@@ -123,7 +123,7 @@
 
 #if defined(XR_ADV_BACKEND_VULKAN)
 #define XR_ADV_TABLE_LAYOUT(bindingIndex) layout(set = XR_ADV_GLOBAL_SET, binding = bindingIndex, std430, row_major)
-#define XR_ADV_RESOURCE_LAYOUT(bindingIndex) layout(set = XR_ADV_GLOBAL_SET, binding = bindingIndex)
+#define XR_ADV_RESOURCE_LAYOUT(bindingIndex) layout(set = XR_ADV_RESOURCE_SET, binding = bindingIndex)
 #elif defined(XR_ADV_BACKEND_OPENGL)
 #define XR_ADV_TABLE_LAYOUT(bindingIndex) layout(binding = bindingIndex, std430, row_major)
 #define XR_ADV_RESOURCE_LAYOUT(bindingIndex) layout(binding = bindingIndex)

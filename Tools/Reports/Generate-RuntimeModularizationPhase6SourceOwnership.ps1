@@ -76,7 +76,7 @@ $completedMigrationDestinations = @{
     "XRENGINE/Core/Engine/AssetManager.FileWatching.cs" = "XREngine.Runtime.Core/Assets/AssetManager.FileWatching.cs"
     "XRENGINE/Core/Engine/AssetManager.Metadata.cs" = "XREngine.Runtime.Core/Assets/AssetManager.Metadata.cs"
     "XRENGINE/Core/Engine/AssetManager.Published.cs" = "XREngine.Runtime.Core/Assets/AssetManager.Published.cs"
-    "XRENGINE/Core/Engine/AssetManager.RenderAssetSerializationServices.cs" = "XREngine.Runtime.Bootstrap/Assets/RuntimeAssetBootstrap.cs"
+    "XRENGINE/Core/Engine/AssetManager.RenderAssetSerializationServices.cs" = "XREngine.Runtime.Bootstrap/Composition/RuntimeAssetBootstrap.cs"
     "XRENGINE/Core/Engine/AssetManager.Saving.cs" = "XREngine.Runtime.Core/Assets/AssetManager.Saving.cs"
     "XRENGINE/Core/Engine/AssetManager.Serialization.cs" = "XREngine.Runtime.Core/Assets/AssetManager.Serialization.cs"
     "XRENGINE/Core/Engine/AssetManagerRenderAssetSerializationServices.cs" = "XREngine.Runtime.Core/Serialization/AssetManagerAssetSerializationServices.cs"
@@ -191,30 +191,36 @@ $completedMigrationDestinations["XRENGINE/Core/Engine/AssetManager.ThirdPartyImp
 $completedMigrationDestinations["XRENGINE/Core/Engine/ModelCaching/AssetManager.ModelCacheIdentity.cs"] = "XREngine.Runtime.ModelAssetPipeline/Importing/Caching/AssetManager.ModelCacheIdentity.cs"
 $completedMigrationDestinations["XRENGINE/Core/Engine/ModelCaching/FacadeModelCachePolicyServices.cs"] = "XREngine.Runtime.ModelAssetPipeline/Importing/Caching/ModelCachePolicyServices.cs"
 $completedMigrationDestinations["XRENGINE/Core/Engine/ModelCaching/ModelCookOverrideSnapshotBuilder.cs"] = "XREngine.Runtime.ModelAssetPipeline/Importing/Caching/ModelCookOverrideSnapshotBuilder.cs"
-$completedMigrationDestinations["XRENGINE/Core/Engine/ModelCaching/UnityModelImportProducerAdapter.cs"] = "XREngine.Editor/Importers/Unity/UnityModelImportProducerAdapter.cs"
-$completedMigrationDestinations["XRENGINE/Core/Files/FacadeAssetSerializationRegistration.cs"] = "XREngine.Runtime.Core/Serialization/RuntimeCoreAssetSerializationRegistration.cs;XRENGINE/Compatibility/Serialization/CompatibilityAssetSerializationRegistration.cs"
-$completedMigrationDestinations["XRENGINE/Core/Tools/Unity/UnityConverter.cs"] = "XREngine.Editor/Importers/UnityConverter.cs"
-$completedMigrationDestinations["XRENGINE/Scene/Components/UnityImport/UnityAnimatorImportMetadataComponent.cs"] = "XREngine.Runtime.ModelAssetPipeline/Importing/Unity/Components/UnityAnimatorImportMetadataComponent.cs"
-$completedMigrationDestinations["XRENGINE/Scene/Components/UnityImport/UnityAvatarAnimationLayer.cs"] = "XREngine.Runtime.ModelAssetPipeline/Importing/Unity/Components/UnityAvatarAnimationLayer.cs"
-$completedMigrationDestinations["XRENGINE/Scene/Components/UnityImport/UnityAvatarDescriptorComponent.cs"] = "XREngine.Runtime.ModelAssetPipeline/Importing/Unity/Components/UnityAvatarDescriptorComponent.cs"
-$completedMigrationDestinations["XRENGINE/Scene/Components/UnityImport/UnityAvatarEyeLookMetadata.cs"] = "XREngine.Runtime.ModelAssetPipeline/Importing/Unity/Components/UnityAvatarEyeLookMetadata.cs"
-$completedMigrationDestinations["XRENGINE/Scene/Components/UnityImport/UnityAvatarLipSyncMode.cs"] = "XREngine.Runtime.ModelAssetPipeline/Importing/Unity/Components/UnityAvatarLipSyncMode.cs"
-$completedMigrationDestinations["XRENGINE/Scene/Components/UnityImport/UnityTransformConstraintChannels.cs"] = "XREngine.Runtime.ModelAssetPipeline/Importing/Unity/Components/UnityTransformConstraintChannels.cs"
-$completedMigrationDestinations["XRENGINE/Scene/Components/UnityImport/UnityTransformConstraintComponent.cs"] = "XREngine.Runtime.ModelAssetPipeline/Importing/Unity/Components/UnityTransformConstraintComponent.cs"
-$completedMigrationDestinations["XRENGINE/Scene/Components/UnityImport/UnityTransformConstraintSource.cs"] = "XREngine.Runtime.ModelAssetPipeline/Importing/Unity/Components/UnityTransformConstraintSource.cs"
+$completedMigrationDestinations["XRENGINE/Core/Engine/ModelCaching/UnityModelImportProducerAdapter.cs"] = "XREngine.Editor/Importers/Unity/SerializedModelImportProducerAdapter.cs"
+$completedMigrationDestinations["XRENGINE/Core/Files/FacadeAssetSerializationRegistration.cs"] = "XREngine.Runtime.Core/Serialization/RuntimeCoreAssetSerializationRegistration.cs;XREngine.Runtime.Bootstrap/Serialization/BootstrapAssetSerializationRegistration.cs"
+$completedMigrationDestinations["XRENGINE/Compatibility/Serialization/CompatibilityAssetSerializationRegistration.cs"] = "XREngine.Runtime.Bootstrap/Serialization/BootstrapAssetSerializationRegistration.cs"
+$completedMigrationDestinations["XRENGINE/Core/Files/FacadePublishedCookedAssetRegistration.cs"] = "XREngine.Runtime.Bootstrap/Serialization/BootstrapPublishedCookedAssetRegistration.cs"
+$completedMigrationDestinations["XRENGINE/Compatibility/Input/Engine.Input.cs"] = "XREngine.Runtime.Bootstrap/SubsystemHost/Engine.Input.cs"
+$completedMigrationDestinations["XRENGINE/Compatibility/State/Engine.State.cs"] = "XREngine.Runtime.Bootstrap/Engine/Engine.State.cs"
+$completedMigrationDestinations["XRENGINE/Compatibility/Windowing/Engine.ViewportRebind.cs"] = "XREngine.Runtime.Bootstrap/RenderingHost/Engine.ViewportRebind.cs"
+$completedMigrationDestinations["XRENGINE/Compatibility/Windowing/Engine.Windows.cs"] = "XREngine.Runtime.Bootstrap/RenderingHost/Engine.Windows.cs"
+$completedMigrationDestinations["XRENGINE/Core/Tools/Unity/UnityConverter.cs"] = "XREngine.Editor/Importers/SerializedSceneImporter.cs"
+$completedMigrationDestinations["XRENGINE/Scene/Components/UnityImport/UnityAnimatorImportMetadataComponent.cs"] = "XREngine.Editor/Importers/Unity/Contracts/SerializedAnimatorRecord.cs"
+$completedMigrationDestinations["XRENGINE/Scene/Components/UnityImport/UnityAvatarAnimationLayer.cs"] = "XREngine.Editor/Importers/Unity/Contracts/SerializedAvatarAnimationLayer.cs"
+$completedMigrationDestinations["XRENGINE/Scene/Components/UnityImport/UnityAvatarDescriptorComponent.cs"] = "XREngine.Runtime.ModelAssetPipeline/Importing/Unity/Components/AvatarPresentationComponent.cs"
+$completedMigrationDestinations["XRENGINE/Scene/Components/UnityImport/UnityAvatarEyeLookMetadata.cs"] = "XREngine.Runtime.ModelAssetPipeline/Importing/Unity/Components/AvatarGazeBinding.cs"
+$completedMigrationDestinations["XRENGINE/Scene/Components/UnityImport/UnityAvatarLipSyncMode.cs"] = "XREngine.Runtime.ModelAssetPipeline/Importing/Unity/Components/AvatarLipSyncMode.cs"
+$completedMigrationDestinations["XRENGINE/Scene/Components/UnityImport/UnityTransformConstraintChannels.cs"] = "XREngine.Runtime.ModelAssetPipeline/Importing/Unity/Components/TransformConstraintChannels.cs"
+$completedMigrationDestinations["XRENGINE/Scene/Components/UnityImport/UnityTransformConstraintComponent.cs"] = "XREngine.Runtime.ModelAssetPipeline/Importing/Unity/Components/WeightedTransformConstraintComponent.cs"
+$completedMigrationDestinations["XRENGINE/Scene/Components/UnityImport/UnityTransformConstraintSource.cs"] = "XREngine.Runtime.ModelAssetPipeline/Importing/Unity/Components/TransformConstraintSource.cs"
 $completedMigrationDestinations["XRENGINE/Scene/Prefabs/SceneNodePrefabUtility.cs"] = "XREngine.Runtime.Core/Scene/Prefabs/SceneNodePrefabUtility.cs"
-$completedMigrationDestinations["XRENGINE/Scene/Prefabs/UnityImport/UnityAssetIdentity.cs"] = "XREngine.Runtime.ModelAssetPipeline/Importing/Unity/Contracts/UnityAssetIdentity.cs"
-$completedMigrationDestinations["XRENGINE/Scene/Prefabs/UnityImport/UnityAssetObjectKind.cs"] = "XREngine.Runtime.ModelAssetPipeline/Importing/Unity/Contracts/UnityAssetObjectKind.cs"
-$completedMigrationDestinations["XRENGINE/Scene/Prefabs/UnityImport/UnityImportCompletionTier.cs"] = "XREngine.Editor/Importers/Unity/Contracts/UnityImportCompletionTier.cs"
-$completedMigrationDestinations["XRENGINE/Scene/Prefabs/UnityImport/UnityImportConversionOutcome.cs"] = "XREngine.Editor/Importers/Unity/Contracts/UnityImportConversionOutcome.cs"
-$completedMigrationDestinations["XRENGINE/Scene/Prefabs/UnityImport/UnityImportDependencyKind.cs"] = "XREngine.Editor/Importers/Unity/Contracts/UnityImportDependencyKind.cs"
-$completedMigrationDestinations["XRENGINE/Scene/Prefabs/UnityImport/UnityImportDependencyManifestEntry.cs"] = "XREngine.Editor/Importers/Unity/Contracts/UnityImportDependencyManifestEntry.cs"
-$completedMigrationDestinations["XRENGINE/Scene/Prefabs/UnityImport/UnityImportDiagnostic.cs"] = "XREngine.Editor/Importers/Unity/Contracts/UnityImportDiagnostic.cs"
-$completedMigrationDestinations["XRENGINE/Scene/Prefabs/UnityImport/UnityImportDiagnosticCategory.cs"] = "XREngine.Editor/Importers/Unity/Contracts/UnityImportDiagnosticCategory.cs"
-$completedMigrationDestinations["XRENGINE/Scene/Prefabs/UnityImport/UnityImportDiagnosticSeverity.cs"] = "XREngine.Editor/Importers/Unity/Contracts/UnityImportDiagnosticSeverity.cs"
-$completedMigrationDestinations["XRENGINE/Scene/Prefabs/UnityImport/UnityPrefabConversionResult.cs"] = "XREngine.Editor/Importers/Unity/Contracts/UnityPrefabConversionResult.cs"
-$completedMigrationDestinations["XRENGINE/Scene/Prefabs/UnityImport/UnityPrefabImportManifest.cs"] = "XREngine.Editor/Importers/Unity/Contracts/UnityPrefabImportManifest.cs"
-$completedMigrationDestinations["XRENGINE/Scene/Prefabs/UnityImport/UnityUnsupportedBehaviourMetadata.cs"] = "XREngine.Editor/Importers/Unity/Contracts/UnityUnsupportedBehaviourMetadata.cs"
+$completedMigrationDestinations["XRENGINE/Scene/Prefabs/UnityImport/UnityAssetIdentity.cs"] = "XREngine.Runtime.ModelAssetPipeline/Importing/Unity/Contracts/SourceAssetIdentity.cs"
+$completedMigrationDestinations["XRENGINE/Scene/Prefabs/UnityImport/UnityAssetObjectKind.cs"] = "XREngine.Runtime.ModelAssetPipeline/Importing/Unity/Contracts/SourceAssetObjectKind.cs"
+$completedMigrationDestinations["XRENGINE/Scene/Prefabs/UnityImport/UnityImportCompletionTier.cs"] = "XREngine.Editor/Importers/Unity/Contracts/SourceImportCompletionTier.cs"
+$completedMigrationDestinations["XRENGINE/Scene/Prefabs/UnityImport/UnityImportConversionOutcome.cs"] = "XREngine.Editor/Importers/Unity/Contracts/SourceImportConversionOutcome.cs"
+$completedMigrationDestinations["XRENGINE/Scene/Prefabs/UnityImport/UnityImportDependencyKind.cs"] = "XREngine.Editor/Importers/Unity/Contracts/SourceImportDependencyKind.cs"
+$completedMigrationDestinations["XRENGINE/Scene/Prefabs/UnityImport/UnityImportDependencyManifestEntry.cs"] = "XREngine.Editor/Importers/Unity/Contracts/SourceImportDependencyManifestEntry.cs"
+$completedMigrationDestinations["XRENGINE/Scene/Prefabs/UnityImport/UnityImportDiagnostic.cs"] = "XREngine.Editor/Importers/Unity/Contracts/SourceImportDiagnostic.cs"
+$completedMigrationDestinations["XRENGINE/Scene/Prefabs/UnityImport/UnityImportDiagnosticCategory.cs"] = "XREngine.Editor/Importers/Unity/Contracts/SourceImportDiagnosticCategory.cs"
+$completedMigrationDestinations["XRENGINE/Scene/Prefabs/UnityImport/UnityImportDiagnosticSeverity.cs"] = "XREngine.Editor/Importers/Unity/Contracts/SourceImportDiagnosticSeverity.cs"
+$completedMigrationDestinations["XRENGINE/Scene/Prefabs/UnityImport/UnityPrefabConversionResult.cs"] = "XREngine.Editor/Importers/Unity/Contracts/SerializedPrefabConversionResult.cs"
+$completedMigrationDestinations["XRENGINE/Scene/Prefabs/UnityImport/UnityPrefabImportManifest.cs"] = "XREngine.Editor/Importers/Unity/Contracts/SerializedPrefabImportManifest.cs"
+$completedMigrationDestinations["XRENGINE/Scene/Prefabs/UnityImport/UnityUnsupportedBehaviourMetadata.cs"] = "XREngine.Editor/Importers/Unity/Contracts/UnsupportedSourceBehaviourMetadata.cs"
 $completedMigrationDestinations["XRENGINE/Scene/Prefabs/XRPrefabSource.cs"] = "XREngine.Runtime.Core/Scene/Prefabs/XRPrefabSource.cs;XREngine.Runtime.ModelAssetPipeline/Importing/ModelPrefabSourceExtensions.cs;XREngine.Runtime.ModelAssetPipeline/Importing/SynchronousModelMeshImportScope.cs"
 $completedMigrationDestinations["XRENGINE/Scene/Prefabs/XRPrefabVariant.cs"] = "XREngine.Runtime.Core/Scene/Prefabs/XRPrefabVariant.cs"
 $completedMigrationDestinations["XRENGINE/Scene/UnityEditorImportBridge.cs"] = "XREngine.Editor/Importers/EditorRuntimeSceneImportServices.cs"
@@ -243,6 +249,10 @@ foreach ($sourcePath in $existingRowsBySource.Keys) {
 $completedDeletions = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
 [void]$completedDeletions.Add("XRENGINE/GlobalUsings.Physics.cs")
 [void]$completedDeletions.Add("XRENGINE/GlobalWorldTypeAliases.cs")
+[void]$completedDeletions.Add("XRENGINE/Properties/AssemblyInfo.cs")
+[void]$completedDeletions.Add("XRENGINE/Properties/RuntimeSubsystemTypeForwards.cs")
+[void]$completedDeletions.Add("XRENGINE/Properties/RuntimeUiTypeForwards.cs")
+[void]$completedDeletions.Add("XRENGINE/Properties/RuntimeWorldTypeForwards.cs")
 
 function New-OwnershipDecision {
     param(
@@ -273,19 +283,19 @@ function Get-OwnershipDecision {
     $path = $RelativePath.Replace("\", "/")
 
     if ($path -like "XRENGINE/Compatibility/Input/*") {
-        return New-OwnershipDecision Refactor "XREngine.Runtime.InputIntegration" "Temporary input facade forwarding remains only until the P6.7 facade deletion gate."
+        return New-OwnershipDecision Refactor "XREngine.Runtime.Bootstrap" "Bootstrap owns the application-level input gateway; InputIntegration supplies the installed implementation."
     }
 
     if ($path -like "XRENGINE/Compatibility/State/*") {
-        return New-OwnershipDecision Refactor @("XREngine.Runtime.Core", "XREngine.Runtime.InputIntegration", "XREngine.Runtime.Bootstrap") "Temporary aggregate state forwarding remains only until the P6.7 facade deletion gate."
+        return New-OwnershipDecision Refactor "XREngine.Runtime.Bootstrap" "Bootstrap owns aggregate application state and player composition over Core and InputIntegration services."
     }
 
     if ($path -like "XRENGINE/Compatibility/Windowing/*") {
-        return New-OwnershipDecision Refactor @("XREngine.Runtime.Rendering", "XREngine.Runtime.Bootstrap") "Temporary window/play-mode forwarding remains while Rendering and Bootstrap own the focused services."
+        return New-OwnershipDecision Refactor "XREngine.Runtime.Bootstrap" "Bootstrap owns window creation and viewport-rebind composition over rendering and input services."
     }
 
     if ($path -like "XRENGINE/Compatibility/Serialization/*") {
-        return New-OwnershipDecision Refactor "XREngine.Runtime.Core" "Temporary serialized facade aliases remain only until the P6.7 facade deletion gate."
+        return New-OwnershipDecision Refactor "XREngine.Runtime.Bootstrap" "Bootstrap owns its settings serializers and persisted enum aliases without a facade compatibility lease."
     }
 
     if ($path -like "XRENGINE/Compatibility/Settings/Editor*") {
@@ -452,11 +462,11 @@ function Get-OwnershipDecision {
     }
 
     if ($path -eq "XRENGINE/Core/Files/FacadeAssetSerializationRegistration.cs") {
-        return New-OwnershipDecision Split @("XREngine.Runtime.Core", "XREngine.Editor") "Runtime.Core owns prefab type hints while the temporary facade compatibility registration retains editor-settings aliases until P6.7."
+        return New-OwnershipDecision Split @("XREngine.Runtime.Core", "XREngine.Runtime.Bootstrap", "XREngine.Editor") "Runtime.Core owns prefab type hints, Bootstrap owns startup settings aliases, and Editor owns editor-preference aliases."
     }
 
     if ($path -eq "XRENGINE/Core/Files/FacadePublishedCookedAssetRegistration.cs") {
-        return New-OwnershipDecision Split @("XREngine.Runtime.Bootstrap", "XREngine.Editor") "Startup-settings serialization moves with Bootstrap while editor-preference serialization moves to Editor in P6.4."
+        return New-OwnershipDecision Split @("XREngine.Runtime.Bootstrap", "XREngine.Editor") "Bootstrap owns startup-settings cooked serialization while Editor owns editor-preference serialization."
     }
 
     if ($path -eq "XRENGINE/Core/Files/XRProject.cs" -or
@@ -600,15 +610,28 @@ $rows = foreach ($relativePath in $trackedFiles) {
             $destinationPaths = ""
         }
 
+        $finalOwners = $decision.FinalOwners
+        $rationale = $decision.Rationale
+        if ($migrationStatus -eq "Migrated" -and -not [string]::IsNullOrWhiteSpace($destinationPaths)) {
+            $finalOwners = @(
+                $destinationPaths.Split(';', [System.StringSplitOptions]::RemoveEmptyEntries) |
+                    ForEach-Object { $_.Split('/')[0] } |
+                    Sort-Object -Unique
+            )
+            if (-not [string]::IsNullOrWhiteSpace($existingRow.Rationale)) {
+                $rationale = $existingRow.Rationale
+            }
+        }
+
         [pscustomobject]@{
             SourcePath = $relativePath
             DeclaredTypes = $existingRow.DeclaredTypes
             PublicTypeDeclarations = [int]$existingRow.PublicTypeDeclarations
             Disposition = $decision.Disposition
-            FinalOwners = $decision.FinalOwners -join ";"
+            FinalOwners = $finalOwners -join ";"
             MigrationStatus = $migrationStatus
             DestinationPaths = $destinationPaths
-            Rationale = $decision.Rationale
+            Rationale = $rationale
         }
         continue
     }

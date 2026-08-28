@@ -15,7 +15,6 @@ public sealed class SelfIterationConfiguration
     public bool RequireCleanTrackedWorktree { get; set; } = true;
     public string[] AllowedPathPrefixes { get; set; } =
     [
-        "XRENGINE/Rendering",
         "XREngine.Runtime.Rendering",
         "XREngine.Runtime.Rendering.OpenGL",
         "XREngine.Runtime.Rendering.Vulkan",

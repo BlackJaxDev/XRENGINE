@@ -253,7 +253,7 @@ public sealed class DirectionalCascadeAtlasStaleFrameTests
         directionalLight.ShouldContain("ERendererProfilerCounter.DirectionalCascadeMixedGenerationPrevented");
         ReadRepoFile("XREngine.Data/Rendering/Enums/ERendererProfilerCounter.cs")
             .ShouldContain("DirectionalCascadePhysicalReprojected");
-        ReadRepoFile("XRENGINE/Engine/Engine.ProfileCapture.cs")
+        ReadRepoFile("XREngine.Runtime.Bootstrap/Engine/Engine.ProfileCapture.cs")
             .ShouldContain("directional_cascade_forced_fresh_render");
     }
 

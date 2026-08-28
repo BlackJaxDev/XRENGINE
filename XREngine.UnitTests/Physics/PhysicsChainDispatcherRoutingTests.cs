@@ -9,7 +9,7 @@ public sealed class PhysicsChainDispatcherRoutingTests
     [Test]
     public void IsolatedModeUsesDispatcherBuffersInsteadOfLegacyComponentBuffers()
     {
-        string componentSource = ReadWorkspaceFile("XRENGINE/Scene/Components/Physics/PhysicsChainComponent.GPU.cs")
+        string componentSource = ReadWorkspaceFile("XREngine.Runtime.Core/Scene/Components/Physics/PhysicsChainComponent.GPU.cs")
             .Replace("\r\n", "\n");
         componentSource.ShouldContain("SubmitToBatchedDispatcher(loop, timeVar)");
         componentSource.ShouldNotContain("private bool TryGetGpuParticleRenderSource");

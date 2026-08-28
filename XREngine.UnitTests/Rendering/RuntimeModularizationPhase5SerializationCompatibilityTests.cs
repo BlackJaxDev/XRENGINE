@@ -23,12 +23,11 @@ public sealed class RuntimeModularizationPhase5SerializationCompatibilityTests
     [TestCase("XREngine.Components.AudioSourceComponent, XREngine", typeof(AudioSourceComponent))]
     [TestCase("XREngine.Data.Components.Scene.VRHeadsetComponent, XREngine", typeof(VRHeadsetComponent))]
     [TestCase("XREngine.Rendering.Models.ModelImportOptions, XREngine", typeof(ModelImportOptions))]
-    public void PreMoveAssemblyQualifiedType_ResolvesToExactlyOneCurrentPublicType(string legacyTypeName, Type expectedType)
+    public void PreMoveAssemblyQualifiedType_UsesSupportedPersistedIdentityResolution(string legacyTypeName, Type expectedType)
     {
-        Type.GetType(legacyTypeName).ShouldBe(expectedType);
-
-        string rewritten = XRTypeRedirectRegistry.RewriteTypeName(legacyTypeName);
-        Type.GetType(rewritten).ShouldBe(expectedType);
+        Type.GetType(legacyTypeName).ShouldBeNull("the removed facade is an intentional external CLR breaking change");
+        CookedAssetTypeReference.Resolve(legacyTypeName, expectedType).ShouldBe(expectedType);
+        Type.GetType(expectedType.AssemblyQualifiedName!).ShouldBe(expectedType);
     }
 
     [Test]

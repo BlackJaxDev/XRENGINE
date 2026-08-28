@@ -110,8 +110,8 @@ internal static class EditorProjectInitializer
         string csprojPath = Path.Combine(projectDirectory, $"{projectName}.csproj");
         string slnPath = Path.Combine(projectDirectory, $"{projectName}.sln");
 
-        string? engineProjectPath = ResolveEngineProjectPath(projectDirectory);
-        string csprojContents = BuildProjectCsproj(projectDirectory, projectName, engineProjectPath);
+        string[] engineProjectPaths = ResolveEngineProjectPaths(projectDirectory);
+        string csprojContents = BuildProjectCsproj(projectDirectory, projectName, engineProjectPaths);
         File.WriteAllText(csprojPath, csprojContents, Encoding.UTF8);
 
         string projectGuid = CreateDeterministicGuid(csprojPath).ToString("B").ToUpperInvariant();
@@ -126,12 +126,12 @@ internal static class EditorProjectInitializer
 
     #region Build File Generation
 
-    private static string BuildProjectCsproj(string projectDirectory, string projectName, string? engineProjectPath)
+    private static string BuildProjectCsproj(string projectDirectory, string projectName, IReadOnlyList<string> engineProjectPaths)
     {
         string rootNamespace = SanitizeIdentifier(projectName, fallback: "GameProject");
-        string? engineReference = engineProjectPath is null
-            ? null
-            : Path.GetRelativePath(projectDirectory, engineProjectPath).Replace('\\', '/');
+        string[] engineReferences = engineProjectPaths
+            .Select(projectPath => Path.GetRelativePath(projectDirectory, projectPath).Replace('\\', '/'))
+            .ToArray();
 
         string publishedDefines = "$(DefineConstants);XRE_PUBLISHED";
 
@@ -168,11 +168,12 @@ internal static class EditorProjectInitializer
         sb.AppendLine("    <Compile Include=\"Assets\\**\\*.cs\" />");
         sb.AppendLine("  </ItemGroup>");
 
-        if (!string.IsNullOrWhiteSpace(engineReference))
+        if (engineReferences.Length > 0)
         {
             sb.AppendLine();
             sb.AppendLine("  <ItemGroup>");
-            sb.AppendLine($"    <ProjectReference Include=\"{EscapeXml(engineReference)}\" />");
+            foreach (string engineReference in engineReferences)
+                sb.AppendLine($"    <ProjectReference Include=\"{EscapeXml(engineReference)}\" />");
             sb.AppendLine("  </ItemGroup>");
         }
 
@@ -287,13 +288,30 @@ internal static class EditorProjectInitializer
             || string.Equals(fullPath, fullRoot, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static string? ResolveEngineProjectPath(string projectDirectory)
+    private static string[] ResolveEngineProjectPaths(string projectDirectory)
     {
         if (!TryResolveRepositoryRoot(projectDirectory, out string? repositoryRoot) || string.IsNullOrWhiteSpace(repositoryRoot))
-            return null;
+            return [];
 
-        string engineProjectPath = Path.Combine(repositoryRoot, "XRENGINE", "XREngine.csproj");
-        return File.Exists(engineProjectPath) ? engineProjectPath : null;
+        string[] projectPaths =
+        [
+            Path.Combine(repositoryRoot, "XREngine.Data", "XREngine.Data.csproj"),
+            Path.Combine(repositoryRoot, "XREngine.Extensions", "XREngine.Extensions.csproj"),
+            Path.Combine(repositoryRoot, "XREngine.Animation", "XREngine.Animation.csproj"),
+            Path.Combine(repositoryRoot, "XREngine.Audio", "XREngine.Audio.csproj"),
+            Path.Combine(repositoryRoot, "XREngine.Input", "XREngine.Input.csproj"),
+            Path.Combine(repositoryRoot, "XREngine.Modeling", "XREngine.Modeling.csproj"),
+            Path.Combine(repositoryRoot, "XREngine.Runtime.Core", "XREngine.Runtime.Core.csproj"),
+            Path.Combine(repositoryRoot, "XREngine.Runtime.Rendering", "XREngine.Runtime.Rendering.csproj"),
+            Path.Combine(repositoryRoot, "XREngine.Runtime.AnimationIntegration", "XREngine.Runtime.AnimationIntegration.csproj"),
+            Path.Combine(repositoryRoot, "XREngine.Runtime.AudioIntegration", "XREngine.Runtime.AudioIntegration.csproj"),
+            Path.Combine(repositoryRoot, "XREngine.Runtime.InputIntegration", "XREngine.Runtime.InputIntegration.csproj"),
+            Path.Combine(repositoryRoot, "XREngine.Runtime.ModelAssetPipeline", "XREngine.Runtime.ModelAssetPipeline.csproj"),
+            Path.Combine(repositoryRoot, "XREngine.Runtime.ModelingIntegration", "XREngine.Runtime.ModelingIntegration.csproj"),
+            Path.Combine(repositoryRoot, "XREngine.Runtime.Bootstrap", "XREngine.Runtime.Bootstrap.csproj"),
+        ];
+
+        return [.. projectPaths.Where(File.Exists)];
     }
 
     #endregion

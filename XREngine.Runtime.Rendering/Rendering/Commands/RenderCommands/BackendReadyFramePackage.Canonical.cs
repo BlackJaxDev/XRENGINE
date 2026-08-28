@@ -104,7 +104,9 @@ public sealed partial class BackendReadyFramePackage
     {
         // A late package preparation only has command membership. It must not
         // discard the already captured canonical publication and its lease.
-        if (scene is null || !scene.AdvancedScenePublication.IsValid)
+        if (scene is null || scene.AdvancedPublicationRejected ||
+            scene.AdvancedPublicationFaulted ||
+            !scene.AdvancedScenePublication.IsValid)
             return;
 
         ResetCanonical();
@@ -245,6 +247,8 @@ public sealed partial class BackendReadyFramePackage
             EAdvancedGpuRecordOwner.Deformation => EBackendReadyCanonicalOwner.Deformation,
             EAdvancedGpuRecordOwner.RenderState => EBackendReadyCanonicalOwner.RenderState,
             EAdvancedGpuRecordOwner.Material => EBackendReadyCanonicalOwner.Material,
+            EAdvancedGpuRecordOwner.Texture => EBackendReadyCanonicalOwner.Texture,
+            EAdvancedGpuRecordOwner.Sampler => EBackendReadyCanonicalOwner.Sampler,
             EAdvancedGpuRecordOwner.Geometry => EBackendReadyCanonicalOwner.Geometry,
             EAdvancedGpuRecordOwner.EditorIdentity => EBackendReadyCanonicalOwner.EditorIdentity,
             _ => EBackendReadyCanonicalOwner.None,
@@ -266,6 +270,10 @@ public sealed partial class BackendReadyFramePackage
                 ulong orderKey = ((ulong)(uint)selectionIndex << 32) | (uint)primitiveIndex;
                 if (!scene.TryGetCanonicalDraw(selection.Command, primitiveIndex, out AdvancedGpuHandle draw))
                 {
+                    scene.TryGetCanonicalCompatibilityReason(
+                        selection.Command,
+                        primitiveIndex,
+                        out EAdvancedCanonicalCompatibilityReason compatibilityReason);
                     EnsureCanonicalCapacity(ref _canonicalOrderedExceptions, exceptionCount + 1);
                     _canonicalOrderedExceptions[exceptionCount++] =
                         new BackendReadyOrderedExceptionRecord(
@@ -273,7 +281,8 @@ public sealed partial class BackendReadyFramePackage
                             0u,
                             selection.RenderPass,
                             orderKey,
-                            1u);
+                            1u,
+                            compatibilityReason);
                     continue;
                 }
 
@@ -318,6 +327,8 @@ public sealed partial class BackendReadyFramePackage
         AppendTemplateDeltas(snapshot.Materials, EBackendReadyCanonicalOwner.Material, EBackendTemplateMutationDomain.ResourceTable, identity.Sequence, ref count);
         AppendTemplateDeltas(snapshot.Kernels, EBackendReadyCanonicalOwner.ShadingKernel, EBackendTemplateMutationDomain.LayoutTopology, identity.Sequence, ref count);
         AppendTemplateDeltas(snapshot.Layouts, EBackendReadyCanonicalOwner.MaterialLayout, EBackendTemplateMutationDomain.LayoutTopology, identity.Sequence, ref count);
+        AppendTemplateDeltas(snapshot.Textures, EBackendReadyCanonicalOwner.Texture, EBackendTemplateMutationDomain.ResourceTable, identity.Sequence, ref count);
+        AppendTemplateDeltas(snapshot.Samplers, EBackendReadyCanonicalOwner.Sampler, EBackendTemplateMutationDomain.ResourceTable, identity.Sequence, ref count);
         _canonicalTemplateProjectionDeltaCount = count;
     }
 

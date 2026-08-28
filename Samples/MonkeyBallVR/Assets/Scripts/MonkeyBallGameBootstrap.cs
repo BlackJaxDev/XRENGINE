@@ -1,4 +1,5 @@
 using XREngine;
+using XREngine.Runtime.Bootstrap;
 using XREngine.Scene;
 
 namespace MonkeyBallVR;
@@ -11,6 +12,9 @@ public sealed class MonkeyBallGameBootstrap :
     IGameLaunchRuntimeSmokeBootstrap
 {
     private bool _runtimeSmoke;
+
+    public RuntimeApplicationProfile ApplicationProfile
+        => RuntimeApplicationProfile.VrClient;
 
     public void ConfigureRuntimeSmoke()
     {

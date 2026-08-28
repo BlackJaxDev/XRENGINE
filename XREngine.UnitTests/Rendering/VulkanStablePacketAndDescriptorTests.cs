@@ -2574,7 +2574,7 @@ public sealed class VulkanStablePacketAndDescriptorTests
         allocated.ShouldBe(0);
 
         string effectiveSettings = ReadWorkspaceFile(
-            "XRENGINE/Engine/Subclasses/Engine.EffectiveSettings.cs");
+            "XREngine.Runtime.Bootstrap/Engine/Subclasses/Engine.EffectiveSettings.cs");
         string queueOverlap = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.QueueOverlap.cs");
         string diagnostics = ReadWorkspaceFile(
@@ -2707,7 +2707,7 @@ public sealed class VulkanStablePacketAndDescriptorTests
         string runtimeEngine = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering/Runtime/RuntimeEngine.cs");
         string engine = ReadWorkspaceFile(
-            "XRENGINE/Engine/Engine.cs");
+            "XREngine.Runtime.Bootstrap/Engine/Engine.cs");
         string preparedFrustum = ReadWorkspaceFile(
             "XREngine.Data/Geometry/PreparedFrustum.cs");
         string camera = ReadWorkspaceFile(
@@ -3634,9 +3634,9 @@ public sealed class VulkanStablePacketAndDescriptorTests
         string hierarchy = ReadWorkspaceFile(
             "XREngine.Editor/IMGUI/EditorImGuiUI.HierarchyPanel.cs");
         string profiler = ReadWorkspaceFile(
-            "XRENGINE/Engine/Subclasses/Engine.CodeProfiler.cs");
+            "XREngine.Runtime.Bootstrap/Engine/Subclasses/Engine.CodeProfiler.cs");
         string preferences = ReadWorkspaceFile(
-            "XRENGINE/Settings/EditorPreferences.cs");
+            "XREngine.Runtime.Bootstrap/Settings/EditorPreferences.cs");
         string imageViewCache = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Textures/VkImageBackedTexture.ViewCache.cs");
         string viewport = ReadWorkspaceFile(
@@ -3660,7 +3660,7 @@ public sealed class VulkanStablePacketAndDescriptorTests
         string meshRendererBase = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering/Rendering/XRMeshRenderer.cs");
         string engine = ReadWorkspaceFile(
-            "XRENGINE/Engine/Engine.cs");
+            "XREngine.Runtime.Bootstrap/Engine/Engine.cs");
         string renderingHost = ReadWorkspaceFile(
             "XREngine.Runtime.Bootstrap/RenderingHost/Engine.RuntimeRenderingHostServices.cs");
         string profilerDumps = ReadWorkspaceFile(

@@ -73,6 +73,7 @@ internal unsafe partial class VkRenderProgram(
     private bool[] _descriptorSetUsesUpdateAfterBind = Array.Empty<bool>();
     private bool _descriptorSetsRequireUpdateAfterBind;
     private bool _descriptorSetsRequireVariableDescriptorCount;
+    private uint _externallyOwnedDescriptorSetMask;
     private long _linkGeneration;
     private int _linkedShaderConfigVersion = -1;
     private bool _linkedUsesVulkanClipDepthRemap;
@@ -112,10 +113,16 @@ internal unsafe partial class VkRenderProgram(
     internal Dictionary<string, AutoUniformBlockInfo> AutoUniformBlockMap => _autoUniformBlocks;
     public bool DescriptorSetsRequireUpdateAfterBind => _descriptorSetsRequireUpdateAfterBind;
     public bool DescriptorSetsRequireVariableDescriptorCount => _descriptorSetsRequireVariableDescriptorCount;
+    internal uint ExternallyOwnedDescriptorSetMask => _externallyOwnedDescriptorSetMask;
     internal bool HasGlobalTextureArrayOnlySet => _hasGlobalTextureArrayOnlySet;
     internal bool CanBindGlobalTextureArraySeparately => _canBindGlobalTextureArraySeparately;
     public bool DescriptorSetUsesUpdateAfterBind(uint setIndex)
         => setIndex < _descriptorSetUsesUpdateAfterBind.Length && _descriptorSetUsesUpdateAfterBind[setIndex];
+
+    internal bool IsDescriptorSetExternallyOwned(uint setIndex)
+        => VulkanAdvancedSceneProgramBindingContract.IsExternallyOwnedSet(
+            _externallyOwnedDescriptorSetMask,
+            setIndex);
 
     protected override uint CreateObjectInternal() => CacheObject(this);
 

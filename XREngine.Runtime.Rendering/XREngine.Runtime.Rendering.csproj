@@ -9,6 +9,7 @@
     <RiveSharpManagedDll>$(MSBuildProjectDirectory)\..\Build\Submodules\rive-sharp\RiveSharp\bin\$(Configuration)\netstandard2.0\RiveSharp.dll</RiveSharpManagedDll>
     <DefineConstants Condition="Exists('$(RiveSharpManagedDll)')">$(DefineConstants);XRENGINE_HAS_RIVESHARP</DefineConstants>
     <Freetype64Source Condition="'$(Freetype64Source)' == ''">$(NuGetPackageRoot)sharpfont.dependencies\2.6.0\bin\msvc12\x64\freetype6.dll</Freetype64Source>
+    <NvidiaRtxgiWinX64Dir Condition="'$(NvidiaRtxgiWinX64Dir)' == ''">$(MSBuildProjectDirectory)\..\ThirdParty\NVIDIA\RTXGI\win-x64\</NvidiaRtxgiWinX64Dir>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
@@ -114,7 +115,21 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>
+    <None Include="$(NvidiaRtxgiWinX64Dir)RestirGI.Native.dll" Condition="Exists('$(NvidiaRtxgiWinX64Dir)RestirGI.Native.dll')">
+      <Link>RestirGI.Native.dll</Link>
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+      <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+    </None>
   </ItemGroup>
+
+  <Target Name="CopyRestirNative" AfterTargets="Build">
+    <PropertyGroup>
+      <RestirNativeSource>$(MSBuildProjectDirectory)\..\Build\RestirGI\bin\$(Configuration)\RestirGINative.dll</RestirNativeSource>
+      <RestirNativeDest>$(NvidiaRtxgiWinX64Dir)RestirGI.Native.dll</RestirNativeDest>
+    </PropertyGroup>
+    <MakeDir Directories="$(NvidiaRtxgiWinX64Dir)" Condition="Exists('$(RestirNativeSource)')" />
+    <Copy SourceFiles="$(RestirNativeSource)" DestinationFiles="$(RestirNativeDest)" SkipUnchangedFiles="true" Condition="Exists('$(RestirNativeSource)')" />
+  </Target>
 
   <Target Name="ForceFreetype64" AfterTargets="Build" Condition="Exists('$(Freetype64Source)')">
     <Copy SourceFiles="$(Freetype64Source)" DestinationFiles="$(OutDir)freetype6.dll" SkipUnchangedFiles="false" />

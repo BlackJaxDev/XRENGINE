@@ -155,7 +155,7 @@ public sealed class PhysicsChainWorldTests
     [Test]
     public void ParallelInputGather_UsesReusableWeightedRangesAndDeterministicCompaction()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Scene/Components/Physics/PhysicsChainWorld.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Core/Scene/Components/Physics/PhysicsChainWorld.cs");
         source.ShouldContain("private PhysicsChainComponent[] _prepareComponents = [];");
         source.ShouldContain("private void EnsurePrepareCapacity(int requiredCount)");
         source.ShouldContain("private void BuildWeightedPrepareRanges(int count, int sliceCount)");
@@ -165,7 +165,7 @@ public sealed class PhysicsChainWorldTests
         source.ShouldContain("for (int prepareIndex = 0; prepareIndex < prepareCount; ++prepareIndex)");
         source.ShouldNotContain("Task.Run(");
 
-        string componentSource = ReadWorkspaceFile("XRENGINE/Scene/Components/Physics/PhysicsChainComponent.cs");
+        string componentSource = ReadWorkspaceFile("XREngine.Runtime.Core/Scene/Components/Physics/PhysicsChainComponent.cs");
         componentSource.ShouldContain("internal bool CanPrepareWorldLateTickInputsInParallel");
         componentSource.ShouldContain("internal bool BeginWorldLateTickParallelPreparation()");
         componentSource.ShouldContain("internal void FinalizeWorldLateTickParallelPreparation()");

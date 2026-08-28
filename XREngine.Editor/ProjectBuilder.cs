@@ -610,6 +610,8 @@ internal static class ProjectBuilder
             string fileName = Path.GetFileName(file);
             if (fileName.StartsWith("XREngine.Editor", StringComparison.OrdinalIgnoreCase))
                 continue;
+            if (string.Equals(fileName, "XREngine.dll", StringComparison.OrdinalIgnoreCase))
+                continue;
 
             File.Copy(file, Path.Combine(destination, fileName), true);
         }

@@ -2,9 +2,10 @@
 
 Started: 2026-08-25
 
-Last updated: 2026-08-25
+Last updated: 2026-08-27
 
-Status: P6.0 through P6.3 complete. P6.4 is next.
+Status: Complete. P6.0 through P6.8 are implemented and Phase 6 closed on
+2026-08-28.
 
 Branch: `codex/runtime-modularization-phase6`
 
@@ -12,7 +13,7 @@ Implementation base and current HEAD at P6.0 closeout:
 `76e241e5937ad29d00d435de3c32be1d095ff327` (`Vulkan work`, 2026-08-25).
 
 Reference tracker:
-[Runtime Modularization Phase 6 TODO](../../todo/runtime/runtime-modularization-phase6-todo.md)
+[Runtime Modularization Phase 6 TODO](../../todo/COMPLETED/runtime-modularization-phase6-todo.md)
 
 ## P6.0 Decision And Scope
 
@@ -47,7 +48,8 @@ No dependency or submodule version changed.
 
 | Artifact | Rows | Purpose | Generator |
 |---|---:|---|---|
-| [Source ownership manifest](runtime-modularization-phase6-source-ownership.tsv) | 358 baseline / 365 current | Stateful file/type disposition, final owners, migration status, and concrete destination paths; later slices retain newly discovered compatibility adapters and split owners | `Tools/Reports/Generate-RuntimeModularizationPhase6SourceOwnership.ps1` |
+| [Source ownership manifest](runtime-modularization-phase6-source-ownership.tsv) | 358 initial / 384 tracked | Stateful file/type disposition, final owners, migration status, and concrete destination paths, including migration adapters discovered after the initial inventory | `Tools/Reports/Generate-RuntimeModularizationPhase6SourceOwnership.ps1` |
+| [Identity migration report](runtime-modularization-phase6-identity-migration.tsv) | 103 | Every removed facade-forward identity, its stable full name, current assembly/type identity, and migration policy | Captured from the final built facade metadata before deletion |
 | [Consumer API baseline](runtime-modularization-phase6-consumer-api-baseline.tsv) | 7 | Built-metadata facade type/member references for every direct consumer | `Tools/Reports/Get-RuntimeModularizationPhase6FacadeApiUsage.ps1` |
 | [Project graph baseline](runtime-modularization-phase6-project-graph-baseline.tsv) | 24 | Destination, consumer, and facade project edges and project cargo | `Tools/Reports/Get-RuntimeModularizationPhase6ProjectGraph.ps1` |
 | [Publish layout baseline](runtime-modularization-phase6-publish-layout-baseline.tsv) | 697 | File-level Editor, Server, and VRClient publish manifests with size, category, and SHA-256 | `Tools/Reports/Get-RuntimeModularizationPhase6PublishLayout.ps1` |
@@ -419,10 +421,10 @@ owners without dependency-version or license changes.
 
 The AOT generator scans Bootstrap plus explicit final owner projects: Data,
 Animation, Runtime.Core, Runtime.Rendering, the integration projects, and
-ModelingBridge. It no longer scans the facade. The sole remaining facade type
-that still needs a factory, `BillboardTransform`, has one explicit temporary
-Bootstrap registration with a P6.3 removal point; there is no broad facade
-source root.
+ModelingBridge. It no longer scans the facade. `BillboardTransform` moved to
+Runtime.Rendering in P6.6, and P6.7 removed its temporary Bootstrap
+registration together with the facade forwards; there is no broad facade
+source root or compatibility factory.
 
 No new lower serialization assembly was required. Data remains the lowest
 serialization owner, and the reference dependency graph therefore needs no
@@ -611,3 +613,260 @@ The broader Vulkan contract debt remains with the renderer investigation above.
 The next executable slice is P6.4: move gameplay, input, startup, window, and
 settings composition while keeping the headless Server profile free of local
 input, rendering-window, audio, and VR services.
+
+## P6.5B Imported-Asset Semantic Normalization
+
+P6.5B is complete. Runtime publication now contains only converted native
+behavior; serialized source evidence and intentional loss remain at the editor
+import boundary.
+
+- Removed the placeholder runtime animator metadata and avatar animation-layer
+  components. `SerializedPrefabImportManifest` schema 2 now owns animator,
+  controller, layer, mask, expression-menu, and parameter references. Its
+  avatar graph is explicitly a staging representation for compilation into one
+  native `AnimStateMachineComponent`, not a second runtime animation model.
+- Animation manifest schema 3 accepts callbacks only through an explicit native
+  event allowlist and typed receiver dispatch. The initial allowlist is empty,
+  so arbitrary source callback names are recorded as non-blocking intentional
+  conversion loss rather than invoked by reflection.
+- Opaque source behavior and animation payloads no longer retain raw YAML.
+  Import reports keep bounded field names, byte counts, discarded-item counts,
+  and SHA-256 digests sufficient for diagnostics and cache evidence.
+- Native presentation, gaze, eyelid, jaw, speech-pose, physics-chain, collider,
+  and weighted-constraint behavior remains. Source grabbing, posing, solver,
+  collision policy, freeze/rebake, and authority flags are diagnosed as loss;
+  eventual local and replicated manipulation will enter through one native
+  physics-chain interaction/authority contract.
+
+Ignored evidence is under
+`Build/_AgentValidation/20260827-235500-phase65b-import-loss/`.
+
+- ModelAssetPipeline, Animation, and AnimationIntegration built with zero
+  warnings and zero errors.
+- An isolated compile of the Editor importer sources completed with zero
+  warnings and zero errors. A live synthetic avatar-prefab conversion published
+  `PhysicsChainComponent` and `AvatarPresentationComponent`, one import-side
+  avatar graph/layer record, bounded unsupported-behavior evidence, and the
+  expected loss diagnostics.
+- The full Editor graph reached unrelated concurrent Bootstrap work and failed
+  because `RuntimeAssetBootstrap` was absent from
+  `Engine.RuntimeRenderingHostServices`. P6.5B did not alter Bootstrap or the
+  concurrent renderer work.
+- No unit tests were modified or run. Repository policy requires explicit user
+  clearance after the live integration is functionally sound; two existing
+  fixtures still reference the deliberately removed placeholder component and
+  raw-YAML property and must be migrated in that later test pass.
+
+## P6.6 Application, Sample, Test, And Tooling Migration
+
+P6.6 is complete. Bootstrap, Editor, Server, VRClient, UnitTests, Benchmarks,
+and `Samples/MonkeyBallVR` now reference their real module owners directly.
+Metadata inspection of all seven built binaries reports zero `XREngine`
+assembly references and zero facade type or member references. Editor assembly
+discovery and generated game projects no longer name `XREngine.dll` or
+`XRENGINE/XREngine.csproj`, and launcher packaging explicitly rejects stale
+facade cargo.
+
+All facade production sources were physically moved to Data, Runtime.Core,
+Runtime.Rendering, Runtime.Bootstrap, or Editor. The 384-row ownership ledger
+now records 378 migrated rows, two deleted rows, and only four pending P6.7
+assembly metadata/type-forward files under `XRENGINE/Properties`. Bootstrap is
+the application composition owner. Its headless profile uses a specialized
+adapter lease that does not instantiate local window, input, audio, or VR
+services, and the Server selects the `None` renderer build profile. The audited
+headless publish contains no Editor, OpenGL/Vulkan backend, OpenVR, SDL/GLFW,
+Vulkan, or VMA cargo.
+
+Removing facade load side effects exposed and closed three real generated-game
+dependencies: `.xrproj` extension registration now deserializes directly
+without re-entering the generic loader, Data explicitly contributes its YAML
+converters through a lease, and generated launchers install modular asset
+services before reading startup configuration. Framework-dependent launcher
+assembly identity now matches the requested executable name, so a renamed
+`Game.exe` locates its managed entry assembly correctly.
+
+Ignored evidence is under
+`Build/_AgentValidation/20260828-193000-runtime-p66/`.
+
+- All seven consumers built with zero warnings and zero errors. UnitTests also
+  rebuilt after final launcher/serialization changes with zero warnings and
+  zero errors.
+- OpenGL-only and Vulkan-only Bootstrap builds passed, and generated AOT
+  registration source contained no `XREngine.dll`. This validates static/AOT
+  roots without claiming that a full NativeAOT publish was performed.
+- Editor, Server, VRClient, and the generated MonkeyBall launcher passed bounded
+  startup smokes. The final MonkeyBall build completed with zero warnings and
+  zero errors, `Game.exe` remained running for eight seconds, and its package
+  contained no facade assembly.
+- The final Phase 6 boundary, launcher-generation, and packaging set passed
+  14/14. The regenerated source/API manifests pass their stateful gates.
+- A broader focused run passed 27/29. The two failures are stale source-contract
+  expectations in concurrent renderer work:
+  `BackendGeneration_IsInstalledBeforeApiWrappersAreCreated` and
+  `ReplacementAcceptance_RequiresBackendValidatedFrameContent`. Neither tests
+  a P6.6 consumer/facade boundary, and P6.6 did not change the concurrent
+  Vulkan implementation to satisfy obsolete strings.
+
+## P6.7 Facade Deletion, Identity Migration, And Cargo Ownership
+
+P6.7 is complete. Option A is now the physical repository state:
+`XRENGINE/XREngine.csproj`, all 103 type forwards, the facade cargo, and the
+entire `XRENGINE` production directory are gone. Both solution formats contain
+only the modular projects. The regenerated project graph contains 24 rows and
+no facade row. Metadata inspection of Bootstrap, Editor, Server, VRClient,
+UnitTests, Benchmarks, and MonkeyBall reports zero facade assembly, type, and
+member references.
+
+The durable identity migration report records all 103 forwarded identities,
+their stable full names, their current assemblies, and the supported migration
+policy. Repository-owned serialized type references now compare stable full
+names without losing generic type syntax. The AOT metadata store first uses
+current CLR resolution, then stable full-name matching over loaded assemblies
+and the explicit published cooked-asset registry. This keeps YAML, JSON,
+cooked, MemoryPack, prefab, scene, project, and generated-settings paths
+independent of `XREngine.dll` without introducing a permanent facade-name map.
+Direct external `Type.GetType(..., XREngine)` calls intentionally fail and must
+migrate to current assembly-qualified names; that is the deliberate pre-v1
+breaking boundary.
+
+Package and native cargo now follow their direct owners. Runtime.Core owns
+`lib_coacd.dll` and its acquisition/build path. Runtime.Rendering owns optional
+RestirGI publication. NIS/Streamline licenses and shared NVIDIA SDK cargo use
+`ThirdParty/NVIDIA/SDK/win-x64`. The dependency generator was rerun from
+`Tools/Reports/Generate-Dependencies.ps1`; the resulting inventory has no
+facade package or binary row. The temporary facade-named serialization
+registrations and the `System.Remapper` compatibility shim were removed. The
+remaining `Engine` partials formerly staged under Bootstrap `Compatibility`
+folders were reclassified under final Bootstrap composition owners.
+
+Validation on 2026-08-27:
+
+- the 384-row ownership ledger reports 378 migrated and six deleted rows, with
+  no pending entry;
+- the 103-row identity report has 103 unique legacy identities and no current
+  `XREngine` assembly owner;
+- Data, Runtime.Core, Bootstrap, and UnitTests independent builds passed with
+  zero warnings and zero errors;
+- the full Bootstrap dependency graph, including both renderer leaves and all
+  runtime adapters it composes, passed with zero warnings and zero errors;
+- the facade identity and modular-boundary set passed 51/51;
+- the broader asset, serialization, prefab, project, settings, and generated
+  launcher set passed 150/150; and
+- current product/tool outputs contain no facade binary. Fifteen exact stale
+  facade binaries/symbols from ignored pre-migration output folders were
+  deleted; historical validation evidence remains disposable and is not an
+  active build or package input.
+
+The only remaining exact `XREngine.dll` source reference outside historical
+evidence and negative tests is the generated-launcher packaging rejection in
+`XREngine.Editor/ProjectBuilder.cs`; it prevents copying the deleted facade and
+does not probe, load, or require it. Legitimate product, namespace, solution,
+and modular assembly names beginning with `XREngine` remain unchanged. The
+reference architecture now records the implemented end state and the one
+deliberate aggregate: ModelAssetPipeline continues to compose its tightly
+coupled format-to-runtime publication pipeline.
+
+## P6.8 Final Validation And Closeout
+
+P6.8 is complete. It closed five issues exposed only by the exhaustive matrix:
+
+- Bootstrap build artifacts are isolated by `All`, `OpenGL`, `Vulkan`, and
+  `None` renderer variants, so differently composed builds no longer share
+  generated source, NuGet state, IL, or NativeAOT inputs.
+- `RuntimeAssetBootstrap` is a shared reference-counted installation. Nested
+  application and test composition roots can lease the same cooked-asset
+  registrations without duplicate registration or premature teardown.
+- The headless application profile installs asset services plus the headless
+  adapter set, while Server publish removes concrete renderer leaves and native
+  local window, input, audio, VR, FFmpeg, and shared NVIDIA cargo. Managed
+  adapter/wrapper assemblies that Bootstrap or Runtime.Rendering references as
+  metadata remain present; they are not installed as local headless services.
+- Four obsolete exact `InternalsVisibleTo("XREngine")` declarations and stale
+  UnitTests reads of deleted facade source paths were removed or retargeted to
+  their current owners.
+- Generated launcher project references propagate
+  `XREngineRendererBackends` into Bootstrap. Non-AOT selected-backend builds
+  therefore use the same isolated dependency graph/output variant as their
+  launcher instead of silently compiling and packaging `renderer-All`.
+
+The closeout evidence root is
+`Build/_AgentValidation/20260827-215638-runtime-p68/`. Durable reports are the
+24-project graph, seven-consumer metadata audit, 384-row ownership ledger, and
+890-row publish manifest under `docs/work/progress/runtime/`.
+
+### Build, Regression, And Runtime Evidence
+
+- The independent Data/lower-library/Runtime.Core/rendering/backend/adapter/
+  Bootstrap/application/test/benchmark/sample matrix and a final serialized
+  `dotnet build XRENGINE.slnx --no-restore` completed with zero warnings and
+  zero errors after facade deletion. After unrelated concurrent Vulkan work
+  entered the working tree, fresh Bootstrap `All`, `OpenGL`, and `None` variant
+  builds and the UnitTests build again completed with zero warnings/errors by
+  consuming the last clean dependency outputs. The concurrent Vulkan branch
+  currently has compile errors in its new
+  `VulkanAdvancedSceneResourceRuntime` work; no Phase 6 file is implicated, so
+  this record does not claim the entire subsequently modified tree is green.
+- The final profile plus Phase 3/4/5/6 boundary/identity/serialization set
+  passed 79/79. Publish/launcher coverage passed 16/16. Repeated collectible
+  backend registration/unload coverage passed 13/13. The prior broad subsystem
+  run completed 4,625 tests: 4,077 passed, 541 failed, and seven skipped. Its
+  failures are the existing animation, cooked-schema, renderer/backend, and
+  source-contract backlog, not facade-removal regressions.
+- After the launcher backend propagation fix, Editor Release and UnitTests
+  Debug rebuilt with zero warnings/errors and the exact generated-project
+  contract passed 1/1.
+- The fresh exhaustive UnitTests run after the shared asset-lease fix completed
+  5,255 console-reported tests in 20 minutes 23 seconds: 4,711 passed, 537
+  failed, and seven skipped. The console log and TRX are
+  `logs/p68-full-after-shared-assets.log` and
+  `logs/p68-full-after-shared-assets.trx` under the evidence root. Focused
+  Phase 6 and application-profile tests are green. That run exposed one final
+  deleted rendering-root fixture and several silently vacuous source-contract
+  paths; after retargeting them, UnitTests rebuilt with zero warnings/errors and
+  the Phase 3/4/5/6, application-profile, and naming set passed 83/83. The
+  retargeted shadow/forward source contracts now execute instead of skipping:
+  78 passed and 16 failed, with zero skipped. Those 16 assert current
+  renderer/shadow behavior and are part of the existing renderer contract
+  drift, not facade identity, ownership, or application composition.
+- Named isolated Editor sessions reached MCP readiness on canonical OpenGL and
+  Vulkan Unit Testing World paths. Five changing captures under
+  `mcp-captures/` prove live rendering rather than a stale readback. Vulkan
+  emitted one recovered texture-backend initialization error and showed visual
+  artifacts attributable to the concurrent renderer work; session teardown
+  was owned and bounded.
+- Framework-dependent Release publishes contain 355 Editor files, 210 Server
+  files, and 325 VRClient files. None contains `XREngine.dll`. The final pruned
+  Server package reached world/network startup and bound UDP ports 5000 and
+  47777 before its owned process was stopped. The final published VRClient
+  no-peer path exited with code 0. A physical XR headset was unavailable, so
+  headset rendering, tracking, input, and local/remote avatar interaction are
+  explicitly not claimed.
+- The NativeAOT MonkeyBall launcher published and ran its live scripted smoke:
+  36,927 metadata types, 12 registered runtime asset types, two content assets,
+  484 common assets, 300 update ticks, and 399 physics steps. Renderer input
+  hashes matched the just-built rendering assemblies. Strict trimming remains
+  release debt: 913 IL2xxx/IL3xxx warnings (424 cooked-binary, 268 general
+  first-party reflection/dynamic-code, 89 third-party/runtime, 88 editor/dev,
+  and 44 first-party runtime). The warnings are recorded rather than treated
+  as a successful zero-warning NativeAOT publish.
+
+### Final Audits And External Lanes
+
+- Metadata reports show zero facade assembly, type, or member references in all
+  seven former consumers. Exact build-input and friend-assembly searches find
+  no active facade dependency; remaining `XREngine.dll` strings are the
+  generated-launcher rejection guard, absence tests, or historical ownership
+  classification.
+- The allocation audit found no new steady-state allocation in Phase 6 hot
+  paths. It separately records 65 pre-existing OpenXR formatted-log candidates
+  for later performance work.
+- `git diff --check` is clean. Dependency/license data was regenerated after
+  cargo ownership changes, and the final relative documentation links resolve.
+- Supported-hardware Streamline/NVIDIA validation and physical-headset
+  validation remain external manual acceptance lanes. They are not claimed and
+  do not change the completed dependency/ownership result.
+- No commit, merge, push, or branch promotion was requested or performed.
+
+Phase 6 is closed. Future physics-chain grabbing/posing, avatar animation-state
+machine conversion, and expression menu/parameter conversion extend the new
+module boundaries; they are not deferred facade-removal work.

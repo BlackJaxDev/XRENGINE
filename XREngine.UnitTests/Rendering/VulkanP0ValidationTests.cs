@@ -29,7 +29,7 @@ public sealed class VulkanP0ValidationTests
         string statsSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Statistics/RuntimeEngine.Rendering.Stats.Vulkan.cs");
         string commandBufferSource = global::XREngine.UnitTests.SourceContractWorkspace.ReadPartialType("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/VulkanRenderer.CommandBufferRecording.cs");
         string packetSource = ReadWorkspaceFile("XREngine.Data/Profiling/ProfilerStatsPacket.cs");
-        string profilerSenderSource = ReadWorkspaceFile("XRENGINE/Engine/Engine.ProfilerSender.cs");
+        string profilerSenderSource = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/Engine/Engine.ProfilerSender.cs");
         string editorSource = ReadWorkspaceFile("XREngine.Editor/EngineProfilerDataSource.cs");
         string profilerUiSource = ReadWorkspaceFile("XREngine.Profiler.UI/ProfilerPanelRenderer.cs");
 
@@ -1265,7 +1265,7 @@ public sealed class VulkanP0ValidationTests
     public void VulkanTextureUploadPrepWorker_DefaultsToWorkerPath()
     {
         string flagsSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/RenderDiagnosticsFlags.cs");
-        string preferencesSource = ReadWorkspaceFile("XREngine/Settings/EditorPreferences.cs");
+        string preferencesSource = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/Settings/EditorPreferences.cs");
 
         flagsSource.ShouldContain("VkTextureUploadPrepWorker = ReadBoolDefaultTrue(XREngineEnvironmentVariables.VulkanTextureUploadPrepWorker)");
         preferencesSource.ShouldContain("Run Vulkan imported-texture upload preparation on the worker/upload context");

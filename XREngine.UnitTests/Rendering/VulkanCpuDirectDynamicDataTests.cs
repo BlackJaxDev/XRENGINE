@@ -60,7 +60,7 @@ public sealed class VulkanCpuDirectDynamicDataTests
     {
         string arena = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Buffers/VulkanMappedFrameArena.cs");
-        string profileCapture = ReadWorkspaceFile("XREngine/Engine/Engine.ProfileCapture.cs");
+        string profileCapture = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/Engine/Engine.ProfileCapture.cs");
 
         arena.ShouldContain("internal bool TryReserve(");
         arena.ShouldContain("internal bool TryWriteIfChanged<T>");

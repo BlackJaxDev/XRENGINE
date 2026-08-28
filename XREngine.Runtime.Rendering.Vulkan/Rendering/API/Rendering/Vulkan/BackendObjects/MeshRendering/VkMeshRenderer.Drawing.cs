@@ -456,8 +456,39 @@ internal unsafe partial class VkMeshRenderer
 		{
 			return false;
 		}
+		VulkanAdvancedScenePublicationState advancedSceneState = default;
+		bool advancedSceneReady = false;
+		if (draw.CanonicalDrawIdentitySnapshot.IsValid)
+		{
+			advancedSceneReady =
+				preparedFrame.TryPrepareAdvancedScenePublication(
+					BackendContext.Resources.AdvancedSceneResources,
+					draw.CanonicalDrawIdentitySnapshot,
+					out advancedSceneState,
+					out EVulkanAdvancedSceneResourceFailure advancedFailure,
+					out string advancedReason,
+					out bool newlyAttempted);
+			if (!advancedSceneReady && newlyAttempted)
+			{
+				Debug.VulkanWarningEvery(
+					$"Vulkan.AdvancedSceneResources.{advancedFailure}",
+					TimeSpan.FromSeconds(2),
+					"[VulkanAdvancedScene] Native dual-feed projection unavailable ({0}): {1}. The ordered legacy draw remains selected.",
+					advancedFailure,
+					advancedReason);
+			}
+		}
 		ReleaseCanonicalPublicationBridge(
 			draw.CanonicalDrawIdentitySnapshot);
+		if (program.ExternallyOwnedDescriptorSetMask != 0u &&
+			(!draw.CanonicalDrawIdentitySnapshot.IsValid ||
+			 !advancedSceneReady ||
+			 !advancedSceneState.IsValid))
+		{
+			reason =
+				"advanced Vulkan program requires a valid retained canonical publication and native descriptor realization";
+			return false;
+		}
 
 		if (Mesh?.HasSkinning == true)
 			MeshRenderer.PushBoneMatricesToGPU();
@@ -701,6 +732,7 @@ internal unsafe partial class VkMeshRenderer
 						preparedFrame,
 						program,
 						descriptorSets,
+						advancedSceneState,
 						frameIndex,
 						drawUniformSlot,
 						out descriptorRange,
@@ -1102,6 +1134,7 @@ internal unsafe partial class VkMeshRenderer
 		VulkanPreparedFrameRecording preparedFrame,
 		VkRenderProgram program,
 		DescriptorSet[] descriptorSets,
+		in VulkanAdvancedScenePublicationState advancedSceneState,
 		int frameIndex,
 		int drawUniformSlot,
 		out VulkanPreparedStreamRange descriptorRange,
@@ -1114,9 +1147,15 @@ internal unsafe partial class VkMeshRenderer
 		reason = "Ready";
 
 		int totalDynamicOffsetCount = 0;
-		for (int setIndex = 0; setIndex < descriptorSets.Length; setIndex++)
+		int descriptorSetCount = program.DescriptorSetLayouts.Count;
+		for (int setIndex = 0; setIndex < descriptorSetCount; setIndex++)
 		{
-			if (descriptorSets[setIndex].Handle == 0)
+			DescriptorSet descriptorSet = ResolvePreparedDescriptorSet(
+				program,
+				descriptorSets,
+				setIndex,
+				advancedSceneState);
+			if (descriptorSet.Handle == 0)
 				continue;
 
 			preparedBindingCount++;
@@ -1158,9 +1197,13 @@ internal unsafe partial class VkMeshRenderer
 
 		int preparedBindingIndex = 0;
 		int dynamicOffsetIndex = 0;
-		for (int setIndex = 0; setIndex < descriptorSets.Length; setIndex++)
+		for (int setIndex = 0; setIndex < descriptorSetCount; setIndex++)
 		{
-			DescriptorSet descriptorSet = descriptorSets[setIndex];
+			DescriptorSet descriptorSet = ResolvePreparedDescriptorSet(
+				program,
+				descriptorSets,
+				setIndex,
+				advancedSceneState);
 			if (descriptorSet.Handle == 0)
 				continue;
 
@@ -1204,6 +1247,30 @@ internal unsafe partial class VkMeshRenderer
 		}
 
 		return true;
+	}
+
+	private static DescriptorSet ResolvePreparedDescriptorSet(
+		VkRenderProgram program,
+		DescriptorSet[] descriptorSets,
+		int setIndex,
+		in VulkanAdvancedScenePublicationState advancedSceneState)
+	{
+		uint set = (uint)setIndex;
+		if (program.IsDescriptorSetExternallyOwned(set))
+		{
+			return set switch
+			{
+				VulkanAdvancedSceneProgramBindingContract.GlobalSetIndex =>
+					advancedSceneState.GlobalDescriptorSet,
+				VulkanAdvancedSceneProgramBindingContract.ResourceSetIndex =>
+					advancedSceneState.ResourceDescriptorSet,
+				_ => default,
+			};
+		}
+
+		return (uint)setIndex < (uint)descriptorSets.Length
+			? descriptorSets[setIndex]
+			: default;
 	}
 
 	private static bool BindPreparedMeshDescriptorSets(

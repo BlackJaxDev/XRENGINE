@@ -2,7 +2,7 @@
 
 Reference design: [Runtime Modularization And Bootstrap Extraction Plan](../../design/runtime-modularization-plan.md)
 
-Follow-on: [Runtime Modularization Phase 6 - Remove The XRENGINE Facade](../runtime/runtime-modularization-phase6-todo.md)
+Follow-on: [Runtime Modularization Phase 6 - Remove The XRENGINE Facade](runtime-modularization-phase6-todo.md)
 
 Prerequisites:
 

@@ -11,7 +11,7 @@ namespace XREngine.Runtime.Bootstrap;
 public static class RuntimeAdapterBootstrap
 {
     private static readonly object Sync = new();
-    private static RuntimeAdapterHostLease? _installedLease;
+    private static IRuntimeAdapterHostLease? _installedLease;
 
     /// <summary>
     /// Installs the selected adapter host capabilities and returns a lease that restores the
@@ -21,11 +21,13 @@ public static class RuntimeAdapterBootstrap
     {
         lock (Sync)
         {
-            RuntimeAdapterHostLease? previous = _installedLease;
+            IRuntimeAdapterHostLease? previous = _installedLease;
             _installedLease = null;
             previous?.DisposeWithoutLock();
 
-            RuntimeAdapterHostLease lease = new(profile);
+            IRuntimeAdapterHostLease lease = profile == RuntimeApplicationProfile.HeadlessServer.AdapterProfile
+                ? new HeadlessRuntimeAdapterHostLease()
+                : new RuntimeAdapterHostLease(profile);
             _installedLease = lease;
             return lease;
         }
@@ -38,13 +40,77 @@ public static class RuntimeAdapterBootstrap
     {
         lock (Sync)
         {
-            RuntimeAdapterHostLease? lease = _installedLease;
+            IRuntimeAdapterHostLease? lease = _installedLease;
             _installedLease = null;
             lease?.DisposeWithoutLock();
         }
     }
 
-    private sealed class RuntimeAdapterHostLease : IDisposable
+    private interface IRuntimeAdapterHostLease : IDisposable
+    {
+        void DisposeWithoutLock();
+    }
+
+    /// <summary>
+    /// Headless composition is kept free of local audio, window, and VR service types so a
+    /// dedicated-server publish does not need to carry their managed or native implementations.
+    /// </summary>
+    private sealed class HeadlessRuntimeAdapterHostLease : IRuntimeAdapterHostLease
+    {
+        private readonly IRuntimeAnimationHostServices _previousAnimation;
+        private readonly IRuntimePlayerControllerServices? _previousPlayerController;
+        private readonly IDisposable _installedPlayerController;
+        private readonly IDisposable _networkingLease;
+        private readonly HeadlessRuntimeWorldHostServices _worldHost;
+        private readonly IDisposable _worldHostLease;
+        private readonly IDisposable _worldRegistryLease;
+        private int _disposed;
+
+        public HeadlessRuntimeAdapterHostLease()
+        {
+            _previousAnimation = RuntimeAnimationHostServices.Current;
+            _previousPlayerController = RuntimePlayerControllerServices.Current;
+            _worldHost = new HeadlessRuntimeWorldHostServices();
+            _worldRegistryLease = RuntimeWorldRegistryServices.Install(_worldHost.CoreWorldRegistry);
+            _worldHostLease = RuntimeWorldHostServices.Install(_worldHost);
+            RuntimeAnimationHostServices.Current = new EngineRuntimeAnimationHostServices();
+            RuntimePlayerControllerServices.Current = new RemoteOnlyPlayerControllerServices();
+            _installedPlayerController = (IDisposable)RuntimePlayerControllerServices.Current;
+            _networkingLease = RuntimeNetworkingHostServices.Install(new EngineRuntimeNetworkingHostServices());
+        }
+
+        public void Dispose()
+        {
+            lock (Sync)
+            {
+                if (ReferenceEquals(_installedLease, this))
+                    _installedLease = null;
+                DisposeWithoutLock();
+            }
+        }
+
+        public void DisposeWithoutLock()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) != 0)
+                return;
+
+            try
+            {
+                _worldHost.Dispose();
+            }
+            finally
+            {
+                RuntimeAnimationHostServices.Current = _previousAnimation;
+                _installedPlayerController.Dispose();
+                RuntimePlayerControllerServices.Current = _previousPlayerController;
+                _networkingLease.Dispose();
+                _worldRegistryLease.Dispose();
+                _worldHostLease.Dispose();
+            }
+        }
+    }
+
+    private sealed class RuntimeAdapterHostLease : IRuntimeAdapterHostLease
     {
         private readonly IRuntimeAnimationHostServices _previousAnimation;
         private readonly IRuntimeAudioIntegrationServices _previousAudio;

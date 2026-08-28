@@ -10,6 +10,8 @@ public sealed class SourceProjectImportContext
 {
     private readonly Dictionary<string, XRMaterial> _materialCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, XRTexture2D> _textureCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<SerializedAnimatorRecord, SceneNode> _animatorOwners = [];
+    private readonly Dictionary<SerializedAvatarAnimationGraphRecord, SceneNode> _avatarAnimationGraphOwners = [];
     private readonly HashSet<string> _reportedIndexDiagnostics = new(StringComparer.Ordinal);
 
     public SourceProjectImportContext(
@@ -40,6 +42,8 @@ public sealed class SourceProjectImportContext
     public SourceAssetResolver Resolver { get; }
     public SourceDependencyGraph? DependencyGraph { get; internal set; }
     public List<SourceImportDiagnostic> Diagnostics { get; } = [];
+    public List<SerializedAnimatorRecord> Animators { get; } = [];
+    public List<SerializedAvatarAnimationGraphRecord> AvatarAnimationGraphs { get; } = [];
     public List<UnsupportedSourceBehaviourMetadata> UnsupportedBehaviours { get; } = [];
     public HashSet<string> ActiveImports { get; } = new(StringComparer.OrdinalIgnoreCase);
     public Dictionary<SourceAssetIdentity, object> ImportCache { get; } = [];
@@ -126,9 +130,36 @@ public sealed class SourceProjectImportContext
         });
     }
 
+    internal void RegisterAnimator(SceneNode owner, SerializedAnimatorRecord record)
+    {
+        Animators.Add(record);
+        _animatorOwners.Add(record, owner);
+    }
+
+    internal void UnregisterAnimator(SerializedAnimatorRecord record)
+    {
+        Animators.Remove(record);
+        _animatorOwners.Remove(record);
+    }
+
+    internal void RegisterAvatarAnimationGraph(
+        SceneNode owner,
+        SerializedAvatarAnimationGraphRecord record)
+    {
+        AvatarAnimationGraphs.Add(record);
+        _avatarAnimationGraphOwners.Add(record, owner);
+    }
+
+    internal void UnregisterAvatarAnimationGraph(SerializedAvatarAnimationGraphRecord record)
+    {
+        AvatarAnimationGraphs.Remove(record);
+        _avatarAnimationGraphOwners.Remove(record);
+    }
+
     public SerializedPrefabImportManifest CreateManifest(SourceImportCompletionTier completionTier)
     {
         SynchronizeIndexDiagnostics();
+        UpdateImportEvidencePaths();
         var manifest = new SerializedPrefabImportManifest
         {
             EntrySourcePath = EntrySourcePath,
@@ -138,6 +169,8 @@ public sealed class SourceProjectImportContext
             CompletionTier = completionTier,
             ImportedAtUtc = DateTime.UtcNow,
             Diagnostics = [.. Diagnostics],
+            Animators = [.. Animators],
+            AvatarAnimationGraphs = [.. AvatarAnimationGraphs],
             UnsupportedBehaviours = [.. UnsupportedBehaviours],
         };
 
@@ -193,6 +226,23 @@ public sealed class SourceProjectImportContext
         }
 
         return manifest;
+    }
+
+    private void UpdateImportEvidencePaths()
+    {
+        foreach ((SerializedAnimatorRecord record, SceneNode owner) in _animatorOwners)
+            record.SceneNodePath = GetSceneNodePath(owner);
+
+        foreach ((SerializedAvatarAnimationGraphRecord record, SceneNode owner) in _avatarAnimationGraphOwners)
+            record.SceneNodePath = GetSceneNodePath(owner);
+    }
+
+    private static string GetSceneNodePath(SceneNode node)
+    {
+        var segments = new Stack<string>();
+        for (SceneNode? current = node; current is not null; current = current.Parent)
+            segments.Push(current.Name ?? SceneNode.DefaultName);
+        return string.Join('/', segments);
     }
 
     private void SynchronizeIndexDiagnostics()

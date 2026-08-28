@@ -63,6 +63,7 @@ internal sealed partial class VulkanFrameLoop
                 _deviceContext,
                 RuntimeEngine.Rendering.Settings.VulkanRobustnessSettings.AllocatorBackend,
                 _deviceContext.SupportsBufferDeviceAddress);
+            _resourceRuntime.Descriptors.FinalizeLogicalDevicePublication();
             EnterInitializationStage(VulkanFrameLoopInitializationStage.StreamingScheduler);
             VulkanTextureStreamingBackendProvider.Instance.BindScheduler(this);
             EnterInitializationStage(VulkanFrameLoopInitializationStage.CanonicalSampler);
@@ -90,6 +91,14 @@ internal sealed partial class VulkanFrameLoop
             _resourceRuntime.InitializeMappedFrameArena(_deviceContext, FrameSlotCount);
             EnterInitializationStage(VulkanFrameLoopInitializationStage.FrameDataArenas);
             _resourceRuntime.InitializeFrameDataArenas(_deviceContext, FrameSlotCount);
+            if (!_resourceRuntime.AdvancedSceneResources.TryInitialize(
+                    _deviceContext,
+                    out string advancedSceneResourceReason))
+            {
+                Debug.VulkanWarning(
+                    "[VulkanAdvancedScene] Native dual-feed realization is unavailable: {0}",
+                    advancedSceneResourceReason);
+            }
             ReserveOpenXrFrameDataSlotsIfRequired("initialization");
             int deferredProgramLinkCount = _resourceRuntime.PipelineManager.FlushPendingDeviceReadyProgramLinks();
             if (deferredProgramLinkCount > 0)
@@ -242,6 +251,10 @@ internal sealed partial class VulkanFrameLoop
         RunCleanupStep("compute transient resources", _commandRuntime.DestroyComputeTransientResources, failures);
         RunCleanupStep("compute descriptor caches", () => _ = _resourceRuntime.RetireComputeDescriptorCachesForShutdown(), failures);
         RunCleanupStep("dangling Vulkan wrappers", DestroyDanglingWrappers, failures);
+        RunCleanupStep(
+            "advanced-scene native resources",
+            _resourceRuntime.AdvancedSceneResources.RetireAll,
+            failures);
         RunCleanupStep("query arenas", _resourceRuntime.Queries.DisposeArenas, failures);
         RunCleanupStep("mesh uniform buffers", _resourceRuntime.DestroyRemainingTrackedMeshUniformBuffers, failures);
         RunCleanupStep("initial retirement drain", ForceFlushAllRetiredResources, failures);

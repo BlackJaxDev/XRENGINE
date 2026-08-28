@@ -56,8 +56,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\XRENGINE\XREngine.csproj" SetConfiguration="Configuration=$(EditorBuildConfiguration)" />
     <ProjectReference Include="..\..\XREngine.Data\XREngine.Data.csproj" SetConfiguration="Configuration=$(EditorBuildConfiguration)" />
+    <ProjectReference Include="..\..\XREngine.Extensions\XREngine.Extensions.csproj" SetConfiguration="Configuration=$(EditorBuildConfiguration)" />
     <ProjectReference Include="..\..\XREngine.Input\XREngine.Input.csproj" SetConfiguration="Configuration=$(EditorBuildConfiguration)" />
     <ProjectReference Include="..\..\XREngine.Runtime.Bootstrap\XREngine.Runtime.Bootstrap.csproj" SetConfiguration="Configuration=$(EditorBuildConfiguration)" />
     <ProjectReference Include="..\..\XREngine.Runtime.Core\XREngine.Runtime.Core.csproj" SetConfiguration="Configuration=$(EditorBuildConfiguration)" />

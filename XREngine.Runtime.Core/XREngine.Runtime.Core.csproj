@@ -53,7 +53,7 @@
   </ItemGroup>
 
   <PropertyGroup>
-    <CoACDBuildScript Condition="'$(CoACDBuildScript)' == ''">$(SolutionDir)Tools\Dependencies\Build-CoACD.ps1</CoACDBuildScript>
+    <CoACDBuildScript Condition="'$(CoACDBuildScript)' == ''">$(MSBuildProjectDirectory)\..\Tools\Dependencies\Build-CoACD.ps1</CoACDBuildScript>
     <CoACDRef Condition="'$(CoACDRef)' == ''">1.0.7</CoACDRef>
     <CoACDRid Condition="'$(CoACDRid)' == '' and '$(RuntimeIdentifier)' != ''">$(RuntimeIdentifier)</CoACDRid>
     <CoACDRid Condition="'$(CoACDRid)' == ''">win-x64</CoACDRid>

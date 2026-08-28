@@ -10,9 +10,9 @@ public sealed class PhysicsChainDebugDefaultTests
     [Test]
     public void PerChainDebugRendering_IsExplicitOptIn()
     {
-        string fields = ReadWorkspaceFile("XRENGINE/Scene/Components/Physics/PhysicsChainComponent Fields.cs");
-        string component = ReadWorkspaceFile("XRENGINE/Scene/Components/Physics/PhysicsChainComponent.cs");
-        string gpu = ReadWorkspaceFile("XRENGINE/Scene/Components/Physics/PhysicsChainComponent.GPU.cs");
+        string fields = ReadWorkspaceFile("XREngine.Runtime.Core/Scene/Components/Physics/PhysicsChainComponent Fields.cs");
+        string component = ReadWorkspaceFile("XREngine.Runtime.Core/Scene/Components/Physics/PhysicsChainComponent.cs");
+        string gpu = ReadWorkspaceFile("XREngine.Runtime.Core/Scene/Components/Physics/PhysicsChainComponent.GPU.cs");
         string dispatcherDebug = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/PhysicsCompute/GPUPhysicsChainDispatcher.Debug.cs");
 
         fields.ShouldContain("private bool _debugDrawChains;");

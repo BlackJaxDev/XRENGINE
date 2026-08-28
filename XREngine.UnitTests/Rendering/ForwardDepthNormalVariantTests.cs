@@ -305,7 +305,7 @@ public sealed class ForwardDepthNormalVariantTests : GpuTestBase
     [Test]
     public void SharedOpaqueShadowMaterialFastPath_IsWiredIntoGlMeshRenderer()
     {
-        string source = LoadRepoSource(Path.Combine("XREngine", "Rendering", "API", "Rendering", "OpenGL", "Types", "Mesh Renderer", "GLMeshRenderer.Rendering.cs"));
+        string source = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering.OpenGL", "Rendering", "API", "Rendering", "OpenGL", "BackendObjects", "MeshRendering", "GLMeshRenderer.Rendering.cs"));
 
         source.ShouldContain("shadowSourceMaterial?.CanUseSharedOpaqueShadowMaterial() == true");
         source.ShouldContain("return (Renderer.GetOrCreateAPIRenderObject(globalMaterialOverride) as GLMaterial)!;");
@@ -363,7 +363,7 @@ public sealed class ForwardDepthNormalVariantTests : GpuTestBase
     [Test]
     public void ShadowBindingPlan_IsWiredIntoGlMaterial()
     {
-        string source = LoadRepoSource(Path.Combine("XREngine", "Rendering", "API", "Rendering", "OpenGL", "Types", "Meshes", "GLMaterial.cs"));
+        string source = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering.OpenGL", "Rendering", "API", "Rendering", "OpenGL", "BackendObjects", "Materials", "GLMaterial.cs"));
 
         source.ShouldContain("Data.ShadowBindingSourceMaterial");
         source.ShouldContain("GetOrCreateShadowBindingPlan");
@@ -374,7 +374,7 @@ public sealed class ForwardDepthNormalVariantTests : GpuTestBase
     [Test]
     public void ShadowBindingFinalize_SkipsFallbackDiagnostics_ForSamplerFreeShadowPrograms()
     {
-        string source = LoadRepoSource(Path.Combine("XREngine", "Rendering", "API", "Rendering", "OpenGL", "Types", "Meshes", "GLMaterial.cs"));
+        string source = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering.OpenGL", "Rendering", "API", "Rendering", "OpenGL", "BackendObjects", "Materials", "GLMaterial.cs"));
 
         source.ShouldContain("RuntimeEngine.Rendering.State.IsShadowPass");
         source.ShouldContain("!materialProgram.HasActiveSamplerUniforms()");
@@ -385,7 +385,7 @@ public sealed class ForwardDepthNormalVariantTests : GpuTestBase
     [Test]
     public void GlRenderProgram_ExposesActiveSamplerQuery_ForShadowFinalizeFastPath()
     {
-        string source = LoadRepoSource(Path.Combine("XREngine", "Rendering", "API", "Rendering", "OpenGL", "Types", "Meshes", "GLRenderProgram.UniformBinding.cs"));
+        string source = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering.OpenGL", "Rendering", "API", "Rendering", "OpenGL", "BackendObjects", "Programs", "GLRenderProgram.UniformBinding.cs"));
 
         source.ShouldContain("public bool HasActiveSamplerUniforms()");
         source.ShouldContain("if (IsSamplerType(pair.Value.Type))");
@@ -394,7 +394,7 @@ public sealed class ForwardDepthNormalVariantTests : GpuTestBase
     [Test]
     public void LightShadowMapMaterial_UsesShadowSpecificUniformHook()
     {
-        string source = LoadRepoSource(Path.Combine("XREngine", "Scene", "Components", "Lights", "Types", "LightComponent.cs"));
+        string source = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Scene", "Components", "Lights", "Types", "LightComponent.cs"));
 
         source.ShouldContain("previousShadowMap.Material.SettingShadowUniforms -= SetShadowMapUniforms;");
         source.ShouldContain("ShadowMap.Material.SettingShadowUniforms += SetShadowMapUniforms;");

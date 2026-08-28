@@ -294,8 +294,8 @@ public sealed class RuntimeModularizationPhase6BoundaryTests
         string root = ResolveWorkspaceRoot();
         HashSet<string> approvedFiles = new(StringComparer.OrdinalIgnoreCase)
         {
+            "XREngine.UnitTests/Core/PublishedCookedAssetTests.cs",
             "XREngine.UnitTests/Prefabs/PrefabModelSerializationTests.cs",
-            "XREngine.UnitTests/Rendering/RuntimeModularizationPhase3RenderingTests.cs",
             "XREngine.UnitTests/Rendering/RuntimeModularizationPhase4SerializationCompatibilityTests.cs",
             "XREngine.UnitTests/Rendering/RuntimeModularizationPhase5SerializationCompatibilityTests.cs",
         };
@@ -314,59 +314,28 @@ public sealed class RuntimeModularizationPhase6BoundaryTests
     }
 
     [Test]
-    public void FacadeCargo_CanOnlyShrinkFromTheAcceptedBaseline()
+    public void P67_RemovedFacadeCargo_HasFinalModuleOwners()
     {
         string root = ResolveWorkspaceRoot();
         string facadeProject = Path.Combine(root, "XRENGINE", "XREngine.csproj");
-        if (!File.Exists(facadeProject))
-            return;
+        Assert.That(File.Exists(facadeProject), Is.False);
+        Assert.That(Directory.Exists(Path.Combine(root, "XRENGINE")), Is.False);
+        Assert.That(File.Exists(Path.Combine(root, "XREngine.Runtime.Core", "runtimes", "win-x64", "native", "lib_coacd.dll")), Is.True);
+        Assert.That(File.Exists(Path.Combine(root, "ThirdParty", "NVIDIA", "SDK", "win-x64", "nis.license.txt")), Is.True);
 
-        XDocument document = XDocument.Load(facadeProject);
-        HashSet<string> packages = ReadIncludes(document, "PackageReference");
-        HashSet<string> projectReferences = ReadProjectReferenceNames(facadeProject);
-        HashSet<string> targets = document.Descendants("Target")
-            .Select(element => (string?)element.Attribute("Name"))
-            .Where(static name => !string.IsNullOrWhiteSpace(name))
-            .Select(static name => name!)
-            .ToHashSet(StringComparer.Ordinal);
-        HashSet<string> friendAssemblies = ReadIncludes(document, "InternalsVisibleTo");
+        string coreProject = File.ReadAllText(Path.Combine(root, "XREngine.Runtime.Core", "XREngine.Runtime.Core.csproj"));
+        string renderingProject = File.ReadAllText(Path.Combine(root, "XREngine.Runtime.Rendering", "XREngine.Runtime.Rendering.csproj"));
+        Assert.That(coreProject, Does.Contain("<Target Name=\"EnsureCoACD\""));
+        Assert.That(renderingProject, Does.Contain("<Target Name=\"CopyRestirNative\""));
+    }
 
-        string[] acceptedPackages =
-        [
-            "AssimpNetter", "JoltPhysicsSharp", "LZMA-SDK", "MagicPhysX", "MemoryPack", "Newtonsoft.Json",
-            "Silk.NET.Core", "Silk.NET.DirectStorage", "Silk.NET.DirectStorage.Native", "Silk.NET.Input",
-            "Silk.NET.Windowing", "Silk.NET.Windowing.Common", "Silk.NET.Windowing.Extensions",
-            "Silk.NET.Windowing.Glfw", "Silk.NET.Windowing.Sdl", "System.IO.Hashing",
-            "System.Security.Cryptography.ProtectedData", "Vecc.YamlDotNet.Analyzers.StaticGenerator", "YamlDotNet",
-        ];
-        string[] acceptedProjectReferences =
-        [
-            "XREngine.Animation", "XREngine.Audio", "XREngine.Data", "XREngine.Extensions", "XREngine.Fbx",
-            "XREngine.Input", "XREngine.Runtime.AnimationIntegration", "XREngine.Runtime.AudioIntegration",
-            "XREngine.Runtime.Core", "XREngine.Runtime.InputIntegration", "XREngine.Runtime.ModelAssetPipeline",
-            "XREngine.Runtime.Rendering",
-        ];
-
-        Assert.That(packages, Is.SubsetOf(acceptedPackages));
-        Assert.That(projectReferences, Is.SubsetOf(acceptedProjectReferences));
-        Assert.That(targets, Is.SubsetOf(new[] { "EnsureCoACD", "CopyRestirNative" }));
-        Assert.That(friendAssemblies, Is.SubsetOf(new[] { "XREngine.UnitTests", "XREngine.Runtime.Bootstrap" }));
-
-        bool allSourcesPending = ReadTsv(Path.Combine(root, OwnershipManifestPath))
-            .All(row => row["MigrationStatus"] == "Pending");
-        if (!allSourcesPending)
-            return;
-
-        Assert.That(packages, Is.EquivalentTo(acceptedPackages));
-        Assert.That(projectReferences, Is.EquivalentTo(acceptedProjectReferences));
-        Assert.That(targets, Is.EquivalentTo(new[] { "EnsureCoACD", "CopyRestirNative" }));
-        Assert.That(friendAssemblies, Is.EquivalentTo(new[] { "XREngine.UnitTests", "XREngine.Runtime.Bootstrap" }));
-        Assert.That(File.Exists(Path.Combine(root, "XRENGINE", "runtimes", "win-x64", "native", "lib_coacd.dll")), Is.True);
-        Assert.That(File.Exists(Path.Combine(root, "XRENGINE", "nis.license.txt")), Is.True);
-
-        int typeForwardCount = Directory.EnumerateFiles(Path.Combine(root, "XRENGINE", "Properties"), "*.cs")
-            .Sum(file => Regex.Matches(File.ReadAllText(file), @"\[assembly:\s*TypeForwardedTo").Count);
-        Assert.That(typeForwardCount, Is.EqualTo(103));
+    [Test]
+    public void P67_TestRuntimeDoesNotLoadOrPackageFacadeAssembly()
+    {
+        Assert.That(
+            AppDomain.CurrentDomain.GetAssemblies().Select(static assembly => assembly.GetName().Name),
+            Has.None.EqualTo("XREngine"));
+        Assert.That(File.Exists(Path.Combine(AppContext.BaseDirectory, "XREngine.dll")), Is.False);
     }
 
     [Test]
@@ -396,6 +365,56 @@ public sealed class RuntimeModularizationPhase6BoundaryTests
         Assert.That(aotGenerator, Does.Not.Contain("'..\\XRENGINE'"));
         Assert.That(editorCodeManager, Does.Not.Contain("\"XREngine.dll\""));
         Assert.That(editorProjectInitializer, Does.Not.Contain("\"XRENGINE\", \"XREngine.csproj\""));
+    }
+
+    [Test]
+    public void P66_FormerConsumersAndToolingDoNotReferenceOrDiscoverFacadeAssembly()
+    {
+        string root = ResolveWorkspaceRoot();
+        string facadeProject = Path.GetFullPath(Path.Combine(root, "XRENGINE", "XREngine.csproj"));
+        string[] formerConsumers =
+        [
+            "XREngine.Runtime.Bootstrap/XREngine.Runtime.Bootstrap.csproj",
+            "XREngine.Editor/XREngine.Editor.csproj",
+            "XREngine.Server/XREngine.Server.csproj",
+            "XREngine.VRClient/XREngine.VRClient.csproj",
+            "XREngine.UnitTests/XREngine.UnitTests.csproj",
+            "XREngine.Benchmarks/XREngine.Benchmarks.csproj",
+            "Samples/MonkeyBallVR/MonkeyBallVR.csproj",
+        ];
+
+        foreach (string relativeProject in formerConsumers)
+        {
+            string project = Path.GetFullPath(Path.Combine(root, relativeProject));
+            Assert.That(ReferencesProject(project, facadeProject), Is.False, relativeProject);
+        }
+
+        string legacyDllName = "XREngine" + ".dll";
+        string[] discoveryAndGenerationInputs =
+        [
+            "XREngine.Editor/CodeManager.cs",
+            "XREngine.Editor/EditorProjectInitializer.cs",
+            "XREngine.Runtime.Bootstrap/XREngine.Runtime.Bootstrap.csproj",
+            "Tools/Generate-AotFactoryRegistrations.ps1",
+        ];
+        foreach (string relativePath in discoveryAndGenerationInputs)
+        {
+            string source = File.ReadAllText(Path.Combine(root, relativePath));
+            Assert.That(source, Does.Not.Contain(legacyDllName), relativePath);
+            Assert.That(source, Does.Not.Contain("..\\XRENGINE\\XREngine.csproj"), relativePath);
+            Assert.That(source, Does.Not.Contain("..\\XRENGINE\\**\\*.cs"), relativePath);
+        }
+
+        string facadeSourceRoot = Path.Combine(root, "XRENGINE");
+        string[] remainingProductionSources = Directory.Exists(facadeSourceRoot)
+            ? Directory
+                .EnumerateFiles(facadeSourceRoot, "*.cs", SearchOption.AllDirectories)
+                .Where(path => !IsWithinRoot(path, Path.Combine(facadeSourceRoot, "Properties")))
+                .Where(path => !path.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase))
+                .Where(path => !path.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase))
+                .ToArray()
+            : [];
+        Assert.That(remainingProductionSources, Is.Empty);
     }
 
     private static IReadOnlyList<TsvRow> ReadTsv(string path)

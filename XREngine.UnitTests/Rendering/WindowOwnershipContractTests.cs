@@ -14,7 +14,7 @@ public sealed class WindowOwnershipContractTests
     [Test]
     public void WindowPumpHost_VoidWindowTasksPostWithoutBlockingCaller()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Engine/Engine.WindowPumpHost.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/RuntimeWindowPumpHost.cs");
         int enqueueStart = source.IndexOf("public void EnqueueWindowTask", StringComparison.Ordinal);
         enqueueStart.ShouldBeGreaterThanOrEqualTo(0);
         int invokeStart = source.IndexOf("public T InvokeWindowTask", StringComparison.Ordinal);
@@ -130,7 +130,7 @@ public sealed class WindowOwnershipContractTests
     [Test]
     public void EngineTimer_InteractiveResizeDispatchUsesNormalFrameAndCollectPublication()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Core/Time/EngineTimer.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/Core/Time/EngineTimer.cs");
         int dispatchStart = source.IndexOf("public bool TryDispatchInteractiveResizeFrame()", StringComparison.Ordinal);
         dispatchStart.ShouldBeGreaterThanOrEqualTo(0);
         int normalDispatchStart = source.IndexOf("public bool DispatchRender()", dispatchStart, StringComparison.Ordinal);
@@ -410,7 +410,7 @@ public sealed class WindowOwnershipContractTests
     [Test]
     public void WindowPumpHost_StopFlushesMailboxBeforeCompletingQueue()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Engine/Engine.WindowPumpHost.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/RuntimeWindowPumpHost.cs");
         int stopStart = source.IndexOf("public void Stop()", StringComparison.Ordinal);
         stopStart.ShouldBeGreaterThanOrEqualTo(0);
         int flushStart = source.IndexOf("public bool Flush", stopStart, StringComparison.Ordinal);
@@ -508,7 +508,7 @@ public sealed class WindowOwnershipContractTests
         string fileDrop = ReadWorkspaceFile("XREngine.Editor/EditorFileDropHandler.cs");
         string fileBrowser = ReadWorkspaceFile("XREngine.Editor/UI/ImGuiFileBrowser.cs");
         string statePanel = ReadWorkspaceFile("XREngine.Editor/IMGUI/EditorImGuiUI.StatePanel.cs");
-        string vrState = ReadWorkspaceFile("XRENGINE/Engine/EngineVrLifecycle.cs");
+        string vrState = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/SubsystemHost/EngineVrLifecycle.cs");
 
         xrWindow.ShouldContain("public event Action<XRWindow, string[]>? FileDropped;");
         xrWindow.ShouldContain("public event Action<XRWindow>? ClosingRequested;");

@@ -178,6 +178,25 @@ public sealed class PublishedCookedAssetTests
     }
 
     [Test]
+    public void AotRuntimeMetadataStore_ResolvesRemovedFacadeIdentityByStableFullName()
+    {
+        string legacyMeshTypeName = $"{typeof(XRMesh).FullName}, XREngine";
+        string archivePath = CreateConfigArchive(new AotRuntimeMetadata
+        {
+            KnownTypeAssemblyQualifiedNames = [legacyMeshTypeName],
+            PublishedRuntimeAssetTypeNames = [legacyMeshTypeName],
+        });
+
+        XRRuntimeEnvironment.ConfigureBuildKind(EXRRuntimeBuildKind.PublishedAot);
+        XRRuntimeEnvironment.ConfigurePublishedPaths(archivePath);
+
+        Type.GetType(legacyMeshTypeName).ShouldBeNull("the facade assembly is intentionally no longer shipped");
+        AotRuntimeMetadataStore.ResolveType(legacyMeshTypeName).ShouldBe(typeof(XRMesh));
+        AotRuntimeMetadataStore.ResolveType(0).ShouldBe(typeof(XRMesh));
+        AotRuntimeMetadataStore.IsPublishedRuntimeAssetType(typeof(XRMesh)).ShouldBeTrue();
+    }
+
+    [Test]
     public void AotRuntimeMetadataStore_RequireMetadata_FailsFastWhenMissing()
     {
         string staging = Path.Combine(_tempRoot, "config-without-metadata");

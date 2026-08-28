@@ -85,7 +85,10 @@ internal unsafe partial class VkMeshRenderer
 
 		int descriptorFrameSlotCount = frameCount;
 		int setCount = layouts.Count;
-		uint activeSetMask = ComputeActiveDescriptorSetMask(bindings, setCount);
+		uint activeSetMask = ComputeActiveDescriptorSetMask(
+			bindings,
+			setCount,
+			_program.ExternallyOwnedDescriptorSetMask);
 		VkMaterial? sharedMaterial = null;
 		bool usesSharedMaterialTier = false;
 		if (BackendContext.Resources.Descriptors.Heap.ActiveBackend != EVulkanDescriptorBackend.DescriptorHeap &&
@@ -102,7 +105,8 @@ internal unsafe partial class VkMeshRenderer
 			AreDescriptorBindingsDrawSlotInvariant(
 				bindings,
 				usesSharedMaterialTier,
-				BackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap);
+				BackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap,
+				_program.ExternallyOwnedDescriptorSetMask);
 		int descriptorOwnerSlot =
 			descriptorBindingsAreDrawSlotInvariant ? 0 : drawUniformSlot;
 		int activeSetCount = System.Numerics.BitOperations.PopCount(activeSetMask);
@@ -358,7 +362,8 @@ internal unsafe partial class VkMeshRenderer
 
 		uint activeSetMask = ComputeActiveDescriptorSetMask(
 			bindings,
-			setCount);
+			setCount,
+			_program.ExternallyOwnedDescriptorSetMask);
 		bool usesSharedMaterialTier = false;
 		if (BackendContext.Resources.Descriptors.Heap.ActiveBackend !=
 				EVulkanDescriptorBackend.DescriptorHeap &&
@@ -381,7 +386,8 @@ internal unsafe partial class VkMeshRenderer
 				bindings,
 				usesSharedMaterialTier,
 				BackendContext.Resources.Descriptors.Heap.ActiveBackend ==
-					EVulkanDescriptorBackend.DescriptorHeap) ||
+					EVulkanDescriptorBackend.DescriptorHeap,
+				_program.ExternallyOwnedDescriptorSetMask) ||
 			SnapshotHasFrameSourceSampler(
 				bindingSnapshot,
 				RuntimeEngine.Rendering.State.CurrentRenderingPipeline) ||
@@ -997,7 +1003,8 @@ internal unsafe partial class VkMeshRenderer
 			AreDescriptorBindingsDrawSlotInvariant(
 				bindings,
 				usesSharedMaterialTier,
-				BackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap);
+				BackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap,
+				_program.ExternallyOwnedDescriptorSetMask);
 		int descriptorOwnerSlot =
 			descriptorBindingsAreDrawSlotInvariant ? 0 : drawUniformSlot;
         // A captured binding snapshot can differ from the program's current bindings even
@@ -1143,7 +1150,8 @@ internal unsafe partial class VkMeshRenderer
 				AreDescriptorBindingsDrawSlotInvariant(
 					bindings,
 					usesSharedMaterialTier: true,
-					BackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap);
+					BackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap,
+					_program.ExternallyOwnedDescriptorSetMask);
 			int sharedDescriptorOwnerSlot =
 				sharedDescriptorBindingsAreDrawSlotInvariant
 					? 0
@@ -1194,7 +1202,10 @@ internal unsafe partial class VkMeshRenderer
 		}
 
 		int materialIdentity = System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(material);
-		uint activeSetMask = ComputeActiveDescriptorSetMask(bindings, setCount);
+		uint activeSetMask = ComputeActiveDescriptorSetMask(
+			bindings,
+			setCount,
+			_program.ExternallyOwnedDescriptorSetMask);
 		if (usesSharedMaterialTier)
 			activeSetMask &= ~(1u << (int)VulkanMeshRenderingConventions.DescriptorSetMaterial);
 		ulong immutableResourceFingerprint =

@@ -9,7 +9,7 @@ namespace XREngine.Animation.Importers;
 [MemoryPackable]
 public sealed partial class ImportedAnimationImportManifest
 {
-    public const int CurrentSchemaVersion = 2;
+    public const int CurrentSchemaVersion = 3;
 
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
     public int CapabilityContractVersion { get; set; } = ImportedAnimationImportCapabilityContract.CurrentVersion;
@@ -20,15 +20,17 @@ public sealed partial class ImportedAnimationImportManifest
     public ImportedAnimationPreservedPayload[] PreservedPayloads { get; set; } = [];
 
     /// <summary>
-    /// True only when every behaviorally relevant source domain present in the
-    /// clip is executable through the single native path.
+    /// True when every retained source domain can execute through the single native path.
+    /// Intentionally discarded source semantics do not block playback.
     /// </summary>
     public bool IsExecutable
     {
         get
         {
             for (int i = 0; i < Domains.Length; i++)
-                if (Domains[i].State != EImportedAnimationCapabilityState.SupportedAndApplied)
+                if (Domains[i].State is not (
+                    EImportedAnimationCapabilityState.SupportedAndApplied or
+                    EImportedAnimationCapabilityState.IntentionallyDiscarded))
                     return false;
             return true;
         }
@@ -64,6 +66,8 @@ public sealed partial class ImportedAnimationImportManifest
         {
             ImportedAnimationDomainCapability domain = Domains[i];
             if (domain.State == EImportedAnimationCapabilityState.SupportedAndApplied)
+                continue;
+            if (domain.State == EImportedAnimationCapabilityState.IntentionallyDiscarded)
                 continue;
             if (allowRuntimeAdapters && domain.State == EImportedAnimationCapabilityState.RequiresRuntimeAdapter)
                 continue;

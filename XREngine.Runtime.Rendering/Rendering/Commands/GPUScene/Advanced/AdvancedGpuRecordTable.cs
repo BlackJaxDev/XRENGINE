@@ -73,8 +73,18 @@ public sealed class AdvancedGpuRecordTable<T> where T : unmanaged
     /// Allocates a retained-publication snapshot at a setup or growth boundary.
     /// Sealing a publication into the returned object performs no allocation.
     /// </summary>
-    public AdvancedGpuRecordTablePublicationSnapshot<T> CreatePublicationSnapshot()
-        => new(_publicationDeltas.Length, _publishedRemaps.Length);
+    public AdvancedGpuRecordTablePublicationSnapshot<T> CreatePublicationSnapshot(
+        bool includeRecordImage = false)
+        => new(
+            _publicationDeltas.Length,
+            _publishedRemaps.Length,
+            includeRecordImage ? _records.Length : 0);
+
+    internal bool CanSealPublication(
+        AdvancedGpuRecordTablePublicationSnapshot<T> snapshot)
+        => snapshot.DeltaCapacity >= _publicationDeltas.Length &&
+           snapshot.RemapCapacity >= _publishedRemaps.Length &&
+           (snapshot.RecordCapacity == 0 || snapshot.RecordCapacity >= _records.Length);
 
     public AdvancedGpuDirtyRange DirtyRange
         => _dirtyMin == uint.MaxValue
@@ -158,7 +168,11 @@ public sealed class AdvancedGpuRecordTable<T> where T : unmanaged
         return snapshot.TryCapture(
             publicationSequence,
             _publicationDeltas.AsSpan(deltaStart, deltaEnd - deltaStart),
-            PublishedRemaps);
+            PublishedRemaps,
+            PhysicalRecords,
+            PhysicalHandles,
+            PhysicalOccupancy,
+            this);
     }
 
     /// <summary>

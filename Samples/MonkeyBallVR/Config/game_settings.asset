@@ -25,6 +25,21 @@ DefaultUserSettings:
   JobWorkerCapOverride:
     HasOverride: false
     Value: 0
+  RenderWorkerThreadCountOverride:
+    HasOverride: false
+    Value: 0
+  RenderWorkerThreadCapOverride:
+    HasOverride: false
+    Value: 0
+  ReservedForegroundThreadCountOverride:
+    HasOverride: false
+    Value: 0
+  AllowCpuOversubscriptionOverride:
+    HasOverride: false
+    Value: false
+  RenderWorkerQosOverride:
+    HasOverride: false
+    Value: OsDefault
   JobQueueLimitOverride:
     HasOverride: false
     Value: 0
@@ -120,6 +135,12 @@ Rendering:
     RenderTargetModeOverride:
       HasOverride: false
       Value: Auto
+    PresentationProfileOverride:
+      HasOverride: false
+      Value: Stable
+    PresentationTargetRefreshHzOverride:
+      HasOverride: false
+      Value: 0
   Quality: {}
   Technical:
     AllowSkinningOverride:
@@ -188,6 +209,21 @@ JobWorkersOverride:
 JobWorkerCapOverride:
   HasOverride: false
   Value: 0
+RenderWorkerThreadCountOverride:
+  HasOverride: false
+  Value: 0
+RenderWorkerThreadCapOverride:
+  HasOverride: false
+  Value: 0
+ReservedForegroundThreadCountOverride:
+  HasOverride: false
+  Value: 0
+AllowCpuOversubscriptionOverride:
+  HasOverride: false
+  Value: false
+RenderWorkerQosOverride:
+  HasOverride: false
+  Value: OsDefault
 JobQueueLimitOverride:
   HasOverride: false
   Value: 0
@@ -245,6 +281,12 @@ RenderBackendFallbackPolicyOverride:
 VulkanRenderTargetModeOverride:
   HasOverride: false
   Value: Auto
+VulkanPresentationProfileOverride:
+  HasOverride: false
+  Value: Stable
+VulkanPresentationTargetRefreshHzOverride:
+  HasOverride: false
+  Value: 0
 AntiAliasingModeOverride:
   HasOverride: false
   Value: None

@@ -89,6 +89,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\XREngine.AgentOrchestration\XREngine.AgentOrchestration.csproj" />
+    <ProjectReference Include="..\XREngine.Animation\XREngine.Animation.csproj" />
     <ProjectReference Include="..\XREngine.Audio\XREngine.Audio.csproj" />
     <ProjectReference Include="..\XREngine.ControlPlane\XREngine.ControlPlane.csproj" />
     <ProjectReference Include="..\XREngine.Data\XREngine.Data.csproj" />
@@ -101,7 +102,10 @@
     <ProjectReference Include="..\XREngine.Runtime.InputIntegration\XREngine.Runtime.InputIntegration.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.ModelAssetPipeline\XREngine.Runtime.ModelAssetPipeline.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.ModelingIntegration\XREngine.Runtime.ModelingIntegration.csproj" />
-    <ProjectReference Include="..\XREngine\XREngine.csproj" />
+    <ProjectReference Include="..\XREngine.Runtime.AnimationIntegration\XREngine.Runtime.AnimationIntegration.csproj" />
+    <ProjectReference Include="..\XREngine.Runtime.Core\XREngine.Runtime.Core.csproj" />
+    <ProjectReference Include="..\XREngine.Runtime.Rendering\XREngine.Runtime.Rendering.csproj" />
+    <ProjectReference Include="..\XREngine.Input\XREngine.Input.csproj" />
   </ItemGroup>
 
   <ItemGroup>

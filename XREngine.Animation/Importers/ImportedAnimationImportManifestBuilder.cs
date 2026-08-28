@@ -61,7 +61,11 @@ internal sealed class ImportedAnimationImportManifestBuilder
         {
             Domain = domain,
             SourceLocation = sourceLocation,
-            SerializedYaml = serializedYaml,
+            SerializedPayloadByteCount = System.Text.Encoding.UTF8.GetByteCount(serializedYaml),
+            SerializedPayloadSha256 = Convert.ToHexString(
+                System.Security.Cryptography.SHA256.HashData(
+                    System.Text.Encoding.UTF8.GetBytes(serializedYaml))),
+            ContentOmitted = true,
         });
     }
 
@@ -115,6 +119,8 @@ internal sealed class ImportedAnimationImportManifestBuilder
         capability.SourceItemCount++;
         if (state == EImportedAnimationCapabilityState.SupportedAndApplied)
             capability.AppliedItemCount++;
+        else if (state == EImportedAnimationCapabilityState.IntentionallyDiscarded)
+            capability.DiscardedItemCount++;
         else
             capability.PreservedItemCount++;
 

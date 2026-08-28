@@ -55,6 +55,9 @@ internal sealed partial class VulkanResourceRuntime
             variantsPerDraw: 1u);
         ResidentTemplateFrameSlotLifetimes =
             new VulkanResidentTemplateFrameSlotLifetimes(frameSlotCount);
+        AdvancedSceneResources = new VulkanAdvancedSceneResourceRuntime(
+            this,
+            frameSlotCount);
     }
 
     internal VulkanBackendObjectRegistry BackendObjects { get; }
@@ -84,6 +87,7 @@ internal sealed partial class VulkanResourceRuntime
     internal VulkanSparseTextureStreamingService SparseTextureStreaming { get; }
     internal VulkanResidentDrawTemplateTable ResidentDrawTemplates { get; }
     internal VulkanResidentTemplateFrameSlotLifetimes ResidentTemplateFrameSlotLifetimes { get; }
+    internal VulkanAdvancedSceneResourceRuntime AdvancedSceneResources { get; }
     internal VulkanPipelineManager PipelineManager { get; } = new();
     internal VulkanBackendObjectContext? BackendObjectContext;
     internal bool AllowSynchronousResourceUploads { get; private set; }

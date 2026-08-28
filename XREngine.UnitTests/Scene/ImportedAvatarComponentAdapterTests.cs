@@ -258,13 +258,15 @@ public sealed class ImportedAvatarComponentAdapterTests
         descriptor.EyeLook.Enabled.ShouldBeTrue();
         descriptor.EyeLook.LeftEye.ShouldBeSameAs(bone.Transform);
         descriptor.EyeLook.RightEye.ShouldBeSameAs(source.Transform);
-        descriptor.AnimationLayers.Single().IsDefault.ShouldBeTrue();
-
         conversion.Manifest.ShouldNotBeNull();
+        conversion.Manifest!.AvatarAnimationGraphs.Single().Layers.Single().IsDefault.ShouldBeTrue();
+
         SerializedPrefabImportManifest manifest = conversion.Manifest!;
         manifest.UnsupportedBehaviours.Count.ShouldBe(1);
-        manifest.UnsupportedBehaviours.Single().SerializedYaml
-            .ShouldContain("syntheticUnsupportedValue: 42");
+        UnsupportedSourceBehaviourMetadata unsupported = manifest.UnsupportedBehaviours.Single();
+        unsupported.SerializedPayloadByteCount.ShouldBeGreaterThan(0);
+        unsupported.SerializedPayloadSha256.ShouldNotBeNullOrWhiteSpace();
+        unsupported.SerializedFieldNames.ShouldContain("syntheticUnsupportedValue");
         manifest.Diagnostics.ShouldContain(static diagnostic => diagnostic.Code == "UNITYVRC0006");
         manifest.Diagnostics.ShouldContain(static diagnostic => diagnostic.Code == "UNITYVRC0007");
         manifest.Diagnostics.ShouldNotContain(static diagnostic =>

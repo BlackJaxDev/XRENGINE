@@ -99,6 +99,27 @@ namespace XREngine.Core.Files
             }
         }
 
+        internal static bool TryResolveByFullName(string fullTypeName, bool ignoreCase, out Type? assetType)
+        {
+            StringComparison comparison = ignoreCase
+                ? StringComparison.OrdinalIgnoreCase
+                : StringComparison.Ordinal;
+            lock (Sync)
+            {
+                foreach (Type registeredType in Entries.Keys)
+                {
+                    if (string.Equals(registeredType.FullName, fullTypeName, comparison))
+                    {
+                        assetType = registeredType;
+                        return true;
+                    }
+                }
+            }
+
+            assetType = null;
+            return false;
+        }
+
         private static bool TryGetEntry(Type assetType, out Entry? entry)
         {
             lock (Sync)

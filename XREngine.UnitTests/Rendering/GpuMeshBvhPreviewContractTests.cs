@@ -281,7 +281,7 @@ public sealed class GpuMeshBvhPreviewContractTests
         string queueSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Compute/GpuBvhDebugOverlayQueue.cs");
         string overlaySource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Commands/VPRC_RenderDebugShapes.cs");
         string engineDebugSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/RuntimeEngine.Rendering.Debug.cs");
-        string modelPreviewSource = ReadWorkspaceFile("XRENGINE/Scene/Components/Debug/Visualize/ModelBvhPreviewComponent.cs");
+        string modelPreviewSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Scene/Components/Debug/Visualize/ModelBvhPreviewComponent.cs");
 
         componentSource.ShouldContain("=> Interlocked.Exchange(ref _gpuWorkQueued, 1);");
         componentSource.ShouldNotContain("Engine.EnqueueRenderThreadTask(");
@@ -527,7 +527,7 @@ public sealed class GpuMeshBvhPreviewContractTests
         raycastDispatcherSource.ShouldNotContain("program.Uniform(\"uRayCount\", (int)request.RayCount);");
         raycastDispatcherSource.ShouldNotContain("program.Uniform(\"uMaxStackDepth\", (int)(request.MaxStackDepth ?? DefaultStackLimit));");
 
-        string preferencesSource = ReadWorkspaceFile("XRENGINE/Settings/EditorPreferences.cs");
+        string preferencesSource = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/Settings/EditorPreferences.cs");
         preferencesSource.ShouldContain("public bool GpuMeshBvhClickPickEnabled");
         preferencesSource.ShouldNotContain("enum EMeshBvhClickPickMode");
 

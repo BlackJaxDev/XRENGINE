@@ -83,6 +83,7 @@ internal static partial class SerializedSceneImporter
             AddAvatarDiagnostic(
                 state,
                 behaviour,
+                hierarchy,
                 "UNITYVRC0001",
                 SourceImportDiagnosticSeverity.Warning,
                 $"VRChat PhysBone collider shapeType '{shapeType}' is unsupported and was retained as metadata only.");
@@ -120,6 +121,7 @@ internal static partial class SerializedSceneImporter
             AddAvatarDiagnostic(
                 state,
                 behaviour,
+                hierarchy,
                 "UNITYVRC0002",
                 SourceImportDiagnosticSeverity.Warning,
                 "VRChat collider bones-as-spheres/global collision filtering has no native equivalent and was not applied.");
@@ -186,10 +188,19 @@ internal static partial class SerializedSceneImporter
             approximated.Add("stretch/squish");
         }
 
-        if ((GetScalarInt(fields, "allowGrabbing") ?? 0) != 0 ||
-            (GetScalarInt(fields, "allowPosing") ?? 0) != 0)
+        bool allowsGrabbing = (GetScalarInt(fields, "allowGrabbing") ?? 0) != 0;
+        bool allowsPosing = (GetScalarInt(fields, "allowPosing") ?? 0) != 0;
+        if (allowsGrabbing || allowsPosing)
         {
             approximated.Add("VRChat grabbing/posing");
+            AddAvatarDiagnostic(
+                state,
+                behaviour,
+                hierarchy,
+                "UNITYVRC0011",
+                SourceImportDiagnosticSeverity.Warning,
+                "Source grabbing/posing flags were not mapped onto the generic physics chain. " +
+                "A future converter must target native physics-chain interaction and authority inputs so local and remote posing share one runtime contract.");
         }
 
         if ((GetScalarInt(fields, "isAnimated") ?? 0) != 0)
@@ -206,6 +217,7 @@ internal static partial class SerializedSceneImporter
         AddAvatarDiagnostic(
             state,
             behaviour,
+            hierarchy,
             "UNITYVRC0003",
             approximated.Count == 0 ? SourceImportDiagnosticSeverity.Info : SourceImportDiagnosticSeverity.Warning,
             mappedSummary + approximationSummary);
@@ -241,6 +253,7 @@ internal static partial class SerializedSceneImporter
             AddAvatarDiagnostic(
                 state,
                 behaviour,
+                hierarchy,
                 "UNITYVRC0004",
                 SourceImportDiagnosticSeverity.Warning,
                 "VRChat constraint freeze/rebake editor semantics were not reproduced; weighted runtime source offsets remain active.");
@@ -277,24 +290,71 @@ internal static partial class SerializedSceneImporter
         component.MouthOpenBlendShapeName = GetScalarString(fields, "MouthOpenBlendShapeName") ?? string.Empty;
         component.VisemeBlendShapeNames = ParseStringSequence(GetNode(fields, "VisemeBlendShapes"));
         component.EyeLook = ParseEyeLookMetadata(fields, hierarchy);
-        component.AnimationLayers =
-        [
-            .. ParseAnimationLayers(GetNode(fields, "baseAnimationLayers")),
-            .. ParseAnimationLayers(GetNode(fields, "specialAnimationLayers")),
-        ];
-        component.AnimationPreset = ToIdentity(ParseReference(GetNode(fields, "AnimationPreset")), SourceAssetObjectKind.Asset);
 
         hierarchy.ComponentsByFileId[behaviour.FileId] = component;
         MarkAdaptedScriptDependency(behaviour, state);
 
-        if ((GetScalarInt(fields, "customExpressions") ?? 0) != 0)
+        var animationGraph = new SerializedAvatarAnimationGraphRecord
+        {
+            DescriptorIdentity = new SourceAssetIdentity
+            {
+                AssetGuid = hierarchy.SourceGuid ?? string.Empty,
+                LocalFileId = behaviour.FileId,
+                ObjectKind = SourceAssetObjectKind.Component,
+            },
+            AnimationPreset = ToIdentity(
+                ParseReference(GetNode(fields, "AnimationPreset")),
+                SourceAssetObjectKind.Asset),
+            Layers =
+            [
+                .. ParseAnimationLayers(GetNode(fields, "baseAnimationLayers"), "baseAnimationLayers"),
+                .. ParseAnimationLayers(GetNode(fields, "specialAnimationLayers"), "specialAnimationLayers"),
+            ],
+            UsesCustomExpressions = (GetScalarInt(fields, "customExpressions") ?? 0) != 0,
+            ExpressionMenu = ToIdentity(
+                ParseReference(GetNode(fields, "expressionsMenu") ?? GetNode(fields, "ExpressionsMenu")),
+                SourceAssetObjectKind.Asset),
+            ExpressionParameters = ToIdentity(
+                ParseReference(GetNode(fields, "expressionParameters") ?? GetNode(fields, "ExpressionParameters")),
+                SourceAssetObjectKind.Asset),
+        };
+        hierarchy.AvatarAnimationGraphsByFileId[behaviour.FileId] = animationGraph;
+        hierarchy.AvatarAnimationGraphOwners[animationGraph] = node;
+        state.Context.RegisterAvatarAnimationGraph(node, animationGraph);
+        MarkSourceEvidenceOutcome(animationGraph.AnimationPreset, state);
+        MarkSourceEvidenceOutcome(animationGraph.ExpressionMenu, state);
+        MarkSourceEvidenceOutcome(animationGraph.ExpressionParameters, state);
+        foreach (SerializedAvatarAnimationLayer layer in animationGraph.Layers)
+        {
+            MarkSourceEvidenceOutcome(layer.Controller, state);
+            MarkSourceEvidenceOutcome(layer.Mask, state);
+        }
+
+        bool hasExecutableLayerEvidence = animationGraph.AnimationPreset is not null ||
+            animationGraph.Layers.Any(static layer => layer.Enabled && layer.Controller is not null);
+        AddAvatarDiagnostic(
+            state,
+            behaviour,
+            hierarchy,
+            "UNITYVRC0009",
+            hasExecutableLayerEvidence
+                ? SourceImportDiagnosticSeverity.Warning
+                : SourceImportDiagnosticSeverity.Info,
+            $"Retained {animationGraph.Layers.Count} avatar animation layer record(s) in the import manifest. " +
+            "No layer metadata was published on the runtime avatar and no controller was attached because a compiler has not yet merged the supported layers into one native AnimStateMachineComponent.");
+
+        if (animationGraph.UsesCustomExpressions ||
+            animationGraph.ExpressionMenu is not null ||
+            animationGraph.ExpressionParameters is not null)
         {
             AddAvatarDiagnostic(
                 state,
                 behaviour,
-                "UNITYVRC0005",
-                SourceImportDiagnosticSeverity.Info,
-                "Avatar custom expression menu/parameters are behavior-only metadata; missing references remain non-fatal and are reported by the dependency manifest.");
+                hierarchy,
+                "UNITYVRC0010",
+                SourceImportDiagnosticSeverity.Warning,
+                "Avatar expression menu and parameter assets were retained in the import manifest as intentional conversion loss. " +
+                "They will remain non-executable until a native expression graph can feed the avatar's single animation state machine.");
         }
     }
 
@@ -307,6 +367,7 @@ internal static partial class SerializedSceneImporter
         AddAvatarDiagnostic(
             state,
             behaviour,
+            hierarchy,
             "UNITYVRC0006",
             SourceImportDiagnosticSeverity.Info,
             "VRChat PipelineManager upload identity and SDK pipeline status were intentionally ignored as editor-only metadata.");
@@ -318,6 +379,9 @@ internal static partial class SerializedSceneImporter
         ImportState state)
     {
         hierarchy.NodesByGameObjectId.TryGetValue(behaviour.GameObjectFileId, out SceneNode? node);
+        List<string> serializedFieldNames = CreateBoundedSerializedFieldNames(
+            behaviour.SerializedFields,
+            out bool serializedFieldNamesTruncated);
         state.Context.UnsupportedBehaviours.Add(new UnsupportedSourceBehaviourMetadata
         {
             Identity = new SourceAssetIdentity
@@ -330,15 +394,22 @@ internal static partial class SerializedSceneImporter
             ScriptGuid = behaviour.Script.Guid ?? string.Empty,
             ScriptFileId = behaviour.Script.FileId,
             Enabled = behaviour.Enabled,
-            SerializedYaml = behaviour.SerializedYaml,
+            SerializedPayloadByteCount = System.Text.Encoding.UTF8.GetByteCount(behaviour.SerializedYaml),
+            SerializedPayloadSha256 = Convert.ToHexString(
+                System.Security.Cryptography.SHA256.HashData(
+                    System.Text.Encoding.UTF8.GetBytes(behaviour.SerializedYaml))),
+            SerializedFieldCount = behaviour.SerializedFields.Children.Count,
+            SerializedFieldNames = serializedFieldNames,
+            SerializedFieldNamesTruncated = serializedFieldNamesTruncated,
         });
         MarkScriptDependencyOutcome(behaviour, state, SourceImportConversionOutcome.IgnoredOptional);
         AddAvatarDiagnostic(
             state,
             behaviour,
+            hierarchy,
             "UNITYVRC0007",
             SourceImportDiagnosticSeverity.Info,
-            $"Unsupported MonoBehaviour script '{behaviour.Script.Guid}:{behaviour.Script.FileId}' was preserved for inspection without attaching a fake runtime behavior.");
+            $"Unsupported MonoBehaviour script '{behaviour.Script.Guid}:{behaviour.Script.FileId}' was summarized in the import manifest without retaining opaque YAML or attaching a fake runtime behavior.");
     }
 
     private static bool TryResolveBehaviourNode(
@@ -353,6 +424,7 @@ internal static partial class SerializedSceneImporter
         AddAvatarDiagnostic(
             state,
             behaviour,
+            hierarchy,
             "UNITYVRC0008",
             SourceImportDiagnosticSeverity.Error,
             $"MonoBehaviour owner GameObject fileID '{behaviour.GameObjectFileId}' could not be resolved after prefab correspondence binding.");
@@ -398,18 +470,23 @@ internal static partial class SerializedSceneImporter
             ConvertRotation(GetQuaternion(rotations, "right", Quaternion.Identity)));
     }
 
-    private static IEnumerable<ImportedAvatarAnimationLayer> ParseAnimationLayers(YamlNode? node)
+    private static IEnumerable<SerializedAvatarAnimationLayer> ParseAnimationLayers(
+        YamlNode? node,
+        string sourceCollection)
     {
         if (node is not YamlSequenceNode sequence)
             yield break;
 
-        foreach (YamlNode child in sequence.Children)
+        for (int sourceIndex = 0; sourceIndex < sequence.Children.Count; sourceIndex++)
         {
+            YamlNode child = sequence.Children[sourceIndex];
             if (child is not YamlMappingNode layer)
                 continue;
 
-            yield return new ImportedAvatarAnimationLayer
+            yield return new SerializedAvatarAnimationLayer
             {
+                SourceCollection = sourceCollection,
+                SourceIndex = sourceIndex,
                 LayerType = GetScalarInt(layer, "type") ?? 0,
                 Enabled = (GetScalarInt(layer, "isEnabled") ?? 0) != 0,
                 IsDefault = (GetScalarInt(layer, "isDefault") ?? 0) != 0,
@@ -417,6 +494,56 @@ internal static partial class SerializedSceneImporter
                 Mask = ToIdentity(ParseReference(GetNode(layer, "mask")), SourceAssetObjectKind.Asset),
             };
         }
+    }
+
+    private static void MarkSourceEvidenceOutcome(SourceAssetIdentity? identity, ImportState state)
+    {
+        if (identity is null || string.IsNullOrWhiteSpace(identity.AssetGuid))
+            return;
+
+        string? sourcePath = ResolveAssetPath(state, identity.AssetGuid);
+        if (!string.IsNullOrWhiteSpace(sourcePath) && File.Exists(sourcePath))
+            state.Context.MarkOutcome(sourcePath, SourceImportConversionOutcome.IgnoredOptional);
+    }
+
+    private static List<string> CreateBoundedSerializedFieldNames(
+        YamlMappingNode fields,
+        out bool truncated)
+    {
+        const int maximumFieldCount = 64;
+        const int maximumFieldNameLength = 96;
+        const int maximumAggregateCharacters = 2_048;
+
+        string[] sourceNames =
+        [
+            .. fields.Children.Keys
+                .OfType<YamlScalarNode>()
+                .Select(static key => key.Value ?? string.Empty)
+                .Where(static key => !string.IsNullOrWhiteSpace(key))
+                .Distinct(StringComparer.Ordinal)
+                .Order(StringComparer.Ordinal),
+        ];
+        var result = new List<string>(Math.Min(sourceNames.Length, maximumFieldCount));
+        int aggregateCharacters = 0;
+        truncated = sourceNames.Length > maximumFieldCount;
+        for (int index = 0; index < sourceNames.Length && result.Count < maximumFieldCount; index++)
+        {
+            string sourceName = sourceNames[index];
+            string boundedName = sourceName.Length <= maximumFieldNameLength
+                ? sourceName
+                : sourceName[..maximumFieldNameLength];
+            truncated |= boundedName.Length != sourceName.Length;
+            if (aggregateCharacters + boundedName.Length > maximumAggregateCharacters)
+            {
+                truncated = true;
+                break;
+            }
+
+            result.Add(boundedName);
+            aggregateCharacters += boundedName.Length;
+        }
+
+        return result;
     }
 
     private static List<TransformConstraintSource> ParseConstraintSources(
@@ -668,6 +795,7 @@ internal static partial class SerializedSceneImporter
     private static void AddAvatarDiagnostic(
         ImportState state,
         ParsedMonoBehaviour behaviour,
+        ImportedHierarchy hierarchy,
         string code,
         SourceImportDiagnosticSeverity severity,
         string message)
@@ -680,7 +808,7 @@ internal static partial class SerializedSceneImporter
             state.EntryFilePath,
             identity: new SourceAssetIdentity
             {
-                AssetGuid = behaviour.Script.Guid ?? string.Empty,
+                AssetGuid = hierarchy.SourceGuid ?? string.Empty,
                 LocalFileId = behaviour.FileId,
                 ObjectKind = SourceAssetObjectKind.Component,
             });

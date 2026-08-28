@@ -41,7 +41,7 @@ public sealed class ImportedTextureStreamingContractTests
     public void ImportedTextureStreaming_EvaluatesResidencyAfterCollectBeforeSwapBuffers()
     {
         string managerSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Objects/Textures/2D/ImportedTextureStreamingManager.cs");
-        string timerSource = ReadWorkspaceFile("XREngine/Core/Time/EngineTimer.cs");
+        string timerSource = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/Core/Time/EngineTimer.cs");
         string interfaceSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Interfaces/IRuntimeRenderSchedulingServices.cs");
         string hostSource = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/RenderingHost/Engine.RuntimeRenderingHostServices.cs");
 
@@ -88,7 +88,7 @@ public sealed class ImportedTextureStreamingContractTests
     [Test]
     public void ImportedTextureStreaming_PrefersFreshCachedTextureAssetAuthority()
     {
-        string assetManagerSource = ReadWorkspaceFile("XRENGINE/Core/Engine/Loading/AssetManager.Loading.SerializationAndCache.cs");
+        string assetManagerSource = ReadWorkspaceFile("XREngine.Runtime.Core/Assets/Loading/AssetManager.Loading.SerializationAndCache.cs");
         string streamingSource = ReadTextureStreamingSources();
 
         assetManagerSource.ShouldContain("XRTexture2D.IsTextureStreamingAssetUsable(cachePath)");
@@ -109,7 +109,7 @@ public sealed class ImportedTextureStreamingContractTests
     [Test]
     public void ImportedTextureStreaming_CooksCachedMipChainsOnGpuBeforeCpuFallback()
     {
-        string assetManagerSource = ReadWorkspaceFile("XRENGINE/Core/Engine/Loading/AssetManager.Loading.SerializationAndCache.cs");
+        string assetManagerSource = ReadWorkspaceFile("XREngine.Runtime.Core/Assets/Loading/AssetManager.Loading.SerializationAndCache.cs");
         string payloadSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Objects/Textures/2D/XRTexture2D.StreamingPayload.cs");
         string rendererSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenGL/Features/Streaming/OpenGLRenderer.TextureStreamingCacheCook.cs");
         string textureSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenGL/BackendObjects/Textures/GLTexture2D.TextureStreamingCacheCook.cs");

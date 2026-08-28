@@ -1,15 +1,15 @@
-# Runtime Modularization And Bootstrap Extraction Plan
+# Runtime Modularization And Bootstrap Architecture
 
 ## Overview
 
-This document proposes a staged restructuring of the runtime assemblies so that:
+This document records the staged restructuring and the implemented runtime assembly boundaries:
 
 1. `XREngine.Server` no longer depends on `XREngine.Editor`.
-2. the current `XRENGINE` assembly stops acting as a dependency sink for unrelated subsystems.
+2. the former `XRENGINE` facade no longer acts as a dependency sink for unrelated subsystems.
 3. runtime, rendering, animation, audio, input, and modeling integration code are split into explicit assemblies with one-way dependencies.
 4. world/bootstrap/test-world composition lives in a runtime-safe assembly instead of inside the editor.
 
-This is a design document for the refactor, not an implementation record.
+Historical sections retain the original migration rationale; status notes identify the implemented end state.
 
 Implementation companions:
 
@@ -17,25 +17,22 @@ Implementation companions:
 - [Runtime Modularization Phase 3 TODO](../todo/COMPLETED/runtime-modularization-phase3-todo.md) (completed Runtime.Core carve-out and non-rendering prerequisites)
 - [Runtime Modularization Phase 4 TODO](../todo/COMPLETED/runtime-modularization-phase4-todo.md) (completed rendering move, backend split, and engineering validation)
 - [Runtime Modularization Phase 5 TODO](../todo/COMPLETED/runtime-modularization-phase5-todo.md) (completed subsystem adapter ownership, composition, compatibility, and dependency cleanup)
-- [Runtime Modularization Phase 6 TODO](../todo/runtime/runtime-modularization-phase6-todo.md) (planned final facade-consumer migration and removal of `XRENGINE`/`XREngine.dll`)
+- [Runtime Modularization Phase 6 TODO](../todo/COMPLETED/runtime-modularization-phase6-todo.md) (completed facade deletion, identity/cargo migration, application validation, and closeout)
 - [OpenGL And Vulkan Rendering Hot Reload TODO](../todo/COMPLETED/rendering-backend-hot-reload-todo.md) (completed backend DLL extraction, collectible editor loading, and renderer replacement)
 
-> Status note (2026-08-24): Engineering work for Phases 0 through 5 is
-> complete. Phase 4 moved the stable rendering kernel and concrete OpenGL/Vulkan
-> leaves, split host capabilities, completed selectable static/AOT and
-> collectible module composition, and decomposed the Vulkan desktop frame loop.
-> Phase 5 moved subsystem host composition and AOT registration to Bootstrap,
-> finalized adapter cargo ownership, and locked the adapter graph. The model
-> importer remains one deliberate aggregate adapter over Animation, FBX, glTF,
-> Modeling, Data, and Runtime.Rendering because its format importers construct
-> runtime scene, mesh, material, skinning, and animation objects as one atomic
-> publication pipeline. Final `XRENGINE` deletion and the remaining facade-bound
-> gameplay/import consumers are Phase 6. Physical XR and supported-hardware
-> Streamline checks remain external manual acceptance and are not claimed as
-> executed. Some historical baseline sections below intentionally no longer
-> match the repository. The Phase 6 tracker adopts Option A as the target:
-> migrate every remaining consumer and delete the facade assembly rather than
-> preserving it as a permanent compatibility layer.
+> Status note (2026-08-28): Phases 0 through 6 are complete. The stable
+> rendering kernel, concrete OpenGL/Vulkan leaves,
+> subsystem adapters, application composition, imported-asset pipeline, and
+> application consumers have explicit owners. The model importer remains one
+> deliberate aggregate adapter over Animation, FBX, glTF, Modeling, Data, and
+> Runtime.Rendering because its format importers construct runtime scene, mesh,
+> material, skinning, and animation objects as one atomic publication pipeline.
+> Option A was implemented: the facade project, all 103 type forwards, its cargo,
+> and the `XRENGINE` production directory are removed. Persisted repository data
+> resolves moved identities by stable full type name; external callers that use
+> `Type.GetType(..., XREngine)` must migrate because the product is pre-v1. P6.8
+> completed the exhaustive engineering closeout. Physical XR and supported-hardware
+> Streamline checks remain external manual acceptance and are not claimed.
 
 ## Why This Refactor Exists
 
@@ -136,7 +133,7 @@ Only some of that belongs in the editor assembly.
 
 ## Target Assembly Layout
 
-The recommended end state is:
+The implemented assembly layout is:
 
 ### Foundation
 
@@ -716,21 +713,23 @@ Audio-owned. The aggregate ModelingBridge graph above is intentional and is
 enforced together with the other adapter and public-API boundaries by the Phase
 5 dependency contract suite.
 
-### Phase 6 - Delete Or Re-scope XRENGINE
+### Phase 6 - Delete XRENGINE
 
-Execution tracker: [Runtime Modularization Phase 6 - Remove The XRENGINE Facade](../todo/runtime/runtime-modularization-phase6-todo.md)
+Execution tracker: [Runtime Modularization Phase 6 - Remove The XRENGINE Facade](../todo/COMPLETED/runtime-modularization-phase6-todo.md)
 
-Once apps reference the new projects directly, choose one of these end states:
+Option A was selected and implemented in P6.7. Applications reference their
+module owners directly; the facade project and production directory no longer
+exist. Repository-owned serialized identities use current assembly-qualified
+names and supported loaders tolerate an obsolete outer assembly qualifier by
+matching the stable full type name. No general-purpose CLR facade assembly or
+permanent forwarding compatibility layer remains.
 
-#### Option A - Remove XRENGINE entirely
-
-Recommended for the cleanest v1 architecture.
-
-#### Option B - Keep XRENGINE as a thin facade
-
-Only acceptable if there is a strong short-term migration reason. It should not continue to own real implementation.
-
-Because the product is pre-ship, Option A is preferred.
+P6.8 closed the phase on 2026-08-28 after independent project and solution
+builds, focused and exhaustive regression execution, OpenGL/Vulkan Editor
+smokes, headless Server and VRClient publish smokes, collectible backend
+validation, and a live NativeAOT MonkeyBall launcher smoke. Physical-headset
+and supported-hardware Streamline lanes remain external acceptance work; they
+do not keep the modularization phase open.
 
 ## Required Dependency Inversions
 
@@ -899,19 +898,21 @@ This refactor is complete when all of the following are true:
 
 - `XREngine.Server` does not reference `XREngine.Editor`.
 - shared startup/test-world/world-factory code lives in `XREngine.Runtime.Bootstrap`.
-- the old `XRENGINE` assembly is either removed or reduced to a thin temporary facade with no meaningful implementation.
+- the old `XRENGINE` assembly is removed.
 - `XREngine.Runtime.Core` does not reference animation, audio, input, or modeling feature libraries.
 - rendering, animation integration, audio integration, input integration, and modeling bridge code live in explicit assemblies.
 - OpenGL and Vulkan implementation code lives in separate leaf backend DLLs,
   while `XREngine.Runtime.Rendering` remains the backend-neutral stable kernel.
 - Editor, Server, VRClient, and targeted tests all build and launch through the new graph.
 
-## Recommendation
+## Implemented Sequence
 
-Proceed with this refactor in two deliberate waves:
+The refactor proceeded in two deliberate waves:
 
 1. server/editor decoupling through `XREngine.Runtime.Bootstrap`
 2. `XRENGINE` decomposition into `Runtime.Core`, the stable `Runtime.Rendering`
    kernel, OpenGL/Vulkan leaf modules, and subsystem adapter assemblies
 
-That sequence removes the most obvious bad dependency first, establishes the target graph early, and avoids trying to solve every architectural issue in a single move.
+That sequence removed the most obvious bad dependency first, established the
+target graph early, and avoided trying to solve every architectural issue in a
+single move.

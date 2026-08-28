@@ -23,6 +23,12 @@ public partial class GPUScene
     public bool AdvancedPublicationRejected
         => _advancedScenePublisher.PublicationRejected;
 
+    public bool AdvancedPublicationFaulted
+        => _advancedScenePublisher.PublicationFaulted;
+
+    public EAdvancedGpuScenePublicationFault AdvancedPublicationFault
+        => AdvancedSharedDatabase.PublicationFault;
+
     public ReadOnlySpan<LegacyCanonicalDrawMapping> LegacyCanonicalDrawMappings
         => _advancedScenePublisher.LegacyMappings;
 
@@ -66,6 +72,15 @@ public partial class GPUScene
             source,
             primitiveIndex,
             out draw);
+
+    public bool TryGetCanonicalCompatibilityReason(
+        IRenderCommandMesh source,
+        int primitiveIndex,
+        out EAdvancedCanonicalCompatibilityReason reason)
+        => _advancedScenePublisher.TryGetCanonicalCompatibilityReason(
+            source,
+            primitiveIndex,
+            out reason);
 
     public bool WasCanonicalDrawAddedThisPublication(AdvancedGpuHandle draw)
         => _advancedScenePublisher.WasDrawAddedThisPublication(draw);

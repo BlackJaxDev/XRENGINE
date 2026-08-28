@@ -121,25 +121,40 @@ internal static partial class SerializedSceneImporter
         }
     }
 
-    private static void ApplyPrefabRemovals(ParsedPrefabInstance prefabInstance, ImportedHierarchy hierarchy)
+    private static void ApplyPrefabRemovals(
+        ParsedPrefabInstance prefabInstance,
+        ImportedHierarchy hierarchy,
+        ImportState state)
     {
         foreach (SourceReference removedGameObject in prefabInstance.RemovedGameObjects)
         {
             if (TryResolveTargetNode(hierarchy, removedGameObject.FileId, out SceneNode? node) && node is not null)
-                RemoveNodeFromHierarchy(node, hierarchy);
+                RemoveNodeFromHierarchy(node, hierarchy, state);
         }
 
         foreach (SourceReference removedComponent in prefabInstance.RemovedComponents)
         {
-            if (!hierarchy.ComponentsByFileId.TryGetValue(removedComponent.FileId, out XRComponent? component))
-                continue;
+            if (hierarchy.ComponentsByFileId.Remove(removedComponent.FileId, out XRComponent? component))
+            {
+                // Components must be detached from the owning SceneNode before destruction,
+                // otherwise the node still reports them through TryGetComponent/GetComponents.
+                component.SceneNode.DetachComponent(component);
+                component.Destroy();
+            }
 
-            hierarchy.ComponentsByFileId.Remove(removedComponent.FileId);
+            if (hierarchy.SerializedAnimatorsByFileId.TryGetValue(
+                    removedComponent.FileId,
+                    out SerializedAnimatorRecord? animator))
+            {
+                RemoveSerializedAnimator(animator, hierarchy, state);
+            }
 
-            // Components must be detached from the owning SceneNode before destruction,
-            // otherwise the node still reports them through TryGetComponent/GetComponents.
-            component.SceneNode.DetachComponent(component);
-            component.Destroy();
+            if (hierarchy.AvatarAnimationGraphsByFileId.TryGetValue(
+                    removedComponent.FileId,
+                    out SerializedAvatarAnimationGraphRecord? avatarGraph))
+            {
+                RemoveAvatarAnimationGraph(avatarGraph, hierarchy, state);
+            }
         }
     }
 
@@ -195,9 +210,6 @@ internal static partial class SerializedSceneImporter
                 break;
             case ModelComponent modelComponent:
                 ApplyModelComponentModifications(modelComponent, modifications, state);
-                break;
-            case ImportedAnimatorMetadataComponent animatorMetadata:
-                ApplyAnimatorModifications(animatorMetadata, modifications, state);
                 break;
             default:
                 foreach (PropertyModification modification in modifications)
@@ -1098,7 +1110,7 @@ internal static partial class SerializedSceneImporter
     }
 
     private static void ApplyAnimatorModifications(
-        ImportedAnimatorMetadataComponent component,
+        SerializedAnimatorRecord record,
         IEnumerable<PropertyModification> modifications,
         ImportState state)
     {
@@ -1108,16 +1120,16 @@ internal static partial class SerializedSceneImporter
             {
                 case "m_Enabled":
                     if (TryParseBool(modification.Value, out bool enabled))
-                        component.IsActive = enabled;
+                        record.Enabled = enabled;
                     break;
                 case "m_Controller":
-                    component.Controller = ToIdentity(modification.ObjectReference, SourceAssetObjectKind.Component);
+                    record.Controller = ToIdentity(modification.ObjectReference, SourceAssetObjectKind.Asset);
                     if (!string.IsNullOrWhiteSpace(modification.ObjectReference.Guid))
                     {
                         string? controllerPath = ResolveAssetPath(state, modification.ObjectReference.Guid);
                         if (!string.IsNullOrWhiteSpace(controllerPath) && File.Exists(controllerPath))
                         {
-                            state.Context.MarkOutcome(controllerPath, SourceImportConversionOutcome.Converted);
+                            state.Context.MarkOutcome(controllerPath, SourceImportConversionOutcome.IgnoredOptional);
                         }
                         else
                         {
@@ -1125,30 +1137,47 @@ internal static partial class SerializedSceneImporter
                                 "UNITYAVATAR0001",
                                 SourceImportDiagnosticSeverity.Warning,
                                 SourceImportDiagnosticCategory.AvatarComponent,
-                                $"Animator controller '{modification.ObjectReference.Guid}' could not be resolved; its source identity was retained.",
+                                $"Animator controller '{modification.ObjectReference.Guid}' could not be resolved; its source identity remains in the import manifest.",
                                 state.EntryFilePath,
                                 modification.PropertyPath,
-                                component.Controller);
+                                record.Controller);
                         }
                     }
                     break;
                 case "m_ApplyRootMotion":
                     if (TryParseBool(modification.Value, out bool applyRootMotion))
-                        component.ApplyRootMotion = applyRootMotion;
+                        record.ApplyRootMotion = applyRootMotion;
                     break;
                 case "m_CullingMode":
                     if (TryParseInt(modification.Value, out int cullingMode))
-                        component.CullingMode = cullingMode;
+                        record.CullingMode = cullingMode;
                     break;
                 case "m_UpdateMode":
                     if (TryParseInt(modification.Value, out int updateMode))
-                        component.UpdateMode = updateMode;
+                        record.UpdateMode = updateMode;
                     break;
                 case "m_HasTransformHierarchy":
                     if (TryParseBool(modification.Value, out bool hasHierarchy))
-                        component.HasTransformHierarchy = hasHierarchy;
+                        record.HasTransformHierarchy = hasHierarchy;
                     break;
             }
+        }
+
+        bool hasRuntimeRelevantSourceSettings = record.Controller is not null ||
+            record.ApplyRootMotion ||
+            record.CullingMode != 0 ||
+            record.UpdateMode != 0 ||
+            !record.Enabled;
+        if (hasRuntimeRelevantSourceSettings)
+        {
+            state.Context.AddDiagnostic(
+                "UNITYAVATAR0003",
+                SourceImportDiagnosticSeverity.Warning,
+                SourceImportDiagnosticCategory.AvatarComponent,
+                "Animator controller and scheduling settings were retained in the import manifest as intentional loss. " +
+                "They will become executable only when a native compiler produces the avatar's single AnimStateMachineComponent.",
+                state.EntryFilePath,
+                identity: record.Identity);
         }
     }
 
@@ -1488,7 +1517,10 @@ internal static partial class SerializedSceneImporter
             hierarchy.ComponentsByFileId[fileId] = component;
     }
 
-    private static void RemoveNodeFromHierarchy(SceneNode node, ImportedHierarchy hierarchy)
+    private static void RemoveNodeFromHierarchy(
+        SceneNode node,
+        ImportedHierarchy hierarchy,
+        ImportState state)
     {
         TransformBase? parentTransform = node.Transform.Parent;
         if (parentTransform is not null)
@@ -1526,6 +1558,52 @@ internal static partial class SerializedSceneImporter
             .ToArray();
         foreach (long componentId in componentIds)
             hierarchy.ComponentsByFileId.Remove(componentId);
+
+        SerializedAnimatorRecord[] animators = hierarchy.SerializedAnimatorOwners
+            .Where(pair => IsNodeSelfOrDescendant(pair.Value, node))
+            .Select(static pair => pair.Key)
+            .ToArray();
+        foreach (SerializedAnimatorRecord animator in animators)
+            RemoveSerializedAnimator(animator, hierarchy, state);
+
+        SerializedAvatarAnimationGraphRecord[] avatarGraphs = hierarchy.AvatarAnimationGraphOwners
+            .Where(pair => IsNodeSelfOrDescendant(pair.Value, node))
+            .Select(static pair => pair.Key)
+            .ToArray();
+        foreach (SerializedAvatarAnimationGraphRecord avatarGraph in avatarGraphs)
+            RemoveAvatarAnimationGraph(avatarGraph, hierarchy, state);
+    }
+
+    private static void RemoveSerializedAnimator(
+        SerializedAnimatorRecord animator,
+        ImportedHierarchy hierarchy,
+        ImportState state)
+    {
+        long[] fileIds = hierarchy.SerializedAnimatorsByFileId
+            .Where(pair => ReferenceEquals(pair.Value, animator))
+            .Select(static pair => pair.Key)
+            .ToArray();
+        foreach (long fileId in fileIds)
+            hierarchy.SerializedAnimatorsByFileId.Remove(fileId);
+
+        hierarchy.SerializedAnimatorOwners.Remove(animator);
+        state.Context.UnregisterAnimator(animator);
+    }
+
+    private static void RemoveAvatarAnimationGraph(
+        SerializedAvatarAnimationGraphRecord avatarGraph,
+        ImportedHierarchy hierarchy,
+        ImportState state)
+    {
+        long[] fileIds = hierarchy.AvatarAnimationGraphsByFileId
+            .Where(pair => ReferenceEquals(pair.Value, avatarGraph))
+            .Select(static pair => pair.Key)
+            .ToArray();
+        foreach (long fileId in fileIds)
+            hierarchy.AvatarAnimationGraphsByFileId.Remove(fileId);
+
+        hierarchy.AvatarAnimationGraphOwners.Remove(avatarGraph);
+        state.Context.UnregisterAvatarAnimationGraph(avatarGraph);
     }
 
     private static bool IsNodeSelfOrDescendant(SceneNode candidate, SceneNode ancestor)

@@ -32,7 +32,11 @@ internal unsafe partial class VkRenderProgram
 
         IEnumerable<DescriptorBindingInfo> shaderBindings = EnumerateShaderDescriptorBindings();
         string programName = Data.Name ?? "UnnamedProgram";
-        var result = VulkanProgramUtilities.BuildDescriptorLayoutsShared(BackendContext.Resources.Descriptors, shaderBindings, programName);
+        var result = VulkanProgramUtilities.BuildDescriptorLayoutsShared(
+            BackendContext.Resources.Descriptors,
+            BackendContext.Resources.AdvancedSceneResources,
+            shaderBindings,
+            programName);
 
         _descriptorSetLayouts = result.Layouts;
         _programDescriptorBindings.Clear();
@@ -73,6 +77,7 @@ internal unsafe partial class VkRenderProgram
         _descriptorSetUsesUpdateAfterBind = result.SetUsesUpdateAfterBind;
         _descriptorSetsRequireUpdateAfterBind = result.RequiresUpdateAfterBind;
         _descriptorSetsRequireVariableDescriptorCount = result.RequiresVariableDescriptorCount;
+        _externallyOwnedDescriptorSetMask = result.ExternallyOwnedSetMask;
         _descriptorHeapLayout = null;
         if (BackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap)
         {
@@ -277,8 +282,12 @@ internal unsafe partial class VkRenderProgram
 
         if (_descriptorSetLayouts.Length > 0)
         {
-            foreach (DescriptorSetLayout layout in _descriptorSetLayouts)
-                BackendContext.Resources.Descriptors.ReleaseProgramDescriptorSetLayout(layout);
+            for (int setIndex = 0; setIndex < _descriptorSetLayouts.Length; ++setIndex)
+                if (!IsDescriptorSetExternallyOwned((uint)setIndex))
+                {
+                    BackendContext.Resources.Descriptors.ReleaseProgramDescriptorSetLayout(
+                        _descriptorSetLayouts[setIndex]);
+                }
 
             _descriptorSetLayouts = Array.Empty<DescriptorSetLayout>();
         }
@@ -300,6 +309,7 @@ internal unsafe partial class VkRenderProgram
         _descriptorSetUsesUpdateAfterBind = Array.Empty<bool>();
         _descriptorSetsRequireUpdateAfterBind = false;
         _descriptorSetsRequireVariableDescriptorCount = false;
+        _externallyOwnedDescriptorSetMask = 0u;
         _frameMaterialBindingSnapshots.Clear();
         _autoUniformMaterialWritePlans.Clear();
         _frequencyOwnedAutoUniformWritePlans.Clear();

@@ -167,24 +167,41 @@ loading or executing Unity, VRChat, or package assemblies:
 - PhysBone sphere, capsule, and plane colliders;
 - position, rotation, and scale constraints with source weights and affected
   axes;
-- avatar descriptor view position, lip-sync mode, viseme blendshapes, eye-look
-  metadata, playable animation layers, and custom animation layers;
-- Animator controller references needed for inspectable imported state.
+- avatar descriptor view position, lip-sync mode, viseme blendshapes, and
+  eye-look metadata;
+- animator controller, layer, mask, expression-menu, and parameter references
+  needed for inspectable import-side state.
+
+Only behavior with independent engine semantics is published as runtime
+components. Animator settings and avatar animation layers remain in the import
+manifest until they can be compiled into one executable native
+`AnimStateMachineComponent`; expression menus and parameter networks use the
+same future graph boundary. They are not represented by placeholder runtime
+components.
+
+Physics chains retain their engine-owned transform, collider, limit, and
+simulation behavior. Source-specific grabbing, posing, solver, collision
+policy, and local/remote authority flags are diagnosed as intentional loss.
+Future interaction support should feed one native physics-chain interaction
+and authority contract so local and replicated commands do not create separate
+simulation models.
 
 Pipeline-manager components are intentionally ignored. Unknown
-`MonoBehaviour` documents are preserved as structured metadata containing
-their script GUID, local file ID, source path, enabled state, and raw
-properties. Unsupported behavior is therefore inspectable and non-executable
-rather than silently lost.
+`MonoBehaviour` documents are summarized with script identity, local file ID,
+source path, enabled state, bounded field names, byte count, and a SHA-256
+digest. Raw YAML and opaque source properties are not copied into runtime
+assets. Unsupported behavior remains inspectable and non-executable without
+creating a source-runtime emulation layer.
 
 ## Manifest, Reimport, And Failure Policy
 
-Every imported Unity prefab embeds a `UnityPrefabImportManifest`. It records the
+Every imported Unity prefab embeds a `SerializedPrefabImportManifest`. It records the
 entry source, Unity project root and editor version, completion tier,
 SHA-256-fingerprinted reached dependencies, GUID/local-file-ID identity,
 dependency kind, referring property, timestamps, source length, conversion
 outcome, native output path, diagnostics, unsupported behaviors, and owned
-output paths.
+output paths. Schema 2 also records animator and avatar-animation graph evidence
+without publishing it as runtime behavior.
 
 The dependency monitor hashes only manifest entries. A change to the entry
 prefab or a reached dependency requests reimport; an unrelated Unity project
@@ -194,10 +211,18 @@ its sibling assets are committed transactionally, so a failed conversion
 restores the last valid files byte-for-byte.
 
 Completion tiers distinguish hierarchy-only, visual, and visual-plus-avatar-
-behavior results. Diagnostics identify the dependency, source object, target
+behavior results; the last tier means converted native behavior, not source-
+platform runtime parity. Diagnostics identify the dependency, source object, target
 node/component, override property, conversion phase, and severity when those
 fields are available. Missing optional expression/menu assets remain non-fatal;
 missing required models, materials, or textures are errors.
+
+Imported animation callbacks cross the runtime boundary only through the
+explicit native event allowlist and typed `IImportedAnimationEventReceiver`
+dispatch. The allowlist is initially empty. Unmapped source callback names are
+recorded as non-blocking intentional conversion loss and are never resolved to
+runtime methods by reflection. Animation manifest schema 3 likewise stores
+only bounded digests for opaque source payloads.
 
 ## Related Documentation
 

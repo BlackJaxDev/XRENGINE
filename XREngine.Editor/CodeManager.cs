@@ -519,8 +519,13 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         string gameProjectPath = GetManagedGameProjectPath();
 
         string programPath = Path.Combine(launcherRoot, "Program.cs");
-        string launcherAssemblyName = $"{projectName}.Launcher";
-        string launcherProjectPath = Path.Combine(launcherRoot, $"{launcherAssemblyName}.csproj");
+        string launcherAssemblyName = Path.GetFileNameWithoutExtension(settings.LauncherExecutableName);
+        if (string.IsNullOrWhiteSpace(launcherAssemblyName))
+            launcherAssemblyName = "Game";
+        string generatedLauncherAssemblyName = settings.PublishLauncherAsNativeAot
+            ? $"{launcherAssemblyName}.Launcher"
+            : launcherAssemblyName;
+        string launcherProjectPath = Path.Combine(launcherRoot, $"{projectName}.Launcher.csproj");
         string rendererBackendSelection = settings.RendererBackendPackage.ToString();
         string? bootstrapProjectPath = TryResolveBootstrapProjectPath();
         if (settings.RendererBackendPackage != ERendererBackendPackageMode.All &&
@@ -543,7 +548,7 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         CreateLauncherProject(
             launcherProjectPath,
             programPath,
-            launcherAssemblyName,
+            generatedLauncherAssemblyName,
             platform,
             GetEngineAssemblyPaths(),
             GetEngineRuntimePackageReferences(),
@@ -586,9 +591,16 @@ internal partial class CodeManager : XRSingleton<CodeManager>
 
             WriteLauncherPublishDiagnostics(publishDirectory, publishLog, settings.ValidateLauncherAotCompatibility);
 
+            string generatedLauncherExePath = Path.Combine(publishDirectory, $"{generatedLauncherAssemblyName}.exe");
+            if (!File.Exists(generatedLauncherExePath))
+                throw new FileNotFoundException("Launcher executable was not produced by publish.", generatedLauncherExePath);
+
             string launcherExePath = Path.Combine(publishDirectory, $"{launcherAssemblyName}.exe");
-            if (!File.Exists(launcherExePath))
-                throw new FileNotFoundException("Launcher executable was not produced by publish.", launcherExePath);
+            File.Move(generatedLauncherExePath, launcherExePath, overwrite: true);
+
+            string generatedSymbolsPath = Path.ChangeExtension(generatedLauncherExePath, ".pdb");
+            if (File.Exists(generatedSymbolsPath))
+                File.Move(generatedSymbolsPath, Path.ChangeExtension(launcherExePath, ".pdb"), overwrite: true);
 
             return launcherExePath;
         }
@@ -733,7 +745,6 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         string[] assemblyNames =
         [
             "OpenVR.NET.dll",
-            "XREngine.dll",
             "XREngine.Data.dll",
             "XREngine.Extensions.dll",
             "XREngine.Animation.dll",
@@ -932,6 +943,10 @@ internal partial class CodeManager : XRSingleton<CodeManager>
                     new XElement("Platforms", platform),
                     new XElement("RuntimeIdentifier", "win-x64"),
                     new XElement("XREngineRendererBackends", rendererBackendSelection),
+                    // The game project can legitimately use the requested executable name as
+                    // its assembly/package identity. Keep the generated host distinct so NuGet
+                    // restore never sees two projects with the same project name in one graph.
+                    new XElement("PackageId", Path.GetFileNameWithoutExtension(projectFilePath)),
                     new XElement("AssemblyName", assemblyName),
                     new XElement("RootNamespace", assemblyName.Replace('.', '_')),
                     new XElement("BaseOutputPath", "Build"),
@@ -950,7 +965,10 @@ internal partial class CodeManager : XRSingleton<CodeManager>
                 "ProjectReference",
                 new XAttribute(
                     "Include",
-                    Path.GetRelativePath(projectDirectory, bootstrapProjectPath))));
+                    Path.GetRelativePath(projectDirectory, bootstrapProjectPath)),
+                new XAttribute(
+                    "AdditionalProperties",
+                    "XREngineRendererBackends=$(XREngineRendererBackends)")));
         }
 
         if (!string.IsNullOrWhiteSpace(includeGameProject))
@@ -1193,7 +1211,18 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         sb.AppendLine("#else");
         sb.AppendLine("        XRRuntimeEnvironment.ConfigureBuildKind(EXRRuntimeBuildKind.Development);");
         sb.AppendLine("#endif");
-        sb.AppendLine("        EnginePublishedCookedAssetRegistryRegistration.Register();");
+        if (!string.IsNullOrWhiteSpace(gameLaunchBootstrapTypeName))
+        {
+            string bootstrapTypeName = gameLaunchBootstrapTypeName.Replace('+', '.');
+            sb.AppendLine($"        IGameLaunchBootstrap gameBootstrap = new global::{bootstrapTypeName}();");
+            sb.AppendLine("        using IDisposable applicationServices = RuntimeApplicationBootstrap.Install(");
+            sb.AppendLine("            gameBootstrap.ApplicationProfile");
+            sb.AppendLine("            ?? throw new InvalidOperationException(\"The game launch bootstrap returned no application profile.\"));");
+        }
+        else
+        {
+            sb.AppendLine("        using IDisposable startupAssetServices = RuntimeAssetBootstrap.InstallEngineAssetServices();");
+        }
         sb.AppendLine();
         sb.AppendLine($"        string archivePath = ResolvePublishedArchivePath(\"{escapedConfigFolder}\", \"{escapedConfigArchive}\");");
         sb.AppendLine("        XRRuntimeEnvironment.ConfigurePublishedPaths(archivePath);");
@@ -1249,8 +1278,6 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         sb.AppendLine();
         if (!string.IsNullOrWhiteSpace(gameLaunchBootstrapTypeName))
         {
-            string bootstrapTypeName = gameLaunchBootstrapTypeName.Replace('+', '.');
-            sb.AppendLine($"        IGameLaunchBootstrap gameBootstrap = new global::{bootstrapTypeName}();");
             sb.AppendLine("        IGameLaunchRuntimeSmokeBootstrap? runtimeSmokeBootstrap =");
             sb.AppendLine("            runAotSmoke ? gameBootstrap as IGameLaunchRuntimeSmokeBootstrap : null;");
             sb.AppendLine("        runtimeSmokeBootstrap?.ConfigureRuntimeSmoke();");
@@ -1263,10 +1290,14 @@ internal partial class CodeManager : XRSingleton<CodeManager>
         sb.AppendLine("            Engine.UserSettings = userSettings;");
         sb.AppendLine();
         sb.AppendLine("        Engine.ConfigureMemoryPolicy(startup is IVRGameStartupSettings ? EngineMemoryProfile.VRLowLatency : EngineMemoryProfile.PublishedDefault);");
-        sb.AppendLine("        using IDisposable applicationServices = RuntimeApplicationBootstrap.Install(");
-        sb.AppendLine("            startup is IVRGameStartupSettings");
-        sb.AppendLine("                ? RuntimeApplicationProfile.VrClient");
-        sb.AppendLine("                : RuntimeApplicationProfile.DesktopClient);");
+        if (string.IsNullOrWhiteSpace(gameLaunchBootstrapTypeName))
+        {
+            sb.AppendLine("        startupAssetServices.Dispose();");
+            sb.AppendLine("        using IDisposable applicationServices = RuntimeApplicationBootstrap.Install(");
+            sb.AppendLine("            startup is IVRGameStartupSettings");
+            sb.AppendLine("                ? RuntimeApplicationProfile.VrClient");
+            sb.AppendLine("                : RuntimeApplicationProfile.DesktopClient);");
+        }
         sb.AppendLine();
         sb.AppendLine("#if XRE_PUBLISHED");
         sb.AppendLine("        if (runAotSmoke)");

@@ -939,7 +939,7 @@ function Get-BinaryOwner([string]$fileOrPath) {
         '^openvr_api\.dll$' { return 'Valve (OpenVR/SteamVR)' }
         '^openxr_loader\.dll$' { return 'Valve (SteamVR) / Khronos (OpenXR loader)' }
         '^OVRLipSync\.dll$' { return 'Meta/Oculus (OVR LipSync)' }
-        '^RestirGI\.Native\.dll$' { return 'NVIDIA Corporation' }
+        'RestirGI\.Native\.dll$' { return 'NVIDIA Corporation' }
         '^rive\.dll$' { return 'Rive (rive-app)' }
 
         '^(av.*|sw(resample|scale)(-[0-9]+)?|postproc)(-[0-9]+)?\.dll$' { return 'FFmpeg project' }
@@ -966,11 +966,11 @@ function Get-BinaryLicense([string]$fileOrPath) {
     switch -Regex ($name) {
         '^FastGltfBridge\.Native\.dll$' { return 'MIT (fastgltf) + Apache-2.0 (simdjson)' }
         '^VulkanMemoryAllocatorBridge\.Native\.dll$' { return 'MIT (Vulkan Memory Allocator)' }
-        '^sl\.nis\.dll$' { return 'MIT (see XRENGINE/nis.license.txt)' }
-        '^nvngx_.*\.dll$' { return 'NVIDIA RTX SDKs License (see XRENGINE/nvngx_dlss.license.txt)' }
-        '^NvLowLatencyVk\.dll$' { return 'NVIDIA SDK License Agreement (see XRENGINE/reflex.license.txt)' }
+        '^sl\.nis\.dll$' { return 'MIT (see ThirdParty/NVIDIA/SDK/win-x64/nis.license.txt)' }
+        '^nvngx_.*\.dll$' { return 'NVIDIA RTX SDKs License (see ThirdParty/NVIDIA/SDK/win-x64/nvngx_dlss.license.txt)' }
+        '^NvLowLatencyVk\.dll$' { return 'NVIDIA SDK License Agreement (see ThirdParty/NVIDIA/SDK/win-x64/reflex.license.txt)' }
         '^sl\..*\.dll$' { return '(unknown - see NVIDIA license files)' }
-        '^RestirGI\.Native\.dll$' { return 'Proprietary (NVIDIA RTXGI SDK License)' }
+        'RestirGI\.Native\.dll$' { return 'Proprietary (NVIDIA RTXGI SDK License)' }
         '^rive\.dll$' { return 'MIT' }
 
         '^lib_coacd\.(dll|so|dylib)$' { return 'MIT (see Build/Submodules/CoACD/LICENSE)' }
@@ -986,13 +986,20 @@ function Get-BinaryLicenseLink([string]$fileOrPath) {
     if (-not $fileOrPath) { return $null }
     $name = [System.IO.Path]::GetFileName($fileOrPath)
 
+    # The project-item pass creates this combined upstream-license note before the
+    # checked-binary pass reuses it. A project item includes a path; the later
+    # filesystem entry supplies only the file name.
+    if ($name -eq 'FastGltfBridge.Native.dll' -and $fileOrPath -eq $name) {
+        return 'licenses/notes/binary-item-XREngine.Gltf.csproj-FastGltfBridge.Native.dll.txt'
+    }
+
     switch -Regex ($name) {
         '^VulkanMemoryAllocatorBridge\.Native\.dll$' { return '../Build/Native/VulkanMemoryAllocatorBridge/vendor/VulkanMemoryAllocator/LICENSE.txt' }
-        '^sl\.nis\.dll$' { return '../XRENGINE/nis.license.txt' }
+        '^sl\.nis\.dll$' { return '../ThirdParty/NVIDIA/SDK/win-x64/nis.license.txt' }
         '^nvngx_.*\.dll$' { return '../ThirdParty/NVIDIA/SDK/win-x64/nvngx_dlss.license.txt' }
         '^NvLowLatencyVk\.dll$' { return '../ThirdParty/NVIDIA/SDK/win-x64/reflex.license.txt' }
         '^sl\..*\.dll$' { return '../ThirdParty/NVIDIA/SDK/win-x64/' }
-        '^RestirGI\.Native\.dll$' { return 'https://developer.nvidia.com/rtxgi' }
+        'RestirGI\.Native\.dll$' { return 'https://developer.nvidia.com/rtxgi' }
         '^rive\.dll$' { return 'https://github.com/rive-app/rive-cpp/blob/master/LICENSE' }
         '^lib_coacd\.(dll|so|dylib)$' { return '../Build/Submodules/CoACD/LICENSE' }
         '^libmagicphysx\.(dll|so|dylib)$' { return 'https://github.com/Cysharp/MagicPhysX/blob/main/LICENSE' }
@@ -1255,21 +1262,16 @@ foreach ($n in $nested) {
 
 # --- Checked-in binaries (filesystem) ---
 $checkedBinaries = New-Object System.Collections.Generic.List[object]
-$xreDir = Join-Path $root 'XRENGINE'
-if (Test-Path $xreDir) {
-    Get-ChildItem -Path (Join-Path $xreDir '*.dll') -File -ErrorAction SilentlyContinue | ForEach-Object {
-        $checkedBinaries.Add([pscustomobject]@{ Path = ("XRENGINE/{0}" -f $_.Name); File = $_.Name })
-    }
-    Get-ChildItem -Path (Join-Path $xreDir '*.exe') -File -ErrorAction SilentlyContinue | ForEach-Object {
-        $checkedBinaries.Add([pscustomobject]@{ Path = ("XRENGINE/{0}" -f $_.Name); File = $_.Name })
-    }
-
-    $rt = Join-Path $xreDir 'runtimes'
+$runtimeOwners = Get-ChildItem -LiteralPath $root -Directory -Filter 'XREngine*' -ErrorAction SilentlyContinue
+foreach ($runtimeOwner in $runtimeOwners) {
+    $rt = Join-Path $runtimeOwner.FullName 'runtimes'
     if (Test-Path $rt) {
-        Get-ChildItem -LiteralPath $rt -Recurse -File -Filter '*.dll' -ErrorAction SilentlyContinue | ForEach-Object {
-            $rel = $_.FullName.Substring($root.Length).TrimStart('\') -replace '\\', '/'
-            $checkedBinaries.Add([pscustomobject]@{ Path = $rel; File = $_.Name })
-        }
+        Get-ChildItem -LiteralPath $rt -Recurse -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Extension -in @('.dll', '.so', '.dylib') } |
+            ForEach-Object {
+                $rel = $_.FullName.Substring($root.Length).TrimStart('\') -replace '\\', '/'
+                $checkedBinaries.Add([pscustomobject]@{ Path = $rel; File = $_.Name })
+            }
     }
 }
 

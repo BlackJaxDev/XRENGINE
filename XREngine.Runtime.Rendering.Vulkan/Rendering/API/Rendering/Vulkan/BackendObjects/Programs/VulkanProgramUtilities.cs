@@ -17,7 +17,11 @@ internal static class VulkanProgramUtilities
         EProgramStageMask.FragmentShaderBit |
         EProgramStageMask.MeshShaderBit |
         EProgramStageMask.TaskShaderBit;
-    internal static DescriptorLayoutBuildResult BuildDescriptorLayoutsShared(VulkanDescriptorManager descriptors, IEnumerable<DescriptorBindingInfo> bindings, string programName)
+    internal static DescriptorLayoutBuildResult BuildDescriptorLayoutsShared(
+        VulkanDescriptorManager descriptors,
+        VulkanAdvancedSceneResourceRuntime advancedScene,
+        IEnumerable<DescriptorBindingInfo> bindings,
+        string programName)
     {
         List<DescriptorBindingInfo> reflectedBindings = bindings
             .Select(DescriptorBindingInfo.NormalizeKnownMetadata)
@@ -50,7 +54,34 @@ internal static class VulkanProgramUtilities
                 new List<DescriptorBindingInfo>(),
                 Array.Empty<bool>(),
                 false,
-                false);
+                false,
+                0u);
+
+        List<DescriptorBindingInfo> mergedBindings = builders.Values
+            .OrderBy(b => b.Set)
+            .ThenBy(b => b.Binding)
+            .Select(b => b.ToDescriptorBindingInfo())
+            .ToList();
+        uint externallyOwnedSetMask = 0u;
+        if (VulkanAdvancedSceneProgramBindingContract.IsCandidate(mergedBindings))
+        {
+            if (!advancedScene.IsReady)
+            {
+                throw new InvalidOperationException(
+                    $"Advanced Vulkan program '{programName}' cannot link because the native scene-resource runtime is unavailable: {advancedScene.AvailabilityReason}");
+            }
+            if (!VulkanAdvancedSceneProgramBindingContract.TryValidate(
+                    mergedBindings,
+                    advancedScene.DescriptorCapacity,
+                    out string advancedContractReason))
+            {
+                throw new InvalidOperationException(
+                    $"Advanced Vulkan descriptor ABI validation failed for program '{programName}': {advancedContractReason}.");
+            }
+
+            externallyOwnedSetMask =
+                VulkanAdvancedSceneProgramBindingContract.ExternallyOwnedSetMask;
+        }
 
         List<DescriptorSetLayout> layouts = new();
         List<bool> setUsesUpdateAfterBind = new();
@@ -65,6 +96,23 @@ internal static class VulkanProgramUtilities
 
         for (uint setIndex = 0; setIndex <= maxSet; setIndex++)
         {
+            if (VulkanAdvancedSceneProgramBindingContract.IsExternallyOwnedSet(
+                    externallyOwnedSetMask,
+                    setIndex))
+            {
+                if (!advancedScene.TryGetProgramDescriptorSetLayout(
+                        setIndex,
+                        out DescriptorSetLayout externalLayout))
+                {
+                    throw new InvalidOperationException(
+                        $"Advanced Vulkan program '{programName}' could not resolve runtime-owned descriptor set {setIndex}.");
+                }
+
+                layouts.Add(externalLayout);
+                setUsesUpdateAfterBind.Add(false);
+                continue;
+            }
+
             DescriptorSetLayoutBinding[] vkBindings = groupsBySet.TryGetValue(setIndex, out List<DescriptorSetLayoutBindingBuilder>? setBuilders)
                 ? [.. setBuilders.Select(b => b.ToBinding())]
                 : Array.Empty<DescriptorSetLayoutBinding>();
@@ -83,18 +131,13 @@ internal static class VulkanProgramUtilities
             setUsesUpdateAfterBind.Add(usesUpdateAfterBind);
         }
 
-        List<DescriptorBindingInfo> mergedBindings = builders.Values
-            .OrderBy(b => b.Set)
-            .ThenBy(b => b.Binding)
-            .Select(b => b.ToDescriptorBindingInfo())
-            .ToList();
-
         return new DescriptorLayoutBuildResult(
             layouts.ToArray(),
             mergedBindings,
             setUsesUpdateAfterBind.ToArray(),
             requiresUpdateAfterBind,
-            requiresVariableDescriptorCount);
+            requiresVariableDescriptorCount,
+            externallyOwnedSetMask);
     }
 
     /// <summary>

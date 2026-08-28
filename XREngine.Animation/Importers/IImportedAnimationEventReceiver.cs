@@ -1,8 +1,9 @@
 namespace XREngine.Animation.Importers;
 
 /// <summary>
-/// Typed alternative to Unity's name-based AnimationEvent dispatch. Runtime
-/// hosts may additionally support compatible named component methods.
+/// Receives imported animation events through an explicit, strongly typed runtime contract.
+/// Implementations dispatch on the allowlisted native <see cref="ImportedAnimationEvent.EventId"/>;
+/// source callback names never reach runtime assets.
 /// </summary>
 public interface IImportedAnimationEventReceiver
 {

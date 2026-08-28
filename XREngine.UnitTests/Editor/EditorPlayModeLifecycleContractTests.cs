@@ -21,7 +21,7 @@ public sealed class EditorPlayModeLifecycleContractTests
     [Test]
     public void ExitPlayMode_RestartsWorldsBeforePublishingEditState()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Engine/Subclasses/Engine.PlayMode.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/Engine/Subclasses/Engine.PlayMode.cs");
         int exitStart = source.IndexOf("public static Task ExitPlayModeAsync()", StringComparison.Ordinal);
         int toggleStart = source.IndexOf("public static void TogglePlayMode()", exitStart, StringComparison.Ordinal);
         exitStart.ShouldBeGreaterThanOrEqualTo(0);

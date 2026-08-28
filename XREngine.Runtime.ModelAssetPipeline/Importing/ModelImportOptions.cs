@@ -23,28 +23,6 @@ public enum EOpacityMapMode
     Blended,
 }
 
-public enum FbxImportBackend
-{
-    Auto,
-    Native,
-    Assimp,
-
-    [Browsable(false)]
-    [EditorBrowsable(EditorBrowsableState.Never)]
-    AssimpLegacy = Assimp,
-}
-
-public enum GltfImportBackend
-{
-    Auto,
-    Native,
-    Assimp,
-
-    [Browsable(false)]
-    [EditorBrowsable(EditorBrowsableState.Never)]
-    AssimpLegacy = Assimp,
-}
-
 [XRTypeRedirect("XREngine.Rendering.Models.ModelImportOptions")]
 public sealed class ModelImportOptions : IXR3rdPartyImportOptions
 {

@@ -15,14 +15,29 @@ public static class AdvancedShaderAccessLibrary
         RuntimeGraphicsApiKind backend,
         EAdvancedTextureIndirectionMode textureEncoding,
         bool diagnosticBounds = false,
-        uint descriptorSet = 0u)
+        uint descriptorSet = 0u,
+        uint? resourceDescriptorSet = null,
+        uint vulkanResourceDescriptorCapacity = 1024u)
     {
         ValidateBackendEncoding(backend, textureEncoding);
+        if (backend == RuntimeGraphicsApiKind.Vulkan &&
+            textureEncoding is EAdvancedTextureIndirectionMode.VulkanDescriptorIndexing or
+                EAdvancedTextureIndirectionMode.VulkanDescriptorHeap &&
+            vulkanResourceDescriptorCapacity == 0u)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(vulkanResourceDescriptorCapacity),
+                "Vulkan advanced resource descriptor capacity must be greater than zero.");
+        }
 
         StringBuilder source = new(4096);
         AppendRequiredExtensions(source, backend, textureEncoding);
         source.Append(AdvancedShaderRecordLayout.BuildCpuLayoutDefines());
         AppendDefine(source, "XR_ADV_GLOBAL_SET", descriptorSet);
+        AppendDefine(
+            source,
+            "XR_ADV_RESOURCE_SET",
+            resourceDescriptorSet ?? descriptorSet);
         AppendDefine(source, "XR_ADV_VISIBILITY_PAYLOAD_VERSION", AdvancedVisibilityBufferContract.PayloadVersion);
         AppendDefine(source, "XR_ADV_SURFACE_CONTRACT_VERSION", AdvancedSurfaceContract.ContractVersion);
         AppendDefine(source, "XR_ADV_BINDING_DRAWS", AdvancedGlobalResourceBindings.Draws);
@@ -64,6 +79,15 @@ public static class AdvancedShaderAccessLibrary
             : "#define XR_ADV_BACKEND_VULKAN 1");
         source.Append("#define XR_ADV_TEXTURE_MODE_")
             .AppendLine(GetTextureModeDefine(textureEncoding));
+        if (backend == RuntimeGraphicsApiKind.Vulkan &&
+            textureEncoding is EAdvancedTextureIndirectionMode.VulkanDescriptorIndexing or
+                EAdvancedTextureIndirectionMode.VulkanDescriptorHeap)
+        {
+            AppendDefine(
+                source,
+                "XR_ADV_RESOURCE_DESCRIPTOR_CAPACITY",
+                vulkanResourceDescriptorCapacity);
+        }
         if (diagnosticBounds)
             source.AppendLine("#define XR_ADV_DIAGNOSTIC_BOUNDS 1");
 

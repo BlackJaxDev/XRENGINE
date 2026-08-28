@@ -65,7 +65,7 @@ public partial class AnimationClipComponent
                 && occurrence.Event.MessageOptions == EImportedAnimationEventMessageOptions.RequireReceiver)
             {
                 Debug.Animation(
-                    $"[AnimationEvent] '{occurrence.Event.FunctionName}' from '{occurrence.Clip.Name}' " +
+                    $"[AnimationEvent] '{occurrence.Event.EventId}' from '{occurrence.Clip.Name}' " +
                     $"had no compatible receiver on '{SceneNode.Name}'.");
             }
         }

@@ -1,6 +1,6 @@
 # Vulkan Core Frame Loop, Resident Rendering, and High-Refresh Master TODO
 
-Last Updated: 2026-08-27
+Last Updated: 2026-08-28
 Owner: Rendering / Vulkan / Frame Scheduling / Core Architecture  
 Status: Active Master Implementation Tracker (Supersedes Present-Now Readiness, Core Hardening, Frame-Loop Stability, and Resident Draw Streams)  
 Primary Target: Stable desktop rendering above 100 Hz, with a 120 Hz promotion gate and a 144 Hz stretch gate  
@@ -66,7 +66,7 @@ The renderer will not be rewritten; rather, the resident data-oriented architect
 
 ## 2. Checkpoints, Baseline Constraints, & Safety Rules
 
-### 2.1 Current Validated Checkpoints (2026-08-27)
+### 2.1 Current Validated Checkpoints (through 2026-08-28)
 
 - **PresentNow Cold Liveness Validation:** The desktop Vulkan `PresentNow + BlockForExact` path passed an isolated Sponza acceptance run with scheduling capacity forced to 1. The camera swept across 8 exterior, entrance, atrium, upper, and near-wall views. Monotonic progress continued across long shader compilations (~20–21 s) without livelock, renderer pause, old-content replay, or provenance violations.
 - **Binary Texture-Cache Dispatch:** Feature-owned binary `XRTexture2D` cache payloads are claimed before generic YAML deserialization. The exact 178,958,379-byte `studio_small_09_4k` cache payload from the failing run loaded through MCP as an `XRTexture2D` with its original-source path intact and no `YamlDotNet`, unresolved-reference, or texture-load failure.
@@ -75,7 +75,8 @@ The renderer will not be rewritten; rather, the resident data-oriented architect
 - **Measured Performance Baseline:** Clean Release evidence reported render p50 6.959–7.716 ms and p95 8.241–9.175 ms, with Vulkan-frame p50 5.511–5.995 ms and p95 6.410–7.071 ms. One comparable run showed frame-slot wait p50/p95 4.791/7.728 ms and render p50 13.577 ms; an immediate rerun returned slot waits to 0.019/0.029 ms and render p50 to 7.716 ms. These values motivate causal pacing/slot attribution and are not a frozen promotion baseline.
 - **Meshlet Prerequisite:** Cleared on 2026-08-22. Cooking, binary caching, and Vulkan EXT indirect-count mesh-task submission are validated.
 - **Execution Topology & Scheduler (Phases 1A/1B):** `EngineExecutionTopology` and `EngineWorkScheduler` are implemented in working tree. `Engine.Jobs` and `RuntimeEngine.Jobs` share general lanes.
-- **Canonical Publication (Resident Phase 2):** Bounded journals, tombstones, dirty owner ranges, acknowledgements, canonical handles, and backend package metadata are implemented. Packed material/texture/kernel payloads, complete dual-feed parity, and legacy-array removal remain open.
+- **Canonical Publication (Resident Phase 2):** Bounded journals, tombstones, dirty owner ranges, acknowledgements, canonical handles, retained material/layout/kernel payloads, logical texture/sampler records, backend package metadata, and the first frame-slot Vulkan SoA/descriptor realization are implemented. Production shader/pipeline consumption, complete dual-feed parity, and legacy-array removal remain open.
+- **Advanced Vulkan Descriptor ABI (Phase 3.1):** The binding-ready ABI is implemented: ordinary uniforms remain set 0, visibility/pass resources remain set 1, advanced sampled-image/sampler arrays use runtime-owned set 2, and advanced canonical tables use runtime-owned set 3. Exact advanced programs are link-time validated and the prepared frame binds the retained publication's native sets without allowing the legacy descriptor allocator to allocate, write, or fingerprint them. Shader-family capability promotion, real advanced stage execution, and parity remain open.
 - **Vulkan Template Table & Native Leases (Phase 3):** Direct-slot template lookup and transactional native generation leases implemented.
 - **Output Scheduling (Core Hardening Phase 5):** Deadline-aware output ordering, acquired-eye reservation, bounded optional-output policy, narrow queue-lock ownership, and frozen modal-resize presentation packages are implemented; long-duration acceptance remains open.
 - **Forward+ Simplification (Section 6):** Complete-scene normal/depth target from deferred attachment 1 plus depth overlays forward opaque/masked surfaces once; contact-copy pair and merge replays removed.
@@ -363,6 +364,26 @@ promotion gate or the other explicitly unchecked empirical rows.
 - [ ] Verify local mutations (1 material scalar, 1 texture binding, 1 geometry replacement, 1 shader reload) invalidate only exact dependent entries.
 - [ ] Verify add/remove/re-add is generation safe, one shadow-cascade update leaves unrelated entries warm, and camera/object transforms cause zero structural or bin invalidations.
 
+Phase 2 resource-domain continuation (2026-08-27): canonical texture and sampler
+tables now have independent generation-safe owners, dirty ranges, lookup
+publication, and backend-ready dirty-owner mapping. The whole-scene material
+transition owns exact texture/sampler reference multiplicities and publishes
+resource changes without a table-wide material clear. Retained texture/sampler
+deltas now also enter backend template projection as resource-table mutations.
+The parent rows remain unchecked until Vulkan descriptor/table realization
+supplies the corresponding reverse manifests and the local-mutation matrix
+proves zero broad fallback.
+
+Phase 2 native-resource continuation (2026-08-28): exact pinned texture/sampler
+publications now lower into frame-slot-owned descriptor-indexing arrays and
+immutable lookup/storage slices, with native receipts retired by the existing
+GPU publication completion authority. This supplies the concrete Vulkan table
+generation needed by later reverse-dependency wiring without introducing a
+parallel lifetime graph. The Phase 2 rows remain unchecked because production
+pipelines do not yet consume this resource set, descriptor/table-to-variant
+reverse manifests are not complete, and the exact local-mutation/zero-broad-
+fallback matrix has not run.
+
 Phase 2 implementation checkpoint (2026-08-27): the tracked gateway now reports
 allocation-free stage histograms plus reason-coded seal/fallback and exact/broad
 invalidation telemetry. Every reusable graphics-primary command lifetime owns
@@ -388,13 +409,20 @@ continued stable hits. The aggregate Debug live sample measured 0.2048 ms p50,
 `MissingContract` submissions; the empirical rows above remain unchecked until
 the frozen Release benchmark and unchanged-sealed cohort are measured.
 
-The unchecked rows above remain intentionally open. Full image-state and
-cold-fallback dictionary replacement, stable indices for the remaining owner
-domains, and the pipeline/descriptor/output/shader/shadow/probe portions of the
-reverse graph depend on Phase 3 owners that do not yet exist. The `<0.25 ms`
-stable-hit target, zero-broad-fallback rule, exact mutation matrix,
-hardware/OpenXR coverage, and matched promotion evidence are empirical gates
-rather than claims inferred from implementation.
+**Phase 2 wrap boundary (2026-08-28):**
+
+- **Done:** tracked gateway stage/fallback telemetry; reusable sealed contracts
+  with compact generation vectors and dependency manifests; sampled full-path
+  acceptance parity; batched native lifetime pins; canonical texture/sampler
+  generation domains; and frame-slot native table/descriptor generations.
+- **Still open:** the unchecked rows above. In particular, full image-state and
+  cold-fallback dictionary replacement, flat stable indices for every owner
+  domain, the pipeline/descriptor/output/shader/shadow/probe reverse graph,
+  exact local-mutation validation, zero broad fallbacks, the frozen Release
+  `<0.25 ms` stable-hit gate, and hardware/OpenXR coverage remain unproven.
+- **Dependency:** production Phase 3 shader/stage consumers must exist before
+  descriptor/table-to-variant reverse dependencies and their mutation matrix
+  can be closed honestly.
 
 ---
 
@@ -406,8 +434,10 @@ rather than claims inferred from implementation.
 - [x] Implement bounded delta journals, tombstones, dirty owner ranges, and consumer acknowledgement in `AdvancedSharedGpuSceneDatabase`.
 - [x] Retain `AdvancedGpuHandle(Index, Generation)` as the sole ABA-safe logical handle across all tables (draw, instance, transform, deformation, state, geometry, material).
 - [ ] Dual-feed legacy `GPUScene` / `HybridRenderingManager` and canonical package projections; verify handles/dense remaps, membership/order/pass/selection/instance identity, material/geometry/shadow/dependency signatures, and visual/output identity for every selected strategy before canonical production cutover.
-- [ ] Publish packed material constant words, texture/sampler bindings, material-layout rows, and shading-kernel rows.
+- [x] Publish packed material constant words, texture/sampler bindings, material-layout rows, and shading-kernel rows.
 - [x] Publish canonical deltas, view/pass records, strategy assignments, dirty ranges, and compact exception records through `BackendReadyFramePackage`.
+- [x] Lower each exact retained publication into frame-slot-owned Vulkan material/resource/lookup slices, a per-publication canonical table descriptor set, and a frame-slot sampled-image/sampler descriptor set with completion-owned native receipts.
+- [x] Define and enforce the binding-ready Vulkan ABI for exact advanced programs, use runtime-owned set layouts, bind the retained native sets during prepared recording, and exclude those sets from legacy descriptor allocation/writes/fingerprints.
 - [ ] Remove live `BackendReadyMeshSelection` managed arrays after parity and make the immutable backend-ready package the only normal-frame Vulkan input.
 - [ ] Remove legacy `GPUScene` storage and ID maps after dual-publication parity.
 
@@ -422,6 +452,200 @@ not yet attached to the retained scene-publication ring or backend-ready
 package, draw registration does not acquire the shared material/resource
 owners, Vulkan lowering still lacks a frozen publication-owned dependency
 closure, and the five-strategy dual-feed/output parity matrix has not run.
+
+Phase 3.1 retained-payload continuation (2026-08-27): every scene-publication
+ring slot now owns and transactionally seals the immutable packed material
+payload image with the material/layout/kernel and texture/sampler tables. A
+sequence mismatch rejects the complete publication before its ring tail becomes
+visible. The shared material publisher now has generation-aware direct handle
+lookup, local removal repair instead of a full hash rebuild, exact bounded
+capacity rejection, and immutable variant identity. Database-owned compound
+creation now interns exact layout/kernel schema, preflights all missing schema
+and material capacity before the first write, and creates one independently
+owned material row per publisher variant. Publisher updates reuse retained
+schema handles rather than mutating schema. The backend-ready package
+intentionally does not expose ring-owned payload spans after releasing its
+package lease. The scene capacity profile now reserves the three supported
+layouts, their members, fixed-stride payloads, and logical resource rows instead
+of the former one-empty-layout/zero-payload profile. A live isolated Vulkan run
+produced fresh camera-dependent readbacks and continued publishing beyond frame
+1936 with no canonical publication rejection or Vulkan validation VUID.
+Production draw/resource acquisition remains ordered behind a refcounted logical
+texture/sampler publisher; invalid placeholder bindings are not accepted as
+parity. Vulkan GPU-pin SoA consumption, five-strategy dual-feed parity, and a
+separately observed recoverable startup framebuffer-backing race remain open. See
+`docs/work/investigations/rendering/vulkan-frame-loop-phase3-material-publication-2026-08-27.md`.
+
+Phase 3.1 logical-resource continuation (2026-08-27): a scene-boundary-owned
+logical resource publisher now assigns texture identity by `XRTexture` reference
+and value-interns immutable sampler rows. Whole-batch acquire, release, and
+acquire-before-release replacement preflight peak publisher counts, exact
+reference multiplicities, metadata conflicts, and the combined canonical table
+journals before writing. The source contract deliberately accepts only full,
+non-rectangle, non-MSAA `XRTexture2D` resources matching the current material
+layouts. Stable explicitly numbered format/compare enums and normalized sampler
+keys preserve filter, LOD, anisotropy, comparison, address, and border state
+without implying Vulkan residency or descriptor realization. Publisher registry
+growth now follows the shared frame-boundary capacity profile. The row remains
+unchecked because canonical draw registration still needs the preallocated
+whole-scene transition plan that acquires these bindings, publishes shared
+materials/draw replacements, and drains old ownership in that order.
+
+Phase 3.1 whole-scene ownership continuation (2026-08-27): production canonical
+scene publication now builds one preallocated transition plan before opening the
+database transaction. It captures mutable inputs once, deduplicates command and
+material identities, encodes each unique variant once, and aggregate-preflights
+scene, schema, material, logical-resource, journal, and reference-count capacity.
+Commit order is resource acquire, shared-material upsert/retain, draw add/switch,
+draw tombstone, material retirement, then resource release. Unsupported pass,
+legacy-state, and resource translations remain ordered compatibility exceptions
+with typed reasons. Exact GLSL value kinds, coverage/double-sided state, texture
+feature flags, resource dirty owners, and native opaque/masked eligibility are
+now canonical data rather than shallow per-draw placeholders. The material
+publication row above is therefore complete. A shared-ownership/update/refresh/
+retirement smoke passed, and a fresh Vulkan session produced two camera-dependent
+readbacks through frame 2644 with no publication rejection, exception, VUID,
+validation error, device loss, or OOM. The run also confirms why Phase 3.1 itself
+is not closed: Vulkan still reports that advanced rendering is unavailable until
+GPU-addressable texture indirection exists. GPU publication leasing, frame-slot
+SoA/descriptor realization, five-strategy parity, legacy-array removal, and
+production cutover remain open. See
+`docs/work/investigations/rendering/vulkan-frame-loop-phase3-material-publication-2026-08-27.md`.
+
+Phase 3.1 publication-safety closeout (2026-08-27): publication visibility is
+now staged as reserve, snapshot prepare, lookup commit, and ring commit. Prepared
+snapshots remain invisible until lookup rows are complete under the publication
+lock; any post-begin failure permanently faults/quarantines the database instead
+of exposing or reusing partial producer state. Rejected/faulted scenes cannot
+reproject stale backend packages. Every prior and current renderer source is
+planned before compatibility resolution, so unsupported or removed primitive
+zero is explicitly republished invalid. Texture/sampler snapshot deltas reach
+backend template projection, and resource compatibility reports stable typed
+subreasons for type, shape, empty content, sampler numeric state, format,
+address, comparison operation, and comparison/depth mismatches. The expanded
+scene smoke passed invalidation, exact-reason, and recovery cases; a max-effort
+architecture re-review found no blocking correctness issue. Fresh named Vulkan
+session `phase31-staged-commit-20260827` built with zero warnings/errors,
+produced two distinct inspected 1920x1080 readbacks, and advanced through frame
+520 without canonical rejection/fault or a validation VUID. Its one startup
+`XRTexture2DArray` backing failure recovered on the next frame and matches an
+independent pre-change session, so it remains a separate bootstrap lifetime
+issue. Phase 3.1's remaining boundary is Vulkan GPU-addressable texture/sampler
+realization plus GPU-lease SoA lowering and the five-strategy parity/cutover
+matrix.
+
+Phase 3.1 retained-replay continuation (2026-08-27): every retained canonical
+scene publication now owns immutable physical record/handle images and the
+authoritative logical lookup image for draw, material, kernel, layout, texture,
+and sampler tables. It also owns exact layout-member, constant-word, and
+texture-binding ranges plus strong `XRTexture` source references for logically
+resident texture handles. This closes the replay gap that previously forced a
+Vulkan resident dependency manifest to consult mutable live databases after
+acquiring a publication lease. `VulkanResidentDrawDependencyManifest` now
+resolves exclusively from the exact pinned publication and rejects missing,
+stale, or sequence-mismatched data. Backend-ready frame packages remain compact
+identity/delta projections instead of copying payload or source objects. A
+three-publication add/replace/tombstone smoke caught and fixed logical-handle
+resurrection from physically retained tombstone rows. Renderer-neutral, Vulkan,
+and isolated full-editor builds pass with zero warnings/errors; fresh named
+Vulkan validation reached frame 853 with 19 resident-template creations, 9 exact
+invalidations, zero dependency rejects, zero validation messages/errors, and
+zero dropped frame/draw operations. The next boundary is a frame-slot-owned
+`VulkanAdvancedSceneResourceRuntime` with separate sampled-image and sampler
+descriptor-indexing tables, native-generation receipts carried by the existing
+publication lease, and correct logical sampler resolution in the advanced
+shader. Descriptor-heap mode remains explicitly unsupported until implemented
+and measured; five-strategy parity/cutover remains open. See
+`docs/work/investigations/rendering/vulkan-frame-loop-phase3-material-publication-2026-08-27.md`.
+
+Phase 3.1 native-resource continuation (2026-08-28):
+`VulkanAdvancedSceneResourceRuntime` now lowers each distinct exact pinned
+publication once per frame slot into a fixed 8 MiB `AdvancedSceneStorage` lane,
+immutable material/resource/lookup slices, and separate fixed-capacity sampled-
+image and sampler descriptor-indexing arrays. Dense-plus-one encoded references
+reserve zero as invalid/fallback, and logical sampler lookup is independent of
+image identity. Whole-publication preflight revalidates the retained strong
+texture source image and requires an existing ready Vulkan descriptor; it never
+creates wrappers, uploads synchronously, or exposes partial native state. Typed
+native receipts travel beside the canonical GPU publication lease through
+prepared-frame transfer and resident frame-slot retention, then retire under the
+same completion authority. Logical-device publication now finalizes the live
+descriptor backend after allocator startup, correcting the previous bootstrap/
+runtime split where descriptor indexing was enabled but the manager remained on
+`DescriptorSets`. Standard-Validation session
+`phase31-native-validation-20260827` reached canonical sequence 717 / native
+generation 1 with 31 textures and 5 samplers after progressive streaming
+settled; frame 998 reported zero package/dependency/capacity/broad-fallback/
+dropped-operation failures and zero active validation messages/errors. Two
+fresh camera-dependent 1920x1080 Vulkan readbacks were visually verified. The
+final ownership build was repeated in named session
+`phase31-native-retirement-20260828`: its full isolated editor build passed with
+zero warnings/errors, canonical sequence 595 lowered successfully, and frame
+843 again reported zero active validation, package, dependency, capacity,
+descriptor-binding, dropped-operation, or pending-retirement failures. The
+rows remain unchecked because the native resource set is not yet bound into the
+production advanced shader/pipeline families and the five-strategy dual-feed
+parity/cutover matrix has not run. Active-frame validation was clean; shutdown
+still names five image views and one pipeline layout in the separate known
+device-teardown debt. See
+`docs/work/investigations/rendering/vulkan-frame-loop-phase3-material-publication-2026-08-27.md`.
+
+#### Phase 2/3 Implementation Wrap Boundary (2026-08-28)
+
+The retained publication and Vulkan binding substrate are now complete enough
+for a real advanced shader family to consume. They do **not** constitute an
+advanced shader-family cutover.
+
+| Vulkan set | Owner at this boundary | Wrap status |
+|---:|---|---|
+| 0 | Existing ordinary/auto-uniform path | Preserved; not owned by the advanced runtime. |
+| 1 | Visibility and pass-local resources | Reserved by the advanced ABI; real visibility-stage production remains open. |
+| 2 | Advanced sampled-image and separate-sampler arrays | Implemented as one runtime-owned fixed-capacity set per frame slot. |
+| 3 | Advanced canonical storage tables | Implemented as one runtime-owned set per retained publication. Material, resource, encoded-reference, layout, kernel, constant, binding, and lookup slices are real; not-yet-produced table domains bind a valid zero fallback slice. |
+
+**Completed in the final binding slice:**
+
+- Vulkan shader preambles publish an exact fixed resource-descriptor capacity,
+  so SPIR-V array counts and the runtime-owned set-2 layout cannot silently
+  disagree.
+- Link-time ABI validation requires the complete advanced signature and exact
+  table/resource descriptor types and counts. The full three-binding signature
+  prevents unrelated legacy high binding numbers from being misclassified.
+- The advanced resource runtime owns both layouts, preallocates bounded global
+  sets, writes all 25 canonical table bindings without per-frame heap growth,
+  and carries both native sets in the publication state.
+- Prepared mesh recording requires a valid retained canonical publication for
+  any program that opts into those externally owned sets, then binds set 2 and
+  set 3 from that exact publication. Failure is explicit; it cannot silently
+  substitute legacy descriptors.
+- Legacy descriptor allocation, writes, draw-slot invariance checks, and
+  resource/binding fingerprints ignore externally owned advanced sets.
+- `XREngine.Runtime.Rendering.Vulkan.csproj --no-restore` built with zero
+  warnings and zero errors. Named session
+  `phase31-advanced-binding-20260828` reached a clean isolated Vulkan module
+  build, but was stopped at the requested wrap boundary before MCP readiness;
+  therefore this slice adds no new live-frame or visual-parity claim.
+- `EAdvancedShaderFamily` intentionally remains `None`. No placeholder stage
+  was promoted and no automated test was added or run.
+
+**Remaining before Phase 3.1 can close:**
+
+1. Create the production advanced shader/program/pipeline families using the
+   runtime-generated Vulkan preamble and the exact set 0/1/2/3 ABI.
+2. Replace set-3 fallback slices with the remaining frame/view/pass/draw/
+   instance/mesh/geometry/transform/deformation/state/visibility producers and
+   complete the matching set-1 visibility resources.
+3. Execute every real advanced stage, then promote a shader-family capability
+   only when its entire required stage/resource closure is available; required
+   failures must remain observable rather than falling back silently.
+4. Run material/resource/ordering/output parity for `CpuDirect`, CPU indirect,
+   GPU indirect, mesh-task indirect, and fully GPU-driven lanes. Keep the
+   canonical and legacy feeds side by side until all five pass.
+5. After parity, remove live `BackendReadyMeshSelection` arrays and legacy
+   `GPUScene` storage/ID maps, then close the dependent Phase 2 reverse-
+   dependency and exact-mutation gates.
+6. Separately close the known startup framebuffer-backing race and the five-
+   image-view/one-pipeline-layout teardown debt under Standard Validation.
 
 #### 3.2 Frequency-Owned Structure-of-Arrays (SoA) Data
 - [ ] Complete SoA streams: frame constants; view matrices/frusta/jitter; pass constants; material blocks and resource tables; object transforms/bounds/IDs; instance, skinning, deformation, and visibility ranges; geometry identities/offsets/formats; and bin indirect buffers.

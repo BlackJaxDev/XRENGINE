@@ -14,6 +14,7 @@ internal unsafe class VkRenderProgramPipeline(
     private DescriptorSetLayout[] _descriptorSetLayouts = Array.Empty<DescriptorSetLayout>();
     private PipelineLayout _pipelineLayout;
     private readonly List<DescriptorBindingInfo> _descriptorBindings = new();
+    private uint _externallyOwnedDescriptorSetMask;
     private bool _layoutsDirty = true;
 
     public override VkObjectType Type => VkObjectType.ProgramPipeline;
@@ -151,11 +152,16 @@ internal unsafe class VkRenderProgramPipeline(
 
         IEnumerable<DescriptorBindingInfo> bindingInfos = _stagePrograms.Values.SelectMany(p => p.DescriptorBindings);
         string pipelineName = Data.Name ?? "UnnamedPipeline";
-        var result = VulkanProgramUtilities.BuildDescriptorLayoutsShared(BackendContext.Resources.Descriptors, bindingInfos, pipelineName);
+        var result = VulkanProgramUtilities.BuildDescriptorLayoutsShared(
+            BackendContext.Resources.Descriptors,
+            BackendContext.Resources.AdvancedSceneResources,
+            bindingInfos,
+            pipelineName);
 
         _descriptorSetLayouts = result.Layouts;
         _descriptorBindings.Clear();
         _descriptorBindings.AddRange(result.Bindings);
+        _externallyOwnedDescriptorSetMask = result.ExternallyOwnedSetMask;
 
         CreatePipelineLayout(_descriptorSetLayouts);
         _layoutsDirty = false;
@@ -165,8 +171,14 @@ internal unsafe class VkRenderProgramPipeline(
     {
         if (_descriptorSetLayouts.Length > 0)
         {
-            foreach (DescriptorSetLayout layout in _descriptorSetLayouts)
-                BackendContext.Resources.Descriptors.ReleaseProgramDescriptorSetLayout(layout);
+            for (int setIndex = 0; setIndex < _descriptorSetLayouts.Length; ++setIndex)
+                if (!VulkanAdvancedSceneProgramBindingContract.IsExternallyOwnedSet(
+                        _externallyOwnedDescriptorSetMask,
+                        (uint)setIndex))
+                {
+                    BackendContext.Resources.Descriptors.ReleaseProgramDescriptorSetLayout(
+                        _descriptorSetLayouts[setIndex]);
+                }
 
             _descriptorSetLayouts = Array.Empty<DescriptorSetLayout>();
         }
@@ -175,6 +187,7 @@ internal unsafe class VkRenderProgramPipeline(
             DestroyPipelineLayout("VkRenderProgramPipeline.DestroyLayouts");
 
         _descriptorBindings.Clear();
+        _externallyOwnedDescriptorSetMask = 0u;
         _layoutsDirty = true;
     }
 

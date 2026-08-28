@@ -104,7 +104,7 @@ public sealed class SerializedPrefabAvatarPrivateIntegrationTests
             constraint.Sources.Count.ShouldBe(1);
         }
         components.OfType<AvatarPresentationComponent>().Count().ShouldBe(1);
-        components.OfType<ImportedAnimatorMetadataComponent>().Count().ShouldBeGreaterThanOrEqualTo(1);
+        manifest.Animators.Count.ShouldBeGreaterThanOrEqualTo(1);
 
         manifest.CompletionTier.ShouldBe(SourceImportCompletionTier.VisualAndAvatarBehavior);
         const string nestedFaceTrackingPackage = "Packages/adjerry91.vrcft.templates/";

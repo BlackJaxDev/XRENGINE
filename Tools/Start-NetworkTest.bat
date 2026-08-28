@@ -48,7 +48,7 @@ if not exist "%SERVER_EXE%" (
     echo Dedicated server executable not found at:
     echo   %SERVER_EXE%
     echo Building server first...
-    dotnet build XREngine.Server\XREngine.Server.csproj
+    dotnet build XREngine.Server\XREngine.Server.csproj /property:XREngineRendererBackends=None
     if errorlevel 1 goto :BUILD_FAILED
     echo.
 )

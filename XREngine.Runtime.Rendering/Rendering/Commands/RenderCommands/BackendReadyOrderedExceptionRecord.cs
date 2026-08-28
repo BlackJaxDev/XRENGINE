@@ -8,4 +8,6 @@ public readonly record struct BackendReadyOrderedExceptionRecord(
     uint ViewId,
     int PassIndex,
     ulong OrderKey,
-    uint ReasonFlags);
+    uint ReasonFlags,
+    EAdvancedCanonicalCompatibilityReason CompatibilityReason =
+        EAdvancedCanonicalCompatibilityReason.None);

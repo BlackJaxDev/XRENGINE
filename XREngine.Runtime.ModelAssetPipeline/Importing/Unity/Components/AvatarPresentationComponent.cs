@@ -1,6 +1,5 @@
 using System.Numerics;
 using XREngine.Components.Scene.Mesh;
-using XREngine.Scene.Prefabs;
 using XREngine.Scene.Transforms;
 
 namespace XREngine.Components;
@@ -22,8 +21,6 @@ public sealed class AvatarPresentationComponent : XRComponent
     private string _mouthOpenBlendShapeName = string.Empty;
     private List<string> _visemeBlendShapeNames = [];
     private AvatarGazeBinding _eyeLook = new();
-    private List<ImportedAvatarAnimationLayer> _animationLayers = [];
-    private SourceAssetIdentity? _animationPreset;
 
     public TransformBase? AvatarRoot
     {
@@ -85,15 +82,4 @@ public sealed class AvatarPresentationComponent : XRComponent
         set => SetField(ref _eyeLook, value ?? new AvatarGazeBinding());
     }
 
-    public List<ImportedAvatarAnimationLayer> AnimationLayers
-    {
-        get => _animationLayers;
-        set => SetField(ref _animationLayers, value ?? []);
-    }
-
-    public SourceAssetIdentity? AnimationPreset
-    {
-        get => _animationPreset;
-        set => SetField(ref _animationPreset, value);
-    }
 }

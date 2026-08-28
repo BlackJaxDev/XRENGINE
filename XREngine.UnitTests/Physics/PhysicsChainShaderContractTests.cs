@@ -48,7 +48,7 @@ public sealed class PhysicsChainShaderContractTests
     [Test]
     public void PhysicsChainDispatchers_SetParticleAndTreeCountUniformsBeforeDispatch()
     {
-        string componentSource = ReadWorkspaceFile("XRENGINE/Scene/Components/Physics/PhysicsChainComponent.GPU.cs");
+        string componentSource = ReadWorkspaceFile("XREngine.Runtime.Core/Scene/Components/Physics/PhysicsChainComponent.GPU.cs");
         string dispatcherSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/PhysicsCompute/GPUPhysicsChainDispatcher.cs")
             + ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/PhysicsCompute/GPUPhysicsChainDispatcher.Kernels.cs");
 
@@ -190,7 +190,7 @@ public sealed class PhysicsChainShaderContractTests
     [Test]
     public void Dispatcher_BatchesPartialPalettesIntoGlobalAtlasWithoutPerRendererDispatches()
     {
-        string component = ReadWorkspaceFile("XRENGINE/Scene/Components/Physics/PhysicsChainComponent.GPU.cs")
+        string component = ReadWorkspaceFile("XREngine.Runtime.Core/Scene/Components/Physics/PhysicsChainComponent.GPU.cs")
             .Replace("\r\n", "\n");
         string dispatcher = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/PhysicsCompute/GPUPhysicsChainDispatcher.cs")
             .Replace("\r\n", "\n");

@@ -10,6 +10,9 @@
     <ServerGarbageCollection>true</ServerGarbageCollection>
     <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
     <GarbageCollectionAdaptationMode>1</GarbageCollectionAdaptationMode>
+    <XREngineRendererBackends>None</XREngineRendererBackends>
+    <XREngineIncludeSharedExecutableDependencies>false</XREngineIncludeSharedExecutableDependencies>
+    <XREngineHeadlessExcludedPublishPattern>(?i)(openvr_api\.dll|actionmanifest\.json|bindings_.*\.json|ovrlipsync\.dll|naudio\.sdl2\.dll|(?:lib)?sdl2(?:-2\.0)?\.(dll|so|dylib|a)|glfw3\.dll|libglfw(?:\.so\.3|\.3\.dylib)|vulkanmemoryallocator.*\.(dll|so|dylib)|soft_oal\.dll|libopenal\.(so|dylib)|av(codec|device|filter|format|util)-[0-9]+\.dll|postproc-[0-9]+\.dll|swresample-[0-9]+\.dll|swscale-[0-9]+\.dll|libmp3lame\.(32|64)\.dll|cimgui\.(dll|so|dylib)|raylib\.(dll|so|dylib)|ultralight(core)?\.(dll|so|dylib)|appcore\.(dll|so|dylib)|webcore\.(dll|so|dylib)|dstorage(core)?\.dll|openal-soft)</XREngineHeadlessExcludedPublishPattern>
   </PropertyGroup>
 
   <ItemGroup>
@@ -41,15 +44,22 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\XREngine.Animation\XREngine.Animation.csproj" />
-    <ProjectReference Include="..\XREngine.Audio\XREngine.Audio.csproj" />
-    <ProjectReference Include="..\XREngine.ControlPlane\XREngine.ControlPlane.csproj" />
     <ProjectReference Include="..\XREngine.Data\XREngine.Data.csproj" />
     <ProjectReference Include="..\XREngine.Extensions\XREngine.Extensions.csproj" />
-    <ProjectReference Include="..\XREngine.Input\XREngine.Input.csproj" />
-    <ProjectReference Include="..\XREngine.Runtime.Bootstrap\XREngine.Runtime.Bootstrap.csproj" />
+    <ProjectReference Include="..\XREngine.Fbx\XREngine.Fbx.csproj" />
+    <ProjectReference Include="..\XREngine.Runtime.Bootstrap\XREngine.Runtime.Bootstrap.csproj" AdditionalProperties="XREngineRendererBackends=None" />
+    <ProjectReference Include="..\XREngine.Runtime.Core\XREngine.Runtime.Core.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.ModelAssetPipeline\XREngine.Runtime.ModelAssetPipeline.csproj" />
-    <ProjectReference Include="..\XREngine\XREngine.csproj" />
   </ItemGroup>
+
+  <Target Name="RemoveHeadlessLocalDevicePublishCargo" AfterTargets="ComputeFilesToPublish" BeforeTargets="CopyFilesToPublishDirectory">
+    <ItemGroup>
+      <_HeadlessLocalDevicePublishCargo
+        Include="@(ResolvedFileToPublish)"
+        Condition="$([System.Text.RegularExpressions.Regex]::IsMatch('%(ResolvedFileToPublish.RelativePath)', '$(XREngineHeadlessExcludedPublishPattern)'))" />
+      <ResolvedFileToPublish Remove="@(_HeadlessLocalDevicePublishCargo)" />
+      <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)" Condition="'%(ResolvedFileToPublish.Filename)%(ResolvedFileToPublish.Extension)' == 'openvr_api.dll'" />
+    </ItemGroup>
+  </Target>
 
 </Project>

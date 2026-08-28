@@ -103,6 +103,7 @@ uniform uvec2 VisibilityGeometryLookupSegment;
 uniform uvec2 VisibilityMaterialLookupSegment;
 uniform uvec2 VisibilityShadingKernelLookupSegment;
 uniform uvec2 VisibilityTextureLookupSegment;
+uniform uvec2 VisibilitySamplerLookupSegment;
 
 uint XR_ADV_ResolveVisibilityHandle(
     XRAdvancedGpuHandle handle,
@@ -135,9 +136,11 @@ uint XR_ADV_ResolveVisibilityStableIndex(
 }
 
 bool XR_ADV_TryResolveTextureReference(
-    XRAdvancedTextureReference logicalReference,
+    XRAdvancedMaterialTextureBinding logicalBinding,
     out XRAdvancedEncodedTextureReference encodedReference)
 {
+    XRAdvancedTextureReference logicalReference =
+        logicalBinding.textureReference;
     encodedReference = XRAdvancedEncodedTextureReference(
         0u,
         0u,
@@ -164,8 +167,46 @@ bool XR_ADV_TryResolveTextureReference(
         return false;
     }
 
+    XRAdvancedSamplerReference logicalSampler =
+        logicalBinding.samplerReference;
+    if (!XR_ADV_IsValidHandle(logicalSampler.handle))
+        return false;
+
+    uint samplerDense = XR_ADV_ResolveVisibilityHandle(
+        logicalSampler.handle,
+        VisibilitySamplerLookupSegment,
+        XR_ADV_DIAGNOSTIC_TEXTURE);
+    uint encodedSamplerIndex = samplerDense + 1u;
+    if (samplerDense == XR_ADV_INVALID_DENSE_INDEX ||
+        samplerDense >= uint(XR_ADV_Samplers.records.length()) ||
+        encodedSamplerIndex == 0u ||
+        encodedSamplerIndex >=
+            uint(XR_ADV_EncodedSamplers.records.length()))
+    {
+        return false;
+    }
+
+    XRAdvancedSamplerRecord samplerRecord =
+        XR_ADV_LoadSampler(samplerDense);
+    if (samplerRecord.stableSamplerId !=
+            logicalSampler.handle.index ||
+        samplerRecord.generation !=
+            logicalSampler.handle.generation)
+    {
+        return false;
+    }
+
+    XRAdvancedEncodedSamplerReference encodedSampler =
+        XR_ADV_LoadEncodedSampler(encodedSamplerIndex);
+    if ((encodedSampler.flags & XR_ADV_RESOURCE_FLAG_RESIDENT) == 0u)
+        return false;
+
     encodedReference =
         XR_ADV_LoadEncodedTexture(textureRecord.encodedReferenceIndex);
+    if ((encodedReference.flags & XR_ADV_RESOURCE_FLAG_RESIDENT) == 0u)
+        return false;
+
+    encodedReference.payload1 = encodedSampler.payload0;
     return true;
 }
 

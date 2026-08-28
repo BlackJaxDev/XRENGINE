@@ -6,6 +6,7 @@
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
     <Platforms>AnyCPU;x64</Platforms>
+    <DefaultItemExcludes>$(DefaultItemExcludes);$(MSBuildProjectDirectory)\obj\**;$(MSBuildProjectDirectory)\bin\**</DefaultItemExcludes>
     <XREngineRendererBackends Condition="'$(XREngineRendererBackends)' == ''">All</XREngineRendererBackends>
     <XREngineIncludeOpenGlBackend Condition="'$(XREngineIncludeOpenGlBackend)' == '' and ('$(XREngineRendererBackends)' == 'All' or '$(XREngineRendererBackends)' == 'OpenGL')">true</XREngineIncludeOpenGlBackend>
     <XREngineIncludeOpenGlBackend Condition="'$(XREngineIncludeOpenGlBackend)' == ''">false</XREngineIncludeOpenGlBackend>
@@ -17,10 +18,8 @@
 
   <PropertyGroup>
     <AotFactoryRegistrationGenerator>$(MSBuildProjectDirectory)\..\Tools\Generate-AotFactoryRegistrations.ps1</AotFactoryRegistrationGenerator>
-    <GeneratedAotFactoryRegistrations Condition="'$(UseArtifactsOutput)' != 'true'">$(MSBuildProjectDirectory)\obj\$(Configuration)\$(TargetFramework)\Generated\AotFactoryRegistrations.g.cs</GeneratedAotFactoryRegistrations>
-    <GeneratedAotFactoryRegistrations Condition="'$(UseArtifactsOutput)' == 'true'">$(BaseIntermediateOutputPath)$(Configuration)\$(TargetFramework)\Generated\AotFactoryRegistrations.g.cs</GeneratedAotFactoryRegistrations>
-    <AotFactoryRegistrationStamp Condition="'$(UseArtifactsOutput)' != 'true'">$(MSBuildProjectDirectory)\obj\$(Configuration)\$(TargetFramework)\Generated\AotFactoryRegistrations.stamp</AotFactoryRegistrationStamp>
-    <AotFactoryRegistrationStamp Condition="'$(UseArtifactsOutput)' == 'true'">$(BaseIntermediateOutputPath)$(Configuration)\$(TargetFramework)\Generated\AotFactoryRegistrations.stamp</AotFactoryRegistrationStamp>
+    <GeneratedAotFactoryRegistrations>$(BaseIntermediateOutputPath)$(Configuration)\$(TargetFramework)\Generated\AotFactoryRegistrations.g.cs</GeneratedAotFactoryRegistrations>
+    <AotFactoryRegistrationStamp>$(BaseIntermediateOutputPath)$(Configuration)\$(TargetFramework)\Generated\AotFactoryRegistrations.stamp</AotFactoryRegistrationStamp>
   </PropertyGroup>
 
   <ItemGroup Condition="'$(DesignTimeBuild)' != 'true'">
@@ -75,14 +74,11 @@
     <ProjectReference Include="..\XREngine.Runtime.Rendering.OpenGL\XREngine.Runtime.Rendering.OpenGL.csproj" Condition="'$(XREngineIncludeOpenGlBackend)' == 'true'" />
     <ProjectReference Include="..\XREngine.Runtime.Rendering\XREngine.Runtime.Rendering.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.Rendering.Vulkan\XREngine.Runtime.Rendering.Vulkan.csproj" Condition="'$(XREngineIncludeVulkanBackend)' == 'true'" />
-    <!-- Transitional Phase 3 edge: Bootstrap still composes facade-owned world, pawn,
-         movement, and concrete physics types. Remove this reference when those open
-         ownership slices move to their target runtime assemblies. -->
-    <ProjectReference Include="..\XRENGINE\XRENGINE.csproj" />
   </ItemGroup>
 
   <Target Name="ValidateRendererBackendSelection" BeforeTargets="PrepareForBuild">
-    <Error Condition="'$(XREngineIncludeOpenGlBackend)' != 'true' and '$(XREngineIncludeVulkanBackend)' != 'true'" Text="XREngine.Runtime.Bootstrap requires at least one statically packaged renderer backend. Set XREngineRendererBackends to All, OpenGL, or Vulkan." />
+    <Error Condition="'$(XREngineRendererBackends)' != 'All' and '$(XREngineRendererBackends)' != 'OpenGL' and '$(XREngineRendererBackends)' != 'Vulkan' and '$(XREngineRendererBackends)' != 'None'" Text="XREngineRendererBackends must be All, OpenGL, Vulkan, or None." />
+    <Error Condition="'$(XREngineRendererBackends)' != 'None' and '$(XREngineIncludeOpenGlBackend)' != 'true' and '$(XREngineIncludeVulkanBackend)' != 'true'" Text="XREngine.Runtime.Bootstrap requires at least one statically packaged renderer backend unless XREngineRendererBackends=None is selected for a headless host." />
   </Target>
 
   <ItemGroup>

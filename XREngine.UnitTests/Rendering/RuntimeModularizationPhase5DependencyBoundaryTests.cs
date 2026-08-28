@@ -169,7 +169,6 @@ public sealed class RuntimeModularizationPhase5DependencyBoundaryTests
         string bootstrapRoot = Path.Combine(root, "XREngine.Runtime.Bootstrap");
         string hostRoot = Path.Combine(bootstrapRoot, "SubsystemHost");
         string bootstrapProject = File.ReadAllText(Path.Combine(bootstrapRoot, "XREngine.Runtime.Bootstrap.csproj"));
-        string facadeProject = File.ReadAllText(Path.Combine(root, "XRENGINE", "XREngine.csproj"));
         string adapterBootstrap = File.ReadAllText(Path.Combine(hostRoot, "RuntimeAdapterBootstrap.cs"));
 
         string[] hostFiles =
@@ -201,14 +200,13 @@ public sealed class RuntimeModularizationPhase5DependencyBoundaryTests
             bootstrapProject.ShouldContain($"..\\{adapterName}\\**\\*.cs");
         bootstrapProject.ShouldNotContain("..\\XREngine.Runtime.ModelAssetPipeline\\**\\*.cs");
         bootstrapProject.ShouldNotContain("..\\XREngine.Runtime.ModelingIntegration\\**\\*.cs");
-        facadeProject.ShouldNotContain("GenerateAotFactoryRegistrations");
+        File.Exists(Path.Combine(root, "XRENGINE", "XREngine.csproj")).ShouldBeFalse();
     }
 
     [Test]
     public void FeatureNativeCargo_IsOwnedBelowTheFacade()
     {
         string root = ResolveWorkspaceRoot();
-        string facadeProject = File.ReadAllText(Path.Combine(root, "XRENGINE", "XREngine.csproj"));
         string audioAdapterProject = File.ReadAllText(Path.Combine(
             root, "XREngine.Runtime.AudioIntegration", "XREngine.Runtime.AudioIntegration.csproj"));
         string inputProject = File.ReadAllText(Path.Combine(root, "XREngine.Input", "XREngine.Input.csproj"));
@@ -216,10 +214,7 @@ public sealed class RuntimeModularizationPhase5DependencyBoundaryTests
         string renderingProject = File.ReadAllText(Path.Combine(
             root, "XREngine.Runtime.Rendering", "XREngine.Runtime.Rendering.csproj"));
 
-        facadeProject.ShouldNotContain("OVRLipSync.dll");
-        facadeProject.ShouldNotContain("openvr_api.dll");
-        facadeProject.ShouldNotContain("Silk.NET.OpenAL.Soft.Native");
-        facadeProject.ShouldNotContain("SharpFont.Dependencies");
+        File.Exists(Path.Combine(root, "XRENGINE", "XREngine.csproj")).ShouldBeFalse();
         audioAdapterProject.ShouldContain("OVRLipSync.dll");
         inputProject.ShouldContain("openvr_api.dll");
         inputProject.ShouldContain("ActionManifest.json");

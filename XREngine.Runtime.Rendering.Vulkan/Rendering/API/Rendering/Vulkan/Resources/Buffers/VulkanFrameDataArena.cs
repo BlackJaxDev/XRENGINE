@@ -128,11 +128,40 @@ internal sealed class VulkanFrameDataArena
             return TryMakeSlice(frameSlot, lane, groupIndex, offset, (uint)length, alignment, out slice);
         }
 
-        if (!TryAppendChunkGroup(laneIndex, length, alignment, out int appendedIndex))
+        if (lane == EVulkanFrameDataLane.AdvancedSceneStorage ||
+            !TryAppendChunkGroup(laneIndex, length, alignment, out int appendedIndex))
             return false;
         offsets = _nextOffsets[laneIndex];
         offsets[appendedIndex][frameSlot] = length;
         return TryMakeSlice(frameSlot, lane, appendedIndex, 0, (uint)length, alignment, out slice);
+    }
+
+    /// <summary>
+    /// Reserves one fixed-capacity chunk group for a boundary-owned lane. The
+    /// advanced-scene lane subsequently fails on exhaustion instead of growing
+    /// native mapped storage from the per-frame preparation path.
+    /// </summary>
+    internal bool TryReserveLaneCapacity(
+        EVulkanFrameDataLane lane,
+        ulong capacityPerFrameSlot,
+        uint alignment = 16u)
+    {
+        if (!IsActive || !_backend.IsOperational || !IsValidLane(lane) ||
+            capacityPerFrameSlot == 0u || alignment == 0u ||
+            Volatile.Read(ref _hostAccess) != 0)
+        {
+            return false;
+        }
+
+        int laneIndex = (int)lane;
+        if (_chunkGroupCounts[laneIndex] != 0)
+            return false;
+
+        return TryAppendChunkGroup(
+            laneIndex,
+            capacityPerFrameSlot,
+            alignment,
+            out _);
     }
 
     internal bool TryAllocateWrite(int frameSlot, EVulkanFrameDataLane lane, ReadOnlySpan<byte> source, uint alignment, out VulkanFrameDataSlice slice)
@@ -515,6 +544,7 @@ internal sealed class VulkanFrameDataArena
         EVulkanFrameDataLane.Readback => BufferUsageFlags.TransferDstBit,
         EVulkanFrameDataLane.Uniform => BufferUsageFlags.UniformBufferBit | BufferUsageFlags.TransferSrcBit | BufferUsageFlags.TransferDstBit,
         EVulkanFrameDataLane.Storage => BufferUsageFlags.StorageBufferBit | BufferUsageFlags.TransferSrcBit | BufferUsageFlags.TransferDstBit,
+        EVulkanFrameDataLane.AdvancedSceneStorage => BufferUsageFlags.StorageBufferBit | BufferUsageFlags.TransferSrcBit | BufferUsageFlags.TransferDstBit,
         EVulkanFrameDataLane.Indirect => BufferUsageFlags.IndirectBufferBit | BufferUsageFlags.StorageBufferBit | BufferUsageFlags.TransferSrcBit | BufferUsageFlags.TransferDstBit,
         _ => throw new ArgumentOutOfRangeException(nameof(lane), lane, "Unsupported Vulkan frame-data lane."),
     };

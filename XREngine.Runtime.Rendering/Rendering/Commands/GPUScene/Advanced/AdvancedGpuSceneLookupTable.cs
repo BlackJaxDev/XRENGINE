@@ -79,8 +79,40 @@ public sealed class AdvancedGpuSceneLookupTable
         AdvancedMaterialDatabase materials,
         AdvancedGlobalResourceDatabase resources)
     {
-        if (AdvancedGpuSceneLookupLayout.Create(scene, materials, resources) != Layout)
+        if (!CanPublish(scene, materials, resources))
             return false;
+
+        PublishAfterPreflight(scene, materials, resources);
+        return true;
+    }
+
+    internal bool CanPublish(
+        AdvancedGpuSceneDatabase scene,
+        AdvancedMaterialDatabase materials,
+        AdvancedGlobalResourceDatabase resources)
+        => AdvancedGpuSceneLookupLayout.Create(scene, materials, resources) == Layout &&
+           Layout.TotalCount <= (uint)_records.Length &&
+           SegmentFits(scene.Draws, Layout.Draws) &&
+           SegmentFits(scene.Instances, Layout.Instances) &&
+           SegmentFits(scene.Transforms, Layout.Transforms) &&
+           SegmentFits(scene.Deformations, Layout.Deformations) &&
+           SegmentFits(scene.RenderStates, Layout.RenderStates) &&
+           SegmentFits(scene.EditorIdentities, Layout.EditorIdentities) &&
+           SegmentFits(scene.Geometry.Records, Layout.Geometry) &&
+           SegmentFits(materials.Materials, Layout.Materials) &&
+           SegmentFits(materials.Kernels, Layout.ShadingKernels) &&
+           SegmentFits(materials.Layouts, Layout.MaterialLayouts) &&
+           SegmentFits(resources.Textures, Layout.Textures) &&
+           SegmentFits(resources.Samplers, Layout.Samplers);
+
+    internal void PublishAfterPreflight(
+        AdvancedGpuSceneDatabase scene,
+        AdvancedMaterialDatabase materials,
+        AdvancedGlobalResourceDatabase resources)
+    {
+        if (!CanPublish(scene, materials, resources))
+            throw new InvalidOperationException(
+                "The preflighted advanced lookup layout changed before commit.");
 
         _publishedDirtyRangeCount = 0;
         if (!CopyDirty(scene.Draws, Layout.Draws) ||
@@ -97,11 +129,11 @@ public sealed class AdvancedGpuSceneLookupTable
             !CopyDirty(resources.Samplers, Layout.Samplers))
         {
             _publishedDirtyRangeCount = 0;
-            return false;
+            throw new InvalidOperationException(
+                "A preflighted advanced lookup segment failed during commit.");
         }
 
         ClearSourceDirtyRanges(scene, materials, resources);
-        return true;
     }
 
     public bool TryResolve(
@@ -212,6 +244,13 @@ public sealed class AdvancedGpuSceneLookupTable
 
         _publishedDirtyRanges[_publishedDirtyRangeCount++] = range;
     }
+
+    private static bool SegmentFits<T>(
+        AdvancedGpuRecordTable<T> table,
+        in AdvancedGpuLookupSegment segment)
+        where T : unmanaged
+        => segment.Count == table.Capacity + 1u &&
+           table.LogicalLookupCount <= segment.Count;
 
     private static void ClearSourceDirtyRanges(
         AdvancedGpuSceneDatabase scene,

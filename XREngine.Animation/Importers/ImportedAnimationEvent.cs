@@ -2,12 +2,15 @@ using MemoryPack;
 
 namespace XREngine.Animation.Importers;
 
-/// <summary>An executable Unity AnimationEvent retained without Unity runtime types.</summary>
+/// <summary>
+/// An allowlisted native event converted from imported animation data.
+/// <see cref="EventId"/> is a native identifier and is never interpreted as a component method.
+/// </summary>
 [MemoryPackable]
 public sealed partial class ImportedAnimationEvent
 {
     public float Time { get; set; }
-    public string FunctionName { get; set; } = string.Empty;
+    public string EventId { get; set; } = string.Empty;
     public string StringParameter { get; set; } = string.Empty;
     public float FloatParameter { get; set; }
     public int IntParameter { get; set; }

@@ -74,16 +74,6 @@ internal static partial class SerializedSceneImporter
         // cook immediately before it is published, so every mesh receives an
         // identity from its final Unity placement.
 
-        ImportedAnimatorMetadataComponent? animatorMetadata = root.TryGetComponent<ImportedAnimatorMetadataComponent>(
-            out ImportedAnimatorMetadataComponent? existingAnimatorMetadata)
-            ? existingAnimatorMetadata
-            : root.AddComponent<ImportedAnimatorMetadataComponent>();
-        if (animatorMetadata is not null)
-        {
-            animatorMetadata.IsActive = metadata.ImportAnimation;
-            animatorMetadata.HasTransformHierarchy = true;
-        }
-
         var hierarchy = new ImportedHierarchy(modelPath)
         {
             SourceGuid = sourceGuid,
@@ -94,6 +84,12 @@ internal static partial class SerializedSceneImporter
         // "RootNode" instead, so using that display hierarchy verbatim shifts
         // every GameObject, Transform, and renderer fileID.
         IndexModelHierarchy(root, "//RootNode/root", hierarchy, state);
+        RegisterSerializedAnimatorRecord(
+            root,
+            "//RootNode/root",
+            metadata,
+            hierarchy,
+            state);
         RegisterIdentityMappings(hierarchy);
         state.Context.MarkOutcome(modelPath, SourceImportConversionOutcome.Converted);
         if (File.Exists(metaPath))
@@ -219,7 +215,6 @@ internal static partial class SerializedSceneImporter
             {
                 ModelComponent model when RequiresSkinnedMeshRenderer(model) => "SkinnedMeshRenderer",
                 ModelComponent => "MeshRenderer",
-                ImportedAnimatorMetadataComponent => "Animator",
                 _ => component.GetType().Name,
             };
             long componentFileId = SerializedModelFileId.ForComponent(sourceType, sourcePath);
@@ -248,6 +243,39 @@ internal static partial class SerializedSceneImporter
                 child.Name = segment;
             IndexModelHierarchy(child, $"{sourcePath}/{segment}", hierarchy, state);
         }
+    }
+
+    private static void RegisterSerializedAnimatorRecord(
+        SceneNode owner,
+        string sourcePath,
+        SerializedModelImporterDocument metadata,
+        ImportedHierarchy hierarchy,
+        ImportState state)
+    {
+        long fileId = SerializedModelFileId.ForComponent("Animator", sourcePath);
+        var record = new SerializedAnimatorRecord
+        {
+            Identity = new SourceAssetIdentity
+            {
+                AssetGuid = hierarchy.SourceGuid ?? string.Empty,
+                LocalFileId = fileId,
+                ObjectKind = SourceAssetObjectKind.Component,
+            },
+            Enabled = metadata.ImportAnimation,
+            HasTransformHierarchy = true,
+        };
+
+        hierarchy.SerializedAnimatorsByFileId[fileId] = record;
+        hierarchy.SerializedAnimatorOwners[record] = owner;
+        state.Context.RegisterAnimator(owner, record);
+        state.Context.AddDiagnostic(
+            "UNITYAVATAR0002",
+            SourceImportDiagnosticSeverity.Info,
+            SourceImportDiagnosticCategory.AvatarComponent,
+            "Animator controller, update mode, and culling mode were retained in the import manifest only. " +
+            "No runtime component was attached because the controller has not been compiled into a native animation state machine.",
+            hierarchy.SourcePath,
+            identity: record.Identity);
     }
 
     private static void AddUniqueNodeIdentity(

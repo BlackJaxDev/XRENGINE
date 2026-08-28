@@ -57,6 +57,14 @@ internal sealed class VulkanPreparedFrameRecording
         new AdvancedGpuScenePublicationReference[VulkanMeshOperationRequestQueue.Capacity];
     private readonly AdvancedGpuScenePublicationLease[] _canonicalPublicationLeases =
         new AdvancedGpuScenePublicationLease[VulkanMeshOperationRequestQueue.Capacity];
+    private readonly VulkanAdvancedScenePublicationUse[] _canonicalPublicationNativeUses =
+        new VulkanAdvancedScenePublicationUse[VulkanMeshOperationRequestQueue.Capacity];
+    private readonly EVulkanAdvancedSceneResourceFailure[] _canonicalPublicationNativeFailures =
+        new EVulkanAdvancedSceneResourceFailure[VulkanMeshOperationRequestQueue.Capacity];
+    private readonly string?[] _canonicalPublicationNativeFailureReasons =
+        new string[VulkanMeshOperationRequestQueue.Capacity];
+    private readonly byte[] _canonicalPublicationNativeAttempts =
+        new byte[VulkanMeshOperationRequestQueue.Capacity];
     private readonly VulkanResidentDrawTemplate?[] _residentTemplateUses =
         new VulkanResidentDrawTemplate[VulkanMeshOperationRequestQueue.Capacity];
     private VulkanPreparedCommandChain[] _commandChains =
@@ -484,6 +492,83 @@ internal sealed class VulkanPreparedFrameRecording
     }
 
     /// <summary>
+    /// Lowers one already-retained canonical publication into the current
+    /// frame slot. Failure is cached for this prepared frame so dual-feed draws
+    /// keep using the legacy path without repeating native work per draw.
+    /// </summary>
+    internal bool TryPrepareAdvancedScenePublication(
+        VulkanAdvancedSceneResourceRuntime runtime,
+        in AdvancedGpuSceneDrawIdentitySnapshot canonicalDraw,
+        out VulkanAdvancedScenePublicationState state,
+        out EVulkanAdvancedSceneResourceFailure failure,
+        out string reason,
+        out bool newlyAttempted)
+    {
+        ArgumentNullException.ThrowIfNull(runtime);
+        state = default;
+        newlyAttempted = false;
+        if (IsFrozen)
+            throw new InvalidOperationException(
+                "Advanced-scene publications must be prepared before recording is frozen.");
+        if (!canonicalDraw.IsValid || canonicalDraw.Database is not { } database)
+        {
+            failure = EVulkanAdvancedSceneResourceFailure.InvalidPublication;
+            reason = "canonical draw identity is invalid";
+            return false;
+        }
+
+        AdvancedGpuScenePublicationReference publication = canonicalDraw.Publication;
+        for (int index = 0; index < _canonicalPublicationLeaseCount; ++index)
+        {
+            if (!ReferenceEquals(_canonicalPublicationDatabases[index], database) ||
+                _canonicalPublicationReferences[index] != publication)
+            {
+                continue;
+            }
+
+            if (_canonicalPublicationNativeAttempts[index] != 0)
+            {
+                failure = _canonicalPublicationNativeFailures[index];
+                reason = _canonicalPublicationNativeFailureReasons[index] ??
+                    (failure == EVulkanAdvancedSceneResourceFailure.None
+                        ? "Ready"
+                        : "advanced-scene native realization failed");
+                VulkanAdvancedScenePublicationUse cachedUse =
+                    _canonicalPublicationNativeUses[index];
+                state = cachedUse.PublicationState;
+                return cachedUse.IsValid;
+            }
+
+            _canonicalPublicationNativeAttempts[index] = 1;
+            newlyAttempted = true;
+            if (!runtime.TryPreparePublication(
+                    FrameSlot,
+                    Generation,
+                    database,
+                    publication,
+                    out VulkanAdvancedScenePublicationUse use,
+                    out failure,
+                    out reason))
+            {
+                _canonicalPublicationNativeFailures[index] = failure;
+                _canonicalPublicationNativeFailureReasons[index] = reason;
+                return false;
+            }
+
+            _canonicalPublicationNativeUses[index] = use;
+            state = use.PublicationState;
+            _canonicalPublicationNativeFailures[index] =
+                EVulkanAdvancedSceneResourceFailure.None;
+            _canonicalPublicationNativeFailureReasons[index] = "Ready";
+            return true;
+        }
+
+        failure = EVulkanAdvancedSceneResourceFailure.InvalidPublication;
+        reason = "canonical publication must be GPU-retained before native realization";
+        return false;
+    }
+
+    /// <summary>
     /// Adopts one use already acquired from the resident table. Duplicate draw
     /// references collapse to one frame-owned use without allocating.
     /// </summary>
@@ -533,6 +618,18 @@ internal sealed class VulkanPreparedFrameRecording
             return false;
         }
 
+        if (!destination.CanAdoptRetainedLifetimes(
+                FrameSlot,
+                _canonicalPublicationDatabases,
+                _canonicalPublicationReferences,
+                _canonicalPublicationLeaseCount,
+                _residentTemplateUses,
+                _residentTemplateUseCount))
+        {
+            reason = "frame-slot retained-lifetime capacity was exhausted before atomic transfer";
+            return false;
+        }
+
         for (int index = 0; index < _canonicalPublicationLeaseCount; ++index)
         {
             AdvancedSharedGpuSceneDatabase database =
@@ -543,13 +640,17 @@ internal sealed class VulkanPreparedFrameRecording
                     FrameSlot,
                     database,
                     _canonicalPublicationReferences[index],
-                    ref _canonicalPublicationLeases[index]))
+                    ref _canonicalPublicationLeases[index],
+                    ref _canonicalPublicationNativeUses[index]))
             {
-                reason = "frame-slot canonical publication retirement capacity was exhausted";
-                return false;
+                throw new InvalidOperationException(
+                    "A preflighted canonical publication lifetime transfer failed during commit.");
             }
             _canonicalPublicationDatabases[index] = null;
             _canonicalPublicationReferences[index] = default;
+            _canonicalPublicationNativeAttempts[index] = 0;
+            _canonicalPublicationNativeFailures[index] = default;
+            _canonicalPublicationNativeFailureReasons[index] = null;
         }
         _canonicalPublicationLeaseCount = 0;
 
@@ -560,8 +661,8 @@ internal sealed class VulkanPreparedFrameRecording
                     "Prepared resident template use ownership is missing.");
             if (!destination.TryAdoptResidentTemplate(FrameSlot, template))
             {
-                reason = "frame-slot resident template retirement capacity was exhausted";
-                return false;
+                throw new InvalidOperationException(
+                    "A preflighted resident template lifetime transfer failed during commit.");
             }
             _residentTemplateUses[index] = null;
         }
@@ -581,10 +682,15 @@ internal sealed class VulkanPreparedFrameRecording
 
         for (int index = 0; index < _canonicalPublicationLeaseCount; ++index)
         {
+            _canonicalPublicationNativeUses[index].Dispose();
+            _canonicalPublicationNativeUses[index] = default;
             _canonicalPublicationLeases[index].Dispose();
             _canonicalPublicationLeases[index] = default;
             _canonicalPublicationDatabases[index] = null;
             _canonicalPublicationReferences[index] = default;
+            _canonicalPublicationNativeAttempts[index] = 0;
+            _canonicalPublicationNativeFailures[index] = default;
+            _canonicalPublicationNativeFailureReasons[index] = null;
         }
         _canonicalPublicationLeaseCount = 0;
 

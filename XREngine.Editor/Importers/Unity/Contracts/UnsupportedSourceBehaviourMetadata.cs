@@ -1,7 +1,7 @@
 namespace XREngine.Scene.Prefabs;
 
 /// <summary>
-/// Serialized Unity MonoBehaviour data retained for inspection when no adapter exists.
+/// Bounded summary of a serialized Unity MonoBehaviour for which no adapter exists.
 /// </summary>
 [Serializable]
 public sealed class UnsupportedSourceBehaviourMetadata
@@ -11,5 +11,9 @@ public sealed class UnsupportedSourceBehaviourMetadata
     public string ScriptGuid { get; set; } = string.Empty;
     public long ScriptFileId { get; set; }
     public bool Enabled { get; set; } = true;
-    public string SerializedYaml { get; set; } = string.Empty;
+    public int SerializedPayloadByteCount { get; set; }
+    public string SerializedPayloadSha256 { get; set; } = string.Empty;
+    public int SerializedFieldCount { get; set; }
+    public List<string> SerializedFieldNames { get; set; } = [];
+    public bool SerializedFieldNamesTruncated { get; set; }
 }

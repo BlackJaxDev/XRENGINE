@@ -18,6 +18,8 @@ internal sealed class VulkanResidentTemplateFrameSlotLifetimes
             new AdvancedGpuScenePublicationReference[VulkanMeshOperationRequestQueue.Capacity];
         internal readonly AdvancedGpuScenePublicationLease[] PublicationLeases =
             new AdvancedGpuScenePublicationLease[VulkanMeshOperationRequestQueue.Capacity];
+        internal readonly VulkanAdvancedScenePublicationUse[] NativePublicationUses =
+            new VulkanAdvancedScenePublicationUse[VulkanMeshOperationRequestQueue.Capacity];
         internal readonly VulkanResidentDrawTemplate?[] Templates =
             new VulkanResidentDrawTemplate[VulkanMeshOperationRequestQueue.Capacity];
         internal int PublicationCount;
@@ -40,7 +42,8 @@ internal sealed class VulkanResidentTemplateFrameSlotLifetimes
         int frameSlot,
         AdvancedSharedGpuSceneDatabase database,
         in AdvancedGpuScenePublicationReference publication,
-        ref AdvancedGpuScenePublicationLease lease)
+        ref AdvancedGpuScenePublicationLease lease,
+        ref VulkanAdvancedScenePublicationUse nativeUse)
     {
         Slot slot = GetSlot(frameSlot);
         for (int index = 0; index < slot.PublicationCount; ++index)
@@ -49,6 +52,8 @@ internal sealed class VulkanResidentTemplateFrameSlotLifetimes
                 slot.Publications[index] != publication)
                 continue;
 
+            nativeUse.Dispose();
+            nativeUse = default;
             lease.Dispose();
             lease = default;
             return true;
@@ -60,8 +65,85 @@ internal sealed class VulkanResidentTemplateFrameSlotLifetimes
         slot.Databases[target] = database;
         slot.Publications[target] = publication;
         slot.PublicationLeases[target] = lease;
+        slot.NativePublicationUses[target] = nativeUse;
         lease = default;
+        nativeUse = default;
         return true;
+    }
+
+    /// <summary>
+    /// Preflights a complete prepared batch so publication and template
+    /// ownership cannot be partially moved before a later capacity failure.
+    /// </summary>
+    internal bool CanAdoptRetainedLifetimes(
+        int frameSlot,
+        ReadOnlySpan<AdvancedSharedGpuSceneDatabase?> databases,
+        ReadOnlySpan<AdvancedGpuScenePublicationReference> publications,
+        int publicationCount,
+        ReadOnlySpan<VulkanResidentDrawTemplate?> templates,
+        int templateCount)
+    {
+        Slot slot = GetSlot(frameSlot);
+        if (publicationCount < 0 || publicationCount > databases.Length ||
+            publicationCount > publications.Length || templateCount < 0 ||
+            templateCount > templates.Length)
+        {
+            return false;
+        }
+
+        int publicationAdditions = 0;
+        for (int sourceIndex = 0; sourceIndex < publicationCount; ++sourceIndex)
+        {
+            AdvancedSharedGpuSceneDatabase? database = databases[sourceIndex];
+            if (database is null)
+                return false;
+
+            bool duplicate = false;
+            for (int destinationIndex = 0;
+                 destinationIndex < slot.PublicationCount;
+                 ++destinationIndex)
+            {
+                if (ReferenceEquals(slot.Databases[destinationIndex], database) &&
+                    slot.Publications[destinationIndex] == publications[sourceIndex])
+                {
+                    duplicate = true;
+                    break;
+                }
+            }
+            if (!duplicate)
+                ++publicationAdditions;
+        }
+
+        if (publicationAdditions >
+            slot.PublicationLeases.Length - slot.PublicationCount)
+        {
+            return false;
+        }
+
+        int templateAdditions = 0;
+        for (int sourceIndex = 0; sourceIndex < templateCount; ++sourceIndex)
+        {
+            VulkanResidentDrawTemplate? template = templates[sourceIndex];
+            if (template is null)
+                return false;
+
+            bool duplicate = false;
+            for (int destinationIndex = 0;
+                 destinationIndex < slot.TemplateCount;
+                 ++destinationIndex)
+            {
+                if (ReferenceEquals(slot.Templates[destinationIndex], template))
+                {
+                    duplicate = true;
+                    break;
+                }
+            }
+            if (!duplicate)
+                ++templateAdditions;
+        }
+
+        return templateAdditions <=
+            slot.Templates.Length - slot.TemplateCount;
     }
 
     internal bool TryAdoptResidentTemplate(
@@ -96,6 +178,8 @@ internal sealed class VulkanResidentTemplateFrameSlotLifetimes
 
         for (int index = 0; index < slot.PublicationCount; ++index)
         {
+            slot.NativePublicationUses[index].Dispose();
+            slot.NativePublicationUses[index] = default;
             slot.PublicationLeases[index].Dispose();
             slot.PublicationLeases[index] = default;
             slot.Databases[index] = null;

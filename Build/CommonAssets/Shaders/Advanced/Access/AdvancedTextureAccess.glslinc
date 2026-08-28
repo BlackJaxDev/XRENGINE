@@ -59,10 +59,13 @@ XR_ADV_TABLE_LAYOUT(XR_ADV_BINDING_ENCODED_SAMPLERS) readonly buffer XRAdvancedE
 
 #if defined(XR_ADV_TEXTURE_MODE_VULKAN_INDEXING) || \
     defined(XR_ADV_TEXTURE_MODE_VULKAN_HEAP)
+#ifndef XR_ADV_RESOURCE_DESCRIPTOR_CAPACITY
+#error "XR_ADV_RESOURCE_DESCRIPTOR_CAPACITY must match the Vulkan advanced resource descriptor layout."
+#endif
 XR_ADV_RESOURCE_LAYOUT(XR_ADV_BINDING_TEXTURE_DESCRIPTORS)
-uniform texture2D XR_ADV_TextureDescriptors[];
+uniform texture2D XR_ADV_TextureDescriptors[XR_ADV_RESOURCE_DESCRIPTOR_CAPACITY];
 XR_ADV_RESOURCE_LAYOUT(XR_ADV_BINDING_SAMPLER_DESCRIPTORS)
-uniform sampler XR_ADV_SamplerDescriptors[];
+uniform sampler XR_ADV_SamplerDescriptors[XR_ADV_RESOURCE_DESCRIPTOR_CAPACITY];
 #elif defined(XR_ADV_TEXTURE_MODE_ARRAY)
 XR_ADV_RESOURCE_LAYOUT(XR_ADV_BINDING_TEXTURE_ARRAY)
 uniform sampler2DArray XR_ADV_TextureArray;

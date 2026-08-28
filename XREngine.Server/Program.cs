@@ -1,440 +1,165 @@
 using System.Globalization;
-using System.IO;
-using System.Linq;
-using System.Numerics;
-using XREngine.Audio;
-using XREngine.Components;
-using XREngine.Components.Scene;
-using XREngine;
-using XREngine.Data.Colors;
-using XREngine.Data.Rendering;
 using XREngine.Fbx;
-using XREngine.Native;
 using XREngine.Rendering;
-using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Models.Caching;
-using XREngine.Rendering.UI;
 using XREngine.Runtime.Bootstrap;
 using XREngine.Runtime.Bootstrap.Builders;
 using XREngine.Scene;
 using XREngine.Scene.Prefabs;
-using XREngine.Scene.Transforms;
 using static XREngine.GameStartupSettings;
-namespace XREngine.Networking
+
+namespace XREngine.Networking;
+
+/// <summary>
+/// Dedicated realtime server entry point. Instance discovery, allocation, and asset delivery live outside
+/// this engine process; this executable only accepts direct UDP joins against its loaded world.
+/// </summary>
+public static class Program
 {
-    /// <summary>
-    /// Dedicated realtime server entry point. Instance discovery, allocation, and asset delivery live outside
-    /// this engine process; this executable only accepts direct UDP joins against its loaded world.
-    /// </summary>
-    public class Program
+    private static readonly Guid ServerSessionId = ResolveConfiguredSessionId();
+    private static readonly string? RequiredSessionToken = GetOptionalEnvironmentValue(XREngineEnvironmentVariables.SessionToken);
+    private static readonly string UdpMulticastGroup = GetOptionalEnvironmentValue(XREngineEnvironmentVariables.UdpMulticastGroup) ?? "239.0.0.222";
+    private static readonly int UdpMulticastPort = GetOptionalIntEnvironmentValue(XREngineEnvironmentVariables.UdpMulticastPort) ?? 5000;
+    private static readonly int UdpBindPort = GetOptionalIntEnvironmentValue(XREngineEnvironmentVariables.UdpBindPort)
+        ?? GetOptionalIntEnvironmentValue(XREngineEnvironmentVariables.UdpServerBindPort)
+        ?? 5000;
+    private static readonly int UdpAdvertisedPort = GetOptionalIntEnvironmentValue(XREngineEnvironmentVariables.UdpAdvertisedPort)
+        ?? GetOptionalIntEnvironmentValue(XREngineEnvironmentVariables.UdpServerSendPort)
+        ?? UdpBindPort;
+
+    private static void Main()
     {
-        private const string EditorViewCameraName = "Editor View";
+        using IDisposable modelAssetPipelineRegistration =
+            ModelAssetPipelineRegistration.Install(Engine.Assets, typeof(XRPrefabSource));
+        using IDisposable applicationServices =
+            RuntimeApplicationBootstrap.Install(RuntimeApplicationProfile.HeadlessServer);
+        Engine.ConfigureMemoryPolicy(EngineMemoryProfile.HeadlessServer);
 
-        private static readonly Guid _serverSessionId = ResolveConfiguredSessionId();
-        private static readonly string? _requiredSessionToken = GetOptionalEnvironmentValue(XREngineEnvironmentVariables.SessionToken);
-        private static readonly string _udpMulticastGroup = GetOptionalEnvironmentValue(XREngineEnvironmentVariables.UdpMulticastGroup) ?? "239.0.0.222";
-        private static readonly int _udpMulticastPort = GetOptionalIntEnvironmentValue(XREngineEnvironmentVariables.UdpMulticastPort)
-            ?? 5000;
-        private static readonly int _udpBindPort = GetOptionalIntEnvironmentValue(XREngineEnvironmentVariables.UdpBindPort)
-            ?? GetOptionalIntEnvironmentValue(XREngineEnvironmentVariables.UdpServerBindPort)
-            ?? 5000;
-        private static readonly int _udpAdvertisedPort = GetOptionalIntEnvironmentValue(XREngineEnvironmentVariables.UdpAdvertisedPort)
-            ?? GetOptionalIntEnvironmentValue(XREngineEnvironmentVariables.UdpServerSendPort)
-            ?? _udpBindPort;
+        Engine.ServerSessionResolver = ResolveServerSession;
+        Engine.ServerJoinAdmissionResolver = ResolveServerJoin;
 
-        private static void Main(string[] args)
+        UnitTestingWorldSettings settings = UnitTestingWorldSettingsStore.Load(false);
+        UnitTestingWorldSettingsStore.ApplyWorldKindOverride(settings);
+        ConfigureFbxTraceLogging(settings);
+        XRWorld targetWorld = BootstrapWorldFactory.CreateServerDefaultWorld();
+        Action<GameStartupSettings, GameState> initializeServerWorld = (_, _) =>
+            Engine.GetOrCreateWorld(targetWorld);
+        ConsoleCancelEventHandler cancelHandler = (_, eventArgs) =>
         {
-            using IDisposable modelAssetPipelineRegistration =
-                ModelAssetPipelineRegistration.Install(Engine.Assets, typeof(XRPrefabSource));
-            using IDisposable applicationServices =
-                RuntimeApplicationBootstrap.Install(RuntimeApplicationProfile.HeadlessServer);
-            Engine.ConfigureMemoryPolicy(EngineMemoryProfile.HeadlessServer);
+            eventArgs.Cancel = true;
+            Engine.ShutDown();
+        };
 
-            Engine.ServerSessionResolver = ResolveServerSession;
-            Engine.ServerJoinAdmissionResolver = ResolveServerJoin;
+        Engine.BeforeCreateWindows += initializeServerWorld;
+        Console.CancelKeyPress += cancelHandler;
+        GameStartupSettings startupSettings = GetEngineSettings();
+        RuntimeStartupPolicy.ValidateProfile(
+            RuntimeApplicationProfile.HeadlessServer,
+            RuntimeStartupPolicy.Normalize(startupSettings));
+        try
+        {
+            Engine.Run(startupSettings, Engine.LoadOrGenerateGameState());
+        }
+        finally
+        {
+            Console.CancelKeyPress -= cancelHandler;
+            Engine.BeforeCreateWindows -= initializeServerWorld;
+        }
+    }
 
-            //JsonConvert.DefaultSettings = DefaultJsonSettings;
+    private static void ConfigureFbxTraceLogging(UnitTestingWorldSettings settings)
+    {
+        FbxTrace.LogSink = static message => Debug.Meshes(message);
+        FbxTrace.ProfilerScopeFactory = static scopeName => Engine.Profiler.Start(scopeName);
 
-            // Determine world mode from command line or environment variable
-            //EWorldMode worldMode = ResolveWorldMode(args);
-
-            // Note: engine startup settings (render API, update rates, etc.) are sourced from UnitTestingWorld.Toggles
-            // via GetEngineSettings(). Load the JSON settings for both Default and UnitTesting modes so defaults don't
-            // accidentally pick unsupported/undesired values and render a black screen.
-            var settings = UnitTestingWorldSettingsStore.Load(false);
-            UnitTestingWorldSettingsStore.ApplyWorldKindOverride(settings);
-            ConfigureFbxTraceLogging(settings);
-            XRWorld targetWorld = BootstrapWorldFactory.CreateServerDefaultWorld();
-            Action<GameStartupSettings, GameState> initializeServerWorld = (_, _) =>
-                Engine.GetOrCreateWorld(targetWorld);
-            ConsoleCancelEventHandler cancelHandler = (_, eventArgs) =>
+        if (settings.FbxLogVerbosity == UnitTestFbxLogVerbosity.UseEnvironment)
+            FbxTrace.RefreshFromEnvironment();
+        else
+        {
+            FbxTrace.Verbosity = settings.FbxLogVerbosity switch
             {
-                eventArgs.Cancel = true;
-                Engine.ShutDown();
+                UnitTestFbxLogVerbosity.Off => FbxLogVerbosity.Off,
+                UnitTestFbxLogVerbosity.Errors => FbxLogVerbosity.Errors,
+                UnitTestFbxLogVerbosity.Warnings => FbxLogVerbosity.Warnings,
+                UnitTestFbxLogVerbosity.Info => FbxLogVerbosity.Info,
+                UnitTestFbxLogVerbosity.Verbose => FbxLogVerbosity.Verbose,
+                _ => FbxLogVerbosity.Off,
             };
+        }
 
-            Engine.BeforeCreateWindows += initializeServerWorld;
-            Console.CancelKeyPress += cancelHandler;
-            GameStartupSettings startupSettings = GetEngineSettings(targetWorld);
-            RuntimeStartupPolicy.ValidateProfile(
-                RuntimeApplicationProfile.HeadlessServer,
-                RuntimeStartupPolicy.Normalize(startupSettings));
-            try
+        Debug.Meshes($"FBX trace logging configured: setting={settings.FbxLogVerbosity}, effective={FbxTrace.Verbosity}, category={ELogCategory.Meshes}.");
+    }
+
+    private static ServerJoinAdmissionResult? ResolveServerJoin(PlayerJoinRequest request)
+    {
+        AdmissionFailureReason sessionFailure = RealtimeAdmissionValidator.ValidateSession(
+            request,
+            ServerSessionId,
+            RequiredSessionToken,
+            out string sessionFailureMessage);
+        if (sessionFailure != AdmissionFailureReason.None)
+            return new ServerJoinAdmissionResult(null, sessionFailure, sessionFailureMessage);
+
+        ServerSessionContext? session = ResolveServerSession(request);
+        return session is null
+            ? new ServerJoinAdmissionResult(null, AdmissionFailureReason.SessionNotFound, "No local world instance is ready for realtime joins.")
+            : new ServerJoinAdmissionResult(session);
+    }
+
+    private static ServerSessionContext? ResolveServerSession(PlayerJoinRequest request)
+    {
+        RuntimeWorld? worldInstance = Engine.WorldInstances.FirstOrDefault();
+        if (worldInstance?.TargetWorld is null)
+            return null;
+
+        WorldAssetIdentity worldAsset = WorldAssetIdentityProvider.Create(worldInstance.TargetWorld, CurrentProtocolVersion);
+        return new ServerSessionContext(ServerSessionId, worldInstance, worldAsset);
+    }
+
+    private static Guid ResolveConfiguredSessionId()
+    {
+        string? configured = GetOptionalEnvironmentValue(XREngineEnvironmentVariables.SessionId);
+        return Guid.TryParse(configured, out Guid sessionId) ? sessionId : Guid.NewGuid();
+    }
+
+    private static string? GetOptionalEnvironmentValue(string name)
+    {
+        string? value = Environment.GetEnvironmentVariable(name);
+        return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+    }
+
+    private static int? GetOptionalIntEnvironmentValue(string name)
+    {
+        string? value = GetOptionalEnvironmentValue(name);
+        return int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsed) && parsed is > 0 and <= 65535
+            ? parsed
+            : null;
+    }
+
+    private static string CurrentProtocolVersion { get; } = typeof(Engine).Assembly.GetName().Version?.ToString() ?? "dev";
+
+    private static GameStartupSettings GetEngineSettings()
+    {
+        UnitTestingWorldSettings unitTestSettings = RuntimeBootstrapState.Settings;
+        var settings = new GameStartupSettings
+        {
+            StartupWindows = [],
+            RunWithoutWindows = true,
+            OutputVerbosityOverride = new XREngine.Data.Core.OverrideableSetting<EOutputVerbosity>(EOutputVerbosity.Verbose, true),
+            UdpClientRecievePort = 5001,
+            UdpServerBindPort = UdpBindPort,
+            UdpServerSendPort = UdpAdvertisedPort,
+            UdpMulticastGroupIP = UdpMulticastGroup,
+            UdpMulticastPort = UdpMulticastPort,
+            MultiplayerSessionId = ServerSessionId,
+            NetworkingType = ENetworkingType.Server,
+            DefaultUserSettings = new UserSettings
             {
-                Engine.Run(startupSettings, Engine.LoadOrGenerateGameState());
-            }
-            finally
-            {
-                Console.CancelKeyPress -= cancelHandler;
-                Engine.BeforeCreateWindows -= initializeServerWorld;
-            }
-        }
+                VSync = EVSyncMode.Off,
+            },
+        };
 
-        private static void ConfigureFbxTraceLogging(UnitTestingWorldSettings settings)
-        {
-            FbxTrace.LogSink = static message => Debug.Meshes(message);
-            FbxTrace.ProfilerScopeFactory = static scopeName => Engine.Profiler.Start(scopeName);
-
-            if (settings.FbxLogVerbosity == UnitTestFbxLogVerbosity.UseEnvironment)
-                FbxTrace.RefreshFromEnvironment();
-            else
-            {
-                FbxTrace.Verbosity = settings.FbxLogVerbosity switch
-                {
-                    UnitTestFbxLogVerbosity.Off => FbxLogVerbosity.Off,
-                    UnitTestFbxLogVerbosity.Errors => FbxLogVerbosity.Errors,
-                    UnitTestFbxLogVerbosity.Warnings => FbxLogVerbosity.Warnings,
-                    UnitTestFbxLogVerbosity.Info => FbxLogVerbosity.Info,
-                    UnitTestFbxLogVerbosity.Verbose => FbxLogVerbosity.Verbose,
-                    _ => FbxLogVerbosity.Off,
-                };
-            }
-
-            Debug.Meshes($"FBX trace logging configured: setting={settings.FbxLogVerbosity}, effective={FbxTrace.Verbosity}, category={ELogCategory.Meshes}.");
-        }
-
-        private static ServerJoinAdmissionResult? ResolveServerJoin(PlayerJoinRequest request)
-        {
-            AdmissionFailureReason sessionFailure = RealtimeAdmissionValidator.ValidateSession(
-                request,
-                _serverSessionId,
-                _requiredSessionToken,
-                out string sessionFailureMessage);
-            if (sessionFailure != AdmissionFailureReason.None)
-                return new ServerJoinAdmissionResult(null, sessionFailure, sessionFailureMessage);
-
-            ServerSessionContext? session = ResolveServerSession(request);
-            return session is null
-                ? new ServerJoinAdmissionResult(null, AdmissionFailureReason.SessionNotFound, "No local world instance is ready for realtime joins.")
-                : new ServerJoinAdmissionResult(session);
-        }
-
-        private static ServerSessionContext? ResolveServerSession(PlayerJoinRequest request)
-        {
-            RuntimeWorld? worldInstance = ResolvePrimaryWorldInstance();
-            if (worldInstance?.TargetWorld is null)
-                return null;
-
-            WorldAssetIdentity worldAsset = WorldAssetIdentityProvider.Create(worldInstance.TargetWorld, CurrentProtocolVersion);
-
-            return new ServerSessionContext(_serverSessionId, worldInstance, worldAsset);
-        }
-
-        private static RuntimeWorld? ResolvePrimaryWorldInstance()
-        {
-            foreach (var window in RuntimeEngine.Windows)
-            {
-                if (window?.TargetWorldInstance?.WorldContext is RuntimeWorld worldInstance)
-                    return worldInstance;
-            }
-
-            return Engine.WorldInstances.FirstOrDefault();
-        }
-
-        private static Guid ResolveConfiguredSessionId()
-        {
-            string? configured = GetOptionalEnvironmentValue(XREngineEnvironmentVariables.SessionId);
-            return Guid.TryParse(configured, out Guid sessionId)
-                ? sessionId
-                : Guid.NewGuid();
-        }
-
-        private static string? GetOptionalEnvironmentValue(string name)
-        {
-            string? value = Environment.GetEnvironmentVariable(name);
-            return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
-        }
-
-        private static int? GetOptionalIntEnvironmentValue(string name)
-        {
-            string? value = GetOptionalEnvironmentValue(name);
-            return int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsed) && parsed is > 0 and <= 65535
-                ? parsed
-                : null;
-        }
-
-        private static string CurrentProtocolVersion { get; } = typeof(Engine).Assembly.GetName().Version?.ToString() ?? "dev";
-
-        static XRWorld CreateServerDebugWorld()
-        {
-            var scene = new XRScene("Server Console Scene");
-            var rootNode = new SceneNode("Root Node");
-            scene.RootNodes.Add(rootNode);
-
-            // Add simple 3D debug geometry (no assets) so we can visually confirm the
-            // camera + viewport + render pipeline are working even if UI is disabled.
-            AddDefaultGridFloor(rootNode);
-
-            SceneNode cameraNode = CreateCamera(rootNode, out var camComp);
-            var pawn = CreateDesktopViewerPawn(cameraNode, camComp);
-
-            // Create UI canvas as a root scene node (like Editor does) for proper screen-space rendering
-            var uiRootNode = new SceneNode("Server UI Root");
-            scene.RootNodes.Add(uiRootNode);
-            CreateConsoleUI(uiRootNode, camComp!, pawn);
-
-            return new XRWorld("Server World", scene);
-        }
-
-        private static void AddDefaultGridFloor(SceneNode rootNode)
-        {
-            var gridNode = rootNode.NewChild("GridFloor");
-            var debug = gridNode.AddComponent<DebugDrawComponent>()!;
-
-            const float extent = 50.0f;
-            const float step = 1.0f;
-            const int majorEvery = 10;
-            const float y = 0.0f;
-
-            for (float x = -extent; x <= extent; x += step)
-            {
-                int xi = (int)MathF.Round(x);
-                bool isAxis = xi == 0;
-                bool isMajor = (xi % majorEvery) == 0;
-                var color = isAxis ? ColorF4.White : isMajor ? ColorF4.Gray : ColorF4.DarkGray;
-                debug.AddLine(new Vector3(x, y, -extent), new Vector3(x, y, extent), color);
-            }
-
-            for (float z = -extent; z <= extent; z += step)
-            {
-                int zi = (int)MathF.Round(z);
-                bool isAxis = zi == 0;
-                bool isMajor = (zi % majorEvery) == 0;
-                var color = isAxis ? ColorF4.White : isMajor ? ColorF4.Gray : ColorF4.DarkGray;
-                debug.AddLine(new Vector3(-extent, y, z), new Vector3(extent, y, z), color);
-            }
-        }
-
-        private static SceneNode CreateCamera(SceneNode parentNode, out CameraComponent? camComp, bool smoothed = true)
-        {
-            var cameraNode = new SceneNode(parentNode, EditorViewCameraName);
-
-            if (smoothed)
-            {
-                var laggedTransform = cameraNode.GetTransformAs<SmoothedTransform>(true)!;
-                laggedTransform.RotationSmoothingSpeed = 30.0f;
-                laggedTransform.TranslationSmoothingSpeed = 30.0f;
-                laggedTransform.ScaleSmoothingSpeed = 30.0f;
-            }
-
-            if (cameraNode.TryAddComponent(out camComp, EditorViewCameraName))
-                camComp!.SetPerspective(60.0f, 0.1f, 100000.0f, null);
-            else
-                camComp = null;
-
-            return cameraNode;
-        }
-
-        private static FlyingCameraPawnComponent CreateDesktopViewerPawn(SceneNode cameraNode, CameraComponent? camera)
-        {
-            var pawnComp = cameraNode.AddComponent<FlyingCameraPawnComponent>();
-            var listener = cameraNode.AddComponent<AudioListenerComponent>()!;
-            listener.Gain = 1.0f;
-            listener.DistanceModel = EDistanceModel.InverseDistance;
-            listener.DopplerFactor = 0.5f;
-            listener.SpeedOfSound = 343.3f;
-
-            pawnComp!.Name = "TestPawn";
-            // Ensure GetCamera() resolves to the intended camera component before possession.
-            if (camera is not null)
-                pawnComp.CameraComponent = camera;
-
-            // Use direct possession (not queued) so the viewport camera wiring is deterministic.
-            pawnComp.PossessByLocalPlayer(ELocalPlayerIndex.One);
-            return pawnComp;
-        }
-
-        private static void CreateConsoleUI(SceneNode uiRootNode, out UICanvasComponent uiCanvas, out UICanvasInputComponent input)
-        {
-            // Add the canvas component directly to the root node (matching Editor pattern)
-            uiCanvas = uiRootNode.AddComponent<UICanvasComponent>("Console Canvas")!;
-            uiCanvas.IsActive = true;
-            var canvasTfm = uiCanvas.CanvasTransform;
-            canvasTfm.DrawSpace = ECanvasDrawSpace.Screen;
-            canvasTfm.Width = 1920.0f;
-            canvasTfm.Height = 1080.0f;
-            canvasTfm.CameraDrawSpaceDistance = 10.0f;
-            canvasTfm.Padding = new Vector4(0.0f);
-
-            // Large obvious test label in center to verify text rendering works
-            //AddTestLabel(uiRootNode);
-
-            AddFPSText(null, uiRootNode);
-
-            //Add input handler
-            input = uiRootNode.AddComponent<UICanvasInputComponent>()!;
-            input.IsActive = true;
-            //var outputLogNode = uiRootNode.NewChild(out UIMaterialComponent outputLogBackground);
-            //outputLogBackground.Material = BackgroundMaterial;
-            //outputLogBackground.IsActive = true;
-
-            var logTextNode = uiRootNode.NewChild(out VirtualizedConsoleUIComponent outputLogComp);
-            outputLogComp.HorizontalAlignment = EHorizontalAlignment.Left;
-            outputLogComp.VerticalAlignment = EVerticalAlignment.Top;
-            outputLogComp.WrapMode = FontGlyphSet.EWrapMode.None;
-            outputLogComp.Color = ColorF4.White;
-            outputLogComp.FontSize = 16;
-            outputLogComp.SetAsConsoleOut();
-            outputLogComp.IsActive = true;
-            var logTfm = outputLogComp.BoundableTransform;
-            logTfm.MinAnchor = new Vector2(0.0f, 0.0f);
-            logTfm.MaxAnchor = new Vector2(1.0f, 1.0f);
-            logTfm.Margins = new Vector4(10.0f, 10.0f, 10.0f, 10.0f);
-        }
-
-        /// <summary>
-        /// Creates a console UI for the server and sets the UI and input components to the main player's camera and pawn.
-        /// </summary>
-        /// <param name="rootNode"></param>
-        private static void CreateConsoleUI(SceneNode rootNode)
-        {
-            CreateConsoleUI(rootNode, out UICanvasComponent uiCanvas, out UICanvasInputComponent input);
-            var pawnForInput = Engine.State.MainPlayer?.ControlledPawnComponent as PawnComponent;
-            var pawnCam = pawnForInput?.GetSiblingComponent<CameraComponent>(false);
-            pawnCam?.UserInterface = uiCanvas;
-            input.OwningPawn = pawnForInput;
-        }
-
-        /// <summary>
-        /// Creates a console UI for the server and sets the UI and input components to the given camera and pawn.
-        /// </summary>
-        /// <param name="rootNode"></param>
-        /// <param name="camComp"></param>
-        /// <param name="pawnForInput"></param>
-        private static void CreateConsoleUI(SceneNode rootNode, CameraComponent camComp, PawnComponent? pawnForInput = null)
-        {
-            CreateConsoleUI(rootNode, out UICanvasComponent uiCanvas, out UICanvasInputComponent input);
-            camComp?.UserInterface = uiCanvas;
-            input.OwningPawn = pawnForInput;
-        }
-
-        //Simple FPS counter in the bottom right for debugging.
-        private static UITextComponent AddFPSText(FontGlyphSet? font, SceneNode parentNode)
-        {
-            SceneNode textNode = new(parentNode) { Name = "TestTextNode" };
-            UITextComponent text = textNode.AddComponent<UITextComponent>()!;
-            text.IsActive = true;
-            text.Font = font;
-            text.FontSize = 22;
-            text.Color = ColorF4.White;
-            text.WrapMode = FontGlyphSet.EWrapMode.None;
-            text.RegisterAnimationTick<UITextComponent>(TickFPS);
-            var textTransform = textNode.GetTransformAs<UIBoundableTransform>(true)!;
-            textTransform.MinAnchor = new Vector2(1.0f, 0.0f);
-            textTransform.MaxAnchor = new Vector2(1.0f, 0.0f);
-            textTransform.NormalizedPivot = new Vector2(1.0f, 0.0f);
-            textTransform.Width = null;
-            textTransform.Height = null;
-            textTransform.Margins = new Vector4(10.0f, 10.0f, 10.0f, 10.0f);
-            textTransform.Scale = new Vector3(1.0f);
-            return text;
-        }
-
-        private static readonly Queue<float> _fpsAvg = new();
-        private static void TickFPS(UITextComponent t)
-        {
-            _fpsAvg.Enqueue(1.0f / Engine.Time.Timer.Update.SmoothedDelta);
-            if (_fpsAvg.Count > 60)
-                _fpsAvg.Dequeue();
-            t.Text = $"Update: {MathF.Round(_fpsAvg.Sum() / _fpsAvg.Count)}hz";
-        }
-
-        /// <summary>
-        /// Adds a large, obvious static test label in the center of the screen
-        /// to verify that text rendering works at all on the server.
-        /// </summary>
-        private static UITextComponent AddTestLabel(SceneNode parentNode)
-        {
-            SceneNode labelNode = new(parentNode) { Name = "ServerTestLabel" };
-            UITextComponent label = labelNode.AddComponent<UITextComponent>()!;
-            label.IsActive = true;
-            label.FontSize = 48;
-            label.Color = ColorF4.Yellow;
-            label.Text = "=== XRE SERVER RUNNING ===";
-            label.WrapMode = FontGlyphSet.EWrapMode.None;
-            label.HorizontalAlignment = EHorizontalAlignment.Center;
-            label.VerticalAlignment = EVerticalAlignment.Center;
-
-            var tfm = labelNode.GetTransformAs<UIBoundableTransform>(true)!;
-            // Center anchors
-            tfm.MinAnchor = new Vector2(0.5f, 0.5f);
-            tfm.MaxAnchor = new Vector2(0.5f, 0.5f);
-            tfm.NormalizedPivot = new Vector2(0.5f, 0.5f);
-            tfm.Width = null;
-            tfm.Height = null;
-            return label;
-        }
-
-        private static XRMaterial? _backgroundMaterial;
-        public static XRMaterial BackgroundMaterial
-        {
-            get => _backgroundMaterial ??= MakeBackgroundMaterial();
-            set => _backgroundMaterial = value;
-        }
-
-        private static XRMaterial MakeBackgroundMaterial()
-        {
-            var floorShader = ShaderHelper.LoadEngineShader("UI\\GrabpassGaussian.frag");
-            ShaderVar[] floorUniforms =
-            [
-                new ShaderVector4(new ColorF4(0.0f, 1.0f), "MatColor"),
-                new ShaderFloat(10.0f, "BlurStrength"),
-                new ShaderInt(30, "SampleCount"),
-            ];
-            XRTexture2D grabTex = XRTexture2D.CreateGrabPassTextureResized(1.0f, EReadBufferMode.Front, true, false, false, false);
-            var floorMat = new XRMaterial(floorUniforms, [grabTex], floorShader);
-            floorMat.RenderOptions.CullMode = ECullMode.None;
-            floorMat.RenderOptions.RequiredEngineUniforms = EUniformRequirements.Camera;
-            floorMat.RenderPass = (int)EDefaultRenderPass.TransparentForward;
-            return floorMat;
-        }
-
-        static GameStartupSettings GetEngineSettings(XRWorld? targetWorld = null, bool enableDevRendering = true)
-        {
-            UnitTestingWorldSettings unitTestSettings = RuntimeBootstrapState.Settings;
-
-            var settings = new GameStartupSettings()
-            {
-                // The server initializes its world during the lifecycle's pre-window hook and
-                // intentionally creates no graphics or local-device surface.
-                StartupWindows = [],
-                RunWithoutWindows = true,
-                OutputVerbosityOverride = new XREngine.Data.Core.OverrideableSetting<EOutputVerbosity>(EOutputVerbosity.Verbose, true),
-                UdpClientRecievePort = 5001,
-                UdpServerBindPort = _udpBindPort,
-                UdpServerSendPort = _udpAdvertisedPort,
-                UdpMulticastGroupIP = _udpMulticastGroup,
-                UdpMulticastPort = _udpMulticastPort,
-                MultiplayerSessionId = _serverSessionId,
-                NetworkingType = ENetworkingType.Server,
-                DefaultUserSettings = new UserSettings()
-                {
-                    VSync = EVSyncMode.Off,
-                },
-            };
-
-            UnitTestingWorldSettingsStore.ApplyStartupOverrides(settings, unitTestSettings);
-            return settings;
-        }
+        UnitTestingWorldSettingsStore.ApplyStartupOverrides(settings, unitTestSettings);
+        return settings;
     }
 }
