@@ -46,10 +46,13 @@ public sealed class PublishedLauncherGenerationTests
             "user_settings.asset",
             "MonkeyBallVR.MonkeyBallGameBootstrap");
 
-        source.ShouldContain("RuntimeRenderingBootstrap.InstallEngineHostServices();");
-        source.ShouldContain("EnginePublishedCookedAssetRegistryRegistration.Register();");
+        source.ShouldNotContain("using IDisposable startupAssetServices = RuntimeAssetBootstrap.InstallEngineAssetServices();");
+        source.ShouldContain("using IDisposable applicationServices = RuntimeApplicationBootstrap.Install(");
+        source.ShouldNotContain("startupAssetServices.Dispose();");
+        source.ShouldNotContain("EnginePublishedCookedAssetRegistryRegistration");
         source.ShouldContain("startup = LoadRequiredPublishedAsset<GameStartupSettings>(archivePath, \"startup.asset\");");
         source.ShouldContain("IGameLaunchBootstrap gameBootstrap = new global::MonkeyBallVR.MonkeyBallGameBootstrap();");
+        source.ShouldContain("gameBootstrap.ApplicationProfile");
         source.ShouldContain("IGameLaunchRuntimeSmokeBootstrap? runtimeSmokeBootstrap =");
         source.ShouldContain("runtimeSmokeBootstrap?.ConfigureRuntimeSmoke();");
         source.ShouldContain("startup = gameBootstrap.ConfigureStartup(startup)");
@@ -57,6 +60,9 @@ public sealed class PublishedLauncherGenerationTests
         source.ShouldContain("runtimeSmokeBootstrap?.CompleteRuntimeSmoke();");
         source.ShouldContain("AOT runtime smoke passed.");
         source.IndexOf("runtimeSmokeBootstrap?.ConfigureRuntimeSmoke();", StringComparison.Ordinal)
+            .ShouldBeLessThan(
+                source.IndexOf("startup = gameBootstrap.ConfigureStartup(startup)", StringComparison.Ordinal));
+        source.IndexOf("RuntimeApplicationBootstrap.Install(", StringComparison.Ordinal)
             .ShouldBeLessThan(
                 source.IndexOf("startup = gameBootstrap.ConfigureStartup(startup)", StringComparison.Ordinal));
         source.ShouldContain("if (!File.Exists(commonAssetsArchivePath))");

@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using XREngine.Core.Files;
+using XREngine.Data;
 using XREngine.Data.Core;
 
 namespace XREngine
@@ -14,6 +15,7 @@ namespace XREngine
     /// the standard project folders: Assets, Intermediate, Build, Packages, Config, and Cache.
     /// </summary>
     [MemoryPackable]
+    [XR3rdPartyExtensions("xrproj:static")]
     public partial class XRProject : XRAsset
     {
         public const string ProjectExtension = "xrproj";
@@ -256,6 +258,23 @@ namespace XREngine
 
             var project = AssetSerializationServices.Current.LoadImmediate(projectFilePath, typeof(XRProject)) as XRProject;
             project?.EnsureStructure();
+            return project;
+        }
+
+        /// <summary>
+        /// Loads the native project descriptor through the third-party extension dispatch seam.
+        /// </summary>
+        public static XRProject? Load3rdPartyStatic(string projectFilePath)
+        {
+            if (string.IsNullOrWhiteSpace(projectFilePath) || !File.Exists(projectFilePath))
+                return null;
+
+            XRProject? project = AssetManager.Deserializer.Deserialize<XRProject>(File.ReadAllText(projectFilePath));
+            if (project is null)
+                return null;
+
+            project.FilePath = projectFilePath;
+            project.EnsureStructure();
             return project;
         }
 

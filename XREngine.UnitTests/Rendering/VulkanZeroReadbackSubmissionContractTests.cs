@@ -14,7 +14,7 @@ public sealed class VulkanZeroReadbackSubmissionContractTests
     {
         foreach (string path in new[]
         {
-            "XRENGINE/Settings/EditorPreferences.cs",
+            "XREngine.Runtime.Bootstrap/Settings/EditorPreferences.cs",
             "XREngine.Runtime.Rendering/Runtime/RuntimeEffectiveSettings.cs",
             "XREngine.Runtime.Rendering/Runtime/RuntimeDebugPreferences.cs",
             "XREngine.Runtime.Rendering/Runtime/Settings/RuntimeEngine.Rendering.EngineSettings.cs",
@@ -117,7 +117,7 @@ public sealed class VulkanZeroReadbackSubmissionContractTests
         string rung = Read("XREngine.Data/Rendering/Enums/EMaterialTextureBindingRung.cs");
         string stats = Read(
             "XREngine.Runtime.Rendering/Runtime/Statistics/RuntimeEngine.Rendering.Stats.GpuDriven.cs");
-        string profile = Read("XRENGINE/Engine/Engine.ProfileCapture.cs");
+        string profile = Read("XREngine.Runtime.Bootstrap/Engine/Engine.ProfileCapture.cs");
         string visibility = Read(
             "XREngine.Runtime.Rendering/Rendering/Commands/IGpuCompactVisibilityInput.cs");
 
@@ -179,7 +179,7 @@ public sealed class VulkanZeroReadbackSubmissionContractTests
             "XREngine.Runtime.Rendering/Rendering/Commands/GPURenderPassCollection/GPURenderPassCollection.ShadersAndInit.cs");
         string manager = Read(
             "XREngine.Runtime.Rendering/Rendering/HybridRenderingManager.cs");
-        string profile = Read("XRENGINE/Engine/Engine.ProfileCapture.cs");
+        string profile = Read("XREngine.Runtime.Bootstrap/Engine/Engine.ProfileCapture.cs");
 
         environment.ShouldContain(
             "XRE_GPU_DRIVEN_VALIDATION_CAPACITY_MULTIPLIER");

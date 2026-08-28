@@ -321,7 +321,7 @@ namespace XREngine.Components
                 && occurrence.Event.MessageOptions == EImportedAnimationEventMessageOptions.RequireReceiver)
             {
                 Debug.Animation(
-                    $"[AnimationEvent] '{occurrence.Event.FunctionName}' from state '{occurrence.StateName}' " +
+                    $"[AnimationEvent] '{occurrence.Event.EventId}' from state '{occurrence.StateName}' " +
                     $"had no compatible receiver on '{SceneNode.Name}'.");
             }
         }

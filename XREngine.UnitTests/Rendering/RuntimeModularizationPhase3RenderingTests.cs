@@ -18,10 +18,10 @@ public sealed class RuntimeModularizationPhase3RenderingTests
         typeof(UICanvasInputComponent).Assembly.GetName().Name.ShouldBe("XREngine.Runtime.InputIntegration");
         typeof(FlyingCameraPawnComponent).Assembly.GetName().Name.ShouldBe("XREngine.Runtime.InputIntegration");
         typeof(UICanvasInputComponent).GetInterfaces().ShouldContain(typeof(IUICanvasInputSource));
-        Type.GetType("XREngine.Components.UICanvasComponent, XREngine").ShouldBe(typeof(UICanvasComponent));
-        Type.GetType("XREngine.Components.UICanvasInputComponent, XREngine").ShouldBe(typeof(UICanvasInputComponent));
-        Type.GetType("XREngine.Components.FlyingCameraPawnComponent, XREngine").ShouldBe(typeof(FlyingCameraPawnComponent));
-        Type.GetType("XREngine.Rendering.UI.UIComponent, XREngine").ShouldBe(typeof(UIComponent));
+        Type.GetType(typeof(UICanvasComponent).AssemblyQualifiedName!).ShouldBe(typeof(UICanvasComponent));
+        Type.GetType(typeof(UICanvasInputComponent).AssemblyQualifiedName!).ShouldBe(typeof(UICanvasInputComponent));
+        Type.GetType(typeof(FlyingCameraPawnComponent).AssemblyQualifiedName!).ShouldBe(typeof(FlyingCameraPawnComponent));
+        Type.GetType(typeof(UIComponent).AssemblyQualifiedName!).ShouldBe(typeof(UIComponent));
 
         string root = ResolveWorkspaceRoot();
         Directory.Exists(Path.Combine(root, "XRENGINE", "Scene", "Components", "UI")).ShouldBeFalse();

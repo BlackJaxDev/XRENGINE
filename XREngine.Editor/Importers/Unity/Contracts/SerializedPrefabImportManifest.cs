@@ -6,7 +6,7 @@ namespace XREngine.Scene.Prefabs;
 [Serializable]
 public sealed class SerializedPrefabImportManifest
 {
-    public const int CurrentFormatVersion = 1;
+    public const int CurrentFormatVersion = 2;
 
     public int FormatVersion { get; set; } = CurrentFormatVersion;
     public string EntrySourcePath { get; set; } = string.Empty;
@@ -18,6 +18,8 @@ public sealed class SerializedPrefabImportManifest
     public DateTime ImportedAtUtc { get; set; } = DateTime.UtcNow;
     public List<SourceImportDependencyManifestEntry> Dependencies { get; set; } = [];
     public List<SourceImportDiagnostic> Diagnostics { get; set; } = [];
+    public List<SerializedAnimatorRecord> Animators { get; set; } = [];
+    public List<SerializedAvatarAnimationGraphRecord> AvatarAnimationGraphs { get; set; } = [];
     public List<UnsupportedSourceBehaviourMetadata> UnsupportedBehaviours { get; set; } = [];
     public List<string> OwnedOutputPaths { get; set; } = [];
 

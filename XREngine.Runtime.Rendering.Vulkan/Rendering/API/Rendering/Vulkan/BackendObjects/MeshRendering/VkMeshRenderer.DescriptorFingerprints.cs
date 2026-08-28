@@ -97,6 +97,8 @@ internal unsafe partial class VkMeshRenderer
 		for (int bindingIndex = 0; bindingIndex < bindings.Count; bindingIndex++)
 		{
 			DescriptorBindingInfo binding = bindings[bindingIndex];
+			if (_program?.IsDescriptorSetExternallyOwned(binding.Set) == true)
+				continue;
 			if ((usesSharedMaterialTier && binding.Set == VulkanMeshRenderingConventions.DescriptorSetMaterial) ||
 				(excludesGlobalTextureArray && binding.Set == VulkanBindlessMaterialDescriptors.TextureArraySet))
 				continue;
@@ -157,6 +159,8 @@ internal unsafe partial class VkMeshRenderer
 		for (int bindingIndex = 0; bindingIndex < bindings.Count; bindingIndex++)
 		{
 			DescriptorBindingInfo binding = bindings[bindingIndex];
+			if (_program?.IsDescriptorSetExternallyOwned(binding.Set) == true)
+				continue;
 			if ((usesSharedMaterialTier && binding.Set == VulkanMeshRenderingConventions.DescriptorSetMaterial) ||
 				(excludesGlobalTextureArray && binding.Set == VulkanBindlessMaterialDescriptors.TextureArraySet))
 				continue;
@@ -381,7 +385,8 @@ internal unsafe partial class VkMeshRenderer
 	}
 
 	private bool ShouldFingerprintProgramSamplerBinding(XRMaterial material, DescriptorBindingInfo binding)
-		=> IsImageDescriptorBinding(binding.DescriptorType) &&
+		=> _program?.IsDescriptorSetExternallyOwned(binding.Set) != true &&
+			IsImageDescriptorBinding(binding.DescriptorType) &&
 			!VulkanBindlessMaterialDescriptors.IsBindlessTextureArrayBinding(binding) &&
 			!MaterialResolvesDescriptorBinding(material, binding) &&
 			!IsFrameSourceSamplerBinding(material, binding) &&
@@ -575,7 +580,8 @@ internal unsafe partial class VkMeshRenderer
 		ComputeDispatchSnapshot? snapshot)
 	{
 		for (int i = 0; i < bindings.Count; i++)
-			if (IsFrameSourceSamplerBinding(material, bindings[i], snapshot))
+			if (_program?.IsDescriptorSetExternallyOwned(bindings[i].Set) != true &&
+				IsFrameSourceSamplerBinding(material, bindings[i], snapshot))
 				return true;
 
 		return false;

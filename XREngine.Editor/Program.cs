@@ -23,7 +23,6 @@ using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Core.Files;
 using XREngine.Editor;
-using XREngine.Editor.Assets;
 using XREngine.Editor.Importers;
 using XREngine.Editor.Importers.SerializedAssets;
 using XREngine.Editor.Mcp;

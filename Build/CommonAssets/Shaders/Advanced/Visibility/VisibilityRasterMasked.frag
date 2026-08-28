@@ -50,7 +50,7 @@ void main()
             COVERAGE_TEXTURE_BINDING);
     XRAdvancedEncodedTextureReference coverageTexture;
     XR_ADV_TryResolveTextureReference(
-        coverageBinding.textureReference,
+        coverageBinding,
         coverageTexture);
 
     float alphaCutoff = material.constantWordCount > ALPHA_CUTOFF_WORD

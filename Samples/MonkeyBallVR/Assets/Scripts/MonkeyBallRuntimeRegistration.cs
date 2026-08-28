@@ -15,10 +15,18 @@ internal static class MonkeyBallRuntimeRegistration
 {
     [ModuleInitializer]
     internal static void Register()
-        => PublishedCookedAssetRegistry.Register(
+    {
+        // Runtime asset-service composition can replace its owned registrations after
+        // module initialization. Reassert this game-owned serializer at the bootstrap
+        // boundary while keeping repeated initialization harmless.
+        if (PublishedCookedAssetRegistry.IsRegistered(typeof(MonkeyBallWorldAsset)))
+            return;
+
+        PublishedCookedAssetRegistry.Register(
             typeof(MonkeyBallWorldAsset),
             static asset => MonkeyBallWorldCookedSerializer.Serialize((MonkeyBallWorldAsset)asset),
             static (payload, assetType) => assetType == typeof(MonkeyBallWorldAsset)
                 ? MonkeyBallWorldCookedSerializer.Deserialize(payload)
                 : null);
+    }
 }

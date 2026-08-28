@@ -12,12 +12,12 @@ public struct AdvancedSamplerRecord
     public uint StableSamplerId;
     public uint Generation;
     public EAdvancedSamplerFilter Filter;
-    public uint Flags;
+    public EAdvancedSamplerRecordFlags Flags;
 
     public EAdvancedSamplerAddressMode AddressU;
     public EAdvancedSamplerAddressMode AddressV;
     public EAdvancedSamplerAddressMode AddressW;
-    public uint CompareOperation;
+    public EAdvancedCompareOperation CompareOperation;
 
     public Vector4 LodBiasMinMaxAnisotropy;
     public Vector4 BorderColor;

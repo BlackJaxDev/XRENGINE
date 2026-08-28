@@ -6,11 +6,11 @@ param(
 )
 
 $wheelMap = @{
-    "win-x64"     = @{ Suffix = "win_amd64"; Binary = "lib_coacd.dll"; Runtime = "XRENGINE/runtimes/win-x64/native" }
-    "linux-x64"   = @{ Suffix = "manylinux_2_17_x86_64.manylinux2014_x86_64"; Binary = "lib_coacd.so"; Runtime = "XRENGINE/runtimes/linux-x64/native" }
-    "linux-arm64" = @{ Suffix = "manylinux_2_17_aarch64.manylinux2014_aarch64"; Binary = "lib_coacd.so"; Runtime = "XRENGINE/runtimes/linux-arm64/native" }
-    "osx-x64"     = @{ Suffix = "macosx_11_0_x86_64"; Binary = "lib_coacd.dylib"; Runtime = "XRENGINE/runtimes/osx-x64/native" }
-    "osx-arm64"   = @{ Suffix = "macosx_11_0_arm64"; Binary = "lib_coacd.dylib"; Runtime = "XRENGINE/runtimes/osx-arm64/native" }
+    "win-x64"     = @{ Suffix = "win_amd64"; Binary = "lib_coacd.dll"; Runtime = "XREngine.Runtime.Core/runtimes/win-x64/native" }
+    "linux-x64"   = @{ Suffix = "manylinux_2_17_x86_64.manylinux2014_x86_64"; Binary = "lib_coacd.so"; Runtime = "XREngine.Runtime.Core/runtimes/linux-x64/native" }
+    "linux-arm64" = @{ Suffix = "manylinux_2_17_aarch64.manylinux2014_aarch64"; Binary = "lib_coacd.so"; Runtime = "XREngine.Runtime.Core/runtimes/linux-arm64/native" }
+    "osx-x64"     = @{ Suffix = "macosx_11_0_x86_64"; Binary = "lib_coacd.dylib"; Runtime = "XREngine.Runtime.Core/runtimes/osx-x64/native" }
+    "osx-arm64"   = @{ Suffix = "macosx_11_0_arm64"; Binary = "lib_coacd.dylib"; Runtime = "XREngine.Runtime.Core/runtimes/osx-arm64/native" }
 }
 
 if (-not $wheelMap.ContainsKey($Rid)) {

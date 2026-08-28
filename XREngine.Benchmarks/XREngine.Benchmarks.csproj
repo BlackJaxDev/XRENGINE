@@ -34,8 +34,6 @@
     <ProjectReference Include="..\XREngine.Runtime.ModelAssetPipeline\XREngine.Runtime.ModelAssetPipeline.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.Rendering\XREngine.Runtime.Rendering.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.Rendering.OpenGL\XREngine.Runtime.Rendering.OpenGL.csproj" />
-    <!-- Other benchmark surfaces still require the transitional facade until P6.6. -->
-    <ProjectReference Include="..\XRENGINE\XREngine.csproj" />
   </ItemGroup>
 
 </Project>

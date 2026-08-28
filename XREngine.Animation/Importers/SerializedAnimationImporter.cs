@@ -2716,6 +2716,7 @@ namespace XREngine.Animation.Importers
             List<ImportedAnimationEvent> events = new(sequence.Children.Count);
             HashSet<string> referencedGuids = new(StringComparer.OrdinalIgnoreCase);
             int trimmedEventCount = 0;
+            int discardedCallbackCount = 0;
             bool hasTrimRange = stopTimeSeconds > startTimeSeconds;
             for (int sourceOrder = 0; sourceOrder < sequence.Children.Count; sourceOrder++)
             {
@@ -2759,6 +2760,21 @@ namespace XREngine.Animation.Importers
                 if (hasTrimRange)
                     eventTime = Math.Clamp(eventTime, 0.0f, stopTimeSeconds - startTimeSeconds);
 
+                if (!ImportedAnimationEventAllowlist.TryMap(functionName, out string eventId))
+                {
+                    discardedCallbackCount++;
+                    string boundedFunctionName = functionName.Length <= 128
+                        ? functionName
+                        : functionName[..128];
+                    manifestBuilder.RecordSection(
+                        EImportedAnimationDataDomain.AnimationEvent,
+                        EImportedAnimationCapabilityState.IntentionallyDiscarded,
+                        $"m_Events[{sourceOrder}]",
+                        $"Discarded source callback '{boundedFunctionName}' because it is not mapped to an explicit native animation event identifier.",
+                        item.ToString());
+                    continue;
+                }
+
                 SourceAssetReference objectReference = ReadAssetReference(
                     GetMappingOrNull(item, "objectReferenceParameter"));
                 if (!string.IsNullOrWhiteSpace(objectReference.Guid))
@@ -2767,7 +2783,7 @@ namespace XREngine.Animation.Importers
                 events.Add(new ImportedAnimationEvent
                 {
                     Time = eventTime,
-                    FunctionName = functionName,
+                    EventId = eventId,
                     StringParameter = GetScalarString(item, "data")
                         ?? GetScalarString(item, "stringParameter")
                         ?? string.Empty,
@@ -2804,6 +2820,13 @@ namespace XREngine.Animation.Importers
                     $"[{startTimeSeconds:R}, {stopTimeSeconds:R}] seconds.");
             }
 
+            if (discardedCallbackCount > 0)
+            {
+                manifestBuilder.RecordNotice(
+                    EImportedAnimationDataDomain.AnimationEvent,
+                    $"Discarded {discardedCallbackCount} source callback(s) that were not present in the explicit native animation event allowlist.");
+            }
+
             if (unresolvedReferenceCount > 0)
             {
                 manifestBuilder.RecordNotice(
@@ -2823,7 +2846,7 @@ namespace XREngine.Animation.Importers
                     EImportedAnimationDataDomain.AnimationEvent,
                     EImportedAnimationCapabilityState.SupportedAndApplied,
                     "m_Events",
-                    $"Imported {events.Count} executable AnimationEvent entries in stable authored order.",
+                    $"Imported {events.Count} allowlisted native animation event entries in stable authored order.",
                     serializedYaml: string.Empty);
             }
             return [.. events];

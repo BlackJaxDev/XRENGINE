@@ -344,7 +344,7 @@ public sealed class VulkanCoreHardeningPhase524Tests
     [Test]
     public void ProfilerExposesCompactionCacheAndContentionCounters()
     {
-        string capture = ReadWorkspaceFile("XRENGINE/Engine/Engine.ProfileCapture.cs");
+        string capture = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/Engine/Engine.ProfileCapture.cs");
         foreach (string field in new[]
                  {
                      "vulkan_tracking_dependency_binds",

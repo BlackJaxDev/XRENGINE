@@ -10,7 +10,6 @@
   // restored to the previous accepted checkpoint.
   "requireCleanTrackedWorktree": true,
   "allowedPathPrefixes": [
-    "XRENGINE/Rendering",
     "XREngine.Runtime.Rendering",
     "XREngine.Runtime.Rendering.OpenGL",
     "XREngine.Runtime.Rendering.Vulkan"

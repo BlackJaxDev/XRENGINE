@@ -549,7 +549,7 @@ public sealed class VulkanDeferredProbeGiFixesTests
         string environmentSource = ReadWorkspaceFile("XREngine.Data/Environment/XREngineEnvironmentVariables.cs");
         string runtimeEffectiveSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/RuntimeEffectiveSettings.cs");
         string hostServicesSource = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Interfaces/IRuntimeRenderSettingsServices.cs");
-        string editorPreferencesSource = ReadWorkspaceFile("XREngine/Settings/EditorPreferences.cs");
+        string editorPreferencesSource = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/Settings/EditorPreferences.cs");
 
         profileSource.ShouldContain("public enum EVulkanDiagnosticPreset");
         profileSource.ShouldContain("Off");

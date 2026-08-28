@@ -135,7 +135,7 @@ public sealed class VulkanPhysicsChainParityContractTests
     [Test]
     public void StandaloneMode_IsAnIsolatedDispatcherGroupWithoutBackendSpecificCode()
     {
-        string component = ReadWorkspaceFile("XRENGINE/Scene/Components/Physics/PhysicsChainComponent.GPU.cs");
+        string component = ReadWorkspaceFile("XREngine.Runtime.Core/Scene/Components/Physics/PhysicsChainComponent.GPU.cs");
         string dispatcher = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/PhysicsCompute/GPUPhysicsChainDispatcher.cs");
 
         component.ShouldContain("SubmitToBatchedDispatcher(loop, timeVar)");

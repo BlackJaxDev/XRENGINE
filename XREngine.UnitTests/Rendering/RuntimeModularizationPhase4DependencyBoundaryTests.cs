@@ -186,7 +186,6 @@ public sealed class RuntimeModularizationPhase4DependencyBoundaryTests
         string root = ResolveWorkspaceRoot();
         string[] consumerProjects =
         [
-            "XRENGINE/XREngine.csproj",
             "XREngine.Editor/XREngine.Editor.csproj",
             "XREngine.Server/XREngine.Server.csproj",
             "XREngine.VRClient/XREngine.VRClient.csproj",
@@ -247,7 +246,6 @@ public sealed class RuntimeModularizationPhase4DependencyBoundaryTests
         string root = ResolveWorkspaceRoot();
         string[] consumerProjects =
         [
-            "XRENGINE/XREngine.csproj",
             "XREngine.Editor/XREngine.Editor.csproj",
             "XREngine.Runtime.Bootstrap/XREngine.Runtime.Bootstrap.csproj",
             "XREngine.Server/XREngine.Server.csproj",
@@ -274,15 +272,13 @@ public sealed class RuntimeModularizationPhase4DependencyBoundaryTests
             Path.Combine(root, "XREngine.Runtime.Rendering.OpenGL", "XREngine.Runtime.Rendering.OpenGL.csproj"));
         string vulkanProject = File.ReadAllText(
             Path.Combine(root, "XREngine.Runtime.Rendering.Vulkan", "XREngine.Runtime.Rendering.Vulkan.csproj"));
-        string legacyProject = File.ReadAllText(
-            Path.Combine(root, "XRENGINE", "XREngine.csproj"));
 
         kernelProject.ShouldNotContain("VulkanMemoryAllocatorBridge.Native.dll");
         kernelProject.ShouldNotContain("shader_fill.vert");
         openGlProject.ShouldContain(@"Rendering\UI\Ultralight\Shaders\shader_fill.vert");
         vulkanProject.ShouldContain("VulkanMemoryAllocatorBridge.Native.dll");
         vulkanProject.ShouldContain("<NvidiaSdkNative Include=");
-        legacyProject.ShouldNotContain("<NvidiaSdkNative Include=");
+        File.Exists(Path.Combine(root, "XRENGINE", "XREngine.csproj")).ShouldBeFalse();
     }
 
     [Test]
@@ -375,15 +371,14 @@ public sealed class RuntimeModularizationPhase4DependencyBoundaryTests
     public void P47_VrStateCompatibilityFacade_IsRemoved()
     {
         string root = ResolveWorkspaceRoot();
-        string engineRoot = Path.Combine(root, "XRENGINE", "Engine");
+        string engineRoot = Path.Combine(root, "XREngine.Runtime.Bootstrap", "Engine");
         string bootstrapHostRoot = Path.Combine(root, "XREngine.Runtime.Bootstrap", "SubsystemHost");
         string lifecycleSource = File.ReadAllText(Path.Combine(bootstrapHostRoot, "EngineVrLifecycle.cs"));
         string networkingSource = File.ReadAllText(Path.Combine(engineRoot, "Engine.Networking.cs"));
         string windowsSource = File.ReadAllText(Path.Combine(
             root,
-            "XRENGINE",
-            "Compatibility",
-            "Windowing",
+            "XREngine.Runtime.Bootstrap",
+            "RenderingHost",
             "Engine.Windows.cs"));
         string jsonSource = File.ReadAllText(Path.Combine(bootstrapHostRoot, "VrManifestJsonSerialization.cs"));
 
@@ -398,15 +393,15 @@ public sealed class RuntimeModularizationPhase4DependencyBoundaryTests
     }
 
     [Test]
-    public void P47_RuntimeRendering_DoesNotFriendBootstrap()
+    public void P67_RuntimeRendering_FriendsCurrentConsumersButNotRemovedFacade()
     {
         string root = ResolveWorkspaceRoot();
         string assemblyInfo = File.ReadAllText(
             Path.Combine(root, "XREngine.Runtime.Rendering", "Properties", "AssemblyInfo.cs"));
 
-        assemblyInfo.ShouldContain("InternalsVisibleTo(\"XREngine\")");
+        assemblyInfo.ShouldNotContain("InternalsVisibleTo(\"XREngine\")]");
         assemblyInfo.ShouldContain("InternalsVisibleTo(\"XREngine.UnitTests\")");
-        assemblyInfo.ShouldNotContain("InternalsVisibleTo(\"XREngine.Runtime.Bootstrap\")");
+        assemblyInfo.ShouldContain("InternalsVisibleTo(\"XREngine.Runtime.Bootstrap\")");
     }
 
     [Test]

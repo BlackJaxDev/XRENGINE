@@ -36,8 +36,7 @@ $projects = @(
     [pscustomobject]@{ Name = "XREngine.VRClient"; Path = "XREngine.VRClient/XREngine.VRClient.csproj"; Role = "Consumer" },
     [pscustomobject]@{ Name = "XREngine.UnitTests"; Path = "XREngine.UnitTests/XREngine.UnitTests.csproj"; Role = "Consumer" },
     [pscustomobject]@{ Name = "XREngine.Benchmarks"; Path = "XREngine.Benchmarks/XREngine.Benchmarks.csproj"; Role = "Consumer" },
-    [pscustomobject]@{ Name = "Samples/MonkeyBallVR"; Path = "Samples/MonkeyBallVR/MonkeyBallVR.csproj"; Role = "Consumer" },
-    [pscustomobject]@{ Name = "XREngine facade"; Path = "XRENGINE/XREngine.csproj"; Role = "RemovalSource" }
+    [pscustomobject]@{ Name = "Samples/MonkeyBallVR"; Path = "Samples/MonkeyBallVR/MonkeyBallVR.csproj"; Role = "Consumer" }
 )
 
 $rows = foreach ($project in $projects) {

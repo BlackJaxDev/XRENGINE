@@ -25,8 +25,14 @@ public sealed class AdvancedSharedGpuSceneDatabase
     private int _publicationCount;
     private ulong _nextPublicationSequence = 1u;
     private ulong _activePublicationSequence;
+    private int _activePublicationRingIndex = -1;
+    private AdvancedGpuScenePublication _preparedPublication;
     private ulong _lastSealedPublicationSequence;
     private ulong _lastReclaimedPublicationSequence;
+    private ulong _publicationFaultSequence;
+    private EAdvancedGpuScenePublicationFault _publicationFault;
+    private bool _publicationPrepared;
+    private bool _publicationFaulted;
 
     public AdvancedSharedGpuSceneDatabase(
         in AdvancedSharedGpuSceneCapacityProfile capacities,
@@ -98,6 +104,33 @@ public sealed class AdvancedSharedGpuSceneDatabase
         }
     }
 
+    public bool PublicationFaulted
+    {
+        get
+        {
+            lock (_publicationSync)
+                return _publicationFaulted;
+        }
+    }
+
+    public EAdvancedGpuScenePublicationFault PublicationFault
+    {
+        get
+        {
+            lock (_publicationSync)
+                return _publicationFault;
+        }
+    }
+
+    public ulong PublicationFaultSequence
+    {
+        get
+        {
+            lock (_publicationSync)
+                return _publicationFaultSequence;
+        }
+    }
+
     public ulong MinimumAcknowledgedPublicationSequence
     {
         get
@@ -120,6 +153,12 @@ public sealed class AdvancedSharedGpuSceneDatabase
     {
         lock (_publicationSync)
         {
+            if (_publicationFaulted)
+            {
+                token = AdvancedGpuScenePublicationConsumerToken.Invalid;
+                return false;
+            }
+
             for (uint index = 1u; index < (uint)_consumerActive.Length; ++index)
             {
                 if (_consumerActive[index] != 0)
@@ -157,15 +196,33 @@ public sealed class AdvancedSharedGpuSceneDatabase
     /// before sealing are stamped with the returned active sequence.
     /// </summary>
     public bool BeginPublication()
+        => TryBeginPublication(out _);
+
+    internal bool TryBeginPublication(
+        out AdvancedGpuScenePublicationTransaction transaction)
     {
         lock (_publicationSync)
         {
-            if (_activePublicationSequence != 0u || !EnsurePublicationCapacity())
+            transaction = default;
+            if (_publicationFaulted || _activePublicationSequence != 0u ||
+                !EnsurePublicationCapacity())
+                return false;
+
+            int ringIndex =
+                (_publicationHead + _publicationCount) % _publicationRing.Length;
+            if (!CanPreparePublicationCore(ringIndex))
                 return false;
 
             _activePublicationSequence = _nextPublicationSequence;
+            _activePublicationRingIndex = ringIndex;
+            _preparedPublication = default;
+            _publicationPrepared = false;
             BeginTablePublicationGeneration(_activePublicationSequence);
             BeginStructuralUpdateCore();
+            transaction = new AdvancedGpuScenePublicationTransaction(
+                _databaseEpoch,
+                _activePublicationSequence,
+                ringIndex);
             return true;
         }
     }
@@ -181,34 +238,122 @@ public sealed class AdvancedSharedGpuSceneDatabase
         ulong lookupGeneration,
         out AdvancedGpuScenePublicationReference reference)
     {
+        AdvancedGpuScenePublicationTransaction transaction;
         lock (_publicationSync)
         {
             reference = default;
-            if (_activePublicationSequence == 0u || !EnsurePublicationCapacity())
+            if (_activePublicationSequence == 0u || _activePublicationRingIndex < 0)
                 return false;
+            transaction = new AdvancedGpuScenePublicationTransaction(
+                _databaseEpoch,
+                _activePublicationSequence,
+                _activePublicationRingIndex);
+        }
+
+        if (!TryPreparePublication(
+                in transaction,
+                frameGeneration,
+                topologyGeneration,
+                contentGeneration,
+                lookupGeneration,
+                out _))
+        {
+            FaultActivePublication(
+                in transaction,
+                EAdvancedGpuScenePublicationFault.SnapshotCaptureFailed);
+            return false;
+        }
+
+        return TryCommitPreparedPublication(in transaction, out reference);
+    }
+
+    internal bool TryPreparePublication(
+        in AdvancedGpuScenePublicationTransaction transaction,
+        ulong frameGeneration,
+        ulong topologyGeneration,
+        ulong contentGeneration,
+        ulong lookupGeneration,
+        out AdvancedGpuScenePublicationReference reference)
+    {
+        lock (_publicationSync)
+        {
+            reference = default;
+            if (!IsActiveTransactionCurrent(in transaction) ||
+                _publicationFaulted || _publicationPrepared)
+            {
+                return false;
+            }
 
             AdvancedGpuScenePublication publication = new(
                 _databaseEpoch,
-                _activePublicationSequence,
+                transaction.Sequence,
                 frameGeneration,
                 topologyGeneration,
                 contentGeneration,
                 lookupGeneration);
-            int tail = (_publicationHead + _publicationCount) % _publicationRing.Length;
-            if (!TrySealTablePublication(_activePublicationSequence, _publicationSnapshots[tail]))
+            AdvancedGpuScenePublicationSnapshot snapshot =
+                _publicationSnapshots[transaction.RingIndex];
+            if (!TrySealTablePublication(transaction.Sequence, snapshot))
                 return false;
-            _publicationRing[tail] = publication;
-            _packagePinCounts[tail] = 0u;
-            _gpuPinCounts[tail] = 0u;
-            ++_publicationCount;
-            _lastSealedPublicationSequence = publication.Sequence;
-            _activePublicationSequence = 0u;
-            IncrementSequence(ref _nextPublicationSequence);
+
+            _preparedPublication = publication;
+            _publicationPrepared = true;
             reference = new AdvancedGpuScenePublicationReference(
                 publication,
-                _publicationSnapshots[tail]);
+                snapshot);
             return true;
         }
+    }
+
+    internal bool TryCommitPreparedPublication(
+        in AdvancedGpuScenePublicationTransaction transaction,
+        out AdvancedGpuScenePublicationReference reference)
+    {
+        lock (_publicationSync)
+        {
+            reference = default;
+            if (!IsActiveTransactionCurrent(in transaction) ||
+                _publicationFaulted || !_publicationPrepared)
+            {
+                return false;
+            }
+
+            try
+            {
+                HandleLookups.PublishAfterPreflight(Scene, Materials, Resources);
+            }
+            catch
+            {
+                FaultActivePublicationCore(
+                    in transaction,
+                    EAdvancedGpuScenePublicationFault.LookupPublicationFailed);
+                throw;
+            }
+
+            int ringIndex = transaction.RingIndex;
+            _publicationRing[ringIndex] = _preparedPublication;
+            _packagePinCounts[ringIndex] = 0u;
+            _gpuPinCounts[ringIndex] = 0u;
+            ++_publicationCount;
+            _lastSealedPublicationSequence = _preparedPublication.Sequence;
+            reference = new AdvancedGpuScenePublicationReference(
+                _preparedPublication,
+                _publicationSnapshots[ringIndex]);
+            _activePublicationSequence = 0u;
+            _activePublicationRingIndex = -1;
+            _preparedPublication = default;
+            _publicationPrepared = false;
+            IncrementSequence(ref _nextPublicationSequence);
+            return true;
+        }
+    }
+
+    internal void FaultActivePublication(
+        in AdvancedGpuScenePublicationTransaction transaction,
+        EAdvancedGpuScenePublicationFault fault)
+    {
+        lock (_publicationSync)
+            FaultActivePublicationCore(in transaction, fault);
     }
 
     /// <summary>
@@ -224,12 +369,9 @@ public sealed class AdvancedSharedGpuSceneDatabase
     {
         lock (_publicationSync)
         {
-            if (_activePublicationSequence == 0u)
-            {
-                if (!EnsurePublicationCapacity())
-                    return false;
-                _activePublicationSequence = _nextPublicationSequence;
-            }
+            if (_activePublicationSequence == 0u &&
+                !TryBeginPublication(out _))
+                return false;
 
             return SealPublication(
                 frameGeneration,
@@ -248,7 +390,7 @@ public sealed class AdvancedSharedGpuSceneDatabase
         lock (_publicationSync)
         {
             reference = default;
-            if (!IsConsumerTokenCurrent(token))
+            if (_publicationFaulted || !IsConsumerTokenCurrent(token))
                 return false;
 
             ulong nextSequence = _consumerAcknowledgements[token.Index] + 1u;
@@ -310,7 +452,8 @@ public sealed class AdvancedSharedGpuSceneDatabase
         lock (_publicationSync)
         {
             lease = default;
-            if (!TryFindPublication(reference, out int ringIndex))
+            if (_publicationFaulted ||
+                !TryFindPublication(reference, out int ringIndex))
                 return false;
 
             int leaseSlot = 0;
@@ -378,7 +521,8 @@ public sealed class AdvancedSharedGpuSceneDatabase
         out AdvancedResolvedSharedDrawRecords resolved)
     {
         resolved = default;
-        if (!Scene.TryResolveDraw(drawHandle, out AdvancedResolvedDrawRecords scene) ||
+        if (PublicationFaulted ||
+            !Scene.TryResolveDraw(drawHandle, out AdvancedResolvedDrawRecords scene) ||
             !Materials.Materials.TryGet(scene.Draw.Material, out AdvancedMaterialRecord material))
         {
             return false;
@@ -394,7 +538,8 @@ public sealed class AdvancedSharedGpuSceneDatabase
         out AdvancedSharedDrawDependencySnapshot snapshot)
     {
         snapshot = default;
-        if (!Scene.TryCreateDrawDependencySnapshot(
+        if (PublicationFaulted ||
+            !Scene.TryCreateDrawDependencySnapshot(
                 drawHandle,
                 out AdvancedDrawDependencySnapshot scene) ||
             !Materials.Materials.TryGetDenseIndex(
@@ -432,6 +577,9 @@ public sealed class AdvancedSharedGpuSceneDatabase
     /// </summary>
     public int CompactAndPublish()
     {
+        if (PublicationFaulted)
+            return -1;
+
         int total = Scene.CompactAndPublishRemaps();
         if (total < 0 ||
             !Accumulate(Materials.Materials.Compact(), ref total) ||
@@ -448,7 +596,11 @@ public sealed class AdvancedSharedGpuSceneDatabase
     }
 
     public bool PublishHandleLookups()
-        => HandleLookups.Publish(Scene, Materials, Resources);
+    {
+        lock (_publicationSync)
+            return !_publicationFaulted && _activePublicationSequence == 0u &&
+                HandleLookups.Publish(Scene, Materials, Resources);
+    }
 
     public void GrowAtFrameBoundary(
         in AdvancedSharedGpuSceneCapacityProfile capacities)
@@ -471,7 +623,8 @@ public sealed class AdvancedSharedGpuSceneDatabase
         lock (_publicationSync)
         {
             DrainAcknowledgedPublicationsAndReclaimTombstones();
-            if (_activePublicationSequence != 0u || _publicationCount != 0)
+            if (_publicationFaulted || _activePublicationSequence != 0u ||
+                _publicationCount != 0)
                 return false;
 
             Scene.GrowAtFrameBoundary(capacities.Scene);
@@ -624,6 +777,54 @@ public sealed class AdvancedSharedGpuSceneDatabase
            _consumerActive[token.Index] != 0 &&
            _consumerGenerations[token.Index] == token.Generation;
 
+    private bool IsActiveTransactionCurrent(
+        in AdvancedGpuScenePublicationTransaction transaction)
+        => transaction.IsValid &&
+           transaction.DatabaseEpoch == _databaseEpoch &&
+           transaction.Sequence == _activePublicationSequence &&
+           transaction.RingIndex == _activePublicationRingIndex;
+
+    private bool CanPreparePublicationCore(int ringIndex)
+    {
+        if ((uint)ringIndex >= (uint)_publicationSnapshots.Length ||
+            !HandleLookups.CanPublish(Scene, Materials, Resources))
+        {
+            return false;
+        }
+
+        AdvancedGpuScenePublicationSnapshot snapshot =
+            _publicationSnapshots[ringIndex];
+        return Scene.Draws.CanSealPublication(snapshot.Draws) &&
+            Scene.Instances.CanSealPublication(snapshot.Instances) &&
+            Scene.Transforms.CanSealPublication(snapshot.Transforms) &&
+            Scene.Deformations.CanSealPublication(snapshot.Deformations) &&
+            Scene.RenderStates.CanSealPublication(snapshot.RenderStates) &&
+            Scene.EditorIdentities.CanSealPublication(snapshot.EditorIdentities) &&
+            Scene.Geometry.Records.CanSealPublication(snapshot.Geometry) &&
+            Materials.Materials.CanSealPublication(snapshot.Materials) &&
+            Materials.Kernels.CanSealPublication(snapshot.Kernels) &&
+            Materials.Layouts.CanSealPublication(snapshot.Layouts) &&
+            Materials.CanSealPublication(snapshot.MaterialPayloads) &&
+            Resources.Textures.CanSealPublication(snapshot.Textures) &&
+            Resources.Samplers.CanSealPublication(snapshot.Samplers);
+    }
+
+    private void FaultActivePublicationCore(
+        in AdvancedGpuScenePublicationTransaction transaction,
+        EAdvancedGpuScenePublicationFault fault)
+    {
+        if (!IsActiveTransactionCurrent(in transaction))
+            return;
+
+        _publicationFaulted = true;
+        _publicationFault = fault == EAdvancedGpuScenePublicationFault.None
+            ? EAdvancedGpuScenePublicationFault.InvariantFailure
+            : fault;
+        _publicationFaultSequence = transaction.Sequence;
+        _preparedPublication = default;
+        _publicationPrepared = false;
+    }
+
     private void BeginTablePublicationGeneration(ulong sequence)
     {
         Scene.Draws.BeginPublicationGeneration(sequence);
@@ -654,14 +855,17 @@ public sealed class AdvancedSharedGpuSceneDatabase
             !Materials.Materials.TrySealPublication(sequence, snapshot.Materials) ||
             !Materials.Kernels.TrySealPublication(sequence, snapshot.Kernels) ||
             !Materials.Layouts.TrySealPublication(sequence, snapshot.Layouts) ||
+            !Materials.TrySealPublication(sequence, snapshot.MaterialPayloads) ||
+            snapshot.MaterialPayloads.Sequence != sequence ||
             !Resources.Textures.TrySealPublication(sequence, snapshot.Textures) ||
             !Resources.Samplers.TrySealPublication(sequence, snapshot.Samplers))
         {
             return false;
         }
 
-        snapshot.CaptureResourceGenerations(Resources.Generations);
-        return true;
+        return snapshot.TryCaptureResourceTableState(
+            sequence,
+            Resources.Generations);
     }
 
     private static ulong CreateDatabaseEpoch()

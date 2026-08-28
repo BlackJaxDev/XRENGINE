@@ -12,6 +12,11 @@ internal enum EVulkanFrameDataLane : byte
     Readback,
     Uniform,
     Storage,
+    /// <summary>
+    /// Boundary-reserved storage for canonical advanced-scene publication
+    /// images. This lane never grows while a frame is being prepared.
+    /// </summary>
+    AdvancedSceneStorage,
     Indirect,
     Count,
 }

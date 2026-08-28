@@ -339,7 +339,7 @@ public sealed class GLMeshRendererLifecycleContractTests
     {
         string materialSource = global::XREngine.UnitTests.SourceContractWorkspace.ReadPartialType("XREngine.Runtime.Rendering/Objects/Materials/XRMaterial.cs");
         string glMaterialSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenGL/BackendObjects/Materials/GLMaterial.cs");
-        string engineSettingsSource = ReadWorkspaceFile("XRENGINE/Engine/Subclasses/Rendering/EngineRenderingSettingsApplication.cs");
+        string engineSettingsSource = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/Engine/Subclasses/Rendering/EngineRenderingSettingsApplication.cs");
 
         materialSource.ShouldContain("public void DestroyShaderPipelineProgram()");
         materialSource.ShouldContain("public void SyncShaderPipelineProgramForCurrentSettings()");

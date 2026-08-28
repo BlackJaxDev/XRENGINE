@@ -42,6 +42,7 @@ internal static class VulkanDescriptorContracts
     [
         DescriptorType.CombinedImageSampler,
         DescriptorType.SampledImage,
+        DescriptorType.Sampler,
         DescriptorType.StorageImage,
         DescriptorType.UniformBuffer,
         DescriptorType.StorageBuffer,

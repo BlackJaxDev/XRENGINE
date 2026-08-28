@@ -1,4 +1,9 @@
 ﻿__assetType: XREngine.RuntimeEngine+Rendering+EngineSettings
+Execution:
+  GeneralWorkerThreadCount: -1
+  GeneralWorkerThreadCap: 16
+  RenderWorkerThreadCap: 8
+  ReservedForegroundThreadCount: -1
 OpenGL:
   Context: {}
   ShaderLinking:
@@ -16,6 +21,9 @@ OpenGL:
   AllowProgramPipelines: true
 Vulkan:
   Startup: {}
+  Presentation:
+    MaximumFramesAhead: 1
+    LimiterSpinThresholdMilliseconds: 0.25
   TargetMode: {}
   GpuDriven:
     Profile: Diagnostics
@@ -44,6 +52,10 @@ TextureSlowQueueWaitMilliseconds: 100
 TextureUploadFrameBudgetMilliseconds: 2
 EnableZeroReadbackMaterialScatter: true
 ZeroReadbackMaterialDrawPath: BindlessMaterialTable
+GeneralWorkerThreadCount: -1
+GeneralWorkerThreadCap: 16
+RenderWorkerThreadCap: 8
+ReservedForegroundThreadCount: -1
 OutputVerbosity: Verbose
 UseIntegerWeightingIds: true
 TransformReplicationKeyframeIntervalSec: 5
@@ -159,6 +171,7 @@ VrFoveationShadingRates: 1 0.7 0.5
 VrFoveationVisibilityMargin: 0.05
 VrFoveationForceFullResForUiAndNearField: true
 VrFoveationFullResNearDistanceMeters: 1.5
+AdvancedRenderPipelineMode: Available
 RvcInsetWideReuseEnabled: true
 RvcFovealRadiusDegrees: 5
 RvcGuardBandDegrees: 8

@@ -18,7 +18,7 @@ public static class AdvancedReconstructionDecoder
         resolved = default;
         invalidReason =
             EAdvancedReconstructionInvalidReason.BackgroundOrInvalidPayload;
-        if (!encoded.IsValid)
+        if (!encoded.IsValid || database.PublicationFaulted)
             return false;
 
         AdvancedVisibilityDecodedMetadata metadata = encoded.Metadata.Decode();

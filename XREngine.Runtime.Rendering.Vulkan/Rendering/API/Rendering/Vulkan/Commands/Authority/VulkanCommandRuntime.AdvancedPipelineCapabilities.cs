@@ -12,20 +12,19 @@ internal sealed partial class VulkanCommandRuntime
             : DeviceContext.Capabilities.Supports(EVulkanDeviceCapability.DrawIndirectCount)
                 ? EAdvancedIndirectSubmissionMode.MultiDrawIndirectCount
                 : EAdvancedIndirectSubmissionMode.MultiDrawIndirect;
-        EVulkanDescriptorBackend descriptorBackend = ResourceRuntime.Descriptors.ActiveDescriptorBackend;
-        EAdvancedTextureIndirectionMode textureIndirection = descriptorBackend switch
-        {
-            EVulkanDescriptorBackend.DescriptorHeap => EAdvancedTextureIndirectionMode.VulkanDescriptorHeap,
-            EVulkanDescriptorBackend.DescriptorIndexing => EAdvancedTextureIndirectionMode.VulkanDescriptorIndexing,
-            _ => EAdvancedTextureIndirectionMode.None,
-        };
+        VulkanAdvancedSceneResourceRuntime advancedResources =
+            ResourceRuntime.AdvancedSceneResources;
+        bool supportsAdvancedFrameStorage = advancedResources.IsReady &&
+            ResourceRuntime.FrameDataArena is { IsActive: true };
+        EAdvancedTextureIndirectionMode textureIndirection =
+            advancedResources.TextureIndirectionMode;
         return new(
             RuntimeGraphicsApiKind.Vulkan, true, true, EAdvancedVisibilityTargetEncoding.R32G32UInt,
             SupportsOrderedComputeWork, true, indirectSubmission, textureIndirection,
             DeviceContext.SupportsSynchronization2 ? EAdvancedSynchronizationMode.VulkanSynchronization2 : EAdvancedSynchronizationMode.VulkanLegacyBarriers,
-            true, true, EAdvancedShaderFamily.None, DeviceContext.SupportsBufferDeviceAddress,
-            DeviceContext.Capabilities.Supports(EVulkanDeviceCapability.DescriptorIndexing),
-            DeviceContext.SupportsDescriptorHeap, false, DeviceContext.SupportsMeshTaskIndirectCount,
+            supportsAdvancedFrameStorage, true, EAdvancedShaderFamily.None, DeviceContext.SupportsBufferDeviceAddress,
+            advancedResources.IsReady,
+            false, false, DeviceContext.SupportsMeshTaskIndirectCount,
             false, DeviceContext.Capabilities.Supports(EVulkanDeviceCapability.TimelineSemaphores));
     }
 

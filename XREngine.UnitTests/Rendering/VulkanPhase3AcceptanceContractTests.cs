@@ -25,7 +25,7 @@ public sealed class VulkanPhase3AcceptanceContractTests
 
         string environment = Read(
             "XREngine.Data/Environment/XREngineEnvironmentVariables.cs");
-        string profile = Read("XRENGINE/Engine/Engine.ProfileCapture.cs");
+        string profile = Read("XREngine.Runtime.Bootstrap/Engine/Engine.ProfileCapture.cs");
         string runner = Read("Tools/Benchmarks/Invoke-VulkanPerf.ps1");
         environment.ShouldContain("XRE_GPU_DRIVEN_VALIDATION_CAPACITY_FLOOR");
         profile.ShouldContain("\"gpu_driven_validation_capacity_floor\"");
@@ -133,7 +133,7 @@ public sealed class VulkanPhase3AcceptanceContractTests
             "XREngine.Runtime.Rendering/Runtime/Statistics/RuntimeEngine.Rendering.Stats.GpuDriven.cs");
         string materialBindings = Read(
             "XREngine.Runtime.Rendering/Rendering/Materials/MaterialBindingLayout.cs");
-        string profile = Read("XRENGINE/Engine/Engine.ProfileCapture.cs");
+        string profile = Read("XREngine.Runtime.Bootstrap/Engine/Engine.ProfileCapture.cs");
         string measure = Read("Tools/Measure-GameLoopRenderPipeline.ps1");
         string evaluator = Read(
             "XREngine.Benchmarks/VulkanPerformance/VulkanPerformanceEvaluator.cs");
@@ -164,7 +164,7 @@ public sealed class VulkanPhase3AcceptanceContractTests
             "Tools/Benchmarks/Compare-VulkanPhase3Acceptance.ps1");
         string measure = Read("Tools/Measure-GameLoopRenderPipeline.ps1");
         string runner = Read("Tools/Benchmarks/Invoke-VulkanPerf.ps1");
-        string profile = Read("XRENGINE/Engine/Engine.ProfileCapture.cs");
+        string profile = Read("XREngine.Runtime.Bootstrap/Engine/Engine.ProfileCapture.cs");
         string settings1X = Read(
             "XREngine.Benchmarks/VulkanPerformance/Cohorts/phase3-active-1x.jsonc");
         string settings4X = Read(

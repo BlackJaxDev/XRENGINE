@@ -103,7 +103,7 @@ public sealed class VulkanCoreHardeningPhase523Tests
     [Test]
     public void ExactInvalidationTelemetry_IsCapturedAndGlobalFallbackFailsTheStrictGate()
     {
-        string capture = ReadWorkspaceFile("XRENGINE/Engine/Engine.ProfileCapture.cs");
+        string capture = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/Engine/Engine.ProfileCapture.cs");
         string harness = ReadWorkspaceFile("Tools/Measure-GameLoopRenderPipeline.ps1");
 
         capture.ShouldContain("vulkan_exact_variants_dirtied");

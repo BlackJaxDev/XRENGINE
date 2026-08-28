@@ -12,18 +12,20 @@ public sealed class AdvancedGpuScenePublicationSnapshot
         AdvancedGpuSceneDatabase scene = database.Scene;
         AdvancedMaterialDatabase materials = database.Materials;
         AdvancedGlobalResourceDatabase resources = database.Resources;
-        Draws = scene.Draws.CreatePublicationSnapshot();
+        Draws = scene.Draws.CreatePublicationSnapshot(includeRecordImage: true);
         Instances = scene.Instances.CreatePublicationSnapshot();
         Transforms = scene.Transforms.CreatePublicationSnapshot();
         Deformations = scene.Deformations.CreatePublicationSnapshot();
         RenderStates = scene.RenderStates.CreatePublicationSnapshot();
         EditorIdentities = scene.EditorIdentities.CreatePublicationSnapshot();
         Geometry = scene.Geometry.Records.CreatePublicationSnapshot();
-        Materials = materials.Materials.CreatePublicationSnapshot();
-        Kernels = materials.Kernels.CreatePublicationSnapshot();
-        Layouts = materials.Layouts.CreatePublicationSnapshot();
-        Textures = resources.Textures.CreatePublicationSnapshot();
-        Samplers = resources.Samplers.CreatePublicationSnapshot();
+        MaterialPayloads = materials.CreatePublicationSnapshot();
+        Materials = MaterialPayloads.Materials;
+        Kernels = MaterialPayloads.Kernels;
+        Layouts = MaterialPayloads.Layouts;
+        ResourcePayloads = new AdvancedGpuResourcePublicationSnapshot(resources);
+        Textures = ResourcePayloads.Textures;
+        Samplers = ResourcePayloads.Samplers;
     }
 
     public AdvancedGpuRecordTablePublicationSnapshot<AdvancedDrawRecord> Draws { get; }
@@ -36,13 +38,25 @@ public sealed class AdvancedGpuScenePublicationSnapshot
     public AdvancedGpuRecordTablePublicationSnapshot<AdvancedMaterialRecord> Materials { get; }
     public AdvancedGpuRecordTablePublicationSnapshot<AdvancedShadingKernelRecord> Kernels { get; }
     public AdvancedGpuRecordTablePublicationSnapshot<AdvancedMaterialLayoutRecord> Layouts { get; }
+    /// <summary>
+    /// Immutable packed material constants, texture/sampler references, and
+    /// material-to-layout handles captured with the record-table publication.
+    /// </summary>
+    public AdvancedMaterialPublicationSnapshot MaterialPayloads { get; }
+    /// <summary>
+    /// Immutable logical resource records, lookups, and strong source closure
+    /// captured for this publication.
+    /// </summary>
+    public AdvancedGpuResourcePublicationSnapshot ResourcePayloads { get; }
     public AdvancedGpuRecordTablePublicationSnapshot<AdvancedTextureRecord> Textures { get; }
     public AdvancedGpuRecordTablePublicationSnapshot<AdvancedSamplerRecord> Samplers { get; }
 
     /// <summary>Resource-table generations captured when this ring entry was sealed.</summary>
-    public AdvancedGlobalResourceDatabaseGenerations ResourceGenerations { get; private set; }
+    public AdvancedGlobalResourceDatabaseGenerations ResourceGenerations
+        => ResourcePayloads.Generations;
 
-    internal void CaptureResourceGenerations(
+    internal bool TryCaptureResourceTableState(
+        ulong sequence,
         in AdvancedGlobalResourceDatabaseGenerations generations)
-        => ResourceGenerations = generations;
+        => ResourcePayloads.TryCaptureTableState(sequence, generations);
 }

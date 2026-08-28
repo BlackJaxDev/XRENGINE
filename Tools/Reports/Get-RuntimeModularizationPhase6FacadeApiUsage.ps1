@@ -128,6 +128,14 @@ $rows = foreach ($entry in $consumers.GetEnumerator()) {
     }
 
     $usage = [FacadeApiMetadataReader]::Read($assemblyPath, "XREngine")
+    [xml]$projectDocument = [System.IO.File]::ReadAllText($projectPath)
+    $replacementProjectReferences = @(
+        $projectDocument.Project.ItemGroup.ProjectReference.Include |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+            ForEach-Object { [System.IO.Path]::GetFileNameWithoutExtension($_) } |
+            Where-Object { $_ -notin @("XREngine", "XRENGINE") } |
+            Sort-Object -Unique
+    )
     [pscustomobject]@{
         ConsumerProject = $entry.Key
         ProjectPath = $entry.Value.Replace("\", "/")
@@ -137,8 +145,13 @@ $rows = foreach ($entry in $consumers.GetEnumerator()) {
         FacadeMemberReferenceCount = $usage.MemberReferences.Count
         FacadeTypeReferences = $usage.TypeReferences -join ";"
         FacadeMemberReferences = $usage.MemberReferences -join ";"
-        MigrationStatus = "Pending"
-        ReplacementProjectReferences = ""
+        MigrationStatus = if ($usage.ReferencesFacadeAssembly) { "Pending" } else { "Migrated" }
+        ReplacementProjectReferences = if ($usage.ReferencesFacadeAssembly) {
+            ""
+        }
+        else {
+            $replacementProjectReferences -join ";"
+        }
     }
 }
 

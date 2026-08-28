@@ -1,3 +1,5 @@
+using XREngine.Data;
+
 namespace XREngine.Runtime.Bootstrap;
 
 /// <summary>Installs one explicit application profile and restores it deterministically.</summary>
@@ -64,7 +66,7 @@ public static class RuntimeApplicationBootstrap
             {
                 _servicesLease = profile.AllowsWindows
                     ? RuntimeRenderingBootstrap.InstallEngineHostServices(profile)
-                    : RuntimeAdapterBootstrap.InstallEngineHostServices(profile.AdapterProfile);
+                    : InstallHeadlessServices(profile);
             }
             catch
             {
@@ -74,6 +76,15 @@ public static class RuntimeApplicationBootstrap
         }
 
         public RuntimeApplicationProfile Profile { get; }
+
+        private static IDisposable InstallHeadlessServices(RuntimeApplicationProfile profile)
+            => RegistrationLeaseGroup.Create(leases =>
+            {
+                // Published worlds require the same serialization/cooked-asset roots as
+                // windowed hosts even though a headless process installs no renderer.
+                leases.Add(RuntimeAssetBootstrap.InstallEngineAssetServices());
+                leases.Add(RuntimeAdapterBootstrap.InstallEngineHostServices(profile.AdapterProfile));
+            });
 
         public void Dispose()
         {

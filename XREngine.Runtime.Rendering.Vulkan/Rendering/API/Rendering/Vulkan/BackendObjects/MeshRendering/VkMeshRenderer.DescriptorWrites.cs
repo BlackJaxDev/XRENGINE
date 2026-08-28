@@ -128,7 +128,10 @@ internal unsafe partial class VkMeshRenderer
 		return poolSizes;
 	}
 
-	private static uint ComputeActiveDescriptorSetMask(IReadOnlyList<DescriptorBindingInfo> bindings, int setCount)
+	private static uint ComputeActiveDescriptorSetMask(
+		IReadOnlyList<DescriptorBindingInfo> bindings,
+		int setCount,
+		uint excludedSetMask)
 	{
 		uint mask = 0;
 		for (int i = 0; i < bindings.Count; i++)
@@ -143,7 +146,7 @@ internal unsafe partial class VkMeshRenderer
 		{
 			mask &= ~(1u << (int)VulkanBindlessMaterialDescriptors.TextureArraySet);
 		}
-		return mask;
+		return mask & ~excludedSetMask;
 	}
 
 	/// <summary>
@@ -155,7 +158,8 @@ internal unsafe partial class VkMeshRenderer
 	internal static bool AreDescriptorBindingsDrawSlotInvariant(
 		IReadOnlyList<DescriptorBindingInfo> bindings,
 		bool usesSharedMaterialTier,
-		bool descriptorHeapDrawBindingActive)
+		bool descriptorHeapDrawBindingActive,
+		uint excludedSetMask = 0u)
 	{
 		if (descriptorHeapDrawBindingActive)
 			return false;
@@ -165,6 +169,12 @@ internal unsafe partial class VkMeshRenderer
 			 bindingIndex++)
 		{
 			DescriptorBindingInfo binding = bindings[bindingIndex];
+			if (VulkanAdvancedSceneProgramBindingContract.IsExternallyOwnedSet(
+					excludedSetMask,
+					binding.Set))
+			{
+				continue;
+			}
 			if (usesSharedMaterialTier &&
 				binding.Set == VulkanMeshRenderingConventions.DescriptorSetMaterial)
 			{

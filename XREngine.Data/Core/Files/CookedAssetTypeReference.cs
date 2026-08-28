@@ -42,8 +42,9 @@ namespace XREngine.Core.Files
 
             string rewritten = XRTypeRedirectRegistry.RewriteTypeName(typeReference);
             string? assemblyQualifiedName = expectedType.AssemblyQualifiedName;
+            string rewrittenFullName = SerializedTypeIdentity.GetUnqualifiedTypeName(rewritten);
 
-            return string.Equals(rewritten, expectedType.FullName, StringComparison.Ordinal)
+            return string.Equals(rewrittenFullName, expectedType.FullName, StringComparison.Ordinal)
                 || string.Equals(rewritten, expectedType.Name, StringComparison.Ordinal)
                 || (!string.IsNullOrWhiteSpace(assemblyQualifiedName) && string.Equals(rewritten, assemblyQualifiedName, StringComparison.Ordinal));
         }

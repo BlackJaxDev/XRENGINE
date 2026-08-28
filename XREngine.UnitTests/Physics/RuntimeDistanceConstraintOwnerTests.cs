@@ -110,7 +110,7 @@ public sealed class RuntimeDistanceConstraintOwnerTests
         string transformTool = ReadWorkspaceFile(
             "XREngine.Editor/Scene/Components/Editing/TransformTool3D.cs");
         string vrInput = ReadWorkspaceFile(
-            "XRENGINE/Scene/Components/Pawns/VRPlayerInputSet.cs");
+            "XREngine.Runtime.InputIntegration/Scene/Components/Pawns/VRPlayerInputSet.cs");
         string owner = ReadWorkspaceFile(
             "XREngine.Runtime.Core/Scene/Components/Physics/Joints/RuntimeDistanceConstraintOwner.cs");
 

@@ -1,6 +1,7 @@
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using XREngine.Data.Rendering;
+using XREngine.Rendering.Materials;
 using XREngine.Rendering.Models.Materials;
 
 namespace XREngine.Rendering.Commands;
@@ -10,7 +11,7 @@ namespace XREngine.Rendering.Commands;
 /// shared database at the scene swap boundary. Registrations retain handles
 /// allocated by the canonical tables; this type never manufactures logical IDs.
 /// </summary>
-public sealed class AdvancedGpuScenePublisher
+public sealed partial class AdvancedGpuScenePublisher
 {
     private const uint InitialCapacity = 64u;
 
@@ -24,7 +25,7 @@ public sealed class AdvancedGpuScenePublisher
     private uint[] _registrationLookupStamps = new uint[InitialCapacity * 2u];
     private uint[] _preflightSeenStamps = new uint[InitialCapacity];
     private readonly AdvancedGpuDirtyOwnerRange[] _dirtyOwnerRanges =
-        new AdvancedGpuDirtyOwnerRange[8];
+        new AdvancedGpuDirtyOwnerRange[10];
     private int _registrationCount;
     private int _legacyMappingCount;
     private ulong _sequence;
@@ -38,14 +39,29 @@ public sealed class AdvancedGpuScenePublisher
     private int _dirtyOwnerRangeCount;
     private uint _registrationLookupGeneration;
     private uint _preflightSeenGeneration;
+    private readonly AdvancedGpuResourcePublisher _resourcePublisher;
+    private readonly AdvancedGpuMaterialPublisher _materialPublisher;
 
     public AdvancedGpuScenePublisher()
     {
         Database = new AdvancedSharedGpuSceneDatabase(
             CreateCapacityProfile(InitialCapacity));
+        _resourcePublisher = new AdvancedGpuResourcePublisher(Database.Resources);
+        _materialPublisher = new AdvancedGpuMaterialPublisher(
+            Database.Materials,
+            InitialCapacity);
     }
 
     public AdvancedSharedGpuSceneDatabase Database { get; }
+
+    /// <summary>
+    /// Owns renderer-neutral texture and sampler identities at the same scene
+    /// publication boundary.
+    /// </summary>
+    public AdvancedGpuResourcePublisher ResourcePublisher => _resourcePublisher;
+
+    /// <summary>Owns shared canonical material variants and their draw references.</summary>
+    public AdvancedGpuMaterialPublisher MaterialPublisher => _materialPublisher;
 
     public ulong Sequence => _sequence;
 
@@ -61,14 +77,20 @@ public sealed class AdvancedGpuScenePublisher
 
     public bool PublicationRejected => _publicationRejected;
 
+    public bool PublicationFaulted => Database.PublicationFaulted;
+
     public AdvancedGpuScenePublicationReference CurrentPublication
         => _currentPublication;
 
     public ReadOnlySpan<LegacyCanonicalDrawMapping> LegacyMappings
-        => _legacyMappings.AsSpan(0, _legacyMappingCount);
+        => _publicationRejected || Database.PublicationFaulted
+            ? ReadOnlySpan<LegacyCanonicalDrawMapping>.Empty
+            : _legacyMappings.AsSpan(0, _legacyMappingCount);
 
     public ReadOnlySpan<AdvancedGpuDirtyOwnerRange> DirtyOwnerRanges
-        => _dirtyOwnerRanges.AsSpan(0, _dirtyOwnerRangeCount);
+        => _publicationRejected || Database.PublicationFaulted
+            ? ReadOnlySpan<AdvancedGpuDirtyOwnerRange>.Empty
+            : _dirtyOwnerRanges.AsSpan(0, _dirtyOwnerRangeCount);
 
     /// <summary>
     /// Publishes one immutable render-side scene snapshot. Callers must invoke
@@ -83,123 +105,161 @@ public sealed class AdvancedGpuScenePublisher
         _legacyMappingCount = 0;
         _publicationRejected = false;
 
+        if (Database.PublicationFaulted)
+        {
+            _publicationRejected = true;
+            return;
+        }
+
         if (!EnsureBoundaryCapacity(scene.TotalCommandCount))
         {
             _publicationRejected = true;
             return;
         }
+        Array.Clear(
+            _commandDrawHandles,
+            0,
+            checked((int)scene.TotalCommandCount));
         RebuildRegistrationLookup();
-        if (!CanPublishWholeScene(scene))
+        if (!TryBuildAndPreflightWholeScenePlan(scene, out _))
         {
             _publicationRejected = true;
             return;
         }
-        if (!Database.BeginPublication())
+        if (!Database.TryBeginPublication(
+                out AdvancedGpuScenePublicationTransaction transaction))
         {
             _publicationRejected = true;
             return;
         }
-        _sequence = Database.ActivePublicationSequence;
+        _sequence = transaction.Sequence;
 
-        for (uint commandIndex = 0u; commandIndex < scene.TotalCommandCount; ++commandIndex)
+        try
         {
-            if (!scene.TryGetAdvancedPreparationCommand(commandIndex, out DrawMetadata command) ||
-                !scene.TryGetSourceCommand(commandIndex, out IRenderCommandMesh? source, out int primitiveIndex) ||
-                source is null)
-            {
-                _commandDrawHandles[commandIndex] = AdvancedGpuHandle.Invalid;
-                continue;
-            }
+            ApplyPreflightedMaterialTransitions();
 
-            int registrationIndex = FindRegistration(source, primitiveIndex);
-            if (registrationIndex < 0)
+            for (uint commandIndex = 0u;
+                 commandIndex < scene.TotalCommandCount;
+                 ++commandIndex)
             {
-                registrationIndex = TryAddRegistration(
-                    scene,
-                    source,
-                    primitiveIndex,
-                    in command);
+                ref readonly AdvancedGpuSceneCommandTransition plan =
+                    ref _plannedCommands[checked((int)commandIndex)];
+                if (!plan.Supported || plan.Source is not { })
+                {
+                    _commandDrawHandles[commandIndex] =
+                        AdvancedGpuHandle.Invalid;
+                    continue;
+                }
+
+                AdvancedGpuHandle material =
+                    _plannedMaterialRequests[plan.MaterialPlanIndex].MaterialHandle;
+                int registrationIndex = plan.RegistrationIndex;
                 if (registrationIndex < 0)
                 {
-                    throw new InvalidOperationException(
-                        "Canonical resident tables exhausted their preflighted frame-boundary capacity.");
+                    registrationIndex = TryAddRegistration(in plan, material);
+                    if (registrationIndex < 0)
+                    {
+                        throw new InvalidOperationException(
+                            "Canonical resident tables exhausted their preflighted frame-boundary capacity.");
+                    }
                 }
-            }
-            else
-            {
-                UpdateRegistration(
-                    scene,
-                    registrationIndex,
-                    source,
-                    primitiveIndex,
-                    in command);
+                else
+                {
+                    UpdateRegistration(registrationIndex, in plan, material);
+                }
+
+                ref AdvancedResidentRegistration registration =
+                    ref _registrations[registrationIndex];
+                registration.LastSeenSequence = _sequence;
+                registration.LegacyCommandIndex = commandIndex;
+                _commandDrawHandles[commandIndex] = registration.Draw;
+                AppendLegacyMapping(
+                    commandIndex,
+                    plan.PrimitiveIndex,
+                    in plan.Command,
+                    in registration);
             }
 
-            ref AdvancedResidentRegistration registration =
-                ref _registrations[registrationIndex];
-            registration.LastSeenSequence = _sequence;
-            registration.LegacyCommandIndex = commandIndex;
-            _commandDrawHandles[commandIndex] = registration.Draw;
-            AppendLegacyMapping(commandIndex, primitiveIndex, in command, in registration);
-        }
-
-        TombstoneMissingRegistrations();
-        bool lookupDirty = HasDirtyLogicalLookups();
-        if (Database.PublishHandleLookups())
-        {
+            TombstoneMissingRegistrations();
+            CompletePreflightedMaterialTransitions();
+            bool lookupDirty = HasDirtyLogicalLookups();
             if (lookupDirty)
                 AdvanceNonZero(ref _lookupGeneration);
-        }
-        else
-            _publicationRejected = true;
 
-        if (!Database.SealPublication(
-            frameId,
-            _topologyGeneration,
-            _contentGeneration,
-            _lookupGeneration,
-            out _currentPublication))
+            if (!Database.TryPreparePublication(
+                    in transaction,
+                    frameId,
+                    _topologyGeneration,
+                    _contentGeneration,
+                    _lookupGeneration,
+                    out AdvancedGpuScenePublicationReference provisional))
+            {
+                Database.FaultActivePublication(
+                    in transaction,
+                    EAdvancedGpuScenePublicationFault.SnapshotCaptureFailed);
+                throw new InvalidOperationException(
+                    "Canonical scene snapshot capture failed after a successful whole-frame preflight.");
+            }
+
+            if (!_resourcePublisher.TryCapturePublication(
+                    provisional.Sequence,
+                    provisional.Snapshot!.ResourcePayloads))
+            {
+                Database.FaultActivePublication(
+                    in transaction,
+                    EAdvancedGpuScenePublicationFault.SnapshotCaptureFailed);
+                throw new InvalidOperationException(
+                    "Canonical resource source capture failed after sealing the logical resource image.");
+            }
+
+            PublishSourceDrawIdentities(in provisional);
+            CaptureAndClearDirtyOwnerRanges();
+            if (!Database.TryCommitPreparedPublication(
+                    in transaction,
+                    out AdvancedGpuScenePublicationReference committed))
+            {
+                Database.FaultActivePublication(
+                    in transaction,
+                    EAdvancedGpuScenePublicationFault.InvariantFailure);
+                throw new InvalidOperationException(
+                    "Canonical scene commit failed after preparing a complete publication.");
+            }
+
+            _currentPublication = committed;
+        }
+        catch
         {
             _publicationRejected = true;
-            throw new InvalidOperationException("Canonical scene publication failed after a successful whole-frame preflight.");
+            Database.FaultActivePublication(
+                in transaction,
+                EAdvancedGpuScenePublicationFault.InvariantFailure);
+            throw;
         }
-
-        PublishSourceDrawIdentities();
-        CaptureAndClearDirtyOwnerRanges();
     }
 
-    private AdvancedGpuHandle[] _identityHandleScratch = new AdvancedGpuHandle[8];
+    private AdvancedGpuHandle[] _identityHandleScratch =
+        new AdvancedGpuHandle[InitialCapacity];
 
     /// <summary>
     /// Assigns renderer-facing identities only after the database sealed the
     /// publication. Primitive zero is the primary identity while the immutable
     /// snapshot retains every exact primitive handle for Vulkan submission.
     /// </summary>
-    private void PublishSourceDrawIdentities()
+    private void PublishSourceDrawIdentities(
+        in AdvancedGpuScenePublicationReference publication)
     {
-        for (int registrationIndex = 0; registrationIndex < _registrationCount; ++registrationIndex)
+        for (int sourceIndex = 0;
+             sourceIndex < _plannedIdentitySourceCount;
+             ++sourceIndex)
         {
-            ref readonly AdvancedResidentRegistration primary = ref _registrations[registrationIndex];
-            if (!primary.Active || primary.PrimitiveIndex != 0 ||
-                primary.Source is not RenderCommandMesh3D command)
-            {
+            if (_plannedIdentitySources[sourceIndex] is not RenderCommandMesh3D command)
                 continue;
-            }
 
-            AdvancedMeshRenderSnapshot renderSnapshot =
-                command.CaptureAdvancedPreparationSnapshot();
-            int primitiveCount = Math.Max(
-                1,
-                renderSnapshot.Renderer?.Submeshes.Count ?? 0);
-
-            if (_identityHandleScratch.Length < primitiveCount)
-                Array.Resize(
-                    ref _identityHandleScratch,
-                    checked((int)NextPowerOfTwo((uint)primitiveCount)));
+            int primitiveCount = _plannedIdentityPrimitiveCounts[sourceIndex];
             Array.Clear(_identityHandleScratch, 0, primitiveCount);
             for (int primitiveIndex = 0; primitiveIndex < primitiveCount; ++primitiveIndex)
             {
-                int candidateIndex = FindRegistration(primary.Source, primitiveIndex);
+                int candidateIndex = FindRegistration(command, primitiveIndex);
                 if (candidateIndex >= 0)
                     _identityHandleScratch[primitiveIndex] =
                         _registrations[candidateIndex].Draw;
@@ -207,7 +267,7 @@ public sealed class AdvancedGpuScenePublisher
 
             command.PublishCanonicalDrawIdentities(
                 Database,
-                _currentPublication,
+                publication,
                 _identityHandleScratch.AsSpan(0, primitiveCount));
         }
     }
@@ -222,6 +282,8 @@ public sealed class AdvancedGpuScenePublisher
         Capture(EAdvancedGpuRecordOwner.Deformation, scene.Deformations);
         Capture(EAdvancedGpuRecordOwner.RenderState, scene.RenderStates);
         Capture(EAdvancedGpuRecordOwner.Material, Database.Materials.Materials);
+        Capture(EAdvancedGpuRecordOwner.Texture, Database.Resources.Textures);
+        Capture(EAdvancedGpuRecordOwner.Sampler, Database.Resources.Samplers);
         Capture(EAdvancedGpuRecordOwner.Geometry, scene.Geometry.Records);
         Capture(EAdvancedGpuRecordOwner.EditorIdentity, scene.EditorIdentities);
     }
@@ -238,7 +300,9 @@ public sealed class AdvancedGpuScenePublisher
             !scene.Geometry.Records.LogicalLookupDirtyRange.IsEmpty ||
             !Database.Materials.Materials.LogicalLookupDirtyRange.IsEmpty ||
             !Database.Materials.Kernels.LogicalLookupDirtyRange.IsEmpty ||
-            !Database.Materials.Layouts.LogicalLookupDirtyRange.IsEmpty;
+            !Database.Materials.Layouts.LogicalLookupDirtyRange.IsEmpty ||
+            !Database.Resources.Textures.LogicalLookupDirtyRange.IsEmpty ||
+            !Database.Resources.Samplers.LogicalLookupDirtyRange.IsEmpty;
     }
 
     private void Capture<T>(
@@ -253,7 +317,6 @@ public sealed class AdvancedGpuScenePublisher
                 new AdvancedGpuDirtyOwnerRange(owner, range, _contentGeneration);
         }
         table.ClearDirtyRange();
-        table.ClearLogicalLookupDirtyRange();
     }
 
     public bool TryGetCanonicalHandles(
@@ -279,7 +342,8 @@ public sealed class AdvancedGpuScenePublisher
         geometry = AdvancedGpuHandle.Invalid;
         material = AdvancedGpuHandle.Invalid;
         deformation = AdvancedGpuHandle.Invalid;
-        if (commandIndex >= (uint)_commandDrawHandles.Length)
+        if (_publicationRejected || Database.PublicationFaulted ||
+            commandIndex >= (uint)_commandDrawHandles.Length)
             return false;
 
         draw = _commandDrawHandles[commandIndex];
@@ -303,6 +367,12 @@ public sealed class AdvancedGpuScenePublisher
         int primitiveIndex,
         out AdvancedGpuHandle draw)
     {
+        if (_publicationRejected || Database.PublicationFaulted)
+        {
+            draw = AdvancedGpuHandle.Invalid;
+            return false;
+        }
+
         int index = FindRegistration(source, primitiveIndex);
         if (index >= 0)
         {
@@ -316,6 +386,9 @@ public sealed class AdvancedGpuScenePublisher
 
     public bool WasDrawAddedThisPublication(AdvancedGpuHandle draw)
     {
+        if (_publicationRejected || Database.PublicationFaulted)
+            return false;
+
         ReadOnlySpan<AdvancedGpuRecordPublicationDelta> deltas =
             Database.Scene.Draws.PublishedDeltas;
         for (int index = deltas.Length - 1; index >= 0; --index)
@@ -329,17 +402,16 @@ public sealed class AdvancedGpuScenePublisher
     }
 
     private int TryAddRegistration(
-        GPUScene scene,
-        IRenderCommandMesh source,
-        int primitiveIndex,
-        in DrawMetadata command)
+        in AdvancedGpuSceneCommandTransition plan,
+        AdvancedGpuHandle material)
     {
-        CaptureSourceState(scene, source, primitiveIndex, in command,
-            out Matrix4x4 world,
-            out Matrix4x4 previousWorld,
-            out BoundsGpu bounds,
-            out XRMesh? mesh,
-            out XRMaterial? sourceMaterial);
+        IRenderCommandMesh source = plan.Source ??
+            throw new InvalidOperationException("A supported command plan lost its source.");
+        int primitiveIndex = plan.PrimitiveIndex;
+        ref readonly DrawMetadata command = ref plan.Command;
+        Matrix4x4 world = plan.World;
+        Matrix4x4 previousWorld = plan.PreviousWorld;
+        BoundsGpu bounds = plan.Bounds;
 
         AdvancedGpuSceneDatabase tables = Database.Scene;
         AdvancedGpuHandle currentTransform = AdvancedGpuHandle.Invalid;
@@ -347,19 +419,19 @@ public sealed class AdvancedGpuScenePublisher
         AdvancedGpuHandle instance = AdvancedGpuHandle.Invalid;
         AdvancedGpuHandle geometry = AdvancedGpuHandle.Invalid;
         AdvancedGpuHandle deformation = AdvancedGpuHandle.Invalid;
-        AdvancedGpuHandle material = AdvancedGpuHandle.Invalid;
         AdvancedGpuHandle renderState = AdvancedGpuHandle.Invalid;
         AdvancedGpuHandle editorIdentity = AdvancedGpuHandle.Invalid;
-        if (!CanAddRegistration(tables))
+        if (!material.IsValid ||
+            !Database.Materials.Materials.IsCurrent(material) ||
+            !CanAddRegistration(tables))
             return -1;
 
         if (!tables.Transforms.TryAdd(CreateTransform(world), out currentTransform) ||
             !tables.Transforms.TryAdd(CreateTransform(previousWorld), out previousTransform) ||
             !tables.Instances.TryAdd(CreateInstance(world, previousWorld, in bounds, in command), out instance) ||
-            !tables.Geometry.Records.TryAdd(CreateGeometry(scene, mesh, in bounds, in command), out geometry) ||
-            !tables.Deformations.TryAdd(CreateDeformation(geometry, mesh), out deformation) ||
-            !Database.Materials.Materials.TryAdd(CreateMaterial(in command, sourceMaterial), out material) ||
-            !tables.RenderStates.TryAdd(CreateRenderState(mesh, in command), out renderState) ||
+            !tables.Geometry.Records.TryAdd(plan.Geometry, out geometry) ||
+            !tables.Deformations.TryAdd(CreateDeformation(geometry, plan.MeshVertexCount), out deformation) ||
+            !tables.RenderStates.TryAdd(plan.RenderState, out renderState) ||
             !tables.EditorIdentities.TryAdd(CreateEditorIdentity(in command), out editorIdentity))
         {
             RollBackPartialRegistration(
@@ -368,25 +440,6 @@ public sealed class AdvancedGpuScenePublisher
                 instance,
                 geometry,
                 deformation,
-                material,
-                renderState,
-                editorIdentity);
-            return -1;
-        }
-
-        // The table owns canonical row identity. The source material ID is only
-        // input metadata and must never become a second logical-handle allocator.
-        if (!Database.Materials.Materials.TryReplace(
-            material,
-            CreateMaterial(in command, sourceMaterial, material)))
-        {
-            RollBackPartialRegistration(
-                currentTransform,
-                previousTransform,
-                instance,
-                geometry,
-                deformation,
-                material,
                 renderState,
                 editorIdentity);
             return -1;
@@ -413,7 +466,6 @@ public sealed class AdvancedGpuScenePublisher
                 instance,
                 geometry,
                 deformation,
-                material,
                 renderState,
                 editorIdentity);
             return -1;
@@ -436,9 +488,8 @@ public sealed class AdvancedGpuScenePublisher
             CurrentTransform = currentTransform,
             PreviousTransform = previousTransform,
             World = world,
-            StructuralSignature = ComputeStructuralSignature(in command, mesh, sourceMaterial, primitiveIndex),
-            ContentSignature = ComputeContentSignature(in command, in bounds, in world, in previousWorld, sourceMaterial),
-            MaterialBindingResourceVersion = sourceMaterial?.BindingResourceVersion ?? 0UL,
+            StructuralSignature = plan.StructuralSignature,
+            ContentSignature = plan.ContentSignature,
             Active = true,
         };
         if (!TryInsertRegistrationLookup(index))
@@ -450,7 +501,6 @@ public sealed class AdvancedGpuScenePublisher
                 instance,
                 geometry,
                 deformation,
-                material,
                 renderState,
                 editorIdentity);
             _registrations[index] = default;
@@ -465,28 +515,28 @@ public sealed class AdvancedGpuScenePublisher
     }
 
     private void UpdateRegistration(
-        GPUScene scene,
         int registrationIndex,
-        IRenderCommandMesh source,
-        int primitiveIndex,
-        in DrawMetadata command)
+        in AdvancedGpuSceneCommandTransition plan,
+        AdvancedGpuHandle material)
     {
         ref AdvancedResidentRegistration registration =
             ref _registrations[registrationIndex];
         if (!registration.Active)
             return;
 
-        CaptureSourceState(scene, source, primitiveIndex, in command,
-            out Matrix4x4 world,
-            out Matrix4x4 previousWorld,
-            out BoundsGpu bounds,
-            out XRMesh? mesh,
-            out XRMaterial? sourceMaterial);
-        ulong structural = ComputeStructuralSignature(in command, mesh, sourceMaterial, primitiveIndex);
-        ulong content = ComputeContentSignature(in command, in bounds, in world, in previousWorld, sourceMaterial);
-        if (structural != registration.StructuralSignature)
+        ref readonly DrawMetadata command = ref plan.Command;
+        int primitiveIndex = plan.PrimitiveIndex;
+        Matrix4x4 world = plan.World;
+        Matrix4x4 previousWorld = plan.PreviousWorld;
+        BoundsGpu bounds = plan.Bounds;
+        ulong structural = plan.StructuralSignature;
+        ulong content = plan.ContentSignature;
+        if (structural != registration.StructuralSignature ||
+            material != registration.Material)
         {
-            if (!CanUpdateRegistrationStructure(registration) ||
+            if (!material.IsValid ||
+                !Database.Materials.Materials.IsCurrent(material) ||
+                !CanUpdateRegistrationStructure(registration) ||
                 !Database.Scene.Draws.TryGet(registration.Draw, out AdvancedDrawRecord draw))
             {
                 throw new InvalidOperationException("Canonical structural update preflight failed.");
@@ -494,19 +544,15 @@ public sealed class AdvancedGpuScenePublisher
 
             if (!Database.Scene.Geometry.Records.TryReplace(
                 registration.Geometry,
-                CreateGeometry(scene, mesh, in bounds, in command),
+                plan.Geometry,
                 EAdvancedGpuMutationDomain.LayoutTopology) ||
                 !Database.Scene.Deformations.TryReplace(
                     registration.Deformation,
-                    CreateDeformation(registration.Geometry, mesh),
+                    CreateDeformation(registration.Geometry, plan.MeshVertexCount),
                     EAdvancedGpuMutationDomain.ResourceBinding) ||
-                !Database.Materials.Materials.TryReplace(
-                registration.Material,
-                CreateMaterial(in command, sourceMaterial, registration.Material),
-                EAdvancedGpuMutationDomain.LayoutTopology) ||
                 !Database.Scene.RenderStates.TryReplace(
                 registration.RenderState,
-                CreateRenderState(mesh, in command),
+                plan.RenderState,
                 EAdvancedGpuMutationDomain.LayoutTopology))
             {
                 throw new InvalidOperationException("Canonical structural update failed after successful preflight.");
@@ -514,14 +560,14 @@ public sealed class AdvancedGpuScenePublisher
 
             draw.PrimitiveSection = checked((uint)Math.Max(0, primitiveIndex));
             draw.Flags = command.Flags;
+            draw.Material = material;
             if (!Database.Scene.Draws.TryReplace(
                     registration.Draw,
                     draw,
                     EAdvancedGpuMutationDomain.RecordingTopology))
                 throw new InvalidOperationException("Canonical draw update failed after successful preflight.");
             registration.StructuralSignature = structural;
-            registration.MaterialBindingResourceVersion =
-                sourceMaterial?.BindingResourceVersion ?? 0UL;
+            registration.Material = material;
             ++_topologyDeltaCount;
             AdvanceNonZero(ref _topologyGeneration);
         }
@@ -529,11 +575,6 @@ public sealed class AdvancedGpuScenePublisher
         if (content == registration.ContentSignature)
             return;
 
-        ulong bindingResourceVersion = sourceMaterial?.BindingResourceVersion ?? 0UL;
-        EAdvancedGpuMutationDomain materialMutationDomain =
-            bindingResourceVersion != registration.MaterialBindingResourceVersion
-                ? EAdvancedGpuMutationDomain.ResourceBinding
-                : EAdvancedGpuMutationDomain.Content;
         if (!CanUpdateRegistrationContent(registration) ||
             !Database.Scene.Transforms.TryReplace(
             registration.PreviousTransform,
@@ -544,10 +585,6 @@ public sealed class AdvancedGpuScenePublisher
             !Database.Scene.Instances.TryReplace(
             registration.Instance,
             CreateInstance(world, previousWorld, in bounds, in command)) ||
-            !Database.Materials.Materials.TryReplace(
-            registration.Material,
-            CreateMaterial(in command, sourceMaterial, registration.Material),
-            materialMutationDomain) ||
             !Database.Scene.EditorIdentities.TryReplace(
             registration.EditorIdentity,
             CreateEditorIdentity(in command)))
@@ -556,7 +593,6 @@ public sealed class AdvancedGpuScenePublisher
         }
         registration.World = world;
         registration.ContentSignature = content;
-        registration.MaterialBindingResourceVersion = bindingResourceVersion;
         ++_contentDeltaCount;
         AdvanceNonZero(ref _contentGeneration);
     }
@@ -577,7 +613,6 @@ public sealed class AdvancedGpuScenePublisher
                 Database.Scene.Instances.TryTombstone(registration.Instance, _sequence) &&
                 Database.Scene.Geometry.Records.TryTombstone(registration.Geometry, _sequence) &&
                 Database.Scene.Deformations.TryTombstone(registration.Deformation, _sequence) &&
-                Database.Materials.Materials.TryTombstone(registration.Material, _sequence) &&
                 Database.Scene.RenderStates.TryTombstone(registration.RenderState, _sequence) &&
                 Database.Scene.EditorIdentities.TryTombstone(registration.EditorIdentity, _sequence) &&
                 Database.Scene.Transforms.TryTombstone(registration.CurrentTransform, _sequence) &&
@@ -624,6 +659,7 @@ public sealed class AdvancedGpuScenePublisher
         {
             Array.Resize(ref _commandDrawHandles, checked((int)required));
             Array.Resize(ref _legacyMappings, checked((int)required));
+            Array.Resize(ref _identityHandleScratch, checked((int)required));
         }
         if (required > (uint)_registrations.Length)
         {
@@ -639,8 +675,19 @@ public sealed class AdvancedGpuScenePublisher
             _registrationLookupGeneration = 0u;
         }
 
-        return required <= Database.Scene.Draws.Capacity ||
-            Database.TryGrowAtFrameBoundary(CreateCapacityProfile(required));
+        AdvancedSharedGpuSceneCapacityProfile profile = CreateCapacityProfile(required);
+        if (required > Database.Scene.Draws.Capacity &&
+            !Database.TryGrowAtFrameBoundary(profile))
+        {
+            return false;
+        }
+
+        _resourcePublisher.GrowRegistryAtFrameBoundary(
+            profile.TextureRecords,
+            profile.SamplerRecords);
+        _materialPublisher.GrowAtFrameBoundary(profile.MaterialRecords);
+        EnsureMaterialTransitionCapacity(required);
+        return true;
     }
 
     private int FindRegistration(IRenderCommandMesh source, int primitiveIndex)
@@ -727,7 +774,8 @@ public sealed class AdvancedGpuScenePublisher
         out Matrix4x4 previousWorld,
         out BoundsGpu bounds,
         out XRMesh? mesh,
-        out XRMaterial? material)
+        out XRMaterial? material,
+        out int sourcePrimitiveCount)
     {
         AdvancedMeshRenderSnapshot snapshot = source is RenderCommandMesh3D mesh3D
             ? mesh3D.CaptureAdvancedPreparationSnapshot()
@@ -749,6 +797,7 @@ public sealed class AdvancedGpuScenePublisher
         bounds = command.BoundsID < scene.CullBoundsBuffer.ElementCount
             ? scene.CullBoundsBuffer.GetDataRawAtIndex<BoundsGpu>(command.BoundsID)
             : default;
+        sourcePrimitiveCount = Math.Max(1, snapshot.Renderer?.Submeshes.Count ?? 0);
         if (snapshot.Renderer is not { } renderer ||
             !renderer.TryGetMesh(primitiveIndex, out mesh, out material))
         {
@@ -763,84 +812,9 @@ public sealed class AdvancedGpuScenePublisher
            tables.Instances.CanApply(1, 0, 0) &&
            tables.Geometry.Records.CanApply(1, 0, 0) &&
            tables.Deformations.CanApply(1, 0, 0) &&
-           Database.Materials.Materials.CanApply(1, 1, 0) &&
            tables.RenderStates.CanApply(1, 0, 0) &&
            tables.EditorIdentities.CanApply(1, 0, 0) &&
            tables.Draws.CanApply(1, 0, 0);
-
-    private bool CanPublishWholeScene(GPUScene scene)
-    {
-        ++_preflightSeenGeneration;
-        if (_preflightSeenGeneration == 0u)
-        {
-            Array.Clear(_preflightSeenStamps);
-            _preflightSeenGeneration = 1u;
-        }
-
-        int additions = 0;
-        int structuralUpdates = 0;
-        int contentUpdates = 0;
-        for (uint commandIndex = 0u; commandIndex < scene.TotalCommandCount; ++commandIndex)
-        {
-            if (!scene.TryGetAdvancedPreparationCommand(commandIndex, out DrawMetadata command) ||
-                !scene.TryGetSourceCommand(commandIndex, out IRenderCommandMesh? source, out int primitiveIndex) ||
-                source is null)
-            {
-                continue;
-            }
-
-            int registrationIndex = FindRegistration(source, primitiveIndex);
-            if (registrationIndex < 0)
-            {
-                ++additions;
-                continue;
-            }
-
-            _preflightSeenStamps[registrationIndex] = _preflightSeenGeneration;
-            ref readonly AdvancedResidentRegistration registration = ref _registrations[registrationIndex];
-            CaptureSourceState(
-                scene,
-                source,
-                primitiveIndex,
-                in command,
-                out Matrix4x4 world,
-                out Matrix4x4 previousWorld,
-                out BoundsGpu bounds,
-                out XRMesh? mesh,
-                out XRMaterial? material);
-            if (ComputeStructuralSignature(in command, mesh, material, primitiveIndex) !=
-                registration.StructuralSignature)
-            {
-                ++structuralUpdates;
-            }
-            if (ComputeContentSignature(in command, in bounds, in world, in previousWorld, material) !=
-                registration.ContentSignature)
-            {
-                ++contentUpdates;
-            }
-        }
-
-        int tombstones = 0;
-        for (int index = 0; index < _registrationCount; ++index)
-            if (_registrations[index].Active &&
-                _preflightSeenStamps[index] != _preflightSeenGeneration)
-            {
-                ++tombstones;
-            }
-
-        AdvancedGpuSceneDatabase tables = Database.Scene;
-        return tables.Draws.CanApply(additions, structuralUpdates, tombstones) &&
-            tables.Instances.CanApply(additions, contentUpdates, tombstones) &&
-            tables.Transforms.CanApply(additions * 2, contentUpdates * 2, tombstones * 2) &&
-            tables.Geometry.Records.CanApply(additions, structuralUpdates, tombstones) &&
-            tables.Deformations.CanApply(additions, structuralUpdates, tombstones) &&
-            Database.Materials.Materials.CanApply(
-                additions,
-                checked(additions + structuralUpdates + contentUpdates),
-                tombstones) &&
-            tables.RenderStates.CanApply(additions, structuralUpdates, tombstones) &&
-            tables.EditorIdentities.CanApply(additions, contentUpdates, tombstones);
-    }
 
     private bool CanUpdateRegistrationStructure(
         in AdvancedResidentRegistration registration)
@@ -848,8 +822,6 @@ public sealed class AdvancedGpuScenePublisher
            Database.Scene.Geometry.Records.CanApply(0, 1, 0) &&
            Database.Scene.Deformations.IsCurrent(registration.Deformation) &&
            Database.Scene.Deformations.CanApply(0, 1, 0) &&
-           Database.Materials.Materials.IsCurrent(registration.Material) &&
-           Database.Materials.Materials.CanApply(0, 1, 0) &&
            Database.Scene.RenderStates.IsCurrent(registration.RenderState) &&
            Database.Scene.RenderStates.CanApply(0, 1, 0) &&
            Database.Scene.Draws.IsCurrent(registration.Draw) &&
@@ -862,8 +834,6 @@ public sealed class AdvancedGpuScenePublisher
            Database.Scene.Transforms.CanApply(0, 2, 0) &&
            Database.Scene.Instances.IsCurrent(registration.Instance) &&
            Database.Scene.Instances.CanApply(0, 1, 0) &&
-           Database.Materials.Materials.IsCurrent(registration.Material) &&
-           Database.Materials.Materials.CanApply(0, 1, 0) &&
            Database.Scene.EditorIdentities.IsCurrent(registration.EditorIdentity) &&
            Database.Scene.EditorIdentities.CanApply(0, 1, 0);
 
@@ -877,8 +847,6 @@ public sealed class AdvancedGpuScenePublisher
            Database.Scene.Geometry.Records.CanApply(0, 0, 1) &&
            Database.Scene.Deformations.IsCurrent(registration.Deformation) &&
            Database.Scene.Deformations.CanApply(0, 0, 1) &&
-           Database.Materials.Materials.IsCurrent(registration.Material) &&
-           Database.Materials.Materials.CanApply(0, 0, 1) &&
            Database.Scene.RenderStates.IsCurrent(registration.RenderState) &&
            Database.Scene.RenderStates.CanApply(0, 0, 1) &&
            Database.Scene.EditorIdentities.IsCurrent(registration.EditorIdentity) &&
@@ -893,7 +861,6 @@ public sealed class AdvancedGpuScenePublisher
         AdvancedGpuHandle instance,
         AdvancedGpuHandle geometry,
         AdvancedGpuHandle deformation,
-        AdvancedGpuHandle material,
         AdvancedGpuHandle renderState,
         AdvancedGpuHandle editorIdentity)
     {
@@ -907,8 +874,6 @@ public sealed class AdvancedGpuScenePublisher
             Database.Scene.Geometry.Records.TryRemoveImmediatelyBeforePublication(geometry);
         if (deformation.IsValid)
             Database.Scene.Deformations.TryRemoveImmediatelyBeforePublication(deformation);
-        if (material.IsValid)
-            Database.Materials.Materials.TryRemoveImmediatelyBeforePublication(material);
         if (renderState.IsValid)
             Database.Scene.RenderStates.TryRemoveImmediatelyBeforePublication(renderState);
         if (editorIdentity.IsValid)
@@ -937,14 +902,14 @@ public sealed class AdvancedGpuScenePublisher
 
     private static AdvancedDeformationRecord CreateDeformation(
         AdvancedGpuHandle geometry,
-        XRMesh? mesh)
+        int vertexCount)
         => new()
         {
             SourceGeometry = geometry,
             CurrentGeometry = geometry,
             PreviousGeometry = geometry,
             Animation = AdvancedGpuHandle.Invalid,
-            VertexCount = checked((uint)Math.Max(0, mesh?.VertexCount ?? 0)),
+            VertexCount = checked((uint)Math.Max(0, vertexCount)),
         };
 
     private static AdvancedGeometryRecord CreateGeometry(
@@ -977,35 +942,6 @@ public sealed class AdvancedGpuScenePublisher
             CookedLayoutVersion = meshData.Flags,
             Flags = command.Flags,
         };
-    }
-
-    private static AdvancedMaterialRecord CreateMaterial(
-        in DrawMetadata command,
-        XRMaterial? material)
-        => new()
-        {
-            ShadingKernelGeneration = FoldToUInt(material?.ShaderStateRevision ?? 0L),
-            MaterialLayoutHash = ComputeMaterialLayoutHash(in command, material),
-            RenderStateClass = (EAdvancedMaterialRenderStateClass)Math.Min(
-                command.StateClassID,
-                (uint)EAdvancedMaterialRenderStateClass.Refractive),
-            CoverageMode = (command.Flags & (uint)GPUIndirectRenderFlags.Transparent) != 0u
-                ? EAdvancedMaterialCoverageMode.Refractive
-                : EAdvancedMaterialCoverageMode.Opaque,
-            Reserved = FoldToUInt(unchecked(
-                (long)(material?.BindingValueVersion ?? 0UL) ^
-                (long)(material?.BindingResourceVersion ?? 0UL))),
-        };
-
-    private static AdvancedMaterialRecord CreateMaterial(
-        in DrawMetadata command,
-        XRMaterial? material,
-        AdvancedGpuHandle handle)
-    {
-        AdvancedMaterialRecord record = CreateMaterial(in command, material);
-        record.StableRowId = handle.Index;
-        record.Generation = handle.Generation;
-        return record;
     }
 
     private static AdvancedRenderStateRecord CreateRenderState(
@@ -1070,19 +1006,6 @@ public sealed class AdvancedGpuScenePublisher
         return hash;
     }
 
-    private static ulong ComputeMaterialLayoutHash(
-        in DrawMetadata command,
-        XRMaterial? material)
-    {
-        ulong hash = Mix(command.MaterialID, command.StateClassID);
-        hash = Mix(hash, material?.BindingLayoutVersion ?? 0u);
-        hash = Mix(hash, unchecked((ulong)(material?.ShaderStateRevision ?? 0L)));
-        return Mix(hash, unchecked((ulong)(material?.UberStateRevision ?? 0L)));
-    }
-
-    private static uint FoldToUInt(long value)
-        => unchecked((uint)value ^ (uint)((ulong)value >> 32));
-
     private static ulong MixMatrix(ulong hash, in Matrix4x4 value)
     {
         hash = MixFloat(hash, value.M11); hash = MixFloat(hash, value.M12);
@@ -1100,7 +1023,29 @@ public sealed class AdvancedGpuScenePublisher
         => Mix(hash, unchecked((uint)BitConverter.SingleToInt32Bits(value)));
 
     private static AdvancedSharedGpuSceneCapacityProfile CreateCapacityProfile(uint capacity)
-        => new(
+    {
+        uint materialLayoutCapacity = 3u;
+        uint materialLayoutMemberCapacity = checked((uint)(
+            MaterialBindingLayouts.OpaqueDeferred.PackedMembers.Count +
+            MaterialBindingLayouts.OpaqueDeferred.Textures.Count +
+            MaterialBindingLayouts.ForwardOpaque.PackedMembers.Count +
+            MaterialBindingLayouts.ForwardOpaque.Textures.Count +
+            MaterialBindingLayouts.MaskedForward.PackedMembers.Count +
+            MaterialBindingLayouts.MaskedForward.Textures.Count));
+        uint maximumConstantWords = Math.Max(
+            MaterialBindingLayouts.OpaqueDeferred.RowWordCount,
+            Math.Max(
+                MaterialBindingLayouts.ForwardOpaque.RowWordCount,
+                MaterialBindingLayouts.MaskedForward.RowWordCount));
+        uint maximumTextureBindings = checked((uint)Math.Max(
+            MaterialBindingLayouts.OpaqueDeferred.Textures.Count,
+            Math.Max(
+                MaterialBindingLayouts.ForwardOpaque.Textures.Count,
+                MaterialBindingLayouts.MaskedForward.Textures.Count)));
+        uint materialConstantWords = checked(capacity * maximumConstantWords);
+        uint materialTextureBindings = checked(capacity * maximumTextureBindings);
+
+        return new(
             new AdvancedGpuSceneCapacityProfile(
                 capacity,
                 capacity,
@@ -1115,11 +1060,14 @@ public sealed class AdvancedGpuScenePublisher
                 0u,
                 0u),
             capacity,
-            1u,
-            1u,
-            0u,
-            0u,
-            0u);
+            capacity,
+            materialLayoutCapacity,
+            materialLayoutMemberCapacity,
+            materialConstantWords,
+            materialTextureBindings,
+            materialTextureBindings,
+            materialTextureBindings);
+    }
 
     private static uint NextPowerOfTwo(uint value)
     {
@@ -1162,7 +1110,6 @@ public sealed class AdvancedGpuScenePublisher
         public Matrix4x4 World;
         public ulong StructuralSignature;
         public ulong ContentSignature;
-        public ulong MaterialBindingResourceVersion;
         public ulong LastSeenSequence;
         public ulong TombstoneSequence;
         public bool Active;

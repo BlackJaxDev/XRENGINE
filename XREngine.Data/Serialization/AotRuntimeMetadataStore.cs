@@ -2,6 +2,7 @@ using MemoryPack;
 using System.Collections.Concurrent;
 using System.IO;
 using System.Linq;
+using XREngine.Core;
 using XREngine.Core.Files;
 
 namespace XREngine;
@@ -63,7 +64,7 @@ public static class AotRuntimeMetadataStore
             return null;
 
         string assemblyQualifiedName = metadata.KnownTypeAssemblyQualifiedNames[typeIndex];
-        return Type.GetType(assemblyQualifiedName, throwOnError: false, ignoreCase: false);
+        return ResolveTypeCore(assemblyQualifiedName);
     }
 
     public static bool TryGetKnownTypeIndex(Type type, out int typeIndex)
@@ -177,12 +178,17 @@ public static class AotRuntimeMetadataStore
         if (direct is not null)
             return direct;
 
+        string fullTypeName = SerializedTypeIdentity.GetUnqualifiedTypeName(typeName);
+
         AotRuntimeMetadata? metadata = Metadata;
         if (metadata is not null)
         {
             string? assemblyQualifiedName = metadata.KnownTypeAssemblyQualifiedNames
                 .FirstOrDefault(x => string.Equals(x, typeName, ignoreCase ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal)
-                    || string.Equals(TypeNameOnly(x), typeName, ignoreCase ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal));
+                    || string.Equals(
+                        SerializedTypeIdentity.GetUnqualifiedTypeName(x),
+                        fullTypeName,
+                        ignoreCase ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal));
 
             if (!string.IsNullOrWhiteSpace(assemblyQualifiedName))
             {
@@ -192,6 +198,11 @@ public static class AotRuntimeMetadataStore
             }
         }
 
+        // Published registrations are explicit AOT roots. They provide a trimmed-safe
+        // path for repository assets whose persisted outer assembly qualifier changed.
+        if (PublishedCookedAssetRegistry.TryResolveByFullName(fullTypeName, ignoreCase, out Type? publishedType))
+            return publishedType;
+
         // Fallback: scan loaded assemblies by FullName.
         // Type.GetType(string) only searches the calling assembly and System.Private.CoreLib
         // when given a namespace-qualified name without assembly qualifier, so types from other
@@ -200,7 +211,7 @@ public static class AotRuntimeMetadataStore
         {
             foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
             {
-                var found = assembly.GetType(typeName, throwOnError: false, ignoreCase: ignoreCase);
+                var found = assembly.GetType(fullTypeName, throwOnError: false, ignoreCase: ignoreCase);
                 if (found is not null)
                     return found;
             }
@@ -210,8 +221,5 @@ public static class AotRuntimeMetadataStore
     }
 
     private static string TypeNameOnly(string assemblyQualifiedName)
-    {
-        int commaIndex = assemblyQualifiedName.IndexOf(',');
-        return commaIndex < 0 ? assemblyQualifiedName : assemblyQualifiedName[..commaIndex];
-    }
+        => SerializedTypeIdentity.GetUnqualifiedTypeName(assemblyQualifiedName);
 }

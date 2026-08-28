@@ -204,6 +204,8 @@ public sealed class RendererBackendModuleSourceContractTests
         codeManager.ShouldNotContain(
             "GetAssemblyLocation(\"XREngine.Runtime.Rendering.Vulkan\")");
         codeManager.ShouldContain("\"XREngineRendererBackends\"");
+        codeManager.ShouldContain(
+            "\"XREngineRendererBackends=$(XREngineRendererBackends)\"");
         codeManager.ShouldContain("TryResolveBootstrapProjectPath()");
         codeManager.ShouldContain("new XAttribute(\"Include\",");
         buildSettings.ShouldContain(

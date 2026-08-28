@@ -65,7 +65,7 @@ public sealed class OpenXrTimingPipelineContractTests
         string editorProgram = ReadWorkspaceFile("XREngine.Editor/Program.cs");
         string environmentVariables = ReadWorkspaceFile("XREngine.Data/Environment/XREngineEnvironmentVariables.cs");
         string vulkanOpenXr = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/OpenXR/VulkanXrGraphicsBinding.Implementation.cs");
-        string vrState = ReadWorkspaceFile("XRENGINE/Engine/EngineVrLifecycle.cs");
+        string vrState = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/SubsystemHost/EngineVrLifecycle.cs");
 
         frameLifecycle.ShouldContain("internal void EnginePostRenderTick()");
         frameLifecycle.ShouldContain("private void Window_PostRenderViewportsCallback()");
@@ -103,7 +103,7 @@ public sealed class OpenXrTimingPipelineContractTests
     [Test]
     public void RuntimeMonitoring_RetainsOpenXrApiUntilSessionBecomesActive()
     {
-        string vrState = ReadWorkspaceFile("XRENGINE/Engine/EngineVrLifecycle.cs");
+        string vrState = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/SubsystemHost/EngineVrLifecycle.cs");
 
         vrState.ShouldContain("_openXRApi ??= new OpenXRAPI();");
         vrState.ShouldContain("((IOpenXrApplicationLifecycle)_openXRApi).EnableRuntimeMonitoring();");
@@ -920,7 +920,7 @@ public sealed class OpenXrTimingPipelineContractTests
         string state = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.State.cs");
         string frameLifecycle = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.FrameLifecycle.cs");
         string runtimeVrState = ReadWorkspaceFile("XREngine.Input/RuntimeVrStateServices.cs");
-        string engineVrState = ReadWorkspaceFile("XRENGINE/Engine/EngineVrLifecycle.cs");
+        string engineVrState = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/SubsystemHost/EngineVrLifecycle.cs");
 
         string collectCameraUpdate = SliceMethod(
             sceneViews,
@@ -963,7 +963,7 @@ public sealed class OpenXrTimingPipelineContractTests
         string xrCalls = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.XrCalls.cs");
         string stats = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Statistics/RuntimeEngine.Rendering.Stats.Vr.cs");
         string packet = ReadWorkspaceFile("XREngine.Data/Profiling/ProfilerStatsPacket.cs");
-        string sender = ReadWorkspaceFile("XRENGINE/Engine/Engine.ProfilerSender.cs");
+        string sender = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/Engine/Engine.ProfilerSender.cs");
         string editorSource = ReadWorkspaceFile("XREngine.Editor/EngineProfilerDataSource.cs");
         string panel = ReadWorkspaceFile("XREngine.Profiler.UI/ProfilerPanelRenderer.cs");
 
@@ -1523,7 +1523,7 @@ public sealed class OpenXrTimingPipelineContractTests
         string bootstrapRenderSettings = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/BootstrapRenderSettings.cs");
         string editorUnitTestingWorld = ReadWorkspaceFile("XREngine.Editor/Unit Tests/Default/UnitTestingWorld.cs");
         string editorUnitTestingPawns = ReadWorkspaceFile("XREngine.Editor/Unit Tests/Default/UnitTestingWorld.Pawns.cs");
-        string engineState = ReadWorkspaceFile("XRENGINE/Engine/Subclasses/Engine.State.cs");
+        string engineState = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/Engine/Engine.State.cs");
 
         store.ShouldContain("ApplyVrLaunchOverrides");
         store.ShouldContain(nameof(XREngineEnvironmentVariables.UnitTestVrMode));
@@ -1572,7 +1572,7 @@ public sealed class OpenXrTimingPipelineContractTests
     [Test]
     public void RuntimeVrDesktopView_DoesNotReuseEyeCommandsOrEditorImGuiWhenDesktopEditingDisabled()
     {
-        string vrState = ReadWorkspaceFile("XRENGINE/Engine/EngineVrLifecycle.cs");
+        string vrState = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/SubsystemHost/EngineVrLifecycle.cs");
         string vrDeviceTransform = ReadWorkspaceFile("XREngine.Runtime.InputIntegration/Scene/Transforms/VR/VRDeviceTransformBase.cs");
         string openXrApi = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.SceneViews.cs");
         string openXrState = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.State.cs");
@@ -2054,7 +2054,7 @@ public sealed class OpenXrTimingPipelineContractTests
     [Test]
     public void UnitTestingOpenXrVulkan_HonorsPersistedCpuDirectForceAndAllowsEnvOverride()
     {
-        string effectiveSettings = ReadWorkspaceFile("XRENGINE/Engine/Subclasses/Engine.EffectiveSettings.cs");
+        string effectiveSettings = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/Engine/Subclasses/Engine.EffectiveSettings.cs");
 
         effectiveSettings.ShouldNotContain("ShouldIgnorePersistedCpuDirectMeshSubmissionForceForUnitTestingOpenXrVulkan");
         effectiveSettings.ShouldNotContain("Ignoring persisted ForceMeshSubmissionStrategy=CpuDirect");
@@ -2210,7 +2210,7 @@ public sealed class OpenXrTimingPipelineContractTests
         string settings = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Settings/RuntimeEngine.Rendering.EngineSettings.cs");
         string stats = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Statistics/RuntimeEngine.Rendering.Stats.Vr.cs");
         string packet = ReadWorkspaceFile("XREngine.Data/Profiling/ProfilerStatsPacket.cs");
-        string sender = ReadWorkspaceFile("XRENGINE/Engine/Engine.ProfilerSender.cs");
+        string sender = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/Engine/Engine.ProfilerSender.cs");
         string editorSource = ReadWorkspaceFile("XREngine.Editor/EngineProfilerDataSource.cs");
         string panel = ReadWorkspaceFile("XREngine.Profiler.UI/ProfilerPanelRenderer.cs");
 

@@ -103,8 +103,8 @@ public sealed class McpServerAutomationTests
     public void McpServer_CanPersistAndLaunchWithPermissionPolicy()
     {
         string host = ReadWorkspaceFile("XREngine.Editor/Mcp/McpServerHost.cs");
-        string prefs = ReadWorkspaceFile("XRENGINE/Settings/EditorPreferences.cs");
-        string overrides = ReadWorkspaceFile("XRENGINE/Settings/EditorPreferencesOverrides.cs");
+        string prefs = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/Settings/EditorPreferences.cs");
+        string overrides = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/Settings/EditorPreferencesOverrides.cs");
 
         host.ShouldContain("--mcp-allow-all");
         host.ShouldContain("--mcp-no-prompts");

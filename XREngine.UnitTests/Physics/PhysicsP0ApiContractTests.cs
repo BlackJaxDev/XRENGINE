@@ -21,7 +21,7 @@ public sealed class PhysicsP0ApiContractTests
     [Test]
     public void CharacterMovement_ExposesBackendNeutralControllerSurface()
     {
-        string source = ReadWorkspaceFile("XRENGINE/Scene/Components/Movement/CharacterMovementComponent.cs");
+        string source = ReadWorkspaceFile("XREngine.Runtime.Core/Scene/Components/Movement/CharacterMovementComponent.cs");
 
         source.ShouldContain("public IAbstractCharacterController? CharacterController => ActiveController;");
         source.ShouldContain("public IAbstractDynamicRigidBody? RigidBodyReference");
@@ -57,7 +57,7 @@ public sealed class PhysicsP0ApiContractTests
     {
         string controller = ReadWorkspaceFile("XREngine.Runtime.Core/Scene/Components/Physics/CharacterControllerComponent.cs");
         string authoring = ReadWorkspaceFile("XREngine.Runtime.Core/Scene/Physics/PhysicsAuthoring.cs");
-        string dynamicBody = ReadWorkspaceFile("XRENGINE/Scene/Components/Physics/DynamicRigidBodyComponent.cs");
+        string dynamicBody = ReadWorkspaceFile("XREngine.Runtime.Core/Scene/Components/Physics/DynamicRigidBodyComponent.cs");
 
         controller.ShouldContain("public class CharacterControllerComponent : XRComponent, IPhysicsReplicationTarget");
         controller.ShouldContain("public event Action<CharacterControllerComponent, IAbstractCharacterController>? ControllerCreated;");
@@ -72,7 +72,7 @@ public sealed class PhysicsP0ApiContractTests
     public void PhysicsP2_DefinesProductionHardeningContracts()
     {
         string authoring = ReadWorkspaceFile("XREngine.Runtime.Core/Scene/Physics/PhysicsAuthoring.cs");
-        string dynamicBody = ReadWorkspaceFile("XRENGINE/Scene/Components/Physics/DynamicRigidBodyComponent.cs");
+        string dynamicBody = ReadWorkspaceFile("XREngine.Runtime.Core/Scene/Components/Physics/DynamicRigidBodyComponent.cs");
         string staticBody = ReadWorkspaceFile("XREngine.Runtime.Core/Scene/Components/Physics/StaticRigidBodyComponent.cs");
         string joltScene = ReadWorkspaceFile("XREngine.Runtime.Core/Scene/Physics/Jolt/JoltScene.cs");
 

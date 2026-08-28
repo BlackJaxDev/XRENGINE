@@ -329,7 +329,7 @@ internal static partial class SerializedSceneImporter
         }
 
         ApplyPrefabModifications(prefabInstance, hierarchy, ownerHierarchy.SourcePath, state);
-        ApplyPrefabRemovals(prefabInstance, hierarchy);
+        ApplyPrefabRemovals(prefabInstance, hierarchy, state);
         ApplyPrefabAdditions(prefabInstance, ownerFile, ownerHierarchy, hierarchy, state);
         hierarchy.SortRoots();
         return hierarchy;
@@ -379,13 +379,35 @@ internal static partial class SerializedSceneImporter
 
                 case SourceAssetObjectKind.Renderer:
                 case SourceAssetObjectKind.Component:
+                    bool resolved = false;
                     if (importedHierarchy.ComponentsByFileId.TryGetValue(sourceFileId, out XRComponent? component))
                     {
                         ownerHierarchy.ComponentsByFileId[proxy.LocalFileId] = component;
-                        break;
+                        resolved = true;
                     }
 
-                    ReportUnresolvedProxy(proxy, state);
+                    if (importedHierarchy.SerializedAnimatorsByFileId.TryGetValue(
+                            sourceFileId,
+                            out SerializedAnimatorRecord? animator))
+                    {
+                        ownerHierarchy.SerializedAnimatorsByFileId[proxy.LocalFileId] = animator;
+                        ownerHierarchy.SerializedAnimatorOwners[animator] =
+                            importedHierarchy.SerializedAnimatorOwners[animator];
+                        resolved = true;
+                    }
+
+                    if (importedHierarchy.AvatarAnimationGraphsByFileId.TryGetValue(
+                            sourceFileId,
+                            out SerializedAvatarAnimationGraphRecord? avatarGraph))
+                    {
+                        ownerHierarchy.AvatarAnimationGraphsByFileId[proxy.LocalFileId] = avatarGraph;
+                        ownerHierarchy.AvatarAnimationGraphOwners[avatarGraph] =
+                            importedHierarchy.AvatarAnimationGraphOwners[avatarGraph];
+                        resolved = true;
+                    }
+
+                    if (!resolved)
+                        ReportUnresolvedProxy(proxy, state);
                     break;
             }
         }
@@ -479,6 +501,14 @@ internal static partial class SerializedSceneImporter
             if (hierarchy.ComponentsByFileId.TryGetValue(group.Key, out XRComponent? component))
             {
                 ApplyComponentModifications(component, group, state);
+                targetResolved = true;
+            }
+
+            if (hierarchy.SerializedAnimatorsByFileId.TryGetValue(
+                    group.Key,
+                    out SerializedAnimatorRecord? animator))
+            {
+                ApplyAnimatorModifications(animator, group, state);
                 targetResolved = true;
             }
 
@@ -1323,6 +1353,10 @@ internal static partial class SerializedSceneImporter
         public Dictionary<long, SceneNode> NodesByTransformId { get; } = [];
         public Dictionary<long, SceneNode> NodesByGameObjectId { get; } = [];
         public Dictionary<long, XRComponent> ComponentsByFileId { get; } = [];
+        public Dictionary<long, SerializedAnimatorRecord> SerializedAnimatorsByFileId { get; } = [];
+        public Dictionary<SerializedAnimatorRecord, SceneNode> SerializedAnimatorOwners { get; } = [];
+        public Dictionary<long, SerializedAvatarAnimationGraphRecord> AvatarAnimationGraphsByFileId { get; } = [];
+        public Dictionary<SerializedAvatarAnimationGraphRecord, SceneNode> AvatarAnimationGraphOwners { get; } = [];
         public Dictionary<SourceAssetIdentity, SceneNode> NodesByIdentity { get; } = [];
         public Dictionary<SourceAssetIdentity, XRComponent> ComponentsByIdentity { get; } = [];
         public Dictionary<long, int> TransformSortOrders { get; } = [];

@@ -176,7 +176,7 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
     [Test]
     public void ForwardLighting_BindsForwardPrePassContactShadowTextures()
     {
-        string source = LoadRepoSource(Path.Combine("XRENGINE", "Rendering", "Lights3DCollection.ForwardLighting.cs"));
+        string source = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Rendering", "Lights3DCollection.ForwardLighting.cs"));
 
         source.ShouldContain("const int forwardContactDepthUnit = 26;");
         source.ShouldContain("const int forwardContactNormalUnit = 27;");
@@ -389,7 +389,7 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         light.CascadeCount = 6;
         light.CascadeBiasOverrides.Length.ShouldBe(6);
 
-        string source = LoadRepoSource(Path.Combine("XRENGINE", "Scene", "Components", "Lights", "Types", "DirectionalLightComponent.cs"));
+        string source = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Scene", "Components", "Lights", "Types", "DirectionalLightComponent.cs"));
         source.ShouldContain("CascadeBiasMin[{i}]");
         source.ShouldContain("CascadeBiasMax[{i}]");
         source.ShouldContain("CascadeReceiverOffsets[{i}]");
@@ -1359,7 +1359,7 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
     [Test]
     public void PointLightComponent_UsesRenderTranslationForShaderPosition()
     {
-        string source = LoadRepoSource(Path.Combine("XRENGINE", "Scene", "Components", "Lights", "Types", "PointLightComponent.cs"));
+        string source = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Scene", "Components", "Lights", "Types", "PointLightComponent.cs"));
 
         source.ShouldContain("Vector3 lightPosition = Transform.RenderTranslation;");
         source.ShouldContain("program.Uniform($\"{flatPrefix}Position\", lightPosition);");
@@ -1402,7 +1402,7 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
     [Test]
     public void PointLightShadowPath_UsesForcedGeneratedVertexContract()
     {
-        string pointLightSource = LoadRepoSource(Path.Combine("XRENGINE", "Scene", "Components", "Lights", "Types", "PointLightComponent.cs"));
+        string pointLightSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Scene", "Components", "Lights", "Types", "PointLightComponent.cs"));
         pointLightSource.ShouldNotContain("PointLightShadowDepth.vs");
         pointLightSource.ShouldContain("mat = new(refs, geomShader, fragShader);");
         pointLightSource.ShouldContain("mat = new(refs, fragShader);");
@@ -1416,24 +1416,24 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         pointLightGeometrySource.ShouldContain("FragColor0 = InFragColor0[i];");
         pointLightGeometrySource.ShouldContain("layout (location = 20) out vec3 FragPosLocal;");
 
-        string glShaderSource = LoadRepoSource(Path.Combine("XRENGINE", "Rendering", "API", "Rendering", "OpenGL", "Types", "Meshes", "GLShader.cs"));
+        string glShaderSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering.OpenGL", "Rendering", "API", "Rendering", "OpenGL", "BackendObjects", "Programs", "GLShader.cs"));
         glShaderSource.ShouldContain("GLShaderSourceCompatibility.InjectMissingGLPerVertexBlocks");
 
-        string compatibilitySource = LoadRepoSource(Path.Combine("XRENGINE", "Rendering", "API", "Rendering", "OpenGL", "Types", "Meshes", "GLShaderSourceCompatibility.cs"));
+        string compatibilitySource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering.OpenGL", "Rendering", "API", "Rendering", "OpenGL", "Shaders", "GLShaderSourceCompatibility.cs"));
         compatibilitySource.ShouldContain("InjectMissingGLPerVertexBlocks");
         compatibilitySource.ShouldContain("in gl_PerVertex");
         compatibilitySource.ShouldContain("out gl_PerVertex");
 
-        string meshRendererSource = LoadRepoSource(Path.Combine("XREngine", "Rendering", "API", "Rendering", "OpenGL", "Types", "Mesh Renderer", "GLMeshRenderer.Shaders.cs"));
+        string meshRendererSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering.OpenGL", "Rendering", "API", "Rendering", "OpenGL", "BackendObjects", "MeshRendering", "GLMeshRenderer.Shaders.cs"));
         meshRendererSource.ShouldContain("bool pointLightShadowPass = renderState?.ShadowPass == true");
         meshRendererSource.ShouldContain("&& UsesPointLightShadowDepthOutput(globalMaterialOverride);");
         meshRendererSource.ShouldContain("|| pointLightShadowPass;");
 
-        string meshRendererRenderingSource = LoadRepoSource(Path.Combine("XREngine", "Rendering", "API", "Rendering", "OpenGL", "Types", "Mesh Renderer", "GLMeshRenderer.Rendering.cs"));
+        string meshRendererRenderingSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering.OpenGL", "Rendering", "API", "Rendering", "OpenGL", "BackendObjects", "MeshRendering", "GLMeshRenderer.Rendering.cs"));
         meshRendererRenderingSource.ShouldContain("private static bool IsPointLightShadowGeometryPass()");
         meshRendererRenderingSource.ShouldContain("internal bool RequiresTriangleOnlyDrawsForCurrentPass()");
 
-        string meshRendererDrawSource = LoadRepoSource(Path.Combine("XREngine", "Rendering", "API", "Rendering", "OpenGL", "Types", "Mesh Renderer", "GLMeshRenderer.cs"));
+        string meshRendererDrawSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering.OpenGL", "Rendering", "API", "Rendering", "OpenGL", "BackendObjects", "MeshRendering", "GLMeshRenderer.cs"));
         meshRendererDrawSource.ShouldContain("if (ActiveMeshRenderer.RequiresTriangleOnlyDrawsForCurrentPass())");
     }
 
@@ -1489,7 +1489,7 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
     [Test]
     public void GLMaterial_RebindsLightSamplerUniformsEveryBindingBatch()
     {
-        string source = LoadRepoSource(Path.Combine("XRENGINE", "Rendering", "API", "Rendering", "OpenGL", "Types", "Meshes", "GLMaterial.cs"));
+        string source = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering.OpenGL", "Rendering", "API", "Rendering", "OpenGL", "BackendObjects", "Materials", "GLMaterial.cs"));
 
         source.ShouldContain("Light bindings include shadow-map samplers.");
         source.ShouldContain("if (requiredRequirements.HasFlag(EUniformRequirements.Lights))");
@@ -1541,7 +1541,7 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
     [Test]
     public void LightSources_DeclareTunedShadowDefaults()
     {
-        string lightComponentSource = LoadRepoSource(Path.Combine("XRENGINE", "Scene", "Components", "Lights", "Types", "LightComponent.cs"));
+        string lightComponentSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Scene", "Components", "Lights", "Types", "LightComponent.cs"));
         lightComponentSource.ShouldContain("private float _shadowMaxBias = 0.004f;");
         lightComponentSource.ShouldContain("private float _shadowMinBias = 0.00001f;");
         lightComponentSource.ShouldContain("private float _shadowExponent = 1.221f;");
@@ -1558,7 +1558,7 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         lightComponentSource.ShouldContain("private uint _shadowMapResolutionWidth = 1024u;");
         lightComponentSource.ShouldContain("private uint _shadowMapResolutionHeight = 1024u;");
 
-        string directionalSource = LoadRepoSource(Path.Combine("XRENGINE", "Scene", "Components", "Lights", "Types", "DirectionalLightComponent.cs"));
+        string directionalSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Scene", "Components", "Lights", "Types", "DirectionalLightComponent.cs"));
         directionalSource.ShouldContain("SetShadowMapResolution(2048u, 2048u);");
         directionalSource.ShouldContain("ShadowExponentBase = 0.035f;");
         directionalSource.ShouldContain("ShadowExponent = 1.221f;");
@@ -1597,7 +1597,7 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
         directionalLight.ContactShadowNormalOffset.ShouldBe(0.0f);
         directionalLight.ContactShadowJitterStrength.ShouldBe(1.0f);
 
-        string spotSource = LoadRepoSource(Path.Combine("XRENGINE", "Scene", "Components", "Lights", "Types", "SpotLightComponent.cs"));
+        string spotSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Scene", "Components", "Lights", "Types", "SpotLightComponent.cs"));
         spotSource.ShouldContain("SetShadowMapResolution(512u, 512u);");
         spotSource.ShouldContain("ShadowMinBias = 0.0001f;");
         spotSource.ShouldContain("ShadowMaxBias = 0.07f;");
@@ -1691,7 +1691,7 @@ public sealed class CascadedShadowDefaultsAndForwardShaderTests : GpuTestBase
     [Test]
     public void DeferredDirectionalLightPass_BindsSafeShadowFallbacks_AfterLightReactivation()
     {
-        string lightComponentSource = LoadRepoSource(Path.Combine("XRENGINE", "Scene", "Components", "Lights", "Types", "LightComponent.cs"));
+        string lightComponentSource = LoadRepoSource(Path.Combine("XREngine.Runtime.Rendering", "Scene", "Components", "Lights", "Types", "LightComponent.cs"));
         lightComponentSource.ShouldContain("ShadowMap?.Destroy();");
         lightComponentSource.ShouldContain("ShadowMap = null;");
 

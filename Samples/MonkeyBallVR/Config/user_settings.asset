@@ -22,6 +22,21 @@ JobWorkersOverride:
 JobWorkerCapOverride:
   HasOverride: false
   Value: 0
+RenderWorkerThreadCountOverride:
+  HasOverride: false
+  Value: 0
+RenderWorkerThreadCapOverride:
+  HasOverride: false
+  Value: 0
+ReservedForegroundThreadCountOverride:
+  HasOverride: false
+  Value: 0
+AllowCpuOversubscriptionOverride:
+  HasOverride: false
+  Value: false
+RenderWorkerQosOverride:
+  HasOverride: false
+  Value: OsDefault
 JobQueueLimitOverride:
   HasOverride: false
   Value: 0

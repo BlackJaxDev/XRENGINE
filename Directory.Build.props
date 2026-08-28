@@ -19,6 +19,14 @@
     <PackageReadmeFile Condition="'$(PackageReadmeFile)' == '' and Exists('$(MSBuildThisFileDirectory)README.md')">README.md</PackageReadmeFile>
   </PropertyGroup>
 
+  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'XREngine.Runtime.Bootstrap'">
+    <XREngineRendererBackends Condition="'$(XREngineRendererBackends)' == ''">All</XREngineRendererBackends>
+    <XREngineRendererBackendVariant>renderer-$(XREngineRendererBackends)</XREngineRendererBackendVariant>
+    <BaseOutputPath Condition="'$(UseArtifactsOutput)' != 'true' and '$(ArtifactsPath)' == ''">bin\$(XREngineRendererBackendVariant)\</BaseOutputPath>
+    <BaseIntermediateOutputPath Condition="'$(UseArtifactsOutput)' != 'true' and '$(ArtifactsPath)' == ''">obj\$(XREngineRendererBackendVariant)\</BaseIntermediateOutputPath>
+    <ArtifactsProjectName>$(MSBuildProjectName).$(XREngineRendererBackendVariant)</ArtifactsProjectName>
+  </PropertyGroup>
+
   <PropertyGroup Condition="$(MSBuildProjectName.EndsWith('_wpftmp'))">
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <AdditionalCscArguments>$(AdditionalCscArguments) /unsafe</AdditionalCscArguments>

@@ -463,8 +463,8 @@ public sealed class RvcRenderingContractTests
         string contracts = ReadWorkspaceDirectory("XREngine.Runtime.Core/Settings/RvcRenderingContracts");
         string runtimeContracts = ReadWorkspaceDirectory("XREngine.Runtime.Core/Settings/RvcRuntimeContracts");
         string pipeline = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/Pipelines/Types/RvcRenderPipeline.cs");
-        string engineFactory = ReadWorkspaceFile("XRENGINE/Engine/Subclasses/Rendering/EngineRenderingSettingsApplication.Preferences.cs");
-        string engineSettingsApplication = ReadWorkspaceFile("XRENGINE/Engine/Subclasses/Rendering/EngineRenderingSettingsApplication.cs");
+        string engineFactory = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/Engine/Subclasses/Rendering/EngineRenderingSettingsApplication.Preferences.cs");
+        string engineSettingsApplication = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/Engine/Subclasses/Rendering/EngineRenderingSettingsApplication.cs");
         string settings = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Settings/RuntimeEngine.Rendering.EngineSettings.cs");
         string openXrViewConfiguration = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.ViewConfiguration.cs");
         string openXrOpenGl = ReadWorkspaceFile("XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenXR/OpenGlXrGraphicsBinding.Implementation.cs");

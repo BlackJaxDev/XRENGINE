@@ -9,6 +9,7 @@ internal sealed unsafe partial class VulkanDescriptorManager
 {
     private const uint DescriptorHeapDefaultSamplerCapacity = 4096u;
     private const uint DescriptorHeapDefaultResourceCapacity = 16384u;
+    private VulkanLogicalDeviceBootstrapResult.DescriptorPublication? _pendingLogicalDevicePublication;
 
     internal ref VulkanDescriptorHeapNativeFunctions? _descriptorHeapApi => ref ResourceRuntime.Descriptors.Heap.NativeFunctions;
     internal ref VulkanDescriptorHeapStorage _descriptorHeapSamplerStorage => ref ResourceRuntime.Descriptors.Heap.SamplerStorage;
@@ -68,6 +69,15 @@ internal sealed unsafe partial class VulkanDescriptorManager
         VulkanLogicalDeviceBootstrapResult.DescriptorPublication publication)
     {
         ArgumentNullException.ThrowIfNull(publication);
+        if (Interlocked.CompareExchange(
+                ref _pendingLogicalDevicePublication,
+                publication,
+                null) is not null)
+        {
+            throw new InvalidOperationException(
+                "The Vulkan descriptor manager already owns a pending logical-device publication.");
+        }
+
         _descriptorHeapFeatureSupported = publication.DescriptorHeapFeatureSupported;
         _descriptorHeapCaptureReplaySupported = publication.DescriptorHeapCaptureReplaySupported;
         _descriptorHeapShaderUntypedPointersAvailable =
@@ -77,6 +87,32 @@ internal sealed unsafe partial class VulkanDescriptorManager
             : default;
         _descriptorHeapApi = publication.DescriptorHeapNativeFunctions;
         _descriptorHeapNativeApiAvailable = publication.DescriptorHeapNativeApiAvailable;
+    }
+
+    /// <summary>
+    /// Resolves the resource authority's active backend after allocator startup,
+    /// when descriptor-heap storage can be created without publishing a bootstrap
+    /// result that disagrees with the live runtime.
+    /// </summary>
+    internal void FinalizeLogicalDevicePublication()
+    {
+        VulkanLogicalDeviceBootstrapResult.DescriptorPublication publication =
+            Interlocked.Exchange(ref _pendingLogicalDevicePublication, null) ??
+            throw new InvalidOperationException(
+                "The Vulkan descriptor manager has no logical-device publication to finalize.");
+
+        ResolveDescriptorBackendAfterDeviceCreate(
+            publication.RequestedBackend,
+            publication.DescriptorIndexingEnabled,
+            publication.DescriptorHeapExtensionAvailable,
+            publication.DescriptorHeapDependenciesReady,
+            publication.DescriptorHeapFeatureSupported,
+            publication.DescriptorHeapNativeApiAvailable);
+        Debug.Vulkan(
+            "[Vulkan.DescriptorBackend] requested={0} active={1} reason='{2}'.",
+            publication.RequestedBackend,
+            ActiveDescriptorBackend,
+            DescriptorBackendFallbackReason);
     }
 
     internal unsafe void QueryDescriptorHeapCapabilities(

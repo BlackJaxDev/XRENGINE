@@ -98,6 +98,7 @@
 			"args": [
 				"build",
 				"${workspaceFolder}/XREngine.Server/XREngine.Server.csproj",
+				"/property:XREngineRendererBackends=None",
 				"/property:GenerateFullPaths=true",
 				"/consoleloggerparameters:NoSummary"
 			],

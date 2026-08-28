@@ -46,12 +46,18 @@ internal sealed class VulkanResidentDrawDependencyManifest
         AdvancedSharedGpuSceneDatabase? database = canonicalDraw.Database;
         AdvancedGpuHandle primary = canonicalDraw.Primary.Handle;
         if (database is null || !primary.IsValid ||
-            !database.TryCreateDrawDependencySnapshot(
+            !database.TryGetPublicationSnapshot(
+                canonicalDraw.Publication,
+                out AdvancedGpuScenePublicationSnapshot publication) ||
+            publication.Draws.Sequence != canonicalDraw.Publication.Sequence ||
+            publication.MaterialPayloads.Sequence != canonicalDraw.Publication.Sequence ||
+            publication.ResourcePayloads.Sequence != canonicalDraw.Publication.Sequence ||
+            !publication.ResourcePayloads.HasCompleteSourceImage ||
+            !publication.Draws.TryGet(
                 primary,
-                out AdvancedSharedDrawDependencySnapshot snapshot) ||
-            snapshot.Scene.Draw != primary ||
-            !database.Materials.Materials.TryGet(
-                snapshot.Scene.Material,
+                out AdvancedDrawRecord draw) ||
+            !publication.Materials.TryGet(
+                draw.Material,
                 out AdvancedMaterialRecord material))
         {
             return false;
@@ -60,49 +66,72 @@ internal sealed class VulkanResidentDrawDependencyManifest
         Span<VulkanResidentDrawDependency> dependencies =
             stackalloc VulkanResidentDrawDependency[64];
         int count = 0;
-        AddUnique(dependencies, ref count, EBackendReadyCanonicalOwner.Instance, snapshot.Scene.Instance);
-        AddUnique(dependencies, ref count, EBackendReadyCanonicalOwner.Geometry, snapshot.Scene.Geometry);
-        AddUnique(dependencies, ref count, EBackendReadyCanonicalOwner.Material, snapshot.Scene.Material);
-        AddUnique(dependencies, ref count, EBackendReadyCanonicalOwner.Deformation, snapshot.Scene.Deformation);
-        AddUnique(dependencies, ref count, EBackendReadyCanonicalOwner.RenderState, snapshot.Scene.RenderState);
-        AddUnique(dependencies, ref count, EBackendReadyCanonicalOwner.EditorIdentity, snapshot.Scene.EditorIdentity);
-        AddUnique(dependencies, ref count, EBackendReadyCanonicalOwner.Transform, snapshot.Scene.CurrentTransform);
-        AddUnique(dependencies, ref count, EBackendReadyCanonicalOwner.Transform, snapshot.Scene.PreviousTransform);
+        AddUnique(dependencies, ref count, EBackendReadyCanonicalOwner.Instance, draw.Instance);
+        AddUnique(dependencies, ref count, EBackendReadyCanonicalOwner.Geometry, draw.Geometry);
+        AddUnique(dependencies, ref count, EBackendReadyCanonicalOwner.Material, draw.Material);
+        AddUnique(dependencies, ref count, EBackendReadyCanonicalOwner.Deformation, draw.Deformation);
+        AddUnique(dependencies, ref count, EBackendReadyCanonicalOwner.RenderState, draw.RenderState);
+        AddUnique(dependencies, ref count, EBackendReadyCanonicalOwner.EditorIdentity, draw.EditorIdentity);
+        AddUnique(dependencies, ref count, EBackendReadyCanonicalOwner.Transform, draw.CurrentTransform);
+        AddUnique(dependencies, ref count, EBackendReadyCanonicalOwner.Transform, draw.PreviousTransform);
 
+        AdvancedGpuHandle kernelHandle = new(
+            material.ShadingKernelId,
+            material.ShadingKernelGeneration);
+        if (!publication.Kernels.TryGetDenseIndex(kernelHandle, out _))
+            return false;
         AddUnique(
             dependencies,
             ref count,
             EBackendReadyCanonicalOwner.ShadingKernel,
-            new AdvancedGpuHandle(
-                material.ShadingKernelId,
-                material.ShadingKernelGeneration));
-        // Phase 2 consumes the packed-layout dependency when published, but
-        // does not require the Phase 3 material-layout table to exist yet.
-        if (database.Materials.TryGetLayoutHandle(
-                snapshot.Scene.Material,
-                out AdvancedGpuHandle layoutHandle))
-        {
-            AddUnique(
-                dependencies,
-                ref count,
-                EBackendReadyCanonicalOwner.MaterialLayout,
-                layoutHandle);
-        }
+            kernelHandle);
 
-        if (!database.Materials.TryGetTextureBindings(material, out var bindings))
+        if (!publication.MaterialPayloads.TryGetLayoutHandle(
+                draw.Material,
+                out AdvancedGpuHandle layoutHandle))
+            return false;
+        AddUnique(
+            dependencies,
+            ref count,
+            EBackendReadyCanonicalOwner.MaterialLayout,
+            layoutHandle);
+
+        if (!publication.MaterialPayloads.TryGetTextureBindings(
+                material,
+                out ReadOnlySpan<AdvancedMaterialTextureBinding> bindings))
             return false;
         for (int bindingIndex = 0; bindingIndex < bindings.Length; ++bindingIndex)
         {
+            ref readonly AdvancedMaterialTextureBinding binding =
+                ref bindings[bindingIndex];
+            if (binding.Texture.Handle.IsValid &&
+                (!publication.Textures.TryGetDenseIndex(
+                    binding.Texture.Handle,
+                    out _) ||
+                 !publication.ResourcePayloads.TryGetTextureSource(
+                    binding.Texture.Handle,
+                    out _)))
+            {
+                return false;
+            }
+            if (binding.Sampler.Handle.IsValid &&
+                !publication.Samplers.TryGetDenseIndex(
+                    binding.Sampler.Handle,
+                    out _))
+            {
+                return false;
+            }
+
             AddUnique(
                 dependencies,
                 ref count,
                 EBackendReadyCanonicalOwner.Texture,
-                bindings[bindingIndex].Texture.Handle);
+                binding.Texture.Handle);
             AddUnique(
                 dependencies,
                 ref count,
                 EBackendReadyCanonicalOwner.Sampler,
-                bindings[bindingIndex].Sampler.Handle);
+                binding.Sampler.Handle);
         }
 
         // The intrusive reverse index is keyed by owner and stable slot. Two

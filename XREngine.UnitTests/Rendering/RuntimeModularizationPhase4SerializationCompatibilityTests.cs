@@ -4,6 +4,7 @@ using Shouldly;
 using XREngine.Components;
 using XREngine.Core;
 using XREngine.Core.Attributes;
+using XREngine.Core.Files;
 using XREngine.Data.Core;
 using XREngine.Rendering;
 using XREngine.Rendering.Models;
@@ -16,16 +17,12 @@ namespace XREngine.UnitTests.Rendering;
 public sealed class RuntimeModularizationPhase4SerializationCompatibilityTests
 {
     [Test]
-    public void MovedRuntimeUiTypes_ResolveThroughLegacyFacadeTypeForwards()
+    public void MovedRuntimeUiTypes_ResolveThroughSupportedPersistedIdentityLoader()
     {
-        Type.GetType("XREngine.Components.UICanvasComponent, XREngine")
-            .ShouldBe(typeof(UICanvasComponent));
-        Type.GetType("XREngine.Rendering.UI.UISvgComponent, XREngine")
-            .ShouldBe(typeof(UISvgComponent));
-        Type.GetType("XREngine.Rendering.UI.RiveUIComponent, XREngine")
-            .ShouldBe(typeof(RiveUIComponent));
-        Type.GetType("XREngine.Rendering.UI.IUICanvasInputSource, XREngine")
-            .ShouldBe(typeof(IUICanvasInputSource));
+        AssertPersistedIdentity("XREngine.Components.UICanvasComponent, XREngine", typeof(UICanvasComponent));
+        AssertPersistedIdentity("XREngine.Rendering.UI.UISvgComponent, XREngine", typeof(UISvgComponent));
+        AssertPersistedIdentity("XREngine.Rendering.UI.RiveUIComponent, XREngine", typeof(RiveUIComponent));
+        AssertPersistedIdentity("XREngine.Rendering.UI.IUICanvasInputSource, XREngine", typeof(IUICanvasInputSource));
     }
 
     [Test]
@@ -149,5 +146,12 @@ public sealed class RuntimeModularizationPhase4SerializationCompatibilityTests
             .Single();
 
         attribute.LegacyTypeNames.ShouldContain(legacyTypeName);
+    }
+
+    private static void AssertPersistedIdentity(string legacyTypeName, Type expectedType)
+    {
+        Type.GetType(legacyTypeName).ShouldBeNull("the removed facade is an intentional external CLR breaking change");
+        CookedAssetTypeReference.Resolve(legacyTypeName, expectedType).ShouldBe(expectedType);
+        Type.GetType(expectedType.AssemblyQualifiedName!).ShouldBe(expectedType);
     }
 }

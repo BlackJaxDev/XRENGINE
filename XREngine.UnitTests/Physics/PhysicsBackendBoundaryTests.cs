@@ -76,7 +76,7 @@ public sealed class PhysicsBackendBoundaryTests
         string characterController = ReadWorkspaceFile(
             "XREngine.Runtime.Core/Scene/Components/Physics/CharacterControllerComponent.cs");
         string characterMovement = ReadWorkspaceFile(
-            "XRENGINE/Scene/Components/Movement/CharacterMovementComponent.cs");
+            "XREngine.Runtime.Core/Scene/Components/Movement/CharacterMovementComponent.cs");
         string dynamicBody = ReadWorkspaceFile(
             "XREngine.Runtime.Core/Scene/Components/Physics/DynamicRigidBodyComponent.cs");
         string staticBody = ReadWorkspaceFile(

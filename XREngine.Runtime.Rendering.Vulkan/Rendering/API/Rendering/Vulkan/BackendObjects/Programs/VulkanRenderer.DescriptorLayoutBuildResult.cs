@@ -7,4 +7,5 @@ internal readonly record struct DescriptorLayoutBuildResult(
     List<DescriptorBindingInfo> Bindings,
     bool[] SetUsesUpdateAfterBind,
     bool RequiresUpdateAfterBind,
-    bool RequiresVariableDescriptorCount);
+    bool RequiresVariableDescriptorCount,
+    uint ExternallyOwnedSetMask);

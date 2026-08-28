@@ -66,10 +66,25 @@ public sealed class AdvancedMaterialDatabase
     public ReadOnlySpan<AdvancedMaterialTextureBinding> TextureBindings => _textureBindings.AsSpan(0, checked((int)_textureBindingCount));
     public uint MaximumConstantWordsPerMaterial => _maximumConstantWordsPerMaterial;
     public uint MaximumTextureBindingsPerMaterial => _maximumTextureBindingsPerMaterial;
+    public uint LayoutMemberCount => _layoutMemberCount;
+    public uint LayoutMemberCapacity => checked((uint)_layoutMembers.Length);
 
     /// <summary>Allocates a ring-owned immutable publication image at a setup or growth boundary.</summary>
     public AdvancedMaterialPublicationSnapshot CreatePublicationSnapshot()
-        => new(_materialLayoutHandles.Length, _constantWords.Length, _textureBindings.Length);
+        => new(
+            _materials.CreatePublicationSnapshot(includeRecordImage: true),
+            _kernels.CreatePublicationSnapshot(includeRecordImage: true),
+            _layouts.CreatePublicationSnapshot(includeRecordImage: true),
+            _materialLayoutHandles.Length,
+            _layoutMembers.Length,
+            _constantWords.Length,
+            _textureBindings.Length);
+
+    internal bool CanSealPublication(AdvancedMaterialPublicationSnapshot snapshot)
+        => snapshot.LayoutHandleCapacity >= _materialLayoutHandles.Length &&
+           snapshot.LayoutMemberCapacity >= _layoutMembers.Length &&
+           snapshot.ConstantWordCapacity >= _constantWords.Length &&
+           snapshot.TextureBindingCapacity >= _textureBindings.Length;
 
     /// <summary>Copies canonical material payload state into a retained publication image without allocating.</summary>
     public bool TrySealPublication(ulong publicationSequence, AdvancedMaterialPublicationSnapshot snapshot)
@@ -78,8 +93,15 @@ public sealed class AdvancedMaterialDatabase
         if (publicationSequence == 0u)
             return false;
 
-        return snapshot.TryCapture(publicationSequence, _materialLayoutHandles, _constantWords, _textureBindings,
-            _materialGeneration, _kernelGeneration, _layoutGeneration);
+        return snapshot.TryCapture(
+            publicationSequence,
+            _materialLayoutHandles,
+            LayoutMembers,
+            ConstantWords,
+            TextureBindings,
+            _materialGeneration,
+            _kernelGeneration,
+            _layoutGeneration);
     }
 
     /// <summary>Resolves the stable layout handle used by a packed material row.</summary>
@@ -306,6 +328,118 @@ public sealed class AdvancedMaterialDatabase
         return true;
     }
 
+    /// <summary>
+    /// Interns an exact layout and kernel schema before adding an exact material
+    /// payload. Every input and fixed-capacity journal is preflighted before the
+    /// first mutation, so a rejected request leaves the database unchanged.
+    /// </summary>
+    public bool TryAddMaterialWithInternedSchema(
+        in AdvancedMaterialLayoutRecord layoutSource,
+        ReadOnlySpan<AdvancedMaterialLayoutMember> layoutMembers,
+        in AdvancedShadingKernelRecord kernelSource,
+        in AdvancedMaterialRecord materialSource,
+        ReadOnlySpan<AdvancedMaterialValueDescriptor> values,
+        ReadOnlySpan<uint> constantWords,
+        ReadOnlySpan<AdvancedMaterialTextureBinding> textureBindings,
+        out AdvancedMaterialVariantHandles handles,
+        out EAdvancedMaterialVariantCreationFailure failure)
+    {
+        handles = default;
+        failure = EAdvancedMaterialVariantCreationFailure.None;
+
+        bool hasLayout = TryFindLayoutHandle(layoutSource, layoutMembers, out AdvancedGpuHandle layoutHandle);
+        AdvancedMaterialLayoutRecord layout;
+        if (hasLayout)
+        {
+            if (!_layouts.TryGet(layoutHandle, out layout))
+                throw new InvalidOperationException("Interned material layout disappeared before compound creation.");
+        }
+        else
+        {
+            if (!ValidateLayoutMembers(layoutSource, layoutMembers))
+            {
+                failure = EAdvancedMaterialVariantCreationFailure.InvalidLayout;
+                return false;
+            }
+            if ((uint)layoutMembers.Length > (uint)_layoutMembers.Length - _layoutMemberCount)
+            {
+                failure = EAdvancedMaterialVariantCreationFailure.LayoutMemberCapacity;
+                return false;
+            }
+            if (!_layouts.CanApply(addCount: 1, replaceCount: 1, tombstoneCount: 0))
+            {
+                failure = EAdvancedMaterialVariantCreationFailure.LayoutPublicationCapacity;
+                return false;
+            }
+
+            layout = layoutSource;
+            layout.MemberOffset = _layoutMemberCount;
+            layout.MemberCount = checked((uint)layoutMembers.Length);
+            layout.StableLayoutId = 0u;
+            layout.Generation = 0u;
+        }
+
+        AdvancedShadingKernelRecord kernel = PrepareKernelRecord(in layout, in kernelSource);
+        AdvancedGpuHandle kernelHandle = AdvancedGpuHandle.Invalid;
+        bool hasKernel = hasLayout && TryFindKernelHandle(layoutHandle, kernel, out kernelHandle);
+        if (hasKernel)
+        {
+            if (!_kernels.TryGet(kernelHandle, out kernel))
+                throw new InvalidOperationException("Interned shading kernel disappeared before compound creation.");
+        }
+        else if (!_kernels.CanApply(addCount: 1, replaceCount: 1, tombstoneCount: 0))
+        {
+            failure = EAdvancedMaterialVariantCreationFailure.KernelPublicationCapacity;
+            return false;
+        }
+
+        if (!TryPrepareMaterial(
+                in layout,
+                in kernel,
+                hasKernel ? kernelHandle : AdvancedGpuHandle.Invalid,
+                hasLayout ? GetLayoutMembers(layout) : layoutMembers,
+                materialSource,
+                values,
+                constantWords,
+                textureBindings,
+                out _))
+        {
+            failure = EAdvancedMaterialVariantCreationFailure.InvalidMaterial;
+            return false;
+        }
+
+        if (!_materials.CanApply(addCount: 1, replaceCount: 1, tombstoneCount: 0))
+        {
+            failure = EAdvancedMaterialVariantCreationFailure.MaterialPublicationCapacity;
+            return false;
+        }
+
+        if (!hasLayout)
+        {
+            if (!TryAddLayout(layoutSource, layoutMembers, out layoutHandle))
+                throw new InvalidOperationException("Preflighted material layout insertion failed.");
+        }
+        if (!hasKernel)
+        {
+            if (!TryAddKernel(layoutHandle, kernelSource, out kernelHandle))
+                throw new InvalidOperationException("Preflighted shading kernel insertion failed.");
+        }
+        if (!TryAddMaterial(
+                layoutHandle,
+                kernelHandle,
+                materialSource,
+                values,
+                constantWords,
+                textureBindings,
+                out AdvancedGpuHandle materialHandle))
+        {
+            throw new InvalidOperationException("Preflighted material insertion failed.");
+        }
+
+        handles = new(layoutHandle, kernelHandle, materialHandle);
+        return true;
+    }
+
     public bool TryReplaceMaterial(
         AdvancedGpuHandle materialHandle,
         AdvancedGpuHandle layoutHandle,
@@ -408,7 +542,18 @@ public sealed class AdvancedMaterialDatabase
                 0ul);
         }
 
-        ReadOnlySpan<AdvancedMaterialLayoutMember> declared = GetLayoutMembers(layout);
+        return ValidateValues(in layout, values);
+    }
+
+    private AdvancedMaterialValidationResult ValidateValues(
+        in AdvancedMaterialLayoutRecord layout,
+        ReadOnlySpan<AdvancedMaterialValueDescriptor> values)
+        => ValidateValues(GetLayoutMembers(layout), values);
+
+    private static AdvancedMaterialValidationResult ValidateValues(
+        ReadOnlySpan<AdvancedMaterialLayoutMember> declared,
+        ReadOnlySpan<AdvancedMaterialValueDescriptor> values)
+    {
         for (int valueIndex = 0; valueIndex < values.Length; valueIndex++)
         {
             AdvancedMaterialValueDescriptor value = values[valueIndex];
@@ -539,15 +684,41 @@ public sealed class AdvancedMaterialDatabase
         ReadOnlySpan<AdvancedMaterialTextureBinding> textureBindings,
         out AdvancedMaterialRecord record)
     {
-        record = source;
         if (!_layouts.TryGet(layoutHandle, out AdvancedMaterialLayoutRecord layout) ||
-            !_kernels.TryGet(kernelHandle, out AdvancedShadingKernelRecord kernel) ||
-            kernel.MaterialLayoutHash != layout.LayoutHash)
+            !_kernels.TryGet(kernelHandle, out AdvancedShadingKernelRecord kernel))
         {
+            record = default;
             return false;
         }
 
-        AdvancedMaterialValidationResult validation = ValidateValues(layoutHandle, values);
+        return TryPrepareMaterial(
+            in layout,
+            in kernel,
+            kernelHandle,
+            GetLayoutMembers(layout),
+            source,
+            values,
+            constantWords,
+            textureBindings,
+            out record);
+    }
+
+    private bool TryPrepareMaterial(
+        in AdvancedMaterialLayoutRecord layout,
+        in AdvancedShadingKernelRecord kernel,
+        AdvancedGpuHandle kernelHandle,
+        ReadOnlySpan<AdvancedMaterialLayoutMember> declaredMembers,
+        in AdvancedMaterialRecord source,
+        ReadOnlySpan<AdvancedMaterialValueDescriptor> values,
+        ReadOnlySpan<uint> constantWords,
+        ReadOnlySpan<AdvancedMaterialTextureBinding> textureBindings,
+        out AdvancedMaterialRecord record)
+    {
+        record = source;
+        if (kernel.MaterialLayoutHash != layout.LayoutHash)
+            return false;
+
+        AdvancedMaterialValidationResult validation = ValidateValues(declaredMembers, values);
         if (!validation.IsValid ||
             constantWords.Length != layout.ConstantWordCount ||
             textureBindings.Length != layout.TextureReferenceCount ||
@@ -692,6 +863,18 @@ public sealed class AdvancedMaterialDatabase
            left.Flags == right.Flags &&
            left.Reserved0 == right.Reserved0 && left.Reserved1 == right.Reserved1 &&
            left.Reserved2 == right.Reserved2 && left.Reserved3 == right.Reserved3;
+
+    private static AdvancedShadingKernelRecord PrepareKernelRecord(
+        in AdvancedMaterialLayoutRecord layout,
+        in AdvancedShadingKernelRecord source)
+    {
+        AdvancedShadingKernelRecord record = source;
+        record.StableKernelId = 0u;
+        record.Generation = 0u;
+        record.MaterialLayoutHash = layout.LayoutHash;
+        record.RequiredAttributeMask |= layout.RequiredAttributeMask;
+        return record;
+    }
 
     private static bool TextureBindingsEqual(
         ReadOnlySpan<AdvancedMaterialTextureBinding> left,

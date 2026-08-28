@@ -25,7 +25,7 @@ public sealed class RenderingNamingConventionTests
     public void GpuRenderingDomainFiles_UseRoleSuffixes()
     {
         string root = ResolveWorkspaceRoot();
-        string domainRoot = Path.Combine(root, "XRENGINE", "Rendering", "Commands", "GPURendering");
+        string domainRoot = Path.Combine(root, "XREngine.Runtime.Rendering", "Rendering", "Commands", "GPURendering");
 
         var expectedRoleSuffix = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
@@ -55,7 +55,7 @@ public sealed class RenderingNamingConventionTests
     public void GenericNames_AreBanned_InGpuRenderingAndComputeShaders()
     {
         string root = ResolveWorkspaceRoot();
-        string renderingRoot = Path.Combine(root, "XRENGINE", "Rendering");
+        string renderingRoot = Path.Combine(root, "XREngine.Runtime.Rendering", "Rendering");
         string computeRoot = Path.Combine(root, "Build", "CommonAssets", "Shaders", "Compute");
 
         var banned = new HashSet<string>(StringComparer.OrdinalIgnoreCase)

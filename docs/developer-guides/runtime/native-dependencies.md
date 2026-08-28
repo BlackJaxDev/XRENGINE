@@ -41,7 +41,7 @@ Used for convex decomposition workflows.
 - Build path: triggered by `dotnet build` when needed
 - Script: `Tools/Dependencies/Build-CoACD.ps1`
 - Requirements: `git`, `cmake`, and Visual Studio tooling on Windows
-- Output location: `XRENGINE/runtimes/<rid>/native`
+- Output location: `XREngine.Runtime.Core/runtimes/<rid>/native`
 
 If you need to force a rebuild, pass:
 
@@ -135,7 +135,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Tools\Reports\Generate-Dep
 Used for the current PhysX integration.
 
 - Runtime DLL: `libmagicphysx.dll`
-- Expected location: `XRENGINE/runtimes/win-x64/native`
+- Expected location: `XREngine.Runtime.Core/runtimes/win-x64/native`
 
 If you update the MagicPhysX submodule or its native output, rebuild and revalidate physics-focused flows afterward.
 

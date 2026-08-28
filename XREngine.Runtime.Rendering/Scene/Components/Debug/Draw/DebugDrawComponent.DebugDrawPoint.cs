@@ -1,0 +1,29 @@
+using System.Numerics;
+using XREngine.Data.Colors;
+using XREngine.Scene.Transforms;
+
+namespace XREngine.Components
+{
+    public partial class DebugDrawComponent
+    {
+        public class DebugDrawPoint(Vector3 localOffset, ColorF4 color) : DebugShapeBase(color, false)
+        {
+            /// <summary>
+            /// Parameterless constructor for serialization.
+            /// </summary>
+            public DebugDrawPoint() : this(Vector3.Zero, ColorF4.White) { }
+
+            /// <summary>
+            /// The local offset of the point relative to this component's transform.
+            /// </summary>
+            public Vector3 LocalOffset
+            {
+                get => localOffset;
+                set => localOffset = value;
+            }
+
+            public override void Render(TransformBase transform)
+                => RuntimeEngine.Rendering.Debug.RenderPoint(transform.TransformPoint(LocalOffset), Color);
+        }
+    }
+}

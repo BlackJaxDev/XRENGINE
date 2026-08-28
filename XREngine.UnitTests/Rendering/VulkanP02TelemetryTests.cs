@@ -39,7 +39,7 @@ public sealed class VulkanP02TelemetryTests
             "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Synchronization.cs");
         string statsSource = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering/Runtime/Statistics/RuntimeEngine.Rendering.Stats.Vulkan.cs");
-        string captureSource = ReadWorkspaceFile("XRENGINE/Engine/Engine.ProfileCapture.cs");
+        string captureSource = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/Engine/Engine.ProfileCapture.cs");
         string mcpSource = ReadWorkspaceFile(
             "XREngine.Editor/Mcp/Actions/EditorMcpActions.Profiler.cs");
 
@@ -135,7 +135,7 @@ public sealed class VulkanP02TelemetryTests
         string statsSource = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering/Runtime/Statistics/RuntimeEngine.Rendering.Stats.Vulkan.Binding.cs");
         string captureSource = ReadWorkspaceFile(
-            "XRENGINE/Engine/Engine.ProfileCapture.cs");
+            "XREngine.Runtime.Bootstrap/Engine/Engine.ProfileCapture.cs");
         string mcpSource = ReadWorkspaceFile(
             "XREngine.Editor/Mcp/Actions/EditorMcpActions.Profiler.cs");
 
@@ -179,7 +179,7 @@ public sealed class VulkanP02TelemetryTests
         string statsSource = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering/Runtime/Statistics/RuntimeEngine.Rendering.Stats.Vulkan.Binding.cs");
         string captureSource = ReadWorkspaceFile(
-            "XRENGINE/Engine/Engine.ProfileCapture.cs");
+            "XREngine.Runtime.Bootstrap/Engine/Engine.ProfileCapture.cs");
         string mcpSource = ReadWorkspaceFile(
             "XREngine.Editor/Mcp/Actions/EditorMcpActions.Profiler.cs");
 
@@ -209,7 +209,7 @@ public sealed class VulkanP02TelemetryTests
         string statsSource = ReadWorkspaceFile(
             "XREngine.Runtime.Rendering/Runtime/Statistics/RuntimeEngine.Rendering.Stats.Vulkan.Binding.cs");
         string captureSource = ReadWorkspaceFile(
-            "XRENGINE/Engine/Engine.ProfileCapture.cs");
+            "XREngine.Runtime.Bootstrap/Engine/Engine.ProfileCapture.cs");
         string mcpSource = ReadWorkspaceFile(
             "XREngine.Editor/Mcp/Actions/EditorMcpActions.Profiler.cs");
 
