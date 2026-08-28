@@ -46,6 +46,17 @@ public sealed class AdvancedGpuRecordTablePublicationSnapshot<T> where T : unman
     public ulong Sequence { get; private set; }
 
     /// <summary>
+    /// Oldest publication generation represented by <see cref="Deltas"/>.
+    /// A consumer whose applied sequence precedes this floor cannot safely
+    /// patch a retained image and must materialize a fresh image instead.
+    /// </summary>
+    public ulong JournalFloorSequence { get; private set; }
+
+    public bool HasRetainedJournal => _deltaCount != 0;
+
+    public AdvancedGpuOwnerGenerations Generations { get; private set; }
+
+    /// <summary>
     /// Whether this snapshot retains an exact physical record and logical
     /// lookup image in addition to its structural deltas.
     /// </summary>
@@ -122,6 +133,8 @@ public sealed class AdvancedGpuRecordTablePublicationSnapshot<T> where T : unman
     {
         ArgumentNullException.ThrowIfNull(sourceTable);
         Sequence = 0u;
+        JournalFloorSequence = 0u;
+        Generations = default;
         if (sequence == 0u ||
             deltas.Length > _deltas.Length ||
             remaps.Length > _remaps.Length ||
@@ -148,6 +161,10 @@ public sealed class AdvancedGpuRecordTablePublicationSnapshot<T> where T : unman
         _deltaCount = deltas.Length;
         _remapCount = remaps.Length;
         Sequence = sequence;
+        Generations = sourceTable.Generations;
+        JournalFloorSequence = deltas.IsEmpty
+            ? sequence
+            : deltas[0].PublicationGeneration;
         return true;
     }
 

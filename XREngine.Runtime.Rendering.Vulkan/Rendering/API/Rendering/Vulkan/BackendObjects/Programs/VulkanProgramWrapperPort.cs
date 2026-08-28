@@ -70,13 +70,7 @@ internal unsafe sealed class VulkanProgramCreationPort(VulkanBackendObjectContex
     }
 
     internal void RegisterPipeline(Pipeline pipeline, string owner)
-    {
-        if (pipeline.Handle != 0)
-            context.Resources.Lifetime.Tracker.RegisterResource(
-                new VulkanResourceLifetimeKey(ObjectType.Pipeline, pipeline.Handle),
-                owner,
-                externallyOwned: false);
-    }
+        => context.Resources.RegisterPipeline(pipeline, owner);
 
     internal void NotifyPipelineCreated(string kind)
         => context.Resources.PipelineManager.NotifyPipelineCreated(kind);

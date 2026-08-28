@@ -23,6 +23,7 @@ public readonly struct AdvancedGpuScenePublicationLease : IDisposable
     }
 
     public AdvancedGpuScenePublicationReference Reference { get; }
+    internal AdvancedSharedGpuSceneDatabase? Database => _database;
     public bool IsValid => _database is not null && _slot != 0u && Reference.IsValid;
     public void Dispose() => _database?.ReleasePublicationLease(_slot, _generation);
 }

@@ -12,6 +12,9 @@ public sealed partial class ImportedAnimationClipMetadata
     public bool Legacy { get; set; }
     public bool Compressed { get; set; }
     public bool UseHighQualityCurve { get; set; }
+    public bool HasGenericRootTransform { get; set; }
+    public bool HasMotionFloatCurves { get; set; }
+    public bool GenerateMotionCurves { get; set; }
     public Vector3 BoundsCenter { get; set; }
     public Vector3 BoundsExtents { get; set; }
 }

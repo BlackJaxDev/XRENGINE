@@ -27,6 +27,7 @@ internal enum EVulkanAdvancedSceneResourceFailure : byte
     SamplerCacheCapacity,
     NativeSamplerCreationFailed,
     FrameStorageCapacity,
+    TransactionIntegrityFailure,
     DescriptorUpdateFailed,
     DeviceLost,
     NativeFault,

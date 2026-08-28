@@ -1,5 +1,16 @@
 #version 450
 
+layout(push_constant, std430) uniform XRAdvancedVisibilityPreparationPush
+{
+    uint viewIndex;
+    uint payloadBase;
+    uint payloadCapacity;
+    uint rangeBase;
+} XR_ADV_VisibilityPush;
+
+#define XR_ADV_VISIBILITY_COUNTER_INDEX XR_ADV_VisibilityPush.viewIndex
+#include "../Visibility/VisibilityInterface.glslinc"
+
 layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 
 const uint PRODUCER_STATIC_MESHLET = 0u;
@@ -7,30 +18,6 @@ const uint PRODUCER_SKINNED_MESHLET = 1u;
 const uint PRODUCER_INDIRECT_INDEXED = 2u;
 const uint PRODUCER_CPU_DIRECT_STATIC_INDEXED = 3u;
 const uint PRODUCER_CPU_DIRECT_PRE_SKINNED = 4u;
-
-struct VisibilityPayload
-{
-    uvec2 Draw;
-    uvec2 Geometry;
-    uvec2 Material;
-    uint VertexOffset;
-    uint PreviousVertexOffset;
-    uint IndexOffset;
-    uint WeightOffset;
-    uint PaletteOffset;
-    uint MeshletOffset;
-    uint MeshletCount;
-    uint PrimitiveSection;
-    uint InstanceCount;
-    uint FirstIndex;
-    uint IndexCount;
-    uint VertexCount;
-    uint RasterStateClass;
-    uint Coverage;
-    uint CullMode;
-    uint PrimitiveTopology;
-    uint Flags;
-};
 
 struct DrawIndexedIndirect
 {
@@ -48,144 +35,119 @@ struct DrawMeshTasksIndirect
     uint GroupCountZ;
 };
 
-layout(std430, binding = 0) readonly buffer Payloads
-{
-    VisibilityPayload PayloadRows[];
-};
-
-layout(std430, binding = 1) readonly buffer VisiblePayloadIndices
-{
-    uint VisibleIndices[];
-};
-
-layout(std430, binding = 2) readonly buffer Producers
-{
-    uint ProducerRows[];
-};
-
-layout(std430, binding = 3) writeonly buffer IndexedIndirectArguments
-{
-    DrawIndexedIndirect IndexedArguments[];
-};
-
-layout(std430, binding = 4) buffer RangeCounts
-{
-    uint Counts[];
-};
-
-layout(std430, binding = 5) readonly buffer PayloadRangeIndices
-{
-    uint RangeIndices[];
-};
-
-layout(std430, binding = 6) readonly buffer RangeArgumentOffsets
-{
-    uint ArgumentOffsets[];
-};
-
-layout(std430, binding = 7) buffer VisibilityCounters
-{
-    uint EarlyCount;
-    uint DeferredCount;
-    uint LateCount;
-    uint RecoveredCount;
-    uint ValidPixelCount;
-    uint InvalidPixelCount;
-    uint PayloadOverflowCount;
-    uint MaskedCoverageCount;
-    uint DecodeOutOfBoundsCount;
-    uint DepthPyramidBuildCount;
-    uint UnsupportedDisplacementCount;
-    uint ReservedCounters[5];
-};
-
-layout(std430, binding = 8) writeonly buffer MeshIndirectArguments
-{
-    DrawMeshTasksIndirect MeshArguments[];
-};
-
-layout(std430, binding = 9) writeonly buffer MeshPayloadIndices
-{
-    uint MeshPayloadRows[];
-};
-
-uniform uint VisibleCapacity;
-uniform uint PayloadCount;
-uniform uint RangeCount;
-uniform uint ArgumentCapacity;
-uniform uint UseLateVisibleList;
-
 void main()
 {
     uint visibleIndex = gl_GlobalInvocationID.x;
-    uint visibleCount = UseLateVisibleList != 0u
-        ? LateCount
-        : EarlyCount;
+    uint visibleCapacity = XR_ADV_VisibilityPush.payloadCapacity;
+    uint visibleCount = XR_ADV_VisibilityCounters.earlyDraws;
+    uint payloadCount =
+        uint(XR_ADV_VisibilityPayloads.records.length());
+    uint rangeCount =
+        uint(XR_ADV_VisibilityRangeOffsets.records.length());
+    uint indexedArgumentCapacity = XR_ADV_VisibilityPush.payloadCapacity;
+    uint meshArgumentCapacity = XR_ADV_VisibilityPush.payloadCapacity;
     if (visibleIndex >= visibleCount)
         return;
-    if (visibleIndex >= VisibleCapacity)
+    if (visibleIndex >= visibleCapacity)
         return;
 
-    uint payloadIndex = VisibleIndices[visibleIndex];
-    if (payloadIndex >= PayloadCount)
+    uint payloadIndex = XR_ADV_VisibilityVisibleIndices.records[
+        XR_ADV_VisibilityPush.payloadBase + visibleIndex];
+    if (payloadIndex >= payloadCount)
     {
-        atomicAdd(DecodeOutOfBoundsCount, 1u);
+        atomicAdd(XR_ADV_VisibilityCounters.decodeOutOfBounds, 1u);
         return;
     }
 
-    uint producer = ProducerRows[payloadIndex];
+    uint producer = XR_ADV_VisibilityProducers.records[payloadIndex];
     if (producer == PRODUCER_CPU_DIRECT_STATIC_INDEXED ||
         producer == PRODUCER_CPU_DIRECT_PRE_SKINNED)
     {
         return;
     }
 
-    uint range = RangeIndices[payloadIndex];
-    if (range >= RangeCount)
+    uint range = XR_ADV_VisibilityRangeIndices.records[payloadIndex];
+    if (range >= rangeCount)
     {
-        atomicAdd(DecodeOutOfBoundsCount, 1u);
+        atomicAdd(XR_ADV_VisibilityCounters.decodeOutOfBounds, 1u);
         return;
     }
 
-    uint rangeLocal = atomicAdd(Counts[range], 1u);
-    uint outputIndex =
-        ArgumentOffsets[range] + rangeLocal;
-    if (outputIndex >= ArgumentCapacity)
+    XRAdvancedVisibilityPayload payload = XR_ADV_VisibilityPayloads.records[payloadIndex];
+    if ((producer == PRODUCER_STATIC_MESHLET ||
+         producer == PRODUCER_SKINNED_MESHLET) &&
+        payload.meshletCount == 0u)
     {
-        atomicAdd(PayloadOverflowCount, 1u);
+        atomicAdd(XR_ADV_VisibilityCounters.decodeOutOfBounds, 1u);
         return;
     }
 
-    VisibilityPayload payload = PayloadRows[payloadIndex];
+    uint argumentCapacity = producer == PRODUCER_INDIRECT_INDEXED
+        ? indexedArgumentCapacity
+        : meshArgumentCapacity;
+    uint rangeBegin = XR_ADV_VisibilityPush.payloadBase +
+        XR_ADV_VisibilityRangeOffsets.records[range];
+    uint rangeEnd = XR_ADV_VisibilityPush.payloadBase +
+        (range + 1u < rangeCount
+            ? XR_ADV_VisibilityRangeOffsets.records[range + 1u]
+            : argumentCapacity);
+    if (rangeBegin > rangeEnd ||
+        rangeEnd > XR_ADV_VisibilityPush.payloadBase + argumentCapacity)
+    {
+        atomicAdd(XR_ADV_VisibilityCounters.payloadOverflow, 1u);
+        return;
+    }
+    uint rangeCapacity = rangeEnd - rangeBegin;
+    uint rangeLocal = atomicAdd(
+        XR_ADV_VisibilityRangeCounts.records[XR_ADV_VisibilityPush.rangeBase + range],
+        0u);
+    while (rangeLocal < rangeCapacity)
+    {
+        uint prior = atomicCompSwap(
+            XR_ADV_VisibilityRangeCounts.records[XR_ADV_VisibilityPush.rangeBase + range],
+            rangeLocal,
+            rangeLocal + 1u);
+        if (prior == rangeLocal)
+            break;
+        rangeLocal = prior;
+    }
+    if (rangeLocal >= rangeCapacity)
+    {
+        atomicAdd(XR_ADV_VisibilityCounters.payloadOverflow, 1u);
+        return;
+    }
+    uint outputIndex = rangeBegin + rangeLocal;
+
     if (producer == PRODUCER_INDIRECT_INDEXED)
     {
         DrawIndexedIndirect argument;
-        argument.IndexCount = payload.IndexCount;
-        argument.InstanceCount = max(payload.InstanceCount, 1u);
-        argument.FirstIndex = payload.FirstIndex;
-        argument.VertexOffset = int(payload.VertexOffset);
+        argument.IndexCount = payload.indexCount;
+        argument.InstanceCount = max(payload.instanceCount, 1u);
+        argument.FirstIndex = payload.firstIndex;
+        argument.VertexOffset = int(payload.vertexOffset);
         argument.FirstInstance = payloadIndex;
-        IndexedArguments[outputIndex] = argument;
+        uint argumentBase = outputIndex * 5u;
+        XR_ADV_VisibilityIndexedArguments.records[argumentBase] = argument.IndexCount;
+        XR_ADV_VisibilityIndexedArguments.records[argumentBase + 1u] = argument.InstanceCount;
+        XR_ADV_VisibilityIndexedArguments.records[argumentBase + 2u] = argument.FirstIndex;
+        XR_ADV_VisibilityIndexedArguments.records[argumentBase + 3u] = uint(argument.VertexOffset);
+        XR_ADV_VisibilityIndexedArguments.records[argumentBase + 4u] = argument.FirstInstance;
         return;
     }
 
     if (producer == PRODUCER_STATIC_MESHLET ||
         producer == PRODUCER_SKINNED_MESHLET)
     {
-        if (payload.MeshletCount == 0u)
-        {
-            atomicAdd(DecodeOutOfBoundsCount, 1u);
-            return;
-        }
-
         DrawMeshTasksIndirect argument;
-        argument.GroupCountX = payload.MeshletCount;
+        argument.GroupCountX = payload.meshletCount;
         argument.GroupCountY = 1u;
         argument.GroupCountZ = 1u;
-        MeshArguments[outputIndex] = argument;
-        MeshPayloadRows[outputIndex] = payloadIndex;
+        XR_ADV_VisibilityMeshArguments.records[outputIndex * 3u] = argument.GroupCountX;
+        XR_ADV_VisibilityMeshArguments.records[outputIndex * 3u + 1u] = argument.GroupCountY;
+        XR_ADV_VisibilityMeshArguments.records[outputIndex * 3u + 2u] = argument.GroupCountZ;
+        XR_ADV_VisibilityMeshPayloads.records[outputIndex] = payloadIndex;
         return;
     }
 
-    atomicAdd(DecodeOutOfBoundsCount, 1u);
+    atomicAdd(XR_ADV_VisibilityCounters.decodeOutOfBounds, 1u);
 }

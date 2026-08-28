@@ -14,11 +14,15 @@ public readonly record struct CompletedDiagnosticPayload
     public CompletedDiagnosticPayload(
         ArraySegment<uint> words,
         ulong sourceFrameId,
-        long completionTimestamp)
+        long completionTimestamp,
+        uint decoderId = 0u,
+        Action<CompletedDiagnosticPayload>? semanticDecoder = null)
     {
         Words = words;
         SourceFrameId = sourceFrameId;
         CompletionTimestamp = completionTimestamp;
+        DecoderId = decoderId;
+        SemanticDecoder = semanticDecoder;
     }
 
     /// <summary>
@@ -31,9 +35,21 @@ public readonly record struct CompletedDiagnosticPayload
 
     public long CompletionTimestamp { get; }
 
+    /// <summary>Renderer-owned stable decoder identity; zero means checksum-only.</summary>
+    public uint DecoderId { get; }
+
+    /// <summary>
+    /// Optional CPU-only semantic decoder. The completed-payload job invokes it
+    /// on the general/telemetry domain after checksum decoding; it must never
+    /// wait for GPU work or retain the backing array.
+    /// </summary>
+    public Action<CompletedDiagnosticPayload>? SemanticDecoder { get; }
+
     public static CompletedDiagnosticPayload Create(
         ReadOnlyMemory<uint> completedWords,
-        ulong sourceFrameId = 0)
+        ulong sourceFrameId = 0,
+        uint decoderId = 0u,
+        Action<CompletedDiagnosticPayload>? semanticDecoder = null)
     {
         if (!MemoryMarshal.TryGetArray(completedWords, out ArraySegment<uint> arrayWords))
         {
@@ -42,6 +58,11 @@ public readonly record struct CompletedDiagnosticPayload
                 nameof(completedWords));
         }
 
-        return new CompletedDiagnosticPayload(arrayWords, sourceFrameId, Stopwatch.GetTimestamp());
+        return new CompletedDiagnosticPayload(
+            arrayWords,
+            sourceFrameId,
+            Stopwatch.GetTimestamp(),
+            decoderId,
+            semanticDecoder);
     }
 }

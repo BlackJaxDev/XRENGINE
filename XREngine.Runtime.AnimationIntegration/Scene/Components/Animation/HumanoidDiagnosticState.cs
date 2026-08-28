@@ -1,5 +1,6 @@
 namespace XREngine.Components.Animation;
 
+using System.Numerics;
 using XREngine.Animation.Importers;
 
 /// <summary>
@@ -13,11 +14,14 @@ internal sealed class HumanoidDiagnosticState
     internal float[] ProjectionMuscleValues { get; } = new float[95];
     internal float[] CanonicalProjectionMuscleValues { get; } = new float[95];
     internal float[] AppliedMuscleValues { get; } = new float[95];
+    internal Vector3[] ImportedTranslationDofValues { get; } = new Vector3[21];
+    internal uint ImportedTranslationDofMask;
+    internal bool HasInvalidImportedTranslationDof;
     internal HumanoidImportedBodySample CanonicalImportedBodySample;
     internal HumanoidImportedBodySample CurrentImportedMappedBodySample;
     internal HumanoidImportedBodySample StagedImportedBodySample;
-    internal System.Numerics.Vector3 CurrentConvertedBodyTranslationDelta;
-    internal System.Numerics.Quaternion CurrentConvertedBodyRotationDelta;
+    internal Vector3 CurrentConvertedBodyTranslationDelta;
+    internal Quaternion CurrentConvertedBodyRotationDelta;
     internal HumanoidProjectedRootPose CurrentProjectedRootPose;
     internal HumanoidProjectedRootPose BodyAllocationProjectedRootPose;
     internal HumanoidProjectedRootPose PreFeetProjectedRootPose;
@@ -40,7 +44,6 @@ internal sealed class HumanoidDiagnosticState
     internal HumanoidLoopPoseCorrection? PendingImportedBodyLoopPoseCorrection;
     internal HumanoidLoopPoseCorrection? ActiveImportedBodyLoopPoseCorrection;
     internal ImportedHumanoidRootMotionPolicy? ActiveImportedBodyProjectionPolicy;
-    internal string? ImportedBodyProjectionCalibrationClipName;
     internal float CanonicalProjectedFeetY;
     internal bool HasCanonicalProjectedFeetY;
     internal bool HasPendingProjectedRootMotion;

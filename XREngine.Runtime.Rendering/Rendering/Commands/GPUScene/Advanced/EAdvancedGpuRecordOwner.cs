@@ -13,4 +13,12 @@ public enum EAdvancedGpuRecordOwner : byte
     Sampler,
     Geometry,
     EditorIdentity,
+    MaterialLayout,
+    ShadingKernel,
+    Light,
+    Shadow,
+    Probe,
+    Environment,
+    Decal,
+    GiResource,
 }

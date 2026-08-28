@@ -15,6 +15,7 @@ internal sealed partial class VulkanResourceRuntime
             new VulkanResourceLifetimeKey(ObjectType.DescriptorSetLayout, layout.Handle),
             owner,
             externallyOwned: false);
+        NativeDependencies.Register(EVulkanNativeDependencyOwner.DescriptorLayout, layout.Handle);
     }
 
     /// <summary>
@@ -35,6 +36,7 @@ internal sealed partial class VulkanResourceRuntime
         }
 
         VulkanResourceLifetimeKey key = new(ObjectType.DescriptorSetLayout, layout.Handle);
+        NativeDependencies.Retire(EVulkanNativeDependencyOwner.DescriptorLayout, layout.Handle, $"{owner}.Retirement");
         VulkanRetirementTicket ticket = CaptureRetirementTicket(key, owner);
         lock (Lifetime.Retirement.SyncRoot)
         {

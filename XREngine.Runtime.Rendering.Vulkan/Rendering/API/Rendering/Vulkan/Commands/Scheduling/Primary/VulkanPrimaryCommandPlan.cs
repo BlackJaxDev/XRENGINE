@@ -65,7 +65,7 @@ internal sealed class VulkanPrimaryCommandPlan
                 operations, opIndex, barrierPlanner, operationBarrierPlan);
             bool isDrawLike = kind is EVulkanPrimaryPlanNodeKind.MeshDraw or
                 EVulkanPrimaryPlanNodeKind.IndirectDraw or
-                EVulkanPrimaryPlanNodeKind.MeshTaskDispatchIndirectCount;
+            EVulkanPrimaryPlanNodeKind.MeshTaskDispatchIndirectCount;
             _nodes[opIndex] = new VulkanPrimaryPlanNode(kind, opIndex, opIndex, actions, isDrawLike);
             ref readonly FrameOpContext context = ref operations.GetContext(opIndex);
             AddEmission(ref identity, kind, actions, opIndex, header.PassIndex,
@@ -242,6 +242,9 @@ internal sealed class VulkanPrimaryCommandPlan
             EVulkanPrimaryPlanNodeKind.MeshDraw or
             EVulkanPrimaryPlanNodeKind.IndirectDraw or
             EVulkanPrimaryPlanNodeKind.MeshTaskDispatchIndirectCount ||
+            kind == EVulkanPrimaryPlanNodeKind.AdvancedVisibility &&
+            operations.GetAdvancedVisibility(operationIndex).Request.Stage ==
+                EAdvancedRenderStage.VisibilityRaster ||
             kind == EVulkanPrimaryPlanNodeKind.Query &&
             operations.GetQuery(operationIndex).Operation is ERenderQueryOperation.Begin or ERenderQueryOperation.End;
     }
@@ -259,7 +262,8 @@ internal sealed class VulkanPrimaryCommandPlan
             EVulkanPrimaryPlanNodeKind.MemoryBarrier or
             EVulkanPrimaryPlanNodeKind.PublishFramebufferForSampling or
             EVulkanPrimaryPlanNodeKind.DlssUpscale or
-            EVulkanPrimaryPlanNodeKind.DlssFrameGeneration ||
+            EVulkanPrimaryPlanNodeKind.DlssFrameGeneration or
+            EVulkanPrimaryPlanNodeKind.AdvancedVisibility ||
             kind == EVulkanPrimaryPlanNodeKind.Query &&
             operations.GetQuery(operationIndex).Operation is ERenderQueryOperation.WriteProperties or ERenderQueryOperation.CopyResults;
     }

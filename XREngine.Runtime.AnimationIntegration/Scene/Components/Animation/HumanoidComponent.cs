@@ -33,7 +33,6 @@ namespace XREngine.Components.Animation
         private readonly float[] _projectionMuscleValueSnapshot = new float[MuscleValueCount];
         private readonly float[] _canonicalProjectionMuscleValueSnapshot = new float[MuscleValueCount];
         private readonly float[] _appliedMuscleValueSnapshot = new float[MuscleValueCount];
-        private readonly float[] _unmirroredMuscleValueSnapshot = new float[MuscleValueCount];
         private readonly object _loopPoseCorrectionProbeOwner = new();
         private readonly object _poseEvaluationSyncRoot = new();
         private static readonly (string Left, string Right)[] HumanoidArmSideMirrorPairs =
@@ -308,7 +307,14 @@ namespace XREngine.Components.Animation
                         return;
                 }
 
-                ApplyMusclePose();
+                try
+                {
+                    ApplyMusclePose();
+                }
+                finally
+                {
+                    ClearImportedTranslationDofState();
+                }
             }
         }
 
@@ -435,58 +441,6 @@ namespace XREngine.Components.Animation
                 _rawHumanoidValues[value] = amount;
                 _muscleValues[value] = amount;
             }
-
-            float t = amount * 0.5f + 0.5f;
-            switch (value)
-            {
-                case EHumanoidValue.LeftEyeDownUp:
-                    {
-                        const float degToRad = MathF.PI / 180.0f;
-                        float yaw = Settings.GetValue(EHumanoidValue.LeftEyeInOut);
-                        float pitch = Interp.Lerp(Settings.LeftEyeDownUpRange.X, Settings.LeftEyeDownUpRange.Y, t);
-                        Settings.SetValue(EHumanoidValue.LeftEyeDownUp, pitch);
-
-                        // LH?RH: negate yaw (Y) and pitch (X) to convert from Unity's left-handed convention.
-                        Quaternion q = Quaternion.CreateFromYawPitchRoll(-yaw * degToRad, -pitch * degToRad, 0.0f);
-                        ApplyNeutralBindRelativeRotation(GetCompiledAvatarNode(EHumanoidAvatarBoneRole.LeftEye), q);
-                        break;
-                    }
-                case EHumanoidValue.LeftEyeInOut:
-                    {
-                        const float degToRad = MathF.PI / 180.0f;
-                        float yaw = Interp.Lerp(Settings.LeftEyeInOutRange.X, Settings.LeftEyeInOutRange.Y, t);
-                        float pitch = Settings.GetValue(EHumanoidValue.LeftEyeDownUp);
-                        Settings.SetValue(EHumanoidValue.LeftEyeInOut, yaw);
-
-                        Quaternion q = Quaternion.CreateFromYawPitchRoll(-yaw * degToRad, -pitch * degToRad, 0.0f);
-                        ApplyNeutralBindRelativeRotation(GetCompiledAvatarNode(EHumanoidAvatarBoneRole.LeftEye), q);
-                        break;
-                    }
-                case EHumanoidValue.RightEyeDownUp:
-                    {
-                        const float degToRad = MathF.PI / 180.0f;
-                        float yaw = Settings.GetValue(EHumanoidValue.RightEyeInOut);
-                        float pitch = Interp.Lerp(Settings.RightEyeDownUpRange.X, Settings.RightEyeDownUpRange.Y, t);
-                        Settings.SetValue(EHumanoidValue.RightEyeDownUp, pitch);
-
-                        Quaternion q = Quaternion.CreateFromYawPitchRoll(-yaw * degToRad, -pitch * degToRad, 0.0f);
-                        ApplyNeutralBindRelativeRotation(GetCompiledAvatarNode(EHumanoidAvatarBoneRole.RightEye), q);
-                        break;
-                    }
-                case EHumanoidValue.RightEyeInOut:
-                    {
-                        const float degToRad = MathF.PI / 180.0f;
-                        float yaw = Interp.Lerp(Settings.RightEyeInOutRange.X, Settings.RightEyeInOutRange.Y, t);
-                        float pitch = Settings.GetValue(EHumanoidValue.RightEyeDownUp);
-                        Settings.SetValue(EHumanoidValue.RightEyeInOut, yaw);
-
-                        Quaternion q = Quaternion.CreateFromYawPitchRoll(-yaw * degToRad, -pitch * degToRad, 0.0f);
-                        ApplyNeutralBindRelativeRotation(GetCompiledAvatarNode(EHumanoidAvatarBoneRole.RightEye), q);
-                        break;
-                    }
-                default:
-                    break;
-            }
         }
 
         public void SetImportedRawValue(EHumanoidValue value, float amount, bool flipMuscleZ = false)
@@ -498,8 +452,6 @@ namespace XREngine.Components.Animation
                 _rawHumanoidValues[value] = amount;
                 _muscleValues[value] = convertedAmount;
             }
-
-            ApplyImmediateHumanoidValueEffects(value, convertedAmount);
         }
 
         public void SetImportedRawValue(int value, float amount, bool flipMuscleZ = false)
@@ -526,58 +478,6 @@ namespace XREngine.Components.Animation
         public void SetValue(string name, float amount)
         {
             // Intentionally no-op: string->enum conversion should live in the importer.
-        }
-
-        private void ApplyImmediateHumanoidValueEffects(EHumanoidValue value, float amount)
-        {
-            float t = amount * 0.5f + 0.5f;
-            switch (value)
-            {
-                case EHumanoidValue.LeftEyeDownUp:
-                    {
-                        const float degToRad = MathF.PI / 180.0f;
-                        float yaw = Settings.GetValue(EHumanoidValue.LeftEyeInOut);
-                        float pitch = Interp.Lerp(Settings.LeftEyeDownUpRange.X, Settings.LeftEyeDownUpRange.Y, t);
-                        Settings.SetValue(EHumanoidValue.LeftEyeDownUp, pitch);
-
-                        Quaternion q = Quaternion.CreateFromYawPitchRoll(-yaw * degToRad, -pitch * degToRad, 0.0f);
-                        ApplyNeutralBindRelativeRotation(GetCompiledAvatarNode(EHumanoidAvatarBoneRole.LeftEye), q);
-                        break;
-                    }
-                case EHumanoidValue.LeftEyeInOut:
-                    {
-                        const float degToRad = MathF.PI / 180.0f;
-                        float yaw = Interp.Lerp(Settings.LeftEyeInOutRange.X, Settings.LeftEyeInOutRange.Y, t);
-                        float pitch = Settings.GetValue(EHumanoidValue.LeftEyeDownUp);
-                        Settings.SetValue(EHumanoidValue.LeftEyeInOut, yaw);
-
-                        Quaternion q = Quaternion.CreateFromYawPitchRoll(-yaw * degToRad, -pitch * degToRad, 0.0f);
-                        ApplyNeutralBindRelativeRotation(GetCompiledAvatarNode(EHumanoidAvatarBoneRole.LeftEye), q);
-                        break;
-                    }
-                case EHumanoidValue.RightEyeDownUp:
-                    {
-                        const float degToRad = MathF.PI / 180.0f;
-                        float yaw = Settings.GetValue(EHumanoidValue.RightEyeInOut);
-                        float pitch = Interp.Lerp(Settings.RightEyeDownUpRange.X, Settings.RightEyeDownUpRange.Y, t);
-                        Settings.SetValue(EHumanoidValue.RightEyeDownUp, pitch);
-
-                        Quaternion q = Quaternion.CreateFromYawPitchRoll(-yaw * degToRad, -pitch * degToRad, 0.0f);
-                        ApplyNeutralBindRelativeRotation(GetCompiledAvatarNode(EHumanoidAvatarBoneRole.RightEye), q);
-                        break;
-                    }
-                case EHumanoidValue.RightEyeInOut:
-                    {
-                        const float degToRad = MathF.PI / 180.0f;
-                        float yaw = Interp.Lerp(Settings.RightEyeInOutRange.X, Settings.RightEyeInOutRange.Y, t);
-                        float pitch = Settings.GetValue(EHumanoidValue.RightEyeDownUp);
-                        Settings.SetValue(EHumanoidValue.RightEyeInOut, yaw);
-
-                        Quaternion q = Quaternion.CreateFromYawPitchRoll(-yaw * degToRad, -pitch * degToRad, 0.0f);
-                        ApplyNeutralBindRelativeRotation(GetCompiledAvatarNode(EHumanoidAvatarBoneRole.RightEye), q);
-                        break;
-                    }
-            }
         }
 
         internal static float ConvertImportedHumanoidAmount(EHumanoidValue value, float amount, bool flipMuscleZ)
@@ -720,7 +620,13 @@ namespace XREngine.Components.Animation
         {
             lock (_muscleValuesLock)
             {
-                if (_muscleValues.Count == 0)
+                if (_muscleValues.Count == 0
+                    && _importedTranslationDofMask == 0u
+                    && !_hasInvalidImportedTranslationDof
+                    // Root-only clips and zero-muscle state leaves still require one
+                    // canonical neutral transaction to finalize Body/Hips/root.
+                    && !_isImportedBodySampleTransactionActive
+                    && _pendingStateMachineRootMotionFrame is null)
                     return false;
 
                 Array.Clear(destination);
@@ -746,7 +652,16 @@ namespace XREngine.Components.Animation
         public void ApplyCurrentMusclePose()
         {
             lock (_poseEvaluationSyncRoot)
-                ApplyMusclePose();
+            {
+                try
+                {
+                    ApplyMusclePose();
+                }
+                finally
+                {
+                    ClearImportedTranslationDofState();
+                }
+            }
         }
 
         public void ReloadNeutralPosePreset()
@@ -1248,16 +1163,71 @@ namespace XREngine.Components.Animation
 
         private void ApplyMusclePose()
         {
+            HumanoidIKSolverComponent? ikSolver =
+                GetSiblingComponent<HumanoidIKSolverComponent>(false);
             if (!IsAnimatedPosePreviewActive)
+            {
+                if (ikSolver?.HasUnresolvedAnimationDrivenGoalFrame == true)
+                    ikSolver.RejectAnimationDrivenGoalFrame();
                 return;
+            }
+
+            // Authored IK is part of the same visible-frame transaction. Validate it
+            // before Body/root state or any concrete bone is allowed to commit.
+            if (ikSolver?.IsAnimationDrivenGoalFrameRejected == true)
+            {
+                LogRejectedImportedHumanoidFrame(
+                    "authored IK position, rotation, or weight was invalid");
+                RejectCurrentNativeHumanoidFrame(ikSolver);
+                return;
+            }
 
             if (!TryCaptureMuscleSnapshot(_muscleValueSnapshot))
-                return;
+            {
+                // An IK-only humanoid clip still needs one native neutral solve so
+                // its goal is applied after a known authored-pose baseline.
+                if (ikSolver?.HasPendingAnimationDrivenGoalFrame != true)
+                    return;
+                Array.Clear(_muscleValueSnapshot);
+            }
 
             ReadOnlySpan<float> muscleSnapshot = _muscleValueSnapshot;
 
             if (!TryGetCompiledAvatarDefinition(out CompiledHumanoidAvatarDefinition compiled))
+            {
+                RejectCurrentNativeHumanoidFrame(ikSolver);
                 return;
+            }
+
+            // Direct evaluators defer RootT/RootQ commit until this canonical native
+            // frame is known to be valid. The state-machine path owns its separate
+            // final blended Body/root frame and has no active scalar transaction here.
+            if (!TryValidateActiveImportedBodySampleTransaction())
+            {
+                RejectCurrentNativeHumanoidFrame(ikSolver);
+                return;
+            }
+
+            // Validate the complete canonical solver input before exposing the staged
+            // Body/root policy. This dry solve writes only the reusable workspace, so
+            // a malformed muscle or TDoF value leaves both live pose and root intact.
+            if (!TryEvaluateNativeHumanoidPose(
+                    compiled,
+                    muscleSnapshot,
+                    includeTranslationDof: true,
+                    commit: false))
+            {
+                LogRejectedImportedHumanoidFrame(
+                    "native muscle or translation-DoF channels were non-finite or unsolvable");
+                RejectCurrentNativeHumanoidFrame(ikSolver);
+                return;
+            }
+
+            if (!CommitActiveImportedBodySampleTransaction())
+            {
+                RejectCurrentNativeHumanoidFrame(ikSolver);
+                return;
+            }
 
             // Log first-playback diagnostic (once).
             LogFirstPlaybackDiagnostic();
@@ -1274,100 +1244,58 @@ namespace XREngine.Components.Animation
                 // Unity chooses a feet-based root from the authored pose, then distributes the
                 // Loop Pose seam over the root-relative result. This first pass never becomes
                 // visible and reuses a preallocated muscle buffer.
-                ApplyMuscleSnapshot(compiled, _projectionMuscleValueSnapshot);
-                resolvedFeetBeforeLoopPose = TryResolveProjectedFeetFromCurrentPose(
-                    compiled,
-                    _projectionMuscleValueSnapshot);
+                if (TryEvaluateNativeHumanoidPose(
+                        compiled,
+                        _projectionMuscleValueSnapshot,
+                        includeTranslationDof: false,
+                        commit: false))
+                    resolvedFeetBeforeLoopPose = TryResolveProjectedFeetFromCurrentPose(compiled);
             }
 
-            ApplyMuscleSnapshot(compiled, muscleSnapshot);
+            if (!ApplyMuscleSnapshot(compiled, muscleSnapshot))
+            {
+                RejectCurrentNativeHumanoidFrame(ikSolver);
+                return;
+            }
 
             // One-time diagnostic snapshot of muscle values -> degree values.
             LogMusclePoseSnapshot(_muscleValueSnapshot);
 
             // Split the projected root only after the final corrected authored pose has FK.
-            if (!TryFinalizeStateMachineRootMotionFrame(compiled, muscleSnapshot))
+            if (!TryFinalizeStateMachineRootMotionFrame(compiled))
                 FinalizeImportedBodyRootAndPose(compiled, resolvedFeetBeforeLoopPose);
+            ikSolver?.ResolveAnimationDrivenGoalFrame(true);
         }
 
-        private void ApplyMuscleSnapshot(
+        private void RejectCurrentNativeHumanoidFrame(HumanoidIKSolverComponent? ikSolver)
+        {
+            CancelActiveImportedBodySampleTransaction();
+            _pendingStateMachineRootMotionFrame = null;
+            _pendingStateMachineRootMotionOwner = null;
+            _activeImportedBodyProjectionOwner = null;
+            _activeImportedBodyProjectionPolicy = null;
+            _pendingImportedBodyLoopPoseCorrection = null;
+            _hasPendingProjectedRootMotion = false;
+            ikSolver?.ResolveAnimationDrivenGoalFrame(false);
+        }
+
+        private bool ApplyMuscleSnapshot(
             CompiledHumanoidAvatarDefinition compiled,
             ReadOnlySpan<float> muscleSnapshot)
         {
-            if (muscleSnapshot.Length >= MuscleValueCount)
-                muscleSnapshot[..MuscleValueCount].CopyTo(_appliedMuscleValueSnapshot);
-            ResetHipsToNeutralMusclePose(compiled);
-
-            SceneNode? spineNode = compiled.GetNode(EHumanoidAvatarBoneRole.Spine);
-            SceneNode? chestNode = compiled.GetNode(EHumanoidAvatarBoneRole.Chest);
-            SceneNode? upperChestNode = compiled.GetNode(EHumanoidAvatarBoneRole.UpperChest);
-            SceneNode? neckNode = compiled.GetNode(EHumanoidAvatarBoneRole.Neck);
-            SceneNode? headNode = compiled.GetNode(EHumanoidAvatarBoneRole.Head);
-            SceneNode? jawNode = compiled.GetNode(EHumanoidAvatarBoneRole.Jaw);
-
-            // Torso
-            ApplyBindRelativeEulerDegrees(
-                spineNode,
-                yawDeg: MapMuscleToDeg(EHumanoidValue.SpineTwistLeftRight, GetMuscleValue(muscleSnapshot, EHumanoidValue.SpineTwistLeftRight)),
-                pitchDeg: MapMuscleToDeg(EHumanoidValue.SpineFrontBack, GetMuscleValue(muscleSnapshot, EHumanoidValue.SpineFrontBack)),
-                rollDeg: MapMuscleToDeg(EHumanoidValue.SpineLeftRight, GetMuscleValue(muscleSnapshot, EHumanoidValue.SpineLeftRight)),
-                axisMapping: compiled.GetAxisMapping(EHumanoidAvatarBoneRole.Spine));
-
-            ApplyBindRelativeEulerDegrees(
-                chestNode,
-                yawDeg: MapMuscleToDeg(EHumanoidValue.ChestTwistLeftRight, GetMuscleValue(muscleSnapshot, EHumanoidValue.ChestTwistLeftRight))
-                    + (upperChestNode is null ? MapMuscleToDeg(EHumanoidValue.UpperChestTwistLeftRight, GetMuscleValue(muscleSnapshot, EHumanoidValue.UpperChestTwistLeftRight)) : 0.0f),
-                pitchDeg: MapMuscleToDeg(EHumanoidValue.ChestFrontBack, GetMuscleValue(muscleSnapshot, EHumanoidValue.ChestFrontBack))
-                      + (upperChestNode is null ? MapMuscleToDeg(EHumanoidValue.UpperChestFrontBack, GetMuscleValue(muscleSnapshot, EHumanoidValue.UpperChestFrontBack)) : 0.0f),
-                rollDeg: MapMuscleToDeg(EHumanoidValue.ChestLeftRight, GetMuscleValue(muscleSnapshot, EHumanoidValue.ChestLeftRight))
-                     + (upperChestNode is null ? MapMuscleToDeg(EHumanoidValue.UpperChestLeftRight, GetMuscleValue(muscleSnapshot, EHumanoidValue.UpperChestLeftRight)) : 0.0f),
-                axisMapping: compiled.GetAxisMapping(EHumanoidAvatarBoneRole.Chest));
-
-            // UpperChest — only applied when a separate UpperChest bone exists.
-            if (upperChestNode is not null)
+            if (!TryEvaluateNativeHumanoidPose(
+                compiled,
+                muscleSnapshot,
+                includeTranslationDof: true,
+                commit: true))
             {
-                ApplyBindRelativeEulerDegrees(
-                    upperChestNode,
-                    yawDeg: MapMuscleToDeg(EHumanoidValue.UpperChestTwistLeftRight, GetMuscleValue(muscleSnapshot, EHumanoidValue.UpperChestTwistLeftRight)),
-                    pitchDeg: MapMuscleToDeg(EHumanoidValue.UpperChestFrontBack, GetMuscleValue(muscleSnapshot, EHumanoidValue.UpperChestFrontBack)),
-                    rollDeg: MapMuscleToDeg(EHumanoidValue.UpperChestLeftRight, GetMuscleValue(muscleSnapshot, EHumanoidValue.UpperChestLeftRight)),
-                    axisMapping: compiled.GetAxisMapping(EHumanoidAvatarBoneRole.UpperChest));
+                LogRejectedImportedHumanoidFrame(
+                    "native muscle or translation-DoF channels were non-finite or unsolvable");
+                return false;
             }
 
-            // Neck / Head
-            ApplyBindRelativeEulerDegrees(
-                neckNode,
-                yawDeg: MapMuscleToDeg(EHumanoidValue.NeckTurnLeftRight, GetMuscleValue(muscleSnapshot, EHumanoidValue.NeckTurnLeftRight)),
-                pitchDeg: -MapMuscleToDeg(EHumanoidValue.NeckNodDownUp, GetMuscleValue(muscleSnapshot, EHumanoidValue.NeckNodDownUp)),
-                rollDeg: MapMuscleToDeg(EHumanoidValue.NeckTiltLeftRight, GetMuscleValue(muscleSnapshot, EHumanoidValue.NeckTiltLeftRight)),
-                axisMapping: compiled.GetAxisMapping(EHumanoidAvatarBoneRole.Neck));
-
-            ApplyBindRelativeEulerDegrees(
-                headNode,
-                yawDeg: MapMuscleToDeg(EHumanoidValue.HeadTurnLeftRight, GetMuscleValue(muscleSnapshot, EHumanoidValue.HeadTurnLeftRight)),
-                pitchDeg: -MapMuscleToDeg(EHumanoidValue.HeadNodDownUp, GetMuscleValue(muscleSnapshot, EHumanoidValue.HeadNodDownUp)),
-                rollDeg: MapMuscleToDeg(EHumanoidValue.HeadTiltLeftRight, GetMuscleValue(muscleSnapshot, EHumanoidValue.HeadTiltLeftRight)),
-                axisMapping: compiled.GetAxisMapping(EHumanoidAvatarBoneRole.Head));
-
-            // Jaw
-            ApplyBindRelativeEulerDegrees(
-                jawNode,
-                yawDeg: MapMuscleToDeg(EHumanoidValue.JawLeftRight, GetMuscleValue(muscleSnapshot, EHumanoidValue.JawLeftRight)),
-                pitchDeg: MapMuscleToDeg(EHumanoidValue.JawClose, GetMuscleValue(muscleSnapshot, EHumanoidValue.JawClose)),
-                rollDeg: 0.0f,
-                axisMapping: compiled.GetAxisMapping(EHumanoidAvatarBoneRole.Jaw));
-
-            // Arms / Legs / Hands / Feet
-            Vector3 bodyLeft = -compiled.BodyAxes.Right;
-            Vector3 bodyUp = compiled.BodyAxes.Up;
-            Vector3 bodyForward = compiled.BodyAxes.Forward;
-            ApplyLimbMuscles(compiled, isLeft: true, bodyLeft, bodyUp, bodyForward, muscleSnapshot);
-            ApplyLimbMuscles(compiled, isLeft: false, bodyLeft, bodyUp, bodyForward, muscleSnapshot);
-            ApplyAvatarDefinitionCalibrationOverrides(compiled, muscleSnapshot);
-
-            // Fingers
-            ApplyFingerMuscles(compiled, isLeft: true, muscleSnapshot);
-            ApplyFingerMuscles(compiled, isLeft: false, muscleSnapshot);
+            muscleSnapshot[..MuscleValueCount].CopyTo(_appliedMuscleValueSnapshot);
+            return true;
         }
 
         private void ResetHipsToNeutralMusclePose(CompiledHumanoidAvatarDefinition compiled)
@@ -1376,77 +1304,10 @@ namespace XREngine.Components.Animation
             if (hipsNode is null)
                 return;
 
-            HumanoidAvatarLegacyBoneCalibration? calibration =
-                compiled.GetLegacyCalibration(EHumanoidAvatarBoneRole.Hips);
-            Vector3? calibratedNeutralPosition = calibration?.HasNeutralPosition == true
-                ? calibration.NeutralPosition * compiled.ModelUnitsPerMeter
-                : null;
             ApplyNeutralBindRelativePose(
                 hipsNode,
                 Quaternion.Identity,
-                Vector3.Zero,
-                calibratedNeutralPosition);
-        }
-
-        private void ApplyAvatarDefinitionCalibrationOverrides(
-            CompiledHumanoidAvatarDefinition compiled,
-            ReadOnlySpan<float> muscleSnapshot)
-        {
-            for (int roleIndex = 0; roleIndex <= (int)EHumanoidAvatarBoneRole.RightToes; roleIndex++)
-            {
-                EHumanoidAvatarBoneRole role = (EHumanoidAvatarBoneRole)roleIndex;
-                HumanoidAvatarLegacyBoneCalibration? calibration = compiled.GetLegacyCalibration(role);
-                if (calibration is not null)
-                    ApplyAvatarDefinitionCalibrationBone(compiled, calibration, compiled.Nodes[roleIndex], muscleSnapshot);
-            }
-        }
-
-        private void ApplyAvatarDefinitionCalibrationBone(
-            CompiledHumanoidAvatarDefinition compiled,
-            HumanoidAvatarLegacyBoneCalibration calibration,
-            SceneNode? node,
-            ReadOnlySpan<float> muscleSnapshot)
-        {
-            if (node is null)
-                return;
-
-            if (calibration.CoupledBoneModel is ImportedHumanoidCoupledBoneModel coupledModel)
-            {
-                bool mirrorHips = calibration.Role is EHumanoidAvatarBoneRole.Hips
-                    && _activeImportedBodyProjectionPolicy is { Mirror: true };
-                ReadOnlySpan<float> calibrationMuscles = muscleSnapshot;
-                if (mirrorHips)
-                {
-                    ReconstructUnmirroredMuscleSnapshot(
-                        muscleSnapshot,
-                        _unmirroredMuscleValueSnapshot);
-                    calibrationMuscles = _unmirroredMuscleValueSnapshot;
-                }
-                coupledModel.Evaluate(
-                    calibrationMuscles,
-                    compiled.MuscleInputScale,
-                    compiled.ModelUnitsPerMeter,
-                    out Quaternion coupledRotation,
-                    out Vector3 positionDelta);
-                Vector3? calibratedNeutralPosition = calibration.HasNeutralPosition
-                    ? calibration.NeutralPosition * compiled.ModelUnitsPerMeter
-                    : null;
-                if (mirrorHips)
-                {
-                    coupledRotation = ImportedHumanoidMirrorOperator.MirrorRotation(coupledRotation);
-                    positionDelta = calibratedNeutralPosition is Vector3 neutralPosition
-                        ? ImportedHumanoidMirrorOperator.MirrorPosition(neutralPosition + positionDelta) - neutralPosition
-                        : ImportedHumanoidMirrorOperator.MirrorPosition(positionDelta);
-                }
-                ApplyNeutralBindRelativePose(node, coupledRotation, positionDelta, calibratedNeutralPosition);
-                return;
-            }
-
-            if (calibration.BoneResponse is not ImportedHumanoidBoneResponseProfile response)
-                return;
-
-            Quaternion rotation = response.Evaluate(muscleSnapshot, compiled.MuscleInputScale);
-            ApplyNeutralBindRelativeRotation(node, rotation);
+                Vector3.Zero);
         }
 
         private bool _boneMappingComplete;
@@ -1844,13 +1705,10 @@ namespace XREngine.Components.Animation
             // produce a non-zero rotation at rest (muscle=0).
             //const float maxMuscleMagnitude = 1.0f;
             //float m = System.Math.Clamp(muscle, -maxMuscleMagnitude, maxMuscleMagnitude);
-            float m = muscle;
+            float m = Math.Clamp(muscle, -1.0f, 1.0f);
             CompiledHumanoidAvatarDefinition? compiled = TryGetCompiledAvatarDefinition(out var avatar)
                 ? avatar
                 : null;
-            m *= compiled?.MuscleInputScale ?? Settings.MuscleInputScale;
-            //m = System.Math.Clamp(m, -maxMuscleMagnitude, maxMuscleMagnitude);
-
             Vector2 range = compiled?.GetMuscleRange(value)
                 ?? Settings.GetResolvedMuscleRotationDegRange(value);
 
@@ -2561,6 +2419,9 @@ namespace XREngine.Components.Animation
             {
                 _muscleValues.Clear();
                 _rawHumanoidValues.Clear();
+                Array.Clear(_importedTranslationDofValues);
+                _importedTranslationDofMask = 0u;
+                _hasInvalidImportedTranslationDof = false;
             }
 
             Settings.CurrentValues.Clear();
@@ -3116,7 +2977,6 @@ namespace XREngine.Components.Animation
         private HumanoidLoopPoseCorrection? _pendingImportedBodyLoopPoseCorrection;
         private HumanoidLoopPoseCorrection? _activeImportedBodyLoopPoseCorrection;
         private ImportedHumanoidRootMotionPolicy? _activeImportedBodyProjectionPolicy;
-        private string? _importedBodyProjectionCalibrationClipName;
         private float _canonicalProjectedFeetY;
         private bool _hasCanonicalProjectedFeetY;
         private bool _hasPendingProjectedRootMotion;
@@ -3126,6 +2986,7 @@ namespace XREngine.Components.Animation
         private bool _loggedInvalidImportedBodyPosition;
         private bool _loggedInvalidImportedBodyRotation;
         private bool _loggedInvalidImportedBodyWeight;
+        private bool _loggedRejectedImportedHumanoidFrame;
 
         /// <summary>
         /// The time-zero imported Unity RootT/RootQ sample used as this clip's canonical body reference.
@@ -3216,7 +3077,6 @@ namespace XREngine.Components.Animation
                 PendingImportedBodyLoopPoseCorrection = _pendingImportedBodyLoopPoseCorrection,
                 ActiveImportedBodyLoopPoseCorrection = _activeImportedBodyLoopPoseCorrection,
                 ActiveImportedBodyProjectionPolicy = _activeImportedBodyProjectionPolicy,
-                ImportedBodyProjectionCalibrationClipName = _importedBodyProjectionCalibrationClipName,
                 CanonicalProjectedFeetY = _canonicalProjectedFeetY,
                 HasCanonicalProjectedFeetY = _hasCanonicalProjectedFeetY,
                 HasPendingProjectedRootMotion = _hasPendingProjectedRootMotion,
@@ -3234,6 +3094,9 @@ namespace XREngine.Components.Animation
                     state.MuscleValues[value] = amount;
                 foreach ((EHumanoidValue value, float amount) in _rawHumanoidValues)
                     state.RawHumanoidValues[value] = amount;
+                _importedTranslationDofValues.CopyTo(state.ImportedTranslationDofValues, 0);
+                state.ImportedTranslationDofMask = _importedTranslationDofMask;
+                state.HasInvalidImportedTranslationDof = _hasInvalidImportedTranslationDof;
             }
 
             foreach ((EHumanoidValue value, float amount) in Settings.CurrentValues)
@@ -3258,6 +3121,10 @@ namespace XREngine.Components.Animation
                 _rawHumanoidValues.Clear();
                 foreach ((EHumanoidValue value, float amount) in state.RawHumanoidValues)
                     _rawHumanoidValues[value] = amount;
+
+                state.ImportedTranslationDofValues.CopyTo(_importedTranslationDofValues, 0);
+                _importedTranslationDofMask = state.ImportedTranslationDofMask;
+                _hasInvalidImportedTranslationDof = state.HasInvalidImportedTranslationDof;
             }
 
             Settings.CurrentValues.Clear();
@@ -3291,7 +3158,6 @@ namespace XREngine.Components.Animation
             _pendingImportedBodyLoopPoseCorrection = state.PendingImportedBodyLoopPoseCorrection;
             _activeImportedBodyLoopPoseCorrection = state.ActiveImportedBodyLoopPoseCorrection;
             _activeImportedBodyProjectionPolicy = state.ActiveImportedBodyProjectionPolicy;
-            _importedBodyProjectionCalibrationClipName = state.ImportedBodyProjectionCalibrationClipName;
             _canonicalProjectedFeetY = state.CanonicalProjectedFeetY;
             _hasCanonicalProjectedFeetY = state.HasCanonicalProjectedFeetY;
             _hasPendingProjectedRootMotion = state.HasPendingProjectedRootMotion;
@@ -3343,17 +3209,16 @@ namespace XREngine.Components.Animation
                 || _hasCanonicalProjectionMuscleValueSnapshot != state.HasCanonicalProjectionMuscleValueSnapshot
                 || !_projectionMuscleValueSnapshot.AsSpan().SequenceEqual(state.ProjectionMuscleValues)
                 || !_canonicalProjectionMuscleValueSnapshot.AsSpan().SequenceEqual(state.CanonicalProjectionMuscleValues)
-                || !_appliedMuscleValueSnapshot.AsSpan().SequenceEqual(state.AppliedMuscleValues)
-                || !string.Equals(
-                    _importedBodyProjectionCalibrationClipName,
-                    state.ImportedBodyProjectionCalibrationClipName,
-                    StringComparison.Ordinal))
+                || !_appliedMuscleValueSnapshot.AsSpan().SequenceEqual(state.AppliedMuscleValues))
                 return false;
 
             lock (_muscleValuesLock)
             {
                 if (!DictionaryContentsMatch(_muscleValues, state.MuscleValues)
-                    || !DictionaryContentsMatch(_rawHumanoidValues, state.RawHumanoidValues))
+                    || !DictionaryContentsMatch(_rawHumanoidValues, state.RawHumanoidValues)
+                    || _importedTranslationDofMask != state.ImportedTranslationDofMask
+                    || _hasInvalidImportedTranslationDof != state.HasInvalidImportedTranslationDof
+                    || !_importedTranslationDofValues.AsSpan().SequenceEqual(state.ImportedTranslationDofValues))
                     return false;
             }
 
@@ -3389,7 +3254,6 @@ namespace XREngine.Components.Animation
             bool hasCanonicalSample,
             float weight = 1.0f,
             ImportedHumanoidClipRootMotionSettings? projectionSettings = null,
-            string? projectionCalibrationClipName = null,
             HumanoidProjectedRootPose? projectionPrefix = null,
             HumanoidLoopPoseCorrection? loopPoseCorrection = null,
             ReadOnlySpan<float> canonicalProjectionMuscles = default)
@@ -3397,17 +3261,28 @@ namespace XREngine.Components.Animation
             if (_isImportedBodySampleTransactionActive)
                 return false;
 
+            if (!TryValidateImportedBodyWeight(weight))
+            {
+                LogRejectedImportedHumanoidFrame("Body/root blend weight was non-finite or outside [0,1]");
+                return false;
+            }
+
+            if (hasCanonicalSample && !IsValidImportedBodySample(canonicalSample))
+            {
+                LogRejectedImportedHumanoidFrame("canonical Body/root sample contained a non-finite position or invalid rotation");
+                return false;
+            }
+
             // A new evaluator sample supersedes any pending skip left by an immediate
             // fixed-time state-machine evaluation in the same update interval.
             _skipNextScenePoseAfterImmediateStateMachineEvaluation = false;
             _isImportedBodySampleTransactionActive = true;
             _importedBodySampleTransactionOwner = owner;
             _transactionHasCanonicalImportedBodySample = hasCanonicalSample;
-            _importedBodySampleWeight = SanitizeImportedBodyWeight(weight);
+            _importedBodySampleWeight = weight;
             _importedBodyProjectionSettings = projectionSettings;
             _importedBodyProjectionPrefix = projectionPrefix;
             _importedBodyLoopPoseCorrection = loopPoseCorrection;
-            _importedBodyProjectionCalibrationClipName = projectionCalibrationClipName;
             _stagedImportedBodySample = HumanoidImportedBodySample.Neutral;
             _hasCanonicalProjectionMuscleValueSnapshot =
                 canonicalProjectionMuscles.Length >= MuscleValueCount;
@@ -3461,10 +3336,79 @@ namespace XREngine.Components.Animation
         /// <summary>
         /// Atomically applies the RootT/RootQ values staged by the current evaluator.
         /// </summary>
+        private bool TryValidateActiveImportedBodySampleTransaction()
+        {
+            if (!_isImportedBodySampleTransactionActive)
+                return true;
+
+            if (TryValidateImportedBodySampleTransaction())
+                return true;
+
+            LogRejectedImportedHumanoidFrame(
+                "staged Body/root sample contained a non-finite position, invalid rotation, or invalid weight");
+            return false;
+        }
+
+        private bool CommitActiveImportedBodySampleTransaction()
+        {
+            object? owner = _importedBodySampleTransactionOwner;
+            return !_isImportedBodySampleTransactionActive
+                || owner is not null && CommitImportedBodySampleTransaction(owner);
+        }
+
+        private void CancelActiveImportedBodySampleTransaction()
+        {
+            object? owner = _importedBodySampleTransactionOwner;
+            if (owner is not null)
+                CancelImportedBodySampleTransaction(owner);
+        }
+
+        private bool TryValidateImportedBodySampleTransaction()
+        {
+            if (!TryValidateImportedBodyWeight(_importedBodySampleWeight))
+                return false;
+
+            if (_transactionHasCanonicalImportedBodySample
+                && !IsValidImportedBodySample(_canonicalImportedBodySample))
+                return false;
+
+            return _stagedImportedBodySample.Channels == EHumanoidImportedBodySampleChannels.None
+                || IsValidImportedBodySample(_stagedImportedBodySample);
+        }
+
+        private static bool TryValidateImportedBodyWeight(float weight)
+            => float.IsFinite(weight) && weight >= 0.0f && weight <= 1.0f;
+
+        private static bool IsValidImportedBodySample(HumanoidImportedBodySample sample)
+        {
+            EHumanoidImportedBodySampleChannels channels = sample.Channels;
+            if ((channels & EHumanoidImportedBodySampleChannels.Position) != 0
+                && !IsFinite(sample.Position))
+                return false;
+
+            return (channels & EHumanoidImportedBodySampleChannels.Rotation) == 0
+                || TryNormalizeImportedBodyRotation(sample.Rotation, out _);
+        }
+
+        private void LogRejectedImportedHumanoidFrame(string reason)
+        {
+            if (_loggedRejectedImportedHumanoidFrame)
+                return;
+
+            _loggedRejectedImportedHumanoidFrame = true;
+            Debug.Animation($"[RootMotion] Rejected imported humanoid frame: {reason}. The previous pose/root remains committed.");
+        }
+
         public bool CommitImportedBodySampleTransaction(object owner)
         {
             if (!_isImportedBodySampleTransactionActive || !ReferenceEquals(_importedBodySampleTransactionOwner, owner))
                 return false;
+
+            if (!TryValidateImportedBodySampleTransaction())
+            {
+                CancelImportedBodySampleTransaction(owner);
+                return false;
+            }
 
             _isImportedBodySampleTransactionActive = false;
             _importedBodySampleTransactionOwner = null;
@@ -3475,7 +3419,6 @@ namespace XREngine.Components.Animation
                 _importedBodyProjectionSettings = null;
                 _importedBodyProjectionPrefix = null;
                 _importedBodyLoopPoseCorrection = null;
-                _importedBodyProjectionCalibrationClipName = null;
                 _hasProjectionMuscleValueSnapshot = false;
                 _hasCanonicalProjectionMuscleValueSnapshot = false;
                 return false;
@@ -3493,7 +3436,6 @@ namespace XREngine.Components.Animation
                 _importedBodySampleWeight,
                 owner,
                 _importedBodyProjectionSettings,
-                _importedBodyProjectionCalibrationClipName,
                 _importedBodyProjectionPrefix,
                 _importedBodyLoopPoseCorrection);
             _stagedImportedBodySample = HumanoidImportedBodySample.Neutral;
@@ -3501,7 +3443,6 @@ namespace XREngine.Components.Animation
             _importedBodyProjectionSettings = null;
             _importedBodyProjectionPrefix = null;
             _importedBodyLoopPoseCorrection = null;
-            _importedBodyProjectionCalibrationClipName = null;
             return true;
         }
 
@@ -3520,7 +3461,6 @@ namespace XREngine.Components.Animation
             _importedBodyProjectionSettings = null;
             _importedBodyProjectionPrefix = null;
             _importedBodyLoopPoseCorrection = null;
-            _importedBodyProjectionCalibrationClipName = null;
             _hasProjectionMuscleValueSnapshot = false;
             _hasCanonicalProjectionMuscleValueSnapshot = false;
         }
@@ -3547,8 +3487,7 @@ namespace XREngine.Components.Animation
                 HumanoidImportedBodySample.Neutral,
                 1.0f,
                 owner: null,
-                projectionSettings: null,
-                projectionCalibrationClipName: null);
+                projectionSettings: null);
         }
 
         public void SetRootPositionX(float x)
@@ -3628,8 +3567,7 @@ namespace XREngine.Components.Animation
                 HumanoidImportedBodySample.Neutral,
                 1.0f,
                 owner: null,
-                projectionSettings: null,
-                projectionCalibrationClipName: null);
+                projectionSettings: null);
         }
 
         public void SetRootRotationX(float x)
@@ -3674,7 +3612,6 @@ namespace XREngine.Components.Animation
             _hasCanonicalProjectionMuscleValueSnapshot = false;
             Array.Clear(_projectionMuscleValueSnapshot);
             Array.Clear(_canonicalProjectionMuscleValueSnapshot);
-            _importedBodyProjectionCalibrationClipName = null;
             ResetProjectedRootMotion();
         }
 
@@ -3730,7 +3667,6 @@ namespace XREngine.Components.Animation
             float weight,
             object? owner,
             ImportedHumanoidClipRootMotionSettings? projectionSettings,
-            string? projectionCalibrationClipName,
             HumanoidProjectedRootPose? projectionPrefix = null,
             HumanoidLoopPoseCorrection? loopPoseCorrection = null)
         {
@@ -3791,7 +3727,6 @@ namespace XREngine.Components.Animation
                 weight,
                 owner,
                 projectionSettings,
-                projectionCalibrationClipName,
                 projectionPrefix);
             _pendingImportedBodyLoopPoseCorrection = loopPoseCorrection;
 
@@ -3832,7 +3767,6 @@ namespace XREngine.Components.Animation
             float weight,
             object? owner,
             ImportedHumanoidClipRootMotionSettings? settings,
-            string? projectionCalibrationClipName,
             HumanoidProjectedRootPose? projectionPrefix)
         {
             ReadOnlySpan<float> muscleValues = TryCaptureMuscleSnapshot(_muscleValueSnapshot)
@@ -3846,7 +3780,6 @@ namespace XREngine.Components.Animation
                 weightedMotionScale,
                 weight,
                 settings,
-                projectionCalibrationClipName,
                 muscleValues);
             _preFeetBodyAllocationProjectedRootPose = projectedPose;
             _bodyAllocationProjectedRootPose = projectedPose;
@@ -3863,7 +3796,6 @@ namespace XREngine.Components.Animation
             HumanoidImportedBodySample canonicalSample,
             float weight,
             ImportedHumanoidClipRootMotionSettings? settings,
-            string? projectionCalibrationClipName,
             ReadOnlySpan<float> muscleValues)
         {
             Vector3 canonicalPosition = IsFinite(canonicalSample.Position)
@@ -3887,7 +3819,6 @@ namespace XREngine.Components.Animation
                 EstimateAnimatedMotionScale() * safeWeight,
                 safeWeight,
                 settings,
-                projectionCalibrationClipName,
                 muscleValues);
         }
 
@@ -3899,10 +3830,8 @@ namespace XREngine.Components.Animation
             float weightedMotionScale,
             float weight,
             ImportedHumanoidClipRootMotionSettings? settings,
-            string? projectionCalibrationClipName,
             ReadOnlySpan<float> muscleValues)
         {
-            _ = projectionCalibrationClipName;
             _ = muscleValues;
             EHumanoidProjectedRootChannels channels = EHumanoidProjectedRootChannels.None;
             Vector3 projectedPosition = Vector3.Zero;
@@ -3996,7 +3925,6 @@ namespace XREngine.Components.Animation
             ReadOnlySpan<float> sourceEndMuscles,
             float weight,
             ImportedHumanoidClipRootMotionSettings settings,
-            string? projectionCalibrationClipName,
             out HumanoidLoopPoseCorrection bodyCorrection,
             out HumanoidProjectedRootPose projectedRootGenerator)
         {
@@ -4006,7 +3934,6 @@ namespace XREngine.Components.Animation
                 sourceStart,
                 weight,
                 settings,
-                projectionCalibrationClipName,
                 ReadOnlySpan<float>.Empty);
             if (!ImportedHumanoidRootMotionPolicy.TryCreate(
                     settings,
@@ -4030,7 +3957,6 @@ namespace XREngine.Components.Animation
                     sourceEndMuscles,
                     weight,
                     settings,
-                    projectionCalibrationClipName,
                     out bodyCorrection,
                     out projectedRootGenerator))
                 return;
@@ -4107,14 +4033,12 @@ namespace XREngine.Components.Animation
                 sourceStart,
                 safeWeight,
                 settings,
-                projectionCalibrationClipName,
                 ReadOnlySpan<float>.Empty);
             HumanoidProjectedRootPose endRoot = CalculateProjectedRootPose(
                 sourceEnd,
                 sourceStart,
                 safeWeight,
                 settings,
-                projectionCalibrationClipName,
                 ReadOnlySpan<float>.Empty);
             Matrix4x4 startPose = startBodyPose * InvertProjectedRootMatrix(startRoot);
             Matrix4x4 endPose = endBodyPose * InvertProjectedRootMatrix(endRoot);
@@ -4154,19 +4078,12 @@ namespace XREngine.Components.Animation
             ReadOnlySpan<float> sourceEndMuscles,
             float weight,
             ImportedHumanoidClipRootMotionSettings settings,
-            string? projectionCalibrationClipName,
             out HumanoidLoopPoseCorrection bodyCorrection,
             out HumanoidProjectedRootPose projectedRootGenerator)
         {
             bodyCorrection = HumanoidLoopPoseCorrection.Identity;
             projectedRootGenerator = HumanoidProjectedRootPose.Identity;
-            bool ownsDiagnosticScope = !TransformBase.IsDiagnosticEvaluationActive;
-            TransformDiagnosticEvaluationScope diagnosticScope = ownsDiagnosticScope
-                ? TransformBase.BeginDiagnosticEvaluation()
-                : default;
             HumanoidDiagnosticState humanoidState = CaptureDiagnosticState();
-            List<(TransformBase Transform, TransformState? FrameState, Matrix4x4 LocalMatrix, TransformDiagnosticInvalidationState InvalidationState)> transformStates =
-                CaptureLoopPoseProbeTransformStates(SceneNode.Transform);
             try
             {
                 float safeWeight = SanitizeImportedBodyWeight(weight);
@@ -4192,7 +4109,6 @@ namespace XREngine.Components.Animation
                         sourceStartMuscles,
                         safeWeight,
                         settings,
-                        projectionCalibrationClipName,
                         out Matrix4x4 startPose,
                         out HumanoidProjectedRootPose startRoot)
                     || !TryEvaluateLoopPoseProbeEndpoint(
@@ -4204,7 +4120,6 @@ namespace XREngine.Components.Animation
                         policy.LoopPose ? sourceStartMuscles : sourceEndMuscles,
                         safeWeight,
                         settings,
-                        projectionCalibrationClipName,
                         out Matrix4x4 endPose,
                         out HumanoidProjectedRootPose endRoot))
                     return false;
@@ -4237,8 +4152,6 @@ namespace XREngine.Components.Animation
             finally
             {
                 RestoreDiagnosticState(humanoidState);
-                RestoreLoopPoseProbeTransformStates(transformStates);
-                diagnosticScope.Dispose();
             }
         }
 
@@ -4251,7 +4164,6 @@ namespace XREngine.Components.Animation
             ReadOnlySpan<float> visiblePoseMuscles,
             float weight,
             ImportedHumanoidClipRootMotionSettings settings,
-            string? projectionCalibrationClipName,
             out Matrix4x4 hipsLocalPose,
             out HumanoidProjectedRootPose projectedRootPose)
         {
@@ -4266,20 +4178,27 @@ namespace XREngine.Components.Animation
                 canonicalSample,
                 weight,
                 _loopPoseCorrectionProbeOwner,
-                settings,
-                projectionCalibrationClipName);
-            ApplyMuscleSnapshot(compiled, feetProjectionMuscles);
-            TryResolveProjectedFeetFromCurrentPose(compiled, feetProjectionMuscles);
+                settings);
+            if (TryEvaluateNativeHumanoidPose(
+                    compiled,
+                    feetProjectionMuscles,
+                    includeTranslationDof: false,
+                    commit: false))
+                TryResolveProjectedFeetFromCurrentPose(compiled);
             projectedRootPose = _currentProjectedRootPose;
-            ApplyMuscleSnapshot(compiled, visiblePoseMuscles);
-            ApplyImportedBodyPoseAllocation(compiled, hipsNode, policy, loopPoseCorrection: null);
+            if (!TryEvaluateNativeHumanoidPose(
+                    compiled,
+                    visiblePoseMuscles,
+                    includeTranslationDof: false,
+                    commit: false))
+                return false;
 
-            TransformBase hipsTransform = hipsNode.Transform;
-            if (hipsTransform.IsLocalMatrixDirty)
-                hipsTransform.RecalcLocal();
-            // Calibrated Body allocation and Loop Pose both operate on Unity's
-            // Hips-local channels, so measure the seam in that same space.
-            hipsLocalPose = hipsTransform.LocalMatrix;
+            // Body allocation and Loop Pose operate on the native solver's
+            // scratch Hips-local result. Endpoint probes never mutate the live rig.
+            hipsLocalPose = CalculateImportedBodyAllocatedLocalPose(
+                compiled,
+                _nativePoseWorkspace.GetLocalMatrix(EHumanoidAvatarBoneRole.Hips),
+                policy);
             return true;
         }
 
@@ -4308,46 +4227,6 @@ namespace XREngine.Components.Animation
             }
 
             return parent is null ? Matrix4x4.Identity : result;
-        }
-
-        private static List<(TransformBase Transform, TransformState? FrameState, Matrix4x4 LocalMatrix, TransformDiagnosticInvalidationState InvalidationState)>
-            CaptureLoopPoseProbeTransformStates(TransformBase root)
-        {
-            var states = new List<(TransformBase Transform, TransformState? FrameState, Matrix4x4 LocalMatrix, TransformDiagnosticInvalidationState InvalidationState)>();
-            CaptureLoopPoseProbeTransformStatesRecursive(root, states);
-            return states;
-        }
-
-        private static void CaptureLoopPoseProbeTransformStatesRecursive(
-            TransformBase transform,
-            List<(TransformBase Transform, TransformState? FrameState, Matrix4x4 LocalMatrix, TransformDiagnosticInvalidationState InvalidationState)> states)
-        {
-            TransformDiagnosticInvalidationState invalidationState = transform.CaptureDiagnosticInvalidationState();
-            if (transform.IsLocalMatrixDirty)
-                transform.RecalcLocal();
-
-            states.Add((
-                transform,
-                transform is Transform concrete ? concrete.FrameState : null,
-                transform.LocalMatrix,
-                invalidationState));
-            foreach (TransformBase child in transform.Children)
-                CaptureLoopPoseProbeTransformStatesRecursive(child, states);
-        }
-
-        private static void RestoreLoopPoseProbeTransformStates(
-            List<(TransformBase Transform, TransformState? FrameState, Matrix4x4 LocalMatrix, TransformDiagnosticInvalidationState InvalidationState)> states)
-        {
-            foreach ((TransformBase transform, TransformState? frameState, Matrix4x4 localMatrix, _) in states)
-            {
-                if (transform is Transform concrete && frameState.HasValue)
-                    concrete.SetFrameState(frameState.Value);
-                else
-                    transform.DeriveLocalMatrix(localMatrix);
-            }
-
-            foreach ((TransformBase transform, _, _, TransformDiagnosticInvalidationState invalidationState) in states)
-                transform.RestoreDiagnosticInvalidationState(invalidationState);
         }
 
         private static Matrix4x4 InvertProjectedRootMatrix(HumanoidProjectedRootPose pose)
@@ -4399,7 +4278,7 @@ namespace XREngine.Components.Animation
             object? owner = _pendingProjectedRootMotionOwner;
 
             if (!feetProjectionAlreadyResolved)
-                TryResolveProjectedFeetFromCurrentPose(compiled, _muscleValueSnapshot);
+                TryResolveProjectedFeetFromCurrentPose(compiled);
 
             ApplyImportedBodyPoseAllocation(
                 compiled,
@@ -4410,34 +4289,13 @@ namespace XREngine.Components.Animation
         }
 
         private bool TryResolveProjectedFeetFromCurrentPose(
-            CompiledHumanoidAvatarDefinition compiled,
-            ReadOnlySpan<float> muscleValues)
+            CompiledHumanoidAvatarDefinition compiled)
         {
             if (!_hasPendingProjectedRootMotion
                 || _activeImportedBodyProjectionPolicy is not ImportedHumanoidRootMotionPolicy policy
                 || policy.BakePositionYIntoPose
                 || policy.PositionYBasis is not EImportedHumanoidRootPositionYBasis.Feet)
                 return false;
-
-            if (TryEvaluateCalibratedProjectedRootYDelta(
-                    compiled,
-                    muscleValues,
-                    out float calibratedProjectedY))
-            {
-                Vector3 calibratedPosition = _preFeetProjectedRootPose.Position;
-                calibratedPosition.Y += calibratedProjectedY;
-                _currentProjectedRootPose = new HumanoidProjectedRootPose(
-                    calibratedPosition,
-                    _preFeetProjectedRootPose.Rotation,
-                    _preFeetProjectedRootPose.Channels | EHumanoidProjectedRootChannels.PositionY);
-                Vector3 calibratedAllocationPosition = _preFeetBodyAllocationProjectedRootPose.Position;
-                calibratedAllocationPosition.Y += calibratedProjectedY;
-                _bodyAllocationProjectedRootPose = new HumanoidProjectedRootPose(
-                    calibratedAllocationPosition,
-                    _preFeetBodyAllocationProjectedRootPose.Rotation,
-                    _preFeetBodyAllocationProjectedRootPose.Channels | EHumanoidProjectedRootChannels.PositionY);
-                return true;
-            }
 
             if (!TryCalculateProjectedFeetHeight(compiled, policy, out float currentFeetY))
                 return false;
@@ -4464,70 +4322,6 @@ namespace XREngine.Components.Animation
                 _preFeetBodyAllocationProjectedRootPose.Rotation,
                 _preFeetBodyAllocationProjectedRootPose.Channels | EHumanoidProjectedRootChannels.PositionY);
             return true;
-        }
-
-        private bool TryEvaluateCalibratedProjectedRootYDelta(
-            CompiledHumanoidAvatarDefinition compiled,
-            ReadOnlySpan<float> muscleValues,
-            out float projectedY)
-        {
-            projectedY = 0.0f;
-            if (!_hasCanonicalProjectionMuscleValueSnapshot
-                || muscleValues.Length < MuscleValueCount
-                || compiled.GetLegacyCalibration(EHumanoidAvatarBoneRole.Hips)?.CoupledBoneModel
-                    is not ImportedHumanoidCoupledBoneModel hipsModel
-                || !TryEvaluateProjectedRootY(
-                    compiled,
-                    hipsModel,
-                    muscleValues,
-                    out float currentY)
-                || !TryEvaluateProjectedRootY(
-                    compiled,
-                    hipsModel,
-                    _canonicalProjectionMuscleValueSnapshot,
-                    out float canonicalY))
-                return false;
-
-            projectedY = currentY - canonicalY;
-            return float.IsFinite(projectedY);
-        }
-
-        private bool TryEvaluateProjectedRootY(
-            CompiledHumanoidAvatarDefinition compiled,
-            ImportedHumanoidCoupledBoneModel hipsModel,
-            ReadOnlySpan<float> muscleValues,
-            out float projectedY)
-        {
-            ReadOnlySpan<float> calibrationMuscles = muscleValues;
-            if (_activeImportedBodyProjectionPolicy is { Mirror: true })
-            {
-                ReconstructUnmirroredMuscleSnapshot(
-                    muscleValues,
-                    _unmirroredMuscleValueSnapshot);
-                calibrationMuscles = _unmirroredMuscleValueSnapshot;
-            }
-
-            return hipsModel.TryEvaluateProjectedRootY(
-                calibrationMuscles,
-                compiled.MuscleInputScale,
-                compiled.ModelUnitsPerMeter,
-                out projectedY);
-        }
-
-        private static void ReconstructUnmirroredMuscleSnapshot(
-            ReadOnlySpan<float> mirroredMuscles,
-            Span<float> unmirroredMuscles)
-        {
-            unmirroredMuscles.Clear();
-            int count = Math.Min(MuscleValueCount, unmirroredMuscles.Length);
-            for (int sourceIndex = 0; sourceIndex < count; sourceIndex++)
-            {
-                EHumanoidValue source = (EHumanoidValue)sourceIndex;
-                EHumanoidValue mirrored = ImportedHumanoidMirrorOperator.MirrorMuscle(source, out float parity);
-                int mirroredIndex = (int)mirrored;
-                if ((uint)mirroredIndex < (uint)mirroredMuscles.Length)
-                    unmirroredMuscles[sourceIndex] = mirroredMuscles[mirroredIndex] * parity;
-            }
         }
 
         private void ApplyImportedBodyPoseAllocation(
@@ -4583,7 +4377,7 @@ namespace XREngine.Components.Animation
                 hipsNode,
                 policy,
                 loopPoseCorrection);
-            return localPose * GetParentPoseInModelRoot(hipsNode.Transform);
+            return localPose * compiled.HipsParentInModelRootFrame;
         }
 
         private Matrix4x4 GetParentPoseInModelRoot(TransformBase hipsTransform)
@@ -4604,21 +4398,24 @@ namespace XREngine.Components.Animation
             if (hipsTransform.IsLocalMatrixDirty)
                 hipsTransform.RecalcLocal();
 
-            // Unity evaluates Body channels in Animator-root space. Imported scene
-            // parents can be normalized into a different basis than their serialized
-            // Unity parent frame, so the live scene parent is not a reliable Body
-            // basis. Enter the exported
-            // Hips-parent -> Animator-root frame, apply Body/root allocation there,
-            // then conjugate back to the imported Hips-local basis.
-            Matrix4x4 bodyFrame = compiled.HasLegacyCalibrationRootAllocationFrame
-                ? compiled.LegacyCalibrationRootAllocationFrame
-                : GetParentPoseInModelRoot(hipsTransform);
-            Matrix4x4 inverseBodyFrame = compiled.HasLegacyCalibrationRootAllocationFrame
-                ? compiled.InverseLegacyCalibrationRootAllocationFrame
-                : Matrix4x4.Invert(bodyFrame, out Matrix4x4 fallbackInverseBodyFrame)
-                    ? fallbackInverseBodyFrame
-                    : Matrix4x4.Identity;
-            Matrix4x4 hipsInBodyFrame = hipsTransform.LocalMatrix * bodyFrame;
+            return CalculateImportedBodyAllocatedLocalPose(
+                compiled,
+                hipsTransform.LocalMatrix,
+                policy);
+        }
+
+        private Matrix4x4 CalculateImportedBodyAllocatedLocalPose(
+            CompiledHumanoidAvatarDefinition compiled,
+            Matrix4x4 hipsLocalPose,
+            ImportedHumanoidRootMotionPolicy policy)
+        {
+
+            // Body channels are evaluated in the canonical Animator-root frame
+            // compiled from the finalized neutral pose. Runtime allocation must not
+            // depend on a calibration capture or on the current scene parent pose.
+            Matrix4x4 bodyFrame = compiled.HipsParentInModelRootFrame;
+            Matrix4x4 inverseBodyFrame = compiled.InverseHipsParentInModelRootFrame;
+            Matrix4x4 hipsInBodyFrame = hipsLocalPose * bodyFrame;
 
             float weight = _importedBodySampleWeight;
             Matrix4x4 activeAllocation = CreateImportedBodyAllocationMatrix(
@@ -4751,33 +4548,42 @@ namespace XREngine.Components.Animation
             ImportedHumanoidRootMotionPolicy policy,
             out float feetY)
         {
-            SceneNode? hipsNode = compiled.GetNode(EHumanoidAvatarBoneRole.Hips);
-            if (hipsNode is null)
+            if (compiled.GetNode(EHumanoidAvatarBoneRole.Hips) is null)
             {
                 feetY = 0.0f;
                 return false;
             }
 
-            TransformBase hipsTransform = hipsNode.Transform;
-            Matrix4x4 projectedHipsInModelRoot = CalculateImportedBodyRootRelativePose(
+            Matrix4x4 projectedHipsLocal = CalculateImportedBodyAllocatedLocalPose(
                 compiled,
-                hipsNode,
-                policy,
-                loopPoseCorrection: null);
+                _nativePoseWorkspace.GetLocalMatrix(EHumanoidAvatarBoneRole.Hips),
+                policy);
+            Matrix4x4 projectedHipsInModelRoot = projectedHipsLocal
+                * compiled.HipsParentInModelRootFrame;
+            Matrix4x4 solvedHipsInModelRoot = _nativePoseWorkspace.GetModelRootMatrix(
+                EHumanoidAvatarBoneRole.Hips);
+            if (!Matrix4x4.Invert(solvedHipsInModelRoot, out Matrix4x4 inverseSolvedHips))
+            {
+                feetY = 0.0f;
+                return false;
+            }
+
             bool hasLeft = TryCalculateProjectedFootBottom(
                 compiled,
+                _nativePoseWorkspace,
                 EHumanoidAvatarBoneRole.LeftFoot,
                 EHumanoidAvatarBoneRole.LeftToes,
                 projectedHipsInModelRoot,
-                hipsTransform,
+                inverseSolvedHips,
                 policy.Mirror,
                 out float leftY);
             bool hasRight = TryCalculateProjectedFootBottom(
                 compiled,
+                _nativePoseWorkspace,
                 EHumanoidAvatarBoneRole.RightFoot,
                 EHumanoidAvatarBoneRole.RightToes,
                 projectedHipsInModelRoot,
-                hipsTransform,
+                inverseSolvedHips,
                 policy.Mirror,
                 out float rightY);
 
@@ -4803,10 +4609,11 @@ namespace XREngine.Components.Animation
 
         private static bool TryCalculateProjectedFootBottom(
             CompiledHumanoidAvatarDefinition compiled,
+            HumanoidPoseSolveWorkspace workspace,
             EHumanoidAvatarBoneRole footRole,
             EHumanoidAvatarBoneRole toesRole,
             Matrix4x4 projectedHipsInModelRoot,
-            TransformBase hipsTransform,
+            Matrix4x4 inverseSolvedHips,
             bool mirror,
             out float bottomY)
         {
@@ -4829,14 +4636,8 @@ namespace XREngine.Components.Animation
 
             if (footNode is not null)
             {
-                Matrix4x4 footInHips = ComposeCurrentLocalPoseRelativeToAncestor(
-                    footNode.Transform,
-                    hipsTransform);
-                // The live Hips pose has already been mirrored in semantic humanoid space.
-                // Reflect its canonical sole offset as well so feet-based Y is invariant under
-                // the sagittal mirror instead of mixing a mirrored frame with an unmirrored role.
-                // Using current Hips-relative FK (rather than the neutral offset) also preserves
-                // optional-toe behavior and any authored per-bone translation degrees of freedom.
+                Matrix4x4 footInHips = workspace.GetModelRootMatrix(footRole)
+                    * inverseSolvedHips;
                 Vector3 footOffset = mirror
                     ? ImportedHumanoidMirrorOperator.MirrorPosition(footInHips.Translation)
                     : footInHips.Translation;
@@ -4845,9 +4646,8 @@ namespace XREngine.Components.Animation
             }
             if (toesNode is not null)
             {
-                Matrix4x4 toesInHips = ComposeCurrentLocalPoseRelativeToAncestor(
-                    toesNode.Transform,
-                    hipsTransform);
+                Matrix4x4 toesInHips = workspace.GetModelRootMatrix(toesRole)
+                    * inverseSolvedHips;
                 Vector3 toesOffset = mirror
                     ? ImportedHumanoidMirrorOperator.MirrorPosition(toesInHips.Translation)
                     : toesInHips.Translation;

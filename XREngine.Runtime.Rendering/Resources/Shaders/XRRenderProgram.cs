@@ -226,6 +226,7 @@ namespace XREngine.Rendering
         private ShaderProgramMetadata _shaderMetadata = ShaderProgramMetadata.Empty;
         private ShaderProgramDiagnosticMetadata _diagnosticMetadata = ShaderProgramDiagnosticMetadata.Empty;
         private XRRenderProgramDescriptor _programDescriptor = XRRenderProgramDescriptor.Empty;
+        private uint _externallyOwnedDescriptorSetMask;
 
         [YamlIgnore]
         private readonly Dictionary<XRShader, ShaderSubscription> _shaderSourceSubscriptions = new();
@@ -258,6 +259,20 @@ namespace XREngine.Rendering
         {
             get => _programDescriptor;
             set => SetField(ref _programDescriptor, value);
+        }
+
+        /// <summary>
+        /// Descriptor-set coordinates whose layouts are supplied by the active
+        /// backend runtime instead of being inferred from this program's
+        /// reflection. Set this before linking; the mask is backend-neutral
+        /// program metadata, while each backend defines its own ownership ABI.
+        /// </summary>
+        [Browsable(false)]
+        [YamlIgnore]
+        public uint ExternallyOwnedDescriptorSetMask
+        {
+            get => _externallyOwnedDescriptorSetMask;
+            set => SetField(ref _externallyOwnedDescriptorSetMask, value);
         }
 
         /// <summary>

@@ -21,6 +21,21 @@ namespace XREngine.Components.Animation
             set => SetField(ref _ikRotationWeight, value);
         }
 
+        private float _stretchAllowance;
+        /// <summary>
+        /// Fraction of additional chain length available near full extension.
+        /// A value of <c>0.05</c> begins adding translation at 95 percent reach
+        /// and reaches five percent extension at the nominal chain length.
+        /// </summary>
+        [Range(0f, 1f)]
+        public float StretchAllowance
+        {
+            get => _stretchAllowance;
+            set => SetField(
+                ref _stretchAllowance,
+                float.IsFinite(value) ? Math.Clamp(value, 0.0f, 1.0f) : 0.0f);
+        }
+
         private Quaternion _rawIKRotation = Quaternion.Identity;
         public Quaternion RawIKRotation
         {
@@ -358,6 +373,13 @@ namespace XREngine.Components.Animation
                 Vector3 bone1WorldPos = _bone1._transform.WorldMatrix.Translation;
                 Vector3 bone2WorldPos = _bone2._transform.WorldMatrix.Translation;
                 Vector3 bone3WorldPos = _bone3._transform.WorldMatrix.Translation;
+                Vector3 weightedWorldPos = GetWorldIKPosition();
+
+                ApplyTargetStretch(
+                    weightedWorldPos,
+                    ref bone1WorldPos,
+                    ref bone2WorldPos,
+                    ref bone3WorldPos);
 
                 // Reinitializing the bones when the hierarchy is not direct. This allows for skipping animated bones in the hierarchy.
                 if (!_directHierarchy)
@@ -372,8 +394,6 @@ namespace XREngine.Components.Animation
 
                 if (BendNormal == Vector3.Zero)
                     Debug.LogWarning("IKSolverTrigonometric Bend Normal is Vector3.zero.");
-
-                var weightedWorldPos = GetWorldIKPosition();
 
                 // Interpolating bend normal
                 Vector3 effectiveBendNormal = BendNormalOverride.LengthSquared() > 1e-8f ? BendNormalOverride : BendNormal;
@@ -420,6 +440,48 @@ namespace XREngine.Components.Animation
 
             PostSolve();
         }
+
+        private void ApplyTargetStretch(
+            Vector3 target,
+            ref Vector3 bone1Position,
+            ref Vector3 bone2Position,
+            ref Vector3 bone3Position)
+        {
+            float allowance = StretchAllowance;
+            if (allowance <= 0.0f || !IsFinite(target))
+                return;
+
+            Vector3 firstSegment = bone2Position - bone1Position;
+            Vector3 secondSegment = bone3Position - bone2Position;
+            float firstLength = firstSegment.Length();
+            float secondLength = secondSegment.Length();
+            float chainLength = firstLength + secondLength;
+            if (!float.IsFinite(chainLength) || chainLength <= 1e-6f)
+                return;
+
+            float targetDistance = Vector3.Distance(bone1Position, target);
+            float stretchStart = chainLength * (1.0f - allowance);
+            if (!float.IsFinite(targetDistance) || targetDistance <= stretchStart)
+                return;
+
+            float stretchProgress = Math.Clamp(
+                (targetDistance - stretchStart) / MathF.Max(chainLength - stretchStart, 1e-6f),
+                0.0f,
+                1.0f);
+            float scale = 1.0f + allowance * stretchProgress;
+            if (scale <= 1.0f + 1e-6f)
+                return;
+
+            bone2Position = bone1Position + firstSegment * scale;
+            bone3Position = bone2Position + secondSegment * scale;
+            _bone2._transform!.SetWorldTranslation(bone2Position);
+            _bone3._transform!.SetWorldTranslation(bone3Position);
+        }
+
+        private static bool IsFinite(Vector3 value)
+            => float.IsFinite(value.X)
+            && float.IsFinite(value.Y)
+            && float.IsFinite(value.Z);
 
         protected virtual void PreInitialize() { }
         protected virtual void PreUpdate() { }

@@ -28,4 +28,8 @@ public enum EBackendReadyCanonicalOwner : byte
     Shader,
     Shadow,
     Probe,
+    Light,
+    Environment,
+    Decal,
+    GiResource,
 }

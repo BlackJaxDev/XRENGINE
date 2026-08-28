@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Threading;
 using Silk.NET.Vulkan;
 using Semaphore = Silk.NET.Vulkan.Semaphore;
@@ -116,6 +117,9 @@ internal sealed partial class VulkanCommandRuntime
                 ? RuntimeEngine.Rendering.Stats.Vulkan.SealedSubmissionFallbackReason.ForcedFull
                 : RuntimeEngine.Rendering.Stats.Vulkan.SealedSubmissionFallbackReason.Unknown;
         string submissionValidationFailure = string.Empty;
+        long sealedImageValidationTicks = 0L;
+        long sealedQueueOwnershipValidationTicks = 0L;
+        long sealedLifetimePinAcquisitionTicks = 0L;
         if (!ValidateSubmissionCommandBuffersReady(
                 ref submitInfo,
                 out submissionValidationFailure))
@@ -145,15 +149,14 @@ internal sealed partial class VulkanCommandRuntime
         }
         if (!sampleFullContract)
         {
-            long sealedValidationStarted = Stopwatch.GetTimestamp();
             usedSealedContract = TryAcquireSealedSubmissionPins(
                 queue,
                 ref submitInfo,
                 out submissionValidationFailure,
-                out sealedFallbackReason);
-            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanTrackedSubmissionTiming(
-                RuntimeEngine.Rendering.Stats.Vulkan.TrackedSubmissionTimingStage.LifetimePinAcquisition,
-                Stopwatch.GetTimestamp() - sealedValidationStarted);
+                out sealedFallbackReason,
+                out sealedImageValidationTicks,
+                out sealedQueueOwnershipValidationTicks,
+                out sealedLifetimePinAcquisitionTicks);
             imageStateValid = usedSealedContract;
             lifetimePinsValid = usedSealedContract;
         }
@@ -179,12 +182,16 @@ internal sealed partial class VulkanCommandRuntime
                 out submissionValidationFailure,
                 out long queueOwnershipValidationTicks);
             long validationTicks = Stopwatch.GetTimestamp() - validationStarted;
+            sealedImageValidationTicks +=
+                Math.Max(0L, validationTicks - queueOwnershipValidationTicks);
+            sealedQueueOwnershipValidationTicks +=
+                queueOwnershipValidationTicks;
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanTrackedSubmissionTiming(
                 RuntimeEngine.Rendering.Stats.Vulkan.TrackedSubmissionTimingStage.ImageValidation,
-                Math.Max(0L, validationTicks - queueOwnershipValidationTicks));
+                sealedImageValidationTicks);
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanTrackedSubmissionTiming(
                 RuntimeEngine.Rendering.Stats.Vulkan.TrackedSubmissionTimingStage.QueueOwnershipValidation,
-                queueOwnershipValidationTicks);
+                sealedQueueOwnershipValidationTicks);
 
             if (imageStateValid)
             {
@@ -194,9 +201,8 @@ internal sealed partial class VulkanCommandRuntime
                     in diagnostics,
                     out submissionValidationFailure,
                     out injectedFailureStage);
-                RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanTrackedSubmissionTiming(
-                    RuntimeEngine.Rendering.Stats.Vulkan.TrackedSubmissionTimingStage.LifetimePinAcquisition,
-                    Stopwatch.GetTimestamp() - lifetimePinsStarted);
+                sealedLifetimePinAcquisitionTicks +=
+                    Stopwatch.GetTimestamp() - lifetimePinsStarted;
             }
             if (sampledSealedContract)
             {
@@ -204,6 +210,18 @@ internal sealed partial class VulkanCommandRuntime
                     sampledSealedValid == (imageStateValid && lifetimePinsValid));
             }
         }
+        if (usedSealedContract)
+        {
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanTrackedSubmissionTiming(
+                RuntimeEngine.Rendering.Stats.Vulkan.TrackedSubmissionTimingStage.ImageValidation,
+                sealedImageValidationTicks);
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanTrackedSubmissionTiming(
+                RuntimeEngine.Rendering.Stats.Vulkan.TrackedSubmissionTimingStage.QueueOwnershipValidation,
+                sealedQueueOwnershipValidationTicks);
+        }
+        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanTrackedSubmissionTiming(
+            RuntimeEngine.Rendering.Stats.Vulkan.TrackedSubmissionTimingStage.LifetimePinAcquisition,
+            sealedLifetimePinAcquisitionTicks);
         if (!imageStateValid || !lifetimePinsValid)
         {
             Debug.VulkanWarningEvery(
@@ -581,7 +599,7 @@ internal sealed partial class VulkanCommandRuntime
 
                 long queueOwnershipStarted = Stopwatch.GetTimestamp();
                 bool queueOwnershipValid = ValidateQueueOwnershipTransferRequirements(
-                        recorded,
+                        CollectionsMarshal.AsSpan(recorded.QueueOwnershipTransfers),
                         submissionQueueFamilyIndex,
                         ref submitInfo,
                         commandIndex,
@@ -622,7 +640,7 @@ internal sealed partial class VulkanCommandRuntime
             ulong handle = unchecked(
                 (ulong)submitInfo.PCommandBuffers[commandIndex].Handle);
             if (handle == 0 ||
-                !CommandBuffers.InvalidatedBuffersPendingReset.ContainsKey(handle))
+                !CommandBuffers.ContainsInvalidatedCommandHandle(handle))
             {
                 continue;
             }
@@ -636,7 +654,7 @@ internal sealed partial class VulkanCommandRuntime
     }
 
     private bool ValidateQueueOwnershipTransferRequirements(
-        VulkanRecordedImageLayoutState recorded,
+        ReadOnlySpan<VulkanQueueOwnershipTransferRequirement> requirements,
         uint submissionQueueFamilyIndex,
         ref SubmitInfo submitInfo,
         int commandIndex,
@@ -647,9 +665,9 @@ internal sealed partial class VulkanCommandRuntime
         out string failureReason)
     {
         failureReason = string.Empty;
-        for (int transferIndex = 0; transferIndex < recorded.QueueOwnershipTransfers.Count; transferIndex++)
+        for (int transferIndex = 0; transferIndex < requirements.Length; transferIndex++)
         {
-            VulkanQueueOwnershipTransferRequirement requirement = recorded.QueueOwnershipTransfers[transferIndex];
+            VulkanQueueOwnershipTransferRequirement requirement = requirements[transferIndex];
             EVulkanQueueOwnershipTransferRole role = requirement.ResolveRole(submissionQueueFamilyIndex);
             if (role == EVulkanQueueOwnershipTransferRole.Invalid)
             {
@@ -1074,20 +1092,30 @@ internal sealed partial class VulkanCommandRuntime
         commandLifetime.RefreshTouchedDependencies();
         List<KeyValuePair<VulkanResourceLifetimeKey, ulong>> touched = commandLifetime.TouchedDependencies;
         int descriptorScanCount = touched.Count;
-        Dictionary<VulkanResourceLifetimeKey, ulong> touchedGenerations =
-            tracker.SubmissionDependencyGenerationsScratch;
-        touchedGenerations.Clear();
+        ulong scratchEpoch =
+            tracker.BeginSubmissionDependencyGenerationScratchNoLock();
         for (int index = 0; index < descriptorScanCount; index++)
-            touchedGenerations[touched[index].Key] = touched[index].Value;
+            if (tracker.TryGetResourceSlotNoLock(
+                    touched[index].Key,
+                    out VulkanResourceSlotHandle slot))
+            {
+                tracker.RecordSubmissionDependencyGenerationNoLock(
+                    slot,
+                    touched[index].Value,
+                    scratchEpoch);
+            }
 
         for (int index = 0; index < descriptorScanCount; index++)
         {
             VulkanResourceLifetimeKey descriptorSetKey = touched[index].Key;
             if (descriptorSetKey.Type != ObjectType.DescriptorSet)
                 continue;
-            if (!tracker.PublishedDescriptorSets.TryGetValue(
-                    descriptorSetKey.Handle,
-                    out VulkanPublishedDescriptorSetSnapshot? snapshot) ||
+            if (!tracker.TryGetResourceSlotNoLock(
+                    descriptorSetKey,
+                    out VulkanResourceSlotHandle descriptorSetSlot) ||
+                !tracker.TryGetPublishedDescriptorSnapshotNoLock(
+                    descriptorSetSlot,
+                    out VulkanPublishedDescriptorSetSnapshot snapshot) ||
                 !snapshot.IsNativePublicationKnown)
             {
                 failureKey = descriptorSetKey;
@@ -1102,7 +1130,7 @@ internal sealed partial class VulkanCommandRuntime
                 if (TryAppendSubmittedDescriptorDependency_NoLock(
                         tracker,
                         touched,
-                        touchedGenerations,
+                        scratchEpoch,
                         referenceKey,
                         out failureReason))
                     continue;
@@ -1119,7 +1147,7 @@ internal sealed partial class VulkanCommandRuntime
                 tracker,
                 commandLifetime,
                 previousContract,
-                touchedGenerations))
+                scratchEpoch))
         {
             commandLifetime.SealedSubmissionContract = previousContract;
         }
@@ -1133,7 +1161,7 @@ internal sealed partial class VulkanCommandRuntime
         VulkanResourceLifetimeTracker tracker,
         VulkanCommandBufferLifetimeRecord commandLifetime,
         SealedSubmissionContract contract,
-        Dictionary<VulkanResourceLifetimeKey, ulong> refreshedGenerations)
+        ulong scratchEpoch)
     {
         if (contract.Resources.Length != commandLifetime.TouchedDependencies.Count ||
             contract.MatchResourceVectorNoLock(
@@ -1147,8 +1175,9 @@ internal sealed partial class VulkanCommandRuntime
         for (int index = 0; index < contract.Resources.Length; ++index)
         {
             VulkanSealedResourceDependency dependency = contract.Resources[index];
-            if (!refreshedGenerations.TryGetValue(
-                    dependency.Key,
+            if (!tracker.TryGetSubmissionDependencyGenerationNoLock(
+                    dependency.Slot,
+                    scratchEpoch,
                     out ulong generation) ||
                 generation != dependency.Generation)
             {
@@ -1162,11 +1191,16 @@ internal sealed partial class VulkanCommandRuntime
     private static bool TryAppendSubmittedDescriptorDependency_NoLock(
         VulkanResourceLifetimeTracker tracker,
         List<KeyValuePair<VulkanResourceLifetimeKey, ulong>> touched,
-        Dictionary<VulkanResourceLifetimeKey, ulong> touchedGenerations,
+        ulong scratchEpoch,
         VulkanResourceLifetimeKey key,
         out string failureReason)
     {
-        if (!tracker.ResourceLifetimes.TryGetValue(key, out VulkanResourceLifetimeRecord? resource))
+        if (!tracker.TryGetResourceSlotNoLock(
+                key,
+                out VulkanResourceSlotHandle slot) ||
+            !tracker.TryResolveResourceSlotNoLock(
+                slot,
+                out VulkanResourceLifetimeRecord resource))
         {
             failureReason = $"descriptor submission dependency {key} is no longer tracked";
             return false;
@@ -1177,7 +1211,10 @@ internal sealed partial class VulkanCommandRuntime
             return false;
         }
 
-        if (touchedGenerations.TryGetValue(key, out ulong trackedGeneration))
+        if (tracker.TryGetSubmissionDependencyGenerationNoLock(
+                slot,
+                scratchEpoch,
+                out ulong trackedGeneration))
         {
             if (trackedGeneration != resource.Generation)
             {
@@ -1194,7 +1231,10 @@ internal sealed partial class VulkanCommandRuntime
                 return false;
             }
             touched.Add(new KeyValuePair<VulkanResourceLifetimeKey, ulong>(key, resource.Generation));
-            touchedGenerations.Add(key, resource.Generation);
+            tracker.RecordSubmissionDependencyGenerationNoLock(
+                slot,
+                resource.Generation,
+                scratchEpoch);
         }
 
         if (key.Type == ObjectType.ImageView &&
@@ -1203,7 +1243,7 @@ internal sealed partial class VulkanCommandRuntime
             !TryAppendSubmittedDescriptorDependency_NoLock(
                 tracker,
                 touched,
-                touchedGenerations,
+                scratchEpoch,
                 new VulkanResourceLifetimeKey(ObjectType.Image, backingImageHandle),
                 out failureReason))
             return false;
@@ -1214,7 +1254,7 @@ internal sealed partial class VulkanCommandRuntime
             !TryAppendSubmittedDescriptorDependency_NoLock(
                 tracker,
                 touched,
-                touchedGenerations,
+                scratchEpoch,
                 new VulkanResourceLifetimeKey(ObjectType.Buffer, backingBufferHandle),
                 out failureReason))
             return false;
@@ -1499,6 +1539,10 @@ internal sealed partial class VulkanCommandRuntime
                             state.OtherSequence = Math.Max(state.OtherSequence, submission.QueueSequence);
                             break;
                     }
+                    // Publish only after the full path has committed every
+                    // mutable field. Stable sealed reads therefore observe
+                    // either the old complete state or this complete state.
+                    _ = Synchronization.PublishStableImageSubresourceNoLock(state);
                 }
             }
         }

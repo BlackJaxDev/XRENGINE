@@ -33,11 +33,41 @@ bool XR_ADV_IsSupportedVisibilityProducer(uint producer)
 #define XR_ADV_VISIBILITY_SET 1
 #endif
 #ifndef XR_ADV_BINDING_VISIBILITY_PAYLOADS
-#define XR_ADV_BINDING_VISIBILITY_PAYLOADS 28
+#define XR_ADV_BINDING_VISIBILITY_PAYLOADS 24
 #endif
 #ifndef XR_ADV_BINDING_VISIBILITY_COUNTERS
 #define XR_ADV_BINDING_VISIBILITY_COUNTERS 29
 #endif
+
+#define XR_ADV_BINDING_VISIBILITY_CANDIDATES 20
+#define XR_ADV_BINDING_VISIBILITY_PERSISTENT_STATE 21
+#define XR_ADV_BINDING_VISIBILITY_DEFERRED_INDICES 22
+#define XR_ADV_BINDING_VISIBILITY_VISIBLE_INDICES 23
+#define XR_ADV_BINDING_VISIBILITY_PRODUCERS 25
+#define XR_ADV_BINDING_VISIBILITY_RANGE_INDICES 26
+#define XR_ADV_BINDING_VISIBILITY_RANGE_OFFSETS 27
+#define XR_ADV_BINDING_VISIBILITY_RANGE_COUNTS 28
+#define XR_ADV_BINDING_VISIBILITY_INDEXED_ARGUMENTS 30
+#define XR_ADV_BINDING_VISIBILITY_MESH_ARGUMENTS 31
+#define XR_ADV_BINDING_VISIBILITY_MESH_PAYLOADS 32
+#define XR_ADV_BINDING_VISIBILITY_STATIC_VERTICES 33
+#define XR_ADV_BINDING_VISIBILITY_CURRENT_VERTICES 34
+#define XR_ADV_BINDING_VISIBILITY_PREVIOUS_VERTICES 35
+#define XR_ADV_BINDING_VISIBILITY_MESHLET_DESCRIPTORS 36
+#define XR_ADV_BINDING_VISIBILITY_MESHLET_VERTEX_INDICES 37
+#define XR_ADV_BINDING_VISIBILITY_MESHLET_TRIANGLE_WORDS 38
+// Late visibility never overwrites the early producer's GPU-owned streams.
+// These three frame-slot ranges retain recovered candidates and their indexed
+// indirect expansion until the load-preserving late raster consumes them.
+#define XR_ADV_BINDING_VISIBILITY_LATE_VISIBLE_INDICES 39
+#define XR_ADV_BINDING_VISIBILITY_LATE_RANGE_COUNTS 40
+#define XR_ADV_BINDING_VISIBILITY_LATE_INDEXED_ARGUMENTS 41
+#define XR_ADV_BINDING_VISIBILITY_LATE_MESH_ARGUMENTS 44
+#define XR_ADV_BINDING_VISIBILITY_LATE_MESH_PAYLOADS 45
+// Per-frame depth-pyramid bindings are intentionally runtime-owned. They are
+// populated only by the late-stage image closure, never via loose uniforms.
+#define XR_ADV_BINDING_VISIBILITY_DEPTH_PYRAMID_SAMPLED 42
+#define XR_ADV_BINDING_VISIBILITY_DEPTH_PYRAMID_STORAGE 43
 
 #if defined(XR_ADV_BACKEND_VULKAN)
 #define XR_ADV_VIS_TABLE_LAYOUT(bindingIndex) layout(set = XR_ADV_VISIBILITY_SET, binding = bindingIndex, std430, row_major)
@@ -71,14 +101,31 @@ struct XRAdvancedVisibilityPayload
     uint flags;
 };
 
+XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_VISIBILITY_CANDIDATES)
+readonly buffer XRAdvancedVisibilityCandidates { uint records[]; } XR_ADV_VisibilityCandidates;
+XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_VISIBILITY_PERSISTENT_STATE)
+buffer XRAdvancedVisibilityPersistentState { uint records[]; } XR_ADV_VisibilityPersistentState;
+XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_VISIBILITY_DEFERRED_INDICES)
+buffer XRAdvancedVisibilityDeferredIndices { uint records[]; } XR_ADV_VisibilityDeferredIndices;
+XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_VISIBILITY_VISIBLE_INDICES)
+buffer XRAdvancedVisibilityVisibleIndices { uint records[]; } XR_ADV_VisibilityVisibleIndices;
+
 XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_VISIBILITY_PAYLOADS)
 readonly buffer XRAdvancedVisibilityPayloadTable
 {
     XRAdvancedVisibilityPayload records[];
 } XR_ADV_VisibilityPayloads;
 
-XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_VISIBILITY_COUNTERS)
-buffer XRAdvancedVisibilityCounterTable
+XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_VISIBILITY_PRODUCERS)
+readonly buffer XRAdvancedVisibilityProducers { uint records[]; } XR_ADV_VisibilityProducers;
+XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_VISIBILITY_RANGE_INDICES)
+readonly buffer XRAdvancedVisibilityRangeIndices { uint records[]; } XR_ADV_VisibilityRangeIndices;
+XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_VISIBILITY_RANGE_OFFSETS)
+readonly buffer XRAdvancedVisibilityRangeOffsets { uint records[]; } XR_ADV_VisibilityRangeOffsets;
+XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_VISIBILITY_RANGE_COUNTS)
+buffer XRAdvancedVisibilityRangeCounts { uint records[]; } XR_ADV_VisibilityRangeCounts;
+
+struct XRAdvancedVisibilityCounterRecord
 {
     uint earlyDraws;
     uint deferredCandidates;
@@ -92,18 +139,136 @@ buffer XRAdvancedVisibilityCounterTable
     uint depthPyramidBuilds;
     uint unsupportedDisplacement;
     uint reserved[5];
-} XR_ADV_VisibilityCounters;
+    uvec2 drawLookupSegment;
+    uvec2 instanceLookupSegment;
+    uvec2 transformLookupSegment;
+    uvec2 renderStateLookupSegment;
+    uvec2 editorIdentityLookupSegment;
+    uvec2 geometryLookupSegment;
+    uvec2 materialLookupSegment;
+    uvec2 shadingKernelLookupSegment;
+    uvec2 textureLookupSegment;
+    uvec2 samplerLookupSegment;
+};
 
-uniform uvec2 VisibilityDrawLookupSegment;
-uniform uvec2 VisibilityInstanceLookupSegment;
-uniform uvec2 VisibilityTransformLookupSegment;
-uniform uvec2 VisibilityRenderStateLookupSegment;
-uniform uvec2 VisibilityEditorIdentityLookupSegment;
-uniform uvec2 VisibilityGeometryLookupSegment;
-uniform uvec2 VisibilityMaterialLookupSegment;
-uniform uvec2 VisibilityShadingKernelLookupSegment;
-uniform uvec2 VisibilityTextureLookupSegment;
-uniform uvec2 VisibilitySamplerLookupSegment;
+XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_VISIBILITY_COUNTERS)
+buffer XRAdvancedVisibilityCounterTable
+{
+    XRAdvancedVisibilityCounterRecord records[];
+} XR_ADV_VisibilityCounterTable;
+
+// A producer can select its sealed view segment before including this ABI.
+// Legacy single-view shaders intentionally retain index zero.
+#ifndef XR_ADV_VISIBILITY_COUNTER_INDEX
+#define XR_ADV_VISIBILITY_COUNTER_INDEX 0u
+#endif
+#define XR_ADV_VisibilityCounters (XR_ADV_VisibilityCounterTable.records[XR_ADV_VISIBILITY_COUNTER_INDEX])
+
+XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_VISIBILITY_INDEXED_ARGUMENTS)
+buffer XRAdvancedVisibilityIndexedArguments { uint records[]; } XR_ADV_VisibilityIndexedArguments;
+XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_VISIBILITY_MESH_ARGUMENTS)
+buffer XRAdvancedVisibilityMeshArguments { uint records[]; } XR_ADV_VisibilityMeshArguments;
+XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_VISIBILITY_MESH_PAYLOADS)
+buffer XRAdvancedVisibilityMeshPayloads { uint records[]; } XR_ADV_VisibilityMeshPayloads;
+
+// These layouts mirror AdvancedDeformedVertex (64 bytes) and
+// AdvancedMeshletDescriptor (80 bytes) exactly. They are declared here rather
+// than in the mesh stage so every visibility consumer shares one canonical
+// set-1 geometry contract.
+struct XRAdvancedVisibilityPackedVertex
+{
+    vec3 position;
+    uint normalOct;
+    uint tangentOctAndSign;
+    uint texCoord0Half;
+    uint texCoord1Half;
+    uint color0Rgba8;
+    uint color1Rgba8;
+    uint custom0;
+    uint sourceVertex;
+    uint flags;
+    uint reserved0;
+    uint reserved1;
+    uint reserved2;
+    uint reserved3;
+};
+
+struct XRAdvancedVisibilityMeshletDescriptor
+{
+    vec4 boundsSphere;
+    uint vertexOffset;
+    uint triangleByteOffset;
+    uint vertexCount;
+    uint triangleCount;
+    vec4 cone;
+    vec4 coneApex;
+    uint packedCone;
+    uint reserved0;
+    uint reserved1;
+    uint reserved2;
+};
+
+XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_VISIBILITY_STATIC_VERTICES)
+readonly buffer XRAdvancedVisibilityStaticVertexTable
+{
+    XRAdvancedVisibilityPackedVertex records[];
+} XR_ADV_VisibilityStaticVertices;
+XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_VISIBILITY_CURRENT_VERTICES)
+readonly buffer XRAdvancedVisibilityCurrentVertexTable
+{
+    XRAdvancedVisibilityPackedVertex records[];
+} XR_ADV_VisibilityCurrentVertices;
+XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_VISIBILITY_PREVIOUS_VERTICES)
+readonly buffer XRAdvancedVisibilityPreviousVertexTable
+{
+    XRAdvancedVisibilityPackedVertex records[];
+} XR_ADV_VisibilityPreviousVertices;
+XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_VISIBILITY_MESHLET_DESCRIPTORS)
+readonly buffer XRAdvancedVisibilityMeshletTable
+{
+    XRAdvancedVisibilityMeshletDescriptor records[];
+} XR_ADV_VisibilityMeshlets;
+XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_VISIBILITY_MESHLET_VERTEX_INDICES)
+readonly buffer XRAdvancedVisibilityMeshletVertexTable
+{
+    uint records[];
+} XR_ADV_VisibilityMeshletVertexIndices;
+XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_VISIBILITY_MESHLET_TRIANGLE_WORDS)
+readonly buffer XRAdvancedVisibilityMeshletTriangleTable
+{
+    uint records[];
+} XR_ADV_VisibilityMeshletTriangleWords;
+
+#if defined(XR_ADV_ENABLE_LATE_VISIBILITY_OUTPUTS)
+XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_VISIBILITY_LATE_VISIBLE_INDICES)
+buffer XRAdvancedVisibilityLateVisibleIndices { uint records[]; } XR_ADV_VisibilityLateVisibleIndices;
+XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_VISIBILITY_LATE_RANGE_COUNTS)
+buffer XRAdvancedVisibilityLateRangeCounts { uint records[]; } XR_ADV_VisibilityLateRangeCounts;
+XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_VISIBILITY_LATE_INDEXED_ARGUMENTS)
+buffer XRAdvancedVisibilityLateIndexedArguments { uint records[]; } XR_ADV_VisibilityLateIndexedArguments;
+XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_VISIBILITY_LATE_MESH_ARGUMENTS)
+buffer XRAdvancedVisibilityLateMeshArguments { uint records[]; } XR_ADV_VisibilityLateMeshArguments;
+XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_VISIBILITY_LATE_MESH_PAYLOADS)
+buffer XRAdvancedVisibilityLateMeshPayloads { uint records[]; } XR_ADV_VisibilityLateMeshPayloads;
+#endif
+
+#if defined(XR_ADV_ENABLE_DEPTH_PYRAMID_IMAGES) && defined(XR_ADV_BACKEND_VULKAN)
+layout(set = XR_ADV_VISIBILITY_SET, binding = XR_ADV_BINDING_VISIBILITY_DEPTH_PYRAMID_SAMPLED)
+uniform sampler2D XR_ADV_DepthPyramidSampled;
+layout(set = XR_ADV_VISIBILITY_SET, binding = XR_ADV_BINDING_VISIBILITY_DEPTH_PYRAMID_STORAGE, r32f)
+writeonly uniform image2D XR_ADV_DepthPyramidStorage;
+#endif
+
+#define VisibilityDrawLookupSegment XR_ADV_VisibilityCounters.drawLookupSegment
+#define VisibilityInstanceLookupSegment XR_ADV_VisibilityCounters.instanceLookupSegment
+#define VisibilityTransformLookupSegment XR_ADV_VisibilityCounters.transformLookupSegment
+#define VisibilityRenderStateLookupSegment XR_ADV_VisibilityCounters.renderStateLookupSegment
+#define VisibilityEditorIdentityLookupSegment XR_ADV_VisibilityCounters.editorIdentityLookupSegment
+#define VisibilityGeometryLookupSegment XR_ADV_VisibilityCounters.geometryLookupSegment
+#define VisibilityMaterialLookupSegment XR_ADV_VisibilityCounters.materialLookupSegment
+#define VisibilityShadingKernelLookupSegment XR_ADV_VisibilityCounters.shadingKernelLookupSegment
+#define VisibilityTextureLookupSegment XR_ADV_VisibilityCounters.textureLookupSegment
+#define VisibilitySamplerLookupSegment XR_ADV_VisibilityCounters.samplerLookupSegment
 
 uint XR_ADV_ResolveVisibilityHandle(
     XRAdvancedGpuHandle handle,

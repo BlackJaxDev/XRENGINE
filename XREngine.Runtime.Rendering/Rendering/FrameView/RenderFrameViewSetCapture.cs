@@ -60,6 +60,7 @@ public static class RenderFrameViewSetCapture
     {
         Matrix4x4 view = camera.Transform.InverseRenderMatrix;
         Matrix4x4 projection = camera.ProjectionMatrix;
+        Matrix4x4 projectionUnjittered = camera.ProjectionMatrixUnjittered;
         Matrix4x4 viewProjection = view * projection;
         return new RenderFrameViewDescriptor(
             0u,
@@ -78,6 +79,8 @@ public static class RenderFrameViewSetCapture
             0,
             new Vector4(camera.Transform.RenderTranslation, camera.NearZ),
             new Vector4(camera.Transform.RenderForward, camera.FarZ),
-            ReversedDepth: camera.IsReversedDepth);
+            ReversedDepth: camera.IsReversedDepth,
+            ProjectionMatrixUnjittered: projectionUnjittered,
+            CurrentJitter: camera.ProjectionJitter);
     }
 }

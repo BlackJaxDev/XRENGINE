@@ -504,7 +504,34 @@ namespace XREngine.Animation
             if (!Slot.IsValid)
                 return;
 
-            store.SetValue(Slot, DefaultValue);
+            // Imported scalar channels commonly have no reflected property default because
+            // they target the humanoid staging transaction rather than a concrete member.
+            // Dispatch by the assigned slot type so a null default becomes the typed identity
+            // instead of falling through AnimationValueStore.SetValue's discrete path.
+            switch (Slot.Type)
+            {
+                case EAnimValueType.Float:
+                    store.SetFloat(Slot.TypeIndex, DefaultValue is float f ? f : 0.0f);
+                    break;
+                case EAnimValueType.Vector2:
+                    store.SetVector2(Slot.TypeIndex, DefaultValue is Vector2 v2 ? v2 : Vector2.Zero);
+                    break;
+                case EAnimValueType.Vector3:
+                    store.SetVector3(Slot.TypeIndex, DefaultValue is Vector3 v3 ? v3 : Vector3.Zero);
+                    break;
+                case EAnimValueType.Vector4:
+                    store.SetVector4(Slot.TypeIndex, DefaultValue is Vector4 v4 ? v4 : Vector4.Zero);
+                    break;
+                case EAnimValueType.Quaternion:
+                    store.SetQuaternion(Slot.TypeIndex, DefaultValue is Quaternion q ? q : Quaternion.Identity);
+                    break;
+                case EAnimValueType.Bool:
+                    store.SetBool(Slot.TypeIndex, DefaultValue is bool b && b);
+                    break;
+                default:
+                    store.SetDiscrete(Slot.TypeIndex, DefaultValue);
+                    break;
+            }
         }
 
         private float GetCurrentFloat()

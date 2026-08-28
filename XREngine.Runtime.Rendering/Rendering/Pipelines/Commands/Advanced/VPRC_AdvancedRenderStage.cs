@@ -32,15 +32,13 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
 
     protected override void Execute()
     {
-        if (Stage != EAdvancedRenderStage.FrameBegin)
-            return;
-
         XRRenderPipelineInstance.RenderingState state =
             ActivePipelineInstance.RenderState;
         if (state.WorldSnapshot is not RenderWorldSnapshot world)
             return;
 
-        AdvancedSharedPreparationService.Instance.Acquire(
+        AdvancedPreparationPublication publication =
+            AdvancedSharedPreparationService.Instance.Acquire(
             world,
             state.FrameViewSet,
             EAdvancedPreparationConsumer.Visibility |
@@ -52,6 +50,49 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             EAdvancedPreparationConsumer.SpotShadow |
             EAdvancedPreparationConsumer.Probe |
             EAdvancedPreparationConsumer.Capture);
+
+        if (Stage is not (EAdvancedRenderStage.VisibilityPreparation or
+            EAdvancedRenderStage.VisibilityRaster or
+            EAdvancedRenderStage.DepthPyramidAndLateVisibility))
+            return;
+
+        if (AbstractRenderer.Current is not IRuntimeRendererHost renderer ||
+            !renderer.TryGetBackendCapability<IAdvancedVisibilityStageBackendCapability>(
+                out IAdvancedVisibilityStageBackendCapability? visibility) ||
+            visibility is null ||
+            !visibility.SupportsAdvancedVisibilityStage(Stage))
+        {
+            return;
+        }
+
+        if (!ActivePipelineInstance.Resources.TryGetFrameBuffer(
+                AdvancedVisibilityResourceNames.FrameBuffer,
+                out XRFrameBuffer? target) ||
+            target is null)
+        {
+            Debug.Out(
+                $"Advanced visibility stage '{Stage}' has no realized '{AdvancedVisibilityResourceNames.FrameBuffer}' target in the active resource generation.");
+            return;
+        }
+
+        AdvancedVisibilityStageBackendRequest request = new(
+            Stage,
+            publication,
+            AdvancedSharedPreparationService.Instance.Extractor,
+            world.FrameId,
+            state.FrameViewSet ?? throw new InvalidOperationException(
+                "Advanced visibility requires an immutable frame view set."),
+            target,
+            AdvancedVisibilityResourceNames.Identity,
+            AdvancedVisibilityResourceNames.Metadata,
+            AdvancedVisibilityResourceNames.Selection,
+            AdvancedVisibilityResourceNames.DepthStencil,
+            AdvancedVisibilityResourceNames.CurrentDepthPyramid);
+        if (!visibility.TryEnqueueAdvancedVisibilityStage(in request, out string failureReason))
+        {
+            Debug.Out(
+                $"Advanced visibility stage '{Stage}' was rejected by the active backend: {failureReason}");
+        }
     }
 
     internal override void DescribeRenderPass(RenderGraphDescribeContext context)

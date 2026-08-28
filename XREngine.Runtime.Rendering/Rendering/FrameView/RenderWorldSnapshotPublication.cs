@@ -14,14 +14,15 @@ public static class RenderWorldSnapshotPublication
     public static RenderWorldSnapshot Acquire(
         ulong frameId,
         IRuntimeRenderCommandSceneContext scene,
-        GPUScene gpuScene)
+        GPUScene gpuScene,
+        in AdvancedGlobalResourceCapture globalResources)
     {
         lock (Sync)
         {
             if (_hasPublished && _published.FrameId == frameId)
                 return _published;
 
-            _published = new RenderWorldSnapshot(frameId, scene, gpuScene);
+            _published = new RenderWorldSnapshot(frameId, scene, gpuScene, globalResources);
             _hasPublished = true;
             return _published;
         }

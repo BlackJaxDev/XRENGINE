@@ -1,9 +1,9 @@
 namespace XREngine.Rendering;
 
 /// <summary>
-/// Content generations for independently uploadable material database tables.
+/// Owner-local mutation domains for independently uploadable material tables.
 /// </summary>
 public readonly record struct AdvancedMaterialDatabaseGenerations(
-    ulong MaterialRows,
-    ulong Kernels,
-    ulong Layouts);
+    AdvancedGpuOwnerGenerations MaterialRows,
+    AdvancedGpuOwnerGenerations Kernels,
+    AdvancedGpuOwnerGenerations Layouts);

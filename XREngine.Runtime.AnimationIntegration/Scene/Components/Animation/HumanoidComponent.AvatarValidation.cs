@@ -423,87 +423,26 @@ public partial class HumanoidComponent
             diagnostics.Add("Error: the avatar definition contains no humanoid muscle limits.");
     }
 
-    private static void ValidateLegacyCalibration(
-        HumanoidAvatarLegacyCalibration? calibration,
-        List<string> diagnostics)
+    private static bool IsFiniteJointLimit(HumanoidAvatarJointLimit? limit)
     {
-        if (calibration is null)
-            return;
+        if (limit is null
+            || !IsFiniteVector(limit.CenterDegrees)
+            || !IsFiniteVector(limit.MinimumDegrees)
+            || !IsFiniteVector(limit.MaximumDegrees)
+            || !float.IsFinite(limit.AxisLength)
+            || limit.AxisLength < 0.0f)
+            return false;
 
-        HumanoidAvatarLegacyBoneCalibration? hips = null;
-        HumanoidAvatarLegacyBoneCalibration[] bones = calibration.Bones ?? [];
-        for (int i = 0; i < bones.Length; i++)
-        {
-            if (bones[i].Role is EHumanoidAvatarBoneRole.Hips)
-            {
-                hips = bones[i];
-                break;
-            }
-        }
-
-        if (hips?.CoupledBoneModel is null)
-            return;
-
-        if (calibration.CalibrationRootMotionSettings is not { } settings)
-        {
-            diagnostics.Add(
-                "Error: the migrated coupled Hips calibration does not record the Unity root-motion policy used to train it. Regenerate the avatar profile with schema 4 or newer.");
-            return;
-        }
-
-        if (!ImportedHumanoidRootMotionPolicy.TryCreate(
-                settings,
-                out ImportedHumanoidRootMotionPolicy policy,
-                out string diagnostic))
-        {
-            diagnostics.Add($"Error: the migrated coupled Hips calibration has an invalid root-motion policy: {diagnostic}");
-            return;
-        }
-
-        ImportedHumanoidCoupledBoneModel model = hips.CoupledBoneModel;
-        if (!policy.BakePositionYIntoPose
-            && policy.PositionYBasis is EImportedHumanoidRootPositionYBasis.Feet
-            && model.ProjectedRootYCoefficients.Length != model.ExpectedFeatureCount)
-        {
-            diagnostics.Add(
-                "Error: the migrated coupled Hips calibration uses Height From Feet but has no matching projected-root Y model. Regenerate the avatar profile with schema 4 or newer.");
-        }
-
-        if (calibration.SourceSchemaVersion < 5
-            || calibration.RootAllocationFrame is not ImportedHumanoidRootAllocationFrame frame)
-        {
-            diagnostics.Add(
-                "Error: the migrated coupled Hips calibration does not record Unity's Hips-parent allocation frame. Regenerate the avatar profile with schema 5 or newer.");
-            return;
-        }
-
-        Quaternion frameRotation = frame.HipsParentRotationInAnimatorRoot;
-        if (!IsFiniteVector(frame.HipsParentPositionInAnimatorRoot)
-            || !IsFiniteVector(frame.HipsParentScaleInAnimatorRoot)
-            || !float.IsFinite(frameRotation.X)
-            || !float.IsFinite(frameRotation.Y)
-            || !float.IsFinite(frameRotation.Z)
-            || !float.IsFinite(frameRotation.W)
-            || frameRotation.LengthSquared() <= 1e-12f)
-        {
-            diagnostics.Add("Error: the migrated coupled Hips calibration has a non-finite root-allocation frame.");
-            return;
-        }
-
-        Matrix4x4 allocationFrame = Matrix4x4.CreateScale(frame.HipsParentScaleInAnimatorRoot)
-            * Matrix4x4.CreateFromQuaternion(Quaternion.Normalize(frameRotation))
-            * Matrix4x4.CreateTranslation(frame.HipsParentPositionInAnimatorRoot);
-        if (!Matrix4x4.Invert(allocationFrame, out _))
-            diagnostics.Add("Error: the migrated coupled Hips calibration has a non-invertible root-allocation frame.");
+        return limit.UseDefaultValues
+            || IsValidCustomJointAxis(limit.MinimumDegrees.X, limit.MaximumDegrees.X)
+                && IsValidCustomJointAxis(limit.MinimumDegrees.Y, limit.MaximumDegrees.Y)
+                && IsValidCustomJointAxis(limit.MinimumDegrees.Z, limit.MaximumDegrees.Z);
     }
 
-    private static bool IsFiniteJointLimit(HumanoidAvatarJointLimit? limit)
-        => limit is not null
-        && IsFiniteVector(limit.CenterDegrees)
-        && IsFiniteVector(limit.MinimumDegrees)
-        && IsFiniteVector(limit.MaximumDegrees)
-        && float.IsFinite(limit.AxisLength)
-        && limit.AxisLength >= 0.0f;
+    private static bool IsValidCustomJointAxis(float minimumDegrees, float maximumDegrees)
+        => minimumDegrees is >= -180.0f and <= 0.0f
+        && maximumDegrees is >= 0.0f and <= 180.0f
+        && minimumDegrees <= maximumDegrees;
 
     private static bool IsFiniteVector(Vector3 value)
         => float.IsFinite(value.X) && float.IsFinite(value.Y) && float.IsFinite(value.Z);
@@ -518,143 +457,4 @@ public partial class HumanoidComponent
         AppendCanonical(canonical, limit.AxisLength);
     }
 
-    private static void AppendLegacyCalibration(
-        StringBuilder canonical,
-        HumanoidAvatarLegacyCalibration? calibration)
-    {
-        AppendCanonical(canonical, calibration is not null);
-        if (calibration is null)
-            return;
-
-        AppendCanonical(canonical, calibration.SourceSchemaVersion);
-        AppendCanonical(canonical, calibration.Source);
-        AppendCanonical(canonical, calibration.AvatarName);
-        AppendCanonical(canonical, calibration.CalibrationClipName);
-        AppendRootMotionSettings(canonical, calibration.CalibrationRootMotionSettings);
-        AppendRootAllocationFrame(canonical, calibration.RootAllocationFrame);
-        HumanoidAvatarLegacyBoneCalibration[] bones = calibration.Bones ?? [];
-        for (int i = 0; i < bones.Length; i++)
-        {
-            HumanoidAvatarLegacyBoneCalibration bone = bones[i];
-            AppendCanonical(canonical, (int)bone.Role);
-            AppendCanonical(canonical, bone.HasNeutralRotation);
-            AppendQuaternion(canonical, bone.NeutralRotation);
-            AppendCanonical(canonical, bone.HasNeutralPosition);
-            AppendVector(canonical, bone.NeutralPosition);
-            AppendLegacyResponse(canonical, bone.BoneResponse);
-            AppendLegacyCoupledModel(canonical, bone.CoupledBoneModel);
-        }
-    }
-
-    private static void AppendRootAllocationFrame(
-        StringBuilder canonical,
-        ImportedHumanoidRootAllocationFrame? frame)
-    {
-        AppendCanonical(canonical, frame is not null);
-        if (frame is null)
-            return;
-
-        AppendVector(canonical, frame.HipsParentPositionInAnimatorRoot);
-        AppendQuaternion(canonical, frame.HipsParentRotationInAnimatorRoot);
-        AppendVector(canonical, frame.HipsParentScaleInAnimatorRoot);
-    }
-
-    private static void AppendRootMotionSettings(
-        StringBuilder canonical,
-        ImportedHumanoidClipRootMotionSettings? settings)
-    {
-        AppendCanonical(canonical, settings is not null);
-        if (settings is null)
-            return;
-
-        AppendCanonical(canonical, settings.StartTime);
-        AppendCanonical(canonical, settings.StopTime);
-        AppendCanonical(canonical, settings.OrientationOffsetY);
-        AppendCanonical(canonical, settings.Level);
-        AppendCanonical(canonical, settings.CycleOffset);
-        AppendCanonical(canonical, settings.LoopTime);
-        AppendCanonical(canonical, settings.LoopPose);
-        AppendCanonical(canonical, settings.BakeOrientationIntoPose);
-        AppendCanonical(canonical, settings.BakePositionYIntoPose);
-        AppendCanonical(canonical, settings.BakePositionXZIntoPose);
-        AppendCanonical(canonical, settings.KeepOriginalOrientation);
-        AppendCanonical(canonical, settings.KeepOriginalPositionY);
-        AppendCanonical(canonical, settings.KeepOriginalPositionXZ);
-        AppendCanonical(canonical, settings.HeightFromFeet);
-        AppendCanonical(canonical, settings.Mirror);
-    }
-
-    private static void AppendLegacyResponse(
-        StringBuilder canonical,
-        ImportedHumanoidBoneResponseProfile? response)
-    {
-        AppendCanonical(canonical, response is not null);
-        if (response is null)
-            return;
-        AppendCanonical(canonical, response.BoneName);
-        ImportedHumanoidMuscleResponse[] responses = response.Responses ?? [];
-        for (int i = 0; i < responses.Length; i++)
-        {
-            AppendCanonical(canonical, (int)responses[i].Muscle);
-            AppendQuaternion(canonical, responses[i].NegativeRotation);
-            AppendQuaternion(canonical, responses[i].PositiveRotation);
-        }
-    }
-
-    private static void AppendLegacyCoupledModel(
-        StringBuilder canonical,
-        ImportedHumanoidCoupledBoneModel? model)
-    {
-        AppendCanonical(canonical, model is not null);
-        if (model is null)
-            return;
-
-        AppendCanonical(canonical, model.BoneName);
-        AppendCanonical(canonical, model.MaximumPolynomialDegree);
-        AppendEnumArray(canonical, model.Muscles);
-        AppendQuaternionArray(canonical, model.NegativeEndpointRotations);
-        AppendQuaternionArray(canonical, model.PositiveEndpointRotations);
-        AppendVectorArray(canonical, model.NegativeEndpointPositionDeltas);
-        AppendVectorArray(canonical, model.PositiveEndpointPositionDeltas);
-        AppendVectorArray(canonical, model.RotationResidualCoefficients);
-        AppendVectorArray(canonical, model.PositionResidualCoefficients);
-        AppendFloatArray(canonical, model.ProjectedRootYCoefficients);
-        AppendCanonical(canonical, model.ProjectedRootYZeroOffset);
-        AppendCanonical(canonical, model.MeanAngularErrorDegrees);
-        AppendCanonical(canonical, model.MaxAngularErrorDegrees);
-        AppendCanonical(canonical, model.MeanPositionError);
-        AppendCanonical(canonical, model.MaxPositionError);
-    }
-
-    private static void AppendEnumArray(StringBuilder canonical, EHumanoidValue[]? values)
-    {
-        values ??= [];
-        AppendCanonical(canonical, values.Length);
-        for (int i = 0; i < values.Length; i++)
-            AppendCanonical(canonical, (int)values[i]);
-    }
-
-    private static void AppendQuaternionArray(StringBuilder canonical, Quaternion[]? values)
-    {
-        values ??= [];
-        AppendCanonical(canonical, values.Length);
-        for (int i = 0; i < values.Length; i++)
-            AppendQuaternion(canonical, values[i]);
-    }
-
-    private static void AppendVectorArray(StringBuilder canonical, Vector3[]? values)
-    {
-        values ??= [];
-        AppendCanonical(canonical, values.Length);
-        for (int i = 0; i < values.Length; i++)
-            AppendVector(canonical, values[i]);
-    }
-
-    private static void AppendFloatArray(StringBuilder canonical, float[]? values)
-    {
-        values ??= [];
-        AppendCanonical(canonical, values.Length);
-        for (int i = 0; i < values.Length; i++)
-            AppendCanonical(canonical, values[i]);
-    }
 }

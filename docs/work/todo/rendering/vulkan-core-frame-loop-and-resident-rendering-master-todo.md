@@ -414,15 +414,18 @@ the frozen Release benchmark and unchanged-sealed cohort are measured.
 - **Done:** tracked gateway stage/fallback telemetry; reusable sealed contracts
   with compact generation vectors and dependency manifests; sampled full-path
   acceptance parity; batched native lifetime pins; canonical texture/sampler
-  generation domains; and frame-slot native table/descriptor generations.
+  generation domains; frame-slot native table/descriptor generations; flat
+  ABA-safe command/image-subresource indices on the sealed normal path;
+  transitive native pipeline/descriptor/shader/render-pass/output/artifact
+  invalidation; and proportional resident table/lookup publication.
 - **Still open:** the unchecked rows above. In particular, full image-state and
-  cold-fallback dictionary replacement, flat stable indices for every owner
-  domain, the pipeline/descriptor/output/shader/shadow/probe reverse graph,
-  exact local-mutation validation, zero broad fallbacks, the frozen Release
-  `<0.25 ms` stable-hit gate, and hardware/OpenXR coverage remain unproven.
-- **Dependency:** production Phase 3 shader/stage consumers must exist before
-  descriptor/table-to-variant reverse dependencies and their mutation matrix
-  can be closed honestly.
+  cold-fallback dictionary replacement, coarse submission aggregation, the
+  remaining logical material/texture/shadow/probe reverse edges, exact
+  local-mutation validation, zero broad fallbacks, the frozen Release `<0.25 ms`
+  stable-hit gate, and hardware/OpenXR coverage remain unproven.
+- **Dependency:** output-aware Phase 3 family scheduling and five-lane parity
+  must exist before the remaining logical reverse edges and their mutation
+  matrix can be closed honestly.
 
 ---
 
@@ -592,18 +595,20 @@ device-teardown debt. See
 
 #### Phase 2/3 Implementation Wrap Boundary (2026-08-28)
 
-The retained publication and Vulkan binding substrate are now complete enough
-for a real advanced shader family to consume. They do **not** constitute an
-advanced shader-family cutover.
+The retained publication, Vulkan binding substrate, and one exact mono
+visibility-family implementation now exist end to end. This is an implementation
+checkpoint, not a production capability promotion: global shader-family
+advertisement remains fail-closed until output-family cardinality is represented
+at capability-selection time.
 
 | Vulkan set | Owner at this boundary | Wrap status |
 |---:|---|---|
 | 0 | Existing ordinary/auto-uniform path | Preserved; not owned by the advanced runtime. |
-| 1 | Visibility and pass-local resources | Reserved by the advanced ABI; real visibility-stage production remains open. |
+| 1 | Visibility and pass-local resources | Implemented for one immutable mono preparation/raster/late family, including per-operation late descriptors and persistent history. Stereo and multiple independently selected output families remain unsupported. |
 | 2 | Advanced sampled-image and separate-sampler arrays | Implemented as one runtime-owned fixed-capacity set per frame slot. |
-| 3 | Advanced canonical storage tables | Implemented as one runtime-owned set per retained publication. Material, resource, encoded-reference, layout, kernel, constant, binding, and lookup slices are real; not-yet-produced table domains bind a valid zero fallback slice. |
+| 3 | Advanced canonical storage tables | Implemented as one runtime-owned set per retained publication. Frame, view, pass, draw, instance, mesh/geometry, transform, deformation, render-state, material, global-resource, encoded-reference, layout, kernel, constant, binding, and lookup slices are real. |
 
-**Completed in the final binding slice:**
+**Completed through the final implementation slice:**
 
 - Vulkan shader preambles publish an exact fixed resource-descriptor capacity,
   so SPIR-V array counts and the runtime-owned set-2 layout cannot silently
@@ -620,36 +625,119 @@ advanced shader-family cutover.
   substitute legacy descriptors.
 - Legacy descriptor allocation, writes, draw-slot invariance checks, and
   resource/binding fingerprints ignore externally owned advanced sets.
-- `XREngine.Runtime.Rendering.Vulkan.csproj --no-restore` built with zero
-  warnings and zero errors. Named session
-  `phase31-advanced-binding-20260828` reached a clean isolated Vulkan module
-  build, but was stopped at the requested wrap boundary before MCP readiness;
-  therefore this slice adds no new live-frame or visual-parity claim.
-- `EAdvancedShaderFamily` intentionally remains `None`. No placeholder stage
-  was promoted and no automated test was added or run.
+- Production compute, indexed-raster, and mesh-raster shader/program families
+  compile against the exact set 1/2/3 ABI. Stable bins resolve all five strategy
+  lanes before sealing; zero-readback lanes issue count-indirect commands and
+  instrumented lanes attach only the bounded asynchronous diagnostic sidecar.
+- Set-1 allocation is exact and rollback-safe. One preparation/raster/late trio
+  shares one immutable family seal; mutable extraction content has its own
+  monotonic generation and is validated before and after upload.
+- All advanced descriptor batches pass through descriptor lifetime authority.
+  Per-operation late image-view closures therefore remain pinned through the
+  recorded/submitted command lifetime rather than relying on interner references.
+- Resident delta patching is allowed only for the same canonical database epoch
+  and a table sequence covered by the retained journal floor. An owner whose
+  retained native capacity still fits but whose epoch/journal proof changed is
+  fully rewritten in place at the completed-slot boundary; actual capacity growth
+  triggers a transactional all-owner packed rebuild before the first immutable
+  entry. Later same-generation publications remain copy-on-write.
+- Unchanged resident table owners retain their frame-slot image and advance only
+  the applied publication stamp. The logical lookup image is likewise resident:
+  twelve fixed owner segments retain stable shader offsets, and only owners whose
+  lookup generation changed are cleared/copied. The retained mapped Vulkan ranges
+  are the sole data authority; the former 27 managed CPU mirrors and their
+  completed-boundary `Array.Resize` operations are gone. Exact table rows, byte
+  ranges, lookup segments, and truncation tails open exact write sub-slices, and
+  every reuse predicate proves the retained native byte capacity before publishing.
+- Resident owners and lookup segments are allocated before fallback/view/frame/
+  encoded-reference transients, producing one deterministic prefix. The sealed
+  plan is all-retain or all-rebuild, charges the initial alignment pad, and checks
+  the aligned mapped-arena cursor against the planned end before descriptor
+  publication. Empty owners keep a valid one-element sentinel slice while their
+  logical count remains zero.
+- Arena rollback is now a transaction-integrity boundary. Failed cursor restore
+  quarantines the affected advanced-scene or visibility frame slot and reports an
+  explicit transaction failure; it cannot clear resident metadata and continue
+  with unknown allocation state.
+- The late raster stage may reuse the raster pipeline only when both stages seal
+  the same exact dynamic-rendering target closure. Legacy clear/load render-pass
+  handles remain fail-closed before command-buffer recording.
+- Sealed stable submissions resolve flat ABA-safe command and image-subresource
+  slots on the normal path; dictionaries remain only in cold/full/sampled
+  validation. Native dependency invalidation is transitive across registered
+  pipeline, descriptor, shader, render-pass/output, and command-artifact edges.
+- Renderer-neutral, Vulkan, and isolated validation-only editor builds pass with
+  zero warnings/errors, and all six advanced shaders compile. No automated test
+  was added or run under the repository's explicit-clearance policy.
+- Live Vulkan validation exposed and closed two ordinary-frame authority defects:
+  non-promoted scheduled mesh secondaries no longer demand an unavailable
+  advanced canonical publication, and stable-bin copy compares ordered-exception
+  count against fixed capacity rather than the just-cleared current count. The
+  corrected session completed frames without validation/transaction/capacity
+  failures and produced distinct textured readbacks from two camera positions.
+- The final rebuilt `phase23-final-0828` session completed through publication
+  3629 after the resident-prefix/dirty-write closeout. The sampled profiler
+  reported three packages prepared, two published and consumed, zero package or
+  output rejection, zero forbidden CPU fallback, zero submission managed bytes,
+  zero resident-template capacity/dependency rejection, and zero Vulkan validation
+  messages. Log filtering found no transaction-integrity, storage-capacity,
+  quarantine, frame-plan-capacity, renderer-pause, VUID, device-loss, OOM, or
+  exception record. Camera-separated Vulkan readbacks at `(0,6,18)` and `(12,6,0)`
+  again showed distinct textured geometry. This is an ordinary-frame smoke, not
+  an advanced-family promotion result.
+- `EAdvancedShaderFamily` intentionally remains `None` globally. The realized
+  path admits exactly one mono family per primary plan, while current capability
+  selection cannot reserve that family for one output or distinguish a second
+  mono mirror/capture/offscreen selection. Advertising it globally would allow a
+  configuration that fails only at primary preflight.
 
-**Remaining before Phase 3.1 can close:**
+**Implementation boxes reconciled in this wrap:** Phase 3.2 now checks the
+complete SoA image and shared upload substrate; Phase 3.4 checks numeric bins,
+intrusive membership, immutable manifests, target lowering, and exact exception
+retention; Phase 3.5 checks the resolver plus CPU-direct/indexed zero-readback and
+instrumented indexed lanes; and Phase 3.6 checks the bounded asynchronous sidecar
+implementation. Mesh-task lane completion, rendered parity, strict readback
+evidence, output policy, and dirty-range promotion proof remain unchecked.
 
-1. Create the production advanced shader/program/pipeline families using the
-   runtime-generated Vulkan preamble and the exact set 0/1/2/3 ABI.
-2. Replace set-3 fallback slices with the remaining frame/view/pass/draw/
-   instance/mesh/geometry/transform/deformation/state/visibility producers and
-   complete the matching set-1 visibility resources.
-3. Execute every real advanced stage, then promote a shader-family capability
-   only when its entire required stage/resource closure is available; required
-   failures must remain observable rather than falling back silently.
-4. Run material/resource/ordering/output parity for `CpuDirect`, CPU indirect,
+**Remaining promotion and empirical gates:**
+
+1. Add output-aware advanced-family reservation or bounded multi-family state,
+   then promote the mono shader-family capability. Add a true `gl_ViewIndex`/
+   layer-specific indirect/raster ABI before advertising stereo.
+2. Run material/resource/ordering/output parity for `CpuDirect`, CPU indirect,
    GPU indirect, mesh-task indirect, and fully GPU-driven lanes. Keep the
    canonical and legacy feeds side by side until all five pass.
-5. After parity, remove live `BackendReadyMeshSelection` arrays and legacy
+3. Prove shadow, explicit-output, OpenXR, mirror, capture, and external-output
+   policy on the same canonical residency/bin substrate, including strict
+   zero-readback and diagnostic saturation/retirement evidence.
+4. After parity, remove live `BackendReadyMeshSelection` arrays and legacy
    `GPUScene` storage/ID maps, then close the dependent Phase 2 reverse-
    dependency and exact-mutation gates.
+5. Measure the frozen Release sealed-hit gateway percentile, run the exact local
+   mutation/zero-broad-fallback matrix, and complete hardware/OpenXR coverage.
 6. Separately close the known startup framebuffer-backing race and the five-
    image-view/one-pipeline-layout teardown debt under Standard Validation.
+7. Fix the retained-prefix false-rejection edge: preflight both retain and exact
+   compact footprints, select a cold all-owner rebuild when historical retained
+   capacity plus transients exceeds the 8 MiB lane but current compact data fits,
+   and compact lookup segment capacities instead of preserving obsolete maxima.
+8. Raise or redesign the fixed dirty-range set (`MaxRanges == 8`), or publish an
+   explicit collapse reason/counter and require zero collapses for promotion.
+   Today a ninth disjoint exact write conservatively coalesces the chunk to one
+   broad flush, so the implementation is memory-safe but the proportional-dirty
+   promotion claim remains unchecked.
+9. Skip journal deltas whose publication generation is already at or below the
+   resident's applied sequence before issuing native row writes. Metadata already
+   ignores them, but the mapped write path currently dirties those old rows again.
+10. Repair async texture-source republishing/parity. The final live run repeatedly
+    rejected canonical texture `1:1` because retained metadata still described
+    the 64x64, one-mip import placeholder after `sponza_thorn_diff` became 256x256
+    with nine mips. The fail-closed ordered legacy selection is correct, but this
+    `SourceMismatch` prevents native dual-feed parity and canonical cutover.
 
 #### 3.2 Frequency-Owned Structure-of-Arrays (SoA) Data
-- [ ] Complete SoA streams: frame constants; view matrices/frusta/jitter; pass constants; material blocks and resource tables; object transforms/bounds/IDs; instance, skinning, deformation, and visibility ranges; geometry identities/offsets/formats; and bin indirect buffers.
-- [ ] Ensure the same uploaded SoA records feed CPU direct, GPU indirect, and GPU meshlet strategies without repacking.
+- [x] Complete SoA streams: frame constants; view matrices/frusta/jitter; pass constants; material blocks and resource tables; object transforms/bounds/IDs; instance, skinning, deformation, and visibility ranges; geometry identities/offsets/formats; and bin indirect buffers.
+- [x] Ensure the same uploaded SoA records feed CPU direct, GPU indirect, and GPU meshlet strategies without repacking.
 - [ ] Stream dirty ranges to persistently mapped or staging memory without locks.
 
 #### 3.3 Direct-Slot `VulkanDrawTemplateTable` & Native Leases
@@ -660,31 +748,31 @@ advanced shader-family cutover.
 - [x] Keep texture/sampler ownership in material/resource tables and frame/swapchain/OpenXR target leases in frame scope; resident templates retain neither ownership domain.
 
 #### 3.4 Stable Bins & Bin-Level Resource Manifests
-- [ ] Build numeric `VulkanRenderBinKey` (pass compatibility, pipeline variant, geometry page/index type, topology/state, descriptor model, view mask, ordering class).
-- [ ] Maintain bin membership with slot-indexed intrusive arrays; update membership only on topology changes.
-- [ ] Replace per-draw `FrameOpResourceUseList` lowering with immutable `VulkanTemplateResourceManifest` and `VulkanBinResourceManifest`.
-- [ ] Lower target-dependent pass state only after context coalescing.
-- [ ] Preserve compact ordered exception streams for transparency, UI, callbacks, and unsupported custom work; every legacy draw must report an exact retained reason.
+- [x] Build numeric `VulkanRenderBinKey` (pass compatibility, pipeline variant, geometry page/index type, topology/state, descriptor model, view mask, ordering class).
+- [x] Maintain bin membership with slot-indexed intrusive arrays; update membership only on topology changes.
+- [x] Replace per-draw `FrameOpResourceUseList` lowering with immutable `VulkanTemplateResourceManifest` and `VulkanBinResourceManifest`.
+- [x] Lower target-dependent pass state only after context coalescing.
+- [x] Preserve compact ordered exception streams for transparency, UI, callbacks, and unsupported custom work; every legacy draw reports an exact retained reason.
 - [ ] Keep a direct-draw parity mode and a CPU-built indirect scaffold that compare template IDs, draw parameters, material/object indices, order, and rendered output without becoming a fallback for GPU zero-readback paths.
 
 #### 3.5 Unified 5 Submission Strategy Lanes
-- [ ] Maintain `EMeshSubmissionStrategy` resolver before plan sealing; never resolve dynamically in workers.
-- [ ] **`CpuDirect`:** Canonical handles feed direct draws or CPU-built indirect parity streams.
-- [ ] **`GpuIndirectZeroReadback`:** Canonical records feed GPU culling and fixed compact `vkCmdDrawIndexedIndirectCount` ranges (zero readbacks, mappings, or CPU fallbacks).
-- [ ] **`GpuIndirectInstrumented`:** Same GPU indirect inputs with explicit diagnostic sidecar; planned CPU safety-net draw only when explicitly configured.
+- [x] Maintain `EMeshSubmissionStrategy` resolver before plan sealing; never resolve dynamically in workers.
+- [x] **`CpuDirect`:** Canonical handles feed direct draws or CPU-built indirect parity streams.
+- [x] **`GpuIndirectZeroReadback`:** Canonical records feed GPU culling and fixed compact `vkCmdDrawIndexedIndirectCount` ranges (zero readbacks, mappings, or CPU fallbacks).
+- [x] **`GpuIndirectInstrumented`:** Same GPU indirect inputs with explicit diagnostic sidecar; planned CPU safety-net draw only when explicitly configured.
 - [ ] **`GpuMeshletZeroReadback`:** Canonical records feed GPU mesh-task generation and `vkCmdDrawMeshTasksIndirectCountEXT` (zero readbacks or fallbacks).
 - [ ] **`GpuMeshletInstrumented`:** Same meshlet stream with explicit diagnostic sidecar.
-- [ ] Resolve capabilities, downgrade reasons, crossovers, and any explicitly allowed instrumented CPU safety net before sealing; never silently change a sealed strategy in a worker.
+- [x] Resolve capabilities, downgrade reasons, crossovers, and any explicitly allowed instrumented CPU safety net before sealing; never silently change a sealed strategy in a worker.
 - [ ] Prove source/output capacity from resident counts and declared worst-case expansion before dispatch; clamp unexpected GPU overflow for memory safety and report it asynchronously without same-frame retry.
 - [ ] Preserve shadow, explicit-output, OpenXR, mirror, capture, and external-output pass policy over the same canonical scene residency and bins.
 
 #### 3.6 Asynchronous `GpuDiagnosticReadbackPlan` Sidecar
-- [ ] Represent diagnostic requests as immutable `GpuDiagnosticReadbackPlan` nodes attached only to instrumented passes.
-- [ ] Copy diagnostic data into a fixed-capacity host-visible staging ring after producer completion.
-- [ ] Poll completion non-blockingly at frame retirement; decode on general/telemetry worker domain.
-- [ ] Ensure render workers never block, spin, or wait on diagnostic GPU fences.
-- [ ] Drop and count requests on ring saturation without stalling or altering render output.
-- [ ] Ensure diagnostics never influence later strategy resolution, capacity, visibility, binning, cache generations, or output; disabled diagnostics create zero ring, command, decoder, or pipeline work.
+- [x] Represent diagnostic requests as immutable `GpuDiagnosticReadbackPlan` nodes attached only to instrumented passes.
+- [x] Copy diagnostic data into a fixed-capacity host-visible staging ring after producer completion.
+- [x] Poll completion non-blockingly at frame retirement; decode on general/telemetry worker domain.
+- [x] Ensure render workers never block, spin, or wait on diagnostic GPU fences.
+- [x] Drop and count requests on ring saturation without stalling or altering render output.
+- [x] Ensure diagnostics never influence later strategy resolution, capacity, visibility, binning, cache generations, or output; disabled diagnostics create zero ring, command, decoder, or pipeline work.
 - [ ] Strict zero-readback evidence requires `GpuReadbackBytes == 0`, 0 buffer maps, and 0 readback-caused waits.
 
 #### 3.7 Optional Capability Tiers (Post-Baseline Only)

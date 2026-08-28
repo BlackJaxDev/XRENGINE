@@ -19,6 +19,20 @@ internal static class VulkanMeshRenderingConventions
         ShaderStageFlags.FragmentBit |
         ShaderStageFlags.ComputeBit;
 
+    /// <summary>
+    /// Extends the fixed 16-byte common push-constant ABI only when the
+    /// logical device enabled VK_EXT_mesh_shader.
+    /// </summary>
+    internal static ShaderStageFlags GetCommonPushConstantStageFlags(
+        VulkanDeviceContext device)
+    {
+        ArgumentNullException.ThrowIfNull(device);
+        return CommonPushConstantStageFlags |
+            (device.SupportsMeshTaskIndirectCount
+                ? ShaderStageFlags.TaskBitExt | ShaderStageFlags.MeshBitExt
+                : 0);
+    }
+
     internal static bool CommandRecordingDiagnosticsEnabled
         => XREnvironment.IsEnabled(XREngineEnvironmentVariables.VulkanRecordingDiag);
     internal static bool CommandRecordingDetailProfilingEnabled

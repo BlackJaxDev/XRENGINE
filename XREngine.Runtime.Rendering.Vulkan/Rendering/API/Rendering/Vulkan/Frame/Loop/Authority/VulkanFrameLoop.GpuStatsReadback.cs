@@ -6,6 +6,8 @@ using System.Runtime.InteropServices;
 using System.Text;
 using Silk.NET.Vulkan;
 using XREngine.Data.Rendering;
+using XREngine.Execution;
+using XREngine.Rendering.Diagnostics;
 using Buffer = Silk.NET.Vulkan.Buffer;
 
 namespace XREngine.Rendering.Vulkan;
@@ -20,6 +22,10 @@ internal sealed partial class VulkanFrameLoop
     private ulong _pendingGpuRenderStatsReadbackFrameId;
     private ulong _gpuDiagnosticSnapshotReceiptFrameId;
     private ulong _gpuDiagnosticSnapshotDiscardGeneration;
+    // Created only after an instrumented diagnostic request is accepted. The
+    // sidecar owns the fixed host-visible arena access path, never the frame's
+    // producer resources or strategy selection.
+    private VulkanGpuDiagnosticReadbackSidecar? _gpuDiagnosticReadbackSidecar;
 
     internal ulong GpuDiagnosticSnapshotDiscardGeneration
         => _gpuDiagnosticSnapshotDiscardGeneration;
@@ -38,6 +44,12 @@ internal sealed partial class VulkanFrameLoop
                 RenderThreadJobKind.Readback);
             return;
         }
+
+        _gpuDiagnosticReadbackSidecar?.PollPrimaryCompleted(
+            value => HasTimelineValueCompleted(
+                _commandRuntime.Synchronization._graphicsTimelineSemaphore,
+                value),
+            ConsumePrimaryGpuDiagnosticReadback);
 
         GpuRenderStatsReadbackSlot?[] slots = OutputRuntime.Capture.GpuStatsReadbackSlots;
         for (int i = 0; i < slots.Length; ++i)
@@ -103,7 +115,10 @@ internal sealed partial class VulkanFrameLoop
         bool publishDraws,
         bool publishTriangles)
     {
-        if (_deviceLost || !RuntimeEngine.Rendering.Stats.EnableTracking || byteCount == 0u || elementCount == 0u)
+        if (_deviceLost || !RuntimeEngine.Rendering.Stats.EnableTracking ||
+            !GpuDiagnosticReadbackPlan.IsInstrumented(
+                RuntimeEngine.Rendering.LastResolvedMeshSubmissionStrategy) ||
+            byteCount == 0u || elementCount == 0u)
             return false;
 
         if (!RuntimeEngine.IsRenderThread)
@@ -244,6 +259,210 @@ internal sealed partial class VulkanFrameLoop
         return receipt;
     }
 
+    private VulkanGpuDiagnosticReadbackSidecar? GetOrCreateGpuDiagnosticReadbackSidecar()
+    {
+        if (_gpuDiagnosticReadbackSidecar is not null)
+            return _gpuDiagnosticReadbackSidecar;
+
+        int capacity = OutputRuntime.Capture.GpuStatsReadbackSlots.Length;
+        if (capacity == 0)
+            return null;
+
+        return _gpuDiagnosticReadbackSidecar = new VulkanGpuDiagnosticReadbackSidecar(
+            ReadbackOutputResources,
+            capacity);
+    }
+
+    /// <summary>
+    /// Records one bounded set-1 diagnostic copy into the producer primary.
+    /// The resulting staging slice is deliberately not submitted here: the
+    /// desktop frame's accepted graphics timeline is its sole completion
+    /// authority.
+    /// </summary>
+    internal unsafe bool TryRecordAdvancedVisibilityDiagnosticCopy(
+        CommandBuffer commandBuffer,
+        in VulkanAdvancedVisibilityResourceState visibilityState,
+        in GpuDiagnosticReadbackPlanNode node,
+        ulong frameIdentity)
+    {
+        if (_deviceLost || !node.IsInstrumentedPass || node.ByteCount == 0u ||
+            commandBuffer.Handle == 0)
+            return false;
+
+        VulkanFrameDataSlice source = node.Decoder switch
+        {
+            EGpuDiagnosticReadbackDecoder.IndirectDrawCount => visibilityState.RangeCounts,
+            EGpuDiagnosticReadbackDecoder.MeshletVisibility => visibilityState.MeshArguments,
+            EGpuDiagnosticReadbackDecoder.SubmissionValidation => visibilityState.Counters,
+            _ => default,
+        };
+        if (!source.IsValid ||
+            (ulong)node.SourceByteOffset + node.ByteCount > source.Length)
+            return false;
+
+        VulkanGpuDiagnosticReadbackSidecar? sidecar =
+            GetOrCreateGpuDiagnosticReadbackSidecar();
+        VulkanGpuDiagnosticReadbackReservation reservation = default;
+        if (sidecar is null || !sidecar.TryReserveNext(
+                in node, frameIdentity, out reservation) ||
+            !sidecar.TryAcquireStagingSlice(
+                reservation.SlotIndex, node.ByteCount, out VulkanFrameDataSlice destination))
+        {
+            if (reservation != default)
+                sidecar?.Cancel(in reservation);
+            return false;
+        }
+
+        bool attached = false;
+        try
+        {
+            BufferMemoryBarrier sourceBarrier = new()
+            {
+                SType = StructureType.BufferMemoryBarrier,
+                SrcAccessMask = AccessFlags.ShaderWriteBit | AccessFlags.TransferWriteBit |
+                    AccessFlags.MemoryWriteBit,
+                DstAccessMask = AccessFlags.TransferReadBit,
+                SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                Buffer = source.Buffer,
+                Offset = source.Offset + node.SourceByteOffset,
+                Size = node.ByteCount,
+            };
+            _commandRuntime.CmdPipelineBarrierTracked(
+                commandBuffer,
+                PipelineStageFlags.AllCommandsBit,
+                PipelineStageFlags.TransferBit,
+                0, 0, null, 1, &sourceBarrier, 0, null);
+
+            BufferCopy copy = new()
+            {
+                SrcOffset = source.Offset + node.SourceByteOffset,
+                DstOffset = destination.Offset,
+                Size = node.ByteCount,
+            };
+            _commandRuntime.CmdCopyBufferTracked(
+                commandBuffer, source.Buffer, destination.Buffer, 1, ref copy);
+            attached = sidecar.TryAttachPrimaryCopy(
+                in reservation, commandBuffer, in destination);
+            return attached;
+        }
+        finally
+        {
+            if (!attached)
+            {
+                sidecar.CancelStagingSliceSubmission(destination);
+                sidecar.Cancel(in reservation);
+            }
+        }
+    }
+
+    private void ConsumePrimaryGpuDiagnosticReadback(
+        in VulkanGpuDiagnosticReadbackReservation reservation,
+        in VulkanFrameDataSlice slice,
+        ulong frameIdentity,
+        in GpuDiagnosticReadbackPlanNode node)
+    {
+        VulkanGpuDiagnosticReadbackSidecar? sidecar = _gpuDiagnosticReadbackSidecar;
+        if (sidecar is null || !sidecar.TryCompleteStagingSlice(slice) ||
+            !sidecar.TryBeginStagingRead(slice, out VulkanFrameDataReadScope readScope))
+            return;
+
+        try
+        {
+            if ((node.ByteCount & 3u) != 0u)
+                return;
+
+            RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuBufferMapped();
+            RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuReadbackBytes(node.ByteCount);
+            using (readScope)
+            {
+                uint[] words = MemoryMarshal.Cast<byte, uint>(readScope.Bytes)
+                    .Slice(0, checked((int)(node.ByteCount / sizeof(uint))))
+                    .ToArray();
+                CompletedDiagnosticPayload payload = CompletedDiagnosticPayload.Create(
+                    words,
+                    frameIdentity,
+                    (uint)node.Decoder,
+                    DecodeAdvancedVisibilityDiagnostic);
+                RuntimeRenderingHostServices.Work.ScheduleCompletedDiagnosticDecode(payload);
+            }
+            RuntimeEngine.Rendering.Stats.GpuDriven.RecordDelayedDiagnosticReadback(node.ByteCount);
+        }
+        catch (Exception ex)
+        {
+            Debug.VulkanWarningEvery(
+                $"Vulkan.AdvancedVisibility.DiagnosticDecode.{node.PassIdentity}",
+                TimeSpan.FromSeconds(2),
+                "[Vulkan] Delayed advanced-visibility diagnostic decode failed: {0}",
+                ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Interprets already-completed set-1 diagnostics on the general worker
+    /// domain. This callback observes CPU array data only and publishes
+    /// asynchronous telemetry; it cannot affect the sealed render strategy.
+    /// </summary>
+    private static void DecodeAdvancedVisibilityDiagnostic(
+        CompletedDiagnosticPayload payload)
+    {
+        ReadOnlySpan<uint> words = payload.Words.AsSpan();
+        EGpuDiagnosticReadbackDecoder decoder =
+            (EGpuDiagnosticReadbackDecoder)payload.DecoderId;
+        switch (decoder)
+        {
+            case EGpuDiagnosticReadbackDecoder.IndirectDrawCount:
+                if (!words.IsEmpty)
+                    RuntimeEngine.Rendering.Stats.GpuDriven.RecordCommandCompaction(
+                        culledCommands: 0,
+                        delayedDrawCountValue: words[0]);
+                break;
+            case EGpuDiagnosticReadbackDecoder.MeshletVisibility:
+            {
+                ulong tasks = 0u;
+                for (int index = 0; index + 2 < words.Length; index += 3)
+                {
+                    ulong groups = (ulong)words[index] * words[index + 1] *
+                        words[index + 2];
+                    tasks = ulong.MaxValue - tasks < groups
+                        ? ulong.MaxValue
+                        : tasks + groups;
+                }
+                RuntimeEngine.Rendering.Stats.GpuDriven.RecordCommandCompaction(
+                    culledCommands: 0,
+                    delayedDrawCountValue: tasks > long.MaxValue
+                        ? long.MaxValue
+                        : checked((long)tasks));
+                break;
+            }
+            case EGpuDiagnosticReadbackDecoder.SubmissionValidation:
+                if (words.Length < 16)
+                    return;
+
+                long payloadOverflow = words[6];
+                long decodeOutOfBounds = words[8];
+                long unsupportedDisplacement = words[10];
+                RuntimeEngine.Rendering.Stats.GpuDriven.RecordCommandCompaction(
+                    culledCommands: 0,
+                    gpuCompactionOverflow: payloadOverflow,
+                    activeListOverflow: decodeOutOfBounds,
+                    meshletOverflow: unsupportedDisplacement);
+                if (payloadOverflow != 0 || decodeOutOfBounds != 0 ||
+                    unsupportedDisplacement != 0)
+                {
+                    Debug.VulkanWarningEvery(
+                        "Vulkan.AdvancedVisibility.AsyncDiagnostic",
+                        TimeSpan.FromSeconds(1),
+                        "[Vulkan] Advanced visibility diagnostic frame={0} payloadOverflow={1} decodeOutOfBounds={2} unsupportedDisplacement={3}.",
+                        payload.SourceFrameId,
+                        payloadOverflow,
+                        decodeOutOfBounds,
+                        unsupportedDisplacement);
+                }
+                break;
+        }
+    }
+
     private unsafe bool SubmitGpuRenderStatsReadback(
         XRDataBuffer sourceBuffer,
         ulong sourceFrameId,
@@ -254,7 +473,10 @@ internal sealed partial class VulkanFrameLoop
         bool publishDraws,
         bool publishTriangles)
     {
-        if (_deviceLost || !RuntimeEngine.Rendering.Stats.EnableTracking || byteCount == 0u || elementCount == 0u)
+        if (_deviceLost || !RuntimeEngine.Rendering.Stats.EnableTracking ||
+            !GpuDiagnosticReadbackPlan.IsInstrumented(
+                RuntimeEngine.Rendering.LastResolvedMeshSubmissionStrategy) ||
+            byteCount == 0u || elementCount == 0u)
             return false;
 
         PollGpuRenderStatsReadbacks();
@@ -269,22 +491,34 @@ internal sealed partial class VulkanFrameLoop
         }
 
         GpuRenderStatsReadbackSlot? slot = AcquireGpuRenderStatsReadbackSlot();
+        VulkanGpuDiagnosticReadbackSidecar? sidecar = GetOrCreateGpuDiagnosticReadbackSidecar();
         if (slot is null ||
             !EnsureGpuRenderStatsReadbackResources(slot) ||
-            !ReadbackOutputResources.TryAcquireGpuStatsSlice(
+            sidecar is null ||
+            !sidecar.TryAcquireStagingSlice(
                 slot.ArenaSlot,
                 byteCount,
                 out slot.DataSlice))
             return false;
 
         bool arenaSubmissionAccepted = false;
+        GpuDiagnosticReadbackPlanNode planNode = new(
+            PassIdentity: sourceHandle.Handle,
+            ViewId: 0u,
+            SourceByteOffset: sourceByteOffset,
+            ByteCount: byteCount,
+            Strategy: RuntimeEngine.Rendering.LastResolvedMeshSubmissionStrategy,
+            Decoder: MapGpuStatsReadbackDecoder(kind));
+        if (!sidecar.TryReserve(planNode, sourceFrameId, slot.ArenaSlot, out slot.Reservation))
+            return false;
+        slot.PlanNode = planNode;
         try
         {
             Result resetFenceResult = Api!.ResetFences(_deviceContext.Device, 1, in slot.Fence);
             Result resetCommandResult = _commandRuntime.ResetTrackedCommandBuffer(slot.CommandBuffer);
             if (resetFenceResult != Result.Success || resetCommandResult != Result.Success)
             {
-                ReadbackOutputResources.CancelGpuStatsSliceSubmission(slot.DataSlice);
+                sidecar.CancelStagingSliceSubmission(slot.DataSlice);
                 slot.DataSlice = default;
                 return false;
             }
@@ -300,7 +534,7 @@ internal sealed partial class VulkanFrameLoop
                     ref beginInfo,
                     "GpuStatsReadback") != Result.Success)
             {
-                ReadbackOutputResources.CancelGpuStatsSliceSubmission(slot.DataSlice);
+                sidecar.CancelStagingSliceSubmission(slot.DataSlice);
                 slot.DataSlice = default;
                 return false;
             }
@@ -342,9 +576,9 @@ internal sealed partial class VulkanFrameLoop
                 ref copy);
 
             if (_commandRuntime.EndCommandBufferTracked(slot.CommandBuffer) != Result.Success ||
-                !ReadbackOutputResources.TryPrepareGpuStatsSlice(slot.DataSlice))
+                !sidecar.TryPrepareStagingSlice(slot.DataSlice))
             {
-                ReadbackOutputResources.CancelGpuStatsSliceSubmission(slot.DataSlice);
+                sidecar.CancelStagingSliceSubmission(slot.DataSlice);
                 slot.DataSlice = default;
                 return false;
             }
@@ -379,7 +613,7 @@ internal sealed partial class VulkanFrameLoop
 
             if (!submitReceipt.SubmissionAccepted)
             {
-                ReadbackOutputResources.CancelGpuStatsSliceSubmission(slot.DataSlice);
+                sidecar.CancelStagingSliceSubmission(slot.DataSlice);
                 slot.DataSlice = default;
                 if (submitResult == Result.ErrorDeviceLost)
                     MarkDeviceLost(
@@ -389,8 +623,15 @@ internal sealed partial class VulkanFrameLoop
                 return false;
             }
 
-            ReadbackOutputResources.MarkGpuStatsSliceSubmitted(slot.DataSlice);
+            sidecar.MarkStagingSliceSubmitted(slot.DataSlice);
             arenaSubmissionAccepted = true;
+            if (!sidecar.TryMarkSubmitted(slot.Reservation))
+            {
+                Debug.VulkanWarningEvery(
+                    "Vulkan.GpuDiagnosticReadback.SidecarSubmissionState",
+                    TimeSpan.FromSeconds(2),
+                    "[Vulkan] Diagnostic staging copy was submitted but its sidecar state could not transition.");
+            }
 
             slot.ByteCount = byteCount;
             slot.ElementCount = elementCount;
@@ -407,11 +648,27 @@ internal sealed partial class VulkanFrameLoop
         {
             if (!arenaSubmissionAccepted && slot.DataSlice.IsValid)
             {
-                ReadbackOutputResources.CancelGpuStatsSliceSubmission(slot.DataSlice);
+                sidecar.CancelStagingSliceSubmission(slot.DataSlice);
                 slot.DataSlice = default;
+            }
+            if (!arenaSubmissionAccepted)
+            {
+                sidecar.Cancel(slot.Reservation);
+                slot.Reservation = default;
+                slot.PlanNode = default;
             }
         }
     }
+
+    private static EGpuDiagnosticReadbackDecoder MapGpuStatsReadbackDecoder(
+        GpuRenderStatsReadbackKind kind)
+        => kind switch
+        {
+            GpuRenderStatsReadbackKind.DrawCountBuffer => EGpuDiagnosticReadbackDecoder.IndirectDrawCount,
+            GpuRenderStatsReadbackKind.MeshletDispatchIndirectBuffer => EGpuDiagnosticReadbackDecoder.MeshletVisibility,
+            GpuRenderStatsReadbackKind.StatsBuffer => EGpuDiagnosticReadbackDecoder.SubmissionValidation,
+            _ => EGpuDiagnosticReadbackDecoder.None,
+        };
 
     private GpuRenderStatsReadbackSlot? AcquireGpuRenderStatsReadbackSlot()
     {
@@ -485,8 +742,10 @@ internal sealed partial class VulkanFrameLoop
 
         _commandRuntime.CompleteTrackedFence(slot.Fence);
 
-        if (!ReadbackOutputResources.TryCompleteGpuStatsSlice(slot.DataSlice) ||
-            !ReadbackOutputResources.TryBeginGpuStatsRead(
+        VulkanGpuDiagnosticReadbackSidecar? sidecar = _gpuDiagnosticReadbackSidecar;
+        if (sidecar is null ||
+            !sidecar.TryCompleteStagingSlice(slot.DataSlice) ||
+            !sidecar.TryBeginStagingRead(
                 slot.DataSlice,
                 out VulkanFrameDataReadScope readScope))
         {
@@ -498,12 +757,21 @@ internal sealed partial class VulkanFrameLoop
 
         try
         {
+            // This is the sole host-observation point for the advanced
+            // instrumented sidecar. Publishing it through the global counters
+            // makes zero-readback lane evidence exact: those lanes never reach
+            // this completed-plan branch and therefore report zero maps/bytes.
+            RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuBufferMapped();
+            RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuReadbackBytes(
+                slot.ByteCount);
             using (readScope)
                 MemoryMarshal.Cast<byte, uint>(readScope.Bytes).Slice(
                     0,
                     checked((int)slot.ElementCount)).CopyTo(values);
 
             PublishGpuRenderStatsReadback(slot, values);
+            ScheduleCompletedGpuDiagnosticDecode(values, slot.SourceFrameId);
+            _ = sidecar.TryComplete(slot.Reservation);
             RuntimeEngine.Rendering.Stats.GpuDriven.RecordDelayedDiagnosticReadback(slot.ByteCount);
         }
         finally
@@ -517,9 +785,35 @@ internal sealed partial class VulkanFrameLoop
             slot.PublishTriangles = false;
             slot.SourceFrameId = 0UL;
             slot.DataSlice = default;
+            slot.PlanNode = default;
+            slot.Reservation = default;
         }
 
         return true;
+    }
+
+    private static void ScheduleCompletedGpuDiagnosticDecode(
+        ReadOnlySpan<uint> words,
+        ulong sourceFrameId)
+    {
+        try
+        {
+            // The copy completes before this allocation. The general-domain
+            // payload deliberately cannot carry a fence or GPU callback.
+            uint[] completedWords = words.ToArray();
+            CompletedDiagnosticPayload payload = CompletedDiagnosticPayload.Create(
+                completedWords,
+                sourceFrameId);
+            RuntimeRenderingHostServices.Work.ScheduleCompletedDiagnosticDecode(payload);
+        }
+        catch (Exception ex)
+        {
+            Debug.VulkanWarningEvery(
+                "Vulkan.GpuDiagnosticReadback.DecodeSchedule",
+                TimeSpan.FromSeconds(2),
+                "[Vulkan] Delayed diagnostic decode scheduling failed: {0}",
+                ex.Message);
+        }
     }
 
     private void PublishGpuRenderStatsReadback(

@@ -8,4 +8,5 @@ namespace XREngine.Rendering;
 public readonly record struct RenderWorldSnapshot(
     ulong FrameId,
     IRuntimeRenderCommandSceneContext Scene,
-    GPUScene GpuScene);
+    GPUScene GpuScene,
+    AdvancedGlobalResourceCapture GlobalResources);

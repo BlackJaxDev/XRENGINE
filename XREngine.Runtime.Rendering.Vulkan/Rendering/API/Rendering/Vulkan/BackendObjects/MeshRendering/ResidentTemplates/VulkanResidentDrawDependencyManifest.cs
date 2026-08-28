@@ -10,8 +10,8 @@ internal readonly record struct VulkanResidentDrawDependency(
 /// <summary>Intrusive reverse-index links owned by one manifest entry.</summary>
 internal struct VulkanResidentDrawDependencyLink
 {
-    internal int PreviousPrimaryIndex;
-    internal int NextPrimaryIndex;
+    internal VulkanResidentDrawTemplateHandle Previous;
+    internal VulkanResidentDrawTemplateHandle Next;
     internal bool IsLinked;
 }
 

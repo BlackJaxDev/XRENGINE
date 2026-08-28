@@ -35,8 +35,10 @@ internal unsafe partial class VkRenderProgram
         var result = VulkanProgramUtilities.BuildDescriptorLayoutsShared(
             BackendContext.Resources.Descriptors,
             BackendContext.Resources.AdvancedSceneResources,
+            BackendContext.Resources.AdvancedVisibilityResources,
             shaderBindings,
-            programName);
+            programName,
+            Data.ExternallyOwnedDescriptorSetMask);
 
         _descriptorSetLayouts = result.Layouts;
         _programDescriptorBindings.Clear();

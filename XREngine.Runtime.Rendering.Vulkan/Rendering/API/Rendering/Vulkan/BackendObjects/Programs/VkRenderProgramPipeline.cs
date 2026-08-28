@@ -107,6 +107,11 @@ internal unsafe class VkRenderProgramPipeline(
                 throw new InvalidOperationException($"Failed to create graphics pipeline ({result}).");
 
             ProgramCreationPort.RegisterPipeline(pipeline, "VkRenderProgramPipeline.Graphics");
+            BackendContext.Resources.LinkPipelineDependencies(
+                pipeline,
+                _pipelineLayout,
+                _descriptorSetLayouts,
+                stages);
             return pipeline;
         }
     }
@@ -130,6 +135,11 @@ internal unsafe class VkRenderProgramPipeline(
             throw new InvalidOperationException($"Failed to create compute pipeline ({result}).");
 
         ProgramCreationPort.RegisterPipeline(pipeline, "VkRenderProgramPipeline.Compute");
+        BackendContext.Resources.LinkPipelineDependencies(
+            pipeline,
+            _pipelineLayout,
+            _descriptorSetLayouts,
+            [computeStage]);
         return pipeline;
     }
 
@@ -155,6 +165,7 @@ internal unsafe class VkRenderProgramPipeline(
         var result = VulkanProgramUtilities.BuildDescriptorLayoutsShared(
             BackendContext.Resources.Descriptors,
             BackendContext.Resources.AdvancedSceneResources,
+            BackendContext.Resources.AdvancedVisibilityResources,
             bindingInfos,
             pipelineName);
 
@@ -244,10 +255,11 @@ internal unsafe class VkRenderProgramPipeline(
             Api!.DestroyPipelineLayout(Device, pipelineLayout, null);
     }
 
-    private static PushConstantRange CreateCommonPushConstantRange()
+    private PushConstantRange CreateCommonPushConstantRange()
         => new()
         {
-            StageFlags = VulkanPipelineManager.CommonPushConstantStages,
+            StageFlags = VulkanMeshRenderingConventions.GetCommonPushConstantStageFlags(
+                BackendContext.DeviceContext),
             Offset = 0,
             Size = VulkanPipelineManager.CommonPushConstantByteSize
         };

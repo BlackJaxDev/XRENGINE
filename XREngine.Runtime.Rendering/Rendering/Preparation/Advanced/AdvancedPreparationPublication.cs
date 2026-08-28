@@ -11,6 +11,7 @@ namespace XREngine.Rendering;
 public readonly record struct AdvancedPreparationPublication(
     ulong FrameId,
     ulong PublicationGeneration,
+    ulong VisibilityContentGeneration,
     uint SceneIdentity,
     uint DrawCount,
     uint DeformationJobCount,

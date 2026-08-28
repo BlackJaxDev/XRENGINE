@@ -19,6 +19,17 @@ public interface IRuntimeRenderCamera
     Matrix4x4 ProjectionMatrix { get; }
 
     /// <summary>
+    /// Gets the same projection before temporal jitter. Cameras without an
+    /// independent temporal projection expose their resolved projection.
+    /// </summary>
+    Matrix4x4 ProjectionMatrixUnjittered => ProjectionMatrix;
+
+    /// <summary>
+    /// Gets the current clip-space temporal jitter, if the camera owns one.
+    /// </summary>
+    Vector2 ProjectionJitter => Vector2.Zero;
+
+    /// <summary>
     /// Gets the near clipping plane distance.
     /// </summary>
     float NearZ { get; }

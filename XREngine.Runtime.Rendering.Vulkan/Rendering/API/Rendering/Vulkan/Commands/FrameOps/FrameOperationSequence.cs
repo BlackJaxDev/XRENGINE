@@ -43,5 +43,6 @@ internal readonly struct FrameOperationSequence
     internal ref readonly PublishFramebufferPayload GetPublishedFramebuffer(int index) => ref Stream.GetPublishedFramebuffer(index);
     internal ref readonly DlssUpscalePayload GetDlssUpscale(int index) => ref Stream.GetDlssUpscale(index);
     internal ref readonly DlssFrameGenerationPayload GetDlssFrameGeneration(int index) => ref Stream.GetDlssFrameGeneration(index);
+    internal ref readonly VulkanAdvancedVisibilityOperationPayload GetAdvancedVisibility(int index) => ref Stream.GetAdvancedVisibility(index);
 
 }

@@ -14,6 +14,7 @@ using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Models.Materials.Textures;
 using XREngine.Rendering.Pipelines.Commands;
+using XREngine.Rendering.RenderGraph;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -118,6 +119,9 @@ internal static class VulkanFrameOperationSemantics
             IndirectDrawOp draw => draw.Target ?? draw.Context.OutputFrameBuffer,
             MeshTaskDispatchIndirectCountOp meshTask => meshTask.Target ?? meshTask.Context.OutputFrameBuffer,
             TransformFeedbackOp transformFeedback => transformFeedback.Target ?? transformFeedback.Context.OutputFrameBuffer,
+            AdvancedVisibilityOp visibility
+                when visibility.Request.Stage == EAdvancedRenderStage.VisibilityRaster
+                => visibility.Target,
             _ => null,
         };
 
@@ -188,6 +192,35 @@ internal static class VulkanFrameOperationSemantics
             case ComputeDispatchIndirectOp indirect:
                 AddBufferUse(ref uses, indirect.ArgumentOwner, version,
                     EFrameOpResourceAccess.Read | EFrameOpResourceAccess.Imported);
+                break;
+            case AdvancedVisibilityOp visibility:
+                if (visibility.Request.Stage == EAdvancedRenderStage.VisibilityRaster)
+                {
+                    // Preserve both the graph names and the exact realized target.
+                    // The former drives graph ordering while the latter freezes
+                    // views/formats/extent for native render-scope preparation.
+                    AddFrameBufferUses(
+                        ref uses,
+                        output,
+                        version,
+                        EFrameOpResourceAccess.Write);
+                    AddLogicalResourceUse(
+                        ref uses,
+                        RenderGraphResourceNames.MakeTexture(visibility.Request.IdentityTargetName),
+                        version);
+                    AddLogicalResourceUse(
+                        ref uses,
+                        RenderGraphResourceNames.MakeTexture(visibility.Request.MetadataTargetName),
+                        version);
+                    AddLogicalResourceUse(
+                        ref uses,
+                        RenderGraphResourceNames.MakeTexture(visibility.Request.SelectionTargetName),
+                        version);
+                    AddLogicalResourceUse(
+                        ref uses,
+                        RenderGraphResourceNames.MakeTexture(visibility.Request.DepthTargetName),
+                        version);
+                }
                 break;
             case TextureUploadFrameOp upload:
                 AddTextureUploadUse(ref uses, upload.Upload, version);
@@ -278,6 +311,15 @@ internal static class VulkanFrameOperationSemantics
         ulong version,
         EFrameOpResourceAccess access)
         => uses.Add(ComputeResourceIdentity(buffer), version, access);
+
+    private static void AddLogicalResourceUse(
+        ref FrameOpResourceUseList uses,
+        string name,
+        ulong version)
+        => uses.Add(
+            ComputeResourceIdentity(name),
+            version,
+            EFrameOpResourceAccess.Write);
 
     private static void AddTextureUploadUse(
         ref FrameOpResourceUseList uses,

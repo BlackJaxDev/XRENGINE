@@ -36,5 +36,6 @@ public sealed class CompletedDiagnosticDecodeJob : Job
         }
 
         Checksum = checksum;
+        _payload.SemanticDecoder?.Invoke(_payload);
     }
 }

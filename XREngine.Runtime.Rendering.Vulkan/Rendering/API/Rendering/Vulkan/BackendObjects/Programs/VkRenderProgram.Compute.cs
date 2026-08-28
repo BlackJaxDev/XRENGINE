@@ -526,10 +526,11 @@ internal unsafe partial class VkRenderProgram
         return false;
     }
 
-    private static PushConstantRange CreateCommonPushConstantRange()
+    private PushConstantRange CreateCommonPushConstantRange()
         => new()
         {
-            StageFlags = VulkanPipelineManager.CommonPushConstantStages,
+            StageFlags = VulkanMeshRenderingConventions.GetCommonPushConstantStageFlags(
+                BackendContext.DeviceContext),
             Offset = 0,
             Size = VulkanPipelineManager.CommonPushConstantByteSize
         };

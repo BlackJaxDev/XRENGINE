@@ -7,12 +7,13 @@ namespace XREngine.Animation.Importers;
 /// </summary>
 public static class ImportedAnimationImportCapabilityContract
 {
-    public const int CurrentVersion = 1;
+    public const int CurrentVersion = 2;
     public const string SourceFormat = "UnityYamlAnimationClip";
 
     private static readonly int[] SerializedVersions = [6, 7];
     private static readonly int[] InfinityModes = [0, 1, 2, 4, 8];
     private static readonly int[] WeightedModes = [0, 1, 2, 3];
+    private static readonly int[] NestedSerializedVersions = [2, 3];
     private static readonly EImportedAnimationWrapMode[] WrapModes =
     [
         EImportedAnimationWrapMode.Default,
@@ -59,6 +60,8 @@ public static class ImportedAnimationImportCapabilityContract
 
     public static IReadOnlyList<int> SupportedWeightedModes => WeightedModes;
 
+    public static IReadOnlyList<int> SupportedNestedSerializedVersions => NestedSerializedVersions;
+
     public static IReadOnlyList<EImportedAnimationWrapMode> SupportedWrapModes => WrapModes;
 
     public static IReadOnlyList<EImportedAnimationBindingValueKind> SupportedBindingValueKinds => BindingValueKinds;
@@ -72,4 +75,7 @@ public static class ImportedAnimationImportCapabilityContract
                 return true;
         return false;
     }
+
+    public static bool SupportsNestedSerializedVersion(int version)
+        => version is 2 or 3;
 }

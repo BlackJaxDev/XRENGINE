@@ -29,6 +29,10 @@ public sealed partial record ImportedAnimationBindingDescriptor
     public byte CustomType { get; init; }
     public bool IsPPtrCurve { get; init; }
     public bool IsIntCurve { get; init; }
+    /// <summary>Raw Unity editable-binding flags, preserved for adapter decisions.</summary>
+    public int BindingFlags { get; init; }
+    /// <summary>Nested serialized version carried by the editable binding.</summary>
+    public int BindingSerializedVersion { get; init; }
     /// <summary>
     /// Unity 2022.2+ binding flag for a field below a managed-reference graph.
     /// Such bindings remain adapter-owned until the target supplies an explicit

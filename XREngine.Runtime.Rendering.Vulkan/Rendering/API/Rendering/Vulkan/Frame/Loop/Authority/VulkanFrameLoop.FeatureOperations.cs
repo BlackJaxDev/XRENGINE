@@ -7,6 +7,65 @@ namespace XREngine.Rendering.Vulkan;
 /// <summary>Frame-operation translations that capture immutable context at their authority boundary.</summary>
 internal sealed partial class VulkanFrameLoop
 {
+    internal bool SupportsAdvancedVisibilityStage(EAdvancedRenderStage stage)
+        => stage is (EAdvancedRenderStage.VisibilityPreparation or
+               EAdvancedRenderStage.VisibilityRaster or
+               EAdvancedRenderStage.DepthPyramidAndLateVisibility) &&
+           _commandRuntime.IsAdvancedVisibilityProductionPromoted &&
+           _deviceContext.IsOperational &&
+           _resourceRuntime.AdvancedVisibilityResources.IsReady &&
+           _resourceRuntime.AdvancedSceneResources.IsReady &&
+           _deviceContext.Capabilities.Supports(EVulkanDeviceCapability.DrawIndirectCount) &&
+           _commandRuntime.CanAdmitAdvancedVisibilityFamily();
+
+    internal bool TryEnqueueAdvancedVisibilityStage(
+        in AdvancedVisibilityStageBackendRequest request,
+        out string failureReason)
+    {
+        if (!request.IsValid)
+        {
+            failureReason = "The advanced visibility request is incomplete.";
+            return false;
+        }
+        if (request.Views.ViewCount != 1)
+        {
+            failureReason =
+                "The Vulkan advanced visibility family currently admits exactly one view; stereo and multiview requests remain fail-closed.";
+            return false;
+        }
+        if (!SupportsAdvancedVisibilityStage(request.Stage))
+        {
+            failureReason = "The Vulkan zero-readback visibility lane is unavailable on this device or resource generation.";
+            return false;
+        }
+
+        int passIndex = RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex;
+        if (passIndex < 0)
+        {
+            failureReason = "No render-graph pass is active for the advanced visibility stage.";
+            return false;
+        }
+
+        FrameOpContext context = CaptureFrameOpContextForCurrentPipelineScope();
+        VulkanAdvancedVisibilityStageRequest vulkanRequest = new(
+            request.Stage,
+            request.Publication,
+            request.Publication.VisibilityContentGeneration,
+            request.Extractor,
+            request.RenderFrameId,
+            request.Views,
+            request.Target,
+            request.IdentityTargetName,
+            request.MetadataTargetName,
+            request.SelectionTargetName,
+            request.DepthTargetName,
+            request.CurrentDepthPyramidTargetName);
+        _frameOperationQueue.EnqueuePrepared(
+            new AdvancedVisibilityOp(passIndex, vulkanRequest, context));
+        failureReason = "Ready";
+        return true;
+    }
+
     internal string GetMeshletDispatchUnsupportedReason()
         => _deviceContext.MeshletDispatchStatus;
 

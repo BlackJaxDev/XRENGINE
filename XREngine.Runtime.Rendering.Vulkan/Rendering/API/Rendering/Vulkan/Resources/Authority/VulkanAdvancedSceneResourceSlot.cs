@@ -20,6 +20,52 @@ internal sealed class VulkanAdvancedSceneResourceSlot
     internal VulkanAdvancedScenePublicationEntry[] Entries { get; }
     internal DescriptorSet[] GlobalDescriptorSets { get; }
     internal VulkanAdvancedScenePublicationUseState[] ReceiptStates { get; }
+    internal VulkanAdvancedScenePublicationAllocationPlan AllocationPlan { get; } = new();
+    // These regions survive a completed slot reset.  A later generation may
+    // patch their exact publication deltas in place only before it creates its
+    // first immutable entry; later same-generation publications use COW.
+    internal VulkanAdvancedSceneResidentTable<AdvancedDrawRecord> ResidentDraws { get; } = new();
+    internal VulkanAdvancedSceneResidentTable<AdvancedInstanceRecord> ResidentInstances { get; } = new();
+    internal VulkanAdvancedSceneResidentTable<AdvancedTransformRecord> ResidentTransforms { get; } = new();
+    internal VulkanAdvancedSceneResidentTable<AdvancedGeometryRecord> ResidentGeometry { get; } = new();
+    internal VulkanAdvancedSceneResidentTable<AdvancedDeformationRecord> ResidentDeformations { get; } = new();
+    internal VulkanAdvancedSceneResidentTable<AdvancedRenderStateRecord> ResidentRenderStates { get; } = new();
+    internal VulkanAdvancedSceneResidentTable<AdvancedEditorIdentityRecord> ResidentEditorIdentities { get; } = new();
+    internal VulkanAdvancedSceneResidentTable<AdvancedMaterialRecord> ResidentMaterials { get; } = new();
+    internal VulkanAdvancedSceneResidentTable<AdvancedShadingKernelRecord> ResidentKernels { get; } = new();
+    internal VulkanAdvancedSceneResidentTable<AdvancedMaterialLayoutRecord> ResidentLayouts { get; } = new();
+    internal VulkanAdvancedSceneResidentBytes ResidentStaticVertices { get; } = new();
+    internal VulkanAdvancedSceneResidentBytes ResidentIndices { get; } = new();
+    internal VulkanAdvancedSceneResidentBytes ResidentPreSkinnedCurrent { get; } = new();
+    internal VulkanAdvancedSceneResidentBytes ResidentPreSkinnedPrevious { get; } = new();
+    internal VulkanAdvancedSceneResidentBytes ResidentMeshletDescriptors { get; } = new();
+    internal VulkanAdvancedSceneResidentBytes ResidentMeshletVertexIndices { get; } = new();
+    internal VulkanAdvancedSceneResidentBytes ResidentMeshletTriangleWords { get; } = new();
+    internal VulkanAdvancedSceneResidentBytes ResidentMaterialConstants { get; } = new();
+    internal VulkanAdvancedSceneResidentBytes ResidentMaterialBindings { get; } = new();
+    internal VulkanAdvancedSceneResidentTable<AdvancedTextureRecord> ResidentTextures { get; } = new();
+    internal VulkanAdvancedSceneResidentTable<AdvancedSamplerRecord> ResidentSamplers { get; } = new();
+    internal VulkanAdvancedSceneResidentTable<AdvancedLightRecord> ResidentLights { get; } = new();
+    internal VulkanAdvancedSceneResidentTable<AdvancedShadowRecord> ResidentShadows { get; } = new();
+    internal VulkanAdvancedSceneResidentTable<AdvancedProbeRecord> ResidentProbes { get; } = new();
+    internal VulkanAdvancedSceneResidentTable<AdvancedEnvironmentRecord> ResidentEnvironments { get; } = new();
+    internal VulkanAdvancedSceneResidentTable<AdvancedDecalRecord> ResidentDecals { get; } = new();
+    internal VulkanAdvancedSceneResidentTable<AdvancedGiResourceRecord> ResidentGiResources { get; } = new();
+    internal VulkanAdvancedSceneResidentLookups ResidentLookups { get; } = new();
+
+    internal void ClearResidentMirrors()
+    {
+        ResidentDraws.Clear(); ResidentInstances.Clear(); ResidentTransforms.Clear(); ResidentGeometry.Clear();
+        ResidentDeformations.Clear(); ResidentRenderStates.Clear(); ResidentEditorIdentities.Clear();
+        ResidentMaterials.Clear(); ResidentKernels.Clear(); ResidentLayouts.Clear();
+        ResidentTextures.Clear(); ResidentSamplers.Clear(); ResidentLights.Clear(); ResidentShadows.Clear();
+        ResidentProbes.Clear(); ResidentEnvironments.Clear(); ResidentDecals.Clear(); ResidentGiResources.Clear();
+        ResidentStaticVertices.Clear(); ResidentIndices.Clear(); ResidentPreSkinnedCurrent.Clear();
+        ResidentPreSkinnedPrevious.Clear(); ResidentMeshletDescriptors.Clear();
+        ResidentMeshletVertexIndices.Clear(); ResidentMeshletTriangleWords.Clear();
+        ResidentMaterialConstants.Clear(); ResidentMaterialBindings.Clear();
+        ResidentLookups.Clear();
+    }
     internal DescriptorSet ResourceDescriptorSet;
     internal ulong FrameGeneration;
     internal uint NextTextureDescriptor = 1u;
@@ -29,6 +75,7 @@ internal sealed class VulkanAdvancedSceneResourceSlot
     internal int ActiveUseCount;
     internal ulong StorageBytesConsumed;
     internal bool Quarantined;
+    internal bool TransactionIntegrityFault;
 
     internal int Find(
         AdvancedSharedGpuSceneDatabase database,
@@ -60,5 +107,6 @@ internal sealed class VulkanAdvancedSceneResourceSlot
         ReceiptCount = 0;
         StorageBytesConsumed = 0u;
         Quarantined = false;
+        TransactionIntegrityFault = false;
     }
 }

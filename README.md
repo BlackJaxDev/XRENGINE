@@ -148,22 +148,64 @@ To boot into the Unit Testing World, use the `Editor (Unit Testing World)` launc
 
 If you are contributing code, the best follow-up docs are `docs/developer-guides/testing/unit-testing-world.md` and `docs/architecture/getting-started-in-codebase.md`.
 
-## Project layout
+## Repository layout
 
-| Project | What it is |
-|---------|-----------|
-| `XREngine/` | Core runtime: scene graph, rendering, XR subsystems |
-| `XREngine.Editor/` | Desktop editor |
-| `XREngine.Server/` | Dedicated server |
-| `XREngine.VRClient/` | Legacy OpenVR companion app. Keeps the SteamVR/OpenVR connection isolated from the main engine process, forwards player input to the main app through a pipe, and displays per-eye frames streamed back from the engine. |
-| `XREngine.Animation/`, `XREngine.Audio/`, `XREngine.Input/`, `XREngine.Modeling/`, `XREngine.Extensions/` | Supporting modules |
-| `XREngine.Data/` | Shared data types and serialization primitives |
-| `XREngine.Fbx/`, `XREngine.Gltf/` | Native FBX and glTF importers |
-| `XREngine.Runtime.*/` | Runtime integration layers (Core, Bootstrap, Rendering, AnimationIntegration, AudioIntegration, InputIntegration, ModelingBridge) |
-| `XREngine.Profiler/`, `XREngine.Profiler.UI/` | Standalone profiler app and UI |
-| `XREngine.Benchmarks/` | Performance benchmarks |
-| `XREngine.UnitTests/` | Automated tests |
-| `Build/Submodules/` | Git submodules: OpenVR.NET, CoACD, OscCore-NET9, rive-sharp, Monado |
+The tables below cover the source-controlled top-level folders. Local build and
+editor output such as `.git/`, `.vs/`, `artifacts/`, `Cache/`, `lib/`, and
+`Metadata/` may also appear in a working copy, but they are generated rather
+than repository components.
+
+### Configuration, content, and tooling
+
+| Folder | What it is for |
+|--------|----------------|
+| `.agents/` | Shared agent skills and reference material used for repository-specific workflows. |
+| `.claude/` | Claude-specific project settings and repository skills. |
+| `.codex/` | Codex project configuration, hooks, and native agent role definitions. |
+| `.config/` | Repository-local .NET tool manifest. |
+| `.github/` | GitHub Actions workflows, dependency updates, funding metadata, and contribution templates. |
+| `.vscode/` | VS Code tasks, launch profiles, workspace settings, MCP configuration, and JSON schemas. |
+| `Assets/` | Source assets used by the engine, editor, samples, and local unit-testing world. |
+| `Build/` | Shared build assets, submodules, dependency staging, build output, logs, caches, and disposable validation evidence. |
+| `docs/` | Architecture notes, user and developer guides, dependency records, and active design or investigation documents. |
+| `LEGAL/` | License terms, commercial guidance, contributor agreement, and engine/application boundary guidance. |
+| `Samples/` | Example applications and game content, including the MonkeyBallVR sample. |
+| `ThirdParty/` | Checked-in third-party runtime and SDK material that is not supplied through NuGet or submodules. |
+| `Tools/` | Setup, build, dependency, documentation, benchmark, editor-session, and agent-broker scripts and utilities. |
+
+### Engine projects and applications
+
+| Folder | What it is for |
+|--------|----------------|
+| `XREngine.AgentOrchestration/` | Agent context, evidence, model-provider, tool-policy, and orchestration services. |
+| `XREngine.Animation/` | Animation clips, curves, key collections, compression, and VR IK data and logic. |
+| `XREngine.Audio/` | Audio buffers, sources, playback, capture, effects, diagnostics, and backend abstractions. |
+| `XREngine.Benchmarks/` | BenchmarkDotNet suites and focused performance or regression harnesses. |
+| `XREngine.ControlPlane/` | Multiplayer control-plane models and host, instance, session, and world-package orchestration. |
+| `XREngine.Data/` | Shared data types, serialization primitives, collections, interpolation, archives, and stream helpers. |
+| `XREngine.Editor/` | The desktop editor application and its editing, inspection, asset, play-mode, and world-bootstrap tools. |
+| `XREngine.Extensions/` | Reusable .NET extension methods and low-level memory, numeric, collection, and threading helpers. |
+| `XREngine.Fbx/` | Native FBX parsing, semantic conversion, animation support, and export tooling. |
+| `XREngine.Gltf/` | Native glTF/GLB document loading, data models, and import support. |
+| `XREngine.Input/` | Input-device abstractions, action state, and runtime keyboard, mouse, gamepad, and VR input services. |
+| `XREngine.Modeling/` | Editable mesh, half-edge topology, CSG, mesh generation, and modeling document types. |
+| `XREngine.Profiler/` | Standalone profiler application and its network receiver. |
+| `XREngine.Profiler.UI/` | Reusable UI panels and rendering components for profiler data. |
+| `XREngine.RenderBench/` | Standalone rendering benchmark runner, fixtures, profiles, and validation gates. |
+| `XREngine.Runtime.AnimationIntegration/` | Scene components and bootstrap services that connect animation systems to the runtime. |
+| `XREngine.Runtime.AudioIntegration/` | Scene components and bootstrap services that connect audio systems to the runtime. |
+| `XREngine.Runtime.Automation/` | Runtime MCP automation, permission, capture, and render-profiling infrastructure. |
+| `XREngine.Runtime.Bootstrap/` | Shared application startup, world construction, rendering setup, networking profiles, and asset bootstrap. |
+| `XREngine.Runtime.Core/` | Core runtime lifecycle, assets, jobs, scene graph, physics, networking, XR, and foundational engine services. |
+| `XREngine.Runtime.InputIntegration/` | Player controllers, pawns, locomotion, camera, game-mode, and runtime input integration. |
+| `XREngine.Runtime.ModelAssetPipeline/` | Runtime model import, conversion, repair, cooking, and prefab-loading pipeline. |
+| `XREngine.Runtime.ModelingIntegration/` | Conversion between modeling documents and runtime meshes, including authoring operations and policies. |
+| `XREngine.Runtime.Rendering/` | Renderer-independent resources, render graph, shaders, scene submission, and rendering systems. |
+| `XREngine.Runtime.Rendering.OpenGL/` | OpenGL 4.6 renderer backend and API object implementations. |
+| `XREngine.Runtime.Rendering.Vulkan/` | Vulkan renderer backend, OpenXR graphics binding, shader translation, and vendor upscaling integration. |
+| `XREngine.Server/` | Dedicated server executable, authentication, command handling, storage, and server bootstrap. |
+| `XREngine.UnitTests/` | Automated unit, integration, rendering, networking, and source-contract tests. |
+| `XREngine.VRClient/` | Standalone OpenVR companion that forwards input and displays per-eye frames from the engine process. |
 
 ## Running and debugging
 

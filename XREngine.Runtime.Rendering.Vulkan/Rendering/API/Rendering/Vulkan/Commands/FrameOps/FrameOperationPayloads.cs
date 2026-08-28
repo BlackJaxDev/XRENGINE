@@ -23,6 +23,30 @@ internal readonly record struct MemoryBarrierPayload(EMemoryBarrierMask Mask);
 internal readonly record struct PublishFramebufferPayload(XRFrameBuffer FrameBuffer);
 internal readonly record struct DlssUpscalePayload(NvidiaDlssManager.Native.NativeVulkanSession Session, VulkanStreamlineImage SourceColor, VulkanStreamlineImage Depth, VulkanStreamlineImage Motion, VulkanStreamlineImage OutputColor, VulkanStreamlineImage? Exposure, VulkanUpscaleBridgeDispatchParameters Parameters);
 internal readonly record struct DlssFrameGenerationPayload(NvidiaDlssManager.Native.NativeFrameGenerationSession Session, VulkanStreamlineImage Depth, VulkanStreamlineImage Motion, VulkanStreamlineImage HudlessColor, VulkanUpscaleBridgeDispatchParameters Parameters, VulkanStreamlineImage UiColorAndAlpha);
+/// <summary>
+/// Sealed authoring request plus the exact set-1 frame-slot state admitted at
+/// primary preparation. The logical attachment names intentionally remain in
+/// <see cref="VulkanAdvancedVisibilityStageRequest"/> until recording can
+/// resolve the frozen render-graph generation.
+/// </summary>
+internal readonly record struct VulkanAdvancedVisibilityOperationPayload(
+    VulkanAdvancedVisibilityStageRequest Request,
+    VulkanAdvancedVisibilityResourceState State,
+    VulkanAdvancedScenePublicationState SceneState,
+    VulkanAdvancedVisibilityTargetClosure TargetClosure,
+    VulkanAdvancedVisibilityLateTargetClosure? LateTargetClosure,
+    VkRenderProgram? EarlyVisibilityProgram,
+    Pipeline EarlyVisibilityPipeline,
+    ulong EarlyVisibilityLinkGeneration,
+    VkRenderProgram? BuildIndirectProgram,
+    Pipeline BuildIndirectPipeline,
+    ulong BuildIndirectLinkGeneration,
+    VkRenderProgram? BuildDepthPyramidProgram,
+    Pipeline BuildDepthPyramidPipeline,
+    ulong BuildDepthPyramidLinkGeneration,
+    VkRenderProgram? LateVisibilityProgram,
+    Pipeline LateVisibilityPipeline,
+    ulong LateVisibilityLinkGeneration);
 
 /// <summary>
 /// Per-opcode dense storage owned exclusively by a sealed operation stream.
@@ -50,6 +74,8 @@ internal sealed class FrameOperationPayloadStore
     internal PublishFramebufferPayload[] PublishedFramebuffers;
     internal DlssUpscalePayload[] DlssUpscales;
     internal DlssFrameGenerationPayload[] DlssFrameGenerations;
+    internal VulkanAdvancedVisibilityOperationPayload[] AdvancedVisibilities;
+    internal VulkanAdvancedVisibilityLateClosureStorage[] AdvancedVisibilityLateClosures;
 
     internal FrameOperationPayloadStore()
         : this(
@@ -94,6 +120,9 @@ internal sealed class FrameOperationPayloadStore
         PublishedFramebuffers = new PublishFramebufferPayload[generalCapacity];
         DlssUpscales = new DlssUpscalePayload[generalCapacity];
         DlssFrameGenerations = new DlssFrameGenerationPayload[generalCapacity];
+        AdvancedVisibilities = new VulkanAdvancedVisibilityOperationPayload[generalCapacity];
+        AdvancedVisibilityLateClosures =
+            CreateAdvancedVisibilityLateClosureStorage(generalCapacity);
     }
 
     internal void EnsureCapacity(EVulkanPrimaryPlanNodeKind kind, int count)
@@ -116,6 +145,10 @@ internal sealed class FrameOperationPayloadStore
             case EVulkanPrimaryPlanNodeKind.PublishFramebufferForSampling: Ensure(ref PublishedFramebuffers, count); break;
             case EVulkanPrimaryPlanNodeKind.DlssUpscale: Ensure(ref DlssUpscales, count); break;
             case EVulkanPrimaryPlanNodeKind.DlssFrameGeneration: Ensure(ref DlssFrameGenerations, count); break;
+            case EVulkanPrimaryPlanNodeKind.AdvancedVisibility:
+                Ensure(ref AdvancedVisibilities, count);
+                EnsureAdvancedVisibilityLateClosureCapacity(count);
+                break;
         }
     }
 
@@ -132,5 +165,37 @@ internal sealed class FrameOperationPayloadStore
         Array.Resize(
             ref values,
             Math.Max(count, values.Length == 0 ? 4 : values.Length * 2));
+    }
+
+    private void EnsureAdvancedVisibilityLateClosureCapacity(int count)
+    {
+        if (AdvancedVisibilityLateClosures.Length >= count)
+            return;
+        if (_fixedCapacity)
+            throw new VulkanAcceptedFramePlanCapacityException(
+                _lane,
+                AdvancedVisibilityLateClosures.Length,
+                count);
+
+        int previousLength = AdvancedVisibilityLateClosures.Length;
+        Array.Resize(
+            ref AdvancedVisibilityLateClosures,
+            Math.Max(count, previousLength == 0 ? 4 : previousLength * 2));
+        for (int index = previousLength;
+             index < AdvancedVisibilityLateClosures.Length;
+             ++index)
+        {
+            AdvancedVisibilityLateClosures[index] = new();
+        }
+    }
+
+    private static VulkanAdvancedVisibilityLateClosureStorage[]
+        CreateAdvancedVisibilityLateClosureStorage(int capacity)
+    {
+        VulkanAdvancedVisibilityLateClosureStorage[] storage =
+            new VulkanAdvancedVisibilityLateClosureStorage[capacity];
+        for (int index = 0; index < storage.Length; ++index)
+            storage[index] = new();
+        return storage;
     }
 }

@@ -12,6 +12,7 @@ internal sealed class VulkanCommandBufferLifetimeRecord
     public CommandBufferLevel Level;
     public VulkanResourceLifetimeKey AllocatingCommandPool;
     public ulong AllocatingCommandPoolGeneration;
+    public VulkanStableCommandSlotHandle StableCommandIdentity;
     public SealedSubmissionContract? SealedSubmissionContract;
     public VulkanSubmissionPinReceipt SubmissionPinReceipt { get; } = new();
 

@@ -23,6 +23,11 @@ internal sealed partial class VulkanFrameLoop
         _ = attempt.CompletePhase(
             EVulkanFrameStage.PlanBuild,
             EDesktopFrameFlow.Continue);
+        // Native output mutations publish exact CommandArtifact dependency
+        // records. Apply them before this frame captures a reusable-primary
+        // authority so a stale seal cannot be admitted for recording.
+        _commandRuntime.DrainNativeCommandArtifactDependencyInvalidations(
+            ResourceRuntime);
         CommandBuffer[] primaryBuffers = _commandRuntime.CommandBuffers.Buffers
             ?? throw new InvalidOperationException(
                 "Desktop primary command buffers are not initialized.");
@@ -136,6 +141,22 @@ internal sealed partial class VulkanFrameLoop
                     {
                         ingressFinalized = _preparedMeshIngress.TryFinalize(
                             ref _preparedMeshIngressResourceUseScratch);
+                        if (ingressFinalized)
+                        {
+                            ingressFinalized = _preparedMeshIngress
+                                .TryBuildStableBinStream(
+                                    _resourceRuntime.ResidentDrawTemplates);
+                            if (ingressFinalized)
+                            {
+                                VulkanResidentDrawTemplateTable residentTemplates =
+                                    _resourceRuntime.ResidentDrawTemplates;
+                                ingressFinalized = _preparedMeshIngress.StableBinStream
+                                    .TryResolveManifests(
+                                        residentTemplates.StableBinManifestCache,
+                                        residentTemplates.StableBinMembership
+                                            .TopologyGeneration);
+                            }
+                        }
                     }
                     catch (InvalidOperationException ex)
                     {

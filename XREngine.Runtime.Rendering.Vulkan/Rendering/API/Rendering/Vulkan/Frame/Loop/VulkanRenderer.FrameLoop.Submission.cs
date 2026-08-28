@@ -20,6 +20,9 @@ namespace XREngine.Rendering.Vulkan
             }
             finally
             {
+                if (!attempt.Submitted)
+                    _gpuDiagnosticReadbackSidecar?.CancelPrimarySubmission(
+                        attempt.SceneCommandBuffer);
                 // Flush consumes accepted-attempt requests. Anything left here
                 // belongs to a rejected or abandoned recording attempt.
                 DiscardPendingGpuRenderStatsReadbacks();
@@ -297,6 +300,9 @@ namespace XREngine.Rendering.Vulkan
                             // The queue owns this frame as soon as vkQueueSubmit accepts it. Set
                             // settlement flags before profiling/telemetry scopes can unwind.
                             attempt.Submitted = true;
+                            _gpuDiagnosticReadbackSidecar?.MarkPrimarySubmissionAccepted(
+                                attempt.SceneCommandBuffer,
+                                attempt.GraphicsSignalValue);
                             attempt.CommandArtifactsSettled = true;
                             mappedFrameArena?.MarkFrameSlotSubmitted(
                                 attempt.ImageIndex,

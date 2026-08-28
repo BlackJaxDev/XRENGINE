@@ -8,4 +8,6 @@ public enum EHumanoidIKGoalApplicationStatus
     SkippedUncalibrated,
     AppliedAuthored,
     AppliedWithContactCompensation,
+    AppliedWithFeetSpacing,
+    AppliedWithContactCompensationAndFeetSpacing,
 }

@@ -435,6 +435,176 @@ internal sealed class FrameOperationStream
     internal ref readonly PublishFramebufferPayload GetPublishedFramebuffer(int index) => ref _payloads.PublishedFramebuffers[RequireKind(index, EVulkanPrimaryPlanNodeKind.PublishFramebufferForSampling).PayloadIndex];
     internal ref readonly DlssUpscalePayload GetDlssUpscale(int index) => ref _payloads.DlssUpscales[RequireKind(index, EVulkanPrimaryPlanNodeKind.DlssUpscale).PayloadIndex];
     internal ref readonly DlssFrameGenerationPayload GetDlssFrameGeneration(int index) => ref _payloads.DlssFrameGenerations[RequireKind(index, EVulkanPrimaryPlanNodeKind.DlssFrameGeneration).PayloadIndex];
+    internal ref readonly VulkanAdvancedVisibilityOperationPayload GetAdvancedVisibility(int index) => ref _payloads.AdvancedVisibilities[RequireKind(index, EVulkanPrimaryPlanNodeKind.AdvancedVisibility).PayloadIndex];
+    internal VulkanAdvancedVisibilityLateClosureStorage
+        GetAdvancedVisibilityLateClosureStorage(int index)
+        => _payloads.AdvancedVisibilityLateClosures[
+            RequireKind(
+                index,
+                EVulkanPrimaryPlanNodeKind.AdvancedVisibility).PayloadIndex];
+
+    /// <summary>
+    /// Publishes the one admissible native set-1 allocation for a sealed
+    /// visibility operation. This is deliberately the only mutation allowed
+    /// after lowering: it cannot replace the authoring request or retarget the
+    /// logical attachment identities held by the plan.
+    /// </summary>
+    internal bool TryAssociateAdvancedVisibilityState(
+        int index,
+        in VulkanAdvancedVisibilityStageRequest request,
+        in VulkanAdvancedVisibilityResourceState state,
+        VkRenderProgram earlyVisibilityProgram,
+        VkRenderProgram buildIndirectProgram)
+    {
+        if (!state.IsValid || (uint)index >= (uint)_count ||
+            _headers[index].OpCode != EVulkanPrimaryPlanNodeKind.AdvancedVisibility)
+            return false;
+
+        ref readonly FrameOperationHeader header = ref _headers[index];
+        VulkanAdvancedVisibilityOperationPayload payload = _payloads.AdvancedVisibilities[header.PayloadIndex];
+        if (!payload.Request.Equals(request) ||
+            (payload.SceneState.IsValid &&
+             (payload.SceneState.FrameSlot != state.FrameSlot ||
+              payload.SceneState.FrameGeneration != state.FrameGeneration)))
+            return false;
+
+        Pipeline earlyPipeline = earlyVisibilityProgram.GetOrCreateComputePipeline();
+        Pipeline indirectPipeline = buildIndirectProgram.GetOrCreateComputePipeline();
+        if (earlyPipeline.Handle == 0 || indirectPipeline.Handle == 0 ||
+            earlyVisibilityProgram.PipelineLayout.Handle == 0 ||
+            buildIndirectProgram.PipelineLayout.Handle == 0)
+        {
+            return false;
+        }
+        _payloads.AdvancedVisibilities[header.PayloadIndex] = payload with
+        {
+            State = state,
+            EarlyVisibilityProgram = earlyVisibilityProgram,
+            EarlyVisibilityPipeline = earlyPipeline,
+            EarlyVisibilityLinkGeneration = earlyVisibilityProgram.LinkGeneration,
+            BuildIndirectProgram = buildIndirectProgram,
+            BuildIndirectPipeline = indirectPipeline,
+            BuildIndirectLinkGeneration = buildIndirectProgram.LinkGeneration,
+        };
+        return true;
+    }
+
+    internal bool TryAssociateAdvancedVisibilityPublication(
+        int index,
+        in VulkanAdvancedScenePublicationState sceneState)
+    {
+        if (!sceneState.IsValid || (uint)index >= (uint)_count ||
+            _headers[index].OpCode != EVulkanPrimaryPlanNodeKind.AdvancedVisibility)
+            return false;
+
+        ref readonly FrameOperationHeader header = ref _headers[index];
+        VulkanAdvancedVisibilityOperationPayload payload =
+            _payloads.AdvancedVisibilities[header.PayloadIndex];
+        if (payload.SceneState.IsValid && payload.SceneState != sceneState)
+            return false;
+
+        _payloads.AdvancedVisibilities[header.PayloadIndex] = payload with
+        {
+            SceneState = sceneState,
+        };
+        return true;
+    }
+
+    internal bool TryAssociateAdvancedVisibilityTarget(
+        int index,
+        in VulkanAdvancedVisibilityStageRequest request,
+        in VulkanAdvancedVisibilityTargetClosure closure)
+    {
+        if (!closure.IsValid || (uint)index >= (uint)_count ||
+            _headers[index].OpCode != EVulkanPrimaryPlanNodeKind.AdvancedVisibility)
+            return false;
+
+        ref readonly FrameOperationHeader header = ref _headers[index];
+        VulkanAdvancedVisibilityOperationPayload payload =
+            _payloads.AdvancedVisibilities[header.PayloadIndex];
+        if (!payload.Request.Equals(request) ||
+            !ReferenceEquals(request.Target, closure.Target))
+            return false;
+
+        _payloads.AdvancedVisibilities[header.PayloadIndex] = payload with
+        {
+            TargetClosure = closure,
+        };
+        return true;
+    }
+
+    internal bool TryAssociateAdvancedVisibilityLateClosure(
+        int index,
+        in VulkanAdvancedVisibilityStageRequest request,
+        in VulkanAdvancedVisibilityLateTargetClosure closure,
+        VkRenderProgram buildDepthPyramidProgram,
+        VkRenderProgram lateVisibilityProgram)
+    {
+        if (!closure.IsValid || (uint)index >= (uint)_count ||
+            _headers[index].OpCode != EVulkanPrimaryPlanNodeKind.AdvancedVisibility)
+            return false;
+
+        ref readonly FrameOperationHeader header = ref _headers[index];
+        VulkanAdvancedVisibilityOperationPayload payload =
+            _payloads.AdvancedVisibilities[header.PayloadIndex];
+        if (!payload.Request.Equals(request))
+            return false;
+
+        Pipeline depthPipeline = buildDepthPyramidProgram.GetOrCreateComputePipeline();
+        Pipeline latePipeline = lateVisibilityProgram.GetOrCreateComputePipeline();
+        if (depthPipeline.Handle == 0 || latePipeline.Handle == 0 ||
+            buildDepthPyramidProgram.PipelineLayout.Handle == 0 ||
+            lateVisibilityProgram.PipelineLayout.Handle == 0)
+        {
+            return false;
+        }
+
+        _payloads.AdvancedVisibilities[header.PayloadIndex] = payload with
+        {
+            LateTargetClosure = closure,
+            BuildDepthPyramidProgram = buildDepthPyramidProgram,
+            BuildDepthPyramidPipeline = depthPipeline,
+            BuildDepthPyramidLinkGeneration = buildDepthPyramidProgram.LinkGeneration,
+            LateVisibilityProgram = lateVisibilityProgram,
+            LateVisibilityPipeline = latePipeline,
+            LateVisibilityLinkGeneration = lateVisibilityProgram.LinkGeneration,
+        };
+        return true;
+    }
+
+    internal bool TrySealAdvancedVisibilityLateDescriptors(
+        int index,
+        in VulkanAdvancedVisibilityStageRequest request,
+        DescriptorSet[] descriptorSets,
+        int descriptorSetCount)
+    {
+        if ((uint)index >= (uint)_count ||
+            _headers[index].OpCode != EVulkanPrimaryPlanNodeKind.AdvancedVisibility)
+            return false;
+
+        ref readonly FrameOperationHeader header = ref _headers[index];
+        VulkanAdvancedVisibilityOperationPayload payload =
+            _payloads.AdvancedVisibilities[header.PayloadIndex];
+        if (!payload.Request.Equals(request) || payload.LateTargetClosure is not { } closure ||
+            descriptorSetCount != checked(
+                (closure.DispatchCount + 1) * (int)closure.ViewCount) ||
+            descriptorSets.Length < descriptorSetCount)
+            return false;
+
+        for (int setIndex = 0; setIndex < descriptorSetCount; ++setIndex)
+            if (descriptorSets[setIndex].Handle == 0)
+                return false;
+
+        _payloads.AdvancedVisibilities[header.PayloadIndex] = payload with
+        {
+            LateTargetClosure = closure with
+            {
+                DescriptorSets = descriptorSets,
+                DescriptorSetCount = descriptorSetCount,
+            },
+        };
+        return true;
+    }
 
     internal bool Contains(EVulkanPrimaryPlanNodeKind kind)
     {
@@ -501,6 +671,7 @@ internal sealed class FrameOperationStream
             case EVulkanPrimaryPlanNodeKind.PublishFramebufferForSampling: _payloads.PublishedFramebuffers[i]=new(((PublishFramebufferForSamplingOp)op).FrameBuffer); break;
             case EVulkanPrimaryPlanNodeKind.DlssUpscale: { var p=(DlssUpscaleOp)op; _payloads.DlssUpscales[i]=new(p.Session,p.SourceColor,p.Depth,p.Motion,p.OutputColor,p.Exposure,p.Parameters); break; }
             case EVulkanPrimaryPlanNodeKind.DlssFrameGeneration: { var p=(DlssFrameGenerationOp)op; _payloads.DlssFrameGenerations[i]=new(p.Session,p.Depth,p.Motion,p.HudlessColor,p.Parameters,p.UiColorAndAlpha); break; }
+            case EVulkanPrimaryPlanNodeKind.AdvancedVisibility: _payloads.AdvancedVisibilities[i] = new(((AdvancedVisibilityOp)op).Request, default, default, default, null, null, default, 0u, null, default, 0u, null, default, 0u, null, default, 0u); break;
             default: throw new InvalidOperationException($"No payload writer exists for {kind}.");
         }
     }

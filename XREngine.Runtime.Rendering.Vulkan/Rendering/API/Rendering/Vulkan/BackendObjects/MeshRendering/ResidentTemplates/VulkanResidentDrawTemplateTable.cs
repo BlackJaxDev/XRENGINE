@@ -5,9 +5,8 @@ namespace XREngine.Rendering.Vulkan;
 
 /// <summary>
 /// Render-thread-owned, bounded resident-template table. Primary lookup is an
-/// array access by canonical handle index. Each canonical draw owns exactly one
-/// active sealed variant, so stable lookup avoids hashing, allocation, variant
-/// scans, and structural comparison.
+/// array access by canonical handle index. Each canonical draw owns a bounded
+/// set of independently-addressed sealed variants.
 /// </summary>
 internal sealed class VulkanResidentDrawTemplateTable : IDisposable
 {
@@ -57,7 +56,10 @@ internal sealed class VulkanResidentDrawTemplateTable : IDisposable
     private long _exactDependencyInvalidations;
     private long _broadFallbackInvalidations;
     private long _broadFallbackEntries;
-    private readonly int[][] _reverseDependencyHeads;
+    private readonly VulkanResidentDrawTemplateHandle[][] _reverseDependencyHeads;
+    private readonly VulkanStableBinMembership _stableBinMembership;
+    private readonly VulkanStableBinManifestCache _stableBinManifestCache = new();
+    private VulkanResidentDrawTemplateHandle[] _nativeDependencySlots;
     private ulong _lastProjectionDatabaseEpoch;
     private ulong _lastProjectionSequence;
     private VulkanResidentTemplateBroadInvalidationRecord _lastBroadInvalidation;
@@ -70,21 +72,28 @@ internal sealed class VulkanResidentDrawTemplateTable : IDisposable
         ArgumentNullException.ThrowIfNull(resourceRuntime);
         if (primaryCapacity == 0u || primaryCapacity >= int.MaxValue)
             throw new ArgumentOutOfRangeException(nameof(primaryCapacity));
-        if (variantsPerDraw != 1u)
+        if (variantsPerDraw == 0u || variantsPerDraw > ushort.MaxValue)
             throw new ArgumentOutOfRangeException(nameof(variantsPerDraw));
 
         _resourceRuntime = resourceRuntime;
         _ownerThreadId = Environment.CurrentManagedThreadId;
         _variantsPerDraw = checked((int)variantsPerDraw);
         _primarySlots = CreateSlots(checked((int)primaryCapacity + 1), _variantsPerDraw);
-        _reverseDependencyHeads = new int[(int)EBackendReadyCanonicalOwner.Probe + 1][];
+        _nativeDependencySlots = new VulkanResidentDrawTemplateHandle[
+            checked((int)(primaryCapacity * variantsPerDraw) + 1)];
+        _stableBinMembership = new VulkanStableBinMembership(
+            primaryCapacity,
+            _variantsPerDraw);
+        _reverseDependencyHeads = new VulkanResidentDrawTemplateHandle[(int)EBackendReadyCanonicalOwner.Probe + 1][];
         for (int index = 0; index < _reverseDependencyHeads.Length; ++index)
-            _reverseDependencyHeads[index] = new int[1];
+            _reverseDependencyHeads[index] = new VulkanResidentDrawTemplateHandle[1];
     }
 
     internal uint PrimaryCapacity => checked((uint)_primarySlots.Length - 1u);
     internal int VariantsPerDraw => _variantsPerDraw;
     internal int ResidentCount => _residentCount;
+    internal VulkanStableBinMembership StableBinMembership => _stableBinMembership;
+    internal VulkanStableBinManifestCache StableBinManifestCache => _stableBinManifestCache;
     internal VulkanResidentTemplateBroadInvalidationRecord LastBroadInvalidation
         => _lastBroadInvalidation;
 
@@ -122,22 +131,25 @@ internal sealed class VulkanResidentDrawTemplateTable : IDisposable
         if (!TryGetMatchingPrimarySlot(in primary, out PrimarySlot slot))
             return RecordMiss();
 
-        const int index = 0;
         VulkanResidentDrawTemplate?[] variants = slot.Variants;
-        VulkanResidentDrawTemplate? candidate = variants[index];
-        if (candidate is not null && candidate.Variant == variant)
+        if (TryFindVariantOrdinal(slot, in variant, out int index))
         {
+            VulkanResidentDrawTemplate candidate = variants[index]!;
             if (!candidate.Generations.IsStructurallyCompatibleWith(in generations))
                 return RecordMiss();
             if (!_resourceRuntime.IsResidentTemplateDependencyLeaseCurrent(
                     candidate.DependencyLease))
             {
+                _stableBinMembership.Remove(CreateHandle(in primary, slot, index));
                 UnlinkReverseDependencies(candidate);
+                RetireNativeDependencies(candidate);
                 candidate.Dispose();
                 variants[index] = null;
                 slot.EntryGenerations[index] = NextGeneration(
                     slot.EntryGenerations[index]);
                 --_residentCount;
+                if (!HasAnyVariant(slot))
+                    slot.ClearIdentity();
                 Interlocked.Increment(ref _dependencyRejects);
                 RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanResidentDrawTemplate(
                     dependencyRejected: true);
@@ -234,6 +246,37 @@ internal sealed class VulkanResidentDrawTemplateTable : IDisposable
     }
 
     /// <summary>
+    /// Resolves a generation-checked retained address for sealed bin preparation.
+    /// It does not acquire a use: the prepared-frame lifetime transfer remains
+    /// the sole owner of frame-slot retention.
+    /// </summary>
+    internal bool TryGetLive(
+        in VulkanResidentDrawTemplateHandle handle,
+        out VulkanResidentDrawTemplate? template)
+    {
+        VerifyOwnerThread();
+        template = null;
+        if (!handle.IsValid || handle.PrimaryIndex >= (uint)_primarySlots.Length)
+            return false;
+
+        PrimarySlot slot = _primarySlots[checked((int)handle.PrimaryIndex)];
+        int variantOrdinal = handle.VariantOrdinal;
+        if (slot.DatabaseEpoch != handle.DatabaseEpoch ||
+            slot.HandleGeneration != handle.CanonicalHandleGeneration ||
+            (uint)variantOrdinal >= (uint)slot.Variants.Length ||
+            slot.EntryGenerations[variantOrdinal] != handle.EntryGeneration ||
+            slot.Variants[variantOrdinal] is not { } candidate ||
+            !_resourceRuntime.IsResidentTemplateDependencyLeaseCurrent(
+                candidate.DependencyLease))
+        {
+            return false;
+        }
+
+        template = candidate;
+        return true;
+    }
+
+    /// <summary>
     /// Creates or atomically replaces one fixed variant slot. Callers must have
     /// already acquired <paramref name="dependencyLease"/> transactionally; this
     /// table disposes it on every rejected or superseded publication path.
@@ -290,7 +333,14 @@ internal sealed class VulkanResidentDrawTemplateTable : IDisposable
             slot.SetIdentity(in primary);
 
         VulkanResidentDrawTemplate?[] variants = slot.Variants;
-        const int targetVariant = 0;
+        int targetVariant = FindExistingOrVacantVariantOrdinal(slot, in variant);
+        if (targetVariant < 0)
+        {
+            dependencyLease.Dispose();
+            Interlocked.Increment(ref _capacityFailures);
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanResidentDrawTemplate(capacityFailure: true);
+            return false;
+        }
 
         VulkanResidentDrawTemplate? existing = variants[targetVariant];
         if (existing is not null && existing.Variant == variant)
@@ -318,14 +368,46 @@ internal sealed class VulkanResidentDrawTemplateTable : IDisposable
             nativeState,
             dependencyManifest,
             dependencyLease);
+        if (!CanRegisterNativeDependencies(replacement))
+        {
+            replacement.Dispose();
+            Interlocked.Increment(ref _dependencyRejects);
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanResidentDrawTemplate(
+                dependencyRejected: true);
+            return false;
+        }
+        VulkanResidentDrawTemplateHandle replacementHandle = new(
+            primary.Handle.Index,
+            primary.Handle.Generation,
+            primary.DatabaseEpoch,
+            checked((ushort)targetVariant),
+            NextGeneration(slot.EntryGenerations[targetVariant]));
+        if (replacement.IsStableBinEligible &&
+            !_stableBinMembership.TryUpdateTopology(
+                replacementHandle,
+                replacement.RenderBinKey,
+                out _))
+        {
+            replacement.Dispose();
+            Interlocked.Increment(ref _capacityFailures);
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanResidentDrawTemplate(
+                capacityFailure: true);
+            return false;
+        }
+        if (!replacement.IsStableBinEligible && existing is not null)
+            _stableBinMembership.Remove(CreateHandle(in primary, slot, targetVariant));
         if (existing is not null)
+        {
             UnlinkReverseDependencies(existing);
+            RetireNativeDependencies(existing);
+        }
         variants[targetVariant] = replacement;
-        LinkReverseDependencies(
-            checked((int)primary.Handle.Index),
-            replacement);
         slot.EntryGenerations[targetVariant] = NextGeneration(
             slot.EntryGenerations[targetVariant]);
+        VulkanResidentDrawTemplateHandle publishedHandle = CreateHandle(in primary, slot, targetVariant);
+        LinkReverseDependencies(in publishedHandle, replacement);
+        replacement.NativeDependencyIdentity = CreateNativeDependencyIdentity(publishedHandle);
+        RegisterNativeDependencies(replacement, in publishedHandle);
         if (existing is null)
         {
             ++_residentCount;
@@ -342,7 +424,7 @@ internal sealed class VulkanResidentDrawTemplateTable : IDisposable
         }
 
         template = replacement;
-        handle = CreateHandle(in primary, slot, targetVariant);
+        handle = publishedHandle;
         return true;
     }
 
@@ -356,11 +438,12 @@ internal sealed class VulkanResidentDrawTemplateTable : IDisposable
             return false;
 
         VulkanResidentDrawTemplate?[] variants = slot.Variants;
-        const int index = 0;
-        VulkanResidentDrawTemplate? candidate = variants[index];
-        if (candidate is not null && candidate.Variant == variant)
+        if (TryFindVariantOrdinal(slot, in variant, out int index))
         {
+            VulkanResidentDrawTemplate candidate = variants[index]!;
+            _stableBinMembership.Remove(CreateHandle(in primary, slot, index));
             UnlinkReverseDependencies(candidate);
+            RetireNativeDependencies(candidate);
             candidate.Detach();
             variants[index] = null;
             slot.EntryGenerations[index] = NextGeneration(
@@ -369,7 +452,8 @@ internal sealed class VulkanResidentDrawTemplateTable : IDisposable
             Interlocked.Increment(ref _evictions);
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanResidentDrawTemplate(
                 evicted: true);
-            slot.ClearIdentity();
+            if (!HasAnyVariant(slot))
+                slot.ClearIdentity();
             return true;
         }
 
@@ -390,7 +474,10 @@ internal sealed class VulkanResidentDrawTemplateTable : IDisposable
             _variantsPerDraw);
         Array.Copy(_primarySlots, grown, _primarySlots.Length);
         _primarySlots = grown;
-        return true;
+        Array.Resize(
+            ref _nativeDependencySlots,
+            checked((int)(requiredPrimaryCapacity * (uint)_variantsPerDraw) + 1));
+        return _stableBinMembership.GrowAtBoundary(requiredPrimaryCapacity);
     }
 
     /// <summary>
@@ -403,6 +490,7 @@ internal sealed class VulkanResidentDrawTemplateTable : IDisposable
         ReadOnlySpan<BackendTemplateProjectionDelta> deltas)
     {
         VerifyOwnerThread();
+        DrainNativeDependencyInvalidations();
         if (databaseEpoch == 0u || publicationSequence == 0u)
             return;
         if (_lastProjectionDatabaseEpoch == databaseEpoch &&
@@ -429,7 +517,7 @@ internal sealed class VulkanResidentDrawTemplateTable : IDisposable
                         out int invalidated))
                 {
                     RecordBroadFallback(
-                        "reverse dependency index was missing or inconsistent",
+                        $"MissingOrInconsistentReverseManifest:{delta.Owner}:slot={delta.Handle.Index}:generation={delta.Handle.Generation}:domain={delta.Domain}",
                         delta.Owner,
                         delta.Domain,
                         publicationSequence);
@@ -500,6 +588,201 @@ internal sealed class VulkanResidentDrawTemplateTable : IDisposable
             checked((ushort)variantOrdinal),
             slot.EntryGenerations[variantOrdinal]);
 
+    private static bool TryFindVariantOrdinal(
+        PrimarySlot slot,
+        in VulkanResidentDrawTemplateVariantKey variant,
+        out int ordinal)
+    {
+        VulkanResidentDrawTemplate?[] variants = slot.Variants;
+        for (int index = 0; index < variants.Length; ++index)
+        {
+            if (variants[index] is { } candidate && candidate.Variant == variant)
+            {
+                ordinal = index;
+                return true;
+            }
+        }
+        ordinal = -1;
+        return false;
+    }
+
+    private static int FindExistingOrVacantVariantOrdinal(
+        PrimarySlot slot,
+        in VulkanResidentDrawTemplateVariantKey variant)
+    {
+        int vacant = -1;
+        VulkanResidentDrawTemplate?[] variants = slot.Variants;
+        for (int index = 0; index < variants.Length; ++index)
+        {
+            VulkanResidentDrawTemplate? candidate = variants[index];
+            if (candidate is not null && candidate.Variant == variant)
+                return index;
+            if (candidate is null && vacant < 0)
+                vacant = index;
+        }
+        return vacant;
+    }
+
+    private static bool TryFindTemplateOrdinal(
+        PrimarySlot slot,
+        VulkanResidentDrawTemplate template,
+        out int ordinal)
+    {
+        VulkanResidentDrawTemplate?[] variants = slot.Variants;
+        for (int index = 0; index < variants.Length; ++index)
+        {
+            if (ReferenceEquals(variants[index], template))
+            {
+                ordinal = index;
+                return true;
+            }
+        }
+        ordinal = -1;
+        return false;
+    }
+
+    private static bool HasAnyVariant(PrimarySlot slot)
+    {
+        foreach (VulkanResidentDrawTemplate? variant in slot.Variants)
+            if (variant is not null)
+                return true;
+        return false;
+    }
+
+    private ulong CreateNativeDependencyIdentity(
+        in VulkanResidentDrawTemplateHandle handle)
+        // Live primary/variant coordinates are injective within this table.
+        // Graph generations distinguish retirement/republication of the same
+        // coordinate, so correctness never depends on a hash collision.
+        => checked(
+            1UL +
+            (ulong)handle.PrimaryIndex * (uint)_variantsPerDraw +
+            handle.VariantOrdinal);
+
+    private bool CanRegisterNativeDependencies(
+        VulkanResidentDrawTemplate template)
+    {
+        VulkanNativeDependencyGraph graph = _resourceRuntime.NativeDependencies;
+        if (!TryResolve(
+                EVulkanNativeDependencyOwner.PipelineLayout,
+                template.NativeState.PipelineLayout.Handle))
+        {
+            return false;
+        }
+        for (int primitiveIndex = 0;
+             primitiveIndex < template.NativeState.PrimitiveCount;
+             ++primitiveIndex)
+        {
+            if (!TryResolve(
+                    EVulkanNativeDependencyOwner.Pipeline,
+                    template.NativeState.GetPrimitive(primitiveIndex).Pipeline.Handle))
+            {
+                return false;
+            }
+        }
+        return TryResolve(EVulkanNativeDependencyOwner.DescriptorTable, 1UL);
+
+        bool TryResolve(EVulkanNativeDependencyOwner owner, ulong nativeHandle)
+            => nativeHandle != 0 && graph.TryGet(owner, nativeHandle, out _);
+    }
+
+    private void RegisterNativeDependencies(
+        VulkanResidentDrawTemplate template,
+        in VulkanResidentDrawTemplateHandle publishedHandle)
+    {
+        VulkanNativeDependencyGraph graph = _resourceRuntime.NativeDependencies;
+        VulkanNativeDependencyHandle dependent = graph.Register(
+            EVulkanNativeDependencyOwner.ResidentVariant,
+            template.NativeDependencyIdentity);
+        if (!dependent.IsValid)
+            throw new InvalidOperationException(
+                "A preflighted resident variant could not register its native dependency identity.");
+        EnsureNativeDependencySlotCapacity(dependent.Slot);
+        template.NativeDependencyHandle = dependent;
+        _nativeDependencySlots[dependent.Slot] = publishedHandle;
+        LinkNativeDependencyRequired(EVulkanNativeDependencyOwner.PipelineLayout, template.NativeState.PipelineLayout.Handle, dependent);
+        for (int primitiveIndex = 0; primitiveIndex < template.NativeState.PrimitiveCount; ++primitiveIndex)
+            LinkNativeDependencyRequired(
+                EVulkanNativeDependencyOwner.Pipeline,
+                template.NativeState.GetPrimitive(primitiveIndex).Pipeline.Handle,
+                dependent);
+        LinkNativeDependencyRequired(EVulkanNativeDependencyOwner.DescriptorTable, 1UL, dependent);
+    }
+
+    private void RetireNativeDependencies(VulkanResidentDrawTemplate template)
+    {
+        if (template.NativeDependencyIdentity != 0)
+        {
+            if (template.NativeDependencyHandle.IsValid &&
+                template.NativeDependencyHandle.Slot < (uint)_nativeDependencySlots.Length)
+                _nativeDependencySlots[template.NativeDependencyHandle.Slot] = default;
+            _ = _resourceRuntime.NativeDependencies.Retire(
+                EVulkanNativeDependencyOwner.ResidentVariant,
+                template.NativeDependencyIdentity,
+                "ResidentVariant.Eviction");
+            template.NativeDependencyHandle = default;
+        }
+    }
+
+    private void EnsureNativeDependencySlotCapacity(uint requiredSlot)
+    {
+        if (requiredSlot < (uint)_nativeDependencySlots.Length)
+            return;
+
+        int required = checked((int)requiredSlot + 1);
+        int capacity = Math.Max(required, checked(_nativeDependencySlots.Length * 2));
+        Array.Resize(ref _nativeDependencySlots, capacity);
+    }
+
+    private void LinkNativeDependencyRequired(
+        EVulkanNativeDependencyOwner owner,
+        ulong nativeHandle,
+        VulkanNativeDependencyHandle dependent)
+    {
+        VulkanNativeDependencyGraph graph = _resourceRuntime.NativeDependencies;
+        if (nativeHandle == 0 ||
+            !graph.TryGet(owner, nativeHandle, out VulkanNativeDependencyHandle source) ||
+            !graph.Link(
+                owner,
+                source,
+                EVulkanNativeDependencyOwner.ResidentVariant,
+                dependent))
+        {
+            throw new InvalidOperationException(
+                $"A preflighted resident variant lost its required {owner} native dependency before publication.");
+        }
+    }
+
+    private void DrainNativeDependencyInvalidations()
+    {
+        VulkanNativeDependencyGraph graph = _resourceRuntime.NativeDependencies;
+        while (graph.TryDequeueDirtyRecord(
+                   EVulkanNativeDependencyOwner.ResidentVariant,
+                   out VulkanNativeDependencyInvalidationRecord record))
+        {
+            if (record.DependentOwner != EVulkanNativeDependencyOwner.ResidentVariant ||
+                record.Dependent.Slot >= (uint)_nativeDependencySlots.Length)
+                continue;
+
+            VulkanResidentDrawTemplateHandle handle = _nativeDependencySlots[record.Dependent.Slot];
+            if (!handle.IsValid || handle.PrimaryIndex >= (uint)_primarySlots.Length)
+                continue;
+
+            PrimarySlot slot = _primarySlots[checked((int)handle.PrimaryIndex)];
+            if (handle.VariantOrdinal >= slot.Variants.Length ||
+                slot.EntryGenerations[handle.VariantOrdinal] != handle.EntryGeneration)
+                continue;
+
+            VulkanResidentDrawTemplate? template = slot.Variants[handle.VariantOrdinal];
+            if (template is null || template.NativeDependencyHandle != record.Dependent)
+                continue;
+
+            EvictVariant(slot, handle.VariantOrdinal);
+            Interlocked.Increment(ref _exactDependencyInvalidations);
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanResidentTemplateExactDependencyInvalidation(1);
+        }
+    }
+
     private void EvictSlot(PrimarySlot slot)
     {
         VulkanResidentDrawTemplate?[] variants = slot.Variants;
@@ -510,6 +793,16 @@ internal sealed class VulkanResidentDrawTemplateTable : IDisposable
                 continue;
 
             UnlinkReverseDependencies(template);
+            RetireNativeDependencies(template);
+            AdvancedGpuSceneDrawIdentity primary =
+                template.StructuralIdentity.CanonicalDraw.Primary;
+            VulkanResidentDrawTemplateHandle handle = new(
+                primary.Handle.Index,
+                primary.Handle.Generation,
+                primary.DatabaseEpoch,
+                checked((ushort)index),
+                slot.EntryGenerations[index]);
+            _stableBinMembership.Remove(handle);
             template.Detach();
             variants[index] = null;
             slot.EntryGenerations[index] = NextGeneration(
@@ -520,6 +813,25 @@ internal sealed class VulkanResidentDrawTemplateTable : IDisposable
                 evicted: true);
         }
         slot.ClearIdentity();
+    }
+
+    private void EvictVariant(PrimarySlot slot, int index)
+    {
+        if ((uint)index >= (uint)slot.Variants.Length || slot.Variants[index] is not { } template)
+            return;
+
+        UnlinkReverseDependencies(template);
+        RetireNativeDependencies(template);
+        AdvancedGpuSceneDrawIdentity primary = template.StructuralIdentity.CanonicalDraw.Primary;
+        _stableBinMembership.Remove(CreateHandle(in primary, slot, index));
+        template.Detach();
+        slot.Variants[index] = null;
+        slot.EntryGenerations[index] = NextGeneration(slot.EntryGenerations[index]);
+        --_residentCount;
+        Interlocked.Increment(ref _evictions);
+        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanResidentDrawTemplate(evicted: true);
+        if (!HasAnyVariant(slot))
+            slot.ClearIdentity();
     }
 
     private void EnsureReverseDependencyCapacity(
@@ -535,7 +847,7 @@ internal sealed class VulkanResidentDrawTemplateTable : IDisposable
                 throw new InvalidOperationException("Unsupported resident reverse-dependency owner.");
 
             int required = checked((int)dependency.Handle.Index + 1);
-            int[] heads = _reverseDependencyHeads[owner];
+            VulkanResidentDrawTemplateHandle[] heads = _reverseDependencyHeads[owner];
             if (heads.Length >= required)
                 continue;
 
@@ -547,7 +859,7 @@ internal sealed class VulkanResidentDrawTemplateTable : IDisposable
     }
 
     private void LinkReverseDependencies(
-        int primaryIndex,
+        in VulkanResidentDrawTemplateHandle handle,
         VulkanResidentDrawTemplate template)
     {
         ReadOnlySpan<VulkanResidentDrawDependency> dependencies =
@@ -557,25 +869,25 @@ internal sealed class VulkanResidentDrawTemplateTable : IDisposable
         for (int index = 0; index < dependencies.Length; ++index)
         {
             VulkanResidentDrawDependency dependency = dependencies[index];
-            int[] heads = _reverseDependencyHeads[(int)dependency.Owner];
+            VulkanResidentDrawTemplateHandle[] heads = _reverseDependencyHeads[(int)dependency.Owner];
             int dependencyIndex = checked((int)dependency.Handle.Index);
-            int previousHead = heads[dependencyIndex];
+            VulkanResidentDrawTemplateHandle previousHead = heads[dependencyIndex];
             links[index] = new VulkanResidentDrawDependencyLink
             {
-                NextPrimaryIndex = previousHead,
+                Next = previousHead,
                 IsLinked = true,
             };
-            if (previousHead != 0 &&
+            if (previousHead.IsValid &&
                 TryGetReverseLink(
-                    previousHead,
+                    in previousHead,
                     dependency.Owner,
                     dependency.Handle.Index,
                     out VulkanResidentDrawDependencyManifest? headManifest,
                     out int headLinkIndex))
             {
-                headManifest!.ReverseLinks[headLinkIndex].PreviousPrimaryIndex = primaryIndex;
+                headManifest!.ReverseLinks[headLinkIndex].Previous = handle;
             }
-            heads[dependencyIndex] = primaryIndex;
+            heads[dependencyIndex] = handle;
         }
     }
 
@@ -594,32 +906,30 @@ internal sealed class VulkanResidentDrawTemplateTable : IDisposable
             VulkanResidentDrawDependency dependency = dependencies[index];
             int owner = (int)dependency.Owner;
             int dependencyIndex = checked((int)dependency.Handle.Index);
-            int[] heads = _reverseDependencyHeads[owner];
-            if (link.PreviousPrimaryIndex == 0)
+            VulkanResidentDrawTemplateHandle[] heads = _reverseDependencyHeads[owner];
+            if (!link.Previous.IsValid)
             {
-                heads[dependencyIndex] = link.NextPrimaryIndex;
+                heads[dependencyIndex] = link.Next;
             }
             else if (TryGetReverseLink(
-                         link.PreviousPrimaryIndex,
+                         in link.Previous,
                          dependency.Owner,
                          dependency.Handle.Index,
                          out VulkanResidentDrawDependencyManifest? previousManifest,
                          out int previousLinkIndex))
             {
-                previousManifest!.ReverseLinks[previousLinkIndex].NextPrimaryIndex =
-                    link.NextPrimaryIndex;
+                previousManifest!.ReverseLinks[previousLinkIndex].Next = link.Next;
             }
 
-            if (link.NextPrimaryIndex != 0 &&
+            if (link.Next.IsValid &&
                 TryGetReverseLink(
-                    link.NextPrimaryIndex,
+                    in link.Next,
                     dependency.Owner,
                     dependency.Handle.Index,
                     out VulkanResidentDrawDependencyManifest? nextManifest,
                     out int nextLinkIndex))
             {
-                nextManifest!.ReverseLinks[nextLinkIndex].PreviousPrimaryIndex =
-                    link.PreviousPrimaryIndex;
+                nextManifest!.ReverseLinks[nextLinkIndex].Previous = link.Previous;
             }
             link = default;
         }
@@ -638,18 +948,18 @@ internal sealed class VulkanResidentDrawTemplateTable : IDisposable
             return false;
         }
 
-        int[] heads = _reverseDependencyHeads[ownerIndex];
+        VulkanResidentDrawTemplateHandle[] heads = _reverseDependencyHeads[ownerIndex];
         if (handle.Index >= (uint)heads.Length)
             return true;
 
-        int primaryIndex = heads[checked((int)handle.Index)];
+        VulkanResidentDrawTemplateHandle dependent = heads[checked((int)handle.Index)];
         int traversalBudget = _residentCount + 1;
-        int expectedPreviousPrimaryIndex = 0;
-        while (primaryIndex != 0)
+        VulkanResidentDrawTemplateHandle expectedPrevious = default;
+        while (dependent.IsValid)
         {
             if (--traversalBudget < 0 ||
                 !TryGetReverseLink(
-                    primaryIndex,
+                    in dependent,
                     owner,
                     handle.Index,
                     out VulkanResidentDrawDependencyManifest? manifest,
@@ -659,18 +969,17 @@ internal sealed class VulkanResidentDrawTemplateTable : IDisposable
             }
 
             VulkanResidentDrawDependencyLink link = manifest!.ReverseLinks[linkIndex];
-            if (link.PreviousPrimaryIndex != expectedPreviousPrimaryIndex)
+            if (link.Previous != expectedPrevious)
                 return false;
-            int nextPrimaryIndex = link.NextPrimaryIndex;
-            if (nextPrimaryIndex != 0 &&
+            VulkanResidentDrawTemplateHandle next = link.Next;
+            if (next.IsValid &&
                 (!TryGetReverseLink(
-                    nextPrimaryIndex,
+                    in next,
                     owner,
                     handle.Index,
                     out VulkanResidentDrawDependencyManifest? nextManifest,
                     out int nextLinkIndex) ||
-                 nextManifest!.ReverseLinks[nextLinkIndex].PreviousPrimaryIndex !=
-                    primaryIndex))
+                 nextManifest!.ReverseLinks[nextLinkIndex].Previous != dependent))
             {
                 return false;
             }
@@ -678,20 +987,22 @@ internal sealed class VulkanResidentDrawTemplateTable : IDisposable
                 manifest.CanonicalDependencies[linkIndex];
             if (dependency.Handle == handle)
             {
-                EvictSlot(_primarySlots[primaryIndex]);
+                EvictVariant(
+                    _primarySlots[checked((int)dependent.PrimaryIndex)],
+                    dependent.VariantOrdinal);
                 ++invalidated;
             }
             else
             {
-                expectedPreviousPrimaryIndex = primaryIndex;
+                expectedPrevious = dependent;
             }
-            primaryIndex = nextPrimaryIndex;
+            dependent = next;
         }
         return true;
     }
 
     private bool TryGetReverseLink(
-        int primaryIndex,
+        in VulkanResidentDrawTemplateHandle handle,
         EBackendReadyCanonicalOwner owner,
         uint dependencyIndex,
         out VulkanResidentDrawDependencyManifest? manifest,
@@ -699,11 +1010,18 @@ internal sealed class VulkanResidentDrawTemplateTable : IDisposable
     {
         manifest = null;
         linkIndex = -1;
-        if ((uint)primaryIndex >= (uint)_primarySlots.Length ||
-            _primarySlots[primaryIndex].Variants[0] is not { } template)
+        if (!handle.IsValid || handle.PrimaryIndex >= (uint)_primarySlots.Length)
         {
             return false;
         }
+
+        PrimarySlot slot = _primarySlots[checked((int)handle.PrimaryIndex)];
+        if (slot.DatabaseEpoch != handle.DatabaseEpoch ||
+            slot.HandleGeneration != handle.CanonicalHandleGeneration ||
+            handle.VariantOrdinal >= slot.Variants.Length ||
+            slot.EntryGenerations[handle.VariantOrdinal] != handle.EntryGeneration ||
+            slot.Variants[handle.VariantOrdinal] is not { } template)
+            return false;
 
         VulkanResidentDrawDependencyManifest candidate =
             template.DependencyManifest;

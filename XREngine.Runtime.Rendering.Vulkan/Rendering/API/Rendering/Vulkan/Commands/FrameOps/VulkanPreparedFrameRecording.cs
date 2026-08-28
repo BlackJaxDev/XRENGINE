@@ -65,6 +65,12 @@ internal sealed class VulkanPreparedFrameRecording
         new string[VulkanMeshOperationRequestQueue.Capacity];
     private readonly byte[] _canonicalPublicationNativeAttempts =
         new byte[VulkanMeshOperationRequestQueue.Capacity];
+    private BackendReadyCanonicalViewRecord[] _globalViews = [];
+    private BackendReadyCanonicalPassRecord[] _globalPasses = [];
+    private BackendReadyDiagnosticReadbackRequest[] _globalDiagnostics = [];
+    private int _globalViewCount;
+    private int _globalPassCount;
+    private int _globalDiagnosticCount;
     private readonly VulkanResidentDrawTemplate?[] _residentTemplateUses =
         new VulkanResidentDrawTemplate[VulkanMeshOperationRequestQueue.Capacity];
     private VulkanPreparedCommandChain[] _commandChains =
@@ -119,6 +125,48 @@ internal sealed class VulkanPreparedFrameRecording
     /// complete lowered operation/output snapshot alongside prepared draws.
     /// </summary>
     internal FramePlan? FramePlan { get; private set; }
+    internal VulkanPreparedFrameGlobalResourceSnapshot GlobalResources { get; private set; }
+    internal ReadOnlySpan<BackendReadyCanonicalViewRecord> GlobalViews => _globalViews.AsSpan(0, _globalViewCount);
+    internal ReadOnlySpan<BackendReadyCanonicalPassRecord> GlobalPasses => _globalPasses.AsSpan(0, _globalPassCount);
+    internal ReadOnlySpan<BackendReadyDiagnosticReadbackRequest> GlobalDiagnostics => _globalDiagnostics.AsSpan(0, _globalDiagnosticCount);
+
+    internal void CaptureGlobalResources(BackendReadyFramePackage package, ulong packageGeneration)
+    {
+        ArgumentNullException.ThrowIfNull(package);
+        if (IsFrozen || packageGeneration == 0u)
+            throw new InvalidOperationException("Global resources must be captured before prepared-frame freeze.");
+        Copy(package.CanonicalViews, ref _globalViews, out _globalViewCount);
+        Copy(package.CanonicalPasses, ref _globalPasses, out _globalPassCount);
+        Copy(package.DiagnosticReadbackRequests, ref _globalDiagnostics, out _globalDiagnosticCount);
+        string retainReason = "package publication identity mismatch";
+        if (!package.TryGetCanonicalPublication(
+                out AdvancedSharedGpuSceneDatabase database,
+                out AdvancedGpuScenePublicationReference publication) ||
+            package.CanonicalScenePublication.DatabaseEpoch != publication.DatabaseEpoch ||
+            package.CanonicalScenePublication.Sequence != publication.Sequence ||
+            !TryRetainCanonicalPublication(database, in publication, out retainReason))
+        {
+            throw new VulkanPlanPreconditionException(
+                $"Prepared global resources could not retain their exact canonical publication: {retainReason}.");
+        }
+        GlobalResources = new(
+            package.CanonicalFrame,
+            package.CanonicalScenePublication,
+            database,
+            publication,
+            packageGeneration,
+            _globalViewCount,
+            _globalPassCount,
+            _globalDiagnosticCount);
+    }
+
+    private static void Copy<T>(ReadOnlySpan<T> source, ref T[] destination, out int count)
+    {
+        if (destination.Length < source.Length)
+            Array.Resize(ref destination, Math.Max(source.Length, destination.Length == 0 ? 4 : destination.Length * 2));
+        source.CopyTo(destination);
+        count = source.Length;
+    }
 
     internal void Begin(int frameSlot, ulong generation)
     {
@@ -458,6 +506,23 @@ internal sealed class VulkanPreparedFrameRecording
         }
 
         AdvancedGpuScenePublicationReference publication = canonicalDraw.Publication;
+        return TryRetainCanonicalPublication(database, in publication, out reason);
+    }
+
+    internal bool TryRetainCanonicalPublication(
+        AdvancedSharedGpuSceneDatabase database,
+        in AdvancedGpuScenePublicationReference publication,
+        out string reason)
+    {
+        ArgumentNullException.ThrowIfNull(database);
+        if (IsFrozen || !publication.IsValid)
+        {
+            reason = IsFrozen
+                ? "prepared recording is already frozen"
+                : "canonical publication reference is invalid";
+            return false;
+        }
+
         for (int index = 0; index < _canonicalPublicationLeaseCount; ++index)
         {
             if (ReferenceEquals(_canonicalPublicationDatabases[index], database) &&
@@ -518,6 +583,39 @@ internal sealed class VulkanPreparedFrameRecording
         }
 
         AdvancedGpuScenePublicationReference publication = canonicalDraw.Publication;
+        return TryPrepareAdvancedScenePublication(
+            runtime,
+            database,
+            in publication,
+            out state,
+            out failure,
+            out reason,
+            out newlyAttempted);
+    }
+
+    internal bool TryPrepareAdvancedScenePublication(
+        VulkanAdvancedSceneResourceRuntime runtime,
+        AdvancedSharedGpuSceneDatabase database,
+        in AdvancedGpuScenePublicationReference publication,
+        out VulkanAdvancedScenePublicationState state,
+        out EVulkanAdvancedSceneResourceFailure failure,
+        out string reason,
+        out bool newlyAttempted)
+    {
+        ArgumentNullException.ThrowIfNull(runtime);
+        ArgumentNullException.ThrowIfNull(database);
+        state = default;
+        newlyAttempted = false;
+        if (IsFrozen)
+            throw new InvalidOperationException(
+                "Advanced-scene publications must be prepared before recording is frozen.");
+        if (!publication.IsValid)
+        {
+            failure = EVulkanAdvancedSceneResourceFailure.InvalidPublication;
+            reason = "canonical publication reference is invalid";
+            return false;
+        }
+
         for (int index = 0; index < _canonicalPublicationLeaseCount; ++index)
         {
             if (!ReferenceEquals(_canonicalPublicationDatabases[index], database) ||
@@ -541,11 +639,17 @@ internal sealed class VulkanPreparedFrameRecording
 
             _canonicalPublicationNativeAttempts[index] = 1;
             newlyAttempted = true;
+            BackendReadyCanonicalFrameRecord canonicalFrame =
+                GlobalResources.Frame;
             if (!runtime.TryPreparePublication(
                     FrameSlot,
                     Generation,
                     database,
                     publication,
+                    GlobalViews,
+                    in canonicalFrame,
+                    GlobalPasses,
+                    GlobalResources.DiagnosticCount,
                     out VulkanAdvancedScenePublicationUse use,
                     out failure,
                     out reason))
@@ -653,6 +757,8 @@ internal sealed class VulkanPreparedFrameRecording
             _canonicalPublicationNativeFailureReasons[index] = null;
         }
         _canonicalPublicationLeaseCount = 0;
+        _globalViewCount = _globalPassCount = _globalDiagnosticCount = 0;
+        GlobalResources = default;
 
         for (int index = 0; index < _residentTemplateUseCount; ++index)
         {

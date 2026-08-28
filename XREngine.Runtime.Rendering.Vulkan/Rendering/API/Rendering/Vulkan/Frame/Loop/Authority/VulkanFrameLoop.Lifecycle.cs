@@ -99,6 +99,14 @@ internal sealed partial class VulkanFrameLoop
                     "[VulkanAdvancedScene] Native dual-feed realization is unavailable: {0}",
                     advancedSceneResourceReason);
             }
+            if (!_resourceRuntime.AdvancedVisibilityResources.TryInitialize(
+                    _deviceContext,
+                    out string advancedVisibilityResourceReason))
+            {
+                Debug.VulkanWarning(
+                    "[VulkanAdvancedVisibility] Native set-1 producer realization is unavailable: {0}",
+                    advancedVisibilityResourceReason);
+            }
             ReserveOpenXrFrameDataSlotsIfRequired("initialization");
             int deferredProgramLinkCount = _resourceRuntime.PipelineManager.FlushPendingDeviceReadyProgramLinks();
             if (deferredProgramLinkCount > 0)
@@ -254,6 +262,10 @@ internal sealed partial class VulkanFrameLoop
         RunCleanupStep(
             "advanced-scene native resources",
             _resourceRuntime.AdvancedSceneResources.RetireAll,
+            failures);
+        RunCleanupStep(
+            "advanced-visibility set-1 native resources",
+            _resourceRuntime.AdvancedVisibilityResources.RetireAll,
             failures);
         RunCleanupStep("query arenas", _resourceRuntime.Queries.DisposeArenas, failures);
         RunCleanupStep("mesh uniform buffers", _resourceRuntime.DestroyRemainingTrackedMeshUniformBuffers, failures);

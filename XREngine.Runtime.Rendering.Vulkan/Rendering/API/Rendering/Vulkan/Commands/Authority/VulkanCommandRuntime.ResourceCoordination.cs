@@ -48,6 +48,7 @@ internal sealed partial class VulkanCommandRuntime
         if (observedGeneration != 0 &&
             tracker.GetPublishedGeneration(resourceKey) == observedGeneration)
         {
+            LinkNativeCommandArtifactDependency(commandBufferHandle, resourceKey, owner);
             return;
         }
 
@@ -57,6 +58,40 @@ internal sealed partial class VulkanCommandRuntime
             resourceKey,
             observedGeneration,
             owner);
+        LinkNativeCommandArtifactDependency(commandBufferHandle, resourceKey, owner);
+    }
+
+    /// <summary>
+    /// Publishes native render-pass ownership separately from the general
+    /// lifetime batch so render-pass replacement dirties only the command
+    /// artifacts that actually recorded that pass.
+    /// </summary>
+    private void LinkNativeCommandArtifactDependency(
+        ulong commandBufferHandle,
+        in VulkanResourceLifetimeKey resourceKey,
+        string owner)
+    {
+        if (resourceKey.Type != ObjectType.RenderPass)
+            return;
+
+        VulkanNativeDependencyGraph graph = ResourceRuntime.NativeDependencies;
+        if (!graph.TryGet(
+                EVulkanNativeDependencyOwner.RenderPass,
+                resourceKey.Handle,
+                out VulkanNativeDependencyHandle renderPass) ||
+            !graph.TryGet(
+                EVulkanNativeDependencyOwner.CommandArtifact,
+                commandBufferHandle,
+                out VulkanNativeDependencyHandle commandArtifact) ||
+            !graph.Link(
+                EVulkanNativeDependencyOwner.RenderPass,
+                renderPass,
+                EVulkanNativeDependencyOwner.CommandArtifact,
+                commandArtifact))
+        {
+            throw new InvalidOperationException(
+                $"{owner} could not publish RenderPass 0x{resourceKey.Handle:X} -> CommandArtifact 0x{commandBufferHandle:X}.");
+        }
     }
 
     /// <summary>

@@ -1,3 +1,4 @@
+using System.Numerics;
 using System.Runtime.CompilerServices;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Commands;
@@ -34,6 +35,7 @@ public sealed class AdvancedPreparationExtractor : IDisposable
     private readonly AdvancedVisibilityCandidate[] _visibilityCandidates;
     private readonly AdvancedVisibilityPayload[] _visibilityPayloads;
     private readonly AdvancedVisibilityDispatchPlan[] _visibilityPlans;
+    private readonly RenderFrameViewDescriptor[] _visibilityPlanViews;
     private readonly AdvancedDeformedArenaSlice[] _drawDeformationSlices;
     private readonly int[] _drawDeformationCandidateIndices;
     private readonly uint[] _depthPyramidGenerations;
@@ -50,6 +52,12 @@ public sealed class AdvancedPreparationExtractor : IDisposable
     private uint _feedbackLookupGeneration;
     private uint _scheduleLookupGeneration;
     private ulong _publicationGeneration;
+    private long _visibilityContentGeneration;
+    private RenderFrameViewSet? _lastVisibilityViewSet;
+    // This is an identity-only guard for the fixed extractor columns.  A
+    // deferred Vulkan consumer must obtain record data from the package's
+    // retained publication, never by retaining this mutable GPUScene.
+    private uint _preparedSceneIdentity;
 
     public AdvancedPreparationExtractor(AdvancedPreparationOptions options)
     {
@@ -100,6 +108,8 @@ public sealed class AdvancedPreparationExtractor : IDisposable
             new AdvancedVisibilityPayload[options.MaximumDraws];
         _visibilityPlans =
             new AdvancedVisibilityDispatchPlan[options.MaximumViews];
+        _visibilityPlanViews =
+            new RenderFrameViewDescriptor[options.MaximumViews];
         _drawDeformationSlices =
             new AdvancedDeformedArenaSlice[options.MaximumDraws];
         _drawDeformationCandidateIndices =
@@ -114,6 +124,19 @@ public sealed class AdvancedPreparationExtractor : IDisposable
         => _visibilityCandidates.AsSpan(0, _drawCount);
     public ReadOnlySpan<AdvancedVisibilityPayload> VisibilityPayloads
         => _visibilityPayloads.AsSpan(0, _drawCount);
+    /// <summary>
+    /// Verifies that a deferred backend consumer still observes the exact
+    /// retained preparation generation it was handed. This guards the fixed
+    /// payload arrays from a later world-frame extraction without copying them
+    /// into a transient CPU fallback buffer.
+    /// </summary>
+    public bool MatchesPublication(in AdvancedPreparationPublication publication)
+        => _preparedSceneIdentity != 0u && publication.GpuResourcesPublished &&
+           publication.PublicationGeneration == _publicationGeneration &&
+           publication.VisibilityContentGeneration == VisibilityContentGeneration &&
+           publication.DrawCount == (uint)_drawCount &&
+           publication.SceneIdentity == _preparedSceneIdentity &&
+           publication.FrameId != 0u;
     public ReadOnlySpan<EAdvancedGeometryProducer> VisibilityProducers
         => _indirectPlanner.ProducersByPayload;
     public ReadOnlySpan<AdvancedVisibilityDispatchPlan> VisibilityPlans
@@ -126,8 +149,21 @@ public sealed class AdvancedPreparationExtractor : IDisposable
         => _dispatchPlanner;
     public ReadOnlySpan<AdvancedIndirectRange> IndirectRanges
         => _indirectPlanner.Ranges;
+    /// <summary>
+    /// Original payload indices grouped in the exact order occupied by the
+    /// indirect ranges. The visibility set-1 publisher uses this immutable
+    /// permutation to stamp each payload's range without reclassification.
+    /// </summary>
+    public ReadOnlySpan<int> IndirectPayloadIndices
+        => _indirectPlanner.PayloadIndices;
     public AdvancedDeformationAdmissionResult Admission => _admission;
     public AdvancedIndirectPreparationResult IndirectResult => _indirectResult;
+    /// <summary>
+    /// Monotonic identity for the mutable visibility columns retained by this
+    /// extractor. Deferred consumers must validate it before using those arrays.
+    /// </summary>
+    public ulong VisibilityContentGeneration
+        => unchecked((ulong)Volatile.Read(ref _visibilityContentGeneration));
     public AdvancedDeformedVertexArenaTelemetry ArenaTelemetry
         => _deformedArena.GetTelemetry();
     public AdvancedFrameUploadTelemetrySnapshot FrameUploadTelemetry
@@ -150,6 +186,14 @@ public sealed class AdvancedPreparationExtractor : IDisposable
         RenderFrameViewSet? viewSet,
         EAdvancedPreparationConsumer consumers)
     {
+        // Do not let deferred or failed preparation leave consumers observing
+        // arrays tied to the preceding world frame.
+        AdvanceVisibilityContentGeneration();
+        _preparedSceneIdentity = 0u;
+        _drawCount = 0;
+        _visibilityPlanCount = 0;
+        _lastVisibilityViewSet = null;
+        _uploadCopyRangeCount = 0;
         ulong frameId = world.FrameId;
         ulong completedValue = frameId == 0UL ? 0UL : frameId - 1UL;
         if (!_frameUploadArena.TryBeginFrame(frameId, completedValue))
@@ -247,12 +291,18 @@ public sealed class AdvancedPreparationExtractor : IDisposable
             submissionStrategy:
                 RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy());
         _visibilityPlanCount = 0;
-        AddVisibilityPlans(viewSet);
+        if (viewSet is RenderFrameViewSet initialViews)
+        {
+            _lastVisibilityViewSet = initialViews;
+            AddVisibilityPlansCore(initialViews, replaceMask: true);
+        }
 
         _deformedArena.EndFrame(frameId);
         _frameUploadArena.EndFrame(frameId);
         _gpuDeformation.EndFrame(frameId);
         _publicationGeneration++;
+        _preparedSceneIdentity = unchecked((uint)RuntimeHelpers.GetHashCode(
+            world.GpuScene));
         ulong deformedVertices = 0UL;
         ReadOnlySpan<AdvancedDeformationJobRecord> jobs =
             _deformationJobs.Jobs;
@@ -262,6 +312,7 @@ public sealed class AdvancedPreparationExtractor : IDisposable
         return new AdvancedPreparationPublication(
             frameId,
             _publicationGeneration,
+            VisibilityContentGeneration,
             SceneIdentity: unchecked((uint)RuntimeHelpers.GetHashCode(
                 world.GpuScene)),
             DrawCount: checked((uint)_drawCount),
@@ -312,11 +363,34 @@ public sealed class AdvancedPreparationExtractor : IDisposable
     {
         if (viewSet is not RenderFrameViewSet views)
             return _visibilityPlanCount;
+        if (_lastVisibilityViewSet is RenderFrameViewSet previousViews &&
+            previousViews.Equals(views))
+        {
+            return _visibilityPlanCount;
+        }
+
+        // Invalidate every previously captured publication before mutating
+        // candidate masks, temporal depth generations, or dispatch plans.
+        AdvanceVisibilityContentGeneration();
+        _lastVisibilityViewSet = views;
+        return AddVisibilityPlansCore(views, replaceMask: false);
+    }
+
+    private int AddVisibilityPlansCore(
+        in RenderFrameViewSet views,
+        bool replaceMask)
+    {
+        // A shared extraction can accumulate output-local view sets. Keep the
+        // candidate mask as their exact union; early dispatch selects one
+        // canonical view-id from that union for each set-1 segment.
+        ClassifyCandidatesForViews(views, replaceMask);
 
         for (int viewIndex = 0; viewIndex < views.ViewCount; viewIndex++)
         {
             RenderFrameViewDescriptor view = views.GetView(viewIndex);
-            if (FindCurrentPlan(view.EffectiveHistoryKey) >= 0)
+            int currentPlanIndex = FindCurrentPlan(view.EffectiveHistoryKey);
+            if (currentPlanIndex >= 0 &&
+                _visibilityPlanViews[currentPlanIndex].Equals(view))
                 continue;
 
             int viewSlot = FindOrAddViewSlot(view.EffectiveHistoryKey);
@@ -350,11 +424,95 @@ public sealed class AdvancedPreparationExtractor : IDisposable
                         (uint)_options.MaximumDraws),
                     gpuCounterOffset: checked((uint)viewSlot * 16u));
 
-            if (_visibilityPlanCount < _visibilityPlans.Length)
-                _visibilityPlans[_visibilityPlanCount++] = plan;
+            if (currentPlanIndex >= 0)
+            {
+                _visibilityPlans[currentPlanIndex] = plan;
+                _visibilityPlanViews[currentPlanIndex] = view;
+            }
+            else if (_visibilityPlanCount < _visibilityPlans.Length)
+            {
+                _visibilityPlans[_visibilityPlanCount] = plan;
+                _visibilityPlanViews[_visibilityPlanCount++] = view;
+            }
         }
 
         return _visibilityPlanCount;
+    }
+
+    private void AdvanceVisibilityContentGeneration()
+    {
+        long generation = Interlocked.Increment(ref _visibilityContentGeneration);
+        if (generation == 0)
+            _ = Interlocked.Increment(ref _visibilityContentGeneration);
+    }
+
+    private void ClassifyCandidatesForViews(
+        RenderFrameViewSet? viewSet,
+        bool replaceMask)
+    {
+        if (viewSet is not RenderFrameViewSet views)
+            return;
+
+        for (int candidateIndex = 0; candidateIndex < _drawCount; ++candidateIndex)
+        {
+            AdvancedVisibilityCandidate candidate = _visibilityCandidates[candidateIndex];
+            ulong viewMask = replaceMask ? 0UL : candidate.ViewMask;
+            for (int viewIndex = 0; viewIndex < views.ViewCount; ++viewIndex)
+            {
+                RenderFrameViewDescriptor view = views.GetView(viewIndex);
+                if (view.ViewId >= 64u ||
+                    !SphereIntersectsView(candidate.BoundsSphere, in view))
+                {
+                    continue;
+                }
+
+                viewMask |= 1UL << checked((int)view.ViewId);
+            }
+            _visibilityCandidates[candidateIndex] = candidate with
+            {
+                ViewMask = viewMask,
+            };
+        }
+    }
+
+    private static bool SphereIntersectsView(
+        Vector4 sphere,
+        in RenderFrameViewDescriptor view)
+    {
+        if (!float.IsFinite(sphere.X) || !float.IsFinite(sphere.Y) ||
+            !float.IsFinite(sphere.Z) || !float.IsFinite(sphere.W) ||
+            sphere.W < 0.0f)
+        {
+            return false;
+        }
+
+        Matrix4x4 projection = view.ProjectionMatrixUnjittered == default
+            ? view.ProjectionMatrix
+            : view.ProjectionMatrixUnjittered;
+        Matrix4x4 viewProjection = view.ViewMatrix * projection;
+        Vector4 columnX = new(viewProjection.M11, viewProjection.M21,
+            viewProjection.M31, viewProjection.M41);
+        Vector4 columnY = new(viewProjection.M12, viewProjection.M22,
+            viewProjection.M32, viewProjection.M42);
+        Vector4 columnZ = new(viewProjection.M13, viewProjection.M23,
+            viewProjection.M33, viewProjection.M43);
+        Vector4 columnW = new(viewProjection.M14, viewProjection.M24,
+            viewProjection.M34, viewProjection.M44);
+        return SphereInsidePlane(sphere, columnW + columnX) &&
+            SphereInsidePlane(sphere, columnW - columnX) &&
+            SphereInsidePlane(sphere, columnW + columnY) &&
+            SphereInsidePlane(sphere, columnW - columnY) &&
+            SphereInsidePlane(sphere, columnZ) &&
+            SphereInsidePlane(sphere, columnW - columnZ);
+    }
+
+    private static bool SphereInsidePlane(Vector4 sphere, Vector4 plane)
+    {
+        float normalLength = plane.X * plane.X + plane.Y * plane.Y +
+            plane.Z * plane.Z;
+        return normalLength > 0.0f &&
+            Vector4.Dot(plane, new Vector4(sphere.X, sphere.Y, sphere.Z, 1.0f)) >=
+            -sphere.W * MathF.Sqrt(normalLength);
     }
 
     /// <summary>
@@ -400,6 +558,7 @@ public sealed class AdvancedPreparationExtractor : IDisposable
         scene.TryGetSourceCommand(
             commandIndex,
             out IRenderCommandMesh? source);
+        AdvancedMeshRenderSnapshot snapshot = CaptureSnapshot(source);
         if (!scene.TryGetCanonicalAdvancedPreparationHandles(
                 commandIndex,
                 out AdvancedGpuHandle draw,
@@ -410,8 +569,6 @@ public sealed class AdvancedPreparationExtractor : IDisposable
             return;
         }
         bool commandChanged = scene.WasCanonicalDrawAddedThisPublication(draw);
-        AdvancedMeshRenderSnapshot snapshot =
-            CaptureSnapshot(source);
         XRMeshRenderer? renderer = snapshot.Renderer;
         XRMesh? mesh = renderer?.Mesh;
 
@@ -433,16 +590,25 @@ public sealed class AdvancedPreparationExtractor : IDisposable
                 BvhLeaf: command.BoundsID,
                 visibilityFlags);
 
-        AdvancedSceneGeometryOffsets offsets =
-            ResolveGeometryOffsets(scene, command);
+        bool hasCanonicalGeometry = scene.AdvancedSharedDatabase.Scene.Geometry
+            .TryResolveVisibilityGeometry(
+                geometry,
+                out AdvancedGeometryRecord canonicalGeometry);
+        AdvancedSceneGeometryOffsets offsets = ResolveGeometryOffsets(
+            hasCanonicalGeometry,
+            in canonicalGeometry,
+            command.SkinID);
         bool skinned =
             (command.Flags & (uint)GPUIndirectRenderFlags.Skinned) != 0u &&
             mesh is { VertexCount: > 0 };
-        bool meshletsResident =
-            scene.TryGetMeshletRange(
-                command.MeshID,
-                out GPUScene.GpuMeshletRange meshletRange) &&
-            meshletRange.HasMeshlets;
+        bool meshletsResident = hasCanonicalGeometry &&
+            canonicalGeometry.MeshletCount != 0u &&
+            canonicalGeometry.MeshletDescriptors.IsValid &&
+            canonicalGeometry.MeshletVertexIndices.IsValid &&
+            canonicalGeometry.MeshletTriangleWords.IsValid;
+        scene.TryGetMeshletRange(
+            command.MeshID,
+            out GPUScene.GpuMeshletRange deformationMeshletRange);
         AdvancedDeformedArenaSlice deformationSlice = default;
         int deformationCandidateIndex = -1;
         bool aggregateDeformationAvailable = false;
@@ -456,7 +622,7 @@ public sealed class AdvancedPreparationExtractor : IDisposable
                 deformation,
                 (visibilityFlags & EAdvancedVisibilityPreparationFlags.NewRecord) != 0,
                 offsets,
-                meshletRange,
+                deformationMeshletRange,
                 frameId,
                 out deformationSlice,
                 out AdvancedGpuDeformationMeshSlice gpuMeshSlice,
@@ -490,7 +656,9 @@ public sealed class AdvancedPreparationExtractor : IDisposable
                 PrimitiveSection: command.SubmeshID,
                 InstanceCount: Math.Max(1u, command.InstanceCount),
                 FirstIndex: offsets.IndexOffset,
-                IndexCount: ResolveIndexCount(scene, command),
+                IndexCount: hasCanonicalGeometry
+                    ? canonicalGeometry.IndexCount
+                    : 0u,
                 VertexCount: checked((uint)Math.Max(0, mesh?.VertexCount ?? 0)),
                 RasterStateClass: command.StateClassID,
                 Coverage: ResolveCoverage(command),
@@ -506,6 +674,7 @@ public sealed class AdvancedPreparationExtractor : IDisposable
                 ForceCpuDiagnostic:
                     snapshot.ForceCpuRendering ||
                     mesh is null ||
+                    !hasCanonicalGeometry ||
                     (skinned && !aggregateDeformationAvailable));
     }
 
@@ -924,10 +1093,16 @@ public sealed class AdvancedPreparationExtractor : IDisposable
         EAdvancedPreparationConsumer consumers,
         uint visibleFallbackCount)
     {
+        _preparedSceneIdentity = 0u;
+        _drawCount = 0;
+        _visibilityPlanCount = 0;
+        _lastVisibilityViewSet = null;
+        _uploadCopyRangeCount = 0;
         _publicationGeneration++;
         return new AdvancedPreparationPublication(
             world.FrameId,
             _publicationGeneration,
+            VisibilityContentGeneration,
             SceneIdentity: unchecked((uint)RuntimeHelpers.GetHashCode(
                 world.GpuScene)),
             DrawCount: 0u,
@@ -950,6 +1125,9 @@ public sealed class AdvancedPreparationExtractor : IDisposable
 
     public void Dispose()
     {
+        _preparedSceneIdentity = 0u;
+        _drawCount = 0;
+        _visibilityPlanCount = 0;
         _gpuDeformation.Dispose();
         _frameUploadArena.Dispose();
     }
@@ -973,47 +1151,22 @@ public sealed class AdvancedPreparationExtractor : IDisposable
     }
 
     private static AdvancedSceneGeometryOffsets ResolveGeometryOffsets(
-        GPUScene scene,
-        in DrawMetadata command)
+        bool hasCanonicalGeometry,
+        in AdvancedGeometryRecord geometry,
+        uint skinId)
     {
-        uint firstVertex = 0u;
-        uint firstIndex = 0u;
-        if (scene.TryGetMeshDataEntry(
-                command.MeshID,
-                out GPUScene.MeshDataEntry meshData))
-        {
-            firstVertex = meshData.FirstVertex;
-            firstIndex = meshData.FirstIndex;
-        }
-
-        uint meshletOffset = 0u;
-        uint meshletCount = 0u;
-        if (scene.TryGetMeshletRange(
-                command.MeshID,
-                out GPUScene.GpuMeshletRange meshlets))
-        {
-            meshletOffset = meshlets.MeshletOffset;
-            meshletCount = meshlets.MeshletCount;
-        }
+        if (!hasCanonicalGeometry)
+            return default;
 
         return new AdvancedSceneGeometryOffsets(
-            VertexOffset: firstVertex,
-            PreviousVertexOffset: firstVertex,
-            IndexOffset: firstIndex,
-            WeightOffset: firstVertex,
-            PaletteOffset: command.SkinID,
-            MeshletOffset: meshletOffset,
-            MeshletCount: meshletCount);
+            VertexOffset: geometry.CurrentVertexData.ElementOffset,
+            PreviousVertexOffset: geometry.PreviousVertexData.ElementOffset,
+            IndexOffset: geometry.IndexData.ElementOffset,
+            WeightOffset: geometry.CurrentVertexData.ElementOffset,
+            PaletteOffset: skinId,
+            MeshletOffset: geometry.MeshletFirst,
+            MeshletCount: geometry.MeshletCount);
     }
-
-    private static uint ResolveIndexCount(
-        GPUScene scene,
-        in DrawMetadata command)
-        => scene.TryGetMeshDataEntry(
-            command.MeshID,
-            out GPUScene.MeshDataEntry meshData)
-                ? meshData.IndexCount
-                : 0u;
 
     private static EAdvancedMaterialCoverageMode ResolveCoverage(
         in DrawMetadata command)

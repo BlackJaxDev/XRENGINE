@@ -20,7 +20,10 @@ public sealed class AdvancedGpuSceneDatabase
             capacities.IndexBytes,
             capacities.PreSkinnedCurrentBytes,
             capacities.PreSkinnedPreviousBytes,
-            capacities.MeshletBytes);
+            capacities.MeshletBytes,
+            capacities.MeshletDescriptorBytes,
+            capacities.MeshletVertexIndexBytes,
+            capacities.MeshletTriangleWordBytes);
     }
 
     public AdvancedGpuRecordTable<AdvancedDrawRecord> Draws { get; }
@@ -213,7 +216,10 @@ public sealed class AdvancedGpuSceneDatabase
             capacities.IndexBytes,
             capacities.PreSkinnedCurrentBytes,
             capacities.PreSkinnedPreviousBytes,
-            capacities.MeshletBytes);
+            capacities.MeshletBytes,
+            capacities.MeshletDescriptorBytes,
+            capacities.MeshletVertexIndexBytes,
+            capacities.MeshletTriangleWordBytes);
     }
 
     private static bool AccumulateCompaction(int result, ref int total)

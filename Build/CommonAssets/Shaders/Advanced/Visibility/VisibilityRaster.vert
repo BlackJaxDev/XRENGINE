@@ -1,10 +1,18 @@
 #version 450
 
-#if defined(XR_ADV_BACKEND_OPENGL)
 #extension GL_ARB_shader_draw_parameters : require
-#endif
 
 #include "VisibilityInterface.glslinc"
+
+// Matches the mesh-shader visibility ABI. Indexed and meshlet submission must
+// select the same immutable canonical view for a given raster invocation.
+layout(push_constant, std430) uniform XRAdvancedVisibilityRasterPushConstants
+{
+    uint meshArgumentBase;
+    uint producerAndOrigin;
+    uint viewIndex;
+    uint flags;
+} XR_ADV_VisibilityRasterPush;
 
 layout(location = 0) in vec3 Position;
 layout(location = 1) in vec2 TexCoord0;
@@ -20,26 +28,9 @@ layout(location = 7) flat out uint VisibilityPrimitiveBase;
 layout(location = 8) flat out uint VisibilityMeshletIndex;
 layout(location = 9) flat out uint VisibilityMaterialDenseIndex;
 
-uniform mat4 JitteredViewProjection;
-uniform mat4 UnjitteredViewProjection;
-uniform mat4 PreviousUnjitteredViewProjection;
-uniform uint CpuDirectPayloadIndex;
-uniform uint UseIndirectPayloadIndex;
-uniform uint VisibilityProducerClass;
-uniform uint VisibilityView;
-uniform uint VisibilityPhaseOrigin;
-uniform uint VisibilityVelocityIsValid;
-
 uint XR_ADV_VisibilityPayloadIndex()
 {
-    if (UseIndirectPayloadIndex == 0u)
-        return CpuDirectPayloadIndex;
-
-#if defined(XR_ADV_BACKEND_OPENGL)
     return gl_BaseInstanceARB;
-#else
-    return gl_BaseInstance;
-#endif
 }
 
 void XR_ADV_RejectVisibilityVertex()
@@ -47,9 +38,9 @@ void XR_ADV_RejectVisibilityVertex()
     gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
     VisibilityDrawIndex = XR_ADV_VIS_INVALID;
     VisibilitySelectionId = XR_ADV_VIS_INVALID;
-    VisibilityProducer = VisibilityProducerClass;
-    VisibilityViewIndex = VisibilityView;
-    VisibilityOrigin = VisibilityPhaseOrigin;
+    VisibilityProducer = XR_ADV_VIS_PRODUCER_INDIRECT_INDEXED;
+    VisibilityViewIndex = 0u;
+    VisibilityOrigin = 0u;
     VisibilityVelocityValid = 0u;
     VisibilityCoverageUv = vec2(0.0);
     VisibilityPrimitiveBase = 0u;
@@ -69,6 +60,10 @@ void main()
 
     XRAdvancedVisibilityPayload payload =
         XR_ADV_VisibilityPayloads.records[payloadIndex];
+    uint producer = payloadIndex <
+            uint(XR_ADV_VisibilityProducers.records.length())
+        ? XR_ADV_VisibilityProducers.records[payloadIndex]
+        : XR_ADV_VIS_INVALID;
     uint drawDense = XR_ADV_ResolveVisibilityHandle(
         payload.draw,
         VisibilityDrawLookupSegment,
@@ -120,6 +115,15 @@ void main()
         XR_ADV_LoadTransform(transformDense);
     XRAdvancedTransformRecord previousTransformRecord =
         XR_ADV_LoadTransform(previousTransformDense);
+    if (XR_ADV_VisibilityRasterPush.viewIndex >=
+        uint(XR_ADV_Views.records.length()))
+    {
+        atomicAdd(XR_ADV_VisibilityCounters.decodeOutOfBounds, 1u);
+        XR_ADV_RejectVisibilityVertex();
+        return;
+    }
+    XRAdvancedViewRecord viewRecord = XR_ADV_LoadView(
+        XR_ADV_VisibilityRasterPush.viewIndex);
 
     vec3 localPosition = Position;
 #if defined(XR_ADV_VIS_VERTEX_DISPLACEMENT)
@@ -134,18 +138,20 @@ void main()
         vec4(localPosition, 1.0) * transformRecord.world;
     vec4 previousWorldPosition =
         vec4(localPosition, 1.0) * previousTransformRecord.world;
-    gl_Position = worldPosition * JitteredViewProjection;
+    gl_Position =
+        worldPosition * viewRecord.viewProjectionJittered;
 
     // The unjittered pair deliberately remains part of this producer ABI.
     // Document 05 reconstructs the same pair from the stored draw/primitive.
     vec4 currentUnjitteredClip =
-        worldPosition * UnjitteredViewProjection;
+        worldPosition * viewRecord.viewProjectionUnjittered;
     vec4 previousUnjitteredClip =
-        previousWorldPosition * PreviousUnjitteredViewProjection;
+        previousWorldPosition *
+            viewRecord.previousViewProjectionUnjittered;
     VisibilityDrawIndex = payload.draw.index;
-    VisibilityProducer = VisibilityProducerClass;
-    VisibilityViewIndex = VisibilityView;
-    VisibilityOrigin = VisibilityPhaseOrigin;
+    VisibilityProducer = producer;
+    VisibilityViewIndex = XR_ADV_VisibilityRasterPush.viewIndex;
+    VisibilityOrigin = 0u;
     VisibilityCoverageUv = TexCoord0;
     VisibilityPrimitiveBase = payload.firstIndex / 3u;
     VisibilityMeshletIndex = XR_ADV_VIS_INVALID;
@@ -160,7 +166,7 @@ void main()
         !any(isnan(previousUnjitteredClip)) &&
         !any(isinf(previousUnjitteredClip));
     VisibilityVelocityValid =
-        VisibilityVelocityIsValid != 0u &&
+        false &&
         geometrySourcesValid &&
         temporalInputsValid
             ? 1u
@@ -175,9 +181,7 @@ void main()
             ? XR_ADV_LoadEditorIdentity(editorDense).selectionId
             : XR_ADV_VIS_INVALID;
 
-    uvec2 activeMask = VisibilityView < 32u
-        ? uvec2(1u << VisibilityView, 0u)
-        : uvec2(0u, 1u << (VisibilityView - 32u));
+    uvec2 activeMask = uvec2(1u, 0u);
     if (all(equal(
             uvec2(instanceRecord.viewMaskLow, instanceRecord.viewMaskHigh) &
                 activeMask,

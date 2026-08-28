@@ -216,7 +216,8 @@ public sealed partial class XRRenderPipelineInstance
                 RenderWorldSnapshot snapshot = RenderWorldSnapshotPublication.Acquire(
                     RuntimeEngine.Rendering.State.RenderFrameId,
                     Scene,
-                    Scene.GPUCommands);
+                    Scene.GPUCommands,
+                    Scene.GPUCommands.AdvancedGlobalResources);
                 WorldSnapshot = snapshot;
                 FrameViewSet = views;
             }

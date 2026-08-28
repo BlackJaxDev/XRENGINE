@@ -30,6 +30,13 @@ internal sealed unsafe class VulkanCommandSynchronizationState
     internal EVulkanSynchronizationBackend _activeSynchronizationBackend = EVulkanSynchronizationBackend.Legacy;
     internal readonly object _vulkanImageLayoutLock = new();
     internal readonly Dictionary<VulkanTrackedImageSubresource, VulkanImageSubresourceState> _trackedImageSubresourceStates = new();
+    // The dictionary is the cold publication/diagnostic index. Sealed submission
+    // only follows generation-tagged entries in this flat directory.
+    private VulkanStableImageSubresourceSlotState[] _stableImageSubresourceSlots =
+        new VulkanStableImageSubresourceSlotState[1024];
+    private uint[] _stableImageSubresourceSlotFreeLinks = new uint[1024];
+    private uint _stableImageSubresourceSlotCount = 1u;
+    private uint _freeStableImageSubresourceSlotHead;
     internal readonly Dictionary<ulong, (ulong ResourceGeneration, EVulkanExternalImageOwnership Ownership)> _externalImageOwnershipByHandle = new();
     internal readonly Dictionary<ulong, VulkanRecordedImageLayoutState> _recordedImageLayoutsByCommandBuffer = new();
     internal readonly VulkanQueueOperationRecord[] _vulkanQueueOperationHistory =
@@ -42,6 +49,106 @@ internal sealed unsafe class VulkanCommandSynchronizationState
     internal readonly object _submissionMarkerLock = new();
     internal readonly Dictionary<nint, List<VulkanTimelineGpuFence>> _submissionMarkersByCommandBuffer = [];
     internal readonly Stack<VulkanTimelineGpuFence> _timelineGpuFencePool = [];
+
+    internal VulkanStableImageSubresourceSlotHandle PublishStableImageSubresourceNoLock(
+        VulkanImageSubresourceState state)
+    {
+        VulkanStableImageSubresourceSlotHandle existing = state.StableSlot;
+        if (TryGetStableImageSubresourceStateNoLock(existing, out VulkanImageSubresourceState? published) &&
+            ReferenceEquals(published, state))
+        {
+            return existing;
+        }
+
+        uint index;
+        if (_freeStableImageSubresourceSlotHead != 0u)
+        {
+            index = _freeStableImageSubresourceSlotHead;
+            _freeStableImageSubresourceSlotHead = _stableImageSubresourceSlotFreeLinks[index];
+            _stableImageSubresourceSlotFreeLinks[index] = 0u;
+        }
+        else
+        {
+            index = _stableImageSubresourceSlotCount++;
+            EnsureStableImageSubresourceSlotCapacity(index);
+        }
+
+        VulkanStableImageSubresourceSlotState slot = _stableImageSubresourceSlots[index] ??= new();
+        slot.Generation = NextStableImageSubresourceSlotGeneration(slot.Generation);
+        slot.State = state;
+        return state.StableSlot = new VulkanStableImageSubresourceSlotHandle(
+            new VulkanStableImageSubresourceIndex(index),
+            slot.Generation);
+    }
+
+    internal bool TryGetStableImageSubresourceStateNoLock(
+        VulkanStableImageSubresourceSlotHandle handle,
+        out VulkanImageSubresourceState? state)
+    {
+        state = null;
+        if (!handle.IsValid || handle.Index.Value >= _stableImageSubresourceSlotCount)
+            return false;
+
+        VulkanStableImageSubresourceSlotState? slot =
+            _stableImageSubresourceSlots[handle.Index.Value];
+        if (slot is null || slot.Generation != handle.Generation || slot.State is null)
+            return false;
+
+        state = slot.State;
+        return true;
+    }
+
+    internal void RetireStableImageSubresourceNoLock(VulkanImageSubresourceState state)
+    {
+        VulkanStableImageSubresourceSlotHandle handle = state.StableSlot;
+        if (!handle.IsValid || handle.Index.Value >= _stableImageSubresourceSlotCount)
+            return;
+
+        VulkanStableImageSubresourceSlotState? slot =
+            _stableImageSubresourceSlots[handle.Index.Value];
+        if (slot is null || slot.Generation != handle.Generation || !ReferenceEquals(slot.State, state))
+            return;
+
+        // Nulling before linking the slot makes any stale sealed handle fail.
+        slot.State = null;
+        _stableImageSubresourceSlotFreeLinks[handle.Index.Value] = _freeStableImageSubresourceSlotHead;
+        _freeStableImageSubresourceSlotHead = handle.Index.Value;
+        state.StableSlot = VulkanStableImageSubresourceSlotHandle.Invalid;
+    }
+
+    internal void ClearStableImageSubresourcesNoLock()
+    {
+        for (uint index = 1u; index < _stableImageSubresourceSlotCount; ++index)
+        {
+            VulkanStableImageSubresourceSlotState? slot = _stableImageSubresourceSlots[index];
+            if (slot?.State is { } state)
+                state.StableSlot = VulkanStableImageSubresourceSlotHandle.Invalid;
+            if (slot is not null)
+                slot.State = null;
+            _stableImageSubresourceSlotFreeLinks[index] = index - 1u;
+        }
+        _freeStableImageSubresourceSlotHead = _stableImageSubresourceSlotCount > 1u
+            ? _stableImageSubresourceSlotCount - 1u
+            : 0u;
+    }
+
+    private static ulong NextStableImageSubresourceSlotGeneration(ulong generation)
+    {
+        unchecked { ++generation; }
+        return generation == 0UL ? 1UL : generation;
+    }
+
+    private void EnsureStableImageSubresourceSlotCapacity(uint requiredIndex)
+    {
+        if (requiredIndex < (uint)_stableImageSubresourceSlots.Length)
+            return;
+
+        int capacity = _stableImageSubresourceSlots.Length;
+        do capacity = checked(capacity * 2);
+        while (requiredIndex >= (uint)capacity);
+        Array.Resize(ref _stableImageSubresourceSlots, capacity);
+        Array.Resize(ref _stableImageSubresourceSlotFreeLinks, capacity);
+    }
 
     /// <summary>
     /// Reserves the next graphics timeline value across desktop, explicit-target,

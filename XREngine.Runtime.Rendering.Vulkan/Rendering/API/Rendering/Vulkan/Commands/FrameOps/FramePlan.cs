@@ -10,6 +10,9 @@ internal sealed class FramePlan
     private FrameOperationStream _operations = new();
     private FrameOperationStream _dynamicOverlayOperations = new();
     private FrameOperationStream _textureUploadOperations = new();
+    private readonly VulkanPreparedStableBinStream _stableBins = new(
+        VulkanMeshOperationRequestQueue.Capacity,
+        VulkanMeshOperationRequestQueue.Capacity * 16);
     // OpenXR can freeze two eye inputs concurrently. Keep a separate bounded
     // header/resource-use view for each eye so both workers can consume the
     // same immutable payload columns without a per-eye heap allocation.
@@ -64,6 +67,12 @@ internal sealed class FramePlan
     internal FrameOperationStream DynamicOverlayOperations => _dynamicOverlayOperations;
     /// <summary>Canonical numeric transfer stream recorded before the primary stream.</summary>
     internal FrameOperationStream TextureUploadOperations => _textureUploadOperations;
+    /// <summary>
+    /// Slot-owned stable-bin publication copied before the accepted ingress is
+    /// released. Late advanced preparation may seal strategy/range metadata,
+    /// but recording workers receive only the frozen headers and records.
+    /// </summary>
+    internal VulkanPreparedStableBinStream StableBins => _stableBins;
     internal int OutputCount => _outputCount;
     /// <summary>
     /// Number of output/resource DAG nodes in the validated deterministic order
@@ -187,7 +196,8 @@ internal sealed class FramePlan
         VulkanRenderGraphPlan[] staticPlannerContextPlans,
         int staticPlannerContextKeyCount,
         ulong renderGraphPlanSignature,
-        bool requiresFreshEmptyTerminalWrite)
+        bool requiresFreshEmptyTerminalWrite,
+        VulkanPreparedStableBinStream? stableBins)
     {
         lock (_leaseGate)
         {
@@ -224,6 +234,10 @@ internal sealed class FramePlan
             _staticPlannerContexts = staticPlannerContexts;
             _staticPlannerContextPlans = staticPlannerContextPlans;
             _staticPlannerContextKeyCount = staticPlannerContextKeyCount;
+            if (stableBins is not null)
+                _stableBins.CopyFrom(stableBins);
+            else
+                _stableBins.ThawForReuse();
             ViewSet.Seal();
             MaterializeOpenXrLogicalViewSlices();
             IsSealed = true;
@@ -257,6 +271,7 @@ internal sealed class FramePlan
             Array.Clear(_staticPlannerContexts, 0, _staticPlannerContextKeyCount);
             Array.Clear(_staticPlannerContextPlans, 0, _staticPlannerContextKeyCount);
             _staticPlannerContextKeyCount = 0;
+            _stableBins.ThawForReuse();
             for (int index = 0; index < _logicalViewOperations.Length; index++)
             {
                 _logicalViewOperations[index].Reset();

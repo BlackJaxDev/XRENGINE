@@ -23,6 +23,14 @@ internal sealed class VulkanResourceLifetimeTracker
     private VulkanResourceLifetimeRecord?[] _resourceSlots =
         new VulkanResourceLifetimeRecord?[InitialResourceSlotCapacity];
     private uint[] _resourceSlotFreeLinks = new uint[InitialResourceSlotCapacity];
+    // Submission validation is serialized by SyncRoot. Keep its generation
+    // membership scratch parallel to the resource directory so the hot submit
+    // path never rebuilds a keyed hash table just to detect duplicates.
+    private ulong[] _submissionDependencyGenerationScratch =
+        new ulong[InitialResourceSlotCapacity];
+    private ulong[] _submissionDependencyEpochScratch =
+        new ulong[InitialResourceSlotCapacity];
+    private ulong _submissionDependencyScratchEpoch;
     private uint _resourceSlotCount = 1u;
     private uint _freeResourceSlotHead;
 
@@ -198,11 +206,6 @@ internal sealed class VulkanResourceLifetimeTracker
 
     internal Dictionary<ulong, VulkanResourceLifetimeKey[]> FramebufferAttachments { get; } = new();
 
-    /// <summary>
-    /// Retained submission lookup shared by serialized queue submissions.
-    /// </summary>
-    internal Dictionary<VulkanResourceLifetimeKey, ulong> SubmissionDependencyGenerationsScratch { get; } = new(4096);
-
     internal List<VulkanLifetimeSubmission> LifetimeSubmissions { get; } = new(16);
     internal ThreadLocal<HashSet<ulong>> ChangedDescriptorSetsScratch { get; } = new(static () => []);
     internal ThreadLocal<HashSet<ulong>> DescriptorClosureChangedSetsScratch { get; } = new(static () => []);
@@ -273,6 +276,61 @@ internal sealed class VulkanResourceLifetimeTracker
 
         resource = candidate;
         return true;
+    }
+
+    /// <summary>
+    /// Starts an allocation-free generation-membership pass for one serialized
+    /// submission. The epoch distinguishes entries retained from earlier
+    /// submissions while the stored generation preserves ABA validation.
+    /// </summary>
+    internal ulong BeginSubmissionDependencyGenerationScratchNoLock()
+    {
+        ulong epoch = unchecked(++_submissionDependencyScratchEpoch);
+        if (epoch != 0UL)
+            return epoch;
+
+        Array.Clear(_submissionDependencyEpochScratch);
+        _submissionDependencyScratchEpoch = 1UL;
+        return 1UL;
+    }
+
+    internal void RecordSubmissionDependencyGenerationNoLock(
+        VulkanResourceSlotHandle slot,
+        ulong generation,
+        ulong epoch)
+    {
+        if (!slot.IsValid ||
+            generation == 0UL ||
+            epoch == 0UL ||
+            slot.Index >= (uint)_submissionDependencyGenerationScratch.Length)
+        {
+            throw new ArgumentOutOfRangeException(nameof(slot));
+        }
+
+        int index = checked((int)slot.Index);
+        _submissionDependencyGenerationScratch[index] = generation;
+        _submissionDependencyEpochScratch[index] = epoch;
+    }
+
+    internal bool TryGetSubmissionDependencyGenerationNoLock(
+        VulkanResourceSlotHandle slot,
+        ulong epoch,
+        out ulong generation)
+    {
+        if (slot.IsValid &&
+            epoch != 0UL &&
+            slot.Index < (uint)_submissionDependencyGenerationScratch.Length)
+        {
+            int index = checked((int)slot.Index);
+            if (_submissionDependencyEpochScratch[index] == epoch)
+            {
+                generation = _submissionDependencyGenerationScratch[index];
+                return true;
+            }
+        }
+
+        generation = 0UL;
+        return false;
     }
 
     /// <summary>
@@ -741,6 +799,8 @@ internal sealed class VulkanResourceLifetimeTracker
 
         Array.Resize(ref _resourceSlots, capacity);
         Array.Resize(ref _resourceSlotFreeLinks, capacity);
+        Array.Resize(ref _submissionDependencyGenerationScratch, capacity);
+        Array.Resize(ref _submissionDependencyEpochScratch, capacity);
     }
 
     internal VulkanRetirementTicket CaptureRetirementWatermark()

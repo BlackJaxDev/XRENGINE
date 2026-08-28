@@ -206,7 +206,7 @@ namespace XREngine.Animation
                 case AnimationClip clip:
                     clip.PrepareImportedHumanoidMirrorSlotBindings(layout, slotsByPath);
                     clip.PrepareImportedHumanoidScalarQuaternionBindings(layout);
-                    clip.PrepareAdditivePoseEvaluation(layout);
+                    clip.PrepareAdditivePoseEvaluation(layout, slotsByPath);
                     break;
                 case BlendTree1D bt1d:
                     foreach (var child in bt1d.Children)

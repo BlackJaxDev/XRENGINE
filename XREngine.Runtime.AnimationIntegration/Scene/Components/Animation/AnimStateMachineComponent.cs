@@ -247,13 +247,19 @@ namespace XREngine.Components
             if (humanoid is not null && !humanoid.IsAnimatedPosePreviewActive)
                 return;
 
+            HumanoidIKSolverComponent? ikSolver = humanoid?.SceneNode.GetComponent<VRIKSolverComponent>() is null
+                ? humanoid?.SceneNode.GetComponent<HumanoidIKSolverComponent>()
+                : null;
+
             StateMachine.SeekActiveMotions(timeSeconds, dispatchEvents);
             _observedMotionContinuityVersion = StateMachine.HumanoidMotionContinuityVersion;
             BeginRootMotionEpoch(
-                preserveExistingAnchor: true,
-                rebaseFromNextPose: true);
+                preserveExistingAnchor: true);
             EvaluateAndApply(0L, humanoid);
             PublishRootMotion();
+            // Match deferred playback: state/blend pose first, projected root
+            // second, and a single animation-driven IK/contact pass last.
+            ikSolver?.UpdateSolverExternal();
         }
 
         /// <summary>
@@ -329,6 +335,11 @@ namespace XREngine.Components
         private void EvaluateAndApply(long deltaTicks, HumanoidComponent? humanoid)
         {
             bool ownsImportedBodySampleTransaction = false;
+            bool animationGoalFramePrepared = false;
+            HumanoidIKSolverComponent? ikSolver = humanoid?.SceneNode.GetComponent<VRIKSolverComponent>() is null
+                ? humanoid?.SceneNode.GetComponent<HumanoidIKSolverComponent>()
+                : null;
+            ikSolver?.BeginAnimationDrivenGoalFrame();
             try
             {
                 StateMachine.EvaluateAnimationValues(this, deltaTicks);
@@ -354,6 +365,7 @@ namespace XREngine.Components
                 }
 
                 StateMachine.ApplyAnimationValues();
+                ikSolver?.CompleteAnimationDrivenGoalFrame();
 
                 if (ownsImportedBodySampleTransaction)
                 {
@@ -368,6 +380,7 @@ namespace XREngine.Components
                         $"[AnimStateMachineComponent] Playback rejected on '{SceneNode.Name}': {PlaybackCapabilityDiagnostic}");
                     return;
                 }
+                animationGoalFramePrepared = true;
             }
             catch
             {
@@ -375,6 +388,11 @@ namespace XREngine.Components
                     humanoid!.CancelImportedBodySampleTransaction(this);
                 humanoid?.ClearStateMachineRootMotionFrame(this);
                 throw;
+            }
+            finally
+            {
+                if (!animationGoalFramePrepared)
+                    ikSolver?.RejectAnimationDrivenGoalFrame();
             }
 
             if (deltaTicks == 0L)
