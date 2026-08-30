@@ -15,6 +15,7 @@ public sealed partial class BackendReadyFramePackage
     private BackendReadyCpuVisibleDrawRecord[] _canonicalCpuVisibleDraws = [];
     private BackendReadyOrderedExceptionRecord[] _canonicalOrderedExceptions = [];
     private BackendTemplateProjectionDelta[] _canonicalTemplateProjectionDeltas = [];
+    private AdvancedGlobalPassPublicationCoverage[] _canonicalGlobalPassCoverage = [];
     private AdvancedGpuScenePublicationLease? _canonicalPublicationLease;
     private int _canonicalViewCount;
     private int _canonicalPassCount;
@@ -24,6 +25,7 @@ public sealed partial class BackendReadyFramePackage
     private int _canonicalOrderedExceptionCount;
     private int _canonicalTemplateProjectionDeltaCount;
     private int _canonicalDiagnosticReadbackPlanCount;
+    private int _canonicalGlobalPassCoverageCount;
 
     /// <summary>
     /// Canonical resident scene publication captured for this package. The
@@ -51,6 +53,61 @@ public sealed partial class BackendReadyFramePackage
     public ReadOnlySpan<BackendReadyCpuVisibleDrawRecord> CpuVisibleDraws => _canonicalCpuVisibleDraws.AsSpan(0, _canonicalCpuVisibleDrawCount);
     public ReadOnlySpan<BackendReadyOrderedExceptionRecord> OrderedExceptions => _canonicalOrderedExceptions.AsSpan(0, _canonicalOrderedExceptionCount);
     public ReadOnlySpan<BackendTemplateProjectionDelta> TemplateProjectionDeltas => _canonicalTemplateProjectionDeltas.AsSpan(0, _canonicalTemplateProjectionDeltaCount);
+    /// <summary>
+    /// Per-pass immutable global shadow/probe coverage derived from the same
+    /// retained publication as the canonical pass records.
+    /// </summary>
+    public ReadOnlySpan<AdvancedGlobalPassPublicationCoverage> GlobalPassCoverage
+        => _canonicalGlobalPassCoverage.AsSpan(0, _canonicalGlobalPassCoverageCount);
+
+    /// <summary>
+    /// Number of immutable advanced submission rows retained by this package's
+    /// publication. A package without a retained canonical publication reports
+    /// zero rather than recreating a legacy managed selection projection.
+    /// </summary>
+    public int CanonicalSubmissionCount
+        => TryGetCanonicalPublicationSnapshot(out AdvancedGpuScenePublicationSnapshot snapshot)
+            ? snapshot.Submission.Count
+            : 0;
+
+    /// <summary>
+    /// Looks up a canonical submission row from the immutable publication held
+    /// by this package. This is the only normal-frame ownership query exposed
+    /// to renderer-neutral consumers; it intentionally does not reconstruct a
+    /// managed mesh-selection projection.
+    /// </summary>
+    public bool TryGetCanonicalSubmission(
+        int renderPass,
+        uint stableQueryKey,
+        out AdvancedDrawSubmissionRecord submission)
+    {
+        if (TryGetCanonicalPublicationSnapshot(out AdvancedGpuScenePublicationSnapshot snapshot))
+        {
+            ReadOnlySpan<AdvancedDrawSubmissionRecord> submissions = snapshot.Submission.Records;
+            for (int index = 0; index < submissions.Length; ++index)
+            {
+                AdvancedDrawSubmissionRecord candidate = submissions[index];
+                if (candidate.PassIndex == unchecked((uint)renderPass) &&
+                    candidate.StableQueryKey == stableQueryKey)
+                {
+                    submission = candidate;
+                    return true;
+                }
+            }
+        }
+
+        submission = default;
+        return false;
+    }
+
+    /// <summary>
+    /// Returns whether a canonical row is owned by advanced GPU submission.
+    /// Missing canonical data is deliberately fail-visible to CPU callers.
+    /// </summary>
+    public bool IsCanonicalGpuOwned(int renderPass, uint stableQueryKey)
+        => TryGetCanonicalSubmission(renderPass, stableQueryKey, out AdvancedDrawSubmissionRecord submission) &&
+           submission.CompatibilityReason == EAdvancedCanonicalCompatibilityReason.None &&
+           (submission.Flags & (uint)GPUIndirectRenderFlags.CpuFallbackOnly) == 0u;
 
     /// <summary>
     /// Exposes the exact immutable publication association already retained by
@@ -120,12 +177,13 @@ public sealed partial class BackendReadyFramePackage
         CopyCanonical(cpuVisibleDraws, ref _canonicalCpuVisibleDraws, ref _canonicalCpuVisibleDrawCount);
         CopyCanonical(orderedExceptions, ref _canonicalOrderedExceptions, ref _canonicalOrderedExceptionCount);
         CopyCanonical(templateProjectionDeltas, ref _canonicalTemplateProjectionDeltas, ref _canonicalTemplateProjectionDeltaCount);
+        ClearCanonical(ref _canonicalGlobalPassCoverage, ref _canonicalGlobalPassCoverageCount);
     }
 
     /// <summary>
     /// Resets canonical package references without shrinking reusable backing
-    /// arrays. <see cref="MeshSelections"/> intentionally remains a legacy
-    /// parity sidecar until the backend consumes canonical projections directly.
+    /// arrays. Normal-frame submission state is retained solely by the
+    /// publication snapshot and the package's canonical projections.
     /// </summary>
     internal void ResetCanonical()
     {
@@ -142,6 +200,7 @@ public sealed partial class BackendReadyFramePackage
         ClearCanonical(ref _canonicalCpuVisibleDraws, ref _canonicalCpuVisibleDrawCount);
         ClearCanonical(ref _canonicalOrderedExceptions, ref _canonicalOrderedExceptionCount);
         ClearCanonical(ref _canonicalTemplateProjectionDeltas, ref _canonicalTemplateProjectionDeltaCount);
+        ClearCanonical(ref _canonicalGlobalPassCoverage, ref _canonicalGlobalPassCoverageCount);
     }
 
     /// <summary>
@@ -211,9 +270,10 @@ public sealed partial class BackendReadyFramePackage
             _canonicalViewCount = 1;
         }
 
-        PopulateCanonicalResidentPasses(scene, in identity);
-        PopulateCanonicalDirtyRanges(scene, in identity);
-        PopulateCanonicalVisibleRecords(scene, snapshot);
+        PopulateCanonicalResidentPasses(snapshot, in identity);
+        PopulateCanonicalGlobalPassCoverage(snapshot, in identity);
+        PopulateCanonicalDirtyRanges(snapshot, in identity);
+        PopulateCanonicalVisibleRecords(snapshot);
         PopulateCanonicalTemplateDeltas(snapshot, in identity);
         PopulateCanonicalDiagnosticReadbackRequests();
         BuildDiagnosticReadbackPlan();
@@ -345,20 +405,19 @@ public sealed partial class BackendReadyFramePackage
     }
 
     private void PopulateCanonicalResidentPasses(
-        GPUScene scene,
+        AdvancedGpuScenePublicationSnapshot snapshot,
         in AdvancedGpuScenePublication identity)
     {
         BackendReadySubmissionResolution submissionResolution = SubmissionResolution;
         EBackendReadyPassDiagnosticFlags diagnostics =
             GetPassDiagnostics(in submissionResolution);
-        ReadOnlySpan<LegacyCanonicalDrawMapping> mappings =
-            scene.LegacyCanonicalDrawMappings;
-        EnsureCanonicalCapacity(ref _canonicalPasses, mappings.Length);
+        ReadOnlySpan<AdvancedDrawSubmissionRecord> submissions = snapshot.Submission.Records;
+        EnsureCanonicalCapacity(ref _canonicalPasses, submissions.Length);
         int count = 0;
-        for (int mappingIndex = 0; mappingIndex < mappings.Length; ++mappingIndex)
+        for (int mappingIndex = 0; mappingIndex < submissions.Length; ++mappingIndex)
         {
-            LegacyCanonicalDrawMapping mapping = mappings[mappingIndex];
-            int pass = checked((int)mapping.LegacyRenderPass);
+            AdvancedDrawSubmissionRecord mapping = submissions[mappingIndex];
+            int pass = checked((int)mapping.PassIndex);
             int existing = -1;
             for (int passIndex = 0; passIndex < count; ++passIndex)
                 if (_canonicalPasses[passIndex].PassIndex == pass)
@@ -394,22 +453,83 @@ public sealed partial class BackendReadyFramePackage
     }
 
     private void PopulateCanonicalDirtyRanges(
-        GPUScene scene,
+        AdvancedGpuScenePublicationSnapshot snapshot,
         in AdvancedGpuScenePublication identity)
     {
-        ReadOnlySpan<AdvancedGpuDirtyOwnerRange> ranges =
-            scene.AdvancedDirtyOwnerRanges;
+        if (snapshot.Mutations.Sequence != identity.Sequence)
+        {
+            throw new InvalidOperationException(
+                $"Canonical mutation snapshot sequence {snapshot.Mutations.Sequence} does not match publication {identity.Sequence}.");
+        }
+
+        ReadOnlySpan<AdvancedGpuDirtyOwnerRange> ranges = snapshot.Mutations.Ranges;
         EnsureCanonicalCapacity(ref _canonicalDirtyOwnerRanges, ranges.Length);
         for (int index = 0; index < ranges.Length; ++index)
         {
             AdvancedGpuDirtyOwnerRange range = ranges[index];
-            _canonicalDirtyOwnerRanges[index] =
-                new BackendReadyCanonicalDirtyOwnerRange(
-                    MapOwner(range.Owner),
-                    range.Range,
-                    range.ContentGeneration);
+            _canonicalDirtyOwnerRanges[index] = new BackendReadyCanonicalDirtyOwnerRange(
+                MapOwner(range.Owner), range.Range, range.ContentGeneration);
+        }
+        if (_canonicalDirtyOwnerRangeCount > ranges.Length)
+        {
+            Array.Clear(_canonicalDirtyOwnerRanges, ranges.Length,
+                _canonicalDirtyOwnerRangeCount - ranges.Length);
         }
         _canonicalDirtyOwnerRangeCount = ranges.Length;
+    }
+
+    private void PopulateCanonicalGlobalPassCoverage(
+        AdvancedGpuScenePublicationSnapshot snapshot,
+        in AdvancedGpuScenePublication identity)
+    {
+        AdvancedGlobalPassPublicationCoverage source = snapshot.GlobalPassCoverage;
+        if (source.Sequence != identity.Sequence)
+        {
+            throw new InvalidOperationException(
+                $"Canonical global coverage sequence {source.Sequence} does not match publication {identity.Sequence}.");
+        }
+
+        ReadOnlySpan<AdvancedDrawSubmissionRecord> submissions = snapshot.Submission.Records;
+        EnsureCanonicalCapacity(ref _canonicalGlobalPassCoverage, _canonicalPassCount);
+        int count = 0;
+        for (int passRecordIndex = 0; passRecordIndex < _canonicalPassCount; ++passRecordIndex)
+        {
+            BackendReadyCanonicalPassRecord pass = _canonicalPasses[passRecordIndex];
+            bool usesShadows = false;
+            bool usesProbes = false;
+            for (int submissionIndex = 0; submissionIndex < submissions.Length; ++submissionIndex)
+            {
+                AdvancedDrawSubmissionRecord submission = submissions[submissionIndex];
+                if (submission.PassIndex != unchecked((uint)pass.PassIndex))
+                    continue;
+
+                GPUIndirectRenderFlags flags = (GPUIndirectRenderFlags)submission.Flags;
+                usesShadows |= (flags & (GPUIndirectRenderFlags.CastShadow | GPUIndirectRenderFlags.ReceiveShadows)) != 0;
+                // Lighting rows with a non-unlit material can sample probes.
+                // The producer-stamped submission flag avoids consulting live
+                // material or scene state during package preparation.
+                usesProbes |= (flags & GPUIndirectRenderFlags.Unlit) == 0;
+                if (usesShadows && usesProbes)
+                    break;
+            }
+
+            AdvancedGlobalPassPublicationCoverage coverage = source.ForPass(
+                pass.PassIndex, usesShadows, usesProbes);
+            _canonicalGlobalPassCoverage[count++] = coverage;
+            _canonicalPasses[passRecordIndex] = pass with
+            {
+                DependencySignature = MixCanonical(
+                    pass.DependencySignature,
+                    coverage.UsedOwnerGenerationSignature),
+            };
+        }
+
+        if (_canonicalGlobalPassCoverageCount > count)
+        {
+            Array.Clear(_canonicalGlobalPassCoverage, count,
+                _canonicalGlobalPassCoverageCount - count);
+        }
+        _canonicalGlobalPassCoverageCount = count;
     }
 
     private static EBackendReadyCanonicalOwner MapOwner(EAdvancedGpuRecordOwner owner)
@@ -437,36 +557,40 @@ public sealed partial class BackendReadyFramePackage
         };
 
     private void PopulateCanonicalVisibleRecords(
-        GPUScene scene,
         AdvancedGpuScenePublicationSnapshot snapshot)
     {
         int visibleCount = 0;
-        ReadOnlySpan<LegacyCanonicalDrawMapping> mappings =
-            scene.LegacyCanonicalDrawMappings;
+        _canonicalOrderedExceptionCount = 0;
+        ReadOnlySpan<AdvancedDrawSubmissionRecord> mappings = snapshot.Submission.Records;
         EnsureCanonicalCapacity(ref _canonicalCpuVisibleDraws, mappings.Length);
+        EnsureCanonicalCapacity(ref _canonicalOrderedExceptions, mappings.Length);
         for (int mappingIndex = 0; mappingIndex < mappings.Length; ++mappingIndex)
         {
-            LegacyCanonicalDrawMapping mapping = mappings[mappingIndex];
+            AdvancedDrawSubmissionRecord mapping = mappings[mappingIndex];
             // The mapping is a producer-time pass projection only.  The draw
             // row itself is resolved from the exact immutable package image;
             // mutable visible selections are diagnostic sidecars and never
             // decide normal Vulkan visibility membership.
             if (!snapshot.Draws.TryGet(mapping.Draw, out AdvancedDrawRecord draw) ||
-                draw.Geometry != mapping.Geometry ||
-                draw.Material != mapping.Material)
+                draw.Geometry != mapping.Geometry || draw.Material != mapping.Material)
                 continue;
 
             _canonicalCpuVisibleDraws[visibleCount++] =
                 new BackendReadyCpuVisibleDrawRecord(
                     mapping.Draw,
                     0u,
-                    checked((int)mapping.LegacyRenderPass),
-                    1u,
-                    ((ulong)mapping.LegacyCommandIndex << 32) |
-                    unchecked((uint)mapping.SourcePrimitiveIndex));
+                    checked((int)mapping.PassIndex), mapping.InstanceCount,
+                    mapping.SourceOrder);
+            if (mapping.CompatibilityReason != EAdvancedCanonicalCompatibilityReason.None ||
+                (mapping.Flags & (uint)GPUIndirectRenderFlags.CpuFallbackOnly) != 0u)
+            {
+                _canonicalOrderedExceptions[_canonicalOrderedExceptionCount++] =
+                    new BackendReadyOrderedExceptionRecord(mapping.Draw, 0u,
+                        checked((int)mapping.PassIndex), mapping.SourceOrder,
+                        mapping.Flags, mapping.CompatibilityReason);
+            }
         }
         _canonicalCpuVisibleDrawCount = visibleCount;
-        _canonicalOrderedExceptionCount = 0;
     }
 
     private void PopulateCanonicalTemplateDeltas(

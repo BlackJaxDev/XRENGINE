@@ -236,7 +236,8 @@ public sealed class GpuIndirectPhase3PolicyTests
         source.ShouldContain("RenderPass == (int)EDefaultRenderPass.MaskedForward");
         source.ShouldContain("EGpuHiZSkipReason.MissingShaders");
         source.ShouldContain("EGpuHiZSkipReason.NoDepthTexture");
-        source.ShouldContain("scene.BoundsBuffer.BindTo(_hiZOcclusionProgram, 5);");
+        source.ShouldContain("scene.CullControlBuffer.BindTo(_hiZOcclusionProgram, 10u);");
+        source.ShouldContain("scene.CullBoundsBuffer.BindTo(_hiZOcclusionProgram, 5);");
         source.ShouldContain("OcclusionTelemetry.RecordGpuDepthSource(depthInput.History);");
     }
 

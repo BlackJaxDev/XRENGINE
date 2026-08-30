@@ -9,6 +9,7 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal readonly record struct VulkanPreparedMeshDrawState(
     PipelineLayout PipelineLayout,
+    ShaderStageFlags PushConstantStageFlags,
     bool UsesDescriptorHeap,
     uint DescriptorHeapPushByteCount,
     VulkanPreparedStreamRange DescriptorBindings,

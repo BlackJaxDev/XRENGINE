@@ -622,17 +622,17 @@ internal static partial class GlslSnippetDeadCodeEliminator
                     braceDepth--;
                     if (braceDepth == 0 && sawOpenBrace)
                     {
-                        // After '}', see if a trailing instance + ';' closes the chunk
-                        // (struct/uniform/buffer block). Otherwise '}' closes a function body.
-                        int k = i + 1;
-                        while (k < end && (masked[k] == ' ' || masked[k] == '\t' || masked[k] == '\r' || masked[k] == '\n'))
-                            k++;
-                        if (k < end && masked[k] == ';')
+                        // Struct and interface-block instance declarators are part of
+                        // the declaration. Keeping them in the same chunk preserves
+                        // the dependency between the block type and its instance when
+                        // whole-source dead-code elimination prunes an unused block.
+                        if (TryFindBlockDeclarationEnd(masked, chunkStart, i, end, out int declarationEnd))
                         {
-                            i = k + 1;
+                            i = declarationEnd;
                             closed = true;
                             break;
                         }
+
                         // No semicolon: function definition ends here.
                         i++;
                         closed = true;
@@ -676,6 +676,70 @@ internal static partial class GlslSnippetDeadCodeEliminator
             output.Add(chunk);
         }
     }
+
+    private static bool TryFindBlockDeclarationEnd(
+        string source,
+        int chunkStart,
+        int closingBrace,
+        int end,
+        out int declarationEnd)
+    {
+        declarationEnd = 0;
+        ReadOnlySpan<char> header = source.AsSpan(chunkStart, closingBrace - chunkStart);
+        if (!ContainsDeclarationBlockKeyword(header))
+            return false;
+
+        for (int index = closingBrace + 1; index < end; index++)
+        {
+            char c = source[index];
+            if (c == ';')
+            {
+                declarationEnd = index + 1;
+                return true;
+            }
+
+            if (char.IsWhiteSpace(c) ||
+                char.IsLetterOrDigit(c) ||
+                c is '_' or ',' or '[' or ']')
+            {
+                continue;
+            }
+
+            return false;
+        }
+
+        return false;
+    }
+
+    private static bool ContainsDeclarationBlockKeyword(ReadOnlySpan<char> header)
+        => ContainsWholeWord(header, "struct") ||
+            ContainsWholeWord(header, "uniform") ||
+            ContainsWholeWord(header, "buffer");
+
+    private static bool ContainsWholeWord(ReadOnlySpan<char> source, ReadOnlySpan<char> word)
+    {
+        int searchStart = 0;
+        while (searchStart <= source.Length - word.Length)
+        {
+            int relativeIndex = source[searchStart..].IndexOf(word, StringComparison.Ordinal);
+            if (relativeIndex < 0)
+                return false;
+
+            int index = searchStart + relativeIndex;
+            bool validStart = index == 0 || !IsIdentifierCharacter(source[index - 1]);
+            int after = index + word.Length;
+            bool validEnd = after == source.Length || !IsIdentifierCharacter(source[after]);
+            if (validStart && validEnd)
+                return true;
+
+            searchStart = index + word.Length;
+        }
+
+        return false;
+    }
+
+    private static bool IsIdentifierCharacter(char c)
+        => char.IsLetterOrDigit(c) || c == '_';
 
     private static bool IsAtLineStart(string s, int i, int chunkStart)
     {

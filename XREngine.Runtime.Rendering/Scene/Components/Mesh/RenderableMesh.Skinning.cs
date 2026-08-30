@@ -1310,7 +1310,9 @@ namespace XREngine.Components.Scene.Mesh
             var tcs = new TaskCompletionSource<SkinnedBoundsRefreshResult>(TaskCreationOptions.RunContinuationsAsynchronously);
             long queuedTicks = Stopwatch.GetTimestamp();
             RuntimeEngine.Rendering.Stats.SkinnedBounds.RecordSkinnedBoundsRefreshDeferredScheduled();
-            RuntimeEngine.Jobs.Schedule(() => RunSkinnedBoundsJob(snapshot, revision, queuedTicks, tcs), priority: JobPriority.Low);
+            RuntimeRenderingHostServices.Work.GeneralJobs.Schedule(
+                () => RunSkinnedBoundsJob(snapshot, revision, queuedTicks, tcs),
+                priority: JobPriority.Low);
             return tcs.Task;
         }
 

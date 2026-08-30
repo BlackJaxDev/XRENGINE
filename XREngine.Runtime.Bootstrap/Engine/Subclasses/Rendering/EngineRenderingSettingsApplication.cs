@@ -26,6 +26,9 @@ namespace XREngine
             private static readonly Func<RenderPipelineRequest, RenderPipeline>
                 RenderPipelineFactory =
                     static request => NewRenderPipeline(request);
+            private static readonly Action<XRViewport>
+                RenderPipelineOutputBindingHandler =
+                    static viewport => ApplyRenderPipelineOutputBinding(viewport);
 
             static EngineRenderingSettingsApplication()
                 => RuntimeEngine.Rendering.SettingChanged += ApplyRuntimeRenderSettingChange;
@@ -38,6 +41,8 @@ namespace XREngine
             internal static void InitializeSettingsApplicationBoundary()
             {
                 RuntimeEngine.Rendering.SetRenderPipelineFactory(RenderPipelineFactory);
+                RuntimeEngine.Rendering.SetRenderPipelineOutputBindingHandler(
+                    RenderPipelineOutputBindingHandler);
             }
 
             private static void ApplyRuntimeRenderSettingChange(string? propertyName)

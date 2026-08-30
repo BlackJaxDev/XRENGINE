@@ -35,6 +35,14 @@ namespace XREngine
         public static Func<string, IDisposable?>? ProfilerScopeFactory { get; set; }
         public static Action<JobAffinity, string, RenderThreadJobKind>? JobDispatchObserver { get; set; }
         public static Action<string, RenderThreadJobKind, double, double, double>? RenderThreadJobExecutionObserver { get; set; }
+        /// <summary>
+        /// Optional process hook that admits one general background-job slice.
+        /// The paired completion hook is invoked exactly once after each
+        /// successful admission, including when the queue races empty.
+        /// </summary>
+        public static Func<bool>? BackgroundDispatchAdmission { get; set; }
+        public static Action? BackgroundDispatchCompletion { get; set; }
+        public static Action? BackgroundDispatchWait { get; set; }
 
         private const int PriorityLevels = 5; // Matches JobPriority enum
         private const int DefaultWorkerCap = 16;
@@ -51,7 +59,6 @@ namespace XREngine
         // Render-thread jobs that exceed this duration always log (bypass per-label dedup) and emit a memory snapshot.
         // Tuned to catch the ~hundreds-of-ms freezes that precede OS-level memory-pressure kills without spamming on normal slow frames.
         private static readonly long StallRenderThreadJobTicks = (long)(System.Diagnostics.Stopwatch.Frequency * 0.250);
-        private static readonly TimeSpan RemoteWorkerIdleTimeout = TimeSpan.FromSeconds(30);
         private static readonly TimeSpan ShutdownTaskWaitTimeout = TimeSpan.FromSeconds(2);
         private readonly ConcurrentQueue<Job>[] _pendingByPriority =
         [
@@ -110,17 +117,11 @@ namespace XREngine
         private readonly int _queueWarningThreshold;
         private readonly int _maxQueueSize;
 
-        private readonly SemaphoreSlim _remoteReadySignal = new(0);
-        private readonly SemaphoreSlim _deferredReadySignal = new(0);
         private readonly ConcurrentQueue<Job> _deferredBySlot = new();
         private readonly CancellationTokenSource _cts = new();
         private readonly int _configuredWorkerCount;
         private Execution.EngineGeneralWorkDomain? _generalDomain;
-        private readonly object _remoteWorkerLock = new();
-        private Task? _remoteWorkerTask;
-
-        private readonly object _deferredWorkerLock = new();
-        private Task? _deferredWorkerTask;
+        private Execution.EngineJobAuxiliaryWorkDomain? _auxiliaryDomain;
         private readonly ManualResetEventSlim _activeJobsEmpty = new(initialState: true);
         private readonly ManualResetEventSlim _submissionsEmpty = new(initialState: true);
         private readonly Queue<Job> _shutdownFinalizationQueue = new();
@@ -139,7 +140,7 @@ namespace XREngine
         public IRemoteJobTransport? RemoteTransport { get; set; }
 
         public JobManager(int? workerCount = null, int? maxQueueSize = null, int? queueWarningThreshold = null, int? workerCap = null)
-            : this(workerCount, maxQueueSize, queueWarningThreshold, workerCap, createGeneralWorkers: true)
+            : this(workerCount, maxQueueSize, queueWarningThreshold, workerCap, createWorkerDomains: true)
         {
         }
 
@@ -148,7 +149,7 @@ namespace XREngine
             int? maxQueueSize,
             int? queueWarningThreshold,
             int? workerCap,
-            bool createGeneralWorkers)
+            bool createWorkerDomains)
         {
             int cap = workerCap ?? ReadWorkerCapFromEnv() ?? DefaultWorkerCap;
             int reserved = Math.Max(0, DefaultReservedThreads);
@@ -156,7 +157,7 @@ namespace XREngine
             defaultWorkers = Math.Min(defaultWorkers, cap);
 
             int count = workerCount ?? ReadWorkerCountFromEnv() ?? defaultWorkers;
-            count = Math.Clamp(count, createGeneralWorkers ? 1 : 0, cap);
+            count = Math.Clamp(count, createWorkerDomains ? 1 : 0, cap);
             _configuredWorkerCount = count;
 
             _maxQueueSize = maxQueueSize ?? ReadQueueLimitFromEnv() ?? DefaultQueueLimit;
@@ -169,8 +170,11 @@ namespace XREngine
             if (_maxQueueSize > 0)
                 _queueSlots = new SemaphoreSlim(_maxQueueSize, _maxQueueSize);
 
-            if (createGeneralWorkers)
+            if (createWorkerDomains)
+            {
                 AttachGeneralDomain(new Execution.EngineGeneralWorkDomain(this, count));
+                AttachAuxiliaryDomain(new Execution.EngineJobAuxiliaryWorkDomain(this));
+            }
         }
 
         internal void AttachGeneralDomain(Execution.EngineGeneralWorkDomain domain)
@@ -178,6 +182,23 @@ namespace XREngine
             ArgumentNullException.ThrowIfNull(domain);
             if (Interlocked.CompareExchange(ref _generalDomain, domain, null) is not null)
                 throw new InvalidOperationException("The JobManager general execution domain is already installed.");
+
+            try
+            {
+                domain.Start();
+            }
+            catch
+            {
+                Shutdown(waitForWorkers: true);
+                throw;
+            }
+        }
+
+        internal void AttachAuxiliaryDomain(Execution.EngineJobAuxiliaryWorkDomain domain)
+        {
+            ArgumentNullException.ThrowIfNull(domain);
+            if (Interlocked.CompareExchange(ref _auxiliaryDomain, domain, null) is not null)
+                throw new InvalidOperationException("The JobManager auxiliary execution domain is already installed.");
 
             try
             {
@@ -369,10 +390,7 @@ namespace XREngine
                 if (Volatile.Read(ref _shutdownState) != 0)
                     rejected = true;
                 else
-                {
                     _deferredBySlot.Enqueue(job);
-                    EnsureDeferredWorker();
-                }
             }
 
             if (rejected)
@@ -381,66 +399,32 @@ namespace XREngine
                 return;
             }
 
-            try
-            {
-                _deferredReadySignal.Release();
-            }
-            catch (ObjectDisposedException)
-            {
-            }
+            _auxiliaryDomain!.NotifyDeferredWorkAvailable();
         }
 
-        private void EnsureDeferredWorker()
+        internal bool TryPromoteDeferredJob()
         {
-            lock (_deferredWorkerLock)
+            if (!_deferredBySlot.TryDequeue(out Job? job))
+                return false;
+
+            if (_cts.IsCancellationRequested)
             {
-                if (_deferredWorkerTask is { IsCompleted: false })
-                    return;
-
-                _deferredWorkerTask = Task.Factory.StartNew(
-                    DeferredEnqueueLoop,
-                    CancellationToken.None,
-                    TaskCreationOptions.LongRunning,
-                    TaskScheduler.Default);
+                CancelQueuedJobForShutdown(job);
+                return false;
             }
-        }
 
-        private void DeferredEnqueueLoop()
-        {
-            try
+            bool acquired = AcquireQueueSlot(_cts.Token);
+            if (acquired)
+                job.UsesQueueSlot = _queueSlots is not null;
+
+            if (!acquired || _cts.IsCancellationRequested)
             {
-                while (!_cts.IsCancellationRequested)
-                {
-                    _deferredReadySignal.Wait(_cts.Token);
-
-                    while (_deferredBySlot.TryDequeue(out var job))
-                    {
-                        if (_cts.IsCancellationRequested)
-                        {
-                            CancelQueuedJobForShutdown(job);
-                            return;
-                        }
-
-                        bool acquired = AcquireQueueSlot(_cts.Token);
-                        if (acquired)
-                            job.UsesQueueSlot = _queueSlots is not null;
-
-                        if (!acquired || _cts.IsCancellationRequested)
-                        {
-                            CancelQueuedJobForShutdown(job);
-                            return;
-                        }
-
-                        Enqueue(job, countAgainstSlots: false);
-                    }
-                }
+                CancelQueuedJobForShutdown(job);
+                return false;
             }
-            catch (OperationCanceledException)
-            {
-            }
-            catch (ObjectDisposedException)
-            {
-            }
+
+            Enqueue(job, countAgainstSlots: false);
+            return true;
         }
 
         public EnumeratorJob Schedule(
@@ -588,7 +572,6 @@ namespace XREngine
                             _pendingCollectVisibleSwapByPriority[bucket].Enqueue(job);
                             break;
                         case JobAffinity.Remote:
-                            EnsureRemoteWorker();
                             _pendingRemoteByPriority[bucket].Enqueue(job);
                             notifyRemote = true;
                             break;
@@ -611,13 +594,7 @@ namespace XREngine
             if (!notifyRemote)
                 return;
 
-            try
-            {
-                _remoteReadySignal.Release();
-            }
-            catch (ObjectDisposedException)
-            {
-            }
+            _auxiliaryDomain!.NotifyRemoteWorkAvailable();
         }
 
         private bool AcquireQueueSlot(CancellationToken cancellationToken)
@@ -821,80 +798,20 @@ namespace XREngine
             => ProfilerScopeFactory?.Invoke(name);
 
         public bool Process()
+            => TryDispatchGeneralWork(out _);
+
+        internal bool TryDispatchRemoteJob()
         {
-            return TryDispatchGeneralWork();
-        }
+            if (!TryDequeueWithAging(
+                    _pendingRemoteByPriority,
+                    JobAffinity.Remote,
+                    out Job? job,
+                    out int bucket))
+                return false;
 
-        private void RemoteWorkerLoop()
-        {
-            WorkerLaneState previousLane = EnterGeneralWorkerLane(laneId: -1);
-            try
-            {
-                var token = _cts.Token;
-                while (!token.IsCancellationRequested)
-                {
-                    bool signaled;
-                    try
-                    {
-                        signaled = _remoteReadySignal.Wait(RemoteWorkerIdleTimeout, token);
-                    }
-                    catch (OperationCanceledException)
-                    {
-                        break;
-                    }
-
-                    if (!signaled)
-                    {
-                        if (IsRemoteQueueEmpty())
-                            return;
-
-                        continue;
-                    }
-
-                    if (!TryDequeueWithAging(_pendingRemoteByPriority, JobAffinity.Remote, out var job, out var bucket))
-                        continue;
-
-                    RecordWait(job, bucket);
-                    ExecuteJob(job);
-                }
-            }
-            finally
-            {
-                ClearRemoteWorkerTask();
-                RestoreWorkerLane(previousLane);
-            }
-        }
-
-        private bool IsRemoteQueueEmpty()
-        {
-            for (int i = 0; i < PriorityLevels; i++)
-                if (!_pendingRemoteByPriority[i].IsEmpty)
-                    return false;
-
+            RecordWait(job, bucket);
+            ExecuteJob(job);
             return true;
-        }
-
-        private void ClearRemoteWorkerTask()
-        {
-            lock (_remoteWorkerLock)
-            {
-                if (Volatile.Read(ref _shutdownState) == 0)
-                    _remoteWorkerTask = null;
-            }
-        }
-
-        private void EnsureRemoteWorker()
-        {
-            if (_remoteWorkerTask is { IsCompleted: false })
-                return;
-
-            lock (_remoteWorkerLock)
-            {
-                if (_remoteWorkerTask is { IsCompleted: false })
-                    return;
-
-                _remoteWorkerTask = Task.Run(RemoteWorkerLoop, _cts.Token);
-            }
         }
 
         private bool TryDequeueWithAging(ConcurrentQueue<Job>[] queues, JobAffinity affinity, out Job job, out int bucket)
@@ -1079,13 +996,65 @@ namespace XREngine
         }
 
         internal bool TryDispatchGeneralWork()
-        {
-            if (!TryDequeueWithAging(_pendingByPriority, JobAffinity.Any, out var job, out var bucket))
-                return false;
+            => TryDispatchGeneralWork(out _);
 
-            RecordWait(job, bucket);
-            ExecuteJob(job);
-            return true;
+        internal bool TryDispatchGeneralWork(out bool throttled)
+            => TryDispatchGeneralWork(
+                applyBackgroundThrottle: true,
+                out throttled);
+
+        internal bool TryDispatchGeneralWorkUnthrottled()
+            => TryDispatchGeneralWork(
+                applyBackgroundThrottle: false,
+                out _);
+
+        private bool TryDispatchGeneralWork(
+            bool applyBackgroundThrottle,
+            out bool throttled)
+        {
+            throttled = false;
+            Func<bool>? admission = applyBackgroundThrottle
+                ? BackgroundDispatchAdmission
+                : null;
+            bool admitted = admission is null || admission();
+            if (!admitted)
+            {
+                throttled = true;
+                return false;
+            }
+
+            try
+            {
+                if (!TryDequeueWithAging(
+                        _pendingByPriority,
+                        JobAffinity.Any,
+                        out var job,
+                        out var bucket))
+                {
+                    return false;
+                }
+
+                RecordWait(job, bucket);
+                ExecuteJob(job);
+                return true;
+            }
+            finally
+            {
+                if (admission is not null)
+                    BackgroundDispatchCompletion?.Invoke();
+            }
+        }
+
+        internal static void WaitForBackgroundDispatchPermission()
+        {
+            Action? wait = BackgroundDispatchWait;
+            if (wait is null)
+            {
+                Thread.Yield();
+                return;
+            }
+
+            wait();
         }
 
         internal readonly record struct WorkerLaneState(bool IsWorkerThread, int LaneId);
@@ -1313,28 +1282,7 @@ namespace XREngine
                 }
 
                 _generalDomain?.Shutdown(waitForWorkers: false);
-
-                try
-                {
-                    _remoteReadySignal.Release();
-                }
-                catch (OperationCanceledException)
-                {
-                }
-                catch (ObjectDisposedException)
-                {
-                }
-
-                try
-                {
-                    _deferredReadySignal.Release();
-                }
-                catch (OperationCanceledException)
-                {
-                }
-                catch (ObjectDisposedException)
-                {
-                }
+                _auxiliaryDomain?.Shutdown(waitForWorkers: false);
             }
 
             if (!waitForWorkers)
@@ -1354,29 +1302,22 @@ namespace XREngine
                 bool generalWorkersStopped = _generalDomain?.Shutdown(
                     waitForWorkers: true,
                     GetShutdownRemaining(deadline)) ?? true;
-                bool remoteWorkerStopped = true;
-                if (_remoteWorkerTask is { IsCompleted: false } task)
-                    remoteWorkerStopped = WaitForTaskShutdown(task, GetShutdownRemaining(deadline));
-
-                bool deferredWorkerStopped = true;
-                if (_deferredWorkerTask is { IsCompleted: false } deferred)
-                    deferredWorkerStopped = WaitForTaskShutdown(deferred, GetShutdownRemaining(deadline));
+                bool auxiliaryWorkersStopped = _auxiliaryDomain?.Shutdown(
+                    waitForWorkers: true,
+                    GetShutdownRemaining(deadline)) ?? true;
 
                 bool submissionsStopped = WaitForSubmissions(GetShutdownRemaining(deadline));
                 bool activeJobsStopped = WaitForActiveJobs(GetShutdownRemaining(deadline));
 
-                bool executionStopped = generalWorkersStopped && remoteWorkerStopped &&
-                    deferredWorkerStopped && submissionsStopped && activeJobsStopped;
+                bool executionStopped = generalWorkersStopped && auxiliaryWorkersStopped &&
+                    submissionsStopped && activeJobsStopped;
                 if (!executionStopped)
                 {
                     if (!generalWorkersStopped)
                         Log("JobManager shutdown timed out waiting for the shared general worker domain.");
 
-                    if (!remoteWorkerStopped)
-                        Log("JobManager shutdown timed out waiting for the remote dispatch worker task.");
-
-                    if (!deferredWorkerStopped)
-                        Log("JobManager shutdown timed out waiting for the deferred enqueue worker task.");
+                    if (!auxiliaryWorkersStopped)
+                        Log("JobManager shutdown timed out waiting for the auxiliary scheduler domain.");
 
                     if (!submissionsStopped)
                         Log("JobManager shutdown timed out waiting for an admitted Schedule call.");
@@ -1408,8 +1349,6 @@ namespace XREngine
                 if (Interlocked.Exchange(ref _shutdownSynchronizationDisposed, 1) != 0)
                     return true;
 
-                _remoteReadySignal.Dispose();
-                _deferredReadySignal.Dispose();
                 _activeJobsEmpty.Dispose();
                 _submissionsEmpty.Dispose();
                 _shutdownFinalizationsEmpty.Dispose();
@@ -1672,21 +1611,6 @@ namespace XREngine
             }
 
             job.UsesQueueSlot = false;
-        }
-
-        private static bool WaitForTaskShutdown(Task task, TimeSpan timeout)
-        {
-            if (timeout <= TimeSpan.Zero)
-                return task.IsCompleted;
-
-            try
-            {
-                return task.Wait(timeout);
-            }
-            catch (AggregateException)
-            {
-                return task.IsCompleted;
-            }
         }
 
         private bool WaitForActiveJobs(TimeSpan timeout)

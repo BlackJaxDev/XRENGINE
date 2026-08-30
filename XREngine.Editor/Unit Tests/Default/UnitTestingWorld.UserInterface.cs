@@ -127,21 +127,34 @@ public static partial class EditorUnitTests
             int bytesPerSecond = 0;
 
             var net = Engine.Networking;
-            if (net is not null)
+            bool hasConnectedRemotePeer = net?.HasConnectedRemotePeer == true;
+            if (hasConnectedRemotePeer)
             {
-                networkingRttMs = net.AverageRoundTripTimeMs;
+                networkingRttMs = net!.AverageRoundTripTimeMs;
                 packetsPerSecond = net.PacketsPerSecond;
                 bytesPerSecond = net.BytesSentLastSecond;
             }
 
             var builder = _fpsTextBuilder;
             builder.Clear();
-            builder.Append("net:    rtt ");
-            AppendFixed(builder, networkingRttMs, "F1", 5);
-            builder.Append("ms | pkt ");
-            AppendFixed(builder, packetsPerSecond, "F1", 5);
-            builder.Append("/s | data ");
-            builder.Append(FormatCompactRate(bytesPerSecond, 7));
+
+            if (hasConnectedRemotePeer)
+            {
+                builder.Append("net:    rtt ");
+                AppendFixed(builder, networkingRttMs, "F1", 5);
+                builder.Append("ms | pkt ");
+                AppendFixed(builder, packetsPerSecond, "F1", 5);
+                builder.Append("/s | data ");
+                builder.Append(FormatCompactRate(bytesPerSecond, 7));
+                builder.Append('\n');
+            }
+
+            builder.Append("path:   ");
+            builder.Append(ResolveRenderBackendLabel());
+            builder.Append(" | ");
+            builder.Append(ResolvePrimaryRenderPipelineLabel());
+            builder.Append(" | ");
+            builder.Append(ResolveMeshSubmissionStrategyLabel());
 
             builder.Append(vrActive ? "\ndesktop:" : "\nrender: ");
             AppendFixed(builder, averageHz, "F0", 3);
@@ -209,6 +222,46 @@ public static partial class EditorUnitTests
             string fpsText = builder.ToString();
             t.Text = fpsText;
             t.Color = ResolveFpsOverlayColor(renderMs, cpuFrameMs, gpuCmdMs, vrPassMs, networkingRttMs, fallbackEvents);
+        }
+
+        private static string ResolveRenderBackendLabel()
+            => RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend switch
+            {
+                RuntimeGraphicsApiKind.OpenGL => "OpenGL",
+                RuntimeGraphicsApiKind.Vulkan => "Vulkan",
+                RuntimeGraphicsApiKind.WebGL2 => "WebGL2",
+                RuntimeGraphicsApiKind.WebGPU => "WebGPU",
+                _ => "Unknown",
+            };
+
+        private static string ResolvePrimaryRenderPipelineLabel()
+        {
+            if (RuntimeEngine.Windows.Count == 0)
+                return "NoRenderPipeline";
+
+            XRWindow? window = RuntimeEngine.Windows[0];
+            if (window is null || window.Viewports.Count == 0)
+                return "NoRenderPipeline";
+
+            return window.Viewports[0].RenderPipelineInstance.Pipeline?.GetType().Name
+                ?? "NoRenderPipeline";
+        }
+
+        private static string ResolveMeshSubmissionStrategyLabel()
+        {
+            string activeStrategy = RuntimeEngine.Rendering.Stats.RendererState.ActiveSubmissionStrategy;
+            if (!string.Equals(activeStrategy, "unknown", StringComparison.OrdinalIgnoreCase))
+                return activeStrategy;
+
+            return RuntimeEngine.Rendering.LastResolvedMeshSubmissionStrategy switch
+            {
+                EMeshSubmissionStrategy.CpuDirect => nameof(EMeshSubmissionStrategy.CpuDirect),
+                EMeshSubmissionStrategy.GpuIndirectInstrumented => nameof(EMeshSubmissionStrategy.GpuIndirectInstrumented),
+                EMeshSubmissionStrategy.GpuIndirectZeroReadback => nameof(EMeshSubmissionStrategy.GpuIndirectZeroReadback),
+                EMeshSubmissionStrategy.GpuMeshletZeroReadback => nameof(EMeshSubmissionStrategy.GpuMeshletZeroReadback),
+                EMeshSubmissionStrategy.GpuMeshletInstrumented => nameof(EMeshSubmissionStrategy.GpuMeshletInstrumented),
+                _ => "UnknownSubmission",
+            };
         }
 
         private static void AddFpsFrameDuration(double durationSeconds)

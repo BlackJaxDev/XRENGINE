@@ -85,6 +85,14 @@ internal sealed class VulkanSealedBinSubmissionPlan
         EMeshSubmissionStrategy.GpuIndirectInstrumented or
         EMeshSubmissionStrategy.GpuMeshletInstrumented;
 
+    /// <summary>
+    /// True only when this instrumented lane has a completion-owned sidecar
+    /// that observes sticky producer-overflow counters after the frame.
+    /// Zero-readback lanes deliberately remain sidecar-free.
+    /// </summary>
+    internal bool HasAsynchronousOverflowDiagnostics
+        => OverflowDiagnosticPlan.HasValue;
+
     internal void AttachOverflowDiagnosticPlan(
         GpuDiagnosticReadbackPlanNode? diagnosticPlan)
     {
@@ -114,6 +122,14 @@ internal sealed class VulkanSealedBinSubmissionPlan
             new(BinKey, ResolvedStrategy, producedCount, Capacity.OutputCapacity));
         return Capacity.OutputCapacity;
     }
+
+    /// <summary>
+    /// Returns the maximum passed to Vulkan's indirect-count command. Vulkan
+    /// clamps the GPU-written count to this exact sealed bound; recording never
+    /// maps the counter to select a fallback or retry the same frame.
+    /// </summary>
+    internal uint ClampMaximumDrawCount(uint requestedCount)
+        => Math.Min(requestedCount, Capacity.OutputCapacity);
 }
 
 /// <summary>

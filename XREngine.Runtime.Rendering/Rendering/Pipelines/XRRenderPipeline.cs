@@ -94,9 +94,9 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
     public List<XRRenderPipelineInstance> Instances { get; } = [];
 
     /// <summary>
-    /// When true, <see cref="RuntimeEngine.Rendering.ApplyRenderPipelinePreference"/> will not replace
-    /// this pipeline with the global debug/default preference. Use this for viewports that
-    /// require a specific pipeline (e.g., VR desktop mirror cameras that need deferred rendering).
+    /// When true, output-owned viewport setup must not replace this source pipeline with a
+    /// purpose-specific pipeline. Camera-owned scene viewports are always source-authoritative;
+    /// this flag remains for explicit output-owned exceptions such as OpenXR views.
     /// </summary>
     [Browsable(false)]
     public bool OverrideProtected { get; set; }

@@ -13,5 +13,13 @@ public sealed class AdvancedRenderPipelineNotSupportedException : InvalidOperati
         SelectionResult = selectionResult;
     }
 
+    public AdvancedRenderPipelineNotSupportedException(
+        AdvancedRenderPipelineSelectionResult selectionResult,
+        string failureDetail)
+        : base($"{selectionResult.Diagnostic} Reservation: {failureDetail}")
+    {
+        SelectionResult = selectionResult;
+    }
+
     public AdvancedRenderPipelineSelectionResult SelectionResult { get; }
 }

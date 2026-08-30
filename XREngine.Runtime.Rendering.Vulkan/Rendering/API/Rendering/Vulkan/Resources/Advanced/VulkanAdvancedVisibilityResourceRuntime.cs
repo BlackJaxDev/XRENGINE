@@ -133,7 +133,7 @@ internal sealed class VulkanAdvancedVisibilityResourceRuntime
         in AdvancedPreparationPublication publication,
         in AdvancedIndirectPreparationResult indirect,
         in VulkanAdvancedSceneLookupSegments lookupSegments,
-        AdvancedPreparationExtractor extractor,
+        VulkanAdvancedVisibilityInputStorage input,
         ReadOnlySpan<AdvancedVisibilityPayload> sourcePayloads,
         in VulkanAdvancedVisibilityGeometrySlices geometry,
         uint viewCount,
@@ -168,7 +168,8 @@ internal sealed class VulkanAdvancedVisibilityResourceRuntime
             // scope. Do not admit stereo until layer-specific scopes or a
             // true gl_ViewIndex-based indirect ABI is sealed end to end.
             if (!familySeal.IsValid ||
-                !extractor.MatchesPublication(in publication) ||
+                input is null ||
+                !input.MatchesPublication(in publication, in indirect) ||
                 publication.DrawCount == 0u || viewCount != 1u ||
                 publication.RequiresCpuReadback ||
                 indirect.RequiresCpuCount ||
@@ -328,14 +329,14 @@ internal sealed class VulkanAdvancedVisibilityResourceRuntime
                 return false;
             }
             if (!TryWritePayloads(arena, payloads, sourcePayloads) ||
-                !TryWritePayloads(arena, candidates, extractor.VisibilityCandidates) ||
-                !TryWritePayloads(arena, producers, extractor.VisibilityProducers) ||
+                !TryWritePayloads(arena, candidates, input.Candidates) ||
+                !TryWritePayloads(arena, producers, input.Producers) ||
                 !TryWriteRangeMetadata(
                     arena,
                     rangeIndices,
                     rangeOffsets,
-                    extractor.IndirectRanges,
-                    extractor.IndirectPayloadIndices,
+                    input.IndirectRanges,
+                    input.IndirectPayloadIndices,
                     publication.DrawCount) ||
                 !TryClear(arena, deferredIndices) ||
                 !TryClear(arena, visibleIndices) || !TryClear(arena, rangeCounts) ||
@@ -358,7 +359,7 @@ internal sealed class VulkanAdvancedVisibilityResourceRuntime
                 reason = "The frame-slot visibility payload, counters, or indirect arguments could not be initialized.";
                 return false;
             }
-            if (!extractor.MatchesPublication(in publication))
+            if (!input.MatchesPublication(in publication, in indirect))
             {
                 if (!TryRollbackFrameStorageTransaction(
                         arena, frameSlot, rollbackCursor, out string rollbackReason))
@@ -368,7 +369,7 @@ internal sealed class VulkanAdvancedVisibilityResourceRuntime
                     return false;
                 }
                 failure = EVulkanAdvancedVisibilityResourceFailure.InvalidPreparation;
-                reason = "The visibility extractor changed while its immutable set-1 payload was being copied.";
+                reason = "The frame-owned visibility input changed while its immutable set-1 payload was being copied.";
                 return false;
             }
             VulkanAdvancedVisibilityResourceState candidateState = new(
@@ -1154,17 +1155,25 @@ internal sealed class VulkanAdvancedVisibilityResourceRuntime
 
         ResourcePlannerRuntimeGeneration generation =
             _resources.PlannerPublications.GetPublishedGeneration();
-        if (!ReferenceEquals(generation.State.CompiledRenderGraph, graph) ||
-            !generation.State.ResourceAllocator.TryGetPhysicalGroupForResource(
-                RenderGraphResourceNames.MakeTexture(depthTargetName),
+        if (!ReferenceEquals(generation.State.CompiledRenderGraph, graph))
+        {
+            reason =
+                "The published physical-resource generation does not match the frozen render graph.";
+            return false;
+        }
+        // Render-graph pass edges use the tex:: namespace, while the physical
+        // allocator is keyed by the registry's declared texture names.
+        if (!generation.State.ResourceAllocator.TryGetPhysicalGroupForResource(
+                depthTargetName,
                 out VulkanPhysicalImageGroup? depthGroup) ||
             depthGroup is null ||
             !generation.State.ResourceAllocator.TryGetPhysicalGroupForResource(
-                RenderGraphResourceNames.MakeTexture(pyramidTargetName),
+                pyramidTargetName,
                 out VulkanPhysicalImageGroup? pyramidGroup) ||
             pyramidGroup is null)
         {
-            reason = "The frozen render-graph generation does not own the requested depth and current-pyramid physical images.";
+            reason =
+                $"The frozen physical-resource generation has no allocation for depth '{depthTargetName}' or pyramid '{pyramidTargetName}'.";
             return false;
         }
         if (!depthGroup.IsAllocated || !pyramidGroup.IsAllocated ||

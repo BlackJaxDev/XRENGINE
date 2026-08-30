@@ -41,7 +41,9 @@ internal readonly ref struct VulkanCpuStageScope
              s_fineGrainedProfilingEnabled ||
              spanCapture);
         _captureAllocations =
-            _active && (s_detailedDiagnosticsEnabled || spanCapture);
+            _active &&
+            (s_detailedDiagnosticsEnabled ||
+             spanCapture);
         if (!_active)
         {
             _startTimestamp = 0;
@@ -105,4 +107,5 @@ internal readonly ref struct VulkanCpuStageScope
             EVulkanCpuStage.MeshDrawPublisherState or
             EVulkanCpuStage.MeshDrawArtifactEligibility or
             EVulkanCpuStage.MeshDrawArtifactLookup;
+
 }

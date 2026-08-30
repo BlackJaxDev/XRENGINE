@@ -65,7 +65,7 @@ namespace XREngine.Scene
             GPUCommands.SwapCommandBuffers();
         }
 
-        public void Initialize()
+        public virtual void Initialize()
         {
             GPUCommands.Initialize();
         }

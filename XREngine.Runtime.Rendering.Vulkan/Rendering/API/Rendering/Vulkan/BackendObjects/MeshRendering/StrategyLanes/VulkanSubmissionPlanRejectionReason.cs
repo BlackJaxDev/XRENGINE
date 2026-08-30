@@ -23,6 +23,7 @@ internal enum VulkanSubmissionPlanRejectionReason : byte
     MeshletVisibilityAbiUnavailable = 17,
     OrderedExceptionCapacityExceeded = 18,
     RangeExecutionLaneMismatch = 19,
+    CanonicalVisibilityOutputPolicyRejected = 20,
 }
 
 /// <summary>Exact downgrade recorded when the requested lane cannot be sealed.</summary>

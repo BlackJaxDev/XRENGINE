@@ -14,4 +14,14 @@ public readonly record struct RenderForegroundWorkSnapshot(
     long BackgroundSlicesStarted,
     long BackgroundSlicesCompleted,
     long BackgroundYieldCount,
-    long BackgroundResumeCount);
+    long BackgroundResumeCount,
+    bool HighRefreshConfigured,
+    float HighRefreshTargetHz,
+    int HighRefreshFrameDepth,
+    long HighRefreshFrameEntries,
+    long HighRefreshFrameExits,
+    int ActiveEditorJobSlices,
+    long EditorJobSlicesStarted,
+    long EditorJobSlicesCompleted,
+    long EditorJobYieldCount,
+    long EditorJobResumeCount);

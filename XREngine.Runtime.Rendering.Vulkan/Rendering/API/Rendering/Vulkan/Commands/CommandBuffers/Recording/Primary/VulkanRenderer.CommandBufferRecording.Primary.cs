@@ -24,6 +24,7 @@ namespace XREngine.Rendering.Vulkan
             recordingState.RecordedSwapchainWriteCount = ref context.RecordedSwapchainWriteCount;
             recordingState.RecordedSwapchainFinalLayout = ref context.RecordedSwapchainFinalLayout;
             recordingState.RecordingDeferredReason = ref context.RecordingDeferredReason;
+            recordingState.FailureKind = ref context.FailureKind;
             recordingState.FrameOpsRequireRerecord = ref context.FrameOpsRequireRerecord;
             CapturePrimaryCommandBufferRecordingContext(in context, ref recordingState);
 
@@ -78,7 +79,8 @@ namespace XREngine.Rendering.Vulkan
             catch (VulkanPlanPreconditionException exception)
             {
                 recordingState.RecordingDeferredReason = exception.Message;
-                context.FailureKind = EVulkanCommandRecordingFailureKind.ReplanRequired;
+                recordingState.FailureKind =
+                    EVulkanCommandRecordingFailureKind.ReplanRequired;
                 _ = EndCommandBufferTracked(
                     recordingState.CommandBuffer,
                     cacheVariant: false,

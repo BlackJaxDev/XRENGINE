@@ -85,5 +85,6 @@ and graceful-shutdown evidence instead.
 Phase 1B is complete. See the
 [shared-scheduler investigation](vulkan-resident-draw-stream-phase1b-scheduler-2026-08-22.md)
 for the process-wide `EngineWorkScheduler`, pooled render batches, lifetime
-hardening, tests, and matched Vulkan parity evidence. Vulkan recording remains
-on its existing workers until the later backend migration phase.
+hardening, tests, and matched Vulkan parity evidence. At this investigation's
+boundary Vulkan recording still used its existing workers; Phase 4.3 completed
+the render-domain lane migration on 2026-08-29.

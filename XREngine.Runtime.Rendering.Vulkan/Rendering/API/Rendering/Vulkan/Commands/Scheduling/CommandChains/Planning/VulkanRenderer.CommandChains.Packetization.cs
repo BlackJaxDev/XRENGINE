@@ -30,8 +30,8 @@ internal sealed partial class VulkanCommandRuntime
         // Packet lowering is deliberately deterministic and allocation-free on a
         // schedule-cache hit. Parallelizing this cheap classification previously
         // allocated two exact-length arrays and captured two closures every time
-        // visibility changed; actual Vulkan recording belongs on the persistent
-        // command-chain workers instead.
+        // visibility changed; actual Vulkan recording belongs in coarse,
+        // lane-affine render-domain batches instead.
         if (excludeStaticQueryBrackets)
             LowerFrameOpsToRenderPacketsExcludingQueryBrackets(targetImageIndex, staticOps, resourcePlanRevision, packets, preparedRecordingTarget, profileDetail);
         else
@@ -75,7 +75,12 @@ internal sealed partial class VulkanCommandRuntime
                     out DrawPacket preparedMeshDraw);
                 if (consumed > 0)
                     i += consumed - 1;
-                else if (IsSchedulableCommandChainFrameOp(ops, i, dynamicOverlay: false))
+                else if (ops.GetHeader(i).OpCode !=
+                             EVulkanPrimaryPlanNodeKind.MeshDraw &&
+                         IsSchedulableCommandChainFrameOp(
+                             ops,
+                             i,
+                             dynamicOverlay: false))
                     packets.Add(CreateRenderPacket(
                         targetImageIndex, ops, i, dynamicOverlay: false, resourcePlanRevision, preparedMeshDraw, preparedRecordingTarget));
             }
@@ -114,7 +119,12 @@ internal sealed partial class VulkanCommandRuntime
                 out DrawPacket preparedMeshDraw);
             if (consumed > 0)
                 i += consumed - 1;
-            else if (IsSchedulableCommandChainFrameOp(ops, i, dynamicOverlay))
+            else if (ops.GetHeader(i).OpCode !=
+                         EVulkanPrimaryPlanNodeKind.MeshDraw &&
+                     IsSchedulableCommandChainFrameOp(
+                         ops,
+                         i,
+                         dynamicOverlay))
                 packets.Add(CreateRenderPacket(
                     targetImageIndex, ops, i, dynamicOverlay, resourcePlanRevision, preparedMeshDraw, preparedRecordingTarget));
         }
@@ -192,9 +202,7 @@ internal sealed partial class VulkanCommandRuntime
                 startIndex,
                 compatibleRunCount);
         }
-        bool identityCapacityLimited = runCount < compatibleRunCount;
-        if (runCount < MinMeshDrawsPerRenderPacket &&
-            (!identityCapacityLimited || runCount <= 1))
+        if (runCount < MinMeshDrawsPerRenderPacket)
             return 0;
 
         Span<DrawPacket> draws = _commandChainDrawPacketScratch.AsSpan(0, runCount);
@@ -293,10 +301,10 @@ internal sealed partial class VulkanCommandRuntime
 
     /// <summary>
     /// Limits a compatible mesh run before its exact inline native identities
-    /// overflow. A capacity-limited prefix remains worth grouping even when it
-    /// is smaller than the ordinary batching threshold; accepting an oversized
-    /// packet would make its prepared key permanently incomplete and force the
-    /// whole run back into primary inline recording every frame.
+    /// overflow. A capacity-limited prefix below the coarse-recording floor is
+    /// left inline; accepting an oversized packet would make its prepared key
+    /// permanently incomplete and force the whole run back into primary inline
+    /// recording every frame.
     /// </summary>
     private int LimitMeshPacketToRecordedIdentityCapacity(
         FrameOperationStream ops,
@@ -382,10 +390,9 @@ internal sealed partial class VulkanCommandRuntime
         }
 
         // Multi-draw packets may switch graphics programs and descriptor layouts
-        // per draw. Shadow packetization is currently capped at one draw because
-        // cascade membership churn must not invalidate unrelated casters. Keep
-        // the compatibility rule for an explicitly raised cap and retain the
-        // main view's fine-grained program/descriptor grouping.
+        // per draw. Shadow packetization uses a smaller bounded packet cap so
+        // cascade membership churn cannot invalidate an unbounded caster set.
+        // Retain the main view's fine-grained program/descriptor grouping.
         if (viewKey.Kind != RenderViewKind.Shadow)
         {
             DescriptorBindingSnapshot candidateDescriptors = CreateMeshDrawDescriptorSnapshot(candidate);

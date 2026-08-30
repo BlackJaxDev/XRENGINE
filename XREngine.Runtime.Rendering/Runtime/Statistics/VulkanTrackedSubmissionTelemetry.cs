@@ -2,6 +2,7 @@ using System;
 using System.Diagnostics;
 using System.Numerics;
 using System.Threading;
+using XREngine.Rendering.Commands;
 
 namespace XREngine;
 
@@ -27,6 +28,7 @@ public static partial class RuntimeEngine
                     DiagnosticPublication,
                     CleanupPinRelease,
                     GatewayTotal,
+                    SealedHitGatewayTotal,
                 }
 
                 public enum SealedSubmissionFallbackReason
@@ -58,9 +60,9 @@ public static partial class RuntimeEngine
                 private static readonly long[][] _trackedSubmissionTimingCounts = CreateTrackedTimingCounts();
                 private static long[][] CreateTrackedTimingCounts()
                     => Array.ConvertAll(
-                        new long[(int)TrackedSubmissionTimingStage.GatewayTotal + 1][],
+                        new long[(int)TrackedSubmissionTimingStage.SealedHitGatewayTotal + 1][],
                         _ => new long[TrackedTimingBuckets]);
-                private static readonly long[] _trackedSubmissionTimingCount = new long[(int)TrackedSubmissionTimingStage.GatewayTotal + 1];
+                private static readonly long[] _trackedSubmissionTimingCount = new long[(int)TrackedSubmissionTimingStage.SealedHitGatewayTotal + 1];
                 private static long _vulkanSealedSubmissionHits;
                 private static long _vulkanSealedSubmissionFallbacks;
                 private static readonly long[] _vulkanSealedSubmissionFallbackReasons =
@@ -73,6 +75,9 @@ public static partial class RuntimeEngine
                 private static long _vulkanResidentTemplateExactDependencyInvalidations;
                 private static long _vulkanResidentTemplateBroadFallbackInvalidations;
                 private static long _vulkanResidentTemplateBroadFallbackEntries;
+                private static VulkanResidentTemplateBroadFallbackSnapshot
+                    _vulkanResidentTemplateLastBroadFallback =
+                        VulkanResidentTemplateBroadFallbackSnapshot.Empty;
 
                 public static long VulkanSealedSubmissionHits
                     => Volatile.Read(ref _vulkanSealedSubmissionHits);
@@ -90,6 +95,9 @@ public static partial class RuntimeEngine
                     => Volatile.Read(ref _vulkanResidentTemplateBroadFallbackInvalidations);
                 public static long VulkanResidentTemplateBroadFallbackEntries
                     => Volatile.Read(ref _vulkanResidentTemplateBroadFallbackEntries);
+                public static VulkanResidentTemplateBroadFallbackSnapshot
+                    VulkanResidentTemplateLastBroadFallback
+                    => Volatile.Read(ref _vulkanResidentTemplateLastBroadFallback);
 
                 public static void RecordVulkanSealedSubmissionHit()
                     => Interlocked.Increment(ref _vulkanSealedSubmissionHits);
@@ -138,10 +146,23 @@ public static partial class RuntimeEngine
                 }
 
                 public static void RecordVulkanResidentTemplateBroadFallback(
-                    int affectedCount)
+                    int affectedCount,
+                    string reason,
+                    EBackendReadyCanonicalOwner owner,
+                    EBackendTemplateMutationDomain domain,
+                    ulong publicationSequence)
                 {
                     if (!EnableTracking)
                         return;
+
+                    Volatile.Write(
+                        ref _vulkanResidentTemplateLastBroadFallback,
+                        new VulkanResidentTemplateBroadFallbackSnapshot(
+                            reason,
+                            owner,
+                            domain,
+                            affectedCount,
+                            publicationSequence));
                     Interlocked.Increment(
                         ref _vulkanResidentTemplateBroadFallbackInvalidations);
                     if (affectedCount > 0)

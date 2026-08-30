@@ -515,13 +515,17 @@ internal sealed partial class VulkanFrameLoop
                     UseDynamicRenderingRenderTargets,
                     preserveSwapchainForOverlay: false,
                     ref watchdog,
+                    out bool pipelineRetryable,
                     out string pipelineFailure))
             {
                 throw watchdog.CreateFailure(
                     EVulkanPresentNowReadinessStage.PipelineCompilation,
                     "explicit-graphics-pipeline",
                     "ExplicitOutput -> graphics pipeline manifest",
-                    pipelineFailure);
+                    pipelineFailure,
+                    disposition: pipelineRetryable
+                        ? EVulkanPresentNowFailureDisposition.RetryFrame
+                        : EVulkanPresentNowFailureDisposition.RendererTerminal);
             }
         }
 

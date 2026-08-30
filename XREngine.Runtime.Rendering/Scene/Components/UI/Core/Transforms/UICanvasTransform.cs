@@ -130,7 +130,7 @@ namespace XREngine.Rendering.UI
             IsUpdatingLayout = true;
             LayoutingStarted?.Invoke(this);
 
-            _layoutJob = RuntimeEngine.Jobs.Schedule(
+            _layoutJob = RuntimeRenderingHostServices.Work.GeneralJobs.Schedule(
                 routine: UILayoutSystem.LayoutCoroutine(this, MaxLayoutItemsPerFrame),
                 completed: OnLayoutJobCompleted,
                 error: OnLayoutJobError

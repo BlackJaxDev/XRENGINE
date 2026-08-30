@@ -67,9 +67,11 @@ internal sealed class VulkanPreparedFrameRecording
         new byte[VulkanMeshOperationRequestQueue.Capacity];
     private BackendReadyCanonicalViewRecord[] _globalViews = [];
     private BackendReadyCanonicalPassRecord[] _globalPasses = [];
+    private AdvancedGlobalPassPublicationCoverage[] _globalPassCoverage = [];
     private BackendReadyDiagnosticReadbackRequest[] _globalDiagnostics = [];
     private int _globalViewCount;
     private int _globalPassCount;
+    private int _globalPassCoverageCount;
     private int _globalDiagnosticCount;
     private readonly VulkanResidentDrawTemplate?[] _residentTemplateUses =
         new VulkanResidentDrawTemplate[VulkanMeshOperationRequestQueue.Capacity];
@@ -128,6 +130,8 @@ internal sealed class VulkanPreparedFrameRecording
     internal VulkanPreparedFrameGlobalResourceSnapshot GlobalResources { get; private set; }
     internal ReadOnlySpan<BackendReadyCanonicalViewRecord> GlobalViews => _globalViews.AsSpan(0, _globalViewCount);
     internal ReadOnlySpan<BackendReadyCanonicalPassRecord> GlobalPasses => _globalPasses.AsSpan(0, _globalPassCount);
+    internal ReadOnlySpan<AdvancedGlobalPassPublicationCoverage> GlobalPassCoverage
+        => _globalPassCoverage.AsSpan(0, _globalPassCoverageCount);
     internal ReadOnlySpan<BackendReadyDiagnosticReadbackRequest> GlobalDiagnostics => _globalDiagnostics.AsSpan(0, _globalDiagnosticCount);
 
     internal void CaptureGlobalResources(BackendReadyFramePackage package, ulong packageGeneration)
@@ -137,6 +141,7 @@ internal sealed class VulkanPreparedFrameRecording
             throw new InvalidOperationException("Global resources must be captured before prepared-frame freeze.");
         Copy(package.CanonicalViews, ref _globalViews, out _globalViewCount);
         Copy(package.CanonicalPasses, ref _globalPasses, out _globalPassCount);
+        Copy(package.GlobalPassCoverage, ref _globalPassCoverage, out _globalPassCoverageCount);
         Copy(package.DiagnosticReadbackRequests, ref _globalDiagnostics, out _globalDiagnosticCount);
         string retainReason = "package publication identity mismatch";
         if (!package.TryGetCanonicalPublication(
@@ -157,6 +162,7 @@ internal sealed class VulkanPreparedFrameRecording
             packageGeneration,
             _globalViewCount,
             _globalPassCount,
+            _globalPassCoverageCount,
             _globalDiagnosticCount);
     }
 
@@ -649,6 +655,7 @@ internal sealed class VulkanPreparedFrameRecording
                     GlobalViews,
                     in canonicalFrame,
                     GlobalPasses,
+                    GlobalPassCoverage,
                     GlobalResources.DiagnosticCount,
                     out VulkanAdvancedScenePublicationUse use,
                     out failure,
@@ -757,7 +764,8 @@ internal sealed class VulkanPreparedFrameRecording
             _canonicalPublicationNativeFailureReasons[index] = null;
         }
         _canonicalPublicationLeaseCount = 0;
-        _globalViewCount = _globalPassCount = _globalDiagnosticCount = 0;
+        _globalViewCount = _globalPassCount = _globalPassCoverageCount =
+            _globalDiagnosticCount = 0;
         GlobalResources = default;
 
         for (int index = 0; index < _residentTemplateUseCount; ++index)
@@ -799,6 +807,9 @@ internal sealed class VulkanPreparedFrameRecording
             _canonicalPublicationNativeFailureReasons[index] = null;
         }
         _canonicalPublicationLeaseCount = 0;
+        _globalViewCount = _globalPassCount = _globalPassCoverageCount =
+            _globalDiagnosticCount = 0;
+        GlobalResources = default;
 
         if (_meshDrawCount > 0)
             Array.Clear(_meshDraws, 0, _meshDrawCount);

@@ -11,7 +11,8 @@ namespace XREngine.Rendering.Vulkan
             string rejectionStage,
             out bool imageWasEverPresented,
             out bool imageHasValidPresentedContent,
-            out bool acquireAvailable)
+            out bool acquireAvailable,
+            bool allowPresentNowRetryInitializationClear)
         {
             imageWasEverPresented =
                 OutputRuntime.Desktop.IsImageEverPresented(attempt.ImageIndex);
@@ -32,6 +33,22 @@ namespace XREngine.Rendering.Vulkan
                     imageHasValidPresentedContent,
                     allowStaleReuse:
                         attempt.WorkClass != ERenderOutputWorkClass.PresentNow);
+
+            // A retryable PresentNow rejection may submit a newly recorded
+            // clear/overlay recovery frame. That is fresh output rather than
+            // stale scene replay, and it also carries texture uploads whose
+            // completion can satisfy the next exact scene attempt.
+            if (allowPresentNowRetryInitializationClear &&
+                policy.IsExplicitFailure &&
+                acquireAvailable &&
+                !_deviceLost)
+            {
+                return new RejectedDesktopFramePolicyDecision(
+                    ERejectedDesktopFrameDisposition
+                        .PresentInitializationClear,
+                    ERejectedDesktopFramePolicyReason
+                        .PresentNowRetryInitializationClear);
+            }
 
             if (policy.ShouldPresent ||
                 policy.IsExplicitFailure ||

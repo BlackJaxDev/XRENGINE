@@ -358,12 +358,14 @@ namespace XREngine
                     private static long _vulkanFrameDataArenaAllocationCount;
                     private static long _vulkanFrameDataArenaDirtyBytes;
                     private static int _vulkanFrameDataArenaDirtyRangeCount;
+                    private static long _vulkanFrameDataArenaDirtyRangeCapacityCollapseCount;
                     private static long _vulkanFrameDataArenaFlushExpansionBytes;
                     private static long _vulkanFrameDataArenaInvalidateExpansionBytes;
                     private static long _lastFrameVulkanFrameDataArenaAllocatedBytes;
                     private static long _lastFrameVulkanFrameDataArenaAllocationCount;
                     private static long _lastFrameVulkanFrameDataArenaDirtyBytes;
                     private static int _lastFrameVulkanFrameDataArenaDirtyRangeCount;
+                    private static long _lastFrameVulkanFrameDataArenaDirtyRangeCapacityCollapseCount;
                     private static long _lastFrameVulkanFrameDataArenaFlushExpansionBytes;
                     private static long _lastFrameVulkanFrameDataArenaInvalidateExpansionBytes;
 
@@ -788,6 +790,8 @@ namespace XREngine
                     public static long VulkanFrameDataArenaAllocationCount => _lastFrameVulkanFrameDataArenaAllocationCount;
                     public static long VulkanFrameDataArenaDirtyBytes => _lastFrameVulkanFrameDataArenaDirtyBytes;
                     public static int VulkanFrameDataArenaDirtyRangeCount => _lastFrameVulkanFrameDataArenaDirtyRangeCount;
+                    /// <summary>Number of frame-data dirty-range capacity overflows that conservatively widened flush coverage.</summary>
+                    public static long VulkanFrameDataArenaDirtyRangeCapacityCollapseCount => _lastFrameVulkanFrameDataArenaDirtyRangeCapacityCollapseCount;
                     public static long VulkanFrameDataArenaFlushExpansionBytes => _lastFrameVulkanFrameDataArenaFlushExpansionBytes;
                     public static long VulkanFrameDataArenaInvalidateExpansionBytes => _lastFrameVulkanFrameDataArenaInvalidateExpansionBytes;
                     public static int VulkanRetiredResourcePlanReplacements => _lastFrameVulkanRetiredResourcePlanReplacements;
@@ -1014,6 +1018,7 @@ namespace XREngine
                         long allocationCount,
                         long dirtyBytes,
                         int dirtyRangeCount,
+                        long dirtyRangeCapacityCollapseCount,
                         long flushExpansionBytes,
                         long invalidateExpansionBytes)
                     {
@@ -1024,6 +1029,7 @@ namespace XREngine
                         Volatile.Write(ref _vulkanFrameDataArenaAllocationCount, Math.Max(allocationCount, 0L));
                         Volatile.Write(ref _vulkanFrameDataArenaDirtyBytes, Math.Max(dirtyBytes, 0L));
                         Volatile.Write(ref _vulkanFrameDataArenaDirtyRangeCount, Math.Max(dirtyRangeCount, 0));
+                        Volatile.Write(ref _vulkanFrameDataArenaDirtyRangeCapacityCollapseCount, Math.Max(dirtyRangeCapacityCollapseCount, 0L));
                         Volatile.Write(ref _vulkanFrameDataArenaFlushExpansionBytes, Math.Max(flushExpansionBytes, 0L));
                         Volatile.Write(ref _vulkanFrameDataArenaInvalidateExpansionBytes, Math.Max(invalidateExpansionBytes, 0L));
                     }
@@ -2182,6 +2188,7 @@ namespace XREngine
                         _lastFrameVulkanFrameDataArenaAllocationCount = _vulkanFrameDataArenaAllocationCount;
                         _lastFrameVulkanFrameDataArenaDirtyBytes = _vulkanFrameDataArenaDirtyBytes;
                         _lastFrameVulkanFrameDataArenaDirtyRangeCount = _vulkanFrameDataArenaDirtyRangeCount;
+                        _lastFrameVulkanFrameDataArenaDirtyRangeCapacityCollapseCount = _vulkanFrameDataArenaDirtyRangeCapacityCollapseCount;
                         _lastFrameVulkanFrameDataArenaFlushExpansionBytes = _vulkanFrameDataArenaFlushExpansionBytes;
                         _lastFrameVulkanFrameDataArenaInvalidateExpansionBytes = _vulkanFrameDataArenaInvalidateExpansionBytes;
                         _lastFrameVulkanRetiredResourcePlanReplacements = _vulkanRetiredResourcePlanReplacements;
@@ -2393,6 +2400,7 @@ namespace XREngine
                         _vulkanFrameDataArenaAllocationCount = 0;
                         _vulkanFrameDataArenaDirtyBytes = 0;
                         _vulkanFrameDataArenaDirtyRangeCount = 0;
+                        _vulkanFrameDataArenaDirtyRangeCapacityCollapseCount = 0;
                         _vulkanFrameDataArenaFlushExpansionBytes = 0;
                         _vulkanFrameDataArenaInvalidateExpansionBytes = 0;
                         _vulkanRetiredResourcePlanReplacements = 0;

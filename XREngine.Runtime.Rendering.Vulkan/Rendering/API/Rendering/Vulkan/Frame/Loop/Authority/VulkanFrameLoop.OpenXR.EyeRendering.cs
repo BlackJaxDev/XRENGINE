@@ -385,6 +385,7 @@ internal sealed partial class VulkanFrameLoop
             request.OpenXrImageIndex,
             request.Image);
         OpenXrEyeRenderTargetContext targetContext = default;
+        bool frameDataSlotCompletionProven;
 
         try
         {
@@ -396,7 +397,7 @@ internal sealed partial class VulkanFrameLoop
                 if (!TryPrepareOpenXrFrameDataSlot(
                         recordImageIndex,
                         "eye swapchain render",
-                        out bool frameDataSlotCompletionProven))
+                        out frameDataSlotCompletionProven))
                 {
                     return false;
                 }
@@ -568,7 +569,8 @@ internal sealed partial class VulkanFrameLoop
                         plannerState.ResourcePlannerSignature,
                         plannerState.ResourceAllocationSignature),
                     frameOpsSignature,
-                    plannerRevision);
+                    plannerRevision,
+                    frameDataSlotCompletionProven);
 
                 if (_commandRuntime.IsOpenXrTraceEnabled)
                 {
@@ -614,6 +616,7 @@ internal sealed partial class VulkanFrameLoop
         recorded = default;
         if (!TryFreezeOpenXrEyeRecordWorkerInput(
                 in prepared,
+                _commandRuntime.ResolveOpenXrEyeRenderLaneId(0),
                 out OpenXrPreparedEyeRecordWorkerInput frozen))
         {
             throw CreateOpenXrEyePresentNowFailure(
@@ -632,14 +635,20 @@ internal sealed partial class VulkanFrameLoop
                 _commandRuntime,
                 ResourceRuntime,
                 _deviceContext);
+            VulkanRenderLaneFrameAttachment attachment =
+                _commandRuntime.GetRenderLaneAttachment(
+                    frozen.RenderLaneId,
+                    frozen.RenderFrameSlot);
+            using VulkanRenderLaneExecutionScope laneScope = new(attachment);
+            using VulkanLaneCommandFamilyArena.RecordingLease arenaLease =
+                VulkanLaneCommandFamilyArena.EnterRecording(
+                    attachment.Graphics);
             if (!recordingService.TryRecordPreparedEye(
-                    workerIndex: -1,
+                    workerIndex: frozen.RenderLaneId,
                     in frozen,
                     out recorded,
                     out VulkanImportedTexturePendingUpload[] uploads))
-            {
                 return false;
-            }
 
             if (uploads.Length != 0)
                 GetOpenXrEyeRecordedTextureUploads(frozen.OpenXrViewIndex)
@@ -666,6 +675,7 @@ internal sealed partial class VulkanFrameLoop
 
     private bool TryFreezeOpenXrEyeRecordWorkerInput(
         in OpenXrPreparedEyeCommandBufferInput prepared,
+        int renderLaneId,
         out OpenXrPreparedEyeRecordWorkerInput frozen)
     {
         frozen = default;
@@ -680,6 +690,11 @@ internal sealed partial class VulkanFrameLoop
                 "OpenXREyeSubmit -> immutable logical plan",
                 "The foreground eye lost its target or sealed logical plan before native recording freeze.");
         }
+        if ((uint)renderLaneId >= (uint)_commandRuntime.RenderLogicalLaneCount)
+            throw new ArgumentOutOfRangeException(nameof(renderLaneId));
+
+        int renderFrameSlot = _commandRuntime.ResolveRenderLaneFrameSlot(
+            unchecked((uint)framePlan.RenderFrameId));
 
         ulong logicalViewId = prepared.LogicalViewId;
         RenderOutputRequest requiredContract = prepared.RequiredOutputContract;
@@ -757,11 +772,22 @@ internal sealed partial class VulkanFrameLoop
         ulong cacheKey = BuildOpenXrPrimaryCommandBufferCacheKey(
             targetContext.CommandChainImageKey,
             in targetContext);
+        FrameOpSignatureHasher laneCacheHash = new();
+        laneCacheHash.Add(cacheKey);
+        laneCacheHash.Add(renderLaneId);
+        laneCacheHash.Add(renderFrameSlot);
+        cacheKey = laneCacheHash.ToHash();
+        VulkanLaneCommandFamilyArena laneArena =
+            _commandRuntime.GetRenderLaneAttachment(
+                renderLaneId,
+                renderFrameSlot).Graphics;
         PrimaryCommandArtifactOwner owner =
             GetOrCreateOpenXrPrimaryCommandBufferOwner(
                 cacheKey,
                 targetContext.FrameDataSlotIndex,
-                in targetContext);
+                laneArena,
+                prepared.FrameDataSlotCompletionProven,
+                targetContext.OpenXrViewIndex);
         owner.PrimaryCommandPlan.Build(
             nativeOperations.Stream,
             frameOpsSignature,
@@ -832,7 +858,9 @@ internal sealed partial class VulkanFrameLoop
             prepared.PlannerRevision,
             prepared.PlannerContext.ContextId,
             prepared.PlannerContext.ResourceGeneration,
-            prepared.PlannerContext.DescriptorGeneration);
+            prepared.PlannerContext.DescriptorGeneration,
+            renderLaneId,
+            renderFrameSlot);
         return true;
     }
 
@@ -1132,12 +1160,16 @@ internal sealed partial class VulkanFrameLoop
     private PrimaryCommandArtifactOwner GetOrCreateOpenXrPrimaryCommandBufferOwner(
         ulong targetSlotKey,
         uint recordImageIndex,
-        in OpenXrEyeRenderTargetContext targetContext)
+        VulkanLaneCommandFamilyArena laneArena,
+        bool priorUseCompletionProven,
+        uint openXrViewIndex)
     {
-        return _commandRuntime.GetOrCreateOpenXrPrimaryCommandBufferOwner(
+        return _commandRuntime.GetOrCreateOpenXrLanePrimaryCommandBufferOwner(
             targetSlotKey,
             recordImageIndex,
-            in targetContext);
+            laneArena,
+            priorUseCompletionProven,
+            openXrViewIndex);
     }
 
     private bool TryCreateSingleOpenXrLogicalPlan(

@@ -169,7 +169,8 @@ namespace XREngine.Rendering.Vulkan
                 dirtyOperationCount += chain.SourceCount;
             }
 
-            if (dirtyChainCount <= MaxProgressiveDesktopCommandChainRecordJobs &&
+            int maxAdmittedChains = MaxSecondaryCommandBuffersPerScope;
+            if (dirtyChainCount <= maxAdmittedChains &&
                 dirtyOperationCount <=
                     MaxProgressiveDesktopCommandChainRecordOperations)
                 return;
@@ -191,8 +192,7 @@ namespace XREngine.Rendering.Vulkan
                     continue;
                 }
 
-                bool admit = admitted <
-                        MaxProgressiveDesktopCommandChainRecordJobs &&
+                bool admit = admitted < maxAdmittedChains &&
                     (admitted == 0 ||
                      admittedOperations + chain.SourceCount <=
                         MaxProgressiveDesktopCommandChainRecordOperations);
@@ -496,13 +496,15 @@ namespace XREngine.Rendering.Vulkan
                 ?? throw new VulkanPlanPreconditionException(
                     "Advanced visibility preparation requires a sealed frame plan.");
             VulkanAdvancedVisibilityStageRequest familyRequest = default;
+            VulkanAdvancedVisibilityInputStorage? familyInput = null;
             VulkanAdvancedScenePublicationState familySceneState = default;
             VulkanAdvancedVisibilityResourceState familyState = default;
             VulkanAdvancedVisibilityTargetClosure rasterTargetClosure = default;
             VulkanAdvancedVisibilityTargetClosure lateRasterTargetClosure = default;
             int preparationStageCount = 0;
             int rasterStageCount = 0;
-            int lateStageCount = 0;
+            int lateComputeStageCount = 0;
+            int lateRasterStageCount = 0;
 
             for (int operationIndex = 0;
                  operationIndex < recordingState.Ops.Length;
@@ -515,48 +517,53 @@ namespace XREngine.Rendering.Vulkan
                 ref readonly VulkanAdvancedVisibilityOperationPayload payload = ref
                     recordingState.Ops.GetAdvancedVisibility(operationIndex);
                 VulkanAdvancedVisibilityStageRequest request = payload.Request;
-                if (request.Stage is not (
-                        EAdvancedRenderStage.VisibilityPreparation or
-                        EAdvancedRenderStage.VisibilityRaster or
-                        EAdvancedRenderStage.DepthPyramidAndLateVisibility))
+                VulkanAdvancedVisibilityInputStorage input = payload.Input;
+                if (!request.IsValid || input is null ||
+                    !input.MatchesRequest(in request))
                 {
                     recordingState.RecordingDeferredReason =
-                        $"Advanced visibility operation is Unsupported: stage '{request.Stage}' is outside the admitted preparation/raster family.";
+                        $"Advanced visibility operation is Unsupported: stage '{request.Stage}' phase '{request.Phase}' is outside the admitted physical family.";
                     return false;
                 }
-                AdvancedPreparationPublication publication = request.Publication;
-                AdvancedIndirectPreparationResult indirect =
-                    request.Extractor.IndirectResult;
-                if (!request.IsValid || request.RenderFrameId != framePlan.RenderFrameId ||
-                    !request.Extractor.MatchesPublication(in publication))
+                AdvancedPreparationPublication publication = input.Publication;
+                AdvancedIndirectPreparationResult indirect = input.Indirect;
+                AdvancedVisibilityFamilyReservation reservation = request.Reservation;
+                if (request.RenderFrameId != framePlan.RenderFrameId ||
+                    !_commandRuntime.IsAdvancedVisibilityReservationCurrent(in reservation))
                 {
                     recordingState.RecordingDeferredReason =
                         "Advanced visibility operation is Unsupported: its sealed preparation publication is stale or incomplete.";
                     return false;
                 }
-                if (preparationStageCount + rasterStageCount + lateStageCount == 0)
+                if (preparationStageCount + rasterStageCount + lateComputeStageCount + lateRasterStageCount == 0)
                 {
                     familyRequest = request;
+                    familyInput = input;
                 }
-                else if (!familyRequest.MatchesFamily(in request))
+                else if (!familyRequest.MatchesFamily(in request) ||
+                    !ReferenceEquals(familyInput, input))
                 {
                     recordingState.RecordingDeferredReason =
                         "Advanced visibility operation is Unsupported: the sealed stages do not form one exact publication/view/target family.";
                     return false;
                 }
-                switch (request.Stage)
+                switch (request.Stage, request.Phase)
                 {
-                    case EAdvancedRenderStage.VisibilityPreparation:
+                    case (EAdvancedRenderStage.VisibilityPreparation, EAdvancedVisibilityStageBackendPhase.Complete):
                         preparationStageCount++;
                         break;
-                    case EAdvancedRenderStage.VisibilityRaster:
+                    case (EAdvancedRenderStage.VisibilityRaster, EAdvancedVisibilityStageBackendPhase.Complete):
                         rasterStageCount++;
                         break;
-                    case EAdvancedRenderStage.DepthPyramidAndLateVisibility:
-                        lateStageCount++;
+                    case (EAdvancedRenderStage.DepthPyramidAndLateVisibility, EAdvancedVisibilityStageBackendPhase.LateCompute):
+                        lateComputeStageCount++;
+                        break;
+                    case (EAdvancedRenderStage.DepthPyramidAndLateVisibility, EAdvancedVisibilityStageBackendPhase.LateRaster):
+                        lateRasterStageCount++;
                         break;
                 }
-                if (preparationStageCount > 1 || rasterStageCount > 1 || lateStageCount > 1)
+                if (preparationStageCount > 1 || rasterStageCount > 1 ||
+                    lateComputeStageCount > 1 || lateRasterStageCount > 1)
                 {
                     recordingState.RecordingDeferredReason =
                         "Advanced visibility operation is Unsupported: one frame plan contains duplicate stages for a single set-1 family.";
@@ -565,6 +572,12 @@ namespace XREngine.Rendering.Vulkan
 
                 FrameOpContext operationContext =
                     recordingState.Ops.GetContext(operationIndex);
+                if (operationContext.OutputSchedulingInstanceIdentity != reservation.OutputId)
+                {
+                    recordingState.RecordingDeferredReason =
+                        "Advanced visibility operation is Unsupported: its pipeline scope does not belong to the reserved output.";
+                    return false;
+                }
                 VulkanCompiledRenderGraph operationGraph =
                     recordingState.RenderGraphPlan.CompiledGraph;
                 if (framePlan.TryResolveRenderGraphPlan(
@@ -573,23 +586,33 @@ namespace XREngine.Rendering.Vulkan
                 {
                     operationGraph = operationPlan.CompiledGraph;
                 }
-                if (ResourceRuntime.BackendObjects.Get(request.Target) is not
-                        VkFrameBuffer targetWrapper)
+                VulkanAdvancedVisibilityTargetClosure targetClosure = default;
+                int operationPassIndex =
+                    recordingState.Ops.GetHeader(operationIndex).PassIndex;
+                bool requiresGraphicsTargetClosure =
+                    request.Stage == EAdvancedRenderStage.VisibilityRaster ||
+                    request.Phase == EAdvancedVisibilityStageBackendPhase.LateRaster;
+                VkFrameBuffer? targetWrapper = null;
+                if (requiresGraphicsTargetClosure &&
+                    (targetWrapper = ResourceRuntime.BackendObjects.Get(request.Target)
+                        as VkFrameBuffer) is null)
                 {
                     recordingState.RecordingDeferredReason =
                         "Advanced visibility operation is Unsupported: the authoritative target has no Vulkan framebuffer wrapper.";
                     return false;
                 }
-                if (!TryValidateAdvancedVisibilityTarget(
+                if (requiresGraphicsTargetClosure && !TryValidateAdvancedVisibilityTarget(
                         in request,
-                        targetWrapper,
+                        targetWrapper!,
                         out string targetShapeReason))
                 {
                     recordingState.RecordingDeferredReason =
                         $"Advanced visibility operation is Unsupported: target closure is incomplete: {targetShapeReason}";
                     return false;
                 }
-                targetWrapper.EnsureCurrent();
+                if (requiresGraphicsTargetClosure)
+                {
+                targetWrapper!.EnsureCurrent();
                 if (!targetWrapper.TryCaptureRecordedRenderTargetSnapshot(
                         out VulkanRecordedRenderTargetSnapshot targetSnapshot))
                 {
@@ -597,8 +620,6 @@ namespace XREngine.Rendering.Vulkan
                         "Advanced visibility operation is Unsupported: the native target snapshot is incomplete.";
                     return false;
                 }
-                int operationPassIndex =
-                    recordingState.Ops.GetHeader(operationIndex).PassIndex;
                 if (!TryResolveGraphicsPipelinePrewarmTarget(
                         request.Target,
                         operationPassIndex,
@@ -617,7 +638,7 @@ namespace XREngine.Rendering.Vulkan
                         $"Advanced visibility operation is Unsupported: target compatibility failed: {targetCompatibilityReason}";
                     return false;
                 }
-                VulkanAdvancedVisibilityTargetClosure targetClosure = new(
+                targetClosure = new(
                     request.Target,
                     targetSnapshot,
                     usesDynamicRendering,
@@ -627,17 +648,24 @@ namespace XREngine.Rendering.Vulkan
                     depthStencilReadOnly);
                 if (request.Stage == EAdvancedRenderStage.VisibilityRaster)
                     rasterTargetClosure = targetClosure;
-                else if (request.Stage ==
-                         EAdvancedRenderStage.DepthPyramidAndLateVisibility)
+                else if (request.Phase == EAdvancedVisibilityStageBackendPhase.LateRaster)
                     lateRasterTargetClosure = targetClosure;
+                }
                 if (!TryPrepareAdvancedVisibilityScenePublication(
                         framePlan,
-                        in operationContext,
+                        in request,
                         out VulkanAdvancedScenePublicationState sceneState,
+                        out EVulkanAdvancedSceneResourceFailure sceneFailure,
                         out string sceneReason))
                 {
                     recordingState.RecordingDeferredReason =
                         $"Advanced visibility operation is Unsupported: set-2/set-3 scene publication failed: {sceneReason}";
+                    if (VulkanAdvancedSceneResourceFailurePolicy
+                        .RequiresFrameRetry(sceneFailure))
+                    {
+                        recordingState.FailureKind =
+                            EVulkanCommandRecordingFailureKind.RetryFrame;
+                    }
                     return false;
                 }
                 if (!familySceneState.IsValid)
@@ -655,6 +683,7 @@ namespace XREngine.Rendering.Vulkan
                     !TrySealAdvancedVisibilityBins(
                         framePlan.StableBins,
                         in request,
+                        input,
                         in sceneState,
                         in operationContext,
                         operationPassIndex,
@@ -676,7 +705,7 @@ namespace XREngine.Rendering.Vulkan
                 if (request.Stage == EAdvancedRenderStage.VisibilityRaster &&
                     !framePlan.StableBins.TryPrepareVisibilityRasterPipelines(
                         ResourceRuntime.AdvancedVisibilityPipelines,
-                        request.Extractor.VisibilityPayloads,
+                        input.Payloads,
                         in targetClosure,
                         out string rasterPipelineReason))
                 {
@@ -684,7 +713,8 @@ namespace XREngine.Rendering.Vulkan
                         $"Advanced visibility operation is Unsupported: raster closure failed: {rasterPipelineReason}";
                     return false;
                 }
-                if (!recordingState.Ops.Stream.TryAssociateAdvancedVisibilityTarget(
+                if (requiresGraphicsTargetClosure &&
+                    !recordingState.Ops.Stream.TryAssociateAdvancedVisibilityTarget(
                         operationIndex,
                         in request,
                         in targetClosure))
@@ -705,7 +735,7 @@ namespace XREngine.Rendering.Vulkan
                 }
 
                 ReadOnlySpan<AdvancedVisibilityPayload> visibilityPayloads =
-                    request.Extractor.VisibilityPayloads;
+                    input.Payloads;
                 if (request.Stage != EAdvancedRenderStage.VisibilityRaster)
                     continue;
                 if (!framePlan.StableBins.TryBuildVisibilityRasterPayloads(
@@ -728,7 +758,8 @@ namespace XREngine.Rendering.Vulkan
                     sceneState.MeshletTriangleWords);
                 VulkanAdvancedVisibilityFamilySeal familySeal = new(
                     framePlan,
-                    request.Extractor,
+                    request.Reservation,
+                    input,
                     publication,
                     publication.VisibilityContentGeneration,
                     indirect,
@@ -742,7 +773,7 @@ namespace XREngine.Rendering.Vulkan
                         in publication,
                         in indirect,
                         in lookupSegments,
-                        request.Extractor,
+                        input,
                         visibilityPayloads,
                         in geometrySlices,
                         checked((uint)request.Views.ViewCount),
@@ -757,13 +788,14 @@ namespace XREngine.Rendering.Vulkan
                 }
             }
 
-            if (preparationStageCount + rasterStageCount + lateStageCount == 0)
+            if (preparationStageCount + rasterStageCount + lateComputeStageCount + lateRasterStageCount == 0)
                 return true;
             if (preparationStageCount != 1 || rasterStageCount != 1 ||
-                lateStageCount != 1 || !familyState.IsValid)
+                lateComputeStageCount != 1 || lateRasterStageCount != 1 ||
+                !familyState.IsValid)
             {
                 recordingState.RecordingDeferredReason =
-                    "Advanced visibility operation is Unsupported: the frame plan must seal exactly one preparation, raster, and late stage before one immutable set-1 family is published.";
+                    "Advanced visibility operation is Unsupported: the frame plan must seal exactly one preparation, early raster, late compute, and late raster stage before one immutable set-1 family is published.";
                 return false;
             }
             // The late stage reuses the raster family's sealed graphics
@@ -815,7 +847,7 @@ namespace XREngine.Rendering.Vulkan
                     return false;
                 }
 
-                if (request.Stage == EAdvancedRenderStage.DepthPyramidAndLateVisibility)
+                if (request.Phase == EAdvancedVisibilityStageBackendPhase.LateCompute)
                 {
                     VulkanCompiledRenderGraph operationGraph =
                         recordingState.RenderGraphPlan.CompiledGraph;
@@ -945,19 +977,20 @@ namespace XREngine.Rendering.Vulkan
         /// </summary>
         private bool TryPrepareAdvancedVisibilityScenePublication(
             FramePlan framePlan,
-            in FrameOpContext context,
+            in VulkanAdvancedVisibilityStageRequest request,
             out VulkanAdvancedScenePublicationState state,
+            out EVulkanAdvancedSceneResourceFailure failure,
             out string reason)
         {
             state = default;
+            failure =
+                EVulkanAdvancedSceneResourceFailure.PublicationSnapshotUnavailable;
             reason = "the canonical scene publication is unavailable";
-            BackendReadyFramePackage? package = context.PipelineInstance?
-                .ActiveMeshRenderCommands.RenderingBackendReadyPackage;
-            if (package is null ||
-                package.CanonicalFrame.FrameId != framePlan.RenderFrameId ||
-                package.CanonicalScenePublication.Sequence == 0u)
+            if (!request.BackendPackage.TryGetCurrent(
+                    out BackendReadyFramePackage package))
             {
-                reason = "the canonical backend package does not match the sealed frame plan";
+                reason =
+                    "the captured canonical backend package changed after visibility authoring";
                 return false;
             }
 
@@ -974,7 +1007,7 @@ namespace XREngine.Rendering.Vulkan
                     preparation.GlobalResources;
                 AdvancedGpuScenePublicationReference publication =
                     globals.Publication;
-                EVulkanAdvancedSceneResourceFailure failure =
+                failure =
                     EVulkanAdvancedSceneResourceFailure.InvalidPublication;
                 if (globals.Database is null || !publication.IsValid ||
                     !preparation.TryPrepareAdvancedScenePublication(
@@ -995,9 +1028,12 @@ namespace XREngine.Rendering.Vulkan
                         out reason))
                 {
                     state = default;
+                    failure =
+                        EVulkanAdvancedSceneResourceFailure.TransactionIntegrityFailure;
                     return false;
                 }
 
+                failure = EVulkanAdvancedSceneResourceFailure.None;
                 reason = "Ready";
                 return true;
             }
@@ -1010,23 +1046,30 @@ namespace XREngine.Rendering.Vulkan
         private bool TrySealAdvancedVisibilityBins(
             VulkanPreparedStableBinStream bins,
             in VulkanAdvancedVisibilityStageRequest request,
+            VulkanAdvancedVisibilityInputStorage input,
             in VulkanAdvancedScenePublicationState sceneState,
             in FrameOpContext context,
             int passIndex,
             out string reason)
         {
-            BackendReadyFramePackage? package = context.PipelineInstance?
-                .ActiveMeshRenderCommands.RenderingBackendReadyPackage;
-            if (package is null ||
-                package.CanonicalFrame.FrameId != request.RenderFrameId)
+            if (!request.BackendPackage.TryGetCurrent(
+                    out BackendReadyFramePackage package))
             {
-                reason = "the canonical backend package does not match the sealed visibility frame";
+                reason =
+                    "the captured canonical backend package changed after visibility authoring";
                 return false;
             }
 
             BackendReadySubmissionResolution resolution =
                 package.SubmissionResolution;
             RenderOutputRequest outputRequest = context.OutputSchedulingRequest;
+            bool isDesktopCanonicalOutput = outputRequest.OutputKind is
+                EFrameOutputKind.DesktopScene or EFrameOutputKind.EditorScenePanel;
+            bool isExternalOutput = outputRequest.Target.TargetClass ==
+                ERenderOutputTargetClass.RuntimeExternalImage;
+            bool isExplicitOutput = outputRequest.IsDefined &&
+                (!isDesktopCanonicalOutput ||
+                 outputRequest.Target.TargetClass != ERenderOutputTargetClass.DesktopSwapchain);
             uint outputViewMask = outputRequest.IsDefined
                 ? outputRequest.Target.ViewMask
                 : 0u;
@@ -1042,7 +1085,7 @@ namespace XREngine.Rendering.Vulkan
             bins.ThawForReuse();
             if (!bins.TryBuildVisibilityGeometryStream(
                     ResourceRuntime,
-                    request.Extractor,
+                    input.Payloads,
                     package,
                     in sceneState,
                     passIndex,
@@ -1087,7 +1130,7 @@ namespace XREngine.Rendering.Vulkan
                 AllowsGpuDrivenSubmission: resolution.Resolved !=
                     EMeshSubmissionStrategy.CpuDirect,
                 IsShadowPass: outputRequest.OutputKind == EFrameOutputKind.Shadow,
-                IsExplicitOutput: outputRequest.IsDefined,
+                IsExplicitOutput: isExplicitOutput,
                 IsOpenXrOutput: outputRequest.OutputKind ==
                     EFrameOutputKind.OpenXREyeSubmit,
                 IsMirrorOutput: outputRequest.OutputKind is
@@ -1100,13 +1143,17 @@ namespace XREngine.Rendering.Vulkan
                     EFrameOutputKind.ReflectionProbeCapture or
                     EFrameOutputKind.ImageBasedLighting or
                     EFrameOutputKind.Thumbnail,
-                IsExternalOutput: outputRequest.Target.TargetClass ==
-                    ERenderOutputTargetClass.RuntimeExternalImage);
+                IsExternalOutput: isExternalOutput);
+            if (!outputPolicy.AllowsCanonicalVisibilityFamily)
+            {
+                reason = outputPolicy.DescribeCanonicalVisibilityRejection();
+                return false;
+            }
             if (!bins.TrySealSubmissionPlans(
                     ResourceRuntime.ResidentDrawTemplates,
-                    request.Extractor.VisibilityPayloads,
-                    request.Extractor.IndirectRanges,
-                    request.Extractor.IndirectPayloadIndices,
+                    input.Payloads,
+                    input.IndirectRanges,
+                    input.IndirectPayloadIndices,
                     resolution.Resolved,
                     in capabilities,
                     in outputPolicy,
@@ -1370,6 +1417,7 @@ namespace XREngine.Rendering.Vulkan
                             pipelineVariantManifest.Requirements[
                                 requirementIndex],
                             out bool optionalDeferred,
+                            out _,
                             out string pendingReason);
                         int opIndex = pipelineVariantManifest.Requirements[
                             requirementIndex].OpIndex;
@@ -1499,6 +1547,7 @@ namespace XREngine.Rendering.Vulkan
                         ref recordingState,
                         in requirement,
                         out _,
+                        out _,
                         out string pendingReason))
                 {
                     recordingState.PipelineDeferredOperationIndices.Remove(opIndex);
@@ -1517,9 +1566,11 @@ namespace XREngine.Rendering.Vulkan
             scoped ref PrimaryCommandBufferRecordingState recordingState,
             in VulkanPipelineVariantRequirement requirement,
             out bool optionalDeferred,
+            out bool retryable,
             out string pendingReason)
         {
             optionalDeferred = false;
+            retryable = false;
             pendingReason = string.Empty;
             int opIndex = requirement.OpIndex;
             if ((uint)opIndex >= (uint)recordingState.Ops.Length)
@@ -1537,6 +1588,7 @@ namespace XREngine.Rendering.Vulkan
                     ref recordingState,
                     in requirement,
                     out optionalDeferred,
+                    out retryable,
                     out pendingReason);
             }
 
@@ -1552,6 +1604,7 @@ namespace XREngine.Rendering.Vulkan
             if (meshRenderer is null)
             {
                 optionalDeferred = !requirement.Required;
+                retryable = true;
                 pendingReason = "mesh renderer is not prepared";
                 return false;
             }
@@ -1624,6 +1677,7 @@ namespace XREngine.Rendering.Vulkan
                     operationContext.PipelineInstance?.DebugName ??
                         "<no pipeline>",
                     foregroundRequired: recordingState.Policy.FreshSerialRecording,
+                    out retryable,
                     out string pipelineReason))
             {
                 if (preparationSignature != 0)
@@ -1659,9 +1713,11 @@ namespace XREngine.Rendering.Vulkan
             scoped ref PrimaryCommandBufferRecordingState recordingState,
             in VulkanPipelineVariantRequirement requirement,
             out bool optionalDeferred,
+            out bool retryable,
             out string pendingReason)
         {
             optionalDeferred = false;
+            retryable = false;
             pendingReason = string.Empty;
             int opIndex = requirement.OpIndex;
             ref readonly MeshTaskDispatchIndirectCountPayload meshTask =
@@ -1670,6 +1726,7 @@ namespace XREngine.Rendering.Vulkan
                 meshTask.ProgramLinkGeneration != meshTask.Program.LinkGeneration)
             {
                 optionalDeferred = !requirement.Required;
+                retryable = true;
                 pendingReason = "mesh-task program generation changed after the frame plan was sealed";
                 return false;
             }

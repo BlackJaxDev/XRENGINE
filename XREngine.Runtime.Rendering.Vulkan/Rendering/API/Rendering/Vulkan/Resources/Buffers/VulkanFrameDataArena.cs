@@ -36,12 +36,15 @@ internal sealed class VulkanFrameDataArena
     private long _invalidateExpansionBytes;
     private long _dirtyBytes;
     private int _dirtyRangeCount;
+    private long _dirtyRangeCapacityCollapseCount;
 
     internal readonly record struct MappingTelemetry(
         long AllocatedBytes,
         long AllocationCount,
         long DirtyBytes,
         int DirtyRangeCount,
+        long DirtyRangeCapacityCollapseCount,
+        VulkanFrameDataDirtyRangeCollapseReason DirtyRangeCollapseReason,
         long FlushExpansionBytes,
         long InvalidateExpansionBytes);
 
@@ -81,6 +84,11 @@ internal sealed class VulkanFrameDataArena
     internal long InvalidateExpansionBytes => Volatile.Read(ref _invalidateExpansionBytes);
     internal int DirtyRangeCount => Volatile.Read(ref _dirtyRangeCount);
     internal long DirtyBytes => Volatile.Read(ref _dirtyBytes);
+    internal long DirtyRangeCapacityCollapseCount => Volatile.Read(ref _dirtyRangeCapacityCollapseCount);
+    internal VulkanFrameDataDirtyRangeCollapseReason DirtyRangeCollapseReason
+        => DirtyRangeCapacityCollapseCount == 0
+            ? VulkanFrameDataDirtyRangeCollapseReason.None
+            : VulkanFrameDataDirtyRangeCollapseReason.CapacityExceeded;
 
     internal MappingTelemetry GetMappingTelemetry()
         => new(
@@ -88,6 +96,8 @@ internal sealed class VulkanFrameDataArena
             AllocationCount,
             DirtyBytes,
             DirtyRangeCount,
+            DirtyRangeCapacityCollapseCount,
+            DirtyRangeCollapseReason,
             FlushExpansionBytes,
             InvalidateExpansionBytes);
 
@@ -411,9 +421,11 @@ internal sealed class VulkanFrameDataArena
         {
             int previousRangeCount = chunk.DirtyRanges.Count;
             ulong previousDirtyBytes = chunk.DirtyRanges.TotalLength;
+            uint previousCapacityCollapseCount = chunk.DirtyRanges.CapacityCollapseCount;
             chunk.DirtyRanges.Include(slice.Offset, slice.Length);
             Interlocked.Add(ref _dirtyRangeCount, chunk.DirtyRanges.Count - previousRangeCount);
             Interlocked.Add(ref _dirtyBytes, checked((long)(chunk.DirtyRanges.TotalLength - previousDirtyBytes)));
+            Interlocked.Add(ref _dirtyRangeCapacityCollapseCount, chunk.DirtyRanges.CapacityCollapseCount - previousCapacityCollapseCount);
         }
         ExitHostAccess();
     }

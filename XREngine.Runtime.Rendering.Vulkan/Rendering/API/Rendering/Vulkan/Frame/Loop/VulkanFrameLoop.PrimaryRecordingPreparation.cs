@@ -582,18 +582,33 @@ internal sealed partial class VulkanFrameLoop
             return false;
         }
 
-        if (wrapper.IsGenerated)
+        if (!wrapper.TryPrepareAttachmentBackings(
+                allowSynchronousResourceUploads,
+                out reason))
         {
-            // The logical framebuffer is shared by desktop and OpenXR render plans,
-            // while its attachments resolve through the currently active physical
-            // resource generation. Refresh even an already-generated wrapper here so
-            // a preceding eye frame cannot leave the desktop target bound to eye-sized
-            // images. A window resize used to mask this by destroying the wrapper.
-            wrapper.EnsureCurrent();
+            return false;
         }
-        else if (allowSynchronousResourceUploads)
+
+        try
         {
-            wrapper.Generate();
+            if (wrapper.IsGenerated)
+            {
+                // The logical framebuffer is shared by desktop and OpenXR render plans,
+                // while its attachments resolve through the currently active physical
+                // resource generation. Refresh even an already-generated wrapper here so
+                // a preceding eye frame cannot leave the desktop target bound to eye-sized
+                // images. A window resize used to mask this by destroying the wrapper.
+                wrapper.EnsureCurrent();
+            }
+            else if (allowSynchronousResourceUploads)
+            {
+                wrapper.Generate();
+            }
+        }
+        catch (VulkanFrameBufferAttachmentNotReadyException exception)
+        {
+            reason = exception.Message;
+            return false;
         }
         if (!wrapper.IsGenerated)
         {

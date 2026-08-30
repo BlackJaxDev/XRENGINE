@@ -374,6 +374,38 @@ internal sealed class VulkanAcceptedFramePlan
                             upload.Upload.Request.StreamingGeneration);
                     }
                     break;
+                case EVulkanPrimaryPlanNodeKind.AdvancedVisibility:
+                    CaptureAdvancedVisibilityTextureReferences(
+                        operations.GetAdvancedVisibility(index));
+                    break;
+            }
+        }
+    }
+
+    private void CaptureAdvancedVisibilityTextureReferences(
+        in VulkanAdvancedVisibilityOperationPayload payload)
+    {
+        if (!payload.Request.BackendPackage.TryGetCurrent(
+                out BackendReadyFramePackage package) ||
+            !package.TryGetCanonicalPublicationSnapshot(
+                out AdvancedGpuScenePublicationSnapshot snapshot))
+        {
+            return;
+        }
+
+        AdvancedGpuResourcePublicationSnapshot resources =
+            snapshot.ResourcePayloads;
+        ReadOnlySpan<AdvancedGpuHandle> handles =
+            resources.TextureSourceHandles;
+        for (int index = 0; index < handles.Length; ++index)
+        {
+            if (resources.TryGetTextureSource(
+                    handles[index],
+                    out XRTexture source))
+            {
+                AddRequiredTextureReference(
+                    source,
+                    includePendingUploadGeneration: true);
             }
         }
     }

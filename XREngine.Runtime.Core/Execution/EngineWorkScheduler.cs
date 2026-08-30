@@ -3,13 +3,14 @@ using System.Diagnostics;
 namespace XREngine.Execution;
 
 /// <summary>
-/// Process-wide owner of persistent general and render-critical execution
-/// domains. Backends consume the render domain through host capabilities and do
-/// not construct another general worker pool.
+/// Process-wide owner of persistent general, job-auxiliary, and render-critical
+/// execution domains. Backends consume these domains through focused host
+/// capabilities and do not construct another general worker pool.
 /// </summary>
 public sealed class EngineWorkScheduler : IDisposable
 {
     private readonly EngineGeneralWorkDomain _generalDomain;
+    private readonly EngineJobAuxiliaryWorkDomain _jobAuxiliaryDomain;
     private int _shutdownState;
 
     public EngineWorkScheduler(
@@ -25,12 +26,14 @@ public sealed class EngineWorkScheduler : IDisposable
             generalQueueLimit,
             generalQueueWarningThreshold,
             topology.Request.GeneralWorkerThreadCap,
-            createGeneralWorkers: false);
+            createWorkerDomains: false);
         _generalDomain = new EngineGeneralWorkDomain(GeneralJobs, topology.GeneralWorkerThreadCount);
-        GeneralJobs.AttachGeneralDomain(_generalDomain);
+        _jobAuxiliaryDomain = new EngineJobAuxiliaryWorkDomain(GeneralJobs);
 
         try
         {
+            GeneralJobs.AttachGeneralDomain(_generalDomain);
+            GeneralJobs.AttachAuxiliaryDomain(_jobAuxiliaryDomain);
             Render = new RenderWorkDomain(
                 topology.RenderWorkerThreadCount,
                 topology.RenderWorkerQos);
@@ -50,6 +53,9 @@ public sealed class EngineWorkScheduler : IDisposable
         _generalDomain.WorkerCount,
         _generalDomain.DispatchCount,
         _generalDomain.WakeCount,
+        _generalDomain.ThrottledDispatchCount,
+        _generalDomain.ThrottleWaitTicks,
+        _jobAuxiliaryDomain.GetMetrics(),
         Render.Metrics);
 
     public bool Shutdown(bool waitForWorkers = true)
@@ -74,7 +80,7 @@ public sealed class EngineWorkScheduler : IDisposable
     }
 
     /// <summary>
-    /// Performs a bounded clean shutdown of both execution domains.
+    /// Performs a bounded clean shutdown of every scheduler execution domain.
     /// </summary>
     /// <exception cref="TimeoutException">
     /// A domain remained live at the lifecycle bound. Callers must retain all

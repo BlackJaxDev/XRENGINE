@@ -392,6 +392,7 @@ namespace XREngine.Editor.Mcp
                     pendingDrawDeltaCount = activeGpuScene.AdvancedSharedDatabase.Scene.Draws.PublishedDeltas.Length,
                     minimumAcknowledgedSequence = activeGpuScene.AdvancedSharedDatabase.MinimumAcknowledgedPublicationSequence,
                     minimumReclaimableSequence = activeGpuScene.AdvancedSharedDatabase.MinimumReclaimablePublicationSequence,
+                    retention = activeGpuScene.AdvancedSharedDatabase.CaptureRetentionSnapshot(),
                 },
                 canonicalFramePackage = activeFramePackage is null ? null : new
                 {
@@ -406,7 +407,7 @@ namespace XREngine.Editor.Mcp
                     cpuVisibleDrawCount = activeFramePackage.CpuVisibleDraws.Length,
                     orderedExceptionCount = activeFramePackage.OrderedExceptions.Length,
                     templateProjectionDeltaCount = activeFramePackage.TemplateProjectionDeltas.Length,
-                    legacySelectionCount = activeFramePackage.MeshSelections.Length,
+                    canonicalSubmissionCount = activeFramePackage.CanonicalSubmissionCount,
                 },
                 activeCameraType = activeCamera?.GetType().FullName,
                 activeCameraNodeId = activeCameraNode?.ID,

@@ -12,6 +12,9 @@
     <GarbageCollectionAdaptationMode>1</GarbageCollectionAdaptationMode>
     <XREngineRendererBackends>None</XREngineRendererBackends>
     <XREngineIncludeSharedExecutableDependencies>false</XREngineIncludeSharedExecutableDependencies>
+    <HeadlessBootstrapAssetsFile>$(MSBuildThisFileDirectory)..\XREngine.Runtime.Bootstrap\obj\renderer-None\project.assets.json</HeadlessBootstrapAssetsFile>
+    <HeadlessBootstrapBuildTargets Condition="Exists('$(HeadlessBootstrapAssetsFile)')">Build</HeadlessBootstrapBuildTargets>
+    <HeadlessBootstrapBuildTargets Condition="!Exists('$(HeadlessBootstrapAssetsFile)')">Restore;Build</HeadlessBootstrapBuildTargets>
     <XREngineHeadlessExcludedPublishPattern>(?i)(openvr_api\.dll|actionmanifest\.json|bindings_.*\.json|ovrlipsync\.dll|naudio\.sdl2\.dll|(?:lib)?sdl2(?:-2\.0)?\.(dll|so|dylib|a)|glfw3\.dll|libglfw(?:\.so\.3|\.3\.dylib)|vulkanmemoryallocator.*\.(dll|so|dylib)|soft_oal\.dll|libopenal\.(so|dylib)|av(codec|device|filter|format|util)-[0-9]+\.dll|postproc-[0-9]+\.dll|swresample-[0-9]+\.dll|swscale-[0-9]+\.dll|libmp3lame\.(32|64)\.dll|cimgui\.(dll|so|dylib)|raylib\.(dll|so|dylib)|ultralight(core)?\.(dll|so|dylib)|appcore\.(dll|so|dylib)|webcore\.(dll|so|dylib)|dstorage(core)?\.dll|openal-soft)</XREngineHeadlessExcludedPublishPattern>
   </PropertyGroup>
 
@@ -47,7 +50,12 @@
     <ProjectReference Include="..\XREngine.Data\XREngine.Data.csproj" />
     <ProjectReference Include="..\XREngine.Extensions\XREngine.Extensions.csproj" />
     <ProjectReference Include="..\XREngine.Fbx\XREngine.Fbx.csproj" />
-    <ProjectReference Include="..\XREngine.Runtime.Bootstrap\XREngine.Runtime.Bootstrap.csproj" AdditionalProperties="XREngineRendererBackends=None" />
+    <!-- NuGet's recursive restore drops custom ProjectReference properties. Restore
+         the headless variant on first use so its isolated assets file exists. -->
+    <ProjectReference
+      Include="..\XREngine.Runtime.Bootstrap\XREngine.Runtime.Bootstrap.csproj"
+      AdditionalProperties="XREngineRendererBackends=None"
+      Targets="$(HeadlessBootstrapBuildTargets)" />
     <ProjectReference Include="..\XREngine.Runtime.Core\XREngine.Runtime.Core.csproj" />
     <ProjectReference Include="..\XREngine.Runtime.ModelAssetPipeline\XREngine.Runtime.ModelAssetPipeline.csproj" />
   </ItemGroup>

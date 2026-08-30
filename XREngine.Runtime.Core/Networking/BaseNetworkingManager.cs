@@ -46,6 +46,13 @@ namespace XREngine
             public abstract bool IsServer { get; }
             public abstract bool IsClient { get; }
 
+            /// <summary>
+            /// Gets whether this manager currently has at least one confirmed remote peer that
+            /// can exchange application data. A bound or configured socket alone is not a
+            /// connection.
+            /// </summary>
+            public abstract bool HasConnectedRemotePeer { get; }
+
             public bool UDPServerConnectionEstablished
                 => UdpReceiver?.Client is { } socket && (socket.Connected || socket.IsBound);
             public string LocalPeerId { get; }

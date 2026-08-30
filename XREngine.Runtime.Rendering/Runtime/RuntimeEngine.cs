@@ -229,6 +229,7 @@ public static partial class RuntimeEngine
         private static EngineSettings _globalDefaultSettings = _settings;
         private static EngineSettings? _projectDefaultSettings;
         private static Func<RenderPipelineRequest, RenderPipeline>? _renderPipelineFactory;
+        private static Action<XRViewport>? _renderPipelineOutputBindingHandler;
         private static RuntimeRenderingState StateData { get; } = new();
         public static RuntimeBvhStats BvhStats { get; } = new();
         public static event Action? SettingsChanged;
@@ -404,14 +405,34 @@ public static partial class RuntimeEngine
 
         /// <summary>
         /// Registers the application-owned purpose-aware render-pipeline factory.
-        /// Without one, runtime-only hosts use the legacy standard pipeline for desktop/capture
-        /// and the RVC shell for OpenXR eyes.
+        /// Without one, runtime-only hosts use Advanced for desktop scenes, the
+        /// legacy standard pipeline for capture, and the RVC shell for OpenXR eyes.
         /// </summary>
         public static void SetRenderPipelineFactory(
             Func<RenderPipelineRequest, RenderPipeline> factory)
             => Volatile.Write(
                 ref _renderPipelineFactory,
                 factory ?? throw new ArgumentNullException(nameof(factory)));
+
+        /// <summary>
+        /// Registers the application-owned handler that realizes a configured
+        /// pipeline source for one physical viewport output.
+        /// </summary>
+        public static void SetRenderPipelineOutputBindingHandler(
+            Action<XRViewport> handler)
+            => Volatile.Write(
+                ref _renderPipelineOutputBindingHandler,
+                handler ?? throw new ArgumentNullException(nameof(handler)));
+
+        /// <summary>
+        /// Refreshes output-local backend binding without changing the
+        /// viewport's configured pipeline source.
+        /// </summary>
+        public static void RefreshRenderPipelineOutputBinding(XRViewport viewport)
+        {
+            ArgumentNullException.ThrowIfNull(viewport);
+            Volatile.Read(ref _renderPipelineOutputBindingHandler)?.Invoke(viewport);
+        }
 
         public static RenderPipeline NewRenderPipeline(bool stereo = false)
             => NewRenderPipeline(RenderPipelineRequest.DesktopScene(stereo));
@@ -425,7 +446,8 @@ public static partial class RuntimeEngine
                 {
                     ERenderPipelinePurpose.OpenXrEye =>
                         new RvcRenderPipeline(request.Stereo, Settings.RvcPipelineMode),
-                    ERenderPipelinePurpose.DesktopScene or
+                    ERenderPipelinePurpose.DesktopScene =>
+                        new AdvancedRenderPipeline(request.Stereo),
                     ERenderPipelinePurpose.OffscreenCapture =>
                         new DefaultRenderPipeline(request.Stereo),
                     _ => throw new ArgumentOutOfRangeException(

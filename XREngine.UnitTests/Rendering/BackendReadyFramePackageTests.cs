@@ -31,7 +31,7 @@ public sealed class BackendReadyFramePackageTests
         package.Passes.Length.ShouldBe(2);
         package.Passes[0].PassIndex.ShouldBe(opaquePass);
         package.Passes[1].PassIndex.ShouldBe(transparentPass);
-        package.MeshSelections.Length.ShouldBe(2);
+        package.CanonicalSubmissionCount.ShouldBe(0);
         package.TryGetPass(opaquePass, out BackendReadyRenderPass opaquePackage).ShouldBeTrue();
         opaquePackage.Commands.Single().ShouldBeSameAs(opaque);
     }
@@ -83,8 +83,8 @@ public sealed class BackendReadyFramePackageTests
     [Test]
     public void VulkanResourcePlanner_ConsumesPublishedPackageMetadata()
     {
-        string source = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/RenderGraph/VulkanRenderer.ResourcePlannerContext.cs");
+        string source = SourceContractWorkspace.ReadExactFile(
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Loop/Authority/VulkanFrameLoop.ResourcePlannerContext.cs");
 
         source.ShouldContain(
             "pipeline.ActiveMeshRenderCommands.RenderingBackendReadyPackage.PassMetadata");
@@ -237,18 +237,4 @@ public sealed class BackendReadyFramePackageTests
             InternalWidth: 1600,
             InternalHeight: 900);
 
-    private static string ReadWorkspaceFile(string relativePath)
-    {
-        string? current = TestContext.CurrentContext.TestDirectory;
-        while (!string.IsNullOrWhiteSpace(current))
-        {
-            string candidate = Path.Combine(current, relativePath.Replace('/', Path.DirectorySeparatorChar));
-            if (File.Exists(candidate))
-                return File.ReadAllText(candidate);
-
-            current = Directory.GetParent(current)?.FullName;
-        }
-
-        throw new FileNotFoundException(relativePath);
-    }
 }

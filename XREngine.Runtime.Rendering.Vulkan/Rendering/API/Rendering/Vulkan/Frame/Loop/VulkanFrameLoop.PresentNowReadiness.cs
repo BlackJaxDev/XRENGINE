@@ -10,6 +10,7 @@ internal sealed partial class VulkanFrameLoop
     private VulkanPresentNowReadinessException? _presentNowTerminalFailure;
     private readonly VulkanTextureUploadManifest _presentNowPumpUploadManifest = new();
     private long _presentNowTerminalTransitionSequence;
+    private long _presentNowFailureDiagnosticSequence;
 
     /// <summary>
     /// Freezes and completes format-independent foreground work before the WSI
@@ -275,7 +276,10 @@ internal sealed partial class VulkanFrameLoop
                 EVulkanPresentNowReadinessStage.FramePlanSeal,
                 "frame-operation-target",
                 "DesktopScene -> framebuffer dependencies",
-                targetFailure);
+                targetFailure,
+                disposition: VulkanFrameBufferAttachmentNotReadyException.IsTransientReason(targetFailure)
+                    ? EVulkanPresentNowFailureDisposition.RetryFrame
+                    : EVulkanPresentNowFailureDisposition.RendererTerminal);
         }
         if (!TryFreezeNativeBarrierBindings(
                 in planningSnapshot,
@@ -368,6 +372,19 @@ internal sealed partial class VulkanFrameLoop
             plannerState.ResourceAllocationSignature);
         VulkanRenderGraphPlan acceptedRenderGraphPlan =
             frozenPlanningSnapshot.RenderGraphPlan;
+        acceptedPlan.CaptureRequiredTextureReferences(
+            logicalPlan,
+            _resourceRuntime.Descriptors);
+        _resourceRuntime.Uploads.CaptureRequiredTextureUploadManifest(
+            acceptedPlan.RequiredTextureUploads,
+            acceptedPlan.RequiredTextures,
+            acceptedPlan.RequiredTextureGenerations,
+            requireExactDescriptorPublication: false);
+        CompleteAcceptedPresentNowTextureReadiness(
+            acceptedPlan,
+            ref watchdog,
+            "DesktopScene -> canonical scene texture -> exact descriptor");
+        watchdog.RecordProgress();
         if (!_commandRuntime.TryPreparePresentNowPipelinesForSealedFramePlan(
                 logicalPlan,
                 logicalPlan.GetNativeStaticOperationsForRecording(),
@@ -378,13 +395,17 @@ internal sealed partial class VulkanFrameLoop
                 UseDynamicRenderingRenderTargets,
                 preserveSwapchainForOverlay: true,
                 ref watchdog,
+                out bool pipelineRetryable,
                 out string pipelineFailure))
         {
             throw watchdog.CreateFailure(
                 EVulkanPresentNowReadinessStage.PipelineCompilation,
                 "graphics-pipeline",
                 "DesktopScene -> graphics pipeline manifest",
-                pipelineFailure);
+                pipelineFailure,
+                disposition: pipelineRetryable
+                    ? EVulkanPresentNowFailureDisposition.RetryFrame
+                    : EVulkanPresentNowFailureDisposition.RendererTerminal);
         }
 
         Image[]? desktopImages = OutputRuntime.Desktop.Images;
@@ -414,17 +435,6 @@ internal sealed partial class VulkanFrameLoop
             }
         }
 
-        acceptedPlan.CaptureRequiredTextureReferences(
-            logicalPlan,
-            _resourceRuntime.Descriptors);
-        _resourceRuntime.Uploads.CaptureRequiredTextureUploadManifest(
-            acceptedPlan.RequiredTextureUploads,
-            acceptedPlan.RequiredTextures,
-            acceptedPlan.RequiredTextureGenerations,
-            // Materialization already captured the exact descriptor bindings
-            // for these published generations. Streaming requests admitted
-            // after that boundary belong to the next accepted frame.
-            requireExactDescriptorPublication: false);
         acceptedPlan.DeclareDependencies(logicalPlan);
         acceptedPlan.MarkNonTextureDependenciesReady();
         _ = acceptedPlan.SynchronizeTextureDependencies();
@@ -542,13 +552,17 @@ internal sealed partial class VulkanFrameLoop
                 current.DynamicRendering,
                 preserveSwapchainForOverlay: true,
                 ref watchdog,
+                out bool pipelineRetryable,
                 out string pipelineFailure))
         {
             throw watchdog.CreateFailure(
                 EVulkanPresentNowReadinessStage.PipelineCompilation,
                 "target-revalidation-pipeline",
                 "DesktopScene -> swapchain-compatible pipelines",
-                pipelineFailure);
+                pipelineFailure,
+                disposition: pipelineRetryable
+                    ? EVulkanPresentNowFailureDisposition.RetryFrame
+                    : EVulkanPresentNowFailureDisposition.RendererTerminal);
         }
     }
 
@@ -653,6 +667,7 @@ internal sealed partial class VulkanFrameLoop
         ref VulkanFrameAttempt attempt,
         VulkanPresentNowReadinessException failure)
     {
+        PublishPresentNowFailureDiagnostic(ref attempt, failure);
         ResetIncompleteAcceptedPresentNowPlan(ref attempt);
         attempt.RejectedFailure = failure;
         Debug.VulkanWarningEvery(
@@ -671,6 +686,7 @@ internal sealed partial class VulkanFrameLoop
         ref VulkanFrameAttempt attempt,
         VulkanPresentNowReadinessException failure)
     {
+        PublishPresentNowFailureDiagnostic(ref attempt, failure);
         if (_presentNowTerminalFailure is null)
         {
             VulkanPresentNowTerminalTransitionRecord transition =
@@ -682,6 +698,28 @@ internal sealed partial class VulkanFrameLoop
         ResetIncompleteAcceptedPresentNowPlan(ref attempt);
         attempt.DeferredFailure = _presentNowTerminalFailure;
         attempt.Stop(EDesktopFrameReason.PresentNowReadinessFailed);
+    }
+
+    private void PublishPresentNowFailureDiagnostic(
+        ref VulkanFrameAttempt attempt,
+        VulkanPresentNowReadinessException failure)
+    {
+        _telemetry.PublishPresentNowFailureDiagnostic(
+            new VulkanPresentNowFailureDiagnostic(
+                Interlocked.Increment(ref _presentNowFailureDiagnosticSequence),
+                attempt.FrameNumber,
+                attempt.FrameSlot,
+                attempt.AcceptedSceneEpoch,
+                attempt.OutputGeneration,
+                failure.Stage.ToString(),
+                failure.ActiveTicket,
+                failure.DependencyChain,
+                failure.Disposition.ToString(),
+                failure.Elapsed.TotalMilliseconds,
+                failure.SinceLastProgress.TotalMilliseconds,
+                attempt.PresentNowMeshRequestCount,
+                failure.GetType().FullName ?? failure.GetType().Name,
+                failure.Message));
     }
 
     private VulkanPresentNowTerminalTransitionRecord

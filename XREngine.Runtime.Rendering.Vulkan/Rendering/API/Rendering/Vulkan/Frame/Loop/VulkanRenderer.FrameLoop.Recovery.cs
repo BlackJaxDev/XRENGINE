@@ -341,7 +341,8 @@ namespace XREngine.Rendering.Vulkan
             Result? rejectedSubmitResult,
             VulkanImGuiFrameSnapshot? recoveryOverlaySnapshot = null,
             CommandBuffer recoveryDynamicTextSecondaryCommandBuffer = default,
-            int recoveryDynamicTextOperationCount = 0)
+            int recoveryDynamicTextOperationCount = 0,
+            bool allowPresentNowRetryInitializationClear = false)
         {
             // Recovery submits an abort/replay primary, never the rejected scene
             // primary. Terminalize its deferred submission receipts before any
@@ -355,7 +356,8 @@ namespace XREngine.Rendering.Vulkan
                     rejectionStage,
                     out bool imageWasEverPresented,
                     out bool imageHasValidPresentedContent,
-                    out bool acquireAvailable);
+                    out bool acquireAvailable,
+                    allowPresentNowRetryInitializationClear);
 
             if (!policy.ShouldPresent)
             {

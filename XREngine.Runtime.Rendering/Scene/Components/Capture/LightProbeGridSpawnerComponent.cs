@@ -590,7 +590,7 @@ public class LightProbeGridSpawnerComponent : XRComponent
     {
         if (_spawnedNodes.Count == 0)
         {
-            // Grid not yet spawned — attempt initial spawn (will defer if bounds unavailable).
+            // Grid not yet spawned â€” attempt initial spawn (will defer if bounds unavailable).
             SpawnGrid();
             return;
         }
@@ -605,7 +605,7 @@ public class LightProbeGridSpawnerComponent : XRComponent
 
         if (_spawnedNodes.Count == 0)
         {
-            // Deferred spawn was pending — try again.
+            // Deferred spawn was pending â€” try again.
             SpawnGrid();
             return;
         }
@@ -670,7 +670,7 @@ public class LightProbeGridSpawnerComponent : XRComponent
             _gridBuildRunningVersion = version;
         }
 
-        RuntimeEngine.Jobs.Schedule(new ActionJob(() =>
+        RuntimeRenderingHostServices.Work.GeneralJobs.Schedule(new ActionJob(() =>
         {
             GridBuildResult? result = null;
             try
@@ -1426,7 +1426,7 @@ public class LightProbeGridSpawnerComponent : XRComponent
         if ((hitCount & 1) == 0 || nearestHitDistance <= 1e-4f)
             return false;
 
-        // nearestHitDistance is in LOCAL space — transform the hit point back to
+        // nearestHitDistance is in LOCAL space â€” transform the hit point back to
         // world space so scaling is handled correctly.
         Vector3 localHitPoint = localStart + localDirection * nearestHitDistance;
         Matrix4x4.Invert(worldToLocal, out Matrix4x4 localToWorld);

@@ -427,7 +427,8 @@ public sealed class AdvancedVisibilityBufferContractTests
                 stereo: true);
         AdvancedRenderPipeline pipeline = new(
             stereo: true,
-            capabilities);
+            capabilities,
+            visibilityFamilyReservation: default);
         RenderPipelineResourceProfile profile = new(
             DisplayWidth: 1920u,
             DisplayHeight: 1080u,
@@ -532,7 +533,8 @@ public sealed class AdvancedVisibilityBufferContractTests
         indirect.ShouldContain("PRODUCER_CPU_DIRECT_STATIC_INDEXED");
         indirect.ShouldContain("PRODUCER_CPU_DIRECT_PRE_SKINNED");
         indirect.ShouldContain("DrawMeshTasksIndirect");
-        indirect.ShouldContain("MeshPayloadRows[outputIndex]");
+        indirect.ShouldContain(
+            "XR_ADV_VisibilityMeshPayloads.records[outputIndex]");
     }
 
     private static AdvancedVisibilityPayload CreatePayload(

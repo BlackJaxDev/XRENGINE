@@ -29,8 +29,8 @@ internal sealed partial class VulkanCommandRuntime
 
         VulkanTrackedCommandEncoder encoder = new(this);
         VulkanRecordedCommandInheritance inheritance = preparedChain.Inheritance;
-        using VulkanWorkerSecondaryCommandArena.RecordingLease arenaLease =
-            VulkanWorkerSecondaryCommandArena.EnterRecording(chain.RecordedArtifact.WorkerArenaOwner);
+        using VulkanLaneCommandFamilyArena.RecordingLease arenaLease =
+            VulkanLaneCommandFamilyArena.EnterRecording(chain.RecordedArtifact.LaneArenaOwner);
         CommandBuffer secondary = entry.SecondaryBuffer;
         chain.RecordedArtifact.Invalidate(EVulkanRecordedCommandArtifactInvalidationReason.RecordingStarted);
         Result resetResult = encoder.Reset(secondary);
@@ -116,7 +116,7 @@ internal sealed partial class VulkanCommandRuntime
         CommandBufferBeginInfo beginInfo = new()
         {
             SType = StructureType.CommandBufferBeginInfo,
-            Flags = CommandBufferUsageFlags.RenderPassContinueBit | CommandBufferUsageFlags.SimultaneousUseBit,
+            Flags = CommandBufferUsageFlags.RenderPassContinueBit,
             PInheritanceInfo = &inheritanceInfo,
         };
 

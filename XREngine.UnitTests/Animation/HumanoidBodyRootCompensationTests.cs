@@ -83,7 +83,6 @@ public sealed class HumanoidBodyRootCompensationTests
             weightedMotionScale: 2.0f,
             weight: 1.0f,
             settings,
-            projectionCalibrationClipName: null,
             ReadOnlySpan<float>.Empty);
 
         pose.Channels.ShouldBe(
@@ -101,7 +100,6 @@ public sealed class HumanoidBodyRootCompensationTests
             2.0f,
             1.0f,
             settings,
-            projectionCalibrationClipName: null,
             ReadOnlySpan<float>.Empty);
         yawOnly.Channels.ShouldBe(EHumanoidProjectedRootChannels.RotationYaw);
 
@@ -114,7 +112,6 @@ public sealed class HumanoidBodyRootCompensationTests
             2.0f,
             1.0f,
             settings,
-            projectionCalibrationClipName: null,
             ReadOnlySpan<float>.Empty);
         baked.Channels.ShouldBe(EHumanoidProjectedRootChannels.None);
     }

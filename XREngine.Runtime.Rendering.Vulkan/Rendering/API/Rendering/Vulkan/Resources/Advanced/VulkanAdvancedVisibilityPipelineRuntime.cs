@@ -54,7 +54,9 @@ internal sealed class VulkanAdvancedVisibilityPipelineRuntime
                 !early.Link(allowAsyncShaderCompile: false) ||
                 !early.IsLinked || early.PipelineLayout.Handle == 0)
             {
-                reason = "early visibility compute program did not link a Vulkan pipeline layout";
+                reason = DescribeProgramFailure(
+                    _earlyVisibilityProgram,
+                    "early visibility compute program did not link a Vulkan pipeline layout");
                 return false;
             }
             if (_resources.WrapperLookup.GetOrCreate(
@@ -248,7 +250,7 @@ internal sealed class VulkanAdvancedVisibilityPipelineRuntime
             // resolved from it after the Vulkan preamble is inserted.
             Text = InsertPreambleAfterVersion(source, preamble),
         };
-        return new XRRenderProgram(
+        XRRenderProgram program = new(
             linkNow: false,
             separable: false,
             new XRShader(EShaderType.Compute, sourceWithPreamble)
@@ -260,6 +262,8 @@ internal sealed class VulkanAdvancedVisibilityPipelineRuntime
             ExternallyOwnedDescriptorSetMask =
                 VulkanAdvancedSceneProgramBindingContract.ExternallyOwnedSetMask,
         };
+        program.AllowLink();
+        return program;
     }
 
     private XRRenderProgram CreateRasterProgram(string fragmentPath, string name)
@@ -272,7 +276,7 @@ internal sealed class VulkanAdvancedVisibilityPipelineRuntime
             EShaderType.Fragment);
         string preamble = VulkanAdvancedSceneProgramBindingContract.BuildShaderPreamble(
             _resources.AdvancedSceneResources);
-        return new XRRenderProgram(
+        XRRenderProgram program = new(
             linkNow: false,
             separable: false,
             CreateShaderWithPreamble(vertexAsset, preamble, name + ".vert"),
@@ -282,6 +286,8 @@ internal sealed class VulkanAdvancedVisibilityPipelineRuntime
             ExternallyOwnedDescriptorSetMask =
                 VulkanAdvancedSceneProgramBindingContract.ExternallyOwnedSetMask,
         };
+        program.AllowLink();
+        return program;
     }
 
     private XRRenderProgram CreateMeshRasterProgram(string fragmentPath, string name)
@@ -294,7 +300,7 @@ internal sealed class VulkanAdvancedVisibilityPipelineRuntime
             EShaderType.Fragment);
         string preamble = VulkanAdvancedSceneProgramBindingContract.BuildShaderPreamble(
             _resources.AdvancedSceneResources);
-        return new XRRenderProgram(
+        XRRenderProgram program = new(
             linkNow: false,
             separable: false,
             CreateShaderWithPreamble(meshAsset, preamble, name + ".mesh"),
@@ -304,6 +310,8 @@ internal sealed class VulkanAdvancedVisibilityPipelineRuntime
             ExternallyOwnedDescriptorSetMask =
                 VulkanAdvancedSceneProgramBindingContract.ExternallyOwnedSetMask,
         };
+        program.AllowLink();
+        return program;
     }
 
     private static XRShader CreateShaderWithPreamble(
@@ -330,5 +338,20 @@ internal sealed class VulkanAdvancedVisibilityPipelineRuntime
             source.AsSpan(0, versionEnd + 1),
             preamble,
             source.AsSpan(versionEnd + 1));
+    }
+
+    private static string DescribeProgramFailure(
+        XRRenderProgram program,
+        string fallback)
+    {
+        XRRenderProgram.ShaderProgramBackendStatus status =
+            program.ShaderMetadata.Backend;
+        if (string.IsNullOrWhiteSpace(status.FailureReason) &&
+            string.IsNullOrWhiteSpace(status.Detail))
+        {
+            return fallback;
+        }
+
+        return $"{fallback}: {status.FailureReason ?? "no backend failure reason"} ({status.Detail ?? "no backend detail"})";
     }
 }

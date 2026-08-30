@@ -557,15 +557,78 @@ public partial class AdvancedRenderPipeline
                     pixelType);
         }
 
+        bool usesMipChain = name is AdvancedVisibilityResourceNames.CurrentDepthPyramid or
+            AdvancedVisibilityResourceNames.PreviousDepthPyramid;
+        if (usesMipChain)
+            ConfigureVisibilityMipChain(texture, internalFormat, pixelFormat, pixelType);
+
         ConfigureVisibilityTexture(
             texture,
             sizedInternalFormat,
-            name is AdvancedVisibilityResourceNames.CurrentDepthPyramid or
-                AdvancedVisibilityResourceNames.PreviousDepthPyramid);
+            usesMipChain);
         texture.RequiresStorageUsage = storage;
         texture.Name = name;
         texture.SamplerName = name;
         return texture;
+    }
+
+    private void ConfigureVisibilityMipChain(
+        XRTexture texture,
+        EPixelInternalFormat internalFormat,
+        EPixelFormat pixelFormat,
+        EPixelType pixelType)
+    {
+        int mipCount = checked((int)ResolveVisibilityMipCount(InternalWidth, InternalHeight));
+        switch (texture)
+        {
+            case XRTexture2D texture2D:
+                texture2D.Mipmaps = CreateVisibilityMipChain(
+                    InternalWidth,
+                    InternalHeight,
+                    mipCount,
+                    internalFormat,
+                    pixelFormat,
+                    pixelType);
+                break;
+            case XRTexture2DArray textureArray:
+                foreach (XRTexture2D layerTexture in textureArray.Textures)
+                {
+                    layerTexture.Mipmaps = CreateVisibilityMipChain(
+                        InternalWidth,
+                        InternalHeight,
+                        mipCount,
+                        internalFormat,
+                        pixelFormat,
+                        pixelType);
+                }
+                break;
+            default:
+                throw new InvalidOperationException(
+                    $"Unsupported advanced visibility texture type '{texture.GetType().Name}'.");
+        }
+    }
+
+    private static Mipmap2D[] CreateVisibilityMipChain(
+        uint width,
+        uint height,
+        int mipCount,
+        EPixelInternalFormat internalFormat,
+        EPixelFormat pixelFormat,
+        EPixelType pixelType)
+    {
+        Mipmap2D[] mipmaps = new Mipmap2D[mipCount];
+        for (int mipLevel = 0; mipLevel < mipCount; mipLevel++)
+        {
+            mipmaps[mipLevel] = new Mipmap2D(
+                Math.Max(1u, width >> mipLevel),
+                Math.Max(1u, height >> mipLevel),
+                internalFormat,
+                pixelFormat,
+                pixelType,
+                allocateData: false);
+        }
+
+        return mipmaps;
     }
 
     private static void ConfigureVisibilityTexture(

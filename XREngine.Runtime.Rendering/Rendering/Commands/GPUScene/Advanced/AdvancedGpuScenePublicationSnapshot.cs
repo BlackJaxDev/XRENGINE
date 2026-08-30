@@ -7,7 +7,9 @@ namespace XREngine.Rendering.Commands;
 /// </summary>
 public sealed class AdvancedGpuScenePublicationSnapshot
 {
-    internal AdvancedGpuScenePublicationSnapshot(AdvancedSharedGpuSceneDatabase database)
+    internal AdvancedGpuScenePublicationSnapshot(
+        AdvancedSharedGpuSceneDatabase database,
+        in AdvancedSharedGpuSceneCapacityProfile capacities)
     {
         DatabaseEpoch = database.DatabaseEpoch;
         AdvancedGpuSceneDatabase scene = database.Scene;
@@ -19,7 +21,11 @@ public sealed class AdvancedGpuScenePublicationSnapshot
         Deformations = scene.Deformations.CreatePublicationSnapshot();
         RenderStates = scene.RenderStates.CreatePublicationSnapshot();
         EditorIdentities = scene.EditorIdentities.CreatePublicationSnapshot();
-        Geometry = scene.Geometry.Records.CreatePublicationSnapshot();
+        // Stable-bin sealing resolves each compact submission's immutable
+        // geometry range from the retained publication. Journals alone cannot
+        // satisfy that lookup after the live table advances.
+        Geometry = scene.Geometry.Records.CreatePublicationSnapshot(
+            includeRecordImage: true);
         GeometryPayloads = new AdvancedGeometryPublicationSnapshot(scene.Geometry);
         MaterialPayloads = materials.CreatePublicationSnapshot();
         Materials = MaterialPayloads.Materials;
@@ -29,6 +35,9 @@ public sealed class AdvancedGpuScenePublicationSnapshot
         Textures = ResourcePayloads.Textures;
         Samplers = ResourcePayloads.Samplers;
         GlobalResources = new AdvancedGlobalSceneResourcePublicationSnapshot(resources);
+        Submission = new AdvancedSceneSubmissionPublicationSnapshot();
+        ReverseDependencies = new AdvancedCanonicalReverseDependencyManifest(capacities);
+        Mutations = new AdvancedCanonicalPublicationMutationSnapshot();
     }
 
     public AdvancedGpuRecordTablePublicationSnapshot<AdvancedDrawRecord> Draws { get; }
@@ -63,6 +72,14 @@ public sealed class AdvancedGpuScenePublicationSnapshot
     /// and GI resources captured with this publication.
     /// </summary>
     public AdvancedGlobalSceneResourcePublicationSnapshot GlobalResources { get; }
+    /// <summary>Exact immutable draw ordering/control sidecar for this ring entry.</summary>
+    public AdvancedSceneSubmissionPublicationSnapshot Submission { get; }
+    /// <summary>Exact canonical reverse edges retained for invalidation fan-out.</summary>
+    public AdvancedCanonicalReverseDependencyManifest ReverseDependencies { get; }
+    /// <summary>Owner-local dirty ranges and generation stamps at seal time.</summary>
+    public AdvancedCanonicalPublicationMutationSnapshot Mutations { get; }
+    /// <summary>Explicit shadow/probe coverage consumed by global-resource pass families.</summary>
+    public AdvancedGlobalPassPublicationCoverage GlobalPassCoverage { get; private set; }
 
     /// <summary>Resource-table generations captured when this ring entry was sealed.</summary>
     public AdvancedGlobalResourceDatabaseGenerations ResourceGenerations
@@ -73,4 +90,17 @@ public sealed class AdvancedGpuScenePublicationSnapshot
         in AdvancedGlobalResourceDatabaseGenerations generations)
         => ResourcePayloads.TryCaptureTableState(sequence, generations) &&
            GlobalResources.TryCaptureTableState(sequence, generations);
+
+    internal bool TryCaptureCanonicalDependencyState(
+        ulong sequence,
+        AdvancedSharedGpuSceneDatabase database)
+    {
+        if (!ReverseDependencies.TryCapture(sequence, database.Scene, database.Materials))
+            return false;
+
+        Mutations.Capture(sequence, database);
+        GlobalPassCoverage = AdvancedGlobalPassPublicationCoverage.Capture(
+            sequence, database.Resources);
+        return true;
+    }
 }

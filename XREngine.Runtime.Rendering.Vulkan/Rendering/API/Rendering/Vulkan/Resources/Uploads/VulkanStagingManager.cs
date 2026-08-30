@@ -338,7 +338,6 @@ internal sealed class VulkanStagingManager
                 return;
 
             _trimFrameCounter = 0;
-            List<StagingBufferEntry>? evicted = null;
             for (int index = _entries.Count - 1; index >= 0; index--)
             {
                 StagingBufferEntry entry = _entries[index];
@@ -356,20 +355,10 @@ internal sealed class VulkanStagingManager
                     continue;
                 }
 
-                evicted ??= [];
-                evicted.Add(entry);
                 _entries.RemoveAt(index);
                 idleBytes = idleBytes > entry.Size
                     ? idleBytes - entry.Size
                     : 0;
-            }
-
-            if (evicted is null)
-                return;
-
-            for (int index = 0; index < evicted.Count; index++)
-            {
-                StagingBufferEntry entry = evicted[index];
                 backendContext.Resources.Buffers.Destroy(
                     backendContext,
                     entry.Buffer,

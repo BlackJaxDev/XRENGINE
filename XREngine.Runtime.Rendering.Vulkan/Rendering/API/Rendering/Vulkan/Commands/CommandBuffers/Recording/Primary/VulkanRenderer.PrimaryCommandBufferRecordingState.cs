@@ -109,6 +109,7 @@ namespace XREngine.Rendering.Vulkan
         public ref int RecordedSwapchainWriteCount;
         public ref ImageLayout RecordedSwapchainFinalLayout;
         public ref string RecordingDeferredReason;
+        public ref EVulkanCommandRecordingFailureKind FailureKind;
         public ref bool FrameOpsRequireRerecord;
         public ImageLayout InitialSwapchainColorLayout;
         public List<VulkanSecondaryRecordingBucket> SecondaryBuckets;

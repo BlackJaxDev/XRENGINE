@@ -372,9 +372,9 @@ namespace XREngine.Rendering
             int largestMipmapLevel,
             int smallestAllowedMipmapLevel)
         {
-            _autoGenerateMipmaps = autoGenerateMipmaps;
-            _largestMipmapLevel = largestMipmapLevel;
-            _smallestAllowedMipmapLevel = smallestAllowedMipmapLevel;
+            AutoGenerateMipmaps = autoGenerateMipmaps;
+            LargestMipmapLevel = largestMipmapLevel;
+            SmallestAllowedMipmapLevel = smallestAllowedMipmapLevel;
         }
 
         private ETextureColorSpace _importedColorSpace = ETextureColorSpace.Linear;

@@ -11,6 +11,7 @@ namespace XREngine.Rendering.Vulkan;
 internal struct VulkanCommandChainRecordingEntry
 {
     private const uint NeedsRecordingMask = 1u;
+    private const uint DispatchToRenderDomainMask = 1u << 1;
 
     public int PreparedChainIndex;
     public int ColdDataIndex;
@@ -22,6 +23,19 @@ internal struct VulkanCommandChainRecordingEntry
     {
         readonly get => (Flags & NeedsRecordingMask) != 0;
         set => Flags = value ? Flags | NeedsRecordingMask : Flags & ~NeedsRecordingMask;
+    }
+
+    /// <summary>
+    /// Whether this immutable prepared entry belongs to a render-domain range.
+    /// Entries which remain inline still use <see cref="WorkerIndex"/> as their
+    /// lane-owned arena identity.
+    /// </summary>
+    public bool DispatchToRenderDomain
+    {
+        readonly get => (Flags & DispatchToRenderDomainMask) != 0;
+        set => Flags = value
+            ? Flags | DispatchToRenderDomainMask
+            : Flags & ~DispatchToRenderDomainMask;
     }
 
     public static int SizeInBytes => Unsafe.SizeOf<VulkanCommandChainRecordingEntry>();

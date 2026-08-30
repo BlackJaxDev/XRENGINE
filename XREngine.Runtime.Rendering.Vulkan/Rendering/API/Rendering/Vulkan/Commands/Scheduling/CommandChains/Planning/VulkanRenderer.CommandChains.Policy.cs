@@ -79,8 +79,7 @@ internal sealed partial class VulkanCommandRuntime
     // Bound both artifacts and the actual draw-preparation work: the old
     // 32-chain-only limit admitted 144 cold Sponza draws and spent more than
     // 200 ms preparing their frame data before workers could start.
-    private const int MaxProgressiveDesktopCommandChainRecordJobs = 16;
-    private const int MaxProgressiveDesktopCommandChainRecordOperations = 16;
+    private const int MaxProgressiveDesktopCommandChainRecordOperations = 64;
 
     /// <summary>
     /// Assigns a shadow caster to a stable runtime bucket. Membership changes can

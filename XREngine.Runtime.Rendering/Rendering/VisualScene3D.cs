@@ -55,6 +55,18 @@ namespace XREngine.Scene
             BvhRaycasts.WarmShaders();
         }
 
+        /// <summary>
+        /// Resolves the submission strategy again at world activation. Visual scenes
+        /// may be constructed before unit-test or command-line rendering preferences
+        /// are installed, so their constructor-time routing decision is not authoritative.
+        /// </summary>
+        public override void Initialize()
+        {
+            base.Initialize();
+            ApplyRenderDispatchPreference(
+                RuntimeEngine.EffectiveSettings.GPURenderDispatch);
+        }
+
         public void SetBounds(AABB bounds)
         {
             _sceneBounds = bounds;
@@ -452,6 +464,15 @@ namespace XREngine.Scene
 
         private void ProcessPendingRenderableOperations()
         {
+            // A world can finish activation before startup/profile preferences are
+            // applied to Engine.WorldInstances. Reconcile on every collect boundary,
+            // including an empty mutation queue, so a late strategy change migrates
+            // renderables that were already registered in the constructor-time lane.
+            bool useGpu = RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy() !=
+                EMeshSubmissionStrategy.CpuDirect;
+            if (useGpu != _isGpuDispatchActive)
+                ApplyRenderDispatchPreference(useGpu);
+
             if (_pendingRenderableOperations.IsEmpty)
                 return;
 

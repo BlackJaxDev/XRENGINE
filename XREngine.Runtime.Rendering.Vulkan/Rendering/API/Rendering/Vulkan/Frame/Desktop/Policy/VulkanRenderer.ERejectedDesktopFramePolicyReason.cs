@@ -9,4 +9,5 @@ internal enum ERejectedDesktopFramePolicyReason
     ReuseCompletedContent = 4,
     DeferredInitializationClear = 5,
     PresentNowFreshOutputRequired = 6,
+    PresentNowRetryInitializationClear = 7,
 }

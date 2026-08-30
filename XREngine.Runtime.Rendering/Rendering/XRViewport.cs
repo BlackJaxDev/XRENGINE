@@ -43,6 +43,7 @@ namespace XREngine.Rendering
         /// This allows the viewport to render without requiring a full scene graph hierarchy.
         /// </summary>
         private XRCamera? _camera = null;
+        private XRWindow? _window;
 
         /// <summary>
         /// The camera component from the scene graph that provides both the camera and its transform.
@@ -75,10 +76,10 @@ namespace XREngine.Rendering
         private readonly XRRenderPipelineInstance _renderPipeline = new();
 
         /// <summary>
-        /// Stable output ownership used when a global setting replaces this viewport's pipeline.
+        /// Stable output ownership used to realize the configured pipeline asset for this viewport.
+        /// Output-local capabilities and reservations are bound without replacing the source asset.
         /// </summary>
-        private RenderPipelineRequest _pipelineRequest =
-            RenderPipelineRequest.DesktopScene();
+        private RenderPipelineRequest _pipelineRequest;
 
         /// <summary>
         /// When true, the render pipeline is automatically updated to match the camera's RenderPipeline property.
@@ -231,7 +232,17 @@ namespace XREngine.Rendering
         /// A window can contain multiple viewports for split-screen or picture-in-picture rendering.
         /// May be null for off-screen render targets that don't display to a window.
         /// </summary>
-        public XRWindow? Window { get; set; }
+        public XRWindow? Window
+        {
+            get => _window;
+            set
+            {
+                if (!SetField(ref _window, value))
+                    return;
+
+                RefreshRenderPipelineOutputBinding();
+            }
+        }
 
         /// <summary>
         /// True when this viewport renders into a runtime-owned external swapchain image
@@ -436,8 +447,19 @@ namespace XREngine.Rendering
         [YamlIgnore]
         public RenderPipelineRequest PipelineRequest
         {
-            get => _pipelineRequest;
-            set => SetField(ref _pipelineRequest, value);
+            get => _pipelineRequest.OutputId == 0
+                ? _pipelineRequest with { OutputId = _frameOutputIdentity }
+                : _pipelineRequest;
+            set
+            {
+                RenderPipelineRequest normalized = value.OutputId == 0
+                    ? value with { OutputId = _frameOutputIdentity }
+                    : value;
+                if (!SetField(ref _pipelineRequest, normalized))
+                    return;
+
+                RefreshRenderPipelineOutputBinding();
+            }
         }
 
         [YamlIgnore]
@@ -446,15 +468,48 @@ namespace XREngine.Rendering
         /// <summary>
         /// The render pipeline definition that controls how rendering is performed.
         /// Defines the sequence of render passes (G-buffer, lighting, post-processing, etc.).
-        /// Setting this directly is an alternative to using SetRenderPipelineFromCamera.
+        /// When SetRenderPipelineFromCamera is true, assignments update the camera's configured
+        /// source asset so the inspector and live viewport cannot diverge.
         /// Not serialized (YamlIgnore) as pipelines are typically assigned from camera settings.
         /// </summary>
         [YamlIgnore]
         public RenderPipeline? RenderPipeline
         {
-            get => _renderPipeline.Pipeline;
+            get
+            {
+                if (!SetRenderPipelineFromCamera || ActiveCamera is not { } camera)
+                    return _renderPipeline.Pipeline;
+
+                RenderPipeline configuredPipeline = camera.GetOrCreateRenderPipeline();
+                if (!ReferenceEquals(_renderPipeline.AssignedPipeline, configuredPipeline))
+                {
+                    _renderPipeline.Pipeline = configuredPipeline;
+                    RefreshRenderPipelineOutputBinding();
+                }
+                return configuredPipeline;
+            }
             set
             {
+                if (SetRenderPipelineFromCamera && ActiveCamera is { } camera)
+                {
+                    if (value is null)
+                    {
+                        throw new InvalidOperationException(
+                            "A camera-synchronized viewport cannot clear its render pipeline. " +
+                            "Assign the configured camera pipeline or disable SetRenderPipelineFromCamera first.");
+                    }
+
+                    if (!ReferenceEquals(camera.AssignedRenderPipeline, value))
+                    {
+                        // The camera asset is authoritative. Runtime policy changes
+                        // must update that source so the inspector and every bound
+                        // viewport observe the same pipeline definition.
+                        camera.RenderPipeline = value;
+                        if (ReferenceEquals(_renderPipeline.AssignedPipeline, value))
+                            return;
+                    }
+                }
+
                 _renderPipeline.Pipeline = value;
 
                 if (value is ISceneRenderPipelineFeatureProvider features &&
@@ -465,6 +520,8 @@ namespace XREngine.Rendering
                         Stereo = features.Stereo,
                     };
                 }
+
+                RefreshRenderPipelineOutputBinding();
             }
         }
 
@@ -478,6 +535,19 @@ namespace XREngine.Rendering
         {
             get => _setRenderPipelineFromCamera;
             set => SetField(ref _setRenderPipelineFromCamera, value);
+        }
+
+        internal bool IsDestroyed => _destroyed;
+
+        private void RefreshRenderPipelineOutputBinding()
+        {
+            if (_destroyed)
+            {
+                _renderPipeline.ClearAdvancedOutputBinding();
+                return;
+            }
+
+            RuntimeEngine.Rendering.RefreshRenderPipelineOutputBinding(this);
         }
 
         internal void SynchronizeRenderPipelineFromCamera(XRCamera camera)
@@ -901,6 +971,8 @@ namespace XREngine.Rendering
                 case nameof(SetRenderPipelineFromCamera):
                     if (_setRenderPipelineFromCamera)
                         SynchronizeRenderPipelineFromActiveCamera();
+                    else
+                        RefreshRenderPipelineOutputBinding();
                     break;
             }
         }

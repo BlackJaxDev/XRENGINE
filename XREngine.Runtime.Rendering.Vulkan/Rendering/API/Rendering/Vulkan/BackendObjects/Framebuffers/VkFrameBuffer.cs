@@ -201,6 +201,99 @@ internal unsafe class VkFrameBuffer(
         ActivateFrameBufferState(state);
     }
 
+    /// <summary>
+    /// Prepares the exact attachment wrappers through the resource runtime's
+    /// cold creation boundary.  Framebuffer creation itself must remain a
+    /// retained lookup operation so recording never races wrapper publication.
+    /// </summary>
+    internal bool TryPrepareAttachmentBackings(
+        bool allowSynchronousResourceUploads,
+        out string reason)
+    {
+        var targets = Data.Targets;
+        if (targets is null || targets.Length == 0)
+            throw new InvalidOperationException("Framebuffer must have at least one attachment.");
+
+        for (int index = 0; index < targets.Length; index++)
+        {
+            IFrameBufferAttachement? target = targets[index].Target;
+            if (target is null)
+                throw new InvalidOperationException("Framebuffer attachment target cannot be null.");
+
+            AbstractRenderAPIObject? wrapper = target switch
+            {
+                XRTexture texture => BackendContext.Resources.CreateAPIRenderObject(texture),
+                XRRenderBuffer renderBuffer => BackendContext.Resources.CreateAPIRenderObject(renderBuffer),
+                _ => throw new NotSupportedException(
+                    $"Framebuffer attachment type '{target.GetType().Name}' is not supported yet."),
+            };
+
+            if (wrapper is null)
+            {
+                reason = CreateAttachmentNotReadyReason(
+                    target,
+                    "the Vulkan wrapper was not published by the cold resource boundary");
+                return false;
+            }
+
+            if (!wrapper.IsGenerated)
+            {
+                if (!allowSynchronousResourceUploads)
+                {
+                    reason = CreateAttachmentNotReadyReason(
+                        target,
+                        "synchronous backing creation is disabled");
+                    return false;
+                }
+
+                wrapper.Generate();
+            }
+
+            if (!wrapper.IsGenerated)
+            {
+                reason = CreateAttachmentNotReadyReason(
+                    target,
+                    "the Vulkan wrapper did not generate a native backing");
+                return false;
+            }
+
+            switch (wrapper)
+            {
+                case IVkFrameBufferAttachmentSource source when
+                    !source.TryEnsureDescriptorReadyForUse(
+                        $"framebuffer attachment '{DescribeAttachment(target)}'",
+                        allowSynchronousResourceUploads):
+                    reason = CreateAttachmentNotReadyReason(
+                        target,
+                        "the descriptor image has not been published");
+                    return false;
+                case VkRenderBuffer renderBuffer:
+                    renderBuffer.RefreshIfStale();
+                    if (renderBuffer.Image.Handle == 0 || renderBuffer.View.Handle == 0)
+                    {
+                        reason = CreateAttachmentNotReadyReason(
+                            target,
+                            "the render-buffer image or view has not been published");
+                        return false;
+                    }
+                    break;
+                case not IVkFrameBufferAttachmentSource:
+                    throw new InvalidOperationException(
+                        $"Framebuffer attachment '{DescribeAttachment(target)}' is backed by " +
+                        $"unsupported Vulkan wrapper '{wrapper.GetType().Name}'.");
+            }
+        }
+
+        reason = string.Empty;
+        return true;
+    }
+
+    private static string CreateAttachmentNotReadyReason(
+        IFrameBufferAttachement attachment,
+        string detail)
+        => $"{VulkanFrameBufferAttachmentNotReadyException.DiagnosticPrefix} " +
+           $"'{DescribeAttachment(attachment)}' {detail}.";
+
     internal FrameBufferAttachmentSignature[] ResolveAttachmentSignatureForPass(
         int passIndex,
         IReadOnlyCollection<RenderPassMetadata>? passMetadata,
@@ -813,6 +906,19 @@ internal unsafe class VkFrameBuffer(
 
     protected override uint CreateObjectInternal()
     {
+        // Generate() is the cold framebuffer composition boundary used by
+        // backend-agnostic setup work such as the BRDF LUT prepass. Prepare the
+        // declared attachment wrappers here before the retained build performs
+        // lookup-only resolution. Steady-state recording reaches EnsureCurrent()
+        // only after the frame loop has performed the same readiness check.
+        if (!TryPrepareAttachmentBackings(
+                BackendContext.Resources.AllowSynchronousResourceUploads,
+                out string attachmentFailure))
+        {
+            throw new VulkanFrameBufferAttachmentNotReadyException(
+                attachmentFailure);
+        }
+
         AttachmentBuildInfo[] attachments = BuildAttachmentInfos();
         var (fbWidth, fbHeight) = ResolveFramebufferExtent(attachments);
         CachedFrameBufferState state = CreateFrameBufferState(attachments, fbWidth, fbHeight);
@@ -1809,11 +1915,19 @@ internal unsafe class VkFrameBuffer(
 
     private AttachmentSource ResolveRenderBufferAttachment(XRRenderBuffer renderBuffer)
     {
-        if (WrapperLookup.GetOrCreate(renderBuffer) is not VkRenderBuffer vkRenderBuffer)
-            throw new InvalidOperationException("Render buffer is not backed by a Vulkan object.");
+        if (WrapperLookup.GetOrCreate(renderBuffer, generateNow: false) is not VkRenderBuffer vkRenderBuffer)
+            throw new VulkanFrameBufferAttachmentNotReadyException(
+                $"render buffer '{DescribeAttachment(renderBuffer)}' has no published Vulkan wrapper.");
 
-        vkRenderBuffer.Generate();
+        if (!vkRenderBuffer.IsGenerated)
+            throw new VulkanFrameBufferAttachmentNotReadyException(
+                $"render buffer '{DescribeAttachment(renderBuffer)}' has no generated Vulkan backing.");
+
         vkRenderBuffer.RefreshIfStale();
+        if (vkRenderBuffer.Image.Handle == 0 || vkRenderBuffer.View.Handle == 0)
+            throw new VulkanFrameBufferAttachmentNotReadyException(
+                $"render buffer '{DescribeAttachment(renderBuffer)}' has no published image view.");
+
         ImageAspectFlags aspect = NormalizeAttachmentAspectMask(vkRenderBuffer.Format, vkRenderBuffer.Aspect);
         return new AttachmentSource(
             vkRenderBuffer.View,
@@ -1830,8 +1944,13 @@ internal unsafe class VkFrameBuffer(
 
     private AttachmentSource ResolveTextureAttachment(IFrameBufferAttachement textureAttachment, XRTexture texture, EFrameBufferAttachment attachment, int mipLevel, int layerIndex)
     {
-        if (WrapperLookup.GetOrCreate(texture, generateNow: true) is not IVkFrameBufferAttachmentSource source)
-            throw new InvalidOperationException($"Texture '{texture.Name ?? texture.GetDescribingName()}' is not backed by a Vulkan texture.");
+        if (WrapperLookup.GetOrCreate(texture, generateNow: false) is not IVkFrameBufferAttachmentSource source)
+            throw new VulkanFrameBufferAttachmentNotReadyException(
+                $"texture '{texture.Name ?? texture.GetDescribingName()}' has no published Vulkan wrapper.");
+
+        if (!source.IsDescriptorReady || source.DescriptorImage.Handle == 0)
+            throw new VulkanFrameBufferAttachmentNotReadyException(
+                $"texture '{texture.Name ?? texture.GetDescribingName()}' has no published descriptor image.");
 
         bool depthStencilAttachment = attachment is EFrameBufferAttachment.DepthAttachment
             or EFrameBufferAttachment.DepthStencilAttachment
@@ -1840,8 +1959,8 @@ internal unsafe class VkFrameBuffer(
 
         ImageView view = source.GetAttachmentView(mipLevel, layerIndex);
         if (view.Handle == 0)
-            throw new InvalidOperationException(
-                $"Texture '{texture.Name ?? texture.GetDescribingName()}' could not provide a Vulkan image view for framebuffer attachment '{attachment}'.");
+            throw new VulkanFrameBufferAttachmentNotReadyException(
+                $"texture '{texture.Name ?? texture.GetDescribingName()}' has no Vulkan image view for framebuffer attachment '{attachment}'.");
 
         ImageAspectFlags aspect = NormalizeAttachmentAspectMask(source.DescriptorFormat, source.DescriptorAspect);
         ImageUsageFlags usage = source.DescriptorUsage;

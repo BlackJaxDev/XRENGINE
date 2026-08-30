@@ -20,9 +20,11 @@ internal sealed partial class VulkanCommandRuntime
         bool useDynamicRendering,
         bool preserveSwapchainForOverlay,
         ref VulkanPresentNowReadinessWatchdog watchdog,
+        out bool retryable,
         out string reason)
     {
         ArgumentNullException.ThrowIfNull(framePlan);
+        retryable = false;
         if (!framePlan.IsSealed)
             throw new VulkanPlanPreconditionException(
                 "PresentNow pipeline readiness requires a sealed frame plan.");
@@ -42,6 +44,7 @@ internal sealed partial class VulkanCommandRuntime
             includeSwapchainDepth: true,
             framePlan.StaticOperationSignature,
             ref watchdog,
+            out retryable,
             out reason))
         {
             return false;
@@ -57,6 +60,7 @@ internal sealed partial class VulkanCommandRuntime
             includeSwapchainDepth: !preserveSwapchainForOverlay,
             framePlan.DynamicOverlaySignature,
             ref watchdog,
+            out retryable,
             out reason);
     }
 
@@ -70,8 +74,10 @@ internal sealed partial class VulkanCommandRuntime
         bool includeSwapchainDepth,
         ulong recordingStructuralSignature,
         ref VulkanPresentNowReadinessWatchdog watchdog,
+        out bool retryable,
         out string reason)
     {
+        retryable = false;
         reason = string.Empty;
         if (operations.Length == 0)
             return true;
@@ -119,12 +125,14 @@ internal sealed partial class VulkanCommandRuntime
                     ref recordingState,
                     in requirement,
                     out bool optionalDeferred,
+                    out bool requirementRetryable,
                     out string pendingReason))
             {
                 watchdog.RecordProgress();
                 continue;
             }
 
+            retryable = requirementRetryable;
             reason = optionalDeferred
                 ? $"optional PresentNow pipeline requirement was not ready: {pendingReason}"
                 : $"required PresentNow pipeline requirement {index} was not ready: {pendingReason}";

@@ -175,13 +175,13 @@ public sealed class AdvancedRenderPipelineCapabilityTests
     public void StandardPipelineFactory_UsesSelectionResultBeforeConstruction()
     {
         RenderPipeline disabled = EngineRenderingSettingsApplication.NewStandardRenderPipeline(
-            stereo: false,
+            RenderPipelineRequest.DesktopScene(stereo: false, outputId: 1UL),
             EAdvancedRenderPipelineMode.Disabled,
             AdvancedRenderPipelineCapabilities.NoRenderer);
         disabled.ShouldBeOfType<DefaultRenderPipeline>();
 
         RenderPipeline selected = EngineRenderingSettingsApplication.NewStandardRenderPipeline(
-            stereo: true,
+            RenderPipelineRequest.DesktopScene(stereo: true, outputId: 1UL),
             EAdvancedRenderPipelineMode.Available,
             SupportedCapabilities);
         AdvancedRenderPipeline advanced = selected.ShouldBeOfType<AdvancedRenderPipeline>();
@@ -189,13 +189,13 @@ public sealed class AdvancedRenderPipelineCapabilityTests
         advanced.CapabilityResult.IsSupported.ShouldBeTrue();
 
         RenderPipeline fallback = EngineRenderingSettingsApplication.NewStandardRenderPipeline(
-            stereo: false,
+            RenderPipelineRequest.DesktopScene(stereo: false, outputId: 1UL),
             EAdvancedRenderPipelineMode.Available,
             AdvancedRenderPipelineCapabilities.NoRenderer);
         fallback.ShouldBeOfType<DefaultRenderPipeline>();
 
         RenderPipeline diagnostic = EngineRenderingSettingsApplication.NewStandardRenderPipeline(
-            stereo: false,
+            RenderPipelineRequest.DesktopScene(stereo: false, outputId: 1UL),
             EAdvancedRenderPipelineMode.Diagnostic,
             SupportedCapabilities);
         diagnostic.ShouldBeOfType<DefaultRenderPipeline>();
@@ -203,7 +203,9 @@ public sealed class AdvancedRenderPipelineCapabilityTests
         AdvancedRenderPipelineNotSupportedException exception = Should.Throw<
             AdvancedRenderPipelineNotSupportedException>(
             () => EngineRenderingSettingsApplication.NewStandardRenderPipeline(
-                stereo: false,
+                RenderPipelineRequest.DesktopScene(
+                    stereo: false,
+                    outputId: 1UL),
                 EAdvancedRenderPipelineMode.Required,
                 AdvancedRenderPipelineCapabilities.NoRenderer));
         exception.SelectionResult.CapabilityResult.RejectionReason.ShouldBe(

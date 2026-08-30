@@ -10,6 +10,7 @@ internal sealed partial class VulkanCommandRuntime
         new SealedSubmissionContract?[16];
     private readonly VulkanSealedImageExitState[] _sealedSubmissionImageOverlayScratch =
         new VulkanSealedImageExitState[256];
+    private readonly VulkanSealedSubmissionBatchReceipt _sealedSubmissionBatchReceipt = new();
 
     private unsafe bool TryAcquireSealedSubmissionPins(
         Queue queue,
@@ -29,7 +30,8 @@ internal sealed partial class VulkanCommandRuntime
         int commandCount = checked((int)submitInfo.CommandBufferCount);
         if (commandCount == 0 ||
             commandCount > _sealedSubmissionContractScratch.Length ||
-            submitInfo.PCommandBuffers is null)
+            submitInfo.PCommandBuffers is null ||
+            !_sealedSubmissionBatchReceipt.Begin(commandCount))
         {
             failureReason = "sealed fast path command-buffer batch shape is unsupported";
             fallbackReason = RuntimeEngine.Rendering.Stats.Vulkan
@@ -39,18 +41,6 @@ internal sealed partial class VulkanCommandRuntime
 
         uint queueFamilyIndex = ResolveQueueFamilyIndex(queue);
         VulkanResourceLifetimeTracker tracker = ResourceRuntime.Lifetime.Tracker;
-        ulong completedGraphicsSequence;
-        ulong completedTransferSequence;
-        ulong completedOtherSequence;
-        using (VulkanFrameLockScope.Enter(
-                   tracker.SyncRoot,
-                   EVulkanFrameWaitReason.ResourceLifetimeLock))
-        {
-            completedGraphicsSequence = tracker.CompletedGraphicsSequence;
-            completedTransferSequence = tracker.CompletedTransferSequence;
-            completedOtherSequence = tracker.CompletedOtherSequence;
-        }
-
         using (VulkanFrameLockScope.Enter(
                    tracker.SyncRoot,
                    EVulkanFrameWaitReason.ResourceLifetimeLock))
@@ -72,9 +62,6 @@ internal sealed partial class VulkanCommandRuntime
                     }
                 }
 
-                EVulkanSealedResourceMatch resourceMatch =
-                    EVulkanSealedResourceMatch.CommandBuffer;
-                VulkanResourceLifetimeKey mismatchKey = default;
                 if (handle == 0)
                 {
                     ClearSealedSubmissionContractScratch(commandIndex);
@@ -98,10 +85,11 @@ internal sealed partial class VulkanCommandRuntime
                     return false;
                 }
                 if (candidate.CommandBufferHandle != handle ||
-                    candidate.QueueFamilyIndex != queueFamilyIndex)
+                    candidate.QueueFamilyIndex != queueFamilyIndex ||
+                    candidate.QueueOwnershipTransfers.Length != 0)
                 {
                     ClearSealedSubmissionContractScratch(commandIndex);
-                    failureReason = "sealed command buffer or queue family changed";
+                    failureReason = "sealed command buffer queue-family or ownership contract changed";
                     fallbackReason = RuntimeEngine.Rendering.Stats.Vulkan
                         .SealedSubmissionFallbackReason.ResourceVector;
                     return false;
@@ -115,47 +103,13 @@ internal sealed partial class VulkanCommandRuntime
                         .SealedSubmissionFallbackReason.ResourceVector;
                     return false;
                 }
-                resourceMatch = candidate.MatchResourceVectorNoLock(
-                        tracker,
-                        lifetime,
-                        out mismatchKey);
-                if (resourceMatch != EVulkanSealedResourceMatch.Match)
-                {
-                    ClearSealedSubmissionContractScratch(commandIndex);
-                    failureReason =
-                        $"sealed resource generation vector changed at {mismatchKey}";
-                    fallbackReason = resourceMatch ==
-                        EVulkanSealedResourceMatch.DescriptorPublication
-                            ? RuntimeEngine.Rendering.Stats.Vulkan
-                                .SealedSubmissionFallbackReason.DescriptorVector
-                            : RuntimeEngine.Rendering.Stats.Vulkan
-                                .SealedSubmissionFallbackReason.ResourceVector;
-                    return false;
-                }
                 _sealedSubmissionContractScratch[commandIndex] = candidate;
+                _sealedSubmissionBatchReceipt.Set(
+                    commandIndex,
+                    candidate,
+                    lifetime,
+                    trackingBatch);
 
-                if (trackingBatch is not null)
-                {
-                    using (VulkanFrameLockScope.Enter(
-                               trackingBatch,
-                               EVulkanFrameWaitReason.ResourceLifetimeLock))
-                    {
-                        if (trackingBatch.IsRecording ||
-                            trackingBatch.QueuedSubmissionCount != 0 ||
-                            trackingBatch.Dependencies.Count != 0 ||
-                            trackingBatch.PublishedImageDeltaCount !=
-                                trackingBatch.ImageAccessDeltas.Count ||
-                            trackingBatch.PublishedQueueOwnershipTransferCount !=
-                                trackingBatch.QueueOwnershipTransfers.Count)
-                        {
-                            ClearSealedSubmissionContractScratch(commandIndex + 1);
-                            failureReason = "sealed command tracking batch is dirty";
-                            fallbackReason = RuntimeEngine.Rendering.Stats.Vulkan
-                                .SealedSubmissionFallbackReason.TrackingBatch;
-                            return false;
-                        }
-                    }
-                }
             }
         }
 
@@ -182,28 +136,6 @@ internal sealed partial class VulkanCommandRuntime
                 {
                     ClearSealedSubmissionContractScratch(commandCount);
                     failureReason = "sealed image vector changed";
-                    fallbackReason = RuntimeEngine.Rendering.Stats.Vulkan
-                        .SealedSubmissionFallbackReason.ImageVector;
-                    return false;
-                }
-
-                long queueStarted = Stopwatch.GetTimestamp();
-                bool queueOwnershipValid = ValidateQueueOwnershipTransferRequirements(
-                        contract.QueueOwnershipTransfers,
-                        queueFamilyIndex,
-                        ref submitInfo,
-                        commandIndex,
-                        contract.CommandBufferHandle,
-                        completedGraphicsSequence,
-                        completedTransferSequence,
-                        completedOtherSequence,
-                        out _);
-                queueOwnershipValidationTicks +=
-                    Stopwatch.GetTimestamp() - queueStarted;
-                if (!queueOwnershipValid)
-                {
-                    ClearSealedSubmissionContractScratch(commandCount);
-                    failureReason = "sealed queue-ownership vector changed";
                     fallbackReason = RuntimeEngine.Rendering.Stats.Vulkan
                         .SealedSubmissionFallbackReason.ImageVector;
                     return false;
@@ -237,16 +169,11 @@ internal sealed partial class VulkanCommandRuntime
             {
                 for (int commandIndex = 0; commandIndex < commandCount; ++commandIndex)
                 {
-                    ulong handle = unchecked(
-                        (ulong)submitInfo.PCommandBuffers[commandIndex].Handle);
-                    SealedSubmissionContract contract =
-                        _sealedSubmissionContractScratch[commandIndex]!;
-                    if (!CommandBuffers.StableCommandDirectory.TryResolve(
-                            contract.StableCommandIdentity,
-                            handle,
-                            contract.LifetimeRecordingGeneration,
-                            out VulkanCommandBufferLifetimeRecord lifetime,
-                            out _) ||
+                    ref readonly VulkanSealedSubmissionBatchReceipt.Entry receipt =
+                        ref _sealedSubmissionBatchReceipt.GetEntry(commandIndex);
+                    SealedSubmissionContract contract = receipt.Contract;
+                    VulkanCommandBufferLifetimeRecord lifetime = receipt.Lifetime;
+                    if (lifetime.StableCommandIdentity != contract.StableCommandIdentity ||
                         !ReferenceEquals(lifetime.SealedSubmissionContract, contract) ||
                         lifetime.QueuedSubmissionCount != 0 ||
                         contract.MatchResourceVectorNoLock(
@@ -261,20 +188,36 @@ internal sealed partial class VulkanCommandRuntime
                             .SealedSubmissionFallbackReason.PinCommit;
                         return false;
                     }
+                    if (receipt.TrackingBatch is not null)
+                    {
+                        using (VulkanFrameLockScope.Enter(
+                                   receipt.TrackingBatch,
+                                   EVulkanFrameWaitReason.ResourceLifetimeLock))
+                            if (receipt.TrackingBatch.IsRecording ||
+                                receipt.TrackingBatch.QueuedSubmissionCount != 0 ||
+                                receipt.TrackingBatch.Dependencies.Count != 0 ||
+                                receipt.TrackingBatch.PublishedImageDeltaCount !=
+                                    receipt.TrackingBatch.ImageAccessDeltas.Count ||
+                                receipt.TrackingBatch.PublishedQueueOwnershipTransferCount !=
+                                    receipt.TrackingBatch.QueueOwnershipTransfers.Count)
+                            {
+                                ClearSealedSubmissionContractScratch(commandCount);
+                                failureReason = "sealed command tracking batch is dirty before pin commit";
+                                fallbackReason = RuntimeEngine.Rendering.Stats.Vulkan
+                                    .SealedSubmissionFallbackReason.TrackingBatch;
+                                return false;
+                            }
+                    }
                 }
 
                 for (int commandIndex = 0; commandIndex < commandCount; ++commandIndex)
                 {
-                    ulong handle = unchecked(
-                        (ulong)submitInfo.PCommandBuffers[commandIndex].Handle);
-                    SealedSubmissionContract contract =
-                        _sealedSubmissionContractScratch[commandIndex]!;
-                    if (!CommandBuffers.StableCommandDirectory.TryResolve(
-                            contract.StableCommandIdentity,
-                            handle,
-                            contract.LifetimeRecordingGeneration,
-                            out VulkanCommandBufferLifetimeRecord lifetime,
-                            out _))
+                    ref readonly VulkanSealedSubmissionBatchReceipt.Entry receipt =
+                        ref _sealedSubmissionBatchReceipt.GetEntry(commandIndex);
+                    SealedSubmissionContract contract = receipt.Contract;
+                    VulkanCommandBufferLifetimeRecord lifetime = receipt.Lifetime;
+                    if (lifetime.StableCommandIdentity != contract.StableCommandIdentity ||
+                        !ReferenceEquals(lifetime.SealedSubmissionContract, contract))
                     {
                         ClearSealedSubmissionContractScratch(commandCount);
                         failureReason = "sealed command identity changed before pin capture";
@@ -284,6 +227,7 @@ internal sealed partial class VulkanCommandRuntime
                     }
                     if (lifetime.SubmissionPinReceipt.TryCapture(
                             contract.CommandBufferSlot,
+                            contract.CommandBufferResource,
                             contract.Resources))
                     {
                         continue;
@@ -292,18 +236,8 @@ internal sealed partial class VulkanCommandRuntime
                     for (int priorIndex = 0;
                          priorIndex < commandIndex;
                          ++priorIndex)
-                    {
-                        SealedSubmissionContract priorContract =
-                            _sealedSubmissionContractScratch[priorIndex]!;
-                        ulong priorHandle = unchecked((ulong)submitInfo.PCommandBuffers[priorIndex].Handle);
-                        if (CommandBuffers.StableCommandDirectory.TryResolve(
-                                priorContract.StableCommandIdentity,
-                                priorHandle,
-                                priorContract.LifetimeRecordingGeneration,
-                                out VulkanCommandBufferLifetimeRecord priorLifetime,
-                                out _))
-                            priorLifetime.SubmissionPinReceipt.Clear();
-                    }
+                        _sealedSubmissionBatchReceipt.GetEntry(priorIndex)
+                            .Lifetime.SubmissionPinReceipt.Clear();
                     ClearSealedSubmissionContractScratch(commandCount);
                     failureReason =
                         "sealed submission pin receipt could not be captured";
@@ -316,16 +250,13 @@ internal sealed partial class VulkanCommandRuntime
                     checked(tracker.LifetimeSubmissions.Count + 1));
                 for (int commandIndex = 0; commandIndex < commandCount; ++commandIndex)
                 {
-                    ulong handle = unchecked(
-                        (ulong)submitInfo.PCommandBuffers[commandIndex].Handle);
-                    SealedSubmissionContract contract =
-                        _sealedSubmissionContractScratch[commandIndex]!;
-                    if (!CommandBuffers.StableCommandDirectory.TryResolve(
-                            contract.StableCommandIdentity,
-                            handle,
-                            contract.LifetimeRecordingGeneration,
-                            out VulkanCommandBufferLifetimeRecord lifetime,
-                            out VulkanCommandBufferTrackingBatch? trackingBatch))
+                    ref readonly VulkanSealedSubmissionBatchReceipt.Entry receipt =
+                        ref _sealedSubmissionBatchReceipt.GetEntry(commandIndex);
+                    SealedSubmissionContract contract = receipt.Contract;
+                    VulkanCommandBufferLifetimeRecord lifetime = receipt.Lifetime;
+                    VulkanCommandBufferTrackingBatch? trackingBatch = receipt.TrackingBatch;
+                    if (lifetime.StableCommandIdentity != contract.StableCommandIdentity ||
+                        !ReferenceEquals(lifetime.SealedSubmissionContract, contract))
                     {
                         ClearSealedSubmissionContractScratch(commandCount);
                         failureReason = "sealed command identity changed before publication";
@@ -335,18 +266,18 @@ internal sealed partial class VulkanCommandRuntime
                     }
                     VulkanSubmissionPinReceipt pinReceipt =
                         lifetime.SubmissionPinReceipt;
-                    _ = tracker.TryResolveResourceSlotNoLock(
-                        pinReceipt.CommandBufferSlot,
-                        out VulkanResourceLifetimeRecord commandResource);
+                    VulkanResourceLifetimeRecord commandResource =
+                        pinReceipt.CommandBufferResource ?? throw new InvalidOperationException(
+                            "Sealed command buffer pin receipt lost its retained resource record.");
                     commandResource.Pins.AddQueuedReference();
                     commandResource.State |= EVulkanResourceLifetimeState.Queued;
-                    ReadOnlySpan<VulkanResourceSlotHandle> resourceSlots =
-                        pinReceipt.Resources;
-                    for (int index = 0; index < resourceSlots.Length; ++index)
+                    ReadOnlySpan<VulkanResourceLifetimeRecord?> resourceRecords =
+                        pinReceipt.ResourceRecords;
+                    for (int index = 0; index < resourceRecords.Length; ++index)
                     {
-                        _ = tracker.TryResolveResourceSlotNoLock(
-                            resourceSlots[index],
-                            out VulkanResourceLifetimeRecord resource);
+                        VulkanResourceLifetimeRecord resource = resourceRecords[index] ??
+                            throw new InvalidOperationException(
+                                "Sealed resource pin receipt lost its retained resource record.");
                         resource.Pins.AddQueuedReference();
                         resource.State |= EVulkanResourceLifetimeState.Queued;
                     }
@@ -394,6 +325,10 @@ internal sealed partial class VulkanCommandRuntime
 
             if (!foundOverlay)
             {
+                // A stable-slot version is advanced whenever its submitted
+                // state changes. Refresh only admits matching entry state, so
+                // the retained version proves the ordinary stable hit without
+                // consulting the global image-state dictionary again.
                 if (!Synchronization.TryGetStableImageSubresourceStateNoLock(
                         dependency.Slot,
                         out VulkanImageSubresourceState? tracked) ||
@@ -402,16 +337,16 @@ internal sealed partial class VulkanCommandRuntime
                 {
                     return false;
                 }
-                actual = tracked.Submitted;
+                continue;
             }
 
+            // A prior command in this submit batch can replace the entry
+            // state, so preserve the explicit ordered overlay comparison.
             if (VulkanImageEntryStateContract.Compare(
                     actual,
                     dependency.RequiredEntryState) !=
                 EVulkanPrimaryEntryStateMismatch.None)
-            {
                 return false;
-            }
         }
         return true;
     }
@@ -482,6 +417,7 @@ internal sealed partial class VulkanCommandRuntime
         VulkanSealedResourceDependency[] resources;
         VulkanSealedDescriptorDependency[] descriptors;
         VulkanResourceSlotHandle commandSlot;
+        VulkanResourceLifetimeRecord commandResource;
         ulong lifetimeRecordingGeneration;
         CommandBuffer commandBuffer = default;
         commandBuffer.Handle = unchecked((nint)handle);
@@ -491,6 +427,7 @@ internal sealed partial class VulkanCommandRuntime
             owner?.RecordedDependencySignature.RenderTargetSnapshot ?? default;
         VulkanSealedResourceDependency[] renderTargetResources;
         VulkanSealedNestedCommandDependency[] nestedCommands;
+        VulkanSealedQueryResultDependency[] queryResults;
         using (VulkanFrameLockScope.Enter(
                    tracker.SyncRoot,
                    EVulkanFrameWaitReason.ResourceLifetimeLock))
@@ -502,10 +439,12 @@ internal sealed partial class VulkanCommandRuntime
                 lifetime.Level != CommandBufferLevel.Primary ||
                 !tracker.ResourceLifetimes.TryGetValue(
                     new VulkanResourceLifetimeKey(ObjectType.CommandBuffer, handle),
-                    out VulkanResourceLifetimeRecord? commandResource))
+                    out VulkanResourceLifetimeRecord? resolvedCommandResource) ||
+                resolvedCommandResource is null)
             {
                 return false;
             }
+            commandResource = resolvedCommandResource;
 
             // Descriptor sets retain structural command state, but their
             // payload resources can change between recordings. Seed the seal
@@ -532,13 +471,18 @@ internal sealed partial class VulkanCommandRuntime
                 if (!tracker.TryGetResourceSlotNoLock(
                         dependency.Key,
                         out VulkanResourceSlotHandle dependencySlot) ||
-                    dependencySlot.Generation != dependency.Value)
+                    dependencySlot.Generation != dependency.Value ||
+                    !tracker.TryResolvePublishedResourceSlotNoLock(
+                        dependencySlot,
+                        out VulkanResourceLifetimeRecord dependencyResource))
                 {
                     return false;
                 }
                 resources[index] = new VulkanSealedResourceDependency(
                     dependencySlot,
-                    dependency.Key);
+                    dependency.Key,
+                    dependencyResource.Generation,
+                    dependencyResource);
                 if (dependency.Key.Type == ObjectType.DescriptorSet)
                     ++descriptorCount;
             }
@@ -619,25 +563,25 @@ internal sealed partial class VulkanCommandRuntime
                     .SealedSubmissionSealFailureReason.ImageState;
                 return false;
             }
-            queueOwnershipTransfers = new VulkanQueueOwnershipTransferRequirement[
-                recorded.QueueOwnershipTransfers.Count];
-            for (int transferIndex = 0;
-                 transferIndex < queueOwnershipTransfers.Length;
-                 ++transferIndex)
+            // Ownership release/acquire requirements depend on live submission
+            // ordering. Keep those command buffers on the full validator rather
+            // than rebuilding dictionary-backed ownership state on a sealed hit.
+            if (recorded.QueueOwnershipTransfers.Count != 0)
             {
-                VulkanQueueOwnershipTransferRequirement transfer =
-                    recorded.QueueOwnershipTransfers[transferIndex];
-                if (!transfer.IsValid ||
-                    transfer.ResolveRole(queueFamilyIndex) ==
-                        EVulkanQueueOwnershipTransferRole.Invalid)
-                {
-                    failureReason = RuntimeEngine.Rendering.Stats.Vulkan
-                        .SealedSubmissionSealFailureReason.QueueOwnership;
-                    return false;
-                }
-
-                queueOwnershipTransfers[transferIndex] = transfer;
+                failureReason = RuntimeEngine.Rendering.Stats.Vulkan
+                    .SealedSubmissionSealFailureReason.QueueOwnership;
+                return false;
             }
+            if (!TryCaptureSealedQueryResults(
+                    tracker,
+                    resources,
+                    out queryResults))
+            {
+                failureReason = RuntimeEngine.Rendering.Stats.Vulkan
+                    .SealedSubmissionSealFailureReason.ResourceState;
+                return false;
+            }
+            queueOwnershipTransfers = [];
 
             images = new VulkanSealedImageDependency[recorded.EntrySubresources.Count];
             int imageIndex = 0;
@@ -708,6 +652,7 @@ internal sealed partial class VulkanCommandRuntime
                     handle,
                     stableCommandIdentity,
                     commandSlot,
+                    commandResource,
                     lifetimeRecordingGeneration,
                     imageRecordingGeneration,
                     queueFamilyIndex,
@@ -718,7 +663,8 @@ internal sealed partial class VulkanCommandRuntime
                     queueOwnershipTransfers,
                     renderTarget,
                     renderTargetResources,
-                    nestedCommands);
+                    nestedCommands,
+                    queryResults);
                 lifetime.SealedSubmissionContract = contract;
                 return true;
             }
@@ -737,6 +683,54 @@ internal sealed partial class VulkanCommandRuntime
                 return true;
 
         return false;
+    }
+
+    private static bool TryCaptureSealedQueryResults(
+        VulkanResourceLifetimeTracker tracker,
+        ReadOnlySpan<VulkanSealedResourceDependency> resources,
+        out VulkanSealedQueryResultDependency[] queryResults)
+    {
+        int queryCount = 0;
+        for (int resourceIndex = 0; resourceIndex < resources.Length; ++resourceIndex)
+        {
+            VulkanSealedResourceDependency resource = resources[resourceIndex];
+            if (resource.Key.Type != ObjectType.QueryPool)
+                continue;
+
+            if (!tracker.RenderQueriesByPool.TryGetValue(
+                    resource.Key.Handle,
+                    out List<VkRenderQuery>? queries))
+                continue;
+            queryCount += queries.Count;
+        }
+
+        if (queryCount == 0)
+        {
+            queryResults = [];
+            return true;
+        }
+
+        queryResults = new VulkanSealedQueryResultDependency[queryCount];
+        int destination = 0;
+        for (int resourceIndex = 0; resourceIndex < resources.Length; ++resourceIndex)
+        {
+            VulkanSealedResourceDependency resource = resources[resourceIndex];
+            if (resource.Key.Type != ObjectType.QueryPool ||
+                !tracker.RenderQueriesByPool.TryGetValue(
+                    resource.Key.Handle,
+                    out List<VkRenderQuery>? queries))
+            {
+                continue;
+            }
+
+            for (int queryIndex = 0; queryIndex < queries.Count; ++queryIndex)
+                queryResults[destination++] = new(
+                    resource.Slot,
+                    resource.Resource!,
+                    queries[queryIndex]);
+        }
+
+        return destination == queryResults.Length;
     }
 
     private static bool TryCaptureSealedNestedCommands(
@@ -850,7 +844,7 @@ internal sealed partial class VulkanCommandRuntime
             return false;
         }
 
-        dependency = new VulkanSealedResourceDependency(slot, key, generation);
+        dependency = new VulkanSealedResourceDependency(slot, key, generation, resource);
         return true;
     }
 
@@ -896,16 +890,10 @@ internal sealed partial class VulkanCommandRuntime
 
         VulkanResourceLifetimeTracker tracker = ResourceRuntime.Lifetime.Tracker;
         uint queueFamilyIndex = ResolveQueueFamilyIndex(queue);
-        ulong completedGraphicsSequence;
-        ulong completedTransferSequence;
-        ulong completedOtherSequence;
         using (VulkanFrameLockScope.Enter(
                    tracker.SyncRoot,
                    EVulkanFrameWaitReason.ResourceLifetimeLock))
         {
-            completedGraphicsSequence = tracker.CompletedGraphicsSequence;
-            completedTransferSequence = tracker.CompletedTransferSequence;
-            completedOtherSequence = tracker.CompletedOtherSequence;
             for (int commandIndex = 0; commandIndex < commandCount; ++commandIndex)
             {
                 ulong handle = unchecked(
@@ -948,17 +936,8 @@ internal sealed partial class VulkanCommandRuntime
             {
                 SealedSubmissionContract contract =
                     _sealedSubmissionContractScratch[commandIndex]!;
-                if (!TryMatchSealedImageEntriesNoLock(contract, ref overlayCount) ||
-                    !ValidateQueueOwnershipTransferRequirements(
-                        contract.QueueOwnershipTransfers,
-                        queueFamilyIndex,
-                        ref submitInfo,
-                        commandIndex,
-                        contract.CommandBufferHandle,
-                        completedGraphicsSequence,
-                        completedTransferSequence,
-                        completedOtherSequence,
-                        out _) ||
+                if (contract.QueueOwnershipTransfers.Length != 0 ||
+                    !TryMatchSealedImageEntriesNoLock(contract, ref overlayCount) ||
                     !TryAppendSealedImageExits(contract, ref overlayCount))
                 {
                     isValid = false;
@@ -970,8 +949,22 @@ internal sealed partial class VulkanCommandRuntime
     }
 
     private unsafe void RefreshSealedSubmissionImageVersions(
-        ref SubmitInfo submitInfo)
+        ref SubmitInfo submitInfo,
+        VulkanSealedSubmissionBatchReceipt? sealedReceipt = null)
     {
+        if (sealedReceipt is { IsActive: true })
+        {
+            using (VulkanFrameLockScope.Enter(
+                       Synchronization._vulkanImageLayoutLock,
+                       EVulkanFrameWaitReason.SynchronizationLock))
+                for (int commandIndex = 0;
+                     commandIndex < sealedReceipt.Count;
+                     ++commandIndex)
+                    sealedReceipt.GetEntry(commandIndex).Contract
+                        .RefreshCurrentImageVersionsNoLock(Synchronization);
+            return;
+        }
+
         if (submitInfo.CommandBufferCount == 0 || submitInfo.PCommandBuffers is null)
             return;
 

@@ -188,17 +188,24 @@ internal sealed partial class VulkanCommandRuntime
         VulkanFrameTelemetry telemetry,
         out string failureReason)
     {
-        if (!resources.TryPublishCommandBufferTrackingBatch(commandBuffer, batch, out failureReason))
+        if (!resources.TryPublishCommandBufferTrackingBatch(
+                commandBuffer,
+                batch,
+                out failureReason,
+                out long lifetimeLockWaitTicks))
             return false;
 
-        bool layoutLockContended = FlushImageAccessBatch(commandBuffer, batch, telemetry);
+        long layoutLockWaitTicks =
+            FlushImageAccessBatch(commandBuffer, batch, telemetry);
         RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanTrackingContention(
-            lifetimeLockContentions: 0,
-            layoutLockContentions: layoutLockContended ? 1 : 0);
+            lifetimeLockContentions:
+                lifetimeLockWaitTicks > 0L ? 1 : 0,
+            layoutLockContentions:
+                layoutLockWaitTicks > 0L ? 1 : 0);
         return true;
     }
 
-    private bool FlushImageAccessBatch(
+    private long FlushImageAccessBatch(
         CommandBuffer commandBuffer,
         VulkanCommandBufferTrackingBatch batch,
         VulkanFrameTelemetry telemetry)
@@ -207,13 +214,11 @@ internal sealed partial class VulkanCommandRuntime
             (batch.PublishedImageDeltaCount >= batch.ImageAccessDeltas.Count &&
              batch.PublishedQueueOwnershipTransferCount >= batch.QueueOwnershipTransfers.Count))
         {
-            return false;
+            return 0L;
         }
 
         ulong commandBufferHandle = unchecked((ulong)commandBuffer.Handle);
-        bool contended = !Monitor.TryEnter(Synchronization._vulkanImageLayoutLock);
-        if (contended)
-            Monitor.Enter(Synchronization._vulkanImageLayoutLock);
+        long lockWaitTicks = EnterImageLayoutLockMeasured();
         try
         {
             if (!Synchronization._recordedImageLayoutsByCommandBuffer.TryGetValue(
@@ -262,7 +267,24 @@ internal sealed partial class VulkanCommandRuntime
 
         batch.PublishedImageDeltaCount = batch.ImageAccessDeltas.Count;
         batch.PublishedQueueOwnershipTransferCount = batch.QueueOwnershipTransfers.Count;
-        return contended;
+        return lockWaitTicks;
+    }
+
+    private long EnterImageLayoutLockMeasured()
+    {
+        long waitTicks = 0L;
+        if (!Monitor.TryEnter(Synchronization._vulkanImageLayoutLock))
+        {
+            long waitStarted =
+                System.Diagnostics.Stopwatch.GetTimestamp();
+            Monitor.Enter(Synchronization._vulkanImageLayoutLock);
+            waitTicks = Math.Max(
+                1L,
+                System.Diagnostics.Stopwatch.GetTimestamp() - waitStarted);
+        }
+
+        VulkanFrameHotPathTelemetry.RecordLayoutLockWait(waitTicks);
+        return waitTicks;
     }
 
     private void RecordImageAspectState(

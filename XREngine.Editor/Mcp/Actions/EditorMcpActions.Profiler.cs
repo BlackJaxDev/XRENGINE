@@ -1,10 +1,12 @@
 using System;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading.Tasks;
 using XREngine;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
+using XREngine.Execution;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Occlusion;
@@ -74,6 +76,32 @@ namespace XREngine.Editor.Mcp
         public static Task<McpToolResponse> GetRenderProfilerStatsAsync(McpToolContext context)
         {
             VulkanFrameTelemetryPublication vulkanFrame = VulkanStats.LatestVulkanFrameTelemetry;
+            VulkanResidentTemplateBroadFallbackSnapshot residentTemplateBroadFallback =
+                VulkanStats.VulkanResidentTemplateLastBroadFallback;
+            EngineWorkScheduler? workScheduler = Engine.WorkScheduler;
+            EngineWorkSchedulerMetrics schedulerMetrics =
+                workScheduler?.Metrics ?? default;
+            RenderWorkDomainMetrics renderWork = schedulerMetrics.Render;
+            RenderForegroundWorkSnapshot foregroundWork =
+                RenderForegroundWorkCoordinator.CaptureSnapshot();
+            VulkanFrameHotPathSnapshot hotPath =
+                VulkanFrameHotPathTelemetry.CaptureSnapshot();
+            VulkanRenderer? activeVulkanRenderer =
+                (AbstractRenderer.Current ??
+                    RuntimeEngine.Windows.FirstOrDefault()?.Renderer) as
+                VulkanRenderer;
+            VulkanPresentNowTerminalDiagnostic presentNowTerminal =
+                activeVulkanRenderer is not null
+                    ? activeVulkanRenderer.CapturePresentNowTerminalDiagnostic()
+                    : default;
+            VulkanPresentNowFailureDiagnostic presentNowFailure =
+                activeVulkanRenderer is not null
+                    ? activeVulkanRenderer.CapturePresentNowFailureDiagnostic()
+                    : default;
+            VulkanDesktopFrameTerminalDiagnostic desktopFrameTerminal =
+                activeVulkanRenderer is not null
+                    ? activeVulkanRenderer.CaptureDesktopFrameTerminalDiagnostic()
+                    : default;
             RvcFrameProfileSnapshot rvcFrameProfile = RuntimeEngine.Rendering.Stats.Rvc.FrameProfile;
             var gpuScene = context.RenderWorld.VisualScene.GPUCommands;
             GpuMeshletEligibilitySnapshot meshletEligibility =
@@ -82,6 +110,58 @@ namespace XREngine.Editor.Mcp
                 "Retrieved render profiler stats.",
                 new
                 {
+                    work_scheduler = new
+                    {
+                        installed = workScheduler is not null,
+                        general_workers =
+                            schedulerMetrics.GeneralWorkerCount,
+                        general_dispatches =
+                            schedulerMetrics.GeneralDispatchCount,
+                        general_wakes =
+                            schedulerMetrics.GeneralWakeCount,
+                        general_throttled_dispatches =
+                            schedulerMetrics.GeneralThrottledDispatchCount,
+                        general_throttle_wait_ms =
+                            schedulerMetrics.GeneralThrottleWaitTicks *
+                            1000.0 / Stopwatch.Frequency,
+                        render = new
+                        {
+                            background_workers =
+                                renderWork.BackgroundWorkerCount,
+                            logical_lanes =
+                                renderWork.LogicalLaneCount,
+                            build_operations =
+                                renderWork.BuildOperationCount,
+                            dispatch_operations =
+                                renderWork.DispatchOperationCount,
+                            execute_operations =
+                                renderWork.ExecuteOperationCount,
+                            merge_operations =
+                                renderWork.MergeOperationCount,
+                            build_allocated_bytes =
+                                renderWork.BuildAllocatedBytes,
+                            dispatch_allocated_bytes =
+                                renderWork.DispatchAllocatedBytes,
+                            execute_allocated_bytes =
+                                renderWork.ExecuteAllocatedBytes,
+                            merge_allocated_bytes =
+                                renderWork.MergeAllocatedBytes,
+                            wakes = renderWork.WakeCount,
+                            empty_wakes = renderWork.EmptyWakeCount,
+                            unexplained_wakes =
+                                renderWork.UnexplainedWakeCount,
+                            queue_lock_wait_count =
+                                renderWork.QueueLockWaitCount,
+                            queue_lock_wait_ms =
+                                renderWork.QueueLockWaitTicks *
+                                1000.0 / Stopwatch.Frequency,
+                            queue_lock_wait_peak_ms =
+                                renderWork.QueueLockWaitPeakTicks *
+                                1000.0 / Stopwatch.Frequency,
+                            queue_lock_waits_over_0_1_ms =
+                                renderWork.QueueLockWaitOverThresholdCount,
+                        },
+                    },
                     frame_lifecycle = new
                     {
                         collect_visible_late_policy = RuntimeEngine.Rendering.Stats.FrameLifecycle.CollectVisibleLatePolicy,
@@ -360,6 +440,60 @@ namespace XREngine.Editor.Mcp
                             output_index = vulkanFrame.Identity.Output.OutputIndex,
                             output_generation = vulkanFrame.Identity.Output.OutputGeneration,
                             outcome = vulkanFrame.Outcome.ToString(),
+                            terminal_result = desktopFrameTerminal.IsValid
+                                ? new
+                                {
+                                    sequence = desktopFrameTerminal.Sequence,
+                                    frame_id = desktopFrameTerminal.FrameId,
+                                    frame_slot = desktopFrameTerminal.FrameSlot,
+                                    outcome = desktopFrameTerminal.Outcome,
+                                    reason = desktopFrameTerminal.Reason,
+                                    failure_kind = desktopFrameTerminal.FailureKind,
+                                    failure_stage = desktopFrameTerminal.FailureStage,
+                                    native_result = desktopFrameTerminal.NativeResult,
+                                    exception_type = desktopFrameTerminal.ExceptionType,
+                                    detail = desktopFrameTerminal.Detail,
+                                    ownership_settled = desktopFrameTerminal.OwnershipSettled,
+                                }
+                                : null,
+                            present_now_terminal = presentNowTerminal.IsValid
+                                ? new
+                                {
+                                    transition_id = presentNowTerminal.TransitionId,
+                                    frame_id = presentNowTerminal.FrameId,
+                                    frame_slot = presentNowTerminal.FrameSlot,
+                                    accepted_scene_epoch = presentNowTerminal.AcceptedSceneEpoch,
+                                    output_generation = presentNowTerminal.OutputGeneration,
+                                    readiness_stage = presentNowTerminal.ReadinessStage,
+                                    active_ticket = presentNowTerminal.ActiveTicket,
+                                    dependency_chain = presentNowTerminal.DependencyChain,
+                                    disposition = presentNowTerminal.Disposition,
+                                    elapsed_ms = presentNowTerminal.ElapsedMilliseconds,
+                                    since_last_progress_ms = presentNowTerminal.SinceLastProgressMilliseconds,
+                                    mesh_request_count = presentNowTerminal.MeshRequestCount,
+                                    failure_type = presentNowTerminal.FailureType,
+                                    detail = presentNowTerminal.Detail,
+                                }
+                                : null,
+                            present_now_latest_failure = presentNowFailure.IsValid
+                                ? new
+                                {
+                                    sequence = presentNowFailure.Sequence,
+                                    frame_id = presentNowFailure.FrameId,
+                                    frame_slot = presentNowFailure.FrameSlot,
+                                    accepted_scene_epoch = presentNowFailure.AcceptedSceneEpoch,
+                                    output_generation = presentNowFailure.OutputGeneration,
+                                    readiness_stage = presentNowFailure.ReadinessStage,
+                                    active_ticket = presentNowFailure.ActiveTicket,
+                                    dependency_chain = presentNowFailure.DependencyChain,
+                                    disposition = presentNowFailure.Disposition,
+                                    elapsed_ms = presentNowFailure.ElapsedMilliseconds,
+                                    since_last_progress_ms = presentNowFailure.SinceLastProgressMilliseconds,
+                                    mesh_request_count = presentNowFailure.MeshRequestCount,
+                                    failure_type = presentNowFailure.FailureType,
+                                    detail = presentNowFailure.Detail,
+                                }
+                                : null,
                             total_ms = vulkanFrame.TotalElapsed.TotalMilliseconds,
                             gpu_command_buffer_ms = VulkanStats.VulkanFrameGpuCommandBufferMs,
                             presentation_profile = new
@@ -493,7 +627,36 @@ namespace XREngine.Editor.Mcp
                                 present_ms = vulkanFrame.Detail.PresentQueue.TotalMilliseconds,
                             },
                         },
-                        foreground_arbitration = RenderForegroundWorkCoordinator.CaptureSnapshot(),
+                        foreground_arbitration = foregroundWork,
+                        hot_path = new
+                        {
+                            submission_invocations =
+                                hotPath.SubmissionInvocationCount,
+                            submission_allocated_bytes =
+                                hotPath.SubmissionAllocatedBytes,
+                            submission_allocation_high_water_bytes =
+                                hotPath.SubmissionAllocationHighWaterBytes,
+                            present_invocations =
+                                hotPath.PresentInvocationCount,
+                            present_allocated_bytes =
+                                hotPath.PresentAllocatedBytes,
+                            present_allocation_high_water_bytes =
+                                hotPath.PresentAllocationHighWaterBytes,
+                            lifetime_lock_wait_count =
+                                hotPath.LifetimeLockWaitCount,
+                            lifetime_lock_wait_peak_ms =
+                                hotPath.LifetimeLockWaitPeakTicks *
+                                1000.0 / Stopwatch.Frequency,
+                            lifetime_lock_waits_over_0_1_ms =
+                                hotPath.LifetimeLockWaitOverThresholdCount,
+                            layout_lock_wait_count =
+                                hotPath.LayoutLockWaitCount,
+                            layout_lock_wait_peak_ms =
+                                hotPath.LayoutLockWaitPeakTicks *
+                                1000.0 / Stopwatch.Frequency,
+                            layout_lock_waits_over_0_1_ms =
+                                hotPath.LayoutLockWaitOverThresholdCount,
+                        },
                         cpu_stages = new
                         {
                             frame_op_preparation = VulkanCpuStage(EVulkanCpuStage.FrameOpPreparation),
@@ -638,6 +801,7 @@ namespace XREngine.Editor.Mcp
                                     diagnostic_publication = VulkanStats.GetVulkanTrackedSubmissionTiming(VulkanStats.TrackedSubmissionTimingStage.DiagnosticPublication),
                                     cleanup_pin_release = VulkanStats.GetVulkanTrackedSubmissionTiming(VulkanStats.TrackedSubmissionTimingStage.CleanupPinRelease),
                                     gateway_total = VulkanStats.GetVulkanTrackedSubmissionTiming(VulkanStats.TrackedSubmissionTimingStage.GatewayTotal),
+                                    sealed_hit_gateway_total = VulkanStats.GetVulkanTrackedSubmissionTiming(VulkanStats.TrackedSubmissionTimingStage.SealedHitGatewayTotal),
                                 },
                             },
                             visible_mesh_draws = VulkanStats.VulkanVisibleMeshDraws,
@@ -660,6 +824,14 @@ namespace XREngine.Editor.Mcp
                             resident_draw_template_exact_dependency_invalidations = VulkanStats.VulkanResidentTemplateExactDependencyInvalidations,
                             resident_draw_template_broad_fallback_invalidations = VulkanStats.VulkanResidentTemplateBroadFallbackInvalidations,
                             resident_draw_template_broad_fallback_entries = VulkanStats.VulkanResidentTemplateBroadFallbackEntries,
+                            resident_draw_template_last_broad_fallback = new
+                            {
+                                reason = residentTemplateBroadFallback.Reason,
+                                owner = residentTemplateBroadFallback.Owner.ToString(),
+                                domain = residentTemplateBroadFallback.Domain.ToString(),
+                                affected_entries = residentTemplateBroadFallback.AffectedEntries,
+                                publication_sequence = residentTemplateBroadFallback.PublicationSequence,
+                            },
                         },
                         binding_data = new
                         {

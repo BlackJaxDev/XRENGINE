@@ -222,6 +222,7 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
         ReadOnlySpan<BackendReadyCanonicalViewRecord> views,
         in BackendReadyCanonicalFrameRecord frame,
         ReadOnlySpan<BackendReadyCanonicalPassRecord> passes,
+        ReadOnlySpan<AdvancedGlobalPassPublicationCoverage> globalPassCoverage,
         int diagnosticCount,
         out VulkanAdvancedScenePublicationUse use,
         out EVulkanAdvancedSceneResourceFailure failure,
@@ -314,6 +315,28 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
                 reason = "The exact retained canonical publication snapshot is unavailable or sequence-mismatched.";
                 return false;
             }
+            if (snapshot.Submission.Sequence != publication.Sequence ||
+                snapshot.Mutations.Sequence != publication.Sequence ||
+                snapshot.ReverseDependencies.Sequence != publication.Sequence ||
+                !snapshot.ReverseDependencies.IsComplete ||
+                snapshot.GlobalPassCoverage.Sequence != publication.Sequence)
+            {
+                failure =
+                    EVulkanAdvancedSceneResourceFailure.DependencyManifestInconsistent;
+                reason = "The retained canonical publication has an incomplete or sequence-mismatched submission, mutation, reverse-dependency, or global-pass manifest.";
+                return false;
+            }
+            if (!TryValidateGlobalPassCoverage(
+                    snapshot,
+                    passes,
+                    globalPassCoverage,
+                    publication.Sequence,
+                    out reason))
+            {
+                failure =
+                    EVulkanAdvancedSceneResourceFailure.DependencyManifestInconsistent;
+                return false;
+            }
             if (!snapshot.ResourcePayloads.HasCompleteSourceImage)
             {
                 failure =
@@ -384,6 +407,103 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
 
             return armed;
         }
+    }
+
+    /// <summary>
+    /// Revalidates the mutable texture sources retained by a canonical package
+    /// before its visibility family can enter an accepted frame. Streaming may
+    /// replace an <see cref="XRTexture"/> image after the package captured its
+    /// logical record; that package must be retried on a later publication.
+    /// </summary>
+    internal bool TryValidatePackageSourcesForAdmission(
+        BackendReadyFramePackage package,
+        out EVulkanAdvancedSceneResourceFailure failure,
+        out string reason)
+    {
+        ArgumentNullException.ThrowIfNull(package);
+        lock (_gate)
+        {
+            if (!package.TryGetCanonicalPublicationSnapshot(
+                    out AdvancedGpuScenePublicationSnapshot snapshot) ||
+                snapshot.Submission.Sequence !=
+                    package.CanonicalScenePublication.Sequence)
+            {
+                failure =
+                    EVulkanAdvancedSceneResourceFailure.PublicationSnapshotUnavailable;
+                reason =
+                    "The canonical package no longer retains its exact scene publication.";
+                return false;
+            }
+
+            return TryValidatePublicationSources(
+                snapshot,
+                out failure,
+                out reason);
+        }
+    }
+
+    private static bool TryValidateGlobalPassCoverage(
+        AdvancedGpuScenePublicationSnapshot snapshot,
+        ReadOnlySpan<BackendReadyCanonicalPassRecord> passes,
+        ReadOnlySpan<AdvancedGlobalPassPublicationCoverage> coverage,
+        ulong publicationSequence,
+        out string reason)
+    {
+        if (coverage.Length != passes.Length)
+        {
+            reason =
+                $"Canonical global-pass coverage count {coverage.Length} does not match pass count {passes.Length}.";
+            return false;
+        }
+
+        AdvancedGlobalPassPublicationCoverage source =
+            snapshot.GlobalPassCoverage;
+        ReadOnlySpan<AdvancedDrawSubmissionRecord> submissions =
+            snapshot.Submission.Records;
+        for (int passIndex = 0; passIndex < passes.Length; ++passIndex)
+        {
+            BackendReadyCanonicalPassRecord pass = passes[passIndex];
+            AdvancedGlobalPassPublicationCoverage candidate =
+                coverage[passIndex];
+            bool usesShadows = false;
+            bool usesProbes = false;
+            for (int submissionIndex = 0;
+                 submissionIndex < submissions.Length;
+                 ++submissionIndex)
+            {
+                AdvancedDrawSubmissionRecord submission =
+                    submissions[submissionIndex];
+                if (submission.PassIndex != unchecked((uint)pass.PassIndex))
+                    continue;
+
+                GPUIndirectRenderFlags flags =
+                    (GPUIndirectRenderFlags)submission.Flags;
+                usesShadows |= (flags &
+                    (GPUIndirectRenderFlags.CastShadow |
+                     GPUIndirectRenderFlags.ReceiveShadows)) != 0;
+                usesProbes |=
+                    (flags & GPUIndirectRenderFlags.Unlit) == 0;
+                if (usesShadows && usesProbes)
+                    break;
+            }
+
+            if (candidate.PassIndex != pass.PassIndex ||
+                candidate.Sequence != publicationSequence ||
+                candidate.ShadowGenerations != source.ShadowGenerations ||
+                candidate.ProbeGenerations != source.ProbeGenerations ||
+                candidate.ShadowDirtyRange != source.ShadowDirtyRange ||
+                candidate.ProbeDirtyRange != source.ProbeDirtyRange ||
+                candidate.UsesShadows != usesShadows ||
+                candidate.UsesProbes != usesProbes)
+            {
+                reason =
+                    $"Canonical global-pass coverage at index {passIndex} does not match pass {pass.PassIndex} in publication {publicationSequence}.";
+                return false;
+            }
+        }
+
+        reason = "Ready";
+        return true;
     }
 
     internal void ReleaseUse(int frameSlot, int entryIndex)
@@ -532,6 +652,33 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
         {
             failure = EVulkanAdvancedSceneResourceFailure.FrameStorageCapacity;
             reason = "The advanced-scene allocation cursor is unavailable.";
+            return false;
+        }
+
+        // Preflight both legal completed-slot layouts before retaining any
+        // native slice. A retained prefix can preserve obsolete capacity and
+        // falsely reject a current snapshot which fits when packed from zero.
+        ulong retainedCursor = allocationPlan.GetRetainedEnd(rollbackCursor);
+        ulong retainedConsumedStorage = AlignUp(
+            Math.Max(slot.StorageBytesConsumed, retainedCursor),
+            StorageAlignment);
+        bool retainFits = requiredStorage <= StorageCapacityPerFrameSlot &&
+            retainedConsumedStorage <= StorageCapacityPerFrameSlot - requiredStorage;
+        ulong compactRequiredStorage = allocationPlan.CompactRequiredBytes;
+        ulong compactConsumedStorage = AlignUp(
+            Math.Max(slot.StorageBytesConsumed, rollbackCursor),
+            StorageAlignment);
+        bool compactFits = compactRequiredStorage <= StorageCapacityPerFrameSlot &&
+            compactConsumedStorage <= StorageCapacityPerFrameSlot - compactRequiredStorage;
+        if (!retainFits && compactFits)
+        {
+            allocationPlan.SelectCompactRebuild();
+            requiredStorage = allocationPlan.RequiredBytes;
+        }
+        else if (!retainFits)
+        {
+            failure = EVulkanAdvancedSceneResourceFailure.FrameStorageCapacity;
+            reason = $"Frame-slot advanced-scene storage requires {requiredStorage} more bytes after {retainedConsumedStorage} of {StorageCapacityPerFrameSlot} bytes were consumed.";
             return false;
         }
         if (!TryRetainPlannedResidentSlices(slot, allocationPlan) ||
@@ -1414,6 +1561,9 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
         {
             AdvancedGpuRecordPublicationDelta delta = deltas[index];
 
+            if (delta.PublicationGeneration <= resident.AppliedPublicationSequence)
+                continue;
+
             if (!TryPatchResidentRow(resident.Slice, source, delta.CurrentDenseIndex))
                 return false;
 
@@ -1781,7 +1931,10 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
 
         Span<uint> capacities = stackalloc uint[VulkanAdvancedSceneResidentLookups.OwnerCount];
         for (int owner = 0; owner < capacities.Length; ++owner)
-            capacities[owner] = resident.GetRequiredCapacity(owner, counts[owner], boundary);
+            capacities[owner] = resident.GetRequiredCapacity(
+                owner,
+                counts[owner],
+                boundary && !allocationPlan.IsCompactRebuild);
         uint total = 0u;
         for (int owner = 0; owner < capacities.Length; ++owner)
             total = checked(total + capacities[owner]);
@@ -2556,7 +2709,8 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
         bool patch = slot.EntryCount == 0 &&
             slot.ActiveUseCount == 0 && resident.MatchesCapacity(source) &&
             _resources.FrameDataArena!.CanRetainResidentSlice(resident.Slice);
-        plan.SetPatch(owner, patch, GetTableBytes<T>(source.Length));
+        ulong bytes = GetTableBytes<T>(source.Length);
+        plan.SetPatch(owner, patch, bytes, bytes, GetResidentEnd(resident.Slice));
     }
 
     private void SetLookupDecision(
@@ -2572,8 +2726,11 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
         bool patch = boundary && resident.MatchesCapacity(counts) &&
             _resources.FrameDataArena!.CanRetainResidentSlice(resident.Slice);
         uint capacity = resident.GetRequiredCapacity(counts, boundary);
+        uint compactCapacity = resident.GetRequiredCapacity(counts, false);
         plan.SetPatch(EVulkanAdvancedSceneResidentOwner.Lookups, patch,
-            GetTableBytes<AdvancedGpuHandleLookup>(checked((int)capacity)));
+            GetTableBytes<AdvancedGpuHandleLookup>(checked((int)capacity)),
+            GetTableBytes<AdvancedGpuHandleLookup>(checked((int)compactCapacity)),
+            GetResidentEnd(resident.Slice));
     }
 
     private static void FillLookupCounts(
@@ -2690,7 +2847,8 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
         bool patch = slot.EntryCount == 0 &&
             slot.ActiveUseCount == 0 && resident.MatchesCapacity(source) &&
             _resources.FrameDataArena!.CanRetainResidentSlice(resident.Slice);
-        plan.SetPatch(owner, patch, GetTableBytes<byte>(source.Length));
+        ulong bytes = GetTableBytes<byte>(source.Length);
+        plan.SetPatch(owner, patch, bytes, bytes, GetResidentEnd(resident.Slice));
     }
 
     private void SetResidentDecision(
@@ -2705,7 +2863,8 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
         bool patch = slot.EntryCount == 0 &&
             slot.ActiveUseCount == 0 && resident.MatchesCapacity(source) &&
             _resources.FrameDataArena!.CanRetainResidentSlice(resident.Slice);
-        plan.SetPatch(owner, patch, GetTableBytes<byte>(source.Length));
+        ulong bytes = GetTableBytes<byte>(source.Length);
+        plan.SetPatch(owner, patch, bytes, bytes, GetResidentEnd(resident.Slice));
     }
 
     private static ulong CalculateFramePublicationStorageBytes(
@@ -2739,6 +2898,9 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
         ulong bytes = checked((ulong)rowCount * (uint)Unsafe.SizeOf<T>());
         return AlignUp(bytes, StorageAlignment);
     }
+
+    private static ulong GetResidentEnd(in VulkanFrameDataSlice slice)
+        => slice.IsValid ? checked(slice.Offset + slice.Length) : 0u;
 
     private static uint ResolveDescriptorCapacity(
         in PhysicalDeviceProperties properties)

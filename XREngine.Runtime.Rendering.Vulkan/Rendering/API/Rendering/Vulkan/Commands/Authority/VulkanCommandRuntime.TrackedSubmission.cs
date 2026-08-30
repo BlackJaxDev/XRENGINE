@@ -9,17 +9,61 @@ namespace XREngine.Rendering.Vulkan;
 
 internal sealed partial class VulkanCommandRuntime
 {
-    private readonly ref struct TrackedSubmissionGatewayTimingScope
+    /// <summary>
+    /// Reuses the graphics-timeline caller's submission-state lease instead of
+    /// taking a reentrant monitor acquisition around the same native submit.
+    /// </summary>
+    private readonly ref struct SubmissionStateScope
+    {
+        private readonly VulkanFrameLockScope _lease;
+        private readonly bool _ownsLease;
+
+        public SubmissionStateScope(object gate)
+        {
+            if (Monitor.IsEntered(gate))
+            {
+                _lease = default;
+                _ownsLease = false;
+                return;
+            }
+
+            _lease = VulkanFrameLockScope.Enter(
+                gate,
+                EVulkanFrameWaitReason.SubmissionStateLock);
+            _ownsLease = true;
+        }
+
+        public void Dispose()
+        {
+            if (_ownsLease)
+                _lease.Dispose();
+        }
+    }
+
+    private ref struct TrackedSubmissionGatewayTimingScope
     {
         private readonly long _started;
+        private bool _sealedHit;
 
         public TrackedSubmissionGatewayTimingScope()
             => _started = Stopwatch.GetTimestamp();
 
+        public void MarkSealedHit()
+            => _sealedHit = true;
+
         public void Dispose()
-            => RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanTrackedSubmissionTiming(
+        {
+            long elapsedTicks = Stopwatch.GetTimestamp() - _started;
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanTrackedSubmissionTiming(
                 RuntimeEngine.Rendering.Stats.Vulkan.TrackedSubmissionTimingStage.GatewayTotal,
-                Stopwatch.GetTimestamp() - _started);
+                elapsedTicks);
+            if (_sealedHit)
+            {
+                RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanTrackedSubmissionTiming(
+                    RuntimeEngine.Rendering.Stats.Vulkan.TrackedSubmissionTimingStage.SealedHitGatewayTotal,
+                    elapsedTicks);
+            }
+        }
     }
 
     /// <summary>Publishes a completed fence to both lifetime and image ledgers.</summary>
@@ -91,9 +135,8 @@ internal sealed partial class VulkanCommandRuntime
         // lease. Validation, lifetime pinning, and post-submit publication may
         // be substantial, but only vkQueueSubmit owns the queue gate.
         long submissionStateStarted = Stopwatch.GetTimestamp();
-        using (VulkanFrameLockScope submissionStateScope = VulkanFrameLockScope.Enter(
-                   CommandBuffers.SubmissionStateGate,
-                   EVulkanFrameWaitReason.SubmissionStateLock))
+        using (SubmissionStateScope submissionStateScope = new(
+                   CommandBuffers.SubmissionStateGate))
         {
         RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanTrackedSubmissionTiming(
             RuntimeEngine.Rendering.Stats.Vulkan.TrackedSubmissionTimingStage.SubmissionStateSerialization,
@@ -157,24 +200,30 @@ internal sealed partial class VulkanCommandRuntime
                 out sealedImageValidationTicks,
                 out sealedQueueOwnershipValidationTicks,
                 out sealedLifetimePinAcquisitionTicks);
+            if (!usedSealedContract)
+                _sealedSubmissionBatchReceipt.Clear();
             imageStateValid = usedSealedContract;
             lifetimePinsValid = usedSealedContract;
         }
 
         if (usedSealedContract)
         {
+            gatewayTiming.MarkSealedHit();
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanSealedSubmissionHit();
         }
         else
         {
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanSealedSubmissionFallback(
                 sealedFallbackReason);
-            Debug.VulkanWarningEvery(
-                $"Vulkan.SealedSubmission.Fallback.{sealedFallbackReason}",
-                TimeSpan.FromSeconds(1),
-                "[Vulkan] Sealed submission used the full validator. reason={0} detail='{1}'",
-                sealedFallbackReason,
-                submissionValidationFailure);
+            if (VulkanCpuStageScope.DetailedDiagnosticsEnabled)
+            {
+                Debug.VulkanWarningEvery(
+                    GetSealedSubmissionFallbackLogKey(sealedFallbackReason),
+                    TimeSpan.FromSeconds(1),
+                    "[Vulkan] Sealed submission used the full validator. reason={0} detail='{1}'",
+                    sealedFallbackReason,
+                    submissionValidationFailure);
+            }
             long validationStarted = Stopwatch.GetTimestamp();
             imageStateValid = ValidateOrderedCommandBufferImageStateContracts(
                 queue,
@@ -334,13 +383,20 @@ internal sealed partial class VulkanCommandRuntime
                     ref submitInfo,
                     fence,
                     in diagnostics,
-                    out lifetimePinsTransferred);
+                    out lifetimePinsTransferred,
+                    usedSealedContract ? _sealedSubmissionBatchReceipt : null);
                 RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanTrackedSubmissionTiming(
                     RuntimeEngine.Rendering.Stats.Vulkan.TrackedSubmissionTimingStage.LifetimePublication,
                     Stopwatch.GetTimestamp() - lifetimePublicationStarted);
                 long imagePublicationStarted = Stopwatch.GetTimestamp();
-                PublishRecordedImageLayouts(queue, ref submitInfo, in submission);
-                RefreshSealedSubmissionImageVersions(ref submitInfo);
+                PublishRecordedImageLayouts(
+                    queue,
+                    ref submitInfo,
+                    in submission,
+                    usedSealedContract ? _sealedSubmissionBatchReceipt : null);
+                RefreshSealedSubmissionImageVersions(
+                    ref submitInfo,
+                    usedSealedContract ? _sealedSubmissionBatchReceipt : null);
                 RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanTrackedSubmissionTiming(
                     RuntimeEngine.Rendering.Stats.Vulkan.TrackedSubmissionTimingStage.ImagePublication,
                     Stopwatch.GetTimestamp() - imagePublicationStarted);
@@ -366,7 +422,9 @@ internal sealed partial class VulkanCommandRuntime
             {
                 try
                 {
-                    ReleaseSubmissionLifetimePins(ref submitInfo);
+                    ReleaseSubmissionLifetimePins(
+                        ref submitInfo,
+                        usedSealedContract ? _sealedSubmissionBatchReceipt : null);
                 }
                 catch
                 {
@@ -376,6 +434,8 @@ internal sealed partial class VulkanCommandRuntime
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanTrackedSubmissionTiming(
                 RuntimeEngine.Rendering.Stats.Vulkan.TrackedSubmissionTimingStage.CleanupPinRelease,
                 Stopwatch.GetTimestamp() - cleanupStarted);
+            if (usedSealedContract)
+                _sealedSubmissionBatchReceipt.Clear();
         }
 
         return new VulkanSubmissionReceipt(
@@ -387,6 +447,29 @@ internal sealed partial class VulkanCommandRuntime
             nativeDispatchElapsed);
     }
     }
+
+    private static string GetSealedSubmissionFallbackLogKey(
+        RuntimeEngine.Rendering.Stats.Vulkan.SealedSubmissionFallbackReason reason)
+        => reason switch
+        {
+            RuntimeEngine.Rendering.Stats.Vulkan.SealedSubmissionFallbackReason.Shape =>
+                "Vulkan.SealedSubmission.Fallback.Shape",
+            RuntimeEngine.Rendering.Stats.Vulkan.SealedSubmissionFallbackReason.ForcedFull =>
+                "Vulkan.SealedSubmission.Fallback.ForcedFull",
+            RuntimeEngine.Rendering.Stats.Vulkan.SealedSubmissionFallbackReason.MissingContract =>
+                "Vulkan.SealedSubmission.Fallback.MissingContract",
+            RuntimeEngine.Rendering.Stats.Vulkan.SealedSubmissionFallbackReason.ResourceVector =>
+                "Vulkan.SealedSubmission.Fallback.ResourceVector",
+            RuntimeEngine.Rendering.Stats.Vulkan.SealedSubmissionFallbackReason.DescriptorVector =>
+                "Vulkan.SealedSubmission.Fallback.DescriptorVector",
+            RuntimeEngine.Rendering.Stats.Vulkan.SealedSubmissionFallbackReason.TrackingBatch =>
+                "Vulkan.SealedSubmission.Fallback.TrackingBatch",
+            RuntimeEngine.Rendering.Stats.Vulkan.SealedSubmissionFallbackReason.ImageVector =>
+                "Vulkan.SealedSubmission.Fallback.ImageVector",
+            RuntimeEngine.Rendering.Stats.Vulkan.SealedSubmissionFallbackReason.PinCommit =>
+                "Vulkan.SealedSubmission.Fallback.PinCommit",
+            _ => "Vulkan.SealedSubmission.Fallback.Unknown",
+        };
 
     private unsafe VulkanSubmissionDiagnosticContext BuildTrackedSubmissionDiagnostics(
         Queue queue,
@@ -505,6 +588,119 @@ internal sealed partial class VulkanCommandRuntime
                 out injectedFailureStage,
                 caller);
         }
+    }
+
+    /// <summary>
+    /// Publishes an ordinary sealed submission from the retained command and
+    /// ABA-safe resource slot vectors captured at queue admission.
+    /// </summary>
+    private VulkanLifetimeSubmission PublishSealedSubmissionLifetime(
+        Queue queue,
+        ref SubmitInfo submitInfo,
+        Fence fence,
+        in VulkanSubmissionDiagnosticContext diagnosticContext,
+        VulkanSealedSubmissionBatchReceipt receipt,
+        out bool lifetimeOwnershipPublished)
+    {
+        lifetimeOwnershipPublished = false;
+        VulkanResourceLifetimeTracker tracker = ResourceRuntime.Lifetime.Tracker;
+        EVulkanLifetimeQueueDomain domain = ResolveLifetimeQueueDomain(queue);
+        ResolveSubmissionTimelineSignal(
+            ref submitInfo,
+            out ulong timelineSemaphoreHandle,
+            out ulong timelineValue);
+        using (VulkanFrameLockScope.Enter(
+                   tracker.SyncRoot,
+                   EVulkanFrameWaitReason.ResourceLifetimeLock))
+        {
+            for (int commandIndex = 0; commandIndex < receipt.Count; ++commandIndex)
+            {
+                ref readonly VulkanSealedSubmissionBatchReceipt.Entry entry =
+                    ref receipt.GetEntry(commandIndex);
+                VulkanCommandBufferLifetimeRecord lifetime = entry.Lifetime;
+                if (!lifetime.SubmissionPinReceipt.IsActive ||
+                    lifetime.StableCommandIdentity != entry.Contract.StableCommandIdentity)
+                {
+                    throw new InvalidOperationException(
+                        "Sealed submission receipt changed after queue admission.");
+                }
+
+                ValidateSealedPinReceiptRecords(lifetime.SubmissionPinReceipt);
+            }
+
+            ulong sequence = domain switch
+            {
+                EVulkanLifetimeQueueDomain.Graphics => ++tracker.LastGraphicsSequence,
+                EVulkanLifetimeQueueDomain.Transfer => ++tracker.LastTransferSequence,
+                _ => ++tracker.LastOtherSequence,
+            };
+            VulkanLifetimeSubmission submission = new(
+                unchecked((ulong)queue.Handle),
+                domain,
+                sequence,
+                timelineSemaphoreHandle,
+                timelineValue,
+                unchecked((ulong)fence.Handle));
+            tracker.LifetimeSubmissions.Add(submission);
+
+            for (int commandIndex = 0; commandIndex < receipt.Count; ++commandIndex)
+            {
+                ref readonly VulkanSealedSubmissionBatchReceipt.Entry entry =
+                    ref receipt.GetEntry(commandIndex);
+                VulkanSubmissionPinReceipt pinReceipt = entry.Lifetime.SubmissionPinReceipt;
+                VulkanResourceLifetimeRecord commandResource =
+                    pinReceipt.CommandBufferResource ?? throw new InvalidOperationException(
+                        "Sealed command buffer receipt lost its retained resource record.");
+                MarkSubmitted(commandResource, domain, sequence, in diagnosticContext);
+                ReadOnlySpan<VulkanResourceLifetimeRecord?> resourceRecords =
+                    pinReceipt.ResourceRecords;
+                for (int resourceIndex = 0; resourceIndex < resourceRecords.Length; ++resourceIndex)
+                {
+                    VulkanResourceLifetimeRecord resource = resourceRecords[resourceIndex] ??
+                        throw new InvalidOperationException(
+                            "Sealed resource receipt lost its retained resource record.");
+                    MarkSubmitted(resource, domain, sequence, in diagnosticContext);
+                }
+
+                ReadOnlySpan<VulkanSealedQueryResultDependency> queryResults =
+                    entry.Contract.QueryResults;
+                for (int queryIndex = 0; queryIndex < queryResults.Length; ++queryIndex)
+                {
+                    VulkanSealedQueryResultDependency queryResult =
+                        queryResults[queryIndex];
+                    if (queryResult.QueryPoolResource.Key.Type != ObjectType.QueryPool)
+                    {
+                        throw new InvalidOperationException(
+                            "A sealed query-pool slot changed after queue admission.");
+                    }
+
+                    queryResult.Query.MarkResultEpochSubmitted(
+                        entry.Contract.CommandBufferHandle,
+                        in submission);
+                }
+            }
+
+            lifetimeOwnershipPublished = true;
+            for (int commandIndex = 0; commandIndex < receipt.Count; ++commandIndex)
+                receipt.GetEntry(commandIndex).Lifetime.FrameDataLease.TryTransferToSubmission(
+                    domain,
+                    sequence);
+            return submission;
+        }
+    }
+
+    private static void ValidateSealedPinReceiptRecords(
+        VulkanSubmissionPinReceipt pinReceipt)
+    {
+        if (pinReceipt.CommandBufferResource is null)
+            throw new InvalidOperationException(
+                "A sealed command-buffer record changed after queue admission.");
+
+        ReadOnlySpan<VulkanResourceLifetimeRecord?> resourceRecords = pinReceipt.ResourceRecords;
+        for (int index = 0; index < resourceRecords.Length; ++index)
+            if (resourceRecords[index] is null)
+                throw new InvalidOperationException(
+                    "A sealed resource record changed after queue admission.");
     }
 
     private unsafe bool ValidateOrderedCommandBufferImageStateContracts(
@@ -1268,8 +1464,18 @@ internal sealed partial class VulkanCommandRuntime
         ref SubmitInfo submitInfo,
         Fence fence,
         in VulkanSubmissionDiagnosticContext diagnosticContext,
-        out bool lifetimeOwnershipPublished)
+        out bool lifetimeOwnershipPublished,
+        VulkanSealedSubmissionBatchReceipt? sealedReceipt = null)
     {
+        if (sealedReceipt is { IsActive: true })
+            return PublishSealedSubmissionLifetime(
+                queue,
+                ref submitInfo,
+                fence,
+                in diagnosticContext,
+                sealedReceipt,
+                out lifetimeOwnershipPublished);
+
         lifetimeOwnershipPublished = false;
         VulkanResourceLifetimeTracker tracker = ResourceRuntime.Lifetime.Tracker;
         EVulkanLifetimeQueueDomain domain = ResolveLifetimeQueueDomain(queue);
@@ -1465,8 +1671,15 @@ internal sealed partial class VulkanCommandRuntime
     private unsafe void PublishRecordedImageLayouts(
         Queue queue,
         ref SubmitInfo submitInfo,
-        in VulkanLifetimeSubmission submission)
+        in VulkanLifetimeSubmission submission,
+        VulkanSealedSubmissionBatchReceipt? sealedReceipt = null)
     {
+        if (sealedReceipt is { IsActive: true })
+        {
+            PublishSealedImageLayouts(queue, in submission, sealedReceipt);
+            return;
+        }
+
         if (submitInfo.CommandBufferCount == 0 || submitInfo.PCommandBuffers is null)
             return;
 
@@ -1548,6 +1761,68 @@ internal sealed partial class VulkanCommandRuntime
         }
     }
 
+    /// <summary>
+    /// Publishes sealed exit states directly through their stable subresource
+    /// slots. Sealed contracts exclude ownership-transfer and external-image
+    /// paths, which continue through the counted full validator.
+    /// </summary>
+    private void PublishSealedImageLayouts(
+        Queue queue,
+        in VulkanLifetimeSubmission submission,
+        VulkanSealedSubmissionBatchReceipt receipt)
+    {
+        uint queueFamilyIndex = ResolveQueueFamilyIndex(queue);
+        using (VulkanFrameLockScope.Enter(
+                   Synchronization._vulkanImageLayoutLock,
+                   EVulkanFrameWaitReason.SynchronizationLock))
+        {
+            for (int commandIndex = 0; commandIndex < receipt.Count; ++commandIndex)
+            {
+                ReadOnlySpan<VulkanSealedImageExitState> exits = receipt
+                    .GetEntry(commandIndex).Contract.ImageExits;
+                for (int exitIndex = 0; exitIndex < exits.Length; ++exitIndex)
+                {
+                    VulkanSealedImageExitState exit = exits[exitIndex];
+                    if (!Synchronization.TryGetStableImageSubresourceStateNoLock(
+                            exit.Slot,
+                            out VulkanImageSubresourceState? state) ||
+                        state is null ||
+                        (exit.State.QueueFamilyIndex != Vk.QueueFamilyIgnored &&
+                         exit.State.QueueFamilyIndex != queueFamilyIndex) ||
+                        exit.State.ExternalOwnership != EVulkanExternalImageOwnership.EngineOwned)
+                    {
+                        throw new InvalidOperationException(
+                            "Sealed image exit state changed after queue admission.");
+                    }
+
+                    state.PendingQueueOwnershipRelease = null;
+                    state.Submitted = exit.State;
+                    state.SubmittedVersion = NextSubmittedImageStateVersion(
+                        state.SubmittedVersion);
+                    switch (submission.QueueDomain)
+                    {
+                        case EVulkanLifetimeQueueDomain.Graphics:
+                            state.GraphicsSequence = Math.Max(
+                                state.GraphicsSequence,
+                                submission.QueueSequence);
+                            break;
+                        case EVulkanLifetimeQueueDomain.Transfer:
+                            state.TransferSequence = Math.Max(
+                                state.TransferSequence,
+                                submission.QueueSequence);
+                            break;
+                        default:
+                            state.OtherSequence = Math.Max(
+                                state.OtherSequence,
+                                submission.QueueSequence);
+                            break;
+                    }
+                    _ = Synchronization.PublishStableImageSubresourceNoLock(state);
+                }
+            }
+        }
+    }
+
     private static bool TryResolveQueueOwnershipTransfer(
         VulkanRecordedImageLayoutState recorded,
         VulkanTrackedImageSubresource key,
@@ -1573,8 +1848,88 @@ internal sealed partial class VulkanCommandRuntime
         return false;
     }
 
-    private unsafe void ReleaseSubmissionLifetimePins(ref SubmitInfo submitInfo)
+    private void ReleaseSealedSubmissionLifetimePins(
+        ref SubmitInfo submitInfo,
+        VulkanSealedSubmissionBatchReceipt receipt)
     {
+        VulkanResourceLifetimeTracker tracker = ResourceRuntime.Lifetime.Tracker;
+        using (VulkanFrameLockScope.Enter(
+                   tracker.SyncRoot,
+                   EVulkanFrameWaitReason.ResourceLifetimeLock))
+        {
+            for (int commandIndex = 0; commandIndex < receipt.Count; ++commandIndex)
+            {
+                VulkanCommandBufferLifetimeRecord lifetime = receipt.GetEntry(commandIndex)
+                    .Lifetime;
+                VulkanSubmissionPinReceipt pinReceipt = lifetime.SubmissionPinReceipt;
+                if (!pinReceipt.IsActive || pinReceipt.CommandBufferResource is not { } commandResource)
+                {
+                    throw new InvalidOperationException(
+                        "Sealed submission receipt changed before queued-pin release.");
+                }
+
+                ReleaseQueuedPin(commandResource);
+                ReadOnlySpan<VulkanResourceLifetimeRecord?> resourceRecords =
+                    pinReceipt.ResourceRecords;
+                for (int resourceIndex = 0; resourceIndex < resourceRecords.Length; ++resourceIndex)
+                {
+                    if (resourceRecords[resourceIndex] is not { } resource)
+                    {
+                        throw new InvalidOperationException(
+                            "A sealed resource record changed before queued-pin release.");
+                    }
+                    ReleaseQueuedPin(resource);
+                }
+            }
+        }
+
+        ReleaseSealedSubmissionGatewayPins(receipt);
+    }
+
+    private void ReleaseSealedSubmissionGatewayPins(
+        VulkanSealedSubmissionBatchReceipt receipt)
+    {
+        VulkanResourceLifetimeTracker tracker = ResourceRuntime.Lifetime.Tracker;
+        using (VulkanFrameLockScope.Enter(
+                   tracker.SyncRoot,
+                   EVulkanFrameWaitReason.ResourceLifetimeLock))
+        {
+            for (int commandIndex = 0; commandIndex < receipt.Count; ++commandIndex)
+            {
+                ref readonly VulkanSealedSubmissionBatchReceipt.Entry entry =
+                    ref receipt.GetEntry(commandIndex);
+                VulkanCommandBufferLifetimeRecord lifetime = entry.Lifetime;
+                if (lifetime.QueuedSubmissionCount <= 0)
+                    throw new InvalidOperationException(
+                        "Sealed command-buffer submission gateway pin underflow.");
+                lifetime.QueuedSubmissionCount--;
+                lifetime.FrameDataLease.CompleteRecording(cacheVariant: true);
+                if (entry.TrackingBatch is not null)
+                {
+                    using (VulkanFrameLockScope.Enter(
+                               entry.TrackingBatch,
+                               EVulkanFrameWaitReason.ResourceLifetimeLock))
+                    {
+                        if (entry.TrackingBatch.QueuedSubmissionCount <= 0)
+                            throw new InvalidOperationException(
+                                "Sealed command tracking gateway pin underflow.");
+                        entry.TrackingBatch.QueuedSubmissionCount--;
+                    }
+                }
+                lifetime.SubmissionPinReceipt.Clear();
+            }
+        }
+    }
+
+    private unsafe void ReleaseSubmissionLifetimePins(
+        ref SubmitInfo submitInfo,
+        VulkanSealedSubmissionBatchReceipt? sealedReceipt = null)
+    {
+        if (sealedReceipt is { IsActive: true })
+        {
+            ReleaseSealedSubmissionLifetimePins(ref submitInfo, sealedReceipt);
+            return;
+        }
         VulkanResourceLifetimeTracker tracker = ResourceRuntime.Lifetime.Tracker;
         using (VulkanFrameLockScope.Enter(
                    tracker.SyncRoot,

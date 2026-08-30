@@ -470,8 +470,8 @@ Additional diagnostic flags are:
 | Flag | Purpose |
 |---|---|
 | `XRE_VULKAN_COMMAND_CHAINS_SINGLE_THREAD=1` | Forces deterministic single-thread chain processing for bisection. |
-| `XRE_VULKAN_DISABLE_PARALLEL_CHAIN_RECORDING=1` | Keeps command-chain lowering enabled while disabling worker dispatch. |
-| `XRE_VULKAN_COMMAND_CHAIN_WORKER_COUNT=0..8` | Startup-only persistent worker capacity. Auto mode caps the domain at four workers and dispatches graphics packets only when at least 32 eligible operations can amortize the handoff; smaller packets stay serial. Any explicit `1..8` value bypasses that cost heuristic for controlled comparison, while `0` forces serial recording. The single-thread and disable flags take precedence. |
+| `XRE_VULKAN_DISABLE_PARALLEL_CHAIN_RECORDING=1` | Keeps command-chain lowering enabled while disabling render-lane dispatch. |
+| `XRE_VULKAN_COMMAND_CHAIN_WORKER_COUNT=0..8` | Startup-only benchmark cap over the process-owned render-domain lanes; it does not create Vulkan threads. Auto mode dispatches graphics packets only when at least 32 eligible operations can amortize the handoff. Any explicit `1..8` value bypasses that cost heuristic for controlled comparison, while `0` keeps recording inline. The single-thread and disable flags take precedence. |
 | `XRE_VULKAN_COMMAND_CHAIN_VALIDATE=1` | Enables expensive schedule, view-specialization, queue-schedule, and signature checks. |
 | `XRE_VULKAN_COMMAND_CHAIN_TRACE=1` | Emits throttled first-dirty-reason and schedule diagnostics. |
 | `XRE_VULKAN_COMMAND_CHAIN_MESH_SECONDARY_NOOP=1` | Diagnostic mode that records secondary mesh chains without draw payloads. |
@@ -486,8 +486,8 @@ named isolated editor session; it is not a recovery or fallback mode.
 
 Packet lowering is deterministic and sequential. The obsolete
 `XRE_VULKAN_PARALLEL_PACKET_BUILD` compatibility flag is no longer recognized;
-parallel native recording is controlled by the command-chain worker settings
-above.
+parallel native recording is controlled by the process render domain and the
+optional command-chain benchmark cap above.
 
 Command-chain recording keeps the render graph as the source of ordering truth:
 
@@ -521,26 +521,29 @@ layouts, or descriptors.
 
 Primary command-buffer reuse is tracked separately from secondary reuse. A primary can be reused when the pass-group layout, schedule signature, and ordered secondary command-buffer handles are unchanged. When only frame data changes, the chain metrics report frame-data refreshes rather than command-buffer records.
 
-Dirty scheduled mesh chains use persistent renderer-owned workers when at least
-two independent chains are available. Before dispatch, the render thread
-finishes pipeline, descriptor, image-transition, and frame-data preparation,
-then captures an immutable planner runtime snapshot for each chain. Each worker
-owns graphics command pools per indexed frame slot and private planner
-switching state; worker encoding does not take the renderer-wide planner lock.
+Dirty scheduled mesh chains use lane-affine items in the process-owned
+`RenderWorkDomain`. Before dispatch, the render thread finishes pipeline,
+descriptor, image-transition, and frame-data preparation and freezes scalar and
+stream ranges for each chain. Lane execution does not traverse live materials,
+renderers, callbacks, or mutable planner state.
 
-Renderer ownership is assigned per batch. Every `VkMeshRenderer` touched by a
-chain is pinned to one worker, including heterogeneous chains. A chain that
-would bridge two existing ownership components is recorded on the explicit
-serial path after worker completion. Contexts may be coalesced when they differ
-only by the immutable planner/resource/descriptor generations captured for
-each chain; render target, dimensions, pipeline, viewport, queue family,
-stereo/multiview, registry identity, and ordering policy must still match.
+Every logical lane and scheduler frame slot owns distinct transient and retained
+command pools for each selected queue family. Reusable artifacts live only in
+retained pools and remain keyed by their in-flight frame slot; a pending artifact
+is retired and replaced unless exact completion permits reuse. Transient pools
+reset only after the prior slot use has completed.
 
-Workers record independently, but the primary executes secondary command
-buffers in scheduled order. Worker completion order therefore cannot reorder
-passes or transparent draws. Dispatch, cancellation, idle, and thread joins
-are bounded. An exception or timeout faults the worker domain, fails the frame
-before submission, and leaves later frames on the visible serial path.
+Mesh packets contain at least 10 compatible draws. Parallel dispatch normally
+requires at least 32 eligible operations, admits at most two secondaries per
+logical lane for one scope, and keeps smaller or nested batches on lane 0.
+Adjacent draws share a secondary only when render scope, inheritance, query,
+ordering, and graphics-queue-family contracts match.
+
+Lanes record independently, but source-indexed result slots and the primary
+execute secondaries in canonical bin/range order. Lane completion order therefore
+cannot reorder passes or transparent draws. Dispatch and joins are bounded. An
+exception or timeout faults the render domain, fails the frame before submission,
+and leaves later frames on the visible inline path.
 
 The profiler/runtime stat surface separately exposes scheduled, queued,
 worker-started, worker-completed, serial, reused, conflict, failure, and timeout

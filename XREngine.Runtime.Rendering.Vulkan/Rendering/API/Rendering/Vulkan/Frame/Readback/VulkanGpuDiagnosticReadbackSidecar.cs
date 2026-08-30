@@ -85,10 +85,11 @@ internal sealed class VulkanGpuDiagnosticReadbackSidecar
         in GpuDiagnosticReadbackPlanNode node,
         ulong frameIdentity,
         int ringSlot,
+        EVulkanGpuDiagnosticReadbackPurpose purpose,
         out VulkanGpuDiagnosticReadbackReservation reservation)
     {
         reservation = default;
-        if (!node.IsInstrumentedPass || (uint)ringSlot >= (uint)_slots.Length)
+        if (!IsEligible(in node, purpose) || (uint)ringSlot >= (uint)_slots.Length)
             return false;
 
         VulkanGpuDiagnosticReadbackSidecarSlot slot = _slots[ringSlot];
@@ -111,23 +112,37 @@ internal sealed class VulkanGpuDiagnosticReadbackSidecar
     internal bool TryReserveNext(
         in GpuDiagnosticReadbackPlanNode node,
         ulong frameIdentity,
+        EVulkanGpuDiagnosticReadbackPurpose purpose,
         out VulkanGpuDiagnosticReadbackReservation reservation)
     {
         reservation = default;
-        if (!node.IsInstrumentedPass)
+        if (!IsEligible(in node, purpose))
             return false;
 
         int start = Math.Abs(Interlocked.Increment(ref _cursor));
         for (int attempt = 0; attempt < _slots.Length; ++attempt)
         {
             int index = (start + attempt) % _slots.Length;
-            if (TryReserve(in node, frameIdentity, index, out reservation))
+            if (TryReserve(in node, frameIdentity, index, purpose, out reservation))
                 return true;
         }
 
         Interlocked.Increment(ref _droppedReservationCount);
         return false;
     }
+
+    private static bool IsEligible(
+        in GpuDiagnosticReadbackPlanNode node,
+        EVulkanGpuDiagnosticReadbackPurpose purpose)
+        => purpose switch
+        {
+            EVulkanGpuDiagnosticReadbackPurpose.Instrumented => node.IsInstrumentedPass,
+            EVulkanGpuDiagnosticReadbackPurpose.MeshletZeroReadbackEvidence =>
+                node.Strategy == global::XREngine.Data.Rendering.EMeshSubmissionStrategy.GpuMeshletZeroReadback &&
+                node.Decoder is EGpuDiagnosticReadbackDecoder.SubmissionValidation or
+                    EGpuDiagnosticReadbackDecoder.MeshletVisibility,
+            _ => false,
+        };
 
     /// <summary>
     /// Attaches an already-recorded copy to the primary command buffer that

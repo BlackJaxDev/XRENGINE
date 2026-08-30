@@ -9,6 +9,9 @@ namespace XREngine.Rendering.Pipelines.Commands;
 /// </summary>
 public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
 {
+    internal const string LateVisibilityRasterPassName =
+        "Advanced.LateVisibilityRaster";
+
     private EAdvancedRenderStage _stage;
 
     public EAdvancedRenderStage Stage
@@ -56,8 +59,34 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             EAdvancedRenderStage.DepthPyramidAndLateVisibility))
             return;
 
+        AdvancedRenderPipelineOutputBinding binding =
+            ActivePipelineInstance.AdvancedOutputBinding;
+        AdvancedVisibilityFamilyReservation reservation = binding.Reservation;
         if (AbstractRenderer.Current is not IRuntimeRendererHost renderer ||
-            !renderer.TryGetBackendCapability<IAdvancedVisibilityStageBackendCapability>(
+            ActivePipelineInstance.Pipeline is not AdvancedRenderPipeline ||
+            !binding.IsBound)
+        {
+            return;
+        }
+
+        if (!renderer.IsAdvancedVisibilityFamilyReservationCurrent(in reservation))
+        {
+            XRViewport? viewport = state.WindowViewport
+                ?? ActivePipelineInstance.LastWindowViewport;
+            if (viewport is null)
+                return;
+
+            RuntimeEngine.Rendering.RefreshRenderPipelineOutputBinding(viewport);
+            binding = ActivePipelineInstance.AdvancedOutputBinding;
+            reservation = binding.Reservation;
+            if (!binding.IsBound ||
+                !renderer.IsAdvancedVisibilityFamilyReservationCurrent(in reservation))
+            {
+                return;
+            }
+        }
+
+        if (!renderer.TryGetBackendCapability<IAdvancedVisibilityStageBackendCapability>(
                 out IAdvancedVisibilityStageBackendCapability? visibility) ||
             visibility is null ||
             !visibility.SupportsAdvancedVisibilityStage(Stage))
@@ -77,6 +106,8 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
 
         AdvancedVisibilityStageBackendRequest request = new(
             Stage,
+            EAdvancedVisibilityStageBackendPhase.Complete,
+            reservation,
             publication,
             AdvancedSharedPreparationService.Instance.Extractor,
             world.FrameId,
@@ -88,12 +119,55 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             AdvancedVisibilityResourceNames.Selection,
             AdvancedVisibilityResourceNames.DepthStencil,
             AdvancedVisibilityResourceNames.CurrentDepthPyramid);
-        if (!visibility.TryEnqueueAdvancedVisibilityStage(in request, out string failureReason))
+
+        if (Stage == EAdvancedRenderStage.DepthPyramidAndLateVisibility)
         {
-            Debug.Out(
-                $"Advanced visibility stage '{Stage}' was rejected by the active backend: {failureReason}");
+            EnqueueLatePhase(
+                visibility,
+                request with
+                {
+                    Phase = EAdvancedVisibilityStageBackendPhase.LateCompute,
+                },
+                Descriptor.PassName);
+            EnqueueLatePhase(
+                visibility,
+                request with
+                {
+                    Phase = EAdvancedVisibilityStageBackendPhase.LateRaster,
+                },
+                LateVisibilityRasterPassName);
+            return;
         }
+
+        using IDisposable? passScope = PushRenderGraphPass(Descriptor.PassName);
+        if (!visibility.TryEnqueueAdvancedVisibilityStage(
+                in request,
+                out string failureReason))
+            ReportRejectedPhase(request.Phase, failureReason);
     }
+
+    private void EnqueueLatePhase(
+        IAdvancedVisibilityStageBackendCapability visibility,
+        in AdvancedVisibilityStageBackendRequest request,
+        string passName)
+    {
+        using IDisposable? passScope = PushRenderGraphPass(passName);
+        if (!visibility.TryEnqueueAdvancedVisibilityStage(
+                in request,
+                out string failureReason))
+            ReportRejectedPhase(request.Phase, failureReason);
+    }
+
+    private IDisposable? PushRenderGraphPass(string passName)
+        => ParentPipeline?.TryGetRenderPassIndex(passName, out int passIndex) == true
+            ? RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(passIndex)
+            : null;
+
+    private void ReportRejectedPhase(
+        EAdvancedVisibilityStageBackendPhase phase,
+        string failureReason)
+        => Debug.Out(
+            $"Advanced visibility stage '{Stage}' phase '{phase}' was rejected by the active backend: {failureReason}");
 
     internal override void DescribeRenderPass(RenderGraphDescribeContext context)
     {
@@ -107,8 +181,53 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
         DescribeVisibilityResources(builder, descriptor.Stage);
 
         int stageIndex = (int)descriptor.Stage;
-        if (stageIndex > 0)
+        if (descriptor.Stage == EAdvancedRenderStage.DepthPyramidAndLateVisibility)
+        {
             builder.DependsOn(stageIndex - 1);
+            DescribeLateRasterPass(context, stageIndex);
+        }
+        else if (descriptor.Stage == EAdvancedRenderStage.WorkClassification)
+        {
+            builder.DependsOn(context.GetOrCreateSyntheticPass(
+                LateVisibilityRasterPassName,
+                ERenderGraphPassStage.Graphics).PassIndex);
+        }
+        else if (stageIndex > 0)
+            builder.DependsOn(stageIndex - 1);
+    }
+
+    private static void DescribeLateRasterPass(
+        RenderGraphDescribeContext context,
+        int computePassIndex)
+    {
+        RenderPassBuilder builder = context.GetOrCreateSyntheticPass(
+                LateVisibilityRasterPassName,
+                ERenderGraphPassStage.Graphics)
+            .UseEngineDescriptors()
+            .DependsOn(computePassIndex)
+            .ReadBuffer(AdvancedVisibilityResourceNames.Payloads)
+            .ReadBuffer(AdvancedVisibilityResourceNames.Producers)
+            .UseColorAttachment(
+                Tex(AdvancedVisibilityResourceNames.Identity),
+                ERenderGraphAccess.ReadWrite,
+                ERenderPassLoadOp.Load,
+                ERenderPassStoreOp.Store)
+            .UseColorAttachment(
+                Tex(AdvancedVisibilityResourceNames.Metadata),
+                ERenderGraphAccess.ReadWrite,
+                ERenderPassLoadOp.Load,
+                ERenderPassStoreOp.Store)
+            .UseColorAttachment(
+                Tex(AdvancedVisibilityResourceNames.Selection),
+                ERenderGraphAccess.ReadWrite,
+                ERenderPassLoadOp.Load,
+                ERenderPassStoreOp.Store)
+            .UseDepthAttachment(
+                Tex(AdvancedVisibilityResourceNames.DepthStencil),
+                ERenderGraphAccess.ReadWrite,
+                ERenderPassLoadOp.Load,
+                ERenderPassStoreOp.Store);
+        DescribeLateRasterSlotResources(builder);
     }
 
     private static void DescribeVisibilityResources(
@@ -203,28 +322,8 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
                     .ReadWriteTexture(Tex(
                         AdvancedVisibilityResourceNames.CurrentDepthPyramid))
                     .ReadWriteBuffer(
-                        AdvancedVisibilityResourceNames.PersistentState)
-                    .UseColorAttachment(
-                        Tex(AdvancedVisibilityResourceNames.Identity),
-                        ERenderGraphAccess.ReadWrite,
-                        ERenderPassLoadOp.Load,
-                        ERenderPassStoreOp.Store)
-                    .UseColorAttachment(
-                        Tex(AdvancedVisibilityResourceNames.Metadata),
-                        ERenderGraphAccess.ReadWrite,
-                        ERenderPassLoadOp.Load,
-                        ERenderPassStoreOp.Store)
-                    .UseColorAttachment(
-                        Tex(AdvancedVisibilityResourceNames.Selection),
-                        ERenderGraphAccess.ReadWrite,
-                        ERenderPassLoadOp.Load,
-                        ERenderPassStoreOp.Store)
-                    .UseDepthAttachment(
-                        Tex(AdvancedVisibilityResourceNames.DepthStencil),
-                        ERenderGraphAccess.ReadWrite,
-                        ERenderPassLoadOp.Load,
-                        ERenderPassStoreOp.Store);
-                DescribeLateSlotResources(builder);
+                        AdvancedVisibilityResourceNames.PersistentState);
+                DescribeLateComputeSlotResources(builder);
                 break;
 
             case EAdvancedRenderStage.AttributeReconstruction:
@@ -251,7 +350,8 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
                 AdvancedReconstructionResourceNames.Counters(slot));
     }
 
-    private static void DescribeLateSlotResources(RenderPassBuilder builder)
+    private static void DescribeLateComputeSlotResources(
+        RenderPassBuilder builder)
     {
         for (uint slot = 0u;
              slot < AdvancedFrameSlotContract.DefaultSlotCount;
@@ -274,6 +374,30 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
                     AdvancedVisibilityResourceNames.RangeCounts(slot))
                 .ReadWriteBuffer(
                     AdvancedVisibilityResourceNames.Counters(slot));
+        }
+    }
+
+    private static void DescribeLateRasterSlotResources(
+        RenderPassBuilder builder)
+    {
+        for (uint slot = 0u;
+             slot < AdvancedFrameSlotContract.DefaultSlotCount;
+             slot++)
+        {
+            builder
+                .ReadBuffer(
+                    AdvancedVisibilityResourceNames.LateArguments(slot),
+                    ERenderPassResourceType.IndirectBuffer)
+                .ReadBuffer(
+                    AdvancedVisibilityResourceNames.LateMeshTaskArguments(slot),
+                    ERenderPassResourceType.IndirectBuffer)
+                .ReadBuffer(
+                    AdvancedVisibilityResourceNames.LateMeshPayloads(slot))
+                .ReadBuffer(
+                    AdvancedVisibilityResourceNames.LateVisiblePayloads(slot))
+                .ReadBuffer(
+                    AdvancedVisibilityResourceNames.RangeCounts(slot),
+                    ERenderPassResourceType.IndirectBuffer);
         }
     }
 

@@ -25,4 +25,5 @@ internal enum VulkanStableBinSubmissionLoweringFailure : byte
     OffsetOverflow = 5,
     UnsupportedStrategy = 6,
     ProducerLaneMismatch = 7,
+    SealedCapacityMismatch = 8,
 }

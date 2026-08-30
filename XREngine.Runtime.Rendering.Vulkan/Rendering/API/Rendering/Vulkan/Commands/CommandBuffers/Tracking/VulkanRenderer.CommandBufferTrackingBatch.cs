@@ -438,18 +438,20 @@ internal sealed partial class VulkanCommandRuntime
             newCompactImageRanges = batch.ImageAccessDeltas.Count - batch.PublishedImageDeltaCount;
         }
 
-        bool lifetimeLockContended = !Monitor.TryEnter(ResourceRuntime.Lifetime.Tracker.SyncRoot);
-        if (!lifetimeLockContended)
-            Monitor.Exit(ResourceRuntime.Lifetime.Tracker.SyncRoot);
-        if (!ResourceRuntime.TryPublishCommandBufferTrackingBatch(commandBuffer, batch, out failureReason))
+        if (!ResourceRuntime.TryPublishCommandBufferTrackingBatch(
+                commandBuffer,
+                batch,
+                out failureReason,
+                out long lifetimeLockWaitTicks))
             return false;
 
-        bool layoutLockContended;
+        long layoutLockWaitTicks;
         int dependencyBinds;
         int imageAccessWrites;
         lock (batch)
         {
-            layoutLockContended = FlushImageAccessBatch(commandBuffer, batch, FrameTelemetry);
+            layoutLockWaitTicks =
+                FlushImageAccessBatch(commandBuffer, batch, FrameTelemetry);
             dependencyBinds = batch.DependencyBindCount - batch.ReportedDependencyBindCount;
             imageAccessWrites = batch.ImageAccessWriteCount - batch.ReportedImageAccessWriteCount;
             batch.ReportedDependencyBindCount = batch.DependencyBindCount;
@@ -462,8 +464,8 @@ internal sealed partial class VulkanCommandRuntime
             imageAccessWrites,
             newCompactImageRanges);
         RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanTrackingContention(
-            lifetimeLockContended ? 1 : 0,
-            layoutLockContended ? 1 : 0);
+            lifetimeLockWaitTicks > 0L ? 1 : 0,
+            layoutLockWaitTicks > 0L ? 1 : 0);
         return true;
     }
 

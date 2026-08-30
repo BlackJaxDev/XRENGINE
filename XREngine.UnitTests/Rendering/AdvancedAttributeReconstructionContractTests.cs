@@ -51,7 +51,8 @@ public sealed class AdvancedAttributeReconstructionContractTests
                 stereo: true);
         AdvancedRenderPipeline pipeline = new(
             stereo: true,
-            capabilities);
+            capabilities,
+            visibilityFamilyReservation: default);
         RenderPipelineResourceLayout baseline =
             pipeline.BuildResourceLayout(CreateProfile(
                 stereo: true,

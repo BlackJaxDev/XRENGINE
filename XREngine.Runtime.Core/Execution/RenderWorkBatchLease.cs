@@ -46,8 +46,9 @@ public readonly struct RenderWorkBatchLease : IDisposable
             return;
 
         long allocationBefore = GC.GetAllocatedBytesForCurrentThread();
+        long mergeCostStarted = System.Diagnostics.Stopwatch.GetTimestamp();
         batch.ReleaseLease(Generation);
-        batch.Domain.RecordMergeAllocation(allocationBefore);
+        batch.Domain.RecordMergeOperation(allocationBefore, mergeCostStarted);
     }
 
     internal RenderWorkBatch Batch => GetBatch();

@@ -48,7 +48,11 @@ internal sealed unsafe partial class VulkanPipelineManager
             if (_vulkanGraphicsPipelineCompletedResults.TryGetValue(
                     completionKey,
                     out result))
+            {
+                if (result.Retryable)
+                    _vulkanGraphicsPipelineCompletedResults.Remove(completionKey);
                 return true;
+            }
 
             if (!_vulkanGraphicsPipelineCompileJobs.TryGetValue(key, out VulkanGraphicsPipelineCompileJob? job) ||
                 !job.Task.IsCompleted)
@@ -66,6 +70,8 @@ internal sealed unsafe partial class VulkanPipelineManager
             }
 
             StoreCompletedGraphicsPipelineResult(job.Request, result);
+            if (result.Retryable)
+                _vulkanGraphicsPipelineCompletedResults.Remove(completionKey);
 
             if (!_vulkanGraphicsPipelineCompileJobs.TryRemove(key, out job))
                 return false;
@@ -88,10 +94,12 @@ internal sealed unsafe partial class VulkanPipelineManager
         in VulkanGraphicsPipelineCompileKey key,
         long dependencyGeneration,
         out VulkanGraphicsPipelineCompileResult result,
-        out string reason)
+        out string reason,
+        out bool retryable)
     {
         result = default;
         reason = string.Empty;
+        retryable = false;
         DrainSupersededSharedGraphicsPipelines();
         InspectPipelineCompileHealth();
         VulkanGraphicsPipelineCompileJob? job;
@@ -104,10 +112,13 @@ internal sealed unsafe partial class VulkanPipelineManager
                 dependencyGeneration);
             if (_vulkanGraphicsPipelineCompletedResults.TryGetValue(completionKey, out result))
             {
+                if (result.Retryable)
+                    _vulkanGraphicsPipelineCompletedResults.Remove(completionKey);
                 if (result.Success && result.Pipeline.Handle != 0)
                     return true;
 
                 reason = result.ErrorMessage ?? "pipeline compilation failed";
+                retryable = result.Retryable;
                 return false;
             }
 
@@ -118,6 +129,7 @@ internal sealed unsafe partial class VulkanPipelineManager
                         out string? permanentFailure)
                     ? permanentFailure
                     : "pipeline compile was not admitted";
+                retryable = permanentFailure is null;
                 return false;
             }
         }
@@ -135,12 +147,14 @@ internal sealed unsafe partial class VulkanPipelineManager
                 out result))
         {
             reason = "pipeline compile completed but could not be published";
+            retryable = true;
             return false;
         }
 
         if (!result.Success || result.Pipeline.Handle == 0)
         {
             reason = result.ErrorMessage ?? "pipeline compilation failed";
+            retryable = result.Retryable;
             return false;
         }
 
@@ -152,10 +166,12 @@ internal sealed unsafe partial class VulkanPipelineManager
         bool acceptsBackendWork,
         bool asyncCompilationEnabled,
         bool foregroundRequired,
-        out string rejectReason)
+        out string rejectReason,
+        out bool retryable)
     {
         DrainSupersededSharedGraphicsPipelines();
         rejectReason = string.Empty;
+        retryable = false;
         InspectPipelineCompileHealth();
         if (!IsAsyncCompilationEnabled(
                 RequireDeviceContext().IsReady,
@@ -180,6 +196,7 @@ internal sealed unsafe partial class VulkanPipelineManager
             if (Volatile.Read(ref _vulkanPipelineCompileDependencyMutationActive) != 0)
             {
                 rejectReason = "shader or pipeline-layout dependencies are being replaced";
+                retryable = true;
                 return false;
             }
 
@@ -187,6 +204,7 @@ internal sealed unsafe partial class VulkanPipelineManager
                 Volatile.Read(ref _vulkanPipelineCompileDependencyGeneration))
             {
                 rejectReason = "pipeline build request captured a retired shader or pipeline-layout generation";
+                retryable = true;
                 return false;
             }
 
@@ -197,6 +215,7 @@ internal sealed unsafe partial class VulkanPipelineManager
                 if (foregroundRequired)
                     existingJob.PromoteToForeground();
                 rejectReason = "pipeline compile job is already queued";
+                retryable = true;
                 return false;
             }
 
@@ -211,10 +230,20 @@ internal sealed unsafe partial class VulkanPipelineManager
                 return false;
             }
 
-            if (_vulkanGraphicsPipelineProgramCompileJobs.ContainsKey(request.Key.ProgramPipelineHash))
+            if (_vulkanGraphicsPipelineProgramCompileJobs.TryGetValue(
+                    request.Key.ProgramPipelineHash,
+                    out VulkanGraphicsPipelineCompileKey blockingCompileKey))
             {
+                if (foregroundRequired &&
+                    _vulkanGraphicsPipelineCompileJobs.TryGetValue(
+                        blockingCompileKey,
+                        out VulkanGraphicsPipelineCompileJob? blockingJob))
+                {
+                    blockingJob.PromoteToForeground();
+                }
                 rejectReason =
                     $"another cold pipeline for program 0x{request.Key.ProgramPipelineHash:X16} is already queued";
+                retryable = true;
                 return false;
             }
 
@@ -231,6 +260,7 @@ internal sealed unsafe partial class VulkanPipelineManager
             if (activeJobCount >= capacity && !foregroundRequired)
             {
                 rejectReason = $"async Vulkan pipeline compile queue is at capacity ({capacity}; active={activeJobCount}, completed={Math.Max(0, totalJobCount - activeJobCount)})";
+                retryable = true;
                 RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanPipelineTelemetry(
                     EVulkanPipelineTelemetryEvent.QueueRejected,
                     queueDepth: activeJobCount,

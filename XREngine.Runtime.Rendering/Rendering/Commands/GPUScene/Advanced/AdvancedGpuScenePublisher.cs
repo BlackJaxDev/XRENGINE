@@ -102,10 +102,10 @@ public sealed partial class AdvancedGpuScenePublisher
         ulong frameId,
         in AdvancedGlobalResourceCapture globalResources)
     {
-        AdvanceSequence();
         _topologyDeltaCount = 0;
         _contentDeltaCount = 0;
         _legacyMappingCount = 0;
+        _dirtyOwnerRangeCount = 0;
         _publicationRejected = false;
 
         if (Database.PublicationFaulted)
@@ -134,6 +134,11 @@ public sealed partial class AdvancedGpuScenePublisher
             _publicationRejected = true;
             return;
         }
+        if (!TryEnsurePlannedGeometryBoundaryCapacity())
+        {
+            _publicationRejected = true;
+            return;
+        }
         AdvancedGlobalResourceCapture acceptedGlobalResources =
             globalResources.FrameId == frameId
                 ? globalResources
@@ -143,6 +148,8 @@ public sealed partial class AdvancedGpuScenePublisher
             _publicationRejected = true;
             return;
         }
+        if (TryReuseUnchangedPublication())
+            return;
         if (!Database.TryBeginPublication(
                 out AdvancedGpuScenePublicationTransaction transaction))
         {
@@ -191,11 +198,32 @@ public sealed partial class AdvancedGpuScenePublisher
                 registration.LastSeenSequence = _sequence;
                 registration.LegacyCommandIndex = commandIndex;
                 _commandDrawHandles[commandIndex] = registration.Draw;
+                int submissionIndex = _legacyMappingCount;
                 AppendLegacyMapping(
                     commandIndex,
                     plan.PrimitiveIndex,
                     in plan.Command,
                     in registration);
+                _plannedSubmissionRecords[submissionIndex] = new AdvancedDrawSubmissionRecord
+                {
+                    Draw = registration.Draw,
+                    Geometry = registration.Geometry,
+                    Material = registration.Material,
+                    Deformation = registration.Deformation,
+                    StableQueryKey = plan.Source.StableQueryKey,
+                    LegacyCommandIndex = commandIndex,
+                    PrimitiveIndex = checked((uint)Math.Max(0, plan.PrimitiveIndex)),
+                    PassIndex = plan.Command.RenderPass,
+                    InstanceCount = Math.Max(1u, plan.Command.InstanceCount),
+                    Flags = plan.Command.Flags,
+                    StateClass = plan.Command.StateClassID,
+                    CompatibilityReason = plan.CompatibilityReason,
+                    SourceOrder = ((ulong)commandIndex << 32) | unchecked((uint)plan.PrimitiveIndex),
+                    DependencySignature = Mix(plan.StructuralSignature, plan.ContentSignature),
+                };
+                _plannedDeformationSources[submissionIndex] = new AdvancedManagedDeformationSourceRow(
+                    plan.Source, plan.Source.Mesh, checked((uint)Math.Max(0, plan.MeshVertexCount)),
+                    plan.ContentSignature, plan.StructuralSignature);
             }
 
             TombstoneMissingRegistrations();
@@ -228,6 +256,15 @@ public sealed partial class AdvancedGpuScenePublisher
                     EAdvancedGpuScenePublicationFault.SnapshotCaptureFailed);
                 throw new InvalidOperationException(
                     "Canonical resource source capture failed after sealing the logical resource image.");
+            }
+
+            if (!Database.TryCaptureSubmissionPublication(
+                    in transaction,
+                    _plannedSubmissionRecords.AsSpan(0, _legacyMappingCount),
+                    _plannedDeformationSources.AsSpan(0, _legacyMappingCount)))
+            {
+                Database.FaultActivePublication(in transaction, EAdvancedGpuScenePublicationFault.SnapshotCaptureFailed);
+                throw new InvalidOperationException("Canonical submission sidecar capture failed after table sealing.");
             }
 
             PublishSourceDrawIdentities(in provisional);
@@ -1128,9 +1165,6 @@ public sealed partial class AdvancedGpuScenePublisher
             return 1u;
         return BitOperations.RoundUpToPowerOf2(value);
     }
-
-    private void AdvanceSequence()
-        => AdvanceNonZero(ref _sequence);
 
     private static void AdvanceNonZero(ref ulong value)
     {

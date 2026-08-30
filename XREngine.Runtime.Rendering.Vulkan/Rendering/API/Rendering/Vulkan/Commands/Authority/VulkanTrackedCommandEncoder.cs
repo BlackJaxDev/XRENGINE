@@ -292,13 +292,11 @@ internal readonly unsafe struct VulkanTrackedCommandEncoder(VulkanCommandRuntime
 
     internal bool TryAcquireFrameDataLease(
         CommandBuffer commandBuffer,
-        VkMeshRenderer owner,
         int drawSlot,
         ulong sealedGeneration,
         out string reason)
         => Runtime.ResourceRuntime.TryAcquirePreparedFrameDataLease(
             commandBuffer,
-            owner,
             drawSlot,
             sealedGeneration,
             out reason);

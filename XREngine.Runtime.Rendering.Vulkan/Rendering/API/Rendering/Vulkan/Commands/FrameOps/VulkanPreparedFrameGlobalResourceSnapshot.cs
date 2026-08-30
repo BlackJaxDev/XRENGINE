@@ -14,6 +14,7 @@ internal readonly record struct VulkanPreparedFrameGlobalResourceSnapshot(
     ulong PackageGeneration,
     int ViewCount,
     int PassCount,
+    int GlobalPassCoverageCount,
     int DiagnosticCount)
 {
     internal bool Matches(in AdvancedGpuScenePublicationReference publication)

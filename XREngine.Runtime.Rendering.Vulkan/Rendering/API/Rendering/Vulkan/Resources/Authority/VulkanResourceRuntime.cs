@@ -457,7 +457,6 @@ internal sealed partial class VulkanResourceRuntime
     /// </summary>
     internal bool TryAcquirePreparedFrameDataLease(
         CommandBuffer commandBuffer,
-        VkMeshRenderer owner,
         int drawSlot,
         ulong sealedGeneration,
         out string reason)
@@ -467,7 +466,7 @@ internal sealed partial class VulkanResourceRuntime
         ulong generation = MappedFrameArena?.Generation ?? 0UL;
         if (commandBufferHandle == 0 || generation == 0)
             return true;
-        if (owner is null || sealedGeneration == 0 || sealedGeneration != generation)
+        if (sealedGeneration == 0 || sealedGeneration != generation)
         {
             reason = $"prepared frame-data generation {sealedGeneration} does not match active generation {generation}";
             return false;
@@ -502,40 +501,59 @@ internal sealed partial class VulkanResourceRuntime
     internal bool TryPublishCommandBufferTrackingBatch(
         CommandBuffer commandBuffer,
         VulkanCommandBufferTrackingBatch batch,
-        out string reason)
+        out string reason,
+        out long lifetimeLockWaitTicks)
     {
         reason = string.Empty;
+        lifetimeLockWaitTicks = 0L;
         ulong commandBufferHandle = unchecked((ulong)commandBuffer.Handle);
         if (commandBufferHandle == 0)
             return true;
 
-        lock (Lifetime.Tracker.SyncRoot)
-        lock (batch)
+        object lifetimeGate = Lifetime.Tracker.SyncRoot;
+        if (!Monitor.TryEnter(lifetimeGate))
         {
-            if (batch.QueuedSubmissionCount != 0)
+            long waitStarted = Stopwatch.GetTimestamp();
+            Monitor.Enter(lifetimeGate);
+            lifetimeLockWaitTicks = Math.Max(
+                1L,
+                Stopwatch.GetTimestamp() - waitStarted);
+        }
+        VulkanFrameHotPathTelemetry.RecordLifetimeLockWait(
+            lifetimeLockWaitTicks);
+        try
+        {
+            lock (batch)
             {
-                reason = $"Command buffer 0x{commandBufferHandle:X} is queued for submission.";
-                return false;
-            }
-
-            foreach (VulkanResourceLifetimeKey key in batch.Dependencies)
-            {
-                if (!TryValidateCommandBufferDependencyNoLock(commandBufferHandle, key, out reason))
+                if (batch.QueuedSubmissionCount != 0)
+                {
+                    reason = $"Command buffer 0x{commandBufferHandle:X} is queued for submission.";
                     return false;
+                }
+
+                foreach (VulkanResourceLifetimeKey key in batch.Dependencies)
+                {
+                    if (!TryValidateCommandBufferDependencyNoLock(commandBufferHandle, key, out reason))
+                        return false;
+                }
+
+                if (!Lifetime.Tracker.CommandBufferLifetimes.TryGetValue(commandBufferHandle, out VulkanCommandBufferLifetimeRecord? lifetime))
+                {
+                    lifetime = new VulkanCommandBufferLifetimeRecord();
+                    Lifetime.Tracker.CommandBufferLifetimes[commandBufferHandle] = lifetime;
+                }
+
+                foreach (VulkanResourceLifetimeKey key in batch.Dependencies)
+                    PublishCommandBufferDependencyNoLock(commandBufferHandle, lifetime, key);
+
+                lifetime.RefreshTouchedDependencies();
+                batch.Dependencies.Clear();
+                return true;
             }
-
-            if (!Lifetime.Tracker.CommandBufferLifetimes.TryGetValue(commandBufferHandle, out VulkanCommandBufferLifetimeRecord? lifetime))
-            {
-                lifetime = new VulkanCommandBufferLifetimeRecord();
-                Lifetime.Tracker.CommandBufferLifetimes[commandBufferHandle] = lifetime;
-            }
-
-            foreach (VulkanResourceLifetimeKey key in batch.Dependencies)
-                PublishCommandBufferDependencyNoLock(commandBufferHandle, lifetime, key);
-
-            lifetime.RefreshTouchedDependencies();
-            batch.Dependencies.Clear();
-            return true;
+        }
+        finally
+        {
+            Monitor.Exit(lifetimeGate);
         }
     }
 

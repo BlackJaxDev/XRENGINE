@@ -67,7 +67,7 @@ namespace XREngine
                     ERenderPipelinePurpose.DesktopScene or
                     ERenderPipelinePurpose.OffscreenCapture =>
                         NewStandardRenderPipeline(
-                            request.Stereo,
+                            request,
                             advancedMode,
                             capabilities),
                     _ => throw new ArgumentOutOfRangeException(
@@ -78,106 +78,135 @@ namespace XREngine
             }
 
             internal static RenderPipeline NewStandardRenderPipeline(
-                bool stereo,
+                RenderPipelineRequest request,
                 EAdvancedRenderPipelineMode mode,
                 in AdvancedRenderPipelineCapabilities capabilities)
             {
+                // Desktop cameras are configured before a physical output exists.
+                // Make Advanced the source asset for the normal Available/Required
+                // policy and bind its output-local capability reservation later.
+                // Disabled/Diagnostic and independently owned offscreen outputs
+                // retain their explicit selection semantics.
+                if (request.Purpose == ERenderPipelinePurpose.DesktopScene &&
+                    request.OutputId == 0 &&
+                    (mode is EAdvancedRenderPipelineMode.Available or
+                        EAdvancedRenderPipelineMode.Required))
+                {
+                    return new AdvancedRenderPipeline(request.Stereo);
+                }
+
                 AdvancedRenderPipelineSelectionResult selection =
-                    ResolveAdvancedRenderPipelineSelection(stereo, mode, capabilities);
+                    ResolveAdvancedRenderPipelineSelection(
+                        request,
+                        mode,
+                        capabilities,
+                        reservationRenderer: null,
+                        retainConfiguredSource: false,
+                        out _,
+                        out _);
 
                 return selection.EffectiveKind switch
                 {
                     ERenderPipelineKind.Advanced =>
-                        new AdvancedRenderPipeline(stereo, selection.CapabilityResult),
+                        new AdvancedRenderPipeline(request.Stereo, selection.CapabilityResult),
                     ERenderPipelineKind.LegacyDefault =>
-                        new DefaultRenderPipeline(stereo),
+                        new DefaultRenderPipeline(request.Stereo),
                     _ => throw new AdvancedRenderPipelineNotSupportedException(selection),
                 };
             }
 
             public static void ApplyRenderPipelinePreference()
             {
-                bool preferDebug = Engine.EditorPreferences?.Debug?.UseDebugOpaquePipeline ?? false;
                 foreach (XRViewport viewport in RuntimeEngine.EnumerateActiveViewports(
                              RuntimeEngine.EViewportEnumerationMode.IncludeVrEyeViewports))
+                    ApplyRenderPipelineOutputBinding(viewport);
+            }
+
+            private static void ApplyRenderPipelineOutputBinding(XRViewport viewport)
+            {
+                if (viewport.IsDestroyed)
                 {
-                    RenderPipelineRequest request = viewport.PipelineRequest;
-                    RenderPipeline? pipeline = viewport.RenderPipeline;
-
-                    if (pipeline is null)
-                    {
-                        viewport.RenderPipeline = NewRenderPipeline(request);
-                        continue;
-                    }
-
-                    if (pipeline.OverrideProtected)
-                        continue;
-
-                    if (request.Purpose == ERenderPipelinePurpose.OpenXrEye)
-                    {
-                        if (pipeline is RvcRenderPipeline rvcPipeline &&
-                            rvcPipeline.Stereo == request.Stereo)
-                        {
-                            ApplyRvcSettings(rvcPipeline);
-                            continue;
-                        }
-
-                        viewport.RenderPipeline = NewRenderPipeline(request);
-                        continue;
-                    }
-
-                    if (pipeline is RvcRenderPipeline)
-                    {
-                        viewport.RenderPipeline = NewRenderPipeline(request);
-                        continue;
-                    }
-
-                    bool debugAllowed =
-                        request.Purpose == ERenderPipelinePurpose.DesktopScene &&
-                        !request.Stereo;
-                    if (preferDebug && debugAllowed)
-                    {
-                        if (pipeline is DefaultRenderPipeline or AdvancedRenderPipeline)
-                        {
-                            viewport.RenderPipeline = new DebugOpaqueRenderPipeline();
-                            continue;
-                        }
-                    }
-                    else if (pipeline is DebugOpaqueRenderPipeline)
-                    {
-                        viewport.RenderPipeline = NewRenderPipeline(request);
-                        continue;
-                    }
-
-                    if (pipeline is not DefaultRenderPipeline and not AdvancedRenderPipeline)
-                        continue;
-
-                    AdvancedRenderPipelineCapabilities capabilities =
-                        RuntimeRenderingHostServices.FrameTiming.CurrentRenderer?
-                            .GetAdvancedRenderPipelineCapabilities()
-                        ?? AdvancedRenderPipelineCapabilities.NoRenderer;
-                    AdvancedRenderPipelineSelectionResult selection =
-                        ResolveAdvancedRenderPipelineSelection(
-                            request.Stereo,
-                            AdvancedRenderPipelineMode,
-                            capabilities);
-
-                    if (selection.SelectsAdvanced)
-                    {
-                        if (pipeline is AdvancedRenderPipeline advancedPipeline)
-                            advancedPipeline.ApplyCapabilityResult(selection.CapabilityResult);
-                        else
-                            viewport.RenderPipeline =
-                                new AdvancedRenderPipeline(
-                                    request.Stereo,
-                                    selection.CapabilityResult);
-                    }
-                    else if (pipeline is AdvancedRenderPipeline)
-                    {
-                        viewport.RenderPipeline =
-                            new DefaultRenderPipeline(request.Stereo);
-                    }
+                    viewport.RenderPipelineInstance.ClearAdvancedOutputBinding();
+                    return;
                 }
+
+                RenderPipelineRequest request = viewport.PipelineRequest;
+                RenderPipeline? pipeline = viewport.RenderPipeline;
+                if (pipeline is null)
+                {
+                    viewport.RenderPipelineInstance.ClearAdvancedOutputBinding();
+                    return;
+                }
+
+                // OpenXR eye pipelines are explicit output-owned exceptions to
+                // camera source authority. Their lifecycle owns distinct RVC
+                // command chains and only copies compatible visual features.
+                if (request.Purpose == ERenderPipelinePurpose.OpenXrEye)
+                {
+                    viewport.RenderPipelineInstance.ClearAdvancedOutputBinding();
+                    if (pipeline is RvcRenderPipeline rvcPipeline &&
+                        rvcPipeline.Stereo == request.Stereo)
+                    {
+                        ApplyRvcSettings(rvcPipeline);
+                    }
+                    else if (!pipeline.OverrideProtected &&
+                             !viewport.SetRenderPipelineFromCamera)
+                    {
+                        viewport.RenderPipeline = NewRenderPipeline(request);
+                    }
+                    return;
+                }
+
+                // A configured source is authoritative. Default, debug, capture,
+                // and custom pipelines are never promoted or replaced here.
+                if (pipeline is not AdvancedRenderPipeline)
+                {
+                    viewport.RenderPipelineInstance.ClearAdvancedOutputBinding();
+                    return;
+                }
+
+                IRuntimeRendererHost? renderer = viewport.Window?.Renderer
+                    ?? RuntimeRenderingHostServices.FrameTiming.CurrentRenderer;
+                AdvancedRenderPipelineCapabilities capabilities =
+                    renderer?.GetAdvancedRenderPipelineCapabilities()
+                    ?? AdvancedRenderPipelineCapabilities.NoRenderer;
+                EAdvancedRenderPipelineMode mode = AdvancedRenderPipelineMode;
+                AdvancedRenderPipelineSelectionResult selection =
+                    ResolveAdvancedRenderPipelineSelection(
+                        request,
+                        mode,
+                        capabilities,
+                        renderer,
+                        retainConfiguredSource: true,
+                        out AdvancedVisibilityFamilyReservation reservation,
+                        out string reservationFailureReason);
+
+                EAdvancedRenderPipelineOutputBindingState state = mode switch
+                {
+                    EAdvancedRenderPipelineMode.Disabled =>
+                        EAdvancedRenderPipelineOutputBindingState.Disabled,
+                    EAdvancedRenderPipelineMode.Diagnostic =>
+                        EAdvancedRenderPipelineOutputBindingState.DiagnosticOnly,
+                    _ when selection.SelectsAdvanced =>
+                        EAdvancedRenderPipelineOutputBindingState.Bound,
+                    _ => EAdvancedRenderPipelineOutputBindingState.Rejected,
+                };
+                string? failureReason = state switch
+                {
+                    EAdvancedRenderPipelineOutputBindingState.Bound => null,
+                    EAdvancedRenderPipelineOutputBindingState.Disabled =>
+                        "Advanced output binding is disabled by policy.",
+                    EAdvancedRenderPipelineOutputBindingState.DiagnosticOnly =>
+                        "Advanced output binding is diagnostic-only by policy.",
+                    _ => reservationFailureReason,
+                };
+                AdvancedRenderPipelineOutputBinding binding = new(
+                    request,
+                    selection.CapabilityResult,
+                    reservation,
+                    state,
+                    failureReason);
+                viewport.RenderPipelineInstance.ApplyAdvancedOutputBinding(in binding);
             }
 
             private static EAdvancedRenderPipelineMode ResolveAdvancedRenderPipelineMode()
@@ -205,12 +234,37 @@ namespace XREngine
             }
 
             private static AdvancedRenderPipelineSelectionResult ResolveAdvancedRenderPipelineSelection(
-                bool stereo,
+                RenderPipelineRequest request,
                 EAdvancedRenderPipelineMode mode,
-                in AdvancedRenderPipelineCapabilities capabilities)
+                in AdvancedRenderPipelineCapabilities capabilities,
+                IRuntimeRendererHost? reservationRenderer,
+                bool retainConfiguredSource,
+                out AdvancedVisibilityFamilyReservation reservation,
+                out string reservationFailureReason)
             {
+                reservation = default;
+                // The public snapshot deliberately stays fail-closed: it has no
+                // output identity. Only this selection boundary may turn a live,
+                // sticky reservation into the promoted shader-family capability.
+                AdvancedRenderPipelineCapabilities effectiveCapabilities = capabilities;
+                reservationFailureReason = "Reservation was not requested for this output.";
+                if ((mode == EAdvancedRenderPipelineMode.Available ||
+                     mode == EAdvancedRenderPipelineMode.Required) &&
+                    request.Purpose == ERenderPipelinePurpose.DesktopScene &&
+                    !request.Stereo && request.OutputId != 0 &&
+                    reservationRenderer is not null &&
+                    reservationRenderer.TryReserveAdvancedVisibilityFamily(
+                        request.OutputId,
+                        out reservation,
+                        out reservationFailureReason))
+                {
+                    effectiveCapabilities = capabilities with
+                    {
+                        ShaderFamily = EAdvancedShaderFamily.VisibilityBuffer,
+                    };
+                }
                 AdvancedRenderPipelineSelectionResult selection =
-                    AdvancedRenderPipelineSelectionResolver.Resolve(mode, capabilities, stereo);
+                    AdvancedRenderPipelineSelectionResolver.Resolve(mode, effectiveCapabilities, request.Stereo);
 
                 lock (AdvancedPipelineSelectionLock)
                     _lastAdvancedPipelineSelection = selection;
@@ -218,7 +272,15 @@ namespace XREngine
                 RuntimeEngine.Rendering.Stats.RendererState.UpdateAdvancedPipelineContext(selection);
 
                 if (selection.RequiresFailure)
-                    throw new AdvancedRenderPipelineNotSupportedException(selection);
+                {
+                    Debug.RenderingError(
+                        "[AdvancedPipeline] Required output reservation failed. Output={0} Reason={1}",
+                        request.OutputId,
+                        reservationFailureReason);
+                    throw new AdvancedRenderPipelineNotSupportedException(
+                        selection,
+                        reservationFailureReason);
+                }
 
                 if (mode == EAdvancedRenderPipelineMode.Diagnostic)
                 {
@@ -227,11 +289,24 @@ namespace XREngine
                 else if (mode == EAdvancedRenderPipelineMode.Available &&
                          !selection.SelectsAdvanced)
                 {
-                    Debug.RenderingWarningEvery(
-                        $"AdvancedPipeline.AvailableFallback.{selection.CapabilityResult.RejectionReason}",
-                        TimeSpan.FromSeconds(10),
-                        "[AdvancedPipeline] {0}",
-                        selection.Diagnostic);
+                    if (retainConfiguredSource)
+                    {
+                        Debug.RenderingWarningEvery(
+                            $"AdvancedPipeline.OutputUnbound.{request.OutputId}.{selection.CapabilityResult.RejectionReason}",
+                            TimeSpan.FromSeconds(10),
+                            "[AdvancedPipeline] Configured AdvancedRenderPipeline retained, but output {0} is unbound. Reason={1} Capability={2}",
+                            request.OutputId,
+                            reservationFailureReason,
+                            selection.CapabilityResult.Diagnostic);
+                    }
+                    else
+                    {
+                        Debug.RenderingWarningEvery(
+                            $"AdvancedPipeline.AvailableFallback.{selection.CapabilityResult.RejectionReason}",
+                            TimeSpan.FromSeconds(10),
+                            "[AdvancedPipeline] {0}",
+                            selection.Diagnostic);
+                    }
                 }
 
                 return selection;
