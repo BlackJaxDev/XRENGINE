@@ -17,7 +17,9 @@ internal readonly record struct VulkanPrimaryCommandRecordingResult(
     FramePlan? OutputExecutionPlan = null,
     ERenderOutputReadinessPolicy ReadinessPolicy = ERenderOutputReadinessPolicy.AllowDeferral,
     ERenderOutputWorkClass WorkClass = ERenderOutputWorkClass.Background,
-    ulong SourceFrameId = 0UL)
+    ulong SourceFrameId = 0UL,
+    EVulkanCommandRecordingFailureKind FailureKind =
+        EVulkanCommandRecordingFailureKind.None)
 {
     internal bool Succeeded => Disposition is EVulkanPrimaryCommandRecordingDisposition.Recorded or
         EVulkanPrimaryCommandRecordingDisposition.RecordedWithGpuFallback or
@@ -26,19 +28,26 @@ internal readonly record struct VulkanPrimaryCommandRecordingResult(
     internal bool IsPresentNowFailure => Disposition == EVulkanPrimaryCommandRecordingDisposition.Failed &&
         WorkClass == ERenderOutputWorkClass.PresentNow;
     internal bool RequiresReplan => Disposition == EVulkanPrimaryCommandRecordingDisposition.ReplanRequired;
+    internal bool RequiresFrameRetry =>
+        FailureKind == EVulkanCommandRecordingFailureKind.RetryFrame;
 
     internal static VulkanPrimaryCommandRecordingResult ReplanRequired(string reason)
         => new(EVulkanPrimaryCommandRecordingDisposition.ReplanRequired, default, default, 0, default, default,
-            ImageLayout.Undefined, 0, 0, reason);
+            ImageLayout.Undefined, 0, 0, reason,
+            FailureKind: EVulkanCommandRecordingFailureKind.ReplanRequired);
 
     internal static VulkanPrimaryCommandRecordingResult Deferred(string reason)
         => new(EVulkanPrimaryCommandRecordingDisposition.Deferred, default, default, 0, default, default,
-            ImageLayout.Undefined, 0, 0, reason);
+            ImageLayout.Undefined, 0, 0, reason,
+            FailureKind: EVulkanCommandRecordingFailureKind.Deferred);
 
     internal static VulkanPrimaryCommandRecordingResult Failed(string reason,
         ERenderOutputReadinessPolicy readinessPolicy = ERenderOutputReadinessPolicy.BlockForExact,
         ERenderOutputWorkClass workClass = ERenderOutputWorkClass.PresentNow,
-        ulong sourceFrameId = 0UL)
+        ulong sourceFrameId = 0UL,
+        EVulkanCommandRecordingFailureKind failureKind =
+            EVulkanCommandRecordingFailureKind.None)
         => new(EVulkanPrimaryCommandRecordingDisposition.Failed, default, default, 0, default, default,
-            ImageLayout.Undefined, 0, 0, reason, null, readinessPolicy, workClass, sourceFrameId);
+            ImageLayout.Undefined, 0, 0, reason, null, readinessPolicy,
+            workClass, sourceFrameId, failureKind);
 }

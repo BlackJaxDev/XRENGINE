@@ -22,6 +22,4 @@ public partial class AdvancedRenderPipeline : IAdvancedRenderPipelineCapabilityS
     internal void RefreshCapabilityResult()
         => CapabilityResult = AdvancedRenderPipelineCapabilityResolver.ResolveCurrent(Stereo);
 
-    internal void ApplyCapabilityResult(AdvancedRenderPipelineCapabilityResult capabilityResult)
-        => CapabilityResult = capabilityResult;
 }

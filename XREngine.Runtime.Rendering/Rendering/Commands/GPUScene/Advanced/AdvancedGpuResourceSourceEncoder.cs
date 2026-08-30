@@ -32,6 +32,13 @@ public static class AdvancedGpuResourceSourceEncoder
             reason = $"Texture type '{texture.GetType().Name}' is not a 2D material texture.";
             return false;
         }
+
+        // A streamed texture can complete on a worker while the scene boundary
+        // is capturing resources. Require one stable source generation around
+        // every source-metadata read; a later boundary will retry against the
+        // completed source instead of publishing a torn description.
+        ulong sourceContentGeneration = texture2D.CanonicalSourceContentGeneration;
+
         if (texture2D.Rectangle || texture2D.MultiSample)
         {
             source = default;
@@ -116,7 +123,15 @@ public static class AdvancedGpuResourceSourceEncoder
             addressV,
             compareOperation,
             mipCount);
-        source = new(texture2D, textureRecord, samplerRecord, fallback);
+        if (sourceContentGeneration != texture2D.CanonicalSourceContentGeneration)
+        {
+            source = default;
+            compatibilityReason = EAdvancedCanonicalCompatibilityReason.EmptyResourceTexture;
+            reason = "The texture source changed while canonical metadata was being captured.";
+            return false;
+        }
+
+        source = new(texture2D, textureRecord, samplerRecord, fallback, sourceContentGeneration);
         compatibilityReason = EAdvancedCanonicalCompatibilityReason.None;
         reason = string.Empty;
         return true;

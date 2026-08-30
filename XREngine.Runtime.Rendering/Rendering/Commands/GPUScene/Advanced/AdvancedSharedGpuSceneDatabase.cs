@@ -21,6 +21,7 @@ public sealed class AdvancedSharedGpuSceneDatabase
     private readonly uint[] _leaseGenerations;
     private readonly byte[] _leaseActive;
     private readonly ulong _databaseEpoch;
+    private AdvancedSharedGpuSceneCapacityProfile _capacities;
     private int _publicationHead;
     private int _publicationCount;
     private ulong _nextPublicationSequence = 1u;
@@ -44,6 +45,7 @@ public sealed class AdvancedSharedGpuSceneDatabase
         if (consumerCapacity == 0u || consumerCapacity >= int.MaxValue)
             throw new ArgumentOutOfRangeException(nameof(consumerCapacity));
 
+        _capacities = capacities;
         Scene = new AdvancedGpuSceneDatabase(capacities.Scene);
         Materials = new AdvancedMaterialDatabase(
             capacities.MaterialRecords,
@@ -76,8 +78,16 @@ public sealed class AdvancedSharedGpuSceneDatabase
         _leaseActive = new byte[leaseCapacity + 1];
         _databaseEpoch = CreateDatabaseEpoch();
         for (int index = 0; index < _publicationSnapshots.Length; ++index)
-            _publicationSnapshots[index] = new AdvancedGpuScenePublicationSnapshot(this);
+            _publicationSnapshots[index] = new AdvancedGpuScenePublicationSnapshot(this, _capacities);
     }
+
+    /// <summary>
+    /// Current structural capacities used by the live tables and retained
+    /// publication snapshots. Producers use this as the base for boundary-only
+    /// growth so an independently grown arena never shrinks another domain's
+    /// snapshot budget.
+    /// </summary>
+    public AdvancedSharedGpuSceneCapacityProfile Capacities => _capacities;
 
     public AdvancedGpuSceneDatabase Scene { get; }
 
@@ -217,7 +227,16 @@ public sealed class AdvancedSharedGpuSceneDatabase
             int ringIndex =
                 (_publicationHead + _publicationCount) % _publicationRing.Length;
             if (!CanPreparePublicationCore(ringIndex))
-                return false;
+            {
+                // A retained entry may have been sealed before the live tables
+                // grew. The selected ring entry is free, so refresh only that
+                // snapshot at this legal boundary and leave retained snapshots
+                // untouched for their current consumers.
+                _publicationSnapshots[ringIndex] =
+                    new AdvancedGpuScenePublicationSnapshot(this, _capacities);
+                if (!CanPreparePublicationCore(ringIndex))
+                    return false;
+            }
 
             _activePublicationSequence = _nextPublicationSequence;
             _activePublicationRingIndex = ringIndex;
@@ -299,7 +318,8 @@ public sealed class AdvancedSharedGpuSceneDatabase
                 lookupGeneration);
             AdvancedGpuScenePublicationSnapshot snapshot =
                 _publicationSnapshots[transaction.RingIndex];
-            if (!TrySealTablePublication(transaction.Sequence, snapshot))
+            if (!TrySealTablePublication(transaction.Sequence, snapshot) ||
+                !snapshot.TryCaptureCanonicalDependencyState(transaction.Sequence, this))
                 return false;
 
             _preparedPublication = publication;
@@ -351,6 +371,55 @@ public sealed class AdvancedSharedGpuSceneDatabase
             _publicationPrepared = false;
             IncrementSequence(ref _nextPublicationSequence);
             return true;
+        }
+    }
+
+    internal bool TryCaptureSubmissionPublication(
+        in AdvancedGpuScenePublicationTransaction transaction,
+        ReadOnlySpan<AdvancedDrawSubmissionRecord> records,
+        ReadOnlySpan<AdvancedManagedDeformationSourceRow> deformationSources)
+    {
+        lock (_publicationSync)
+        {
+            return IsActiveTransactionCurrent(in transaction) && _publicationPrepared &&
+                _publicationSnapshots[transaction.RingIndex].Submission.TryCapture(
+                    transaction.Sequence, records, deformationSources);
+        }
+    }
+
+    /// <summary>
+    /// Captures bounded publication-retention diagnostics without exposing the
+    /// ring or lease tables themselves.
+    /// </summary>
+    public AdvancedGpuSceneRetentionSnapshot CaptureRetentionSnapshot()
+    {
+        lock (_publicationSync)
+        {
+            ulong oldestSequence = _publicationCount == 0
+                ? 0u
+                : _publicationRing[_publicationHead].Sequence;
+            uint oldestPackagePins = _publicationCount == 0
+                ? 0u
+                : _packagePinCounts[_publicationHead];
+            uint oldestGpuPins = _publicationCount == 0
+                ? 0u
+                : _gpuPinCounts[_publicationHead];
+            uint totalPackagePins = 0u;
+            uint totalGpuPins = 0u;
+            for (int offset = 0; offset < _publicationCount; ++offset)
+            {
+                int index = (_publicationHead + offset) % _publicationRing.Length;
+                totalPackagePins = checked(totalPackagePins + _packagePinCounts[index]);
+                totalGpuPins = checked(totalGpuPins + _gpuPinCounts[index]);
+            }
+
+            return new AdvancedGpuSceneRetentionSnapshot(
+                _publicationCount,
+                oldestSequence,
+                oldestPackagePins,
+                oldestGpuPins,
+                totalPackagePins,
+                totalGpuPins);
         }
     }
 
@@ -626,14 +695,15 @@ public sealed class AdvancedSharedGpuSceneDatabase
         if (!TryGrowAtFrameBoundary(capacities))
         {
             throw new InvalidOperationException(
-                "Shared GPU-scene storage cannot grow while a publication is retained by a consumer or lease.");
+                "Shared GPU-scene storage cannot grow during an active or faulted publication.");
         }
     }
 
     /// <summary>
-    /// Attempts boundary-only growth without throwing when retained publications
-    /// make the boundary temporarily unavailable. Producers use this to reject a
-    /// complete publication and retry on a later legal boundary.
+    /// Attempts boundary-only growth without invalidating retained publications.
+    /// Live tables replace their backing arrays, while only free publication-ring
+    /// snapshots are rebuilt at the larger capacity. Retained snapshots keep their
+    /// exact immutable images until their consumers release them.
     /// </summary>
     public bool TryGrowAtFrameBoundary(
         in AdvancedSharedGpuSceneCapacityProfile capacities)
@@ -641,30 +711,97 @@ public sealed class AdvancedSharedGpuSceneDatabase
         lock (_publicationSync)
         {
             DrainAcknowledgedPublicationsAndReclaimTombstones();
-            if (_publicationFaulted || _activePublicationSequence != 0u ||
-                _publicationCount != 0)
+            if (_publicationFaulted || _activePublicationSequence != 0u)
                 return false;
 
-            Scene.GrowAtFrameBoundary(capacities.Scene);
+            AdvancedSharedGpuSceneCapacityProfile grown =
+                GrowCapacityProfile(in _capacities, in capacities);
+            if (grown == _capacities)
+                return true;
+
+            Scene.GrowAtFrameBoundary(grown.Scene);
             Materials.GrowAtFrameBoundary(
-                capacities.MaterialRecords,
-                capacities.ShadingKernels,
-                capacities.MaterialLayouts,
-                capacities.MaterialLayoutMembers,
-                capacities.MaterialConstantWords,
-                capacities.MaterialTextureBindings);
+                grown.MaterialRecords,
+                grown.ShadingKernels,
+                grown.MaterialLayouts,
+                grown.MaterialLayoutMembers,
+                grown.MaterialConstantWords,
+                grown.MaterialTextureBindings);
             Resources.GrowAtFrameBoundary(
-                capacities.TextureRecords,
-                capacities.SamplerRecords,
-                capacities.LightRecords,
-                capacities.ShadowRecords,
-                capacities.ProbeRecords,
-                capacities.EnvironmentRecords,
-                capacities.DecalRecords,
-                capacities.GiResourceRecords);
+                grown.TextureRecords,
+                grown.SamplerRecords,
+                grown.LightRecords,
+                grown.ShadowRecords,
+                grown.ProbeRecords,
+                grown.EnvironmentRecords,
+                grown.DecalRecords,
+                grown.GiResourceRecords);
             HandleLookups.RebuildAtFrameBoundary(Scene, Materials, Resources);
+            _capacities = grown;
             for (int index = 0; index < _publicationSnapshots.Length; ++index)
-                _publicationSnapshots[index] = new AdvancedGpuScenePublicationSnapshot(this);
+            {
+                if (_publicationRing[index].Sequence != 0u)
+                    continue;
+
+                _publicationSnapshots[index] =
+                    new AdvancedGpuScenePublicationSnapshot(this, _capacities);
+            }
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Grows only append-only geometry payload arenas at a publication boundary.
+    /// Retained publications are legal here because each arena growth replaces
+    /// its backing array; older snapshots keep their previous immutable array.
+    /// Record tables, lookup images, and ring-owned snapshot storage are not
+    /// resized by this operation.
+    /// </summary>
+    public bool TryGrowGeometryArenasAtFrameBoundary(
+        in AdvancedGpuSceneCapacityProfile requested)
+    {
+        lock (_publicationSync)
+        {
+            if (_publicationFaulted || _activePublicationSequence != 0u)
+                return false;
+
+            AdvancedGpuSceneCapacityProfile current = _capacities.Scene;
+            AdvancedGpuSceneCapacityProfile grown = current with
+            {
+                StaticVertexBytes = Math.Max(
+                    current.StaticVertexBytes,
+                    requested.StaticVertexBytes),
+                IndexBytes = Math.Max(current.IndexBytes, requested.IndexBytes),
+                PreSkinnedCurrentBytes = Math.Max(
+                    current.PreSkinnedCurrentBytes,
+                    requested.PreSkinnedCurrentBytes),
+                PreSkinnedPreviousBytes = Math.Max(
+                    current.PreSkinnedPreviousBytes,
+                    requested.PreSkinnedPreviousBytes),
+                MeshletBytes = Math.Max(
+                    current.MeshletBytes,
+                    requested.MeshletBytes),
+                MeshletDescriptorBytes = Math.Max(
+                    current.MeshletDescriptorBytes,
+                    requested.MeshletDescriptorBytes),
+                MeshletVertexIndexBytes = Math.Max(
+                    current.MeshletVertexIndexBytes,
+                    requested.MeshletVertexIndexBytes),
+                MeshletTriangleWordBytes = Math.Max(
+                    current.MeshletTriangleWordBytes,
+                    requested.MeshletTriangleWordBytes),
+            };
+            Scene.Geometry.GrowAtBoundary(
+                current.GeometryRecords,
+                grown.StaticVertexBytes,
+                grown.IndexBytes,
+                grown.PreSkinnedCurrentBytes,
+                grown.PreSkinnedPreviousBytes,
+                grown.MeshletBytes,
+                grown.MeshletDescriptorBytes,
+                grown.MeshletVertexIndexBytes,
+                grown.MeshletTriangleWordBytes);
+            _capacities = _capacities with { Scene = grown };
             return true;
         }
     }
@@ -716,6 +853,46 @@ public sealed class AdvancedSharedGpuSceneDatabase
         total = checked(total + result);
         return true;
     }
+
+    private static AdvancedSharedGpuSceneCapacityProfile GrowCapacityProfile(
+        in AdvancedSharedGpuSceneCapacityProfile current,
+        in AdvancedSharedGpuSceneCapacityProfile requested)
+        => new(
+            GrowCapacityProfile(current.Scene, requested.Scene),
+            Math.Max(current.MaterialRecords, requested.MaterialRecords),
+            Math.Max(current.ShadingKernels, requested.ShadingKernels),
+            Math.Max(current.MaterialLayouts, requested.MaterialLayouts),
+            Math.Max(current.MaterialLayoutMembers, requested.MaterialLayoutMembers),
+            Math.Max(current.MaterialConstantWords, requested.MaterialConstantWords),
+            Math.Max(current.MaterialTextureBindings, requested.MaterialTextureBindings),
+            Math.Max(current.TextureRecords, requested.TextureRecords),
+            Math.Max(current.SamplerRecords, requested.SamplerRecords),
+            Math.Max(current.LightRecords, requested.LightRecords),
+            Math.Max(current.ShadowRecords, requested.ShadowRecords),
+            Math.Max(current.ProbeRecords, requested.ProbeRecords),
+            Math.Max(current.EnvironmentRecords, requested.EnvironmentRecords),
+            Math.Max(current.DecalRecords, requested.DecalRecords),
+            Math.Max(current.GiResourceRecords, requested.GiResourceRecords));
+
+    private static AdvancedGpuSceneCapacityProfile GrowCapacityProfile(
+        AdvancedGpuSceneCapacityProfile current,
+        AdvancedGpuSceneCapacityProfile requested)
+        => new(
+            Math.Max(current.DrawRecords, requested.DrawRecords),
+            Math.Max(current.InstanceRecords, requested.InstanceRecords),
+            Math.Max(current.TransformRecords, requested.TransformRecords),
+            Math.Max(current.DeformationRecords, requested.DeformationRecords),
+            Math.Max(current.RenderStateRecords, requested.RenderStateRecords),
+            Math.Max(current.EditorIdentityRecords, requested.EditorIdentityRecords),
+            Math.Max(current.GeometryRecords, requested.GeometryRecords),
+            Math.Max(current.StaticVertexBytes, requested.StaticVertexBytes),
+            Math.Max(current.IndexBytes, requested.IndexBytes),
+            Math.Max(current.PreSkinnedCurrentBytes, requested.PreSkinnedCurrentBytes),
+            Math.Max(current.PreSkinnedPreviousBytes, requested.PreSkinnedPreviousBytes),
+            Math.Max(current.MeshletBytes, requested.MeshletBytes),
+            Math.Max(current.MeshletDescriptorBytes, requested.MeshletDescriptorBytes),
+            Math.Max(current.MeshletVertexIndexBytes, requested.MeshletVertexIndexBytes),
+            Math.Max(current.MeshletTriangleWordBytes, requested.MeshletTriangleWordBytes));
 
     private bool EnsurePublicationCapacity()
     {

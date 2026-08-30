@@ -267,6 +267,10 @@ public static partial class EditorUnitTests
                 new Vector3(0.5f),
                 true,
                 XRMesh.Shapes.ECubemapTextureUVs.None);
+            // Unit boxes are procedural and therefore bypass the imported-model
+            // cooked-cache path. Build the shared payload once during world setup
+            // so resident GPU registration remains lookup-only in measured frames.
+            _ = mesh.GetOrCreateMeshletPayload(meshletSettings: null);
             AABB bounds = new(new Vector3(-0.5f), new Vector3(0.5f));
             XRMaterial[] sharedMaterials = new XRMaterial[materialCount];
             const float gridAspectRatio = 16.0f / 9.0f;

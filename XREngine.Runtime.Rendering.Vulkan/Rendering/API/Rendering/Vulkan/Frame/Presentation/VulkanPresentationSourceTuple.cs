@@ -88,4 +88,38 @@ internal readonly record struct VulkanPresentationSourceTuple(
         DescriptorPublicationGeneration != 0 &&
         OwningCommandArtifact.Handle != 0 &&
         OwningCommandArtifactGeneration != 0;
+
+    /// <summary>
+    /// Determines whether another snapshot is the exact publication captured
+    /// for this submit. Native Vulkan handles are compared by value so the
+    /// generated record equality cannot box Silk.NET handle structs on the
+    /// per-frame submit path.
+    /// </summary>
+    internal bool MatchesPublication(in VulkanPresentationSourceTuple other) =>
+        LogicalEpoch == other.LogicalEpoch &&
+        ReferenceEquals(ColorTexture, other.ColorTexture) &&
+        ReferenceEquals(FrameBuffer, other.FrameBuffer) &&
+        Context.PipelineIdentity == other.Context.PipelineIdentity &&
+        Context.ViewportIdentity == other.Context.ViewportIdentity &&
+        Context.ResourceGeneration == other.Context.ResourceGeneration &&
+        ReferenceEquals(Context.ResourceRegistry, other.Context.ResourceRegistry) &&
+        DescriptorResourceEpoch == other.DescriptorResourceEpoch &&
+        Image.Handle == other.Image.Handle &&
+        ImageAllocationGeneration == other.ImageAllocationGeneration &&
+        ImageView.Handle == other.ImageView.Handle &&
+        ImageViewGeneration == other.ImageViewGeneration &&
+        Sampler.Handle == other.Sampler.Handle &&
+        SamplerGeneration == other.SamplerGeneration &&
+        Format == other.Format &&
+        Aspect == other.Aspect &&
+        Samples == other.Samples &&
+        ExpectedLayout == other.ExpectedLayout &&
+        Width == other.Width &&
+        Height == other.Height &&
+        DescriptorSet.Handle == other.DescriptorSet.Handle &&
+        DescriptorSetGeneration == other.DescriptorSetGeneration &&
+        DescriptorSlot == other.DescriptorSlot &&
+        DescriptorPublicationGeneration == other.DescriptorPublicationGeneration &&
+        OwningCommandArtifact.Handle == other.OwningCommandArtifact.Handle &&
+        OwningCommandArtifactGeneration == other.OwningCommandArtifactGeneration;
 }

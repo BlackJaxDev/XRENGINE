@@ -40,6 +40,7 @@ internal sealed class VulkanCommandRecorder
         context.RecordedSwapchainWriteCount = 0;
         context.RecordedSwapchainFinalLayout = ImageLayout.Undefined;
         context.RecordingDeferredReason = string.Empty;
+        context.FailureKind = EVulkanCommandRecordingFailureKind.None;
         context.FrameOpsRequireRerecord = false;
 
         if (context.CommandBuffer.Handle != 0)

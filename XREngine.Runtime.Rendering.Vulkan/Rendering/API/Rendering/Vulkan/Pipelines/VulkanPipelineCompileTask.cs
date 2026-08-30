@@ -60,7 +60,7 @@ internal sealed class VulkanPipelineCompileTask : IDisposable
         {
             IsBackground = true,
             Name = "XRE Vulkan Pipeline Compile",
-            Priority = ThreadPriority.Normal,
+            Priority = ThreadPriority.BelowNormal,
         };
         _worker.Start();
     }

@@ -3,8 +3,9 @@ using System.Diagnostics;
 namespace XREngine.Execution;
 
 /// <summary>
-/// Persistent scheduler-owned lanes that drain the compatibility job queue.
-/// Foreground-affine and remote jobs remain owned by their existing dispatchers.
+/// Persistent scheduler-owned lanes that drain general <c>Any</c>-affinity work.
+/// Foreground affinities remain phase-polled; auxiliary affinities have their
+/// own scheduler domain.
 /// </summary>
 internal sealed class EngineGeneralWorkDomain
 {
@@ -17,6 +18,8 @@ internal sealed class EngineGeneralWorkDomain
     private int _synchronizationDisposed;
     private long _dispatchCount;
     private long _wakeCount;
+    private long _throttledDispatchCount;
+    private long _throttleWaitTicks;
 
     [ThreadStatic]
     private static EngineGeneralWorkDomain?[]? _inlineDrainStack;
@@ -45,6 +48,10 @@ internal sealed class EngineGeneralWorkDomain
     internal int WorkerCount => _workers.Length;
     internal long DispatchCount => Interlocked.Read(ref _dispatchCount);
     internal long WakeCount => Interlocked.Read(ref _wakeCount);
+    internal long ThrottledDispatchCount
+        => Interlocked.Read(ref _throttledDispatchCount);
+    internal long ThrottleWaitTicks
+        => Interlocked.Read(ref _throttleWaitTicks);
 
     internal void Start()
     {
@@ -179,7 +186,8 @@ internal sealed class EngineGeneralWorkDomain
         JobManager.WorkerLaneState previousLane = JobManager.EnterGeneralWorkerLane(laneId: 0);
         try
         {
-            while (Volatile.Read(ref _shutdownState) == 0 && _jobs.TryDispatchGeneralWork())
+            while (Volatile.Read(ref _shutdownState) == 0 &&
+                   _jobs.TryDispatchGeneralWorkUnthrottled())
                 Interlocked.Increment(ref _dispatchCount);
         }
         finally
@@ -210,8 +218,25 @@ internal sealed class EngineGeneralWorkDomain
                     continue;
 
                 Interlocked.Increment(ref _wakeCount);
-                while (Volatile.Read(ref _shutdownState) == 0 && _jobs.TryDispatchGeneralWork())
-                    Interlocked.Increment(ref _dispatchCount);
+                while (Volatile.Read(ref _shutdownState) == 0)
+                {
+                    if (_jobs.TryDispatchGeneralWork(out bool throttled))
+                    {
+                        Interlocked.Increment(ref _dispatchCount);
+                        continue;
+                    }
+                    if (!throttled)
+                        break;
+
+                    long waitStarted = Stopwatch.GetTimestamp();
+                    Interlocked.Increment(ref _throttledDispatchCount);
+                    JobManager.WaitForBackgroundDispatchPermission();
+                    Interlocked.Add(
+                        ref _throttleWaitTicks,
+                        Math.Max(
+                            1L,
+                            Stopwatch.GetTimestamp() - waitStarted));
+                }
             }
         }
         finally

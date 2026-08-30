@@ -29,7 +29,10 @@ internal sealed partial class VulkanCommandRuntime
         QueueFamilyIndices queueFamilyIndices = _deviceContext.QueueFamilies;
         uint graphicsFamily = queueFamilyIndices.GraphicsFamilyIndex
             ?? throw new InvalidOperationException("Graphics queue family is not available.");
-        CommandPool pool = CreateCommandPoolForFamily(graphicsFamily);
+        CommandPool pool = CreateCommandPoolForFamily(
+            graphicsFamily,
+            transient: false,
+            "CommandChain.SerialRetained");
         CommandBufferAllocateInfo allocInfo = new()
         {
             SType = StructureType.CommandBufferAllocateInfo,
@@ -113,13 +116,13 @@ internal sealed partial class VulkanCommandRuntime
     private bool TryEnsureMutableCommandChainSecondaryCommandBufferFromWorkerPool(
         CommandChain chain,
         uint imageIndex,
-        VulkanWorkerSecondaryCommandArena workerArena,
+        VulkanLaneCommandFamilyArena laneArena,
         HashSet<nint> executedSecondaryHandles,
         out CommandBuffer secondary)
     {
-        using VulkanWorkerSecondaryCommandArena.RecordingLease arenaLease =
-            VulkanWorkerSecondaryCommandArena.EnterRecording(workerArena);
-        CommandPool workerPool = workerArena.GetPool(chain.Key.FrameSlot);
+        using VulkanLaneCommandFamilyArena.RecordingLease arenaLease =
+            VulkanLaneCommandFamilyArena.EnterRecording(laneArena);
+        CommandPool workerPool = laneArena.RetainedPool;
         secondary = chain.SecondaryCommandBuffer;
         if (workerPool.Handle == 0)
             return false;
@@ -156,7 +159,7 @@ internal sealed partial class VulkanCommandRuntime
                 secondary,
                 workerPool,
                 ownsPool: false,
-                workerArena);
+                laneArena);
             TrackOwnedCommandChainSecondaryCommandBuffer(workerPool, secondary);
             RegisterCommandBufferImageIndex(secondary, imageIndex);
             SetSecondaryDebugObjectName(
@@ -198,7 +201,7 @@ internal sealed partial class VulkanCommandRuntime
             replacement,
             workerPool,
             ownsPool: false,
-            workerArena);
+            laneArena);
         TrackOwnedCommandChainSecondaryCommandBuffer(workerPool, replacement);
         secondary = replacement;
         return true;

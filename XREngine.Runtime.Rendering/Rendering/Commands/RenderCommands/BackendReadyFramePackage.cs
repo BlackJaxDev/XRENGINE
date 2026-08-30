@@ -13,12 +13,8 @@ namespace XREngine.Rendering.Commands;
 public sealed partial class BackendReadyFramePackage
 {
     private BackendReadyRenderPass[] _passes = [];
-    private BackendReadyMeshSelection[] _meshSelections = [];
-    private readonly Dictionary<uint, BackendReadyMeshSelection> _meshSelectionCache = [];
-    private readonly Dictionary<uint, int> _meshSelectionIndices = [];
     private IReadOnlyCollection<RenderPassMetadata>? _passMetadata;
     private int _passCount;
-    private int _meshSelectionCount;
 
     public EBackendReadyFramePackageState State { get; private set; }
     public BackendReadyFramePackageIdentity Identity { get; private set; }
@@ -35,8 +31,6 @@ public sealed partial class BackendReadyFramePackage
     public bool RequiresForwardContactPrePass { get; private set; }
     public IReadOnlyCollection<RenderPassMetadata>? PassMetadata => _passMetadata;
     public ReadOnlySpan<BackendReadyRenderPass> Passes => _passes.AsSpan(0, _passCount);
-    public ReadOnlySpan<BackendReadyMeshSelection> MeshSelections
-        => _meshSelections.AsSpan(0, _meshSelectionCount);
 
     internal void Prepare(
         in BackendReadyFramePackageIdentity identity,
@@ -46,7 +40,6 @@ public sealed partial class BackendReadyFramePackage
         IReadOnlyCollection<RenderPassMetadata>? passMetadata)
     {
         int previousPassCount = _passCount;
-        int previousMeshSelectionCount = _meshSelectionCount;
         EnsurePassCapacity(updatingPasses.Count);
 
         int passCount = 0;
@@ -82,13 +75,6 @@ public sealed partial class BackendReadyFramePackage
             meshCommandCount += pass.MeshCommandCount;
         }
 
-        EnsureMeshSelectionCapacity(meshCommandCount);
-        int meshSelectionCacheLimit = Math.Max(64, meshCommandCount * 2);
-        if (_meshSelectionCache.Count > meshSelectionCacheLimit)
-            _meshSelectionCache.Clear();
-        _meshSelectionIndices.Clear();
-        _meshSelectionIndices.EnsureCapacity(meshCommandCount);
-        int meshSelectionCount = 0;
         bool requiresForwardContactPrePass = false;
         ulong packageDependencySignature = 14695981039346656037UL;
         for (int passIndex = 0; passIndex < passCount; passIndex++)
@@ -97,33 +83,7 @@ public sealed partial class BackendReadyFramePackage
             packageDependencySignature = AddHash(packageDependencySignature, pass.PassIndex);
             packageDependencySignature = AddHash(packageDependencySignature, pass.DependencySignature);
 
-            ICollection<RenderCommand> commands =
-                (ICollection<RenderCommand>)pass.Commands;
-            for (int commandIndex = 0; commandIndex < commands.Count; commandIndex++)
-            {
-                RenderCommand command = RenderCommandCollection.GetCommandAt(
-                    commands,
-                    commandIndex);
-                if (command is not IRenderCommandMesh meshCommand)
-                    continue;
-
-                XRMaterial? material = meshCommand.MaterialOverride ?? meshCommand.Mesh?.Material;
-                BackendReadyMeshSelection selection =
-                    CreateOrReuseMeshSelection(pass.PassIndex, meshCommand, material);
-                if (!requiresForwardContactPrePass &&
-                    meshCommand.Enabled &&
-                    material is not null &&
-                    pass.PassIndex is (int)EDefaultRenderPass.OpaqueForward or
-                        (int)EDefaultRenderPass.MaskedForward &&
-                    UberShaderVariantBuilder.RequiresForwardContactShadows(material))
-                {
-                    requiresForwardContactPrePass = true;
-                }
-                _meshSelections[meshSelectionCount] = selection;
-                _meshSelectionIndices[meshCommand.StableQueryKey] = meshSelectionCount;
-                meshSelectionCount++;
-                _meshSelectionCache[meshCommand.StableQueryKey] = selection;
-            }
+            TryGetForwardContactPrePassRequirement(pass, ref requiresForwardContactPrePass);
         }
 
         Identity = identity;
@@ -133,7 +93,6 @@ public sealed partial class BackendReadyFramePackage
         MeshCommandCount = meshCommandCount;
         DependencySignature = MixHash(packageDependencySignature);
         _passCount = passCount;
-        _meshSelectionCount = meshSelectionCount;
         ShadowCasterCommandSetSignature = ComputeShadowCasterCommandSetSignature();
         RequiresForwardContactPrePass = requiresForwardContactPrePass;
         _passMetadata = passMetadata;
@@ -141,11 +100,6 @@ public sealed partial class BackendReadyFramePackage
 
         if (previousPassCount > passCount)
             Array.Clear(_passes, passCount, previousPassCount - passCount);
-        if (previousMeshSelectionCount > meshSelectionCount)
-            Array.Clear(
-                _meshSelections,
-                meshSelectionCount,
-                previousMeshSelectionCount - meshSelectionCount);
     }
 
     internal void Publish()
@@ -160,8 +114,6 @@ public sealed partial class BackendReadyFramePackage
     {
         for (int i = 0; i < _passCount; i++)
             _passes[i] = default;
-        for (int i = 0; i < _meshSelectionCount; i++)
-            _meshSelections[i] = default;
 
         Identity = default;
         SourceRevision = -1L;
@@ -172,7 +124,6 @@ public sealed partial class BackendReadyFramePackage
         RequiresForwardContactPrePass = false;
         _passMetadata = null;
         _passCount = 0;
-        _meshSelectionCount = 0;
         ResetCanonical();
         State = EBackendReadyFramePackageState.Empty;
     }
@@ -180,8 +131,6 @@ public sealed partial class BackendReadyFramePackage
     internal void Cancel()
     {
         Reset();
-        _meshSelectionCache.Clear();
-        _meshSelectionIndices.Clear();
         State = EBackendReadyFramePackageState.Cancelled;
     }
 
@@ -206,21 +155,6 @@ public sealed partial class BackendReadyFramePackage
         }
 
         pass = default;
-        return false;
-    }
-
-    public bool TryGetMeshSelection(
-        uint stableQueryKey,
-        out BackendReadyMeshSelection selection)
-    {
-        if (_meshSelectionIndices.TryGetValue(stableQueryKey, out int index) &&
-            (uint)index < (uint)_meshSelectionCount)
-        {
-            selection = _meshSelections[index];
-            return true;
-        }
-
-        selection = default;
         return false;
     }
 
@@ -297,58 +231,6 @@ public sealed partial class BackendReadyFramePackage
         return MixHash(hash);
     }
 
-    private BackendReadyMeshSelection CreateOrReuseMeshSelection(
-        int renderPass,
-        IRenderCommandMesh command,
-        XRMaterial? material)
-    {
-        RenderingParameters? renderOptions =
-            command.RenderOptionsOverride ?? material?.RenderOptions;
-        uint instances = command.Instances;
-        bool forceCpuRendering = command.ForceCpuRendering;
-        bool excludeFromGpuIndirect =
-            renderOptions?.ExcludeFromGpuIndirect == true;
-        ulong materialBindingLayoutVersion =
-            material?.BindingLayoutVersion ?? 0UL;
-        long materialShaderStateRevision =
-            material?.ShaderStateRevision ?? 0L;
-        long materialUberStateRevision =
-            material?.UberStateRevision ?? 0L;
-
-        if (_meshSelectionCache.TryGetValue(
-                command.StableQueryKey,
-                out BackendReadyMeshSelection cached) &&
-            cached.RenderPass == renderPass &&
-            ReferenceEquals(cached.Command, command) &&
-            ReferenceEquals(cached.Mesh, command.Mesh) &&
-            ReferenceEquals(cached.Material, material) &&
-            ReferenceEquals(cached.RenderOptions, renderOptions) &&
-            cached.Instances == instances &&
-            cached.ForceCpuRendering == forceCpuRendering &&
-            cached.ExcludeFromGpuIndirect == excludeFromGpuIndirect &&
-            cached.MaterialBindingLayoutVersion == materialBindingLayoutVersion &&
-            cached.MaterialShaderStateRevision == materialShaderStateRevision &&
-            cached.MaterialUberStateRevision == materialUberStateRevision)
-        {
-            return cached;
-        }
-
-        return new BackendReadyMeshSelection(
-            renderPass,
-            command.StableQueryKey,
-            command,
-            command.Mesh,
-            material,
-            renderOptions,
-            instances,
-            forceCpuRendering,
-            excludeFromGpuIndirect,
-            materialBindingLayoutVersion,
-            materialShaderStateRevision,
-            materialUberStateRevision,
-            ComputeMeshDependencySignature(command, material));
-    }
-
     private void EnsurePassCapacity(int required)
     {
         if (_passes.Length >= required)
@@ -376,12 +258,33 @@ public sealed partial class BackendReadyFramePackage
         }
     }
 
-    private void EnsureMeshSelectionCapacity(int required)
+    private static bool TryGetForwardContactPrePassRequirement(
+        in BackendReadyRenderPass pass,
+        ref bool requirement)
     {
-        if (_meshSelections.Length >= required)
-            return;
+        if (requirement ||
+            (pass.PassIndex != (int)EDefaultRenderPass.OpaqueForward &&
+             pass.PassIndex != (int)EDefaultRenderPass.MaskedForward))
+            return requirement;
 
-        Array.Resize(ref _meshSelections, GrowCapacity(_meshSelections.Length, required));
+        ICollection<RenderCommand> commands = (ICollection<RenderCommand>)pass.Commands;
+        for (int commandIndex = 0; commandIndex < commands.Count; commandIndex++)
+        {
+            if (RenderCommandCollection.GetCommandAt(commands, commandIndex) is not IRenderCommandMesh meshCommand ||
+                !meshCommand.Enabled)
+            {
+                continue;
+            }
+
+            XRMaterial? material = meshCommand.MaterialOverride ?? meshCommand.Mesh?.Material;
+            if (material is not null && UberShaderVariantBuilder.RequiresForwardContactShadows(material))
+            {
+                requirement = true;
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static int GrowCapacity(int current, int required)

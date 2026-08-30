@@ -35,10 +35,14 @@ Full contract: [Render Pipeline Resource Lifecycle](render-pipeline-resource-lif
 
 ## Selecting `AdvancedRenderPipeline`
 
-`DefaultRenderPipeline` remains the default production path. To opt into the advanced pipeline for local validation, launch the editor or client with:
+`AdvancedRenderPipeline` is the configured source asset for new desktop cameras
+when the normal `Available` policy (the default) or `Required` policy is active.
+`DefaultRenderPipeline` remains the explicit legacy source. To make it the
+factory default for newly created desktop cameras during local validation,
+launch the editor or client with:
 
 ```powershell
-$env:XRE_ADVANCED_RENDER_PIPELINE_MODE = "Available"
+$env:XRE_ADVANCED_RENDER_PIPELINE_MODE = "Disabled"
 dotnet run --project .\XREngine.Editor\XREngine.Editor.csproj
 ```
 
@@ -46,18 +50,29 @@ The same mode is available through
 `RuntimeEngine.Rendering.Settings.AdvancedRenderPipelineMode`. The environment
 variable takes precedence and accepts:
 
-- `Disabled`: retain the legacy default pipeline without evaluating advanced
-  capabilities. This is the default.
-- `Available`: select the advanced pipeline when the active renderer satisfies
-  the capability floor; otherwise log the structured rejection and visibly
-  retain the legacy default pipeline.
+- `Disabled`: create new desktop camera sources with the legacy default pipeline
+  and disable advanced output binding. It does not rewrite an explicitly saved
+  pipeline asset.
+- `Available`: configure the advanced desktop source, then bind each physical
+  output when its renderer can reserve the required family. An unsupported
+  output remains explicitly unbound and reports the rejection; it does not
+  silently replace a potentially shared camera source with the legacy pipeline.
 - `Required`: select the advanced pipeline or throw
-  `AdvancedRenderPipelineNotSupportedException` before pipeline construction.
-- `Diagnostic`: evaluate and report capabilities while retaining the legacy
-  default pipeline.
+  `AdvancedRenderPipelineNotSupportedException` when the live output cannot be
+  bound.
+- `Diagnostic`: evaluate and report capabilities while creating new desktop
+  camera sources with the legacy default pipeline.
 
-The application registers this policy with the central runtime pipeline
-factory. Every request carries an explicit output purpose:
+The camera pipeline asset is authoritative for camera-synchronized viewports.
+Assignments made through such a viewport are routed to the camera source and
+synchronize every bound viewport; settings application never swaps only the
+live viewport's pipeline definition. Backend capability results, output
+identities, and advanced visibility-family reservations live on each
+`XRRenderPipelineInstance`. This keeps one shared source asset valid across
+multiple physical outputs.
+
+The application registers the default-source policy with the central runtime
+pipeline factory. Every request carries an explicit output purpose:
 
 - desktop scene requests use the standard capability policy, with the
   debug-opaque editor pipeline available only for desktop mono;
@@ -72,11 +87,14 @@ histories, and output topology independent. The standard and RVC pipelines
 implement shared GI, probe-resource, reusable pass-material, temporal,
 volumetric/froxel, and post-process feature contracts.
 
-The advanced pipeline now exposes only the ordered visibility-oriented frame
-stage skeleton. Its copied deferred/Forward+ command graph and resource layout
-are disconnected. OpenGL and Vulkan therefore report no advanced shader family,
-so `Available` keeps this default pipeline active and `Required` fails before
-frame execution until the complete visibility-buffer shader family exists.
+The advanced pipeline currently exposes the ordered visibility-oriented frame
+stage skeleton and Vulkan can bind its promoted visibility family to one stable
+mono output. Its shaded-output producer is still incomplete, so the bound
+pipeline deliberately terminates in the solid-red empty-output diagnostic until
+the Phase 8 output-parity work is complete. Backends or additional outputs that
+cannot reserve the family remain visibly unbound. OpenGL does not currently
+provide an advanced visibility-family reservation, so an explicitly configured
+advanced source remains authoritative there but cannot yet produce scene output.
 
 The inactive skeleton also defines its resource/state contract before declaring
 production visibility resources. Ownership is classified as pipeline

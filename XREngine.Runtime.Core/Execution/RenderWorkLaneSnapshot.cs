@@ -15,4 +15,5 @@ public readonly record struct RenderWorkLaneSnapshot(
     long ExecutedItemCount,
     long WakeCount,
     long EmptyWakeCount,
+    long UnexplainedWakeCount,
     long ExecuteAllocatedBytes);

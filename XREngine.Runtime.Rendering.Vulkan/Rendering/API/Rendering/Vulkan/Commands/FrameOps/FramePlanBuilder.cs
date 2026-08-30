@@ -40,6 +40,10 @@ internal sealed class FramePlanBuilder
             GeneralStaticPayloadCapacity,
             StaticOperationCapacity,
             texturePayloadCapacity: GeneralStaticPayloadCapacity,
+            advancedVisibilityDrawCapacity:
+                AdvancedPreparationOptions.Default.MaximumDraws,
+            advancedVisibilityRangeCapacity:
+                AdvancedPreparationOptions.Default.MaximumIndirectRanges,
             lane: EVulkanAcceptedFrameLane.MainScene);
         internal readonly FrameOperationStream DynamicOverlayOperations = new(
             DynamicOperationCapacity,
@@ -47,6 +51,8 @@ internal sealed class FramePlanBuilder
             GeneralDynamicPayloadCapacity,
             DynamicOperationCapacity,
             texturePayloadCapacity: GeneralDynamicPayloadCapacity,
+            advancedVisibilityDrawCapacity: 0,
+            advancedVisibilityRangeCapacity: 0,
             lane: EVulkanAcceptedFrameLane.Ui);
         internal readonly FrameOperationStream TextureUploadOperations = new(
             TextureUploadOperationCapacity,
@@ -54,6 +60,8 @@ internal sealed class FramePlanBuilder
             GeneralUploadPayloadCapacity,
             meshPayloadCapacity: GeneralUploadPayloadCapacity,
             texturePayloadCapacity: TextureUploadOperationCapacity,
+            advancedVisibilityDrawCapacity: 0,
+            advancedVisibilityRangeCapacity: 0,
             lane: EVulkanAcceptedFrameLane.Upload);
         internal readonly FrameOperationIngress StaticIngress = new();
         internal readonly FrameOperationIngress DynamicIngress = new();

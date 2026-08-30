@@ -18,11 +18,12 @@ namespace XREngine
         {
             public override bool IsServer => false;
             public override bool IsClient => true;
+            public override bool HasConnectedRemotePeer => _assignmentReceived;
 
             private readonly string _clientId = Guid.NewGuid().ToString("N");
             private bool _joinRequested;
             private bool _tickRegistered;
-            private bool _assignmentReceived;
+            private volatile bool _assignmentReceived;
             private long _lastInputSyncTicks;
             private long _lastTransformSyncTicks;
             private long _lastJoinRequestTicks;

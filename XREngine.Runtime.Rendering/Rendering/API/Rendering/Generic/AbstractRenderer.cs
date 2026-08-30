@@ -1482,6 +1482,22 @@ namespace XREngine.Rendering
         public virtual AdvancedRenderPipelineCapabilities GetAdvancedRenderPipelineCapabilities()
             => AdvancedRenderPipelineCapabilities.UnsupportedBackend;
 
+        /// <inheritdoc />
+        public virtual bool TryReserveAdvancedVisibilityFamily(
+            ulong outputId,
+            out AdvancedVisibilityFamilyReservation reservation,
+            out string failureReason)
+        {
+            reservation = default;
+            failureReason = "The active renderer does not support advanced visibility-family reservation.";
+            return false;
+        }
+
+        /// <inheritdoc />
+        public virtual bool IsAdvancedVisibilityFamilyReservationCurrent(
+            in AdvancedVisibilityFamilyReservation reservation)
+            => false;
+
         /// <summary>
         /// Returns whether the current API supports task/mesh shader dispatch for meshlet rendering.
         /// </summary>

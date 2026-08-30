@@ -4,7 +4,8 @@ namespace XREngine.Rendering.Vulkan;
 internal readonly record struct VulkanSealedResourceDependency(
     VulkanResourceSlotHandle Slot,
     VulkanResourceLifetimeKey Key,
-    ulong Generation)
+    ulong Generation,
+    VulkanResourceLifetimeRecord? Resource = null)
 {
     internal VulkanSealedResourceDependency(
         VulkanResourceSlotHandle slot,
@@ -38,6 +39,16 @@ internal readonly record struct VulkanSealedNestedCommandDependency(
     VulkanResourceSlotHandle CommandBufferSlot,
     VulkanCommandBufferLifetimeRecord Lifetime);
 
+/// <summary>
+/// Exact query result recipient retained by a sealed command-buffer contract.
+/// The pool slot guards handle reuse while the query reference preserves the
+/// recorded epoch that must receive the accepted submission sequence.
+/// </summary>
+internal readonly record struct VulkanSealedQueryResultDependency(
+    VulkanResourceSlotHandle QueryPoolSlot,
+    VulkanResourceLifetimeRecord QueryPoolResource,
+    VkRenderQuery Query);
+
 internal enum EVulkanSealedResourceMatch
 {
     Match,
@@ -57,6 +68,7 @@ internal sealed class SealedSubmissionContract
         ulong commandBufferHandle,
         VulkanStableCommandSlotHandle stableCommandIdentity,
         VulkanResourceSlotHandle commandBufferSlot,
+        VulkanResourceLifetimeRecord commandBufferResource,
         ulong lifetimeRecordingGeneration,
         ulong imageRecordingGeneration,
         uint queueFamilyIndex,
@@ -67,11 +79,13 @@ internal sealed class SealedSubmissionContract
         VulkanQueueOwnershipTransferRequirement[] queueOwnershipTransfers,
         VulkanRecordedRenderTargetSnapshot renderTarget,
         VulkanSealedResourceDependency[] renderTargetResources,
-        VulkanSealedNestedCommandDependency[] nestedCommands)
+        VulkanSealedNestedCommandDependency[] nestedCommands,
+        VulkanSealedQueryResultDependency[] queryResults)
     {
         CommandBufferHandle = commandBufferHandle;
         StableCommandIdentity = stableCommandIdentity;
         CommandBufferSlot = commandBufferSlot;
+        CommandBufferResource = commandBufferResource;
         LifetimeRecordingGeneration = lifetimeRecordingGeneration;
         ImageRecordingGeneration = imageRecordingGeneration;
         QueueFamilyIndex = queueFamilyIndex;
@@ -83,11 +97,13 @@ internal sealed class SealedSubmissionContract
         RenderTarget = renderTarget;
         RenderTargetResources = renderTargetResources;
         NestedCommands = nestedCommands;
+        QueryResults = queryResults;
     }
 
     internal ulong CommandBufferHandle { get; }
     internal VulkanStableCommandSlotHandle StableCommandIdentity { get; }
     internal VulkanResourceSlotHandle CommandBufferSlot { get; }
+    internal VulkanResourceLifetimeRecord CommandBufferResource { get; }
     internal ulong LifetimeRecordingGeneration { get; }
     internal ulong ImageRecordingGeneration { get; }
     internal uint QueueFamilyIndex { get; }
@@ -96,14 +112,14 @@ internal sealed class SealedSubmissionContract
     internal VulkanSealedImageDependency[] Images { get; }
     internal VulkanSealedImageExitState[] ImageExits { get; }
     /// <summary>
-    /// Immutable ownership requirements captured at record time. Their live
-    /// release/acquire and semaphore dependencies are intentionally checked
-    /// during submission.
+    /// Must be empty. Ownership transfers are deliberately ineligible for
+    /// sealed submission because they require live release/acquire resolution.
     /// </summary>
     internal VulkanQueueOwnershipTransferRequirement[] QueueOwnershipTransfers { get; }
     internal VulkanRecordedRenderTargetSnapshot RenderTarget { get; }
     internal VulkanSealedResourceDependency[] RenderTargetResources { get; }
     internal VulkanSealedNestedCommandDependency[] NestedCommands { get; }
+    internal VulkanSealedQueryResultDependency[] QueryResults { get; }
 
     internal EVulkanSealedResourceMatch MatchResourceVectorNoLock(
         VulkanResourceLifetimeTracker tracker,
@@ -117,6 +133,7 @@ internal sealed class SealedSubmissionContract
             !tracker.TryResolvePublishedResourceSlotNoLock(
                 CommandBufferSlot,
                 out VulkanResourceLifetimeRecord commandBuffer) ||
+            !ReferenceEquals(commandBuffer, CommandBufferResource) ||
             commandBuffer.Key != mismatchKey ||
             (commandBuffer.State &
              (EVulkanResourceLifetimeState.PendingRetirement |
@@ -148,6 +165,7 @@ internal sealed class SealedSubmissionContract
             if (!tracker.TryResolvePublishedResourceSlotNoLock(
                     dependency.Slot,
                     out VulkanResourceLifetimeRecord resource) ||
+                !ReferenceEquals(resource, dependency.Resource) ||
                 resource.Key != dependency.Key ||
                 resource.Generation != dependency.Generation)
             {
@@ -216,14 +234,22 @@ internal sealed class SealedSubmissionContract
         for (int index = 0; index < Images.Length; ++index)
         {
             VulkanSealedImageDependency dependency = Images[index];
-            ulong version = synchronization.TryGetStableImageSubresourceStateNoLock(
-                dependency.Slot,
-                out VulkanImageSubresourceState? state)
-                    ? state!.SubmittedVersion
-                    : 0UL;
+            if (!synchronization.TryGetStableImageSubresourceStateNoLock(
+                    dependency.Slot,
+                    out VulkanImageSubresourceState? state) ||
+                state is null ||
+                state.PendingQueueOwnershipRelease is not null ||
+                VulkanImageEntryStateContract.Compare(
+                    state.Submitted,
+                    dependency.RequiredEntryState) !=
+                EVulkanPrimaryEntryStateMismatch.None)
+            {
+                continue;
+            }
+
             Images[index] = dependency with
             {
-                SubmittedStateVersion = version,
+                SubmittedStateVersion = state.SubmittedVersion,
             };
         }
     }

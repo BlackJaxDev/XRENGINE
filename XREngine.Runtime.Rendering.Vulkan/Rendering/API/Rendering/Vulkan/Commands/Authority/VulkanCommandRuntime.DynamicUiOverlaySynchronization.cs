@@ -15,7 +15,8 @@ internal sealed partial class VulkanCommandRuntime
 
         ulong commandBufferHandle = unchecked((ulong)commandBuffer.Handle);
         ulong predecessorHandle = unchecked((ulong)predecessor.Handle);
-        lock (Synchronization._vulkanImageLayoutLock)
+        _ = EnterImageLayoutLockMeasured();
+        try
         {
             if (!Synchronization._recordedImageLayoutsByCommandBuffer.TryGetValue(
                     predecessorHandle,
@@ -46,6 +47,10 @@ internal sealed partial class VulkanCommandRuntime
             {
                 recorded.EntrySubresources[pair.Key] = pair.Value;
             }
+        }
+        finally
+        {
+            Monitor.Exit(Synchronization._vulkanImageLayoutLock);
         }
     }
 
@@ -80,7 +85,8 @@ internal sealed partial class VulkanCommandRuntime
             requirements.Clear();
             try
             {
-                lock (Synchronization._vulkanImageLayoutLock)
+                _ = EnterImageLayoutLockMeasured();
+                try
                 {
                     for (int secondaryIndex = 0;
                          secondaryIndex < secondaryBuffers.Length;
@@ -125,6 +131,11 @@ internal sealed partial class VulkanCommandRuntime
                             };
                         }
                     }
+                }
+                finally
+                {
+                    Monitor.Exit(
+                        Synchronization._vulkanImageLayoutLock);
                 }
 
                 foreach (KeyValuePair<VulkanTrackedImageSubresource, VulkanImageAccessState> requirement in requirements)
@@ -217,7 +228,8 @@ internal sealed partial class VulkanCommandRuntime
         CommandBuffer secondary,
         VulkanCommandBufferTrackingBatch? primaryBatch)
     {
-        lock (Synchronization._vulkanImageLayoutLock)
+        _ = EnterImageLayoutLockMeasured();
+        try
         {
             if (!Synchronization._recordedImageLayoutsByCommandBuffer.TryGetValue(
                     unchecked((ulong)primary.Handle),
@@ -238,6 +250,10 @@ internal sealed partial class VulkanCommandRuntime
             }
             MergeSecondaryImageState(primaryState, secondaryState, primaryBatch);
             primaryState.RefreshTouchedSubresources();
+        }
+        finally
+        {
+            Monitor.Exit(Synchronization._vulkanImageLayoutLock);
         }
     }
 
@@ -278,7 +294,8 @@ internal sealed partial class VulkanCommandRuntime
         ReadOnlySpan<CommandBuffer> secondaries,
         VulkanCommandBufferTrackingBatch? primaryBatch)
     {
-        lock (Synchronization._vulkanImageLayoutLock)
+        _ = EnterImageLayoutLockMeasured();
+        try
         {
             if (!Synchronization._recordedImageLayoutsByCommandBuffer.TryGetValue(
                     unchecked((ulong)primary.Handle),
@@ -311,6 +328,10 @@ internal sealed partial class VulkanCommandRuntime
 
             if (merged)
                 primaryState.RefreshTouchedSubresources();
+        }
+        finally
+        {
+            Monitor.Exit(Synchronization._vulkanImageLayoutLock);
         }
     }
 
@@ -437,7 +458,8 @@ internal sealed partial class VulkanCommandRuntime
                     return true;
         }
 
-        lock (Synchronization._vulkanImageLayoutLock)
+        _ = EnterImageLayoutLockMeasured();
+        try
         {
             Synchronization._recordedImageLayoutsByCommandBuffer.TryGetValue(handle, out VulkanRecordedImageLayoutState? recorded);
             return TryGetRecordedImageAccessStateNoLock(
@@ -447,6 +469,10 @@ internal sealed partial class VulkanCommandRuntime
                 out state,
                 includeEntryState,
                 includeUndefinedState);
+        }
+        finally
+        {
+            Monitor.Exit(Synchronization._vulkanImageLayoutLock);
         }
     }
 
@@ -468,45 +494,35 @@ internal sealed partial class VulkanCommandRuntime
         {
             uint mip = requestedRange.BaseMipLevel + levelOffset;
             uint layer = requestedRange.BaseArrayLayer + layerOffset;
-            if (!MergeRecordedAspect(ImageAspectFlags.ColorBit) ||
-                !MergeRecordedAspect(ImageAspectFlags.DepthBit) ||
-                !MergeRecordedAspect(ImageAspectFlags.StencilBit))
+            if (!TryMergeRecordedAspect(
+                    recorded,
+                    image,
+                    mip,
+                    layer,
+                    requestedRange.AspectMask,
+                    ImageAspectFlags.ColorBit,
+                    includeEntryState,
+                    ref combined) ||
+                !TryMergeRecordedAspect(
+                    recorded,
+                    image,
+                    mip,
+                    layer,
+                    requestedRange.AspectMask,
+                    ImageAspectFlags.DepthBit,
+                    includeEntryState,
+                    ref combined) ||
+                !TryMergeRecordedAspect(
+                    recorded,
+                    image,
+                    mip,
+                    layer,
+                    requestedRange.AspectMask,
+                    ImageAspectFlags.StencilBit,
+                    includeEntryState,
+                    ref combined))
             {
                 return false;
-            }
-
-            bool MergeRecordedAspect(ImageAspectFlags aspect)
-            {
-                if ((requestedRange.AspectMask & aspect) == 0)
-                    return true;
-                VulkanTrackedImageSubresource key = new(image.Handle, mip, layer, aspect);
-                VulkanImageAccessState candidate;
-                if (recorded is not null &&
-                    (recorded.Subresources.TryGetValue(key, out candidate) ||
-                     (includeEntryState &&
-                      recorded.EntrySubresources.TryGetValue(key, out candidate))))
-                {
-                    // The command buffer has already established this state.
-                }
-                else if (Synchronization._trackedImageSubresourceStates.TryGetValue(
-                             key,
-                             out VulkanImageSubresourceState? submitted))
-                {
-                    candidate = submitted.Submitted;
-                }
-                else
-                {
-                    return false;
-                }
-
-                if (!combined.HasValue)
-                {
-                    combined = candidate;
-                    return true;
-                }
-                return combined.Value.Layout == candidate.Layout &&
-                    combined.Value.QueueFamilyIndex == candidate.QueueFamilyIndex &&
-                    combined.Value.ResourceGeneration == candidate.ResourceGeneration;
             }
         }
 
@@ -514,6 +530,53 @@ internal sealed partial class VulkanCommandRuntime
             return false;
         state = combined.Value;
         return includeUndefinedState || state.Layout != ImageLayout.Undefined;
+    }
+
+    private bool TryMergeRecordedAspect(
+        VulkanRecordedImageLayoutState? recorded,
+        Image image,
+        uint mip,
+        uint layer,
+        ImageAspectFlags requestedAspects,
+        ImageAspectFlags aspect,
+        bool includeEntryState,
+        ref VulkanImageAccessState? combined)
+    {
+        if ((requestedAspects & aspect) == 0)
+            return true;
+
+        VulkanTrackedImageSubresource key =
+            new(image.Handle, mip, layer, aspect);
+        VulkanImageAccessState candidate;
+        if (recorded is not null &&
+            (recorded.Subresources.TryGetValue(key, out candidate) ||
+             (includeEntryState &&
+              recorded.EntrySubresources.TryGetValue(key, out candidate))))
+        {
+            // The command buffer has already established this state.
+        }
+        else if (Synchronization._trackedImageSubresourceStates.TryGetValue(
+                     key,
+                     out VulkanImageSubresourceState? submitted))
+        {
+            candidate = submitted.Submitted;
+        }
+        else
+        {
+            return false;
+        }
+
+        if (!combined.HasValue)
+        {
+            combined = candidate;
+            return true;
+        }
+
+        return combined.Value.Layout == candidate.Layout &&
+               combined.Value.QueueFamilyIndex ==
+                   candidate.QueueFamilyIndex &&
+               combined.Value.ResourceGeneration ==
+                   candidate.ResourceGeneration;
     }
 
     private static VulkanImageAccessState ResolveOverlayImageAccessState(

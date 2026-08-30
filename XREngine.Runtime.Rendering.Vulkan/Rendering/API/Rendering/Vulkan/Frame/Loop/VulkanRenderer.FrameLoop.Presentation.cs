@@ -12,6 +12,22 @@ namespace XREngine.Rendering.Vulkan
         internal EDesktopFrameFlow PresentSubmittedDesktopFrame(
             ref VulkanFrameAttempt attempt)
         {
+            long allocationBefore =
+                GC.GetAllocatedBytesForCurrentThread();
+            try
+            {
+                return PresentSubmittedDesktopFrameCore(ref attempt);
+            }
+            finally
+            {
+                VulkanFrameHotPathTelemetry.RecordPresent(
+                    allocationBefore);
+            }
+        }
+
+        private EDesktopFrameFlow PresentSubmittedDesktopFrameCore(
+            ref VulkanFrameAttempt attempt)
+        {
             // Detached ImGui viewports sample renderer-owned textures. Submit them only
             // after the primary scene submission so graphics-queue ordering makes those
             // resources visible without introducing a second engine-wide frame graph.

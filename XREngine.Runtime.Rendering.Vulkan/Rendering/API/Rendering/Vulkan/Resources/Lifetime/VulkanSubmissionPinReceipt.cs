@@ -11,14 +11,19 @@ internal sealed class VulkanSubmissionPinReceipt
 
     private VulkanResourceSlotHandle[] _resources =
         new VulkanResourceSlotHandle[InitialResourceCapacity];
+    private VulkanResourceLifetimeRecord?[] _resourceRecords =
+        new VulkanResourceLifetimeRecord?[InitialResourceCapacity];
     private int _resourceCount;
 
     internal VulkanResourceSlotHandle CommandBufferSlot { get; private set; }
+    internal VulkanResourceLifetimeRecord? CommandBufferResource { get; private set; }
 
     internal bool IsActive { get; private set; }
 
     internal ReadOnlySpan<VulkanResourceSlotHandle> Resources
         => _resources.AsSpan(0, _resourceCount);
+    internal ReadOnlySpan<VulkanResourceLifetimeRecord?> ResourceRecords
+        => _resourceRecords.AsSpan(0, _resourceCount);
 
     /// <summary>
     /// Reserves cold-path capacity while a command contract is sealed. Stable
@@ -35,29 +40,34 @@ internal sealed class VulkanSubmissionPinReceipt
         while (resourceCount > capacity);
 
         Array.Resize(ref _resources, capacity);
+        Array.Resize(ref _resourceRecords, capacity);
     }
 
     internal bool TryCapture(
         VulkanResourceSlotHandle commandBufferSlot,
+        VulkanResourceLifetimeRecord commandBufferResource,
         ReadOnlySpan<VulkanSealedResourceDependency> resources)
     {
-        if (IsActive || !commandBufferSlot.IsValid)
+        if (IsActive || !commandBufferSlot.IsValid || commandBufferResource is null)
             return false;
 
         EnsureCapacity(resources.Length);
         for (int index = 0; index < resources.Length; ++index)
         {
             VulkanResourceSlotHandle slot = resources[index].Slot;
-            if (!slot.IsValid)
+            VulkanResourceLifetimeRecord? resource = resources[index].Resource;
+            if (!slot.IsValid || resource is null)
             {
                 Clear();
                 return false;
             }
 
             _resources[index] = slot;
+            _resourceRecords[index] = resource;
         }
 
         CommandBufferSlot = commandBufferSlot;
+        CommandBufferResource = commandBufferResource;
         _resourceCount = resources.Length;
         IsActive = true;
         return true;
@@ -86,9 +96,25 @@ internal sealed class VulkanSubmissionPinReceipt
             }
 
             _resources[index] = slot;
+            if (!tracker.TryResolveResourceSlotNoLock(
+                    slot,
+                    out VulkanResourceLifetimeRecord resource))
+            {
+                Clear();
+                return false;
+            }
+            _resourceRecords[index] = resource;
         }
 
         CommandBufferSlot = commandBufferSlot;
+        if (!tracker.TryResolveResourceSlotNoLock(
+                commandBufferSlot,
+                out VulkanResourceLifetimeRecord commandBufferResource))
+        {
+            Clear();
+            return false;
+        }
+        CommandBufferResource = commandBufferResource;
         _resourceCount = resources.Count;
         IsActive = true;
         return true;
@@ -97,6 +123,8 @@ internal sealed class VulkanSubmissionPinReceipt
     internal void Clear()
     {
         CommandBufferSlot = VulkanResourceSlotHandle.Invalid;
+        CommandBufferResource = null;
+        Array.Clear(_resourceRecords, 0, _resourceCount);
         _resourceCount = 0;
         IsActive = false;
     }

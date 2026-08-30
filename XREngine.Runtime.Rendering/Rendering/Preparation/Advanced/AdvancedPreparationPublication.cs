@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using XREngine.Rendering.Commands;
 
 namespace XREngine.Rendering;
 
@@ -13,6 +14,7 @@ public readonly record struct AdvancedPreparationPublication(
     ulong PublicationGeneration,
     ulong VisibilityContentGeneration,
     uint SceneIdentity,
+    AdvancedGpuScenePublication ScenePublication,
     uint DrawCount,
     uint DeformationJobCount,
     uint DeformationDispatchCount,

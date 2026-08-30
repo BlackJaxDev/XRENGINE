@@ -17,9 +17,9 @@ internal sealed class VulkanRecordedCommandArtifact(
     internal CommandBuffer NativeBuffer { get; private set; }
     internal CommandBufferLevel Level { get; } = level;
     internal CommandPool OwnerPool { get; private set; }
-    internal VulkanWorkerSecondaryCommandArena? WorkerArenaOwner { get; private set; }
+    internal VulkanLaneCommandFamilyArena? LaneArenaOwner { get; private set; }
     internal ulong ArenaOwnerIdentity =>
-        WorkerArenaOwner?.Identity ?? OwnerPool.Handle;
+        LaneArenaOwner?.Identity ?? OwnerPool.Handle;
     internal bool OwnsPool { get; private set; }
     internal CommandRecordingDependencySignature DependencyIdentity
     {
@@ -87,16 +87,16 @@ internal sealed class VulkanRecordedCommandArtifact(
         CommandBuffer commandBuffer,
         CommandPool ownerPool,
         bool ownsPool,
-        VulkanWorkerSecondaryCommandArena? workerArenaOwner = null)
+        VulkanLaneCommandFamilyArena? laneArenaOwner = null)
     {
-        if (!ReferenceEquals(WorkerArenaOwner, workerArenaOwner))
-            WorkerArenaOwner?.Detach(this);
+        if (!ReferenceEquals(LaneArenaOwner, laneArenaOwner))
+            LaneArenaOwner?.Detach(this);
 
         NativeBuffer = commandBuffer;
         OwnerPool = ownerPool;
         OwnsPool = ownsPool;
-        WorkerArenaOwner = workerArenaOwner;
-        WorkerArenaOwner?.Attach(this);
+        LaneArenaOwner = laneArenaOwner;
+        LaneArenaOwner?.Attach(this);
         RecordingGeneration = 0;
         DependencyIdentity = default;
         QueuedSubmissionCount = 0;
@@ -203,11 +203,11 @@ internal sealed class VulkanRecordedCommandArtifact(
 
     internal void MarkRetired()
     {
-        WorkerArenaOwner?.Detach(this);
+        LaneArenaOwner?.Detach(this);
         NativeBuffer = default;
         OwnerPool = default;
         OwnsPool = false;
-        WorkerArenaOwner = null;
+        LaneArenaOwner = null;
         RecordingGeneration = 0;
         DependencyIdentity = default;
         QueuedSubmissionCount = 0;

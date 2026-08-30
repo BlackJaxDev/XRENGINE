@@ -1059,7 +1059,11 @@ internal sealed class VulkanResidentDrawTemplateTable : IDisposable
         Interlocked.Increment(ref _broadFallbackInvalidations);
         Interlocked.Add(ref _broadFallbackEntries, affected);
         RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanResidentTemplateBroadFallback(
-            affected);
+            affected,
+            reason,
+            owner,
+            domain,
+            publicationSequence);
         RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanExactResourceInvalidation(
             0,
             0,

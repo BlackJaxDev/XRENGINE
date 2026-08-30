@@ -84,6 +84,11 @@ namespace XREngine.Rendering.Vulkan
                     $"Vulkan frame-data arena slot {attempt.FrameSlot} could not be reopened after timeline completion {slotWaitValue}.");
             }
 
+            _commandRuntime.ResetCompletedRenderLaneTransientPools(
+                attempt.FrameSlot,
+                unchecked((attempt.FrameNumber << 1) | 1UL),
+                priorUseCompletionProven: slotWaitValue != 0);
+
             long stageStartTimestamp = Stopwatch.GetTimestamp();
             if (attempt.InteractiveResize || xrOwnsFrameDeadline)
             {

@@ -36,6 +36,8 @@ public sealed partial class AdvancedGpuScenePublisher
     private int _resourceAcquireCount;
     private int _resourceReleaseCount;
     private int _plannedIdentitySourceCount;
+    private AdvancedDrawSubmissionRecord[] _plannedSubmissionRecords = [];
+    private AdvancedManagedDeformationSourceRow[] _plannedDeformationSources = [];
     private uint _plannedVariantSlotGeneration;
     private uint _plannedCommandSlotGeneration;
     private uint _plannedReleaseSlotGeneration;
@@ -74,6 +76,11 @@ public sealed partial class AdvancedGpuScenePublisher
         int required = checked((int)capacity);
         if (_plannedCommands.Length < required)
             Array.Resize(ref _plannedCommands, required);
+        if (_plannedSubmissionRecords.Length < required)
+        {
+            Array.Resize(ref _plannedSubmissionRecords, required);
+            Array.Resize(ref _plannedDeformationSources, required);
+        }
         int identityRequired = checked(required * 2);
         if (_plannedIdentitySources.Length < identityRequired)
         {

@@ -1,3 +1,5 @@
+using System.Diagnostics;
+
 namespace XREngine.Execution;
 
 /// <summary>
@@ -35,9 +37,11 @@ internal sealed class BoundedRenderWorkQueue
     internal bool TryEnqueue(
         in RenderWorkClaim claim,
         out bool transitionedFromEmpty,
-        out int queueDepth)
+        out int queueDepth,
+        out long lockWaitTicks)
     {
-        lock (_sync)
+        EnterMeasured(_sync, out lockWaitTicks);
+        try
         {
             if (_count == _items.Length)
             {
@@ -53,11 +57,18 @@ internal sealed class BoundedRenderWorkQueue
             queueDepth = _count;
             return true;
         }
+        finally
+        {
+            Monitor.Exit(_sync);
+        }
     }
 
-    internal bool TryDequeue(out RenderWorkClaim claim)
+    internal bool TryDequeue(
+        out RenderWorkClaim claim,
+        out long lockWaitTicks)
     {
-        lock (_sync)
+        EnterMeasured(_sync, out lockWaitTicks);
+        try
         {
             if (_count == 0)
             {
@@ -71,5 +82,24 @@ internal sealed class BoundedRenderWorkQueue
             _count--;
             return true;
         }
+        finally
+        {
+            Monitor.Exit(_sync);
+        }
+    }
+
+    private static void EnterMeasured(object gate, out long waitTicks)
+    {
+        if (Monitor.TryEnter(gate))
+        {
+            waitTicks = 0L;
+            return;
+        }
+
+        long waitStarted = Stopwatch.GetTimestamp();
+        Monitor.Enter(gate);
+        waitTicks = Math.Max(
+            1L,
+            Stopwatch.GetTimestamp() - waitStarted);
     }
 }

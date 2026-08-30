@@ -194,7 +194,9 @@ internal static class VulkanFrameOperationSemantics
                     EFrameOpResourceAccess.Read | EFrameOpResourceAccess.Imported);
                 break;
             case AdvancedVisibilityOp visibility:
-                if (visibility.Request.Stage == EAdvancedRenderStage.VisibilityRaster)
+                if (visibility.Request.Stage == EAdvancedRenderStage.VisibilityRaster ||
+                    visibility.Request.Phase ==
+                        EAdvancedVisibilityStageBackendPhase.LateRaster)
                 {
                     // Preserve both the graph names and the exact realized target.
                     // The former drives graph ordering while the latter freezes

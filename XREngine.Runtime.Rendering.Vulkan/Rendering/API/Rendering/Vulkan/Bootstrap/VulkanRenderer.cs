@@ -49,6 +49,43 @@ public sealed class VulkanRenderer :
     private readonly VulkanCommandRuntime _commandRuntime = new();
     private readonly VulkanFrameTelemetry _frameTelemetry = new();
 
+    /// <summary>
+    /// Captures the exactly-once diagnostic recorded when PresentNow readiness
+    /// deliberately pauses the renderer after a terminal invariant failure.
+    /// </summary>
+    public VulkanPresentNowTerminalDiagnostic CapturePresentNowTerminalDiagnostic()
+    {
+        if (!_frameTelemetry.TryGetLatestPresentNowTerminalTransition(
+                out VulkanPresentNowTerminalTransitionRecord transition))
+            return default;
+
+        return new VulkanPresentNowTerminalDiagnostic(
+            transition.TransitionId,
+            transition.FrameId,
+            transition.FrameSlot,
+            transition.AcceptedSceneEpoch,
+            transition.OutputGeneration,
+            transition.ReadinessStage.ToString(),
+            transition.ActiveTicket,
+            transition.DependencyChain,
+            transition.Disposition.ToString(),
+            transition.Elapsed.TotalMilliseconds,
+            transition.SinceLastProgress.TotalMilliseconds,
+            transition.MeshRequestCount,
+            transition.FailureType,
+            transition.Detail);
+    }
+
+    /// <summary>
+    /// Captures the latest retryable or terminal PresentNow readiness failure.
+    /// </summary>
+    public VulkanPresentNowFailureDiagnostic CapturePresentNowFailureDiagnostic()
+        => _frameTelemetry.CaptureLatestPresentNowFailureDiagnostic();
+
+    /// <summary>Captures the latest settled desktop-frame outcome and failure.</summary>
+    public VulkanDesktopFrameTerminalDiagnostic CaptureDesktopFrameTerminalDiagnostic()
+        => _frameTelemetry.CaptureLatestDesktopFrameTerminalDiagnostic();
+
     public bool TryGetInteractiveResizePresentationPackage(
         out ulong presentationPackageId,
         out EInteractiveResizeDispatchReason unavailableReason)
@@ -316,6 +353,10 @@ public sealed class VulkanRenderer :
 
     protected override AbstractRenderAPIObject CreateAPIRenderObject(GenericRenderObject renderObject) => _resourceRuntime.CreateAPIRenderObject(renderObject);
     public override AdvancedRenderPipelineCapabilities GetAdvancedRenderPipelineCapabilities() => _commandRuntime.GetAdvancedRenderPipelineCapabilities();
+    public override bool TryReserveAdvancedVisibilityFamily(ulong outputId, out AdvancedVisibilityFamilyReservation reservation, out string failureReason)
+        => _commandRuntime.TryReserveAdvancedVisibilityFamily(outputId, out reservation, out failureReason);
+    public override bool IsAdvancedVisibilityFamilyReservationCurrent(in AdvancedVisibilityFamilyReservation reservation)
+        => _commandRuntime.IsAdvancedVisibilityReservationCurrent(in reservation);
     public bool TryBeginOrderedComputeBatch() => _frameLoop.TryBeginOrderedComputeBatch();
     public void CommitOrderedComputeBatch() => _frameLoop.CommitOrderedComputeBatch();
     public void RollbackOrderedComputeBatch() => _frameLoop.RollbackOrderedComputeBatch();

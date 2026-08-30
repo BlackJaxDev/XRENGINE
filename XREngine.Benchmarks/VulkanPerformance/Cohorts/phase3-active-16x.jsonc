@@ -62,6 +62,7 @@
   "UnitBoxCount": 4096,
   "UnitBoxMaterialCount": 512,
   "UnitBoxDeferredMaterial": true,
+  "UnitBoxDoubleSided": false,
   "VSyncOverride": "Off",
   "RenderFPS": 0.0,
   "UpdateFPS": 60.0,

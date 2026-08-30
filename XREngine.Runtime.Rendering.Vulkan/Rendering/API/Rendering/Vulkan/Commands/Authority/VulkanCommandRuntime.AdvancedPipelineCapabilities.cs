@@ -5,7 +5,74 @@ namespace XREngine.Rendering.Vulkan;
 /// <summary>Command and descriptor capability synthesis for advanced pipeline selection.</summary>
 internal sealed partial class VulkanCommandRuntime
 {
-    internal bool IsAdvancedVisibilityProductionPromoted => false;
+    private readonly object _advancedVisibilityReservationGate = new();
+    private ulong _advancedVisibilityReservedOutputId;
+    private ulong _advancedVisibilityReservationId;
+    private long _advancedVisibilityReservationGeneration;
+
+    // Promotion is deliberately coupled to a live reservation. Capability
+    // snapshots remain advisory and cannot independently select a family.
+    internal bool IsAdvancedVisibilityProductionPromoted
+        => Volatile.Read(ref _advancedVisibilityReservationId) != 0 &&
+           CanAdmitAdvancedVisibilityFamily();
+
+    internal bool TryReserveAdvancedVisibilityFamily(
+        ulong outputId,
+        out AdvancedVisibilityFamilyReservation reservation,
+        out string failureReason)
+    {
+        reservation = default;
+        if (outputId == 0)
+        {
+            failureReason = "Advanced visibility requires a non-zero stable output identity.";
+            return false;
+        }
+        if (!CanAdmitAdvancedVisibilityFamily(out failureReason))
+        {
+            return false;
+        }
+
+        long generation = checked((long)(ResourceRuntime.FrameDataArena?.Generation ?? 0UL));
+        if (generation <= 0)
+        {
+            failureReason = "The Vulkan advanced visibility frame-storage generation is unavailable.";
+            return false;
+        }
+
+        lock (_advancedVisibilityReservationGate)
+        {
+            if (_advancedVisibilityReservationGeneration != generation)
+            {
+                _advancedVisibilityReservationGeneration = generation;
+                _advancedVisibilityReservedOutputId = 0;
+                _advancedVisibilityReservationId = 0;
+            }
+            if (_advancedVisibilityReservedOutputId != 0 &&
+                _advancedVisibilityReservedOutputId != outputId)
+            {
+                failureReason = "This Vulkan renderer generation has already reserved its single mono advanced visibility family for another output.";
+                return false;
+            }
+
+            _advancedVisibilityReservedOutputId = outputId;
+            if (_advancedVisibilityReservationId == 0)
+                _advancedVisibilityReservationId = 1;
+            reservation = new(generation, outputId, _advancedVisibilityReservationId);
+            failureReason = "Ready";
+            return true;
+        }
+    }
+
+    internal bool IsAdvancedVisibilityReservationCurrent(
+        in AdvancedVisibilityFamilyReservation reservation)
+    {
+        if (!reservation.IsValid)
+            return false;
+        lock (_advancedVisibilityReservationGate)
+            return reservation.BackendGeneration == _advancedVisibilityReservationGeneration &&
+                   reservation.OutputId == _advancedVisibilityReservedOutputId &&
+                   reservation.ReservationId == _advancedVisibilityReservationId;
+    }
 
     internal AdvancedRenderPipelineCapabilities GetAdvancedRenderPipelineCapabilities()
     {
@@ -39,12 +106,28 @@ internal sealed partial class VulkanCommandRuntime
     }
 
     internal bool CanAdmitAdvancedVisibilityFamily()
+        => CanAdmitAdvancedVisibilityFamily(out _);
+
+    private bool CanAdmitAdvancedVisibilityFamily(out string failureReason)
     {
-        if (!DeviceContext.IsOperational ||
-            !DeviceContext.Capabilities.Supports(EVulkanDeviceCapability.DrawIndirectCount) ||
-            !ResourceRuntime.AdvancedSceneResources.IsReady ||
-            !ResourceRuntime.AdvancedVisibilityResources.IsReady)
+        if (!DeviceContext.IsOperational)
         {
+            failureReason = "The Vulkan device is not operational.";
+            return false;
+        }
+        if (!DeviceContext.Capabilities.Supports(EVulkanDeviceCapability.DrawIndirectCount))
+        {
+            failureReason = "The Vulkan device does not support indirect-count draws.";
+            return false;
+        }
+        if (!ResourceRuntime.AdvancedSceneResources.IsReady)
+        {
+            failureReason = ResourceRuntime.AdvancedSceneResources.AvailabilityReason;
+            return false;
+        }
+        if (!ResourceRuntime.AdvancedVisibilityResources.IsReady)
+        {
+            failureReason = ResourceRuntime.AdvancedVisibilityResources.AvailabilityReason;
             return false;
         }
 
@@ -53,33 +136,39 @@ internal sealed partial class VulkanCommandRuntime
         // it must not allocate or intern per-frame image views.
         VulkanAdvancedVisibilityPipelineRuntime pipelines =
             ResourceRuntime.AdvancedVisibilityPipelines;
-        if (!pipelines.TryGetComputePipelines(out _, out _, out _) ||
-            !pipelines.TryGetLateVisibilityComputePipelines(out _, out _, out _) ||
+        if (!pipelines.TryGetComputePipelines(out _, out _, out failureReason) ||
+            !pipelines.TryGetLateVisibilityComputePipelines(out _, out _, out failureReason) ||
             !pipelines.TryGetRasterProgram(
                 EAdvancedMaterialCoverageMode.Opaque,
                 meshlet: false,
                 out _,
-                out _) ||
+                out failureReason) ||
             !pipelines.TryGetRasterProgram(
                 EAdvancedMaterialCoverageMode.Masked,
                 meshlet: false,
                 out _,
-                out _))
+                out failureReason))
         {
             return false;
         }
 
-        return !DeviceContext.SupportsMeshTaskIndirectCount ||
-            pipelines.TryGetRasterProgram(
+        if (DeviceContext.SupportsMeshTaskIndirectCount &&
+            (!pipelines.TryGetRasterProgram(
                 EAdvancedMaterialCoverageMode.Opaque,
                 meshlet: true,
                 out _,
-                out _) &&
-            pipelines.TryGetRasterProgram(
+                out failureReason) ||
+             !pipelines.TryGetRasterProgram(
                 EAdvancedMaterialCoverageMode.Masked,
                 meshlet: true,
                 out _,
-                out _);
+                out failureReason)))
+        {
+            return false;
+        }
+
+        failureReason = "Ready";
+        return true;
     }
 
     internal ERvcDescriptorBackend RvcDescriptorBackend => ResourceRuntime.Descriptors.ActiveDescriptorBackend switch

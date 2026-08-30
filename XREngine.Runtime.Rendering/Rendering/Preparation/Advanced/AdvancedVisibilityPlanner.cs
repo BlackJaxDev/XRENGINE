@@ -17,8 +17,14 @@ public sealed class AdvancedVisibilityPlanner
     private readonly uint[] _viewHistoryGenerations;
     private readonly AdvancedVisibilityPersistentRecord[] _records;
     private readonly EAdvancedVisibilityPreparationFlags[] _candidateFlags;
+    private readonly AdvancedGpuHandle[] _extractionDrawSlots;
+    private readonly AdvancedGpuHandle[] _drawSlotLookupHandles;
+    private readonly int[] _drawSlotLookupSlots;
+    private readonly uint[] _drawSlotLookupStamps;
     private readonly int _drawCapacity;
     private ulong _frameId;
+    private uint _drawSlotLookupGeneration;
+    private int _extractionDrawSlotCount;
 
     public AdvancedVisibilityPlanner(int maximumViews, int drawCapacity)
     {
@@ -35,6 +41,11 @@ public sealed class AdvancedVisibilityPlanner
             checked(maximumViews * drawCapacity)];
         _candidateFlags =
             new EAdvancedVisibilityPreparationFlags[drawCapacity];
+        _extractionDrawSlots = new AdvancedGpuHandle[drawCapacity];
+        int lookupCapacity = NextPowerOfTwo(checked(drawCapacity * 2));
+        _drawSlotLookupHandles = new AdvancedGpuHandle[lookupCapacity];
+        _drawSlotLookupSlots = new int[lookupCapacity];
+        _drawSlotLookupStamps = new uint[lookupCapacity];
         _drawCapacity = drawCapacity;
     }
 
@@ -43,7 +54,16 @@ public sealed class AdvancedVisibilityPlanner
     public ulong SynchronousReadbackCount => 0UL;
 
     public void BeginFrame(ulong frameId)
-        => _frameId = frameId;
+    {
+        _frameId = frameId;
+        _extractionDrawSlotCount = 0;
+        _drawSlotLookupGeneration++;
+        if (_drawSlotLookupGeneration == 0u)
+        {
+            Array.Clear(_drawSlotLookupStamps);
+            _drawSlotLookupGeneration = 1u;
+        }
+    }
 
     public AdvancedVisibilityDispatchPlan BuildPlan(
         int viewSlot,
@@ -88,8 +108,17 @@ public sealed class AdvancedVisibilityPlanner
              candidateIndex++)
         {
             AdvancedVisibilityCandidate candidate = candidates[candidateIndex];
-            ValidateDraw(candidate.Draw);
-            int recordIndex = checked(viewBase + (int)candidate.Draw.Index - 1);
+            if (!candidate.Draw.IsValid)
+            {
+                // Extraction keeps command-index-aligned holes when a legacy
+                // command has no canonical projection. The GPU explicitly
+                // rejects index-zero candidates; the CPU history mirror must
+                // preserve that hole without assigning it a resident slot.
+                _candidateFlags[candidateIndex] = candidate.Flags;
+                continue;
+            }
+            int extractionSlot = GetOrAddExtractionDrawSlot(candidate.Draw);
+            int recordIndex = checked(viewBase + extractionSlot);
             AdvancedVisibilityPersistentRecord previous =
                 _records[recordIndex];
 
@@ -160,8 +189,9 @@ public sealed class AdvancedVisibilityPlanner
         for (int i = 0; i < results.Length; i++)
         {
             AdvancedGpuVisibilityResult result = results[i];
-            ValidateDraw(result.Draw);
-            int recordIndex = checked(viewBase + (int)result.Draw.Index - 1);
+            if (!TryGetExtractionDrawSlot(result.Draw, out int extractionSlot))
+                continue;
+            int recordIndex = checked(viewBase + extractionSlot);
             AdvancedVisibilityPersistentRecord record =
                 _records[recordIndex];
             record.Draw = result.Draw;
@@ -185,9 +215,12 @@ public sealed class AdvancedVisibilityPlanner
         out AdvancedVisibilityPersistentRecord record)
     {
         ValidateViewSlot(viewSlot);
-        ValidateDraw(draw);
-        record = _records[
-            checked(viewSlot * _drawCapacity + (int)draw.Index - 1)];
+        if (!TryGetExtractionDrawSlot(draw, out int extractionSlot))
+        {
+            record = default;
+            return false;
+        }
+        record = _records[checked(viewSlot * _drawCapacity + extractionSlot)];
         return record.Draw == draw;
     }
 
@@ -203,15 +236,73 @@ public sealed class AdvancedVisibilityPlanner
             throw new ArgumentOutOfRangeException(nameof(viewSlot));
     }
 
-    private void ValidateDraw(AdvancedGpuHandle draw)
+    private int GetOrAddExtractionDrawSlot(AdvancedGpuHandle draw)
     {
-        if (!draw.IsValid ||
-            draw.Index == 0u ||
-            draw.Index > (uint)_drawCapacity)
+        if (!draw.IsValid)
         {
             throw new ArgumentOutOfRangeException(
                 nameof(draw),
-                "Visibility draw handles must fit the stable draw table.");
+                "Visibility candidates require valid canonical draw handles.");
         }
+        if (TryGetExtractionDrawSlot(draw, out int existing))
+            return existing;
+        if (_extractionDrawSlotCount == _drawCapacity)
+            throw new InvalidOperationException("Visibility extraction exceeded its bounded current-extraction slot capacity.");
+
+        int slot = _extractionDrawSlotCount++;
+        _extractionDrawSlots[slot] = draw;
+        uint mask = checked((uint)_drawSlotLookupHandles.Length - 1u);
+        uint start = Hash(draw) & mask;
+        for (uint probe = 0u; probe <= mask; probe++)
+        {
+            int lookup = checked((int)((start + probe) & mask));
+            if (_drawSlotLookupStamps[lookup] == _drawSlotLookupGeneration)
+                continue;
+            _drawSlotLookupStamps[lookup] = _drawSlotLookupGeneration;
+            _drawSlotLookupHandles[lookup] = draw;
+            _drawSlotLookupSlots[lookup] = slot;
+            return slot;
+        }
+        throw new InvalidOperationException("Visibility extraction draw-slot lookup is unexpectedly saturated.");
+    }
+
+    private bool TryGetExtractionDrawSlot(AdvancedGpuHandle draw, out int slot)
+    {
+        slot = default;
+        if (!draw.IsValid)
+            return false;
+        uint mask = checked((uint)_drawSlotLookupHandles.Length - 1u);
+        uint start = Hash(draw) & mask;
+        for (uint probe = 0u; probe <= mask; probe++)
+        {
+            int lookup = checked((int)((start + probe) & mask));
+            if (_drawSlotLookupStamps[lookup] != _drawSlotLookupGeneration)
+                return false;
+            if (_drawSlotLookupHandles[lookup] != draw)
+                continue;
+            slot = _drawSlotLookupSlots[lookup];
+            return true;
+        }
+        return false;
+    }
+
+    private static uint Hash(AdvancedGpuHandle handle)
+    {
+        uint value = handle.Index * 0x9E3779B9u;
+        value ^= handle.Generation + 0x85EBCA6Bu + (value << 6) + (value >> 2);
+        value ^= value >> 16;
+        value *= 0x7FEB352Du;
+        return value ^ (value >> 15);
+    }
+
+    private static int NextPowerOfTwo(int value)
+    {
+        uint rounded = checked((uint)Math.Max(value, 1) - 1u);
+        rounded |= rounded >> 1;
+        rounded |= rounded >> 2;
+        rounded |= rounded >> 4;
+        rounded |= rounded >> 8;
+        rounded |= rounded >> 16;
+        return checked((int)(rounded + 1u));
     }
 }

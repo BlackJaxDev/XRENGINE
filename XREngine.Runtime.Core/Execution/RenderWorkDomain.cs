@@ -8,7 +8,7 @@ namespace XREngine.Execution;
 /// Persistent renderer-neutral render-critical domain. Logical lane 0 is the
 /// participating render thread; lanes 1..R are background OS threads.
 /// </summary>
-public sealed class RenderWorkDomain : IDisposable
+public sealed partial class RenderWorkDomain : IDisposable
 {
     public const int DefaultFrameSlotCount = 3;
     public const int DefaultQueueCapacityPerLane = 4096;
@@ -16,6 +16,9 @@ public sealed class RenderWorkDomain : IDisposable
     public const int DefaultInitialItemCapacity = 256;
     public const int DefaultInitialDependencyCapacity = 512;
     public const int DefaultInlineItemThreshold = 4;
+    public const int MaximumMigratableItemsPerLogicalLane = 4;
+    public static readonly long LockWaitThresholdTicks =
+        Math.Max(1L, Stopwatch.Frequency / 10_000L);
     public static readonly TimeSpan FatalBatchWait = TimeSpan.FromSeconds(2);
 
     [ThreadStatic]
@@ -34,6 +37,9 @@ public sealed class RenderWorkDomain : IDisposable
     private readonly long[] _laneExecuteAllocatedBytes;
     private readonly long[] _laneWakeCounts;
     private readonly long[] _laneEmptyWakeCounts;
+    private readonly long[] _laneUnexplainedWakeCounts;
+    private readonly long[] _laneSignalSequences;
+    private readonly long[] _laneObservedSignalSequences;
     private readonly ManualResetEventSlim _workerStartupSignal;
     private readonly RenderWorkBatchPool _batchPool;
     private readonly ERenderWorkerQos _qos;
@@ -65,7 +71,12 @@ public sealed class RenderWorkDomain : IDisposable
     private long _stolenItemCount;
     private long _wakeCount;
     private long _emptyWakeCount;
+    private long _unexplainedWakeCount;
     private long _queueOverflowCount;
+    private long _queueLockWaitCount;
+    private long _queueLockWaitTicks;
+    private long _queueLockWaitPeakTicks;
+    private long _queueLockWaitOverThresholdCount;
     private long _totalWaitTicks;
     private long _buildOperationCount;
     private long _dispatchOperationCount;
@@ -104,8 +115,13 @@ public sealed class RenderWorkDomain : IDisposable
         _laneExecuteAllocatedBytes = new long[LogicalLaneCount];
         _laneWakeCounts = new long[LogicalLaneCount];
         _laneEmptyWakeCounts = new long[LogicalLaneCount];
+        _laneUnexplainedWakeCounts = new long[LogicalLaneCount];
+        _laneSignalSequences = new long[LogicalLaneCount];
+        _laneObservedSignalSequences = new long[LogicalLaneCount];
+        _laneSignalTimestamps = new long[LogicalLaneCount];
         _workerStartupRemaining = backgroundWorkerCount;
         _workerStartupSignal = new ManualResetEventSlim(backgroundWorkerCount == 0);
+        _workerWakeCalibrationSignal = new ManualResetEventSlim(backgroundWorkerCount == 0);
         _laneSignals = new AutoResetEvent[LogicalLaneCount];
         _migratableQueues = new BoundedRenderWorkQueue[LogicalLaneCount];
         _affineQueues = new BoundedRenderWorkQueue[LogicalLaneCount];
@@ -122,6 +138,7 @@ public sealed class RenderWorkDomain : IDisposable
             batchPoolCapacity,
             initialItemCapacity,
             initialDependencyCapacity);
+        MeasureQueueAndMergeBaselines();
 
         try
         {
@@ -170,11 +187,15 @@ public sealed class RenderWorkDomain : IDisposable
                 throw startupException;
             }
         }
+
+        CalibrateWorkerWakeCosts();
     }
 
     public int BackgroundWorkerCount => _workers.Length;
     public int LogicalLaneCount { get; }
     public int InlineItemThreshold => _inlineItemThreshold;
+    public int MaxMigratableItemCount
+        => checked(MaximumMigratableItemsPerLogicalLane * LogicalLaneCount);
     public ERenderWorkerQos Qos => _qos;
     public RenderLaneBackendAttachments BackendAttachments { get; }
 
@@ -198,8 +219,14 @@ public sealed class RenderWorkDomain : IDisposable
         Interlocked.Read(ref _stolenItemCount),
         Interlocked.Read(ref _wakeCount),
         Interlocked.Read(ref _emptyWakeCount),
+        Interlocked.Read(ref _unexplainedWakeCount),
         Interlocked.Read(ref _queueOverflowCount),
         Volatile.Read(ref _queueHighWaterMark),
+        Interlocked.Read(ref _queueLockWaitCount),
+        Interlocked.Read(ref _queueLockWaitTicks),
+        Interlocked.Read(ref _queueLockWaitPeakTicks),
+        Interlocked.Read(ref _queueLockWaitOverThresholdCount),
+        LockWaitThresholdTicks,
         Interlocked.Read(ref _totalWaitTicks),
         Interlocked.Read(ref _buildOperationCount),
         Interlocked.Read(ref _dispatchOperationCount),
@@ -208,7 +235,23 @@ public sealed class RenderWorkDomain : IDisposable
         Interlocked.Read(ref _buildAllocatedBytes),
         Interlocked.Read(ref _dispatchAllocatedBytes),
         Interlocked.Read(ref _executeAllocatedBytes),
-        Interlocked.Read(ref _mergeAllocatedBytes));
+        Interlocked.Read(ref _mergeAllocatedBytes),
+        MaxMigratableItemCount,
+        Interlocked.Read(ref _migratableItemCount),
+        Interlocked.Read(ref _capPinnedMigratableItemCount),
+        Interlocked.Read(ref _parallelMigratableBatchCount),
+        Interlocked.Read(ref _inlineMigratableBatchCount),
+        Interlocked.Read(ref _insufficientParallelismBatchCount),
+        Interlocked.Read(ref _unprofitableBatchCount),
+        Interlocked.Read(ref _queueCostSampleCount),
+        Interlocked.Read(ref _queueCostTicks),
+        Interlocked.Read(ref _wakeCostSampleCount),
+        Interlocked.Read(ref _wakeCostTicks),
+        Interlocked.Read(ref _mergeCostSampleCount),
+        Interlocked.Read(ref _mergeCostTicks),
+        Interlocked.Read(ref _executorCostTicks),
+        Volatile.Read(ref _estimatedTicksPerCostUnit),
+        MinimumDispatchHysteresisTicks);
 
     public RenderWorkLaneSnapshot GetLaneSnapshot(int laneId)
     {
@@ -225,6 +268,7 @@ public sealed class RenderWorkDomain : IDisposable
             Interlocked.Read(ref _laneExecutedItemCounts[laneId]),
             Interlocked.Read(ref _laneWakeCounts[laneId]),
             Interlocked.Read(ref _laneEmptyWakeCounts[laneId]),
+            Interlocked.Read(ref _laneUnexplainedWakeCounts[laneId]),
             Interlocked.Read(ref _laneExecuteAllocatedBytes[laneId]));
     }
 
@@ -308,9 +352,10 @@ public sealed class RenderWorkDomain : IDisposable
                 _laneSignals[0].WaitOne(1);
             }
 
+            long mergeCostStarted = Stopwatch.GetTimestamp();
             batch.FinalizeFaultQuarantine(lease.Generation);
             RenderWorkBatchResult result = batch.GetResult(lease.Generation);
-            RecordMergeAllocation(mergeAllocationBefore);
+            RecordMergeOperation(mergeAllocationBefore, mergeCostStarted);
             return result;
         }
         finally
@@ -416,8 +461,12 @@ public sealed class RenderWorkDomain : IDisposable
 
     internal void QueueReadyItem(RenderWorkBatch batch, long generation, int itemIndex)
     {
+        long queueCostStarted = Stopwatch.GetTimestamp();
         if (!batch.TryAddQueuedReference(generation))
+        {
+            RecordQueueCost(queueCostStarted);
             return;
+        }
 
         RenderWorkItem item = batch.GetItem(itemIndex);
         bool affine = batch.InlineOnly || item.PreferredLane >= 0;
@@ -436,10 +485,16 @@ public sealed class RenderWorkDomain : IDisposable
             affine,
             Stopwatch.GetTimestamp());
 
-        if (!queue.TryEnqueue(claim, out bool transitionedFromEmpty, out int queueDepth))
+        if (!queue.TryEnqueue(
+                claim,
+                out bool transitionedFromEmpty,
+                out int queueDepth,
+                out long lockWaitTicks))
         {
+            RecordQueueLockWait(lockWaitTicks);
             batch.ReleaseQueuedReference(generation);
             Interlocked.Increment(ref _queueOverflowCount);
+            RecordQueueCost(queueCostStarted);
             batch.FaultScheduling(
                 generation,
                 itemIndex,
@@ -448,8 +503,10 @@ public sealed class RenderWorkDomain : IDisposable
             return;
         }
 
+        RecordQueueLockWait(lockWaitTicks);
         Interlocked.Increment(ref _queuedItemCount);
         UpdateMaximum(ref _queueHighWaterMark, queueDepth);
+        RecordQueueCost(queueCostStarted);
 
         if (transitionedFromEmpty)
             SignalLane(targetLane, allowSteal: !affine);
@@ -458,11 +515,7 @@ public sealed class RenderWorkDomain : IDisposable
     internal void WakeForSubmittedBatch(bool inlineOnly)
     {
         _laneSignals[0].Set();
-        if (inlineOnly)
-            return;
-
-        for (int laneId = 1; laneId < LogicalLaneCount; laneId++)
-            _laneSignals[laneId].Set();
+        _ = inlineOnly;
     }
 
     internal void WakeForTerminalDrain()
@@ -470,8 +523,9 @@ public sealed class RenderWorkDomain : IDisposable
         if (Volatile.Read(ref _disposedState) != 0)
             return;
 
-        for (int laneId = 0; laneId < LogicalLaneCount; laneId++)
-            _laneSignals[laneId].Set();
+        _laneSignals[0].Set();
+        for (int laneId = 1; laneId < LogicalLaneCount; laneId++)
+            SignalBackgroundLane(laneId);
     }
 
     internal void OnBatchSubmitted(int itemCount)
@@ -530,10 +584,14 @@ public sealed class RenderWorkDomain : IDisposable
         Interlocked.Add(ref _dispatchAllocatedBytes, GetAllocatedByteDelta(allocationBefore));
     }
 
-    internal void RecordMergeAllocation(long allocationBefore)
+    internal void RecordMergeOperation(long allocationBefore, long costStarted)
     {
         Interlocked.Increment(ref _mergeOperationCount);
         Interlocked.Add(ref _mergeAllocatedBytes, GetAllocatedByteDelta(allocationBefore));
+        RecordCostSample(
+            ref _mergeCostSampleCount,
+            ref _mergeCostTicks,
+            Math.Max(1L, Stopwatch.GetTimestamp() - costStarted));
     }
 
     private static long GetAllocatedByteDelta(long allocationBefore)
@@ -569,8 +627,26 @@ public sealed class RenderWorkDomain : IDisposable
 
                 _laneSignals[laneId].WaitOne();
 
+                bool explicitlySignaled = ObserveWorkerSignal(laneId);
+                RecordWorkerWakeCost(laneId);
+                if (Volatile.Read(ref _workerWakeCalibrationState) != 0)
+                {
+                    if (Interlocked.Decrement(ref _workerWakeCalibrationRemaining) == 0)
+                        _workerWakeCalibrationSignal.Set();
+                    continue;
+                }
+
+                if (Volatile.Read(ref _shutdownState) != 0)
+                    return;
+
                 Interlocked.Increment(ref _wakeCount);
                 Interlocked.Increment(ref _laneWakeCounts[laneId]);
+                if (!explicitlySignaled)
+                {
+                    Interlocked.Increment(ref _unexplainedWakeCount);
+                    Interlocked.Increment(
+                        ref _laneUnexplainedWakeCounts[laneId]);
+                }
                 if (!TryExecuteOne(laneId))
                 {
                     Interlocked.Increment(ref _emptyWakeCount);
@@ -615,7 +691,16 @@ public sealed class RenderWorkDomain : IDisposable
             Interlocked.Or(ref _activeLaneMask, 1L << laneId);
             try
             {
-                claim.Batch.Executor.Execute(item, ref context);
+                long executorCostStarted = Stopwatch.GetTimestamp();
+                try
+                {
+                    claim.Batch.Executor.Execute(item, ref context);
+                }
+                finally
+                {
+                    RecordExecutorCost(item.EstimatedCost, executorCostStarted);
+                }
+
                 claim.Batch.CompleteClaim(claim.Generation, claim.ItemIndex);
             }
             catch (Exception exception)
@@ -645,8 +730,16 @@ public sealed class RenderWorkDomain : IDisposable
 
     private bool TryTakeClaim(int laneId, out RenderWorkClaim claim, out bool stolen)
     {
-        if (_affineQueues[laneId].TryDequeue(out claim) ||
-            _migratableQueues[laneId].TryDequeue(out claim))
+        long queueCostStarted = Stopwatch.GetTimestamp();
+        bool claimed = TryTakeClaimCore(laneId, out claim, out stolen);
+        RecordQueueCost(queueCostStarted);
+        return claimed;
+    }
+
+    private bool TryTakeClaimCore(int laneId, out RenderWorkClaim claim, out bool stolen)
+    {
+        if (TryDequeueAndRecord(_affineQueues[laneId], out claim) ||
+            TryDequeueAndRecord(_migratableQueues[laneId], out claim))
         {
             stolen = false;
             return true;
@@ -655,7 +748,9 @@ public sealed class RenderWorkDomain : IDisposable
         for (int offset = 1; offset < LogicalLaneCount; offset++)
         {
             int sourceLane = (laneId + offset) % LogicalLaneCount;
-            if (_migratableQueues[sourceLane].TryDequeue(out claim))
+            if (TryDequeueAndRecord(
+                    _migratableQueues[sourceLane],
+                    out claim))
             {
                 stolen = true;
                 return true;
@@ -665,6 +760,29 @@ public sealed class RenderWorkDomain : IDisposable
         claim = default;
         stolen = false;
         return false;
+    }
+
+    private bool TryDequeueAndRecord(
+        BoundedRenderWorkQueue queue,
+        out RenderWorkClaim claim)
+    {
+        bool dequeued = queue.TryDequeue(
+            out claim,
+            out long lockWaitTicks);
+        RecordQueueLockWait(lockWaitTicks);
+        return dequeued;
+    }
+
+    private void RecordQueueLockWait(long waitTicks)
+    {
+        if (waitTicks <= 0L)
+            return;
+
+        Interlocked.Increment(ref _queueLockWaitCount);
+        Interlocked.Add(ref _queueLockWaitTicks, waitTicks);
+        UpdateMaximum(ref _queueLockWaitPeakTicks, waitTicks);
+        if (waitTicks > LockWaitThresholdTicks)
+            Interlocked.Increment(ref _queueLockWaitOverThresholdCount);
     }
 
     private void BindCallingThreadAsLaneZero(RenderWorkBatch candidateBatch, long candidateGeneration)
@@ -695,12 +813,33 @@ public sealed class RenderWorkDomain : IDisposable
 
     private void SignalLane(int targetLane, bool allowSteal)
     {
-        _laneSignals[targetLane].Set();
+        if (targetLane == 0)
+            _laneSignals[targetLane].Set();
+        else
+            SignalBackgroundLane(targetLane);
+
         if (!allowSteal || BackgroundWorkerCount == 0 || targetLane != 0)
             return;
 
         int backgroundLane = 1 + (int)((uint)Interlocked.Increment(ref _roundRobinLane) % (uint)BackgroundWorkerCount);
-        _laneSignals[backgroundLane].Set();
+        SignalBackgroundLane(backgroundLane);
+    }
+
+    private void SignalBackgroundLane(int laneId)
+    {
+        long timestamp = Stopwatch.GetTimestamp();
+        Interlocked.Increment(ref _laneSignalSequences[laneId]);
+        Interlocked.CompareExchange(ref _laneSignalTimestamps[laneId], timestamp, 0L);
+        _laneSignals[laneId].Set();
+    }
+
+    private bool ObserveWorkerSignal(int laneId)
+    {
+        long sequence = Volatile.Read(ref _laneSignalSequences[laneId]);
+        long previous = Interlocked.Exchange(
+            ref _laneObservedSignalSequences[laneId],
+            sequence);
+        return sequence != previous;
     }
 
     private void SignalWorkerStarted()
@@ -713,9 +852,13 @@ public sealed class RenderWorkDomain : IDisposable
     {
         for (int laneId = 0; laneId < LogicalLaneCount; laneId++)
         {
-            while (_affineQueues[laneId].TryDequeue(out RenderWorkClaim affine))
+            while (TryDequeueAndRecord(
+                       _affineQueues[laneId],
+                       out RenderWorkClaim affine))
                 affine.Batch.ReleaseQueuedReference(affine.Generation);
-            while (_migratableQueues[laneId].TryDequeue(out RenderWorkClaim migratable))
+            while (TryDequeueAndRecord(
+                       _migratableQueues[laneId],
+                       out RenderWorkClaim migratable))
                 migratable.Batch.ReleaseQueuedReference(migratable.Generation);
         }
     }
@@ -730,6 +873,7 @@ public sealed class RenderWorkDomain : IDisposable
         foreach (AutoResetEvent signal in _laneSignals)
             signal.Dispose();
         _workerStartupSignal.Dispose();
+        _workerWakeCalibrationSignal.Dispose();
     }
 
     private void ThrowIfUnavailable()
@@ -794,6 +938,21 @@ public sealed class RenderWorkDomain : IDisposable
                 return;
             if (Interlocked.CompareExchange(ref target, candidate, current) == current)
                 return;
+        }
+    }
+
+    private static void UpdateMaximum(ref long target, long candidate)
+    {
+        while (true)
+        {
+            long current = Volatile.Read(ref target);
+            if (candidate <= current)
+                return;
+            if (Interlocked.CompareExchange(ref target, candidate, current) ==
+                current)
+            {
+                return;
+            }
         }
     }
 }

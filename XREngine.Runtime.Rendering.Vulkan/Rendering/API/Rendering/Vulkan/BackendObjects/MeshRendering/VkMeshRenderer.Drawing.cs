@@ -762,12 +762,14 @@ internal unsafe partial class VkMeshRenderer
 				}
 			}
 
-			// The cold record is diagnostics/ownership validation only. The worker
-			// encoder receives target/pass requirements through prepared numeric
-			// streams, never by revisiting this managed context.
+			// The cold record remains render-thread authority for validation and
+			// diagnostics. Worker encoding consumes only the frozen scalar state
+			// and prepared numeric streams below.
 			int coldDataIndex = preparedFrame.AddMeshDrawColdData(new VulkanPreparedMeshDrawColdData(this, program, target, context, BackendContext.Resources.MappedFrameArena?.Generation ?? 0UL, Mesh?.Name ?? "<unnamed mesh>"));
 			recordingState = new VulkanPreparedMeshDrawState(
 				program.PipelineLayout,
+				VulkanMeshRenderingConventions.GetCommonPushConstantStageFlags(
+					BackendContext.DeviceContext),
 				usesDescriptorHeap,
 				program.DescriptorHeapLayout?.PushByteCount ?? 0u,
 				descriptorRange,
@@ -907,8 +909,7 @@ internal unsafe partial class VkMeshRenderer
 		VulkanTrackedCommandEncoder encoder)
 	{
 		ref readonly VulkanPreparedMeshDrawColdData cold = ref preparedFrame.GetMeshDrawColdData(recordingState.ColdDataIndex);
-		if (cold.Owner is null ||
-			recordingState.PipelineLayout.Handle == 0 ||
+		if (recordingState.PipelineLayout.Handle == 0 ||
 			recordingState.PrimitiveCount <= 0 ||
 			!HasValidFrameDataPayloadHandles(recordingState, preparedFrame, in cold))
 		{
@@ -941,7 +942,7 @@ internal unsafe partial class VkMeshRenderer
 			encoder.PushConstants(
 				commandBuffer,
 				recordingState.PipelineLayout,
-				VulkanPipelineManager.CommonPushConstantStages,
+				recordingState.PushConstantStageFlags,
 				recordingState.PushConstants);
 
 			if (recordingState.UsesDescriptorHeap)
@@ -1286,7 +1287,6 @@ internal unsafe partial class VkMeshRenderer
 
 		if (!encoder.TryAcquireFrameDataLease(
 				commandBuffer,
-			cold.Owner,
 				recordingState.DrawUniformSlot,
 			cold.FrameDataGeneration,
 				out _))
@@ -1541,7 +1541,8 @@ internal unsafe partial class VkMeshRenderer
 		CommandOperations.PushConstantsTracked(
 			commandBuffer,
 			recordingState.PipelineLayout,
-			VulkanMeshRenderingConventions.CommonPushConstantStageFlags,
+			VulkanMeshRenderingConventions.GetCommonPushConstantStageFlags(
+				BackendContext.DeviceContext),
 			0,
 			recordingState.PushConstants);
 
@@ -2322,10 +2323,14 @@ internal unsafe partial class VkMeshRenderer
 		bool depthStencilReadOnly,
 		string pipelineName,
 		bool foregroundRequired,
+		out bool retryable,
 		out string reason)
 	{
+		retryable = false;
+		reason = string.Empty;
 		if (!_recordDrawSync.TryEnter())
 		{
+			retryable = true;
 			reason = "renderer recording state is busy";
 			return false;
 		}
@@ -2339,10 +2344,11 @@ internal unsafe partial class VkMeshRenderer
 			bool triangleOnly = MeshRenderMaterialResolver.RequiresTriangleOnlyDrawsForCurrentPass();
 			bool anyIndexed = triangleIndexed || (!triangleOnly && (lineIndexed || pointIndexed));
 			bool ready = true;
+			bool failuresRetryable = true;
 
 			if (triangleIndexed)
 			{
-				ready &= EnsurePipelineCore(
+				bool topologyReady = EnsurePipelineCore(
 					material,
 					PrimitiveTopology.TriangleList,
 					draw,
@@ -2355,12 +2361,21 @@ internal unsafe partial class VkMeshRenderer
 					pipelineName,
 					allowPipelineCreation: true,
 					foregroundRequired,
-					out _);
+					out _,
+					out bool topologyRetryable,
+					out string topologyReason);
+				MergeGraphicsPipelinePrewarmResult(
+					topologyReady,
+					topologyRetryable,
+					topologyReason,
+					ref ready,
+					ref failuresRetryable,
+					ref reason);
 			}
 
 			if (!triangleOnly && lineIndexed)
 			{
-				ready &= EnsurePipelineCore(
+				bool topologyReady = EnsurePipelineCore(
 					material,
 					PrimitiveTopology.LineList,
 					draw,
@@ -2373,12 +2388,21 @@ internal unsafe partial class VkMeshRenderer
 					pipelineName,
 					allowPipelineCreation: true,
 					foregroundRequired,
-					out _);
+					out _,
+					out bool topologyRetryable,
+					out string topologyReason);
+				MergeGraphicsPipelinePrewarmResult(
+					topologyReady,
+					topologyRetryable,
+					topologyReason,
+					ref ready,
+					ref failuresRetryable,
+					ref reason);
 			}
 
 			if (!triangleOnly && pointIndexed)
 			{
-				ready &= EnsurePipelineCore(
+				bool topologyReady = EnsurePipelineCore(
 					material,
 					PrimitiveTopology.PointList,
 					draw,
@@ -2391,7 +2415,16 @@ internal unsafe partial class VkMeshRenderer
 					pipelineName,
 					allowPipelineCreation: true,
 					foregroundRequired,
-					out _);
+					out _,
+					out bool topologyRetryable,
+					out string topologyReason);
+				MergeGraphicsPipelinePrewarmResult(
+					topologyReady,
+					topologyRetryable,
+					topologyReason,
+					ref ready,
+					ref failuresRetryable,
+					ref reason);
 			}
 
 			if (!anyIndexed && Mesh is not null && Mesh.VertexCount > 0)
@@ -2408,7 +2441,7 @@ internal unsafe partial class VkMeshRenderer
 				};
 				if (!triangleOnly || IsTriangleClassTopology(fallbackTopology))
 				{
-					ready &= EnsurePipelineCore(
+					bool topologyReady = EnsurePipelineCore(
 						material,
 						fallbackTopology,
 						draw,
@@ -2421,17 +2454,47 @@ internal unsafe partial class VkMeshRenderer
 						pipelineName,
 						allowPipelineCreation: true,
 						foregroundRequired,
-						out _);
+						out _,
+						out bool topologyRetryable,
+						out string topologyReason);
+					MergeGraphicsPipelinePrewarmResult(
+						topologyReady,
+						topologyRetryable,
+						topologyReason,
+						ref ready,
+						ref failuresRetryable,
+						ref reason);
 				}
 			}
 
-			reason = ready ? "Ready" : "pipeline compile queued or pending";
+			retryable = !ready && failuresRetryable;
+			if (ready)
+				reason = "Ready";
+			else if (reason.Length == 0)
+				reason = "graphics pipeline preparation failed without a diagnostic";
 			return ready;
 		}
 		finally
 		{
 			_recordDrawSync.Exit();
 		}
+	}
+
+	private static void MergeGraphicsPipelinePrewarmResult(
+		bool topologyReady,
+		bool topologyRetryable,
+		string topologyReason,
+		ref bool ready,
+		ref bool failuresRetryable,
+		ref string firstFailureReason)
+	{
+		if (topologyReady)
+			return;
+
+		ready = false;
+		failuresRetryable &= topologyRetryable;
+		if (firstFailureReason.Length == 0)
+			firstFailureReason = topologyReason;
 	}
 
 	internal bool TryRefreshReusableCommandBufferFrameData(
@@ -2833,7 +2896,8 @@ internal unsafe partial class VkMeshRenderer
 		CommandOperations.PushConstantsTracked(
 			commandBuffer,
 			_program.PipelineLayout,
-			VulkanMeshRenderingConventions.CommonPushConstantStageFlags,
+			VulkanMeshRenderingConventions.GetCommonPushConstantStageFlags(
+				BackendContext.DeviceContext),
 			0,
 			constants);
 	}

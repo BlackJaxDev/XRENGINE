@@ -1023,11 +1023,9 @@ namespace XREngine.Rendering.Commands
                     // Skip mesh commands that should go through GPU dispatch.
                     // Optionally allow opt-out meshes to keep rendering on CPU for diagnostics.
                     bool excludedFromGpuIndirect =
-                        !_renderingBackendReadyPackage.TryGetMeshSelection(
-                            meshCmd.StableQueryKey,
-                            out BackendReadyMeshSelection selection) ||
-                        selection.ForceCpuRendering ||
-                        selection.ExcludeFromGpuIndirect;
+                        !_renderingBackendReadyPackage.IsCanonicalGpuOwned(
+                            renderPass,
+                            meshCmd.StableQueryKey);
                     if (!excludedFromGpuIndirect)
                     {
                         LogSponzaCpuDiag("skip-gpu-owned", renderPass, cmd, camera, "skipGpuCommands=True");
@@ -1637,11 +1635,9 @@ namespace XREngine.Rendering.Commands
                 if (cmd is IRenderCommandMesh meshCmd)
                 {
                     bool excludedFromGpuIndirect =
-                        !_renderingBackendReadyPackage.TryGetMeshSelection(
-                            meshCmd.StableQueryKey,
-                            out BackendReadyMeshSelection selection) ||
-                        selection.ForceCpuRendering ||
-                        selection.ExcludeFromGpuIndirect;
+                        !_renderingBackendReadyPackage.IsCanonicalGpuOwned(
+                            renderPass,
+                            meshCmd.StableQueryKey);
                     if (!excludedFromGpuIndirect)
                         continue;
                 }
@@ -2020,14 +2016,19 @@ namespace XREngine.Rendering.Commands
                 pass.MeshCommandCount == 0)
                 return false;
 
-            ReadOnlySpan<BackendReadyMeshSelection> selections =
-                _renderingBackendReadyPackage.MeshSelections;
-            for (int i = 0; i < selections.Length; i++)
+            if (!_renderingBackendReadyPackage.TryGetCanonicalPublicationSnapshot(
+                    out AdvancedGpuScenePublicationSnapshot snapshot))
             {
-                BackendReadyMeshSelection selection = selections[i];
-                if (selection.RenderPass == renderPass &&
-                    !selection.ForceCpuRendering &&
-                    !selection.ExcludeFromGpuIndirect)
+                return false;
+            }
+
+            ReadOnlySpan<AdvancedDrawSubmissionRecord> submissions = snapshot.Submission.Records;
+            for (int i = 0; i < submissions.Length; i++)
+            {
+                AdvancedDrawSubmissionRecord submission = submissions[i];
+                if (submission.PassIndex == unchecked((uint)renderPass) &&
+                    submission.CompatibilityReason == EAdvancedCanonicalCompatibilityReason.None &&
+                    (submission.Flags & (uint)GPUIndirectRenderFlags.CpuFallbackOnly) == 0u)
                 {
                     return true;
                 }

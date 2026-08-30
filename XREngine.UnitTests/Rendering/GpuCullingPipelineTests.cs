@@ -122,7 +122,10 @@ public class GpuCullingPipelineTests
         source.ShouldContain("HiZMaxMip");
         source.ShouldContain("IsReversedDepth");
         source.ShouldContain("layout(std430, binding = 5) readonly buffer BoundsBuffer");
-        source.ShouldContain("hotBase + HOT_UINTS > inHotCommands.length()");
+        source.ShouldContain("layout(std430, binding = 0) buffer InputDrawIdsBuffer");
+        source.ShouldContain("if (idx >= uint(inDrawIds.length()))");
+        source.ShouldContain("if (drawId >= uint(Draws.length()))");
+        source.ShouldContain("outDrawIds[outIndex] = drawId;");
         source.ShouldContain("const int HIZ_TARGET_TEXEL_SPAN = 6;");
         source.ShouldContain("SampleHiZConservative");
         source.ShouldContain("HiZOccludedAabb");
@@ -154,14 +157,15 @@ public class GpuCullingPipelineTests
     }
 
     [Test]
-    public void CullingShader_CommandLayout_MatchesCompactPhaseC()
+    public void CullingShader_OutputLayout_MatchesPhaseCVisibleDrawIdStream()
     {
         string source = LoadShaderSource("Compute/Culling/GPURenderCulling.comp");
 
-        source.ShouldContain("COMMAND_FLOATS = 20");
         source.ShouldContain("DrawMetadataBuffer");
         source.ShouldContain("BoundsBuffer");
-        source.ShouldContain("outCommands[base + 19] = uintBitsToFloat(meta.DrawID)");
+        source.ShouldContain("VisibleDrawIdsBuffer");
+        source.ShouldContain("outDrawIds[outIndex] = meta.DrawID;");
+        source.ShouldNotContain("COMMAND_FLOATS");
     }
 
     [Test]

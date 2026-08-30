@@ -1,20 +1,21 @@
+using System.Runtime.CompilerServices;
+
 namespace XREngine.Rendering.Vulkan;
 
 /// <summary>Fixed-capacity dirty range set that coalesces overlapping writes without allocating.</summary>
 internal struct VulkanFrameDataDirtyRanges
 {
-    private const int MaxRanges = 8;
-    private VulkanDynamicDataDirtyRange _range0;
-    private VulkanDynamicDataDirtyRange _range1;
-    private VulkanDynamicDataDirtyRange _range2;
-    private VulkanDynamicDataDirtyRange _range3;
-    private VulkanDynamicDataDirtyRange _range4;
-    private VulkanDynamicDataDirtyRange _range5;
-    private VulkanDynamicDataDirtyRange _range6;
-    private VulkanDynamicDataDirtyRange _range7;
+    private const int MaxRanges = 32;
+    private VulkanFrameDataDirtyRangeStorage _ranges;
     private byte _count;
+    private uint _capacityCollapseCount;
 
     internal readonly int Count => _count;
+    internal readonly uint CapacityCollapseCount => _capacityCollapseCount;
+    internal readonly VulkanFrameDataDirtyRangeCollapseReason CollapseReason
+        => _capacityCollapseCount == 0
+            ? VulkanFrameDataDirtyRangeCollapseReason.None
+            : VulkanFrameDataDirtyRangeCollapseReason.CapacityExceeded;
     internal readonly ulong TotalLength
     {
         get
@@ -55,29 +56,36 @@ internal struct VulkanFrameDataDirtyRanges
             merged.Include(Get(index).Offset, Get(index).Length);
         Set(0, merged);
         _count = 1;
+        if (_capacityCollapseCount != uint.MaxValue)
+            _capacityCollapseCount++;
     }
 
-    internal readonly VulkanDynamicDataDirtyRange Get(int index) => index switch
+    internal readonly VulkanDynamicDataDirtyRange Get(int index)
     {
-        0 => _range0, 1 => _range1, 2 => _range2, 3 => _range3,
-        4 => _range4, 5 => _range5, 6 => _range6, 7 => _range7,
-        _ => throw new ArgumentOutOfRangeException(nameof(index)),
-    };
+        if ((uint)index >= _count)
+            throw new ArgumentOutOfRangeException(nameof(index));
+        return _ranges[index];
+    }
 
-    internal void Clear() => _count = 0;
+    internal void Clear()
+    {
+        _count = 0;
+        _capacityCollapseCount = 0;
+    }
 
     private static bool RangesTouchOrOverlap(in VulkanDynamicDataDirtyRange left, in VulkanDynamicDataDirtyRange right)
         => left.Offset <= right.Offset + right.Length && right.Offset <= left.Offset + left.Length;
 
     private void Set(int index, in VulkanDynamicDataDirtyRange value)
     {
-        switch (index)
-        {
-            case 0: _range0 = value; break; case 1: _range1 = value; break;
-            case 2: _range2 = value; break; case 3: _range3 = value; break;
-            case 4: _range4 = value; break; case 5: _range5 = value; break;
-            case 6: _range6 = value; break; case 7: _range7 = value; break;
-            default: throw new ArgumentOutOfRangeException(nameof(index));
-        }
+        if ((uint)index >= MaxRanges)
+            throw new ArgumentOutOfRangeException(nameof(index));
+        _ranges[index] = value;
+    }
+
+    [InlineArray(MaxRanges)]
+    private struct VulkanFrameDataDirtyRangeStorage
+    {
+        private VulkanDynamicDataDirtyRange _element0;
     }
 }

@@ -129,6 +129,7 @@ internal sealed partial class VulkanResourceRuntime
             frameData.AllocationCount,
             frameData.DirtyBytes,
             frameData.DirtyRangeCount,
+            frameData.DirtyRangeCapacityCollapseCount,
             frameData.FlushExpansionBytes,
             frameData.InvalidateExpansionBytes);
 

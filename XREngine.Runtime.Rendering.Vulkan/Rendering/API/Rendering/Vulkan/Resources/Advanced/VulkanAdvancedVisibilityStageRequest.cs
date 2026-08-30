@@ -7,6 +7,9 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal readonly record struct VulkanAdvancedVisibilityStageRequest(
     EAdvancedRenderStage Stage,
+    EAdvancedVisibilityStageBackendPhase Phase,
+    AdvancedVisibilityFamilyReservation Reservation,
+    VulkanAdvancedVisibilityBackendPackageSnapshot BackendPackage,
     AdvancedPreparationPublication Publication,
     ulong VisibilityContentGeneration,
     AdvancedPreparationExtractor Extractor,
@@ -20,11 +23,20 @@ internal readonly record struct VulkanAdvancedVisibilityStageRequest(
     string CurrentDepthPyramidTargetName)
 {
     internal bool IsValid
-        => Stage is EAdvancedRenderStage.VisibilityPreparation or
-            EAdvancedRenderStage.VisibilityRaster or
-            EAdvancedRenderStage.DepthPyramidAndLateVisibility &&
+        => (Stage, Phase) is
+            (EAdvancedRenderStage.VisibilityPreparation,
+                EAdvancedVisibilityStageBackendPhase.Complete) or
+            (EAdvancedRenderStage.VisibilityRaster,
+                EAdvancedVisibilityStageBackendPhase.Complete) or
+            (EAdvancedRenderStage.DepthPyramidAndLateVisibility,
+                EAdvancedVisibilityStageBackendPhase.LateCompute) or
+            (EAdvancedRenderStage.DepthPyramidAndLateVisibility,
+                EAdvancedVisibilityStageBackendPhase.LateRaster) &&
            Publication.FrameId != 0u &&
+           Reservation.IsValid &&
+           BackendPackage.IsValid &&
            Publication.PublicationGeneration != 0u &&
+           Publication.ScenePublication.IsValid &&
            VisibilityContentGeneration != 0u &&
            Publication.VisibilityContentGeneration == VisibilityContentGeneration &&
            Publication.DrawCount != 0u &&
@@ -45,7 +57,9 @@ internal readonly record struct VulkanAdvancedVisibilityStageRequest(
     /// publication, view, target, and extractor identity must be exact.
     /// </summary>
     internal bool MatchesFamily(in VulkanAdvancedVisibilityStageRequest other)
-        => Publication.Equals(other.Publication) &&
+        => Reservation.Equals(other.Reservation) &&
+           BackendPackage.Equals(other.BackendPackage) &&
+           Publication.Equals(other.Publication) &&
            VisibilityContentGeneration == other.VisibilityContentGeneration &&
            ReferenceEquals(Extractor, other.Extractor) &&
            RenderFrameId == other.RenderFrameId &&

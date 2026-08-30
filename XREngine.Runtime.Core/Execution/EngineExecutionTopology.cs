@@ -4,8 +4,8 @@ using XREngine.Data.Rendering;
 namespace XREngine.Execution;
 
 /// <summary>
-/// Resolved process-wide CPU execution budget. Phase 1A establishes this
-/// composition-root contract without changing existing Vulkan recording workers.
+/// Immutable process-wide CPU execution budget resolved by the composition
+/// root before worker domains or backend-owned lanes are created.
 /// </summary>
 public sealed class EngineExecutionTopology
 {
@@ -177,7 +177,7 @@ public sealed class EngineExecutionTopology
 
         AppendNames(builder, " foregroundLoops", Request.ForegroundThreadNames);
         AppendNames(builder, " dedicatedLanes", Request.DedicatedBackgroundThreadNames);
-        builder.Append(" phase1B=scheduler-active; existing Vulkan/OpenXR recording workers unchanged");
+        builder.Append(" schedulerDomains=[general,render,job-auxiliary] backendRecording=retained");
         return builder.ToString();
     }
 

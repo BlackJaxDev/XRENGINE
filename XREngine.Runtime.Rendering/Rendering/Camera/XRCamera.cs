@@ -1693,13 +1693,38 @@ namespace XREngine.Rendering
             // installation still fails fast when rendering actually starts.
             get => _renderPipeline
                 ?? (RuntimeRenderingHostServices.HasConcreteHost
-                    ? SetFieldReturn(ref _renderPipeline, CreateDefaultRenderPipeline())!
+                    ? CreateAndAssignDefaultRenderPipeline()
                     : null!);
-            set => SetField(ref _renderPipeline, value);
+            set
+            {
+                bool notificationsSuppressed = XRBase.ArePropertyNotificationsSuppressed;
+                if (!SetField(ref _renderPipeline, value))
+                    return;
+
+                // Snapshot restoration can suppress XRBase notifications. Keep
+                // every camera-bound viewport on the configured source asset even
+                // across that path instead of leaving a stale runtime override.
+                if (notificationsSuppressed)
+                    SynchronizeRenderPipelineWithViewports();
+            }
         }
 
+        /// <summary>
+        /// Returns the explicitly configured pipeline without invoking the lazy
+        /// runtime factory. Viewport assignment uses this to preserve source
+        /// authority while cameras are still being assembled.
+        /// </summary>
+        internal RenderPipeline? AssignedRenderPipeline => _renderPipeline;
+
         public RenderPipeline GetOrCreateRenderPipeline()
-            => _renderPipeline ?? SetFieldReturn(ref _renderPipeline, CreateDefaultRenderPipeline())!;
+            => _renderPipeline ?? CreateAndAssignDefaultRenderPipeline();
+
+        private RenderPipeline CreateAndAssignDefaultRenderPipeline()
+        {
+            RenderPipeline pipeline = CreateDefaultRenderPipeline();
+            RenderPipeline = pipeline;
+            return pipeline;
+        }
 
         private static RenderPipeline CreateDefaultRenderPipeline()
             => RuntimeRenderingHostServices.Factories.CreateDefaultRenderPipeline() as RenderPipeline

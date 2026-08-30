@@ -93,7 +93,7 @@ internal sealed class VulkanPreparedStableBinStream
     /// </summary>
     internal bool TryBuildVisibilityGeometryStream(
         VulkanResourceRuntime resources,
-        AdvancedPreparationExtractor extractor,
+        ReadOnlySpan<AdvancedVisibilityPayload> payloads,
         BackendReadyFramePackage package,
         in VulkanAdvancedScenePublicationState sceneState,
         int passIndex,
@@ -102,7 +102,6 @@ internal sealed class VulkanPreparedStableBinStream
         out string reason)
     {
         ArgumentNullException.ThrowIfNull(resources);
-        ArgumentNullException.ThrowIfNull(extractor);
         reason = "Ready";
         if (_recordCount != 0)
             return true;
@@ -114,8 +113,6 @@ internal sealed class VulkanPreparedStableBinStream
             return false;
         }
 
-        ReadOnlySpan<AdvancedVisibilityPayload> payloads =
-            extractor.VisibilityPayloads;
         if (payloads.IsEmpty)
         {
             reason = "the canonical visibility payload column is empty";
@@ -126,12 +123,35 @@ internal sealed class VulkanPreparedStableBinStream
         for (int payloadIndex = 0; payloadIndex < payloads.Length; ++payloadIndex)
         {
             AdvancedVisibilityPayload payload = payloads[payloadIndex];
-            if (!payload.Draw.IsValid || !payload.Geometry.IsValid ||
-                !publication.Geometry.TryGet(
-                    payload.Geometry,
-                    out AdvancedGeometryRecord geometry))
+            if (!payload.Draw.IsValid)
             {
-                reason = $"canonical visibility payload {payloadIndex} has no immutable geometry association";
+                // The canonical submission sidecar is compact, but keep this
+                // guard so a malformed row cannot manufacture a raster bin.
+                continue;
+            }
+            AdvancedGeometryRecord geometry = default;
+            bool geometryResolved =
+                payload.Geometry.IsValid &&
+                publication.Geometry.TryGet(
+                    payload.Geometry,
+                    out geometry);
+            if (!geometryResolved)
+            {
+                bool drawResolved = publication.Draws.TryGet(
+                    payload.Draw,
+                    out AdvancedDrawRecord canonicalDraw);
+                reason =
+                    $"canonical visibility payload {payloadIndex} has no immutable geometry association " +
+                    $"(submissionSequence={publication.Submission.Sequence}, " +
+                    $"draw={payload.Draw.Index}:{payload.Draw.Generation}, " +
+                    $"drawResolved={drawResolved}, " +
+                    $"drawGeometry={canonicalDraw.Geometry.Index}:{canonicalDraw.Geometry.Generation}, " +
+                    $"geometry={payload.Geometry.Index}:{payload.Geometry.Generation}, " +
+                    $"geometrySnapshotSequence={publication.Geometry.Sequence}, " +
+                    $"geometryRecordImage={publication.Geometry.HasRecordImage}, " +
+                    $"geometryRecordCount={publication.Geometry.RecordCount}, " +
+                    $"geometryPhysicalHighWater={publication.Geometry.PhysicalRecords.Length}, " +
+                    $"geometryLookupCount={publication.Geometry.HandleLookups.Length})";
                 ThawForReuse();
                 return false;
             }
@@ -583,6 +603,11 @@ internal sealed class VulkanPreparedStableBinStream
 
         rejection = VulkanSubmissionPlanRejectionReason.None;
         _submissionPlansSealed = false;
+        if (!outputPolicy.AllowsCanonicalVisibilityFamily)
+        {
+            rejection = VulkanSubmissionPlanRejectionReason.CanonicalVisibilityOutputPolicyRejected;
+            return false;
+        }
         Array.Clear(_sealScratchPlanAssigned, 0, _headerCount);
         Array.Clear(_sealScratchRanges, 0, _headerCount);
         if (_headerCount == 0)
@@ -687,6 +712,9 @@ internal sealed class VulkanPreparedStableBinStream
             _sealScratchRanges[headerIndex] = range;
         }
 
+        // One global counter copy after the final instrumented range reports
+        // sticky producer overflow asynchronously. It must never attach to a
+        // zero-readback lane, and per-range copies would only duplicate work.
         if (diagnosticPlan.HasValue)
         {
             for (int headerIndex = _headerCount - 1; headerIndex >= 0; --headerIndex)
@@ -695,11 +723,14 @@ internal sealed class VulkanPreparedStableBinStream
                     continue;
 
                 VulkanSealedBinSubmissionPlan plan = _sealScratchPlans[headerIndex]!;
+                if (!plan.IsInstrumented || plan.DiagnosticPlan is not { } attachedDiagnostic)
+                    continue;
+
                 plan.AttachOverflowDiagnosticPlan(diagnosticPlan.Value with
                 {
                     SourceByteOffset = 0u,
                     ByteCount = 64u,
-                    Strategy = plan.ResolvedStrategy,
+                    Strategy = attachedDiagnostic.Strategy,
                     Decoder = EGpuDiagnosticReadbackDecoder.SubmissionValidation,
                 });
                 break;

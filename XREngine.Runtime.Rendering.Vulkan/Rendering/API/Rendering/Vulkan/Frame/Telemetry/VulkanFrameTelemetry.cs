@@ -59,6 +59,11 @@ internal sealed class VulkanFrameTelemetry
     private readonly object _presentNowTerminalTransitionLock = new();
     private VulkanPresentNowTerminalTransitionRecord
         _latestPresentNowTerminalTransition;
+    private readonly object _presentNowFailureDiagnosticLock = new();
+    private VulkanPresentNowFailureDiagnostic _latestPresentNowFailureDiagnostic;
+    private readonly object _desktopFrameTerminalDiagnosticLock = new();
+    private VulkanDesktopFrameTerminalDiagnostic
+        _latestDesktopFrameTerminalDiagnostic;
     internal readonly object _vulkanSubmissionDiagnosticsLock = new();
     internal readonly VulkanCrashBreadcrumb[] _vulkanCrashBreadcrumbs =
         new VulkanCrashBreadcrumb[VulkanCrashBreadcrumbCapacity];
@@ -179,6 +184,42 @@ internal sealed class VulkanFrameTelemetry
         lock (_presentNowTerminalTransitionLock)
             transition = _latestPresentNowTerminalTransition;
         return transition.IsValid;
+    }
+
+    internal void PublishPresentNowFailureDiagnostic(
+        in VulkanPresentNowFailureDiagnostic diagnostic)
+    {
+        if (!diagnostic.IsValid)
+            throw new ArgumentException(
+                "A PresentNow failure diagnostic publication must be valid.",
+                nameof(diagnostic));
+        lock (_presentNowFailureDiagnosticLock)
+            _latestPresentNowFailureDiagnostic = diagnostic;
+    }
+
+    internal VulkanPresentNowFailureDiagnostic
+        CaptureLatestPresentNowFailureDiagnostic()
+    {
+        lock (_presentNowFailureDiagnosticLock)
+            return _latestPresentNowFailureDiagnostic;
+    }
+
+    internal void PublishDesktopFrameTerminalDiagnostic(
+        in VulkanDesktopFrameTerminalDiagnostic diagnostic)
+    {
+        if (!diagnostic.IsValid)
+            throw new ArgumentException(
+                "A desktop-frame terminal diagnostic publication must be valid.",
+                nameof(diagnostic));
+        lock (_desktopFrameTerminalDiagnosticLock)
+            _latestDesktopFrameTerminalDiagnostic = diagnostic;
+    }
+
+    internal VulkanDesktopFrameTerminalDiagnostic
+        CaptureLatestDesktopFrameTerminalDiagnostic()
+    {
+        lock (_desktopFrameTerminalDiagnosticLock)
+            return _latestDesktopFrameTerminalDiagnostic;
     }
 
     internal void RecordSuccessfulSubmissionBreadcrumb(

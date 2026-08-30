@@ -119,6 +119,8 @@ internal static class VulkanBinSubmissionPlanResolver
             return VulkanSubmissionPlanRejectionReason.EmptyResourceManifest;
         if (!outputPolicy.IsValid)
             return VulkanSubmissionPlanRejectionReason.InvalidOutputPolicy;
+        if (!outputPolicy.AllowsCanonicalVisibilityFamily)
+            return VulkanSubmissionPlanRejectionReason.CanonicalVisibilityOutputPolicyRejected;
         if (diagnosticPlan is { } diagnostic)
         {
             if (!capabilities.AllowsInstrumentedDiagnostics ||

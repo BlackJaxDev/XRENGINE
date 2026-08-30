@@ -90,6 +90,8 @@ internal sealed class FrameOperationStream
         int generalPayloadCapacity,
         int meshPayloadCapacity,
         int texturePayloadCapacity,
+        int advancedVisibilityDrawCapacity,
+        int advancedVisibilityRangeCapacity,
         EVulkanAcceptedFrameLane lane)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(operationCapacity);
@@ -98,6 +100,8 @@ internal sealed class FrameOperationStream
             generalPayloadCapacity,
             meshPayloadCapacity,
             texturePayloadCapacity,
+            advancedVisibilityDrawCapacity,
+            advancedVisibilityRangeCapacity,
             fixedCapacity: true,
             lane);
         _fixedCapacity = true;
@@ -137,6 +141,7 @@ internal sealed class FrameOperationStream
     internal void Lower(FrameOperationIngress source)
     {
         Reset();
+        _payloads.AdvancedVisibilityInput.Reset();
         EnsureCapacity(source.Count);
         Span<int> payloadCounts = stackalloc int[KindCount];
         int resourceUseCount = 0;
@@ -468,14 +473,22 @@ internal sealed class FrameOperationStream
               payload.SceneState.FrameGeneration != state.FrameGeneration)))
             return false;
 
+        if (request.Stage != EAdvancedRenderStage.VisibilityPreparation)
+        {
+            _payloads.AdvancedVisibilities[header.PayloadIndex] = payload with
+            {
+                State = state,
+            };
+            return true;
+        }
+
         Pipeline earlyPipeline = earlyVisibilityProgram.GetOrCreateComputePipeline();
         Pipeline indirectPipeline = buildIndirectProgram.GetOrCreateComputePipeline();
         if (earlyPipeline.Handle == 0 || indirectPipeline.Handle == 0 ||
             earlyVisibilityProgram.PipelineLayout.Handle == 0 ||
             buildIndirectProgram.PipelineLayout.Handle == 0)
-        {
             return false;
-        }
+
         _payloads.AdvancedVisibilities[header.PayloadIndex] = payload with
         {
             State = state,
@@ -671,7 +684,32 @@ internal sealed class FrameOperationStream
             case EVulkanPrimaryPlanNodeKind.PublishFramebufferForSampling: _payloads.PublishedFramebuffers[i]=new(((PublishFramebufferForSamplingOp)op).FrameBuffer); break;
             case EVulkanPrimaryPlanNodeKind.DlssUpscale: { var p=(DlssUpscaleOp)op; _payloads.DlssUpscales[i]=new(p.Session,p.SourceColor,p.Depth,p.Motion,p.OutputColor,p.Exposure,p.Parameters); break; }
             case EVulkanPrimaryPlanNodeKind.DlssFrameGeneration: { var p=(DlssFrameGenerationOp)op; _payloads.DlssFrameGenerations[i]=new(p.Session,p.Depth,p.Motion,p.HudlessColor,p.Parameters,p.UiColorAndAlpha); break; }
-            case EVulkanPrimaryPlanNodeKind.AdvancedVisibility: _payloads.AdvancedVisibilities[i] = new(((AdvancedVisibilityOp)op).Request, default, default, default, null, null, default, 0u, null, default, 0u, null, default, 0u, null, default, 0u); break;
+            case EVulkanPrimaryPlanNodeKind.AdvancedVisibility:
+            {
+                VulkanAdvancedVisibilityStageRequest request =
+                    ((AdvancedVisibilityOp)op).Request;
+                _payloads.AdvancedVisibilityInput.CaptureOrValidate(in request);
+                _payloads.AdvancedVisibilities[i] = new(
+                    request,
+                    _payloads.AdvancedVisibilityInput,
+                    default,
+                    default,
+                    default,
+                    null,
+                    null,
+                    default,
+                    0u,
+                    null,
+                    default,
+                    0u,
+                    null,
+                    default,
+                    0u,
+                    null,
+                    default,
+                    0u);
+                break;
+            }
             default: throw new InvalidOperationException($"No payload writer exists for {kind}.");
         }
     }

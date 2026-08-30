@@ -265,6 +265,11 @@ namespace XREngine.Editor.Mcp
                 {
                     XRViewport viewport = window.Viewports[viewportIndex];
                     CameraComponent? cameraComponent = viewport.CameraComponent;
+                    XRCamera? camera = viewport.ActiveCamera;
+                    RenderPipeline? cameraPipeline = camera?.RenderPipeline;
+                    RenderPipeline? viewportPipeline = viewport.RenderPipeline;
+                    AdvancedRenderPipelineOutputBinding advancedBinding =
+                        viewport.RenderPipelineInstance.AdvancedOutputBinding;
                     IRuntimeScreenSpaceUserInterface? ui = cameraComponent?.GetUserInterfaceOverlay();
                     SceneNode? cameraNode = cameraComponent?.SceneNode;
                     activeWindowViewports.Add(new
@@ -280,6 +285,25 @@ namespace XREngine.Editor.Mcp
                             internalHeight = viewport.InternalHeight,
                             allowUiRender = viewport.AllowUIRender,
                             suppress3DSceneRendering = viewport.Suppress3DSceneRendering,
+                        },
+                        renderPipeline = new
+                        {
+                            setFromCamera = viewport.SetRenderPipelineFromCamera,
+                            configuredSourceType = cameraPipeline?.GetType().FullName,
+                            liveViewportType = viewportPipeline?.GetType().FullName,
+                            configuredSourceMatchesLiveViewport =
+                                ReferenceEquals(cameraPipeline, viewportPipeline),
+                            instanceId = viewport.RenderPipelineInstance.InstanceId,
+                            outputPurpose = viewport.PipelineRequest.Purpose.ToString(),
+                            outputId = viewport.PipelineRequest.OutputId,
+                            advancedBinding = new
+                            {
+                                state = advancedBinding.State.ToString(),
+                                failureReason = advancedBinding.FailureReason,
+                                outputId = advancedBinding.Request.OutputId,
+                                reservationId = advancedBinding.Reservation.ReservationId,
+                                backendGeneration = advancedBinding.Reservation.BackendGeneration,
+                            },
                         },
                         camera = new
                         {

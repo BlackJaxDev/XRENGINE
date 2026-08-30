@@ -75,7 +75,7 @@ internal sealed class SkinnedMeshBvhScheduler
             return tcs.Task;
         }
 
-        RuntimeEngine.Jobs.Schedule(
+        RuntimeRenderingHostServices.Work.GeneralJobs.Schedule(
             GenerateBvhJob(mesh, triangles, localizedPositions, version, boundsResult, tcs),
             error: ex => tcs.TrySetException(ex),
             canceled: () => tcs.TrySetCanceled()
@@ -111,7 +111,7 @@ internal sealed class SkinnedMeshBvhScheduler
                 return;
             }
 
-            RuntimeEngine.Jobs.Schedule(
+            RuntimeRenderingHostServices.Work.GeneralJobs.Schedule(
                 GenerateBvhJob(mesh, triangles, positions, version, boundsResult, tcs),
                 error: ex => tcs.TrySetException(ex),
                 canceled: () => tcs.TrySetCanceled()

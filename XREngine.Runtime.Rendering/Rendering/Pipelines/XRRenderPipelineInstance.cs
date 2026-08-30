@@ -466,6 +466,8 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
 
     private void ApplyPipelineChanged(RenderPipeline? pipeline)
     {
+        ClearAdvancedOutputBinding();
+
         if (pipeline is not null)
         {
             MeshRenderCommands.SetRenderPasses(pipeline.PassIndicesAndSorters, pipeline.PassMetadata);

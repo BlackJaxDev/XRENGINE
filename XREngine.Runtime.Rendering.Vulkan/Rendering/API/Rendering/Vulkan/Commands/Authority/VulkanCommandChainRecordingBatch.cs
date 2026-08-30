@@ -1,10 +1,14 @@
 using Silk.NET.Vulkan;
+using System.Diagnostics;
+using XREngine.Execution;
 
 namespace XREngine.Rendering.Vulkan;
 
 /// <summary>Reusable command-runtime batch state shared by recording workers.</summary>
-internal sealed class VulkanCommandChainRecordingBatch
+internal sealed class VulkanCommandChainRecordingBatch : IRenderWorkExecutor
 {
+    internal const int MeshCommandChainOperationKind = 1;
+
     /// <summary>Immutable encoder input published after the prepared frame is frozen.</summary>
     public VulkanPreparedWorkerRecordingContext PreparedWorkerContext { get; } = new();
     public readonly VulkanPreparedFrameRecording PreparedFrame = new();
@@ -16,6 +20,12 @@ internal sealed class VulkanCommandChainRecordingBatch
     private CommandChain[] _commandChainColdData = new CommandChain[16];
     // Merge-only native execute input; it is derived from Entries after all jobs complete.
     public CommandBuffer[] ExecutionBuffers = new CommandBuffer[16];
+    private int[] _renderWorkEntryIndices = new int[16];
+    private int[] _laneStarts = new int[4];
+    private int[] _laneCounts = new int[4];
+    private int[] _laneCursors = new int[4];
+    private int[] _laneEstimatedCosts = new int[4];
+    private VulkanCommandRuntime? _commandRuntime;
     public readonly VulkanCommandChainWorkerLocalStateBlocks WorkerLocalStates = new();
     public int StartIndex;
     public int EntryCount;
@@ -51,6 +61,128 @@ internal sealed class VulkanCommandChainRecordingBatch
             Array.Resize(ref ExecutionBuffers, Math.Max(entryCount, ExecutionBuffers.Length * 2));
         if (_commandChainColdData.Length < entryCount)
             Array.Resize(ref _commandChainColdData, Math.Max(entryCount, _commandChainColdData.Length * 2));
+        if (_renderWorkEntryIndices.Length < entryCount)
+            Array.Resize(ref _renderWorkEntryIndices, Math.Max(entryCount, _renderWorkEntryIndices.Length * 2));
+    }
+
+    internal void PrepareRenderWork(VulkanCommandRuntime commandRuntime, int laneCount)
+    {
+        ArgumentNullException.ThrowIfNull(commandRuntime);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(laneCount);
+        EnsureLaneCapacity(laneCount);
+        Array.Clear(_laneStarts, 0, laneCount);
+        Array.Clear(_laneCounts, 0, laneCount);
+        Array.Clear(_laneCursors, 0, laneCount);
+        Array.Clear(_laneEstimatedCosts, 0, laneCount);
+        ActiveWorkerMask = 0;
+
+        for (int entryIndex = 0; entryIndex < EntryCount; entryIndex++)
+        {
+            ref readonly VulkanCommandChainRecordingEntry entry = ref Entries[entryIndex];
+            if (!entry.NeedsRecording || !entry.DispatchToRenderDomain)
+                continue;
+            if ((uint)entry.WorkerIndex >= (uint)laneCount)
+                throw new InvalidOperationException($"Prepared command-chain entry {entryIndex} has invalid lane {entry.WorkerIndex}.");
+
+            _laneCounts[entry.WorkerIndex]++;
+            CommandChain chain = GetCommandChainColdData(entry.ColdDataIndex);
+            _laneEstimatedCosts[entry.WorkerIndex] = AddSaturating(
+                _laneEstimatedCosts[entry.WorkerIndex],
+                chain.SourceCount);
+            ActiveWorkerMask |= 1u << entry.WorkerIndex;
+        }
+
+        int workOffset = 0;
+        for (int laneId = 0; laneId < laneCount; laneId++)
+        {
+            _laneStarts[laneId] = workOffset;
+            _laneCursors[laneId] = workOffset;
+            workOffset = checked(workOffset + _laneCounts[laneId]);
+        }
+
+        for (int entryIndex = 0; entryIndex < EntryCount; entryIndex++)
+        {
+            ref readonly VulkanCommandChainRecordingEntry entry = ref Entries[entryIndex];
+            if (!entry.NeedsRecording || !entry.DispatchToRenderDomain)
+                continue;
+
+            _renderWorkEntryIndices[_laneCursors[entry.WorkerIndex]++] = entryIndex;
+        }
+
+        _commandRuntime = commandRuntime;
+    }
+
+    internal void GetLaneWork(
+        int laneId,
+        out int sourceStart,
+        out int sourceCount,
+        out int estimatedCost)
+    {
+        if ((uint)laneId >= (uint)_laneCounts.Length)
+            throw new ArgumentOutOfRangeException(nameof(laneId));
+
+        sourceStart = _laneStarts[laneId];
+        sourceCount = _laneCounts[laneId];
+        estimatedCost = Math.Max(1, _laneEstimatedCosts[laneId]);
+    }
+
+    public void Execute(in RenderWorkItem item, ref RenderWorkerContext context)
+    {
+        if (item.OperationKind != MeshCommandChainOperationKind)
+            throw new InvalidOperationException($"Unsupported Vulkan command recording work kind {item.OperationKind}.");
+        if (!context.TryGetBackendAttachment(out VulkanRenderLaneFrameAttachment? attachment) ||
+            attachment is null)
+            throw new InvalidOperationException($"Vulkan render lane {context.LaneId}:{context.FrameSlot} has no command-pool attachment.");
+        if (attachment.LaneId != context.LaneId || attachment.FrameSlot != context.FrameSlot)
+            throw new InvalidOperationException("The Vulkan command-pool attachment does not match its render-worker context.");
+        if (item.SourceStart < 0 || item.SourceCount <= 0 ||
+            item.SourceStart > _renderWorkEntryIndices.Length - item.SourceCount)
+        {
+            throw new InvalidOperationException("Vulkan command recording received an invalid frozen entry range.");
+        }
+
+        VulkanCommandRuntime runtime = _commandRuntime ??
+            throw new InvalidOperationException("The Vulkan command recording executor is not configured.");
+        long started = Stopwatch.GetTimestamp();
+        WorkerLocalStates.Begin(context.LaneId, started, DispatchTimestamp);
+        using VulkanRenderLaneExecutionScope laneScope = new(attachment);
+        using VulkanLaneCommandFamilyArena.RecordingLease arenaLease =
+            VulkanLaneCommandFamilyArena.EnterRecording(attachment.Graphics);
+        try
+        {
+            int end = checked(item.SourceStart + item.SourceCount);
+            for (int workIndex = item.SourceStart; workIndex < end; workIndex++)
+            {
+                int entryIndex = _renderWorkEntryIndices[workIndex];
+                ref readonly VulkanCommandChainRecordingEntry entry = ref Entries[entryIndex];
+                if (!entry.NeedsRecording ||
+                    !entry.DispatchToRenderDomain ||
+                    entry.WorkerIndex != context.LaneId)
+                {
+                    throw new InvalidOperationException(
+                        $"Frozen Vulkan command range contains entry {entryIndex} owned by lane {entry.WorkerIndex}, " +
+                        $"not executing lane {context.LaneId}.");
+                }
+
+                runtime.RecordPreparedMeshCommandChain(this, entryIndex);
+            }
+        }
+        finally
+        {
+            WorkerLocalStates.Complete(context.LaneId, Stopwatch.GetTimestamp());
+        }
+    }
+
+    public void QuarantineFaultedBatch(in RenderWorkBatchFaultContext context)
+    {
+        for (int entryIndex = 0; entryIndex < EntryCount; entryIndex++)
+        {
+            ref readonly VulkanCommandChainRecordingEntry entry = ref Entries[entryIndex];
+            if (!entry.NeedsRecording || !entry.DispatchToRenderDomain)
+                continue;
+
+            GetCommandChainColdData(entry.ColdDataIndex).RecordedArtifact.MarkFailed();
+        }
     }
 
     public int AddCommandChainColdData(CommandChain chain)
@@ -114,5 +246,21 @@ internal sealed class VulkanCommandChainRecordingBatch
         ActiveWorkerMask = 0;
         Error = null;
         PreparedWorkerContext.Reset();
+        _commandRuntime = null;
     }
+
+    private void EnsureLaneCapacity(int laneCount)
+    {
+        if (_laneCounts.Length >= laneCount)
+            return;
+
+        int capacity = Math.Max(laneCount, _laneCounts.Length * 2);
+        Array.Resize(ref _laneStarts, capacity);
+        Array.Resize(ref _laneCounts, capacity);
+        Array.Resize(ref _laneCursors, capacity);
+        Array.Resize(ref _laneEstimatedCosts, capacity);
+    }
+
+    private static int AddSaturating(int left, int right)
+        => left > int.MaxValue - right ? int.MaxValue : left + right;
 }

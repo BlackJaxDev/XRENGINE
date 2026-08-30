@@ -206,9 +206,14 @@ internal sealed class RenderWorkBatch
                     $"Only {_configuredDependentCount} of {_dependentCount} dependency slots were configured.");
 
             ValidateGraph();
+            RenderWorkDispatchProfile dispatchProfile = BuildDispatchProfile();
+            bool migrateWork = _domain.ShouldMigrateWork(dispatchProfile, requestInline);
+            if (!migrateWork)
+                PinMigratableItemsToLaneZero();
+
             _executor = executor;
             _frameSlot = frameSlot;
-            _inlineOnly = requestInline && CanUseLaneZeroOnly();
+            _inlineOnly = !dispatchProfile.RequiresBackgroundLane && !migrateWork;
             Volatile.Write(ref _remainingItems, _itemCount);
 
             if (Interlocked.CompareExchange(ref _state, StateRunning, StateBuilding) != StateBuilding)
@@ -517,17 +522,64 @@ internal sealed class RenderWorkBatch
             throw new InvalidOperationException("The render-work dependency graph contains a cycle.");
     }
 
-    private bool CanUseLaneZeroOnly()
+    private RenderWorkDispatchProfile BuildDispatchProfile()
+    {
+        int migratableItemCount = 0;
+        int independentMigratableItemCount = 0;
+        long independentEstimatedCost = 0;
+        int maximumIndependentEstimatedCost = 0;
+        int capPinnedItemCount = 0;
+        bool requiresBackgroundLane = false;
+        int migratableLimit = _domain.MaxMigratableItemCount;
+
+        for (int itemIndex = 0; itemIndex < _itemCount; itemIndex++)
+        {
+            RenderWorkItem item = _items[itemIndex];
+            if (item.PreferredLane > 0)
+            {
+                requiresBackgroundLane = true;
+                continue;
+            }
+            if (item.PreferredLane != RenderWorkItem.AnyLane)
+                continue;
+
+            if (migratableItemCount >= migratableLimit)
+            {
+                _items[itemIndex] = item with { PreferredLane = 0 };
+                capPinnedItemCount++;
+                continue;
+            }
+
+            migratableItemCount++;
+            if (item.PrerequisiteCount != 0)
+                continue;
+
+            independentMigratableItemCount++;
+            independentEstimatedCost = AddSaturating(independentEstimatedCost, item.EstimatedCost);
+            maximumIndependentEstimatedCost = Math.Max(maximumIndependentEstimatedCost, item.EstimatedCost);
+        }
+
+        return new RenderWorkDispatchProfile(
+            migratableItemCount,
+            independentMigratableItemCount,
+            independentEstimatedCost,
+            maximumIndependentEstimatedCost,
+            capPinnedItemCount,
+            requiresBackgroundLane);
+    }
+
+    private void PinMigratableItemsToLaneZero()
     {
         for (int itemIndex = 0; itemIndex < _itemCount; itemIndex++)
         {
-            int preferredLane = _items[itemIndex].PreferredLane;
-            if (preferredLane > 0)
-                return false;
+            RenderWorkItem item = _items[itemIndex];
+            if (item.PreferredLane == RenderWorkItem.AnyLane)
+                _items[itemIndex] = item with { PreferredLane = 0 };
         }
-
-        return true;
     }
+
+    private static long AddSaturating(long left, int right)
+        => left > long.MaxValue - right ? long.MaxValue : left + right;
 
     private void FaultCore(int faultingItemIndex, int laneId, Exception exception)
     {

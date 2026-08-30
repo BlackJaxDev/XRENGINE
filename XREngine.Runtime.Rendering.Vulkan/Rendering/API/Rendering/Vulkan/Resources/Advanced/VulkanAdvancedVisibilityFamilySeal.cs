@@ -7,7 +7,8 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal readonly record struct VulkanAdvancedVisibilityFamilySeal(
     object Owner,
-    AdvancedPreparationExtractor Extractor,
+    AdvancedVisibilityFamilyReservation Reservation,
+    VulkanAdvancedVisibilityInputStorage Input,
     AdvancedPreparationPublication Publication,
     ulong VisibilityContentGeneration,
     AdvancedIndirectPreparationResult Indirect,
@@ -17,7 +18,8 @@ internal readonly record struct VulkanAdvancedVisibilityFamilySeal(
     uint ViewCount)
 {
     internal bool IsValid
-        => Owner is not null && Extractor is not null &&
+        => Owner is not null && Reservation.IsValid && Input is not null &&
+           Input.IsValid &&
            Publication.PublicationGeneration != 0u &&
            VisibilityContentGeneration != 0u &&
            Publication.VisibilityContentGeneration == VisibilityContentGeneration &&
@@ -25,7 +27,8 @@ internal readonly record struct VulkanAdvancedVisibilityFamilySeal(
 
     internal bool Matches(in VulkanAdvancedVisibilityFamilySeal other)
         => ReferenceEquals(Owner, other.Owner) &&
-           ReferenceEquals(Extractor, other.Extractor) &&
+           Reservation.Equals(other.Reservation) &&
+           ReferenceEquals(Input, other.Input) &&
            Publication.Equals(other.Publication) &&
            VisibilityContentGeneration == other.VisibilityContentGeneration &&
            Indirect.Equals(other.Indirect) &&

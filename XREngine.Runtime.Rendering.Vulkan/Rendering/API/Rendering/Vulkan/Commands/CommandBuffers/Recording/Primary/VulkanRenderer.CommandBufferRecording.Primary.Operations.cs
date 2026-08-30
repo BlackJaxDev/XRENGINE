@@ -118,22 +118,24 @@ internal sealed partial class VulkanCommandRuntime
         scoped ref PrimaryCommandBufferRecordingState state,
         in VulkanAdvancedVisibilityOperationPayload payload,
         in VulkanPrimaryOperationRecordingInfo info)
-        => payload.Request.Stage switch
+        => (payload.Request.Stage, payload.Request.Phase) switch
         {
-            EAdvancedRenderStage.VisibilityPreparation =>
+            (EAdvancedRenderStage.VisibilityPreparation, EAdvancedVisibilityStageBackendPhase.Complete) =>
                 RecordAdvancedVisibilityPreparationPayload(
                     ref state,
                     in payload,
                     in info),
-            EAdvancedRenderStage.VisibilityRaster =>
+            (EAdvancedRenderStage.VisibilityRaster, EAdvancedVisibilityStageBackendPhase.Complete) =>
                 RecordAdvancedVisibilityRasterPayload(
                     ref state,
                     in payload,
                     in info),
-            EAdvancedRenderStage.DepthPyramidAndLateVisibility =>
-                RecordAdvancedVisibilityLatePayload(ref state, in payload, in info),
+            (EAdvancedRenderStage.DepthPyramidAndLateVisibility, EAdvancedVisibilityStageBackendPhase.LateCompute) =>
+                RecordAdvancedVisibilityLateComputePayload(ref state, in payload, in info),
+            (EAdvancedRenderStage.DepthPyramidAndLateVisibility, EAdvancedVisibilityStageBackendPhase.LateRaster) =>
+                RecordAdvancedVisibilityLateRasterPayload(ref state, in payload, in info),
             _ => throw new VulkanPlanPreconditionException(
-                $"Advanced visibility stage '{payload.Request.Stage}' is outside the admitted preparation/raster family."),
+                $"Advanced visibility stage '{payload.Request.Stage}' phase '{payload.Request.Phase}' is outside the admitted physical family."),
         };
 
     private int RecordAdvancedVisibilityPreparationPayload(
@@ -179,7 +181,8 @@ internal sealed partial class VulkanCommandRuntime
             BindAdvancedVisibilityDescriptorSets(state.CommandBuffer,
                 PipelineBindPoint.Compute, early.PipelineLayout, in payload);
             PushConstantsTracked(state.CommandBuffer, early.PipelineLayout,
-                ShaderStageFlags.ComputeBit, 0u,
+                VulkanMeshRenderingConventions.GetCommonPushConstantStageFlags(
+                    DeviceContext), 0u,
                 new AdvancedVisibilityPreparationPushConstants(
                     viewIndex, payloadBase, payload.State.PayloadCapacity, rangeBase));
             Api.CmdDispatch(state.CommandBuffer, groups, 1u, 1u);
@@ -201,7 +204,8 @@ internal sealed partial class VulkanCommandRuntime
             BindAdvancedVisibilityDescriptorSets(state.CommandBuffer,
                 PipelineBindPoint.Compute, indirect.PipelineLayout, in payload);
             PushConstantsTracked(state.CommandBuffer, indirect.PipelineLayout,
-                ShaderStageFlags.ComputeBit, 0u,
+                VulkanMeshRenderingConventions.GetCommonPushConstantStageFlags(
+                    DeviceContext), 0u,
                 new AdvancedVisibilityPreparationPushConstants(
                     viewIndex, payloadBase, payload.State.PayloadCapacity, rangeBase));
             Api.CmdDispatch(state.CommandBuffer, groups, 1u, 1u);
@@ -210,7 +214,7 @@ internal sealed partial class VulkanCommandRuntime
         return info.OperationIndex;
     }
 
-    private unsafe int RecordAdvancedVisibilityLatePayload(
+    private unsafe int RecordAdvancedVisibilityLateComputePayload(
         scoped ref PrimaryCommandBufferRecordingState state,
         in VulkanAdvancedVisibilityOperationPayload payload,
         in VulkanPrimaryOperationRecordingInfo info)
@@ -259,7 +263,8 @@ internal sealed partial class VulkanCommandRuntime
                 PipelineBindPoint.Compute, depth.PipelineLayout, in payload,
                 closure.DescriptorSets![closure.DescriptorIndex(viewIndex, mipIndex)]);
             PushConstantsTracked(state.CommandBuffer, depth.PipelineLayout,
-                ShaderStageFlags.ComputeBit, 0u,
+                VulkanMeshRenderingConventions.GetCommonPushConstantStageFlags(
+                    DeviceContext), 0u,
                 new AdvancedVisibilityPreparationPushConstants(
                     viewIndex, payloadBase, payload.State.PayloadCapacity, rangeBase));
             uint groupsX = Math.Max(1u, closure.PyramidGroup.ResolvedExtent.Width >> (int)destinationMip);
@@ -282,12 +287,42 @@ internal sealed partial class VulkanCommandRuntime
             closure.DescriptorSets![closure.DescriptorIndex(
                 viewIndex, closure.DispatchCount)]);
         PushConstantsTracked(state.CommandBuffer, late.PipelineLayout,
-            ShaderStageFlags.ComputeBit, 0u,
+            VulkanMeshRenderingConventions.GetCommonPushConstantStageFlags(
+                DeviceContext), 0u,
             new AdvancedVisibilityPreparationPushConstants(
                 viewIndex, payloadBase, payload.State.PayloadCapacity, rangeBase));
         Api.CmdDispatch(state.CommandBuffer, DivideRoundUp(payload.State.PayloadCapacity, 256u), 1u, 1u);
         EmitMemoryBarrierMask(state.CommandBuffer, EMemoryBarrierMask.ShaderStorage);
         }
+
+        // The graph transition into LateRaster owns the attachment layout.
+        // This physical compute pass exits with every produced pyramid mip in
+        // General, matching its declared read/write storage use rather than
+        // leaking the internal sampled layout across the pass boundary.
+        for (uint viewIndex = 0u; viewIndex < payload.State.ViewCount; ++viewIndex)
+        for (int mipIndex = 0; mipIndex < closure.DispatchCount; ++mipIndex)
+        {
+            EmitAdvancedVisibilityImageBarrier(
+                state.CommandBuffer,
+                closure.PyramidGroup,
+                checked((uint)mipIndex + 1u),
+                viewIndex,
+                ImageLayout.General,
+                AccessFlags.ShaderReadBit | AccessFlags.ShaderWriteBit,
+                PipelineStageFlags.ComputeShaderBit,
+                allowUndefined: false);
+        }
+        return info.OperationIndex;
+    }
+
+    private int RecordAdvancedVisibilityLateRasterPayload(
+        scoped ref PrimaryCommandBufferRecordingState state,
+        in VulkanAdvancedVisibilityOperationPayload payload,
+        in VulkanPrimaryOperationRecordingInfo info)
+    {
+        if (payload.Request.Phase != EAdvancedVisibilityStageBackendPhase.LateRaster)
+            throw new VulkanPlanPreconditionException(
+                "Late raster recording received a non-raster physical phase.");
 
         VulkanAdvancedVisibilityResourceState lateState = payload.State with
         {
@@ -313,11 +348,30 @@ internal sealed partial class VulkanCommandRuntime
         PipelineStageFlags destinationStage,
         bool allowUndefined)
     {
-        ImageLayout oldLayout = group.GetKnownLayout(
+        ImageAspectFlags aspect = group.Format switch
+        {
+            Format.D16UnormS8Uint or Format.D24UnormS8Uint or
+                Format.D32SfloatS8Uint =>
+                ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit,
+            Format.D16Unorm or Format.D32Sfloat =>
+                ImageAspectFlags.DepthBit,
+            _ => ImageAspectFlags.ColorBit,
+        };
+        ImageSubresourceRange range = new(
+            aspect,
             mipLevel,
             1u,
             arrayLayer,
             1u);
+        ImageLayout oldLayout = TryGetRecordedImageAccessState(
+                commandBuffer,
+                group.Image,
+                in range,
+                out VulkanImageAccessState recordedState,
+                includeEntryState: true,
+                includeUndefinedState: allowUndefined)
+            ? recordedState.Layout
+            : group.GetKnownLayout(mipLevel, 1u, arrayLayer, 1u);
         if (oldLayout == ImageLayout.Undefined && !allowUndefined)
             throw new VulkanPlanPreconditionException(
                 "A late-visibility source subresource has no exact tracked layout.");
@@ -326,27 +380,28 @@ internal sealed partial class VulkanCommandRuntime
             SType = StructureType.ImageMemoryBarrier,
             OldLayout = oldLayout,
             NewLayout = nextLayout,
-            SrcAccessMask = oldLayout == ImageLayout.Undefined
-                ? 0u
-                : AccessFlags.ShaderWriteBit |
-                  AccessFlags.DepthStencilAttachmentWriteBit,
+            SrcAccessMask = SourceAccessForAdvancedVisibilityLayout(oldLayout),
             DstAccessMask = destinationAccess,
             Image = group.Image,
-            SubresourceRange = new ImageSubresourceRange(
-                group.Format is Format.D16Unorm or Format.D32Sfloat or Format.D16UnormS8Uint or Format.D24UnormS8Uint or Format.D32SfloatS8Uint
-                    ? ImageAspectFlags.DepthBit : ImageAspectFlags.ColorBit,
-                mipLevel, 1u, arrayLayer, 1u),
+            SubresourceRange = range,
         };
         CmdPipelineBarrierTracked(commandBuffer,
             PipelineStageFlags.AllCommandsBit, destinationStage,
             DependencyFlags.None, 0, null, 0, null, 1, &barrier);
-        group.UpdateKnownLayout(
-            nextLayout,
-            mipLevel,
-            1u,
-            arrayLayer,
-            1u);
     }
+
+    private static AccessFlags SourceAccessForAdvancedVisibilityLayout(
+        ImageLayout layout) => layout switch
+        {
+            ImageLayout.Undefined => 0u,
+            ImageLayout.ShaderReadOnlyOptimal => AccessFlags.ShaderReadBit,
+            ImageLayout.General => AccessFlags.ShaderReadBit |
+                                   AccessFlags.ShaderWriteBit,
+            ImageLayout.DepthStencilAttachmentOptimal =>
+                AccessFlags.DepthStencilAttachmentReadBit |
+                AccessFlags.DepthStencilAttachmentWriteBit,
+            _ => AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit,
+        };
 
     private unsafe int RecordAdvancedVisibilityRasterPayload(
         scoped ref PrimaryCommandBufferRecordingState state,
@@ -447,10 +502,15 @@ internal sealed partial class VulkanCommandRuntime
                     "A visibility raster pipeline closure changed after frame-plan sealing.");
             }
             VulkanSealedBinSubmissionPlan plan = header.SubmissionPlan!;
+            if (!plan.OutputPolicy.AllowsCanonicalVisibilityFamily)
+            {
+                throw new VulkanPlanPreconditionException(
+                    $"Advanced visibility raster reached recording with an unsupported output policy: {plan.OutputPolicy.DescribeCanonicalVisibilityRejection()}.");
+            }
             // LateVisibility deliberately excludes CPU-direct producers: they
             // have no GPU-owned recovered-count stream and replaying them here
             // would duplicate early raster work.
-            if (payload.Request.Stage == EAdvancedRenderStage.DepthPyramidAndLateVisibility &&
+            if (payload.Request.Phase == EAdvancedVisibilityStageBackendPhase.LateRaster &&
                 plan.ResolvedStrategy == EMeshSubmissionStrategy.CpuDirect)
             {
                 continue;

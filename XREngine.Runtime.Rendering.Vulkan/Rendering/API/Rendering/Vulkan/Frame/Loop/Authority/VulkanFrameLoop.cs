@@ -634,6 +634,19 @@ internal sealed partial class VulkanFrameLoop
                 attempt.Reason,
                 terminalFailure,
                 ownershipSettled));
+        _telemetry.PublishDesktopFrameTerminalDiagnostic(
+            new VulkanDesktopFrameTerminalDiagnostic(
+                checked((long)attempt.FrameNumber),
+                attempt.FrameNumber,
+                attempt.FrameSlot,
+                outcome.ToString(),
+                attempt.Reason.ToString(),
+                terminalFailure.Kind.ToString(),
+                terminalFailure.Stage.ToString(),
+                terminalFailure.NativeResult.ToString(),
+                terminalFailure.ExceptionType,
+                terminalFailure.Detail,
+                ownershipSettled));
 
         if (outcome == EVulkanFrameOutcome.Failed)
             ReportDesktopFrameTerminalFailure(ref attempt, in terminalFailure);
@@ -741,12 +754,22 @@ internal sealed partial class VulkanFrameLoop
             phaseStarted);
 
         phaseStarted = BeginDesktopFramePhase(EVulkanFrameStage.FramePacing);
-        if (!CompleteDesktopFramePhase(
+        VulkanDesktopFramePhaseResult preflightResult =
+            CompleteDesktopFramePhase(
                 ref attempt,
                 EVulkanFrameStage.FramePacing,
                 RunDesktopFramePreflight(ref attempt),
-                phaseStarted).ShouldContinue)
+                phaseStarted);
+        if (!preflightResult.ShouldContinue)
+        {
+            RenderForegroundWorkCoordinator.MarkRenderingInactive();
             return;
+        }
+
+        using RenderForegroundWorkCoordinator.HighRefreshFrameScope
+            highRefreshFrame =
+                RenderForegroundWorkCoordinator.EnterHighRefreshFrame(
+                    attempt.Timing.PresentationProfile.TargetRefreshHz);
 
         phaseStarted = BeginDesktopFramePhase(
             EVulkanFrameStage.CompletionMaintenance);

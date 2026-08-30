@@ -77,6 +77,8 @@ namespace XREngine.Rendering.Vulkan
                 ThreadCommandPools[Environment.CurrentManagedThreadId] = primaryPool;
                 ThreadTransferCommandPools[Environment.CurrentManagedThreadId] = primaryTransferPool;
             }
+
+            InitializeRenderLaneCommandAttachments();
         }
 
         internal CommandPool GetThreadCommandPool()
@@ -148,13 +150,23 @@ namespace XREngine.Rendering.Vulkan
             }
         }
 
-        private unsafe CommandPool CreateCommandPoolForFamily(uint familyIndex)
+        private CommandPool CreateCommandPoolForFamily(uint familyIndex)
+            => CreateCommandPoolForFamily(
+                familyIndex,
+                transient: false,
+                $"CommandPool.QueueFamily.{familyIndex}.Retained");
+
+        private unsafe CommandPool CreateCommandPoolForFamily(
+            uint familyIndex,
+            bool transient,
+            string owner)
         {
             CommandPoolCreateInfo poolInfo = new()
             {
                 SType = StructureType.CommandPoolCreateInfo,
                 QueueFamilyIndex = familyIndex,
-                Flags = CommandPoolCreateFlags.ResetCommandBufferBit | CommandPoolCreateFlags.TransientBit,
+                Flags = CommandPoolCreateFlags.ResetCommandBufferBit |
+                    (transient ? CommandPoolCreateFlags.TransientBit : 0),
             };
 
             if (!DeviceContext.IsOperational)
@@ -165,7 +177,7 @@ namespace XREngine.Rendering.Vulkan
 
             ResourceRuntime.Lifetime.Tracker.RegisterResource(
                 new VulkanResourceLifetimeKey(ObjectType.CommandPool, pool.Handle),
-                $"CommandPool.QueueFamily.{familyIndex}",
+                owner,
                 externallyOwned: false);
 
             return pool;

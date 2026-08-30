@@ -5,6 +5,7 @@ using XREngine.Core.Files;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Pipelines.Commands;
+using XREngine.Rendering.Shaders;
 using XREngine.Rendering.Vulkan;
 
 namespace XREngine.UnitTests.Rendering;
@@ -22,7 +23,8 @@ public sealed class AdvancedPreparationIntegrationContractTests
         RenderWorldSnapshot world = new(
             FrameId: 12UL,
             Scene: context,
-            GpuScene: scene);
+            GpuScene: scene,
+            GlobalResources: AdvancedGlobalResourceCapture.Empty(12UL));
         RenderFrameViewSet desktop = CreateViewSet(
             100UL,
             EVrOutputViewKind.DesktopEditor,
@@ -49,7 +51,7 @@ public sealed class AdvancedPreparationIntegrationContractTests
             desktopPublication.SceneIdentity);
         eyePublication.DeformationJobCount.ShouldBe(
             desktopPublication.DeformationJobCount);
-        eyePublication.VisibilityViewCount.ShouldBe(3u);
+        eyePublication.VisibilityViewCount.ShouldBe(2u);
         (eyePublication.Consumers &
             EAdvancedPreparationConsumer.MaterialReconstruction)
             .ShouldBe(EAdvancedPreparationConsumer.MaterialReconstruction);
@@ -142,22 +144,23 @@ public sealed class AdvancedPreparationIntegrationContractTests
             "layout(std430, binding = 12) readonly buffer BlendshapeRecords");
         deformation.ShouldContain("GroupedJobIndices");
         deformation.ShouldContain("CurrentOutput[job.CurrentVertexOffset");
-        early.ShouldContain("atomicAdd(EarlyCount");
-        early.ShouldContain("atomicAdd(DeferredCount");
-        early.ShouldContain("EarlyVisibleIndices[outputIndex]");
-        early.ShouldContain("PreviousViewProjection");
-        early.ShouldContain("candidate.ViewMask & ActiveViewMask");
-        early.ShouldContain("uniform uint ReversedDepth");
-        late.ShouldContain("deferredIndex >= DeferredCount");
-        late.ShouldContain("atomicAdd(LateCount");
-        late.ShouldContain("LateVisibleIndices[outputIndex]");
-        late.ShouldContain("uniform uint ReversedDepth");
-        depthPyramid.ShouldContain("ReversedDepth != 0u");
+        early.ShouldContain("XR_ADV_VisibilityCounters.earlyDraws");
+        early.ShouldContain("XR_ADV_VisibilityCounters.deferredCandidates");
+        early.ShouldContain("XR_ADV_VisibilityVisibleIndices.records");
+        early.ShouldContain("XR_ADV_VisibilityDeferredIndices.records");
+        early.ShouldContain("viewProjectionUnjittered");
+        early.ShouldContain("candidateIncludesSelectedView(candidate.ViewMask)");
+        late.ShouldContain("deferredIndex >= boundedDeferredCount");
+        late.ShouldContain("XR_ADV_VisibilityCounters.lateDraws");
+        late.ShouldContain("XR_ADV_VisibilityLateVisibleIndices.records");
+        late.ShouldContain("view.depthParams.z != 0.0");
+        depthPyramid.ShouldContain(".depthParams.z != 0.0");
         depthPyramid.ShouldContain("clamp(source + ivec2");
         indirect.ShouldContain("PRODUCER_SKINNED_MESHLET");
         indirect.ShouldContain("PRODUCER_STATIC_MESHLET");
         indirect.ShouldContain("visibleIndex >= visibleCount");
-        indirect.ShouldContain("atomicAdd(Counts[range]");
+        indirect.ShouldContain("XR_ADV_VisibilityRangeCounts.records");
+        indirect.ShouldContain("atomicCompSwap(");
     }
 
     [TestCase("AggregateDeformation.comp")]
@@ -171,10 +174,23 @@ public sealed class AdvancedPreparationIntegrationContractTests
         string relativePath =
             $"Build/CommonAssets/Shaders/Advanced/Preparation/{shaderName}";
         string fullPath = ResolveWorkspaceFile(relativePath);
+        string shaderSource = File.ReadAllText(fullPath);
+        if (!string.Equals(
+                shaderName,
+                "AggregateDeformation.comp",
+                StringComparison.Ordinal))
+        {
+            string preamble = AdvancedShaderAccessLibrary.BuildPreamble(
+                RuntimeGraphicsApiKind.Vulkan,
+                EAdvancedTextureIndirectionMode.VulkanDescriptorHeap,
+                descriptorSet: 3u,
+                resourceDescriptorSet: 2u);
+            shaderSource = InsertPreambleAfterVersion(shaderSource, preamble);
+        }
         TextFile source = new()
         {
             FilePath = fullPath,
-            Text = File.ReadAllText(fullPath),
+            Text = shaderSource,
         };
         XRShader shader = new(EShaderType.Compute, source);
 
@@ -302,6 +318,26 @@ public sealed class AdvancedPreparationIntegrationContractTests
 
     private static string ReadWorkspaceFile(string relativePath)
         => File.ReadAllText(ResolveWorkspaceFile(relativePath));
+
+    private static string InsertPreambleAfterVersion(
+        string source,
+        string preamble)
+    {
+        int versionEnd = source.IndexOf('\n');
+        if (versionEnd < 0 ||
+            !source.AsSpan(0, versionEnd).Trim().StartsWith(
+                "#version",
+                StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "Advanced Vulkan shader source must begin with #version.");
+        }
+
+        return string.Concat(
+            source.AsSpan(0, versionEnd + 1),
+            preamble,
+            source.AsSpan(versionEnd + 1));
+    }
 
     private static string ResolveWorkspaceFile(string relativePath)
     {

@@ -36,8 +36,16 @@ internal sealed partial class VulkanFrameLoop
                 pairedLogicalPlan);
         }
 
-        if (!TryFreezeOpenXrEyeRecordWorkerInput(in preparedFirstEye, out OpenXrPreparedEyeRecordWorkerInput frozenFirstEye) ||
-            !TryFreezeOpenXrEyeRecordWorkerInput(in preparedSecondEye, out OpenXrPreparedEyeRecordWorkerInput frozenSecondEye))
+        int firstLaneId = _commandRuntime.ResolveOpenXrEyeRenderLaneId(0);
+        int secondLaneId = _commandRuntime.ResolveOpenXrEyeRenderLaneId(1);
+        if (!TryFreezeOpenXrEyeRecordWorkerInput(
+                in preparedFirstEye,
+                firstLaneId,
+                out OpenXrPreparedEyeRecordWorkerInput frozenFirstEye) ||
+            !TryFreezeOpenXrEyeRecordWorkerInput(
+                in preparedSecondEye,
+                secondLaneId,
+                out OpenXrPreparedEyeRecordWorkerInput frozenSecondEye))
         {
             throw CreateOpenXrEyePresentNowFailure(
                 firstEye.OpenXrViewIndex,
@@ -116,7 +124,7 @@ internal sealed partial class VulkanFrameLoop
         Debug.VulkanWarningEvery(
             "OpenXR.Vulkan.ParallelCommandBufferRecording.RecordFailure",
             TimeSpan.FromSeconds(1),
-            "[OpenXR] Parallel eye primary recording failed. leftSuccess={0} rightSuccess={1} leftThread={2} rightThread={3} leftError={4} rightError={5}",
+            "[OpenXR] Parallel eye primary recording failed. leftSuccess={0} rightSuccess={1} leftManagedThread={2} rightManagedThread={3} leftError={4} rightError={5}",
             batch.Left.Success,
             batch.Right.Success,
             batch.Left.ThreadId,

@@ -672,19 +672,31 @@ internal unsafe partial class VkMeshRenderer
 		string pipelineName,
 		bool allowPipelineCreation,
 		bool foregroundRequired,
-		out Pipeline pipeline)
+		out Pipeline pipeline,
+		out bool retryable,
+		out string failureReason)
 	{
 		pipeline = default;
+		retryable = false;
+		failureReason = string.Empty;
 
 		RefreshClipDepthPipelinePolicy();
 
 		if (draw.PreparedProgram is { } preparedProgram)
 		{
 			if (!ActivateCapturedProgram(material, preparedProgram, draw.PreparedProgramIdentity, draw.PreparedProgramLinkGeneration))
+			{
+				retryable = true;
+				failureReason = "captured graphics program generation changed";
 				return false;
+			}
 		}
 		else if (!EnsureProgram(material))
+		{
+			retryable = true;
+			failureReason = "graphics program is not ready";
 			return false;
+		}
 
 		bool pipelineInvalidated = _pipelineDirty;
 		uint colorAttachmentCount = useDynamicRendering
@@ -772,6 +784,8 @@ internal unsafe partial class VkMeshRenderer
 		if (!allowPipelineCreation)
 		{
 			_pipelineDirty = true;
+			retryable = true;
+			failureReason = "graphics pipeline was not present in the prepared cache";
 			return false;
 		}
 
@@ -869,14 +883,17 @@ internal unsafe partial class VkMeshRenderer
 				useDynamicRendering,
 				dynamicRenderingFormats);
 		}
-		catch (VulkanPipelineCompilationDeferredException)
+		catch (VulkanPipelineCompilationDeferredException ex)
 		{
 			_pipelineDirty = true;
+			retryable = true;
+			failureReason = ex.Message;
 			return false;
 		}
 		catch (InvalidOperationException ex)
 		{
 			ReportPipelineCreateFailure(program, material, pipelineName, passIndex, topology, ex);
+			failureReason = ex.Message;
 			return false;
 		}
 
@@ -889,6 +906,9 @@ internal unsafe partial class VkMeshRenderer
 			{
 				if (!asyncResult.Success || asyncResult.Pipeline.Handle == 0)
 				{
+				retryable = asyncResult.Retryable;
+				failureReason = asyncResult.ErrorMessage ??
+					"graphics pipeline compilation returned no native pipeline";
 					if (asyncResult.Retryable)
 					{
 						_pipelineDirty = true;
@@ -916,12 +936,14 @@ internal unsafe partial class VkMeshRenderer
 			if (BackendContext.Resources.PipelineManager.IsGraphicsPipelineCompileInFlight(request.CompileKey))
 			{
 				string foregroundReason = "foreground pipeline completion failed";
+				bool foregroundRetryable = true;
 				if (foregroundRequired &&
 				BackendContext.Resources.PipelineManager.TryCompleteGraphicsPipelineForForeground(
 					request.CompileKey,
 					request.DependencyGeneration,
 					out VulkanGraphicsPipelineCompileResult foregroundResult,
-					out foregroundReason))
+					out foregroundReason,
+					out foregroundRetryable))
 				{
 					pipeline = BackendContext.Resources.PipelineManager.StoreOrRetireSharedGraphicsPipeline(key, foregroundResult.Pipeline);
 					_pipelines[key] = pipeline;
@@ -930,11 +952,20 @@ internal unsafe partial class VkMeshRenderer
 				}
 
 				if (foregroundRequired)
+				{
+					retryable = foregroundRetryable;
+					failureReason = foregroundReason;
 					Debug.VulkanWarningEvery(
 						$"Vulkan.Pipeline.ForegroundCompileFailed.{program.Data.Name ?? "UnknownProgram"}",
 						TimeSpan.FromSeconds(2),
 						"[Vulkan] Foreground pipeline admission failed for program='{0}' pipeline='{1}': {2}",
 						program.Data.Name ?? "<unnamed program>", pipelineName, foregroundReason);
+				}
+				else
+				{
+					retryable = true;
+					failureReason = "graphics pipeline compile is queued";
+				}
 
 				RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanPipelineTelemetry(
 					EVulkanPipelineTelemetryEvent.DrawNotReady,
@@ -977,8 +1008,11 @@ internal unsafe partial class VkMeshRenderer
 					BackendContext.IsDeviceOperational,
 					RuntimeEngine.Rendering.Settings.AsyncProgramCompilation,
 					foregroundRequired,
-					out string rejectReason))
+					out string rejectReason,
+					out bool enqueueRetryable))
 			{
+				retryable = enqueueRetryable;
+				failureReason = rejectReason;
 				RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanPipelineTelemetry(
 					EVulkanPipelineTelemetryEvent.DrawNotReady,
 					backgroundCompile: true);
@@ -993,17 +1027,28 @@ internal unsafe partial class VkMeshRenderer
 				return false;
 			}
 
-			if (foregroundRequired &&
-				BackendContext.Resources.PipelineManager.TryCompleteGraphicsPipelineForForeground(
-					request.CompileKey,
-					request.DependencyGeneration,
-					out VulkanGraphicsPipelineCompileResult foregroundCompletion,
-					out _))
+			if (foregroundRequired)
 			{
-				pipeline = BackendContext.Resources.PipelineManager.StoreOrRetireSharedGraphicsPipeline(key, foregroundCompletion.Pipeline);
-				_pipelines[key] = pipeline;
-				_pipelineDirty = false;
-				return true;
+				if (BackendContext.Resources.PipelineManager.TryCompleteGraphicsPipelineForForeground(
+						request.CompileKey,
+						request.DependencyGeneration,
+						out VulkanGraphicsPipelineCompileResult foregroundCompletion,
+						out string foregroundReason,
+						out bool foregroundRetryable))
+				{
+					pipeline = BackendContext.Resources.PipelineManager.StoreOrRetireSharedGraphicsPipeline(key, foregroundCompletion.Pipeline);
+					_pipelines[key] = pipeline;
+					_pipelineDirty = false;
+					return true;
+				}
+
+				retryable = foregroundRetryable;
+				failureReason = foregroundReason;
+			}
+			else
+			{
+				retryable = true;
+				failureReason = "graphics pipeline compile was queued";
 			}
 
 			_pipelineDirty = true;
@@ -1038,23 +1083,30 @@ internal unsafe partial class VkMeshRenderer
 				BackendContext.Resources.PipelineManager.ActivePipelineCache,
 				backgroundCompile: false);
 		}
-		catch (VulkanPipelineCompilationDeferredException)
+		catch (VulkanPipelineCompilationDeferredException ex)
 		{
 			_pipelineDirty = true;
 			pipeline = default;
+			retryable = true;
+			failureReason = ex.Message;
 			return false;
 		}
 		catch (InvalidOperationException ex)
 		{
 			ReportPipelineCreateFailure(program, material, pipelineName, passIndex, topology, ex);
 			pipeline = default;
+			failureReason = ex.Message;
 			return false;
 		}
 
 		pipeline = BackendContext.Resources.PipelineManager.StoreOrRetireSharedGraphicsPipeline(key, pipeline);
 		_pipelines[key] = pipeline;
 		_pipelineDirty = false;
-		return pipeline.Handle != 0;
+		if (pipeline.Handle != 0)
+			return true;
+
+		failureReason = "graphics pipeline creation returned a null native handle";
+		return false;
 	}
 
 	private bool EnsurePipeline(
@@ -1065,7 +1117,7 @@ internal unsafe partial class VkMeshRenderer
 		string pipelineName, bool allowPipelineCreation, out Pipeline pipeline)
 		=> EnsurePipelineCore(material, topology, draw, renderPass, useDynamicRendering,
 			dynamicRenderingFormats, passIndex, passMetadata, depthStencilReadOnly,
-			pipelineName, allowPipelineCreation, false, out pipeline);
+			pipelineName, allowPipelineCreation, false, out pipeline, out _, out _);
 
 	private bool RecordGraphicsPipelineCacheMiss(
 		int passIndex,

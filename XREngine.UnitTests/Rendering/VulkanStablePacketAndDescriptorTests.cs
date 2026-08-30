@@ -1324,56 +1324,57 @@ public sealed class VulkanStablePacketAndDescriptorTests
     }
 
     [Test]
-    public void WorkerSecondaryArena_OwnsPoolsAndReusableArtifactSlots()
+    public void LaneCommandArena_OwnsPoolsAndRetainedArtifacts()
     {
-        VulkanWorkerSecondaryCommandArena arena = new(workerIndex: 3);
-        arena.Initialize(
-        [
-            new CommandPool(0x101),
-            new CommandPool(0x202),
-        ]);
+        VulkanLaneCommandFamilyArena arena = new(
+            laneId: 3,
+            frameSlot: 1,
+            queueFamilyIndex: 7,
+            transientPool: new CommandPool(0x101),
+            retainedPool: new CommandPool(0x202));
         VulkanRecordedCommandArtifact artifact = new(
             CommandBufferLevel.Secondary,
             frameSlot: 1);
 
         artifact.AssignNativeBuffer(
             new CommandBuffer(0x303),
-            arena.GetPool(frameSlot: 1),
+            arena.RetainedPool,
             ownsPool: false,
             arena);
 
-        arena.WorkerIndex.ShouldBe(3);
-        arena.FrameSlotCount.ShouldBe(2);
+        arena.LaneId.ShouldBe(3);
+        arena.FrameSlot.ShouldBe(1);
+        arena.QueueFamilyIndex.ShouldBe(7u);
         artifact.ArenaOwnerIdentity.ShouldBe(arena.Identity);
-        artifact.WorkerArenaOwner.ShouldBeSameAs(arena);
-        arena.GetArtifactCount(frameSlot: 1).ShouldBe(1);
+        artifact.LaneArenaOwner.ShouldBeSameAs(arena);
+        arena.RetainedArtifactCount.ShouldBe(1);
 
         artifact.MarkRetired();
-        arena.GetArtifactCount(frameSlot: 1).ShouldBe(0);
-        Should.NotThrow(arena.ClearAfterPoolRetirement);
-        arena.FrameSlotCount.ShouldBe(0);
+        arena.RetainedArtifactCount.ShouldBe(0);
+        Should.NotThrow(arena.ClearAfterRetirement);
+        arena.TransientPool.Handle.ShouldBe(0UL);
+        arena.RetainedPool.Handle.ShouldBe(0UL);
     }
 
     [Test]
-    public void WorkerSecondaryArena_AllowsPoolResetOnlyWithoutReusableOrPinnedArtifacts()
+    public void LaneCommandArena_RetiresOnlyAfterEveryArtifactDetaches()
     {
-        VulkanWorkerSecondaryCommandArena arena = new(workerIndex: 2);
-        arena.Initialize([new CommandPool(0x101)]);
+        VulkanLaneCommandFamilyArena arena = new(
+            laneId: 2,
+            frameSlot: 0,
+            queueFamilyIndex: 5,
+            transientPool: new CommandPool(0x101),
+            retainedPool: new CommandPool(0x202));
         VulkanRecordedCommandArtifact artifact = new(
             CommandBufferLevel.Secondary,
             frameSlot: 0);
         artifact.AssignNativeBuffer(
-            new CommandBuffer(0x202),
-            arena.GetPool(frameSlot: 0),
+            new CommandBuffer(0x303),
+            arena.RetainedPool,
             ownsPool: false,
             arena);
 
-        arena.CanResetPoolWithoutDiscardingReusableArtifacts(
-            frameSlot: 0,
-            out int reusableArtifactCount,
-            out int pendingArtifactCount).ShouldBeTrue();
-        reusableArtifactCount.ShouldBe(0);
-        pendingArtifactCount.ShouldBe(0);
+        Should.Throw<InvalidOperationException>(arena.ClearAfterRetirement);
 
         artifact.PublishExecutable(
             default,
@@ -1381,49 +1382,39 @@ public sealed class VulkanStablePacketAndDescriptorTests
             recordingGeneration: 1,
             queuedSubmissionCount: 0,
             recordedPrimaryReferenceCount: 1);
-        arena.CanResetPoolWithoutDiscardingReusableArtifacts(
-            frameSlot: 0,
-            out reusableArtifactCount,
-            out pendingArtifactCount).ShouldBeFalse();
-        reusableArtifactCount.ShouldBe(1);
-        pendingArtifactCount.ShouldBe(1);
+        Should.Throw<InvalidOperationException>(arena.ClearAfterRetirement);
 
         artifact.Invalidate(
             EVulkanRecordedCommandArtifactInvalidationReason.DependencyChanged);
-        arena.CanResetPoolWithoutDiscardingReusableArtifacts(
-            frameSlot: 0,
-            out reusableArtifactCount,
-            out pendingArtifactCount).ShouldBeFalse();
-        reusableArtifactCount.ShouldBe(0);
-        pendingArtifactCount.ShouldBe(1);
+        Should.Throw<InvalidOperationException>(arena.ClearAfterRetirement);
 
         artifact.MarkRetired();
-        arena.CanResetPoolWithoutDiscardingReusableArtifacts(
-            frameSlot: 0,
-            out reusableArtifactCount,
-            out pendingArtifactCount).ShouldBeTrue();
-        reusableArtifactCount.ShouldBe(0);
-        pendingArtifactCount.ShouldBe(0);
+        Should.NotThrow(arena.ClearAfterRetirement);
     }
 
     [Test]
-    public void WorkerSecondaryArena_RejectsConcurrentOrDestructivePoolAccess()
+    public void LaneCommandArena_AllowsNestedLaneRecordingButRejectsRetirement()
     {
-        VulkanWorkerSecondaryCommandArena arena = new(workerIndex: 1);
-        arena.Initialize([new CommandPool(0x101)]);
+        VulkanLaneCommandFamilyArena arena = new(
+            laneId: 1,
+            frameSlot: 0,
+            queueFamilyIndex: 3,
+            transientPool: new CommandPool(0x101),
+            retainedPool: new CommandPool(0x202));
 
-        using (VulkanWorkerSecondaryCommandArena.RecordingLease lease =
-               VulkanWorkerSecondaryCommandArena.EnterRecording(arena))
+        using (VulkanLaneCommandFamilyArena.RecordingLease lease =
+               VulkanLaneCommandFamilyArena.EnterRecording(arena))
         {
             arena.IsRecording.ShouldBeTrue();
+            using VulkanLaneCommandFamilyArena.RecordingLease nested =
+                VulkanLaneCommandFamilyArena.EnterRecording(arena);
+            arena.IsRecording.ShouldBeTrue();
             Should.Throw<InvalidOperationException>(
-                () => VulkanWorkerSecondaryCommandArena.EnterRecording(arena));
-            Should.Throw<InvalidOperationException>(
-                arena.ClearAfterPoolRetirement);
+                arena.ClearAfterRetirement);
         }
 
         arena.IsRecording.ShouldBeFalse();
-        Should.NotThrow(arena.ClearAfterPoolRetirement);
+        Should.NotThrow(arena.ClearAfterRetirement);
     }
 
     [Test]

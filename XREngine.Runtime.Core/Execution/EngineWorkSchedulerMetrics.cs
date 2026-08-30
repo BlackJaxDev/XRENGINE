@@ -7,4 +7,7 @@ public readonly record struct EngineWorkSchedulerMetrics(
     int GeneralWorkerCount,
     long GeneralDispatchCount,
     long GeneralWakeCount,
+    long GeneralThrottledDispatchCount,
+    long GeneralThrottleWaitTicks,
+    JobAuxiliaryWorkDomainMetrics JobAuxiliary,
     RenderWorkDomainMetrics Render);

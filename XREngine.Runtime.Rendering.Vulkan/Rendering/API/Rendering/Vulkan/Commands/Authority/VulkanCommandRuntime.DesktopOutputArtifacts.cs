@@ -32,7 +32,7 @@ internal sealed partial class VulkanCommandRuntime
         int frameSlot,
         CommandBuffer[]? imguiOverlayCommandBuffers)
     {
-        Workers.Idle.Wait();
+        QuiesceCommandChainRecordingWorkersForRetirement();
         // Cached chains own their secondary artifacts independently of the
         // desktop primary buffers. Retire them while the cache is still
         // enumerable so worker arenas can detach every artifact before their

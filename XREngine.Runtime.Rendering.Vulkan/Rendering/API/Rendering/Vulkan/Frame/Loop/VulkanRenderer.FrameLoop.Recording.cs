@@ -125,7 +125,10 @@ namespace XREngine.Rendering.Vulkan
                                     "PresentNow primary recording failed.",
                                 imguiOverlaySnapshot,
                                 dynamicTextSecondaryCommandBuffer,
-                                dynamicTextOverlayOpCount);
+                                dynamicTextOverlayOpCount,
+                                recordingResult.RequiresFrameRetry
+                                    ? EVulkanPresentNowFailureDisposition.RetryFrame
+                                    : EVulkanPresentNowFailureDisposition.RendererTerminal);
                         }
 
                         if (attempt.WorkClass == ERenderOutputWorkClass.PresentNow &&
@@ -139,7 +142,8 @@ namespace XREngine.Rendering.Vulkan
                                 $"PresentNow source recording invariant violated: {recordingResult.Disposition}; {recordingResult.Reason ?? "<no detail>"}",
                                 imguiOverlaySnapshot,
                                 dynamicTextSecondaryCommandBuffer,
-                                dynamicTextOverlayOpCount);
+                                dynamicTextOverlayOpCount,
+                                EVulkanPresentNowFailureDisposition.RendererTerminal);
                         }
 
                         if (!string.IsNullOrEmpty(recordingDeferredReason))
@@ -305,7 +309,9 @@ namespace XREngine.Rendering.Vulkan
             string reason,
             VulkanImGuiFrameSnapshot? recoveryOverlaySnapshot,
             CommandBuffer recoveryDynamicTextSecondaryCommandBuffer,
-            int recoveryDynamicTextOperationCount)
+            int recoveryDynamicTextOperationCount,
+            EVulkanPresentNowFailureDisposition disposition =
+                EVulkanPresentNowFailureDisposition.RendererTerminal)
         {
             TimeSpan elapsed = Stopwatch.GetElapsedTime(attempt.StartTimestamp);
             VulkanPresentNowReadinessException failure = new(
@@ -315,13 +321,18 @@ namespace XREngine.Rendering.Vulkan
                 "DesktopScene -> sealed FramePlan -> required pipeline/descriptor/target",
                 elapsed,
                 TimeSpan.Zero,
-                reason);
-            PausePresentNowRenderer(ref attempt, failure);
+                reason,
+                disposition: disposition);
+            if (disposition == EVulkanPresentNowFailureDisposition.RetryFrame)
+                RejectPresentNowFrame(ref attempt, failure);
+            else
+                PausePresentNowRenderer(ref attempt, failure);
 
-            // This call deliberately resolves to FailPresentNow. It may settle
-            // unsubmitted upload ownership, but it cannot record replay/clear
-            // content or present the acquired image as a successful frame.
-            _ = TryRecoverRejectedDesktopImage(
+            // PresentNow never replays stale scene content. A retryable
+            // failure may submit a newly recorded clear/overlay recovery frame
+            // so the UI remains live and any required texture upload can make
+            // forward progress. Permanent failure still refuses presentation.
+            bool recoveryCompleted = TryRecoverRejectedDesktopImage(
                 ref attempt,
                 commandBufferDirtyFlagSet: false,
                 commandBuffersDirtiedAfterSceneRecord: true,
@@ -332,7 +343,13 @@ namespace XREngine.Rendering.Vulkan
                 recoveryDynamicTextSecondaryCommandBuffer:
                     recoveryDynamicTextSecondaryCommandBuffer,
                 recoveryDynamicTextOperationCount:
-                    recoveryDynamicTextOperationCount);
+                    recoveryDynamicTextOperationCount,
+                allowPresentNowRetryInitializationClear:
+                    disposition ==
+                    EVulkanPresentNowFailureDisposition.RetryFrame);
+
+            if (recoveryCompleted)
+                return EDesktopFrameFlow.Completed;
 
             _ = ConsumeDesktopAcquireForRecovery(
                 ref attempt,
@@ -644,7 +661,7 @@ namespace XREngine.Rendering.Vulkan
             VulkanPresentationSourceTuple published =
                 _windowPresentSource.CaptureForDescriptorSlot(
                     checked((int)descriptorSlot));
-            if (!source.Equals(published))
+            if (!source.MatchesPublication(in published))
             {
                 failureReason =
                     $"final presentation source publication changed before submit (recorded epoch={source.LogicalEpoch}, current epoch={published.LogicalEpoch})";

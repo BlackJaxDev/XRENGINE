@@ -938,6 +938,8 @@ namespace XREngine.Rendering.Vulkan
                 if (framePlan is not null)
                     batch.PreparedFrame.AttachFramePlan(framePlan);
                 bool requiresAdvancedScenePublication = false;
+                VulkanAdvancedVisibilityBackendPackageSnapshot
+                    advancedBackendPackage = default;
                 if (IsAdvancedVisibilityProductionPromoted)
                 {
                     for (int operationIndex = 0;
@@ -948,25 +950,24 @@ namespace XREngine.Rendering.Vulkan
                             EVulkanPrimaryPlanNodeKind.AdvancedVisibility)
                         {
                             requiresAdvancedScenePublication = true;
+                            advancedBackendPackage = recordingState.Ops
+                                .GetAdvancedVisibility(operationIndex)
+                                .Request.BackendPackage;
                             break;
                         }
                     }
                 }
                 if (requiresAdvancedScenePublication)
                 {
-                    BackendReadyFramePackage package =
-                        firstContext.PipelineInstance?.ActiveMeshRenderCommands
-                            .RenderingBackendReadyPackage
-                        ?? throw new VulkanPlanPreconditionException(
-                            "Scheduled secondary visibility preparation requires the pipeline-owned backend-ready package.");
                     if (framePlan is null ||
-                        package.CanonicalFrame.FrameId != framePlan.RenderFrameId ||
-                        package.CanonicalScenePublication.Sequence == 0u)
+                        !advancedBackendPackage.TryGetCurrent(
+                            out BackendReadyFramePackage package))
                     {
                         throw new VulkanPlanPreconditionException(
-                            $"Scheduled secondary visibility preparation rejected a backend-ready package whose canonical frame/scene identity does not match the sealed frame plan. " +
-                            $"planFrame={framePlan?.RenderFrameId ?? 0u}, packageFrame={package.Identity.FrameId}, canonicalFrame={package.CanonicalFrame.FrameId}, " +
-                            $"sceneEpoch={package.CanonicalScenePublication.DatabaseEpoch}, sceneSequence={package.CanonicalScenePublication.Sequence}.");
+                            $"Scheduled secondary visibility preparation rejected the exact backend-ready package captured during visibility authoring. " +
+                            $"planFrame={framePlan?.RenderFrameId ?? 0u}, packageGeneration={advancedBackendPackage.PackageGeneration}, " +
+                            $"collectFrame={advancedBackendPackage.CanonicalFrame.FrameId}, sceneEpoch={advancedBackendPackage.CanonicalScenePublication.DatabaseEpoch}, " +
+                            $"sceneSequence={advancedBackendPackage.CanonicalScenePublication.Sequence}.");
                     }
                     batch.PreparedFrame.CaptureGlobalResources(
                         package,
@@ -1076,6 +1077,13 @@ namespace XREngine.Rendering.Vulkan
 
                 if (secondaryCount == 0)
                     return false;
+                if (secondaryCount > MaxSecondaryCommandBuffersPerScope)
+                {
+                    // A primary fallback preserves the canonical operation
+                    // stream without manufacturing more native secondaries
+                    // than the bounded scope contract permits.
+                    return false;
+                }
 
                 int preparedMeshDrawCount = 0;
                 using (VulkanCpuStageScope classificationStage =
@@ -1214,7 +1222,7 @@ namespace XREngine.Rendering.Vulkan
                         if (admitted &&
                             recordingState.CanProgressivelyDeferCommandChainPublication &&
                             (recordJobCount >=
-                                MaxProgressiveDesktopCommandChainRecordJobs ||
+                                MaxSecondaryCommandBuffersPerScope ||
                              (recordJobCount > 0 &&
                               recordOperationCount + chain.SourceCount >
                                 MaxProgressiveDesktopCommandChainRecordOperations)))
@@ -1473,7 +1481,6 @@ namespace XREngine.Rendering.Vulkan
                     true,
                     forceSerial: false,
                     recordingState.FrameDataImageIndex,
-                    out CommandChainRecordingWorkerState[] workers,
                     out int workerCount,
                     out int workerFrameSlot);
                 bool useWorkers =
@@ -1502,25 +1509,28 @@ namespace XREngine.Rendering.Vulkan
                             assignment.Reason);
                     int recordingWorkerIndex = assignment.IsEligible
                         ? assignment.WorkerIndex
-                        : -1;
-                    if (useWorkers && recordingWorkerIndex < 0)
+                        : VulkanRenderLaneExecutionScope.TryGetCurrent(
+                            out VulkanRenderLaneFrameAttachment? currentAttachment)
+                                ? currentAttachment!.LaneId
+                                : 0;
+                    if (useWorkers && !assignment.IsEligible)
                         schedulingConflictCount++;
                     entry.WorkerIndex = recordingWorkerIndex;
-                    if (recordingWorkerIndex >= 0)
+                    entry.DispatchToRenderDomain = useWorkers && assignment.IsEligible;
+                    if (entry.DispatchToRenderDomain)
                         batch.ActiveWorkerMask |= 1u << recordingWorkerIndex;
 
-                    bool allocated = recordingWorkerIndex >= 0
-                        ? TryEnsureMutableCommandChainSecondaryCommandBufferFromWorkerPool(
+                    VulkanLaneCommandFamilyArena laneArena =
+                        GetRenderLaneAttachment(
+                            recordingWorkerIndex,
+                            workerFrameSlot).Graphics;
+                    bool allocated =
+                        TryEnsureMutableCommandChainSecondaryCommandBufferFromWorkerPool(
                             chain,
                             recordingState.FrameDataImageIndex,
-                            workers[recordingWorkerIndex].Arena,
+                            laneArena,
                             recordingState.ExecutedCommandChainSecondaryHandles,
-                            out CommandBuffer secondary)
-                        : TryEnsureMutableCommandChainSecondaryCommandBuffer(
-                            chain,
-                            recordingState.FrameDataImageIndex,
-                            recordingState.ExecutedCommandChainSecondaryHandles,
-                            out secondary);
+                            out CommandBuffer secondary);
                     if (!allocated)
                         throw new InvalidOperationException("Failed to allocate Vulkan scheduled mesh command-chain secondary command buffer.");
 
@@ -1589,7 +1599,10 @@ namespace XREngine.Rendering.Vulkan
                 int conflictCount = schedulingConflictCount;
                 if (useWorkers)
                 {
-                    CommandChainWorkerTiming timing = DispatchCommandChainRecordingWorkers(batch, workers, workerCount);
+                    CommandChainWorkerTiming timing = DispatchCommandChainRecordingWorkers(
+                        batch,
+                        workerCount,
+                        workerFrameSlot);
                     RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandChainWorkerMetrics(
                         queuedChains: timing.QueuedChains,
                         workersStarted: timing.WorkersStarted,
@@ -1612,7 +1625,7 @@ namespace XREngine.Rendering.Vulkan
                     for (int entryIndex = 0; entryIndex < secondaryCount; entryIndex++)
                     {
                         ref VulkanCommandChainRecordingEntry entry = ref entries[entryIndex];
-                        if (entry.NeedsRecording && entry.WorkerIndex < 0)
+                        if (entry.NeedsRecording && !entry.DispatchToRenderDomain)
                         {
                             _commandRuntime.RecordPreparedMeshCommandChain(batch, entryIndex);
                             serialRecordedCount++;

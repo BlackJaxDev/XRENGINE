@@ -40,11 +40,6 @@ internal sealed partial class VulkanCommandRuntime
     private VulkanPrimaryCommandRecordingResult RecordPrimaryCore(
         in VulkanPreparedPrimaryCommandInput input)
     {
-        // A timed-out worker may still own a command-chain artifact or its
-        // recording arena. Quarantine the entire primary-recording surface,
-        // including reuse and direct-secondary paths, until that worker exits.
-        ThrowIfAbandonedRecordingWorkersRemainActive();
-
         if (!TryValidatePreparedPrimaryInput(in input, out string reason))
             return VulkanPrimaryCommandRecordingResult.ReplanRequired(reason);
         if (!input.FramePlan.HasAnyExecutableOutput)
@@ -658,7 +653,8 @@ internal sealed partial class VulkanCommandRuntime
                 reason,
                 context.Policy.ReadinessPolicy,
                 context.Policy.WorkClass,
-                context.Policy.SourceFrameId)
+                context.Policy.SourceFrameId,
+                context.FailureKind)
             : VulkanPrimaryCommandRecordingResult.Deferred(reason);
     }
 

@@ -51,6 +51,29 @@ public interface IRuntimeRendererHost
         => AdvancedRenderPipelineCapabilities.UnsupportedBackend;
 
     /// <summary>
+    /// Reserves the renderer generation's one advanced mono visibility family
+    /// for an output. A matching repeat is idempotent; another output is
+    /// rejected and must select the legacy path.
+    /// </summary>
+    bool TryReserveAdvancedVisibilityFamily(
+        ulong outputId,
+        out AdvancedVisibilityFamilyReservation reservation,
+        out string failureReason)
+    {
+        reservation = default;
+        failureReason = "The active renderer does not support advanced visibility-family reservation.";
+        return false;
+    }
+
+    /// <summary>
+    /// Returns whether an output-local advanced visibility reservation still
+    /// belongs to this renderer generation.
+    /// </summary>
+    bool IsAdvancedVisibilityFamilyReservationCurrent(
+        in AdvancedVisibilityFamilyReservation reservation)
+        => false;
+
+    /// <summary>
     /// Returns the task/mesh shader dialect visible to this renderer.
     /// </summary>
     EMeshShaderDialect MeshShaderDialect { get; }

@@ -1,8 +1,9 @@
 namespace XREngine.Execution;
 
 /// <summary>
-/// Owns the process-wide renderer-neutral work scheduler and its general job domain.
-/// Application composition resolves the topology and supplies diagnostic hooks.
+/// Owns the process-wide renderer-neutral scheduler and its general,
+/// job-auxiliary, and render-critical domains. Application composition resolves
+/// the topology and supplies diagnostic hooks.
 /// </summary>
 public static class RuntimeWorkScheduler
 {

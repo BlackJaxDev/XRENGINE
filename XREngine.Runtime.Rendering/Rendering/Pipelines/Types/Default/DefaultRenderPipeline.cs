@@ -3563,7 +3563,8 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
         _probeTessellationJob?.Cancel();
         int generation = _probeTessellationGeneration;
         int probeCount = probes.Count;
-        _probeTessellationJob = RuntimeEngine.Jobs.Schedule(() => RunTetrahedralization(probes, generation, probeCount));
+        _probeTessellationJob = RuntimeRenderingHostServices.Work.GeneralJobs.Schedule(
+            () => RunTetrahedralization(probes, generation, probeCount));
     }
 
     private IEnumerable RunTetrahedralization(IList<LightProbeComponent> probes, int generation, int probeCount)

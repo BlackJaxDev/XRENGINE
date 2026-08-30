@@ -157,7 +157,9 @@ public sealed class AdvancedGeometryDatabase
         ReadOnlySpan<byte> meshletTriangleWordBytes = MemoryMarshal.AsBytes(meshletTriangleWords);
         if (!StaticVertexArena.CanAppend((uint)vertices.Length, registration.VertexStride) ||
             !IndexArena.CanAppend((uint)indexBytes.Length, sizeof(uint)) ||
-            !MeshletDescriptorArena.CanAppend((uint)descriptorBytes.Length, 80u) ||
+            !MeshletDescriptorArena.CanAppend(
+                (uint)descriptorBytes.Length,
+                checked((uint)System.Runtime.CompilerServices.Unsafe.SizeOf<AdvancedMeshletDescriptor>())) ||
             !MeshletVertexIndexArena.CanAppend((uint)meshletVertexIndexBytes.Length, sizeof(uint)) ||
             !MeshletTriangleWordArena.CanAppend((uint)meshletTriangleWordBytes.Length, sizeof(uint)))
         {
@@ -166,7 +168,10 @@ public sealed class AdvancedGeometryDatabase
 
         StaticVertexArena.TryAppend(vertices, registration.VertexStride, out AdvancedBufferReference vertexData);
         IndexArena.TryAppend(indexBytes, sizeof(uint), out AdvancedBufferReference indexData);
-        MeshletDescriptorArena.TryAppend(descriptorBytes, 80u, out AdvancedBufferReference descriptorData);
+        MeshletDescriptorArena.TryAppend(
+            descriptorBytes,
+            checked((uint)System.Runtime.CompilerServices.Unsafe.SizeOf<AdvancedMeshletDescriptor>()),
+            out AdvancedBufferReference descriptorData);
         MeshletVertexIndexArena.TryAppend(meshletVertexIndexBytes, sizeof(uint), out AdvancedBufferReference vertexIndexData);
         MeshletTriangleWordArena.TryAppend(meshletTriangleWordBytes, sizeof(uint), out AdvancedBufferReference triangleWordData);
         AdvancedGeometryRecord record = CreateResidentRecord(

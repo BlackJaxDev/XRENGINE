@@ -243,11 +243,16 @@ internal sealed class VulkanPrimaryCommandPlan
             EVulkanPrimaryPlanNodeKind.IndirectDraw or
             EVulkanPrimaryPlanNodeKind.MeshTaskDispatchIndirectCount ||
             kind == EVulkanPrimaryPlanNodeKind.AdvancedVisibility &&
-            operations.GetAdvancedVisibility(operationIndex).Request.Stage ==
-                EAdvancedRenderStage.VisibilityRaster ||
+            IsAdvancedVisibilityRaster(
+                operations.GetAdvancedVisibility(operationIndex).Request) ||
             kind == EVulkanPrimaryPlanNodeKind.Query &&
             operations.GetQuery(operationIndex).Operation is ERenderQueryOperation.Begin or ERenderQueryOperation.End;
     }
+
+    private static bool IsAdvancedVisibilityRaster(
+        in VulkanAdvancedVisibilityStageRequest request)
+        => request.Stage == EAdvancedRenderStage.VisibilityRaster ||
+           request.Phase == EAdvancedVisibilityStageBackendPhase.LateRaster;
 
     private static bool EndsRenderScope(FrameOperationStream operations, int operationIndex)
     {

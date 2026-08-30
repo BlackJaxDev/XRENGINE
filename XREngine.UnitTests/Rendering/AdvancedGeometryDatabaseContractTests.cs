@@ -14,20 +14,22 @@ public sealed class AdvancedGeometryDatabaseContractTests
     public void GeometryLayouts_ArePackFourAndStd430Compatible()
     {
         Marshal.SizeOf<AdvancedBufferReference>().ShouldBe(32);
-        Marshal.SizeOf<AdvancedGeometryRecord>().ShouldBe(256);
+        Marshal.SizeOf<AdvancedGeometryRecord>().ShouldBe(320);
         OffsetOf<AdvancedGeometryRecord>(nameof(AdvancedGeometryRecord.CurrentVertexData)).ShouldBe(0);
         OffsetOf<AdvancedGeometryRecord>(nameof(AdvancedGeometryRecord.PreviousVertexData)).ShouldBe(32);
         OffsetOf<AdvancedGeometryRecord>(nameof(AdvancedGeometryRecord.IndexData)).ShouldBe(64);
-        OffsetOf<AdvancedGeometryRecord>(nameof(AdvancedGeometryRecord.MeshletData)).ShouldBe(96);
-        OffsetOf<AdvancedGeometryRecord>(nameof(AdvancedGeometryRecord.FallbackGeometry)).ShouldBe(128);
-        OffsetOf<AdvancedGeometryRecord>(nameof(AdvancedGeometryRecord.VertexLayoutId)).ShouldBe(160);
-        OffsetOf<AdvancedGeometryRecord>(nameof(AdvancedGeometryRecord.BoundsSphere)).ShouldBe(176);
-        OffsetOf<AdvancedGeometryRecord>(nameof(AdvancedGeometryRecord.BoundsMin)).ShouldBe(192);
-        OffsetOf<AdvancedGeometryRecord>(nameof(AdvancedGeometryRecord.BoundsMax)).ShouldBe(208);
-        OffsetOf<AdvancedGeometryRecord>(nameof(AdvancedGeometryRecord.MaterialSectionFirst)).ShouldBe(224);
-        OffsetOf<AdvancedGeometryRecord>(nameof(AdvancedGeometryRecord.PrimitiveTopology)).ShouldBe(232);
-        OffsetOf<AdvancedGeometryRecord>(nameof(AdvancedGeometryRecord.CookedLayoutVersion)).ShouldBe(248);
-        OffsetOf<AdvancedGeometryRecord>(nameof(AdvancedGeometryRecord.Flags)).ShouldBe(252);
+        OffsetOf<AdvancedGeometryRecord>(nameof(AdvancedGeometryRecord.MeshletDescriptors)).ShouldBe(96);
+        OffsetOf<AdvancedGeometryRecord>(nameof(AdvancedGeometryRecord.MeshletVertexIndices)).ShouldBe(128);
+        OffsetOf<AdvancedGeometryRecord>(nameof(AdvancedGeometryRecord.MeshletTriangleWords)).ShouldBe(160);
+        OffsetOf<AdvancedGeometryRecord>(nameof(AdvancedGeometryRecord.FallbackGeometry)).ShouldBe(192);
+        OffsetOf<AdvancedGeometryRecord>(nameof(AdvancedGeometryRecord.VertexLayoutId)).ShouldBe(224);
+        OffsetOf<AdvancedGeometryRecord>(nameof(AdvancedGeometryRecord.BoundsSphere)).ShouldBe(240);
+        OffsetOf<AdvancedGeometryRecord>(nameof(AdvancedGeometryRecord.BoundsMin)).ShouldBe(256);
+        OffsetOf<AdvancedGeometryRecord>(nameof(AdvancedGeometryRecord.BoundsMax)).ShouldBe(272);
+        OffsetOf<AdvancedGeometryRecord>(nameof(AdvancedGeometryRecord.MaterialSectionFirst)).ShouldBe(288);
+        OffsetOf<AdvancedGeometryRecord>(nameof(AdvancedGeometryRecord.PrimitiveTopology)).ShouldBe(296);
+        OffsetOf<AdvancedGeometryRecord>(nameof(AdvancedGeometryRecord.CookedLayoutVersion)).ShouldBe(312);
+        OffsetOf<AdvancedGeometryRecord>(nameof(AdvancedGeometryRecord.Flags)).ShouldBe(316);
     }
 
     [Test]
@@ -88,21 +90,35 @@ public sealed class AdvancedGeometryDatabaseContractTests
             MeshletFirst = 7u,
             MeshletCount = 1u,
         };
-        byte[] meshlet = new byte[16];
+        AdvancedMeshletDescriptor[] meshletDescriptors =
+        [
+            new AdvancedMeshletDescriptor
+            {
+                BoundsSphere = new Vector4(0f, 0f, 0f, 1f),
+                VertexOffset = 0u,
+                TriangleByteOffset = 0u,
+                VertexCount = 3u,
+                TriangleCount = 1u,
+            },
+        ];
 
         database.TryAddMeshletLocal(
             CreateTriangleVertices(),
             [0u, 1u, 2u],
-            meshlet,
-            meshletStride: 16u,
+            meshletDescriptors,
+            [0u, 1u, 2u],
+            [0x00020100u],
             registration,
             out AdvancedGpuHandle handle).ShouldBeTrue();
         database.TryGet(handle, out AdvancedGeometryRecord record).ShouldBeTrue();
 
         record.Source.ShouldBe(EAdvancedGeometrySource.MeshletLocal);
-        record.MeshletData.IsValid.ShouldBeTrue();
-        record.MeshletFirst.ShouldBe(7u);
-        record.MeshletCount.ShouldBe(1u);
+        record.MeshletDescriptors.IsValid.ShouldBeTrue();
+        record.MeshletVertexIndices.IsValid.ShouldBeTrue();
+        record.MeshletTriangleWords.IsValid.ShouldBeTrue();
+        record.MeshletFirst.ShouldBe(record.MeshletDescriptors.ElementOffset);
+        record.MeshletFirst.ShouldNotBe(registration.MeshletFirst);
+        record.MeshletCount.ShouldBe(record.MeshletDescriptors.ElementCount);
         record.VertexCount.ShouldBe(3u);
         record.IndexCount.ShouldBe(3u);
         record.PrimitiveTopology.ShouldBe(EPrimitiveType.Triangles);
@@ -195,7 +211,10 @@ public sealed class AdvancedGeometryDatabaseContractTests
             indexCapacityBytes: 4096u,
             preSkinnedCurrentCapacityBytes: 4096u,
             preSkinnedPreviousCapacityBytes: 4096u,
-            meshletCapacityBytes: 4096u);
+            meshletCapacityBytes: 4096u,
+            meshletDescriptorCapacityBytes: 4096u,
+            meshletVertexIndexCapacityBytes: 4096u,
+            meshletTriangleWordCapacityBytes: 4096u);
 
     private static int OffsetOf<T>(string fieldName) where T : struct
         => Marshal.OffsetOf<T>(fieldName).ToInt32();

@@ -16,6 +16,14 @@ namespace XREngine
         {
             public override bool IsServer => true;
             public override bool IsClient => false;
+            public override bool HasConnectedRemotePeer
+            {
+                get
+                {
+                    lock (_playerLock)
+                        return _playersByIndex.Count != 0;
+                }
+            }
 
             private readonly object _playerLock = new();
             private readonly Dictionary<int, NetworkPlayerConnection> _playersByIndex = new();

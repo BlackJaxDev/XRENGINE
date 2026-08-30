@@ -114,10 +114,27 @@ internal sealed partial class VulkanFrameLoop
         GpuRenderStatsReadbackKind kind,
         bool publishDraws,
         bool publishTriangles)
+        => QueueGpuRenderStatsReadback(
+            sourceBuffer,
+            sourceByteOffset,
+            byteCount,
+            elementCount,
+            kind,
+            publishDraws,
+            publishTriangles,
+            RuntimeEngine.Rendering.LastResolvedMeshSubmissionStrategy);
+
+    private bool QueueGpuRenderStatsReadback(
+        XRDataBuffer sourceBuffer,
+        uint sourceByteOffset,
+        uint byteCount,
+        uint elementCount,
+        GpuRenderStatsReadbackKind kind,
+        bool publishDraws,
+        bool publishTriangles,
+        EMeshSubmissionStrategy capturedStrategy)
     {
         if (_deviceLost || !RuntimeEngine.Rendering.Stats.EnableTracking ||
-            !GpuDiagnosticReadbackPlan.IsInstrumented(
-                RuntimeEngine.Rendering.LastResolvedMeshSubmissionStrategy) ||
             byteCount == 0u || elementCount == 0u)
             return false;
 
@@ -131,7 +148,8 @@ internal sealed partial class VulkanFrameLoop
                     elementCount,
                     kind,
                     publishDraws,
-                    publishTriangles),
+                    publishTriangles,
+                    capturedStrategy),
                 "VulkanRenderer.QueueGpuRenderStatsReadback",
                 RenderThreadJobKind.Readback);
             return false;
@@ -152,6 +170,13 @@ internal sealed partial class VulkanFrameLoop
         if (_gpuDiagnosticSnapshotReceiptFrameId == frameId)
             _gpuDiagnosticSnapshotReceipts.TryGetValue(sourceBuffer, out diagnosticReceipt);
 
+        EVulkanGpuDiagnosticReadbackPurpose purpose = ResolveGpuDiagnosticReadbackPurpose(
+            capturedStrategy,
+            kind,
+            diagnosticReceipt);
+        if (!IsGpuDiagnosticReadbackAllowed(capturedStrategy, purpose))
+            return false;
+
         var request = new GpuRenderStatsReadbackRequest(
             frameId,
             sourceBuffer,
@@ -161,6 +186,8 @@ internal sealed partial class VulkanFrameLoop
             kind,
             publishDraws,
             publishTriangles,
+            capturedStrategy,
+            purpose,
             diagnosticReceipt);
         if (!_pendingGpuRenderStatsReadbacks.Contains(request))
             _pendingGpuRenderStatsReadbacks.Add(request);
@@ -207,7 +234,9 @@ internal sealed partial class VulkanFrameLoop
                     request.ElementCount,
                     request.Kind,
                     request.PublishDraws,
-                    request.PublishTriangles);
+                    request.PublishTriangles,
+                    request.CapturedStrategy,
+                    request.Purpose);
             }
         }
         catch (Exception ex)
@@ -304,7 +333,10 @@ internal sealed partial class VulkanFrameLoop
             GetOrCreateGpuDiagnosticReadbackSidecar();
         VulkanGpuDiagnosticReadbackReservation reservation = default;
         if (sidecar is null || !sidecar.TryReserveNext(
-                in node, frameIdentity, out reservation) ||
+                in node,
+                frameIdentity,
+                EVulkanGpuDiagnosticReadbackPurpose.Instrumented,
+                out reservation) ||
             !sidecar.TryAcquireStagingSlice(
                 reservation.SlotIndex, node.ByteCount, out VulkanFrameDataSlice destination))
         {
@@ -471,11 +503,12 @@ internal sealed partial class VulkanFrameLoop
         uint elementCount,
         GpuRenderStatsReadbackKind kind,
         bool publishDraws,
-        bool publishTriangles)
+        bool publishTriangles,
+        EMeshSubmissionStrategy capturedStrategy,
+        EVulkanGpuDiagnosticReadbackPurpose purpose)
     {
         if (_deviceLost || !RuntimeEngine.Rendering.Stats.EnableTracking ||
-            !GpuDiagnosticReadbackPlan.IsInstrumented(
-                RuntimeEngine.Rendering.LastResolvedMeshSubmissionStrategy) ||
+            !IsGpuDiagnosticReadbackAllowed(capturedStrategy, purpose) ||
             byteCount == 0u || elementCount == 0u)
             return false;
 
@@ -507,11 +540,17 @@ internal sealed partial class VulkanFrameLoop
             ViewId: 0u,
             SourceByteOffset: sourceByteOffset,
             ByteCount: byteCount,
-            Strategy: RuntimeEngine.Rendering.LastResolvedMeshSubmissionStrategy,
+            Strategy: capturedStrategy,
             Decoder: MapGpuStatsReadbackDecoder(kind));
-        if (!sidecar.TryReserve(planNode, sourceFrameId, slot.ArenaSlot, out slot.Reservation))
+        if (!sidecar.TryReserve(
+                planNode,
+                sourceFrameId,
+                slot.ArenaSlot,
+                purpose,
+                out slot.Reservation))
             return false;
         slot.PlanNode = planNode;
+        slot.Purpose = purpose;
         try
         {
             Result resetFenceResult = Api!.ResetFences(_deviceContext.Device, 1, in slot.Fence);
@@ -656,9 +695,41 @@ internal sealed partial class VulkanFrameLoop
                 sidecar.Cancel(slot.Reservation);
                 slot.Reservation = default;
                 slot.PlanNode = default;
+                slot.Purpose = default;
             }
         }
     }
+
+    private static EVulkanGpuDiagnosticReadbackPurpose ResolveGpuDiagnosticReadbackPurpose(
+        EMeshSubmissionStrategy capturedStrategy,
+        GpuRenderStatsReadbackKind kind,
+        GpuDiagnosticSnapshotReceipt? diagnosticReceipt)
+    {
+        bool meshletEvidence =
+            capturedStrategy == EMeshSubmissionStrategy.GpuMeshletZeroReadback &&
+            VulkanFeatureProfile.IsActive &&
+            VulkanFeatureProfile.ActiveProfile == EVulkanGpuDrivenProfile.Diagnostics &&
+            diagnosticReceipt is not null &&
+            kind is GpuRenderStatsReadbackKind.StatsBuffer or
+                GpuRenderStatsReadbackKind.MeshletDispatchIndirectBuffer;
+        return meshletEvidence
+            ? EVulkanGpuDiagnosticReadbackPurpose.MeshletZeroReadbackEvidence
+            : EVulkanGpuDiagnosticReadbackPurpose.Instrumented;
+    }
+
+    private static bool IsGpuDiagnosticReadbackAllowed(
+        EMeshSubmissionStrategy strategy,
+        EVulkanGpuDiagnosticReadbackPurpose purpose)
+        => purpose switch
+        {
+            EVulkanGpuDiagnosticReadbackPurpose.Instrumented =>
+                GpuDiagnosticReadbackPlan.IsInstrumented(strategy),
+            EVulkanGpuDiagnosticReadbackPurpose.MeshletZeroReadbackEvidence =>
+                strategy == EMeshSubmissionStrategy.GpuMeshletZeroReadback &&
+                VulkanFeatureProfile.IsActive &&
+                VulkanFeatureProfile.ActiveProfile == EVulkanGpuDrivenProfile.Diagnostics,
+            _ => false,
+        };
 
     private static EGpuDiagnosticReadbackDecoder MapGpuStatsReadbackDecoder(
         GpuRenderStatsReadbackKind kind)
@@ -757,13 +828,16 @@ internal sealed partial class VulkanFrameLoop
 
         try
         {
-            // This is the sole host-observation point for the advanced
-            // instrumented sidecar. Publishing it through the global counters
-            // makes zero-readback lane evidence exact: those lanes never reach
-            // this completed-plan branch and therefore report zero maps/bytes.
-            RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuBufferMapped();
-            RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuReadbackBytes(
-                slot.ByteCount);
+            // This is the sole host-observation point for the delayed sidecar.
+            // Dedicated meshlet evidence is accounted separately so validating
+            // a production zero-readback lane does not pollute its generic
+            // mapped-buffer or readback-byte invariants.
+            if (slot.Purpose != EVulkanGpuDiagnosticReadbackPurpose.MeshletZeroReadbackEvidence)
+            {
+                RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuBufferMapped();
+                RuntimeEngine.Rendering.Stats.GpuReadback.RecordGpuReadbackBytes(
+                    slot.ByteCount);
+            }
             using (readScope)
                 MemoryMarshal.Cast<byte, uint>(readScope.Bytes).Slice(
                     0,
@@ -786,6 +860,7 @@ internal sealed partial class VulkanFrameLoop
             slot.SourceFrameId = 0UL;
             slot.DataSlice = default;
             slot.PlanNode = default;
+            slot.Purpose = default;
             slot.Reservation = default;
         }
 
@@ -996,6 +1071,8 @@ internal sealed partial class VulkanFrameLoop
         GpuRenderStatsReadbackKind Kind,
         bool PublishDraws,
         bool PublishTriangles,
+        EMeshSubmissionStrategy CapturedStrategy,
+        EVulkanGpuDiagnosticReadbackPurpose Purpose,
         GpuDiagnosticSnapshotReceipt? DiagnosticReceipt);
 }
 

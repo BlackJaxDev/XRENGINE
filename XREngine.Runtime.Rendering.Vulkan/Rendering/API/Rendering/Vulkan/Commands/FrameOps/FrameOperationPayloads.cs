@@ -31,6 +31,7 @@ internal readonly record struct DlssFrameGenerationPayload(NvidiaDlssManager.Nat
 /// </summary>
 internal readonly record struct VulkanAdvancedVisibilityOperationPayload(
     VulkanAdvancedVisibilityStageRequest Request,
+    VulkanAdvancedVisibilityInputStorage Input,
     VulkanAdvancedVisibilityResourceState State,
     VulkanAdvancedScenePublicationState SceneState,
     VulkanAdvancedVisibilityTargetClosure TargetClosure,
@@ -76,12 +77,15 @@ internal sealed class FrameOperationPayloadStore
     internal DlssFrameGenerationPayload[] DlssFrameGenerations;
     internal VulkanAdvancedVisibilityOperationPayload[] AdvancedVisibilities;
     internal VulkanAdvancedVisibilityLateClosureStorage[] AdvancedVisibilityLateClosures;
+    internal readonly VulkanAdvancedVisibilityInputStorage AdvancedVisibilityInput;
 
     internal FrameOperationPayloadStore()
         : this(
             generalCapacity: 0,
             meshCapacity: 0,
             textureCapacity: 0,
+            advancedVisibilityDrawCapacity: 0,
+            advancedVisibilityRangeCapacity: 0,
             fixedCapacity: false,
             EVulkanAcceptedFrameLane.MainScene)
     {
@@ -95,6 +99,8 @@ internal sealed class FrameOperationPayloadStore
         int generalCapacity,
         int meshCapacity,
         int textureCapacity,
+        int advancedVisibilityDrawCapacity,
+        int advancedVisibilityRangeCapacity,
         bool fixedCapacity,
         EVulkanAcceptedFrameLane lane)
     {
@@ -123,6 +129,11 @@ internal sealed class FrameOperationPayloadStore
         AdvancedVisibilities = new VulkanAdvancedVisibilityOperationPayload[generalCapacity];
         AdvancedVisibilityLateClosures =
             CreateAdvancedVisibilityLateClosureStorage(generalCapacity);
+        AdvancedVisibilityInput = new VulkanAdvancedVisibilityInputStorage(
+            advancedVisibilityDrawCapacity,
+            advancedVisibilityRangeCapacity,
+            fixedCapacity,
+            lane);
     }
 
     internal void EnsureCapacity(EVulkanPrimaryPlanNodeKind kind, int count)

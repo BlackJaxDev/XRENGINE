@@ -211,9 +211,11 @@ rerun of the existing matrix.
 
 ### Workstream 05
 
-- Persistent renderer-owned workers replace per-frame generic task dispatch.
-- Workers use per-worker/per-frame-slot command pools and immutable prepared
-  state, with deterministic merge and execution order.
+- Process-owned render-domain lanes replace both per-frame task dispatch and the
+  former persistent renderer-owned worker arrays.
+- Lanes use distinct transient/retained pools per lane, frame slot, and queue
+  family and consume immutable prepared state, with deterministic merge and
+  execution order.
 - Conflict, timeout, exception, resize, device-loss, cancellation, and
   shutdown paths use explicit fallback or frame failure; partial submission is
   prohibited.

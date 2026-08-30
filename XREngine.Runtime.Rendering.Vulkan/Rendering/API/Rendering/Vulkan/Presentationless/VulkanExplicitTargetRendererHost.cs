@@ -151,6 +151,12 @@ public sealed unsafe class VulkanExplicitTargetRendererHost :
     public AdvancedRenderPipelineCapabilities GetAdvancedRenderPipelineCapabilities()
         => _renderer.GetAdvancedRenderPipelineCapabilities();
 
+    public bool TryReserveAdvancedVisibilityFamily(ulong outputId, out AdvancedVisibilityFamilyReservation reservation, out string failureReason)
+        => _renderer.TryReserveAdvancedVisibilityFamily(outputId, out reservation, out failureReason);
+
+    public bool IsAdvancedVisibilityFamilyReservationCurrent(in AdvancedVisibilityFamilyReservation reservation)
+        => _renderer.IsAdvancedVisibilityFamilyReservationCurrent(in reservation);
+
     public bool TryDrawMeshTasksIndirectCount(
         XRRenderProgram program,
         XRDataBuffer indirectBuffer,

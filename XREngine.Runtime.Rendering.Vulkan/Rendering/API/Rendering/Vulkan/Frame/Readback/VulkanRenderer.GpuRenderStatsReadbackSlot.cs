@@ -20,5 +20,6 @@ internal sealed class GpuRenderStatsReadbackSlot
     public ulong SourceHandle;
     public ulong SourceFrameId;
     public GpuDiagnosticReadbackPlanNode PlanNode;
+    public EVulkanGpuDiagnosticReadbackPurpose Purpose;
     public VulkanGpuDiagnosticReadbackReservation Reservation;
 }

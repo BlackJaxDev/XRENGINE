@@ -13,6 +13,7 @@ internal enum EVulkanAdvancedSceneResourceFailure : byte
     InvalidFrameOwner,
     InvalidPublication,
     PublicationSnapshotUnavailable,
+    DependencyManifestInconsistent,
     IncompleteSourceImage,
     FrameSlotStillInUse,
     PublicationCapacity,

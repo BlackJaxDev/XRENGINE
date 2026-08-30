@@ -7,6 +7,8 @@ namespace XREngine.Rendering;
 /// </summary>
 public readonly record struct AdvancedVisibilityStageBackendRequest(
     EAdvancedRenderStage Stage,
+    EAdvancedVisibilityStageBackendPhase Phase,
+    AdvancedVisibilityFamilyReservation Reservation,
     AdvancedPreparationPublication Publication,
     AdvancedPreparationExtractor Extractor,
     ulong RenderFrameId,
@@ -19,11 +21,11 @@ public readonly record struct AdvancedVisibilityStageBackendRequest(
     string CurrentDepthPyramidTargetName)
 {
     public bool IsValid
-        => Stage is EAdvancedRenderStage.VisibilityPreparation or
-            EAdvancedRenderStage.VisibilityRaster or
-            EAdvancedRenderStage.DepthPyramidAndLateVisibility &&
+        => IsStagePhaseValid() &&
            Publication.FrameId != 0u &&
+           Reservation.IsValid &&
            Publication.PublicationGeneration != 0u &&
+           Publication.ScenePublication.IsValid &&
            Publication.DrawCount != 0u &&
            Extractor is not null &&
            RenderFrameId != 0u &&
@@ -36,4 +38,16 @@ public readonly record struct AdvancedVisibilityStageBackendRequest(
            !string.IsNullOrWhiteSpace(SelectionTargetName) &&
            !string.IsNullOrWhiteSpace(DepthTargetName) &&
            !string.IsNullOrWhiteSpace(CurrentDepthPyramidTargetName);
+
+    private bool IsStagePhaseValid()
+        => Stage switch
+        {
+            EAdvancedRenderStage.VisibilityPreparation or
+            EAdvancedRenderStage.VisibilityRaster =>
+                Phase == EAdvancedVisibilityStageBackendPhase.Complete,
+            EAdvancedRenderStage.DepthPyramidAndLateVisibility =>
+                Phase is EAdvancedVisibilityStageBackendPhase.LateCompute or
+                    EAdvancedVisibilityStageBackendPhase.LateRaster,
+            _ => false,
+        };
 }

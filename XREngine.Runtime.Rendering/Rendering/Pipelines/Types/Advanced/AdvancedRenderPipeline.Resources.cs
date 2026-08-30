@@ -10,10 +10,14 @@ public partial class AdvancedRenderPipeline
     /// Captures the complete immutable resource/state profile for this pipeline.
     /// </summary>
     internal AdvancedRenderResourceProfile CaptureAdvancedResourceProfile(
+        XRRenderPipelineInstance instance,
         in RenderPipelineResourceProfile targetProfile)
         => AdvancedRenderResourceProfile.CreateAttributeReconstruction(
             targetProfile,
-            CapabilityResult.Capabilities);
+            instance.AdvancedOutputBinding.State ==
+                EAdvancedRenderPipelineOutputBindingState.Unconfigured
+                    ? CapabilityResult.Capabilities
+                    : instance.AdvancedOutputBinding.CapabilityResult.Capabilities);
 
     /// <summary>
     /// Captures every optional visibility/capture allocation before generation.

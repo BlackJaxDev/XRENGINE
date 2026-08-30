@@ -74,6 +74,14 @@ internal static class VulkanStableBinSubmissionLowering
             failure = VulkanStableBinSubmissionLoweringFailure.VisibilityStateUnavailable;
             return false;
         }
+        if (plan.Capacity.OutputCapacity != range.PayloadCapacity)
+        {
+            // The shader reserves only this range's sealed prefix and the
+            // native indirect-count call clamps to the same bound. Do not
+            // weaken that proof by observing or repairing a live GPU count.
+            failure = VulkanStableBinSubmissionLoweringFailure.SealedCapacityMismatch;
+            return false;
+        }
 
         try
         {
@@ -119,7 +127,7 @@ internal static class VulkanStableBinSubmissionLowering
                 indexedArgumentOffset,
                 meshArgumentOffset,
                 countOffset,
-                range.PayloadCapacity);
+                plan.ClampMaximumDrawCount(range.PayloadCapacity));
             return true;
         }
         catch (OverflowException)

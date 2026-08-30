@@ -16,6 +16,7 @@ public sealed partial class AdvancedGpuScenePublisher
     private uint[] _publishedLightSeenStamps = new uint[InitialCapacity];
     private int _publishedLightCount;
     private int _plannedLightCount;
+    private int _plannedLightMutationCount;
     private uint _publishedLightSeenGeneration;
 
     private bool TryPreflightGlobalResources(
@@ -70,6 +71,9 @@ public sealed partial class AdvancedGpuScenePublisher
         for (int index = 0; index < _publishedLightCount; ++index)
             if (_publishedLightSeenStamps[index] != _publishedLightSeenGeneration)
                 ++tombstones;
+
+        _plannedLightMutationCount = checked(
+            additions + replacements + tombstones);
 
         // TryAddLight emits both an add and the identity-stamping replacement.
         if (!Database.Resources.Lights.CanApply(

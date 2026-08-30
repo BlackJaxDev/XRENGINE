@@ -39,21 +39,39 @@ override order. An explicit configuration that reserves more threads than
 deliberately enabled for a diagnostic run. The ImGui effective-settings panel
 shows the resolved counts and their sources under **Execution**.
 
-`Engine.Jobs` and `RuntimeEngine.Jobs` now use the same scheduler-owned general
-domain. General-worker count `0` uses cooperative inline execution and creates
-no general background threads. Render-worker settings are also active for renderer-neutral pooled
+`Engine.Jobs` is the application-facing general-job API. Runtime rendering code
+resolves that same scheduler-owned domain through
+`RuntimeRenderingHostServices.Work.GeneralJobs`; the former
+`RuntimeEngine.Jobs` compatibility facade has been removed. General-worker count
+`0` uses cooperative inline execution and creates no general background
+threads. Render-worker settings are also active for renderer-neutral pooled
 preparation work: `0` selects lane-0-only execution, `1..32` creates that many
 background lanes, and `-1` uses the topology's auto policy. A setting change
 requires restart.
 
-Vulkan command-chain recording and OpenXR eye recording have not moved onto
-these lanes yet. Changing the generic render-worker count must therefore not be
-used as a Vulkan worker-count control until the later backend migration phase.
+The scheduler also owns two topology-reserved background lanes: one admits
+jobs after a bounded general queue frees a slot, and one dispatches `Remote`
+transport work. Both remain signal-blocked when idle and do not borrow .NET
+thread-pool workers or render-critical lanes.
 
-Small renderer-neutral batches run inline on lane 0; larger independent batches
-can overlap across background lanes while lane 0 participates. Batch queues are
-bounded, and cancellation, faults, or timeouts are surfaced rather than hidden
-behind another worker pool or CPU fallback.
+Vulkan command-chain recording and paired OpenXR eye-primary recording now use
+these same logical render lanes. Each Vulkan lane owns separate transient and
+retained command-pool arenas per scheduler frame slot and queue family; reusable
+artifacts stay in retained pools. Small or unprofitable command-chain batches
+remain inline on lane 0. `XRE_VULKAN_COMMAND_CHAIN_WORKER_COUNT` is retained only
+as a controlled benchmark cap over the configured render lanes and never creates
+another worker pool.
+
+Small renderer-neutral batches run inline on lane 0. Larger batches expose at
+most four migratable items per logical lane and use background lanes only when
+at least two items are independent and predicted savings clear the scheduler's
+measured queue, wake, merge, and hysteresis cost. Surplus or unprofitable work
+stays on lane 0. Batch queues are bounded, and cancellation, faults, or timeouts
+are surfaced rather than hidden behind another worker pool or CPU fallback.
+
+Startup performs a post-warmup 32-batch allocation proof over rent/build,
+dispatch, execute, join, and lease return. A nonzero stage allocation fails
+startup, and the result is recorded in `work-scheduler.log`.
 
 Render-work executors are bounded CPU preparation callbacks. They must not wait
 for GPU completion, tasks, or fences; synchronous callback code cannot be
@@ -65,15 +83,16 @@ domain and retains the batch instead of silently recycling partial output.
 - `XR_JOB_WORKERS`: general worker request (`-1` for auto, `0` for cooperative
   inline execution, or `1..32`).
 - `XR_JOB_WORKER_CAP`: general worker cap (`1..32`).
-- `XRE_RENDER_WORKER_THREADS`: renderer-neutral render workers (`-1` for auto,
-  `0` for lane 0 only, or `1..32` background lanes).
-- `XRE_RENDER_WORKER_THREAD_CAP`: renderer-neutral render-worker auto cap
+- `XRE_RENDER_WORKER_THREADS`: render-domain workers used by renderer-neutral
+  preparation and lane-affine backend recording (`-1` for auto, `0` for lane 0
+  only, or `1..32` background lanes).
+- `XRE_RENDER_WORKER_THREAD_CAP`: render-domain background-lane auto cap
   (`1..32`).
 - `XRE_RESERVED_FOREGROUND_THREADS`: foreground-loop reservation (`-1` for auto,
   or `1..32`).
 - `XRE_ALLOW_CPU_OVERSUBSCRIPTION`: diagnostic opt-in (`true`, `false`, `1`, or
   `0`).
-- `XRE_RENDER_WORKER_QOS`: renderer-neutral render-worker policy (`OsDefault`
+- `XRE_RENDER_WORKER_QOS`: render-domain background-lane policy (`OsDefault`
   or diagnostic `High`).
 - `XR_JOB_QUEUE_LIMIT`: bounded queue capacity.
 - `XR_JOB_QUEUE_WARN`: queue warning threshold.

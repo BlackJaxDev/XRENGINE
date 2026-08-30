@@ -1,4 +1,5 @@
 using XREngine.Data.Rendering;
+using XREngine.Rendering.Commands;
 using XREngine.Rendering.DLSS;
 using Buffer = Silk.NET.Vulkan.Buffer;
 
@@ -7,6 +8,11 @@ namespace XREngine.Rendering.Vulkan;
 /// <summary>Frame-operation translations that capture immutable context at their authority boundary.</summary>
 internal sealed partial class VulkanFrameLoop
 {
+    private ulong _advancedVisibilityAdmissionFrameId;
+    private long _advancedVisibilityAdmissionPackageGeneration;
+    private bool _advancedVisibilityAdmissionAccepted;
+    private string _advancedVisibilityAdmissionReason = string.Empty;
+
     internal bool SupportsAdvancedVisibilityStage(EAdvancedRenderStage stage)
         => stage is (EAdvancedRenderStage.VisibilityPreparation or
                EAdvancedRenderStage.VisibilityRaster or
@@ -25,6 +31,12 @@ internal sealed partial class VulkanFrameLoop
         if (!request.IsValid)
         {
             failureReason = "The advanced visibility request is incomplete.";
+            return false;
+        }
+        AdvancedVisibilityFamilyReservation reservation = request.Reservation;
+        if (!_commandRuntime.IsAdvancedVisibilityReservationCurrent(in reservation))
+        {
+            failureReason = "The advanced visibility reservation is stale or belongs to another output.";
             return false;
         }
         if (request.Views.ViewCount != 1)
@@ -47,8 +59,41 @@ internal sealed partial class VulkanFrameLoop
         }
 
         FrameOpContext context = CaptureFrameOpContextForCurrentPipelineScope();
+        if (context.OutputSchedulingInstanceIdentity != reservation.OutputId)
+        {
+            failureReason = "The active Vulkan pipeline scope does not match the output that owns the advanced visibility reservation.";
+            return false;
+        }
+        BackendReadyFramePackage? package = context.PipelineInstance?
+            .ActiveMeshRenderCommands.RenderingBackendReadyPackage;
+        if (!VulkanAdvancedVisibilityBackendPackageSnapshot.TryCapture(
+                package,
+                out VulkanAdvancedVisibilityBackendPackageSnapshot backendPackage))
+        {
+            failureReason =
+                "The active pipeline has no published canonical backend package for this visibility family.";
+            return false;
+        }
+        AdvancedGpuScenePublication scenePublication =
+            request.Publication.ScenePublication;
+        if (!backendPackage.MatchesScenePublication(in scenePublication))
+        {
+            failureReason =
+                "The canonical backend package has not caught up to the advanced preparation scene publication.";
+            return false;
+        }
+        if (!TryValidateAdvancedVisibilityPackageSources(
+                in backendPackage,
+                request.RenderFrameId,
+                out failureReason))
+        {
+            return false;
+        }
         VulkanAdvancedVisibilityStageRequest vulkanRequest = new(
             request.Stage,
+            request.Phase,
+            request.Reservation,
+            backendPackage,
             request.Publication,
             request.Publication.VisibilityContentGeneration,
             request.Extractor,
@@ -64,6 +109,35 @@ internal sealed partial class VulkanFrameLoop
             new AdvancedVisibilityOp(passIndex, vulkanRequest, context));
         failureReason = "Ready";
         return true;
+    }
+
+    private bool TryValidateAdvancedVisibilityPackageSources(
+        in VulkanAdvancedVisibilityBackendPackageSnapshot package,
+        ulong renderFrameId,
+        out string reason)
+    {
+        if (_advancedVisibilityAdmissionFrameId == renderFrameId &&
+            _advancedVisibilityAdmissionPackageGeneration ==
+                package.PackageGeneration)
+        {
+            reason = _advancedVisibilityAdmissionReason;
+            return _advancedVisibilityAdmissionAccepted;
+        }
+
+        bool accepted = _resourceRuntime.AdvancedSceneResources
+            .TryValidatePackageSourcesForAdmission(
+                package.Package,
+                out EVulkanAdvancedSceneResourceFailure failure,
+                out string validationReason);
+        _advancedVisibilityAdmissionFrameId = renderFrameId;
+        _advancedVisibilityAdmissionPackageGeneration =
+            package.PackageGeneration;
+        _advancedVisibilityAdmissionAccepted = accepted;
+        _advancedVisibilityAdmissionReason = accepted
+            ? "Ready"
+            : $"The canonical scene source image is not stable ({failure}): {validationReason}";
+        reason = _advancedVisibilityAdmissionReason;
+        return accepted;
     }
 
     internal string GetMeshletDispatchUnsupportedReason()

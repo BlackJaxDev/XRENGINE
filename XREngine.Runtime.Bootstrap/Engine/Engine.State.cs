@@ -56,7 +56,8 @@ namespace XREngine
 
         /// <summary>
         /// One process-wide owner for general and renderer-neutral render work.
-        /// Vulkan and OpenXR keep their legacy recording workers during Phase 1B.
+        /// It also owns the dedicated deferred-admission and remote-dispatch
+        /// lanes; Vulkan and OpenXR recording remains a later migration.
         /// </summary>
         public static EngineWorkScheduler? WorkScheduler => RuntimeWorkScheduler.Scheduler;
 
@@ -118,7 +119,7 @@ namespace XREngine
                 RenderWorkerThreadCount = renderWorkers,
                 RenderWorkerThreadCap = renderWorkerCap,
                 ReservedForegroundThreadCount = foregroundReservation,
-                DedicatedBackgroundThreadCount = GetRetainedBackgroundThreadCount(
+                DedicatedBackgroundThreadCount = GetDedicatedBackgroundThreadCount(
                     out string[] dedicatedBackgroundThreadNames),
                 AllowCpuOversubscription = allowOversubscription,
                 RenderWorkerQos = renderWorkerQos,
@@ -145,12 +146,12 @@ namespace XREngine
         }
 
         /// <summary>
-        /// Reserves CPU budget for retained legacy loops which are not owned by
-        /// <see cref="WorkScheduler"/> yet. Several are lazy, but once created
-        /// their process-lifetime capacity is fixed; excluding them would let a
-        /// later Vulkan/OpenXR workload silently oversubscribe the topology.
+        /// Reserves CPU budget for scheduler-owned auxiliary lanes plus retained
+        /// backend/runtime loops which have not moved onto the render domain.
+        /// Excluding either category would let a later workload silently
+        /// oversubscribe the process topology.
         /// </summary>
-        private static int GetRetainedBackgroundThreadCount(out string[] names)
+        private static int GetDedicatedBackgroundThreadCount(out string[] names)
         {
             const int defaultVulkanCommandChainWorkers = 4;
             const int maximumVulkanCommandChainWorkers = 8;
@@ -273,6 +274,12 @@ namespace XREngine
             JobManager.RenderThreadJobExecutionObserver =
                 static (label, kind, durationMs, queueDelayMs, overBudgetMs) =>
                     ObserveRenderThreadJobExecution(label, kind, durationMs, queueDelayMs, overBudgetMs);
+            JobManager.BackgroundDispatchAdmission =
+                RenderForegroundWorkCoordinator.TryEnterEditorJobSlice;
+            JobManager.BackgroundDispatchCompletion =
+                RenderForegroundWorkCoordinator.ExitEditorJobSlice;
+            JobManager.BackgroundDispatchWait =
+                RenderForegroundWorkCoordinator.WaitForBackgroundPermission;
         }
 
         public static GameState LoadOrGenerateGameState(

@@ -8,6 +8,22 @@ namespace XREngine.Rendering;
 
 public partial class XRTexture2D
 {
+    // A source-content generation is intentionally separate from the canonical
+    // resource-table generation. Streaming advances it when a newly decoded
+    // resident image becomes the logical texture source; the scene publisher
+    // consumes that change at its next SwapCommandBuffers boundary.
+    private long _canonicalSourceContentGeneration = 1L;
+
+    internal ulong CanonicalSourceContentGeneration
+        => unchecked((ulong)Volatile.Read(ref _canonicalSourceContentGeneration));
+
+    private void PublishCanonicalSourceContentMutation()
+    {
+        long generation = Interlocked.Increment(ref _canonicalSourceContentGeneration);
+        if (generation == 0L)
+            _ = Interlocked.Increment(ref _canonicalSourceContentGeneration);
+    }
+
     internal const uint ImportedPreviewMaxDimensionInternal = 64;
     internal const double ImportedTextureTimingLogThresholdMilliseconds = 5.0;
 
@@ -314,6 +330,7 @@ public partial class XRTexture2D
             ? ETexMinFilter.LinearMipmapLinear
             : ETexMinFilter.Linear;
         texture.MagFilter = ETexMagFilter.Linear;
+        texture.PublishCanonicalSourceContentMutation();
 
         uint newWidth = residentData.Mipmaps.Length > 0 ? residentData.Mipmaps[0].Width : 0u;
         uint newHeight = residentData.Mipmaps.Length > 0 ? residentData.Mipmaps[0].Height : 0u;
@@ -360,19 +377,20 @@ public partial class XRTexture2D
 
         texture.ClearSparseTextureStreamingState();
         texture.StreamingLockMipLevel = lockMipLevel;
-        texture._mipmaps = residentData.Mipmaps;
-        texture._resizable = false;
-        texture._sizedInternalFormat = residentData.SizedInternalFormat;
+        texture.Mipmaps = residentData.Mipmaps;
+        texture.Resizable = false;
+        texture.SizedInternalFormat = residentData.SizedInternalFormat;
         texture.ApplyImportedTextureStreamingMipRangeMetadata(
             autoGenerateMipmaps: false,
             largestMipmapLevel: 0,
             smallestAllowedMipmapLevel: includeMipChain && residentData.Mipmaps.Length > 0
                 ? residentData.Mipmaps.Length - 1
                 : 0);
-        texture._minFilter = includeMipChain && residentData.Mipmaps.Length > 1
+        texture.MinFilter = includeMipChain && residentData.Mipmaps.Length > 1
             ? ETexMinFilter.LinearMipmapLinear
             : ETexMinFilter.Linear;
-        texture._magFilter = ETexMagFilter.Linear;
+        texture.MagFilter = ETexMagFilter.Linear;
+        texture.PublishCanonicalSourceContentMutation();
 
         uint newWidth = residentData.Mipmaps.Length > 0 ? residentData.Mipmaps[0].Width : 0u;
         uint newHeight = residentData.Mipmaps.Length > 0 ? residentData.Mipmaps[0].Height : 0u;

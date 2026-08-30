@@ -72,7 +72,8 @@ public sealed class AdvancedRenderPipelineResourceStateContractTests
                 stereo: false);
         AdvancedRenderPipeline pipeline = new(
             stereo: false,
-            capabilityResult);
+            capabilityResult,
+            visibilityFamilyReservation: default);
         RenderPipelineResourceProfile target = CreateTargetProfile();
 
         AdvancedRenderResourceProfile profile =

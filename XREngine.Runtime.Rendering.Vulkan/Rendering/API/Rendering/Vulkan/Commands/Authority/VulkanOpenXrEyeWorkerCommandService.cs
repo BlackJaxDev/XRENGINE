@@ -39,24 +39,24 @@ internal sealed class VulkanOpenXrEyeWorkerCommandService : IDisposable
         in OpenXrPreparedEyeRecordWorkerInput rightEye,
         in VulkanSubmissionDiagnosticContext diagnosticContext)
     {
-        VulkanCommandRuntime runtime = _runtime ?? throw new InvalidOperationException("OpenXR eye workers are not configured.");
+        VulkanCommandRuntime runtime = _runtime ?? throw new InvalidOperationException("OpenXR render-domain eye recording is not configured.");
         VulkanOpenXrCommandRecordingService recording = _recording ?? throw new InvalidOperationException("OpenXR eye recording is not configured.");
-        VulkanDeviceContext device = _device ?? throw new InvalidOperationException("OpenXR eye workers have no device authority.");
+        VulkanDeviceContext device = _device ?? throw new InvalidOperationException("OpenXR render-domain eye recording has no device authority.");
         if (!device.IsOperational)
         {
             throw new InvalidOperationException(
-                "OpenXR foreground eye workers cannot run because the Vulkan device is not operational.");
+                "OpenXR foreground eye recording cannot run because the Vulkan device is not operational.");
         }
 
         OpenXrEyeRecordWorkerBatchResult batch =
             (_scheduler ??= new OpenXrEyeRecordWorkerScheduler())
-            .Record(recording, leftEye, rightEye);
+            .Record(runtime, recording, leftEye, rightEye);
         OpenXrEyeRecordWorkerResult leftResult = batch.Left;
         OpenXrEyeRecordWorkerResult rightResult = batch.Right;
         if (!batch.Left.Success || !batch.Right.Success)
         {
-            Cancel(in leftResult, runtime, "OpenXR eye worker command recording failed");
-            Cancel(in rightResult, runtime, "OpenXR eye worker command recording failed");
+            Cancel(in leftResult, runtime, "OpenXR lane-affine eye command recording failed");
+            Cancel(in rightResult, runtime, "OpenXR lane-affine eye command recording failed");
             RethrowWorkerFailure(in leftResult, in rightResult);
             if (leftEye.OutputContract.WorkClass == ERenderOutputWorkClass.PresentNow ||
                 rightEye.OutputContract.WorkClass == ERenderOutputWorkClass.PresentNow)
@@ -72,7 +72,7 @@ internal sealed class VulkanOpenXrEyeWorkerCommandService : IDisposable
                     "OpenXREyeSubmit -> parallel exact primary recording",
                     batch.WaitForWorkersTime,
                     batch.WaitForWorkersTime,
-                    "A foreground eye worker returned failure without a typed recording exception.");
+                    "A foreground eye lane returned failure without a typed recording exception.");
             }
 
             return new(batch, false, false);
