@@ -42,6 +42,7 @@ namespace XREngine.Rendering.Commands
         public const int BuildKeysSortKeys = 2;
         public const int BuildKeysClassification = 3;
         public const int BuildKeysTransparencyMetadata = 4;
+        public const int BuildKeysDrawMetadata = 5;
         public const int IndirectViewBatchClassification = 17;
         public const int IndirectTransparencyMetadata = 18;
         public const int BuildKeysExactViewMasks = GPUViewSetBindings.CulledCommandViewMaskBuffer;

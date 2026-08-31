@@ -40,6 +40,8 @@ internal sealed partial class VulkanCommandRuntime
     private VulkanPrimaryCommandRecordingResult RecordPrimaryCore(
         in VulkanPreparedPrimaryCommandInput input)
     {
+        using VulkanResourceRuntime.ReadOnlyStorageRecordingScope storageScope =
+            ResourceRuntime.EnterReadOnlyStorageRecordingScope(input.ReadOnlyStorageAuthority);
         if (!TryValidatePreparedPrimaryInput(in input, out string reason))
             return VulkanPrimaryCommandRecordingResult.ReplanRequired(reason);
         if (!input.FramePlan.HasAnyExecutableOutput)
@@ -195,6 +197,7 @@ internal sealed partial class VulkanCommandRuntime
             input.Policy.TransitionSwapchainToPresent,
             input.PrimaryCommandPlan,
             input.FrameDataImageIndexOverride,
+            input.ReadOnlyStorageAuthority,
             input.OpenXrTargetContext,
             input.ExcludeDesktopSwapchainBarriers,
             input.ResourcePlanStamp.PlanningSnapshot.RenderGraphPlan,
@@ -501,7 +504,16 @@ internal sealed partial class VulkanCommandRuntime
         }
         StoreFrameOpSignatureDebugParts(owner, operations);
         CaptureCommandBufferVariantImageLayoutEndState(owner);
-        CommandBuffers.ActiveBuffers?[input.ImageIndex] = owner.PrimaryCommandBuffer;
+
+        // ActiveBuffers is indexed by desktop swapchain image. OpenXR records
+        // through frame-data slots appended after that desktop range and owns
+        // those primaries through OpenXrPrimaryOwners instead.
+        CommandBuffer[]? activeDesktopBuffers = CommandBuffers.ActiveBuffers;
+        if (activeDesktopBuffers is not null &&
+            input.ImageIndex < (uint)activeDesktopBuffers.Length)
+        {
+            activeDesktopBuffers[input.ImageIndex] = owner.PrimaryCommandBuffer;
+        }
     }
 
     private static ulong ComputePreparedImageLayoutStartSignature(

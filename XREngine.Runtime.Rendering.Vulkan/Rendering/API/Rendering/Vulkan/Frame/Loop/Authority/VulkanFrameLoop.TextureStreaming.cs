@@ -31,7 +31,8 @@ internal sealed partial class VulkanFrameLoop : IVulkanTextureUploadScheduler
             onFinished,
             onCanceled,
             onError,
-            cancellationToken);
+            cancellationToken,
+            out _);
 
     internal void EnqueueImportedTextureUpload(VulkanImportedTexturePendingUpload upload)
     {
@@ -86,6 +87,24 @@ internal sealed partial class VulkanFrameLoop : IVulkanTextureUploadScheduler
         Action? onCanceled,
         Action<Exception>? onError,
         CancellationToken cancellationToken)
+        => TryScheduleImportedTextureResidencyTransition(
+            texture, residentData, includeMipChain, targetResidentMaxDimension,
+            streamingGeneration, priorityClass, shouldAcceptResult, onFinished,
+            onCanceled, onError, cancellationToken, out _);
+
+    internal bool TryScheduleImportedTextureResidencyTransition(
+        XRTexture2D texture,
+        TextureStreamingResidentData residentData,
+        bool includeMipChain,
+        uint targetResidentMaxDimension,
+        long streamingGeneration,
+        TextureUploadPriorityClass priorityClass,
+        Func<bool>? shouldAcceptResult,
+        Action<XRTexture2D>? onFinished,
+        Action? onCanceled,
+        Action<Exception>? onError,
+        CancellationToken cancellationToken,
+        out VulkanTextureUploadTicket ticket)
         => _resourceRuntime.Uploads.TryScheduleImportedTextureUpload(
             new VulkanTextureUploadSchedulingContext(
                 BackendObjectContext,
@@ -101,7 +120,8 @@ internal sealed partial class VulkanFrameLoop : IVulkanTextureUploadScheduler
             onFinished,
             onCanceled,
             onError,
-            cancellationToken);
+            cancellationToken,
+            out ticket);
 
     private static void InvokePendingTextureUploadCanceled(
         VulkanImportedTexturePendingUpload upload)

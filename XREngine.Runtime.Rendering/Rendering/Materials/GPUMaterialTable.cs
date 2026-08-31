@@ -26,8 +26,17 @@ namespace XREngine.Rendering.Materials
         private readonly Dictionary<uint, uint> _handleRefCounts = [];
         private readonly Queue<uint> _freeHandleIndices = [];
         private readonly Queue<GPUMaterialRetiredHandle> _retiredHandles = [];
+        private readonly object _publicationSync = new();
         private DirtyByteRange _materialDirtyBytes;
         private DirtyByteRange _textureHandleDirtyBytes;
+        private SparseDirtyByteRanges _materialDirtyRanges;
+        private SparseDirtyByteRanges _textureHandleDirtyRanges;
+        private GPUMaterialTablePublication? _currentPublication;
+        private static long s_nextPublicationOwnerId;
+        private readonly ulong _publicationOwnerId = unchecked((ulong)Interlocked.Increment(ref s_nextPublicationOwnerId));
+        private ulong _descriptorClosureGeneration;
+        private GPUMaterialTablePublicationDelta _lastPublicationDelta;
+        private bool _hasPublicationDelta;
         private uint _nextHandleIndex = InitialHandleIndex;
         private ulong _publicationGeneration;
 
@@ -40,6 +49,46 @@ namespace XREngine.Rendering.Materials
         public ulong PublicationGeneration => _publicationGeneration;
         public GPUMaterialTableDirtyRange MaterialDirtyRange => _materialDirtyBytes.ToIndexRange(Buffer.ElementSize);
         public GPUMaterialTableDirtyRange TextureHandleDirtyRange => _textureHandleDirtyBytes.ToIndexRange(TextureHandleBuffer.ElementSize);
+
+        /// <summary>
+        /// Retains the immutable CPU publication matching the last successful table upload.
+        /// The caller must dispose the returned token when its sealed work is released.
+        /// </summary>
+        internal bool TryRetainCurrentPublication(out GPUMaterialTablePublication publication)
+        {
+            lock (_publicationSync)
+            {
+                if (_currentPublication is not { } current)
+                {
+                    publication = null!;
+                    return false;
+                }
+
+                publication = current.Retain();
+                return true;
+            }
+        }
+        /// <summary>
+        /// Gets the last successful CPU-to-GPU table publication summary. This is a cold diagnostic surface;
+        /// range detail is available through the copy methods below.
+        /// </summary>
+        public bool TryGetLastPublicationDelta(out GPUMaterialTablePublicationDelta delta)
+        {
+            delta = _lastPublicationDelta;
+            return _hasPublicationDelta;
+        }
+
+        /// <summary>
+        /// Copies the exact sparse material-row ranges published by the last table update.
+        /// </summary>
+        public int CopyLastPublicationMaterialRanges(Span<GPUMaterialTableDirtyRange> destination)
+            => _materialDirtyRanges.CopyLastPublishedRanges(destination, Buffer.ElementSize);
+
+        /// <summary>
+        /// Copies the exact sparse texture-handle ranges published by the last table update.
+        /// </summary>
+        public int CopyLastPublicationTextureHandleRanges(Span<GPUMaterialTableDirtyRange> destination)
+            => _textureHandleDirtyRanges.CopyLastPublishedRanges(destination, TextureHandleBuffer.ElementSize);
 
         public GPUMaterialTable(uint initialCapacity = 128, uint initialHandleCapacity = 256)
         {
@@ -291,19 +340,86 @@ namespace XREngine.Rendering.Materials
         public void PushDirtyRanges()
         {
             bool publishesChanges = _materialDirtyBytes.HasValue || _textureHandleDirtyBytes.HasValue;
-            PushDirtyRange(Buffer, ref _materialDirtyBytes);
-            PushDirtyRange(TextureHandleBuffer, ref _textureHandleDirtyBytes);
-            if (publishesChanges)
-                _publicationGeneration++;
+            if (!publishesChanges)
+                return;
+
+            GPUMaterialTablePublication? previousPublication;
+            lock (_publicationSync)
+                previousPublication = _currentPublication?.Retain();
+
+            GPUMaterialTablePublication? publication = null;
+
+            try
+            {
+                ulong nextPublicationGeneration = checked(_publicationGeneration + 1u);
+                GPUMaterialTextureReference[] closureReferences =
+                    GPUMaterialTablePublication.CaptureVulkanTextureReferences(_sourceTextureReferences);
+                ulong nextDescriptorClosureGeneration =
+                    previousPublication is not null &&
+                    previousPublication.HasSameDescriptorClosure(closureReferences)
+                        ? previousPublication.DescriptorClosureGeneration
+                        : checked(_descriptorClosureGeneration + 1u);
+                publication = GPUMaterialTablePublication.Capture(
+                    Buffer,
+                    previousPublication,
+                    _materialDirtyRanges,
+                    closureReferences,
+                    _publicationOwnerId,
+                    nextPublicationGeneration,
+                    nextDescriptorClosureGeneration,
+                    MaterialEntryUIntCount);
+                PublicationRangeCounts material = PushDirtyRanges(
+                    Buffer,
+                    ref _materialDirtyBytes,
+                    ref _materialDirtyRanges);
+                PublicationRangeCounts textureHandles = PushDirtyRanges(
+                    TextureHandleBuffer,
+                    ref _textureHandleDirtyBytes,
+                    ref _textureHandleDirtyRanges);
+                _publicationGeneration = nextPublicationGeneration;
+                GPUMaterialTablePublication? replacedPublication;
+                lock (_publicationSync)
+                {
+                    replacedPublication = _currentPublication;
+                    _currentPublication = publication;
+                }
+                publication = null; // Ownership moved to the table, even if releasing its predecessor fails.
+                replacedPublication?.Dispose();
+                _descriptorClosureGeneration = nextDescriptorClosureGeneration;
+                _lastPublicationDelta = new GPUMaterialTablePublicationDelta(
+                    _publicationGeneration,
+                    Capacity,
+                    TextureHandleCapacity,
+                    material.RangeCount,
+                    material.RowCount,
+                    material.ByteCount,
+                    textureHandles.RangeCount,
+                    textureHandles.RowCount,
+                    textureHandles.ByteCount);
+                _hasPublicationDelta = true;
+            }
+            catch
+            {
+                publication?.Dispose();
+                throw;
+            }
+            finally
+            {
+                previousPublication?.Dispose();
+            }
         }
 
         private void MarkMaterialRowDirty(uint rowIndex)
-            => MarkRowDirty(ref _materialDirtyBytes, rowIndex, Buffer.ElementSize);
+            => MarkRowDirty(ref _materialDirtyBytes, ref _materialDirtyRanges, rowIndex, Buffer.ElementSize);
 
         private void MarkTextureHandleRowDirty(uint rowIndex)
-            => MarkRowDirty(ref _textureHandleDirtyBytes, rowIndex, TextureHandleBuffer.ElementSize);
+            => MarkRowDirty(ref _textureHandleDirtyBytes, ref _textureHandleDirtyRanges, rowIndex, TextureHandleBuffer.ElementSize);
 
-        private static void MarkRowDirty(ref DirtyByteRange range, uint rowIndex, uint rowSize)
+        private static void MarkRowDirty(
+            ref DirtyByteRange range,
+            ref SparseDirtyByteRanges sparseRanges,
+            uint rowIndex,
+            uint rowSize)
         {
             ulong byteOffset64 = (ulong)rowIndex * rowSize;
             ulong byteEnd64 = byteOffset64 + rowSize;
@@ -311,54 +427,77 @@ namespace XREngine.Rendering.Materials
                 throw new InvalidOperationException("GPU material table dirty byte range exceeds supported buffer upload range.");
 
             range.Mark((uint)byteOffset64, (uint)rowSize);
+            sparseRanges.Mark((uint)byteOffset64, rowSize);
         }
 
-        private static void MarkFullDirty(ref DirtyByteRange range, XRDataBuffer buffer)
-            => range.Mark(0u, buffer.Length);
-
-        private static void PushDirtyRange(XRDataBuffer buffer, ref DirtyByteRange range)
+        private static void MarkFullDirty(
+            ref DirtyByteRange range,
+            ref SparseDirtyByteRanges sparseRanges,
+            XRDataBuffer buffer)
         {
-            if (!range.HasValue)
-                return;
+            range.Mark(0u, buffer.Length);
+            sparseRanges.MarkFull(buffer.Length);
+        }
 
-            uint offset = range.ByteOffset;
-            uint length = range.ByteCount;
-            range.Clear();
+        private static PublicationRangeCounts PushDirtyRanges(
+            XRDataBuffer buffer,
+            ref DirtyByteRange aggregateRange,
+            ref SparseDirtyByteRanges sparseRanges)
+        {
+            if (!aggregateRange.HasValue)
+                return default;
 
-            if (length == 0u)
-                return;
-
-            if (offset == 0u && length >= buffer.Length)
+            PublicationRangeCounts result = sparseRanges.GetPublicationRangeCounts(buffer.ElementSize);
+            if (sparseRanges.IsFullDirty)
             {
                 buffer.PushSubData();
-                return;
             }
-
-            if (offset > (uint)int.MaxValue)
+            else
             {
-                buffer.PushSubData();
-                return;
+                ReadOnlySpan<DirtyByteRange> ranges = sparseRanges.Ranges;
+                for (int index = 0; index < ranges.Length; ++index)
+                {
+                    DirtyByteRange range = ranges[index];
+                    if (range.ByteOffset > (uint)int.MaxValue)
+                    {
+                        buffer.PushSubData();
+                        result = PublicationRangeCounts.Full(buffer.Length, buffer.ElementSize);
+                        break;
+                    }
+
+                    buffer.PushSubData((int)range.ByteOffset, range.ByteCount);
+                }
             }
 
-            buffer.PushSubData((int)offset, length);
+            sparseRanges.CapturePublishedRanges();
+            sparseRanges.Clear();
+            aggregateRange.Clear();
+            return result;
         }
 
         private void Resize(uint newCapacity)
         {
             Buffer.Resize(newCapacity);
             Capacity = newCapacity;
-            MarkFullDirty(ref _materialDirtyBytes, Buffer);
+            MarkFullDirty(ref _materialDirtyBytes, ref _materialDirtyRanges, Buffer);
         }
 
         private void ResizeTextureHandleTable(uint newCapacity)
         {
             TextureHandleBuffer.Resize(newCapacity);
             TextureHandleCapacity = newCapacity;
-            MarkFullDirty(ref _textureHandleDirtyBytes, TextureHandleBuffer);
+            MarkFullDirty(ref _textureHandleDirtyBytes, ref _textureHandleDirtyRanges, TextureHandleBuffer);
         }
 
         public void Dispose()
         {
+            GPUMaterialTablePublication? publication;
+            lock (_publicationSync)
+            {
+                publication = _currentPublication;
+                _currentPublication = null;
+            }
+            publication?.Dispose();
             Buffer?.Dispose();
             TextureHandleBuffer?.Dispose();
         }

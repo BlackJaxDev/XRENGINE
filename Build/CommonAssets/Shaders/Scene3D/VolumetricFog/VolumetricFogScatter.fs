@@ -73,11 +73,6 @@ uniform vec4 ShadowMomentFilterParams = vec4(0.0f, 0.0f, 0.0f, 0.0f); // blur ra
 // All debug modes write alpha = 0 so the composite `hdrScene * a + rgb` replaces the scene with the debug color.
 uniform int VolumetricFogDebugMode;
 
-// Use the shared LightStructs definitions so DirLight stays in lock-step with
-// the C# uniform upload layout (CascadeBlendWidths, etc.). A locally inlined
-// copy here drifts whenever the shared struct changes and silently mismaps
-// uniforms by name lookup.
-#pragma snippet "LightStructs"
 #pragma snippet "ShadowMomentEncoding"
 
 // Mirror the legacy deferred-light upload path (`LightData`) because that is
@@ -93,13 +88,27 @@ struct LegacyDirLight
   mat4 WorldToLightProjMatrix;
   mat4 WorldToLightSpaceMatrix;
   vec3 Direction;
-  float CascadeSplits[VOLUMETRIC_FOG_MAX_CASCADES];
-  float CascadeBlendWidths[VOLUMETRIC_FOG_MAX_CASCADES];
-  mat4 CascadeMatrices[VOLUMETRIC_FOG_MAX_CASCADES];
   int CascadeCount;
 };
 
 uniform LegacyDirLight LightData;
+
+// std430 mirror of the immutable 224-byte C# DirectionalShadowGpuRecord.
+struct DirectionalShadowGpuRecord
+{
+  mat4 CurrentWorldToLight;
+  mat4 RenderedWorldToLight;
+  vec4 CurrentSplitBlendBias;
+  vec4 RenderedSplitBlendBias;
+  vec4 ReceiverOffsetsAge;
+  ivec4 AtlasPacked0;
+  vec4 AtlasUvScaleBias;
+  vec4 AtlasDepthParams;
+};
+layout(std430, binding = 39) readonly buffer DirectionalShadowRecordsBuffer
+{
+  DirectionalShadowGpuRecord DirectionalShadowRecords[];
+};
 
 const int MaxVolumetricFogVolumes = 4;
 
@@ -266,7 +275,7 @@ int GetPrimaryDirectionalCascadeIndex(vec3 samplePosWS)
   float viewDepth = ViewDepthFromWorldPos(samplePosWS);
   for (int i = 0; i < cascadeCount; ++i)
   {
-    if (viewDepth <= LightData.CascadeSplits[i])
+    if (viewDepth <= DirectionalShadowRecords[i].CurrentSplitBlendBias.x)
       return i;
   }
   return cascadeCount - 1;
@@ -316,7 +325,7 @@ float EvaluatePrimaryDirectionalShadow(vec3 samplePosWS)
   int cascadeIndex = GetPrimaryDirectionalCascadeIndex(samplePosWS);
   if (cascadeIndex >= 0)
   {
-    vec3 cascadeCoord = ProjectShadowCoord(LightData.CascadeMatrices[cascadeIndex], samplePosWS);
+    vec3 cascadeCoord = ProjectShadowCoord(DirectionalShadowRecords[cascadeIndex].CurrentWorldToLight, samplePosWS);
     if (ShadowCoordInBounds(cascadeCoord))
     {
       float filterRadius = ShadowFilterRadius * (1.0f + float(cascadeIndex) * 0.35f);
@@ -406,7 +415,7 @@ vec3 GetPrimaryDirectionalShadowDebugState(vec3 samplePosWS)
   int cascadeIndex = GetPrimaryDirectionalCascadeIndex(samplePosWS);
   if (cascadeIndex >= 0)
   {
-    vec3 cascadeCoord = ProjectShadowCoord(LightData.CascadeMatrices[cascadeIndex], samplePosWS);
+    vec3 cascadeCoord = ProjectShadowCoord(DirectionalShadowRecords[cascadeIndex].CurrentWorldToLight, samplePosWS);
     cascadeInBounds = ShadowCoordInBounds(cascadeCoord) ? 1.0f : 0.0f;
   }
 
@@ -487,7 +496,7 @@ vec4 ComputeVolumetricFog(vec2 uv)
     // dependent modes so it works even when the screen is entirely sky.)
     if (VolumetricFogDebugMode == 15)
     {
-      float split = LightData.CascadeSplits[0];
+      float split = DirectionalShadowRecords[0].CurrentSplitBlendBias.x;
       float normSplit = split / 100.0f;
       float normCount = float(LightData.CascadeCount) / 4.0f;
       return vec4(clamp(normSplit, 0.0f, 1.0f), clamp(normCount, 0.0f, 1.0f), 0.0f, 0.0f);
@@ -520,7 +529,7 @@ vec4 ComputeVolumetricFog(vec2 uv)
     // view matrix, depth reconstruction) so the only remaining signal is the matrix itself.
     if (VolumetricFogDebugMode == 14)
     {
-      vec4 originClip = LightData.CascadeMatrices[0] * vec4(0.0f, 0.0f, 0.0f, 1.0f);
+      vec4 originClip = DirectionalShadowRecords[0].CurrentWorldToLight * vec4(0.0f, 0.0f, 0.0f, 1.0f);
       // Safe divide: a well-formed VP has w near 1 for origin; an identity matrix yields
       // w=1 as well. A degenerate matrix may give w=0 → clamp to avoid NaN.
       float wSafe = (abs(originClip.w) < 1e-6f) ? 1.0f : originClip.w;
@@ -546,7 +555,7 @@ vec4 ComputeVolumetricFog(vec2 uv)
     // Mode 11: visualize cascade shadow coord (or 2D fallback coord if no cascade).
     int ci = GetPrimaryDirectionalCascadeIndex(surfacePosWS);
     vec3 coord = ci >= 0
-      ? ProjectShadowCoord(LightData.CascadeMatrices[ci], surfacePosWS)
+      ? ProjectShadowCoord(DirectionalShadowRecords[ci].CurrentWorldToLight, surfacePosWS)
       : ProjectShadowCoord(LightData.WorldToLightSpaceMatrix, surfacePosWS);
     return vec4(coord, 0.0f);
   }

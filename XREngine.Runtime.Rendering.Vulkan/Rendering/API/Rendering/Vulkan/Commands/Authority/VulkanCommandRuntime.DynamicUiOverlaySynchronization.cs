@@ -403,6 +403,48 @@ internal sealed partial class VulkanCommandRuntime
         EmitImageTransition(encoder, telemetry, commandBuffer, image, in range, prior, next);
     }
 
+    /// <summary>
+    /// Establishes the first swapchain-image access in a command buffer that is
+    /// submitted directly behind the image-acquire semaphore. The acquire wait
+    /// is scoped to color-attachment output, so the layout transition must join
+    /// that same stage rather than inherit the generic present/undefined scope.
+    /// </summary>
+    internal void EmitAcquiredSwapchainImageTransition(
+        VulkanTrackedCommandEncoder encoder,
+        VulkanFrameTelemetry telemetry,
+        CommandBuffer commandBuffer,
+        Image image,
+        in ImageSubresourceRange range,
+        ImageLayout oldLayout,
+        ImageLayout newLayout)
+    {
+        ulong generation = ResourceRuntime.GetPublishedGeneration(
+            ObjectType.Image,
+            image.Handle);
+        VulkanImageAccessState prior = new(
+            oldLayout,
+            PipelineStageFlags2.ColorAttachmentOutputBit,
+            AccessFlags2.None,
+            Vk.QueueFamilyIgnored,
+            ImageLayout.Undefined,
+            0,
+            generation);
+        VulkanImageAccessState next = ResolveOverlayImageAccessState(
+            newLayout,
+            range.AspectMask,
+            generation,
+            unchecked((ulong)Interlocked.Increment(
+                ref telemetry._vulkanImageLayoutTransitionSerial)));
+        EmitImageTransition(
+            encoder,
+            telemetry,
+            commandBuffer,
+            image,
+            in range,
+            in prior,
+            in next);
+    }
+
     private static unsafe void EmitImageTransition(
         VulkanTrackedCommandEncoder encoder,
         VulkanFrameTelemetry telemetry,
@@ -454,16 +496,41 @@ internal sealed partial class VulkanCommandRuntime
         if (CommandBuffers.TrackingBatches.TryGetValue(handle, out VulkanCommandBufferTrackingBatch? batch))
         {
             lock (batch)
+            {
                 if (batch.LatestImageAccessStates.TryGet(image.Handle, range, out state))
                     return true;
+
+                // A partial batch can contain newer states for only some cells.
+                // Preserve the batch -> layout lock order while overlaying it on
+                // the journal/submitted state; a whole-range fallback can hide
+                // those writes behind an older homogeneous layout.
+                return TryGetMergedRecordedImageAccessState(
+                    handle, image, in range, batch.LatestImageAccessStates,
+                    out state, includeEntryState, includeUndefinedState);
+            }
         }
 
+        return TryGetMergedRecordedImageAccessState(
+            handle, image, in range, null,
+            out state, includeEntryState, includeUndefinedState);
+    }
+
+    private bool TryGetMergedRecordedImageAccessState(
+        ulong commandBufferHandle,
+        Image image,
+        in ImageSubresourceRange range,
+        VulkanCommandBufferImageAccessIndex? pending,
+        out VulkanImageAccessState state,
+        bool includeEntryState,
+        bool includeUndefinedState)
+    {
         _ = EnterImageLayoutLockMeasured();
         try
         {
-            Synchronization._recordedImageLayoutsByCommandBuffer.TryGetValue(handle, out VulkanRecordedImageLayoutState? recorded);
+            Synchronization._recordedImageLayoutsByCommandBuffer.TryGetValue(commandBufferHandle, out VulkanRecordedImageLayoutState? recorded);
             return TryGetRecordedImageAccessStateNoLock(
                 recorded,
+                pending,
                 image,
                 in range,
                 out state,
@@ -478,6 +545,7 @@ internal sealed partial class VulkanCommandRuntime
 
     private bool TryGetRecordedImageAccessStateNoLock(
         VulkanRecordedImageLayoutState? recorded,
+        VulkanCommandBufferImageAccessIndex? pending,
         Image image,
         in ImageSubresourceRange range,
         out VulkanImageAccessState state,
@@ -496,6 +564,7 @@ internal sealed partial class VulkanCommandRuntime
             uint layer = requestedRange.BaseArrayLayer + layerOffset;
             if (!TryMergeRecordedAspect(
                     recorded,
+                    pending,
                     image,
                     mip,
                     layer,
@@ -505,6 +574,7 @@ internal sealed partial class VulkanCommandRuntime
                     ref combined) ||
                 !TryMergeRecordedAspect(
                     recorded,
+                    pending,
                     image,
                     mip,
                     layer,
@@ -514,6 +584,7 @@ internal sealed partial class VulkanCommandRuntime
                     ref combined) ||
                 !TryMergeRecordedAspect(
                     recorded,
+                    pending,
                     image,
                     mip,
                     layer,
@@ -534,6 +605,7 @@ internal sealed partial class VulkanCommandRuntime
 
     private bool TryMergeRecordedAspect(
         VulkanRecordedImageLayoutState? recorded,
+        VulkanCommandBufferImageAccessIndex? pending,
         Image image,
         uint mip,
         uint layer,
@@ -548,7 +620,11 @@ internal sealed partial class VulkanCommandRuntime
         VulkanTrackedImageSubresource key =
             new(image.Handle, mip, layer, aspect);
         VulkanImageAccessState candidate;
-        if (recorded is not null &&
+        if (pending is not null && pending.TryGetSubresource(in key, out candidate))
+        {
+            // Pending commands are newer than both the journal and submission.
+        }
+        else if (recorded is not null &&
             (recorded.Subresources.TryGetValue(key, out candidate) ||
              (includeEntryState &&
               recorded.EntrySubresources.TryGetValue(key, out candidate))))
@@ -572,11 +648,24 @@ internal sealed partial class VulkanCommandRuntime
             return true;
         }
 
-        return combined.Value.Layout == candidate.Layout &&
-               combined.Value.QueueFamilyIndex ==
-                   candidate.QueueFamilyIndex &&
-               combined.Value.ResourceGeneration ==
-                   candidate.ResourceGeneration;
+        VulkanImageAccessState prior = combined.Value;
+        if (prior.Layout != candidate.Layout ||
+            prior.QueueFamilyIndex != candidate.QueueFamilyIndex ||
+            prior.ResourceGeneration != candidate.ResourceGeneration)
+        {
+            return false;
+        }
+
+        combined = prior with
+        {
+            StageMask = prior.StageMask | candidate.StageMask,
+            AccessMask = prior.AccessMask | candidate.AccessMask,
+            ExpectedDescriptorLayout = prior.ExpectedDescriptorLayout == candidate.ExpectedDescriptorLayout
+                ? prior.ExpectedDescriptorLayout
+                : ImageLayout.Undefined,
+            Serial = Math.Max(prior.Serial, candidate.Serial),
+        };
+        return true;
     }
 
     private static VulkanImageAccessState ResolveOverlayImageAccessState(

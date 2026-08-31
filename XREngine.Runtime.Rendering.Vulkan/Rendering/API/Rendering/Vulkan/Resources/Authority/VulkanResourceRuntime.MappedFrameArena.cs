@@ -40,7 +40,8 @@ internal sealed partial class VulkanResourceRuntime
             deviceContext,
             this,
             Allocations.Buffers,
-            deviceContext.NonCoherentAtomSize);
+            deviceContext.NonCoherentAtomSize,
+            enableDiagnosticTransferSource: DeferredLightingDiagnostics.Enabled);
         VulkanMappedFrameArena arena = new(
             backend,
             MappedFrameArenaInitialCapacity,

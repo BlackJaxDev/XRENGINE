@@ -551,7 +551,7 @@ namespace XREngine.Rendering.Commands
         private readonly Lock _lock = new();
         private readonly ReaderWriterLockSlim _renderingBufferLock = new(LockRecursionPolicy.SupportsRecursion);
 
-        private RenderingBufferReadScope EnterRenderingBufferReadScope()
+        internal RenderingBufferReadScope EnterRenderingBufferReadScope()
         {
             _renderingBufferLock.EnterReadLock();
             return new RenderingBufferReadScope(_renderingBufferLock);
@@ -563,7 +563,7 @@ namespace XREngine.Rendering.Commands
             return new RenderingBufferWriteScope(_renderingBufferLock);
         }
 
-        private readonly ref struct RenderingBufferReadScope(ReaderWriterLockSlim gate)
+        internal readonly ref struct RenderingBufferReadScope(ReaderWriterLockSlim gate)
         {
             public void Dispose()
                 => gate.ExitReadLock();
@@ -1084,6 +1084,12 @@ namespace XREngine.Rendering.Commands
                     }
                 }
 
+                bool measureCpuSocSubmission =
+                    useCpuSocOcclusion &&
+                    cmd is IRenderCommandMesh socSubmissionMesh &&
+                    !CpuSoftwareOcclusionCuller.IsCpuOcclusionExcluded(socSubmissionMesh) &&
+                    cmd.CullingVolume.HasValue;
+
                 if (useCpuQueryOcclusion && cmd is IRenderCommandMesh occlMesh)
                 {
                     // Explicit per-material opt-out (skybox, fullscreen overlays, gizmos
@@ -1219,7 +1225,7 @@ namespace XREngine.Rendering.Commands
                                         appliedOcclusionMode,
                                         ECpuOcclusionDecision.Visible);
                                 }
-                                RenderWithGpuScope(cmd, renderPass);
+                                RenderWithGpuScope(cmd, renderPass, measureCpuSocSubmission);
                                 cpuCmdIndex++;
                                 continue;
                             }
@@ -1277,12 +1283,12 @@ namespace XREngine.Rendering.Commands
                                 "CPU occlusion query deferred because mesh {0} is not render-ready ({1}).",
                                 queryKey,
                                 queryPrepareReason);
-                            RenderWithGpuScope(cmd, renderPass);
+                            RenderWithGpuScope(cmd, renderPass, measureCpuSocSubmission);
                         }
                         else if (CpuQueryProxyIsNearPlaneUnsafe(camera!, visibleProbeBounds))
                         {
                             s_cpuOcclusionCoordinator.ForceVisible(renderPass, camera, queryKey, ECpuOcclusionForceVisibleReason.NearPlaneUnsafe, occlusionOwnership);
-                            RenderWithGpuScope(cmd, renderPass);
+                            RenderWithGpuScope(cmd, renderPass, measureCpuSocSubmission);
                         }
                         else
                         {
@@ -1313,7 +1319,7 @@ namespace XREngine.Rendering.Commands
                                     visibleProbeBounds);
                             try
                             {
-                                RenderWithGpuScope(cmd, renderPass);
+                                RenderWithGpuScope(cmd, renderPass, measureCpuSocSubmission);
                             }
                             finally
                             {
@@ -1353,7 +1359,7 @@ namespace XREngine.Rendering.Commands
                                 appliedOcclusionMode,
                                 decision);
                         }
-                        RenderWithGpuScope(cmd, renderPass);
+                        RenderWithGpuScope(cmd, renderPass, measureCpuSocSubmission);
                     }
 
                     cpuCmdIndex++;
@@ -1394,7 +1400,7 @@ namespace XREngine.Rendering.Commands
                         appliedOcclusionMode,
                         ECpuOcclusionDecision.Visible);
                 }
-                RenderWithGpuScope(cmd, renderPass);
+                RenderWithGpuScope(cmd, renderPass, measureCpuSocSubmission);
             }
 
             if (visibleDrawCandidates is not null)
@@ -1750,7 +1756,7 @@ namespace XREngine.Rendering.Commands
             }
         }
 
-        private static void RenderWithGpuScope(RenderCommand? command, int renderPass)
+        private static void RenderWithGpuScope(RenderCommand? command, int renderPass, bool measureCpuSocSubmission = false)
         {
             if (command is null)
                 return;
@@ -1758,12 +1764,30 @@ namespace XREngine.Rendering.Commands
             RenderPipelineGpuProfiler profiler = RenderPipelineGpuProfiler.Instance;
             if (!profiler.ShouldInstrumentCommandScopes || ShouldSkipGpuScope(command))
             {
-                command.Render();
+                RenderWithOptionalCpuSocMeasurement(command, measureCpuSocSubmission);
                 return;
             }
 
             using (profiler.StartScope(BuildRenderCommandGpuScopeName(renderPass, command)))
+                RenderWithOptionalCpuSocMeasurement(command, measureCpuSocSubmission);
+        }
+
+        /// <summary>Gets published commands while the caller owns <see cref="EnterRenderingBufferReadScope"/>.</summary>
+        internal bool TryGetPublishedPassCommandsUnderReadLock(int renderPass, out ICollection<RenderCommand> commands)
+            => TryGetPublishedPassCommandsNoLock(renderPass, out commands);
+
+        private static void RenderWithOptionalCpuSocMeasurement(RenderCommand command, bool measureCpuSocSubmission)
+        {
+            if (!measureCpuSocSubmission)
+            {
                 command.Render();
+                return;
+            }
+
+            long start = System.Diagnostics.Stopwatch.GetTimestamp();
+            command.Render();
+            double milliseconds = System.Diagnostics.Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+            s_cpuSoftwareOcclusionCuller.RecordMeasuredCpuDrawSubmissionCost(milliseconds, drawCount: 1);
         }
 
         private static bool ShouldSkipGpuScope(RenderCommand command)

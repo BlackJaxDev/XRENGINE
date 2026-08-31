@@ -95,6 +95,11 @@ namespace XREngine.Scene
         private readonly HashSet<SceneCaptureComponentBase> _pendingCaptureComponents = new();
         private ulong _lastShadowMapsRenderFrameId = ulong.MaxValue;
         private readonly Stopwatch _captureBudgetStopwatch = new();
+        private ulong _captureBudgetFrameId = ulong.MaxValue;
+        private int _captureWorkItemsExecutedThisFrame;
+        private double _captureBudgetMilliseconds = 2.0;
+        private int _maximumCaptureWorkItemsPerFrame = 4;
+        private uint _maximumCaptureDeferralFrames = 8u;
         private long _lastStreamingPressureLogFrameTicks = -1;
         private ulong _lastCaptureAdmissionFrameId = ulong.MaxValue;
         private int _consecutiveCaptureDeferrals;
@@ -156,13 +161,32 @@ namespace XREngine.Scene
         /// <summary>
         /// Budget in milliseconds for processing capture work (collect + render) per frame on the main thread.
         /// </summary>
-        public double CaptureBudgetMilliseconds { get; set; } = 2.0;
+        public double CaptureBudgetMilliseconds
+        {
+            get => _captureBudgetMilliseconds;
+            set => SetField(ref _captureBudgetMilliseconds, value);
+        }
+
+        /// <summary>
+        /// Upper bound for auxiliary capture work items admitted in one frame.
+        /// Progressive cubemap captures yield after every face, so this bound also
+        /// prevents a continuously refreshing probe from starving other probes.
+        /// </summary>
+        public int MaximumCaptureWorkItemsPerFrame
+        {
+            get => _maximumCaptureWorkItemsPerFrame;
+            set => SetField(ref _maximumCaptureWorkItemsPerFrame, value);
+        }
 
         /// <summary>
         /// Maximum consecutive frames that auxiliary captures may reuse their
         /// last published result while texture streaming owns the GPU budget.
         /// </summary>
-        public uint MaximumCaptureDeferralFrames { get; set; } = 8u;
+        public uint MaximumCaptureDeferralFrames
+        {
+            get => _maximumCaptureDeferralFrames;
+            set => SetField(ref _maximumCaptureDeferralFrames, value);
+        }
 
         public int ConsecutiveCaptureDeferrals
             => Math.Max(0, Volatile.Read(ref _consecutiveCaptureDeferrals));
@@ -243,9 +267,9 @@ namespace XREngine.Scene
 
             if (component is SceneCaptureComponent scc && scc.ProgressiveRenderEnabled)
             {
-                for (int i = 0; i < 6; i++)
-                    EnqueueCaptureWorkItem(new CaptureWorkItem(scc, ECaptureWorkType.CubemapFace, i));
-                EnqueueCaptureWorkItem(new CaptureWorkItem(scc, ECaptureWorkType.CaptureFinalize));
+                // Enqueue only the first face. The executor appends the next face
+                // to the tail, giving every pending probe a round-robin turn.
+                EnqueueCaptureWorkItem(new CaptureWorkItem(scc, ECaptureWorkType.CubemapFace, 0));
             }
             else
             {

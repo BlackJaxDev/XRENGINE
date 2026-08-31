@@ -696,6 +696,14 @@ public sealed partial class RenderProfilerOcclusionData
     public int CpuQueryAsyncOccluded { get; set; }
     public int CpuSocTested { get; set; }
     public int CpuSocCulled { get; set; }
+    public double HiZBuildGpuMs { get; set; }
+    public double HiZTestGpuMs { get; set; }
+    public ulong HiZBuildGpuSourceFrame { get; set; }
+    public ulong HiZTestGpuSourceFrame { get; set; }
+    public ulong HiZBuildGpuAgeFrames { get; set; }
+    public ulong HiZTestGpuAgeFrames { get; set; }
+    public string HiZBuildGpuAvailability { get; set; } = string.Empty;
+    public string HiZTestGpuAvailability { get; set; } = string.Empty;
 }
 
 [MemoryPackable]

@@ -96,6 +96,9 @@ namespace XREngine.Rendering.Commands
         public const int PerViewVisibleIndicesBuffer = 14;
         public const int PerViewDrawCountBuffer = 15;
         public const int CulledCommandViewMaskBuffer = 16;
+        // Phase-one two-pass Hi-Z compacts a new command list, so its exact
+        // masks require a distinct GPU output rather than aliasing the source.
+        public const int PhaseOneCulledCommandViewMaskBuffer = 19;
     }
 
     public static class GPUViewSetLayout

@@ -1,4 +1,5 @@
 using XREngine.Rendering;
+using System.Runtime.CompilerServices;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -11,6 +12,7 @@ internal readonly struct AutoUniformMaterialWritePlanCacheKey :
     IEquatable<AutoUniformMaterialWritePlanCacheKey>
 {
     private readonly ulong _publicationLayoutSignature;
+    private readonly int _materialIdentity;
     private readonly ulong _materialLayoutVersion;
     private readonly ulong _materialValueVersion;
     private readonly ulong _runtimeUniformNameSignature;
@@ -23,6 +25,7 @@ internal readonly struct AutoUniformMaterialWritePlanCacheKey :
         ulong runtimeUniformPublicationLayoutSignature)
     {
         _publicationLayoutSignature = publicationLayoutSignature;
+        _materialIdentity = RuntimeHelpers.GetHashCode(material);
         _materialLayoutVersion = material.BindingLayoutVersion;
         _materialValueVersion = material.BindingValueVersion;
         _runtimeUniformNameSignature = runtimeUniformNameSignature;
@@ -36,6 +39,7 @@ internal readonly struct AutoUniformMaterialWritePlanCacheKey :
     public bool Equals(AutoUniformMaterialWritePlanCacheKey other)
         => _publicationLayoutSignature ==
                other._publicationLayoutSignature &&
+           _materialIdentity == other._materialIdentity &&
            _materialLayoutVersion == other._materialLayoutVersion &&
            _materialValueVersion == other._materialValueVersion &&
            _runtimeUniformNameSignature == other._runtimeUniformNameSignature &&
@@ -50,6 +54,7 @@ internal readonly struct AutoUniformMaterialWritePlanCacheKey :
     {
         HashCode hash = new();
         hash.Add(_publicationLayoutSignature);
+        hash.Add(_materialIdentity);
         hash.Add(_materialLayoutVersion);
         hash.Add(_materialValueVersion);
         hash.Add(_runtimeUniformNameSignature);

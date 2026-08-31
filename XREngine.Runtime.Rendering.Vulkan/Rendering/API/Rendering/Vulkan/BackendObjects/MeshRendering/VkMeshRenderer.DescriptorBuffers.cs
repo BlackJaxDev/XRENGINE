@@ -20,6 +20,7 @@ using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Models.Materials.Textures;
+using XREngine.Rendering.Materials;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -33,6 +34,37 @@ internal unsafe partial class VkMeshRenderer
 		ComputeDispatchSnapshot? bindingSnapshot = null)
 	{
 		bufferInfo = default;
+		if (bindingSnapshot?.MaterialTablePublication is not null &&
+			binding.DescriptorType == DescriptorType.StorageBuffer &&
+			binding.Binding == MaterialBindingLayouts.MaterialTableSsboBinding)
+		{
+			if (!BackendContext.Resources.TryResolvePreparedMaterialTable(
+					bindingSnapshot, out VulkanMaterialTablePreparedBinding materialBinding))
+				return false;
+			bufferInfo = new DescriptorBufferInfo
+			{
+				Buffer = materialBinding.Buffer,
+				Offset = 0,
+				Range = materialBinding.Range,
+			};
+			return true;
+		}
+		if (bindingSnapshot?.ReadOnlyStorageBindings is { } immutableBindings &&
+			immutableBindings.TryGet(binding.Binding, out _))
+		{
+			// A frozen publication is the only authority for this binding. Failure
+			// to lower it must not select an unrelated ambient buffer by name.
+			if (!BackendContext.Resources.TryResolvePreparedReadOnlyStorage(
+					bindingSnapshot, binding.Binding, out VulkanFrameDataSlice storageSlice))
+				return false;
+			bufferInfo = new DescriptorBufferInfo
+			{
+				Buffer = storageSlice.Buffer,
+				Offset = storageSlice.Offset,
+				Range = storageSlice.Length,
+			};
+			return true;
+		}
 
 		// A captured draw owns the exact native buffer generation that its command
 		// signature describes. Resolve it before ambient pipeline state so shadow

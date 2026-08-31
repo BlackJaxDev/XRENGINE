@@ -25,6 +25,7 @@ internal readonly record struct VulkanResidentTemplateDependencyRequest(
             EVulkanResidentTemplateDependencyKind.Buffer => ObjectType.Buffer,
             EVulkanResidentTemplateDependencyKind.BufferView => ObjectType.BufferView,
             EVulkanResidentTemplateDependencyKind.RenderPass => ObjectType.RenderPass,
+            EVulkanResidentTemplateDependencyKind.Image => ObjectType.Image,
             _ => ObjectType.Unknown,
         };
 }

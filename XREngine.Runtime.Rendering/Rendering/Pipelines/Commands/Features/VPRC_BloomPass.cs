@@ -1127,8 +1127,8 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             for (int sourceMipLevel = BloomMaxMipmapLevel; sourceMipLevel >= 2; sourceMipLevel--)
             {
-                int targetMipLevel = sourceMipLevel - 1;
                 var upsample = context.GetOrCreateSyntheticPass(GetUpsamplePassName(sourceMipLevel), ERenderGraphPassStage.Graphics);
+                int targetMipLevel = sourceMipLevel - 1;
                 upsample.SampleTextureMip(bloomTexture, (uint)sourceMipLevel);
                 upsample.UseColorAttachmentMip(
                     bloomTexture,

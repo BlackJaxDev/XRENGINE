@@ -340,17 +340,8 @@ namespace XREngine.Rendering.Commands
 
             VisibleCommandCount = 0;
             VisibleInstanceCount = 0;
-            if (_culledCountBuffer is null)
-                return;
-
-            // The zero-readback path records GPURenderResetCounters into the frame command stream.
-            // A one-shot upload here is outside that stream and can race the prior in-flight frame,
-            // clearing CulledCount before its downstream material-scatter dispatch consumes it.
-            // ResetBaseCountersOnCpu still performs the upload when the GPU reset contract is absent.
-            if (IsCpuReadbackCountDisabledForPass() && _resetCountersComputeShader is not null)
-                return;
-
-            WriteUints(_culledCountBuffer, 0u, 0u, 0u);
+            // GPURenderResetCounters owns the storage reset. These calls only
+            // invalidate CPU mirrors so no mapped upload can race queued work.
         }
 
         private void UpdateVisibleCountersFromBuffer()
@@ -528,7 +519,7 @@ namespace XREngine.Rendering.Commands
             }
         }
 
-        public void Cull(GPUScene gpuCommands, XRCamera? camera, bool deferGpuHiZ = false)
+        public bool Cull(GPUScene gpuCommands, XRCamera? camera, bool deferGpuHiZ = false)
         {
             using var timing = BeginTiming("GPURenderPassCollection.Cull");
             Stopwatch cullStopwatch = Stopwatch.StartNew();
@@ -563,7 +554,7 @@ namespace XREngine.Rendering.Commands
                 Dbg("Cull: no commands","Culling");
                 Log(LogCategory.Culling, LogLevel.Debug, "Cull: no commands - early exit");
                 RecordCullTiming();
-                return;
+                return true;
             }
 
 
@@ -604,7 +595,7 @@ namespace XREngine.Rendering.Commands
                 string reason = _skipGpuSubmissionReason ?? "command corruption detected";
                 Warn(LogCategory.Culling, "Skipping GPU submission: {0}", reason);
                 RecordCullTiming();
-                return;
+                return false;
             }
 
             LogCullingResult("Cull", numCommands, VisibleCommandCount, VisibleInstanceCount);
@@ -613,6 +604,7 @@ namespace XREngine.Rendering.Commands
                 XREngine.Debug.Meshes($"GPURenderPassCollection.Cull: {numCommands} input commands -> {VisibleCommandCount} visible commands ({VisibleInstanceCount} instances) in CulledSceneToRenderBuffer");
 
             RecordCullTiming();
+            return true;
         }
 
         private void LogCullModeActivation(CullFrameMode mode)
@@ -766,8 +758,6 @@ namespace XREngine.Rendering.Commands
 
             // Reset counters before dispatch
             ResetVisibleCounters();
-            if (_cullingOverflowFlagBuffer is not null)
-                WriteUInt(_cullingOverflowFlagBuffer, 0u);
 
             // Extract frustum planes from camera
             Frustum? frustumNullable = camera.WorldFrustum();
@@ -869,19 +859,6 @@ namespace XREngine.Rendering.Commands
             VisibleCommandCount = Math.Min(visibleCount, inputCount);
             Dbg($"FrustumCull complete: visible={VisibleCommandCount} instances={VisibleInstanceCount}", "Culling");
 
-            // Update stats buffer
-            if (_statsBuffer is not null)
-            {
-                ReadOnlySpan<uint> statSeed = stackalloc uint[]
-                {
-                    inputCount,
-                    VisibleCommandCount,
-                    0u,
-                    0u,
-                    0u
-                };
-                WriteUints(_statsBuffer, statSeed);
-            }
         }
 
         private bool ShouldUseExternalVrSharedVisibilityPassFilter(XRCamera? camera)
@@ -1050,8 +1027,6 @@ namespace XREngine.Rendering.Commands
 
             // Reset counters before dispatch
             ResetVisibleCounters();
-            if (_cullingOverflowFlagBuffer is not null)
-                WriteUInt(_cullingOverflowFlagBuffer, 0u);
 
             // Extract frustum planes from camera
             Frustum? frustumNullable = camera.WorldFrustum();
@@ -1168,19 +1143,6 @@ namespace XREngine.Rendering.Commands
             VisibleCommandCount = Math.Min(visibleCount, inputCount);
             Dbg($"BvhCull complete: visible={VisibleCommandCount} instances={VisibleInstanceCount}", "Culling");
 
-            // Update stats buffer
-            if (_statsBuffer is not null)
-            {
-                ReadOnlySpan<uint> statSeed = stackalloc uint[]
-                {
-                    inputCount,
-                    VisibleCommandCount,
-                    0u,
-                    0u,
-                    0u
-                };
-                WriteUints(_statsBuffer, statSeed);
-            }
         }
 
         /// <summary>
@@ -1224,8 +1186,6 @@ namespace XREngine.Rendering.Commands
 
             // Copy commands
             ResetVisibleCounters();
-            if (_cullingOverflowFlagBuffer is not null)
-                WriteUInt(_cullingOverflowFlagBuffer, 0u);
 
             uint debugSamples = debugLoggingEnabled ? Math.Min(copyCount, PassFilterDebugMaxSamples) : 0u;
             EnsurePassFilterDebugBuffer(Math.Max(debugSamples, 1u), clearContents: debugSamples > 0u);
@@ -1325,18 +1285,6 @@ namespace XREngine.Rendering.Commands
             Dbg($"Cull passthrough visible={VisibleCommandCount} instances={VisibleInstanceCount} (input={copyCount})", "Culling");
             RunGpuCpuValidation(scene, copyCount, VisibleCommandCount);
 
-            if (_statsBuffer is not null)
-            {
-                ReadOnlySpan<uint> statSeed = stackalloc uint[]
-                {
-                    copyCount,
-                    VisibleCommandCount,
-                    0u,
-                    0u,
-                    0u
-                };
-                WriteUints(_statsBuffer, statSeed);
-            }
         }
 
         private uint CpuCopyCommandsForPass(GPUScene scene, uint copyCount, bool commit, out uint instanceCount)

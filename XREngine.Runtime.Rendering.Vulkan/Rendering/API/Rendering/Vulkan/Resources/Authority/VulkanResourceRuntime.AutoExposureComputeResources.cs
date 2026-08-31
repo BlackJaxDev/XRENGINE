@@ -34,6 +34,10 @@ internal sealed partial class VulkanResourceRuntime
                 Name = "VulkanAutoExposure2DArray"
             };
 
+            // Binding updates are event-driven. Attach the native owners before
+            // the first update, including hosts that have no desktop window.
+            CreateAPIRenderObject(AutoExposureComputeProgram2D);
+            CreateAPIRenderObject(AutoExposureComputeProgram2DArray);
             AutoExposureComputeInitialized = true;
         }
         catch (Exception ex)

@@ -27,12 +27,6 @@ namespace XREngine.Rendering.Vulkan
                 }
 
                 WaitForTimelineValue(_commandRuntime.Synchronization._graphicsTimelineSemaphore, slotWaitValue);
-                VulkanCompletedTimingQueryPools completedQueries =
-                    _frameTelemetry.SampleFrameTimingQueries(
-                    Api,
-                    _deviceContext.Device,
-                    frameSlot);
-                ResourceRuntime.NotifyTimingQueryPoolsCompleted(completedQueries);
             }
 
             // A retirement boundary may observe already-signalled diagnostic
@@ -42,6 +36,7 @@ namespace XREngine.Rendering.Vulkan
 
             ResourceRuntime.ResidentTemplateFrameSlotLifetimes.ReleaseFrameSlot(
                 frameSlot);
+            ResourceRuntime.DrainPendingSupersededDescriptorOwners();
             _commandRuntime.DrainInvalidatedCommandBufferRecordings(
                 Api, ResourceRuntime);
             _commandRuntime.DrainRetiredSynchronousSubmissions();

@@ -111,6 +111,9 @@ layout(binding = 0) uniform sampler2D HiZDepth;
 
 uniform mat4 ViewProj;
 uniform int HiZMaxMip;
+// Nonzero only for the fixed 64-pixel tile path. UVs address the unpadded
+// source extent, not the rounded-up tile image (important at NPOT edges).
+uniform ivec2 CoarseSourceSize;
 uniform uint IsReversedDepth; // 1 if camera uses reversed Z
 uniform int MaxOutputCommands;
 uniform int TwoPassPhase; // 0 = legacy refine, 2 = late two-pass visibility update
@@ -255,6 +258,8 @@ bool IsDefinitelyBehindHiZ(float nearestDepth, float hizDepth)
 
 int SelectHiZMip(vec2 uvMin, vec2 uvMax)
 {
+    if (all(greaterThan(CoarseSourceSize, ivec2(0))))
+        return 0;
     ivec2 baseSize = textureSize(HiZDepth, 0);
     vec2 sizePx = max((uvMax - uvMin) * vec2(baseSize), vec2(1.0));
     float maxDim = max(sizePx.x, sizePx.y);
@@ -262,33 +267,33 @@ int SelectHiZMip(vec2 uvMin, vec2 uvMax)
     return int(clamp(floor(log2(targetDim)), 0.0, float(HiZMaxMip)));
 }
 
-float SampleHiZCornerConservative(vec2 uvMin, vec2 uvMax, int mip)
-{
-    ivec2 mipSize = textureSize(HiZDepth, mip);
-    ivec2 t00 = ivec2(clamp(uvMin * vec2(mipSize), vec2(0.0), vec2(mipSize - 1)));
-    ivec2 t11 = ivec2(clamp(uvMax * vec2(mipSize), vec2(0.0), vec2(mipSize - 1)));
-    ivec2 t01 = ivec2(t00.x, t11.y);
-    ivec2 t10 = ivec2(t11.x, t00.y);
-
-    float d00 = texelFetch(HiZDepth, t00, mip).r;
-    float d01 = texelFetch(HiZDepth, t01, mip).r;
-    float d10 = texelFetch(HiZDepth, t10, mip).r;
-    float d11 = texelFetch(HiZDepth, t11, mip).r;
-
-    return CombineHiZDepth(CombineHiZDepth(d00, d01), CombineHiZDepth(d10, d11));
-}
-
-float SampleHiZConservative(vec2 uvMin, vec2 uvMax, int mip)
+bool TrySampleHiZConservative(vec2 uvMin, vec2 uvMax, int mip, out float result)
 {
     ivec2 mipSize = textureSize(HiZDepth, mip);
     ivec2 tMin = ivec2(clamp(floor(uvMin * vec2(mipSize)), vec2(0.0), vec2(mipSize - 1)));
     ivec2 tMax = ivec2(clamp(floor(uvMax * vec2(mipSize)), vec2(0.0), vec2(mipSize - 1)));
+    if (all(greaterThan(CoarseSourceSize, ivec2(0))))
+    {
+        if (any(notEqual(mipSize, (CoarseSourceSize + ivec2(63)) / 64)))
+            return false;
+        // Include a pixel of rasterization uncertainty and every intersected
+        // tile. Scaling directly by mipSize would skip tiles at partial edges.
+        vec2 firstPixel = floor(uvMin * vec2(CoarseSourceSize)) - vec2(1.0);
+        vec2 lastPixel = ceil(uvMax * vec2(CoarseSourceSize)) + vec2(1.0);
+        tMin = clamp(ivec2(floor(firstPixel / 64.0)), ivec2(0), mipSize - 1);
+        tMax = clamp(ivec2(floor(lastPixel / 64.0)), ivec2(0), mipSize - 1);
+    }
     ivec2 span = tMax - tMin + ivec2(1);
 
     if (span.x > HIZ_MAX_SAMPLE_TEXELS || span.y > HIZ_MAX_SAMPLE_TEXELS)
-        return SampleHiZCornerConservative(uvMin, uvMax, min(mip + 1, HiZMaxMip));
+    {
+        // The bounded coarse-tile path must inspect every intersecting tile.
+        // A larger footprint is simply not proven occluded.
+        result = InitialHiZDepth();
+        return false;
+    }
 
-    float result = InitialHiZDepth();
+    result = InitialHiZDepth();
     for (int y = 0; y < HIZ_MAX_SAMPLE_TEXELS; ++y)
     {
         if (y >= span.y)
@@ -300,11 +305,15 @@ float SampleHiZConservative(vec2 uvMin, vec2 uvMax, int mip)
                 break;
 
             float depth = texelFetch(HiZDepth, tMin + ivec2(x, y), mip).r;
+            // A malformed tile cannot establish occlusion. This also keeps a
+            // partially initialized diagnostic image conservative.
+            if (isnan(depth) || isinf(depth) || depth < 0.0 || depth > 1.0)
+                return false;
             result = CombineHiZDepth(result, depth);
         }
     }
 
-    return result;
+    return true;
 }
 
 bool HiZOccludedAabb(vec3 aabbMin, vec3 aabbMax)
@@ -327,7 +336,7 @@ bool HiZOccludedAabb(vec3 aabbMin, vec3 aabbMax)
     for (int i = 0; i < 8; ++i)
     {
         vec4 clip = ViewProj * vec4(corners[i], 1.0);
-        if (clip.w <= 0.0)
+        if (any(isnan(clip)) || any(isinf(clip)) || clip.w <= 0.0)
             return false;
 
         vec3 ndc = clip.xyz / clip.w;
@@ -352,7 +361,9 @@ bool HiZOccludedAabb(vec3 aabbMin, vec3 aabbMax)
     vec2 clampedUvMax = clamp(uvMax, vec2(0.0), vec2(1.0));
 
     int mip = SelectHiZMip(clampedUvMin, clampedUvMax);
-    float hiz = SampleHiZConservative(clampedUvMin, clampedUvMax, mip);
+    float hiz;
+    if (!TrySampleHiZConservative(clampedUvMin, clampedUvMax, mip, hiz))
+        return false;
     return IsDefinitelyBehindHiZ(nearestDepth, hiz);
 }
 
@@ -406,7 +417,9 @@ bool HiZOccluded(vec3 worldCenter, float radius)
 
     // Select mip level based on projected footprint.
     int mip = SelectHiZMip(clampedUvMin, clampedUvMax);
-    float hiz = SampleHiZConservative(clampedUvMin, clampedUvMax, mip);
+    float hiz;
+    if (!TrySampleHiZConservative(clampedUvMin, clampedUvMax, mip, hiz))
+        return false;
 
     // Convert NDC z to depth-buffer space.
     float depth = ClipToFramebufferDepth(ndc.z);
@@ -453,7 +466,12 @@ void main()
     uint visibilityRecordBase = 0u;
     bool previouslyVisible = true;
     if (TwoPassPhase == 2)
-        previouslyVisible = ForcePhaseOneVisible != 0u || LoadPreviousVisibility(drawId, renderIdentityId, visibilityRecordBase);
+    {
+        // Always resolve this draw's history address, including on camera cuts.
+        // Short-circuiting the load leaves every invocation writing record zero.
+        previouslyVisible = LoadPreviousVisibility(drawId, renderIdentityId, visibilityRecordBase);
+        previouslyVisible = ForcePhaseOneVisible != 0u || previouslyVisible;
+    }
 
     BoundsGpu bounds = draw.BoundsID < uint(Bounds.length()) ? Bounds[draw.BoundsID] : BoundsGpu(vec4(0.0), vec4(0.0), vec4(0.0), 0u, 0u, 0u, 0u);
     vec3 center = bounds.BoundingSphere.xyz;
@@ -463,7 +481,7 @@ void main()
     vec3 aabbMax;
     bool occluded = TryLoadAabb(draw.BoundsID, aabbMin, aabbMax)
         ? HiZOccludedAabb(aabbMin, aabbMax)
-        : HiZOccluded(center, radius);
+        : false;
 
     if (TwoPassPhase == 2)
         StoreCurrentVisibility(visibilityRecordBase, renderIdentityId, !occluded);
@@ -477,10 +495,13 @@ void main()
         return;
 
     uint outIndex = atomicAdd(OutCount, 1u);
-    if (outIndex >= uint(MaxOutputCommands))
+    uint outputCapacity = min(uint(max(MaxOutputCommands, 0)), uint(outDrawIds.length()));
+    if (outIndex >= outputCapacity)
     {
+        // Bound the count as well as the write; the next GPU stage consumes it.
+        atomicMin(OutCount, outputCapacity);
         atomicAdd(OcclusionOverflowFlag, 1u);
-        OutOverflow = 1u;
+        atomicOr(OutOverflow, 1u);
         return;
     }
 

@@ -6,6 +6,7 @@ public enum EFrameOutputPhase
     Swap,
     Render,
     Submit,
+    GpuComplete,
     Overlay,
     Present,
 }

@@ -95,6 +95,8 @@ internal sealed partial class VulkanResourceRuntime
 
     internal void DestroyFrameDataArenas()
     {
+        ReadOnlyStoragePreparedMap.Clear();
+        MaterialTablePreparedMap.Clear(Buffers);
         VulkanFrameDataArena? readback = ReadbackFrameDataArena;
         VulkanFrameDataArena? gpuStats = GpuStatsFrameDataArena;
         VulkanFrameDataArena? frameData = FrameDataArena;

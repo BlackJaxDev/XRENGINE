@@ -10,6 +10,7 @@ using XREngine.Scene;
 using XREngine.Rendering.RenderGraph;
 using XREngine.Rendering.Shadows;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {
@@ -54,6 +55,8 @@ namespace XREngine.Rendering.Pipelines.Commands
         private static XRTexture2D DummyShadowMap => _dummyShadowMap ??= new XRTexture2D(1, 1, ColorF4.White);
         private const string DirectionalShadowAtlasName = "DirectionalShadowAtlas";
         private const int DirectionalShadowAtlasUnit = 9;
+        private const uint DirectionalShadowRecordsBinding = 39;
+        private const ulong DirectionalShadowRecordsAbiSignature = 0x4453_4852_3232_3442UL;
         private const string PointShadowAtlasName = "PointShadowAtlas";
         private const string SpotShadowAtlasName = "SpotShadowAtlas";
         private readonly ConditionalWeakTable<XRRenderPipelineInstance, LightRendererCache> _rendererCaches = new();
@@ -113,6 +116,15 @@ namespace XREngine.Rendering.Pipelines.Commands
             public readonly IVector4[] DirectionalShadowAtlasPacked0 = new IVector4[8];
             public readonly Vector4[] DirectionalShadowAtlasUvScaleBias = new Vector4[8];
             public readonly Vector4[] DirectionalShadowAtlasDepthParams = new Vector4[8];
+            public readonly DirectionalShadowGpuRecord[] DirectionalShadowRecords = new DirectionalShadowGpuRecord[8];
+            public ReadOnlyStoragePublication? DirectionalShadowRecordPublication;
+            public ulong DirectionalShadowRecordGeneration;
+
+            public void ReleasePublications()
+            {
+                DirectionalShadowRecordPublication?.Dispose();
+                DirectionalShadowRecordPublication = null;
+            }
             public readonly IVector4[] PointShadowAtlasPacked0 = new IVector4[PointLightComponent.ShadowFaceCount];
             public readonly Vector4[] PointShadowAtlasUvScaleBias = new Vector4[PointLightComponent.ShadowFaceCount];
             public readonly Vector4[] PointShadowAtlasDepthParams = new Vector4[PointLightComponent.ShadowFaceCount];
@@ -421,7 +433,12 @@ namespace XREngine.Rendering.Pipelines.Commands
         {
             LightRendererCache cache = _rendererCaches.GetValue(
                 ActivePipelineInstance,
-                static _ => new LightRendererCache());
+                static instance =>
+                {
+                    LightRendererCache result = new();
+                    instance.CacheClearing += result.ReleasePublications;
+                    return result;
+                });
             _activeRendererCache = cache;
             return cache;
         }
@@ -606,6 +623,13 @@ namespace XREngine.Rendering.Pipelines.Commands
                     directionalLight.EnableCascadedShadows &&
                     (useDirectionalShadowAtlas || directionalCascadeReceiverTexture is not null) &&
                     activeCascadeCount > 0;
+
+                PublishDirectionalShadowRecords(
+                    materialProgram,
+                    uniformCache,
+                    directionalLight,
+                    activeRenderingCamera,
+                    useCascadedDirectionalShadows);
 
                 materialProgram.Uniform("ShadowMapEncoding", (int)directionalShadowFormat.Encoding);
                 materialProgram.Uniform("ShadowMomentParams0", new Vector4(
@@ -1030,10 +1054,43 @@ namespace XREngine.Rendering.Pipelines.Commands
                 directionalShadowAtlasPacked0);
 
             materialProgram.Uniform("DirectionalShadowAtlasEnabled", hasUsableAtlasState);
-            materialProgram.Uniform("DirectionalShadowAtlasPacked0", directionalShadowAtlasPacked0);
-            materialProgram.Uniform("DirectionalShadowAtlasUvScaleBias", directionalShadowAtlasUvScaleBias);
-            materialProgram.Uniform("DirectionalShadowAtlasDepthParams", directionalShadowAtlasDepthParams);
             return hasUsableAtlasState;
+        }
+
+        /// <summary>
+        /// Publishes the complete directional cascade state as one immutable SSBO
+        /// payload. Exact byte comparison prevents a new publication when the
+        /// selected light/view state has not changed.
+        /// </summary>
+        private static void PublishDirectionalShadowRecords(
+            XRRenderProgram program,
+            LightRendererCache cache,
+            DirectionalLightComponent directionalLight,
+            XRCamera? camera,
+            bool useCascades)
+        {
+            Span<DirectionalShadowGpuRecord> records = cache.DirectionalShadowRecords;
+            records.Clear();
+            directionalLight.CopyPublishedDirectionalShadowRecords(
+                camera,
+                useCascades,
+                records,
+                out _);
+
+            ReadOnlySpan<byte> recordBytes = MemoryMarshal.AsBytes(records);
+            if (cache.DirectionalShadowRecordPublication is not { } publication ||
+                !publication.IsValid ||
+                !publication.ByteContentEquals(recordBytes))
+            {
+                cache.DirectionalShadowRecordPublication?.Dispose();
+                cache.DirectionalShadowRecordPublication = ReadOnlyStoragePublication.CopyFrom(
+                    recordBytes,
+                    (ulong)RuntimeHelpers.GetHashCode(cache),
+                    ++cache.DirectionalShadowRecordGeneration,
+                    DirectionalShadowRecordsAbiSignature);
+            }
+
+            program.BindReadOnlyStorage(cache.DirectionalShadowRecordPublication.Value, DirectionalShadowRecordsBinding);
         }
 
         private static bool IsTextureReadyForShadowSampling(XRTexture? texture)
@@ -1153,9 +1210,6 @@ namespace XREngine.Rendering.Pipelines.Commands
             Array.Clear(directionalShadowAtlasUvScaleBias);
             Array.Clear(directionalShadowAtlasDepthParams);
             materialProgram.Uniform("DirectionalShadowAtlasEnabled", false);
-            materialProgram.Uniform("DirectionalShadowAtlasPacked0", directionalShadowAtlasPacked0);
-            materialProgram.Uniform("DirectionalShadowAtlasUvScaleBias", directionalShadowAtlasUvScaleBias);
-            materialProgram.Uniform("DirectionalShadowAtlasDepthParams", directionalShadowAtlasDepthParams);
         }
 
         private void CreateLightRenderers(

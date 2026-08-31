@@ -326,15 +326,15 @@ namespace XREngine.Scene
                 return;
 
             double budgetMs = CaptureBudgetMilliseconds;
-            _captureBudgetStopwatch.Restart();
+            BeginCaptureFrameBudget();
 
             if (ShouldDeferAuxiliaryCaptures())
                 return;
 
-            int processedCaptureWorkItems = 0;
-            while (_captureWorkQueue.TryPeek(out _))
+            int maximumCaptureWorkItems = Math.Max(1, MaximumCaptureWorkItemsPerFrame);
+            while (_captureWorkItemsExecutedThisFrame < maximumCaptureWorkItems && _captureWorkQueue.TryPeek(out _))
             {
-                if (processedCaptureWorkItems > 0 &&
+                if (_captureWorkItemsExecutedThisFrame > 0 &&
                     _captureBudgetStopwatch.Elapsed.TotalMilliseconds > budgetMs)
                 {
                     LastCaptureDeferralReason = ERenderOutputPolicyReason.CpuBudget;
@@ -352,29 +352,61 @@ namespace XREngine.Scene
                     break;
 
                 NoteCaptureWorkItemDequeued();
-                processedCaptureWorkItems++;
+                // Count immediately so a throwing work item still consumes one
+                // bounded admission slot for this frame.
+                _captureWorkItemsExecutedThisFrame++;
 
-                switch (item.WorkType)
+                try
                 {
-                    case ECaptureWorkType.CubemapFace:
-                        if (item.Component is SceneCaptureComponent scc)
-                            scc.ExecuteCaptureFace(item.FaceIndex);
-                        break;
+                    switch (item.WorkType)
+                    {
+                        case ECaptureWorkType.CubemapFace:
+                            if (item.Component is SceneCaptureComponent scc)
+                            {
+                                scc.ExecuteCaptureFace(item.FaceIndex);
+                                if (item.FaceIndex < 5)
+                                    EnqueueCaptureWorkItem(new CaptureWorkItem(scc, ECaptureWorkType.CubemapFace, item.FaceIndex + 1));
+                                else
+                                    EnqueueCaptureWorkItem(new CaptureWorkItem(scc, ECaptureWorkType.CaptureFinalize));
+                            }
+                            break;
 
-                    case ECaptureWorkType.CaptureFinalize:
-                        if (item.Component is SceneCaptureComponent finScc)
-                            finScc.FinalizeCubemapCapture();
-                        CompletePendingCapture(item.Component);
-                        break;
+                        case ECaptureWorkType.CaptureFinalize:
+                            if (item.Component is SceneCaptureComponent finScc)
+                                finScc.FinalizeCubemapCapture();
+                            CompletePendingCapture(item.Component);
+                            break;
 
-                    case ECaptureWorkType.FullCapture:
-                        item.Component.CollectVisible();
-                        item.Component.SwapBuffers();
-                        item.Component.Render();
-                        CompletePendingCapture(item.Component);
-                        break;
+                        case ECaptureWorkType.FullCapture:
+                            item.Component.CollectVisible();
+                            item.Component.SwapBuffers();
+                            item.Component.Render();
+                            CompletePendingCapture(item.Component);
+                            break;
+                    }
+                }
+                catch
+                {
+                    // No successor exists on failure. Release deduplication so a later
+                    // request can restart at face zero; never finalize partial content.
+                    CompletePendingCapture(item.Component);
+                    throw;
                 }
             }
+
+            if (_captureWorkItemsExecutedThisFrame >= maximumCaptureWorkItems && PendingCaptureWorkItemCount > 0)
+                LastCaptureDeferralReason = ERenderOutputPolicyReason.CpuBudget;
+        }
+
+        private void BeginCaptureFrameBudget()
+        {
+            ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
+            if (_captureBudgetFrameId == frameId)
+                return;
+
+            _captureBudgetFrameId = frameId;
+            _captureWorkItemsExecutedThisFrame = 0;
+            _captureBudgetStopwatch.Restart();
         }
 
         #endregion
@@ -708,7 +740,7 @@ namespace XREngine.Scene
             uint desiredResolution = desiredResolutionOverride ?? GetDesiredShadowAtlasResolution(light);
             uint minimumResolution = GetMinimumShadowAtlasResolution(desiredResolution);
             bool hasPrevious = ShadowAtlas.TryGetPlanningAllocation(key, out ShadowAtlasAllocation previous);
-            ulong contentHash = BuildShadowContentHash(
+            ulong contentHash = BuildShadowDepthContentHash(
                 light,
                 projectionType,
                 faceOrCascadeIndex,
@@ -719,6 +751,13 @@ namespace XREngine.Scene
                 projNear,
                 projFar,
                 desiredResolution);
+            ulong receiverSamplingHash = BuildShadowReceiverSamplingHash(
+                light,
+                projectionType,
+                faceOrCascadeIndex,
+                source,
+                encoding);
+            bool receiverSamplingChanged = ShadowAtlas.IsReceiverSamplingStateChanged(key, receiverSamplingHash);
             bool canReusePreviousFrame = CanReuseShadowAtlasPreviousFrame(light, hasPrevious, previous, contentHash);
             ShadowDirtyReason dirtyReason = ResolveShadowDirtyReason(
                 light,
@@ -728,6 +767,8 @@ namespace XREngine.Scene
                 canReusePreviousFrame,
                 hasPrevious,
                 previous);
+            if (HasExceededDirtyShadowStaleAge(projectionType, hasPrevious, previous, contentHash))
+                dirtyReason |= ShadowDirtyReason.StaleContentAgeLimitReached;
             bool isDirty = dirtyReason != ShadowDirtyReason.None;
             float refreshPriority = priority + EstimateRefreshPriorityBonus(hasPrevious, previous);
             SkipReason effectiveForcedSkipReason = forcedSkipReason;
@@ -794,7 +835,10 @@ namespace XREngine.Scene
                 EditorPinned: false,
                 StereoVis: RuntimeEngine.VRState.IsInVR ? StereoVisibility.BothEyes : StereoVisibility.Mono,
                 ForcedSkipReason: effectiveForcedSkipReason,
-                DirectionalCascadeSample: directionalCascadeSample);
+                DirectionalCascadeSample: directionalCascadeSample,
+                ReceiverSamplingHash: receiverSamplingHash,
+                ReceiverSamplingChanged: receiverSamplingChanged,
+                InvalidationDomains: ResolveShadowInvalidationDomains(dirtyReason, receiverSamplingChanged));
 
             LogDirectionalAtlasSubmit(light, request, hasPrevious, previous);
             ShadowAtlas.Submit(request);
@@ -818,6 +862,12 @@ namespace XREngine.Scene
                 previous.LastRenderedFrame == 0u ||
                 previous.ActiveFallback == ShadowFallbackMode.Disabled)
             {
+                return false;
+            }
+
+            if ((dirtyReason & ShadowDirtyReason.StaleContentAgeLimitReached) != 0)
+            {
+                forcedFresh = true;
                 return false;
             }
 
@@ -849,6 +899,46 @@ namespace XREngine.Scene
 
             forcedFresh = true;
             return false;
+        }
+
+        private bool HasExceededDirtyShadowStaleAge(
+            EShadowProjectionType projectionType,
+            bool hasPrevious,
+            in ShadowAtlasAllocation previous,
+            ulong depthContentHash)
+        {
+            ulong maximumDeferredDirtyFrames = ResolveMaximumDeferredDirtyShadowFrames(projectionType);
+            return hasPrevious &&
+                previous.IsResident &&
+                previous.LastRenderedFrame != 0u &&
+                previous.ContentVersion != depthContentHash &&
+                ShadowAtlas.CurrentFrameId > previous.LastRenderedFrame &&
+                ShadowAtlas.CurrentFrameId - previous.LastRenderedFrame >= maximumDeferredDirtyFrames;
+        }
+
+        private static ulong ResolveMaximumDeferredDirtyShadowFrames(EShadowProjectionType projectionType)
+        {
+            if (projectionType is EShadowProjectionType.DirectionalCascade or EShadowProjectionType.DirectionalPrimary)
+                return (ulong)Math.Max(0, RuntimeEngine.Rendering.Settings.MaxDirectionalCascadeAtlasStaleFrames);
+
+            // Local atlas requests do not have an exposed per-light cadence setting.
+            // Keep their safety cap explicit and shared: four delayed dirty frames,
+            // then conservative lit fallback until the bounded atlas queue catches up.
+            return 4u;
+        }
+
+        private static ShadowInvalidationDomain ResolveShadowInvalidationDomains(
+            ShadowDirtyReason dirtyReason,
+            bool receiverSamplingChanged)
+        {
+            ShadowInvalidationDomain domains = dirtyReason == ShadowDirtyReason.None
+                ? ShadowInvalidationDomain.None
+                : ShadowInvalidationDomain.Depth;
+            if ((dirtyReason & (ShadowDirtyReason.AllocationMissing | ShadowDirtyReason.AllocationChanged | ShadowDirtyReason.EncodingChanged)) != 0)
+                domains |= ShadowInvalidationDomain.AtlasPlacement;
+            if (receiverSamplingChanged)
+                domains |= ShadowInvalidationDomain.ReceiverSampling;
+            return domains;
         }
 
         private static int ResolveDirectionalCascadeSettledRefreshStableFrames(int activeCascadeCount)
@@ -1408,13 +1498,15 @@ namespace XREngine.Scene
             Debug.Lighting(
                 EOutputVerbosity.Normal,
                 false,
-            "[DirectionalShadowAudit][AtlasSubmit] frame={0} light='{1}' projection={2} cascadeOrFace={3} dirty={4} dirtyReason={5} contentChanged={6} canReuse={7} fallback={8} desired={9} min={10} near={11:F3} far={12:F3} priority={13:F1} previousResident={14} previousRenderedFrame={15} previousFallback={16} previousPage={17} previousRect={18}",
+            "[DirectionalShadowAudit][AtlasSubmit] frame={0} light='{1}' projection={2} cascadeOrFace={3} dirty={4} dirtyReason={5} domains={6} receiverSamplingChanged={7} contentChanged={8} canReuse={9} fallback={10} desired={11} min={12} near={13:F3} far={14:F3} priority={15:F1} previousResident={16} previousRenderedFrame={17} previousFallback={18} previousPage={19} previousRect={20}",
                 RuntimeEngine.Rendering.State.RenderFrameId,
                 light.SceneNode?.Name ?? light.Name ?? light.GetType().Name,
                 request.ProjectionType,
                 request.FaceOrCascadeIndex,
                 request.IsDirty,
                 request.DirtyReason,
+                request.InvalidationDomains,
+                request.ReceiverSamplingChanged,
                 contentChanged,
                 request.CanReusePreviousFrame,
                 request.Fallback,
@@ -1591,7 +1683,7 @@ namespace XREngine.Scene
             return false;
         }
 
-        private ulong BuildShadowContentHash(
+        private ulong BuildShadowDepthContentHash(
             LightComponent light,
             EShadowProjectionType projectionType,
             int faceOrCascadeIndex,
@@ -1612,9 +1704,6 @@ namespace XREngine.Scene
             Add(ref hash, light.MovementVersion);
             Add(ref hash, light.ShadowMapResolutionWidth);
             Add(ref hash, light.ShadowMapResolutionHeight);
-            Add(ref hash, (uint)light.SoftShadowMode);
-            AddFloat(ref hash, light.ShadowMinBias);
-            AddFloat(ref hash, light.ShadowMaxBias);
             Add(ref hash, World.VisualScene.ShadowCasterMembershipRevision);
             if (light is DirectionalLightComponent directionalLight)
             {
@@ -1634,6 +1723,24 @@ namespace XREngine.Scene
             }
             AddFloat(ref hash, projectionNear);
             AddFloat(ref hash, projectionFar);
+            return hash;
+        }
+
+        private static ulong BuildShadowReceiverSamplingHash(
+            LightComponent light,
+            EShadowProjectionType projectionType,
+            int faceOrCascadeIndex,
+            ShadowRequestSource source,
+            EShadowMapEncoding encoding)
+        {
+            ulong hash = 14695981039346656037UL;
+            Add(ref hash, (uint)projectionType);
+            Add(ref hash, (uint)faceOrCascadeIndex);
+            Add(ref hash, (uint)source);
+            Add(ref hash, (uint)encoding);
+            Add(ref hash, (uint)light.SoftShadowMode);
+            AddFloat(ref hash, light.ShadowMinBias);
+            AddFloat(ref hash, light.ShadowMaxBias);
             return hash;
         }
 

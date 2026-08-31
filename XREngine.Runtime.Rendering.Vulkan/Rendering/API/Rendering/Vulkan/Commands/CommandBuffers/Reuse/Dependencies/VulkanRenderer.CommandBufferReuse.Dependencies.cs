@@ -231,6 +231,8 @@ namespace XREngine.Rendering.Vulkan
                 if (header.OpCode == EVulkanPrimaryPlanNodeKind.ComputeDispatch)
                 {
                     ref readonly ComputeDispatchPayload computeDispatch = ref ops.Stream.GetComputeDispatch(i);
+                    int computeDescriptorBindingOrdinal =
+                        ResolveComputeDispatchOccurrenceOrdinal(ops.Stream, i);
                     // Reusable compute dispatches bind descriptor sets from the
                     // per-image cache using this structural key. Their sampled
                     // images and uniform values are frame data: the completed
@@ -238,9 +240,9 @@ namespace XREngine.Rendering.Vulkan
                     // before submission. Hashing the mutable snapshot here made
                     // camera-dependent auto exposure invalidate the thin primary
                     // even though its vkCmdBindDescriptorSets command was unchanged.
-                    hash.Add(bindingOpIndex);
+                    hash.Add(computeDescriptorBindingOrdinal);
                     hash.Add(ComputeReusableComputeDescriptorBindingKey(
-                        computeDispatch, header, ops.GetContext(i), bindingOpIndex));
+                        computeDispatch, header, ops.GetContext(i), ops.Stream.Lane, computeDescriptorBindingOrdinal));
                     hash.Add(computeDispatch.Program.BindingId);
                     hash.Add(computeDispatch.Program.LinkGeneration);
                     bindingCount++;

@@ -90,7 +90,9 @@ public partial class AdvancedRenderPipeline
             int capture = layerIndex;
         }
 
-        c.Add<VPRC_RenderQuadToFBO>().SetTargets(SceneCopyFBOName, TransparentSceneCopyFBOName);
+        c.Add<VPRC_RenderQuadToFBO>()
+            .SetTargets(SceneCopyFBOName, TransparentSceneCopyFBOName)
+            .SetRenderGraphResources(DefaultRenderPipelineQuadDescriptors.SceneCopy());
         var resetPpll = c.Add<VPRC_ResetPpllResources>();
         resetPpll.CounterBufferName = PpllCounterBufferName;
         resetPpll.HeadPointerTextureName = PpllHeadPointerTextureName;
@@ -139,7 +141,9 @@ public partial class AdvancedRenderPipeline
             c.Add<VPRC_RenderQuadToFBO>().SetOptions(PpllResolveFBOName, renderToSourceFrameBuffer: true);
         }
 
-        c.Add<VPRC_RenderQuadToFBO>().SetTargets(SceneCopyFBOName, TransparentSceneCopyFBOName);
+        c.Add<VPRC_RenderQuadToFBO>()
+            .SetTargets(SceneCopyFBOName, TransparentSceneCopyFBOName)
+            .SetRenderGraphResources(DefaultRenderPipelineQuadDescriptors.SceneCopy());
         for (int layerIndex = 0; layerIndex < ActiveDepthPeelLayerCount; layerIndex++)
         {
             int capture = layerIndex;

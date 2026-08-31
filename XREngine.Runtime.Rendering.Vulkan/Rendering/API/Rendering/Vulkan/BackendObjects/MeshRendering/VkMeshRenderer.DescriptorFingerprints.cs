@@ -297,6 +297,9 @@ internal unsafe partial class VkMeshRenderer
 		out ulong fingerprint)
 	{
 		fingerprint = 0UL;
+		// Publication identity does not prove its lowered physical buffer/offset.
+		if (bindingSnapshot?.HasReadOnlyStorageBindings == true)
+			return false;
 		if (bindingSnapshot is not
 			{ HasPublishedBindingLayoutSignatures: true } ||
 			_program is not { } program ||
@@ -334,6 +337,10 @@ internal unsafe partial class VkMeshRenderer
 		hash.Add(usesSharedMaterialTier);
 		hash.Add(bindingSnapshot.DescriptorSetLayoutSignature);
 		hash.Add(snapshotResourceSignature);
+		// Native material-table banks and descriptor closures are immutable per
+		// sealed snapshot. This O(1) identity prevents a reused descriptor set
+		// from binding a later bank with an earlier command lease.
+		hash.Add(bindingSnapshot.PreparedMaterialTableSignature);
 		hash.Add(ComputeCachedBufferResourceFingerprintCore());
 		hash.Add(frameArena.Identity);
 		hash.Add(frameArena.Generation);

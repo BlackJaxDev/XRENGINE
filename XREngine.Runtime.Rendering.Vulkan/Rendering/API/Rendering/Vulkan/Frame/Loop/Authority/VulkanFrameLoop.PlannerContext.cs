@@ -260,6 +260,16 @@ internal sealed partial class VulkanFrameLoop
         return operations;
     }
 
+    /// <summary>
+    /// Abandons queued OpenXR authoring operations and releases any retained
+    /// immutable visibility input carried by that cohort.
+    /// </summary>
+    private void DrainAndReleaseFrameOpsExcludingTextureUploads()
+    {
+        FrameOp[] operations = DrainFrameOpsExcludingTextureUploads(out _);
+        VulkanAdvancedVisibilityInputLease.ReleaseOperations(operations);
+    }
+
     internal ResourcePlannerRuntimeState CaptureResourcePlannerRuntimeState()
         => _resourcePlannerSessions.CaptureRuntimeState();
 

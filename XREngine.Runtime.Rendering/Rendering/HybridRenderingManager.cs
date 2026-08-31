@@ -23,7 +23,7 @@ namespace XREngine.Rendering
     /// <summary>
     /// Manages both traditional indirect rendering and modern meshlet-based rendering.
     /// </summary>
-    public class HybridRenderingManager : XRBase, IDisposable
+    public partial class HybridRenderingManager : XRBase, IDisposable
     {
         private const uint IndirectCommandSsboBinding = 7;
         private const uint InstanceTransformSsboBinding = GPUBatchingBindings.InstanceTransformBuffer;
@@ -118,11 +118,16 @@ namespace XREngine.Rendering
         public readonly long ShaderStateRevision = shaderStateRevision;
         }
 
-        private readonly struct MaterialTableProgramCache(XRRenderProgram program, XRShader? generatedVertexShader, XRShader fragmentShader)
+        private readonly struct MaterialTableProgramCache(
+            XRRenderProgram program,
+            XRShader? generatedVertexShader,
+            XRShader fragmentShader,
+            bool requiresForwardLighting)
         {
             public readonly XRRenderProgram Program = program;
             public readonly XRShader? GeneratedVertexShader = generatedVertexShader;
             public readonly XRShader FragmentShader = fragmentShader;
+            public readonly bool RequiresForwardLighting = requiresForwardLighting;
         }
 
         private readonly struct MeshletMaterialTableProgramCache(XRRenderProgram program, XRShader taskShader, XRShader meshShader, XRShader fragmentShader)
@@ -136,7 +141,7 @@ namespace XREngine.Rendering
         private readonly Dictionary<XRRenderProgramDescriptor, MaterialProgramCache> _materialPrograms = [];
         private readonly Dictionary<XRRenderProgramDescriptor, MaterialProgramCache> _pendingMaterialPrograms = [];
         private readonly Dictionary<(uint materialId, int rendererKey), XRRenderProgramDescriptor> _materialProgramUseDescriptors = [];
-        private readonly Dictionary<(EMaterialTableTextureReferenceMode textureReferenceMode, bool sceneDatabaseBda, int rendererKey, string layoutHash, bool depthNormalPrePass, bool maskedDepthNormalPrePass, bool motionVectorPass, bool stereoMultiview), MaterialTableProgramCache> _materialTablePrograms = [];
+        private readonly Dictionary<(EMaterialTableTextureReferenceMode textureReferenceMode, bool sceneDatabaseBda, int rendererKey, string layoutHash, bool depthNormalPrePass, bool maskedDepthNormalPrePass, bool motionVectorPass, bool forwardColorPass, bool stereoMultiview), MaterialTableProgramCache> _materialTablePrograms = [];
         private readonly Dictionary<(EMaterialTableTextureReferenceMode textureReferenceMode, EMeshShaderDialect dialect, bool skinned, bool meshletDebugDisplay, string layoutHash), MeshletMaterialTableProgramCache> _meshletMaterialTablePrograms = [];
         private XRDataBuffer? _indirectTextTransformsBuffer;
         private XRDataBuffer? _indirectTextTexCoordsBuffer;
@@ -887,6 +892,7 @@ namespace XREngine.Rendering
 
         private static void LogVulkanCounterBucketDiagnostics(
             string point,
+            int diagnosticRenderPass,
             XRDataBuffer indirectDrawBuffer,
             XRDataBuffer parameterBuffer,
             uint maxDrawCount,
@@ -915,6 +921,18 @@ namespace XREngine.Rendering
                     : commandAvailable && count > 0u && (command.Count == 0u || command.InstanceCount == 0u)
                         ? "nonzero-count-zero-command"
                         : "ok";
+
+            if (diagnosticRenderPass != int.MinValue)
+            {
+                RecordVulkanGpuCounterDiagnostics(
+                    diagnosticRenderPass,
+                    point,
+                    VulkanGpuCounterDiagnosticFieldGroup.IndirectBucket,
+                    lastBucketIndex: countIndex,
+                    lastBucketCount: countAvailable ? count : null,
+                    lastCommandIndexCount: commandAvailable ? command.Count : null,
+                    lastCommandInstanceCount: commandAvailable ? command.InstanceCount : null);
+            }
 
             XREngine.Debug.VulkanEvery(
                 $"VulkanCounters.DrawBucket.{RuntimeHelpers.GetHashCode(parameterBuffer)}.{countIndex}.{point}",
@@ -2969,13 +2987,20 @@ namespace XREngine.Rendering
                 if (textureReferenceMode == EMaterialTableTextureReferenceMode.VulkanDescriptorIndexTable)
                     ((IRuntimeRendererHost)renderer).TryGetBackendCapability(out materialCapability);
                 bool bindlessScopeActive = false;
+                GPUMaterialTablePublication? materialPublication = null;
                 try
                 {
                     if (materialCapability is not null)
                     {
+                        if (!renderPasses.TryRetainMaterialTablePublication(out materialPublication))
+                        {
+                            failureReason = "The Vulkan material table has no immutable publication for mesh-task recording.";
+                            return false;
+                        }
                         bindlessScopeActive = materialCapability.BeginGlobalMaterialTextureDescriptorScope(
                             program,
-                            "GpuMeshletVulkanDescriptorIndexMaterialTable");
+                            "GpuMeshletVulkanDescriptorIndexMaterialTable",
+                            materialPublication);
                         if (!bindlessScopeActive)
                         {
                             failureReason = "Vulkan global material texture descriptor table could not be bound.";
@@ -3020,6 +3045,7 @@ namespace XREngine.Rendering
                 {
                     if (bindlessScopeActive)
                         materialCapability?.EndGlobalMaterialTextureDescriptorScope(program);
+                    materialPublication?.Dispose();
                 }
                 if (submittedAtlasTierCount != activeAtlasTierCount)
                     WarnMeshletMaterialFallback(currentRenderPass, requestedStrategy, failureReason);
@@ -3377,17 +3403,19 @@ namespace XREngine.Rendering
             MaterialBindingLayout layout,
             bool depthNormalPrePass,
             bool maskedDepthNormalPrePass,
-            bool motionVectorPass)
+            bool motionVectorPass,
+            out bool requiresForwardLighting)
         {
             int rendererKey = vaoRenderer is null ? 0 : RuntimeHelpers.GetHashCode(vaoRenderer);
             bool sceneDatabaseBda = ShouldUseVulkanSceneDatabaseDeviceAddresses();
             bool forwardColorPass = IsMaterialTableForwardColorPass(layout, depthNormalPrePass, motionVectorPass);
             bool stereoMultiview = IsGpuIndirectStereoMultiviewPass();
-            (EMaterialTableTextureReferenceMode textureReferenceMode, bool sceneDatabaseBda, int rendererKey, string layoutHash, bool depthNormalPrePass, bool maskedDepthNormalPrePass, bool motionVectorPass, bool stereoMultiview) cacheKey =
-                (textureReferenceMode, sceneDatabaseBda, rendererKey, layout.LayoutHash, depthNormalPrePass, maskedDepthNormalPrePass, motionVectorPass, stereoMultiview);
+            (EMaterialTableTextureReferenceMode textureReferenceMode, bool sceneDatabaseBda, int rendererKey, string layoutHash, bool depthNormalPrePass, bool maskedDepthNormalPrePass, bool motionVectorPass, bool forwardColorPass, bool stereoMultiview) cacheKey =
+                (textureReferenceMode, sceneDatabaseBda, rendererKey, layout.LayoutHash, depthNormalPrePass, maskedDepthNormalPrePass, motionVectorPass, forwardColorPass, stereoMultiview);
 
             if (_materialTablePrograms.TryGetValue(cacheKey, out var existing))
             {
+                requiresForwardLighting = existing.RequiresForwardLighting;
                 if (IsEnabled(LogCategory.Validation, LogLevel.Debug))
                 {
                     GpuDebug(
@@ -3415,7 +3443,10 @@ namespace XREngine.Rendering
                 indirectCommandBinding: forwardColorPass ? ForwardIndirectCommandSsboBinding : IndirectCommandSsboBinding,
                 instanceTransformBinding: forwardColorPass ? ForwardInstanceTransformSsboBinding : InstanceTransformSsboBinding);
             if (generatedVertexShader is null)
+            {
+                requiresForwardLighting = false;
                 return null;
+            }
 
             XRShader fragmentShader = CreateMaterialTableFragmentShader(
                 textureReferenceMode,
@@ -3428,7 +3459,12 @@ namespace XREngine.Rendering
             program.AllowLink();
             program.Link();
 
-            var cacheEntry = new MaterialTableProgramCache(program, generatedVertexShader, fragmentShader);
+            requiresForwardLighting = forwardColorPass;
+            var cacheEntry = new MaterialTableProgramCache(
+                program,
+                generatedVertexShader,
+                fragmentShader,
+                requiresForwardLighting);
             _materialTablePrograms[cacheKey] = cacheEntry;
             if (IsEnabled(LogCategory.Validation, LogLevel.Debug))
             {
@@ -3696,19 +3732,22 @@ namespace XREngine.Rendering
             sb.AppendLine("    MaterialEntry material;");
             sb.AppendLine("    XR_LoadMaterial(materialId, material);");
             sb.AppendLine("    uint flags = material.Flags;");
+            sb.AppendLine($"    bool requiresAlphaCutoff = (flags & {GPUMaterialEntry.MaskedCoverageFlag}u) != 0u;");
+            if (maskedMaterialPass)
+                sb.AppendLine("    requiresAlphaCutoff = true;");
             if (depthNormalPrePass)
             {
-                if (maskedMaterialPass)
+                sb.AppendLine("    if (requiresAlphaCutoff)");
+                sb.AppendLine("    {");
+                sb.AppendLine("        float depthOpacity = material.BaseColorOpacity.a;");
+                if (samplesMaterialTextures)
                 {
-                    sb.AppendLine("    float depthOpacity = material.BaseColorOpacity.a;");
-                    if (samplesMaterialTextures)
-                    {
-                        sb.AppendLine("    if ((flags & 1u) != 0u)");
-                        sb.AppendLine("        depthOpacity *= SampleBindlessTexture(material.AlbedoHandleIndex, FragUV0, vec4(1.0)).a;");
-                    }
-                    sb.AppendLine("    if (depthOpacity < material.AlphaCutoff)");
-                    sb.AppendLine("        discard;");
+                    sb.AppendLine("        if ((flags & 1u) != 0u)");
+                    sb.AppendLine("            depthOpacity *= SampleBindlessTexture(material.AlbedoHandleIndex, FragUV0, vec4(1.0)).a;");
                 }
+                sb.AppendLine("        if (depthOpacity < material.AlphaCutoff)");
+                sb.AppendLine("            discard;");
+                sb.AppendLine("    }");
                 sb.AppendLine("    vec3 worldNormal = normalize(FragNorm);");
                 if (samplesMaterialTextures)
                 {
@@ -3743,11 +3782,8 @@ namespace XREngine.Rendering
                 sb.AppendLine("        opacity *= albedo.a;");
                 sb.AppendLine("    }");
             }
-            if (maskedMaterialPass)
-            {
-                sb.AppendLine("    if (opacity < material.AlphaCutoff)");
-                sb.AppendLine("        discard;");
-            }
+            sb.AppendLine("    if (requiresAlphaCutoff && opacity < material.AlphaCutoff)");
+            sb.AppendLine("        discard;");
             if (motionVectorPass)
             {
                 sb.AppendLine($"    vec4 currentClip = {FragCurrentClipPositionName};");
@@ -5757,6 +5793,9 @@ namespace XREngine.Rendering
             bool bindless)
         {
             using var profilerScope = RuntimeEngine.Profiler.Start("GpuIndirect.ZeroReadback.RenderMaterialTableBuckets");
+            RecordZeroReadbackMaterialTableDiagnostic(
+                currentRenderPass,
+                EZeroReadbackMaterialTableDiagnosticStage.Entered);
 
             var renderState = RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.RenderState;
             bool depthNormalPrePass = renderState?.UseDepthNormalMaterialVariants == true;
@@ -5776,6 +5815,9 @@ namespace XREngine.Rendering
                     out layout);
             if (!hasGeneratedLayout)
             {
+                RecordZeroReadbackMaterialTableDiagnostic(
+                    currentRenderPass,
+                    EZeroReadbackMaterialTableDiagnosticStage.MissingGeneratedLayout);
                 MaterialBindingResolverResult result = MaterialBindingResolverResult.PerMaterial(
                     $"Pass {currentRenderPass} does not expose a generated material-table layout.");
                 renderPasses.RecordMaterialBindingResolverResult(result);
@@ -5784,11 +5826,9 @@ namespace XREngine.Rendering
                     result.Reason);
                 return;
             }
-            bool forwardColorPass = IsMaterialTableForwardColorPass(
-                layout,
-                depthNormalPassSupported,
-                motionVectorPass);
-
+            RecordZeroReadbackMaterialTableDiagnostic(
+                currentRenderPass,
+                EZeroReadbackMaterialTableDiagnosticStage.GeneratedLayoutReady);
             renderPasses.RecordMaterialBindingResolverResult(MaterialBindingResolverResult.Compatible(layout));
             if (IsEnabled(LogCategory.Validation, LogLevel.Debug))
             {
@@ -5806,6 +5846,9 @@ namespace XREngine.Rendering
             XRDataBuffer? materialTableBuffer = renderPasses.MaterialTableBuffer;
             if (materialTableBuffer is null)
             {
+                RecordZeroReadbackMaterialTableDiagnostic(
+                    currentRenderPass,
+                    EZeroReadbackMaterialTableDiagnosticStage.MissingMaterialTable);
                 renderPasses.RecordMaterialBindingResolverResult(MaterialBindingResolverResult.PerMaterial(
                     "Material-table draw path selected but no material table was prepared.",
                     layout));
@@ -5837,6 +5880,9 @@ namespace XREngine.Rendering
             if (textureReferenceMode == EMaterialTableTextureReferenceMode.OpenGLBindlessHandleTable &&
                 materialTextureHandleBuffer is null)
             {
+                RecordZeroReadbackMaterialTableDiagnostic(
+                    currentRenderPass,
+                    EZeroReadbackMaterialTableDiagnosticStage.MissingTextureHandleTable);
                 textureReferenceMode = EMaterialTableTextureReferenceMode.None;
                 bindlessUnavailableReason = "OpenGL bindless material-table shader selected but the material texture handle buffer is missing.";
             }
@@ -5857,9 +5903,13 @@ namespace XREngine.Rendering
                 layout,
                 depthNormalPassSupported,
                 maskedDepthNormalPrePass,
-                motionVectorPass);
+                motionVectorPass,
+                out bool programRequiresForwardLighting);
             if (program is null)
             {
+                RecordZeroReadbackMaterialTableDiagnostic(
+                    currentRenderPass,
+                    EZeroReadbackMaterialTableDiagnosticStage.ProgramCreationFailed);
                 RejectCompactMaterialTableSubmission(
                     currentRenderPass,
                     "The compact material-table graphics program could not be created.");
@@ -5868,6 +5918,9 @@ namespace XREngine.Rendering
 
             if (!IsProgramReadyForCurrentRenderer(program))
             {
+                RecordZeroReadbackMaterialTableDiagnostic(
+                    currentRenderPass,
+                    EZeroReadbackMaterialTableDiagnosticStage.ProgramPending);
                 renderPasses.RecordZeroReadbackProgramPending();
                 WarnZeroReadbackProgramWarmup(
                     textureReferenceMode == EMaterialTableTextureReferenceMode.None ? "ZeroReadbackMaterialTable" : $"ZeroReadback{textureReferenceMode}MaterialTable",
@@ -5889,6 +5942,9 @@ namespace XREngine.Rendering
 
             if (renderPasses.MaterialTierBucketCount != GPUBatchingBindings.MaterialTierCount)
             {
+                RecordZeroReadbackMaterialTableDiagnostic(
+                    currentRenderPass,
+                    EZeroReadbackMaterialTableDiagnosticStage.TopologyRejected);
                 RejectCompactMaterialTableSubmission(
                     currentRenderPass,
                     $"Compact material-table topology expected {GPUBatchingBindings.MaterialTierCount} tier groups but found {renderPasses.MaterialTierBucketCount}.");
@@ -5928,49 +5984,71 @@ namespace XREngine.Rendering
             if (!TryUseIndirectGraphicsProgram(program, textureReferenceMode == EMaterialTableTextureReferenceMode.None ? "ZeroReadbackMaterialTable" : $"ZeroReadback{textureReferenceMode}MaterialTable"))
                 return;
 
-            // O-7: one coalesced barrier ahead of the material-table bucket loop.
-            renderer?.MemoryBarrier(
-                EMemoryBarrierMask.ShaderStorage |
-                EMemoryBarrierMask.Command);
-
-            // Fixed pass-group topology: the GPU compacts all active material
-            // work into one indirect range per atlas tier. A zero count is a
-            // harmless no-op in the backend indirect-count command.
-            for (uint tier = 0u; tier < GPUBatchingBindings.MaterialTierCount; ++tier)
+            GPUMaterialTablePublication? materialPublication = null;
+            if (textureReferenceMode == EMaterialTableTextureReferenceMode.VulkanDescriptorIndexTable &&
+                !renderPasses.TryRetainMaterialTablePublication(out materialPublication))
             {
-                XRMeshRenderer? tierRenderer = ConfigureIndirectRendererForTier(scene, (EAtlasTier)tier);
-                if (tierRenderer is null)
-                    continue;
+                RejectCompactMaterialTableSubmission(
+                    currentRenderPass,
+                    "The Vulkan material table has no immutable publication for indirect recording.");
+                return;
+            }
 
-                nuint indirectByteOffset = (nuint)(tier * maxDrawsPerBucket * stride);
-                nuint countByteOffset = (nuint)(tier * sizeof(uint));
+            try
+            {
+                // O-7: one coalesced barrier ahead of the material-table bucket loop.
+                renderer?.MemoryBarrier(
+                    EMemoryBarrierMask.ShaderStorage |
+                    EMemoryBarrierMask.Command);
 
-                DispatchRenderIndirectCountBucket(
-                    indirectDrawBuffer,
-                    tierRenderer,
-                    culledCommandsBuffer,
-                    scene.DrawMetadataBuffer,
-                    scene.LodTransitionBuffer,
-                    instanceTransformBuffer,
-                    instanceSourceIndexBuffer,
-                    useGpuInstanceTransforms,
-                    maxDrawsPerBucket,
-                    indirectByteOffset,
-                    parameterBuffer,
-                    countByteOffset,
-                    program,
-                    camera,
-                    defaultModelMatrix,
-                    material: invalidMaterial,
-                    materialTableBuffer: materialTableBuffer,
-                    materialTextureHandleBuffer: materialTextureHandleBuffer,
-                    bindVulkanMaterialTextureDescriptorTable: textureReferenceMode == EMaterialTableTextureReferenceMode.VulkanDescriptorIndexTable,
-                    previousInstanceTransformBuffer: previousInstanceTransformBuffer,
-                    allowMaxDrawFallback: false,
-                    emitBarrier: false,
-                    indirectCommandSsboBinding: forwardColorPass ? ForwardIndirectCommandSsboBinding : IndirectCommandSsboBinding,
-                    instanceTransformSsboBinding: forwardColorPass ? ForwardInstanceTransformSsboBinding : InstanceTransformSsboBinding,
-                    bindForwardLighting: forwardColorPass);
+                // Fixed pass-group topology: the GPU compacts all active material
+                // work into one indirect range per atlas tier. A zero count is a
+                // harmless no-op in the backend indirect-count command.
+                for (uint tier = 0u; tier < GPUBatchingBindings.MaterialTierCount; ++tier)
+                {
+                    RecordZeroReadbackMaterialTableDiagnostic(
+                        currentRenderPass,
+                        EZeroReadbackMaterialTableDiagnosticStage.BucketLoop);
+                    XRMeshRenderer? tierRenderer = ConfigureIndirectRendererForTier(scene, (EAtlasTier)tier);
+                    if (tierRenderer is null)
+                        continue;
+
+                    nuint indirectByteOffset = (nuint)(tier * maxDrawsPerBucket * stride);
+                    nuint countByteOffset = (nuint)(tier * sizeof(uint));
+
+                    DispatchRenderIndirectCountBucket(
+                        indirectDrawBuffer,
+                        tierRenderer,
+                        culledCommandsBuffer,
+                        scene.DrawMetadataBuffer,
+                        scene.LodTransitionBuffer,
+                        instanceTransformBuffer,
+                        instanceSourceIndexBuffer,
+                        useGpuInstanceTransforms,
+                        maxDrawsPerBucket,
+                        indirectByteOffset,
+                        parameterBuffer,
+                        countByteOffset,
+                        program,
+                        camera,
+                        defaultModelMatrix,
+                        material: invalidMaterial,
+                        materialTableBuffer: materialTableBuffer,
+                        materialTextureHandleBuffer: materialTextureHandleBuffer,
+                        materialPublication: materialPublication,
+                        bindVulkanMaterialTextureDescriptorTable: textureReferenceMode == EMaterialTableTextureReferenceMode.VulkanDescriptorIndexTable,
+                        previousInstanceTransformBuffer: previousInstanceTransformBuffer,
+                        allowMaxDrawFallback: false,
+                        emitBarrier: false,
+                        indirectCommandSsboBinding: programRequiresForwardLighting ? ForwardIndirectCommandSsboBinding : IndirectCommandSsboBinding,
+                        instanceTransformSsboBinding: programRequiresForwardLighting ? ForwardInstanceTransformSsboBinding : InstanceTransformSsboBinding,
+                        bindForwardLighting: programRequiresForwardLighting,
+                        diagnosticRenderPass: currentRenderPass);
+                }
+            }
+            finally
+            {
+                materialPublication?.Dispose();
             }
         }
 
@@ -6101,13 +6179,15 @@ namespace XREngine.Rendering
             XRMaterial? material = null,
             XRDataBuffer? materialTableBuffer = null,
             XRDataBuffer? materialTextureHandleBuffer = null,
+            GPUMaterialTablePublication? materialPublication = null,
             bool bindVulkanMaterialTextureDescriptorTable = false,
             XRDataBuffer? previousInstanceTransformBuffer = null,
             bool allowMaxDrawFallback = false,
             bool emitBarrier = true,
             uint indirectCommandSsboBinding = IndirectCommandSsboBinding,
             uint instanceTransformSsboBinding = InstanceTransformSsboBinding,
-            bool bindForwardLighting = false)
+            bool bindForwardLighting = false,
+            int diagnosticRenderPass = int.MinValue)
         {
             using var profilerScope = RuntimeEngine.Profiler.Start("GpuIndirect.DispatchRenderIndirectCountBucket");
 
@@ -6127,7 +6207,15 @@ namespace XREngine.Rendering
             P3Diagnostics.IncBucketDispatched();
 
             if (!TryUseIndirectGraphicsProgram(graphicsProgram, "RenderIndirectCountBucket"))
+            {
+                if (diagnosticRenderPass != int.MinValue)
+                {
+                    RecordZeroReadbackMaterialTableDiagnostic(
+                        diagnosticRenderPass,
+                        EZeroReadbackMaterialTableDiagnosticStage.ProgramPending);
+                }
                 return;
+            }
 
             bool TryBeginIndirectDrawState(out IndirectDrawStateCapabilityScope scope)
             {
@@ -6252,7 +6340,8 @@ namespace XREngine.Rendering
                             {
                                 bindlessScopeActive = materialCapability.BeginGlobalMaterialTextureDescriptorScope(
                                     graphicsProgram,
-                                    "ZeroReadbackVulkanDescriptorIndexMaterialTable");
+                                    "ZeroReadbackVulkanDescriptorIndexMaterialTable",
+                                    materialPublication);
                                 if (!bindlessScopeActive)
                                     return;
                             }
@@ -6318,6 +6407,7 @@ namespace XREngine.Rendering
                     LogIndirectDrawSizes("DispatchRenderIndirectCountBucket", maxDrawCount, stride, indirectDrawBuffer, parameterBuffer, indirectByteOffset, countByteOffset);
                     LogVulkanCounterBucketDiagnostics(
                         "before-draw",
+                        diagnosticRenderPass,
                         indirectDrawBuffer,
                         parameterBuffer,
                         maxDrawCount,
@@ -6342,12 +6432,19 @@ namespace XREngine.Rendering
                         {
                             bindlessScopeActive = materialCapability.BeginGlobalMaterialTextureDescriptorScope(
                                 graphicsProgram,
-                                "ZeroReadbackVulkanDescriptorIndexMaterialTable");
+                                "ZeroReadbackVulkanDescriptorIndexMaterialTable",
+                                materialPublication);
                             if (!bindlessScopeActive)
                                 return;
                         }
 
                         renderer.MultiDrawElementsIndirectCount(maxDrawCount, stride, indirectByteOffset, countByteOffset);
+                        if (diagnosticRenderPass != int.MinValue)
+                        {
+                            RecordZeroReadbackMaterialTableDiagnostic(
+                                diagnosticRenderPass,
+                                EZeroReadbackMaterialTableDiagnosticStage.ActualIndirectDispatch);
+                        }
                     }
                     finally
                     {

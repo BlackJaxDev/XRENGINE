@@ -110,9 +110,8 @@ internal sealed partial class VulkanCommandRuntime
         ulong mappedFrameGeneration = mappedFrameArena?.Generation ?? 0UL;
         VulkanFrameDataArena? frameDataArena = ResourceRuntime.FrameDataArena;
         ulong frameDataGeneration = frameDataArena?.Generation ?? 0UL;
-        uint frameDataSlot = checked((uint)ResourceRuntime.Buffers.CurrentFrameSlot);
         bool mappedFrameSlotsPrepared = false;
-        bool frameDataSlotPrepared = false;
+        bool frameDataSlotsPrepared = false;
         bool nativeSubmitAccepted = false;
         bool commandBuffersCompleted = false;
         bool arenaSlotsReopened = false;
@@ -136,12 +135,14 @@ internal sealed partial class VulkanCommandRuntime
             }
             mappedFrameSlotsPrepared = mappedFrameArena is not null;
             if (frameDataArena is not null &&
-                !frameDataArena.TryPrepareFrameSlotForSubmission(
-                    frameDataSlot,
-                    frameDataGeneration))
+                !TryPrepareOpenXrFrameDataSlotsForSubmission(
+                    frameDataArena,
+                    frameDataGeneration,
+                    commandBuffers,
+                    input.CommandBufferCount))
             {
                 Debug.VulkanWarning(
-                    "[OpenXR] Canonical frame-data slot could not be flushed/sealed before queue submission.");
+                    "[OpenXR] Canonical frame-data slots could not be flushed/sealed before queue submission.");
                 return new VulkanOpenXrSubmissionResult(
                     false,
                     false,
@@ -149,7 +150,7 @@ internal sealed partial class VulkanCommandRuntime
                     injectedFailureStage,
                     submitReceipt);
             }
-            frameDataSlotPrepared = frameDataArena is not null;
+            frameDataSlotsPrepared = frameDataArena is not null;
 
             TimelineSemaphoreSubmitInfo timelineInfo = new()
             {
@@ -196,9 +197,14 @@ internal sealed partial class VulkanCommandRuntime
                             commandBuffers,
                             input.CommandBufferCount);
                     }
-                    frameDataArena?.MarkFrameSlotSubmitted(
-                        frameDataSlot,
-                        frameDataGeneration);
+                    if (frameDataArena is not null)
+                    {
+                        MarkOpenXrFrameDataSlotsSubmitted(
+                            frameDataArena,
+                            frameDataGeneration,
+                            commandBuffers,
+                            input.CommandBufferCount);
+                    }
                 }
                 else if (queueDispatchAttempted)
                 {
@@ -281,13 +287,14 @@ internal sealed partial class VulkanCommandRuntime
                     "OpenXR timeline completed, but mapped frame-data slots could not be reopened.");
             }
             if (frameDataArena is not null &&
-                !frameDataArena.TryResetFrameSlot(
-                    frameDataSlot,
+                !TryCompleteOpenXrFrameDataSlots(
+                    frameDataArena,
                     frameDataGeneration,
-                    submissionCompletionProven: true))
+                    commandBuffers,
+                    input.CommandBufferCount))
             {
                 throw new InvalidOperationException(
-                    "OpenXR timeline completed, but the canonical frame-data slot could not be reopened.");
+                    "OpenXR timeline completed, but the canonical frame-data slots could not be reopened.");
             }
             arenaSlotsReopened = true;
 
@@ -326,13 +333,15 @@ internal sealed partial class VulkanCommandRuntime
                     commandBuffers,
                     input.CommandBufferCount);
             }
-            if (frameDataSlotPrepared &&
+            if (frameDataSlotsPrepared &&
                 !nativeSubmitAccepted &&
                 frameDataArena is not null)
             {
-                _ = frameDataArena.TryCancelFrameSlotSubmission(
-                    frameDataSlot,
-                    frameDataGeneration);
+                CancelOpenXrFrameDataSlotsSubmission(
+                    frameDataArena,
+                    frameDataGeneration,
+                    commandBuffers,
+                    input.CommandBufferCount);
             }
 
             if (nativeSubmitAccepted &&
@@ -348,7 +357,6 @@ internal sealed partial class VulkanCommandRuntime
                     input.CommandBufferCount,
                     frameDataArena,
                     frameDataGeneration,
-                    frameDataSlot,
                     commandBuffersCompleted);
             }
         }
@@ -363,7 +371,6 @@ internal sealed partial class VulkanCommandRuntime
         uint commandBufferCount,
         VulkanFrameDataArena? frameDataArena,
         ulong frameDataGeneration,
-        uint frameDataSlot,
         bool completionProven)
     {
         // This allocation is confined to the exceptional accepted-but-not-yet-
@@ -374,7 +381,7 @@ internal sealed partial class VulkanCommandRuntime
         {
             int frameSlot = ResolveCommandBufferImageIndex(commandBuffers[index]);
             if (frameSlot < 0 ||
-                OpenXrMappedFrameSlotAppearedEarlier(
+                OpenXrFrameSlotAppearedEarlier(
                     commandBuffers,
                     index,
                     frameSlot))
@@ -397,8 +404,7 @@ internal sealed partial class VulkanCommandRuntime
                     frameSlots,
                     frameSlotCount,
                     frameDataArena,
-                    frameDataGeneration,
-                    frameDataSlot));
+                    frameDataGeneration));
         }
     }
 
@@ -472,13 +478,18 @@ internal sealed partial class VulkanCommandRuntime
             }
         }
 
-        if (retired.FrameDataArena is not null &&
-            !retired.FrameDataArena.TryResetFrameSlot(
-                retired.FrameDataSlot,
-                retired.FrameDataGeneration,
-                submissionCompletionProven: true))
+        if (retired.FrameDataArena is not null)
         {
-            return false;
+            for (int index = 0; index < retired.FrameSlotCount; index++)
+            {
+                if (!retired.FrameDataArena.TryResetFrameSlot(
+                        retired.FrameSlots[index],
+                        retired.FrameDataGeneration,
+                        submissionCompletionProven: true))
+                {
+                    return false;
+                }
+            }
         }
 
         return true;
@@ -494,7 +505,7 @@ internal sealed partial class VulkanCommandRuntime
         {
             int frameSlot = ResolveCommandBufferImageIndex(commandBuffers[index]);
             if (frameSlot < 0 ||
-                OpenXrMappedFrameSlotAppearedEarlier(
+                OpenXrFrameSlotAppearedEarlier(
                     commandBuffers,
                     index,
                     frameSlot))
@@ -530,7 +541,7 @@ internal sealed partial class VulkanCommandRuntime
         {
             int frameSlot = ResolveCommandBufferImageIndex(commandBuffers[index]);
             if (frameSlot < 0 ||
-                OpenXrMappedFrameSlotAppearedEarlier(
+                OpenXrFrameSlotAppearedEarlier(
                     commandBuffers,
                     index,
                     frameSlot))
@@ -554,7 +565,7 @@ internal sealed partial class VulkanCommandRuntime
         {
             int frameSlot = ResolveCommandBufferImageIndex(commandBuffers[index]);
             if (frameSlot < 0 ||
-                OpenXrMappedFrameSlotAppearedEarlier(
+                OpenXrFrameSlotAppearedEarlier(
                     commandBuffers,
                     index,
                     frameSlot))
@@ -578,7 +589,7 @@ internal sealed partial class VulkanCommandRuntime
         {
             int frameSlot = ResolveCommandBufferImageIndex(commandBuffers[index]);
             if (frameSlot < 0 ||
-                OpenXrMappedFrameSlotAppearedEarlier(
+                OpenXrFrameSlotAppearedEarlier(
                     commandBuffers,
                     index,
                     frameSlot))
@@ -598,7 +609,121 @@ internal sealed partial class VulkanCommandRuntime
         return true;
     }
 
-    private unsafe bool OpenXrMappedFrameSlotAppearedEarlier(
+    private unsafe bool TryPrepareOpenXrFrameDataSlotsForSubmission(
+        VulkanFrameDataArena arena,
+        ulong generation,
+        CommandBuffer* commandBuffers,
+        uint commandBufferCount)
+    {
+        for (uint index = 0; index < commandBufferCount; index++)
+        {
+            int frameSlot = ResolveCommandBufferImageIndex(commandBuffers[index]);
+            if (frameSlot < 0 ||
+                OpenXrFrameSlotAppearedEarlier(
+                    commandBuffers,
+                    index,
+                    frameSlot))
+            {
+                continue;
+            }
+
+            if (arena.TryPrepareFrameSlotForSubmission(
+                    checked((uint)frameSlot),
+                    generation))
+            {
+                continue;
+            }
+
+            CancelOpenXrFrameDataSlotsSubmission(
+                arena,
+                generation,
+                commandBuffers,
+                index);
+            return false;
+        }
+
+        return true;
+    }
+
+    private unsafe void MarkOpenXrFrameDataSlotsSubmitted(
+        VulkanFrameDataArena arena,
+        ulong generation,
+        CommandBuffer* commandBuffers,
+        uint commandBufferCount)
+    {
+        for (uint index = 0; index < commandBufferCount; index++)
+        {
+            int frameSlot = ResolveCommandBufferImageIndex(commandBuffers[index]);
+            if (frameSlot < 0 ||
+                OpenXrFrameSlotAppearedEarlier(
+                    commandBuffers,
+                    index,
+                    frameSlot))
+            {
+                continue;
+            }
+
+            arena.MarkFrameSlotSubmitted(
+                checked((uint)frameSlot),
+                generation);
+        }
+    }
+
+    private unsafe void CancelOpenXrFrameDataSlotsSubmission(
+        VulkanFrameDataArena arena,
+        ulong generation,
+        CommandBuffer* commandBuffers,
+        uint commandBufferCount)
+    {
+        for (uint index = 0; index < commandBufferCount; index++)
+        {
+            int frameSlot = ResolveCommandBufferImageIndex(commandBuffers[index]);
+            if (frameSlot < 0 ||
+                OpenXrFrameSlotAppearedEarlier(
+                    commandBuffers,
+                    index,
+                    frameSlot))
+            {
+                continue;
+            }
+
+            _ = arena.TryCancelFrameSlotSubmission(
+                checked((uint)frameSlot),
+                generation);
+        }
+    }
+
+    private unsafe bool TryCompleteOpenXrFrameDataSlots(
+        VulkanFrameDataArena arena,
+        ulong generation,
+        CommandBuffer* commandBuffers,
+        uint commandBufferCount)
+    {
+        for (uint index = 0; index < commandBufferCount; index++)
+        {
+            int frameSlot = ResolveCommandBufferImageIndex(commandBuffers[index]);
+            if (frameSlot < 0 ||
+                OpenXrFrameSlotAppearedEarlier(
+                    commandBuffers,
+                    index,
+                    frameSlot))
+            {
+                continue;
+            }
+
+            if (!arena.TryResetFrameSlot(
+                    checked((uint)frameSlot),
+                    generation,
+                    submissionCompletionProven: true))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private unsafe bool OpenXrFrameSlotAppearedEarlier(
         CommandBuffer* commandBuffers,
         uint currentIndex,
         int frameSlot)

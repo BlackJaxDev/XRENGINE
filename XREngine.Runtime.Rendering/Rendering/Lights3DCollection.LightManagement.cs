@@ -14,6 +14,9 @@ namespace XREngine.Scene
         {
             using var sample = RuntimeEngine.Profiler.Start("Lights3DCollection.Clear");
 
+            _forwardDirectionalShadowRecordPublication?.Dispose();
+            _forwardDirectionalShadowRecordPublication = null;
+
             DynamicSpotLights.Clear();
             DynamicPointLights.Clear();
             DynamicDirectionalLights.Clear();

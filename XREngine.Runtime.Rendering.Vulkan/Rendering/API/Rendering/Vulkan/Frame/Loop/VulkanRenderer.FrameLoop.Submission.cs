@@ -29,6 +29,7 @@ namespace XREngine.Rendering.Vulkan
                 // Flush consumes accepted-attempt requests. Anything left here
                 // belongs to a rejected or abandoned recording attempt.
                 DiscardPendingGpuRenderStatsReadbacks();
+                _commandRuntime.DiscardDeferredLightingObjectReadback();
                 VulkanFrameHotPathTelemetry.RecordSubmission(
                     allocationBefore);
             }
@@ -336,6 +337,7 @@ namespace XREngine.Rendering.Vulkan
                                     .ConsumedBySubmissionImagePendingPresent);
                             attempt.AdvanceTo(EDesktopFramePhase.Submitted);
                             PublishAcceptedDesktopSubmissionReuseLedgers(ref attempt);
+                            PublishDesktopReadbackReceipts(in attempt);
                             if (attempt.UploadOwnership == EVulkanDesktopUploadOwnership.Recorded)
                                 attempt.TransitionUploadOwnership(
                                     EVulkanDesktopUploadOwnership.SubmittedDeferredFree);
@@ -399,12 +401,14 @@ namespace XREngine.Rendering.Vulkan
                 _frameTelemetry.MarkFrameTimingSubmitted(
                     unchecked((int)Math.Min(
                         attempt.ImageIndex,
-                        int.MaxValue)));
+                        int.MaxValue)),
+                    RuntimeEngine.Rendering.State.RenderFrameId);
                 CommitSubmittedDesktopTextureUpload(
                     ref attempt,
                     attempt.GraphicsSignalValue,
                     "graphics frame");
                 FlushPendingGpuRenderStatsReadbacks();
+                _commandRuntime.FlushDeferredLightingObjectReadback(attempt.SceneCommandBuffer);
                 ThrowIfDesktopFrameFaultInjected(
                     EVulkanDesktopFrameFaultPoint.PostSubmitAuxiliary);
 

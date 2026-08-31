@@ -23,7 +23,8 @@ internal sealed partial class VulkanCommandRuntime
     internal void TrackCommandBufferResource(
         CommandBuffer commandBuffer,
         VulkanResourceLifetimeKey resourceKey,
-        string owner)
+        string owner,
+        ulong expectedGeneration = 0UL)
     {
         ulong commandBufferHandle = unchecked((ulong)commandBuffer.Handle);
         if (commandBufferHandle == 0 || !resourceKey.IsValid ||
@@ -36,6 +37,12 @@ internal sealed partial class VulkanCommandRuntime
 
         VulkanResourceLifetimeTracker tracker = ResourceRuntime.Lifetime.Tracker;
         ulong observedGeneration = tracker.GetPublishedGeneration(resourceKey);
+        if (expectedGeneration != 0UL && observedGeneration != expectedGeneration)
+        {
+            throw new VulkanPlanPreconditionException(
+                $"Frozen native buffer barrier '{owner}' expected {resourceKey} generation {expectedGeneration}, " +
+                $"but the current published generation is {observedGeneration}.");
+        }
         lock (batch)
         {
             ThrowIfCommandBufferCannotRecordDependency(
@@ -57,7 +64,8 @@ internal sealed partial class VulkanCommandRuntime
             batch,
             resourceKey,
             observedGeneration,
-            owner);
+            owner,
+            expectedGeneration);
         LinkNativeCommandArtifactDependency(commandBufferHandle, resourceKey, owner);
     }
 
@@ -179,7 +187,8 @@ internal sealed partial class VulkanCommandRuntime
         VulkanCommandBufferTrackingBatch batch,
         VulkanResourceLifetimeKey resourceKey,
         ulong observedGeneration,
-        string owner)
+        string owner,
+        ulong expectedGeneration = 0UL)
     {
         VulkanResourceLifetimeTracker tracker = ResourceRuntime.Lifetime.Tracker;
         lock (tracker.SyncRoot)
@@ -201,6 +210,11 @@ internal sealed partial class VulkanCommandRuntime
                     resourceKey,
                     out string dependencyFailure))
             {
+                if (expectedGeneration != 0UL)
+                {
+                    throw new VulkanPlanPreconditionException(
+                        $"Frozen native buffer barrier '{owner}' lost dependency admission for {resourceKey}: {dependencyFailure}");
+                }
                 throw new InvalidOperationException(
                     $"Command buffer 0x{commandBufferHandle:X} cannot record {resourceKey} for {owner}: {dependencyFailure}");
             }
@@ -210,8 +224,20 @@ internal sealed partial class VulkanCommandRuntime
             if (observedGeneration != 0 &&
                 resource.Generation != observedGeneration)
             {
+                if (expectedGeneration != 0UL)
+                {
+                    throw new VulkanPlanPreconditionException(
+                        $"Frozen native buffer barrier '{owner}' observed {resourceKey} generation {observedGeneration}, " +
+                        $"but generation {resource.Generation} is now live.");
+                }
                 throw new InvalidOperationException(
                     $"Command buffer 0x{commandBufferHandle:X} observed stale {resourceKey} generation {observedGeneration} while generation {resource.Generation} is live for {owner}.");
+            }
+            if (expectedGeneration != 0UL && resource.Generation != expectedGeneration)
+            {
+                throw new VulkanPlanPreconditionException(
+                    $"Frozen native buffer barrier '{owner}' reached lifetime admission with " +
+                    $"generation {resource.Generation} instead of expected {expectedGeneration} for {resourceKey}.");
             }
 
             if (!tracker.CommandBufferLifetimes.TryGetValue(

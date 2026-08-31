@@ -72,11 +72,16 @@ layout(std430, binding = 12) readonly buffer ViewConstantsBuffer { GPUViewConsta
 layout(std430, binding = 13) readonly buffer CommandViewMaskBuffer { uvec2 CommandViewMasks[]; };
 layout(std430, binding = 14) buffer PerViewVisibleIndicesBuffer { uint PerViewVisibleIndices[]; };
 layout(std430, binding = 15) buffer PerViewDrawCountBuffer { uint PerViewDrawCounts[]; };
+// Exact masks are compact-list indexed. Phase one therefore reads the current
+// culled list at 16 and emits an equally compacted mask stream at 19.
+layout(std430, binding = 16) readonly buffer CulledCommandViewMaskBuffer { uvec2 CulledCommandViewMasks[]; };
+layout(std430, binding = 19) writeonly buffer PhaseOneCulledCommandViewMaskBuffer { uvec2 PhaseOneCulledCommandViewMasks[]; };
 
 uniform int MaxOutputCommands;
 uniform int ActiveViewCount;
 uniform int CurrentRenderPass;
 uniform uint ForceVisible;
+uniform uint ExactSourceViewMasksValid;
 
 #define FLAG_TRANSPARENT (1u << 0u)
 
@@ -118,12 +123,38 @@ bool ViewPassMatches(uint viewId)
     return hi >= 32u || (descriptor.RenderPassMaskHi & (1u << hi)) != 0u;
 }
 
-void AppendPerView(uint sourceCommandIndex, uint outputCommandIndex, vec3 commandCenter, uint commandFlags)
+uvec2 ActiveViewMask()
 {
-    if (ActiveViewCount <= 0 || sourceCommandIndex >= CommandViewMasks.length())
+    uint count = min(uint(max(ActiveViewCount, 1)), 64u);
+    uint lo = count >= 32u ? 0xFFFFFFFFu : ((1u << count) - 1u);
+    uint hiCount = count > 32u ? count - 32u : 0u;
+    uint hi = hiCount == 0u ? 0u :
+        (hiCount >= 32u ? 0xFFFFFFFFu : ((1u << hiCount) - 1u));
+    return uvec2(lo, hi);
+}
+
+uvec2 ResolveCulledViewMask(uint candidateIndex, uint drawId)
+{
+    if (ExactSourceViewMasksValid != 0u &&
+        candidateIndex < uint(CulledCommandViewMasks.length()))
+    {
+        // An exact empty mask is meaningful and must remain empty.
+        return CulledCommandViewMasks[candidateIndex];
+    }
+
+    if (drawId < uint(CommandViewMasks.length()))
+        return CommandViewMasks[drawId] & ActiveViewMask();
+
+    // The source command-mask stream is unavailable. Submit conservatively;
+    // CPU-side exactness remains false for this compact stream.
+    return ActiveViewMask();
+}
+
+void AppendPerView(uvec2 mask, uint outputCommandIndex, vec3 commandCenter, uint commandFlags)
+{
+    if (ActiveViewCount <= 0)
         return;
 
-    uvec2 mask = CommandViewMasks[sourceCommandIndex];
     uint maxViews = min(uint(ActiveViewCount), min(64u, uint(PerViewDrawCounts.length())));
     for (uint viewId = 0u; viewId < maxViews; ++viewId)
     {
@@ -178,17 +209,25 @@ void main()
         return;
 
     uint outputIndex = atomicAdd(OutCount, 1u);
-    if (outputIndex >= uint(MaxOutputCommands))
+    uint outputCapacity = min(uint(max(MaxOutputCommands, 0)), uint(outCommands.length()));
+    if (outputIndex >= outputCapacity)
     {
+        // The GPU consumer must never see a count larger than the compact list.
+        // Overflow reservations cannot become valid writes: the count is only
+        // reduced to capacity, never below it.
+        atomicMin(OutCount, outputCapacity);
         atomicAdd(OcclusionOverflowFlag, 1u);
-        OutOverflow = 1u;
+        atomicOr(OutOverflow, 1u);
         return;
     }
 
     outCommands[outputIndex] = drawId;
+    uvec2 viewMask = ResolveCulledViewMask(candidateIndex, drawId);
+    if (outputIndex < uint(PhaseOneCulledCommandViewMasks.length()))
+        PhaseOneCulledCommandViewMasks[outputIndex] = viewMask;
 
     uint boundsBase = draw.BoundsID * 4u;
     vec3 center = boundsBase < uint(boundsData.length()) ? boundsData[boundsBase].xyz : vec3(0.0);
-    AppendPerView(drawId, outputIndex, center, draw.Flags);
+    AppendPerView(viewMask, outputIndex, center, draw.Flags);
     atomicAdd(OutInstanceCount, instanceCount);
 }

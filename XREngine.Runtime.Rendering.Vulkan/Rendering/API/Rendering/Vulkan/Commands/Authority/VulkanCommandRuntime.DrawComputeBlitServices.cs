@@ -2,6 +2,7 @@ using Silk.NET.Vulkan;
 using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Resources;
+using XREngine.Rendering.Materials;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -19,11 +20,33 @@ internal sealed partial class VulkanCommandRuntime
     private bool TryBindPreparedGlobalMaterialTextureDescriptorSet(
         CommandBuffer commandBuffer,
         VkRenderProgram program,
-        string consumer)
+        string consumer,
+        GPUMaterialTablePublication? publication)
     {
         if (program.PipelineLayout.Handle == 0)
             throw new VulkanPlanPreconditionException(
                 $"Bindless material consumer '{consumer}' has no prepared pipeline layout.");
+
+        if (publication is not null)
+        {
+            if (!CommandBuffers.TrackingBatches.TryGetValue(unchecked((ulong)commandBuffer.Handle), out var batch))
+                throw new VulkanPlanPreconditionException("Material descriptor recording requires an active tracked command buffer.");
+            if (!ResourceRuntime.TryAttachMaterialDescriptorClosure(
+                    commandBuffer, batch, publication, out VulkanMaterialDescriptorClosureLease? closure,
+                    out bool newlyAttached, out string reason))
+                throw new VulkanPlanPreconditionException(
+                    $"Bindless material consumer '{consumer}' lost its exact descriptor closure: {reason}");
+            if (newlyAttached)
+            foreach (VulkanBindlessMaterialTextureReceipt receipt in closure!.Receipts)
+            {
+                TrackCommandBufferResource(commandBuffer,
+                    new VulkanResourceLifetimeKey(ObjectType.ImageView, receipt.ImageView.Handle),
+                    "MaterialDescriptorClosure.ImageView", expectedGeneration: receipt.ImageViewGeneration);
+                TrackCommandBufferResource(commandBuffer,
+                    new VulkanResourceLifetimeKey(ObjectType.Sampler, receipt.Sampler.Handle),
+                    "MaterialDescriptorClosure.Sampler", expectedGeneration: receipt.SamplerGeneration);
+            }
+        }
 
         if (program.DescriptorSetLayouts.Count <= VulkanBindlessMaterialDescriptors.TextureArraySet)
             throw new VulkanPlanPreconditionException(
@@ -395,6 +418,9 @@ internal sealed partial class VulkanCommandRuntime
             Image = info.Image,
             SubresourceRange = range,
         };
+        if (VulkanTextureReadbackDiagnostics.CopyGuardEnabled && newLayout == ImageLayout.TransferSrcOptimal)
+            VulkanTextureReadbackDiagnostics.PublishTransition(
+                $"image={info.Image.Handle} old={oldLayout} new={newLayout} srcStage={srcStage} srcAccess={srcAccess} dstStage={dstStage} dstAccess={dstAccess} descriptorSource={info.DescriptorSource?.GetType().Name ?? "none"} allocatorImage={info.DescriptorSource?.UsesAllocatorImage == true} exactSubmitted={TryGetExactTrackedBlitLayout(info, info.Image, out _)}");
         CmdPipelineBarrierTracked(
             commandBuffer,
             srcStage,

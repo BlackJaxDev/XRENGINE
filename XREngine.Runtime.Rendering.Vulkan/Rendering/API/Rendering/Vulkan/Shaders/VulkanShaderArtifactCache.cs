@@ -12,10 +12,6 @@ namespace XREngine.Rendering.Vulkan;
 internal static class VulkanShaderArtifactCache
 {
     internal const int SchemaVersion = 4;
-    private const string CacheRootDirectoryName = "Build";
-    private const string CacheSubDirectoryName = "Cache";
-    private const string CacheApiDirectoryName = "Vulkan";
-    private const string CacheDirectoryName = "ShaderArtifacts";
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -29,12 +25,7 @@ internal static class VulkanShaderArtifactCache
     internal static string GetShaderCacheDirectoryPath()
     {
         string root = ResolveRepositoryRoot(Environment.CurrentDirectory);
-        return Path.Combine(
-            root,
-            CacheRootDirectoryName,
-            CacheSubDirectoryName,
-            CacheApiDirectoryName,
-            CacheDirectoryName);
+        return VulkanPipelineCacheStorage.GetShaderArtifactDirectory(root);
     }
 
     internal static bool TryRead(

@@ -82,6 +82,32 @@ internal sealed partial class VulkanTextureUploadService
         }
     }
 
+    private void RecordUploadChunkProgress(
+        in VulkanImportedTextureUploadRequest request,
+        bool submitted)
+    {
+        if (!request.TryGetTexture(out XRTexture2D? texture) || texture is null ||
+            !_uploadGenerations.TryGetValue(texture, out VulkanTextureUploadGenerationRecord? record))
+        {
+            return;
+        }
+
+        using (VulkanFrameLockScope.Enter(
+                   record.Sync,
+                   EVulkanFrameWaitReason.UploadLock))
+        {
+            VulkanTextureUploadGenerationEntry? entry =
+                FindUploadGenerationNoLock(record, request.Ticket);
+            if (entry is null)
+                return;
+
+            if (submitted)
+                entry.SubmittedChunks++;
+            else
+                entry.CompletedChunks++;
+        }
+    }
+
     private static bool TryEvictRetiredUploadGenerationNoLock(
         VulkanTextureUploadGenerationRecord record)
     {
@@ -182,6 +208,65 @@ internal sealed partial class VulkanTextureUploadService
             failureDisposition = ResolveUploadFailureDisposition(entry.State);
             return true;
         }
+    }
+
+    internal bool TryGetLatestTicketForGeneration(
+        XRTexture2D texture,
+        long streamingGeneration,
+        out VulkanTextureUploadTicket ticket)
+    {
+        ticket = default;
+        return TryGetUploadGeneration(
+            texture,
+            streamingGeneration,
+            pinOwner: null,
+            out ticket,
+            out _,
+            out _,
+            out _,
+            out _);
+    }
+
+    internal VulkanTextureStreamingTicketSnapshot CaptureTicketSnapshot(
+        XRTexture2D texture,
+        in VulkanTextureStreamingUploadTicket ticket)
+    {
+        VulkanTextureUploadTicket internalTicket = new(ticket.Sequence, ticket.StreamingGeneration);
+        bool found = TryGetUploadGeneration(
+            texture,
+            internalTicket,
+            out EVulkanFrameDependencyState dependencyState,
+            out string? detail,
+            out _);
+        int submittedChunks = 0;
+        int completedChunks = 0;
+        if (found && _uploadGenerations.TryGetValue(
+                texture,
+                out VulkanTextureUploadGenerationRecord? record))
+        {
+            using (VulkanFrameLockScope.Enter(
+                       record.Sync,
+                       EVulkanFrameWaitReason.UploadLock))
+            {
+                VulkanTextureUploadGenerationEntry? entry =
+                    FindUploadGenerationNoLock(record, internalTicket);
+                if (entry is not null)
+                {
+                    submittedChunks = entry.SubmittedChunks;
+                    completedChunks = entry.CompletedChunks;
+                }
+            }
+        }
+        return new VulkanTextureStreamingTicketSnapshot(
+            ticket,
+            found,
+            found && dependencyState == EVulkanFrameDependencyState.Ready,
+            found && dependencyState == EVulkanFrameDependencyState.TerminalFailed,
+            submittedChunks != 0,
+            submittedChunks,
+            completedChunks,
+            found ? dependencyState.ToString() : "Unknown",
+            detail);
     }
 
     private bool TryGetUploadGeneration(

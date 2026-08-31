@@ -191,8 +191,13 @@ namespace XREngine.Rendering.Vulkan
             }
 
             if (fboCount > 0)
+            {
                 fixed (ClearAttachment* fboAttachmentsPtr = fboAttachments)
                     Api!.CmdClearAttachments(commandBuffer, fboCount, fboAttachmentsPtr, 1, rectPtr);
+
+                if (payload.ClearDepth)
+                    VulkanShadowAtlasDiagnostics.RecordWriterDepthClear(target.Name, payload.Depth, clearArea);
+            }
         }
 
         private static uint ResolveClearRectLayerCount(

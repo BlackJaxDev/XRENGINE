@@ -422,6 +422,23 @@ internal sealed unsafe partial class VulkanDeviceContext
 
         foreach (string optionalExt in _deviceContext.Configuration.OptionalDeviceExtensions)
         {
+            // Presentationless targets intentionally do not enable the swapchain
+            // extension. Device support alone cannot satisfy extension dependencies.
+            if (optionalExt is SwapchainMaintenance1ExtensionName or "VK_KHR_present_id" or
+                    "VK_KHR_present_wait" or "VK_GOOGLE_display_timing" &&
+                !extensionsToEnable.Contains("VK_KHR_swapchain", StringComparer.Ordinal))
+            {
+                Debug.Vulkan("[Vulkan] Optional presentation extension {0} skipped: no swapchain target.", optionalExt);
+                continue;
+            }
+
+            if (optionalExt == SwapchainMaintenance1ExtensionName &&
+                !_deviceContext.EnabledInstanceExtensions.Contains("VK_EXT_surface_maintenance1"))
+            {
+                Debug.Vulkan("[Vulkan] Optional extension {0} skipped: surface maintenance was not enabled on the instance.", optionalExt);
+                continue;
+            }
+
             if (optionalExt == "VK_KHR_present_wait" &&
                 !availableExtensionSet.Contains("VK_KHR_present_id"))
             {
@@ -1419,8 +1436,6 @@ internal sealed unsafe partial class VulkanDeviceContext
             enableDrawIndirectCountFeature,
             _outputRuntime,
             ResourceRuntime);
-        ResourceRuntime.Queries.RequestBackendContextBinding();
-        ResourceRuntime.Queries.RefreshCapabilities();
         VulkanDeviceCapabilityReporter.LogVulkanDiagnosticDeviceCapabilities(
             _deviceContext,
             new VulkanDiagnosticCapabilitySnapshot(

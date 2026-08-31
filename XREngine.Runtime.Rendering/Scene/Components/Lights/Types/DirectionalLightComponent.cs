@@ -351,81 +351,14 @@ namespace XREngine.Components.Lights
             program.Uniform(names.WorldToLightInvViewMatrix, ShadowCamera?.Transform.WorldMatrix ?? Matrix4x4.Identity);
             program.Uniform(names.WorldToLightSpaceMatrix, lightViewProj);  // Pre-computed for deferred shadow mapping
 
-            float[] cascadeSplits = _uniformCascadeSplits;
-            float[] cascadeBlendWidths = _uniformCascadeBlendWidths;
-            float[] cascadeBiasMins = _uniformCascadeBiasMins;
-            float[] cascadeBiasMaxes = _uniformCascadeBiasMaxes;
-            float[] cascadeReceiverOffsets = _uniformCascadeReceiverOffsets;
-            Matrix4x4[] cascadeMatrices = _uniformCascadeMatrices;
-            float[] renderedCascadeSplits = _uniformRenderedCascadeSplits;
-            float[] renderedCascadeBlendWidths = _uniformRenderedCascadeBlendWidths;
-            float[] renderedCascadeBiasMins = _uniformRenderedCascadeBiasMins;
-            float[] renderedCascadeBiasMaxes = _uniformRenderedCascadeBiasMaxes;
-            float[] renderedCascadeReceiverOffsets = _uniformRenderedCascadeReceiverOffsets;
-            float[] renderedCascadeStaleAges = _uniformRenderedCascadeStaleAges;
-            Matrix4x4[] renderedCascadeMatrices = _uniformRenderedCascadeMatrices;
-            CopyPublishedCascadeUniformData(
-                RuntimeEngine.Rendering.State.RenderingCamera,
-                cascadeSplits,
-                cascadeBlendWidths,
-                cascadeBiasMins,
-                cascadeBiasMaxes,
-                cascadeReceiverOffsets,
-                cascadeMatrices,
-                out int cascadeCount);
-            CopyPublishedRenderedCascadeUniformData(
-                RuntimeEngine.Rendering.State.RenderingCamera,
-                renderedCascadeSplits,
-                renderedCascadeBlendWidths,
-                renderedCascadeBiasMins,
-                renderedCascadeBiasMaxes,
-                renderedCascadeReceiverOffsets,
-                renderedCascadeMatrices,
-                renderedCascadeStaleAges,
-                out _);
-
-            // Set the cascade count uniform before setting individual cascade uniforms.
-            program.Uniform(names.CascadeCount, cascadeCount);
-            bool useVulkanBulkArrays = IsVulkanDirectionalShadowBackend();
-            if (useVulkanBulkArrays)
-            {
-                program.Uniform(names.CascadeSplits, cascadeSplits);
-                program.Uniform(names.CascadeBlendWidths, cascadeBlendWidths);
-                program.Uniform(names.CascadeBiasMin, cascadeBiasMins);
-                program.Uniform(names.CascadeBiasMax, cascadeBiasMaxes);
-                program.Uniform(names.CascadeReceiverOffsets, cascadeReceiverOffsets);
-                program.Uniform(names.CascadeMatrices, cascadeMatrices);
-                program.Uniform(names.RenderedCascadeSplits, renderedCascadeSplits);
-                program.Uniform(names.RenderedCascadeBlendWidths, renderedCascadeBlendWidths);
-                program.Uniform(names.RenderedCascadeBiasMin, renderedCascadeBiasMins);
-                program.Uniform(names.RenderedCascadeBiasMax, renderedCascadeBiasMaxes);
-                program.Uniform(names.RenderedCascadeReceiverOffsets, renderedCascadeReceiverOffsets);
-                program.Uniform(names.RenderedCascadeMatrices, renderedCascadeMatrices);
-                program.Uniform(names.RenderedCascadeStaleAge, renderedCascadeStaleAges);
-            }
-
-            // OpenGL retains indexed uploads for drivers that do not expose the
-            // reflected array as one writable uniform. Vulkan writes each reflected
-            // array directly and does not need the duplicate indexed dictionary entries.
-            if (!useVulkanBulkArrays)
-            {
-                for (int i = 0; i < MaxCascadeRenderCount; i++)
-                {
-                    program.Uniform(names.IndexedCascadeSplits[i], cascadeSplits[i]);
-                    program.Uniform(names.IndexedCascadeBlendWidths[i], cascadeBlendWidths[i]);
-                    program.Uniform(names.IndexedCascadeBiasMin[i], cascadeBiasMins[i]);
-                    program.Uniform(names.IndexedCascadeBiasMax[i], cascadeBiasMaxes[i]);
-                    program.Uniform(names.IndexedCascadeReceiverOffsets[i], cascadeReceiverOffsets[i]);
-                    program.Uniform(names.IndexedCascadeMatrices[i], cascadeMatrices[i]);
-                    program.Uniform(names.IndexedRenderedCascadeSplits[i], renderedCascadeSplits[i]);
-                    program.Uniform(names.IndexedRenderedCascadeBlendWidths[i], renderedCascadeBlendWidths[i]);
-                    program.Uniform(names.IndexedRenderedCascadeBiasMin[i], renderedCascadeBiasMins[i]);
-                    program.Uniform(names.IndexedRenderedCascadeBiasMax[i], renderedCascadeBiasMaxes[i]);
-                    program.Uniform(names.IndexedRenderedCascadeReceiverOffsets[i], renderedCascadeReceiverOffsets[i]);
-                    program.Uniform(names.IndexedRenderedCascadeMatrices[i], renderedCascadeMatrices[i]);
-                    program.Uniform(names.IndexedRenderedCascadeStaleAge[i], renderedCascadeStaleAges[i]);
-                }
-            }
+            // Cascade payloads are published by the consuming pass as immutable
+            // DirectionalShadowGpuRecord SSBO data. Keep only the small light
+            // count uniform here so legacy-free consumers select the record range.
+            program.Uniform(
+                names.CascadeCount,
+                enableCascadesForBackend
+                    ? GetActiveCascadeCount(RuntimeEngine.Rendering.State.RenderingCamera)
+                    : 0);
 
             program.Uniform("DebugCascadeColors", _debugCascadeColors);
             program.Uniform("DirectionalShadowAtlasMaxStaleFrames", (float)RuntimeEngine.Rendering.Settings.MaxDirectionalCascadeAtlasStaleFrames);

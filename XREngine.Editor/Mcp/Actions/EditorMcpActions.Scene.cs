@@ -789,6 +789,39 @@ namespace XREngine.Editor.Mcp
         }
 
         /// <summary>
+        /// Changes the depth encoding used by the active editor camera.
+        /// </summary>
+        [XRMcp(Name = "set_editor_camera_depth_mode", Permission = McpPermissionLevel.Mutate, PermissionReason = "Changes the active editor camera depth encoding for bounded rendering diagnostics.")]
+        [McpThreadAffinity(McpThreadAffinity.Update)]
+        [Description("Set normal or reversed-Z depth on the active editor camera and invalidate its viewport.")]
+        public static Task<McpToolResponse> SetEditorCameraDepthModeAsync(
+            McpToolContext context,
+            [McpName("reversed_depth"), Description("True selects reversed-Z depth; false selects normal depth.")]
+            bool reversedDepth)
+        {
+            if (ResolveEditorCameraPawn(context.WorldOrNull) is not { } pawn)
+                return Task.FromResult(new McpToolResponse("No editor camera pawn available.", isError: true));
+
+            if (pawn.CameraComponent?.Camera is not { } camera)
+                return Task.FromResult(new McpToolResponse("Editor camera is unavailable.", isError: true));
+
+            camera.DepthMode = reversedDepth
+                ? XRCamera.EDepthMode.Reversed
+                : XRCamera.EDepthMode.Normal;
+            pawn.InvalidateView();
+
+            return Task.FromResult(new McpToolResponse("Updated editor camera depth mode.", new
+            {
+                reversedDepth = camera.IsReversedDepth,
+                depthMode = camera.DepthMode.ToString(),
+                depthClearValue = camera.GetDepthClearValue(),
+                nearDepthValue = camera.GetNearDepthValue(),
+                farDepthValue = camera.GetFarDepthValue(),
+                cameraNodeId = pawn.SceneNode?.ID
+            }));
+        }
+
+        /// <summary>
         /// Toggles render-on-demand for the active editor camera pawn.
         /// </summary>
         [XRMcp(Name = "set_editor_camera_render_on_demand", Permission = McpPermissionLevel.Mutate, PermissionReason = "Changes editor camera viewport rendering diagnostics.")]

@@ -625,6 +625,15 @@ namespace XREngine.Rendering.Vulkan
                     source.Extent);
             }
 
+            // Explicit readbacks are diagnostic, not per-frame submission work.
+            // Retain both identities so a capture can reveal a stale wrapper or
+            // planner binding instead of presenting a black image as GPU proof.
+            IVkImageDescriptorSource? wrapper =
+                _resourceRuntime.WrapperLookup.GetOrCreate(texture, false) as IVkImageDescriptorSource;
+            VulkanTextureReadbackDiagnostics.Publish(
+                $"texture={texture.Name} sourceImage={source.Image.Handle} wrapperImage={wrapper?.DescriptorImage.Handle ?? 0} " +
+                $"layout={source.PreferredLayout} format={source.Format} mip={source.MipLevel} layer={source.BaseArrayLayer}");
+
             if (IsDepthOrStencilFormat(source.Format))
             {
                 if (!TryResolveTextureBlitImage(

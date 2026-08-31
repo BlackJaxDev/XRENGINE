@@ -125,6 +125,29 @@ namespace XREngine.Rendering.Vulkan
                 return;
             }
 
+            if (synchronousArena is not null && synchronousSlice.Lane == EVulkanFrameDataLane.Readback)
+            {
+                // The fence proves execution completion, not the transfer-to-host
+                // memory dependency. Publish this exact copied range before the
+                // caller invalidates non-coherent memory and reads the mapped bytes.
+                BufferMemoryBarrier hostReadBarrier = new()
+                {
+                    SType = StructureType.BufferMemoryBarrier,
+                    SrcAccessMask = AccessFlags.TransferWriteBit,
+                    DstAccessMask = AccessFlags.HostReadBit,
+                    SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                    DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                    Buffer = synchronousSlice.Buffer,
+                    Offset = synchronousSlice.Offset,
+                    Size = synchronousSlice.Length,
+                };
+                CmdPipelineBarrierTracked(
+                    commandBuffer,
+                    PipelineStageFlags.TransferBit,
+                    PipelineStageFlags.HostBit,
+                    0, 0, null, 1, &hostReadBarrier, 0, null);
+            }
+
             Result endResult = EndCommandBufferTracked(commandBuffer);
             if (endResult != Result.Success)
             {

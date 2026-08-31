@@ -72,6 +72,15 @@ public partial class DefaultRenderPipeline
 
     private const int BloomMaxMipmapLevel = 4;
 
+    /// <summary>
+    /// Resolves the number of legal bloom mip levels for a resource generation.
+    /// Bloom resources must never declare more levels than the generation extent can own.
+    /// </summary>
+    private static uint ResolveBloomMipLevelCount(uint width, uint height)
+        => (uint)(Math.Min(BloomMaxMipmapLevel, XRTexture.GetSmallestMipmapLevel(
+            Math.Max(width, 1u),
+            Math.Max(height, 1u))) + 1);
+
     internal override ulong BuildResourceFeatureMaskForGenerationKey(XRRenderPipelineInstance instance, XRViewport? viewport)
     {
         DefaultPipelineResourceFeature mask = DefaultPipelineResourceFeature.None;
@@ -255,6 +264,7 @@ public partial class DefaultRenderPipeline
     private static void DeclareImportedResources(RenderPipelineResourceLayoutBuilder builder)
     {
         DeclareProbeImports(builder);
+        DeclareGpuHiZCaptureImport(builder);
 
         const string externalOutput = "$ExternalOutput";
         RenderPipelineExternalTargetKind kind = builder.Profile.ExternalTargetKind;
@@ -277,6 +287,29 @@ public partial class DefaultRenderPipeline
         builder.External(externalOutput)
             .Contract(ExternalRenderResourceKind.FrameBuffer, ownership, synchronization)
             .DebugLabel(kind.ToString())
+            .Add();
+    }
+
+    /// <summary>
+    /// Declares the pass-owned generic Hi-Z texture for capture and inspection.
+    /// The pass binds it as an imported resource, so retiring a render-resource
+    /// generation never takes ownership of the live compute image.
+    /// </summary>
+    private static void DeclareGpuHiZCaptureImport(RenderPipelineResourceLayoutBuilder builder)
+    {
+        builder.External("GpuHiZDepthPyramidCapture")
+            .Contract(
+                ExternalRenderResourceKind.Texture,
+                ExternalRenderResourceOwnership.Backend,
+                ExternalRenderResourceSynchronization.FrameBoundary)
+            .DebugLabel("Generic GPU Hi-Z pyramid capture")
+            .Add();
+        builder.External("GpuHiZCoarseTilesCapture")
+            .Contract(
+                ExternalRenderResourceKind.Texture,
+                ExternalRenderResourceOwnership.Backend,
+                ExternalRenderResourceSynchronization.FrameBoundary)
+            .DebugLabel("Generic GPU Hi-Z coarse depth tiles capture")
             .Add();
     }
 
@@ -983,7 +1016,7 @@ public partial class DefaultRenderPipeline
             .Layers(layerCount)
             .StereoCompatible(builder.Profile.Stereo)
             .Mips(new RenderResourceMipPolicy(
-                MipLevelCount: BloomMaxMipmapLevel + 1u,
+                MipLevelCount: ResolveBloomMipLevelCount(builder.Profile.InternalWidth, builder.Profile.InternalHeight),
                 AutoGenerateMipmaps: false,
                 RequireImmutableStorage: true))
             .When(UsesBloomResources)
@@ -1037,15 +1070,37 @@ public partial class DefaultRenderPipeline
 
     private void DeclareBloomFrameBuffers(RenderPipelineResourceLayoutBuilder builder, RenderResourceSizePolicy internalSize)
     {
+        int maxMipLevel = checked((int)ResolveBloomMipLevelCount(
+            builder.Profile.InternalWidth,
+            builder.Profile.InternalHeight) - 1);
+
         DeclareBloomFrameBuffer(builder, VPRC_BloomPass.BloomMip0FBOName, internalSize, 0);
-        DeclareBloomFrameBuffer(builder, VPRC_BloomPass.BloomDS1FBOName, internalSize, 1);
-        DeclareBloomFrameBuffer(builder, VPRC_BloomPass.BloomDS2FBOName, internalSize, 2);
-        DeclareBloomFrameBuffer(builder, VPRC_BloomPass.BloomDS3FBOName, internalSize, 3);
-        DeclareBloomFrameBuffer(builder, VPRC_BloomPass.BloomDS4FBOName, internalSize, 4);
-        DeclareBloomFrameBuffer(builder, VPRC_BloomPass.BloomUS3FBOName, internalSize, 3);
-        DeclareBloomFrameBuffer(builder, VPRC_BloomPass.BloomUS2FBOName, internalSize, 2);
-        DeclareBloomFrameBuffer(builder, VPRC_BloomPass.BloomUS1FBOName, internalSize, 1);
+
+        for (int mipLevel = 1; mipLevel <= maxMipLevel; mipLevel++)
+            DeclareBloomFrameBuffer(builder, GetBloomDownsampleFrameBufferName(mipLevel), internalSize, mipLevel);
+
+        for (int mipLevel = maxMipLevel - 1; mipLevel >= 1; mipLevel--)
+            DeclareBloomFrameBuffer(builder, GetBloomUpsampleFrameBufferName(mipLevel), internalSize, mipLevel);
     }
+
+    private static string GetBloomDownsampleFrameBufferName(int mipLevel)
+        => mipLevel switch
+        {
+            1 => VPRC_BloomPass.BloomDS1FBOName,
+            2 => VPRC_BloomPass.BloomDS2FBOName,
+            3 => VPRC_BloomPass.BloomDS3FBOName,
+            4 => VPRC_BloomPass.BloomDS4FBOName,
+            _ => throw new ArgumentOutOfRangeException(nameof(mipLevel), mipLevel, "Bloom downsample mip level is out of range."),
+        };
+
+    private static string GetBloomUpsampleFrameBufferName(int mipLevel)
+        => mipLevel switch
+        {
+            1 => VPRC_BloomPass.BloomUS1FBOName,
+            2 => VPRC_BloomPass.BloomUS2FBOName,
+            3 => VPRC_BloomPass.BloomUS3FBOName,
+            _ => throw new ArgumentOutOfRangeException(nameof(mipLevel), mipLevel, "Bloom upsample mip level is out of range."),
+        };
 
     private void DeclareBloomFrameBuffer(RenderPipelineResourceLayoutBuilder builder, string name, RenderResourceSizePolicy size, int mipLevel)
         => builder.FrameBuffer(name)
@@ -2134,7 +2189,7 @@ public partial class DefaultRenderPipeline
     {
         uint width = (uint)Math.Max(1, InternalWidth);
         uint height = (uint)Math.Max(1, InternalHeight);
-        int maxMipLevel = Math.Min(BloomMaxMipmapLevel, XRTexture.GetSmallestMipmapLevel(width, height));
+        int maxMipLevel = checked((int)ResolveBloomMipLevelCount(width, height) - 1);
         EPixelInternalFormat internalFormat = ResolvePostProcessIntermediateInternalFormat();
         EPixelType pixelType = ResolvePostProcessIntermediatePixelType();
         ESizedInternalFormat sized = ResolvePostProcessIntermediateSizedInternalFormat();

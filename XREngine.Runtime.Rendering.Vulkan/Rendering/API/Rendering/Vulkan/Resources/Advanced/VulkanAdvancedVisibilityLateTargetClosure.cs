@@ -25,7 +25,10 @@ internal readonly record struct VulkanAdvancedVisibilityLateTargetClosure(
            PyramidGroup is { IsAllocated: true } &&
            PyramidSampledDescriptors is { Length: > 0 } &&
            PyramidStorageDescriptors is { Length: > 0 } &&
-           DispatchCount > 0 &&
+           // Phase 5.2 deliberately has one tile-local level.  Building a
+           // global mip chain in one dispatch would require a device-wide
+           // barrier, which Vulkan compute workgroups cannot provide.
+           DispatchCount == 1 &&
            PyramidSampledDescriptors.Length >= checked(DispatchCount * (int)ViewCount) &&
            PyramidStorageDescriptors.Length >= checked(DispatchCount * (int)ViewCount) &&
            LateSampledDescriptors is { Length: > 0 } &&
@@ -35,9 +38,10 @@ internal readonly record struct VulkanAdvancedVisibilityLateTargetClosure(
 
     internal bool IsRecordingReady
         => IsValid && DescriptorSets is { } sets &&
-           DescriptorSetCount == checked((DispatchCount + 1) * (int)ViewCount) &&
+           DescriptorSetCount == checked(2 * (int)ViewCount) &&
            sets.Length >= DescriptorSetCount;
 
-    internal int DescriptorIndex(uint viewIndex, int mipIndex)
-        => checked((int)viewIndex * (DispatchCount + 1) + mipIndex);
+    /// <summary>Returns the immutable build (0) or test (1) table for a view.</summary>
+    internal int DescriptorIndex(uint viewIndex, int operationIndex)
+        => checked((int)viewIndex * 2 + operationIndex);
 }

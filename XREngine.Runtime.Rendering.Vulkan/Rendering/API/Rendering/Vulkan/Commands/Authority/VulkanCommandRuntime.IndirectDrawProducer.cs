@@ -161,6 +161,10 @@ internal sealed partial class VulkanCommandRuntime
             return false;
         }
 
+        VulkanBindlessMaterialDescriptorBinding? bindlessMaterialTextures =
+            descriptors.CaptureGlobalMaterialTextureDescriptorBindingForNextFrameOp();
+        draw.ProgramBindingSnapshot?.SetMaterialTablePublication(
+            bindlessMaterialTextures?.Publication);
         operation = IndirectDrawOp.Rent(
             passIndex,
             target,
@@ -173,7 +177,7 @@ internal sealed partial class VulkanCommandRuntime
             byteOffset,
             countByteOffset,
             useCount,
-            descriptors.CaptureGlobalMaterialTextureDescriptorBindingForNextFrameOp(),
+            bindlessMaterialTextures,
             context,
             CaptureIndirectSecondaryRecordingContract(
                 indirectBuffer,
@@ -212,6 +216,21 @@ internal sealed partial class VulkanCommandRuntime
         }
 
         ComputeDispatchSnapshot bindings = program.CaptureComputeSnapshot();
+        int passIndex = RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex;
+        VulkanDescriptorResolutionDiagnostics.CaptureIndirectSnapshot(
+            state.Program,
+            program,
+            bindings,
+            contextName,
+            target,
+            passIndex);
+        VulkanDescriptorResolutionDiagnostics.CaptureFirstUnpublishedDirectionalShadowRecords(
+            state.Program,
+            program,
+            bindings,
+            contextName,
+            target,
+            passIndex);
         string programIdentity = state.Program.Name ?? program.GetHashCode().ToString();
         if (mesh.TryCreatePreparedIndirectDrawSnapshot(
                 state.Material,

@@ -119,6 +119,68 @@ internal sealed partial class VulkanFrameLoop
         }
     }
 
+    /// <summary>
+    /// Waits for the next desktop frame slot while preserving the exact target
+    /// and a timeout-only native counter observation for post-hang inspection.
+    /// </summary>
+    private void WaitForNextDesktopFrameSlotTimelineValue(
+        Semaphore semaphore,
+        ulong targetValue,
+        in VulkanFrameAttempt attempt,
+        int nextFrameSlot)
+    {
+        long waitStart = Stopwatch.GetTimestamp();
+        while (!TryWaitForTimelineValue(
+                   semaphore,
+                   targetValue,
+                   TimelineWaitPollTimeoutNanoseconds))
+        {
+            CaptureNextDesktopFrameSlotWaitTimeout(
+                semaphore,
+                targetValue,
+                in attempt,
+                nextFrameSlot);
+            Debug.VulkanWarningEvery(
+                $"Vulkan.TimelineWait.{GetHashCode()}.{semaphore.Handle:X}.{targetValue}",
+                TimeSpan.FromSeconds(1),
+                "[Vulkan] Still waiting for timeline semaphore 0x{0:X} to reach value {1}. WaitedMs={2:F1}",
+                semaphore.Handle,
+                targetValue,
+                Stopwatch.GetElapsedTime(waitStart).TotalMilliseconds);
+        }
+    }
+
+    private unsafe void CaptureNextDesktopFrameSlotWaitTimeout(
+        Semaphore semaphore,
+        ulong targetValue,
+        in VulkanFrameAttempt attempt,
+        int nextFrameSlot)
+    {
+        ulong currentValue = 0UL;
+        Result counterQueryResult = Api.GetSemaphoreCounterValue(
+            _deviceContext.Device,
+            semaphore,
+            &currentValue);
+        ulong[]? slotSignals = _commandRuntime.Synchronization._frameSlotTimelineValues;
+        ulong currentSlotSignal = (uint)attempt.FrameSlot < (uint)(slotSignals?.Length ?? 0)
+            ? slotSignals![attempt.FrameSlot]
+            : 0UL;
+        ulong nextSlotSignal = (uint)nextFrameSlot < (uint)(slotSignals?.Length ?? 0)
+            ? slotSignals![nextFrameSlot]
+            : 0UL;
+        VulkanFrameWaitDiagnostics.Capture(
+            semaphore.Handle,
+            targetValue,
+            currentValue,
+            counterQueryResult,
+            attempt.FrameNumber,
+            attempt.FrameSlot,
+            nextFrameSlot,
+            currentSlotSignal,
+            nextSlotSignal,
+            _commandRuntime.Synchronization._graphicsTimelineValue);
+    }
+
     internal unsafe void CreateSyncObjects()
     {
         if (!_deviceContext.Capabilities.Supports(EVulkanDeviceCapability.TimelineSemaphores))

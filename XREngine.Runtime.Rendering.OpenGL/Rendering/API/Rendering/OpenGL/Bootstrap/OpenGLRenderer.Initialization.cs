@@ -73,6 +73,25 @@ public partial class OpenGLRenderer
             }
 
             RuntimeEngine.Rendering.State.OpenGLExtensions = extensions;
+
+            // Extension wrappers are first requested from the renderer constructor, where a
+            // desktop context is not guaranteed to be current yet. Retry bindless acquisition
+            // now that InitGL has verified the active context's extension list. Without this,
+            // an NVIDIA context can advertise ARB_bindless_texture while the material-table
+            // capability remains permanently disabled for its lifetime.
+            if (ARBBindlessTexture is null &&
+                extensions.Any(e => string.Equals(e, "GL_ARB_bindless_texture", StringComparison.Ordinal)))
+            {
+                ARBBindlessTexture = api.TryGetExtension<ArbBindlessTexture>(out ArbBindlessTexture bindlessTexture)
+                    ? bindlessTexture
+                    : null;
+                if (ARBBindlessTexture is null)
+                {
+                    Debug.OpenGLWarning(
+                        "GL_ARB_bindless_texture is advertised by the active context, but Silk.NET could not load its entry points; bindless material-table rendering remains unavailable.");
+                }
+            }
+
             int glMajor = 0;
             int glMinor = 0;
             try
@@ -182,6 +201,8 @@ public partial class OpenGLRenderer
         api.LineWidth(1.0f);
 
         api.UseProgram(0);
+
+        InitializeReadOnlyStorageArena(api);
 
         SetupDebug(api);
     }

@@ -700,6 +700,7 @@ public sealed class RenderResourceRegistry
             hash.Add(descriptor.SizePolicy.ScaleY);
             hash.Add(descriptor.SizePolicy.Width);
             hash.Add(descriptor.SizePolicy.Height);
+            hash.Add(descriptor.SizePolicy.RoundUpDivisor);
             hash.Add(descriptor.FormatLabel, StringComparer.OrdinalIgnoreCase);
             hash.Add(descriptor.ArrayLayers);
             hash.Add(descriptor.StereoCompatible);
@@ -738,6 +739,7 @@ public sealed class RenderResourceRegistry
             hash.Add(descriptor.SizePolicy.ScaleY);
             hash.Add(descriptor.SizePolicy.Width);
             hash.Add(descriptor.SizePolicy.Height);
+            hash.Add(descriptor.SizePolicy.RoundUpDivisor);
             hash.Add(descriptor.Attachments.Count);
 
             foreach (FrameBufferAttachmentDescriptor attachment in descriptor.Attachments)

@@ -21,7 +21,7 @@ namespace XREngine.Rendering.Vulkan;
 /// <summary>
 /// Vulkan renderer composition root.
 /// </summary>
-public sealed class VulkanRenderer :
+public sealed partial class VulkanRenderer :
     AbstractRenderer<Vk>,
     IIndirectDrawStateBackendCapability,
     IIndirectDrawSecondaryRecordingBackendCapability,
@@ -48,6 +48,7 @@ public sealed class VulkanRenderer :
     private readonly VulkanResourceRuntime _resourceRuntime;
     private readonly VulkanCommandRuntime _commandRuntime = new();
     private readonly VulkanFrameTelemetry _frameTelemetry = new();
+    private int _explicitProductionPreparationStarted;
 
     /// <summary>
     /// Captures the exactly-once diagnostic recorded when PresentNow readiness
@@ -125,6 +126,24 @@ public sealed class VulkanRenderer :
             return false;
         }
 
+        // Modal presentation may acquire any swapchain image. The package is
+        // authoritative only after every image owns completed content that the
+        // overlay-only path can preserve; otherwise a later acquisition would
+        // have to clear and visibly replace the frozen scene.
+        if (validContent.Length == 0 || everPresented.Length != validContent.Length)
+        {
+            unavailableReason = EInteractiveResizeDispatchReason.PresentationPackageUnavailable;
+            return false;
+        }
+        for (int index = 0; index < validContent.Length; index++)
+        {
+            if (validContent[index] && everPresented[index])
+                continue;
+
+            unavailableReason = EInteractiveResizeDispatchReason.PresentationPackageUnavailable;
+            return false;
+        }
+
         presentationPackageId = frameNumber;
         unavailableReason = EInteractiveResizeDispatchReason.None;
         return true;
@@ -163,6 +182,7 @@ public sealed class VulkanRenderer :
             _commandRuntime,
             _frameTelemetry,
             targetDriver,
+            BackendGeneration,
             hostContext.TryGetDesktopWindowHost(out IRuntimeRenderWindowHost? windowHost) &&
             windowHost is XRWindow desktopWindow
                 ? desktopWindow.Window
@@ -229,6 +249,13 @@ public sealed class VulkanRenderer :
     internal ulong ExplicitTargetGeneration => _frameLoop.RequireExplicitFrameTarget().TargetGeneration;
     internal double ExplicitTargetLastCompletedGpuFrameNanoseconds => _frameLoop.RequireExplicitFrameTarget().LastCompletedGpuFrameNanoseconds;
     internal string ExplicitTargetPresentationDescription => _frameLoop.RequireExplicitFrameTarget().PresentationDescription;
+    internal bool ExplicitTargetAllocationDiagnosticsEnabled
+    {
+        get => _frameLoop.ExplicitTargetAllocationDiagnosticsEnabled;
+        set => _frameLoop.ExplicitTargetAllocationDiagnosticsEnabled = value;
+    }
+    internal VulkanExplicitTargetFrameAllocationCounters LastExplicitTargetFrameAllocationCounters
+        => _frameLoop.LastExplicitTargetFrameAllocationCounters;
     internal IReadOnlyList<string> EnabledInstanceExtensions => _deviceContext.EnabledInstanceExtensions;
     internal PhysicalDevice PhysicalDevice => _deviceContext.PhysicalDevice;
     public bool StreamlineFrameGenerationSwapchainActive
@@ -392,6 +419,11 @@ public sealed class VulkanRenderer :
     public bool EndOcclusionQuery(XRRenderQuery query) => _frameLoop.TryEnqueueQueryOperation(query, ERenderQueryOperation.End);
     public ERenderQueryReadStatus WriteTimestamp(XRRenderQuery query) => _frameLoop.TryWriteTimestamp(query);
     public ERenderQueryReadStatus TryGetTimestamp(XRRenderQuery query, out TimestampQueryResult result) => _commandRuntime.TryGetTimestamp(GenericToAPI<VkRenderQuery>(query), out result);
+    public bool TryConsumeAbandonedTimestamp(XRRenderQuery query) => GenericToAPI<VkRenderQuery>(query)?.TryConsumeAbandonedTimestamp() ?? false;
+    public ulong GetElapsedTimestampNanoseconds(ulong startRawTicks, ulong endRawTicks)
+        => RenderQueryTimestampMath.TicksToNanoseconds(
+            RenderQueryTimestampMath.DeltaTicks(startRawTicks, endRawTicks, _resourceRuntime.Queries.Capabilities.GraphicsTimestampValidBits),
+            _resourceRuntime.Queries.Capabilities.TimestampPeriodNanoseconds);
     public ERenderQueryReadStatus TryGetAnySamplesPassed(XRRenderQuery query, out OcclusionQueryResult result, in RenderQueryTicket expectedTicket = default) => _commandRuntime.TryGetAnySamplesPassed(GenericToAPI<VkRenderQuery>(query), out result, expectedTicket);
     public RenderQueryTicket GetTicket(XRRenderQuery query) => _commandRuntime.GetQueryTicket(GenericToAPI<VkRenderQuery>(query));
 
@@ -565,6 +597,14 @@ public sealed class VulkanRenderer :
         XRRenderProgram program,
         string consumer)
         => _resourceRuntime.Descriptors.BeginGlobalMaterialTextureDescriptorScope(program, consumer);
+    bool IMaterialTableBackendCapability.BeginGlobalMaterialTextureDescriptorScope(
+        XRRenderProgram program,
+        string consumer,
+        XREngine.Rendering.Materials.GPUMaterialTablePublication? publication)
+        => _resourceRuntime.Descriptors.BeginGlobalMaterialTextureDescriptorScope(
+            program,
+            consumer,
+            publication);
     void IMaterialTableBackendCapability.EndGlobalMaterialTextureDescriptorScope(XRRenderProgram program)
         => _resourceRuntime.Descriptors.EndGlobalMaterialTextureDescriptorScope(program);
     public bool SupportsVulkanMeshTaskIndirectCount => _deviceContext.SupportsMeshTaskIndirectCount;
@@ -648,30 +688,93 @@ public sealed class VulkanRenderer :
 
     /// <summary>Records and submits one frame through an explicit presentation target.</summary>
     internal void SubmitExplicitTargetFrame(Action<Vk, CommandBuffer, VulkanRenderFrameTarget> record)
-        => _frameLoop.ExecuteExplicitTargetFrame(record);
+    {
+        _frameLoop.InvalidateExplicitProductionReadbackAuthority();
+        _frameLoop.ExecuteExplicitTargetFrame(record);
+    }
 
     /// <summary>
     /// Acquires an explicit target, lets an ordinary viewport/render pipeline
     /// enqueue its production work, then records and submits that work through
     /// the common Vulkan frame-target path.
     /// </summary>
-    internal void SubmitExplicitProductionFrame(
+    internal VulkanExplicitProductionSubmissionReceipt SubmitExplicitProductionFrame(
         Action<RenderFrameOutputDescription> buildFrame)
     {
-        AbstractRenderer? previous = Current;
+        using var creationOwner = GenericRenderObject.PushApiWrapperCreationOwner(this);
+        // First explicit production submission is an intentional preparation
+        // boundary. Later frames must use normal readiness/worker policy rather
+        // than silently turning every recording into a synchronous shader link.
+        using var programPreparation = new VulkanProgramLinkPreparationScope(
+            _resourceRuntime,
+            Interlocked.CompareExchange(ref _explicitProductionPreparationStarted, 1, 0) == 0);
+        using var currentRenderer = AbstractRenderer.PushThreadCurrent(this);
         bool previousActive = Active;
-        Current = this;
         Active = true;
         try
         {
-            _frameLoop.ExecuteExplicitProductionFrame(buildFrame);
+            return _frameLoop.ExecuteExplicitProductionFrame(buildFrame);
         }
         finally
         {
             Active = previousActive;
-            Current = previous;
         }
     }
+
+    internal VulkanExplicitProductionSubmissionReceipt SubmitExplicitProductionFrame(
+        Action<RenderFrameOutputDescription> buildFrame,
+        VulkanExplicitProductionBufferStressProbeRequest probeRequest)
+    {
+        ArgumentNullException.ThrowIfNull(probeRequest);
+        using var creationOwner = GenericRenderObject.PushApiWrapperCreationOwner(this);
+        using var programPreparation = new VulkanProgramLinkPreparationScope(
+            _resourceRuntime,
+            Interlocked.CompareExchange(ref _explicitProductionPreparationStarted, 1, 0) == 0);
+        using var currentRenderer = AbstractRenderer.PushThreadCurrent(this);
+        bool previousActive = Active;
+        Active = true;
+        try
+        {
+            return _frameLoop.ExecuteExplicitProductionFrame(buildFrame, probeRequest);
+        }
+        finally
+        {
+            Active = previousActive;
+        }
+    }
+
+    internal bool TryGetLastExplicitProductionBufferStressProbeEvidence(out VulkanExplicitProductionBufferStressProbeEvidence? evidence)
+        => _frameLoop.TryGetLastExplicitProductionBufferStressProbeEvidence(out evidence);
+
+    internal bool TryGetExplicitProductionSubmissionCompletion(
+        in VulkanExplicitProductionSubmissionReceipt receipt,
+        out bool completed)
+        => _frameLoop.TryGetExplicitProductionSubmissionCompletion(in receipt, out completed);
+
+    internal bool TryReadbackExplicitProductionColor(
+        in VulkanExplicitProductionSubmissionReceipt receipt,
+        int maxByteCount,
+        ImageLayout sourceLayout,
+        out byte[]? color)
+        => _frameLoop.TryReadbackExplicitProductionColor(in receipt, maxByteCount, sourceLayout, out color);
+
+    internal bool TryReadbackExplicitProductionBuffer(
+        in VulkanExplicitProductionSubmissionReceipt receipt,
+        XRDataBuffer sourceBuffer,
+        uint sourceByteOffset,
+        Span<byte> destination,
+        out string route)
+        => _frameLoop.TryReadbackExplicitProductionBuffer(
+            in receipt,
+            sourceBuffer,
+            sourceByteOffset,
+            destination,
+            out route);
+
+    internal bool TryDescribeCurrentNativeBuffer(
+        XRDataBuffer sourceBuffer,
+        out VulkanNativeBufferDiagnosticDescription description)
+        => _frameLoop.TryDescribeCurrentNativeBuffer(sourceBuffer, out description);
 
     /// <summary>Reads the last completed explicit-target color output.</summary>
     internal byte[] ReadbackExplicitTargetColor(int maxByteCount, ImageLayout sourceLayout)

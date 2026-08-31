@@ -324,10 +324,11 @@ internal sealed partial class VulkanCommandRuntime
         if (passIndex == VulkanBarrierPlanner.SwapchainPassIndex)
             passIndex = int.MinValue;
 
-        if (passIndex != int.MinValue && Enum.IsDefined<EDefaultRenderPass>((EDefaultRenderPass)passIndex))
+        bool hasMetadata = passMetadata is { Count: > 0 };
+        if (!hasMetadata && passIndex != int.MinValue &&
+            Enum.IsDefined<EDefaultRenderPass>((EDefaultRenderPass)passIndex))
             return passIndex;
 
-        bool hasMetadata = passMetadata is { Count: > 0 };
         if (passIndex != int.MinValue && (!hasMetadata || ContainsPass(passMetadata!, passIndex)))
             return passIndex;
 

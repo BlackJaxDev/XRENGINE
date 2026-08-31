@@ -784,7 +784,8 @@ internal sealed class VulkanBarrierPlanner
         uint DstQueueFamilyIndex,
         Silk.NET.Vulkan.Buffer NativeBuffer = default,
         ulong NativeOffset = 0,
-        ulong NativeSize = Vk.WholeSize);
+        ulong NativeSize = Vk.WholeSize,
+        ulong NativeGeneration = 0);
 
     internal readonly record struct PlannedSwapchainBarrier(
         int PassIndex,

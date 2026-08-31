@@ -270,6 +270,7 @@ internal sealed unsafe class VkShader(
             {
                 RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanPipelineTelemetry(
                     EVulkanPipelineTelemetryEvent.RenderThreadShaderCompile);
+                BackendContext.Resources.PipelineManager.RecordRenderThreadShaderCompile();
             }
 
             byte[] spirv = VulkanShaderCompiler.CompilePrepared(Data, prepared);
@@ -300,6 +301,7 @@ internal sealed unsafe class VkShader(
 
         private void ApplyCompiledArtifact(VulkanShaderArtifact artifact)
         {
+            BackendContext.Resources.PipelineManager.RecordShaderArtifactIdentity(artifact.Identity);
             _entryPoint = artifact.EntryPoint;
             _autoUniformBlocks = [.. artifact.AutoUniformBlocks];
             _rewrittenSource = artifact.RewrittenSource;

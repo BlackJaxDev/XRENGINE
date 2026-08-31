@@ -660,6 +660,7 @@ internal sealed partial class VulkanFramePlanner
             hash.Add(descriptor.SizePolicy.ScaleY);
             hash.Add(descriptor.SizePolicy.Width);
             hash.Add(descriptor.SizePolicy.Height);
+            hash.Add(descriptor.SizePolicy.RoundUpDivisor);
             hash.Add(descriptor.FormatLabel, StringComparer.OrdinalIgnoreCase);
             hash.Add(descriptor.ArrayLayers);
             hash.Add(descriptor.StereoCompatible);
@@ -846,16 +847,17 @@ internal sealed partial class VulkanFramePlanner
             passIndex = int.MinValue;
         }
 
-        // Short-circuit: well-known EDefaultRenderPass values are always valid.
-        // Metadata may lag behind runtime enqueues (conditional pipeline paths,
-        // hot-reload) — accept standard passes without warning.
-        if (passIndex != int.MinValue &&
-            Enum.IsDefined<EDefaultRenderPass>((EDefaultRenderPass)passIndex))
-            return passIndex;
-
         bool hasMetadata = passMetadata is { Count: > 0 };
         bool passDefinedInMetadata = hasMetadata &&
             PassMetadataContainsPassIndex(passMetadata!, passIndex);
+
+        // A default-pass value is only self-validating when no graph metadata is
+        // available. Advanced and synthetic pipelines can reuse the same numeric
+        // range for a different graph; accepting an absent default pass would seal
+        // an operation that the immutable barrier plan can never schedule.
+        if (!hasMetadata && passIndex != int.MinValue &&
+            Enum.IsDefined<EDefaultRenderPass>((EDefaultRenderPass)passIndex))
+            return passIndex;
 
         if (passIndex != int.MinValue && (!hasMetadata || passDefinedInMetadata))
             return passIndex;

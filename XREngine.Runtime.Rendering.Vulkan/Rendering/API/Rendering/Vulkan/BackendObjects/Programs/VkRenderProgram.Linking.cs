@@ -28,6 +28,7 @@ internal unsafe partial class VkRenderProgram
         if (IsLinkConfigurationCurrent())
             return true;
 
+        allowAsyncShaderCompile &= !VulkanProgramLinkPreparationScope.RequiresSynchronousLink(BackendContext.Resources);
         lock (_linkLock)
             return LinkAfterAcquiringInterfaceLock(allowAsyncShaderCompile);
     }

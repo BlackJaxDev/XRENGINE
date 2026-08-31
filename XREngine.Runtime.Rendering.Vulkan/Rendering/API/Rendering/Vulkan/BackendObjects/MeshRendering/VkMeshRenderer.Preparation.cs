@@ -217,13 +217,16 @@ internal unsafe partial class VkMeshRenderer
 		return SetPrepareResult(true, "Ready", BuildPrepareSuccessDetail("Ready"), out reason);
 	}
 
-	private bool TryReuseCapturedProgramForIndirectDrawSnapshot(
+	/// <summary>
+	/// Prepares only program and geometry state while an indirect draw is being
+	/// authored. Descriptor resolution is intentionally deferred: immutable
+	/// storage has no writable frame-slot authority until frame preparation.
+	/// </summary>
+	private bool TryPrepareCapturedProgramForIndirectDrawEnqueue(
 		XRMaterial material,
 		VkRenderProgram preparedProgram,
 		string? preparedProgramIdentity,
 		ulong preparedProgramLinkGeneration,
-		ComputeDispatchSnapshot? programBindingSnapshot,
-		int drawUniformSlot,
 		out string reason)
 	{
 		reason = "Ready";
@@ -255,36 +258,22 @@ internal unsafe partial class VkMeshRenderer
 				preparedProgram,
 				preparedProgramIdentity,
 				preparedProgramLinkGeneration))
+		{
 			return SetPrepareResult(false, "ProgramsPending", "The captured Vulkan program is being relinked.", out reason);
+		}
 
 		EnsureRuntimeDeformationBuffersCurrent();
 		bool usesShaderGeneratedVertices = ProgramUsesShaderGeneratedVertices();
 		EnsureBuffers(usesShaderGeneratedVertices);
-
 		if (!AreCachedBuffersReadyForRendering(out string bufferDetail, usesShaderGeneratedVertices))
 			return SetPrepareResult(false, "BuffersPending", bufferDetail, out reason);
 
-		ApplyScopedProgramBindingsForPreparation(material);
-		if (programBindingSnapshot is not null)
-			_program?.ApplyBindingSnapshot(programBindingSnapshot);
 		BuildVertexInputState();
-
-		if (!CanReuseRecordedDescriptorSets(
-				material,
-				drawUniformSlot,
-				programBindingSnapshot is not null,
-				programBindingSnapshot,
-				out string descriptorReason))
-		{
-			// This method is an allocation-free probe used immediately before the
-			// legal prewarm fallback. A cache miss is not a failed draw and must not
-			// publish a renderer-not-ready result (or its rate-limited stack trace).
-			// The fallback owns the authoritative preparation result.
-			reason = $"Descriptor sets are not prewarmed for the captured indirect draw layout: {descriptorReason}";
-			return false;
-		}
-
-		return SetPrepareResult(true, "Ready", BuildPrepareSuccessDetail("Reused"), out reason);
+		return SetPrepareResult(
+			true,
+			"Ready",
+			BuildPrepareSuccessDetail("DeferredUntilRecording"),
+			out reason);
 	}
 
 	private bool ActivateCapturedProgram(

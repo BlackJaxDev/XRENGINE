@@ -7,6 +7,7 @@ using System.Runtime.CompilerServices;
 using System.Threading;
 using XREngine.Data.Colors;
 using XREngine.Data.Geometry;
+using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Resources;
 
@@ -47,6 +48,7 @@ internal sealed partial class VulkanFrameLoop
                 CreateOpenXrThreadRenderStateData(),
                 CreateOpenXrPrewarmRenderStateTracker(extent));
         OutputRuntime.OpenXrBackend.ExternalSwapchainPrewarmDepth++;
+        FrameOp[]? capturedOps = null;
 
         try
         {
@@ -69,8 +71,8 @@ internal sealed partial class VulkanFrameLoop
                     return;
                 }
 
-                FrameOp[] ops = CaptureFrameOpsExcludingTextureUploads(emitFrameOps, out _);
-                ops = VulkanCommandRuntime.FilterDiagnosticSkippedFrameOps(ops);
+                capturedOps = CaptureFrameOpsExcludingTextureUploads(emitFrameOps, out _);
+                FrameOp[] ops = VulkanCommandRuntime.FilterDiagnosticSkippedFrameOps(capturedOps);
                 if (ops.Length == 0)
                     return;
                 ops = NormalizeOpenXrExternalSwapchainFrameOps(ops, extent);
@@ -122,7 +124,7 @@ internal sealed partial class VulkanFrameLoop
         }
         catch (Exception ex)
         {
-            _ = DrainFrameOpsExcludingTextureUploads(out _);
+            DrainAndReleaseFrameOpsExcludingTextureUploads();
             if (IsOpenXrStrictExtentFailure(ex))
                 throw;
             Debug.VulkanWarningEvery(
@@ -133,6 +135,8 @@ internal sealed partial class VulkanFrameLoop
         }
         finally
         {
+            if (capturedOps is not null)
+                VulkanAdvancedVisibilityInputLease.ReleaseOperations(capturedOps);
             OutputRuntime.OpenXrBackend.ExternalSwapchainPrewarmDepth--;
         }
     }
@@ -165,6 +169,7 @@ internal sealed partial class VulkanFrameLoop
             openXrViewIndex: prewarmViewIndex);
         OutputRuntime.OpenXrBackend.ExternalSwapchainPrewarmDepth++;
         int openXrFrameDataSlotCount = ResolveOpenXrFrameDataSlotCount(OutputRuntime.Desktop.Images?.Length ?? 0);
+        FrameOp[]? capturedOps = null;
 
         try
         {
@@ -187,8 +192,8 @@ internal sealed partial class VulkanFrameLoop
                     return;
                 }
 
-                FrameOp[] ops = CaptureFrameOpsExcludingTextureUploads(emitFrameOps, out _);
-                ops = VulkanCommandRuntime.FilterDiagnosticSkippedFrameOps(ops);
+                capturedOps = CaptureFrameOpsExcludingTextureUploads(emitFrameOps, out _);
+                FrameOp[] ops = VulkanCommandRuntime.FilterDiagnosticSkippedFrameOps(capturedOps);
                 if (ops.Length == 0)
                     return;
                 ops = NormalizeOpenXrExternalSwapchainFrameOps(ops, extent);
@@ -240,7 +245,7 @@ internal sealed partial class VulkanFrameLoop
         }
         catch (Exception ex)
         {
-            _ = DrainFrameOpsExcludingTextureUploads(out _);
+            DrainAndReleaseFrameOpsExcludingTextureUploads();
             if (IsOpenXrStrictExtentFailure(ex))
                 throw;
             Debug.VulkanWarningEvery(
@@ -251,6 +256,8 @@ internal sealed partial class VulkanFrameLoop
         }
         finally
         {
+            if (capturedOps is not null)
+                VulkanAdvancedVisibilityInputLease.ReleaseOperations(capturedOps);
             OutputRuntime.OpenXrBackend.ExternalSwapchainPrewarmDepth--;
         }
     }
@@ -297,8 +304,25 @@ internal sealed partial class VulkanFrameLoop
         // operation objects before the paired logical plan is sealed. Freeze every concrete
         // operation and its resource-use storage at this boundary.
         FrameOp[] frozen = new FrameOp[ops.Length];
-        for (int index = 0; index < ops.Length; index++)
-            frozen[index] = ops[index].CreateSealedAuthoringCopy();
+        int frozenCount = 0;
+        try
+        {
+            for (int index = 0; index < ops.Length; index++)
+            {
+                frozen[index] = ops[index].CreateSealedAuthoringCopy();
+                frozenCount++;
+            }
+        }
+        catch
+        {
+            VulkanAdvancedVisibilityInputLease.ReleaseOperations(
+                frozen.AsSpan(0, frozenCount));
+            throw;
+        }
+        finally
+        {
+            VulkanAdvancedVisibilityInputLease.ReleaseOperations(ops);
+        }
         return frozen;
     }
 
@@ -486,6 +510,7 @@ internal sealed partial class VulkanFrameLoop
 
     private void RebaseFrameOpResourcesToActiveResourcePlan(FrameOp[] ops)
     {
+        VulkanResourceAllocator allocator = CaptureResourcePlannerRuntimeState().ResourceAllocator;
         for (int opIndex = 0; opIndex < ops.Length; opIndex++)
         {
             FrameOp capturedOp = ops[opIndex];
@@ -532,6 +557,7 @@ internal sealed partial class VulkanFrameLoop
                     pair.Value,
                     activeRegistry,
                     pipeline,
+                    allocator,
                     out XRTexture currentTexture))
                 {
                     snapshot.SamplersByName[pair.Key] = currentTexture;
@@ -546,6 +572,7 @@ internal sealed partial class VulkanFrameLoop
                         capturedTexture,
                         activeRegistry,
                         pipeline,
+                        allocator,
                         out XRTexture currentTexture))
                 {
                     snapshot.Samplers[pair.Key] = currentTexture;
@@ -614,6 +641,7 @@ internal sealed partial class VulkanFrameLoop
         XRTexture capturedTexture,
         RenderResourceRegistry? activeRegistry,
         XRRenderPipelineInstance pipeline,
+        VulkanResourceAllocator allocator,
         out XRTexture currentTexture)
     {
         // Generic post-process bindings such as SourceTexture identify the logical
@@ -622,24 +650,103 @@ internal sealed partial class VulkanFrameLoop
         string? resourceName = VulkanFrameOperationSemantics.IsFrameSourceSamplerName(bindingName)
             ? capturedTexture.Name
             : bindingName;
-        if (!string.IsNullOrWhiteSpace(resourceName) &&
-            activeRegistry?.TryGetTexture(resourceName, out XRTexture? registryTexture) == true &&
-            registryTexture is not null)
+        if (string.IsNullOrWhiteSpace(resourceName) ||
+            !allocator.TryGetPhysicalGroupForResource(resourceName, out VulkanPhysicalImageGroup? physicalGroup) ||
+            physicalGroup?.IsAllocated != true)
         {
-            currentTexture = registryTexture;
-            return true;
+            currentTexture = null!;
+            return false;
         }
 
-        if (!string.IsNullOrWhiteSpace(resourceName) &&
-            pipeline.TryGetTexture(resourceName, out XRTexture? pipelineTexture) &&
-            pipelineTexture is not null)
+        XRTexture? activeTexture = null;
+        if (activeRegistry?.TryGetTexture(resourceName, out XRTexture? registryTexture) == true)
+            activeTexture = registryTexture;
+        else if (pipeline.TryGetTexture(resourceName, out XRTexture? pipelineTexture))
+            activeTexture = pipelineTexture;
+
+        // A binding name is not sufficient to prove that the active graph resource can
+        // replace the captured sampler. For example, strict SPS deliberately captures a
+        // 2D dummy for ForwardContactDepthView while the active stereo resource with that
+        // name is a 2D-array view consumed by ForwardContactDepthViewArray. Replacing the
+        // scalar fallback with the array resource makes an otherwise valid required
+        // descriptor permanently unpublishable. Preserve the captured binding whenever
+        // the descriptor image shapes differ.
+        if (activeTexture is not null &&
+            HaveCompatibleDescriptorImageShape(capturedTexture, activeTexture))
         {
-            currentTexture = pipelineTexture;
+            currentTexture = activeTexture;
             return true;
         }
 
         currentTexture = null!;
         return false;
+    }
+
+    private static bool HaveCompatibleDescriptorImageShape(
+        XRTexture capturedTexture,
+        XRTexture activeTexture)
+        => TryResolveDescriptorImageViewType(capturedTexture, out ImageViewType capturedViewType) &&
+           TryResolveDescriptorImageViewType(activeTexture, out ImageViewType activeViewType) &&
+           capturedViewType == activeViewType;
+
+    private static bool TryResolveDescriptorImageViewType(
+        XRTexture texture,
+        out ImageViewType viewType)
+    {
+        if (texture is XRTextureViewBase view)
+            return TryResolveDescriptorImageViewType(view.TextureTarget, out viewType);
+
+        viewType = texture switch
+        {
+            XRTexture1D => ImageViewType.Type1D,
+            XRTexture1DArray => ImageViewType.Type1DArray,
+            XRTexture2D => ImageViewType.Type2D,
+            XRTexture2DArray => ImageViewType.Type2DArray,
+            XRTexture3D => ImageViewType.Type3D,
+            XRTextureCube => ImageViewType.TypeCube,
+            XRTextureCubeArray => ImageViewType.TypeCubeArray,
+            XRTextureRectangle => ImageViewType.Type2D,
+            _ => default,
+        };
+        return texture is XRTexture1D or
+            XRTexture1DArray or
+            XRTexture2D or
+            XRTexture2DArray or
+            XRTexture3D or
+            XRTextureCube or
+            XRTextureCubeArray or
+            XRTextureRectangle;
+    }
+
+    private static bool TryResolveDescriptorImageViewType(
+        ETextureTarget textureTarget,
+        out ImageViewType viewType)
+    {
+        viewType = textureTarget switch
+        {
+            ETextureTarget.Texture1D => ImageViewType.Type1D,
+            ETextureTarget.Texture1DArray => ImageViewType.Type1DArray,
+            ETextureTarget.Texture2D or
+                ETextureTarget.Texture2DMultisample or
+                ETextureTarget.TextureRectangle => ImageViewType.Type2D,
+            ETextureTarget.Texture2DArray or
+                ETextureTarget.Texture2DMultisampleArray => ImageViewType.Type2DArray,
+            ETextureTarget.Texture3D => ImageViewType.Type3D,
+            ETextureTarget.TextureCubeMap => ImageViewType.TypeCube,
+            ETextureTarget.TextureCubeMapArray => ImageViewType.TypeCubeArray,
+            _ => default,
+        };
+        return textureTarget is
+            ETextureTarget.Texture1D or
+            ETextureTarget.Texture1DArray or
+            ETextureTarget.Texture2D or
+            ETextureTarget.Texture2DArray or
+            ETextureTarget.Texture2DMultisample or
+            ETextureTarget.Texture2DMultisampleArray or
+            ETextureTarget.Texture3D or
+            ETextureTarget.TextureRectangle or
+            ETextureTarget.TextureCubeMap or
+            ETextureTarget.TextureCubeMapArray;
     }
 
     private bool TryRefreshResourceRegistryWrappers(
@@ -775,6 +882,11 @@ internal sealed partial class VulkanFrameLoop
 
         void PrewarmDraw(VkMeshRenderer renderer, in PendingMeshDraw draw, in FrameOpContext context)
         {
+            // Authoring has no sealed material-bank authority yet. Capacity was
+            // reserved above; native descriptor preparation runs from the sealed
+            // primary prewarm under the exact eye-slot storage scope.
+            if (draw.ProgramBindingSnapshot?.MaterialTablePublication is not null)
+                return;
             int drawUniformSlot = VulkanCommandRuntime.GetFrameWideMeshDrawUniformSlot(
                 meshDrawSlotsByRendererFamily,
                 meshFrameDataFamilyBases,

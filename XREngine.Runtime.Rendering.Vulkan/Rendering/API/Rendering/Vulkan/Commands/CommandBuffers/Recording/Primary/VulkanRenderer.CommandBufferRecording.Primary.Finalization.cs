@@ -393,6 +393,8 @@ namespace XREngine.Rendering.Vulkan
         private static void CleanupPrimaryCommandRecording(
             scoped ref PrimaryCommandBufferRecordingState recordingState)
         {
+            if (recordingState.ActiveResourcePlannerScopeSet)
+                recordingState.ActiveResourcePlannerScope.Dispose();
             if (recordingState.ActivePipelineOverrideScopeSet)
                 recordingState.ActivePipelineOverrideScope.Dispose();
         }

@@ -27,6 +27,11 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
     private object? _submissionStateGate;
     private VulkanBackendObjectContext? _backendContext;
     private int _payloadChangeDiagnosticCount;
+    private readonly object _pendingMeshDescriptorPoolSlabRetirementLock = new();
+    private readonly Dictionary<ulong, DescriptorPool> _pendingMeshDescriptorPoolSlabRetirements = [];
+    private readonly object _pendingMeshDescriptorSetRetirementLock = new();
+    private readonly Dictionary<(ulong Pool, ulong Set), (DescriptorPool Pool, DescriptorSet Set)>
+        _pendingMeshDescriptorSetRetirements = [];
 
     internal VulkanDescriptorLifetimeAuthority(
         VulkanResourceRuntime resources,
@@ -1293,12 +1298,7 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
 
         if (retireWholePool)
         {
-            RuntimeEngine.Rendering.Stats.Vulkan.AdjustVulkanMeshDescriptorOwnership(
-                allocationVariants: 0,
-                pools: -1,
-                allocatedSets: 0,
-                reservedSets: 0);
-            RetireDescriptorPool(pool);
+            RetireMeshDescriptorPoolSlabOrQueue(pool);
             return;
         }
 
@@ -1309,10 +1309,123 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
             {
                 if ((locallyOwnedSetMask & (1u << setIndex)) == 0 || sets[setIndex].Handle == 0)
                     continue;
-                RetireDescriptorSet(pool, sets[setIndex]);
+                RetireMeshDescriptorSetOrQueue(pool, sets[setIndex]);
             }
         }
     }
+
+    /// <summary>
+    /// Retries mesh-slab pools detached from allocation accounting when their
+    /// first lifetime-ledger handoff failed. The pool is never reinserted into
+    /// allocation caches, so a later normal frame boundary must retain this
+    /// work until the native retirement queue accepts it.
+    /// </summary>
+    internal int DrainPendingMeshDescriptorPoolSlabRetirements()
+    {
+        int retired = 0;
+        while (true)
+        {
+            DescriptorPool pool;
+            lock (_pendingMeshDescriptorPoolSlabRetirementLock)
+            {
+                if (_pendingMeshDescriptorPoolSlabRetirements.Count == 0)
+                    return retired;
+
+                pool = default;
+                foreach (DescriptorPool candidate in _pendingMeshDescriptorPoolSlabRetirements.Values)
+                {
+                    pool = candidate;
+                    break;
+                }
+            }
+
+            RetireDescriptorPool(pool);
+            lock (_pendingMeshDescriptorPoolSlabRetirementLock)
+            {
+                if (_pendingMeshDescriptorPoolSlabRetirements.Remove(pool.Handle))
+                {
+                    RecordMeshDescriptorPoolSlabRetired();
+                    retired++;
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Retries locally-owned descriptor-set handoffs from a still-live slab.
+    /// Accounting has already released the allocation lease, so retry work must
+    /// outlive that lease if lifetime-ticket capture transiently fails.
+    /// </summary>
+    internal int DrainPendingMeshDescriptorSetRetirements()
+    {
+        int retired = 0;
+        while (true)
+        {
+            (DescriptorPool Pool, DescriptorSet Set) pending;
+            lock (_pendingMeshDescriptorSetRetirementLock)
+            {
+                if (_pendingMeshDescriptorSetRetirements.Count == 0)
+                    return retired;
+
+                pending = default;
+                foreach ((_, (DescriptorPool Pool, DescriptorSet Set) candidate) in
+                         _pendingMeshDescriptorSetRetirements)
+                {
+                    pending = candidate;
+                    break;
+                }
+            }
+
+            RetireDescriptorSet(pending.Pool, pending.Set);
+            lock (_pendingMeshDescriptorSetRetirementLock)
+            {
+                if (_pendingMeshDescriptorSetRetirements.Remove(
+                        (pending.Pool.Handle, pending.Set.Handle)))
+                {
+                    retired++;
+                }
+            }
+        }
+    }
+
+    private void RetireMeshDescriptorPoolSlabOrQueue(DescriptorPool pool)
+    {
+        try
+        {
+            RetireDescriptorPool(pool);
+            RecordMeshDescriptorPoolSlabRetired();
+        }
+        catch
+        {
+            lock (_pendingMeshDescriptorPoolSlabRetirementLock)
+                _pendingMeshDescriptorPoolSlabRetirements[pool.Handle] = pool;
+        }
+    }
+
+    private void RetireMeshDescriptorSetOrQueue(
+        DescriptorPool pool,
+        DescriptorSet descriptorSet)
+    {
+        try
+        {
+            RetireDescriptorSet(pool, descriptorSet);
+        }
+        catch
+        {
+            lock (_pendingMeshDescriptorSetRetirementLock)
+            {
+                _pendingMeshDescriptorSetRetirements[
+                    (pool.Handle, descriptorSet.Handle)] = (pool, descriptorSet);
+            }
+        }
+    }
+
+    private static void RecordMeshDescriptorPoolSlabRetired()
+        => RuntimeEngine.Rendering.Stats.Vulkan.AdjustVulkanMeshDescriptorOwnership(
+            allocationVariants: 0,
+            pools: -1,
+            allocatedSets: 0,
+            reservedSets: 0);
 
     private VulkanRetirementTicket CaptureDescriptorPoolRetirementTicket(
         DescriptorPool pool,

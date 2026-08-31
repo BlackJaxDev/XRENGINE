@@ -120,8 +120,10 @@ namespace XREngine.Rendering.Vulkan
                     ReadOnlySpan<VulkanFrozenBufferBarrier> swapchainBufferBarriers =
                         barrierPlan.GetBufferBarriersForPass(VulkanBarrierPlanner.SwapchainPassIndex);
                     EmitPlannedSwapchainBarriers(ref recordingState, recordingState.CommandBuffer, plannedSwapchainBarriers);
-                    EmitPlannedImageBarriers(recordingState.CommandBuffer, swapchainImageBarriers);
-                    EmitPlannedBufferBarriers(recordingState.CommandBuffer, swapchainBufferBarriers);
+                    EmitPlannedResourceBarrierBatch(
+                        recordingState.CommandBuffer,
+                        swapchainImageBarriers,
+                        swapchainBufferBarriers);
                 }
                 _deviceContext.CmdEndLabel(recordingState.CommandBuffer);
 

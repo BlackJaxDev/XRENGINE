@@ -447,7 +447,10 @@ namespace XREngine.Rendering.Vulkan
             hash.Add((int)indirect.SecondaryRecordingContract.Eligibility);
             hash.Add(indirect.BindlessMaterialTextures?.Program.GetHashCode() ?? 0);
             hash.Add(indirect.BindlessMaterialTextures?.Consumer, StringComparer.Ordinal);
-            AddSignaturePart(parts, opIndex, opType, "indirect", hash, $"draws={indirect.DrawCount} stride={indirect.Stride} byteOffset={indirect.ByteOffset} countOffset={indirect.CountByteOffset} useCount={indirect.UseCount} secondaryEligibility={indirect.SecondaryRecordingContract.Eligibility} indirectBuffer=0x{indirect.IndirectBuffer.BufferHandle?.Handle ?? 0UL:X} parameterBuffer=0x{indirect.ParameterBuffer?.BufferHandle?.Handle ?? 0UL:X} bindlessMaterialTextures={indirect.BindlessMaterialTextures.HasValue}");
+            hash.Add(indirect.Draw.ProgramBindingSnapshot?.PreparedMaterialTableSignature ?? 0UL);
+            hash.Add(indirect.BindlessMaterialTextures?.Publication?.OwnerId ?? 0UL);
+            hash.Add(indirect.BindlessMaterialTextures?.Publication?.DescriptorClosureGeneration ?? 0UL);
+            AddSignaturePart(parts, opIndex, opType, "indirect", hash, $"draws={indirect.DrawCount} stride={indirect.Stride} byteOffset={indirect.ByteOffset} countOffset={indirect.CountByteOffset} useCount={indirect.UseCount} secondaryEligibility={indirect.SecondaryRecordingContract.Eligibility} indirectBuffer=0x{indirect.IndirectBuffer.BufferHandle?.Handle ?? 0UL:X} parameterBuffer=0x{indirect.ParameterBuffer?.BufferHandle?.Handle ?? 0UL:X} bindlessMaterialTextures={indirect.BindlessMaterialTextures is not null}");
         }
 
         private static void AddMeshTaskSignaturePart(List<FrameOpSignatureDebugPart> parts, int opIndex, string opType, MeshTaskDispatchIndirectCountOp meshTask)
@@ -461,7 +464,10 @@ namespace XREngine.Rendering.Vulkan
             hash.Add(meshTask.CountByteOffset);
             hash.Add(meshTask.BindlessMaterialTextures?.Program.GetHashCode() ?? 0);
             hash.Add(meshTask.BindlessMaterialTextures?.Consumer, StringComparer.Ordinal);
-            AddSignaturePart(parts, opIndex, opType, "meshTask", hash, $"maxDraws={meshTask.MaxDrawCount} stride={meshTask.Stride} indirectBuffer=0x{meshTask.IndirectBuffer.BufferHandle?.Handle ?? 0UL:X} countBuffer=0x{meshTask.CountBuffer.BufferHandle?.Handle ?? 0UL:X} bindlessMaterialTextures={meshTask.BindlessMaterialTextures.HasValue}");
+            hash.Add(meshTask.ProgramBindingSnapshot.PreparedMaterialTableSignature);
+            hash.Add(meshTask.BindlessMaterialTextures?.Publication?.OwnerId ?? 0UL);
+            hash.Add(meshTask.BindlessMaterialTextures?.Publication?.DescriptorClosureGeneration ?? 0UL);
+            AddSignaturePart(parts, opIndex, opType, "meshTask", hash, $"maxDraws={meshTask.MaxDrawCount} stride={meshTask.Stride} indirectBuffer=0x{meshTask.IndirectBuffer.BufferHandle?.Handle ?? 0UL:X} countBuffer=0x{meshTask.CountBuffer.BufferHandle?.Handle ?? 0UL:X} bindlessMaterialTextures={meshTask.BindlessMaterialTextures is not null}");
         }
 
         private static void AddMemoryBarrierSignaturePart(List<FrameOpSignatureDebugPart> parts, int opIndex, string opType, MemoryBarrierOp barrier)

@@ -64,18 +64,23 @@ void main()
     uint domain = ReadDomain(sourceCommandIndex);
     if (domain == DOMAIN_MASKED)
     {
+        // Keep the reservation count unclamped to expose a broken host
+        // capacity contract, but never use the overflowing reservation.
         uint outIndex = atomicAdd(MaskedCount, 1u);
-        maskedVisibleIndices[outIndex] = logicalIdx;
+        if (outIndex < uint(maskedVisibleIndices.length()))
+            maskedVisibleIndices[outIndex] = logicalIdx;
     }
     else if (domain == DOMAIN_APPROXIMATE)
     {
         uint outIndex = atomicAdd(ApproximateCount, 1u);
-        approximateVisibleIndices[outIndex] = logicalIdx;
+        if (outIndex < uint(approximateVisibleIndices.length()))
+            approximateVisibleIndices[outIndex] = logicalIdx;
     }
     else if (domain == DOMAIN_EXACT)
     {
         uint outIndex = atomicAdd(ExactCount, 1u);
-        exactVisibleIndices[outIndex] = logicalIdx;
+        if (outIndex < uint(exactVisibleIndices.length()))
+            exactVisibleIndices[outIndex] = logicalIdx;
     }
     else
     {

@@ -135,22 +135,25 @@ internal sealed partial class VulkanCommandRuntime
     {
         recorded = default;
         recordedUploads = [];
+        bool requiresPresentNowBinding =
+            outputContract.IsDefined &&
+            outputContract.WorkClass == ERenderOutputWorkClass.PresentNow;
         bool inputIsValid =
             commandInput.PrimaryCommandBuffer.Handle != 0 &&
             commandInput.FramePlan.IsSealed &&
-            (outputContract.WorkClass != ERenderOutputWorkClass.PresentNow ||
+            (!requiresPresentNowBinding ||
              logicalViewId != 0UL &&
              requiredOutputIndex >= 0 &&
              outputContract.IsDefined);
         if (!inputIsValid)
         {
-            if (outputContract.WorkClass == ERenderOutputWorkClass.PresentNow)
+            if (requiresPresentNowBinding)
             {
                 throw new VulkanPresentNowReadinessException(
                     outputContract.FrameId,
                     EVulkanPresentNowReadinessStage.FramePlanSeal,
                     $"openxr-mirror-{openXrViewIndex}-frozen-input",
-                    "DesktopMirror -> exact immutable recording input",
+                    $"{outputContract.OutputKind} -> exact immutable recording input",
                     TimeSpan.Zero,
                     TimeSpan.Zero,
                     "The foreground mirror recorder received an incomplete or stale output binding.");
@@ -193,7 +196,7 @@ internal sealed partial class VulkanCommandRuntime
                     commandInput.FramePlan.RenderFrameId,
                     EVulkanPresentNowReadinessStage.PipelineCompilation,
                     $"openxr-mirror-{openXrViewIndex}-primary",
-                    "DesktopMirror -> newly recorded exact primary",
+                    $"{outputContract.OutputKind} -> newly recorded exact primary",
                     TimeSpan.Zero,
                     TimeSpan.Zero,
                     $"A foreground mirror cannot complete as {result.Disposition}. " +
@@ -840,6 +843,23 @@ internal sealed partial class VulkanCommandRuntime
             BaseArrayLayer = baseArrayLayer,
             LayerCount = Math.Max(layerCount, 1u),
         };
+        // A publish command can immediately follow a render primary in the
+        // same queue submission. Honor the predecessor state seeded into this
+        // command journal so the encoded source dependency covers every stage
+        // that can still be reading the image, not merely the layout's
+        // fragment-shader default.
+        if (TryGetRecordedImageAccessState(
+                commandBuffer,
+                image,
+                in range,
+                out VulkanImageAccessState recordedSource,
+                includeEntryState: true,
+                includeUndefinedState: true) &&
+            recordedSource.Layout == oldLayout)
+        {
+            srcAccess = (AccessFlags)(ulong)recordedSource.AccessMask;
+            srcStage = (PipelineStageFlags)(ulong)recordedSource.StageMask;
+        }
         ImageMemoryBarrier barrier = new()
         {
             SType = StructureType.ImageMemoryBarrier,

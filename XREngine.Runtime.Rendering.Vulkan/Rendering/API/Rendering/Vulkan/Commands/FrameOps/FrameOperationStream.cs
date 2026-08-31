@@ -11,6 +11,9 @@ internal sealed class FrameOperationStream
 {
     private const int KindCount = (int)EVulkanPrimaryPlanNodeKind.ReleaseExternalImageOwnership + 1;
     private readonly FrameOperationPayloadStore _payloads;
+    // Logical OpenXR header streams share their source payload store and must
+    // never release publication leases owned by that physical source stream.
+    private readonly bool _ownsPayloads;
     private readonly bool _fixedCapacity;
     private readonly EVulkanAcceptedFrameLane _lane;
     private FrameOperationHeader[] _headers;
@@ -26,6 +29,12 @@ internal sealed class FrameOperationStream
     internal int Count => _count;
     internal int Capacity => _headers.Length;
     internal int ResourceUseCapacity => _resourceUses.Length;
+    /// <summary>
+    /// Stable semantic namespace for descriptor-cache identities emitted from
+    /// this sealed stream. This distinguishes static scene and dynamic overlay
+    /// dispatch ordinals without depending on a frame-local stream instance.
+    /// </summary>
+    internal EVulkanAcceptedFrameLane Lane => _lane;
 
     internal FrameOperationStream()
         : this(new FrameOperationPayloadStore())
@@ -35,6 +44,7 @@ internal sealed class FrameOperationStream
     private FrameOperationStream(FrameOperationPayloadStore payloads)
     {
         _payloads = payloads;
+        _ownsPayloads = true;
         _fixedCapacity = false;
         _lane = EVulkanAcceptedFrameLane.MainScene;
         _headers = new FrameOperationHeader[64];
@@ -70,6 +80,7 @@ internal sealed class FrameOperationStream
         EVulkanAcceptedFrameLane lane)
     {
         _payloads = payloads;
+        _ownsPayloads = false;
         _fixedCapacity = true;
         _lane = lane;
         _headers = new FrameOperationHeader[operationCapacity];
@@ -104,6 +115,7 @@ internal sealed class FrameOperationStream
             advancedVisibilityRangeCapacity,
             fixedCapacity: true,
             lane);
+        _ownsPayloads = true;
         _fixedCapacity = true;
         _lane = lane;
         _headers = new FrameOperationHeader[operationCapacity];
@@ -115,6 +127,8 @@ internal sealed class FrameOperationStream
 
     internal void Reset()
     {
+        if (_ownsPayloads)
+            _payloads.ReleaseReadOnlyStorageBindings();
         if (_count > 0)
         {
             Array.Clear(_headers, 0, _count);
@@ -133,6 +147,117 @@ internal sealed class FrameOperationStream
         for (int index = 0; index < _count; index++) destination[index] = _headers[index].OriginalIndex;
     }
 
+    internal bool TryPrepareReadOnlyStorage(
+        VulkanReadOnlyStoragePreparedMap preparedMap,
+        in VulkanReadOnlyStoragePreparedAuthority authority,
+        VulkanFrameDataArena arena,
+        out string failureReason)
+    {
+        for (int index = 0; index < _payloads.MeshDraws.Length; ++index)
+        {
+            ComputeDispatchSnapshot? snapshot = _payloads.MeshDraws[index].Draw.ProgramBindingSnapshot;
+            if (snapshot?.ReadOnlyStorageBindings is { } bindings &&
+                !preparedMap.TryPrepare(in authority, arena, bindings, out failureReason))
+                return false;
+        }
+        for (int index = 0; index < _payloads.IndirectDraws.Length; ++index)
+        {
+            ComputeDispatchSnapshot? snapshot = _payloads.IndirectDraws[index].Draw.ProgramBindingSnapshot;
+            if (snapshot?.ReadOnlyStorageBindings is { } bindings &&
+                !preparedMap.TryPrepare(in authority, arena, bindings, out failureReason))
+                return false;
+        }
+        for (int index = 0; index < _payloads.MeshTasks.Length; ++index)
+        {
+            ComputeDispatchSnapshot? snapshot = _payloads.MeshTasks[index].ProgramBindingSnapshot;
+            if (snapshot?.ReadOnlyStorageBindings is { } bindings &&
+                !preparedMap.TryPrepare(in authority, arena, bindings, out failureReason))
+                return false;
+        }
+        for (int index = 0; index < _payloads.ComputeDispatches.Length; ++index)
+        {
+            ComputeDispatchSnapshot? snapshot = _payloads.ComputeDispatches[index].Snapshot;
+            if (snapshot?.ReadOnlyStorageBindings is { } bindings &&
+                !preparedMap.TryPrepare(in authority, arena, bindings, out failureReason))
+                return false;
+        }
+        for (int index = 0; index < _payloads.ComputeDispatchIndirects.Length; ++index)
+        {
+            ComputeDispatchSnapshot? snapshot = _payloads.ComputeDispatchIndirects[index].Snapshot;
+            if (snapshot?.ReadOnlyStorageBindings is { } bindings &&
+                !preparedMap.TryPrepare(in authority, arena, bindings, out failureReason))
+                return false;
+        }
+        failureReason = string.Empty;
+        return true;
+    }
+
+    private static bool TryPrepareMaterialSnapshot(
+        ComputeDispatchSnapshot? snapshot, VulkanMaterialTablePreparedMap preparedMap,
+        in VulkanMaterialTablePreparedAuthority authority, VulkanBackendObjectContext context,
+        VulkanBufferResourceService buffers, out bool pending, out string reason)
+    {
+        pending = false;
+        reason = string.Empty;
+        if (snapshot?.MaterialTablePublication is not { } publication)
+            return true;
+        if (!preparedMap.TryPrepare(in authority, context, buffers, publication, out var disposition, out reason))
+        {
+            pending = disposition == EVulkanMaterialTablePreparedDisposition.Pending;
+            return false;
+        }
+        if (!preparedMap.TryResolve(in authority, publication, out var binding))
+        {
+            reason = "The prepared material table lost its exact native backing before descriptor publication.";
+            return false;
+        }
+        snapshot.PublishPreparedMaterialTable(in binding);
+        return true;
+    }
+
+    internal bool TryPrepareMaterialTables(
+        VulkanMaterialTablePreparedMap preparedMap,
+        in VulkanMaterialTablePreparedAuthority authority,
+        VulkanBackendObjectContext context,
+        VulkanBufferResourceService buffers,
+        out bool pending,
+        out string failureReason)
+    {
+        pending = false;
+        for (int index = 0; index < _payloads.MeshDraws.Length; ++index)
+        {
+            ComputeDispatchSnapshot? snapshot = _payloads.MeshDraws[index].Draw.ProgramBindingSnapshot;
+            if (!TryPrepareMaterialSnapshot(snapshot, preparedMap, in authority, context, buffers, out pending, out failureReason))
+                return false;
+        }
+        for (int index = 0; index < _payloads.IndirectDraws.Length; ++index)
+        {
+            ComputeDispatchSnapshot? snapshot = _payloads.IndirectDraws[index].Draw.ProgramBindingSnapshot;
+            if (!TryPrepareMaterialSnapshot(snapshot, preparedMap, in authority, context, buffers, out pending, out failureReason))
+                return false;
+        }
+        for (int index = 0; index < _payloads.MeshTasks.Length; ++index)
+        {
+            ComputeDispatchSnapshot? snapshot = _payloads.MeshTasks[index].ProgramBindingSnapshot;
+            if (!TryPrepareMaterialSnapshot(snapshot, preparedMap, in authority, context, buffers, out pending, out failureReason))
+                return false;
+        }
+        for (int index = 0; index < _payloads.ComputeDispatches.Length; ++index)
+        {
+            ComputeDispatchSnapshot? snapshot = _payloads.ComputeDispatches[index].Snapshot;
+            if (!TryPrepareMaterialSnapshot(snapshot, preparedMap, in authority, context, buffers, out pending, out failureReason))
+                return false;
+        }
+        for (int index = 0; index < _payloads.ComputeDispatchIndirects.Length; ++index)
+        {
+            ComputeDispatchSnapshot? snapshot = _payloads.ComputeDispatchIndirects[index].Snapshot;
+            if (!TryPrepareMaterialSnapshot(snapshot, preparedMap, in authority, context, buffers, out pending, out failureReason))
+                return false;
+        }
+        failureReason = string.Empty;
+        return true;
+    }
+
     /// <summary>
     /// Consumes producer objects in source order before any sorting, dependency
     /// planning, or worker scheduling can observe the frame. Subsequent order
@@ -142,45 +267,61 @@ internal sealed class FrameOperationStream
     {
         Reset();
         _payloads.AdvancedVisibilityInput.Reset();
-        EnsureCapacity(source.Count);
-        Span<int> payloadCounts = stackalloc int[KindCount];
-        int resourceUseCount = 0;
-        for (int index = 0; index < source.Count; index++)
+        int sourceCount = source.Count;
+        try
         {
-            FrameOp operation = source.GetAuthoringOperation(index);
-            int kind = (int)operation.Kind;
-            if ((uint)kind >= KindCount) throw new InvalidOperationException("Frame operation has an unsupported opcode.");
-            payloadCounts[kind]++;
-            resourceUseCount += operation.ResourceUsesReference.Count;
-        }
-        EnsureResourceUseCapacity(resourceUseCount);
-        for (int kind = 0; kind < KindCount; kind++) _payloads.EnsureCapacity((EVulkanPrimaryPlanNodeKind)kind, payloadCounts[kind]);
+            EnsureCapacity(sourceCount);
+            Span<int> payloadCounts = stackalloc int[KindCount];
+            int resourceUseCount = 0;
+            for (int index = 0; index < sourceCount; index++)
+            {
+                FrameOp operation = source.GetAuthoringOperation(index);
+                int kind = (int)operation.Kind;
+                if ((uint)kind >= KindCount) throw new InvalidOperationException("Frame operation has an unsupported opcode.");
+                payloadCounts[kind]++;
+                resourceUseCount += operation.ResourceUsesReference.Count;
+            }
+            EnsureResourceUseCapacity(resourceUseCount);
+            for (int kind = 0; kind < KindCount; kind++) _payloads.EnsureCapacity((EVulkanPrimaryPlanNodeKind)kind, payloadCounts[kind]);
 
-        int meshPayloadCount = payloadCounts[(int)EVulkanPrimaryPlanNodeKind.MeshDraw];
-        payloadCounts.Clear();
-        for (int sourceIndex = 0; sourceIndex < source.Count; sourceIndex++)
-        {
-            FrameOp operation = source.GetAuthoringOperation(sourceIndex);
-            EVulkanPrimaryPlanNodeKind kind = operation.Kind;
-            int payloadIndex = payloadCounts[(int)kind]++;
-            StorePayload(kind, payloadIndex, operation);
-            bool preserveSubmissionOrder = operation is MeshDrawOp meshDraw && meshDraw.PreserveSubmissionOrder;
-            ref readonly FrameOpResourceUseList operationResourceUses =
-                ref operation.ResourceUsesReference;
-            int resourceUseOffset = _resourceUseCount;
-            int operationResourceUseCount = operationResourceUses.Count;
-            operationResourceUses.CopyTo(
-                _resourceUses.AsSpan(
-                    resourceUseOffset,
-                    operationResourceUseCount));
-            _resourceUseCount += operationResourceUseCount;
-            _headers[sourceIndex] = new FrameOperationHeader(kind, payloadIndex, operation.PassIndex, operation.ContextReference.OutputTargetIdentity, sourceIndex, resourceUseOffset, operationResourceUseCount, sourceIndex, operation.RequiresPrimaryRecordingContext, preserveSubmissionOrder);
-            _contexts[sourceIndex] = operation.ContextReference;
-            _targets[sourceIndex] = operation.Target;
+            int meshPayloadCount = payloadCounts[(int)EVulkanPrimaryPlanNodeKind.MeshDraw];
+            payloadCounts.Clear();
+            for (int sourceIndex = 0; sourceIndex < sourceCount; sourceIndex++)
+            {
+                FrameOp operation = source.GetAuthoringOperation(sourceIndex);
+                EVulkanPrimaryPlanNodeKind kind = operation.Kind;
+                int payloadIndex = payloadCounts[(int)kind]++;
+                StorePayload(kind, payloadIndex, operation);
+                bool preserveSubmissionOrder = operation is MeshDrawOp meshDraw && meshDraw.PreserveSubmissionOrder;
+                ref readonly FrameOpResourceUseList operationResourceUses =
+                    ref operation.ResourceUsesReference;
+                int resourceUseOffset = _resourceUseCount;
+                int operationResourceUseCount = operationResourceUses.Count;
+                operationResourceUses.CopyTo(
+                    _resourceUses.AsSpan(
+                        resourceUseOffset,
+                        operationResourceUseCount));
+                _resourceUseCount += operationResourceUseCount;
+                _headers[sourceIndex] = new FrameOperationHeader(kind, payloadIndex, operation.PassIndex, operation.ContextReference.OutputTargetIdentity, sourceIndex, resourceUseOffset, operationResourceUseCount, sourceIndex, operation.RequiresPrimaryRecordingContext, preserveSubmissionOrder);
+                _contexts[sourceIndex] = operation.ContextReference;
+                _targets[sourceIndex] = operation.Target;
+            }
+            _count = sourceCount;
+            _meshPayloadCount = meshPayloadCount;
         }
-        _count = source.Count;
-        _meshPayloadCount = meshPayloadCount;
-        source.Clear();
+        finally
+        {
+            for (int index = 0; index < sourceCount; ++index)
+            {
+                source.GetAuthoringOperation(index).ReleaseAuthoringSnapshot();
+                if (source.GetAuthoringOperation(index) is
+                    AdvancedVisibilityOp visibility)
+                {
+                    visibility.ReleaseInputLease();
+                }
+            }
+            source.Clear();
+        }
     }
 
     /// <summary>
@@ -454,16 +595,21 @@ internal sealed class FrameOperationStream
     /// after lowering: it cannot replace the authoring request or retarget the
     /// logical attachment identities held by the plan.
     /// </summary>
-    internal bool TryAssociateAdvancedVisibilityState(
+    internal VulkanAdvancedVisibilityPipelineReadiness TryAssociateAdvancedVisibilityState(
         int index,
         in VulkanAdvancedVisibilityStageRequest request,
         in VulkanAdvancedVisibilityResourceState state,
         VkRenderProgram earlyVisibilityProgram,
-        VkRenderProgram buildIndirectProgram)
+        VkRenderProgram buildIndirectProgram,
+        out string reason)
     {
+        reason = "Ready";
         if (!state.IsValid || (uint)index >= (uint)_count ||
             _headers[index].OpCode != EVulkanPrimaryPlanNodeKind.AdvancedVisibility)
-            return false;
+        {
+            reason = "advanced visibility state does not match the sealed operation";
+            return VulkanAdvancedVisibilityPipelineReadiness.Failed;
+        }
 
         ref readonly FrameOperationHeader header = ref _headers[index];
         VulkanAdvancedVisibilityOperationPayload payload = _payloads.AdvancedVisibilities[header.PayloadIndex];
@@ -471,7 +617,10 @@ internal sealed class FrameOperationStream
             (payload.SceneState.IsValid &&
              (payload.SceneState.FrameSlot != state.FrameSlot ||
               payload.SceneState.FrameGeneration != state.FrameGeneration)))
-            return false;
+        {
+            reason = "advanced visibility request or frame-storage generation changed after sealing";
+            return VulkanAdvancedVisibilityPipelineReadiness.Failed;
+        }
 
         if (request.Stage != EAdvancedRenderStage.VisibilityPreparation)
         {
@@ -479,15 +628,27 @@ internal sealed class FrameOperationStream
             {
                 State = state,
             };
-            return true;
+            return VulkanAdvancedVisibilityPipelineReadiness.Ready;
         }
 
-        Pipeline earlyPipeline = earlyVisibilityProgram.GetOrCreateComputePipeline();
-        Pipeline indirectPipeline = buildIndirectProgram.GetOrCreateComputePipeline();
-        if (earlyPipeline.Handle == 0 || indirectPipeline.Handle == 0 ||
-            earlyVisibilityProgram.PipelineLayout.Handle == 0 ||
+        VulkanComputePipelineReadiness earlyReadiness = earlyVisibilityProgram
+            .TryGetOrRequestComputePipeline(int.MinValue, null, out Pipeline earlyPipeline, out string earlyReason);
+        if (earlyReadiness != VulkanComputePipelineReadiness.Ready)
+            return DescribeAdvancedVisibilityPipelineReadiness(
+                earlyReadiness, "early visibility", earlyReason, out reason);
+
+        VulkanComputePipelineReadiness indirectReadiness = buildIndirectProgram
+            .TryGetOrRequestComputePipeline(int.MinValue, null, out Pipeline indirectPipeline, out string indirectReason);
+        if (indirectReadiness != VulkanComputePipelineReadiness.Ready)
+            return DescribeAdvancedVisibilityPipelineReadiness(
+                indirectReadiness, "visibility indirect", indirectReason, out reason);
+
+        if (earlyVisibilityProgram.PipelineLayout.Handle == 0 ||
             buildIndirectProgram.PipelineLayout.Handle == 0)
-            return false;
+        {
+            reason = "advanced visibility compute pipeline layout is unavailable";
+            return VulkanAdvancedVisibilityPipelineReadiness.Failed;
+        }
 
         _payloads.AdvancedVisibilities[header.PayloadIndex] = payload with
         {
@@ -499,7 +660,7 @@ internal sealed class FrameOperationStream
             BuildIndirectPipeline = indirectPipeline,
             BuildIndirectLinkGeneration = buildIndirectProgram.LinkGeneration,
         };
-        return true;
+        return VulkanAdvancedVisibilityPipelineReadiness.Ready;
     }
 
     internal bool TryAssociateAdvancedVisibilityPublication(
@@ -546,30 +707,52 @@ internal sealed class FrameOperationStream
         return true;
     }
 
-    internal bool TryAssociateAdvancedVisibilityLateClosure(
+    internal VulkanAdvancedVisibilityPipelineReadiness TryAssociateAdvancedVisibilityLateClosure(
         int index,
         in VulkanAdvancedVisibilityStageRequest request,
         in VulkanAdvancedVisibilityLateTargetClosure closure,
         VkRenderProgram buildDepthPyramidProgram,
-        VkRenderProgram lateVisibilityProgram)
+        VkRenderProgram lateVisibilityProgram,
+        out string reason)
     {
+        reason = "Ready";
         if (!closure.IsValid || (uint)index >= (uint)_count ||
             _headers[index].OpCode != EVulkanPrimaryPlanNodeKind.AdvancedVisibility)
-            return false;
+        {
+            reason = "advanced visibility late closure does not match the sealed operation";
+            return VulkanAdvancedVisibilityPipelineReadiness.Failed;
+        }
 
         ref readonly FrameOperationHeader header = ref _headers[index];
         VulkanAdvancedVisibilityOperationPayload payload =
             _payloads.AdvancedVisibilities[header.PayloadIndex];
         if (!payload.Request.Equals(request))
-            return false;
+        {
+            reason = "advanced visibility late request changed after sealing";
+            return VulkanAdvancedVisibilityPipelineReadiness.Failed;
+        }
 
-        Pipeline depthPipeline = buildDepthPyramidProgram.GetOrCreateComputePipeline();
-        Pipeline latePipeline = lateVisibilityProgram.GetOrCreateComputePipeline();
-        if (depthPipeline.Handle == 0 || latePipeline.Handle == 0 ||
-            buildDepthPyramidProgram.PipelineLayout.Handle == 0 ||
+        VulkanComputePipelineReadiness depthReadiness = buildDepthPyramidProgram
+            .TryGetOrRequestComputePipeline(int.MinValue, null, out Pipeline depthPipeline, out string depthReason);
+        if (depthReadiness != VulkanComputePipelineReadiness.Ready)
+        {
+            return DescribeAdvancedVisibilityPipelineReadiness(
+                depthReadiness, "depth pyramid", depthReason, out reason);
+        }
+
+        VulkanComputePipelineReadiness lateReadiness = lateVisibilityProgram
+            .TryGetOrRequestComputePipeline(int.MinValue, null, out Pipeline latePipeline, out string lateReason);
+        if (lateReadiness != VulkanComputePipelineReadiness.Ready)
+        {
+            return DescribeAdvancedVisibilityPipelineReadiness(
+                lateReadiness, "late visibility", lateReason, out reason);
+        }
+
+        if (buildDepthPyramidProgram.PipelineLayout.Handle == 0 ||
             lateVisibilityProgram.PipelineLayout.Handle == 0)
         {
-            return false;
+            reason = "advanced visibility late compute pipeline layout is unavailable";
+            return VulkanAdvancedVisibilityPipelineReadiness.Failed;
         }
 
         _payloads.AdvancedVisibilities[header.PayloadIndex] = payload with
@@ -582,7 +765,7 @@ internal sealed class FrameOperationStream
             LateVisibilityPipeline = latePipeline,
             LateVisibilityLinkGeneration = lateVisibilityProgram.LinkGeneration,
         };
-        return true;
+        return VulkanAdvancedVisibilityPipelineReadiness.Ready;
     }
 
     internal bool TrySealAdvancedVisibilityLateDescriptors(
@@ -599,8 +782,7 @@ internal sealed class FrameOperationStream
         VulkanAdvancedVisibilityOperationPayload payload =
             _payloads.AdvancedVisibilities[header.PayloadIndex];
         if (!payload.Request.Equals(request) || payload.LateTargetClosure is not { } closure ||
-            descriptorSetCount != checked(
-                (closure.DispatchCount + 1) * (int)closure.ViewCount) ||
+            descriptorSetCount != checked(2 * (int)closure.ViewCount) ||
             descriptorSets.Length < descriptorSetCount)
             return false;
 
@@ -617,6 +799,18 @@ internal sealed class FrameOperationStream
             },
         };
         return true;
+    }
+
+    private static VulkanAdvancedVisibilityPipelineReadiness DescribeAdvancedVisibilityPipelineReadiness(
+        VulkanComputePipelineReadiness readiness,
+        string pipelineName,
+        string detail,
+        out string reason)
+    {
+        reason = $"{pipelineName} compute pipeline: {detail}";
+        return readiness == VulkanComputePipelineReadiness.Pending
+            ? VulkanAdvancedVisibilityPipelineReadiness.Pending
+            : VulkanAdvancedVisibilityPipelineReadiness.Failed;
     }
 
     internal bool Contains(EVulkanPrimaryPlanNodeKind kind)
@@ -674,8 +868,22 @@ internal sealed class FrameOperationStream
             case EVulkanPrimaryPlanNodeKind.TransformFeedback: { var p=(TransformFeedbackOp)op; _payloads.TransformFeedbacks[i]=new(p.TransformFeedback,p.Operation,p.CounterBuffer,p.FeedbackBufferOffset,p.FeedbackBufferSize,p.CounterBufferOffset,p.CounterOffset,p.VertexStride,p.InstanceCount,p.FirstInstance); break; }
             case EVulkanPrimaryPlanNodeKind.Query: { var p=(QueryOp)op; _payloads.Queries[i]=new(p.Query,p.Descriptor,p.Operation,p.TimestampStage,p.PointIndex,p.SourceHandles,p.ResultDestination,p.ResultDestinationOffset,p.ResultStride,p.IncludeAvailability); break; }
             case EVulkanPrimaryPlanNodeKind.MeshDraw: _payloads.MeshDraws[i]=new(((MeshDrawOp)op).Draw.CreateSealedCopy()); break;
-            case EVulkanPrimaryPlanNodeKind.IndirectDraw: { var p=(IndirectDrawOp)op; _payloads.IndirectDraws[i]=new(p.IndirectBuffer,p.ParameterBuffer,p.MeshRenderer,p.Draw.CreateSealedCopy(),p.DrawCount,p.Stride,p.ByteOffset,p.CountByteOffset,p.UseCount,p.BindlessMaterialTextures,p.SecondaryRecordingContract); break; }
-            case EVulkanPrimaryPlanNodeKind.MeshTaskDispatchIndirectCount: { var p=(MeshTaskDispatchIndirectCountOp)op; _payloads.MeshTasks[i]=new(p.Program,p.ProgramLinkGeneration,p.ProgramBindingSnapshot.CreateSealedCopy(),p.ProducerSnapshot,p.Pipeline,p.IndirectBuffer,p.CountBuffer,p.MaxDrawCount,p.Stride,p.ByteOffset,p.CountByteOffset,p.BindlessMaterialTextures); break; }
+            case EVulkanPrimaryPlanNodeKind.IndirectDraw:
+            {
+                var p = (IndirectDrawOp)op;
+                PendingMeshDraw draw = p.Draw.CreateSealedCopy();
+                draw.ProgramBindingSnapshot?.SetMaterialTablePublication(p.BindlessMaterialTextures?.Publication);
+                _payloads.IndirectDraws[i] = new(p.IndirectBuffer, p.ParameterBuffer, p.MeshRenderer, draw, p.DrawCount, p.Stride, p.ByteOffset, p.CountByteOffset, p.UseCount, p.BindlessMaterialTextures, p.SecondaryRecordingContract);
+                break;
+            }
+            case EVulkanPrimaryPlanNodeKind.MeshTaskDispatchIndirectCount:
+            {
+                var p = (MeshTaskDispatchIndirectCountOp)op;
+                ComputeDispatchSnapshot snapshot = p.ProgramBindingSnapshot.CreateSealedCopy();
+                snapshot.SetMaterialTablePublication(p.BindlessMaterialTextures?.Publication);
+                _payloads.MeshTasks[i] = new(p.Program, p.ProgramLinkGeneration, snapshot, p.ProducerSnapshot, p.Pipeline, p.IndirectBuffer, p.CountBuffer, p.MaxDrawCount, p.Stride, p.ByteOffset, p.CountByteOffset, p.BindlessMaterialTextures);
+                break;
+            }
             case EVulkanPrimaryPlanNodeKind.ComputeDispatch: { var p=(ComputeDispatchOp)op; _payloads.ComputeDispatches[i]=new(p.Program,p.GroupsX,p.GroupsY,p.GroupsZ,p.Snapshot.CreateSealedCopy()); break; }
             case EVulkanPrimaryPlanNodeKind.ComputeDispatchIndirect: { var p=(ComputeDispatchIndirectOp)op; _payloads.ComputeDispatchIndirects[i]=new(p.Program,p.Snapshot.CreateSealedCopy(),p.ArgumentOwner,p.ArgumentBuffer,p.ArgumentOffset,p.Label); break; }
             case EVulkanPrimaryPlanNodeKind.BufferCopy: { var p=(BufferCopyOp)op; _payloads.BufferCopies[i]=new(p.SourceOwner,p.SourceBuffer,p.SourceOffset,p.DestinationOwner,p.DestinationBuffer,p.DestinationOffset,p.ByteCount,p.RequireGpuWriteVisibility,p.DiagnosticReceipt,p.Label); break; }
@@ -688,7 +896,11 @@ internal sealed class FrameOperationStream
             {
                 VulkanAdvancedVisibilityStageRequest request =
                     ((AdvancedVisibilityOp)op).Request;
-                _payloads.AdvancedVisibilityInput.CaptureOrValidate(in request);
+                VulkanAdvancedVisibilityInputStorage authoringInput =
+                    ((AdvancedVisibilityOp)op).InputLease.Input;
+                _payloads.AdvancedVisibilityInput.CaptureOrValidate(
+                    in request,
+                    authoringInput);
                 _payloads.AdvancedVisibilities[i] = new(
                     request,
                     _payloads.AdvancedVisibilityInput,

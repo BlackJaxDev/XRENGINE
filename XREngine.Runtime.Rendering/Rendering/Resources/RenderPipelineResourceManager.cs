@@ -781,15 +781,20 @@ public sealed class RenderPipelineResourceManager
             RenderResourceSizeClass.AbsolutePixels =>
                 (Math.Max(sizePolicy.Width, 1u), Math.Max(sizePolicy.Height, 1u)),
             RenderResourceSizeClass.InternalResolution =>
-                (ScaleExtent(internalWidth, sizePolicy.ScaleX), ScaleExtent(internalHeight, sizePolicy.ScaleY)),
+                (ResolveScaledExtent(internalWidth, sizePolicy.ScaleX, sizePolicy.RoundUpDivisor), ResolveScaledExtent(internalHeight, sizePolicy.ScaleY, sizePolicy.RoundUpDivisor)),
             RenderResourceSizeClass.WindowResolution or RenderResourceSizeClass.Custom =>
-                (ScaleExtent(windowWidth, sizePolicy.ScaleX), ScaleExtent(windowHeight, sizePolicy.ScaleY)),
+                (ResolveScaledExtent(windowWidth, sizePolicy.ScaleX, sizePolicy.RoundUpDivisor), ResolveScaledExtent(windowHeight, sizePolicy.ScaleY, sizePolicy.RoundUpDivisor)),
             _ => (windowWidth, windowHeight),
         };
     }
 
     private static uint ScaleExtent(uint extent, float scale)
         => (uint)Math.Max(1, (int)MathF.Round(Math.Max(extent, 1u) * scale));
+
+    private static uint ResolveScaledExtent(uint extent, float scale, uint roundUpDivisor)
+        => roundUpDivisor > 1u
+            ? checked((Math.Max(extent, 1u) + roundUpDivisor - 1u) / roundUpDivisor)
+            : ScaleExtent(extent, scale);
 
     private static uint ResolveInstanceLayerCount(XRTexture texture)
         => texture switch

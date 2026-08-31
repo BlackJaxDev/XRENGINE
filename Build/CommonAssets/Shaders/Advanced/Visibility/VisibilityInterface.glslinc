@@ -64,8 +64,9 @@ bool XR_ADV_IsSupportedVisibilityProducer(uint producer)
 #define XR_ADV_BINDING_VISIBILITY_LATE_INDEXED_ARGUMENTS 41
 #define XR_ADV_BINDING_VISIBILITY_LATE_MESH_ARGUMENTS 44
 #define XR_ADV_BINDING_VISIBILITY_LATE_MESH_PAYLOADS 45
-// Per-frame depth-pyramid bindings are intentionally runtime-owned. They are
-// populated only by the late-stage image closure, never via loose uniforms.
+// Per-frame depth-pyramid bindings are intentionally runtime-owned. Phase
+// 5.2 uses mip zero as a sparse 64x64-tile grid within the same-sized image;
+// they are populated only by the late-stage image closure, never loose uniforms.
 #define XR_ADV_BINDING_VISIBILITY_DEPTH_PYRAMID_SAMPLED 42
 #define XR_ADV_BINDING_VISIBILITY_DEPTH_PYRAMID_STORAGE 43
 

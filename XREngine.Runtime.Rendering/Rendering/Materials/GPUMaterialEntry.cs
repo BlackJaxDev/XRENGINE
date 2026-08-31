@@ -7,6 +7,12 @@ namespace XREngine.Rendering.Materials
     /// </summary>
     public struct GPUMaterialEntry
     {
+        /// <summary>
+        /// The material's albedo alpha participates in hard coverage discard. Kept in an
+        /// otherwise unused row-flag bit so the material-table ABI and stride remain stable.
+        /// </summary>
+        public const uint MaskedCoverageFlag = 1u << 3;
+
         public uint AlbedoHandleIndex;
         public uint NormalHandleIndex;
         public uint RMHandleIndex;

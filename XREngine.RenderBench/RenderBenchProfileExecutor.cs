@@ -32,6 +32,10 @@ public sealed class RenderBenchProfileExecutor : IRenderProfileExecutor
     private Action<Silk.NET.Vulkan.Vk, Silk.NET.Vulkan.CommandBuffer, VulkanRenderFrameTarget>? _recordFrame;
     private long[] _cpuFrameNanoseconds = [];
     private double[] _gpuFrameNanoseconds = [];
+    private long[] _fixtureFrameAllocatedBytes = [];
+    private long[] _submitFrameAllocatedBytes = [];
+    private long[] _delayedGpuTimingAllocatedBytes = [];
+    private VulkanExplicitTargetFrameAllocationCounters[] _explicitTargetFrameAllocationCounters = [];
     private int _submittedFrames;
     private int _captureStartFrame;
     private int _captureThreadId;
@@ -44,6 +48,7 @@ public sealed class RenderBenchProfileExecutor : IRenderProfileExecutor
     private string _workloadIdentityPath = string.Empty;
     private string _effectiveConfigurationJson = string.Empty;
     private string _workloadIdentityJson = string.Empty;
+    private bool _captureAllocationBreakdownActive;
     private bool _disposed;
 
     public RenderBenchProfileExecutor(RenderBenchOptions processOptions, RenderBenchProcessState state, RenderProfileRecipe recipe)
@@ -84,7 +89,7 @@ public sealed class RenderBenchProfileExecutor : IRenderProfileExecutor
         };
 
         _fixture = RenderBenchFixtureCatalog.Create(recipe);
-        _recordFrame = _fixture.RecordFrame;
+        _recordFrame = RecordFixtureFrame;
         RenderBenchEffectiveConfiguration effectiveConfiguration = new(1, recipe, _fixture.Manifest);
         RenderBenchWorkloadIdentity workloadIdentity = CreateWorkloadIdentity(recipe, _fixture.Manifest);
         _effectiveConfigurationJson = JsonSerializer.Serialize(effectiveConfiguration, s_jsonOptions);
@@ -96,6 +101,10 @@ public sealed class RenderBenchProfileExecutor : IRenderProfileExecutor
 
         _cpuFrameNanoseconds = GC.AllocateUninitializedArray<long>(recipe.TotalCaptureFrames);
         _gpuFrameNanoseconds = GC.AllocateUninitializedArray<double>(recipe.TotalCaptureFrames);
+        _fixtureFrameAllocatedBytes = GC.AllocateUninitializedArray<long>(recipe.TotalCaptureFrames);
+        _submitFrameAllocatedBytes = GC.AllocateUninitializedArray<long>(recipe.TotalCaptureFrames);
+        _delayedGpuTimingAllocatedBytes = GC.AllocateUninitializedArray<long>(recipe.TotalCaptureFrames);
+        _explicitTargetFrameAllocationCounters = GC.AllocateUninitializedArray<VulkanExplicitTargetFrameAllocationCounters>(recipe.TotalCaptureFrames);
         Array.Fill(_gpuFrameNanoseconds, double.NaN);
         _host = new VulkanExplicitTargetRendererHost(CreateTarget(recipe));
         List<string> unsupported = ValidateSelectedRuntime(recipe, _host);
@@ -137,6 +146,7 @@ public sealed class RenderBenchProfileExecutor : IRenderProfileExecutor
     {
         VulkanExplicitTargetRendererHost host = GetHost();
         IRenderBenchFixture fixture = GetFixture();
+        host.ExplicitTargetAllocationDiagnosticsEnabled = true;
         _submittedFrames++;
         host.SubmitFrame(_recordFrame!);
         ValidateStableHost(host, "capture-thread warmup");
@@ -158,16 +168,24 @@ public sealed class RenderBenchProfileExecutor : IRenderProfileExecutor
             _captureThreadId = threadId;
             _allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
             _state.SetPhase(RenderBenchPhase.Capturing);
+            _captureAllocationBreakdownActive = true;
         }
         else if (threadId != _captureThreadId)
             throw new InvalidOperationException("Measured Vulkan frames moved between worker threads.");
 
         VulkanExplicitTargetRendererHost host = GetHost();
         _submittedFrames++;
+        long submitAllocationStart = GC.GetAllocatedBytesForCurrentThread();
         long frameStart = Stopwatch.GetTimestamp();
         host.SubmitFrame(_recordFrame!);
+        long submitAllocationEnd = GC.GetAllocatedBytesForCurrentThread();
+        _submitFrameAllocatedBytes[captureIndex] = submitAllocationEnd - submitAllocationStart;
+        _explicitTargetFrameAllocationCounters[captureIndex] = host.LastExplicitTargetFrameAllocationCounters;
         _cpuFrameNanoseconds[captureIndex] = ToNanoseconds(Stopwatch.GetTimestamp() - frameStart);
+        long delayedGpuTimingAllocationStart = GC.GetAllocatedBytesForCurrentThread();
         CaptureDelayedGpuTiming(host, _submittedFrames - 1);
+        _delayedGpuTimingAllocatedBytes[captureIndex] =
+            GC.GetAllocatedBytesForCurrentThread() - delayedGpuTimingAllocationStart;
         _allocatedAfter = GC.GetAllocatedBytesForCurrentThread();
     }
 
@@ -177,6 +195,8 @@ public sealed class RenderBenchProfileExecutor : IRenderProfileExecutor
         VulkanExplicitTargetRendererHost host = GetHost();
         IRenderBenchFixture fixture = GetFixture();
         fixture.EndCapture();
+        _captureAllocationBreakdownActive = false;
+        host.ExplicitTargetAllocationDiagnosticsEnabled = false;
         int capturedFrames = _submittedFrames - _captureStartFrame;
         string? outputHash = TryComputeOutputHash(host);
         string? outputImagePath = recipe.ValidationMode == RenderProfileValidationMode.CountersHashAndImage
@@ -190,6 +210,7 @@ public sealed class RenderBenchProfileExecutor : IRenderProfileExecutor
         }
 
         long allocatedBytes = _allocatedAfter - _allocatedBefore;
+        WriteCaptureAllocationDiagnostics(capturedFrames, allocatedBytes);
         long[] cpu = _cpuFrameNanoseconds.AsSpan(0, capturedFrames).ToArray();
         double[] gpu = _gpuFrameNanoseconds.AsSpan(0, capturedFrames).ToArray();
         RenderBenchWorkCounters workCounters = fixture.Counters;
@@ -401,6 +422,39 @@ public sealed class RenderBenchProfileExecutor : IRenderProfileExecutor
         if (recipe.ExecutionMode is not (RenderExecutionMode.Component or RenderExecutionMode.Presentationless))
             throw new NotSupportedException($"RenderBench cannot execute '{recipe.ExecutionMode}'.");
         _ = RenderBenchFixtureCatalog.Get(recipe.Fixture, recipe.Component, recipe.ExecutionMode);
+    }
+
+    private void RecordFixtureFrame(
+        Silk.NET.Vulkan.Vk api,
+        Silk.NET.Vulkan.CommandBuffer commandBuffer,
+        VulkanRenderFrameTarget target)
+    {
+        if (!_captureAllocationBreakdownActive)
+        {
+            GetFixture().RecordFrame(api, commandBuffer, target);
+            return;
+        }
+
+        int captureIndex = _submittedFrames - _captureStartFrame;
+        long allocationStart = GC.GetAllocatedBytesForCurrentThread();
+        GetFixture().RecordFrame(api, commandBuffer, target);
+        if ((uint)captureIndex < (uint)_fixtureFrameAllocatedBytes.Length)
+        {
+            _fixtureFrameAllocatedBytes[captureIndex] =
+                GC.GetAllocatedBytesForCurrentThread() - allocationStart;
+        }
+    }
+
+    private void WriteCaptureAllocationDiagnostics(int capturedFrames, long allocatedBytes)
+    {
+        RenderBenchCaptureAllocationDiagnostics diagnostics = new(
+            allocatedBytes,
+            _fixtureFrameAllocatedBytes.AsSpan(0, capturedFrames).ToArray(),
+            _submitFrameAllocatedBytes.AsSpan(0, capturedFrames).ToArray(),
+            _delayedGpuTimingAllocatedBytes.AsSpan(0, capturedFrames).ToArray(),
+            _explicitTargetFrameAllocationCounters.AsSpan(0, capturedFrames).ToArray());
+        string path = Path.Combine(_runDirectory, "render-bench-capture-allocation-diagnostics.json");
+        WriteAtomic(path, JsonSerializer.Serialize(diagnostics, s_jsonOptions));
     }
 
     private static List<string> ValidateSelectedRuntime(RenderProfileRecipe recipe, VulkanExplicitTargetRendererHost host)

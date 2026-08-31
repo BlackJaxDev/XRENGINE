@@ -28,7 +28,8 @@ internal sealed class AutoUniformMaterialWritePlan(
             materialLayoutVersion,
             materialValueVersion,
             runtimeUniformNameSignature,
-            runtimeUniformPublicationLayoutSignature);
+            runtimeUniformPublicationLayoutSignature,
+            staticBytes);
     internal ulong MaterialLayoutVersion { get; } = materialLayoutVersion;
     internal ulong MaterialValueVersion { get; } = materialValueVersion;
     internal ulong RuntimeUniformNameSignature { get; } = runtimeUniformNameSignature;
@@ -56,21 +57,25 @@ internal sealed class AutoUniformMaterialWritePlan(
         ulong materialLayoutVersion,
         ulong materialValueVersion,
         ulong runtimeUniformNameSignature,
-        ulong runtimeUniformPublicationLayoutSignature)
+        ulong runtimeUniformPublicationLayoutSignature,
+        ReadOnlySpan<byte> staticBytes)
     {
         FrameOpSignatureHasher hash = new();
         hash.Add(schema.PublicationLayoutSignature);
-        bool materialOwned =
-            schema.Block.Frequency is EVulkanBindingFrequency.Unknown or
-                EVulkanBindingFrequency.Material;
-        hash.Add(materialOwned);
-        if (materialOwned)
+        bool dependsOnMaterialOrRuntime =
+            schema.HasMaterialOrRuntimeSources;
+        hash.Add(dependsOnMaterialOrRuntime);
+        if (dependsOnMaterialOrRuntime)
         {
             hash.Add(materialLayoutVersion);
             hash.Add(materialValueVersion);
             hash.Add(runtimeUniformNameSignature);
             hash.Add(runtimeUniformPublicationLayoutSignature);
         }
+
+        hash.Add(staticBytes.Length);
+        for (int index = 0; index < staticBytes.Length; index++)
+            hash.Add(staticBytes[index]);
 
         return hash.ToHash();
     }

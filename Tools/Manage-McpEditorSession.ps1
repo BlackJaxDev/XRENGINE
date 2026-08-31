@@ -608,7 +608,22 @@ function Invoke-SessionRetentionCleanup([string]$ProtectedSessionName) {
             if ($null -ne $manifest -and [string]$manifest.name -ceq $ProtectedSessionName) {
                 continue
             }
-            if ($null -eq $manifest -or $null -ne (Get-OwnedEditorProcess $manifest)) {
+            # A build has no editor PID yet, but its live launcher still owns
+            # the artifacts. Another session must not reclaim them mid-compile.
+            if ($null -eq $manifest -or
+                $null -ne (Get-OwnedEditorProcess $manifest) -or
+                (($manifest.state -in @('Preparing', 'Building', 'Starting')) -and (Test-LauncherAlive $manifest))) {
+                continue
+            }
+
+            # Failing the strict ownership check is not proof that artifacts are
+            # unused (process metadata may be temporarily inaccessible). Retention
+            # must fail closed while the recorded PID is alive, even on PID reuse.
+            # Only Stop uses the stricter identity proof to authorize termination.
+            $recordedProcessId = 0
+            if ([int]::TryParse([string]$manifest.processId, [ref]$recordedProcessId) -and
+                $recordedProcessId -gt 0 -and
+                $null -ne (Get-Process -Id $recordedProcessId -ErrorAction SilentlyContinue)) {
                 continue
             }
 

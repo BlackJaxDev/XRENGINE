@@ -29,6 +29,14 @@ internal sealed class TextureUploadScheduler
 
     public int ActiveUploadCount => Volatile.Read(ref _activeProgressiveUploadCount);
     public int QueuedUploadCount => _progressiveUploads.Count;
+    /// <summary>
+    /// Returns whether a texture still has a registered progressive upload. The registration
+    /// spans both locally scheduled OpenGL mip uploads and runtime-managed uploads, and is
+    /// therefore the authoritative readiness check for consumers that freeze native state.
+    /// </summary>
+    public bool HasPendingUpload(XRTexture2D texture)
+        => _progressiveUploads.ContainsKey(texture);
+
     public long BytesScheduledThisFrame => GetBytesScheduledThisFrame();
     public bool HasLargeBacklog
         => ActiveUploadCount >= MaxConcurrentProgressiveOpenGlUploads

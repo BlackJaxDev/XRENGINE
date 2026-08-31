@@ -9,21 +9,20 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal sealed class VulkanAdvancedVisibilityLateClosureStorage
 {
-    internal const int MaxMipLevels = 16;
     internal const int MaxViews = RenderFrameViewSet.MaxViewCount;
 
-    internal DescriptorImageInfo[] PyramidSampled { get; } =
-        new DescriptorImageInfo[MaxViews * (MaxMipLevels - 1)];
-    internal DescriptorImageInfo[] PyramidStorage { get; } =
-        new DescriptorImageInfo[MaxViews * (MaxMipLevels - 1)];
+    // One tile-local R32F level is built and tested per view.  A full global
+    // chain cannot be safely reduced inside a single compute dispatch.
+    internal DescriptorImageInfo[] PyramidSampled { get; } = new DescriptorImageInfo[MaxViews];
+    internal DescriptorImageInfo[] PyramidStorage { get; } = new DescriptorImageInfo[MaxViews];
     internal DescriptorImageInfo[] LateSampled { get; } =
         new DescriptorImageInfo[MaxViews];
     internal DescriptorImageInfo[] LateStorage { get; } =
         new DescriptorImageInfo[MaxViews];
     internal DescriptorSet[] DescriptorSets { get; } =
-        new DescriptorSet[MaxViews * MaxMipLevels];
+        new DescriptorSet[MaxViews * 2];
     private readonly ImageView[] _acquiredViews =
-        new ImageView[MaxViews * (2 * (MaxMipLevels - 1) + 1)];
+        new ImageView[MaxViews * 2];
     private int _acquiredViewCount;
 
     internal bool TryTrackAcquiredView(ImageView view)

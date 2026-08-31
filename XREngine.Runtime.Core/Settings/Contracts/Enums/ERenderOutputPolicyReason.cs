@@ -15,4 +15,5 @@ public enum ERenderOutputPolicyReason
     DeadlineRisk,
     MaximumDeferralReached,
     XrCriticalPathReserved,
+    DependencyRequired,
 }

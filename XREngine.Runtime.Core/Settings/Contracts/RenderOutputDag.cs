@@ -150,6 +150,15 @@ public sealed class RenderOutputDag
             _buildFailure = ERenderOutputDagCompilationFailure.Cycle;
             return false;
         }
+        for (int edgeIndex = 0; edgeIndex < _edgeCount; edgeIndex++)
+        {
+            Edge edge = _edges[edgeIndex];
+            if (edge.Prerequisite == prerequisiteNode &&
+                edge.Dependent == dependentNode)
+            {
+                return true;
+            }
+        }
         if (_edgeCount >= _edges.Length)
         {
             _buildFailure = ERenderOutputDagCompilationFailure.DestinationCapacity;
@@ -175,6 +184,13 @@ public sealed class RenderOutputDag
     {
         nodeIndex = FindNode(stableNodeKey);
         return nodeIndex >= 0 && _active[nodeIndex];
+    }
+
+    /// <summary>Returns whether the last compiled closure includes this node.</summary>
+    public bool IsExecutable(int nodeIndex)
+    {
+        ValidateActiveNode(nodeIndex);
+        return _executable[nodeIndex];
     }
 
     public bool DependenciesComplete(int nodeIndex)
@@ -534,11 +550,10 @@ public sealed class RenderOutputDag
             _workClasses[nodeIndex] = workClass;
             changed = true;
         }
-        ERenderOutputFallbackPolicy effectiveFallback =
+        ERenderOutputFallbackPolicy mergedFallback =
             _readinessPolicies[nodeIndex] == ERenderOutputReadinessPolicy.BlockForExact
                 ? ERenderOutputFallbackPolicy.None
-                : fallbackPolicy;
-        ERenderOutputFallbackPolicy mergedFallback = _fallbackPolicies[nodeIndex] | effectiveFallback;
+                : _fallbackPolicies[nodeIndex] | fallbackPolicy;
         if (mergedFallback != _fallbackPolicies[nodeIndex])
         {
             _fallbackPolicies[nodeIndex] = mergedFallback;

@@ -34,6 +34,7 @@ namespace XREngine.Rendering.Vulkan
         public bool FrameOpsRequireRerecordLocal;
         public uint FrameDataImageIndex;
         public uint? FrameDataImageIndexOverride;
+        public VulkanReadOnlyStoragePreparedAuthority? ReadOnlyStorageAuthority;
         public int CommandBufferImageSlot;
         public SwapchainRecordingTarget SwapchainTarget;
         public Extent2D SwapchainRecordExtent;
@@ -98,6 +99,8 @@ namespace XREngine.Rendering.Vulkan
         public bool RenderPassLabelActive;
         public RuntimeEngine.Rendering.RenderingPipelineOverrideScope ActivePipelineOverrideScope;
         public bool ActivePipelineOverrideScopeSet;
+        public VulkanPreparedResourcePlannerThreadScope ActiveResourcePlannerScope;
+        public bool ActiveResourcePlannerScopeSet;
         public bool SwapchainClearedThisFrame;
         public bool SkipUiPipelineOps;
         public bool SkipUiBatchTextOps;

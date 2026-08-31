@@ -13,4 +13,10 @@ public enum EAdvancedViewRecordFlags : uint
     StereoRight = 1u << 3,
     Foveated = 1u << 4,
     Mirror = 1u << 5,
+    /// <summary>
+    /// Clip-to-framebuffer texture coordinates increase downward on Y. This
+    /// is sealed with the view so compute sampling follows the viewport
+    /// convention that rendered the depth attachment.
+    /// </summary>
+    FramebufferTextureYDown = 1u << 6,
 }

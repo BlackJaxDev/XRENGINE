@@ -256,6 +256,8 @@ internal sealed partial class VulkanFrameLoop
                 request.OpenXrViewIndex,
                 request.ViewBatchStructuralIdentity),
             ResolveOpenXrExternalSwapchainTargetName(request.OpenXrViewIndex),
-            EVulkanFrameOpContextKind.OpenXrMirror);
+            request.RendersExternalSwapchainTarget
+                ? EVulkanFrameOpContextKind.OpenXrMirror
+                : EVulkanFrameOpContextKind.OpenXrEye);
 
 }

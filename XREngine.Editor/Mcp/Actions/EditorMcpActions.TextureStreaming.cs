@@ -71,6 +71,7 @@ namespace XREngine.Editor.Mcp
                 promotions_blocked = telemetry.PromotionsBlocked,
                 vulkan_frozen = telemetry.VulkanFrozen,
                 freeze_reason = telemetry.FreezeReason,
+                backend_upload_diagnostics = XRTexture2D.GetTextureStreamingBackendProfilerSummary(),
             };
 
         private static object DescribeTextureStreamingTexture(ImportedTextureStreamingTextureTelemetry row)

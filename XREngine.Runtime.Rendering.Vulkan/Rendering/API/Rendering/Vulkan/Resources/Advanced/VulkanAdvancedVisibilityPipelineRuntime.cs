@@ -24,7 +24,7 @@ internal sealed class VulkanAdvancedVisibilityPipelineRuntime
     internal VulkanAdvancedVisibilityPipelineRuntime(VulkanResourceRuntime resources)
         => _resources = resources;
 
-    internal bool TryGetComputePipelines(
+    internal VulkanAdvancedVisibilityPipelineReadiness TryGetComputePipelines(
         out VkRenderProgram earlyVisibility,
         out VkRenderProgram buildIndirect,
         out string reason)
@@ -36,7 +36,7 @@ internal sealed class VulkanAdvancedVisibilityPipelineRuntime
         if (!scene.IsReady)
         {
             reason = scene.AvailabilityReason;
-            return false;
+            return VulkanAdvancedVisibilityPipelineReadiness.Missing;
         }
 
         try
@@ -57,7 +57,7 @@ internal sealed class VulkanAdvancedVisibilityPipelineRuntime
                 reason = DescribeProgramFailure(
                     _earlyVisibilityProgram,
                     "early visibility compute program did not link a Vulkan pipeline layout");
-                return false;
+                return VulkanAdvancedVisibilityPipelineReadiness.Failed;
             }
             if (_resources.WrapperLookup.GetOrCreate(
                     _buildIndirectProgram,
@@ -66,24 +66,27 @@ internal sealed class VulkanAdvancedVisibilityPipelineRuntime
                 !indirect.IsLinked || indirect.PipelineLayout.Handle == 0)
             {
                 reason = "visibility indirect compute program did not link a Vulkan pipeline layout";
-                return false;
+                return VulkanAdvancedVisibilityPipelineReadiness.Failed;
             }
 
-            if (early.GetOrCreateComputePipeline().Handle == 0 ||
-                indirect.GetOrCreateComputePipeline().Handle == 0)
-            {
-                reason = "Vulkan refused an advanced visibility compute pipeline";
-                return false;
-            }
+            VulkanComputePipelineReadiness earlyReadiness = early.TryGetOrRequestComputePipeline(
+                int.MinValue, null, out _, out string earlyReason);
+            if (earlyReadiness != VulkanComputePipelineReadiness.Ready)
+                return DescribeComputePipelineReadiness(earlyReadiness, "early visibility", earlyReason, out reason);
+
+            VulkanComputePipelineReadiness indirectReadiness = indirect.TryGetOrRequestComputePipeline(
+                int.MinValue, null, out _, out string indirectReason);
+            if (indirectReadiness != VulkanComputePipelineReadiness.Ready)
+                return DescribeComputePipelineReadiness(indirectReadiness, "visibility indirect", indirectReason, out reason);
 
             earlyVisibility = early;
             buildIndirect = indirect;
-            return true;
+            return VulkanAdvancedVisibilityPipelineReadiness.Ready;
         }
         catch (Exception exception)
         {
             reason = exception.Message;
-            return false;
+            return VulkanAdvancedVisibilityPipelineReadiness.Failed;
         }
     }
 
@@ -92,7 +95,7 @@ internal sealed class VulkanAdvancedVisibilityPipelineRuntime
     /// separate from the early producer closure so a device cannot advertise
     /// the full shader family merely because the early pair linked.
     /// </summary>
-    internal bool TryGetLateVisibilityComputePipelines(
+    internal VulkanAdvancedVisibilityPipelineReadiness TryGetLateVisibilityComputePipelines(
         out VkRenderProgram buildDepthPyramid,
         out VkRenderProgram lateVisibility,
         out string reason)
@@ -106,7 +109,7 @@ internal sealed class VulkanAdvancedVisibilityPipelineRuntime
             reason = !scene.IsReady
                 ? scene.AvailabilityReason
                 : _resources.AdvancedVisibilityResources.AvailabilityReason;
-            return false;
+            return VulkanAdvancedVisibilityPipelineReadiness.Missing;
         }
 
         try
@@ -125,7 +128,7 @@ internal sealed class VulkanAdvancedVisibilityPipelineRuntime
                 depth.PipelineLayout.Handle == 0)
             {
                 reason = "depth-pyramid compute program did not link a Vulkan pipeline layout";
-                return false;
+                return VulkanAdvancedVisibilityPipelineReadiness.Failed;
             }
             if (_resources.WrapperLookup.GetOrCreate(
                     _lateVisibilityProgram,
@@ -134,23 +137,26 @@ internal sealed class VulkanAdvancedVisibilityPipelineRuntime
                 late.PipelineLayout.Handle == 0)
             {
                 reason = "late-visibility compute program did not link a Vulkan pipeline layout";
-                return false;
+                return VulkanAdvancedVisibilityPipelineReadiness.Failed;
             }
-            if (depth.GetOrCreateComputePipeline().Handle == 0 ||
-                late.GetOrCreateComputePipeline().Handle == 0)
-            {
-                reason = "Vulkan refused an advanced late-visibility compute pipeline";
-                return false;
-            }
+            VulkanComputePipelineReadiness depthReadiness = depth.TryGetOrRequestComputePipeline(
+                int.MinValue, null, out _, out string depthReason);
+            if (depthReadiness != VulkanComputePipelineReadiness.Ready)
+                return DescribeComputePipelineReadiness(depthReadiness, "depth pyramid", depthReason, out reason);
+
+            VulkanComputePipelineReadiness lateReadiness = late.TryGetOrRequestComputePipeline(
+                int.MinValue, null, out _, out string lateReason);
+            if (lateReadiness != VulkanComputePipelineReadiness.Ready)
+                return DescribeComputePipelineReadiness(lateReadiness, "late visibility", lateReason, out reason);
 
             buildDepthPyramid = depth;
             lateVisibility = late;
-            return true;
+            return VulkanAdvancedVisibilityPipelineReadiness.Ready;
         }
         catch (Exception exception)
         {
             reason = exception.Message;
-            return false;
+            return VulkanAdvancedVisibilityPipelineReadiness.Failed;
         }
     }
 
@@ -353,5 +359,17 @@ internal sealed class VulkanAdvancedVisibilityPipelineRuntime
         }
 
         return $"{fallback}: {status.FailureReason ?? "no backend failure reason"} ({status.Detail ?? "no backend detail"})";
+    }
+
+    private static VulkanAdvancedVisibilityPipelineReadiness DescribeComputePipelineReadiness(
+        VulkanComputePipelineReadiness readiness,
+        string pipelineName,
+        string detail,
+        out string reason)
+    {
+        reason = $"{pipelineName} compute pipeline: {detail}";
+        return readiness == VulkanComputePipelineReadiness.Pending
+            ? VulkanAdvancedVisibilityPipelineReadiness.Pending
+            : VulkanAdvancedVisibilityPipelineReadiness.Failed;
     }
 }

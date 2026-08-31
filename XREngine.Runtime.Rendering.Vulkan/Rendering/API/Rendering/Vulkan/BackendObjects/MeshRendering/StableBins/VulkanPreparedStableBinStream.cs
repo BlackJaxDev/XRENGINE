@@ -1183,8 +1183,6 @@ internal sealed class VulkanPreparedStableBinStream
                     in rasterPrimitive,
                     native.GetVertexBuffer(0),
                     native.GetVertexBinding(0),
-                    native.GetVertexBuffer(1),
-                    native.GetVertexBinding(1),
                     native.VertexBindingSignature,
                     in drawTemplate)
                 : new VulkanResidentDrawTemplateNativeState(

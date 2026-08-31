@@ -756,6 +756,14 @@ internal sealed class EngineProfilerDataSource : IProfilerDataSource
             CpuQueryAsyncOccluded = OcclusionTelemetry.CpuQueryAsyncOccluded,
             CpuSocTested = OcclusionTelemetry.CpuSocTested,
             CpuSocCulled = OcclusionTelemetry.CpuSocCulled,
+            HiZBuildGpuMs = OcclusionTelemetry.HiZBuildGpuMs,
+            HiZTestGpuMs = OcclusionTelemetry.HiZTestGpuMs,
+            HiZBuildGpuSourceFrame = OcclusionTelemetry.HiZBuildGpuSourceFrame,
+            HiZTestGpuSourceFrame = OcclusionTelemetry.HiZTestGpuSourceFrame,
+            HiZBuildGpuAgeFrames = OcclusionTelemetry.HiZBuildGpuAgeFrames,
+            HiZTestGpuAgeFrames = OcclusionTelemetry.HiZTestGpuAgeFrames,
+            HiZBuildGpuAvailability = OcclusionTelemetry.HiZBuildGpuAvailability.ToString(),
+            HiZTestGpuAvailability = OcclusionTelemetry.HiZTestGpuAvailability.ToString(),
         };
 
     private static FrameOutputManifestData ConvertFrameOutputManifest(RuntimeEngine.Rendering.Stats.FrameOutputManifestSnapshot snapshot)

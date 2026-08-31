@@ -128,6 +128,17 @@ public partial class GLTexture2D
 
     protected override void SetParameters()
     {
+        // The base implementation defers its own writes, but this override issues
+        // additional DSA parameter calls after base.SetParameters returns.
+        if (DeferBindlessParameterUpdateIfFrozen())
+            return;
+
+        // Runtime-managed uploads set this only after their final mip data is present.
+        // Clear the temporary visible range before any parameter application so the first
+        // subsequently acquired bindless handle freezes the intended, full mip range.
+        if (Data.RuntimeManagedProgressiveFinalizePending)
+            ClearProgressiveVisibleMipRange();
+
         base.SetParameters();
 
         if (IsMultisampleTarget)
@@ -169,7 +180,6 @@ public partial class GLTexture2D
         {
             Data.RuntimeManagedProgressiveFinalizePending = false;
             Data.RuntimeManagedProgressiveUploadActive = false;
-            ClearProgressiveVisibleMipRange();
         }
     }
 }

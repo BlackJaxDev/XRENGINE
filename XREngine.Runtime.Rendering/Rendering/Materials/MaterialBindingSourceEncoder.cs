@@ -28,6 +28,8 @@ namespace XREngine.Rendering.Materials
                 flags |= 1u << 1;
             if (rm is not null)
                 flags |= 1u << 2;
+            if (material.GetEffectiveTransparencyMode() is ETransparencyMode.Masked or ETransparencyMode.AlphaToCoverage)
+                flags |= GPUMaterialEntry.MaskedCoverageFlag;
 
             return new MaterialBindingSourceSnapshot(
                 new GPUMaterialEntry

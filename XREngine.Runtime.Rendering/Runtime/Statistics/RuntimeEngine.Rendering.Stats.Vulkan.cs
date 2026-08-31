@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Threading;
+using XREngine.Rendering.Vulkan;
 
 namespace XREngine
 {
@@ -77,6 +78,11 @@ namespace XREngine
                     private static long _vulkanStageIndirectTicks;
                     private static long _vulkanStageDrawTicks;
                     private static long _vulkanFrameGpuCommandBufferTicks;
+                    private static readonly object _vulkanFrameGpuCommandBufferTimingGate = new();
+                    private static VulkanGpuCommandBufferTimingSample _vulkanFrameGpuCommandBufferCurrentTiming =
+                        new(EVulkanGpuTimingAvailability.Disabled, 0u, 0u, 0u, -1, 0u);
+                    private static VulkanGpuCommandBufferTimingSample _lastCompletedVulkanFrameGpuCommandBufferTiming =
+                        new(EVulkanGpuTimingAvailability.Unavailable, 0u, 0u, 0u, -1, 0u);
                     private static long _vulkanRecordCommandBufferAllocatedBytes;
                     private static long _vulkanPreparedMeshOperationCohortHits;
                     private static long _vulkanPreparedMeshOperationCohortBuilds;
@@ -620,6 +626,57 @@ namespace XREngine
                     public static double VulkanFramePresentMs => LatestVulkanFrameTelemetry.Detail.PresentQueue.TotalMilliseconds;
                     public static double VulkanFrameTotalMs => LatestVulkanFrameTelemetry.TotalElapsed.TotalMilliseconds;
                     public static double VulkanFrameGpuCommandBufferMs => TimeSpan.FromTicks(_lastFrameVulkanFrameGpuCommandBufferTicks).TotalMilliseconds;
+                    /// <summary>Current nonblocking query state; completed data remains separately available.</summary>
+                    public static EVulkanGpuTimingAvailability VulkanFrameGpuCommandBufferTimingAvailability
+                    {
+                        get
+                        {
+                            lock (_vulkanFrameGpuCommandBufferTimingGate)
+                                return _vulkanFrameGpuCommandBufferCurrentTiming.Availability;
+                        }
+                    }
+                    public static ulong VulkanFrameGpuCommandBufferTimingLiveSourceRenderFrameId
+                    {
+                        get
+                        {
+                            lock (_vulkanFrameGpuCommandBufferTimingGate)
+                                return _vulkanFrameGpuCommandBufferCurrentTiming.SourceRenderFrameId;
+                        }
+                    }
+                    public static ulong VulkanFrameGpuCommandBufferTimingLiveSequence
+                    {
+                        get
+                        {
+                            lock (_vulkanFrameGpuCommandBufferTimingGate)
+                                return _vulkanFrameGpuCommandBufferCurrentTiming.Sequence;
+                        }
+                    }
+                    public static int VulkanFrameGpuCommandBufferTimingLiveImageSlot
+                    {
+                        get
+                        {
+                            lock (_vulkanFrameGpuCommandBufferTimingGate)
+                                return _vulkanFrameGpuCommandBufferCurrentTiming.ImageSlot;
+                        }
+                    }
+                    public static VulkanGpuCommandBufferTimingSample LastCompletedVulkanFrameGpuCommandBufferTiming
+                    {
+                        get
+                        {
+                            lock (_vulkanFrameGpuCommandBufferTimingGate)
+                                return _lastCompletedVulkanFrameGpuCommandBufferTiming;
+                        }
+                    }
+                    public static VulkanGpuCommandBufferTimingSnapshot VulkanFrameGpuCommandBufferTimingSnapshot
+                    {
+                        get
+                        {
+                            lock (_vulkanFrameGpuCommandBufferTimingGate)
+                                return new(
+                                    _vulkanFrameGpuCommandBufferCurrentTiming,
+                                    _lastCompletedVulkanFrameGpuCommandBufferTiming);
+                        }
+                    }
                     public static double VulkanFrameSampleTimingQueriesMs => LatestVulkanFrameTelemetry.Detail.SampleTimingQueries.TotalMilliseconds;
                     public static double VulkanFrameDrainRetiredResourcesMs => LatestVulkanFrameTelemetry.Detail.DrainRetiredResources.TotalMilliseconds;
                     public static double VulkanFrameAcquireBridgeSubmitMs => LatestVulkanFrameTelemetry.Detail.AcquireBridgeSubmit.TotalMilliseconds;
@@ -1738,6 +1795,71 @@ namespace XREngine
                             return;
 
                         Interlocked.Exchange(ref _vulkanFrameGpuCommandBufferTicks, commandBufferTime.Ticks);
+                    }
+
+                    public static void RecordVulkanFrameGpuCommandBufferTimingDisabled()
+                        => SetVulkanFrameGpuCommandBufferTimingLive(
+                            EVulkanGpuTimingAvailability.Disabled, 0u, 0u, -1);
+
+                    public static void RecordVulkanFrameGpuCommandBufferTimingPending(
+                        ulong sourceRenderFrameId,
+                        ulong sequence,
+                        int imageSlot)
+                        => SetVulkanFrameGpuCommandBufferTimingLive(
+                            EVulkanGpuTimingAvailability.Pending, sourceRenderFrameId, sequence, imageSlot);
+
+                    public static void RecordVulkanFrameGpuCommandBufferTimingUnavailable(
+                        ulong sourceRenderFrameId = 0u,
+                        ulong sequence = 0u,
+                        int imageSlot = -1)
+                        => SetVulkanFrameGpuCommandBufferTimingLive(
+                            EVulkanGpuTimingAvailability.Unavailable, sourceRenderFrameId, sequence, imageSlot);
+
+                    public static void RecordVulkanFrameGpuCommandBufferTimingCompleted(
+                        ulong elapsedNanoseconds,
+                        ulong sourceRenderFrameId,
+                        ulong currentRenderFrameId,
+                        ulong sequence,
+                        int imageSlot)
+                    {
+                        if (!EnableTracking)
+                            return;
+
+                        ulong ageFrames = currentRenderFrameId >= sourceRenderFrameId
+                            ? currentRenderFrameId - sourceRenderFrameId
+                            : ulong.MaxValue;
+                        Interlocked.Exchange(ref _vulkanFrameGpuCommandBufferTicks, checked((long)(elapsedNanoseconds / 100u)));
+                        VulkanGpuCommandBufferTimingSample completed = new(
+                            EVulkanGpuTimingAvailability.Completed,
+                            sourceRenderFrameId,
+                            ageFrames,
+                            sequence,
+                            imageSlot,
+                            elapsedNanoseconds);
+                        lock (_vulkanFrameGpuCommandBufferTimingGate)
+                        {
+                            _lastCompletedVulkanFrameGpuCommandBufferTiming = completed;
+                            _vulkanFrameGpuCommandBufferCurrentTiming = completed;
+                        }
+                    }
+
+                    private static void SetVulkanFrameGpuCommandBufferTimingLive(
+                        EVulkanGpuTimingAvailability availability,
+                        ulong sourceRenderFrameId,
+                        ulong sequence,
+                        int imageSlot)
+                    {
+                        if (!EnableTracking)
+                            return;
+
+                        lock (_vulkanFrameGpuCommandBufferTimingGate)
+                            _vulkanFrameGpuCommandBufferCurrentTiming = new(
+                                availability,
+                                sourceRenderFrameId,
+                                0u,
+                                sequence,
+                                imageSlot,
+                                0u);
                     }
 
 

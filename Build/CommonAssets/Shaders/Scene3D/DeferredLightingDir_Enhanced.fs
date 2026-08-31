@@ -47,12 +47,26 @@ struct DirLight
     mat4 WorldToLightInvViewMatrix;
     mat4 WorldToLightProjMatrix;
     vec3 Direction;
-    float CascadeSplits[MAX_CASCADES]; // For cascaded shadow maps
-    mat4 CascadeMatrices[MAX_CASCADES]; // Light view-projection matrices for each cascade
     int CascadeCount;
     float LightSize; // For soft shadows
 };
 uniform DirLight LightData;
+
+struct DirectionalShadowGpuRecord
+{
+    mat4 CurrentWorldToLight;
+    mat4 RenderedWorldToLight;
+    vec4 CurrentSplitBlendBias;
+    vec4 RenderedSplitBlendBias;
+    vec4 ReceiverOffsetsAge;
+    ivec4 AtlasPacked0;
+    vec4 AtlasUvScaleBias;
+    vec4 AtlasDepthParams;
+};
+layout(std430, binding = 39) readonly buffer DirectionalShadowRecordsBuffer
+{
+    DirectionalShadowGpuRecord DirectionalShadowRecords[];
+};
 
 // Optimized shadow bias calculation with depth awareness
 float GetShadowBias(in float NoL, in float depth, in float cascadeIndex)
@@ -175,7 +189,7 @@ int GetCascadeIndex(in vec3 fragPosWS, in vec3 CameraPosition)
     
     for (int i = 0; i < LightData.CascadeCount; ++i)
     {
-        if(dist < LightData.CascadeSplits[i])
+        if(dist < DirectionalShadowRecords[i].CurrentSplitBlendBias.x)
         {
             return i;
         }
@@ -197,7 +211,7 @@ float ReadShadowMap2D(in vec3 fragPosWS, in vec3 N, in float NoL)
     int cascadeIndex = GetCascadeIndex(fragPosWS, CameraPosition);
     
     // Get the appropriate light matrix
-    mat4 lightMatrix = LightData.CascadeMatrices[cascadeIndex];
+    mat4 lightMatrix = DirectionalShadowRecords[cascadeIndex].CurrentWorldToLight;
     
     // Offset receiver along normal to reduce acne/light leaks
     vec3 offsetPosWS = fragPosWS + N * ShadowBiasMax * 1.0f;

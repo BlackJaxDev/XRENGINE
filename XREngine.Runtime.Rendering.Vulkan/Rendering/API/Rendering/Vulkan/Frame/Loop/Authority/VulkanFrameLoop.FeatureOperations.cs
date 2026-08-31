@@ -45,9 +45,15 @@ internal sealed partial class VulkanFrameLoop
                 "The Vulkan advanced visibility family currently admits exactly one view; stereo and multiview requests remain fail-closed.";
             return false;
         }
-        if (!SupportsAdvancedVisibilityStage(request.Stage))
+        VulkanAdvancedVisibilityPipelineReadiness pipelineReadiness =
+            _commandRuntime.GetAdvancedVisibilityPipelineReadiness(out string pipelineReason);
+        if (!SupportsAdvancedVisibilityStage(request.Stage) ||
+            pipelineReadiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
         {
-            failureReason = "The Vulkan zero-readback visibility lane is unavailable on this device or resource generation.";
+            failureReason = pipelineReadiness is VulkanAdvancedVisibilityPipelineReadiness.Pending or
+                VulkanAdvancedVisibilityPipelineReadiness.Missing
+                ? $"The Vulkan zero-readback visibility lane is waiting for {pipelineReadiness} pipeline admission: {pipelineReason}"
+                : $"The Vulkan zero-readback visibility lane is unavailable on this device or resource generation: {pipelineReason}";
             return false;
         }
 
@@ -105,8 +111,28 @@ internal sealed partial class VulkanFrameLoop
             request.SelectionTargetName,
             request.DepthTargetName,
             request.CurrentDepthPyramidTargetName);
-        _frameOperationQueue.EnqueuePrepared(
-            new AdvancedVisibilityOp(passIndex, vulkanRequest, context));
+        if (!_frameOperationQueue.TryAcquireAdvancedVisibilityInput(
+                in vulkanRequest,
+                out VulkanAdvancedVisibilityInputLease inputLease,
+                out failureReason))
+        {
+            return false;
+        }
+
+        try
+        {
+            _frameOperationQueue.EnqueuePrepared(
+                new AdvancedVisibilityOp(
+                    passIndex,
+                    vulkanRequest,
+                    inputLease,
+                    context));
+        }
+        catch
+        {
+            inputLease.Release();
+            throw;
+        }
         failureReason = "Ready";
         return true;
     }

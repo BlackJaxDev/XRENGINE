@@ -12,6 +12,8 @@ namespace XREngine.Rendering.Vulkan;
 internal sealed partial class VulkanCommandRuntime
 {
     private const uint FrameTimingQueryCount = 2;
+    private static readonly string[] NativeHiZBuildGpuProfilerPath = ["Advanced", "Visibility", "HiZBuild"];
+    private static readonly string[] NativeHiZTestGpuProfilerPath = ["Advanced", "Visibility", "HiZTest"];
     private long _recordedPrimaryFrameCounter;
     private long _primaryReuseCohortGeneration;
 
@@ -776,13 +778,30 @@ internal sealed partial class VulkanCommandRuntime
         int passIndex)
     {
         if (!TryReserveVulkanGpuProfilerQueries(
+                commandBuffer, out QueryPool queryPool, out uint startQuery, out uint endQuery))
+            return default;
+        return BeginReservedVulkanGpuProfilerScope(
+            commandBuffer, queryPool, startQuery, endQuery,
+            BuildVulkanGpuProfilerPath(operation, passIndex));
+    }
+
+    private VulkanGpuProfilerScope TryBeginVulkanGpuProfilerScope(
+        CommandBuffer commandBuffer,
+        string[] path)
+    {
+        if (!TryReserveVulkanGpuProfilerQueries(
                 commandBuffer,
                 out QueryPool queryPool,
                 out uint startQuery,
                 out uint endQuery))
             return default;
 
-        string[] path = BuildVulkanGpuProfilerPath(operation, passIndex);
+        return BeginReservedVulkanGpuProfilerScope(commandBuffer, queryPool, startQuery, endQuery, path);
+    }
+
+    private VulkanGpuProfilerScope BeginReservedVulkanGpuProfilerScope(
+        CommandBuffer commandBuffer, QueryPool queryPool, uint startQuery, uint endQuery, string[] path)
+    {
         Api.CmdWriteTimestamp(
             commandBuffer,
             PipelineStageFlags.TopOfPipeBit,
@@ -1356,14 +1375,36 @@ internal sealed partial class VulkanCommandRuntime
     /// </summary>
     internal unsafe void CmdPipelineBarrier2Tracked(
         CommandBuffer commandBuffer,
-        in DependencyInfo dependencyInfo)
+        in DependencyInfo dependencyInfo,
+        ReadOnlySpan<VulkanFrozenBufferBarrier> frozenBufferBarriers = default)
     {
+        if (!frozenBufferBarriers.IsEmpty &&
+            frozenBufferBarriers.Length != dependencyInfo.BufferMemoryBarrierCount)
+        {
+            throw new VulkanPlanPreconditionException("Frozen buffer barrier stamps do not match the native dependency batch.");
+        }
         for (uint index = 0; index < dependencyInfo.BufferMemoryBarrierCount; index++)
         {
-            PrimaryCommandEncoder.Track(
+            BufferMemoryBarrier2 barrier = dependencyInfo.PBufferMemoryBarriers[index];
+            if (frozenBufferBarriers.IsEmpty)
+            {
+                PrimaryCommandEncoder.Track(commandBuffer, ObjectType.Buffer, barrier.Buffer.Handle);
+                continue;
+            }
+
+            VulkanFrozenBufferBarrier frozen = frozenBufferBarriers[(int)index];
+            if (frozen.NativeBuffer.Handle == 0 || frozen.NativeGeneration == 0UL ||
+                frozen.NativeBuffer.Handle != barrier.Buffer.Handle)
+            {
+                throw new VulkanPlanPreconditionException(
+                    $"Frozen buffer barrier '{frozen.LogicalResourceName}' does not match native dependency buffer 0x{barrier.Buffer.Handle:X}.");
+            }
+
+            TrackCommandBufferResource(
                 commandBuffer,
-                ObjectType.Buffer,
-                dependencyInfo.PBufferMemoryBarriers[index].Buffer.Handle);
+                new VulkanResourceLifetimeKey(ObjectType.Buffer, frozen.NativeBuffer.Handle),
+                frozen.LogicalResourceName,
+                frozen.NativeGeneration);
         }
         for (uint index = 0; index < dependencyInfo.ImageMemoryBarrierCount; index++)
         {
@@ -1540,7 +1581,13 @@ internal sealed partial class VulkanCommandRuntime
 
         BindPipelineTracked(commandBuffer, PipelineBindPoint.Compute, pipeline);
         EnsureComputeStorageImageLayoutsForDispatch(commandBuffer, operation.Snapshot);
-        PushConstantsTracked(commandBuffer, operation.Program.PipelineLayout, CommonPushConstantStageFlags, 0, new ComputeDispatchPushConstants(0u, 0u, 0u, 0u));
+        PushConstantsTracked(
+            commandBuffer,
+            operation.Program.PipelineLayout,
+            VulkanMeshRenderingConventions.GetCommonPushConstantStageFlags(
+                _deviceContext),
+            0,
+            new ComputeDispatchPushConstants(0u, 0u, 0u, 0u));
         if (!operation.Program.TryBuildAndBindComputeDescriptorSets(CreateProgramRecordingRequest(commandBuffer), imageIndex, operation.Snapshot, 0, PipelineBindPoint.Compute, out _, out DescriptorSet[] boundDescriptorSets, out IReadOnlyList<(Buffer buffer, DeviceMemory memory)> temporaryBuffers))
         {
             foreach ((Buffer buffer, DeviceMemory memory) in temporaryBuffers) DestroyBuffer(buffer, memory);
@@ -1624,7 +1671,8 @@ internal sealed partial class VulkanCommandRuntime
         PushConstantsTracked(
             commandBuffer,
             operation.Program.PipelineLayout,
-            CommonPushConstantStageFlags,
+            VulkanMeshRenderingConventions.GetCommonPushConstantStageFlags(
+                _deviceContext),
             0,
             new ComputeDispatchPushConstants(0u, 0u, 0u, 0u));
 

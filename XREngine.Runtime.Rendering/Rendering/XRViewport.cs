@@ -1251,6 +1251,23 @@ namespace XREngine.Rendering
                 InternalHeight);
         }
 
+        /// <summary>
+        /// Prepares the normal retained shadow package without CPU visibility
+        /// collection. The GPU scene owns caster membership; the package still
+        /// owns view/resource identity and must pass normal publication validation.
+        /// Call during collection, then publish with <see cref="SwapBuffers"/>.
+        /// </summary>
+        internal bool PrepareGpuShadowFramePackage()
+        {
+            if (_destroyed || ShouldSuspendPipelineWork(nameof(PrepareGpuShadowFramePackage)) ||
+                _renderPipeline.AssignedPipeline is not ShadowRenderPipeline ||
+                Camera is null || World?.VisualScene is null)
+                return false;
+
+            PrepareBackendReadyFramePackage(_renderPipeline.MeshRenderCommands);
+            return true;
+        }
+
         private static int ResolveRenderGraphGeneration(
             IReadOnlyCollection<RenderPassMetadata>? passMetadata)
             => passMetadata is RenderPassMetadataSnapshot snapshot
@@ -1553,14 +1570,26 @@ namespace XREngine.Rendering
             XRCamera? cameraOverride = null,
             bool shadowPass = false,
             XRMaterial? forcedMaterial = null)
+            => TryRender(targetFbo, worldOverride, cameraOverride, shadowPass, forcedMaterial);
+
+        /// <summary>
+        /// Records the viewport and returns false when admission prevented scene
+        /// command execution. Deferred submission remains a separate backend receipt.
+        /// </summary>
+        public bool TryRender(
+            XRFrameBuffer? targetFbo = null,
+            IRuntimeRenderWorld? worldOverride = null,
+            XRCamera? cameraOverride = null,
+            bool shadowPass = false,
+            XRMaterial? forcedMaterial = null)
         {
             if (_destroyed)
-                return;
+                return false;
 
             using var sample = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRViewport.Render");
 
             if (ShouldSuspendPipelineWork(nameof(Render)))
-                return;
+                return false;
 
             FrameOutputPacingDecision pacing = _renderingFrameOutputPacing.FrameId != 0UL
                 ? _renderingFrameOutputPacing
@@ -1578,7 +1607,7 @@ namespace XREngine.Rendering
                     sceneRendered: false,
                     commandCount: GetRenderingCommandCountForTelemetry(),
                     elapsedTicks: System.Diagnostics.Stopwatch.GetTimestamp() - skipStart);
-                return;
+                return false;
             }
 
             XRCamera? camera = cameraOverride ?? ResolveActiveCameraWithPawnRefresh();
@@ -1596,7 +1625,7 @@ namespace XREngine.Rendering
                     Window?.Viewports.Contains(this) == true,
                     _destroyed,
                     _renderPipeline.AssignedPipeline?.GetType().Name ?? "<null>");
-                return;
+                return false;
             }
 
             var world = worldOverride ?? World;
@@ -1610,7 +1639,7 @@ namespace XREngine.Rendering
                     worldOverride is null,
                     WorldInstanceOverride is null,
                     CameraComponent?.SceneNode?.World is null);
-                return;
+                return false;
             }
 
             if (world.VisualScene is null)
@@ -1621,7 +1650,7 @@ namespace XREngine.Rendering
                     "[RenderDiag] Render skipped: world.VisualScene is null. VP[{0}] World={1}",
                     Index,
                     world.TargetWorldName ?? "<unknown>");
-                return;
+                return false;
             }
 
             if (_renderPipeline.Pipeline is null)
@@ -1638,7 +1667,7 @@ namespace XREngine.Rendering
             if (RuntimeRenderingHostServices.BackendInterop.IsViewportCurrentlyRendering(this))
             {
                 Debug.RenderingWarning("Render recursion: Viewport is already currently rendering.");
-                return;
+                return false;
             }
 
             // Diagnostic: Log camera transform state during render to help diagnose play mode transition issues
@@ -1677,7 +1706,7 @@ namespace XREngine.Rendering
 
                 LastRenderedTargetFBO = targetFbo;
                 unchecked { _sceneRenderSequenceId++; }
-                _renderPipeline.Render(
+                bool recorded = _renderPipeline.TryRender(
                     world.VisualScene,
                     camera,
                     null,
@@ -1695,10 +1724,11 @@ namespace XREngine.Rendering
                 RecordFrameOutput(
                     EFrameOutputPhase.Render,
                     pacing,
-                    rendered: true,
-                    sceneRendered: !Suppress3DSceneRendering,
+                    rendered: recorded,
+                    sceneRendered: recorded && !Suppress3DSceneRendering,
                     commandCount: GetRenderingCommandCountForTelemetry(),
                     elapsedTicks: System.Diagnostics.Stopwatch.GetTimestamp() - renderStart);
+                return recorded;
             }
         }
 

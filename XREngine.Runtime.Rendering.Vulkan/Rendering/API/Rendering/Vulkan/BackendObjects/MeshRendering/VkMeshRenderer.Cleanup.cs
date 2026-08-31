@@ -105,6 +105,139 @@ internal unsafe partial class VkMeshRenderer
 		_descriptorDirty = true;
 	}
 
+	/// <summary>
+	/// Drops only immutable descriptor allocations whose locally-owned set tier
+	/// still names a superseded native buffer generation. Shared material tiers
+	/// are intentionally excluded because this renderer does not own them.
+	/// </summary>
+	internal int ReleaseSupersededDescriptorAllocations(
+		ReadOnlySpan<VulkanDescriptorSetGenerationReference> affectedSets)
+	{
+		int detachedCount = 0;
+		lock (_recordDrawSync)
+		{
+			List<DescriptorAllocationKey>? keysToRelease = null;
+			if (!affectedSets.IsEmpty)
+			{
+				foreach (KeyValuePair<DescriptorAllocationKey, DescriptorAllocation> pair in _descriptorAllocations)
+				{
+					if (AllocationOwnsAffectedDescriptorSet(pair.Value, affectedSets))
+						(keysToRelease ??= []).Add(pair.Key);
+				}
+			}
+
+			if (keysToRelease is not null)
+			{
+				for (int index = 0; index < keysToRelease.Count; index++)
+				{
+					DescriptorAllocationKey key = keysToRelease[index];
+					if (!_descriptorAllocations.Remove(key, out DescriptorAllocation? allocation))
+						continue;
+
+					bool wasActive = ReferenceEquals(_activeDescriptorAllocation, allocation);
+					RemoveDescriptorDrawSlotLookupEntries(allocation);
+					RemoveDescriptorOwnerLookupEntries(allocation);
+					if (BackendContext.Resources.Descriptors.ReleaseSharedMeshDescriptorAllocation(key, allocation))
+						_pendingSupersededDescriptorAllocationRetirements.Enqueue((key, allocation));
+					if (wasActive)
+						ClearActiveDescriptorAllocation();
+					detachedCount++;
+				}
+			}
+
+			if (detachedCount != 0)
+				_descriptorDirty = true;
+		}
+
+		DrainPendingSupersededDescriptorAllocationRetirements();
+		return detachedCount;
+	}
+
+	private void DrainPendingSupersededDescriptorAllocationRetirements()
+	{
+		while (true)
+		{
+			(DescriptorAllocationKey Key, DescriptorAllocation Allocation) pending;
+			lock (_recordDrawSync)
+			{
+				if (_pendingSupersededDescriptorAllocationRetirements.Count == 0)
+					return;
+
+				pending = _pendingSupersededDescriptorAllocationRetirements.Peek();
+			}
+
+			// Keep the detached allocation queued if normal lifetime retirement throws.
+			ReleaseDescriptorAllocationResources(pending.Allocation);
+			ReleaseDescriptorOwnershipTelemetry(pending.Allocation);
+			lock (_recordDrawSync)
+			{
+				if (_pendingSupersededDescriptorAllocationRetirements.Count != 0 &&
+					ReferenceEquals(
+						_pendingSupersededDescriptorAllocationRetirements.Peek().Allocation,
+						pending.Allocation))
+				{
+					_pendingSupersededDescriptorAllocationRetirements.Dequeue();
+				}
+			}
+		}
+	}
+
+	private static bool AllocationOwnsAffectedDescriptorSet(
+		DescriptorAllocation allocation,
+		ReadOnlySpan<VulkanDescriptorSetGenerationReference> affectedSets)
+	{
+		for (int frameSlot = 0; frameSlot < allocation.Sets.Length; frameSlot++)
+		{
+			DescriptorSet[] sets = allocation.Sets[frameSlot];
+			for (int setIndex = 0; setIndex < sets.Length; setIndex++)
+			{
+				if (setIndex >= 32 || (allocation.ActiveSetMask & (1u << setIndex)) == 0)
+					continue;
+
+				ulong handle = sets[setIndex].Handle;
+				for (int affectedIndex = 0; affectedIndex < affectedSets.Length; affectedIndex++)
+				{
+					if (affectedSets[affectedIndex].Set.Handle == handle)
+						return true;
+				}
+			}
+		}
+
+		return false;
+	}
+
+	private void RemoveDescriptorDrawSlotLookupEntries(DescriptorAllocation allocation)
+	{
+		while (true)
+		{
+			int keyToRemove = default;
+			bool found = false;
+			foreach (KeyValuePair<int, DescriptorAllocation> pair in _descriptorAllocationsByDrawSlot)
+			{
+				if (!ReferenceEquals(pair.Value, allocation))
+					continue;
+
+				keyToRemove = pair.Key;
+				found = true;
+				break;
+			}
+			if (!found)
+				return;
+
+			_descriptorAllocationsByDrawSlot.Remove(keyToRemove);
+		}
+	}
+
+	private void ClearActiveDescriptorAllocation()
+	{
+		_activeDescriptorAllocation = null;
+		_descriptorSets = null;
+		_descriptorSchemaFingerprint = 0;
+		_descriptorResourceFingerprint = 0;
+		_descriptorResourceFingerprintDetails = string.Empty;
+		_descriptorPool = default;
+	}
+
 	private void ReleaseDescriptorAllocation(bool destroyPoolImmediately = false)
 	{
 		ulong activePoolHandle = _descriptorPool.Handle;

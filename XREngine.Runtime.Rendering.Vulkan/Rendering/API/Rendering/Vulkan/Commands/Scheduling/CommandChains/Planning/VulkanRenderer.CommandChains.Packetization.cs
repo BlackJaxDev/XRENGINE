@@ -1288,9 +1288,9 @@ internal sealed partial class VulkanCommandRuntime
             EVulkanPrimaryPlanNodeKind.ComputeDispatch =>
                 CreateComputeDispatchDescriptorSnapshot(operations.GetComputeDispatch(index).Snapshot),
             EVulkanPrimaryPlanNodeKind.IndirectDraw =>
-                CreateDescriptorSnapshotFromSignature(unchecked((ulong)(operations.GetIndirectDraw(index).BindlessMaterialTextures?.Program.GetHashCode() ?? 0))),
+                CreateMeshDrawDescriptorSnapshot(operations.GetIndirectDraw(index).Draw),
             EVulkanPrimaryPlanNodeKind.MeshTaskDispatchIndirectCount =>
-                CreateDescriptorSnapshotFromSignature(unchecked((ulong)(operations.GetMeshTask(index).BindlessMaterialTextures?.Program.GetHashCode() ?? 0))),
+                CreateComputeDispatchDescriptorSnapshot(operations.GetMeshTask(index).ProgramBindingSnapshot),
             _ => default,
         };
     }
@@ -1392,14 +1392,45 @@ internal sealed partial class VulkanCommandRuntime
         return Math.Max(sourceIndex, 0);
     }
 
+    /// <summary>
+    /// Returns the stable occurrence ordinal for a direct compute dispatch in a
+    /// sealed operation stream. The source operation index identifies the
+    /// dispatch, while the ordinal deliberately counts only direct compute
+    /// dispatches: inserting a draw, copy, or barrier must not reshape reusable
+    /// descriptor identities. Descriptor sets are prepared per dispatch, so
+    /// this identity must include secondary-owned dispatches rather than using
+    /// the thin-primary ordinal.
+    /// </summary>
+    internal static int ResolveComputeDispatchOccurrenceOrdinal(
+        FrameOperationStream ops,
+        int sourceIndex)
+    {
+        int occurrenceOrdinal = 0;
+        int lastIndex = Math.Min(sourceIndex, ops.Count - 1);
+        for (int operationIndex = 0; operationIndex <= lastIndex; operationIndex++)
+        {
+            if (ops.GetHeader(operationIndex).OpCode != EVulkanPrimaryPlanNodeKind.ComputeDispatch)
+                continue;
+
+            if (operationIndex == sourceIndex)
+                return occurrenceOrdinal;
+
+            occurrenceOrdinal++;
+        }
+
+        return Math.Max(occurrenceOrdinal, 0);
+    }
+
     internal static ulong ComputeReusableComputeDescriptorBindingKey(
         in ComputeDispatchPayload dispatch,
         in FrameOperationHeader header,
         in FrameOpContext context,
+        EVulkanAcceptedFrameLane streamNamespace,
         int descriptorBindingOrdinal)
     {
         FrameOpSignatureHasher hash = new();
         hash.Add(0x434F4D5055444553UL);
+        hash.Add((int)streamNamespace);
         hash.Add(descriptorBindingOrdinal);
         hash.Add(header.PassIndex);
         hash.Add(header.TargetIdentity);

@@ -1,4 +1,5 @@
 using XREngine.Rendering.Shadows;
+using XREngine.Rendering.Materials;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -27,6 +28,8 @@ internal sealed class VulkanAcceptedFramePlan
     private readonly long[] _requiredTextureGenerations = new long[UploadCapacity];
     private readonly VulkanBindlessMaterialTextureReceipt[] _bindlessTextureReceipts =
         new VulkanBindlessMaterialTextureReceipt[UploadCapacity];
+    private readonly GPUMaterialTextureReference[] _bindlessDescriptorReferences =
+        new GPUMaterialTextureReference[UploadCapacity];
     private readonly VulkanFrameDependencyTicket[] _dependencies =
         new VulkanFrameDependencyTicket[DependencyCapacity];
     private readonly VulkanTimelineGpuFence?[] _submissionMarkers =
@@ -39,6 +42,7 @@ internal sealed class VulkanAcceptedFramePlan
     private bool _submissionMarkerOwnershipTransferred;
     private VulkanDescriptorManager? _bindlessReceiptLeaseOwner;
     private int _bindlessReceiptCount;
+    private int _bindlessDescriptorReferenceCount;
 
     internal VulkanCanonicalPublicationPinSet CanonicalPublicationPins { get; } =
         new(VulkanMeshOperationRequestQueue.Capacity);
@@ -309,6 +313,8 @@ internal sealed class VulkanAcceptedFramePlan
                 "Texture readiness closure requires a sealed logical plan.");
 
         bool referencesBindlessTable = false;
+        _bindlessDescriptorReferences.AsSpan(0, _bindlessDescriptorReferenceCount).Clear();
+        _bindlessDescriptorReferenceCount = 0;
         CaptureOperationTextureReferences(
             logicalPlan.GetNativeStaticOperationsForRecording(),
             ref referencesBindlessTable);
@@ -320,6 +326,9 @@ internal sealed class VulkanAcceptedFramePlan
             ref referencesBindlessTable);
         if (referencesBindlessTable)
             CaptureBindlessMaterialTextureReferences(descriptorManager);
+        else
+            CaptureBindlessMaterialTextureReferences(descriptorManager,
+                _bindlessDescriptorReferences.AsSpan(0, _bindlessDescriptorReferenceCount));
     }
 
     private void CaptureOperationTextureReferences(
@@ -345,16 +354,18 @@ internal sealed class VulkanAcceptedFramePlan
                     CaptureDrawTextureReferences(in indirectDraw);
                     CaptureSnapshotTextureReferences(
                         indirectDraw.ProgramBindingSnapshot);
-                    referencesBindlessTable |=
-                        indirect.BindlessMaterialTextures.HasValue;
+                    CaptureBindlessMaterialDescriptorClosure(
+                        indirect.BindlessMaterialTextures,
+                        ref referencesBindlessTable);
                     break;
                 case EVulkanPrimaryPlanNodeKind.MeshTaskDispatchIndirectCount:
                     ref readonly MeshTaskDispatchIndirectCountPayload meshTask =
                         ref operations.GetMeshTask(index);
                     CaptureSnapshotTextureReferences(
                         meshTask.ProgramBindingSnapshot);
-                    referencesBindlessTable |=
-                        meshTask.BindlessMaterialTextures.HasValue;
+                    CaptureBindlessMaterialDescriptorClosure(
+                        meshTask.BindlessMaterialTextures,
+                        ref referencesBindlessTable);
                     break;
                 case EVulkanPrimaryPlanNodeKind.ComputeDispatch:
                     CaptureSnapshotTextureReferences(
@@ -485,6 +496,84 @@ internal sealed class VulkanAcceptedFramePlan
             _bindlessReceiptLeaseOwner = null;
             _bindlessReceiptCount = 0;
             throw;
+        }
+    }
+
+    private void CaptureBindlessMaterialTextureReferences(
+        VulkanDescriptorManager descriptorManager,
+        ReadOnlySpan<GPUMaterialTextureReference> references)
+    {
+        if (_bindlessReceiptCount != 0)
+            return;
+
+        if (!descriptorManager.TryAcquireGlobalMaterialTextureReceiptLeases(
+                references,
+                _bindlessTextureReceipts,
+                out int count,
+                out string reason))
+        {
+            _bindlessTextureReceipts.AsSpan().Clear();
+            throw new VulkanAcceptedFramePlanCapacityException(
+                EVulkanAcceptedFrameLane.Upload,
+                _bindlessTextureReceipts.Length,
+                _bindlessTextureReceipts.Length + 1,
+                reason);
+        }
+
+        _bindlessReceiptLeaseOwner = descriptorManager;
+        _bindlessReceiptCount = count;
+        try
+        {
+            for (int index = 0; index < count; index++)
+            {
+                ref readonly VulkanBindlessMaterialTextureReceipt receipt =
+                    ref _bindlessTextureReceipts[index];
+                AddRequiredTextureReference(receipt.Texture, receipt.StreamingGeneration);
+            }
+        }
+        catch
+        {
+            descriptorManager.ReleaseGlobalMaterialTextureReceiptLeases(
+                _bindlessTextureReceipts.AsSpan(0, count));
+            _bindlessTextureReceipts.AsSpan(0, count).Clear();
+            _bindlessReceiptLeaseOwner = null;
+            _bindlessReceiptCount = 0;
+            throw;
+        }
+    }
+
+    private void CaptureBindlessMaterialDescriptorClosure(
+        VulkanBindlessMaterialDescriptorBinding? binding,
+        ref bool referencesLegacyBindlessTable)
+    {
+        if (binding is null)
+            return;
+        if (binding.Publication is not { } publication)
+        {
+            referencesLegacyBindlessTable = true;
+            return;
+        }
+
+        foreach (GPUMaterialTextureReference reference in publication.VulkanTextureReferences)
+        {
+            bool alreadyCaptured = false;
+            for (int index = 0; index < _bindlessDescriptorReferenceCount; ++index)
+            {
+                if (_bindlessDescriptorReferences[index].Equals(reference))
+                {
+                    alreadyCaptured = true;
+                    break;
+                }
+            }
+            if (alreadyCaptured)
+                continue;
+            if (_bindlessDescriptorReferenceCount >= _bindlessDescriptorReferences.Length)
+                throw new VulkanAcceptedFramePlanCapacityException(
+                    EVulkanAcceptedFrameLane.Upload,
+                    _bindlessDescriptorReferences.Length,
+                    _bindlessDescriptorReferenceCount + 1,
+                    "Bindless material descriptor closure exceeds fixed accepted-frame capacity.");
+            _bindlessDescriptorReferences[_bindlessDescriptorReferenceCount++] = reference;
         }
     }
 
@@ -811,11 +900,21 @@ internal sealed class VulkanAcceptedFramePlan
         }
         _logicalPlan?.ReleaseLease();
         _logicalPlan = null;
+        VulkanAdvancedVisibilityInputLease.ReleaseOperations(
+            _staticOperations.AsSpan(0, StaticOperationCount));
+        VulkanAdvancedVisibilityInputLease.ReleaseOperations(
+            _dynamicUiOperations.AsSpan(0, DynamicUiOperationCount));
+        VulkanAdvancedVisibilityInputLease.ReleaseOperations(
+            _textureUploadOperations.AsSpan(
+                0,
+                TextureUploadOperationCount));
         _staticOperations.AsSpan(0, StaticOperationCount).Clear();
         _dynamicUiOperations.AsSpan(0, DynamicUiOperationCount).Clear();
         _textureUploadOperations.AsSpan(0, TextureUploadOperationCount).Clear();
         _requiredTextures.AsSpan(0, RequiredTextureCount).Clear();
         _requiredTextureGenerations.AsSpan(0, RequiredTextureCount).Clear();
+        _bindlessDescriptorReferences.AsSpan(0, _bindlessDescriptorReferenceCount).Clear();
+        _bindlessDescriptorReferenceCount = 0;
         for (int index = 0; index < DependencyCount; index++)
             _dependencies[index].Clear();
         for (int index = 0; index < _dependencyIndexSlotCount; index++)

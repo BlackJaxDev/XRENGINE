@@ -19,6 +19,29 @@ public readonly record struct RenderOutputRequest(
 {
     public bool IsDefined => OutputId != 0UL;
 
+    /// <summary>
+    /// Identifies the reusable product independently of cadence and frame-local
+    /// scheduling. A completed result is reusable only while this fingerprint
+    /// remains unchanged.
+    /// </summary>
+    public ulong ProductCompatibilityKey
+    {
+        get
+        {
+            ulong hash = 1469598103934665603UL;
+            AddProductIdentity(ref hash, OutputId);
+            AddProductIdentity(ref hash, ViewFamilyId);
+            AddProductIdentity(ref hash, (ulong)(uint)OutputKind);
+            AddProductIdentity(ref hash, (ulong)(uint)ViewKind);
+            AddProductIdentity(ref hash, Target.CompatibilityKey);
+            AddProductIdentity(ref hash, ProducerDependencySetId);
+            AddProductIdentity(ref hash, ConsumerDependencySetId);
+            AddProductIdentity(ref hash, (ulong)(uint)QualityRequirements);
+            AddProductIdentity(ref hash, (ulong)(uint)CompletionRequirement);
+            return hash == 0UL ? 1UL : hash;
+        }
+    }
+
     /// <summary>Whether the renderer must finish required resources before this output can be published.</summary>
     public bool RequiresCompleteFreshOutput => ReadinessPolicy == ERenderOutputReadinessPolicy.BlockForExact;
 
@@ -260,4 +283,10 @@ public readonly record struct RenderOutputRequest(
         => ((ulong)domain << 56) |
            ((ulong)(uint)outputKind + 1UL) << 24 |
            ((ulong)(uint)viewKind + 1UL);
+
+    private static void AddProductIdentity(ref ulong hash, ulong value)
+    {
+        hash ^= value;
+        hash *= 1099511628211UL;
+    }
 }

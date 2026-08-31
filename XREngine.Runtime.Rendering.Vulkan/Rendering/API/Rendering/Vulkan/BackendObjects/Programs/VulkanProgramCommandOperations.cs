@@ -3,6 +3,7 @@ using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.RenderGraph;
 using XREngine.Scene;
+using Buffer = Silk.NET.Vulkan.Buffer;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -59,6 +60,54 @@ internal sealed class VulkanProgramCommandOperations(VulkanCommandRuntime comman
         return false;
     }
     internal int ResolveCommandBufferImageIndex(CommandBuffer commandBuffer) => commands.ResolveCommandBufferImageIndex(commandBuffer);
+    internal void CaptureDeferredLightingObjectReadback(
+        Buffer buffer,
+        ulong bufferGeneration,
+        ulong offset,
+        uint range,
+        int frameIndex,
+        int drawUniformSlot,
+        int rendererIdentity,
+        ulong programBindingId,
+        ulong expectedHash,
+        System.Numerics.Vector3 expectedColor,
+        float expectedIntensity,
+        uint colorOffset,
+        uint intensityOffset)
+        => commands.CaptureDeferredLightingObjectReadback(
+            buffer,
+            bufferGeneration,
+            offset,
+            range,
+            frameIndex,
+            drawUniformSlot,
+            rendererIdentity,
+            programBindingId,
+            expectedHash,
+            expectedColor,
+            expectedIntensity,
+            colorOffset,
+            intensityOffset);
+    internal void ConfirmDeferredLightingObjectReadbackBinding(
+        Buffer buffer,
+        ulong bufferGeneration,
+        ulong offset,
+        uint range,
+        int frameIndex,
+        int drawUniformSlot,
+        int rendererIdentity,
+        ulong programBindingId,
+        CommandBuffer commandBuffer)
+        => commands.ConfirmDeferredLightingObjectReadbackBinding(
+            buffer,
+            bufferGeneration,
+            offset,
+            range,
+            frameIndex,
+            drawUniformSlot,
+            rendererIdentity,
+            programBindingId,
+            commandBuffer);
     internal bool TransitionPublishedDescriptorSetImagesForSampling(
         CommandBuffer commandBuffer,
         DescriptorSet descriptorSet,

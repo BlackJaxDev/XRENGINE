@@ -535,6 +535,7 @@ pwsh Tools/Reports/generate_mcp_docs.ps1
 | `clear_selection` | Clear the current scene-node selection. |
 | `clone_scene` | Deep-clone a scene for experimentation. The clone is added to the world (hidden by default). |
 | `compile_game_scripts` | Regenerate game project files, compile, and hot-reload the game DLL. Returns compilation result. |
+| `configure_vulkan_final_presentation_ledger` | Enable, freeze/unfreeze, or clear the Vulkan final-presentation ledger. Invariant failures freeze it automatically. |
 | `cook_asset` | Cook/package an asset for optimized runtime loading. Creates a cooked binary file at the specified output location. |
 | `copy_game_asset` | Copy a file within the game project's assets directory. |
 | `create_asset` | Create a new typed engine asset (e.g., material, texture, animation) and save it to the game project's assets directory. |
@@ -554,6 +555,7 @@ pwsh Tools/Reports/generate_mcp_docs.ps1
 | `duplicate_scene_node` | Duplicate a scene node (optionally with children). |
 | `enter_play_mode` | Enter play mode. |
 | `evaluate_expression` | Evaluate a dot-separated property chain expression on an XRBase object (e.g. 'Transform.WorldMatrix.Translation.X'). |
+| `evaluate_gpu_hiz_crossover` | Evaluate caller-supplied, parity-proven matched GPU Hi-Z timings into an offline calibration artifact. This does not alter engine policy or forced modes. |
 | `exit_play_mode` | Exit play mode. |
 | `export_scene` | Export a scene asset to a directory. |
 | `find_asset` | Find a project asset by ID, path, or name. |
@@ -602,7 +604,10 @@ pwsh Tools/Reports/generate_mcp_docs.ps1
 | `get_type_members` | Get properties, fields, methods, events, and constructors from any loaded type. |
 | `get_undo_history` | Get undo/redo history entries. |
 | `get_viewport_sequence_capture` | Get viewport sequence capture progress, terminal state, artifact paths, and optionally per-frame metadata. |
+| `get_vulkan_final_presentation_ledger` | Return the bounded Vulkan final-presentation ledger, including final source, native descriptor payload, command artifact, swapchain generation, and present outcome. |
 | `get_vulkan_frame_op_trace` | Return the latest Vulkan frame-op trace snapshot. Requires launching with XRE_VULKAN_FRAMEOP_TRACE=1. |
+| `get_vulkan_gpu_counter_diagnostics` | Return the latest opt-in raw Vulkan GPU counter evidence captured by the zero-readback diagnostics gate. |
+| `get_zero_readback_material_table_diagnostics` | Return the fixed per-pass zero-readback material-table gate reached by the latest render frame. |
 | `import_scene` | Import a scene asset from disk and add it to the active world. |
 | `import_third_party_asset` | Import a third-party file into game assets. External Unity prefabs are converted directly to native .asset output without copying or modifying their source project. |
 | `instantiate_prefab` | Instantiate a prefab into the active scene by asset ID or path. |
@@ -666,13 +671,15 @@ pwsh Tools/Reports/generate_mcp_docs.ps1
 | `set_compile_on_change` | Toggle CodeManager.CompileOnChange: when enabled, game scripts auto-compile when .cs files change and editor regains focus. |
 | `set_component_properties` | Set multiple component properties/fields in one call. |
 | `set_component_property` | Set a component property or field value by name. |
+| `set_editor_camera_depth_mode` | Set normal or reversed-Z depth on the active editor camera and invalidate its viewport. |
 | `set_editor_camera_render_on_demand` | Set render-on-demand for the active editor camera pawn and optionally invalidate the viewport. |
 | `set_editor_camera_view` | Set the editor camera view with interpolation using position plus look-at or Euler rotation. |
-| `set_editor_preference` | Set an editor preference by property name or dotted path, persistently or for the active process only. |
+| `set_editor_preference` | Set an editor preference by property name or dotted path, either persistently or for this editor session only. |
 | `set_game_setting` | Set a game startup setting by property name or dotted path, persistently or for the active process only. |
 | `set_layer` | Set the layer for a scene node. |
 | `set_material_uniform` | Set a shader uniform value on a material by uniform name. Supports float, int, uint, vec2 ({X,Y}), vec3 ({X,Y,Z}), vec4 ({X,Y,Z,W}). Target by material asset ID, a component's Material property, or a ModelComponent submesh/LOD material slot. |
 | `set_material_uniforms` | Set multiple shader uniforms on a material in one call. Pass a map of uniform_name -> value and target by material asset ID, a component's Material property, or a ModelComponent submesh/LOD material slot. |
+| `set_meshlet_debug_display` | Enable or disable per-meshlet colors on a viewport camera. Omit enabled to return control to the camera post-process setting. |
 | `set_node_active` | Set whether a scene node is active in the hierarchy. |
 | `set_node_active_recursive` | Set active state on a node and its children. |
 | `set_node_transform` | Set a scene node transform (translation, rotation, scale). |

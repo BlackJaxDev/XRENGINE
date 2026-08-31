@@ -12,6 +12,9 @@ internal sealed class VulkanCommandBufferTrackingBatch
     public readonly List<VulkanQueueOwnershipTransferRequirement> QueueOwnershipTransfers = new(4);
     public readonly VulkanCommandBufferImageAccessIndex LatestImageAccessStates = new(32);
     public ulong RecordingGeneration;
+    // The lifetime reset epoch and global command-recording sequence are
+    // independent counters. Capture the former at Begin instead of comparing them.
+    public ulong LifetimeRecordingGeneration;
     public ulong LayoutVersion;
     public int DependencyBindCount;
     public int ImageAccessWriteCount;
@@ -24,13 +27,26 @@ internal sealed class VulkanCommandBufferTrackingBatch
 
     public void Reset(ulong recordingGeneration)
     {
+        ClearCompletedRecording();
+        RecordingGeneration = recordingGeneration;
+        IsRecording = true;
+    }
+
+    /// <summary>
+    /// Clears mutable recording state after a successful native reset while
+    /// retaining allocated capacity for the next recording on this command
+    /// buffer. Callers must hold the tracker and batch locks.
+    /// </summary>
+    public void ClearCompletedRecording()
+    {
         Dependencies.Clear();
         ExpandedDescriptorGenerations.Clear();
         ValidatedDescriptorGenerations.Clear();
         ImageAccessDeltas.Clear();
         QueueOwnershipTransfers.Clear();
         LatestImageAccessStates.Clear();
-        RecordingGeneration = recordingGeneration;
+        RecordingGeneration = 0;
+        LifetimeRecordingGeneration = 0;
         LayoutVersion = 0;
         DependencyBindCount = 0;
         ImageAccessWriteCount = 0;
@@ -39,7 +55,7 @@ internal sealed class VulkanCommandBufferTrackingBatch
         ReportedDependencyBindCount = 0;
         ReportedImageAccessWriteCount = 0;
         QueuedSubmissionCount = 0;
-        IsRecording = true;
+        IsRecording = false;
     }
 
     public void RecordDependency(VulkanResourceLifetimeKey key)

@@ -39,6 +39,13 @@ public partial class OpenGLRenderer : IOcclusionQueryBackendCapability
     }
 
     /// <inheritdoc />
+    public bool TryConsumeAbandonedTimestamp(XRRenderQuery query) => false;
+
+    /// <inheritdoc />
+    public ulong GetElapsedTimestampNanoseconds(ulong startRawTicks, ulong endRawTicks)
+        => unchecked(endRawTicks - startRawTicks);
+
+    /// <inheritdoc />
     public ERenderQueryReadStatus TryGetAnySamplesPassed(
         XRRenderQuery query,
         out OcclusionQueryResult result,

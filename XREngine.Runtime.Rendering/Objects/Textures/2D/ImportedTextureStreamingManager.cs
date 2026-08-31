@@ -126,6 +126,93 @@ internal sealed partial class ImportedTextureStreamingManager
             streamingGeneration,
             out authority);
 
+    /// <summary>
+    /// Enters an already-decoded immutable mip payload through the same pending
+    /// transition and publication-authority lifecycle as imported asset loads.
+    /// This is intentionally internal: presentationless diagnostics may provide
+    /// a retained payload, but they may not bypass generation ownership.
+    /// </summary>
+    internal bool TryScheduleRawResidentDataForVulkan(
+        XRTexture2D texture,
+        TextureStreamingResidentData residentData,
+        bool includeMipChain,
+        TextureUploadPriorityClass priorityClass,
+        CancellationToken cancellationToken,
+        out long streamingGeneration)
+    {
+        ArgumentNullException.ThrowIfNull(texture);
+        streamingGeneration = 0;
+        if (cancellationToken.IsCancellationRequested ||
+            RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend != RuntimeGraphicsApiKind.Vulkan)
+        {
+            return false;
+        }
+
+        EnsureCallbacksSubscribed();
+        uint targetDimension = Math.Max(residentData.ResidentMaxDimension, 1u);
+        ImportedTextureStreamingRecord record = GetOrCreateRecord(texture, texture.FilePath);
+        CancellationTokenSource cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        long frameId = Volatile.Read(ref _collectFrameId);
+        if (!_transitionQueue.TryBeginTransition(
+                record,
+                cts,
+                targetDimension,
+                SparseTextureStreamingPageSelection.Full,
+                frameId,
+                pressureDemotion: false,
+                previousResidentSize: 0,
+                previousCommittedBytes: 0L,
+                targetCommittedBytes: XRTexture2D.CalculateResidentUploadBytes(residentData),
+                backendName: VulkanDenseBackend.Name,
+                reason: "retained immutable resident payload",
+                priority: JobPriority.High,
+                uploadPriorityClass: priorityClass,
+                out CancellationTokenSource? previousPendingLoad))
+        {
+            cts.Dispose();
+            return false;
+        }
+
+        CancelPendingLoad(previousPendingLoad);
+        lock (record.Sync)
+        {
+            streamingGeneration = record.UploadGeneration;
+            record.Format = residentData.SizedInternalFormat;
+            record.SourceWidth = residentData.SourceWidth;
+            record.SourceHeight = residentData.SourceHeight;
+            record.Backend = VulkanDenseBackend;
+            // The service checks this exact generation before its descriptor
+            // publication boundary, just as the normal decode callback does.
+            record.PublicationEligibleGeneration = streamingGeneration;
+        }
+
+        bool IsCurrentTransition()
+        {
+            lock (record.Sync)
+                return ReferenceEquals(record.PendingLoadCts, cts) && !cts.IsCancellationRequested;
+        }
+
+        bool queued = VulkanProvider.TryScheduleSynchronizedUpload(
+            texture,
+            residentData,
+            includeMipChain,
+            targetDimension,
+            streamingGeneration,
+            priorityClass,
+            IsCurrentTransition,
+            cts.Token,
+            completed => ClearPendingTransition(record, cts, completed, targetDimension, frameId),
+            error => ClearPendingTransition(record, cts, null, completedResidentSize: 0, frameId, failed: true),
+            () => ClearPendingTransition(record, cts, null, completedResidentSize: 0, frameId));
+        if (!queued)
+        {
+            ClearPendingTransition(record, cts, null, completedResidentSize: 0, frameId);
+            streamingGeneration = 0;
+        }
+
+        return queued;
+    }
+
     internal bool TryDescribeActiveStartupTextureWork(out string reason)
     {
         int activeImportScopes = Volatile.Read(ref _activeImportedModelImports);

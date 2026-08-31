@@ -309,7 +309,16 @@ internal sealed partial class VulkanFrameLoop
                 FreeOpenXrRecordedEyeCommandBuffer(firstRecorded);
 
             ClearOpenXrEyeRecordedTextureUploads();
+            ReleasePreparedOpenXrEyeInput(in secondPrepared);
+            ReleasePreparedOpenXrEyeInput(in firstPrepared);
         }
+    }
+
+    private static void ReleasePreparedOpenXrEyeInput(
+        in OpenXrPreparedEyeCommandBufferInput prepared)
+    {
+        if (prepared.Ops is { } operations)
+            VulkanAdvancedVisibilityInputLease.ReleaseOperations(operations);
     }
 
     internal bool TryRenderOpenXrEyeSwapchainsSinglePassStereo(
@@ -333,25 +342,33 @@ internal sealed partial class VulkanFrameLoop
         out OpenXrRecordedEyeCommandBuffer recorded)
     {
         recorded = default;
-        if (!TryPrepareOpenXrEyeSwapchainCommandBuffer(
-                request,
-                out OpenXrPreparedEyeCommandBufferInput prepared) ||
-            !TryCreateSingleOpenXrLogicalPlan(
-                in prepared,
-                out FramePlan logicalPlan))
+        OpenXrPreparedEyeCommandBufferInput prepared = default;
+        try
         {
-            throw CreateOpenXrEyePresentNowFailure(
-                request.OpenXrViewIndex,
-                EVulkanPresentNowReadinessStage.FramePlanSeal,
-                "single-eye-plan",
-                "OpenXREyeSubmit -> single logical plan",
-                "Foreground single-eye preparation returned no sealed logical plan.");
-        }
+            if (!TryPrepareOpenXrEyeSwapchainCommandBuffer(
+                    request,
+                    out prepared) ||
+                !TryCreateSingleOpenXrLogicalPlan(
+                    in prepared,
+                    out FramePlan logicalPlan))
+            {
+                throw CreateOpenXrEyePresentNowFailure(
+                    request.OpenXrViewIndex,
+                    EVulkanPresentNowReadinessStage.FramePlanSeal,
+                    "single-eye-plan",
+                    "OpenXREyeSubmit -> single logical plan",
+                    "Foreground single-eye preparation returned no sealed logical plan.");
+            }
 
-        prepared = BindOpenXrEyeOutputContract(in prepared, logicalPlan);
-        return TryRecordPreparedOpenXrEyeSwapchainCommandBuffer(
-            in prepared,
-            out recorded);
+            prepared = BindOpenXrEyeOutputContract(in prepared, logicalPlan);
+            return TryRecordPreparedOpenXrEyeSwapchainCommandBuffer(
+                in prepared,
+                out recorded);
+        }
+        finally
+        {
+            ReleasePreparedOpenXrEyeInput(in prepared);
+        }
     }
 
     private bool TryPrepareOpenXrEyeSwapchainCommandBuffer(
@@ -372,6 +389,8 @@ internal sealed partial class VulkanFrameLoop
         }
 
         bool drainedFrameOps = false;
+        FrameOp[]? retainedOps = null;
+        bool transferredRetainedOps = false;
 
         int desktopSwapchainImageCount = OutputRuntime.Desktop.Images?.Length ?? 0;
         VulkanOpenXrFrameContext frameContext = CreateOpenXrEyeFrameContext(in request);
@@ -471,6 +490,7 @@ internal sealed partial class VulkanFrameLoop
                             in emission,
                             out _));
                 }
+                retainedOps = ops;
                 drainedFrameOps = true;
                 ops = VulkanCommandRuntime.FilterDiagnosticSkippedFrameOps(ops);
                 if (ops.Length == 0)
@@ -571,6 +591,7 @@ internal sealed partial class VulkanFrameLoop
                     frameOpsSignature,
                     plannerRevision,
                     frameDataSlotCompletionProven);
+                transferredRetainedOps = true;
 
                 if (_commandRuntime.IsOpenXrTraceEnabled)
                 {
@@ -589,13 +610,13 @@ internal sealed partial class VulkanFrameLoop
         catch (VulkanPresentNowReadinessException)
         {
             if (!drainedFrameOps)
-                _ = DrainFrameOpsExcludingTextureUploads(out _);
+                DrainAndReleaseFrameOpsExcludingTextureUploads();
             throw;
         }
         catch (Exception ex)
         {
             if (!drainedFrameOps)
-                _ = DrainFrameOpsExcludingTextureUploads(out _);
+                DrainAndReleaseFrameOpsExcludingTextureUploads();
             if (IsOpenXrStrictExtentFailure(ex))
                 throw;
 
@@ -606,6 +627,11 @@ internal sealed partial class VulkanFrameLoop
                 targetContext.IsValid ? DescribeOpenXrEyeRenderTargetContext(in targetContext) : "<not prepared>",
                 ex.Message);
             return false;
+        }
+        finally
+        {
+            if (!transferredRetainedOps && retainedOps is not null)
+                VulkanAdvancedVisibilityInputLease.ReleaseOperations(retainedOps);
         }
     }
 
@@ -724,10 +750,48 @@ internal sealed partial class VulkanFrameLoop
 
         FrameOperationSequence nativeOperations =
             framePlan.GetNativeStaticOperationsForLogicalView(logicalViewId);
-        VulkanComputePreparationResult computePreparation =
-            _commandRuntime.PrepareComputeFrameOpsForRecording(
+        VulkanReadOnlyStoragePreparedAuthority? readOnlyStorageAuthority = null;
+        if (FrameDataArena is { } frameDataArena)
+        {
+            VulkanReadOnlyStoragePreparedAuthority authority =
+                ResourceRuntime.ReadOnlyStoragePreparedMap.CreateAuthority(
+                    frameDataArena,
+                    unchecked((int)targetContext.FrameDataSlotIndex));
+            if (!nativeOperations.Stream.TryPrepareReadOnlyStorage(
+                    ResourceRuntime.ReadOnlyStoragePreparedMap,
+                    in authority,
+                    frameDataArena,
+                    out string storageFailure))
+            {
+                throw CreateOpenXrEyePresentNowFailure(
+                    targetContext.OpenXrViewIndex,
+                    EVulkanPresentNowReadinessStage.FramePlanSeal,
+                    "eye-read-only-storage",
+                    "OpenXREyeSubmit -> immutable storage preparation",
+                    storageFailure);
+            }
+            readOnlyStorageAuthority = authority;
+            VulkanMaterialTablePreparedAuthority materialAuthority =
+                ResourceRuntime.MaterialTablePreparedMap.CreateAuthority(frameDataArena,
+                    unchecked((int)targetContext.FrameDataSlotIndex));
+            if (ResourceRuntime.BackendObjectContext is not { } materialContext ||
+                !nativeOperations.Stream.TryPrepareMaterialTables(
+                    ResourceRuntime.MaterialTablePreparedMap, in materialAuthority, materialContext,
+                    ResourceRuntime.Buffers, out _, out storageFailure))
+            {
+                throw CreateOpenXrEyePresentNowFailure(targetContext.OpenXrViewIndex,
+                    EVulkanPresentNowReadinessStage.FramePlanSeal, "eye-material-storage",
+                    "OpenXREyeSubmit -> immutable material preparation", storageFailure);
+            }
+        }
+        // Keep the exact eye-slot authority through mesh prewarm and recording,
+        // not just compute preparation: both consume immutable material banks.
+        using VulkanResourceRuntime.ReadOnlyStorageRecordingScope storageScope =
+            ResourceRuntime.EnterReadOnlyStorageRecordingScope(readOnlyStorageAuthority);
+        VulkanComputePreparationResult computePreparation = _commandRuntime.PrepareComputeFrameOpsForRecording(
                 targetContext.FrameDataSlotIndex,
-                nativeOperations);
+                nativeOperations,
+                framePlan);
         if (!computePreparation.Succeeded)
         {
             throw new VulkanPresentNowReadinessException(
@@ -838,6 +902,7 @@ internal sealed partial class VulkanFrameLoop
                 AllowSecondaryDeferral: false),
             trackedTargetLayout,
             FrameDataImageIndexOverride: targetContext.FrameDataSlotIndex,
+            ReadOnlyStorageAuthority: readOnlyStorageAuthority,
             OpenXrTargetContext: targetContext,
             CommandChainSchedule: commandChainSchedule,
             ExcludeDesktopSwapchainBarriers: true,
@@ -1092,8 +1157,13 @@ internal sealed partial class VulkanFrameLoop
                 Array.Empty<FrameOp>(),
                 new VulkanFramePlanRenderGraphAuthority(
                     firstEye.ResourcePlanStamp.PlanningSnapshot.RenderGraphPlan,
-                    publishedPlannerState.FrameOpResourcePlannerSwitchingState),
+                    publishedPlannerState.FrameOpResourcePlannerSwitchingState,
+                    _framePlanner,
+                    _resourceRuntime.BackendObjectContext),
                 openXrImagesAcquired: true);
+            ResourcePlannerRuntimeState recordingPlannerState = firstEye.PlannerState;
+            recordingPlannerState.FrameOpResourcePlannerSwitchingState = publishedPlannerState.FrameOpResourcePlannerSwitchingState;
+            plan.PrepareRecordingPlannerGenerations(in recordingPlannerState);
             return true;
         }
         catch (Exception ex)
@@ -1105,6 +1175,10 @@ internal sealed partial class VulkanFrameLoop
                 ex.Message);
             plan = null!;
             return false;
+        }
+        finally
+        {
+            VulkanAdvancedVisibilityInputLease.ReleaseOperations(combined);
         }
     }
 
@@ -1141,6 +1215,9 @@ internal sealed partial class VulkanFrameLoop
     /// </summary>
     private static void ClearLogicalOperationNativeTargets(Span<FrameOp> operations)
     {
+        int clonedCount = 0;
+        try
+        {
         for (int index = 0; index < operations.Length; index++)
         {
             FrameOp operation = operations[index];
@@ -1153,7 +1230,18 @@ internal sealed partial class VulkanFrameLoop
                 OutputFrameBufferName = null,
                 OutputFrameBuffer = null,
             };
-            operations[index] = operation with { Context = context };
+            FrameOp copy = operation.CreateSealedAuthoringCopy();
+            copy.Context = context;
+            operations[index] = copy;
+            clonedCount++;
+        }
+        }
+        catch
+        {
+            VulkanAdvancedVisibilityInputLease.ReleaseOperations(operations[..clonedCount]);
+            // Uncloned entries are borrowed from the prepared-eye owner.
+            operations.Clear();
+            throw;
         }
     }
 
@@ -1183,12 +1271,16 @@ internal sealed partial class VulkanFrameLoop
             return false;
         }
 
+        FrameOp[] logicalOperations = new FrameOp[eye.Ops.Length];
+        CopyLogicalOperationsWithoutNativeTargets(
+            eye.Ops,
+            logicalOperations,
+            destinationIndex: 0);
         try
         {
             // This single-eye path has no later consumer of its producer
             // operations. Strip native framebuffer authority before sealing so
             // it has the same logical/native split as the paired-eye path.
-            ClearLogicalOperationNativeTargets(eye.Ops);
             ResourcePlannerRuntimeState publishedPlannerState =
                 PublishedResourcePlannerRuntimeState;
             plan = _framePlanner.FramePlanBuilder.BuildAndSeal(
@@ -1196,12 +1288,17 @@ internal sealed partial class VulkanFrameLoop
                 eye.PlannerRevision,
                 eye.FrameOpsSignature,
                 dynamicOverlaySignature: 0UL,
-                eye.Ops,
+                logicalOperations,
                 Array.Empty<FrameOp>(),
                 new VulkanFramePlanRenderGraphAuthority(
                     eye.ResourcePlanStamp.PlanningSnapshot.RenderGraphPlan,
-                    publishedPlannerState.FrameOpResourcePlannerSwitchingState),
+                    publishedPlannerState.FrameOpResourcePlannerSwitchingState,
+                    _framePlanner,
+                    _resourceRuntime.BackendObjectContext),
                 openXrImagesAcquired: true);
+            ResourcePlannerRuntimeState recordingPlannerState = eye.PlannerState;
+            recordingPlannerState.FrameOpResourcePlannerSwitchingState = publishedPlannerState.FrameOpResourcePlannerSwitchingState;
+            plan.PrepareRecordingPlannerGenerations(in recordingPlannerState);
             return true;
         }
         catch (Exception ex)
@@ -1213,6 +1310,10 @@ internal sealed partial class VulkanFrameLoop
                 ex.Message);
             plan = null!;
             return false;
+        }
+        finally
+        {
+            VulkanAdvancedVisibilityInputLease.ReleaseOperations(logicalOperations);
         }
     }
 

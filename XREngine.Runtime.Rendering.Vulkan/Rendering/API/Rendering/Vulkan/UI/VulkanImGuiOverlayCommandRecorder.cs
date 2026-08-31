@@ -57,7 +57,8 @@ internal sealed unsafe class VulkanImGuiOverlayCommandRecorder
                     input.Target.StreamlineUiInitialLayout,
                     ImageLayout.General,
                     AttachmentLoadOp.Clear,
-                    clear: true);
+                    clear: true,
+                    waitsOnExternalAcquire: false);
             }
 
             RecordIntoAttachment(
@@ -67,7 +68,9 @@ internal sealed unsafe class VulkanImGuiOverlayCommandRecorder
                 input.InitialSwapchainLayout,
                 ImageLayout.PresentSrcKhr,
                 input.ClearSwapchain ? AttachmentLoadOp.Clear : AttachmentLoadOp.Load,
-                clear: input.ClearSwapchain);
+                clear: input.ClearSwapchain,
+                waitsOnExternalAcquire:
+                    input.PredecessorCommandBuffer.Handle == 0);
 
             bool published = encoder.TryEnd(
                 input.OverlayCommandBuffer,
@@ -108,7 +111,8 @@ internal sealed unsafe class VulkanImGuiOverlayCommandRecorder
         ImageLayout initialLayout,
         ImageLayout finalLayout,
         AttachmentLoadOp loadOp,
-        bool clear)
+        bool clear,
+        bool waitsOnExternalAcquire)
     {
         ImageSubresourceRange range = new()
         {
@@ -116,9 +120,23 @@ internal sealed unsafe class VulkanImGuiOverlayCommandRecorder
             LevelCount = 1,
             LayerCount = 1,
         };
-        encoder.Runtime.EmitImageTransition(
-            encoder, telemetry, input.OverlayCommandBuffer, image, in range,
-            initialLayout, ImageLayout.ColorAttachmentOptimal);
+        if (waitsOnExternalAcquire)
+        {
+            encoder.Runtime.EmitAcquiredSwapchainImageTransition(
+                encoder,
+                telemetry,
+                input.OverlayCommandBuffer,
+                image,
+                in range,
+                initialLayout,
+                ImageLayout.ColorAttachmentOptimal);
+        }
+        else
+        {
+            encoder.Runtime.EmitImageTransition(
+                encoder, telemetry, input.OverlayCommandBuffer, image, in range,
+                initialLayout, ImageLayout.ColorAttachmentOptimal);
+        }
 
         RenderingAttachmentInfo attachment = new()
         {

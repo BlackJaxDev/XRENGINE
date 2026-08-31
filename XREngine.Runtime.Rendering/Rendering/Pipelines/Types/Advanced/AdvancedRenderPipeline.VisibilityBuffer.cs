@@ -57,12 +57,11 @@ public partial class AdvancedRenderPipeline
         RenderPipelineResourceLayoutBuilder builder)
     {
         RenderResourceSizePolicy internalSize = RenderResourceSizePolicy.Internal();
+        RenderResourceSizePolicy depthTileSize =
+            RenderResourceSizePolicy.InternalDividedRoundedUp(64u);
         uint layers = Math.Max(
             builder.Profile.ViewCount,
             builder.Profile.Stereo ? 2u : 1u);
-        uint mipCount = ResolveVisibilityMipCount(
-            builder.Profile.InternalWidth,
-            builder.Profile.InternalHeight);
 
         VisibilityTexture(
                 builder,
@@ -144,7 +143,7 @@ public partial class AdvancedRenderPipeline
         VisibilityTexture(
                 builder,
                 AdvancedVisibilityResourceNames.CurrentDepthPyramid,
-                internalSize,
+                depthTileSize,
                 RenderPipelineResourceUsage.SampledTexture |
                 RenderPipelineResourceUsage.StorageImage |
                 RenderPipelineResourceUsage.TransferSource,
@@ -157,7 +156,7 @@ public partial class AdvancedRenderPipeline
             .Layers(layers)
             .Mips(new RenderResourceMipPolicy(
                 0u,
-                mipCount,
+                1u,
                 AutoGenerateMipmaps: false,
                 RequireImmutableStorage: true))
             .StereoCompatible(layers > 1u)
@@ -168,7 +167,7 @@ public partial class AdvancedRenderPipeline
         VisibilityTexture(
                 builder,
                 AdvancedVisibilityResourceNames.PreviousDepthPyramid,
-                internalSize,
+                depthTileSize,
                 RenderPipelineResourceUsage.SampledTexture |
                 RenderPipelineResourceUsage.StorageImage |
                 RenderPipelineResourceUsage.TransferDestination,
@@ -181,7 +180,7 @@ public partial class AdvancedRenderPipeline
             .Layers(layers)
             .Mips(new RenderResourceMipPolicy(
                 0u,
-                mipCount,
+                1u,
                 AutoGenerateMipmaps: false,
                 RequireImmutableStorage: true))
             .StereoCompatible(layers > 1u)
@@ -519,22 +518,27 @@ public partial class AdvancedRenderPipeline
         bool storage)
     {
         uint layers = Stereo ? 2u : 1u;
+        bool isDepthTileGrid = name is
+            AdvancedVisibilityResourceNames.CurrentDepthPyramid or
+            AdvancedVisibilityResourceNames.PreviousDepthPyramid;
+        uint width = isDepthTileGrid ? DivideRoundUp(InternalWidth, 64u) : InternalWidth;
+        uint height = isDepthTileGrid ? DivideRoundUp(InternalHeight, 64u) : InternalHeight;
         XRTexture texture;
         if (layers > 1u)
         {
             texture = attachment.HasValue
                 ? XRTexture2DArray.CreateFrameBufferTexture(
                     layers,
-                    InternalWidth,
-                    InternalHeight,
+                    width,
+                    height,
                     internalFormat,
                     pixelFormat,
                     pixelType,
                     attachment.Value)
                 : XRTexture2DArray.CreateFrameBufferTexture(
                     layers,
-                    InternalWidth,
-                    InternalHeight,
+                    width,
+                    height,
                     internalFormat,
                     pixelFormat,
                     pixelType);
@@ -543,24 +547,21 @@ public partial class AdvancedRenderPipeline
         {
             texture = attachment.HasValue
                 ? XRTexture2D.CreateFrameBufferTexture(
-                    InternalWidth,
-                    InternalHeight,
+                    width,
+                    height,
                     internalFormat,
                     pixelFormat,
                     pixelType,
                     attachment.Value)
                 : XRTexture2D.CreateFrameBufferTexture(
-                    InternalWidth,
-                    InternalHeight,
+                    width,
+                    height,
                     internalFormat,
                     pixelFormat,
                     pixelType);
         }
 
-        bool usesMipChain = name is AdvancedVisibilityResourceNames.CurrentDepthPyramid or
-            AdvancedVisibilityResourceNames.PreviousDepthPyramid;
-        if (usesMipChain)
-            ConfigureVisibilityMipChain(texture, internalFormat, pixelFormat, pixelType);
+        bool usesMipChain = false;
 
         ConfigureVisibilityTexture(
             texture,
@@ -572,64 +573,6 @@ public partial class AdvancedRenderPipeline
         return texture;
     }
 
-    private void ConfigureVisibilityMipChain(
-        XRTexture texture,
-        EPixelInternalFormat internalFormat,
-        EPixelFormat pixelFormat,
-        EPixelType pixelType)
-    {
-        int mipCount = checked((int)ResolveVisibilityMipCount(InternalWidth, InternalHeight));
-        switch (texture)
-        {
-            case XRTexture2D texture2D:
-                texture2D.Mipmaps = CreateVisibilityMipChain(
-                    InternalWidth,
-                    InternalHeight,
-                    mipCount,
-                    internalFormat,
-                    pixelFormat,
-                    pixelType);
-                break;
-            case XRTexture2DArray textureArray:
-                foreach (XRTexture2D layerTexture in textureArray.Textures)
-                {
-                    layerTexture.Mipmaps = CreateVisibilityMipChain(
-                        InternalWidth,
-                        InternalHeight,
-                        mipCount,
-                        internalFormat,
-                        pixelFormat,
-                        pixelType);
-                }
-                break;
-            default:
-                throw new InvalidOperationException(
-                    $"Unsupported advanced visibility texture type '{texture.GetType().Name}'.");
-        }
-    }
-
-    private static Mipmap2D[] CreateVisibilityMipChain(
-        uint width,
-        uint height,
-        int mipCount,
-        EPixelInternalFormat internalFormat,
-        EPixelFormat pixelFormat,
-        EPixelType pixelType)
-    {
-        Mipmap2D[] mipmaps = new Mipmap2D[mipCount];
-        for (int mipLevel = 0; mipLevel < mipCount; mipLevel++)
-        {
-            mipmaps[mipLevel] = new Mipmap2D(
-                Math.Max(1u, width >> mipLevel),
-                Math.Max(1u, height >> mipLevel),
-                internalFormat,
-                pixelFormat,
-                pixelType,
-                allocateData: false);
-        }
-
-        return mipmaps;
-    }
 
     private static void ConfigureVisibilityTexture(
         XRTexture texture,
@@ -677,6 +620,9 @@ public partial class AdvancedRenderPipeline
             Usage = usage,
         };
 
+    private static uint DivideRoundUp(uint value, uint divisor)
+        => checked((Math.Max(value, 1u) + divisor - 1u) / divisor);
+
     private XRFrameBuffer CreateVisibilityFrameBuffer()
         => new(
             (RequireVisibilityAttachment(AdvancedVisibilityResourceNames.Identity), EFrameBufferAttachment.ColorAttachment0, 0, -1),
@@ -700,15 +646,4 @@ public partial class AdvancedRenderPipeline
             ?? throw new InvalidOperationException(
                 $"Advanced visibility attachment '{textureName}' is missing or not framebuffer-attachable.");
 
-    private static uint ResolveVisibilityMipCount(uint width, uint height)
-    {
-        uint size = Math.Max(Math.Max(width, height), 1u);
-        uint count = 1u;
-        while (size > 1u)
-        {
-            size >>= 1;
-            count++;
-        }
-        return count;
-    }
 }

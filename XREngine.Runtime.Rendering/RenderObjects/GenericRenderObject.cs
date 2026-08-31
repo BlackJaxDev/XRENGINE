@@ -109,6 +109,15 @@ public abstract partial class GenericRenderObject : XRAsset
 
     private void GetWrappers()
     {
+        // Explicit hosts have no window registration. Their synchronous creation
+        // scope selects one owner without publishing it to other render threads.
+        if (_apiWrapperCreationOwner is { } owner)
+        {
+            if (owner.GetOrCreateAPIRenderObject(this) is { } wrapper)
+                AddWrapper(wrapper);
+            return;
+        }
+
         AbstractRenderAPIObject?[]? wrappers = RuntimeRenderObjectServices.Current?.CreateObjectsForAllOwners(this);
         if (wrappers is null || wrappers.Length == 0)
             return;

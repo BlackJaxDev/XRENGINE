@@ -202,6 +202,7 @@ internal sealed partial class VulkanFrameLoop
 
     private void DrainRetiredResourcesFromCompletedSubmittedFrameSlots()
     {
+        ResourceRuntime.Descriptors.DrainReleasedMaterialDescriptorClosures();
         _commandRuntime.DrainRetiredSynchronousSubmissions();
         using VulkanDesktopFrameRetirementScope retirement =
             new(_commandRuntime, RetirementGate);

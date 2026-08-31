@@ -67,6 +67,17 @@ namespace XREngine.Rendering.Occlusion
             UpdateTile(x, y, reciprocalDepth);
         }
 
+        /// <summary>Returns the number of tiles an already validated projected rectangle will inspect.</summary>
+        public int GetRectTileWork(int minX, int minY, int maxXExclusive, int maxYExclusive)
+        {
+            if (minX < 0 || minY < 0 || maxXExclusive > Width || maxYExclusive > Height || minX >= maxXExclusive || minY >= maxYExclusive)
+                return 0;
+
+            int tileColumns = (maxXExclusive - 1) / TileWidth - minX / TileWidth + 1;
+            int tileRows = (maxYExclusive - 1) / TileHeight - minY / TileHeight + 1;
+            return checked(tileColumns * tileRows);
+        }
+
         public bool IsRectOccluded(int minX, int minY, int maxXExclusive, int maxYExclusive, float queryNearestReciprocalDepth)
         {
             if (!float.IsFinite(queryNearestReciprocalDepth) ||

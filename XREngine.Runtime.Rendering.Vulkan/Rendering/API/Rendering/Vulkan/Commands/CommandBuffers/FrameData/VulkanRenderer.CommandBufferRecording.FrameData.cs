@@ -518,7 +518,8 @@ namespace XREngine.Rendering.Vulkan
                                     in computeDispatch,
                                     in header,
                                     in context,
-                                    ResolveCommandChainInlineOperationIndex(
+                                    operations.Stream.Lane,
+                                    ResolveComputeDispatchOccurrenceOrdinal(
                                         operations.Stream,
                                         operationIndex)),
                                 computeDispatch.GroupsX,
@@ -610,6 +611,7 @@ namespace XREngine.Rendering.Vulkan
                         frequency,
                         material,
                         request.Draw,
+						request.DrawUniformSlot,
                         out ulong ownerIdentity,
                         out ulong publicationLayoutSignature,
                         out ulong contentGeneration))

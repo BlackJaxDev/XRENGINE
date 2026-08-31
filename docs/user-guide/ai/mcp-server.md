@@ -119,6 +119,46 @@ The default overflow policy fails rather than silently omitting a requested cons
 
 On Vulkan, an unsignaled capture fence produces a warning after two seconds and fails the requesting capture after ten seconds without blocking the render thread. The slot stays quarantined until the GPU finishes or the renderer is recreated. This protects the editor-side workflow from hanging, while the operating system's GPU watchdog remains responsible for recovering a GPU submission that is genuinely stuck.
 
+## Occlusion Validation
+
+`set_editor_camera_depth_mode(reversed_depth)` changes the active editor camera's
+depth convention and invalidates its viewport. It does not change saved project
+defaults. Verify both normal and reversed depth against an occlusion-disabled
+capture at the same pose before accepting a culling change.
+
+For Vulkan GPU cost measurements, use
+`get_render_profiler_stats.vulkan.frame_lifecycle.gpu_command_buffer_timing`.
+Its coherent snapshot separates current query availability from `last_completed`,
+which identifies the submitted render frame, sample sequence, image slot, age
+and elapsed nanoseconds. Count each completed sequence once and reject samples
+whose source frame precedes the workload change. The legacy
+`gpu_command_buffer_ms` scalar alone does not identify the measured frame.
+
+`evaluate_gpu_hiz_crossover(samples_json, requirements_json)` evaluates supplied
+matched Disabled/Full/Coarse GPU timings without changing engine settings. Each
+sample names the GPU, backend, extent, workload, depth convention, parity proof,
+cohort and timestamp scope. Requirements specify minimum observations and cost
+margins. The tool checks internal consistency; it does not independently verify
+the caller's parity proof or manufacture a profitable threshold. Missing,
+insufficient, ambiguous or non-winning evidence never promotes an occlusion mode.
+
+## Texture Streaming Diagnostics
+
+`get_render_state` includes the active window's owner-published event/surface
+snapshots and effective clip-depth range. These read-only snapshots help
+distinguish suspended output from renderer failure without controlling the
+desktop; a sampled event-pump stack alone does not establish minimized state.
+`get_time_state.terminalFault` retains the first exception that stopped the
+current timer run, including the loop phase and visibility-publication sequence
+numbers. It remains available in Release builds even when category logs are
+compiled out, and resets only when a new timer run starts.
+
+`get_texture_streaming_summary` includes `backend_upload_diagnostics`, an
+on-demand text snapshot of the active backend's upload counters. Vulkan reports
+worker preparation and retained ownership separately from queued transfers and
+descriptor publication. These are backend-wide counters, not an atomic frame
+sample. Use repeated observations and completed uploads to establish progress.
+
 ## Safety Notes
 
 - Use read-only mode for inspection-only sessions.

@@ -19,9 +19,9 @@ internal readonly record struct VulkanAllocationRequest(TextureResourceDescripto
     public bool IsStereoCompatible => Descriptor.StereoCompatible;
     public VulkanTransientAttachmentPolicy TransientAttachmentPolicy => ResolveTransientAttachmentPolicy(Descriptor);
 
-    // Physical image aliasing is temporarily disabled because aliased transient
-    // images can carry incompatible layout expectations between logical resources.
-    public bool SupportsAliasing => false;
+    // This is authoring eligibility only. The physical allocator keeps images
+    // dedicated until native handoff, initialization, and lifetime proof exist.
+    public bool SupportsAliasing => Descriptor.SupportsAliasing;
     public VulkanAliasKey AliasKey => new(
         Descriptor.SizePolicy,
         Descriptor.FormatLabel,
@@ -44,6 +44,7 @@ internal readonly record struct VulkanAllocationRequest(TextureResourceDescripto
             (usage & (RenderPipelineResourceUsage.ColorAttachment |
                       RenderPipelineResourceUsage.DepthStencilAttachment)) != 0;
         bool requiresPersistentShaderOrTransferAccess =
+            descriptor.RequiresStorageUsage ||
             (usage & (RenderPipelineResourceUsage.SampledTexture |
                       RenderPipelineResourceUsage.StorageImage |
                       RenderPipelineResourceUsage.TransferSource |

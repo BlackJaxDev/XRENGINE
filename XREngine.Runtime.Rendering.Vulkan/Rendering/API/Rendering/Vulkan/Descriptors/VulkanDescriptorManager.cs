@@ -31,6 +31,11 @@ internal sealed unsafe partial class VulkanDescriptorManager
     private long _descriptorSetContentUpdateGeneration;
     private int _descriptorUpdateInvalidationDiagnosticCount;
     private int _meshOwnershipDiagnosticCount;
+    // Detached cache pools are intentionally not reinserted after a failed
+    // handoff: reusing them would republish superseded descriptor bindings.
+    // Keep their normal lifetime-retirement handoff durable until it succeeds.
+    private readonly Dictionary<ulong, DescriptorPool>
+        _pendingSupersededComputePoolRetirements = [];
     private int _frameSlotCount = 2;
     private VulkanBackendObjectContext? _backendContext;
     private VulkanWrapperLookupPort? _wrapperLookup;
@@ -298,6 +303,187 @@ internal sealed unsafe partial class VulkanDescriptorManager
 
     internal int RecordMeshOwnershipDiagnostic()
         => Interlocked.Increment(ref _meshOwnershipDiagnosticCount);
+
+    /// <summary>
+    /// Removes compute cache entries backed by descriptor pools that still own an
+    /// exact retired buffer generation. Pools are retired as whole units because
+    /// compute pools deliberately do not opt into individual descriptor-set free.
+    /// </summary>
+    internal int RetireSupersededComputeDescriptorPools(
+        ReadOnlySpan<VulkanDescriptorSetGenerationReference> affectedSets)
+    {
+        if (affectedSets.IsEmpty)
+            return DrainPendingSupersededComputePoolRetirements();
+
+        lock (Compute.Gate)
+        {
+            ComputeDescriptorImageCache[]? caches = Compute.Caches;
+            if (caches is null)
+                return 0;
+
+            HashSet<ulong> poolHandles = [];
+            for (int cacheIndex = 0; cacheIndex < caches.Length; cacheIndex++)
+            {
+                ComputeDescriptorImageCache cache = caches[cacheIndex];
+                foreach ((ComputeDescriptorCacheKey key, DescriptorSet[] sets) in cache.CachedSets)
+                {
+                    if (!cache.CachedSetPools.TryGetValue(key, out DescriptorPool pool) ||
+                        pool.Handle == 0 ||
+                        !ContainsCurrentDescriptorSet(sets, affectedSets))
+                    {
+                        continue;
+                    }
+
+                    poolHandles.Add(pool.Handle);
+                }
+
+                // A publication may already have dropped its fingerprint-keyed
+                // cache entry while its allocation block still owns the exact
+                // descriptor set. Discover that block through the authoritative
+                // pool ownership ledger so it cannot pin a superseded buffer
+                // generation indefinitely.
+                foreach ((_, List<ComputeDescriptorPoolBlock> blocks) in cache.PoolsBySchema)
+                {
+                    for (int blockIndex = 0; blockIndex < blocks.Count; blockIndex++)
+                    {
+                        DescriptorPool pool = blocks[blockIndex].Pool;
+                        if (pool.Handle != 0 &&
+                            PoolOwnsCurrentDescriptorSet(pool, affectedSets))
+                        {
+                            poolHandles.Add(pool.Handle);
+                        }
+                    }
+                }
+            }
+            if (poolHandles.Count == 0)
+                return 0;
+
+            for (int cacheIndex = 0; cacheIndex < caches.Length; cacheIndex++)
+            {
+                ComputeDescriptorImageCache cache = caches[cacheIndex];
+                List<ComputeDescriptorCacheKey>? keysToRemove = null;
+                foreach ((ComputeDescriptorCacheKey key, DescriptorPool pool) in cache.CachedSetPools)
+                {
+                    if (poolHandles.Contains(pool.Handle))
+                        (keysToRemove ??= []).Add(key);
+                }
+                if (keysToRemove is not null)
+                {
+                    for (int keyIndex = 0; keyIndex < keysToRemove.Count; keyIndex++)
+                    {
+                        ComputeDescriptorCacheKey key = keysToRemove[keyIndex];
+                        cache.CachedSets.Remove(key);
+                        cache.CachedSetPools.Remove(key);
+                    }
+                }
+
+                List<ulong>? schemasToRemove = null;
+                foreach ((ulong schema, List<ComputeDescriptorPoolBlock> blocks) in cache.PoolsBySchema)
+                {
+                    for (int blockIndex = blocks.Count - 1; blockIndex >= 0; blockIndex--)
+                    {
+                        DescriptorPool pool = blocks[blockIndex].Pool;
+                        if (!poolHandles.Contains(pool.Handle))
+                            continue;
+
+                        blocks.RemoveAt(blockIndex);
+                        _pendingSupersededComputePoolRetirements[pool.Handle] = pool;
+                    }
+                    if (blocks.Count == 0)
+                        (schemasToRemove ??= []).Add(schema);
+                }
+                if (schemasToRemove is not null)
+                {
+                    for (int schemaIndex = 0; schemaIndex < schemasToRemove.Count; schemaIndex++)
+                        cache.PoolsBySchema.Remove(schemasToRemove[schemaIndex]);
+                }
+            }
+        }
+
+        return DrainPendingSupersededComputePoolRetirements();
+    }
+
+    internal int DrainPendingSupersededComputePoolRetirements()
+    {
+        int handedOffCount = 0;
+        while (true)
+        {
+            DescriptorPool pool;
+            lock (Compute.Gate)
+            {
+                if (_pendingSupersededComputePoolRetirements.Count == 0)
+                    return handedOffCount;
+
+                pool = default;
+                foreach (DescriptorPool candidate in
+                         _pendingSupersededComputePoolRetirements.Values)
+                {
+                    pool = candidate;
+                    break;
+                }
+            }
+
+            // This can enter lifetime authority and must stay outside Compute.Gate.
+            RetireDescriptorPool(pool);
+            lock (Compute.Gate)
+            {
+                if (_pendingSupersededComputePoolRetirements.Remove(pool.Handle))
+                    handedOffCount++;
+            }
+        }
+    }
+
+    private bool PoolOwnsCurrentDescriptorSet(
+        DescriptorPool pool,
+        ReadOnlySpan<VulkanDescriptorSetGenerationReference> affectedSets)
+    {
+        VulkanResourceLifetimeTracker tracker = ResourceRuntime.Lifetime.Tracker;
+        lock (tracker.SyncRoot)
+        {
+            if (!tracker.DescriptorSetsByPool.TryGetValue(
+                    pool.Handle,
+                    out HashSet<ulong>? ownedSets))
+            {
+                return false;
+            }
+
+            for (int index = 0; index < affectedSets.Length; index++)
+            {
+                VulkanDescriptorSetGenerationReference affected = affectedSets[index];
+                if (ownedSets.Contains(affected.Set.Handle) &&
+                    tracker.DescriptorSetLifetimes.TryGetValue(
+                        affected.Set.Handle,
+                        out VulkanDescriptorSetLifetimeRecord? state) &&
+                    state.Generation == affected.Generation)
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private bool ContainsCurrentDescriptorSet(
+        ReadOnlySpan<DescriptorSet> sets,
+        ReadOnlySpan<VulkanDescriptorSetGenerationReference> affectedSets)
+    {
+        for (int index = 0; index < sets.Length; index++)
+        {
+            ulong handle = sets[index].Handle;
+            for (int affectedIndex = 0; affectedIndex < affectedSets.Length; affectedIndex++)
+            {
+                VulkanDescriptorSetGenerationReference affected = affectedSets[affectedIndex];
+                if (affected.Set.Handle == handle &&
+                    ResourceRuntime.IsDescriptorSetGenerationCurrent(affected))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
 
     /// <summary>
     /// Republishes every descriptor snapshot that directly references a retiring

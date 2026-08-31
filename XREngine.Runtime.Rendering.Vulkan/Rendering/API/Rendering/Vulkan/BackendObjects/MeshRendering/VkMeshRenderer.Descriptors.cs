@@ -520,7 +520,7 @@ internal unsafe partial class VkMeshRenderer
 			descriptorSlotIndex,
 			bindingSnapshot,
 			recordDescriptorTableGeneration))
-			return FailDescriptorPreparation("descriptor writes unresolved");
+			return false;
 
 		ulong stableResourceFingerprint =
 			allocation.HasFrameSourceDescriptors
@@ -705,6 +705,8 @@ internal unsafe partial class VkMeshRenderer
         int refreshFrameIndex,
 		ComputeDispatchSnapshot? bindingSnapshot)
     {
+		if (bindingSnapshot?.HasReadOnlyStorageBindings == true)
+			return false;
 		DescriptorOwnerLookupKey ownerLookupKey =
 			CreateDescriptorOwnerLookupKey(
 				layoutFingerprint,
@@ -756,6 +758,13 @@ internal unsafe partial class VkMeshRenderer
         }
 
 		int descriptorSlotIndex = ResolveDescriptorFrameIndex(refreshFrameIndex, allocation.Sets.Length);
+		if (bindingSnapshot?.MaterialTablePublication is not null &&
+			(bindingSnapshot.PreparedMaterialTableSignature == 0 || _program is null ||
+			 !TryComputePublishedDescriptorResourceFingerprint(material, descriptorFrameSlotCount,
+				 _program.DescriptorBindings, allocation.UsesSharedMaterialTier, bindingSnapshot,
+				 includeFrameSourceDescriptors: true, out ulong materialFingerprint) ||
+			 !DescriptorSlotResourceFingerprintMatches(allocation, descriptorSlotIndex, materialFingerprint)))
+			return false;
 		if (!allocation.IsOwnerGenerationPublished(
 				descriptorSlotIndex,
 				material.BindingResourceVersion))
@@ -909,7 +918,8 @@ internal unsafe partial class VkMeshRenderer
 			return 0UL;
 
 		if (bindingSnapshot is not
-			{ HasPublishedBindingLayoutSignatures: true })
+			{ HasPublishedBindingLayoutSignatures: true } ||
+			bindingSnapshot.HasReadOnlyStorageBindings)
 		{
 			// Legacy/compute callers without an immutable publication retain the
 			// authoritative reflected-binding walk.
@@ -946,6 +956,7 @@ internal unsafe partial class VkMeshRenderer
 		hash.Add(material.BindingResourceVersion);
 		hash.Add(bindingSnapshot.DescriptorSetLayoutSignature);
 		hash.Add(snapshotResourceSignature);
+		hash.Add(bindingSnapshot.PreparedMaterialTableSignature);
 		hash.Add(cachedBufferResourceSignature);
 		if (BackendContext.Resources.MappedFrameArena is not null)
 		{

@@ -198,6 +198,7 @@ namespace XREngine.Rendering.Commands
             // Phase 3: Hi-Z occlusion pyramid + refinement
             _hiZInitProgram = CreateDeferredComputeProgram("Compute/Occlusion/GPURenderHiZInit.comp", "GPURenderHiZInit");
             _hiZGenProgram = CreateDeferredComputeProgram("Compute/Occlusion/HiZGen.comp", "HiZGen");
+            _hiZCoarseTileProgram = CreateDeferredComputeProgram("Compute/Occlusion/GPURenderHiZCoarseTiles.comp", "GPURenderHiZCoarseTilesV1");
             _hiZPhaseOneProgram = CreateDeferredComputeProgram("Compute/Occlusion/GPURenderOcclusionPhaseOne.comp", "GPURenderOcclusionPhaseOne");
             _hiZOcclusionProgram = CreateDeferredComputeProgram("Compute/Occlusion/GPURenderOcclusionHiZ.comp", "GPURenderOcclusionHiZ");
             _copyCount3Program = CreateDeferredComputeProgram("Compute/Indirect/GPURenderCopyCount3.comp", "GPURenderCopyCount3");
@@ -218,6 +219,7 @@ namespace XREngine.Rendering.Commands
                 _bvhFrustumCullProgram,
                 _hiZInitProgram,
                 _hiZGenProgram,
+                _hiZCoarseTileProgram,
                 _hiZPhaseOneProgram,
                 _hiZOcclusionProgram,
                 _copyCount3Program,
@@ -238,7 +240,18 @@ namespace XREngine.Rendering.Commands
             return program;
         }
 
-        private bool TryPrepareGpuPrograms()
+        /// <summary>
+        /// Prepares this pass without executing visibility, drawing, or advancing history.
+        /// Synchronous preparation is intended for an exclusively owned explicit host
+        /// that must preserve its first frame rather than render while shaders compile.
+        /// </summary>
+        public bool TryPrepareResources(GPUScene scene, bool allowAsyncBackendCompile = true)
+        {
+            PreRenderInitialize(scene);
+            return _initialized && TryPrepareGpuPrograms(allowAsyncBackendCompile);
+        }
+
+        private bool TryPrepareGpuPrograms(bool allowAsyncBackendCompile = true)
         {
             if (_gpuProgramsReady)
                 return true;
@@ -251,9 +264,19 @@ namespace XREngine.Rendering.Commands
             for (int i = 0; i < _gpuPreparationPrograms.Length; i++)
             {
                 XRRenderProgram program = _gpuPreparationPrograms[i];
-                renderer.GetOrCreateAPIRenderObject(program, generateNow: true);
-                program.Link();
-                ready &= program.IsLinked;
+                bool previousAsync = program.AllowAsyncBackendCompile;
+                try
+                {
+                    if (!allowAsyncBackendCompile)
+                        program.AllowAsyncBackendCompile = false;
+                    renderer.GetOrCreateAPIRenderObject(program, generateNow: true);
+                    program.Link();
+                    ready &= program.IsLinked;
+                }
+                finally
+                {
+                    program.AllowAsyncBackendCompile = previousAsync;
+                }
             }
 
             _gpuProgramsReady = ready;
@@ -489,6 +512,7 @@ namespace XREngine.Rendering.Commands
                     capacity,
                     "TwoPassPhaseOneCommands");
             }
+            EnsureTwoPassPhaseOneCulledCommandViewMaskCapacity(capacity);
 
             // Track remap needs per-buffer
             EnsureIndirectDrawBuffer(MaxIndirectDrawCapacity);

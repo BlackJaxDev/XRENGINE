@@ -1,6 +1,7 @@
 using System.Runtime.CompilerServices;
 using System.Threading;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.Materials;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -31,6 +32,24 @@ internal sealed class ComputeDispatchSnapshot
     public Dictionary<uint, ProgramImageBinding> Images { get; private set; }
     public Dictionary<uint, VulkanComputeBufferBinding> Buffers { get; }
     public Dictionary<string, VulkanComputeBufferBinding> BuffersByName { get; }
+    internal ReadOnlyStorageBindingSet? ReadOnlyStorageBindings { get; private set; }
+    private GPUMaterialTablePublication? _materialTablePublication;
+    internal GPUMaterialTablePublication? MaterialTablePublication => _materialTablePublication;
+    internal ulong PreparedMaterialTableSignature { get; private set; }
+
+    internal void PublishPreparedMaterialTable(in VulkanMaterialTablePreparedBinding binding)
+    {
+        FrameOpSignatureHasher hash = new();
+        hash.Add(binding.Buffer.Handle);
+        hash.Add(binding.NativeGeneration);
+        hash.Add(binding.Range);
+        hash.Add(binding.RowByteStride);
+        hash.Add(binding.TableOwnerId);
+        hash.Add(binding.DescriptorClosureGeneration);
+        // Row revisions/reset epochs change bytes, not descriptor identity.
+        PreparedMaterialTableSignature = hash.ToHash();
+    }
+    internal bool HasReadOnlyStorageBindings => ReadOnlyStorageBindings is { } bindings && !bindings.Bindings.IsEmpty;
     private MaterialUniformBindingPayload? _materialUniformBindings;
 
     /// <summary>
@@ -246,6 +265,29 @@ internal sealed class ComputeDispatchSnapshot
     internal void SetMaterialUniformBindings(MaterialUniformBindingPayload? payload)
         => _materialUniformBindings = payload;
 
+    internal void SetReadOnlyStorageBindings(ReadOnlyStorageBindingSet? bindings)
+    {
+        ReadOnlyStorageBindingSet? previous = ReadOnlyStorageBindings;
+        ReadOnlyStorageBindings = bindings?.Retain();
+        previous?.Dispose();
+    }
+
+    internal void ReleaseReadOnlyStorageBindings()
+    {
+        SetReadOnlyStorageBindings(null);
+        SetMaterialTablePublication(null);
+    }
+
+    /// <summary>Transfers the immutable material-row authority into this sealed snapshot.</summary>
+    internal void SetMaterialTablePublication(GPUMaterialTablePublication? publication)
+    {
+        GPUMaterialTablePublication? previous = _materialTablePublication;
+        _materialTablePublication = publication?.Retain();
+        PreparedMaterialTableSignature = 0;
+        previous?.Dispose();
+    }
+
+
     /// <summary>
     /// Produces a detached binding snapshot for a sealed frame plan. The capture
     /// workspace is deliberately mutable and reused by producers, so retaining
@@ -296,6 +338,9 @@ internal sealed class ComputeDispatchSnapshot
         copy._publishedImageResourceSignature = _publishedImageResourceSignature;
         copy._publishedBufferResourceSignature = _publishedBufferResourceSignature;
         copy._publishedFrameSourcePipelineIdentity = _publishedFrameSourcePipelineIdentity;
+        copy.SetReadOnlyStorageBindings(ReadOnlyStorageBindings);
+        copy.SetMaterialTablePublication(_materialTablePublication);
+        copy.PreparedMaterialTableSignature = PreparedMaterialTableSignature;
         copy.DescriptorSignatures.CopyFrom(DescriptorSignatures);
         return copy;
     }
@@ -383,6 +428,8 @@ internal sealed class ComputeDispatchSnapshot
         IsImmutableBindingArtifact = false;
         AllowsMaterialBindingFastPath = false;
         _materialUniformBindings = null;
+        SetReadOnlyStorageBindings(null);
+        SetMaterialTablePublication(null);
         RequiredSamplerNames.Clear();
         HasMutableFrameSourceSamplerBindings = false;
         _publishedImageResourceSignature = 0UL;
@@ -513,7 +560,25 @@ internal sealed class ComputeDispatchSnapshot
         SamplerUnitBindingLayoutSignature = VulkanFrameOpSnapshotSignatures.HashSamplerUnitBindingLayout(Samplers, SamplerNamesByUnit);
         SamplerNameBindingLayoutSignature = VulkanFrameOpSnapshotSignatures.HashSamplerNameBindingLayout(SamplersByName);
         ImageBindingLayoutSignature = VulkanFrameOpSnapshotSignatures.HashImageBindingLayout(Images);
-        BufferBindingLayoutSignature = VulkanFrameOpSnapshotSignatures.HashBufferBindingLayout(Buffers);
+        FrameOpSignatureHasher bufferLayout = new();
+        bufferLayout.Add(VulkanFrameOpSnapshotSignatures.HashBufferBindingLayout(Buffers));
+        FrameOpSignatureHasher bufferResources = new();
+        bufferResources.Add(VulkanFrameOpSnapshotSignatures.HashBufferBindings(Buffers));
+        if (ReadOnlyStorageBindings is { } storageBindings)
+        {
+            foreach (ReadOnlyStorageBinding binding in storageBindings.Bindings)
+            {
+                bufferLayout.Add(binding.Binding);
+                bufferLayout.Add(binding.Publication.AbiSignature);
+                bufferLayout.Add(binding.Length);
+                bufferResources.Add(binding.Binding);
+                bufferResources.Add(binding.Publication.TokenId);
+                bufferResources.Add(binding.Publication.AbiSignature);
+                bufferResources.Add(binding.Offset);
+                bufferResources.Add(binding.Length);
+            }
+        }
+        BufferBindingLayoutSignature = bufferLayout.ToHash();
         RequiredSamplerPolicySignature =
             HashUniformNames(RequiredSamplerNames);
         FrameOpSignatureHasher samplerResourceHash = new();
@@ -548,8 +613,7 @@ internal sealed class ComputeDispatchSnapshot
                 EUniformRequirements.AmbientOcclusion);
         _publishedImageResourceSignature =
             VulkanFrameOpSnapshotSignatures.HashImageBindings(Images, DescriptorSignatures);
-        _publishedBufferResourceSignature =
-            VulkanFrameOpSnapshotSignatures.HashBufferBindings(Buffers);
+        _publishedBufferResourceSignature = bufferResources.ToHash();
         FrameOpSignatureHasher persistentEngineResources = new();
         persistentEngineResources.Add(ExactSamplerResourceSignature);
         persistentEngineResources.Add(_publishedImageResourceSignature);

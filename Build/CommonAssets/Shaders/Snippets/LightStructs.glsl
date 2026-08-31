@@ -12,6 +12,22 @@ struct BaseLight
     mat4 WorldToLightSpaceProjMatrix;
 };
 
+// std430 mirror of the 224-byte DirectionalShadowGpuRecord publication.
+// Matrix bytes are uploaded without transpose: System.Numerics' raw M11..M44
+// layout intentionally has the same transform convention as existing GLSL
+// mat4 uploads in this renderer.
+struct DirectionalShadowGpuRecord
+{
+    mat4 CurrentWorldToLight;
+    mat4 RenderedWorldToLight;
+    vec4 CurrentSplitBlendBias;
+    vec4 RenderedSplitBlendBias;
+    vec4 ReceiverOffsetsAge;
+    ivec4 AtlasPacked0;
+    vec4 AtlasUvScaleBias;
+    vec4 AtlasDepthParams;
+};
+
 struct DirLight
 {
     BaseLight Base;
@@ -19,19 +35,6 @@ struct DirLight
     mat4 WorldToLightInvViewMatrix;
     mat4 WorldToLightProjMatrix;
     mat4 WorldToLightSpaceMatrix;
-    float CascadeSplits[XRENGINE_MAX_CASCADES];
-    float CascadeBlendWidths[XRENGINE_MAX_CASCADES];
-    float CascadeBiasMin[XRENGINE_MAX_CASCADES];
-    float CascadeBiasMax[XRENGINE_MAX_CASCADES];
-    float CascadeReceiverOffsets[XRENGINE_MAX_CASCADES];
-    mat4 CascadeMatrices[XRENGINE_MAX_CASCADES];
-    float RenderedCascadeSplits[XRENGINE_MAX_CASCADES];
-    float RenderedCascadeBlendWidths[XRENGINE_MAX_CASCADES];
-    float RenderedCascadeBiasMin[XRENGINE_MAX_CASCADES];
-    float RenderedCascadeBiasMax[XRENGINE_MAX_CASCADES];
-    float RenderedCascadeReceiverOffsets[XRENGINE_MAX_CASCADES];
-    mat4 RenderedCascadeMatrices[XRENGINE_MAX_CASCADES];
-    float RenderedCascadeStaleAge[XRENGINE_MAX_CASCADES];
     int CascadeCount;
 };
 

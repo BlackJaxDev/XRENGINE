@@ -41,24 +41,22 @@ internal sealed partial class VulkanTextureUploadService
 
         DrainTerminalFailedTransferRetirement(context);
 
-        while (TryPeekSubmittedTransfer(requiredManifest, out VulkanSubmittedImportedTextureUpload? submitted) && submitted is not null)
+        if (TrySubmitReadyTransferBatch(context, requiredManifest, out bool gatherDeferred))
+            return false;
+        if (gatherDeferred)
+            return true;
+
+        while (TryPeekSubmittedTransfer(requiredManifest, out VulkanSubmittedImportedTextureUploadBatch? submitted) && submitted is not null)
         {
-            _ = requiredManifest?.MarkGpuSubmitted(submitted.Upload.Ticket);
             if (!context.Commands.TryPollImportedTextureTransfer(submitted, out bool complete, out string? pollFailure))
             {
                 string reason = pollFailure ??
                     "Required texture transfer upload polling failed.";
-                requiredManifest?.Fail(submitted.Upload.Ticket, reason);
                 if (submitted.TryMarkTerminalFailure(reason))
                 {
-                    RecordState(
-                        submitted.Upload.Request,
-                        VulkanTextureUploadGenerationState.Failed,
-                        reason);
-                    Interlocked.Increment(ref s_failedUploads);
-                    InvokeTextureUploadError(
-                        submitted.Upload,
-                        new InvalidOperationException(reason));
+                    for (int child = 0; child < submitted.Uploads.Length; child++)
+                        ReportSubmittedUploadTerminalFailure(
+                            submitted.Uploads[child], reason, requiredManifest);
                 }
                 continue;
             }
@@ -66,76 +64,26 @@ internal sealed partial class VulkanTextureUploadService
             if (!complete)
                 return false;
 
-            if (!RemoveSubmittedTransfer(submitted))
-                continue;
+            if (!TryReserveCompletedBatchBudget(submitted, requiredManifest))
+                return false;
 
             Volatile.Write(ref s_lastTransferWaitMilliseconds, TextureRuntimeDiagnostics.ElapsedMilliseconds(submitted.SubmitTimestamp));
-            RecordState(
-                submitted.Upload.Request,
-                VulkanTextureUploadGenerationState.TransferComplete,
-                $"transfer upload fence signaled waitMs={Volatile.Read(ref s_lastTransferWaitMilliseconds):F3}");
-
-            if (!context.Commands.CompleteSubmittedImportedTextureUpload(submitted, out string? completeFailure))
+            if (!context.Commands.CompleteSubmittedImportedTextureUploadBatch(submitted, out string? completeFailure))
             {
-                submitted.Upload.Texture.ReleasePreparedImportedUploadResources(submitted.Upload);
                 string reason = completeFailure ??
                     "Required texture transfer upload completion failed.";
-                requiredManifest?.Fail(submitted.Upload.Ticket, reason);
-                RecordState(
-                    submitted.Upload.Request,
-                    VulkanTextureUploadGenerationState.Failed,
-                    reason);
-                Interlocked.Increment(ref s_failedUploads);
-                InvokeTextureUploadError(
-                    submitted.Upload,
-                    new InvalidOperationException(reason));
+                if (submitted.TryMarkTerminalFailure(reason))
+                {
+                    for (int child = 0; child < submitted.Uploads.Length; child++)
+                        ReportSubmittedUploadTerminalFailure(
+                            submitted.Uploads[child], reason, requiredManifest);
+                }
                 continue;
             }
-
-            bool published;
-            string? publicationFailure;
-            try
-            {
-                published = PublishCompletedImportedTextureUpload(
-                    context.Resources,
-                    submitted.Upload,
-                    "_deviceContext.TransferQueue",
-                    requireExactDescriptorPublication:
-                        requiredManifest?.RequiresExactDescriptorPublication == true,
-                    out publicationFailure);
-            }
-            catch (Exception exception) when (requiredManifest is not null)
-            {
-                publicationFailure =
-                    $"Required texture descriptor publication failed: " +
-                    exception.Message;
-                requiredManifest.Fail(
-                    submitted.Upload.Ticket,
-                    publicationFailure);
-                RecordState(
-                    submitted.Upload.Request,
-                    VulkanTextureUploadGenerationState.Failed,
-                    publicationFailure);
-                Interlocked.Increment(ref s_failedUploads);
-                InvokeTextureUploadError(submitted.Upload, exception);
-                return true;
-            }
-
-            if (published)
-            {
-                _ = requiredManifest?.MarkReady(submitted.Upload.Ticket);
-            }
-            else
-            {
-                requiredManifest?.Fail(
-                    submitted.Upload.Ticket,
-                    publicationFailure ??
-                        "Required texture descriptor publication failed.");
-            }
-            // Completion releases staging resources and publishes descriptors. Keep
-            // that non-preemptible Vulkan work to one texture per render iteration;
-            // draining a whole completed avatar batch here previously produced
-            // triple-digit millisecond render-thread jobs.
+            if (!RemoveSubmittedTransfer(submitted))
+                return false;
+            for (int child = 0; child < submitted.Uploads.Length; child++)
+                CompleteSubmittedBatchChild(context, submitted.Uploads[child], requiredManifest);
             return HasSubmittedTransfersOrCompleteDrain(requiredManifest);
         }
 
@@ -160,15 +108,18 @@ internal sealed partial class VulkanTextureUploadService
         {
             if (requiredManifest is not null)
             {
+                for (int index = 0; index < _readyTransferUploads.Count; index++)
+                    if (requiredManifest.Contains(_readyTransferUploads[index].Ticket)) return false;
                 for (int index = 0; index < _pendingTransferUploads.Count; index++)
                 {
-                    if (requiredManifest.Contains(_pendingTransferUploads[index].Upload.Ticket))
-                        return false;
+                    VulkanImportedTexturePendingUpload[] uploads = _pendingTransferUploads[index].Uploads;
+                    for (int child = 0; child < uploads.Length; child++)
+                        if (requiredManifest.Contains(uploads[child].Ticket)) return false;
                 }
                 return true;
             }
 
-            if (_pendingTransferUploads.Count > 0)
+            if (_readyTransferUploads.Count > 0 || _pendingTransferUploads.Count > 0)
                 return false;
         }
 
@@ -177,7 +128,7 @@ internal sealed partial class VulkanTextureUploadService
                    _transferQueueSync,
                    EVulkanFrameWaitReason.UploadLock))
         {
-            if (_pendingTransferUploads.Count == 0)
+            if (_readyTransferUploads.Count == 0 && _pendingTransferUploads.Count == 0)
                 return true;
         }
 
@@ -188,7 +139,7 @@ internal sealed partial class VulkanTextureUploadService
 
     private bool TryPeekSubmittedTransfer(
         VulkanTextureUploadManifest? requiredManifest,
-        out VulkanSubmittedImportedTextureUpload? submitted)
+        out VulkanSubmittedImportedTextureUploadBatch? submitted)
     {
         using (VulkanFrameLockScope.Enter(
                    _transferQueueSync,
@@ -197,10 +148,9 @@ internal sealed partial class VulkanTextureUploadService
             submitted = null;
             for (int index = 0; index < _pendingTransferUploads.Count; index++)
             {
-                VulkanSubmittedImportedTextureUpload candidate = _pendingTransferUploads[index];
+                VulkanSubmittedImportedTextureUploadBatch candidate = _pendingTransferUploads[index];
                 if (!candidate.HasTerminalFailure &&
-                    (requiredManifest is null ||
-                     requiredManifest.Contains(candidate.Upload.Ticket)))
+                    (requiredManifest is null || BatchContains(candidate, requiredManifest)))
                 {
                     submitted = candidate;
                     break;
@@ -219,16 +169,18 @@ internal sealed partial class VulkanTextureUploadService
     private void DrainTerminalFailedTransferRetirement(
         VulkanTextureUploadSchedulingContext context)
     {
-        VulkanSubmittedImportedTextureUpload? submitted = null;
+        VulkanSubmittedImportedTextureUploadBatch? submitted = null;
         using (VulkanFrameLockScope.Enter(
                    _transferQueueSync,
                    EVulkanFrameWaitReason.UploadLock))
         {
             for (int index = 0; index < _pendingTransferUploads.Count; index++)
             {
-                VulkanSubmittedImportedTextureUpload candidate =
+                VulkanSubmittedImportedTextureUploadBatch candidate =
                     _pendingTransferUploads[index];
-                if (!candidate.HasTerminalFailure)
+                if (!candidate.HasTerminalFailure ||
+                    candidate.IsNativeCompletionFaulted ||
+                    candidate.IsNativeCompletionInProgress)
                     continue;
 
                 submitted = candidate;
@@ -241,8 +193,15 @@ internal sealed partial class VulkanTextureUploadService
                 submitted,
                 out bool complete,
                 out _) ||
-            !complete ||
-            !context.Commands.CompleteSubmittedImportedTextureUpload(
+            !complete)
+        {
+            return;
+        }
+
+        if (!TryReserveCompletedBatchBudget(submitted, requiredManifest: null))
+            return;
+
+        if (!context.Commands.CompleteSubmittedImportedTextureUploadBatch(
                 submitted,
                 out _))
         {
@@ -252,11 +211,22 @@ internal sealed partial class VulkanTextureUploadService
         if (!RemoveSubmittedTransfer(submitted))
             return;
 
-        submitted.Upload.Texture.ReleasePreparedImportedUploadResources(
-            submitted.Upload);
+        for (int child = 0; child < submitted.Uploads.Length; child++)
+        {
+            VulkanImportedTexturePendingUpload upload = submitted.Uploads[child];
+            if (submitted.IsCancellationRequested)
+                ReleaseCanceledSubmittedUpload(upload);
+            else
+                FailSubmittedUpload(
+                    upload,
+                    submitted.TerminalFailureReason ??
+                        "Texture upload batch retired after terminal submission failure.",
+                    null);
+        }
+
     }
 
-    private bool RemoveSubmittedTransfer(VulkanSubmittedImportedTextureUpload submitted)
+    private bool RemoveSubmittedTransfer(VulkanSubmittedImportedTextureUploadBatch submitted)
     {
         bool removed;
         using (VulkanFrameLockScope.Enter(
@@ -267,7 +237,7 @@ internal sealed partial class VulkanTextureUploadService
         if (!removed)
             return false;
 
-        int pending = Interlocked.Decrement(ref s_pendingTransferSubmissions);
+        int pending = Interlocked.Add(ref s_pendingTransferSubmissions, -submitted.Uploads.Length);
         if (pending < 0)
             Interlocked.Exchange(ref s_pendingTransferSubmissions, 0);
         long bytes = Interlocked.Add(ref s_transferQueueBytesInFlight, -submitted.BytesInFlight);
@@ -276,33 +246,272 @@ internal sealed partial class VulkanTextureUploadService
         return true;
     }
 
+    private static long RetireCompletedTextureUploadChunk(
+        VulkanResourceRuntime resourceRuntime,
+        VulkanImportedTexturePendingUpload upload)
+    {
+        VulkanImportedTextureUploadStagingResource[] staging = upload.DetachPreparedChunk();
+        long bytes = 0;
+        for (int index = 0; index < staging.Length; index++)
+        {
+            VulkanImportedTextureUploadStagingResource item = staging[index];
+            bytes = checked(bytes + (long)item.SizeBytes);
+            if (!item.Slice.IsValid)
+                resourceRuntime.Buffers.Retire(
+                    item.Buffer,
+                    item.Memory,
+                    "VulkanTextureUploadService.ChunkFenceComplete");
+        }
+        return bytes;
+    }
+
+    private static bool BatchContains(
+        VulkanSubmittedImportedTextureUploadBatch batch,
+        VulkanTextureUploadManifest manifest)
+    {
+        for (int child = 0; child < batch.Uploads.Length; child++)
+            if (manifest.Contains(batch.Uploads[child].Ticket)) return true;
+        return false;
+    }
+
+    private bool TrySubmitReadyTransferBatch(
+        VulkanTextureUploadSchedulingContext context,
+        VulkanTextureUploadManifest? requiredManifest,
+        out bool gatherDeferred)
+    {
+        gatherDeferred = false;
+        bool hasEligibleReadyUpload = false;
+        using (VulkanFrameLockScope.Enter(_transferQueueSync, EVulkanFrameWaitReason.UploadLock))
+        {
+            for (int index = 0; index < _readyTransferUploads.Count; index++)
+            {
+                if (requiredManifest is null ||
+                    requiredManifest.Contains(_readyTransferUploads[index].Ticket))
+                {
+                    hasEligibleReadyUpload = true;
+                    break;
+                }
+            }
+        }
+
+        if (!hasEligibleReadyUpload)
+        {
+            // A foreground manifest is only a filtered view of the queue. An
+            // empty/disjoint view must not repeatedly reset the ordinary
+            // gather continuation and starve unrelated background transfers.
+            if (requiredManifest is null)
+                Interlocked.Exchange(ref _transferBatchGatherPending, 0);
+            return false;
+        }
+
+        // Defer ordinary work exactly once so independently completed workers
+        // can join one native batch. A required manifest is a readiness barrier
+        // and therefore selects immediately. The continuation is separately
+        // queued because a true coroutine result means completion.
+        if (requiredManifest is null &&
+            Interlocked.CompareExchange(ref _transferBatchGatherPending, 1, 0) == 0)
+        {
+            ScheduleTransferDrainContinuation(context);
+            gatherDeferred = true;
+            return false;
+        }
+
+        _transferBatchScratch.Clear();
+        long bytes = 0;
+        using (VulkanFrameLockScope.Enter(_transferQueueSync, EVulkanFrameWaitReason.UploadLock))
+        {
+            for (int index = 0; index < _readyTransferUploads.Count && _transferBatchScratch.Count < MaxTransferBatchChunks;)
+            {
+                VulkanImportedTexturePendingUpload candidate = _readyTransferUploads[index];
+                if (requiredManifest is not null && !requiredManifest.Contains(candidate.Ticket)) { index++; continue; }
+                long candidateBytes = (long)candidate.StagingResources[0].SizeBytes;
+                if (_transferBatchScratch.Count > 0 && bytes + candidateBytes > MaxTransferBatchBytes) break;
+                _transferBatchScratch.Add(candidate);
+                bytes += candidateBytes;
+                _readyTransferUploads.RemoveAt(index);
+                int remainingReady = Interlocked.Decrement(ref s_readyTransferChunks);
+                if (remainingReady < 0)
+                    Interlocked.Exchange(ref s_readyTransferChunks, 0);
+                long remainingReadyBytes = Interlocked.Add(ref s_readyTransferBytes, -candidateBytes);
+                if (remainingReadyBytes < 0)
+                    Interlocked.Exchange(ref s_readyTransferBytes, 0);
+            }
+        }
+        if (_transferBatchScratch.Count == 0) return false;
+        long recordStart = TextureRuntimeDiagnostics.StartTiming();
+        bool submitted = context.Commands.TrySubmitImportedTextureUploadBatchToGraphicsQueue(
+            _transferBatchScratch, out VulkanSubmittedImportedTextureUploadBatch? batch, out string? failure);
+        RecordImportedTextureTransferRecordCpu(TextureRuntimeDiagnostics.ElapsedMilliseconds(recordStart));
+        if (!submitted || batch is null)
+        {
+            for (int child = 0; child < _transferBatchScratch.Count; child++)
+                FailSubmittedUpload(_transferBatchScratch[child], failure ?? "texture upload batch submission failed", requiredManifest);
+            _transferBatchScratch.Clear();
+            Interlocked.Exchange(ref _transferBatchGatherPending, 0);
+            return true;
+        }
+        using (VulkanFrameLockScope.Enter(_transferQueueSync, EVulkanFrameWaitReason.UploadLock))
+            _pendingTransferUploads.Add(batch);
+        int chunksInFlight = Interlocked.Add(ref s_pendingTransferSubmissions, batch.Uploads.Length);
+        long bytesInFlight = Interlocked.Add(ref s_transferQueueBytesInFlight, batch.BytesInFlight);
+        UpdateMaximum(ref s_maxTransferChunksInFlight, chunksInFlight);
+        UpdateMaximum(ref s_maxTransferBytesInFlight, bytesInFlight);
+        Interlocked.Increment(ref s_coalescedTransferBatches);
+        Interlocked.Add(ref s_coalescedTransferChunks, batch.Uploads.Length);
+        for (int child = 0; child < batch.Uploads.Length; child++)
+        {
+            RecordUploadChunkProgress(batch.Uploads[child].Request, submitted: true);
+            _ = requiredManifest?.MarkGpuSubmitted(batch.Uploads[child].Ticket);
+            RecordState(batch.Uploads[child].Request, VulkanTextureUploadGenerationState.TransferSubmitted,
+                $"batch submitted chunks={batch.Uploads.Length} bytes={batch.BytesInFlight}");
+        }
+        _transferBatchScratch.Clear();
+        Interlocked.Exchange(ref _transferBatchGatherPending, 0);
+        return true;
+    }
+
+    private void ScheduleTransferDrainContinuation(VulkanTextureUploadSchedulingContext context)
+        => RuntimeRenderingHostServices.Scheduling.EnqueueRenderThreadCoroutine(
+            () => DrainSubmittedTextureTransfers(context),
+            "VulkanTextureUploadService.GatherTransferUploads",
+            RenderThreadJobKind.TextureUpload);
+
+    private void CompleteSubmittedBatchChild(
+        VulkanTextureUploadSchedulingContext context,
+        VulkanImportedTexturePendingUpload upload,
+        VulkanTextureUploadManifest? manifest)
+    {
+        long completedBytes = RetireCompletedTextureUploadChunk(context.Resources, upload);
+        // The batch fence and command-buffer cleanup have already completed.
+        // Recycle only retirement-ready staging leases so the protected ring can
+        // admit the next foreground chunk without a synthetic frame advance.
+        _ = context.Resources.DrainCompletedStagingBuffers(maxItems: 4);
+        Interlocked.Increment(ref s_chunksCompleted);
+        Interlocked.Add(ref s_chunkBytesCompleted, completedBytes);
+        RecordUploadChunkProgress(upload.Request, submitted: false);
+        if (!upload.ShouldPublish())
+        {
+            const string reason =
+                "Texture upload was canceled after its submitted chunk completed.";
+            upload.Texture.ReleasePreparedImportedUploadResources(upload);
+            manifest?.Fail(
+                upload.Ticket,
+                reason,
+                EVulkanPresentNowFailureDisposition.RetryFrame);
+            RecordState(upload.Request, VulkanTextureUploadGenerationState.Canceled, reason);
+            Interlocked.Increment(ref s_canceledStaleUploads);
+            InvokeTextureUploadCanceled(upload);
+            return;
+        }
+        if (!upload.CurrentChunkIsFinal)
+        {
+            if (!ResumeNextImportedTextureChunk(context, upload))
+                FailSubmittedUpload(upload, "texture chunk could not resume after completion", manifest);
+            return;
+        }
+        if (PublishCompletedImportedTextureUpload(context.Resources, upload, "graphics upload batch",
+                manifest is not null && manifest.Contains(upload.Ticket) &&
+                manifest.RequiresExactDescriptorPublication, out string? failure))
+            _ = manifest?.MarkReady(upload.Ticket);
+        else
+            manifest?.Fail(
+                upload.Ticket,
+                failure ?? "final texture upload publication failed",
+                upload.ShouldPublish()
+                    ? EVulkanPresentNowFailureDisposition.RendererTerminal
+                    : EVulkanPresentNowFailureDisposition.RetryFrame);
+    }
+
+    private void FailSubmittedUpload(
+        VulkanImportedTexturePendingUpload upload,
+        string reason,
+        VulkanTextureUploadManifest? manifest)
+    {
+        upload.Texture.ReleasePreparedImportedUploadResources(upload);
+        manifest?.Fail(upload.Ticket, reason);
+        RecordState(upload.Request, VulkanTextureUploadGenerationState.Failed, reason);
+        Interlocked.Increment(ref s_failedUploads);
+        InvokeTextureUploadError(upload, new InvalidOperationException(reason));
+    }
+
+    private void ReportSubmittedUploadTerminalFailure(
+        VulkanImportedTexturePendingUpload upload,
+        string reason,
+        VulkanTextureUploadManifest? manifest)
+    {
+        manifest?.Fail(upload.Ticket, reason);
+        RecordState(upload.Request, VulkanTextureUploadGenerationState.Failed, reason);
+        Interlocked.Increment(ref s_failedUploads);
+        InvokeTextureUploadError(upload, new InvalidOperationException(reason));
+    }
+
+    private void ReleaseCanceledSubmittedUpload(VulkanImportedTexturePendingUpload upload)
+        => upload.Texture.ReleasePreparedImportedUploadResources(upload);
+
+    private bool ResumeNextImportedTextureChunk(
+        VulkanTextureUploadSchedulingContext context,
+        VulkanImportedTexturePendingUpload upload)
+    {
+        VulkanImportedTextureUploadJob? job = upload.OwnerJob;
+        if (job is null || !job.ShouldAccept() ||
+            Volatile.Read(ref _preparationRetirementStarted) != 0 ||
+            !context.IsDeviceOperational)
+        {
+            return false;
+        }
+
+        job.PendingUpload = upload;
+        return QueueUploadPreparation(context, job);
+    }
+
     private void CancelSubmittedTransfers(VulkanCommandRuntime commandRuntime, string reason)
     {
-        VulkanSubmittedImportedTextureUpload[] submittedUploads;
+        VulkanSubmittedImportedTextureUploadBatch[] submittedUploads;
+        VulkanImportedTexturePendingUpload[] readyUploads;
         using (VulkanFrameLockScope.Enter(
                    _transferQueueSync,
                    EVulkanFrameWaitReason.UploadLock))
         {
             submittedUploads = [.. _pendingTransferUploads];
-            _pendingTransferUploads.Clear();
+            readyUploads = [.. _readyTransferUploads];
+            _readyTransferUploads.Clear();
         }
 
-        Volatile.Write(ref s_pendingTransferSubmissions, 0);
-        Volatile.Write(ref s_transferQueueBytesInFlight, 0);
+        Volatile.Write(ref s_readyTransferChunks, 0);
+        Volatile.Write(ref s_readyTransferBytes, 0);
         for (int i = 0; i < submittedUploads.Length; i++)
         {
-            VulkanSubmittedImportedTextureUpload submitted = submittedUploads[i];
-            bool retired = commandRuntime.CompleteSubmittedImportedTextureUpload(
+            VulkanSubmittedImportedTextureUploadBatch submitted = submittedUploads[i];
+            bool completed = commandRuntime.TryPollImportedTextureTransfer(
                 submitted,
-                out _);
-            if (retired)
+                out bool fenceComplete,
+                out _) && fenceComplete;
+            if (completed &&
+                commandRuntime.CompleteSubmittedImportedTextureUploadBatch(submitted, out _) &&
+                RemoveSubmittedTransfer(submitted))
             {
-                submitted.Upload.Texture.ReleasePreparedImportedUploadResources(
-                    submitted.Upload);
+                for (int child = 0; child < submitted.Uploads.Length; child++)
+                    ReleaseCanceledSubmittedUpload(submitted.Uploads[child]);
             }
-            RecordState(submitted.Upload.Request, VulkanTextureUploadGenerationState.Canceled, reason);
+            else
+            {
+                _ = submitted.TryMarkCancellationRequested(reason);
+                _ = submitted.TryMarkTerminalFailure(reason);
+            }
+            for (int child = 0; child < submitted.Uploads.Length; child++)
+            {
+                RecordState(submitted.Uploads[child].Request, VulkanTextureUploadGenerationState.Canceled, reason);
+                Interlocked.Increment(ref s_canceledStaleUploads);
+                InvokeTextureUploadCanceled(submitted.Uploads[child]);
+            }
+        }
+        for (int i = 0; i < readyUploads.Length; i++)
+        {
+            VulkanImportedTexturePendingUpload upload = readyUploads[i];
+            ReleaseCanceledSubmittedUpload(upload);
+            RecordState(upload.Request, VulkanTextureUploadGenerationState.Canceled, reason);
             Interlocked.Increment(ref s_canceledStaleUploads);
-            InvokeTextureUploadCanceled(submitted.Upload);
+            InvokeTextureUploadCanceled(upload);
         }
     }
 

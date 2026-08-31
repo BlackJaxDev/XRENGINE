@@ -14,6 +14,7 @@ using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.API.Rendering.OpenXR;
 using XREngine.Rendering.OpenGL;
+using XREngine.Rendering.Occlusion;
 using XREngine.Scene.Transforms;
 using Debug = XREngine.Debug;
 
@@ -455,6 +456,7 @@ internal sealed unsafe partial class OpenGlXrGraphicsBinding
             {
                 renderer.Active = true;
                 AbstractRenderer.Current = renderer;
+                OcclusionGpuElapsedTiming.Instance.Resolve(renderer, RuntimeEngine.Rendering.State.RenderFrameId);
 
                 // Make sure the eye pose reflects the latest locomotion-root rotation for *this* render.
                 ApplyOpenXrEyePoseForRenderThread(viewIndex);

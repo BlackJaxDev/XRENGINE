@@ -50,6 +50,12 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     /// </summary>
     public int InstanceId { get; } = System.Threading.Interlocked.Increment(ref s_nextInstanceId);
 
+    /// <summary>
+    /// Releases command-owned CPU publications on the render thread when this
+    /// instance's cache is cleared. Submitted work retains its own leases.
+    /// </summary>
+    internal event Action? CacheClearing;
+
     private OcclusionViewOwnership _occlusionViewOwnership;
 
     public OcclusionViewOwnership OcclusionViewOwnership
@@ -521,6 +527,24 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         bool stereoPass = false,
         XRMaterial? shadowMaterial = null,
         RenderCommandCollection? meshRenderCommandsOverride = null)
+        => TryRender(scene, camera, stereoRightEyeCamera, viewport, targetFBO,
+            userInterface, shadowPass, stereoPass, shadowMaterial, meshRenderCommandsOverride);
+
+    /// <summary>
+    /// Records the pipeline and reports whether its command chain executed.
+    /// This is authoring success, not proof of deferred backend submission.
+    /// </summary>
+    public bool TryRender(
+        VisualScene scene,
+        XRCamera? camera,
+        XRCamera? stereoRightEyeCamera,
+        XRViewport? viewport,
+        XRFrameBuffer? targetFBO = null,
+        IRuntimeScreenSpaceUserInterface? userInterface = null,
+        bool shadowPass = false,
+        bool stereoPass = false,
+        XRMaterial? shadowMaterial = null,
+        RenderCommandCollection? meshRenderCommandsOverride = null)
     {
         IRuntimeRenderFrameTimingServices frameTiming = RuntimeRenderingHostServices.FrameTiming;
 
@@ -533,7 +557,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                 GetHashCode(),
                 camera?.Transform.SceneNode?.Name ?? "<null>",
                 viewport is null ? "<null>" : $"{viewport.Index}:{viewport.Width}x{viewport.Height}");
-            return;
+            return false;
         }
 
         if (frameTiming.IsPlayModeTransitioning)
@@ -546,96 +570,28 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                 frameTiming.PlayModeStateName,
                 camera?.Transform.SceneNode?.Name ?? stereoRightEyeCamera?.Transform.SceneNode?.Name ?? "<null>",
                 viewport is null ? "<null>" : $"{viewport.Index}:{viewport.Width}x{viewport.Height}");
-            return;
+            return false;
         }
 
-        // Capture the last render context for editor tooling.
-        LastSceneCamera = camera;
-        LastRenderingCamera = camera ?? stereoRightEyeCamera;
-        LastWindowViewport = viewport;
-        FinalOutput = AbstractRenderer.Current?.CurrentFrameOutput;
-        XRCamera? effectiveAntiAliasingCamera = camera ?? stereoRightEyeCamera;
-        EAntiAliasingMode effectiveAntiAliasingMode =
-            effectiveAntiAliasingCamera?.AntiAliasingModeOverride
-            ?? frameTiming.DefaultAntiAliasingMode;
-        EffectiveOutputHDRThisFrame = camera?.OutputHDROverride
-            ?? (camera is null ? stereoRightEyeCamera?.OutputHDROverride : null)
-            ?? frameTiming.DefaultOutputHDR;
-        EffectiveAntiAliasingModeThisFrame = effectiveAntiAliasingMode;
-        EffectiveMsaaSampleCountThisFrame = Math.Max(1u,
-            FinalOutput?.Properties.SampleCount ??
-            effectiveAntiAliasingCamera?.MsaaSampleCountOverride ??
-            frameTiming.DefaultMsaaSampleCount);
-        EffectiveTsrRenderScaleThisFrame = effectiveAntiAliasingMode == EAntiAliasingMode.Tsr
-            ? Math.Clamp(
-                effectiveAntiAliasingCamera?.TsrRenderScaleOverride ?? frameTiming.DefaultTsrRenderScale,
-                0.5f,
-                1.0f)
-            : null;
-        ForwardContactPrePassAvailableThisFrame = false;
-
-/*
-        Debug.RenderingEvery(
-            $"XRRenderPipelineInstance.FrameSettings.{GetHashCode()}.{viewport?.Index ?? -1}",
-            TimeSpan.FromSeconds(1),
-            "[RenderDiag] FrameSettings Pipeline={0} VP={1} Camera={2} AA={3} HDR={4} MsaaSamples={5} TsrScale={6} OutputFBO={7}",
-            Pipeline.DebugName ?? Pipeline.GetType().Name,
-            viewport is null ? "<null>" : $"{viewport.Index}:{viewport.Width}x{viewport.Height}",
-            effectiveAntiAliasingCamera?.Transform.SceneNode?.Name ?? "<null>",
-            EffectiveAntiAliasingModeThisFrame?.ToString() ?? "<null>",
-            EffectiveOutputHDRThisFrame?.ToString() ?? "<null>",
-            EffectiveMsaaSampleCountThisFrame?.ToString() ?? "<null>",
-            EffectiveTsrRenderScaleThisFrame?.ToString() ?? "<null>",
-            targetFBO?.Name ?? "<backbuffer>");
-*/
-
-        // Honor any internal resolution request from the pipeline before executing commands.
-        if (viewport is not null)
-        {
-            if (viewport.AllowAutomaticInternalResolution &&
-                !ShouldDeferResourceGenerationForInteractiveWindowResize(viewport))
-            {
-                float? requestedScale = Pipeline.GetRequestedInternalResolutionForCamera(
-                    effectiveAntiAliasingCamera,
-                    effectiveAntiAliasingMode);
-
-                // Avoid redundant resets, while still reapplying the scale after a display resize.
-                if (requestedScale.HasValue)
-                {
-                    float scale = Math.Clamp(requestedScale.Value, 0.25f, 1.25f);
-                    int expectedWidth = Math.Max(1, (int)(scale * viewport.Width));
-                    int expectedHeight = Math.Max(1, (int)(scale * viewport.Height));
-                    if (_appliedInternalResolutionScale != scale ||
-                        viewport.InternalWidth != expectedWidth ||
-                        viewport.InternalHeight != expectedHeight)
-                    {
-                        _appliedInternalResolutionScale = scale;
-                        viewport.SetInternalResolution(expectedWidth, expectedHeight, correctAspect: false);
-                    }
-                }
-                else if (_appliedInternalResolutionScale.HasValue)
-                {
-                    // Restore to native internal resolution once the request is cleared.
-                    _appliedInternalResolutionScale = null;
-                    viewport.SetInternalResolution(viewport.Width, viewport.Height, true);
-                }
-            }
-            else
-            {
-                _appliedInternalResolutionScale = null;
-            }
-
-            if (!RuntimeEngine.Rendering.State.IsSceneCapturePass && !RuntimeEngine.Rendering.State.IsLightProbePass)
-                RuntimeRenderingHostServices.BackendInterop.PrepareUpscaleBridgeForFrame(viewport, this);
-        }
+        ApplyCurrentFrameProfile(camera, stereoRightEyeCamera, viewport);
 
         using (RuntimeRenderingHostServices.Diagnostics.PushRenderingPipeline(this))
         {
             using (RenderState.PushMainAttributes(viewport, scene, camera, stereoRightEyeCamera, targetFBO, shadowPass, stereoPass, shadowMaterial, userInterface, meshRenderCommandsOverride ?? MeshRenderCommands))
             {
                 WarnIfScreenSpaceUiHasNoRenderCommand(userInterface, viewport);
+                DirectionalShadowPipelineDiagnostics.Record(
+                    EDirectionalShadowPipelineReceiptStage.BeforeResourceGeneration,
+                    this,
+                    Pipeline,
+                    targetFBO);
                 if (!EnsureResourceGenerationForCurrentFrame(viewport))
                 {
+                    DirectionalShadowPipelineDiagnostics.Record(
+                        EDirectionalShadowPipelineReceiptStage.ResourceGenerationFailed,
+                        this,
+                        Pipeline,
+                        targetFBO);
                     _resizeCatchUpSkippedFrameId = RuntimeEngine.Rendering.State.RenderFrameId;
                     Debug.RenderingEvery(
                         $"RenderResources.FrameSkippedForResizeCatchUp.{ProfilerKey}",
@@ -645,20 +601,31 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                         ActiveGeneration?.Key.ToString() ?? "<none>",
                         PendingGeneration?.Key.ToString() ?? "<none>",
                         viewport is null ? "<null>" : $"{viewport.Index}:{viewport.Width}x{viewport.Height}/{viewport.InternalWidth}x{viewport.InternalHeight}");
-                    return;
+                    return false;
                 }
                 _resizeCatchUpSkippedFrameId = ulong.MaxValue;
                 RenderCommandCollection activeCommands =
                     meshRenderCommandsOverride ?? MeshRenderCommands;
+                DirectionalShadowPipelineDiagnostics.Record(
+                    EDirectionalShadowPipelineReceiptStage.BeforePackageValidation,
+                    this,
+                    Pipeline,
+                    targetFBO);
                 if (!TryValidateBackendReadyFramePackage(activeCommands, viewport, out string? packageFailure))
                 {
+                    DirectionalShadowPipelineDiagnostics.Record(
+                        EDirectionalShadowPipelineReceiptStage.PackageValidationFailed,
+                        this,
+                        Pipeline,
+                        targetFBO,
+                        packageFailure);
                     Debug.RenderingWarningEvery(
                         $"RenderFramePackage.Invalid.{ProfilerKey}",
                         TimeSpan.FromMilliseconds(250),
                         "[RenderFramePackage] Skipping command chain because the published package is invalid. Pipeline={0} Reason={1}",
                         ProfilerKey,
                         packageFailure ?? "Unknown");
-                    return;
+                    return false;
                 }
 
                 BeginRenderGraphValidationFrame();
@@ -677,6 +644,11 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                 using (AbstractRenderer.Current?.EnterRenderPipelineFrameResourceScope(this, viewport))
                 {
                     long consumptionStarted = System.Diagnostics.Stopwatch.GetTimestamp();
+                    DirectionalShadowPipelineDiagnostics.Record(
+                        EDirectionalShadowPipelineReceiptStage.BeforeCommandChainExecute,
+                        this,
+                        Pipeline,
+                        targetFBO);
                     Pipeline.CommandChain.Execute();
                     RuntimeEngine.Rendering.Stats.FrameLifecycle.RecordFramePackageConsumption(
                         System.Diagnostics.Stopwatch.GetTimestamp() - consumptionStarted);
@@ -686,6 +658,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                 ValidateRenderGraphExecutionAgainstMetadata();
             }
         }
+        return true;
     }
 
     internal void MarkForwardContactPrePassAvailable()
@@ -1912,6 +1885,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     /// </summary>
     private void DestroyCacheOnRenderThread()
     {
+        CacheClearing?.Invoke();
         if (!HasAnyTrackedResources())
             return;
 

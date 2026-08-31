@@ -488,6 +488,16 @@ internal unsafe partial class VkMeshRenderer
         artifact = null!;
         fallbackReason = EVulkanProgramBindingArtifactFallbackReason.None;
         fallbackDetail = null;
+        // Cross-frame artifacts are shared by reference and do not own a
+        // publication lease per recorded consumer. Keep immutable storage on
+        // the frame-owned GPU snapshot path until that cache supports leases.
+        if (snapshot.ReadOnlyStorageBindings is { } storageBindings &&
+            !storageBindings.Bindings.IsEmpty)
+        {
+            fallbackReason = EVulkanProgramBindingArtifactFallbackReason.UnownedDescriptorResource;
+            fallbackDetail = "immutable storage requires a frame-owned binding snapshot";
+            return false;
+        }
         if (snapshot.MutableLegacyUniformNames.Count != 0)
         {
             fallbackReason = EVulkanProgramBindingArtifactFallbackReason

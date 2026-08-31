@@ -85,6 +85,7 @@ internal sealed class FramePlanBuilder
         internal RenderOutputSchedulingDecision[] OutputDecisions =
             new RenderOutputSchedulingDecision[OutputCapacity];
         internal bool[] OutputDue = new bool[OutputCapacity];
+        internal bool[] OutputExecutable = new bool[OutputCapacity];
         internal int[] OutputExecutionRanks = new int[OutputCapacity];
         internal RenderOutputDagNodeDescriptor[] OutputExecutionNodes =
             new RenderOutputDagNodeDescriptor[OutputNodeCapacity];
@@ -236,7 +237,7 @@ internal sealed class FramePlanBuilder
                 ? default
                 : slot.OutputGraphRequests[requiredOutputIndex];
             if (requiredOutputIndex < 0 ||
-                !slot.OutputDue[requiredOutputIndex] ||
+                !slot.OutputExecutable[requiredOutputIndex] ||
                 resolvedContract.WorkClass != requiredContract.WorkClass ||
                 resolvedContract.ReadinessPolicy !=
                     requiredContract.ReadinessPolicy)
@@ -285,7 +286,7 @@ internal sealed class FramePlanBuilder
             slot,
             operationCount,
             dynamicOperationCount);
-        int staticPlannerContextKeyCount = CollectStaticPlannerContextKeys(slot);
+        int staticPlannerContextKeyCount = CollectPlannerContextKeys(slot);
         ulong renderGraphPlanSignature = ResolveStaticPlannerContextPlans(
             slot,
             staticPlannerContextKeyCount,
@@ -345,12 +346,26 @@ internal sealed class FramePlanBuilder
         return -1;
     }
 
-    private static int CollectStaticPlannerContextKeys(Slot slot)
+    /// <summary>
+    /// Captures every distinct resource-planner context consumed by either
+    /// sealed recording stream. Dynamic overlay compute work is recorded after
+    /// the static stream but still requires the same frozen physical generation
+    /// guarantee during descriptor preparation.
+    /// </summary>
+    private static int CollectPlannerContextKeys(Slot slot)
     {
-        int keyCount = 0;
-        for (int operationIndex = 0; operationIndex < slot.Operations.Count; operationIndex++)
+        int keyCount = CollectPlannerContextKeys(slot, slot.Operations, 0);
+        return CollectPlannerContextKeys(slot, slot.DynamicOverlayOperations, keyCount);
+    }
+
+    private static int CollectPlannerContextKeys(
+        Slot slot,
+        FrameOperationStream operations,
+        int keyCount)
+    {
+        for (int operationIndex = 0; operationIndex < operations.Count; operationIndex++)
         {
-            ref readonly FrameOpContext context = ref slot.Operations.GetContext(operationIndex);
+            ref readonly FrameOpContext context = ref operations.GetContext(operationIndex);
             if (context.ResourceRegistry is null && context.PassMetadata is not { Count: > 0 })
                 continue;
 
@@ -1005,20 +1020,46 @@ internal sealed class FramePlanBuilder
             EVulkanAcceptedFrameLane.Output);
         for (int outputIndex = 0; outputIndex < outputCount; outputIndex++)
         {
-            ulong outputId = slot.Outputs[outputIndex].StableOutputId;
+            RenderOutputRequest request = slot.OutputGraphRequests[outputIndex];
+            if (!_outputGraphPlanner.TryGetTerminalNodeIndex(
+                    request,
+                    out int terminalNodeIndex))
+            {
+                throw new InvalidOperationException(
+                    "A reserved output request has no terminal DAG node.");
+            }
+
+            bool executable = graph.IsExecutable(terminalNodeIndex);
+            slot.OutputExecutable[outputIndex] = executable;
+            ulong terminalNodeKey = graph.GetNode(terminalNodeIndex).StableNodeKey;
             int rank = int.MaxValue;
             for (int nodeIndex = 0; nodeIndex < executionNodeCount; nodeIndex++)
             {
-                if (slot.OutputExecutionNodes[nodeIndex].StableOutputKey == outputId)
-                    rank = Math.Min(rank, nodeIndex);
+                if (slot.OutputExecutionNodes[nodeIndex].StableNodeKey == terminalNodeKey)
+                {
+                    rank = nodeIndex;
+                    break;
+                }
             }
             if (rank == int.MaxValue)
             {
-                if (slot.OutputDecisions[outputIndex].Execute)
+                if (executable || slot.OutputDecisions[outputIndex].Execute)
                 {
                     throw new InvalidOperationException(
                         "An admitted output request has no executable DAG terminal.");
                 }
+            }
+            else if (!slot.OutputDecisions[outputIndex].Execute)
+            {
+                RenderOutputSchedulingDecision decision =
+                    slot.OutputDecisions[outputIndex];
+                slot.OutputDecisions[outputIndex] = new(
+                    Execute: true,
+                    ERenderOutputWorkDisposition.FreshRender,
+                    ERenderOutputPolicyReason.DependencyRequired,
+                    decision.ContentAgeFrames,
+                    decision.XrCriticalPathReserved,
+                    ForcedRefresh: true);
             }
 
             slot.OutputExecutionRanks[outputIndex] = rank;
@@ -1076,7 +1117,7 @@ internal sealed class FramePlanBuilder
             {
                 if (!slot.Outputs[outputIndex].MatchesOutput(operationOutput))
                     continue;
-                if (slot.OutputDue[outputIndex])
+                if (slot.OutputExecutable[outputIndex])
                     slot.OperationOrderScratch[retainedCount++] = operationIndex;
                 break;
             }
@@ -1105,7 +1146,7 @@ internal sealed class FramePlanBuilder
     private static bool HasAdmittedOutput(Slot slot, int outputCount)
     {
         for (int index = 0; index < outputCount; index++)
-            if (slot.OutputDue[index])
+            if (slot.OutputExecutable[index])
                 return true;
         return false;
     }

@@ -16,5 +16,4 @@ internal sealed record RetiredOpenXrSubmissionTimeline(
     uint[] FrameSlots,
     int FrameSlotCount,
     VulkanFrameDataArena? FrameDataArena,
-    ulong FrameDataGeneration,
-    uint FrameDataSlot);
+    ulong FrameDataGeneration);

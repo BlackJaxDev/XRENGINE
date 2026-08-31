@@ -20,6 +20,7 @@ internal readonly record struct VulkanPreparedPrimaryCommandInput(
     VulkanCommandRecordingPolicySnapshot Policy,
     ImageLayout TrackedTargetLayout,
     uint? FrameDataImageIndexOverride = null,
+    VulkanReadOnlyStoragePreparedAuthority? ReadOnlyStorageAuthority = null,
     OpenXrEyeRenderTargetContext? OpenXrTargetContext = null,
     CommandChainSchedule? CommandChainSchedule = null,
     bool ExcludeDesktopSwapchainBarriers = false,

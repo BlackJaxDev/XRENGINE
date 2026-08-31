@@ -2,6 +2,13 @@
 
 ## Status
 
+Current master Phase 5.0/5.1 results are recorded in the
+[2026-08-30 closeout](#2026-08-30-phase-5051-closeout). Phase 5.2 has not started.
+The earlier measurements below are historical investigation evidence, not a
+claim of current shaded-output parity or Phase 8 performance promotion.
+
+### Historical status: 2026-08-13
+
 Implementation complete as of 2026-08-13; extended validation remains open.
 The native FPS-overlay continuity defect is fixed in the sampled recovery path,
 and camera-motion stalls are materially shorter, but a fresh exact-source A/B
@@ -553,3 +560,81 @@ under live validation, per repository policy. After the live Sponza path is
 stable and the user clears test work, add focused output-DAG, modal-resize,
 worker-timeout, and OpenXR scheduling coverage and run the companion hardware
 and stress matrix.
+
+## 2026-08-30 Phase 5.0/5.1 Closeout
+
+Phase 5.0 and 5.1 are now complete. This closeout does not enter Phase 5.2.
+
+| Gate | Result |
+| --- | --- |
+| Warm desktop performance | `desktop-steady-fixed/summary.json`: 1,232 samples; render p50/p95/p99 4.294/5.942/8.065 ms and Vulkan p50/p95 3.650/4.905 ms. After the four-second stabilization boundary: zero policy violation, rejection, in-flight wait, forced flush, or VUID. |
+| Interactive resize | Isolated session `20260830-112835-phase51-resize-release-0830`: the editor remained MCP-responsive throughout a modal Win32 resize, recreated the swapchain, resumed live FPS output, and logged zero `DesktopFrameFailure`, `VulkanPlanPreconditionException`, lease exhaustion, VUID, synchronization hazard, or frame rejection. |
+| Allocation policy non-activation | Baseline and Analyze remained inactive. The earlier ProofGated cohort had zero candidates and reached imported-model compute dispatches with zero VUID after the common push-constant mask fix. Final review tightened this further: every mode now keeps dedicated device-local images, and ProofGated reports `block='native dependency/initialization and positive-path validation pending'`. This validates safe non-activation, not a positive alias/lazy A/B or performance gain. |
+| Multi-output OpenXR | `openxr-phase51-final/reports/openxr-smoke-summary.json`: 240 total frames (163 submitted, 77 no-layer), 80 warmup and 160 retained frames, true strict SPS for all 163 submissions, zero sequential fallback/end-frame failure, mirror composed, six of six scripted desktop resizes, zero global in-flight wait/forced flush/final pending retirement, and empty failure/warning arrays with Vulkan and synchronization validation enabled. The 37 counted deadline misses were observable under synchronization validation and caused no output or submission failure. |
+
+The implementation closes three render-graph issues:
+
+- `VulkanRenderGraphCompiler` keeps an O(1) clean-revision hit and immutable
+  connected-subgraph cache. A dirty component rebuild reuses untouched pass
+  objects and restores global order; mutation during compilation is rejected.
+- `VulkanBarrierPlan` coalesces only matching stage/access/layout/queue scopes
+  with adjacent layers or mips, and the recorder emits one Synchronization2
+  dependency batch per pass. A missing frozen graph pass fails closed instead
+  of substituting a broad `AllCommands` transition.
+- `XRE_VULKAN_TRANSIENT_ATTACHMENT_MODE` defaults to Baseline and exposes
+  evidence-only Analyze/ProofGated modes. Candidate analysis identifies
+  graphics-queue, non-imported, non-overlapping declared intervals without
+  mislabeling them native lifetime proof. All image sharing and lazy activation
+  remain disabled pending the native dependency/initialization contract and
+  positive-path validation, including outside OpenXR/VR.
+
+Live validation exposed and fixed two additional lifetime/ABI regressions:
+
+- modal swapchain recreation delayed lowering until the shared advanced
+  extractor had advanced. Advanced visibility columns are now captured under
+  the preparation-service lock into a bounded, reference-counted authoring
+  lease; lowering reads only the immutable lease. Resize abandonment, OpenXR
+  prewarm/mirror/paired-eye early returns, plan lowering, and queue disposal all
+  release that ownership explicitly.
+- compute dispatch used the legacy common push-constant stage mask even when
+  the pipeline layout included Task/Mesh stages. Direct and indirect compute
+  recorders now use the same device-aware full mask as layout creation,
+eliminating `VUID-vkCmdPushConstants-offset-01796` in the imported-model run.
+
+Final read-only GPU review also prevented an unsafe opt-in path from shipping.
+The original candidate gate accepted disjoint graphics storage-image writes,
+but equal physical access states can suppress a native barrier; pass order does
+not prove a WAW handoff. Lazy eligibility also needed to reject
+`RequiresStorageUsage`, rather than stripping `StorageBit` later. The retained
+implementation fixes that eligibility check, preserves all native usage bits,
+removes candidate-driven allocation activation, and reports the missing proof
+explicitly. Future positive A/B work needs native handoff dependencies even for
+equal layouts, complete physical-use lifetime coverage, and initialization
+authority. The present conditional fail-closed gate is complete; those future
+optimizations are not claimed as implemented or validated.
+
+The final isolated Debug run `20260830-121139-phase51-native-proof-gate-0830`
+confirmed the explicit ProofGated block with zero active alias/lazy groups.
+Observed frame IDs advanced from 2,744 to 5,097 with 25 resident draws and no
+publication rejection. Logs contained zero VUID, synchronization hazard,
+desktop-frame failure, plan precondition exception, or lease exhaustion. One
+startup texture-readiness retry remained at one after import settled. The MCP
+viewport screenshot request could not resolve a transfer-readable color image,
+so it was not treated as visual acceptance and no fallback capture path was
+silently substituted. The earlier live modal-resize/FPS observation remains the
+visual continuity evidence; full shaded-output parity is still a Phase 8 gate.
+
+No tests were added or modified. The existing targeted unit-test invocation is
+currently blocked at compile time by pre-existing stale calls to the removed
+`AdvancedRenderPipeline(visibilityFamilyReservation: ...)` overload and the old
+`CaptureAdvancedResourceProfile` signature in three test files. Runtime Vulkan,
+Release editor, strict SPS, resize, and synchronization-validation paths all
+built and completed successfully; the stale test-source migration remains
+separate work requiring explicit test clearance.
+
+Final read-back: `dotnet build XREngine.Editor/XREngine.Editor.csproj -c Release
+--no-restore --disable-build-servers` passed with zero warnings and zero errors;
+`git diff --check` passed. Every isolated editor started for this validation was
+stopped. The final smoke editor's auto-started Monado child outlived the wrapper
+marker and was stopped only after verifying its exact PID, parent smoke-editor
+PID, executable path, and UTC creation time.

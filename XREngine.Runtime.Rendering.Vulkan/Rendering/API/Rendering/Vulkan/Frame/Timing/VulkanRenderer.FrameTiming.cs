@@ -24,6 +24,8 @@ internal sealed partial class VulkanFrameLoop
         int timingSlotCount = Math.Max(_outputRuntime.Desktop.Images?.Length ?? 0, FrameSlotCount);
         _telemetry._frameTimingQueryPools = new QueryPool[timingSlotCount];
         _telemetry._frameTimingQueryReady = new bool[timingSlotCount];
+        _telemetry._frameTimingSubmittedRenderFrameIds = new ulong[timingSlotCount];
+        _telemetry._frameTimingSubmittedSequences = new ulong[timingSlotCount];
 
         QueryPoolCreateInfo createInfo = new()
         {
@@ -73,6 +75,8 @@ internal sealed partial class VulkanFrameLoop
         int oldLength = _telemetry._frameTimingQueryPools.Length;
         Array.Resize(ref _telemetry._frameTimingQueryPools, slotCount);
         Array.Resize(ref _telemetry._frameTimingQueryReady, slotCount);
+        Array.Resize(ref _telemetry._frameTimingSubmittedRenderFrameIds, slotCount);
+        Array.Resize(ref _telemetry._frameTimingSubmittedSequences, slotCount);
 
         QueryPoolCreateInfo createInfo = new()
         {
@@ -114,7 +118,10 @@ internal sealed partial class VulkanFrameLoop
 
         _telemetry._frameTimingQueryPools = null;
         _telemetry._frameTimingQueryReady = null;
+        _telemetry._frameTimingSubmittedRenderFrameIds = null;
+        _telemetry._frameTimingSubmittedSequences = null;
         _telemetry._frameTimingGpuEnabled = false;
+        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanFrameGpuCommandBufferTimingDisabled();
     }
 
     private void BeginFrameTimingQueries(CommandBuffer commandBuffer, int frameSlot)
@@ -196,13 +203,9 @@ internal sealed partial class VulkanFrameLoop
         RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanFrameGpuCommandBufferTime(TimeSpan.FromMilliseconds(gpuMilliseconds));
     }
 
-    private void MarkFrameTimingSubmitted(int frameSlot)
+    private void MarkFrameTimingSubmitted(int frameSlot, ulong submittedRenderFrameId)
     {
-        if (_telemetry._frameTimingQueryReady is null || frameSlot < 0 || frameSlot >= _telemetry._frameTimingQueryReady.Length)
-            return;
-
-        _telemetry._frameTimingQueryReady[frameSlot] = true;
-        MarkVulkanGpuProfilerSubmitted(frameSlot);
+        _telemetry.MarkFrameTimingSubmitted(frameSlot, submittedRenderFrameId);
     }
 
     private unsafe void CreateVulkanGpuProfilerResources()
@@ -406,10 +409,10 @@ internal sealed partial class VulkanFrameLoop
 
                     ulong start = timestamps[sample.StartQuery];
                     ulong end = timestamps[sample.EndQuery];
-                    if (end <= start)
-                        continue;
-
-                    ulong nanoseconds = (ulong)Math.Round((end - start) * _telemetry._frameTimingTimestampPeriodNanoseconds);
+                    ulong elapsedTicks = RenderQueryTimestampMath.DeltaTicks(
+                        start, end, _resourceRuntime.Queries.Capabilities.GraphicsTimestampValidBits);
+                    ulong nanoseconds = RenderQueryTimestampMath.TicksToNanoseconds(
+                        elapsedTicks, _telemetry._frameTimingTimestampPeriodNanoseconds);
                     RenderPipelineGpuProfiler.Instance.RecordBackendGpuTimingSample(
                         frameId,
                         VulkanFrameTelemetry.GpuProfilerBackendName,

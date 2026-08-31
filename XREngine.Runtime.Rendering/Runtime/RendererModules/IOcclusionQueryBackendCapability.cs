@@ -10,6 +10,12 @@ public interface IOcclusionQueryBackendCapability
     bool EndOcclusionQuery(XRRenderQuery query);
     ERenderQueryReadStatus WriteTimestamp(XRRenderQuery query);
     ERenderQueryReadStatus TryGetTimestamp(XRRenderQuery query, out TimestampQueryResult result);
+    /// <summary>
+    /// Consumes proof that the query's recorded timestamp epoch was discarded before queue submission.
+    /// </summary>
+    bool TryConsumeAbandonedTimestamp(XRRenderQuery query);
+    /// <summary>Converts a pair of backend timestamp ticks into a wrap-safe elapsed duration.</summary>
+    ulong GetElapsedTimestampNanoseconds(ulong startRawTicks, ulong endRawTicks);
     ERenderQueryReadStatus TryGetAnySamplesPassed(
         XRRenderQuery query,
         out OcclusionQueryResult result,

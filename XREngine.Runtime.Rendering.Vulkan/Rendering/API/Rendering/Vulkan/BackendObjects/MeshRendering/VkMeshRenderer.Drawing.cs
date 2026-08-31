@@ -676,11 +676,16 @@ internal unsafe partial class VkMeshRenderer
 			}
 
 			UpdateEngineUniformBuffersForDraw(frameIndex, drawUniformSlot, draw);
-			UpdateAutoUniformBuffersForDraw(
-				frameIndex,
-				drawUniformSlot,
-				material,
-				draw);
+			if (!UpdateAutoUniformBuffersForDraw(
+					frameIndex,
+					drawUniformSlot,
+					material,
+					draw,
+					out string autoUniformFailure))
+			{
+				reason = $"auto uniforms: {autoUniformFailure}";
+				return false;
+			}
 			if (!TryPrepareFrameDataPayloadHandles(
 					preparedFrame,
 					program,
@@ -1029,9 +1034,12 @@ internal unsafe partial class VkMeshRenderer
 		int handleIndex = 0;
 		ulong arenaGeneration = BackendContext.Resources.MappedFrameArena?.Generation ?? 0UL;
 		ulong materialGeneration = ComputeMaterialPublicationGeneration(
+			material,
 			material.BindingLayoutVersion,
 			material.BindingValueVersion,
 			draw.ProgramBindingSnapshot?.RuntimeUniformNameSignature ?? 0UL,
+			draw.ProgramBindingSnapshot
+				?.RuntimeUniformPublicationLayoutSignature ?? 0UL,
 			draw.ProgramBindingSnapshot
 				?.MutableLegacyUniformValueSignature ?? 0UL);
 
@@ -1229,6 +1237,7 @@ internal unsafe partial class VkMeshRenderer
 						binding,
 						frameIndex,
 						drawUniformSlot,
+						default,
 						out uint offset))
 				{
 					reason =
@@ -1346,6 +1355,7 @@ internal unsafe partial class VkMeshRenderer
 		string pipelineName,
 		string targetName,
 		int drawUniformSlot,
+		int frameDataImageIndex,
 		out IndexType indexType)
 	{
 		indexType = IndexType.Uint32;
@@ -1385,11 +1395,13 @@ internal unsafe partial class VkMeshRenderer
 		if (_program?.Data is { } programData)
 			NotifyDrawUniforms(material, programData, draw);
 
-		int frameIndex = ResolveCommandBufferIndex(commandBuffer);
-		if (frameIndex < 0)
-			frameIndex = 0;
-
-		if (!BindDescriptorsIfAvailable(commandBuffer, material, draw, drawUniformSlot, frameIndex, passIndex))
+		if (!BindDescriptorsIfAvailable(
+				commandBuffer,
+				material,
+				draw,
+				drawUniformSlot,
+				frameDataImageIndex,
+				passIndex))
 			return false;
 
 		PushPerDrawConstants(commandBuffer, material, draw);
@@ -1484,7 +1496,16 @@ internal unsafe partial class VkMeshRenderer
 
 				int descriptorSlotIndex = ResolveDescriptorFrameIndex(frameIndex, _descriptorSets.Length);
 				UpdateEngineUniformBuffersForDraw(frameIndex, drawUniformSlot, draw);
-				UpdateAutoUniformBuffersForDraw(frameIndex, drawUniformSlot, material, draw);
+				if (!UpdateAutoUniformBuffersForDraw(
+						frameIndex,
+						drawUniformSlot,
+						material,
+						draw,
+						out string autoUniformFailure))
+				{
+					reason = $"auto uniforms: {autoUniformFailure}";
+					return false;
+				}
 
 				descriptorSets = _descriptorSets[descriptorSlotIndex];
 				if (descriptorSets.Length == 0)
@@ -1798,7 +1819,25 @@ internal unsafe partial class VkMeshRenderer
 		int descriptorSlotIndex = ResolveDescriptorFrameIndex(imageIndex, _descriptorSets.Length);
 
 		UpdateEngineUniformBuffersForDraw(imageIndex, drawUniformSlot, draw);
-		UpdateAutoUniformBuffersForDraw(imageIndex, drawUniformSlot, material, draw);
+		if (!UpdateAutoUniformBuffersForDraw(
+				imageIndex,
+				drawUniformSlot,
+				material,
+				draw,
+				out string autoUniformFailure))
+		{
+			WarnOnce($"[DescFail] mesh={meshName} prog={programName} mat={materialName} reason=auto uniforms: {autoUniformFailure}");
+			RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorBindingFailure(
+				programName,
+				"auto-uniform",
+				materialName,
+				0,
+				0,
+				skippedDraw: true,
+				skippedDispatch: false,
+				$"mesh={meshName} auto uniforms: {autoUniformFailure}");
+			return false;
+		}
 
 		DescriptorSet[] sets = _descriptorSets[descriptorSlotIndex];
 		if (sets.Length == 0)
@@ -1905,6 +1944,7 @@ internal unsafe partial class VkMeshRenderer
 						binding,
 						frameIndex,
 						drawUniformSlot,
+						commandBuffer,
 						out uint offset))
 				{
 					WarnOnce($"Skipping draw for mesh '{Mesh?.Name ?? "UnnamedMesh"}' because dynamic uniform '{binding.Name}' could not resolve a bounded offset.");
@@ -1930,6 +1970,7 @@ internal unsafe partial class VkMeshRenderer
 		DescriptorBindingInfo binding,
 		int frameIndex,
 		int drawUniformSlot,
+		CommandBuffer commandBuffer,
 		out uint dynamicOffset)
 	{
 		dynamicOffset = 0;
@@ -1949,6 +1990,24 @@ internal unsafe partial class VkMeshRenderer
 			if (target.Offset <= uint.MaxValue)
 			{
 				dynamicOffset = (uint)target.Offset;
+				ulong descriptorBaseOffset =
+					BackendContext.Resources.Descriptors.Heap.ActiveBackend !=
+						EVulkanDescriptorBackend.DescriptorHeap
+						? 0UL
+						: target.Offset;
+				if (commandBuffer.Handle != 0)
+				{
+					CaptureDeferredLightingObjectBinding(
+						program,
+						block,
+						frameIndex,
+						drawUniformSlot,
+						target.Buffer.Handle,
+						descriptorBaseOffset,
+						Math.Min(target.Size, block.Size),
+						dynamicOffset,
+						commandBuffer);
+				}
 				return true;
 			}
 			return false;
@@ -2557,12 +2616,17 @@ internal unsafe partial class VkMeshRenderer
 				(int)Math.Min(imageIndex, int.MaxValue));
 			using VulkanCpuStageScope autoUniformStage =
 				default;
-			UpdateAutoUniformBuffersForDraw(
-				frameIndex,
-				drawUniformSlot,
-				material,
-				draw,
-				frequencyMask);
+			if (!UpdateAutoUniformBuffersForDraw(
+					frameIndex,
+					drawUniformSlot,
+					material,
+					draw,
+					out string autoUniformFailure,
+					frequencyMask))
+			{
+				reason = $"auto uniforms: {autoUniformFailure}";
+				return false;
+			}
 			return true;
 		}
 	}
@@ -2842,7 +2906,16 @@ internal unsafe partial class VkMeshRenderer
         {
             using VulkanCpuStageScope autoUniformStage =
 				default;
-            UpdateAutoUniformBuffersForDraw(frameIndex, drawUniformSlot, material, draw);
+			if (!UpdateAutoUniformBuffersForDraw(
+					frameIndex,
+					drawUniformSlot,
+					material,
+					draw,
+					out string autoUniformFailure))
+			{
+				reason = $"auto uniforms: {autoUniformFailure}";
+				return false;
+			}
         }
         return true;
 	}

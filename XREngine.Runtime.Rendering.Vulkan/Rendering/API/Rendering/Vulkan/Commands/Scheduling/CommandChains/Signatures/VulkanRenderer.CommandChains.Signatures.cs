@@ -592,6 +592,7 @@ internal sealed partial class VulkanCommandRuntime
             // made clean command-buffer reuse O(draws * reflected bindings).
             hash.Add(1);
             hash.Add(snapshot.PersistentEngineResourceSignature);
+			hash.Add(snapshot.PreparedMaterialTableSignature);
             return hash.ToHash();
         }
 

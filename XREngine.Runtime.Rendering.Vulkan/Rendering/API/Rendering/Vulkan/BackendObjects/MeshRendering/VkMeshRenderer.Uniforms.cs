@@ -13,6 +13,8 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
+using System.Threading;
 
 using Silk.NET.Vulkan;
 
@@ -31,6 +33,54 @@ internal unsafe partial class VkMeshRenderer
 {
 	private static readonly ConcurrentDictionary<(string Prefix, string Field), string> StructUniformFieldNames = new();
 	private static readonly ConcurrentDictionary<(string Prefix, uint Index), string> IndexedUniformNames = new();
+	private static int s_capturedAutoUniformWriteFailure;
+	private static string? s_firstAutoUniformWriteFailure;
+	private static int s_capturedAutoUniformParityMismatch;
+	private static string? s_firstAutoUniformParityMismatch;
+	private static int s_capturedDeferredLightingObjectWrite;
+	private static string? s_firstDeferredLightingObjectWrite;
+	private static int s_capturedDeferredLightingObjectBinding;
+	private static string? s_firstDeferredLightingObjectBinding;
+	private static int s_capturedDeferredLightingObjectGpuReadback;
+	private static string? s_firstDeferredLightingObjectGpuReadback;
+
+	/// <summary>
+	/// Gets the first rejected auto-uniform write. This remains available in
+	/// Release builds so an otherwise silent stale/default UBO cannot be
+	/// mistaken for a successful reusable-frame refresh.
+	/// </summary>
+	public static string? GetFirstAutoUniformWriteFailure()
+		=> Volatile.Read(ref s_firstAutoUniformWriteFailure);
+
+	/// <summary>
+	/// Gets the first validation-only packed/legacy auto-uniform mismatch. The
+	/// value is retained in Release builds because it identifies the member that
+	/// must be corrected before parity repair can be disabled.
+	/// </summary>
+	public static string? GetFirstAutoUniformParityMismatch()
+		=> Volatile.Read(ref s_firstAutoUniformParityMismatch);
+
+	/// <summary>
+	/// Gets the first opt-in deferred-light object UBO write, including the
+	/// captured LightData color/intensity and mapped arena coordinates.
+	/// </summary>
+	public static string? GetFirstDeferredLightingObjectWrite()
+		=> Volatile.Read(ref s_firstDeferredLightingObjectWrite);
+
+	/// <summary>
+	/// Gets the matching opt-in descriptor base and dynamic offset selected for
+	/// a deferred-light object UBO.
+	/// </summary>
+	public static string? GetFirstDeferredLightingObjectBinding()
+		=> Volatile.Read(ref s_firstDeferredLightingObjectBinding);
+
+	/// <summary>
+	/// Gets the first accepted-submit GPU observation of the exact deferred-light
+	/// object UBO range. This is populated only while deferred-light diagnostics
+	/// are enabled.
+	/// </summary>
+	public static string? GetFirstDeferredLightingObjectGpuReadback()
+		=> Volatile.Read(ref s_firstDeferredLightingObjectGpuReadback);
 
 	#region Uniform Buffer Allocation
 
@@ -398,18 +448,20 @@ internal unsafe partial class VkMeshRenderer
 	/// Writes auto-uniform block data into all active auto UBOs for the current frame.
 	/// Auto uniforms are populated from engine state, program overrides, and material parameters.
 	/// </summary>
-	private void UpdateAutoUniformBuffersForDraw(
+	private bool UpdateAutoUniformBuffersForDraw(
 		int frameIndex,
 		int drawUniformSlot,
 		XRMaterial material,
 		in PendingMeshDraw draw,
+		out string failureReason,
 		EVulkanBindingFrequencyMask frequencyMask =
 			EVulkanBindingFrequencyMask.All)
 	{
+		failureReason = string.Empty;
 		if (_program is null || _autoUniformBuffers.Count == 0)
 		{
 			LogGizmoAutoUniformBlocks(material, skipped: true);
-			return;
+			return true;
 		}
 
 		LogGizmoAutoUniformBlocks(material, skipped: false);
@@ -423,7 +475,15 @@ internal unsafe partial class VkMeshRenderer
 					block.Frequency))
 				continue;
 			if (!_autoUniformBuffers.TryGetValue(name, out AutoUniformBuffer[]? buffers) || buffers.Length == 0)
-				continue;
+				return CaptureAutoUniformWriteFailure(
+					block,
+					draw,
+					frameIndex,
+					drawUniformSlot,
+					BackendContext.Resources.MappedFrameArena,
+					null,
+					"the reflected block has no allocated auto-uniform buffer",
+					out failureReason);
 
 			int idx = ResolveFrequencyOwnedAutoUniformBufferIndex(
 				block,
@@ -452,7 +512,15 @@ internal unsafe partial class VkMeshRenderer
 				{
 					RuntimeEngine.Rendering.Stats.Vulkan
 						.RecordVulkanDynamicUniformExhaustion();
-					continue;
+					return CaptureAutoUniformWriteFailure(
+						block,
+						draw,
+						frameIndex,
+						drawUniformSlot,
+						arena,
+						frequencyReservation,
+						"the frequency-owned mapped-frame range could not be reserved or resolved for this frame",
+						out failureReason);
 				}
 
 				buffers[idx] = new AutoUniformBuffer(
@@ -465,18 +533,41 @@ internal unsafe partial class VkMeshRenderer
 			}
 			AutoUniformBuffer buffer = buffers[idx];
 			if (buffer.Buffer.Handle == 0)
-				continue;
+				return CaptureAutoUniformWriteFailure(
+					block,
+					draw,
+					frameIndex,
+					drawUniformSlot,
+					BackendContext.Resources.MappedFrameArena,
+					frequencyReservation,
+					"the selected auto-uniform buffer has no native handle",
+					out failureReason);
 
-			TryWriteAutoUniformBlock(
+			if (!TryWriteAutoUniformBlock(
 				block,
 				buffer,
 				idx,
 				buffers.Length,
 				frameIndex,
+				drawUniformSlot,
 				material,
 				draw,
-				frequencyReservation);
+				frequencyReservation,
+				out string writeFailureReason))
+			{
+				return CaptureAutoUniformWriteFailure(
+					block,
+					draw,
+					frameIndex,
+					drawUniformSlot,
+					BackendContext.Resources.MappedFrameArena,
+					frequencyReservation,
+					writeFailureReason,
+					out failureReason);
+			}
 		}
+
+		return true;
 	}
 
 	/// <summary>
@@ -489,20 +580,29 @@ internal unsafe partial class VkMeshRenderer
 		int bufferIndex,
 		int bufferCount,
 		int frameIndex,
+		int drawUniformSlot,
 		XRMaterial material,
 		in PendingMeshDraw draw,
-		VulkanFrequencyAutoUniformReservation? frequencyReservation)
+		VulkanFrequencyAutoUniformReservation? frequencyReservation,
+		out string failureReason)
 	{
+		failureReason = string.Empty;
+		Span<byte> data = default;
+		bool wrote = false;
 		VulkanMappedFrameWriteScope mappedWrite = default;
 		VulkanMappedMemoryWriteLease mappedMemoryWrite = default;
 		try
 		{
-			Span<byte> data;
 			if (buffer.UsesMappedFrameArena)
 			{
-				if (BackendContext.Resources.MappedFrameArena is not { } arena ||
+				VulkanMappedFrameArena? arena =
+					BackendContext.Resources.MappedFrameArena;
+				if (arena is null ||
 					!arena.TryBeginWrite(buffer.MappedSlice, out mappedWrite))
 				{
+					failureReason = arena is null
+						? "mapped-frame arena is unavailable for the auto-uniform write"
+						: $"mapped-frame arena rejected the auto-uniform write lease: {arena.DescribeWriteRejection(buffer.MappedSlice)}";
 					return false;
 				}
 				data = mappedWrite.Bytes;
@@ -512,7 +612,10 @@ internal unsafe partial class VkMeshRenderer
 				VulkanMappedMemorySlice mappedMemorySlice = buffer.MappedMemorySlice;
 				if (!buffer.UsesMappedMemoryLease ||
 					!BackendContext.Resources.Buffers.TryAcquireWrite(BackendContext, in mappedMemorySlice, out mappedMemoryWrite))
+				{
+					failureReason = "mapped-memory buffer rejected the auto-uniform write lease";
 					return false;
+				}
 				data = mappedMemoryWrite.Bytes;
 			}
 		EVulkanAutoUniformFallbackReason fallbackReason =
@@ -571,11 +674,12 @@ internal unsafe partial class VkMeshRenderer
 					EVulkanBindingFrequency.Material;
 			if (!publicationState.IsPlanPublished(plan))
 			{
-				if (hasMaterialOwnedStorage)
-				{
-					plan.StaticBytes.AsSpan().CopyTo(data);
-					staticBytesCopied = plan.StaticBytes.Length;
-				}
+				// Static bytes include declared defaults and material values whose
+				// source did not have a runtime override. They initialize every
+				// newly published range, including Object/View/Pass blocks; only
+				// the dynamic patch set is owned by a particular frequency.
+				plan.StaticBytes.AsSpan().CopyTo(data);
+				staticBytesCopied = plan.StaticBytes.Length;
 				publicationState.PublishPlan(plan);
 			}
 			if (hasMaterialOwnedStorage)
@@ -603,7 +707,8 @@ internal unsafe partial class VkMeshRenderer
 				ulong generation = ComputeAutoUniformFrequencyGeneration(
 					frequency,
 					plan,
-					draw);
+					draw,
+					drawUniformSlot);
 				ReadOnlySpan<VulkanAutoUniformDirtyRange> dirtyRanges =
 					frequencyPlan.DirtyRanges;
 				if (!publicationState.TryBeginFrequencyPublication(
@@ -655,12 +760,13 @@ internal unsafe partial class VkMeshRenderer
 						publicationState.Invalidate();
 						RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanAutoUniformFallbackReason(
 							operationFallbackReason);
-						return WriteLegacyAutoUniformBlock(
+						wrote = WriteLegacyAutoUniformBlock(
 							data,
 							block,
 							buffer.Size,
 							material,
 							draw);
+						return wrote;
 					}
 					dynamicOperationsWritten++;
 				}
@@ -682,6 +788,7 @@ internal unsafe partial class VkMeshRenderer
 					draw,
 					ref publicationState))
 			{
+				wrote = true;
 				return true;
 			}
 
@@ -690,18 +797,81 @@ internal unsafe partial class VkMeshRenderer
 				dynamicBytesCleared,
 				dynamicOperationsWritten);
 
+			wrote = true;
 			return true;
 		}
 
 		RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanAutoUniformFallbackReason(
 			fallbackReason);
-		return WriteLegacyAutoUniformBlock(data, block, buffer.Size, material, draw);
+		wrote = WriteLegacyAutoUniformBlock(data, block, buffer.Size, material, draw);
+		return wrote;
 		}
 		finally
 		{
+			if (wrote)
+				CaptureDeferredLightingObjectWrite(
+					block,
+					buffer,
+					frameIndex,
+					drawUniformSlot,
+					draw,
+					data);
 			mappedMemoryWrite.Dispose();
 			mappedWrite.Dispose();
 		}
+	}
+
+	private bool CaptureAutoUniformWriteFailure(
+		AutoUniformBlockInfo block,
+		in PendingMeshDraw draw,
+		int frameIndex,
+		int drawUniformSlot,
+		VulkanMappedFrameArena? arena,
+		VulkanFrequencyAutoUniformReservation? reservation,
+		string reason,
+		out string failureReason)
+	{
+		failureReason = reason;
+		if (Interlocked.CompareExchange(ref s_capturedAutoUniformWriteFailure, 1, 0) != 0)
+			return false;
+
+		var targetBinding = RuntimeEngine.Rendering.State.RenderingPipelineState?
+			.CurrentRenderTargetBinding;
+		string target = targetBinding?.FrameBuffer?.Name ??
+			targetBinding?.Name ?? "<unavailable>";
+		string diagnostic = string.Format(
+			System.Globalization.CultureInfo.InvariantCulture,
+			"[Vulkan.AutoUniformWrite] first rejected write: block='{0}' program='{1}' slot={2} " +
+			"frame={3} pass={4} target='{5}' viewPacket={6} shaders=[{7}] arenaGeneration={8} " +
+			"reservationOffset={9} reservationSize={10} reservationFrequency={11} " +
+			"reservationOwner={12} reason='{13}'.",
+			block.InstanceName,
+			_program?.Data?.Name ?? "<unavailable>",
+			drawUniformSlot,
+			frameIndex,
+			RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex,
+			target,
+			draw.ViewSnapshot?.PacketId ?? 0UL,
+			DescribeActiveProgramShaderPaths(),
+			arena?.Generation ?? 0UL,
+			reservation?.Offset ?? 0UL,
+			reservation?.Size ?? 0U,
+			reservation?.Key.Frequency.ToString() ?? "<none>",
+			reservation?.Key.OwnerIdentity ?? 0UL,
+			reason);
+		diagnostic = string.Concat(diagnostic, Environment.NewLine, "Stack:", Environment.NewLine, Environment.StackTrace);
+		Volatile.Write(ref s_firstAutoUniformWriteFailure, diagnostic);
+		Debug.VulkanWarning("{0}", diagnostic);
+		return false;
+	}
+
+	private string DescribeActiveProgramShaderPaths()
+	{
+		if (_program?.Data is not { } program || program.Shaders.Count == 0)
+			return "<unavailable>";
+
+		return string.Join(", ", program.Shaders.Select(
+			static shader => $"{shader.Type}:{shader.Source.FilePath ?? "<memory>"}"));
 	}
 
 	private bool ValidateAutoUniformPayloadParity(
@@ -750,6 +920,7 @@ internal unsafe partial class VkMeshRenderer
 				mismatch.ByteOffset,
 				mismatch.LegacyValue,
 				mismatch.PackedValue);
+			CaptureAutoUniformParityMismatch(block, bufferSize, mismatch);
 
 			Debug.VulkanWarning(
 				"[Vulkan.AutoUniformParity] mesh='{0}' program='{1}' " +
@@ -779,6 +950,279 @@ internal unsafe partial class VkMeshRenderer
 		{
 			ArrayPool<byte>.Shared.Return(rented);
 		}
+	}
+
+	private void CaptureAutoUniformParityMismatch(
+		AutoUniformBlockInfo block,
+		uint bufferSize,
+		in VulkanAutoUniformParityMismatch mismatch)
+	{
+		if (Interlocked.CompareExchange(
+				ref s_capturedAutoUniformParityMismatch,
+				1,
+				0) != 0)
+		{
+			return;
+		}
+
+		string diagnostic = string.Format(
+			System.Globalization.CultureInfo.InvariantCulture,
+			"[Vulkan.AutoUniformParity] first mismatch: mesh='{0}' program='{1}' " +
+			"block='{2}' set={3} binding={4} size={5} blockFrequency={6} " +
+			"entry='{7}' entryFrequency={8} offset={9} legacy=0x{10:X2} packed=0x{11:X2} shaders=[{12}].",
+			Mesh?.Name ?? "<unnamed>",
+			_program?.Data?.Name ?? "<unavailable>",
+			block.InstanceName,
+			block.Set,
+			block.Binding,
+			bufferSize,
+			block.Frequency,
+			mismatch.SchemaEntry,
+			mismatch.Frequency,
+			mismatch.ByteOffset,
+			mismatch.LegacyValue,
+			mismatch.PackedValue,
+			DescribeActiveProgramShaderPaths());
+		Volatile.Write(ref s_firstAutoUniformParityMismatch, diagnostic);
+		Debug.VulkanWarning("{0}", diagnostic);
+	}
+
+	private static bool IsDeferredLightingObjectBlock(
+		AutoUniformBlockInfo block)
+	{
+		if (!DeferredLightingDiagnostics.Enabled ||
+			block.Frequency != EVulkanBindingFrequency.Object)
+		{
+			return false;
+		}
+
+		for (int index = 0; index < block.Members.Count; index++)
+		{
+			if (string.Equals(
+					block.Members[index].Name,
+					RuntimeEngine.Rendering.Constants.LightsStructName,
+					StringComparison.Ordinal))
+			{
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	private void CaptureDeferredLightingObjectWrite(
+		AutoUniformBlockInfo block,
+		AutoUniformBuffer buffer,
+		int frameIndex,
+		int drawUniformSlot,
+		in PendingMeshDraw draw,
+		ReadOnlySpan<byte> data)
+	{
+		if (!IsDeferredLightingObjectBlock(block) ||
+			Interlocked.CompareExchange(
+				ref s_capturedDeferredLightingObjectWrite,
+				1,
+				0) != 0)
+		{
+			return;
+		}
+
+		TryReadDeferredLightData(
+			block,
+			data,
+			out Vector3 color,
+			out float intensity,
+			out bool hasPackedLightData);
+		ComputeDispatchSnapshot? snapshot = draw.ProgramBindingSnapshot;
+		bool hasCapturedColor = snapshot?.HasRuntimeUniform("LightData.Color") == true;
+		bool hasCapturedIntensity =
+			snapshot?.HasRuntimeUniform("LightData.DiffuseIntensity") == true;
+		string diagnostic = string.Format(
+			System.Globalization.CultureInfo.InvariantCulture,
+			"[Vulkan.DeferredLightingObject] write program='{0}' block='{1}' frame={2} slot={3} " +
+			"buffer=0x{4:X} offset={5} range={6} packedLightData={7} color=({8:R},{9:R},{10:R}) intensity={11:R} " +
+			"capturedColor={12} capturedIntensity={13} snapshot={14}.",
+			_program?.Data?.Name ?? "<unavailable>",
+			block.InstanceName,
+			frameIndex,
+			drawUniformSlot,
+			buffer.Buffer.Handle,
+			buffer.Offset,
+			buffer.Size,
+			hasPackedLightData,
+			color.X,
+			color.Y,
+			color.Z,
+			intensity,
+			hasCapturedColor,
+			hasCapturedIntensity,
+			snapshot is not null);
+		Volatile.Write(ref s_firstDeferredLightingObjectWrite, diagnostic);
+		DeferredLightingDiagnostics.Write(diagnostic);
+		if (hasPackedLightData &&
+			BackendContext.Resources.MappedFrameArena is { SupportsDiagnosticTransferSource: true } &&
+			TryGetDeferredLightDataOffsets(block, out uint colorOffset, out uint intensityOffset))
+		{
+			uint range = Math.Min(buffer.Size, checked((uint)data.Length));
+			CommandOperations.CaptureDeferredLightingObjectReadback(
+				buffer.Buffer,
+				GetResourceGeneration(ObjectType.Buffer, buffer.Buffer.Handle),
+				buffer.Offset,
+				range,
+				frameIndex,
+				drawUniformSlot,
+				RuntimeHelpers.GetHashCode(this),
+				_program?.BindingId ?? 0UL,
+				ComputeDeferredLightingByteHash(data[..checked((int)range)]),
+				color,
+				intensity,
+				colorOffset,
+				intensityOffset);
+		}
+	}
+
+	private void CaptureDeferredLightingObjectBinding(
+		VkRenderProgram program,
+		AutoUniformBlockInfo block,
+		int frameIndex,
+		int drawUniformSlot,
+		ulong bufferHandle,
+		ulong descriptorBaseOffset,
+		uint range,
+		uint dynamicOffset,
+		CommandBuffer commandBuffer)
+	{
+		if (!IsDeferredLightingObjectBlock(block) ||
+			Interlocked.CompareExchange(
+				ref s_capturedDeferredLightingObjectBinding,
+				1,
+				0) != 0)
+		{
+			return;
+		}
+
+		string diagnostic = string.Format(
+			System.Globalization.CultureInfo.InvariantCulture,
+			"[Vulkan.DeferredLightingObject] descriptor program='{0}' block='{1}' set={2} binding={3} " +
+			"frame={4} slot={5} buffer=0x{6:X} descriptorBaseOffset={7} dynamicOffset={8} range={9} finalOffset={10}.",
+			program.Data.Name ?? "<unavailable>",
+			block.InstanceName,
+			block.Set,
+			block.Binding,
+			frameIndex,
+			drawUniformSlot,
+			bufferHandle,
+			descriptorBaseOffset,
+			dynamicOffset,
+			range,
+			checked(descriptorBaseOffset + dynamicOffset));
+		Volatile.Write(ref s_firstDeferredLightingObjectBinding, diagnostic);
+		DeferredLightingDiagnostics.Write(diagnostic);
+		CommandOperations.ConfirmDeferredLightingObjectReadbackBinding(
+			new Silk.NET.Vulkan.Buffer(bufferHandle),
+			GetResourceGeneration(ObjectType.Buffer, bufferHandle),
+			checked(descriptorBaseOffset + dynamicOffset),
+			range,
+			frameIndex,
+			drawUniformSlot,
+			RuntimeHelpers.GetHashCode(this),
+			program.BindingId,
+			commandBuffer);
+	}
+
+	internal static void PublishDeferredLightingObjectGpuReadback(string diagnostic)
+	{
+		if (Interlocked.CompareExchange(ref s_capturedDeferredLightingObjectGpuReadback, 1, 0) != 0)
+			return;
+
+		Volatile.Write(ref s_firstDeferredLightingObjectGpuReadback, diagnostic);
+		DeferredLightingDiagnostics.Write(diagnostic);
+	}
+
+	private static void TryReadDeferredLightData(
+		AutoUniformBlockInfo block,
+		ReadOnlySpan<byte> data,
+		out Vector3 color,
+		out float intensity,
+		out bool hasPackedLightData)
+	{
+		color = default;
+		intensity = 0.0f;
+		hasPackedLightData = false;
+		for (int memberIndex = 0; memberIndex < block.Members.Count; memberIndex++)
+		{
+			AutoUniformMember member = block.Members[memberIndex];
+			if (!string.Equals(member.Name, RuntimeEngine.Rendering.Constants.LightsStructName, StringComparison.Ordinal) ||
+				member.StructMembers is not { } fields)
+			{
+				continue;
+			}
+
+			for (int fieldIndex = 0; fieldIndex < fields.Count; fieldIndex++)
+			{
+				AutoUniformMember field = fields[fieldIndex];
+				int offset = checked((int)(member.Offset + field.Offset));
+				if (string.Equals(field.Name, "Color", StringComparison.Ordinal) &&
+					offset <= data.Length - 12)
+				{
+					color = MemoryMarshal.Read<Vector3>(data.Slice(offset, 12));
+					hasPackedLightData = true;
+				}
+				else if (string.Equals(field.Name, "DiffuseIntensity", StringComparison.Ordinal) &&
+					offset <= data.Length - sizeof(float))
+				{
+					intensity = MemoryMarshal.Read<float>(data.Slice(offset, sizeof(float)));
+					hasPackedLightData = true;
+				}
+			}
+
+			return;
+		}
+	}
+
+	private static bool TryGetDeferredLightDataOffsets(
+		AutoUniformBlockInfo block,
+		out uint colorOffset,
+		out uint intensityOffset)
+	{
+		colorOffset = uint.MaxValue;
+		intensityOffset = uint.MaxValue;
+		for (int memberIndex = 0; memberIndex < block.Members.Count; memberIndex++)
+		{
+			AutoUniformMember member = block.Members[memberIndex];
+			if (!string.Equals(member.Name, RuntimeEngine.Rendering.Constants.LightsStructName, StringComparison.Ordinal) ||
+				member.StructMembers is not { } fields)
+			{
+				continue;
+			}
+
+			for (int fieldIndex = 0; fieldIndex < fields.Count; fieldIndex++)
+			{
+				AutoUniformMember field = fields[fieldIndex];
+				uint offset = checked(member.Offset + field.Offset);
+				if (string.Equals(field.Name, "Color", StringComparison.Ordinal))
+					colorOffset = offset;
+				else if (string.Equals(field.Name, "DiffuseIntensity", StringComparison.Ordinal))
+					intensityOffset = offset;
+			}
+
+			return colorOffset != uint.MaxValue && intensityOffset != uint.MaxValue;
+		}
+
+		return false;
+	}
+
+	private static ulong ComputeDeferredLightingByteHash(ReadOnlySpan<byte> bytes)
+	{
+		const ulong offsetBasis = 14695981039346656037UL;
+		const ulong prime = 1099511628211UL;
+		ulong hash = offsetBasis;
+		for (int index = 0; index < bytes.Length; index++)
+		{
+			hash ^= bytes[index];
+			hash *= prime;
+		}
+		return hash;
 	}
 
 	private bool WriteLegacyAutoUniformBlock(
@@ -880,12 +1324,14 @@ internal unsafe partial class VkMeshRenderer
 		bool materialOwned =
 			block.Frequency is EVulkanBindingFrequency.Unknown or
 				EVulkanBindingFrequency.Material;
+		bool cacheDependsOnMaterialOrRuntime =
+			schema.HasMaterialOrRuntimeSources;
 		ulong runtimeUniformNameSignature =
-			materialOwned
+			cacheDependsOnMaterialOrRuntime
 				? bindingSnapshot?.RuntimeUniformNameSignature ?? 0UL
 				: 0UL;
 		ulong runtimeUniformPublicationLayoutSignature =
-			materialOwned
+			cacheDependsOnMaterialOrRuntime
 				? bindingSnapshot
 					?.RuntimeUniformPublicationLayoutSignature ?? 0UL
 				: 0UL;
@@ -896,7 +1342,7 @@ internal unsafe partial class VkMeshRenderer
 			material,
 			runtimeUniformNameSignature,
 			runtimeUniformPublicationLayoutSignature);
-		VkMaterial? materialPlanOwner = materialOwned
+		VkMaterial? materialPlanOwner = cacheDependsOnMaterialOrRuntime
 			? WrapperLookup.GetOrCreate(
 				material,
 				generateNow: true) as VkMaterial
@@ -911,7 +1357,7 @@ internal unsafe partial class VkMeshRenderer
 				material,
 				runtimeUniformNameSignature,
 				runtimeUniformPublicationLayoutSignature,
-				materialOwned,
+				cacheDependsOnMaterialOrRuntime,
 				out cached);
 		if (planCacheHit &&
 			cached is not null &&
@@ -1051,7 +1497,7 @@ internal unsafe partial class VkMeshRenderer
 				material,
 				runtimeUniformNameSignature,
 				runtimeUniformPublicationLayoutSignature,
-				materialOwned,
+				cacheDependsOnMaterialOrRuntime,
 				plan);
 		}
 		return true;
@@ -1163,7 +1609,8 @@ internal unsafe partial class VkMeshRenderer
 		ownerIdentity = ComputeAutoUniformOwnerIdentity(
 			block.Frequency,
 			material,
-			draw);
+			draw,
+			drawUniformSlot);
 		int ownerSlot = table.ResolveAndPublish(
 			frameIndex,
 			drawUniformSlot,
@@ -1225,7 +1672,8 @@ internal unsafe partial class VkMeshRenderer
 	private ulong ComputeAutoUniformOwnerIdentity(
 		EVulkanBindingFrequency frequency,
 		XRMaterial material,
-		in PendingMeshDraw draw)
+		in PendingMeshDraw draw,
+		int drawUniformSlot)
 	{
 		FrameOpSignatureHasher hash = new();
 		hash.Add((byte)frequency);
@@ -1269,10 +1717,11 @@ internal unsafe partial class VkMeshRenderer
 				break;
 			case EVulkanBindingFrequency.Object:
 				hash.Add(RuntimeHelpers.GetHashCode(MeshRenderer));
+				hash.Add(drawUniformSlot);
 				break;
 			case EVulkanBindingFrequency.Instance:
 				hash.Add(RuntimeHelpers.GetHashCode(MeshRenderer));
-				hash.Add(draw.Instances);
+				hash.Add(drawUniformSlot);
 				break;
 			case EVulkanBindingFrequency.RuntimeCallback:
 				hash.Add(
@@ -1329,6 +1778,7 @@ internal unsafe partial class VkMeshRenderer
 		EVulkanBindingFrequency frequency,
 		XRMaterial material,
 		in PendingMeshDraw draw,
+		int drawUniformSlot,
 		out ulong ownerIdentity,
 		out ulong publicationLayoutSignature,
 		out ulong contentGeneration)
@@ -1341,20 +1791,27 @@ internal unsafe partial class VkMeshRenderer
 		ownerIdentity = ComputeAutoUniformOwnerIdentity(
 			frequency,
 			material,
-			draw);
+			draw,
+			drawUniformSlot);
 		if (ownerIdentity == 0 || publicationLayoutSignature == 0)
 		{
 			contentGeneration = 0;
 			return false;
 		}
 
+		bool dependsOnMaterialOrRuntime =
+			publicationProgram?.BindingSchema
+				?.FrequencyDependsOnMaterialOrRuntime(frequency) == true;
 		ulong materialGeneration =
-			frequency == EVulkanBindingFrequency.Material
+			dependsOnMaterialOrRuntime
 				? ComputeMaterialPublicationGeneration(
+					material,
 					material.BindingLayoutVersion,
 					material.BindingValueVersion,
 					draw.ProgramBindingSnapshot
 						?.RuntimeUniformNameSignature ?? 0UL,
+					draw.ProgramBindingSnapshot
+						?.RuntimeUniformPublicationLayoutSignature ?? 0UL,
 					draw.ProgramBindingSnapshot
 						?.MutableLegacyUniformValueSignature ?? 0UL)
 				: 0UL;
@@ -1362,21 +1819,36 @@ internal unsafe partial class VkMeshRenderer
 			draw.AutoUniformPublication.GetGeneration(
 				frequency,
 				materialGeneration);
+		if (dependsOnMaterialOrRuntime &&
+			frequency != EVulkanBindingFrequency.Material)
+		{
+			FrameOpSignatureHasher dependencyHash = new();
+			dependencyHash.Add(contentGeneration);
+			dependencyHash.Add(materialGeneration);
+			contentGeneration = dependencyHash.ToHash();
+		}
 		return true;
 	}
 
 	private ulong ComputeAutoUniformFrequencyGeneration(
 		EVulkanBindingFrequency frequency,
 		AutoUniformMaterialWritePlan plan,
-		in PendingMeshDraw draw)
+		in PendingMeshDraw draw,
+		int drawUniformSlot)
 	{
+		XRMaterial? material =
+			draw.MaterialOverride ?? MeshRenderer.Material;
 		ulong materialGeneration = 0;
-		if (frequency == EVulkanBindingFrequency.Material)
+		if (material is not null &&
+			(frequency == EVulkanBindingFrequency.Material ||
+			 plan.Schema.HasMaterialOrRuntimeSources))
 		{
 			materialGeneration = ComputeMaterialPublicationGeneration(
+				material,
 				plan.MaterialLayoutVersion,
 				plan.MaterialValueVersion,
 				plan.RuntimeUniformNameSignature,
+				plan.RuntimeUniformPublicationLayoutSignature,
 				draw.ProgramBindingSnapshot
 					?.MutableLegacyUniformValueSignature ?? 0UL);
 		}
@@ -1385,15 +1857,22 @@ internal unsafe partial class VkMeshRenderer
 			draw.AutoUniformPublication.GetGeneration(
 			frequency,
 			materialGeneration);
-		XRMaterial? material =
-			draw.MaterialOverride ?? MeshRenderer.Material;
+		if (plan.Schema.HasMaterialOrRuntimeSources &&
+			frequency != EVulkanBindingFrequency.Material)
+		{
+			FrameOpSignatureHasher dependencyHash = new();
+			dependencyHash.Add(contentGeneration);
+			dependencyHash.Add(materialGeneration);
+			contentGeneration = dependencyHash.ToHash();
+		}
 		if (material is null)
 			return contentGeneration;
 
 		ulong ownerIdentity = ComputeAutoUniformOwnerIdentity(
 			frequency,
 			material,
-			draw);
+			draw,
+			drawUniformSlot);
 		if (ownerIdentity == 0)
 			return contentGeneration;
 
@@ -1404,15 +1883,19 @@ internal unsafe partial class VkMeshRenderer
 	}
 
 	internal static ulong ComputeMaterialPublicationGeneration(
+		XRMaterial material,
 		ulong materialLayoutVersion,
 		ulong materialValueVersion,
 		ulong runtimeUniformNameSignature,
+		ulong runtimeUniformPublicationLayoutSignature,
 		ulong mutableLegacyUniformValueSignature)
 	{
 		FrameOpSignatureHasher materialHash = new();
+		materialHash.Add(RuntimeHelpers.GetHashCode(material));
 		materialHash.Add(materialLayoutVersion);
 		materialHash.Add(materialValueVersion);
 		materialHash.Add(runtimeUniformNameSignature);
+		materialHash.Add(runtimeUniformPublicationLayoutSignature);
 		materialHash.Add(mutableLegacyUniformValueSignature);
 		return materialHash.ToHash();
 	}

@@ -561,6 +561,8 @@ namespace XREngine.Rendering.Vulkan
                 Extent = new Extent2D(Math.Max(fboRenderWidth, 1u), Math.Max(fboRenderHeight, 1u))
             };
 
+            RecordDirectionalShadowAtlasWriterScope(vkFrameBuffer, fboName, fboSignature);
+
             if (recordingState.Policy.UseDynamicRendering)
             {
                 if (CommandRecordingDiagnosticsEnabled)
@@ -619,10 +621,19 @@ namespace XREngine.Rendering.Vulkan
 
                     FrameBufferAttachmentSignature signature = fboSignature[i];
                     Image attachmentImage = default;
+                    ImageSubresourceRange attachmentViewRange = new()
+                    {
+                        AspectMask = signature.AspectMask,
+                        BaseMipLevel = 0u,
+                        LevelCount = 1u,
+                        BaseArrayLayer = 0u,
+                        LayerCount = 1u,
+                    };
                     if (TryGetDescriptorHeapImageViewCreateInfo(view, out ImageViewCreateInfo attachmentViewInfo) &&
                         attachmentViewInfo.Image.Handle != 0)
                     {
                         attachmentImage = attachmentViewInfo.Image;
+                        attachmentViewRange = attachmentViewInfo.SubresourceRange;
                     }
                     else if (vkFrameBuffer.TryGetAttachmentTarget(
                             i,
@@ -855,6 +866,8 @@ namespace XREngine.Rendering.Vulkan
                 fboPassInfo.ClearValueCount = attachmentCountFbo;
                 fboPassInfo.PClearValues = clearValuesFbo;
                 CmdBeginRenderPassTracked(recordingState.CommandBuffer, &fboPassInfo, secondaryContents ? SubpassContents.SecondaryCommandBuffers : SubpassContents.Inline);
+                if (HasLegacyDirectionalShadowAtlasDepthClear(fboSignature))
+                    VulkanShadowAtlasDiagnostics.RecordWriterDepthClear(fboName, legacyClearState.ClearDepth, fboRenderArea);
             }
             RecordFboAttachmentAccessState(
                 recordingState.CommandBuffer,
@@ -887,6 +900,77 @@ namespace XREngine.Rendering.Vulkan
                 secondaryContents,
                 FormatFboAttachmentSignature(fboSignature));
             }
+        }
+
+        private void RecordDirectionalShadowAtlasWriterScope(
+            VkFrameBuffer frameBuffer,
+            string framebufferName,
+            FrameBufferAttachmentSignature[] signature)
+        {
+            if (!VulkanShadowAtlasDiagnostics.IsEnabled)
+                return;
+
+            for (int attachmentIndex = 0; attachmentIndex < signature.Length; attachmentIndex++)
+            {
+                FrameBufferAttachmentSignature attachment = signature[attachmentIndex];
+                if (attachment.Role is not (AttachmentRole.Depth or AttachmentRole.DepthStencil) ||
+                    (attachment.AspectMask & ImageAspectFlags.DepthBit) == 0 ||
+                    !frameBuffer.TryGetAttachmentView(attachmentIndex, out ImageView view))
+                {
+                    continue;
+                }
+
+                Image image = default;
+                ImageSubresourceRange viewRange = new()
+                {
+                    AspectMask = attachment.AspectMask,
+                    BaseMipLevel = 0u,
+                    LevelCount = 1u,
+                    BaseArrayLayer = 0u,
+                    LayerCount = 1u,
+                };
+                if (TryGetDescriptorHeapImageViewCreateInfo(view, out ImageViewCreateInfo viewInfo) &&
+                    viewInfo.Image.Handle != 0)
+                {
+                    image = viewInfo.Image;
+                    viewRange = viewInfo.SubresourceRange;
+                }
+                else if (frameBuffer.TryGetAttachmentTarget(
+                             attachmentIndex,
+                             out IFrameBufferAttachement? attachmentTarget,
+                             out _,
+                             out _,
+                             out _) &&
+                         TryResolveFrameBufferAttachmentImage(attachmentTarget, out Image attachmentImage))
+                {
+                    image = attachmentImage;
+                }
+
+                VulkanShadowAtlasDiagnostics.RecordWriterScope(
+                    framebufferName,
+                    image,
+                    GetResourceGeneration(ObjectType.Image, image.Handle),
+                    view,
+                    viewRange,
+                    attachment.LoadOp,
+                    attachment.StoreOp);
+            }
+        }
+
+        private static bool HasLegacyDirectionalShadowAtlasDepthClear(FrameBufferAttachmentSignature[] signature)
+        {
+            for (int attachmentIndex = 0; attachmentIndex < signature.Length; attachmentIndex++)
+            {
+                FrameBufferAttachmentSignature attachment = signature[attachmentIndex];
+                if (attachment.Role is (AttachmentRole.Depth or AttachmentRole.DepthStencil) &&
+                    (attachment.AspectMask & ImageAspectFlags.DepthBit) != 0 &&
+                    attachment.LoadOp == AttachmentLoadOp.Clear)
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
     }
 }

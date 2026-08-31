@@ -213,7 +213,8 @@ internal sealed partial class VulkanFrameLoop
             XRRenderProgram.EImageAccess.ReadWrite,
             XRRenderProgram.EImageFormat.R32F);
 
-        TryDispatchCompute(program, 1, 1, 1);
+        if (TryDispatchCompute(program, 1, 1, 1) != ERendererComputeEnqueueStatus.Enqueued)
+            return false;
         EnqueueMemoryBarrier(EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.TextureFetch);
 
         if (!exposureLayoutManagedByRenderGraph && GetOrCreateAPIRenderObject(exposureTex, generateNow: true) is VkTexture2D vkExposurePost)
@@ -242,7 +243,7 @@ internal sealed partial class VulkanFrameLoop
         uint y = Math.Max(groupsY, 1u);
         uint z = Math.Max(groupsZ, 1u);
 
-        if (GetOrCreateAPIRenderObject(program) is not VkRenderProgram vkProgram)
+        if (_resourceRuntime.CreateAPIRenderObject(program) is not VkRenderProgram vkProgram)
         {
             Debug.VulkanWarning("DispatchCompute skipped: program could not be resolved to VkRenderProgram.");
             return ERendererComputeEnqueueStatus.InvalidResource;
@@ -290,22 +291,9 @@ internal sealed partial class VulkanFrameLoop
             return ERendererComputeEnqueueStatus.DescriptorInvalid;
         }
 
-        try
-        {
-            if (vkProgram.GetOrCreateComputePipeline(passIndex, context.PassMetadata).Handle == 0)
-                return ERendererComputeEnqueueStatus.ProgramPending;
-        }
-        catch (Exception ex)
-        {
-            Debug.VulkanWarningEvery(
-                $"Vulkan.DispatchCompute.PipelinePending.{RuntimeHelpers.GetHashCode(program)}",
-                TimeSpan.FromSeconds(1),
-                "[Vulkan] DispatchCompute deferred for '{0}' because pipeline creation failed: {1}",
-                programName,
-                ex.Message);
-            return ERendererComputeEnqueueStatus.ProgramPending;
-        }
-
+        // The sealed frame-plan preparation owns native compute-pipeline
+        // readiness. Admission must preserve this dispatch while that request
+        // is Pending; dropping it here would make an async compile invisible.
         EnqueueFrameOp(ComputeDispatchOp.Rent(
             passIndex,
             vkProgram,

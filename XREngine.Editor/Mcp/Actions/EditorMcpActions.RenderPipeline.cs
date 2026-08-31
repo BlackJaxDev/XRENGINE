@@ -342,6 +342,27 @@ namespace XREngine.Editor.Mcp
             return Task.FromResult(new McpToolResponse("Listed Vulkan image allocation diagnostics.", snapshot));
         }
 
+        [XRMcp(Name = "get_zero_readback_material_table_diagnostics", Permission = McpPermissionLevel.ReadOnly)]
+        [Description("Return the fixed per-pass zero-readback material-table gate reached by the latest render frame.")]
+        public static Task<McpToolResponse> GetZeroReadbackMaterialTableDiagnosticsAsync()
+        {
+            ZeroReadbackMaterialTablePassDiagnostic[] snapshot =
+                HybridRenderingManager.GetZeroReadbackMaterialTableDiagnosticsSnapshot();
+            return Task.FromResult(new McpToolResponse(
+                "Retrieved zero-readback material-table diagnostics.",
+                snapshot));
+        }
+
+        [XRMcp(Name = "get_vulkan_gpu_counter_diagnostics", Permission = McpPermissionLevel.ReadOnly)]
+        [Description("Return the latest opt-in raw Vulkan GPU counter evidence captured by the zero-readback diagnostics gate.")]
+        public static Task<McpToolResponse> GetVulkanGpuCounterDiagnosticsAsync()
+        {
+            VulkanGpuCounterPassDiagnostic[] snapshot = HybridRenderingManager.GetVulkanGpuCounterDiagnosticsSnapshot();
+            return Task.FromResult(new McpToolResponse(
+                "Retrieved Vulkan GPU counter diagnostics.",
+                snapshot));
+        }
+
         [XRMcp(Name = "get_vulkan_frame_op_trace", Permission = McpPermissionLevel.ReadOnly)]
         [Description("Return the latest Vulkan frame-op trace snapshot. Requires launching with XRE_VULKAN_FRAMEOP_TRACE=1.")]
         public static Task<McpToolResponse> GetVulkanFrameOpTraceAsync(

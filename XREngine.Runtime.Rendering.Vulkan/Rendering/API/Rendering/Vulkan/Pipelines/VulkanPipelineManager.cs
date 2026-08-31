@@ -27,6 +27,8 @@ internal sealed unsafe partial class VulkanPipelineManager
     private VulkanDeviceContext? _deviceContext;
     private VulkanProgramCreationPort? _programServices;
     internal readonly ConcurrentDictionary<VulkanGraphicsPipelineCompileKey, VulkanGraphicsPipelineCompileJob> _vulkanGraphicsPipelineCompileJobs = new();
+    internal readonly ConcurrentDictionary<VulkanComputePipelineCompileKey, VulkanComputePipelineCompileJob> _vulkanComputePipelineCompileJobs = new();
+    internal readonly Dictionary<VulkanComputePipelineCompileKey, VulkanComputePipelineCompileResult> _vulkanComputePipelineCompletedResults = [];
     internal readonly Dictionary<VulkanGraphicsPipelineCompileCompletionKey, VulkanGraphicsPipelineCompileResult> _vulkanGraphicsPipelineCompletedResults = [];
     internal readonly Dictionary<VulkanGraphicsPipelineCompileCompletionKey, string> _vulkanGraphicsPipelinePermanentFailures = [];
     internal readonly Dictionary<ulong, VulkanGraphicsPipelineCompileKey> _vulkanGraphicsPipelineProgramCompileJobs = new();
@@ -75,6 +77,14 @@ internal sealed unsafe partial class VulkanPipelineManager
     private int _prewarmAutoSaveInFlight;
     private const int PipelinePrewarmAutoSaveEntryThreshold = 16;
     private const string PipelinePrewarmCaptureEnvVar = XREngineEnvironmentVariables.VulkanPipelinePrewarmCapture;
+    private long _graphicsPipelineCreateCount;
+    private long _computePipelineCreateCount;
+    private long _workerPipelineCreateCount;
+    private long _foregroundPipelineWaitCount;
+    private long _asyncQueueCount;
+    private long _renderThreadShaderCompileCount;
+    private readonly Lock _shaderArtifactIdentityLock = new();
+    private readonly HashSet<string> _shaderArtifactIdentities = new(StringComparer.Ordinal);
 
     internal VulkanPipelinePrewarmDatabase? PrewarmDatabase => _prewarmDatabase;
 
@@ -124,6 +134,74 @@ internal sealed unsafe partial class VulkanPipelineManager
     internal string? PrewarmDatabaseFilePath => _prewarmDatabaseFilePath;
 
     internal bool PrewarmCaptureEnabled => _prewarmCaptureEnabled;
+
+    internal VulkanPipelineTelemetrySnapshot CaptureTelemetry()
+        => new()
+        {
+            GraphicsPipelineCreateCount = Volatile.Read(ref _graphicsPipelineCreateCount),
+            ComputePipelineCreateCount = Volatile.Read(ref _computePipelineCreateCount),
+            WorkerPipelineCreateCount = Volatile.Read(ref _workerPipelineCreateCount),
+            ForegroundPipelineWaitCount = Volatile.Read(ref _foregroundPipelineWaitCount),
+            AsyncQueueCount = Volatile.Read(ref _asyncQueueCount),
+            RenderThreadShaderCompileCount = Volatile.Read(ref _renderThreadShaderCompileCount),
+            PendingGraphicsPipelineCount = CountActiveVulkanGraphicsPipelineCompileJobs(),
+            PendingComputePipelineCount = CountActiveVulkanComputePipelineCompileJobs(),
+        };
+
+    internal void RecordRenderThreadShaderCompile()
+        => Interlocked.Increment(ref _renderThreadShaderCompileCount);
+
+    internal void RecordShaderArtifactIdentity(string artifactIdentity)
+    {
+        if (string.IsNullOrWhiteSpace(artifactIdentity))
+            return;
+        lock (_shaderArtifactIdentityLock)
+            _shaderArtifactIdentities.Add(artifactIdentity);
+    }
+
+    internal VulkanPipelineCacheDiagnostic CaptureCacheDiagnostic(
+        string requestedTargetMode,
+        string effectiveTargetMode)
+    {
+        PhysicalDeviceProperties properties = default;
+        if (_api is not null && _deviceContext is not null && _deviceContext.PhysicalDevice.Handle != 0)
+            _api.GetPhysicalDeviceProperties(_deviceContext.PhysicalDevice, out properties);
+
+        string shaderDirectory = VulkanShaderArtifactCache.GetShaderCacheDirectoryPath();
+        int shaderArtifactFileCount = Directory.Exists(shaderDirectory)
+            ? Directory.EnumerateFiles(shaderDirectory, "*.spv", SearchOption.TopDirectoryOnly).Count()
+            : 0;
+        string identityDirectory = VulkanPipelineCacheStorage.GetRootOverride()
+            ?? Path.GetDirectoryName(_pipelineCacheFilePath) ?? VulkanPipelineCacheStorage.GetNativePipelineCacheDirectory();
+        string identityPath = Path.Combine(identityDirectory, "pipeline-cache-identity.json");
+        string[] shaderFingerprints;
+        lock (_shaderArtifactIdentityLock)
+            shaderFingerprints = [.. _shaderArtifactIdentities.Order(StringComparer.Ordinal)];
+        VulkanPipelineCacheIdentity identity = new()
+        {
+            EngineBuildRevision = VulkanPipelineCacheIdentity.GetEngineBuildRevision(),
+            EngineAssemblySha256 = VulkanPipelineCacheIdentity.GetEngineAssemblyHash(),
+            DriverIdentity = $"vendor=0x{properties.VendorID:X8};device=0x{properties.DeviceID:X8};driver=0x{properties.DriverVersion:X8};api=0x{properties.ApiVersion:X8}",
+            RequestedTargetMode = requestedTargetMode,
+            EffectiveTargetMode = effectiveTargetMode,
+            ShaderArtifactFingerprints = shaderFingerprints,
+        };
+        VulkanPipelineCacheIdentity.Write(identityPath, identity);
+        return new()
+        {
+            CacheRootOverride = VulkanPipelineCacheStorage.GetRootOverride(),
+            NativePipelineCachePath = _pipelineCacheFilePath ?? string.Empty,
+            NativePipelineCacheInitialBytes = _pipelineCacheInitialDataBytes,
+            PrewarmDatabasePath = _prewarmDatabaseFilePath ?? string.Empty,
+            PrewarmEntryCount = _prewarmDatabase?.EntryCount ?? 0,
+            PrewarmCaptureEnabled = _prewarmCaptureEnabled,
+            ShaderArtifactDirectory = shaderDirectory,
+            ShaderArtifactFileCount = shaderArtifactFileCount,
+            IdentityPath = identityPath,
+            Identity = identity,
+            Telemetry = CaptureTelemetry(),
+        };
+    }
 
     /// <summary>
     /// Resolves a recording-specific pipeline manifest from the cache owned by
@@ -226,11 +304,7 @@ internal sealed unsafe partial class VulkanPipelineManager
 
     internal void InitializePipelinePrewarmDatabase(PhysicalDeviceProperties properties)
     {
-        string cacheDir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "XREngine",
-            "Vulkan",
-            "PipelinePrewarm");
+        string cacheDir = VulkanPipelineCacheStorage.GetPrewarmDirectory();
         string deviceProfile =
             $"v{VulkanPipelinePrewarmDatabase.CurrentVersion}_{properties.VendorID:X8}_{properties.DeviceID:X8}_{properties.DriverVersion:X8}_{properties.ApiVersion:X8}_{VulkanFeatureProfile.ActiveProfile}";
         string filePath = Path.Combine(cacheDir, $"prewarm_{deviceProfile}.json");
@@ -346,6 +420,32 @@ internal sealed unsafe partial class VulkanPipelineManager
             QueuePrewarmAutoSave();
         RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanPipelineCacheMiss(
             entry.ToProfilerSummary(knownAtStartup));
+        return knownAtStartup;
+    }
+
+    /// <summary>
+    /// Persists real compute requirements from the same production path that
+    /// created them. Compute was previously absent from the prewarm database,
+    /// which made a warm native cache opaque to explicit Hi-Z/fullscreen work.
+    /// </summary>
+    internal bool RecordComputePipelineCacheMiss(
+        int passIndex,
+        IReadOnlyCollection<RenderPassMetadata>? passMetadata,
+        string pipelineName,
+        string programName,
+        ulong programPipelineHash)
+    {
+        VulkanPipelinePrewarmEntry entry = VulkanPipelinePrewarmDatabase.CreateComputeEntry(
+            passIndex,
+            ResolveRenderPassName(passIndex, passMetadata),
+            string.IsNullOrWhiteSpace(pipelineName) ? "UnnamedComputePipeline" : pipelineName,
+            string.IsNullOrWhiteSpace(programName) ? "UnnamedComputeProgram" : programName,
+            programPipelineHash,
+            VulkanFeatureProfile.ActiveProfile.ToString());
+        bool shouldAutoSave = RecordPrewarmEntry(entry, countForAutoSave: true, out bool knownAtStartup);
+        if (shouldAutoSave)
+            QueuePrewarmAutoSave();
+        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanPipelineCacheMiss(entry.ToProfilerSummary(knownAtStartup));
         return knownAtStartup;
     }
 

@@ -419,7 +419,7 @@ public sealed class AdvancedPreparationExtractor : IDisposable
                 view.EffectiveHistoryKey,
                 view.ViewRect.Width,
                 view.ViewRect.Height,
-                ResolveMipCount(view.ViewRect.Width, view.ViewRect.Height),
+                1u,
                 currentGeneration,
                 previousGeneration,
                 PreviousValid: previousGeneration != 0u,
@@ -1226,18 +1226,6 @@ public sealed class AdvancedPreparationExtractor : IDisposable
         ulong value = first ^ (second << 1) ^ (second >> 63) ^ third;
         uint folded = (uint)value ^ (uint)(value >> 32);
         return folded == 0u ? 1u : folded;
-    }
-
-    private static uint ResolveMipCount(uint width, uint height)
-    {
-        uint maximum = Math.Max(width, height);
-        uint count = 1u;
-        while (maximum > 1u)
-        {
-            maximum >>= 1;
-            count++;
-        }
-        return count;
     }
 
     private static int NextPowerOfTwo(int value)

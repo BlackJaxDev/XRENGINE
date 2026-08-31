@@ -9,93 +9,101 @@ internal sealed partial class VulkanFrameLoop
         in OpenXrEyeSwapchainRenderRequest firstEye,
         in OpenXrEyeSwapchainRenderRequest secondEye)
     {
-        OpenXrPreparedEyeCommandBufferInput preparedFirstEye;
-        OpenXrPreparedEyeCommandBufferInput preparedSecondEye;
-        using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.ParallelCommandBufferRecording.PrepareInputs"))
+        OpenXrPreparedEyeCommandBufferInput preparedFirstEye = default;
+        OpenXrPreparedEyeCommandBufferInput preparedSecondEye = default;
+        try
         {
-            if (!TryPrepareOpenXrEyeSwapchainCommandBuffer(firstEye, out preparedFirstEye) ||
-                !TryPrepareOpenXrEyeSwapchainCommandBuffer(secondEye, out preparedSecondEye) ||
-                !TryCreatePairedOpenXrLogicalPlan(
+            using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.ParallelCommandBufferRecording.PrepareInputs"))
+            {
+                if (!TryPrepareOpenXrEyeSwapchainCommandBuffer(firstEye, out preparedFirstEye) ||
+                    !TryPrepareOpenXrEyeSwapchainCommandBuffer(secondEye, out preparedSecondEye) ||
+                    !TryCreatePairedOpenXrLogicalPlan(
+                        in preparedFirstEye,
+                        in preparedSecondEye,
+                        out FramePlan pairedLogicalPlan))
+                {
+                    throw CreateOpenXrEyePresentNowFailure(
+                        firstEye.OpenXrViewIndex,
+                        EVulkanPresentNowReadinessStage.FramePlanSeal,
+                        "parallel-paired-plan",
+                        "OpenXREyeSubmit -> parallel paired logical plan",
+                        "Foreground parallel-eye preparation returned no sealed paired plan.");
+                }
+
+                preparedFirstEye = BindOpenXrEyeOutputContract(
                     in preparedFirstEye,
+                    pairedLogicalPlan);
+                preparedSecondEye = BindOpenXrEyeOutputContract(
                     in preparedSecondEye,
-                    out FramePlan pairedLogicalPlan))
+                    pairedLogicalPlan);
+            }
+
+            int firstLaneId = _commandRuntime.ResolveOpenXrEyeRenderLaneId(0);
+            int secondLaneId = _commandRuntime.ResolveOpenXrEyeRenderLaneId(1);
+            if (!TryFreezeOpenXrEyeRecordWorkerInput(
+                    in preparedFirstEye,
+                    firstLaneId,
+                    out OpenXrPreparedEyeRecordWorkerInput frozenFirstEye) ||
+                !TryFreezeOpenXrEyeRecordWorkerInput(
+                    in preparedSecondEye,
+                    secondLaneId,
+                    out OpenXrPreparedEyeRecordWorkerInput frozenSecondEye))
             {
                 throw CreateOpenXrEyePresentNowFailure(
                     firstEye.OpenXrViewIndex,
                     EVulkanPresentNowReadinessStage.FramePlanSeal,
-                    "parallel-paired-plan",
-                    "OpenXREyeSubmit -> parallel paired logical plan",
-                    "Foreground parallel-eye preparation returned no sealed paired plan.");
+                    "parallel-freeze",
+                    "OpenXREyeSubmit -> parallel immutable worker inputs",
+                    "Foreground parallel-eye freeze returned no exact worker input.");
             }
 
-            preparedFirstEye = BindOpenXrEyeOutputContract(
-                in preparedFirstEye,
-                pairedLogicalPlan);
-            preparedSecondEye = BindOpenXrEyeOutputContract(
-                in preparedSecondEye,
-                pairedLogicalPlan);
-        }
+            VulkanOpenXrEyeWorkerCommandService workers = _commandRuntime.OpenXrEyeWorkers;
+            OpenXrRecordedEyeCommandBuffer diagnosticFirst = CreateOpenXrWorkerDiagnosticRecord(in frozenFirstEye);
+            OpenXrRecordedEyeCommandBuffer diagnosticSecond = CreateOpenXrWorkerDiagnosticRecord(in frozenSecondEye);
+            VulkanSubmissionDiagnosticContext diagnosticContext =
+                _commandRuntime.CreateOpenXrBatchSubmissionDiagnosticContext(
+                    AcceptedAttemptCount,
+                    "OpenXrEyeParallelBatchSubmit",
+                    "OpenXrEyeParallelBatch",
+                    in diagnosticFirst,
+                    firstEye.Extent);
+            VulkanOpenXrEyeWorkerCommandResult result;
+            using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.ParallelCommandBufferRecording.WorkerRecordAndSubmit"))
+            {
+                result = workers.Execute(
+                    in frozenFirstEye,
+                    in frozenSecondEye,
+                    in diagnosticContext);
+            }
 
-        int firstLaneId = _commandRuntime.ResolveOpenXrEyeRenderLaneId(0);
-        int secondLaneId = _commandRuntime.ResolveOpenXrEyeRenderLaneId(1);
-        if (!TryFreezeOpenXrEyeRecordWorkerInput(
-                in preparedFirstEye,
-                firstLaneId,
-                out OpenXrPreparedEyeRecordWorkerInput frozenFirstEye) ||
-            !TryFreezeOpenXrEyeRecordWorkerInput(
-                in preparedSecondEye,
-                secondLaneId,
-                out OpenXrPreparedEyeRecordWorkerInput frozenSecondEye))
+            OpenXrEyeRecordWorkerBatchResult batch = result.Batch;
+            if (!batch.Left.Success || !batch.Right.Success)
+            {
+                LogOpenXrEyeRecordWorkerFailure(in batch);
+                throw CreateOpenXrEyePresentNowFailure(
+                    firstEye.OpenXrViewIndex,
+                    EVulkanPresentNowReadinessStage.PipelineCompilation,
+                    "parallel-primary",
+                    "OpenXREyeSubmit -> parallel exact primary recording",
+                    "Foreground parallel eye recording returned an unsuccessful batch without a propagated exception.");
+            }
+
+            if (result.Submitted)
+            {
+                OpenXrRecordedEyeCommandBuffer leftRecorded = batch.Left.Recorded;
+                OpenXrRecordedEyeCommandBuffer rightRecorded = batch.Right.Recorded;
+                CompleteOpenXrGpuProfilerSubmission(in leftRecorded);
+                CompleteOpenXrGpuProfilerSubmission(in rightRecorded);
+                ForceFlushCompletedNonImageRetiredResources();
+            }
+
+            return result.Submitted;
+        }
+        finally
         {
-            throw CreateOpenXrEyePresentNowFailure(
-                firstEye.OpenXrViewIndex,
-                EVulkanPresentNowReadinessStage.FramePlanSeal,
-                "parallel-freeze",
-                "OpenXREyeSubmit -> parallel immutable worker inputs",
-                "Foreground parallel-eye freeze returned no exact worker input.");
+            ReleasePreparedOpenXrEyeInput(in preparedSecondEye);
+            ReleasePreparedOpenXrEyeInput(in preparedFirstEye);
         }
-
-        VulkanOpenXrEyeWorkerCommandService workers = _commandRuntime.OpenXrEyeWorkers;
-        OpenXrRecordedEyeCommandBuffer diagnosticFirst = CreateOpenXrWorkerDiagnosticRecord(in frozenFirstEye);
-        OpenXrRecordedEyeCommandBuffer diagnosticSecond = CreateOpenXrWorkerDiagnosticRecord(in frozenSecondEye);
-        VulkanSubmissionDiagnosticContext diagnosticContext =
-            _commandRuntime.CreateOpenXrBatchSubmissionDiagnosticContext(
-                AcceptedAttemptCount,
-                "OpenXrEyeParallelBatchSubmit",
-                "OpenXrEyeParallelBatch",
-                in diagnosticFirst,
-                firstEye.Extent);
-        VulkanOpenXrEyeWorkerCommandResult result;
-        using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.ParallelCommandBufferRecording.WorkerRecordAndSubmit"))
-        {
-            result = workers.Execute(
-                in frozenFirstEye,
-                in frozenSecondEye,
-                in diagnosticContext);
-        }
-
-        OpenXrEyeRecordWorkerBatchResult batch = result.Batch;
-        if (!batch.Left.Success || !batch.Right.Success)
-        {
-            LogOpenXrEyeRecordWorkerFailure(in batch);
-            throw CreateOpenXrEyePresentNowFailure(
-                firstEye.OpenXrViewIndex,
-                EVulkanPresentNowReadinessStage.PipelineCompilation,
-                "parallel-primary",
-                "OpenXREyeSubmit -> parallel exact primary recording",
-                "Foreground parallel eye recording returned an unsuccessful batch without a propagated exception.");
-        }
-
-        if (result.Submitted)
-        {
-            OpenXrRecordedEyeCommandBuffer leftRecorded = batch.Left.Recorded;
-            OpenXrRecordedEyeCommandBuffer rightRecorded = batch.Right.Recorded;
-            CompleteOpenXrGpuProfilerSubmission(in leftRecorded);
-            CompleteOpenXrGpuProfilerSubmission(in rightRecorded);
-            ForceFlushCompletedNonImageRetiredResources();
-        }
-
-        return result.Submitted;
     }
 
     private void DestroyOpenXrEyeRecordWorkers()

@@ -1924,7 +1924,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
         RuntimeRenderingHostServices.Presentation.RecordRenderFrameOutput(new FrameOutputTelemetry(
             EFrameOutputKind.OpenXREyeSubmit,
             EVrOutputViewKind.LeftEye,
-            EFrameOutputPhase.Submit,
+            EFrameOutputPhase.GpuComplete,
             pacing,
             "OpenXR true single-pass stereo",
             pipelineName,

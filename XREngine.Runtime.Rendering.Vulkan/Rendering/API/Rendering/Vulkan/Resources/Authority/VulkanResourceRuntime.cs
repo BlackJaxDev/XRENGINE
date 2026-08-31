@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Threading;
 using Silk.NET.Vulkan;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.Materials;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -63,6 +64,8 @@ internal sealed partial class VulkanResourceRuntime
         AdvancedSceneResources = new VulkanAdvancedSceneResourceRuntime(
             this,
             frameSlotCount);
+        ReadOnlyStoragePreparedMap = new VulkanReadOnlyStoragePreparedMap();
+        MaterialTablePreparedMap = new VulkanMaterialTablePreparedMap();
     }
 
     internal VulkanBackendObjectRegistry BackendObjects { get; }
@@ -94,6 +97,111 @@ internal sealed partial class VulkanResourceRuntime
     internal VulkanResidentDrawTemplateTable ResidentDrawTemplates { get; }
     internal VulkanResidentTemplateFrameSlotLifetimes ResidentTemplateFrameSlotLifetimes { get; }
     internal VulkanAdvancedSceneResourceRuntime AdvancedSceneResources { get; }
+    internal VulkanReadOnlyStoragePreparedMap ReadOnlyStoragePreparedMap { get; }
+    internal VulkanMaterialTablePreparedMap MaterialTablePreparedMap { get; }
+    [ThreadStatic] private static VulkanResourceRuntime? t_recordingReadOnlyStorageRuntime;
+    [ThreadStatic] private static VulkanReadOnlyStoragePreparedAuthority? t_recordingReadOnlyStorageAuthority;
+    [ThreadStatic] private static VulkanMaterialTablePreparedAuthority? t_recordingMaterialTableAuthority;
+
+    /// <summary>Publishes the immutable storage authority for one foreground-prepared recording scope.</summary>
+    internal ReadOnlyStorageRecordingScope EnterReadOnlyStorageRecordingScope(
+        VulkanReadOnlyStoragePreparedAuthority? authority,
+        VulkanMaterialTablePreparedAuthority? materialAuthority = null)
+    {
+        VulkanResourceRuntime? previousRuntime = t_recordingReadOnlyStorageRuntime;
+        VulkanReadOnlyStoragePreparedAuthority? previousAuthority = t_recordingReadOnlyStorageAuthority;
+        VulkanMaterialTablePreparedAuthority? previousMaterialAuthority = t_recordingMaterialTableAuthority;
+        t_recordingReadOnlyStorageRuntime = this;
+        t_recordingReadOnlyStorageAuthority = authority;
+        t_recordingMaterialTableAuthority = materialAuthority;
+        return new(previousRuntime, previousAuthority, previousMaterialAuthority);
+    }
+
+    internal bool TryResolvePreparedReadOnlyStorage(
+        ComputeDispatchSnapshot snapshot,
+        uint bindingIndex,
+        out VulkanFrameDataSlice slice)
+    {
+        slice = default;
+        if (!ReferenceEquals(t_recordingReadOnlyStorageRuntime, this) ||
+            t_recordingReadOnlyStorageAuthority is not { } authority ||
+            !ReferenceEquals(authority.Owner, ReadOnlyStoragePreparedMap) ||
+            snapshot.ReadOnlyStorageBindings is not { } bindings ||
+            !bindings.TryGet(bindingIndex, out ReadOnlyStorageBinding binding))
+        {
+            return false;
+        }
+
+        return ReadOnlyStoragePreparedMap.TryResolve(in authority, binding, out slice);
+    }
+
+    internal bool TryResolvePreparedMaterialTable(
+        ComputeDispatchSnapshot snapshot,
+        out VulkanMaterialTablePreparedBinding binding)
+    {
+        binding = default;
+        if (!ReferenceEquals(t_recordingReadOnlyStorageRuntime, this) ||
+            snapshot.MaterialTablePublication is not { } publication)
+            return false;
+        VulkanMaterialTablePreparedAuthority authority = t_recordingMaterialTableAuthority ??
+            (t_recordingReadOnlyStorageAuthority is { } storage
+                ? new VulkanMaterialTablePreparedAuthority(MaterialTablePreparedMap, storage.Arena, storage.ArenaIdentity,
+                    storage.ArenaGeneration, storage.FrameSlot, storage.ResetEpoch)
+                : default);
+        return authority.Owner is not null && MaterialTablePreparedMap.TryResolve(in authority, publication, out binding);
+    }
+
+    internal bool TryAttachMaterialDescriptorClosure(CommandBuffer commandBuffer,
+        VulkanCommandBufferTrackingBatch batch, GPUMaterialTablePublication publication,
+        out VulkanMaterialDescriptorClosureLease? closure, out bool newlyAttached, out string reason)
+    {
+        closure = null;
+        newlyAttached = false;
+        if (!publication.DescriptorClosure.TryGetBackendLease(Descriptors, out IDisposable? lease) ||
+            lease is not VulkanMaterialDescriptorClosureLease nativeClosure)
+        {
+            reason = "The authoring publication has no prepared native descriptor closure.";
+            return false;
+        }
+        ulong handle = unchecked((ulong)commandBuffer.Handle);
+        lock (Lifetime.Tracker.SyncRoot)
+        lock (batch)
+        {
+            if (!Lifetime.Tracker.CommandBufferLifetimes.TryGetValue(handle, out VulkanCommandBufferLifetimeRecord? record) ||
+                record.QueuedSubmissionCount != 0 || !batch.IsRecording || batch.QueuedSubmissionCount != 0 ||
+                batch.RecordingGeneration == 0 || batch.LifetimeRecordingGeneration != record.RecordingGeneration)
+            {
+                reason = "The command buffer is no longer recording material descriptor closures.";
+                return false;
+            }
+            foreach (GPUMaterialTableDescriptorClosure existing in record.MaterialDescriptorClosures)
+                if (ReferenceEquals(existing, publication.DescriptorClosure))
+                {
+                    closure = nativeClosure;
+                    reason = string.Empty;
+                    return true;
+                }
+            record.MaterialDescriptorClosures.EnsureCapacity(record.MaterialDescriptorClosures.Count + 1);
+            record.MaterialDescriptorClosures.Add(publication.DescriptorClosure.Retain());
+            closure = nativeClosure;
+            newlyAttached = true;
+        }
+        reason = string.Empty;
+        return true;
+    }
+
+    internal readonly struct ReadOnlyStorageRecordingScope(
+        VulkanResourceRuntime? previousRuntime,
+        VulkanReadOnlyStoragePreparedAuthority? previousAuthority,
+        VulkanMaterialTablePreparedAuthority? previousMaterialAuthority) : IDisposable
+    {
+        public void Dispose()
+        {
+            t_recordingReadOnlyStorageRuntime = previousRuntime;
+            t_recordingReadOnlyStorageAuthority = previousAuthority;
+            t_recordingMaterialTableAuthority = previousMaterialAuthority;
+        }
+    }
     internal VulkanPipelineManager PipelineManager { get; } = new();
     internal VulkanBackendObjectContext? BackendObjectContext;
     internal bool AllowSynchronousResourceUploads { get; private set; }
@@ -198,6 +306,13 @@ internal sealed partial class VulkanResourceRuntime
     internal ulong GetPublishedGeneration(ObjectType type, ulong handle)
         => Lifetime.Tracker.GetPublishedGeneration(
             new VulkanResourceLifetimeKey(type, handle));
+
+    /// <summary>
+    /// Changes only when native buffer publication identity changes, never for
+    /// ordinary buffer uploads or unrelated image/planner revisions.
+    /// </summary>
+    internal ulong NativeBufferBindingRevision
+        => Lifetime.Tracker.PublishedNativeBufferBindingRevision;
 
     internal int FramebufferRetirementFrameSlot
         => Volatile.Read(ref _framebufferRetirementFrameSlot);
@@ -427,6 +542,7 @@ internal sealed partial class VulkanResourceRuntime
         {
             if (tracker.CommandBufferLifetimes.Remove(handle, out VulkanCommandBufferLifetimeRecord? lifetime))
             {
+                lifetime.ReleaseMaterialDescriptorClosures();
                 foreach ((VulkanResourceLifetimeKey key, ulong generation) in lifetime.Dependencies)
                     ReleaseRecordedCommandBufferDependencyNoLock(
                         handle,
@@ -537,6 +653,7 @@ internal sealed partial class VulkanResourceRuntime
                         return false;
                 }
 
+
                 if (!Lifetime.Tracker.CommandBufferLifetimes.TryGetValue(commandBufferHandle, out VulkanCommandBufferLifetimeRecord? lifetime))
                 {
                     lifetime = new VulkanCommandBufferLifetimeRecord();
@@ -563,6 +680,7 @@ internal sealed partial class VulkanResourceRuntime
         if (commandBufferHandle == 0)
             return;
 
+        bool abandoned;
         lock (Lifetime.Tracker.SyncRoot)
         {
             if (!Lifetime.Tracker.CommandBufferLifetimes.TryGetValue(commandBufferHandle, out VulkanCommandBufferLifetimeRecord? lifetime))
@@ -570,7 +688,11 @@ internal sealed partial class VulkanResourceRuntime
 
             lifetime.FrameDataLease.AbandonRecording();
             ReleasePreparedCommandBufferDependenciesNoLock(commandBufferHandle, lifetime);
+            abandoned = true;
         }
+
+        if (abandoned)
+            VulkanQueryAuthority.AbandonRecordedResultEpochs(Lifetime.Tracker, commandBuffer);
     }
 
     internal void CompleteCommandBufferRecording(CommandBuffer commandBuffer, bool cacheVariant)
@@ -637,8 +759,12 @@ internal sealed partial class VulkanResourceRuntime
             resource.State |= EVulkanResourceLifetimeState.Recorded;
             if (!Lifetime.Tracker.ResourceCommandBufferDependencies.TryGetValue(key, out HashSet<ulong>? buffers))
             {
-                buffers = [];
-                Lifetime.Tracker.ResourceCommandBufferDependencies[key] = buffers;
+                VulkanResourceLifetimeTracker tracker = Lifetime.Tracker;
+                buffers = tracker.ReusableResourceCommandBufferDependencySets.TryPop(
+                    out HashSet<ulong>? reusable)
+                    ? reusable
+                    : [];
+                tracker.ResourceCommandBufferDependencies[key] = buffers;
             }
             buffers.Add(commandBufferHandle);
         }
@@ -657,6 +783,7 @@ internal sealed partial class VulkanResourceRuntime
 
     private void ReleasePreparedCommandBufferDependenciesNoLock(ulong commandBufferHandle, VulkanCommandBufferLifetimeRecord lifetime)
     {
+        lifetime.ReleaseMaterialDescriptorClosures();
         foreach ((VulkanResourceLifetimeKey key, ulong generation) in lifetime.Dependencies)
             ReleaseRecordedCommandBufferDependencyNoLock(
                 commandBufferHandle,
@@ -707,7 +834,11 @@ internal sealed partial class VulkanResourceRuntime
 
         commandBuffers.Remove(commandBufferHandle);
         if (commandBuffers.Count == 0)
+        {
             tracker.ResourceCommandBufferDependencies.Remove(key);
+            commandBuffers.Clear();
+            tracker.ReusableResourceCommandBufferDependencySets.Push(commandBuffers);
+        }
     }
 
     internal void CompleteDetachedExternalResourceDestruction(
@@ -939,6 +1070,11 @@ internal sealed partial class VulkanResourceRuntime
                 return;
             }
 
+            if (lifetime.QueuedSubmissionCount != 0)
+                throw new InvalidOperationException("A completed command-buffer reset still has queued submission owners.");
+
+            if (lifetime.SealedSubmissionContract is { } completedContract)
+                lifetime.ReusableSealedSubmissionContract = completedContract;
             ReleaseCommandBufferDependenciesNoLock(handle, lifetime);
             lifetime.FrameDataLease.EvictCachedVariant();
             lifetime.FrameDataLease.Reset();
@@ -1130,6 +1266,7 @@ internal sealed partial class VulkanResourceRuntime
         ulong commandBufferHandle,
         VulkanCommandBufferLifetimeRecord lifetime)
     {
+        lifetime.ReleaseMaterialDescriptorClosures();
         foreach ((VulkanResourceLifetimeKey key, ulong generation) in
                  lifetime.Dependencies)
             ReleaseRecordedCommandBufferDependencyNoLock(
@@ -1774,6 +1911,102 @@ internal sealed partial class VulkanResourceRuntime
             buffers: destroyedBuffers,
             bufferMemories: freedMemories);
         return pooledBuffers;
+    }
+
+    /// <summary>
+    /// Recycles a bounded number of already-retirement-ready imported staging
+    /// leases. This performs no native destruction and never touches non-staging
+    /// entries; it exists so a foreground upload barrier can make progress after
+    /// its own fenced command completes without waiting for a frame-slot rollover.
+    /// </summary>
+    internal int DrainCompletedStagingBuffers(int maxItems = 4)
+    {
+        if (maxItems <= 0)
+            return 0;
+
+        int recycled = 0;
+        for (int item = 0; item < maxItems; item++)
+        {
+            RetiredBuffer candidate = default;
+            int sourceSlot = -1;
+            lock (Lifetime.Retirement.SyncRoot)
+            {
+                for (int frameSlot = 0; frameSlot < Lifetime.Retirement.Buffers.Length && sourceSlot < 0; frameSlot++)
+                {
+                    List<RetiredBuffer> list = Lifetime.Retirement.Buffers[frameSlot];
+                    for (int index = 0; index < list.Count; index++)
+                    {
+                        RetiredBuffer current = list[index];
+                        if (!Lifetime.Tracker.IsRetirementReady(current.Ticket) ||
+                            HasUndestroyedBufferView(current.Buffer) ||
+                            !Allocations.Staging.IsRetiredStagingLease(
+                                current.Buffer,
+                                current.Memory,
+                                current.Ticket.ResourceGeneration))
+                        {
+                            continue;
+                        }
+
+                        candidate = current;
+                        sourceSlot = frameSlot;
+                        list.RemoveAt(index);
+                        if (candidate.Buffer.Handle != 0)
+                        {
+                            Lifetime.Retirement.BufferHandles[frameSlot].Remove(candidate.Buffer.Handle);
+                            Lifetime.Retirement.AllBufferHandles.Remove(candidate.Buffer.Handle);
+                        }
+                        if (candidate.Memory.Handle != 0)
+                        {
+                            Lifetime.Retirement.MemoryHandles[frameSlot].Remove(candidate.Memory.Handle);
+                            Lifetime.Retirement.AllMemoryHandles.Remove(candidate.Memory.Handle);
+                        }
+                        break;
+                    }
+                }
+            }
+
+            if (sourceSlot < 0)
+                break;
+
+            DeviceMemory poolMemory = candidate.Memory;
+            if (Allocations.Buffers.Allocations.TryGetValue(candidate.Buffer.Handle, out VulkanMemoryAllocation allocation))
+                poolMemory = allocation.Memory;
+            else if (Allocations.Buffers.LegacyAllocations.TryGetValue(candidate.Buffer.Handle, out VulkanMemoryAllocation legacyAllocation))
+                poolMemory = legacyAllocation.Memory;
+
+            if (poolMemory.Handle != 0 &&
+                Allocations.Staging.TryPublishRecycled(
+                    this,
+                    candidate.Buffer,
+                    poolMemory,
+                    candidate.Ticket.ResourceGeneration,
+                    out _))
+            {
+                recycled++;
+                continue;
+            }
+
+            // Failed reactivation retains the original retirement ownership;
+            // do not lose an exact-generation entry or let a later drain see a
+            // newer lease as if it were this one.
+            lock (Lifetime.Retirement.SyncRoot)
+            {
+                Lifetime.Retirement.Buffers[sourceSlot].Add(candidate);
+                if (candidate.Buffer.Handle != 0)
+                {
+                    Lifetime.Retirement.BufferHandles[sourceSlot].Add(candidate.Buffer.Handle);
+                    Lifetime.Retirement.AllBufferHandles.Add(candidate.Buffer.Handle);
+                }
+                if (candidate.Memory.Handle != 0)
+                {
+                    Lifetime.Retirement.MemoryHandles[sourceSlot].Add(candidate.Memory.Handle);
+                    Lifetime.Retirement.AllMemoryHandles.Add(candidate.Memory.Handle);
+                }
+            }
+            break;
+        }
+
+        return recycled;
     }
 
     /// <summary>

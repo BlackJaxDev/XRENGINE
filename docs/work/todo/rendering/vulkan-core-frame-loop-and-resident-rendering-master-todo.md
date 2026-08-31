@@ -66,7 +66,7 @@ The renderer will not be rewritten; rather, the resident data-oriented architect
 
 ## 2. Checkpoints, Baseline Constraints, & Safety Rules
 
-### 2.1 Current Validated Checkpoints (through 2026-08-29)
+### 2.1 Current Validated Checkpoints (through 2026-08-30)
 
 - **PresentNow Cold Liveness Validation:** The desktop Vulkan `PresentNow + BlockForExact` path passed an isolated Sponza acceptance run with scheduling capacity forced to 1. The camera swept across 8 exterior, entrance, atrium, upper, and near-wall views. Monotonic progress continued across long shader compilations (~20–21 s) without livelock, renderer pause, old-content replay, or provenance violations.
 - **Binary Texture-Cache Dispatch:** Feature-owned binary `XRTexture2D` cache payloads are claimed before generic YAML deserialization. The exact 178,958,379-byte `studio_small_09_4k` cache payload from the failing run loaded through MCP as an `XRTexture2D` with its original-source path intact and no `YamlDotNet`, unresolved-reference, or texture-load failure.
@@ -78,7 +78,7 @@ The renderer will not be rewritten; rather, the resident data-oriented architect
 - **Canonical Publication (Resident Phase 2):** Bounded journals, tombstones, independent mutation domains and dirty ranges, canonical reverse manifests, acknowledgements, ABA-safe handles, retained material/layout/kernel and global-resource payloads, immutable submission records, and frame-slot Vulkan SoA/descriptor realization are implemented. The package publishes exact per-pass shadow/probe coverage, and Vulkan validates the entire retained dependency closure before native realization.
 - **Advanced Vulkan Descriptor ABI (Phase 3.1):** The binding-ready ABI is implemented: ordinary uniforms remain set 0, visibility/pass resources remain set 1, advanced sampled-image/sampler arrays use runtime-owned set 2, and advanced canonical tables use runtime-owned set 3. Exact advanced programs are link-time validated, prepared frames bind the retained publication's native sets, and the promoted mono family records real compute/raster phases. Rendered visual parity remains a Phase 8 promotion gate because the current advanced graph terminates in its explicit empty-output diagnostic clear.
 - **Vulkan Template Table & 5 Strategy Lanes (Phases 2/3):** Direct-slot template lookup, transactional native generation leases, flat sealed submission receipts, exact reverse invalidation, and all five requested/effective strategy lanes are implemented. The 2026-08-29 five-lane cohort preserved one workload identity with zero VUIDs and zero fallback events; strict zero-readback lanes also reported zero generic readback bytes and buffer maps.
-- **Output Scheduling (Core Hardening Phase 5):** Deadline-aware output ordering, acquired-eye reservation, bounded optional-output policy, narrow queue-lock ownership, and frozen modal-resize presentation packages are implemented; long-duration acceptance remains open.
+- **Output Scheduling (Phase 5.0):** Deadline-aware output ordering, acquired-eye reservation, bounded optional-output policy, narrow queue-lock ownership, and frozen modal-resize presentation packages passed the desktop, interactive-resize, and strict-SPS/mirror acceptance cohort. Phase 8 still owns integrated hardware, visual-parity, and high-refresh promotion.
 - **Forward+ Simplification (Section 6):** Complete-scene normal/depth target from deferred attachment 1 plus depth overlays forward opaque/masked surfaces once; contact-copy pair and merge replays removed.
 - **Heavy-Load Phase 0/1 Revalidation:** The final isolated Sponza/Jax-Mitsuki run crossed a 21.679 s exact-readiness frame and continued beyond frame 1100. All 33 rate-limited correlated-tree records completed, none exceeded the frame root, and the stopped logs contained zero accepted-frame rejection, recording deferral, renderer pause, backpressure, device loss, YAML exception, VUID, or validation error. One command-generation mismatch was rejected before Vulkan acceptance while startup shadow-budget settings were restored; the next package was presented normally.
 
@@ -439,15 +439,14 @@ and moved command recording onto those lanes.
 - [x] Keep one reusable artifact instance per in-flight slot unless exact completion proves the prior instance is no longer pending.
 
 **Fourth Phase 4 slice (2026-08-29):** Vulkan now registers a distinct
-transient/retained command-family arena for every logical render lane, scheduler
-frame slot, and selected queue family. Command-chain recording and paired OpenXR
+transient/retained command-faeCommand-chain recording and paired OpenXR
 eye-primary recording use lane-affine `RenderWorkBatch` items; the old persistent
 command-chain array, OpenXR eye threads, private worker pools, and wait handles
 are removed. Mesh packetization enforces the 10-draw floor, the automatic
 dispatch gate targets 32 eligible operations, and one scope admits at most
 `2 * LogicalLaneCount` secondaries. Lane executors consume only frozen prepared
 streams, while source-indexed result slots preserve canonical execution order
-and exact compatibility gates prevent unsafe adjacent-bin coalescing. Reusable
+and exact compatibility gates prevent unsafe adjacent-bin coalescing. Reusablewd
 artifacts live in retained pools keyed by frame slot; pending instances are
 retired and replaced unless completion is proven.
 
@@ -517,37 +516,106 @@ downgrade another output by replacing the camera asset.
 #### 5.0 Deadline-Aware Output Scheduling
 - [x] Build one output manifest/DAG for uploads, shadows, desktop, OpenXR eyes, mirror, probes, captures, and publication; reserve acquired OpenXR critical work before optional outputs.
 - [x] Use bounded, observable cadence/deferral/stale-reuse policy for optional work, narrow queue-lock ownership, and frozen modal-resize presentation packages.
-- [ ] Complete long-duration, performance, interactive-resize, and multi-output acceptance in the validation matrix.
+- [x] Complete long-duration, performance, interactive-resize, and multi-output acceptance in the validation matrix.
 
 #### 5.1 Render Graph & GPU Pass Stabilization
 - [x] Preserve the implemented complete-scene normal/depth target (deferred attachment 1 + depth) with one forward opaque/masked overlay and no contact-copy/merge replay pair.
 - [x] Execute the depth/normal path only when visible materials and active AO/contact-shadow consumers require it.
 - [x] Eliminate the implemented redundant G-buffer restore/contact-copy pairs and full-resolution merge replays through declared graph transitions.
-- [ ] Cache compiled render graph; recompile only dirty subgraphs on local mutation.
-- [ ] Batch barriers by stage/access; replace broad `AllCommands` barriers with precise masks; coalesce adjacent subresource transitions.
-- [ ] Keep physical attachment aliasing fail-closed until asynchronous lifetime proof exists; then A/B transient aliasing/lazy allocation only for proven non-overlapping targets.
+- [x] Cache compiled render graph; recompile only dirty subgraphs on local mutation.
+- [x] Batch barriers by stage/access; replace broad `AllCommands` barriers with precise masks; coalesce adjacent subresource transitions.
+- [x] Keep physical attachment aliasing fail-closed until asynchronous lifetime proof exists; then A/B transient aliasing/lazy allocation only for proven non-overlapping targets.
+
+**Phase 5.0/5.1 closeout (2026-08-30):** the compiler now retains immutable
+connected subgraphs and rebuilds only components whose pass identity or
+revision changed. Synchronization2 barriers are emitted once per pass from
+precise stage/access scopes and merge only exact adjacent image ranges; missing
+frozen authority fails the frame instead of widening to `AllCommands`.
+Transient alias/lazy allocation stays disabled in every mode. Analyze reports
+eligibility; ProofGated explicitly reports the missing native handoff,
+initialization, and positive-path validation contract. Declared interval
+separation is not asynchronous lifetime proof. The conditional positive A/B
+activation cannot proceed until that proof exists; no aliasing speedup is claimed.
+
+The acceptance matrix covered 1,232 warmed desktop samples over 60 seconds, live Win32 modal
+resize/recreate, Baseline/Analyze/ProofGated allocation policy, and a 240-frame
+Monado cohort with strict single-pass stereo, mirror output, and six scripted
+desktop resizes. All 160 retained XR frames submitted; the complete cohort had
+163 submissions, with zero sequential fallback, end-frame failure, global in-flight
+wait, forced flush, final pending retirement, or reported validation failure.
+Full evidence and the runtime defects found during validation are recorded
+in `docs/work/investigations/rendering/vulkan-phase5-output-scheduling-validation.md`.
 
 #### 5.2 Bounded Shadows, Probes, & Occlusion
-- [ ] Define directional-cascade invalidation from camera, light, caster, receiver, atlas, and quality state; stabilize projections, reuse unaffected recording/data, and enforce a bounded update budget with explicit temporal policy.
-- [ ] Share GPU shadow records across all material kernels instead of large uniform arrays.
-- [ ] Stagger reflection probe and environment capture refreshes across frames.
-- [ ] Instrument occlusion candidates, occluders, tested/rasterized/rejected bounds, query age, Hi-Z build/test cost, CPU/GPU time, and false-positive/negative diagnostics in representative open, moderate, occluder-heavy, masked, static, and moving scenes.
-- [ ] Bound CPU software-occlusion candidate selection/sort/rasterization; define query latency/refresh/stale-result/camera-motion policy and bypass when estimated benefit cannot exceed cost.
-- [ ] GPU Hi-Z occlusion: persistent minimal-format Reverse-Z resources, one or two reduction/test dispatches, zero per-mip host work, measured crossover thresholds, visibility hysteresis, conservative bypass on camera cuts, and current-frame visibility kept on GPU.
-- [ ] Retain forced modes and a conservative no-occlusion fallback for diagnosis; do not promote any mode without measured crossover and visual parity evidence.
+- [x] Define directional-cascade invalidation from camera, light, caster, receiver, atlas, and quality state; stabilize projections, reuse unaffected recording/data, and enforce a bounded update budget with explicit temporal policy.
+- [x] Share GPU shadow records across all material kernels instead of large uniform arrays.
+- [x] Stagger reflection probe and environment capture refreshes across frames.
+- [x] Instrument occlusion candidates, occluders, tested/rasterized/rejected bounds, query age, Hi-Z build/test cost, CPU/GPU time, and false-positive/negative diagnostics in representative open, moderate, occluder-heavy, masked, static, and moving scenes.
+- [x] Bound CPU software-occlusion candidate selection/sort/rasterization; define query latency/refresh/stale-result/camera-motion policy and bypass when estimated benefit cannot exceed cost.
+- [x] GPU Hi-Z occlusion: persistent minimal-format Reverse-Z resources, one or two reduction/test dispatches, zero per-mip host work, measured crossover thresholds, visibility hysteresis, conservative bypass on camera cuts, and current-frame visibility kept on GPU.
+- [x] Retain forced modes and a conservative no-occlusion fallback for diagnosis; do not promote any mode without measured crossover and visual parity evidence.
+
+2026-08-31 closeout: **Phase 5.2 implementation and bounded acceptance complete**.
+Shared shadows, probes, CPU occlusion and conservative R32F tiled Hi-Z retain
+their existing budgets. Headless normal/reversed, two-cold-repeat validation
+covers six representative workloads plus the original moving/cut fixture:
+2,016 completed frames in passing cohorts, zero false occlusion or missing
+visible output, and exact cold-repeat images. Moving-mask trajectories include
+motion and settled tails; the deliberately conservative policy keeps visibility
+on view changes and resumes culling after settling. Raster and compute now use
+the same frozen physical planner generation; masked deferred rows honor coverage.
+
+Actual native C−1/C/C+1 growth, after-seal rejection/retry, in-flight retention,
+descriptor release and natural reclamation pass separately at 4096² in both
+depth modes, including validation-enabled repeats with zero native errors.
+The original warm deterministic-clear allocation gate also returns zero bytes.
+Standard/synchronization validation passes the focused production lanes; loader
+duplicate-layer warnings are recorded separately. No desktop control was used.
+
+Earlier textured OpenGL controls and Vulkan's 1,080 calibration samples remain
+valid; all six crossover buckets select `Disabled / NoMeasuredWin`. Diagnostic
+readbacks never feed production visibility, and these correctness runs make no
+new performance/default promotion or native Advanced shaded-output claim.
+The investigation retains earlier failing runs and identifies their repairs.
+Run instructions: `docs/developer-guides/rendering/renderbench-phase52-scenarios.md`.
+See
+`docs/work/investigations/rendering/vulkan-phase52-bounded-shadows-probes-occlusion.md`.
 
 #### 5.3 Asynchronous Texture Streaming & Pipelines
-- [ ] Keep texture decode, transcode, and mip prep on background workers.
-- [ ] Coalesce uploads into bounded transfer submissions; reserve foreground staging ring capacity.
-- [ ] Stream textures larger than staging ring in bounded chunks.
-- [ ] Publish texture generations at deterministic frame boundaries with narrow descriptor updates.
-- [ ] Meter decode/prep, staging copy, Vulkan allocation, transfer recording/GPU, descriptor publication, queue age, and bytes/items; keep bursts within explicit publication/retirement budgets.
-- [ ] Prove one material scalar and one texture/sampler replacement update only their dependent ranges with zero stable per-draw descriptor validation or writes.
-- [ ] Bound stable material/descriptor-table growth with spare capacity, asynchronous staging/publication, and only a visible counted emergency wait.
-- [ ] Precompile common pipelines during warmup; persist `VkPipelineCache` keyed by GPU, driver, engine revision, render-target mode, and shader fingerprint.
-- [ ] Never synchronously compile pipelines on the render thread during steady state.
+- [x] Phase 5.2 prerequisite: defer OpenGL bindless handle publication until progressive mip upload has finalized sampler state; preserve pending/retry semantics. Cold normal and reversed-depth Disabled/full-Hi-Z/coarse-Hi-Z/Disabled-return controls matched textured raw albedo after the explicit bounded Pending upload interval; see the Phase 5.2 investigation.
+- [x] Phase 5.2 prerequisite: prepare compute descriptors under the sealed operation's exact physical planner generation, including dynamic-stream contexts, without per-dispatch planner allocation.
+- [x] Phase 5.2 prerequisite: give repeated compute occurrences distinct stable stream/occurrence identities across preparation, refresh, serial/secondary recording and reuse; never use the thin-primary ordinal to identify their descriptors or uniform data.
+- [x] Keep imported texture decode/cache parsing, resize/mip generation and Vulkan image/staging preparation on workers. Bounded owned tasks survive cancellation/priority changes and retirement; legacy false flags cannot restore synchronous preparation. Cold worker-only upload and textured albedo acceptance pass; see `docs/work/progress/rendering/vulkan-phase53-worker-texture-preparation.md` for scope and unexercised fault-injection cases.
+- [x] Coalesce uploads into bounded transfer submissions; reserve foreground staging ring capacity.
+- [x] Stream textures larger than staging ring in bounded chunks.
+- [x] Publish texture generations at deterministic frame boundaries with narrow descriptor updates.
+- [x] Meter decode/prep, staging copy, Vulkan allocation, transfer recording/GPU, descriptor publication, queue age, and bytes/items; keep bursts within explicit publication/retirement budgets.
+- [x] Prove one material scalar and one texture/sampler replacement update only their dependent ranges with zero stable per-draw descriptor validation or writes.
+- [x] Bound stable material/descriptor-table growth with spare capacity, asynchronous staging/publication, and only a visible counted emergency wait.
+- [x] Precompile common pipelines during warmup; persist `VkPipelineCache` keyed by GPU, driver, engine revision, render-target mode, and shader fingerprint.
+- [x] Never synchronously compile pipelines on the render thread during steady state.
+
+2026-08-31 closeout: **Phase 5.3 implementation and headless acceptance complete**.
+Normal/reversed, two-repeat streaming and material matrices pass: exact native
+mip/row contents, bounded large required uploads with fresh-plan retries,
+coalesced submissions, cancellation-safe ownership and actual GPU timestamps.
+Scalar and texture/sampler mutations each write one dependent row; warmed idle
+frames perform no material page writes, descriptor writes or closure acquisition.
+Eight cold/warm pipeline children pass cache provenance and zero steady-state
+compile/create/wait gates. Focused Phase 5.2 visibility/native-lifetime and
+zero-allocation clear regressions pass; editor and RenderBench build cleanly.
+Native validation reports zero errors (loader warnings recorded separately).
+No desktop control, live OpenXR acceptance or performance/default promotion is
+claimed. Details and run guides:
+`docs/work/progress/rendering/vulkan-phase53-headless-completion.md`.
 
 #### 5.4 Resource Retirement & Swapchain Lifecycle
+- [x] Phase 5.2 prerequisite: initialize/preserve auto-exposure history before capturing the pending generation's immutable descriptor manifest; retain strict commit validation. Live 1920x1080 → 1279x719 → 1920x1080 completes with normal/reversed-depth mode parity at the odd extent.
+- [x] Phase 5.2 prerequisite: exclude logically tombstoned draw/material owners from new reverse-dependency snapshots while preserving physically retained rows and ACK-based reclamation; live scene deactivate/reactivate and selected-primitive mutation checkpoints pass.
+- [x] Phase 5.2 prerequisite: refreeze required keyed native-buffer barriers on buffer publication changes, carry exact generations into recording pins, and reject superseded accepted packets for a fresh-frame retry without image/structural replanning. Headless normal/reversed 4096² runs prove C−1/C/C+1 growth, after-seal rejection before acquisition, fresh retry, recorded/in-flight retention, and natural reclamation after bounded dependent retirement rotations; validation-enabled repeats report zero native errors.
+- [x] Phase 5.2 prerequisite: retain immutable read-only storage publications in captured operations and lower them into exact frame-slot/arena epochs; include slice identity in descriptor reuse and release capture ownership on retirement.
+- [x] Phase 5.2 prerequisite: preserve retained capture ownership across scoped program binding resets, defer indirect descriptor lowering until prepared storage authority exists, and pass the acquired frame-data slot explicitly into indirect recording.
+- [x] Phase 5.2 prerequisite: publish query capabilities to the live resource authority and recycle delayed timestamp pairs only after completion or proven unrecorded/abandoned epochs; expose bounded saturation and rejection diagnostics.
 - [ ] Meter destruction by resource class (images/views, buffers, pipelines, framebuffers, samplers, descriptors, command artifacts, callbacks) with per-frame caps and a reported high-water memory-safety drain policy.
 - [ ] Destroy retired resources outside global retirement locks.
 - [ ] Retire resources only after all relevant queue timeline values or fences complete.

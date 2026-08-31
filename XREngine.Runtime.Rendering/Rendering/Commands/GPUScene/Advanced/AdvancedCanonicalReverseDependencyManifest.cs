@@ -87,8 +87,17 @@ public sealed class AdvancedCanonicalReverseDependencyManifest
             if (drawOccupancy[index] == 0)
                 continue;
             AdvancedGpuHandle draw = drawHandles[index];
+            // Physical rows remain occupied after tombstoning until every
+            // publication consumer acknowledges them. They are not logical
+            // dependencies of the next canonical publication.
+            if (!draw.IsValid)
+                return MarkInconsistent();
+            if (!scene.Draws.IsCurrent(draw))
+                continue;
             ref readonly AdvancedDrawRecord record = ref drawRecords[index];
-            if (!draw.IsValid || !record.Material.IsValid || !record.Geometry.IsValid ||
+            if (!record.Material.IsValid || !record.Geometry.IsValid ||
+                !materials.Materials.IsCurrent(record.Material) ||
+                !scene.Geometry.Records.IsCurrent(record.Geometry) ||
                 _materialToDrawCount >= _materialToDraw.Length ||
                 _geometryToDrawCount >= _geometryToDraw.Length)
                 return MarkInconsistent();
@@ -104,9 +113,12 @@ public sealed class AdvancedCanonicalReverseDependencyManifest
             if (materialOccupancy[index] == 0)
                 continue;
             AdvancedGpuHandle material = materialHandles[index];
+            if (!material.IsValid)
+                return MarkInconsistent();
+            if (!materials.Materials.IsCurrent(material))
+                continue;
             ref readonly AdvancedMaterialRecord record = ref materialRecords[index];
-            if (!material.IsValid ||
-                !materials.TryGetLayoutHandle(material, out AdvancedGpuHandle layout) ||
+            if (!materials.TryGetLayoutHandle(material, out AdvancedGpuHandle layout) ||
                 !materials.Kernels.TryGet(new AdvancedGpuHandle(record.ShadingKernelId, record.ShadingKernelGeneration), out _) ||
                 _kernelToMaterialCount >= _kernelToMaterial.Length ||
                 _layoutToMaterialCount >= _layoutToMaterial.Length ||

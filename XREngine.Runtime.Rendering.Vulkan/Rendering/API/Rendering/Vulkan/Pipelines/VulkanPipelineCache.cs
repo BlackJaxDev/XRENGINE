@@ -39,11 +39,7 @@ internal sealed unsafe partial class VulkanPipelineManager
         RequireApi().GetPhysicalDeviceProperties(RequireDeviceContext().PhysicalDevice, out PhysicalDeviceProperties properties);
         InitializePipelinePrewarmDatabase(properties);
 
-        string cacheDir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "XREngine",
-            "Vulkan",
-            "PipelineCache");
+        string cacheDir = VulkanPipelineCacheStorage.GetNativePipelineCacheDirectory();
 
         _pipelineCacheFilePath = Path.Combine(
             cacheDir,
@@ -215,6 +211,9 @@ internal sealed unsafe partial class VulkanPipelineManager
         ref GraphicsPipelineCreateInfo pipelineInfo,
         out Pipeline pipeline)
     {
+        Interlocked.Increment(ref _graphicsPipelineCreateCount);
+        if (pipelineCache.Handle == _backgroundPipelineCache.Handle && pipelineCache.Handle != 0)
+            Interlocked.Increment(ref _workerPipelineCreateCount);
         if (pipelineCache.Handle == 0)
             return RequireApi().CreateGraphicsPipelines(RequireDeviceContext().Device, pipelineCache, 1, ref pipelineInfo, null, out pipeline);
 
@@ -232,6 +231,9 @@ internal sealed unsafe partial class VulkanPipelineManager
         ref ComputePipelineCreateInfo pipelineInfo,
         out Pipeline pipeline)
     {
+        Interlocked.Increment(ref _computePipelineCreateCount);
+        if (pipelineCache.Handle == _backgroundPipelineCache.Handle && pipelineCache.Handle != 0)
+            Interlocked.Increment(ref _workerPipelineCreateCount);
         if (pipelineCache.Handle == 0)
             return RequireApi().CreateComputePipelines(RequireDeviceContext().Device, pipelineCache, 1, ref pipelineInfo, null, out pipeline);
 

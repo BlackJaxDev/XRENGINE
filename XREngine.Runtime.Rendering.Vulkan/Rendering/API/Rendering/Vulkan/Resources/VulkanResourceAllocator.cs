@@ -35,6 +35,7 @@ internal sealed class VulkanResourceAllocator
     private readonly Dictionary<VulkanBufferAliasGroupKey, VulkanBufferAliasGroup> _bufferAliasGroups = new();
     private readonly Dictionary<VulkanBufferAliasGroupKey, VulkanPhysicalBufferGroup> _physicalBufferGroups = new();
     private readonly Dictionary<string, VulkanPhysicalBufferGroup> _resourceToPhysicalBufferGroup = new(StringComparer.OrdinalIgnoreCase);
+    private VulkanTransientAttachmentPlan _transientAttachmentPlan = VulkanTransientAttachmentPlan.Baseline;
 
     public IReadOnlyDictionary<string, VulkanImageAllocation> LogicalTextureAllocations => _logicalTextureAllocations;
     public IReadOnlyDictionary<string, VulkanBufferAllocation> LogicalBufferAllocations => _logicalBufferAllocations;
@@ -68,9 +69,12 @@ internal sealed class VulkanResourceAllocator
                 yield return pair.Value;
     }
 
-    public void UpdatePlan(VulkanResourcePlan plan)
+    public void UpdatePlan(
+        VulkanResourcePlan plan,
+        VulkanTransientAttachmentPlan? transientAttachmentPlan = null)
     {
         ObjectDisposedException.ThrowIf(IsRetired, this);
+        _transientAttachmentPlan = transientAttachmentPlan ?? VulkanTransientAttachmentPlan.Baseline;
         _logicalTextureAllocations.Clear();
         _aliasGroups.Clear();
         _physicalGroups.Clear();
@@ -85,14 +89,20 @@ internal sealed class VulkanResourceAllocator
 
         foreach (VulkanAllocationRequest request in plan.AllTextures())
         {
-            VulkanAliasGroupKey key = VulkanAliasGroupKey.FromRequest(request);
+            // Candidate analysis is not native lifetime authority. Preserve
+            // dedicated images even for explicitly opted-in descriptors.
+            VulkanAllocationRequest dedicatedRequest = request with
+            {
+                Descriptor = request.Descriptor with { SupportsAliasing = false },
+            };
+            VulkanAliasGroupKey key = VulkanAliasGroupKey.FromRequest(dedicatedRequest);
             if (!_aliasGroups.TryGetValue(key, out VulkanImageAliasGroup? group))
             {
                 group = new VulkanImageAliasGroup(key);
                 _aliasGroups.Add(key, group);
             }
 
-            VulkanImageAllocation allocation = group.Add(request);
+            VulkanImageAllocation allocation = group.Add(dedicatedRequest);
             _logicalTextureAllocations[request.Name] = allocation;
         }
 
@@ -138,13 +148,10 @@ internal sealed class VulkanResourceAllocator
             ImageUsageFlags usage = InferImageUsage(group, format, planner);
             uint mipLevels = ResolveMipLevelCount(group, extent, usage, planner);
             SampleCountFlags samples = ResolveSampleCount(group.CreateInfoTemplate.Samples);
-            VulkanTransientAttachmentPolicy transientAttachmentPolicy = ResolveTransientAttachmentPolicy(group);
-            MemoryPropertyFlags memoryProperties = ResolveImageMemoryProperties(transientAttachmentPolicy);
-            if (transientAttachmentPolicy == VulkanTransientAttachmentPolicy.PreferLazilyAllocated)
-            {
-                usage |= ImageUsageFlags.TransientAttachmentBit;
-                usage &= ~(ImageUsageFlags.SampledBit | ImageUsageFlags.StorageBit | ImageUsageFlags.TransferSrcBit | ImageUsageFlags.TransferDstBit);
-            }
+            // Do not remove required native usage bits to manufacture lazy
+            // eligibility. Activation needs a validated native usage contract.
+            VulkanTransientAttachmentPolicy transientAttachmentPolicy = VulkanTransientAttachmentPolicy.None;
+            MemoryPropertyFlags memoryProperties = MemoryPropertyFlags.DeviceLocalBit;
 
             VulkanPhysicalImageGroup physicalGroup = new(group, extent, format, usage, mipLevels, samples, memoryProperties, transientAttachmentPolicy);
             foreach (VulkanImageAllocation allocation in group.Allocations)
@@ -182,6 +189,23 @@ internal sealed class VulkanResourceAllocator
 
         foreach (VulkanPhysicalImageGroup group in _physicalGroups.Values)
             _logicalResourcesByPhysicalGroup[group] = group.LogicalResources.ToArray();
+
+        int activeAliasGroupCount = 0;
+        int activeLazyGroupCount = 0;
+        foreach (VulkanPhysicalImageGroup group in _physicalGroups.Values)
+        {
+            if (group.LogicalResources.Count > 1 && group.AllowsAliasing)
+                activeAliasGroupCount++;
+            if (group.TransientAttachmentPolicy == VulkanTransientAttachmentPolicy.PreferLazilyAllocated)
+                activeLazyGroupCount++;
+        }
+        Debug.VulkanEvery(
+            $"Vulkan.TransientAttachmentPlan.{_transientAttachmentPlan.Mode}.{_transientAttachmentPlan.IsActive}.{activeAliasGroupCount}.{activeLazyGroupCount}",
+            TimeSpan.FromSeconds(2),
+            "[Vulkan.TransientAttachments] {0} activeAliasGroups={1} activeLazyGroups={2}.",
+            _transientAttachmentPlan.Describe(),
+            activeAliasGroupCount,
+            activeLazyGroupCount);
 
         LogDeferredLightingPhysicalPlan(passMetadata, planner);
     }
@@ -452,6 +476,7 @@ internal sealed class VulkanResourceAllocator
             hash.Add(pair.Value.SizePolicy.ScaleY);
             hash.Add(pair.Value.SizePolicy.Width);
             hash.Add(pair.Value.SizePolicy.Height);
+            hash.Add(pair.Value.SizePolicy.RoundUpDivisor);
             foreach (FrameBufferAttachmentDescriptor attachment in pair.Value.Attachments)
             {
                 hash.Add(planner.ResolveImageResourceName(attachment.ResourceName), StringComparer.OrdinalIgnoreCase);
@@ -590,16 +615,16 @@ internal sealed class VulkanResourceAllocator
                 height = Math.Max(sizePolicy.Height, 1u);
                 break;
             case RenderResourceSizeClass.InternalResolution:
-                width = (uint)Math.Max(1, (int)MathF.Round(internalWidth * sizePolicy.ScaleX));
-                height = (uint)Math.Max(1, (int)MathF.Round(internalHeight * sizePolicy.ScaleY));
+                width = ResolveScaledExtent(internalWidth, sizePolicy.ScaleX, sizePolicy.RoundUpDivisor);
+                height = ResolveScaledExtent(internalHeight, sizePolicy.ScaleY, sizePolicy.RoundUpDivisor);
                 break;
             case RenderResourceSizeClass.WindowResolution:
-                width = (uint)Math.Max(1, (int)MathF.Round(windowWidth * sizePolicy.ScaleX));
-                height = (uint)Math.Max(1, (int)MathF.Round(windowHeight * sizePolicy.ScaleY));
+                width = ResolveScaledExtent(windowWidth, sizePolicy.ScaleX, sizePolicy.RoundUpDivisor);
+                height = ResolveScaledExtent(windowHeight, sizePolicy.ScaleY, sizePolicy.RoundUpDivisor);
                 break;
             case RenderResourceSizeClass.Custom:
-                width = (uint)Math.Max(1, (int)MathF.Round(windowWidth * sizePolicy.ScaleX));
-                height = (uint)Math.Max(1, (int)MathF.Round(windowHeight * sizePolicy.ScaleY));
+                width = ResolveScaledExtent(windowWidth, sizePolicy.ScaleX, sizePolicy.RoundUpDivisor);
+                height = ResolveScaledExtent(windowHeight, sizePolicy.ScaleY, sizePolicy.RoundUpDivisor);
                 break;
             default:
                 width = windowWidth;
@@ -609,6 +634,11 @@ internal sealed class VulkanResourceAllocator
 
         return new Extent3D(width, height, 1);
     }
+
+    private static uint ResolveScaledExtent(uint extent, float scale, uint roundUpDivisor)
+        => roundUpDivisor > 1u
+            ? checked((Math.Max(extent, 1u) + roundUpDivisor - 1u) / roundUpDivisor)
+            : (uint)Math.Max(1, (int)MathF.Round(extent * scale));
 
     private static Format ResolveFormat(VulkanImageCreateTemplate template)
     {
@@ -794,27 +824,6 @@ internal sealed class VulkanResourceAllocator
 
         return flags;
     }
-
-    private static VulkanTransientAttachmentPolicy ResolveTransientAttachmentPolicy(VulkanImageAliasGroup group)
-    {
-        bool hasLazyCandidate = false;
-        foreach (VulkanImageAllocation allocation in group.Allocations)
-        {
-            if (allocation.Request.TransientAttachmentPolicy != VulkanTransientAttachmentPolicy.PreferLazilyAllocated)
-                return VulkanTransientAttachmentPolicy.None;
-
-            hasLazyCandidate = true;
-        }
-
-        return hasLazyCandidate
-            ? VulkanTransientAttachmentPolicy.PreferLazilyAllocated
-            : VulkanTransientAttachmentPolicy.None;
-    }
-
-    private static MemoryPropertyFlags ResolveImageMemoryProperties(VulkanTransientAttachmentPolicy transientAttachmentPolicy)
-        => transientAttachmentPolicy == VulkanTransientAttachmentPolicy.PreferLazilyAllocated
-            ? MemoryPropertyFlags.DeviceLocalBit | MemoryPropertyFlags.LazilyAllocatedBit
-            : MemoryPropertyFlags.DeviceLocalBit;
 
     private static BufferUsageFlags InferBufferUsage(
         VulkanBufferAliasGroup group,

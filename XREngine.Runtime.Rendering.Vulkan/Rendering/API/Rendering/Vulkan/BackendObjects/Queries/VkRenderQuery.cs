@@ -31,6 +31,7 @@ internal unsafe sealed class VkRenderQuery(
     private VulkanQueryPlan _plan;
     private SubmittedEpoch _submittedEpoch;
     private RenderQueryTicket _latestTicket;
+    private ulong _abandonedTimestampEpoch;
     private ulong _nextEpoch;
     private ulong _activeCommandBufferHandle;
     private bool _queryActive;
@@ -68,7 +69,10 @@ internal unsafe sealed class VkRenderQuery(
     {
         ulong commandBufferHandle = unchecked((ulong)commandBuffer.Handle);
         if (commandBufferHandle == 0ul || !BackendContext.IsDeviceOperational)
+        {
+            RecordUnrecordedTimestampRejection("command-buffer handle is zero or the Vulkan device is not operational");
             return false;
+        }
 
         VulkanQueryPlan plan = VulkanQueryDescriptorMapper.Map(
             Data.Descriptor,
@@ -77,6 +81,7 @@ internal unsafe sealed class VkRenderQuery(
         if (!plan.Supported)
         {
             RenderQueryTelemetry.RecordUnsupported();
+            RecordUnrecordedTimestampRejection(plan.UnsupportedReason ?? "descriptor mapping rejected the query");
             Debug.VulkanWarningEvery(
                 $"Vulkan.RenderQuery.Unsupported.{Data.Descriptor.GetHashCode()}",
                 TimeSpan.FromSeconds(5),
@@ -90,9 +95,15 @@ internal unsafe sealed class VkRenderQuery(
         {
             if (_destroyRequested || _submittedEpoch.IsValid ||
                 (_recordedEpochs.Count != 0 && !_recordedEpochs.ContainsKey(commandBufferHandle)))
+            {
+                RecordUnrecordedTimestampRejection("query has an outstanding or retired epoch");
                 return false;
+            }
             if (!EnsureAllocationNoLock(plan))
+            {
+                RecordUnrecordedTimestampRejection("query-pool allocation failed");
                 return false;
+            }
 
             ulong epoch = ++_nextEpoch;
             if (epoch == 0ul)
@@ -618,6 +629,56 @@ internal unsafe sealed class VkRenderQuery(
             if (_recordedEpochs.TryGetValue(handle, out RecordedEpoch epoch))
                 _recordedEpochs[handle] = epoch with { ForceVisible = true };
         }
+    }
+
+    /// <summary>
+    /// Drops one epoch only after the command-buffer lifetime authority has proved
+    /// that its recording was abandoned before queue admission.
+    /// </summary>
+    internal void AbandonRecordedResultEpoch(CommandBuffer commandBuffer)
+    {
+        ulong handle = unchecked((ulong)commandBuffer.Handle);
+        lock (_epochLock)
+        {
+            if (!_recordedEpochs.TryGetValue(handle, out RecordedEpoch epoch) ||
+                epoch.State == ERenderQuerySlotState.Submitted)
+                return;
+
+            _recordedEpochs.Remove(handle);
+            if (Data.Descriptor.Kind is ERenderQueryKind.Timestamp or ERenderQueryKind.ElapsedTime)
+                _abandonedTimestampEpoch = epoch.Ticket.Epoch;
+            if (_destroyRequested && !_submittedEpoch.IsValid && _recordedEpochs.Count == 0)
+                ReleaseAllocationNoLock();
+        }
+    }
+
+    /// <summary>Consumes one exact pre-submission-abandonment notification for a timestamp query.</summary>
+    internal bool TryConsumeAbandonedTimestamp()
+    {
+        lock (_epochLock)
+        {
+            if (_abandonedTimestampEpoch == 0ul)
+                return false;
+            _abandonedTimestampEpoch = 0ul;
+            return true;
+        }
+    }
+
+    private void RecordUnrecordedTimestampRejection(string reason)
+    {
+        if (Data.Descriptor.Kind != ERenderQueryKind.Timestamp)
+            return;
+
+        // Primary preparation rejected this query before it emitted a reset or
+        // timestamp command. It is therefore terminally safe for the elapsed
+        // ring to release once its companion endpoint is likewise terminal.
+        _abandonedTimestampEpoch = ulong.MaxValue;
+        RenderQueryTelemetry.RecordTimestampPreparationRejection(reason);
+        Debug.VulkanWarningEvery(
+            $"Vulkan.TimestampQuery.PrepareRejected.{Data.Descriptor.GetHashCode()}.{reason}",
+            TimeSpan.FromSeconds(2),
+            "[Vulkan.Query] Timestamp preparation rejected before recording. reason={0}",
+            reason);
     }
 
     internal void MarkResultEpochSubmitted(

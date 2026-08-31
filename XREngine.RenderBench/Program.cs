@@ -26,6 +26,17 @@ public static class Program
         }
 
         Directory.CreateDirectory(options.OutputDirectory);
+        if (options.Scenario == "phase53-pipelines")
+            return await RenderBenchPipelineScenario.RunAsync(options).ConfigureAwait(false);
+        if (options.Scenario == "phase53-streaming")
+            return await RenderBenchTextureStreamingScenario.RunAsync(options).ConfigureAwait(false);
+        if (options.Scenario == "phase53-materials")
+            return await RenderBenchMaterialScenario.RunAsync(options).ConfigureAwait(false);
+        if (options.Scenario is not null)
+            return await RenderBenchScenarioRunner.RunAsync(options).ConfigureAwait(false);
+
+        using RenderBenchWorkSchedulerScope workSchedulerScope =
+            RenderBenchWorkSchedulerScope.EnsureInstalled();
         RuntimeRenderingBootstrap.InstallEngineHostServices();
         RenderBenchProcessState state = new(options);
         RenderProfileControlService profileService = new(

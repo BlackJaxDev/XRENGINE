@@ -7,6 +7,7 @@ using System.Threading;
 using XREngine;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
+using XREngine.Data.Vectors;
 using XREngine.Rendering;
 using XREngine.Rendering.Materials;
 using XREngine.Rendering.Vulkan;
@@ -602,11 +603,15 @@ namespace XREngine.Rendering.Commands
         // Phase 3: Hi-Z occlusion (GPU_HiZ)
         private XRRenderProgram? _hiZInitProgram;
         private XRRenderProgram? _hiZGenProgram;
+        private XRRenderProgram? _hiZCoarseTileProgram;
         private XRRenderProgram? _hiZOcclusionProgram;
         private XRRenderProgram? _hiZPhaseOneProgram;
         private XRRenderProgram? _copyCount3Program;
         private XRTexture2D? _hiZDepthPyramid;
         private XRTexture2D? _hiZDepthPyramidOwned;
+        private XRTexture2D? _hiZCoarseTiles;
+        private IVector2 _hiZCoarseSourceSize;
+        private ulong _hiZCoarseTilesFrameId = ulong.MaxValue;
         private XRTexture2D? _hiZMipSourceViewTexture;
         private XRTexture2DView[] _hiZMipSourceViews = [];
         private int _hiZMaxMip;
@@ -740,6 +745,30 @@ namespace XREngine.Rendering.Commands
         private GPUMaterialTable? _materialTable;
         public XRDataBuffer? MaterialTableBuffer => _materialTable?.Buffer;
         public XRDataBuffer? MaterialTextureHandleBuffer => _materialTable?.TextureHandleBuffer;
+        /// <summary>Retains the last immutable material rows for cold diagnostics or sealed consumers.</summary>
+        public bool TryRetainMaterialTablePublication(
+            out GPUMaterialTablePublication publication)
+        {
+            if (_materialTable is not null &&
+                _materialTable.TryRetainCurrentPublication(out publication))
+            {
+                return true;
+            }
+
+            publication = null!;
+            return false;
+        }
+
+        /// <summary>Reports the last material publication without creating or uploading resources.</summary>
+        public bool TryGetMaterialTablePublicationDelta(out GPUMaterialTablePublicationDelta delta)
+        {
+            delta = default;
+            return _materialTable is not null && _materialTable.TryGetLastPublicationDelta(out delta);
+        }
+
+        /// <summary>Copies the sparse row ranges from the last successful publication.</summary>
+        public int CopyMaterialTablePublicationRanges(Span<GPUMaterialTableDirtyRange> destination)
+            => _materialTable?.CopyLastPublicationMaterialRanges(destination) ?? 0;
         private MaterialBindingResolverResult _lastMaterialBindingResolverResult =
             MaterialBindingResolverResult.PerMaterial("Material binding resolver has not run.");
         public MaterialBindingResolverResult LastMaterialBindingResolverResult => _lastMaterialBindingResolverResult;

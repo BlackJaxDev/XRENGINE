@@ -73,6 +73,63 @@ public sealed class AdvancedSharedPreparationService : IDisposable
     }
 
     /// <summary>
+    /// Copies one exact visibility publication while holding the same lock that
+    /// advances the shared extractor. Deferred backends can therefore retain a
+    /// coherent input image without either blocking later preparation work or
+    /// reading mutable extractor columns after authoring has completed.
+    /// </summary>
+    internal bool TryCopyVisibilityColumns(
+        AdvancedPreparationExtractor extractor,
+        in AdvancedPreparationPublication publication,
+        Span<AdvancedVisibilityPayload> payloads,
+        Span<AdvancedVisibilityCandidate> candidates,
+        Span<EAdvancedGeometryProducer> producers,
+        Span<AdvancedIndirectRange> indirectRanges,
+        Span<int> indirectPayloadIndices,
+        out AdvancedIndirectPreparationResult indirect)
+    {
+        lock (_sync)
+        {
+            indirect = default;
+            if (!ReferenceEquals(extractor, _extractor) ||
+                !_extractor.MatchesPublication(in publication))
+            {
+                return false;
+            }
+
+            ReadOnlySpan<AdvancedVisibilityPayload> sourcePayloads =
+                _extractor.VisibilityPayloads;
+            ReadOnlySpan<AdvancedVisibilityCandidate> sourceCandidates =
+                _extractor.VisibilityCandidates;
+            ReadOnlySpan<EAdvancedGeometryProducer> sourceProducers =
+                _extractor.VisibilityProducers;
+            ReadOnlySpan<AdvancedIndirectRange> sourceIndirectRanges =
+                _extractor.IndirectRanges;
+            ReadOnlySpan<int> sourceIndirectPayloadIndices =
+                _extractor.IndirectPayloadIndices;
+            indirect = _extractor.IndirectResult;
+
+            if (payloads.Length != sourcePayloads.Length ||
+                candidates.Length != sourceCandidates.Length ||
+                producers.Length != sourceProducers.Length ||
+                indirectRanges.Length != sourceIndirectRanges.Length ||
+                indirectPayloadIndices.Length !=
+                    sourceIndirectPayloadIndices.Length)
+            {
+                indirect = default;
+                return false;
+            }
+
+            sourcePayloads.CopyTo(payloads);
+            sourceCandidates.CopyTo(candidates);
+            sourceProducers.CopyTo(producers);
+            sourceIndirectRanges.CopyTo(indirectRanges);
+            sourceIndirectPayloadIndices.CopyTo(indirectPayloadIndices);
+            return true;
+        }
+    }
+
+    /// <summary>
     /// Publishes delayed, completion-gated visibility feedback without
     /// exposing a same-frame GPU readback path.
     /// </summary>

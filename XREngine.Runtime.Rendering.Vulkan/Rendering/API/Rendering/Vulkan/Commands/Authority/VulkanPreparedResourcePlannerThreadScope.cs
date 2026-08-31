@@ -18,6 +18,14 @@ internal readonly struct VulkanPreparedResourcePlannerThreadScope : IDisposable
         VulkanCommandThreadContext context,
         VulkanCommandRuntime owner,
         in ResourcePlannerRuntimeState preparedState)
+        : this(context, owner, new ResourcePlannerRuntimeGeneration(preparedState))
+    {
+    }
+
+    internal VulkanPreparedResourcePlannerThreadScope(
+        VulkanCommandThreadContext context,
+        VulkanCommandRuntime owner,
+        ResourcePlannerRuntimeGeneration preparedGeneration)
     {
         if (!ReferenceEquals(context.Owner, owner))
         {
@@ -25,9 +33,12 @@ internal readonly struct VulkanPreparedResourcePlannerThreadScope : IDisposable
                 "A prepared planner scope must use its command runtime's thread workspace.");
         }
 
-        ResourcePlannerRuntimeState scopedState = preparedState;
-        scopedState.FrameOpResourcePlannerSwitchingState ??=
-            new FrameOpResourcePlannerSwitchingState();
+        ResourcePlannerRuntimeState scopedState = preparedGeneration.State;
+        if (scopedState.FrameOpResourcePlannerSwitchingState is null)
+        {
+            throw new InvalidOperationException(
+                "A prepared planner generation must include its frozen switching state.");
+        }
 
         _context = context;
         _owner = owner;
@@ -40,8 +51,7 @@ internal readonly struct VulkanPreparedResourcePlannerThreadScope : IDisposable
 
         context.ResourcePlannerRuntimeStateOwner = owner;
         context.ResourcePlannerRuntimeState = scopedState;
-        context.ResourcePlannerRuntimeGeneration =
-            new ResourcePlannerRuntimeGeneration(scopedState);
+        context.ResourcePlannerRuntimeGeneration = preparedGeneration;
         context.FrameOpResourcePlannerSwitchingStateOwner = owner;
         context.FrameOpResourcePlannerSwitchingState =
             scopedState.FrameOpResourcePlannerSwitchingState;
@@ -49,6 +59,8 @@ internal readonly struct VulkanPreparedResourcePlannerThreadScope : IDisposable
 
     public void Dispose()
     {
+        if (_context is null)
+            return;
         if (!ReferenceEquals(_context.ResourcePlannerRuntimeStateOwner, _owner))
         {
             throw new InvalidOperationException(
