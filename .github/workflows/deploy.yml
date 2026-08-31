@@ -54,7 +54,7 @@ jobs:
         run: dotnet restore XRENGINE.slnx
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v4.37.4
+        uses: github/codeql-action/init@v4.37.9
         with:
           languages: csharp
           build-mode: manual
@@ -73,7 +73,7 @@ jobs:
           --results-directory TestResults
 
       - name: Analyze with CodeQL
-        uses: github/codeql-action/analyze@v4.37.4
+        uses: github/codeql-action/analyze@v4.37.9
 
       - name: Upload security-gate test results
         if: always()
