@@ -23,6 +23,7 @@ internal sealed class VulkanAutoUniformBindingSchema
         Operations = operations;
         PublicationLayoutSignature =
             ComputePublicationLayoutSignature(block, operations);
+        HasMaterialOrRuntimeSources = ContainsMaterialOrRuntimeSources(operations);
         FrequencyMask = frequencyMask;
         FallbackKind = fallbackKind;
         FallbackReason = fallbackReason;
@@ -31,12 +32,33 @@ internal sealed class VulkanAutoUniformBindingSchema
     internal AutoUniformBlockInfo Block { get; }
     internal ulong ProgramLinkGeneration { get; }
     internal VulkanAutoUniformBindingOperation[] Operations { get; }
+    /// <summary>
+    /// Whether a plan can change when material values or a captured runtime
+    /// uniform layout changes, irrespective of the destination block's
+    /// declared publication frequency.
+    /// </summary>
+    internal bool HasMaterialOrRuntimeSources { get; }
     internal ulong PublicationLayoutSignature { get; }
     internal EVulkanBindingFrequencyMask FrequencyMask { get; }
     internal EVulkanAutoUniformFallbackReason FallbackKind { get; }
     internal string? FallbackReason { get; }
     internal bool IsFastPathEligible
         => FallbackKind == EVulkanAutoUniformFallbackReason.None;
+
+    private static bool ContainsMaterialOrRuntimeSources(
+        ReadOnlySpan<VulkanAutoUniformBindingOperation> operations)
+    {
+        for (int index = 0; index < operations.Length; index++)
+        {
+            if (operations[index].SourceKind ==
+                EVulkanAutoUniformSourceKind.MaterialOrRuntime)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 
     internal static VulkanAutoUniformBindingSchema Compile(
         AutoUniformBlockInfo block,

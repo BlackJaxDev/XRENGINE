@@ -425,7 +425,10 @@ internal sealed partial class VulkanFrameLoop
                 return false;
             }
 
-            hasPublish = TryRecordStereoLayerBlitCommandBuffer(in plan, out publishCommandBuffer);
+            hasPublish = TryRecordStereoLayerBlitCommandBuffer(
+                in plan,
+                recorded.CommandBuffer,
+                out publishCommandBuffer);
             if (!hasPublish)
                 return false;
 
@@ -523,21 +526,22 @@ internal sealed partial class VulkanFrameLoop
             return false;
 
         bool drainedFrameOps = false;
+        FrameOp[]? capturedOps = null;
         int openXrFrameDataSlotCount = ResolveOpenXrFrameDataSlotCount(OutputRuntime.Desktop.Images?.Length ?? 0);
         uint recordImageIndex = ResolveOpenXrRecordImageIndex(
             request.ResourcePlannerStateIndex,
             OutputRuntime.Desktop.Images?.Length ?? 0);
 
+        VulkanOpenXrFrameContext openXrFrameContext =
+            CreateOpenXrMirrorFrameContext(in request);
+        using VulkanOpenXrFrameContextScope frameContextScope =
+            request.RendersExternalSwapchainTarget
+                ? default
+                : _commandRuntime.OpenXrRecording.EnterFrameContextScope(
+                    OutputRuntime.OpenXrBackend,
+                    in openXrFrameContext);
         using IDisposable? externalScope = request.RendersExternalSwapchainTarget
-            ? EnterOpenXrExternalSwapchainRenderScope(
-                request.Extent.Width,
-                request.Extent.Height,
-                BuildOpenXrExternalSwapchainPlannerTargetIdentity(
-                    request.OpenXrViewIndex,
-                    request.ViewBatchStructuralIdentity),
-                ResolveOpenXrExternalSwapchainTargetName(request.OpenXrViewIndex),
-                EVulkanFrameOpContextKind.OpenXrMirror,
-                openXrViewIndex: request.OpenXrViewIndex)
+            ? EnterOpenXrExternalSwapchainRenderScope(in openXrFrameContext)
             : null;
 
         try
@@ -574,9 +578,9 @@ internal sealed partial class VulkanFrameLoop
                 request.ResourcePlannerStateIndex,
                 EVulkanOpenXrResourcePlannerPurpose.Mirror))
             {
-                FrameOp[] ops = CaptureFrameOpsExcludingTextureUploads(request.EmitFrameOps, out _);
+                capturedOps = CaptureFrameOpsExcludingTextureUploads(request.EmitFrameOps, out _);
                 drainedFrameOps = true;
-                ops = VulkanCommandRuntime.FilterDiagnosticSkippedFrameOps(ops);
+                FrameOp[] ops = VulkanCommandRuntime.FilterDiagnosticSkippedFrameOps(capturedOps);
                 if (ops.Length == 0)
                 {
                     Debug.VulkanWarningEvery(
@@ -665,12 +669,19 @@ internal sealed partial class VulkanFrameLoop
                     Array.Empty<FrameOp>(),
                     new VulkanFramePlanRenderGraphAuthority(
                         planningSnapshot.RenderGraphPlan,
-                        plannerState.FrameOpResourcePlannerSwitchingState),
+                        plannerState.FrameOpResourcePlannerSwitchingState,
+                        _framePlanner,
+                        _resourceRuntime.BackendObjectContext),
                     openXrViewIndex: request.OpenXrViewIndex);
+                framePlan.PrepareRecordingPlannerGenerations(in plannerState);
                 EVrOutputViewKind viewKind = default;
                 EVrOutputViewKind indexedViewKind = default;
                 int outputIndex = -1;
                 RenderOutputRequest outputContract = default;
+                EFrameOutputKind expectedOutputKind =
+                    request.RendersExternalSwapchainTarget
+                        ? EFrameOutputKind.DesktopMirror
+                        : EFrameOutputKind.OpenXREyeSubmit;
                 bool hasOutputContract =
                     logicalViewId != 0UL &&
                     framePlan.ViewSet.TryGetLocatedOpenXrViewKindByLogicalViewId(
@@ -682,29 +693,45 @@ internal sealed partial class VulkanFrameLoop
                     viewKind == indexedViewKind &&
                     framePlan.TryGetExecutableOutputContractForLogicalView(
                         logicalViewId,
-                        EFrameOutputKind.DesktopMirror,
+                        expectedOutputKind,
                         viewKind,
                         out outputIndex,
                         out outputContract);
                 bool hasForegroundContract =
                     hasOutputContract &&
                     outputContract.WorkClass == ERenderOutputWorkClass.PresentNow;
-                if (request.RendersExternalSwapchainTarget &&
-                    (!hasForegroundContract ||
-                     outputContract.ReadinessPolicy == ERenderOutputReadinessPolicy.AllowDeferral))
+                if (!hasForegroundContract ||
+                    outputContract.ReadinessPolicy == ERenderOutputReadinessPolicy.AllowDeferral)
                 {
                     throw new VulkanPresentNowReadinessException(
                         framePlan.RenderFrameId,
                         EVulkanPresentNowReadinessStage.FramePlanSeal,
                         $"openxr-mirror-{request.OpenXrViewIndex}-output-bind",
-                        "DesktopMirror -> exact logical-view output terminal",
+                        $"{expectedOutputKind} -> exact logical-view output terminal",
                         TimeSpan.Zero,
                         TimeSpan.Zero,
-                        "The external mirror plan did not expose exactly one executable non-deferrable terminal for this located view.");
+                        "The OpenXR render plan did not expose exactly one executable non-deferrable terminal for this located view.");
                 }
                 frameOpsSignature = framePlan.StaticOperationSignature;
                 FrameOperationSequence recordingOperations =
                     framePlan.GetNativeStaticOperationsForRecording();
+                VulkanComputePreparationResult computePreparation =
+                    _commandRuntime.PrepareComputeFrameOpsForRecording(
+                        recordImageIndex,
+                        recordingOperations,
+                        framePlan);
+                if (!computePreparation.Succeeded)
+                {
+                    throw new VulkanPresentNowReadinessException(
+                        framePlan.RenderFrameId,
+                        EVulkanPresentNowReadinessStage.PipelineCompilation,
+                        $"openxr-mirror-{request.OpenXrViewIndex}-compute",
+                        $"{expectedOutputKind} -> sealed compute program",
+                        TimeSpan.Zero,
+                        TimeSpan.Zero,
+                        "XR deadline missed with no declared resident GPU fallback. " +
+                        computePreparation.FormatFailure());
+                }
                 CommandChainSchedule? commandChainSchedule = TryBuildOpenXrEyeCommandChainSchedule(
                     mirrorCommandChainImageIndex,
                     request.OpenXrViewIndex,
@@ -755,8 +782,11 @@ internal sealed partial class VulkanFrameLoop
                         AllowSynchronousResourceUploads,
                         FreshSerialRecording: hasForegroundContract,
 
-                        IsExternalSwapchainTarget:
-                            request.RendersExternalSwapchainTarget,
+                        // This command transaction publishes an OpenXR output.
+                        // Strict SPS records its first pass into an engine-owned
+                        // array, so it intentionally has no top-level native
+                        // swapchain target even though its terminal is external.
+                        IsExternalSwapchainTarget: true,
                         PreserveSwapchainForOverlay: false,
                         TransitionSwapchainToPresent: false,
                         ReadinessPolicy: hasOutputContract
@@ -802,7 +832,7 @@ internal sealed partial class VulkanFrameLoop
         catch (Exception ex)
         {
             if (!drainedFrameOps)
-                _ = DrainFrameOpsExcludingTextureUploads(out _);
+                DrainAndReleaseFrameOpsExcludingTextureUploads();
             if (IsOpenXrStrictExtentFailure(ex))
                 throw;
 
@@ -813,6 +843,11 @@ internal sealed partial class VulkanFrameLoop
                 "[OpenXR] Vulkan eye mirror render failed: {0}",
                 ex.Message);
             return false;
+        }
+        finally
+        {
+            if (capturedOps is not null)
+                VulkanAdvancedVisibilityInputLease.ReleaseOperations(capturedOps);
         }
     }
 

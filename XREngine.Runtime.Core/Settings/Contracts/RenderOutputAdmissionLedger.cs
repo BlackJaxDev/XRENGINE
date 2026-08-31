@@ -10,26 +10,31 @@ public sealed class RenderOutputAdmissionLedger
     private struct Entry
     {
         internal ulong OutputId;
+        internal ulong ProductCompatibilityKey;
         internal ulong LastFrameId;
         internal RenderOutputDagNodeStatus Status;
     }
 
     private readonly Entry[] _entries;
-    private int _nextReplacement;
+    private long _compatibilityResetCount;
+    private long _obsoleteCompletionCount;
 
-    public RenderOutputAdmissionLedger(int capacity = 64)
+    public RenderOutputAdmissionLedger(int capacity = 512)
     {
         if (capacity < 1)
             throw new ArgumentOutOfRangeException(nameof(capacity));
         _entries = new Entry[capacity];
     }
 
+    public long CompatibilityResetCount => Interlocked.Read(ref _compatibilityResetCount);
+    public long ObsoleteCompletionCount => Interlocked.Read(ref _obsoleteCompletionCount);
+
     public RenderOutputSchedulingDecision Plan(
         in RenderOutputRequest request,
         bool isDue,
         ERenderOutputPolicyReason deferralReason)
     {
-        int index = FindOrCreate(request.OutputId);
+        int index = FindOrCreateForPlanning(request);
         ref Entry entry = ref _entries[index];
         BeginFrame(ref entry, request.FrameId);
         bool xrCritical = request.OutputClass == ERenderOutputClass.XrCritical;
@@ -102,10 +107,25 @@ public sealed class RenderOutputAdmissionLedger
             ForcedRefresh: false);
     }
 
-    public void Complete(in RenderOutputRequest request)
+    /// <summary>
+    /// Completes only the currently installed product generation. A delayed
+    /// completion from an older target or frame is ignored rather than making
+    /// incompatible content eligible for stale reuse.
+    /// </summary>
+    public bool Complete(in RenderOutputRequest request)
     {
-        int index = FindOrCreate(request.OutputId);
+        int index = Find(request.OutputId);
+        if (index < 0)
+            index = Create(request.OutputId, request.ProductCompatibilityKey);
+
         ref Entry entry = ref _entries[index];
+        if (entry.ProductCompatibilityKey != request.ProductCompatibilityKey ||
+            request.FrameId < entry.LastFrameId)
+        {
+            Interlocked.Increment(ref _obsoleteCompletionCount);
+            return false;
+        }
+
         BeginFrame(ref entry, request.FrameId);
         entry.Status = entry.Status with
         {
@@ -119,6 +139,7 @@ public sealed class RenderOutputAdmissionLedger
             PolicyReason = ERenderOutputPolicyReason.None,
             ConsecutiveDeferrals = 0u,
         };
+        return true;
     }
 
     public bool TryGetStatus(
@@ -126,7 +147,9 @@ public sealed class RenderOutputAdmissionLedger
         out RenderOutputDagNodeStatus status)
     {
         int index = Find(request.OutputId);
-        if (index < 0)
+        if (index < 0 ||
+            _entries[index].ProductCompatibilityKey != request.ProductCompatibilityKey ||
+            request.FrameId < _entries[index].LastFrameId)
         {
             status = default;
             return false;
@@ -142,6 +165,10 @@ public sealed class RenderOutputAdmissionLedger
     {
         if (entry.LastFrameId == frameId)
             return;
+
+        if (entry.LastFrameId != 0UL && frameId < entry.LastFrameId)
+            throw new InvalidOperationException(
+                "Render output admission cannot move backward to an older frame.");
 
         ulong delta = entry.LastFrameId == 0UL || frameId <= entry.LastFrameId
             ? 1UL
@@ -162,24 +189,44 @@ public sealed class RenderOutputAdmissionLedger
         };
     }
 
-    private int FindOrCreate(ulong outputId)
+    private int FindOrCreateForPlanning(in RenderOutputRequest request)
     {
-        int existing = Find(outputId);
+        int existing = Find(request.OutputId);
         if (existing >= 0)
+        {
+            ref Entry entry = ref _entries[existing];
+            if (entry.ProductCompatibilityKey != request.ProductCompatibilityKey)
+            {
+                entry = new Entry
+                {
+                    OutputId = request.OutputId,
+                    ProductCompatibilityKey = request.ProductCompatibilityKey,
+                };
+                Interlocked.Increment(ref _compatibilityResetCount);
+            }
             return existing;
 
+        }
+
+        return Create(request.OutputId, request.ProductCompatibilityKey);
+    }
+
+    private int Create(ulong outputId, ulong productCompatibilityKey)
+    {
         for (int index = 0; index < _entries.Length; index++)
         {
             if (_entries[index].OutputId != 0UL)
                 continue;
-            _entries[index].OutputId = outputId;
+            _entries[index] = new Entry
+            {
+                OutputId = outputId,
+                ProductCompatibilityKey = productCompatibilityKey,
+            };
             return index;
         }
 
-        int replacement = _nextReplacement;
-        _nextReplacement = (_nextReplacement + 1) % _entries.Length;
-        _entries[replacement] = new Entry { OutputId = outputId };
-        return replacement;
+        throw new InvalidOperationException(
+            $"Render output admission capacity {_entries.Length} was exceeded; output history is never evicted implicitly.");
     }
 
     private int Find(ulong outputId)

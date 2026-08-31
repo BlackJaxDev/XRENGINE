@@ -37,10 +37,16 @@ internal sealed partial class VulkanFrameLoop
 
         PollScreenshotReadbacks();
 
-        using IDisposable? plannerScope = _commandRuntime.ActiveBoundReadFrameBuffer is null &&
-            _lastWindowPresentFrameOpContext is { } context
-                ? EnterFrameOpResourcePlannerReadbackScope(in context)
-                : null;
+        IDisposable? submittedScope = null;
+        if (_commandRuntime.ActiveBoundReadFrameBuffer is null &&
+            !_resourcePlannerSessions.TryGetScopedFrameOpContext(out _) &&
+            (_lastWindowPresentFrameOpContext is not { } context ||
+             !TryEnterDesktopSubmittedReadbackScope(in context, out submittedScope)))
+        {
+            return RejectScreenshotReadback(
+                "No matching submitted desktop image generation is available for capture.", out failure);
+        }
+        using IDisposable? plannerScope = submittedScope;
 
         if (!TryResolveScreenshotReadbackSource(
                 region,

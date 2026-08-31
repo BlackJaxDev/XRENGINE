@@ -9,6 +9,10 @@ internal sealed class VulkanTextureUploadGenerationEntry
     internal VulkanTextureUploadGenerationState State;
     internal string? Detail;
     internal int PinCount;
+    // Bounded ledger retention lets diagnostics report physical progress after
+    // a ticket leaves the active queue.
+    internal int SubmittedChunks;
+    internal int CompletedChunks;
 
     internal bool IsTerminal =>
         State is VulkanTextureUploadGenerationState.Published or

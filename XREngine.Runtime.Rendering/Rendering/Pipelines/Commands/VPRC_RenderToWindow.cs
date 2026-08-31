@@ -258,8 +258,14 @@ void main()
             return;
         }
 
-        XRWindow? targetWindow = ResolveTargetWindow(renderer);
-        if (targetWindow is null || !ReferenceEquals(targetWindow, renderer.XRWindow))
+        // Explicit targets are represented here only by the immutable pipeline frame contract.
+        // Native recording happens after the callback's CurrentFrameOutput scope ends, so querying
+        // renderer.XRWindow is both invalid for windowless hosts and cannot identify this target.
+        RenderFrameOutputDescription? finalOutput = instance.FinalOutput;
+        bool isExplicitFrameOutputTarget = finalOutput.HasValue && finalOutput.Value.IsValid;
+        XRWindow? targetWindow = isExplicitFrameOutputTarget ? null : ResolveTargetWindow(renderer);
+        if (!isExplicitFrameOutputTarget &&
+            (targetWindow is null || !ReferenceEquals(targetWindow, renderer.XRWindow)))
         {
             Debug.RenderingWarningEvery(
                 $"RenderToWindow.WindowMismatch.{instance.GetHashCode()}",
@@ -292,8 +298,9 @@ void main()
         XRViewport? windowViewport = instance.RenderState.WindowViewport;
         bool isActiveWindowViewport = windowViewport?.Window?.Viewports.Contains(windowViewport) == true;
         bool isExternalSwapchainTarget = renderer.IsRenderingExternalSwapchainTarget;
+        bool isLeaseBackedOutputTarget = isExternalSwapchainTarget || isExplicitFrameOutputTarget;
         bool useBoundOutputFbo = instance.RenderState.OutputFBO is not null;
-        if (windowViewport is not null && !isActiveWindowViewport && !isExternalSwapchainTarget && !useBoundOutputFbo)
+        if (windowViewport is not null && !isActiveWindowViewport && !isLeaseBackedOutputTarget && !useBoundOutputFbo)
         {
             Debug.RenderingWarningEvery(
                 $"RenderToWindow.SkipOffscreenPresent.{instance.GetHashCode()}",
@@ -307,13 +314,19 @@ void main()
             return;
         }
 
-        BoundingRectangle region = isExternalSwapchainTarget &&
-                                   renderer.TryGetExternalSwapchainTargetRegion(out BoundingRectangle externalRegion)
-            ? externalRegion
-            : useBoundOutputFbo
-                ? ResolveOutputFboRegion(instance)
-                : ResolveTargetRegion(instance, targetWindow);
-        if (!isExternalSwapchainTarget && !useBoundOutputFbo)
+        BoundingRectangle region = useBoundOutputFbo
+            ? ResolveOutputFboRegion(instance)
+            : isExplicitFrameOutputTarget
+                ? new BoundingRectangle(
+                    0,
+                    0,
+                    checked((int)finalOutput!.Value.Properties.Width),
+                    checked((int)finalOutput.Value.Properties.Height))
+                : isExternalSwapchainTarget &&
+                  renderer.TryGetExternalSwapchainTargetRegion(out BoundingRectangle externalRegion)
+                    ? externalRegion
+                    : ResolveTargetRegion(instance, targetWindow!);
+        if (!isLeaseBackedOutputTarget && !useBoundOutputFbo)
             region = renderer.MapWindowPresentationRegionToBackbuffer(region);
 
         if (region.Width <= 0 || region.Height <= 0)
@@ -379,7 +392,7 @@ void main()
 
         if (!useBoundOutputFbo)
             RuntimeEngine.Rendering.State.UnbindFrameBuffers(EFramebufferTarget.Framebuffer);
-        if (!isExternalSwapchainTarget && !useBoundOutputFbo)
+        if (!isLeaseBackedOutputTarget && !useBoundOutputFbo)
             renderer.TrackWindowPresentSource(sourceTexture, ResolveSourceFrameBuffer(instance, sourceTexture));
 
         using var areaScope = instance.RenderState.PushRenderArea(region);

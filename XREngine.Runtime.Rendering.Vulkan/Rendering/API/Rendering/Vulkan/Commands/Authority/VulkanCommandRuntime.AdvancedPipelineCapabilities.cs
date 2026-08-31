@@ -27,8 +27,11 @@ internal sealed partial class VulkanCommandRuntime
             failureReason = "Advanced visibility requires a non-zero stable output identity.";
             return false;
         }
-        if (!CanAdmitAdvancedVisibilityFamily(out failureReason))
+        VulkanAdvancedVisibilityPipelineReadiness readiness =
+            GetAdvancedVisibilityPipelineReadiness(out failureReason);
+        if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
         {
+            failureReason = $"Advanced visibility pipeline admission is {readiness}: {failureReason}";
             return false;
         }
 
@@ -106,29 +109,31 @@ internal sealed partial class VulkanCommandRuntime
     }
 
     internal bool CanAdmitAdvancedVisibilityFamily()
-        => CanAdmitAdvancedVisibilityFamily(out _);
+        => GetAdvancedVisibilityPipelineReadiness(out _) ==
+           VulkanAdvancedVisibilityPipelineReadiness.Ready;
 
-    private bool CanAdmitAdvancedVisibilityFamily(out string failureReason)
+    internal VulkanAdvancedVisibilityPipelineReadiness GetAdvancedVisibilityPipelineReadiness(
+        out string failureReason)
     {
         if (!DeviceContext.IsOperational)
         {
             failureReason = "The Vulkan device is not operational.";
-            return false;
+            return VulkanAdvancedVisibilityPipelineReadiness.Failed;
         }
         if (!DeviceContext.Capabilities.Supports(EVulkanDeviceCapability.DrawIndirectCount))
         {
             failureReason = "The Vulkan device does not support indirect-count draws.";
-            return false;
+            return VulkanAdvancedVisibilityPipelineReadiness.Failed;
         }
         if (!ResourceRuntime.AdvancedSceneResources.IsReady)
         {
             failureReason = ResourceRuntime.AdvancedSceneResources.AvailabilityReason;
-            return false;
+            return VulkanAdvancedVisibilityPipelineReadiness.Missing;
         }
         if (!ResourceRuntime.AdvancedVisibilityResources.IsReady)
         {
             failureReason = ResourceRuntime.AdvancedVisibilityResources.AvailabilityReason;
-            return false;
+            return VulkanAdvancedVisibilityPipelineReadiness.Missing;
         }
 
         // Target-specific image/view closure is sealed against the accepted
@@ -136,9 +141,17 @@ internal sealed partial class VulkanCommandRuntime
         // it must not allocate or intern per-frame image views.
         VulkanAdvancedVisibilityPipelineRuntime pipelines =
             ResourceRuntime.AdvancedVisibilityPipelines;
-        if (!pipelines.TryGetComputePipelines(out _, out _, out failureReason) ||
-            !pipelines.TryGetLateVisibilityComputePipelines(out _, out _, out failureReason) ||
-            !pipelines.TryGetRasterProgram(
+        VulkanAdvancedVisibilityPipelineReadiness computeReadiness =
+            pipelines.TryGetComputePipelines(out _, out _, out failureReason);
+        if (computeReadiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
+            return computeReadiness;
+
+        VulkanAdvancedVisibilityPipelineReadiness lateComputeReadiness =
+            pipelines.TryGetLateVisibilityComputePipelines(out _, out _, out failureReason);
+        if (lateComputeReadiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
+            return lateComputeReadiness;
+
+        if (!pipelines.TryGetRasterProgram(
                 EAdvancedMaterialCoverageMode.Opaque,
                 meshlet: false,
                 out _,
@@ -149,7 +162,7 @@ internal sealed partial class VulkanCommandRuntime
                 out _,
                 out failureReason))
         {
-            return false;
+            return VulkanAdvancedVisibilityPipelineReadiness.Failed;
         }
 
         if (DeviceContext.SupportsMeshTaskIndirectCount &&
@@ -164,11 +177,11 @@ internal sealed partial class VulkanCommandRuntime
                 out _,
                 out failureReason)))
         {
-            return false;
+            return VulkanAdvancedVisibilityPipelineReadiness.Failed;
         }
 
         failureReason = "Ready";
-        return true;
+        return VulkanAdvancedVisibilityPipelineReadiness.Ready;
     }
 
     internal ERvcDescriptorBackend RvcDescriptorBackend => ResourceRuntime.Descriptors.ActiveDescriptorBackend switch

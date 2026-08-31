@@ -511,6 +511,16 @@ inline primary for one frame. Descriptor publication and image-view lookup
 likewise retain stable backing storage so camera-only changes do not manufacture
 new structural identities.
 
+Native buffer identity has a separate publication epoch from the logical graph
+and image allocation plan. Before sealing, the existing required-context
+resolution refreshes only stale keyed buffer barriers and persists those
+publications; unused historical contexts cannot block the current frame.
+Frozen barriers carry exact native generations, validated and pinned by the
+normal barrier-recording loop. A superseded generation requests a bounded
+fresh-frame retry and resets the accepted packet. A stable missing resource
+still fails explicitly. Buffer growth does not force image replanning or a
+global GPU wait.
+
 The cache is per swapchain image/frame slot and keyed by `CommandChainKey`, which includes render target identity, pass index, view key, volatility, structural signature, and descriptor/resource generation inputs. Static scene chains can refresh camera/model/material frame data without re-recording secondary command buffers. Dynamic UI text and profiler/overlay work is isolated into volatile chains so it does not dirty static scene chains.
 
 Reusable chains also track the ordered baked uniform-slot mapping and every
@@ -859,6 +869,21 @@ current physical plan remains live and the failure is logged. After a successful
 swap, old physical resources are destroyed through the renderer's frame-slot
 retirement queues rather than being torn down before the replacement plan is
 ready.
+
+Transient attachment optimization is startup-scoped through
+`XRE_VULKAN_TRANSIENT_ATTACHMENT_MODE=Baseline|Analyze|ProofGated`.
+`Baseline` is the default and activates no aliasing or lazily allocated memory;
+`Analyze` records eligibility counts without changing allocation; `ProofGated`
+currently reports `active=False` because native dependency/initialization and
+positive-path validation are pending. Non-overlapping declared pass intervals
+are candidate evidence, not asynchronous lifetime proof: equal-layout writes
+still need a native alias-handoff dependency. No environment switch can enable
+image sharing or lazy memory yet. Lazy candidates also reject storage-required
+descriptors; required native usage flags are never stripped. OpenXR/VR remains
+unconditionally fail-closed. The
+`Vulkan.TransientAttachments` startup record reports the mode, activation
+state, candidate counts, active groups, and the exact block reason. Positive A/B
+activation is conditional future work after the native proof contract exists.
 
 ---
 

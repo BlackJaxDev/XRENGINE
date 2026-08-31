@@ -1,0 +1,56 @@
+#version 460
+
+// One bounded 64x64 source-depth reduction per output tile. The generic Hi-Z
+// experiment deliberately has no CPU mip chain and writes an R32F image that
+// can be sampled directly by the matching occlusion dispatch. Invalid or
+// out-of-range values are far depth, never an invented occluder.
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+layout(binding = 0) uniform sampler2D depthTexture; // XRENGINE_FREQUENCY(Pass)
+layout(binding = 1, r32f) writeonly uniform image2D hiZCoarseTiles;
+
+uniform ivec2 SourceSize; // XRENGINE_FREQUENCY(Pass)
+uniform ivec2 TileCount; // XRENGINE_FREQUENCY(Pass)
+uniform uint IsReversedDepth; // XRENGINE_FREQUENCY(Pass)
+
+const uint HIZ_TILE_SIZE = 64u;
+const uint HIZ_TILE_SAMPLE_COUNT = HIZ_TILE_SIZE * HIZ_TILE_SIZE;
+shared float tileReduction[256];
+
+void main()
+{
+    ivec2 tile = ivec2(gl_WorkGroupID.xy);
+    if (any(greaterThanEqual(tile, TileCount)))
+        return;
+
+    uint lane = gl_LocalInvocationIndex;
+    float farDepth = IsReversedDepth != 0u ? 0.0 : 1.0;
+    float reduced = IsReversedDepth != 0u ? 1.0 : 0.0;
+    for (uint sampleIndex = lane; sampleIndex < HIZ_TILE_SAMPLE_COUNT; sampleIndex += 256u)
+    {
+        ivec2 source = tile * int(HIZ_TILE_SIZE) +
+            ivec2(int(sampleIndex % HIZ_TILE_SIZE), int(sampleIndex / HIZ_TILE_SIZE));
+        float depth = any(greaterThanEqual(source, SourceSize))
+            ? farDepth
+            : texelFetch(depthTexture, source, 0).r;
+        if (isnan(depth) || isinf(depth) || depth < 0.0 || depth > 1.0)
+            depth = farDepth;
+        reduced = IsReversedDepth != 0u ? min(reduced, depth) : max(reduced, depth);
+    }
+
+    tileReduction[lane] = reduced;
+    barrier();
+    for (uint stride = 128u; stride > 0u; stride >>= 1u)
+    {
+        if (lane < stride)
+        {
+            float left = tileReduction[lane];
+            float right = tileReduction[lane + stride];
+            tileReduction[lane] = IsReversedDepth != 0u ? min(left, right) : max(left, right);
+        }
+        barrier();
+    }
+
+    if (lane == 0u)
+        imageStore(hiZCoarseTiles, tile, vec4(tileReduction[0]));
+}

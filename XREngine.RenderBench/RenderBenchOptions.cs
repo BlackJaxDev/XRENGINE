@@ -12,6 +12,8 @@ public sealed record RenderBenchOptions
         "session-name", "session-token", "shutdown-event", "wait-for-mcp-start", "width", "height",
         "layers", "frame-slots", "samples", "color-format", "depth-format", "warmup-frames",
         "stability-frames", "capture-frames", "fixed-step", "random-seed", "frozen-world", "help",
+        "scenario", "scenario-lane", "scenario-depth", "scenario-frames", "scenario-repeats", "scenario-workload", "scenario-timing", "scenario-renderdoc", "scenario-renderdoc-step",
+        "scenario-cache-root",
     };
 
     public string Backend { get; init; } = "Vulkan";
@@ -39,6 +41,20 @@ public sealed record RenderBenchOptions
     public double FixedStepSeconds { get; init; } = 1.0 / 60.0;
     public int RandomSeed { get; init; } = 0x585245;
     public bool FrozenWorld { get; init; }
+    /// <summary>Opt-in correctness scenarios, separate from measured component recipes.</summary>
+    public string? Scenario { get; init; }
+    public string? ScenarioLane { get; init; }
+    public string ScenarioDepth { get; init; } = "both";
+    public int ScenarioFrames { get; init; } = 24;
+    public int ScenarioRepeats { get; init; } = 2;
+    /// <summary>Real production-scene fixture, or <c>all</c> for the representative matrix.</summary>
+    public string ScenarioWorkload { get; init; } = RenderBenchScenarioWorkloads.Default;
+    /// <summary>Opt-in delayed GPU timestamp diagnostics; does not make correctness scenarios performance evidence.</summary>
+    public bool ScenarioTiming { get; init; }
+    public bool ScenarioRenderDoc { get; init; }
+    public int ScenarioRenderDocStep { get; init; }
+    /// <summary>Explicit cache owner for isolated cold/warm pipeline correctness runs.</summary>
+    public string? ScenarioCacheRoot { get; init; }
 
     public RenderTargetOutputProperties OutputProperties
         => new(Width, Height, Layers, ColorFormat, DepthFormat, "Linear", Samples, FrameSlots);
@@ -57,7 +73,7 @@ public sealed record RenderBenchOptions
                 throw new ArgumentException($"Unknown argument '--{key}'.");
             if (values.ContainsKey(key))
                 throw new ArgumentException($"Argument '--{key}' may only be specified once.");
-            bool flag = key is "wait-for-mcp-start" or "frozen-world" or "help";
+            bool flag = key is "wait-for-mcp-start" or "frozen-world" or "help" or "scenario-timing" or "scenario-renderdoc";
             values[key] = flag ? "true" : ReadValue(args, ref index, argument);
         }
 
@@ -117,7 +133,68 @@ public sealed record RenderBenchOptions
             FixedStepSeconds = ParseDouble(values, "fixed-step", 1.0 / 60.0, double.Epsilon),
             RandomSeed = ParseInt(values, "random-seed", 0x585245, int.MinValue, int.MaxValue),
             FrozenWorld = values.ContainsKey("frozen-world"),
+            Scenario = values.GetValueOrDefault("scenario"),
+            ScenarioLane = values.GetValueOrDefault("scenario-lane"),
+            ScenarioDepth = Get(values, "scenario-depth", "both").ToLowerInvariant(),
+            ScenarioFrames = ParseInt(values, "scenario-frames",
+                string.Equals(values.GetValueOrDefault("scenario"), "phase53-streaming", StringComparison.OrdinalIgnoreCase) ? 240 : 24,
+                12, 240),
+            ScenarioRepeats = ParseInt(values, "scenario-repeats", 2, 2, 4),
+            ScenarioWorkload = Get(values, "scenario-workload", RenderBenchScenarioWorkloads.Default).ToLowerInvariant(),
+            ScenarioTiming = values.ContainsKey("scenario-timing"),
+            ScenarioRenderDoc = values.ContainsKey("scenario-renderdoc"),
+            ScenarioRenderDocStep = ParseInt(values, "scenario-renderdoc-step", 0, 0, 239),
+            ScenarioCacheRoot = values.TryGetValue("scenario-cache-root", out string? cacheRoot) && !string.IsNullOrWhiteSpace(cacheRoot)
+                ? Path.GetFullPath(cacheRoot)
+                : null,
         };
+
+        if (result.Scenario is not null)
+        {
+            bool phase53 = result.Scenario is "phase53-streaming" or "phase53-materials" or "phase53-pipelines";
+            if (values.ContainsKey("scenario-renderdoc-step") && !result.ScenarioRenderDoc)
+                throw new ArgumentException("--scenario-renderdoc-step requires --scenario-renderdoc.");
+            if (result.ScenarioRenderDocStep >= result.ScenarioFrames)
+                throw new ArgumentException("The RenderDoc step must fall within the scripted frame sequence.");
+            if (result.ScenarioRenderDoc && result.ScenarioLane is not ("eligibility" or "disabled" or "hiz"))
+                throw new ArgumentException("--scenario-renderdoc requires one visibility child lane and an attached RenderDoc module.");
+            if (!phase53 && result.Scenario is not ("phase52-visibility" or "phase52-buffers" or "phase52-all"))
+                throw new ArgumentException("Unknown scenario. Use phase52-visibility, phase52-buffers, phase52-all, phase53-streaming, phase53-materials, or phase53-pipelines.");
+            if (result.Scenario == "phase53-pipelines" && result.ScenarioCacheRoot is null)
+                throw new ArgumentException("Pipeline cold/warm scenarios require an explicit --scenario-cache-root.");
+            if (phase53 && (result.ScenarioRenderDoc || result.ScenarioTiming || values.ContainsKey("scenario-workload")))
+                throw new ArgumentException("Phase 5.3 scenarios own their workloads and diagnostics; Phase 5.2 workload/timing/capture controls do not apply.");
+            if (result.Scenario != "phase53-pipelines" && result.ScenarioCacheRoot is not null)
+                throw new ArgumentException("--scenario-cache-root requires --scenario phase53-pipelines.");
+            if (result.RecipeFile is not null || values.ContainsKey("recipe") || values.ContainsKey("fixture") ||
+                result.McpPolicy != RenderBenchMcpPolicy.Disabled || mode != RenderExecutionMode.Presentationless)
+                throw new ArgumentException("Correctness scenarios require Presentationless mode, disabled MCP, and no component recipe.");
+            if (values.ContainsKey("warmup-frames") || values.ContainsKey("stability-frames") ||
+                values.ContainsKey("capture-frames") || values.ContainsKey("frozen-world"))
+                throw new ArgumentException("Correctness scenarios retain every scripted frame; use --scenario-frames instead of component warmup/capture controls.");
+            if (result.ScenarioDepth is not ("normal" or "reversed" or "both"))
+                throw new ArgumentException("--scenario-depth must be normal, reversed, or both.");
+            if (result.ScenarioWorkload != "all" && !RenderBenchScenarioWorkloads.IsKnown(result.ScenarioWorkload))
+                throw new ArgumentException("--scenario-workload must be default, all, open-static, moderate-static, heavy-static, heavy-moving-cut, masked-static, or masked-moving.");
+            if (result.ScenarioLane is not null && result.ScenarioWorkload == "all")
+                throw new ArgumentException("A scenario child lane requires one concrete --scenario-workload.");
+            if (!phase53 && result.ScenarioLane is not null &&
+                (result.ScenarioLane is not ("eligibility" or "disabled" or "hiz" or "buffers") || result.ScenarioDepth == "both"))
+                throw new ArgumentException("A scenario child lane requires eligibility, disabled, hiz, or buffers and one explicit depth convention.");
+            if (phase53 && result.ScenarioLane is not null &&
+                (result.ScenarioDepth == "both" ||
+                 (result.Scenario == "phase53-pipelines" ? result.ScenarioLane is not ("cold" or "warm") : result.ScenarioLane != "production")))
+                throw new ArgumentException("Phase 5.3 child lanes require an explicit depth and cold/warm for pipelines or production for streaming/materials.");
+            if (result.Width > 4096 || result.Height > 4096 || result.Layers != 1 || result.Samples != 1 ||
+                result.FrameSlots is < 2 or > 4 || result.ColorFormat != EPixelInternalFormat.Rgba8)
+                throw new ArgumentException("Scenario output is bounded to 4096x4096 RGBA8, one layer/sample, and 2-4 frame slots.");
+            if (result.ScenarioLane is not null &&
+                ((result.ScenarioLane == "buffers" && result.Scenario == "phase52-visibility") ||
+                 (result.ScenarioLane != "buffers" && result.Scenario == "phase52-buffers")))
+                throw new ArgumentException("The child lane must belong to the selected scenario.");
+        }
+        else if (values.Keys.Any(static key => key.StartsWith("scenario-", StringComparison.OrdinalIgnoreCase)))
+            throw new ArgumentException("Scenario controls require --scenario.");
 
         if (result.RecipeFile is null &&
             (!result.Recipe.Equals("deterministic-clear", StringComparison.OrdinalIgnoreCase) ||
@@ -141,6 +218,14 @@ public sealed record RenderBenchOptions
           --color-format Rgba8 --depth-format DepthComponent32f
           --warmup-frames N --stability-frames N --capture-frames N
           --fixed-step seconds --random-seed N --frozen-world
+          --scenario phase52-visibility|phase52-buffers|phase52-all
+          --scenario phase53-streaming|phase53-materials|phase53-pipelines
+          --scenario-cache-root <path> (required only for isolated pipeline cold/warm evidence)
+          --scenario-depth normal|reversed|both --scenario-frames 12..240 --scenario-repeats 2..4
+          --scenario-workload default|all|open-static|moderate-static|heavy-static|heavy-moving-cut|masked-static|masked-moving
+          --scenario-timing (record delayed receipt-attributed Hi-Z GPU timestamp diagnostics)
+          --scenario-lane eligibility|disabled|hiz|buffers|production|cold|warm (scenario-specific child)
+          --scenario-renderdoc [--scenario-renderdoc-step N] (capture one child step; defaults to 0; requires injection)
           --mcp-policy Disabled|ReadOnly|Control --mcp-port N
           --session-token token --wait-for-mcp-start
           --session-name name --shutdown-event Local\\event-name

@@ -240,6 +240,7 @@ internal sealed partial class VulkanCommandRuntime
 
         ComputeDispatchSnapshot programBindingSnapshot =
             vkProgram.CaptureComputeSnapshot();
+        programBindingSnapshot.SetMaterialTablePublication(bindlessMaterialTextures?.Publication);
         if (!vkProgram.ValidateComputeSnapshot(
                 programBindingSnapshot,
                 out string? bindingFailure))
@@ -250,14 +251,23 @@ internal sealed partial class VulkanCommandRuntime
         }
         programBindingSnapshot = programBindingSnapshot.CreateSealedCopy();
 
-        queue.EnqueuePrepared(VulkanFrameOperationSemantics.Prepare(
+        MeshTaskDispatchIndirectCountOp operation =
             // Mesh-task work is recorded later, after the render pass has moved on.
             // Capture the material table now, while the caller's program/binding is
             // still authoritative, exactly as traditional indirect draws do. The
             // primary-plan admission phase resolves the exact target signature and
             // replaces this empty pipeline before command-buffer recording begins.
-            new MeshTaskDispatchIndirectCountOp(passIndex, vkProgram, vkProgram.LinkGeneration, programBindingSnapshot, producer, default, indirectOwner, countOwner, maxDrawCount, stride, byteOffset, countByteOffset, bindlessMaterialTextures, context),
-            passIndex));
+            new(passIndex, vkProgram, vkProgram.LinkGeneration, programBindingSnapshot, producer, default, indirectOwner, countOwner, maxDrawCount, stride, byteOffset, countByteOffset, bindlessMaterialTextures, context);
+        operation.OwnAuthoringSnapshot(programBindingSnapshot);
+        try
+        {
+            queue.EnqueuePrepared(VulkanFrameOperationSemantics.Prepare(operation, passIndex));
+        }
+        catch
+        {
+            operation.ReleaseAuthoringSnapshot();
+            throw;
+        }
         return true;
     }
 

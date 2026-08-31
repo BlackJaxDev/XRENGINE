@@ -14,6 +14,7 @@ using XREngine.Data.Rendering;
 using XREngine.Input;
 using XREngine.Input.Devices;
 using XREngine.Rendering.Vulkan;
+using XREngine.Rendering.Occlusion;
 using XREngine.Scene;
 
 namespace XREngine.Rendering
@@ -1783,6 +1784,13 @@ namespace XREngine.Rendering
                 }
             }
 
+            // Query pairs are renderer-owned and must be destroyed while this renderer still owns its context.
+            TryRendererCleanupStep(
+                renderer,
+                reason,
+                "CleanupOcclusionGpuElapsedTiming",
+                () => OcclusionGpuElapsedTiming.Instance.CleanupRenderer(renderer));
+
             bool wrappersDestroyed = TryRendererCleanupStep(
                 renderer,
                 reason,
@@ -3235,6 +3243,7 @@ namespace XREngine.Rendering
 
                 frameRenderer.Active = true;
                 AbstractRenderer.Current = frameRenderer;
+                OcclusionGpuElapsedTiming.Instance.Resolve(frameRenderer, renderFrameId);
 
                 // Publish the effective strategy and meshlet capability snapshot at the
                 // renderer-current boundary. Profile capture may observe this frame before
@@ -3246,7 +3255,6 @@ namespace XREngine.Rendering
                 bool forceFullViewport = RuntimeRenderingHostServices.Presentation.ForceFullViewport;
                 if (forceFullViewport)
                     useScenePanelMode = false;
-                bool interactiveScenePanelFrame = interactiveResizeFrame && useScenePanelMode;
                 EVrMirrorMode mirrorMode = RuntimeRenderingHostServices.Presentation.VrMirrorMode;
                 bool mirrorByComposition =
                     RuntimeRenderingHostServices.Presentation.IsInVR &&
@@ -3277,7 +3285,7 @@ namespace XREngine.Rendering
                 //LogRenderDiagnostics(delta, useScenePanelMode, canRenderWindowViewports, forceFullViewport);
                 ApplyForcedDebugOpaquePipelineOverride();
 
-                if (!interactiveScenePanelFrame)
+                if (!interactiveResizeFrame)
                 {
                     using var preRenderSample = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRWindow.GlobalPreRender");
                     try
@@ -3326,7 +3334,7 @@ namespace XREngine.Rendering
                         long viewportsPhaseStart = System.Diagnostics.Stopwatch.GetTimestamp();
                         using (var renderViewportsSample = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRWindow.RenderWindowViewports"))
                         {
-                        if (!interactiveScenePanelFrame)
+                        if (!interactiveResizeFrame)
                             RenderWindowViewports(useScenePanelMode, canRenderWindowViewports, mirrorByComposition);
                         }
                         RecordRenderThreadCpuTiming(renderFrameId, "XRWindow.RenderWindowViewports", viewportsPhaseStart);
@@ -3353,7 +3361,7 @@ namespace XREngine.Rendering
                     return;
                 }
 
-                if (!interactiveScenePanelFrame)
+                if (!interactiveResizeFrame)
                 {
                     using var postRenderSample = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRWindow.GlobalPostRender");
                     try

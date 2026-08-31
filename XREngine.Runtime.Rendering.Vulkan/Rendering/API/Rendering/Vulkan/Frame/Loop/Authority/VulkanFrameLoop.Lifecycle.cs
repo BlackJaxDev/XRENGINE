@@ -146,8 +146,16 @@ internal sealed partial class VulkanFrameLoop
         QuiesceFrameAdmissionAndWait();
         List<Exception> failures = [];
         bool forceRetirementDrain = false;
+        bool cleanupReachedCompletion = false;
         try
         {
+            // This is a native-use boundary, not a best-effort cleanup step. Do
+            // not continue to GPU idle or device destruction while a preparation
+            // worker might still own staging/image resources.
+            _resourceRuntime.Uploads.QuiescePreparationForRetirement(
+                "Vulkan renderer cleanup before GPU idle",
+                TimeSpan.FromSeconds(6));
+
             if (stage >= VulkanFrameLoopInitializationStage.TargetInstanceResources)
                 RunCleanupStep("target quiesce", _targetDriver.Quiesce, failures);
 
@@ -209,12 +217,14 @@ internal sealed partial class VulkanFrameLoop
                         _deviceContext.FirstNativeDeviceFault?.Operation),
                     failures);
             }
+            cleanupReachedCompletion = true;
         }
         finally
         {
             if (forceRetirementDrain)
                 _resourceRuntime.EndForcedRetirementDrain();
-            _initializationStage = VulkanFrameLoopInitializationStage.CleanedUp;
+            if (cleanupReachedCompletion)
+                _initializationStage = VulkanFrameLoopInitializationStage.CleanedUp;
             Volatile.Write(ref _cleanupInProgress, 0);
         }
 
@@ -613,8 +623,20 @@ internal sealed partial class VulkanFrameLoop
         _resourceRuntime.Queries.PrimitivesGeneratedAdvertised = queries.PrimitivesGeneratedAdvertised;
         _resourceRuntime.Queries.PrimitivesGeneratedEnabled = queries.PrimitivesGeneratedEnabled;
         _resourceRuntime.Queries.PrimitivesGeneratedNonZeroStreamsEnabled = queries.PrimitivesGeneratedNonZeroStreamsEnabled;
+        // The bootstrap publication only transports feature-negotiation facts.
+        // Resolve timestamp width and stage support on the generation-local
+        // authority after those facts are installed; the bootstrap-side state
+        // intentionally has no backend-object context to query.
+        _resourceRuntime.Queries.RefreshCapabilities();
         _resourceRuntime.Descriptors.ApplyLogicalDevicePublication(result.Resources.Descriptors);
         _commandRuntime.ApplyLogicalDevicePublication(result.Commands);
+        // Bootstrap intentionally transports only facts: its temporary pipeline
+        // state has no generation-local wrapper authority. Apply the cache
+        // policy to the real manager after the device publication is complete.
+        _resourceRuntime.PipelineManager._supportsPipelineCreationCacheControl =
+            result.Resources.SupportsPipelineCreationCacheControl;
+        if (result.Resources.CreatePipelineCache)
+            _resourceRuntime.PipelineManager.CreatePipelineCache();
         RuntimeEngine.Rendering.State.HasVulkanMultiView = result.Engine.HasVulkanMultiView;
         RuntimeEngine.Rendering.State.HasVulkanDepthClipControl = result.Engine.HasVulkanDepthClipControl;
         RuntimeEngine.Rendering.State.HasVulkanMemoryDecompression = result.Engine.HasVulkanMemoryDecompression;

@@ -163,6 +163,37 @@ internal sealed class FrameOperationPayloadStore
         }
     }
 
+    /// <summary>
+    /// Releases immutable storage leases owned by this physical payload store.
+    /// Logical OpenXR streams can share this store and must not invoke this
+    /// during header-only resets.
+    /// </summary>
+    internal void ReleaseReadOnlyStorageBindings()
+    {
+        for (int index = 0; index < MeshDraws.Length; ++index)
+            MeshDraws[index].Draw.ProgramBindingSnapshot?.ReleaseReadOnlyStorageBindings();
+        for (int index = 0; index < IndirectDraws.Length; ++index)
+            IndirectDraws[index].Draw.ProgramBindingSnapshot?.ReleaseReadOnlyStorageBindings();
+        for (int index = 0; index < MeshTasks.Length; ++index)
+            MeshTasks[index].ProgramBindingSnapshot?.ReleaseReadOnlyStorageBindings();
+        for (int index = 0; index < ComputeDispatches.Length; ++index)
+            ComputeDispatches[index].Snapshot?.ReleaseReadOnlyStorageBindings();
+        for (int index = 0; index < ComputeDispatchIndirects.Length; ++index)
+            ComputeDispatchIndirects[index].Snapshot?.ReleaseReadOnlyStorageBindings();
+        for (int index = 0; index < IndirectDraws.Length; ++index)
+        {
+            IndirectDrawPayload payload = IndirectDraws[index];
+            payload.BindlessMaterialTextures?.Dispose();
+            IndirectDraws[index] = payload with { BindlessMaterialTextures = null };
+        }
+        for (int index = 0; index < MeshTasks.Length; ++index)
+        {
+            MeshTaskDispatchIndirectCountPayload payload = MeshTasks[index];
+            payload.BindlessMaterialTextures?.Dispose();
+            MeshTasks[index] = payload with { BindlessMaterialTextures = null };
+        }
+    }
+
     private void Ensure<T>(ref T[] values, int count)
     {
         if (values.Length >= count)

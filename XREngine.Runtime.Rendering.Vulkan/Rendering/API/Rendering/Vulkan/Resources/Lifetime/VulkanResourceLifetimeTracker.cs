@@ -53,6 +53,10 @@ internal sealed class VulkanResourceLifetimeTracker
     /// </summary>
     internal Dictionary<VulkanResourceLifetimeKey, HashSet<ulong>> CommandBuffersByPool { get; } = new();
     internal Dictionary<VulkanResourceLifetimeKey, HashSet<ulong>> ResourceCommandBufferDependencies { get; } = new();
+    // Accessed only while SyncRoot is held. Empty reverse-index sets are
+    // scratch, never visible through the live map, and retain their buckets
+    // across completed command-buffer resets.
+    internal Stack<HashSet<ulong>> ReusableResourceCommandBufferDependencySets { get; } = new();
     internal Dictionary<ulong, VulkanDescriptorSetLifetimeRecord> DescriptorSetLifetimes { get; } = new();
     internal Dictionary<ulong, List<VkRenderQuery>> RenderQueriesByPool { get; } = new();
     internal Dictionary<ulong, HashSet<ulong>> DescriptorSetsByPool { get; } = new();
@@ -60,6 +64,7 @@ internal sealed class VulkanResourceLifetimeTracker
     internal ConcurrentDictionary<ulong, VulkanPublishedDescriptorSetSnapshot> PublishedDescriptorSets { get; } = new();
     internal Dictionary<ulong, ulong> ImageViewBackingImages { get; } = new();
     internal Dictionary<ulong, ulong> BufferViewBackingBuffers { get; } = new();
+
 
     internal VulkanResourceLifetimeSnapshot CaptureSnapshot(
         bool includeExactLiveResourceGenerations)
@@ -213,6 +218,12 @@ internal sealed class VulkanResourceLifetimeTracker
     internal ThreadLocal<HashSet<VulkanResourceLifetimeKey>> DescriptorPinnedReferencesScratch { get; } = new(static () => []);
 
     internal long ResourceGeneration;
+    // Native buffer handles can be replaced while the logical planner revision is
+    // unchanged. This separate epoch invalidates only frozen buffer bindings.
+    internal long NativeBufferBindingRevision;
+
+    internal ulong PublishedNativeBufferBindingRevision
+        => unchecked((ulong)Volatile.Read(ref NativeBufferBindingRevision));
     internal long RetirementSerial;
     internal ulong LastGraphicsSequence;
     internal ulong CompletedGraphicsSequence;
@@ -478,14 +489,21 @@ internal sealed class VulkanResourceLifetimeTracker
         VulkanResourceLifetimeKey key,
         ulong generation)
     {
+        bool nativeBufferPublicationChanged = false;
         if (ResourceLifetimes.TryGetValue(
                 key,
                 out VulkanResourceLifetimeRecord? resource))
         {
+            nativeBufferPublicationChanged =
+                key.Type == ObjectType.Buffer && resource.PublishedGeneration != generation;
             resource.PublishedGeneration = generation;
         }
 
         PublishedResourceGenerations[key] = generation;
+        // Publish the exact generation before releasing the buffer epoch. A
+        // freeze that observes this newer epoch must never resolve the old map value.
+        if (nativeBufferPublicationChanged)
+            IncrementNativeBufferBindingRevisionNoLock();
     }
 
     internal void RecycleResourceGenerationNoLock(
@@ -504,6 +522,8 @@ internal sealed class VulkanResourceLifetimeTracker
         }
 
         resource.Generation = generation;
+        if (resource.Key.Type == ObjectType.Buffer)
+            IncrementNativeBufferBindingRevisionNoLock();
         resource.Slot = new VulkanResourceSlotHandle(
             resource.Slot.Index,
             generation);
@@ -531,8 +551,9 @@ internal sealed class VulkanResourceLifetimeTracker
         }
 
         _ = ResourceLifetimes.Remove(key);
-
         PublishedResourceGenerations.TryRemove(key, out _);
+        if (key.Type == ObjectType.Buffer)
+            IncrementNativeBufferBindingRevisionNoLock();
         if (resource.Key.Type == ObjectType.DescriptorSet)
             PublishedDescriptorSets.TryRemove(resource.Key.Handle, out _);
         ReleaseResourceSlotNoLock(resource);
@@ -580,6 +601,8 @@ internal sealed class VulkanResourceLifetimeTracker
         }
 
         PublishedResourceGenerations.TryRemove(key, out _);
+        if (key.Type == ObjectType.Buffer)
+            IncrementNativeBufferBindingRevisionNoLock();
         resource.PublishedGeneration = 0UL;
         resource.PublishedDescriptorSnapshot = null;
         resource.State |= EVulkanResourceLifetimeState.PendingRetirement;
@@ -702,6 +725,8 @@ internal sealed class VulkanResourceLifetimeTracker
             resource.Slot = AllocateResourceSlotNoLock(resource);
             ResourceLifetimes[key] = resource;
             PublishedResourceGenerations[key] = generation;
+            if (key.Type == ObjectType.Buffer)
+                IncrementNativeBufferBindingRevisionNoLock();
         }
     }
 
@@ -724,6 +749,8 @@ internal sealed class VulkanResourceLifetimeTracker
         record.Slot = AllocateResourceSlotNoLock(record);
         ResourceLifetimes[key] = record;
         PublishedResourceGenerations[key] = generation;
+        if (key.Type == ObjectType.Buffer)
+            IncrementNativeBufferBindingRevisionNoLock();
         return record;
     }
 
@@ -744,6 +771,12 @@ internal sealed class VulkanResourceLifetimeTracker
             _ = GetOrRegisterResourceNoLock(key, owner);
             SetPublishedGenerationNoLock(key, 0UL);
         }
+    }
+
+    private void IncrementNativeBufferBindingRevisionNoLock()
+    {
+        long revision = unchecked(NativeBufferBindingRevision + 1L);
+        Volatile.Write(ref NativeBufferBindingRevision, revision == 0L ? 1L : revision);
     }
 
     private VulkanResourceSlotHandle AllocateResourceSlotNoLock(

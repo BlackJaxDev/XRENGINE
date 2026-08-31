@@ -65,6 +65,14 @@ internal unsafe partial class VkRenderProgram
         _samplersByName.Clear();
         _imagesByUnit.Clear();
         _buffersByBinding.Clear();
+        _readOnlyStorageBindings?.Dispose();
+        _readOnlyStorageBindings = null;
+        // Frame snapshots can already be owned by queued indirect draws. Binding
+        // preparation clears the immediate program dictionaries between draws,
+        // but it must not retire that frame-owned snapshot pool: doing so clears
+        // immutable storage publications before descriptor resolution. The pool
+        // is released when its render-frame identity advances or on teardown.
+        _frameMaterialBindingSnapshots.Clear();
     }
 
     private void SetUniformValue(string name, EShaderVarType type, object value, bool isArray = false)
@@ -214,6 +222,10 @@ internal unsafe partial class VkRenderProgram
             capture.BuffersByBinding.Count + snapshot.Buffers.Count);
         foreach (KeyValuePair<uint, VulkanComputeBufferBinding> pair in snapshot.Buffers)
             capture.BuffersByBinding[pair.Key] = pair.Value.Data;
+        if (snapshot.ReadOnlyStorageBindings is { } readOnlyBindings)
+            ReplaceReadOnlyStorageBindings(
+                ref capture.ReadOnlyStorageBindings,
+                readOnlyBindings);
     }
 
     /// <summary>
@@ -249,6 +261,10 @@ internal unsafe partial class VkRenderProgram
 
         foreach (var pair in snapshot.Buffers)
             _buffersByBinding[pair.Key] = pair.Value.Data;
+
+        ReplaceReadOnlyStorageBindings(
+            ref _readOnlyStorageBindings,
+            snapshot.ReadOnlyStorageBindings);
 
         _appliedBindingSnapshot = null;
     }
@@ -369,10 +385,10 @@ internal unsafe partial class VkRenderProgram
         XRMaterial material,
         ulong runtimeUniformNameSignature,
         ulong runtimeUniformPublicationLayoutSignature,
-        bool materialOwned,
+        bool cacheDependsOnMaterialOrRuntime,
         out AutoUniformMaterialWritePlan? plan)
     {
-        if (!materialOwned)
+        if (!cacheDependsOnMaterialOrRuntime)
             return _frequencyOwnedAutoUniformWritePlans.TryGetValue(
                 blockName,
                 out plan);
@@ -395,10 +411,10 @@ internal unsafe partial class VkRenderProgram
         XRMaterial material,
         ulong runtimeUniformNameSignature,
         ulong runtimeUniformPublicationLayoutSignature,
-        bool materialOwned,
+        bool cacheDependsOnMaterialOrRuntime,
         AutoUniformMaterialWritePlan plan)
     {
-        if (!materialOwned)
+        if (!cacheDependsOnMaterialOrRuntime)
         {
             _frequencyOwnedAutoUniformWritePlans[blockName] = plan;
             return;
@@ -455,6 +471,11 @@ internal unsafe partial class VkRenderProgram
         if (_frameMaterialBindingSnapshotCacheFrame == frameId)
             return;
 
+        // The material-cache epoch is independent from the snapshot-pool epoch.
+        // A direct indirect capture can populate the pool before this cache is
+        // first consulted in the same frame; retiring the pool here would clear
+        // that queued draw's immutable storage publication. Pool retirement is
+        // owned exclusively by its render-frame transition and program teardown.
         _frameMaterialBindingSnapshotCacheFrame = frameId;
         _frameMaterialBindingSnapshots.Clear();
     }
@@ -486,6 +507,7 @@ internal unsafe partial class VkRenderProgram
             ref capture.SamplersByName,
             ref capture.ImagesByUnit);
         CaptureComputeBufferBindings(capture.BuffersByBinding, snapshot);
+        snapshot.SetReadOnlyStorageBindings(capture.ReadOnlyStorageBindings);
         snapshot.PublishBindingLayoutSignatures(
             BackendContext,
             WrapperLookup.Lookup,
@@ -510,6 +532,7 @@ internal unsafe partial class VkRenderProgram
             samplersByName,
             imagesByUnit);
         CaptureComputeBufferBindings(buffersByBinding, snapshot);
+        snapshot.SetReadOnlyStorageBindings(_readOnlyStorageBindings);
         snapshot.PublishBindingLayoutSignatures(
             BackendContext,
             WrapperLookup.Lookup,
@@ -556,6 +579,7 @@ internal unsafe partial class VkRenderProgram
 
         if (_frameBindingSnapshotPoolFrame != frameId)
         {
+            ReleaseFrameBindingSnapshots();
             _frameBindingSnapshotPoolFrame = frameId;
             _frameBindingSnapshotPoolCursor = 0;
         }
@@ -567,6 +591,14 @@ internal unsafe partial class VkRenderProgram
         ComputeDispatchSnapshot snapshot = new();
         _frameBindingSnapshotPool.Add(snapshot);
         return snapshot;
+    }
+
+    private void ReleaseFrameBindingSnapshots()
+    {
+        foreach (ComputeDispatchSnapshot snapshot in _frameBindingSnapshotPool)
+            snapshot.ReleaseReadOnlyStorageBindings();
+        _frameBindingSnapshotPoolFrame = 0;
+        _frameBindingSnapshotPoolCursor = 0;
     }
 
     /// <summary>
@@ -780,6 +812,79 @@ internal unsafe partial class VkRenderProgram
             }
         }
 
+    }
+
+    private void BindReadOnlyStorage(ReadOnlyStorageBinding binding)
+    {
+        if (!TryResolveBindingWriteState(out BindingCaptureState? capture))
+        {
+            VulkanDescriptorResolutionDiagnostics.CaptureFirstDirectionalShadowPublication(
+                this,
+                binding,
+                accepted: false,
+                CurrentBindingCaptureWorkspace.Active?.Owner);
+            return;
+        }
+
+        VulkanDescriptorResolutionDiagnostics.CaptureFirstDirectionalShadowPublication(
+            this,
+            binding,
+            accepted: true,
+            capture?.Owner);
+
+        if (capture is not null)
+        {
+            capture.RejectTypedResourceWrite("read-only storage");
+            ReplaceReadOnlyStorageBinding(ref capture.ReadOnlyStorageBindings, binding);
+            capture.BuffersByBinding.Remove(binding.Binding);
+            return;
+        }
+
+        if (Monitor.IsEntered(_bindingLock))
+        {
+            DetachAppliedBindingSnapshotNoLock();
+            ReplaceReadOnlyStorageBinding(ref _readOnlyStorageBindings, binding);
+            _buffersByBinding.Remove(binding.Binding);
+            return;
+        }
+
+        lock (_bindingLock)
+        {
+            DetachAppliedBindingSnapshotNoLock();
+            ReplaceReadOnlyStorageBinding(ref _readOnlyStorageBindings, binding);
+            _buffersByBinding.Remove(binding.Binding);
+        }
+    }
+
+    private static void ReplaceReadOnlyStorageBinding(
+        ref ReadOnlyStorageBindingSet? bindings,
+        ReadOnlyStorageBinding replacement)
+    {
+        if (bindings is { } current &&
+            current.TryGet(replacement.Binding, out ReadOnlyStorageBinding existing) &&
+            existing.Publication.IsSameToken(replacement.Publication) &&
+            existing.Offset == replacement.Offset &&
+            existing.Length == replacement.Length)
+        {
+            return;
+        }
+
+        ReadOnlyStorageBindingSet next = ReadOnlyStorageBindingSet.WithBinding(
+            bindings,
+            replacement);
+        ReadOnlyStorageBindingSet? previous = bindings;
+        bindings = next;
+        previous?.Dispose();
+    }
+
+    private static void ReplaceReadOnlyStorageBindings(
+        ref ReadOnlyStorageBindingSet? bindings,
+        ReadOnlyStorageBindingSet? replacement)
+    {
+        ReadOnlyStorageBindingSet? next = replacement?.Retain();
+        ReadOnlyStorageBindingSet? previous = bindings;
+        bindings = next;
+        previous?.Dispose();
     }
 
     internal void HandlePlannerDispatch(

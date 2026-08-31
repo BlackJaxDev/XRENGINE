@@ -35,6 +35,7 @@ internal sealed class EngineRuntimeRenderingHostServices :
     IDisposable
 {
     private const int MaxConsecutiveVrDesktopBudgetSkips = 2;
+    private const int RenderOutputCapacity = 512;
 
     private readonly RendererBackendCatalog _rendererBackends = new();
     private IDisposable? _assetServices;
@@ -43,7 +44,7 @@ internal sealed class EngineRuntimeRenderingHostServices :
     private readonly object _renderOutputGraphLock = new();
     private readonly RenderOutputAdmissionLedger _renderOutputAdmissionLedger = new();
     private readonly RenderOutputSchedulingSnapshot[] _renderOutputSchedulingSnapshots =
-        new RenderOutputSchedulingSnapshot[64];
+        new RenderOutputSchedulingSnapshot[RenderOutputCapacity];
     private int _nextRenderOutputSchedulingSnapshot;
     private int _vrDesktopPressureHoldFramesRemaining;
     private int _vrDesktopPressureConsecutiveSkips;
@@ -1774,7 +1775,7 @@ internal sealed class EngineRuntimeRenderingHostServices :
                 bool terminalPhase = request.CompletionRequirement switch
                 {
                     ERenderOutputCompletionRequirement.GpuCompleteBeforeRuntimeRelease =>
-                        telemetry.Phase == EFrameOutputPhase.Submit,
+                        telemetry.Phase == EFrameOutputPhase.GpuComplete,
                     ERenderOutputCompletionRequirement.BeforePresent =>
                         telemetry.Phase == EFrameOutputPhase.Present,
                     ERenderOutputCompletionRequirement.BeforeConsumer =>

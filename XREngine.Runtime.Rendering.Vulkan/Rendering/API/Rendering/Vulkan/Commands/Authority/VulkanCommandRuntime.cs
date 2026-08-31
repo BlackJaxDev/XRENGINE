@@ -235,17 +235,35 @@ internal sealed partial class VulkanCommandRuntime
         if (!DeviceContext.IsOperational)
             return Result.ErrorDeviceLost;
 
+        bool captureAllocations = VulkanCommandBufferBeginAllocationDiagnostics.Enabled;
+        long allocationCheckpoint = captureAllocations
+            ? GC.GetAllocatedBytesForCurrentThread()
+            : 0L;
+        long bindStateAllocatedBytes = 0L;
+        long trackingAllocatedBytes = 0L;
         using (VulkanFrameLockScope.Enter(
                    Pools.Gate,
                    EVulkanFrameWaitReason.CommandPool))
         {
             ulong recordingGeneration = InitializeCommandBufferBindState(commandBuffer);
+            if (captureAllocations)
+            {
+                bindStateAllocatedBytes =
+                    GC.GetAllocatedBytesForCurrentThread() - allocationCheckpoint;
+                allocationCheckpoint = GC.GetAllocatedBytesForCurrentThread();
+            }
             try
             {
                 BeginCommandBufferTrackingCore(
                     commandBuffer,
                     recordingGeneration,
                     owner);
+                if (captureAllocations)
+                {
+                    trackingAllocatedBytes =
+                        GC.GetAllocatedBytesForCurrentThread() - allocationCheckpoint;
+                    allocationCheckpoint = GC.GetAllocatedBytesForCurrentThread();
+                }
             }
             catch
             {
@@ -254,6 +272,13 @@ internal sealed partial class VulkanCommandRuntime
             }
 
             Result result = api.BeginCommandBuffer(commandBuffer, ref beginInfo);
+            if (captureAllocations)
+            {
+                VulkanCommandBufferBeginAllocationDiagnostics.Last = new(
+                    bindStateAllocatedBytes,
+                    trackingAllocatedBytes,
+                    GC.GetAllocatedBytesForCurrentThread() - allocationCheckpoint);
+            }
             if (result == Result.Success)
                 return result;
 
@@ -328,6 +353,7 @@ internal sealed partial class VulkanCommandRuntime
                 }
 
                 batch.Reset(recordingGeneration);
+                batch.LifetimeRecordingGeneration = lifetime?.RecordingGeneration ?? 0UL;
             }
         }
 
@@ -727,7 +753,7 @@ internal sealed partial class VulkanCommandRuntime
             if (result == Result.Success)
             {
                 ResourceRuntime.CompleteCommandBufferReset(handle);
-                RemoveCommandBufferState(commandBuffer);
+                ClearCommandBufferStateAfterSuccessfulReset(commandBuffer);
             }
 
             using (VulkanFrameLockScope.Enter(
@@ -737,9 +763,10 @@ internal sealed partial class VulkanCommandRuntime
                        batch,
                        EVulkanFrameWaitReason.ResourceLifetimeLock))
             {
-                batch.IsRecording = false;
                 if (result == Result.Success)
-                    CommandBuffers.TrackingBatches.TryRemove(handle, out _);
+                    batch.ClearCompletedRecording();
+                else
+                    batch.IsRecording = false;
             }
 
             return true;
@@ -1020,6 +1047,22 @@ internal sealed partial class VulkanCommandRuntime
         }
         CommandBuffers.RemoveBindState(commandBuffer);
         Synchronization.RemoveRecordedImageLayouts(commandBuffer);
+    }
+
+    private void ClearCommandBufferStateAfterSuccessfulReset(CommandBuffer commandBuffer)
+    {
+        ulong handle = unchecked((ulong)commandBuffer.Handle);
+        if (handle != 0)
+        {
+            VulkanResourceLifetimeTracker tracker = ResourceRuntime.Lifetime.Tracker;
+            using (VulkanFrameLockScope.Enter(
+                       tracker.SyncRoot,
+                       EVulkanFrameWaitReason.ResourceLifetimeLock))
+                CommandBuffers.StableCommandDirectory.TombstoneByHandle(handle);
+        }
+
+        CommandBuffers.ClearBindStateAfterSuccessfulReset(commandBuffer);
+        Synchronization.ClearRecordedImageLayoutsAfterSuccessfulReset(commandBuffer);
     }
 
     internal void DeferSecondaryCommandBufferFree(

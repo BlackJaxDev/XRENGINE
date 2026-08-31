@@ -36,15 +36,9 @@ internal static unsafe class VulkanOrderedComputeProducer
         if (!program.ValidateComputeSnapshot(snapshot, out _))
             return ERendererComputeEnqueueStatus.DescriptorInvalid;
 
-        try
-        {
-            if (program.GetOrCreateComputePipeline(passIndex, context.PassMetadata).Handle == 0)
-                return ERendererComputeEnqueueStatus.ProgramPending;
-        }
-        catch
-        {
-            return ERendererComputeEnqueueStatus.ProgramPending;
-        }
+        // The sealed frame-plan preparation authority owns native pipeline
+        // readiness. Preserve this immutable operation while compilation is
+        // pending so it can be retried rather than silently dropped here.
 
         operation = new ComputeDispatchIndirectOp(
             passIndex,

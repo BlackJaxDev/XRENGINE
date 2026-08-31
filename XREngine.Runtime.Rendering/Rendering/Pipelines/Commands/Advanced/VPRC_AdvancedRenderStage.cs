@@ -63,13 +63,18 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             ActivePipelineInstance.AdvancedOutputBinding;
         AdvancedVisibilityFamilyReservation reservation = binding.Reservation;
         if (AbstractRenderer.Current is not IRuntimeRendererHost renderer ||
-            ActivePipelineInstance.Pipeline is not AdvancedRenderPipeline ||
-            !binding.IsBound)
+            ActivePipelineInstance.Pipeline is not AdvancedRenderPipeline)
         {
             return;
         }
 
-        if (!renderer.IsAdvancedVisibilityFamilyReservationCurrent(in reservation))
+        // Output binding can be first evaluated while the native device and its
+        // advanced resource generation are still coming online. Keep the
+        // configured Advanced source intact and retry here, at the first
+        // renderer-owned stage boundary, rather than permanently suppressing
+        // every native stage after that transient admission failure.
+        if (!binding.IsBound ||
+            !renderer.IsAdvancedVisibilityFamilyReservationCurrent(in reservation))
         {
             XRViewport? viewport = state.WindowViewport
                 ?? ActivePipelineInstance.LastWindowViewport;

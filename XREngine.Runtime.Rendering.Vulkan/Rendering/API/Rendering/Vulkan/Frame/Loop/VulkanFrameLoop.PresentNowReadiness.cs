@@ -243,7 +243,10 @@ internal sealed partial class VulkanFrameLoop
                 EVulkanPresentNowReadinessStage.FramePlanSeal,
                 "compute-program",
                 "DesktopScene -> compute programs",
-                computePreparation.FormatFailure());
+                computePreparation.FormatFailure(),
+                disposition: computePreparation.Pending
+                    ? EVulkanPresentNowFailureDisposition.RetryFrame
+                    : EVulkanPresentNowFailureDisposition.RendererTerminal);
         }
 
         ResourcePlannerRuntimeState plannerState =
@@ -281,18 +284,31 @@ internal sealed partial class VulkanFrameLoop
                     ? EVulkanPresentNowFailureDisposition.RetryFrame
                     : EVulkanPresentNowFailureDisposition.RendererTerminal);
         }
-        if (!TryFreezeNativeBarrierBindings(
-                in planningSnapshot,
-                in plannerState,
-                allowSynchronousResourceUploads: true,
-                out VulkanFramePlanningSnapshot frozenPlanningSnapshot,
-                out string freezeFailure))
+        VulkanFramePlanningSnapshot frozenPlanningSnapshot;
+        try
+        {
+            if (!TryFreezeNativeBarrierBindings(
+                    in planningSnapshot,
+                    ref plannerState,
+                    allowSynchronousResourceUploads: true,
+                    out frozenPlanningSnapshot,
+                    out string freezeFailure))
+            {
+                throw watchdog.CreateFailure(
+                    EVulkanPresentNowReadinessStage.FramePlanSeal,
+                    "native-barrier-bindings",
+                    "DesktopScene -> resource barrier bindings",
+                    freezeFailure);
+            }
+        }
+        catch (VulkanNativeBufferBindingSupersededException exception)
         {
             throw watchdog.CreateFailure(
                 EVulkanPresentNowReadinessStage.FramePlanSeal,
                 "native-barrier-bindings",
                 "DesktopScene -> resource barrier bindings",
-                freezeFailure);
+                exception.Message,
+                disposition: EVulkanPresentNowFailureDisposition.RetryFrame);
         }
 
         acceptedPlan.CaptureOperations(
@@ -302,7 +318,10 @@ internal sealed partial class VulkanFrameLoop
         acceptedPlan.PreparedMeshIngress.CopyFrom(_preparedMeshIngress);
         _preparedMeshIngress.Clear();
 
-        FramePlan logicalPlan = _framePlanner.FramePlanBuilder.BuildAndSeal(
+        FramePlan logicalPlan;
+        try
+        {
+            logicalPlan = _framePlanner.FramePlanBuilder.BuildAndSeal(
             attempt.FrameSlot,
             plannerState.ResourcePlannerRevision,
             staticOperationSignature: 0UL,
@@ -311,7 +330,10 @@ internal sealed partial class VulkanFrameLoop
             acceptedPlan.DynamicUiOperations,
             new VulkanFramePlanRenderGraphAuthority(
                 frozenPlanningSnapshot.RenderGraphPlan,
-                plannerState.FrameOpResourcePlannerSwitchingState),
+                plannerState.FrameOpResourcePlannerSwitchingState,
+                _framePlanner,
+                _resourceRuntime.BackendObjectContext,
+                AllowSynchronousResourceUploads: true),
             textureUploadOperations: acceptedPlan.TextureUploadOperations,
             preparedMeshIngress: acceptedPlan.PreparedMeshIngress,
             authoringOperationCount: acceptedPlan.StaticOperationCount,
@@ -319,7 +341,18 @@ internal sealed partial class VulkanFrameLoop
                 acceptedPlan.DynamicUiOperationCount,
             authoringTextureUploadOperationCount:
                 acceptedPlan.TextureUploadOperationCount,
-            emptyPresentNowOutputContract: provisionalContract);
+                emptyPresentNowOutputContract: provisionalContract);
+        }
+        catch (VulkanNativeBufferBindingSupersededException exception)
+        {
+            throw watchdog.CreateFailure(
+                EVulkanPresentNowReadinessStage.FramePlanSeal,
+                "native-barrier-bindings",
+                "DesktopScene -> resource barrier bindings",
+                exception.Message,
+                disposition: EVulkanPresentNowFailureDisposition.RetryFrame);
+        }
+        logicalPlan.PrepareRecordingPlannerGenerations(in plannerState);
         if (!logicalPlan.HasAnyExecutableOutput)
         {
             throw watchdog.CreateFailure(
@@ -384,6 +417,19 @@ internal sealed partial class VulkanFrameLoop
             acceptedPlan,
             ref watchdog,
             "DesktopScene -> canonical scene texture -> exact descriptor");
+        if (!TryPrepareReadOnlyStorage(
+                logicalPlan, attempt.FrameSlot,
+                out VulkanReadOnlyStoragePreparedAuthority? storageAuthority,
+                out bool materialPending,
+                out string storageFailure))
+        {
+            throw watchdog.CreateFailure(
+                EVulkanPresentNowReadinessStage.PipelineCompilation,
+                "immutable-storage", "DesktopScene -> immutable buffer descriptors", storageFailure,
+                disposition: materialPending ? EVulkanPresentNowFailureDisposition.RetryFrame : EVulkanPresentNowFailureDisposition.RendererTerminal);
+        }
+        using VulkanResourceRuntime.ReadOnlyStorageRecordingScope storageScope =
+            ResourceRuntime.EnterReadOnlyStorageRecordingScope(storageAuthority);
         watchdog.RecordProgress();
         if (!_commandRuntime.TryPreparePresentNowPipelinesForSealedFramePlan(
                 logicalPlan,
@@ -424,14 +470,18 @@ internal sealed partial class VulkanFrameLoop
             computePreparation =
                 _commandRuntime.PrepareComputeFramePlanForRecording(
                     frameDataImageIndex,
-                    logicalPlan);
+                    logicalPlan,
+                    in plannerState);
             if (!computePreparation.Succeeded)
             {
                 throw watchdog.CreateFailure(
                     EVulkanPresentNowReadinessStage.PipelineCompilation,
                     $"compute-frame-data:{frameDataImageIndex}",
                     "DesktopScene -> compute descriptors/uniforms",
-                    computePreparation.FormatFailure());
+                    computePreparation.FormatFailure(),
+                    disposition: computePreparation.Pending
+                        ? EVulkanPresentNowFailureDisposition.RetryFrame
+                        : EVulkanPresentNowFailureDisposition.RendererTerminal);
             }
         }
 
@@ -542,6 +592,19 @@ internal sealed partial class VulkanFrameLoop
         VulkanRenderGraphPlan acceptedRenderGraphPlan =
             acceptedPlan.FrozenPlanningSnapshot.RenderGraphPlan;
         FramePlan logicalPlan = acceptedPlan.LogicalPlan;
+        if (!TryPrepareReadOnlyStorage(
+                logicalPlan, CurrentFrameSlot,
+                out VulkanReadOnlyStoragePreparedAuthority? storageAuthority,
+                out bool materialPending,
+                out string storageFailure))
+        {
+            throw watchdog.CreateFailure(
+                EVulkanPresentNowReadinessStage.PipelineCompilation,
+                "immutable-storage-revalidation", "DesktopScene -> immutable buffer descriptors", storageFailure,
+                disposition: materialPending ? EVulkanPresentNowFailureDisposition.RetryFrame : EVulkanPresentNowFailureDisposition.RendererTerminal);
+        }
+        using VulkanResourceRuntime.ReadOnlyStorageRecordingScope storageScope =
+            ResourceRuntime.EnterReadOnlyStorageRecordingScope(storageAuthority);
         if (!_commandRuntime.TryPreparePresentNowPipelinesForSealedFramePlan(
                 logicalPlan,
                 logicalPlan.GetNativeStaticOperationsForRecording(),

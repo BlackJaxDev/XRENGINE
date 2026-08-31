@@ -388,6 +388,8 @@ internal sealed partial class VulkanTextureUploadService
                 exception.Message);
         }
 
+        Interlocked.Increment(ref s_finalPublications);
+
         InvokeTextureUploadFinished(upload);
     }
 
@@ -395,12 +397,14 @@ internal sealed partial class VulkanTextureUploadService
         VulkanResourceRuntime resourceRuntime,
         VulkanImportedTexturePendingUpload upload)
     {
-        if (!upload.TryMarkStagingResourcesReleased())
-            return;
-
-        for (int index = 0; index < upload.StagingResources.Length; index++)
+        // Normal chunk completion retires staging before descriptor publication.
+        // This tail only owns an unrecorded terminal chunk from an exceptional
+        // recorded path, so detaching remains exact-once without keeping all
+        // texture mips resident in staging until publication.
+        VulkanImportedTextureUploadStagingResource[] stagingResources = upload.DetachPreparedChunk();
+        for (int index = 0; index < stagingResources.Length; index++)
         {
-            VulkanImportedTextureUploadStagingResource staging = upload.StagingResources[index];
+            VulkanImportedTextureUploadStagingResource staging = stagingResources[index];
             if (!staging.Slice.IsValid)
                 resourceRuntime.Buffers.Retire(
                     staging.Buffer,
@@ -416,6 +420,11 @@ internal sealed partial class VulkanTextureUploadService
 
         try
         {
+            if (upload.OwnerJob is { } ownerJob)
+            {
+                ownerJob.InvokeFinishedOnce(texture);
+                return;
+            }
             upload.OnFinished?.Invoke(texture);
         }
         catch (Exception ex)
@@ -435,6 +444,11 @@ internal sealed partial class VulkanTextureUploadService
     {
         try
         {
+            if (upload.OwnerJob is { } ownerJob)
+            {
+                ownerJob.InvokeCanceledOnce();
+                return;
+            }
             upload.OnCanceled?.Invoke();
         }
         catch (Exception ex)
@@ -454,6 +468,11 @@ internal sealed partial class VulkanTextureUploadService
     {
         try
         {
+            if (upload.OwnerJob is { } ownerJob)
+            {
+                ownerJob.InvokeErrorOnce(exception);
+                return;
+            }
             upload.OnError?.Invoke(exception);
         }
         catch

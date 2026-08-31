@@ -19,6 +19,7 @@ internal ref struct VulkanCommandRecordingContext(
     bool transitionSwapchainToPresent,
     VulkanPrimaryCommandPlan primaryCommandPlan,
     uint? frameDataImageIndexOverride,
+    VulkanReadOnlyStoragePreparedAuthority? readOnlyStorageAuthority,
     OpenXrEyeRenderTargetContext? openXrTargetContext,
     bool excludeDesktopSwapchainBarriers,
     VulkanRenderGraphPlan renderGraphPlan,
@@ -40,6 +41,7 @@ internal ref struct VulkanCommandRecordingContext(
     public readonly bool TransitionSwapchainToPresent = transitionSwapchainToPresent;
     public readonly VulkanPrimaryCommandPlan PrimaryCommandPlan = primaryCommandPlan;
     public readonly uint? FrameDataImageIndexOverride = frameDataImageIndexOverride;
+    public readonly VulkanReadOnlyStoragePreparedAuthority? ReadOnlyStorageAuthority = readOnlyStorageAuthority;
     public readonly OpenXrEyeRenderTargetContext? OpenXrTargetContext = openXrTargetContext;
     public readonly bool ExcludeDesktopSwapchainBarriers = excludeDesktopSwapchainBarriers;
     public readonly VulkanRenderGraphPlan RenderGraphPlan = renderGraphPlan;

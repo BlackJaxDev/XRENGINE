@@ -87,6 +87,7 @@ internal sealed partial class VulkanFrameLoop
     private readonly bool _injectResidentTemplateDeviceLoss;
     private int _residentTemplateDeviceLossInjected;
     private long _lastAcceptedPresentCompletedTimestamp;
+    private readonly long _backendGeneration;
 
     internal VulkanFrameLoop(
         Vk api,
@@ -97,6 +98,7 @@ internal sealed partial class VulkanFrameLoop
         VulkanCommandRuntime commandRuntime,
         VulkanFrameTelemetry telemetry,
         IVulkanRendererTargetDriver targetDriver,
+        long backendGeneration,
         Silk.NET.Windowing.IWindow? window)
     {
         _api = api ?? throw new ArgumentNullException(nameof(api));
@@ -107,6 +109,7 @@ internal sealed partial class VulkanFrameLoop
         _commandRuntime = commandRuntime;
         _telemetry = telemetry;
         _targetDriver = targetDriver;
+        _backendGeneration = backendGeneration;
         _injectResidentTemplateDeviceLoss = XREnvironment.IsEnabled(
             XREngineEnvironmentVariables.VulkanResidentTemplateDeviceLossInject);
         _openXrMeshFrameOpCaptureEmitter = new OpenXrMeshFrameOpCaptureEmitter(this);
@@ -275,7 +278,7 @@ internal sealed partial class VulkanFrameLoop
     {
         lock (_retirementGate)
         {
-            if (IsQuiescing)
+            if (IsQuiescing || _exclusiveExplicitDiagnostic)
             {
                 identity = default;
                 return false;
@@ -313,7 +316,7 @@ internal sealed partial class VulkanFrameLoop
     {
         lock (_retirementGate)
         {
-            if (IsQuiescing)
+            if (IsQuiescing || _exclusiveExplicitDiagnostic)
                 return false;
 
             _activeFrameExecutions++;

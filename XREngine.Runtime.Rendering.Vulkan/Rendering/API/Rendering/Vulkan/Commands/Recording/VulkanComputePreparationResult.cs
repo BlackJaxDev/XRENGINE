@@ -14,6 +14,7 @@ internal readonly record struct VulkanComputePreparationResult(
     Exception? Exception = null)
 {
     public bool Succeeded => Outcome == EVulkanComputePreparationOutcome.Success;
+    public bool Pending => Outcome == EVulkanComputePreparationOutcome.PipelinePending;
 
     public static VulkanComputePreparationResult Success { get; } =
         new(EVulkanComputePreparationOutcome.Success, -1, 0, null);
@@ -23,6 +24,9 @@ internal readonly record struct VulkanComputePreparationResult(
         string programName = ProgramName ?? "UnnamedProgram";
         return Outcome switch
         {
+            EVulkanComputePreparationOutcome.PipelinePending =>
+                $"Compute pipeline '{programName}' is pending asynchronous preparation before recording" +
+                $"{(string.IsNullOrWhiteSpace(Exception?.Message) ? "." : $": {Exception.Message}")}",
             EVulkanComputePreparationOutcome.ProgramLinkFailed =>
                 $"Compute program '{programName}' is not linkable before recording.",
             EVulkanComputePreparationOutcome.PipelineUnavailable =>

@@ -15,7 +15,8 @@ internal unsafe sealed class VulkanMappedFrameArenaBackend(
     VulkanDeviceContext deviceContext,
     VulkanResourceRuntime resourceRuntime,
     VulkanBufferResourceManager resourceManager,
-    ulong nonCoherentAtomSize)
+    ulong nonCoherentAtomSize,
+    bool enableDiagnosticTransferSource = false)
 {
     private readonly Vk _api = api;
     private readonly PhysicalDevice _physicalDevice = physicalDevice;
@@ -23,9 +24,11 @@ internal unsafe sealed class VulkanMappedFrameArenaBackend(
     private readonly VulkanDeviceContext _deviceContext = deviceContext;
     private readonly VulkanResourceRuntime _resourceRuntime = resourceRuntime;
     private readonly VulkanBufferResourceManager _resourceManager = resourceManager;
+    private readonly bool _enableDiagnosticTransferSource = enableDiagnosticTransferSource;
 
     internal ulong NonCoherentAtomSize { get; } = Math.Max(nonCoherentAtomSize, 1UL);
     internal bool IsOperational => _deviceContext.IsOperational;
+    internal bool SupportsDiagnosticTransferSource => _enableDiagnosticTransferSource;
 
     internal bool TryCreateChunk(
         ulong capacity,
@@ -186,7 +189,10 @@ internal unsafe sealed class VulkanMappedFrameArenaBackend(
         out ulong allocationLength)
         => TryCreateChunk(
             capacity,
-            BufferUsageFlags.UniformBufferBit,
+            BufferUsageFlags.UniformBufferBit |
+                (_enableDiagnosticTransferSource
+                    ? BufferUsageFlags.TransferSrcBit
+                    : 0),
             "MappedFrameArena",
             out buffer,
             out memory,

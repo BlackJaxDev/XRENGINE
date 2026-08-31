@@ -21,6 +21,14 @@ internal static class DefaultRenderPipelineQuadDescriptors
     private const string LightProbeGridIndexBufferName = "LightProbeGridIndices";
 
     /// <summary>
+    /// Generates the descriptor for copying the HDR scene color into the transparency input.
+    /// </summary>
+    /// <returns>The render graph resource descriptor for a scene-color copy pass.</returns>
+    public static VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor SceneCopy()
+        => new VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor()
+            .SampleTexture(DefaultRenderPipeline.HDRSceneTextureName);
+
+    /// <summary>
     /// Generates the descriptor for the deferred light combine pass.
     /// </summary>
     /// <returns>The render graph resource descriptor for the deferred light combine pass.</returns>
@@ -142,7 +150,9 @@ internal static class DefaultRenderPipelineQuadDescriptors
     public static VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor PostProcess()
         => new VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor()
             .SampleTexture(DefaultRenderPipeline.HDRSceneTextureName)
-            .SampleTextureMips(DefaultRenderPipeline.BloomBlurTextureName, 0u, 5u)
+            // The bloom resource has a profile-dependent legal mip count; sampling
+            // its remaining range keeps this descriptor valid for minimized views.
+            .SampleTexture(DefaultRenderPipeline.BloomBlurTextureName)
             .SampleTexture(DefaultRenderPipeline.DepthViewTextureName)
             .SampleTexture(DefaultRenderPipeline.StencilViewTextureName)
             .SampleTexture(DefaultRenderPipeline.AutoExposureTextureName)

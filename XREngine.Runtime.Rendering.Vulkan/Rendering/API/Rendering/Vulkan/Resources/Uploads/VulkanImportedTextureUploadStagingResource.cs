@@ -17,7 +17,8 @@ internal readonly record struct VulkanImportedTextureUploadStagingResource(
     Buffer PooledBuffer,
     DeviceMemory PooledMemory,
     BufferImageCopy CopyRegion,
-    ulong SizeBytes)
+    ulong SizeBytes,
+    ulong AllocationGeneration)
 {
     /// <summary>Persistent arena slice or pooled whole-buffer storage containing the source range.</summary>
     public Buffer Buffer => Slice.IsValid ? Slice.Buffer : PooledBuffer;

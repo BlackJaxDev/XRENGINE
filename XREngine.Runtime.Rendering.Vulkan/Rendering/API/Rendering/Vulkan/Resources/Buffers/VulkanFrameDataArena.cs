@@ -21,6 +21,7 @@ internal sealed class VulkanFrameDataArena
     private readonly ulong[][][] _nextOffsets = new ulong[LaneCount][][];
     private readonly int[] _chunkGroupCounts = new int[LaneCount];
     private readonly ulong[] _nextChunkCapacities = new ulong[LaneCount];
+    private readonly ulong[] _frameSlotResetEpochs = new ulong[MaxFrameSlots];
     private readonly BufferUsageFlags[] _usages = new BufferUsageFlags[LaneCount];
     private readonly string[] _labels = new string[LaneCount];
     private int _frameSlotCount;
@@ -76,6 +77,10 @@ internal sealed class VulkanFrameDataArena
     internal ulong Generation => IsActive ? Volatile.Read(ref _generation) : 0UL;
     internal bool IsActive => Volatile.Read(ref _active) != 0;
     internal int FrameSlotCount => Volatile.Read(ref _frameSlotCount);
+    internal ulong GetFrameSlotResetEpoch(int frameSlot)
+        => IsValidFrameSlot(frameSlot)
+            ? Volatile.Read(ref _frameSlotResetEpochs[frameSlot])
+            : 0UL;
     internal long AllocatedBytes => Volatile.Read(ref _allocatedBytes);
     internal long AllocationCount => Volatile.Read(ref _allocationCount);
     internal long AllocatedBytesHighWater => Volatile.Read(ref _allocatedBytesHighWater);
@@ -400,6 +405,10 @@ internal sealed class VulkanFrameDataArena
                         ClearDirtyRanges(chunk);
                         _nextOffsets[lane][group][frameSlot] = 0;
                     }
+        _frameSlotResetEpochs[frameSlot] =
+            _frameSlotResetEpochs[frameSlot] == ulong.MaxValue
+                ? 1UL
+                : _frameSlotResetEpochs[frameSlot] + 1UL;
         return true;
     }
 
@@ -625,7 +634,16 @@ internal sealed class VulkanFrameDataArena
         EVulkanFrameDataLane.Readback => BufferUsageFlags.TransferDstBit,
         EVulkanFrameDataLane.Uniform => BufferUsageFlags.UniformBufferBit | BufferUsageFlags.TransferSrcBit | BufferUsageFlags.TransferDstBit,
         EVulkanFrameDataLane.Storage => BufferUsageFlags.StorageBufferBit | BufferUsageFlags.TransferSrcBit | BufferUsageFlags.TransferDstBit,
-        EVulkanFrameDataLane.AdvancedSceneStorage => BufferUsageFlags.StorageBufferBit | BufferUsageFlags.TransferSrcBit | BufferUsageFlags.TransferDstBit,
+        // The immutable advanced-scene publication includes canonical packed
+        // vertex and index atlases in the same mapped chunk as its descriptor
+        // tables. Visibility raster therefore consumes this lane through all
+        // three binding classes, not only as shader storage.
+        EVulkanFrameDataLane.AdvancedSceneStorage =>
+            BufferUsageFlags.StorageBufferBit |
+            BufferUsageFlags.VertexBufferBit |
+            BufferUsageFlags.IndexBufferBit |
+            BufferUsageFlags.TransferSrcBit |
+            BufferUsageFlags.TransferDstBit,
         EVulkanFrameDataLane.AdvancedVisibilityStorage => BufferUsageFlags.StorageBufferBit | BufferUsageFlags.IndirectBufferBit | BufferUsageFlags.TransferSrcBit | BufferUsageFlags.TransferDstBit,
         EVulkanFrameDataLane.Indirect => BufferUsageFlags.IndirectBufferBit | BufferUsageFlags.StorageBufferBit | BufferUsageFlags.TransferSrcBit | BufferUsageFlags.TransferDstBit,
         _ => throw new ArgumentOutOfRangeException(nameof(lane), lane, "Unsupported Vulkan frame-data lane."),

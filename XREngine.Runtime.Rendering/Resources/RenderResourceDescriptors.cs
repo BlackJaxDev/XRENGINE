@@ -72,12 +72,14 @@ public enum EBufferAccessPattern
 /// <param name="ScaleY">The vertical scaling factor for the resource.</param>
 /// <param name="Width">The absolute width of the resource in pixels.</param>
 /// <param name="Height">The absolute height of the resource in pixels.</param>
+/// <param name="RoundUpDivisor">Optional source-resolution divisor applied with integer round-up.</param>
 public readonly record struct RenderResourceSizePolicy(
     RenderResourceSizeClass SizeClass,
     float ScaleX = 1f,
     float ScaleY = 1f,
     uint Width = 0,
-    uint Height = 0)
+    uint Height = 0,
+    uint RoundUpDivisor = 1u)
 {
     /// <summary>
     /// Creates a new render resource size policy with an absolute size specified in pixels.
@@ -95,6 +97,17 @@ public readonly record struct RenderResourceSizePolicy(
     /// <returns>A new instance of <see cref="RenderResourceSizePolicy"/> with the specified internal resolution scale.</returns>
     public static RenderResourceSizePolicy Internal(float scale = 1f)
         => new(RenderResourceSizeClass.InternalResolution, scale, scale);
+
+    /// <summary>
+    /// Creates an internal-resolution policy reduced by an integral divisor.
+    /// The resolved extent is rounded up so every source tile has storage.
+    /// </summary>
+    public static RenderResourceSizePolicy InternalDividedRoundedUp(uint divisor)
+        => new(
+            RenderResourceSizeClass.InternalResolution,
+            1f,
+            1f,
+            RoundUpDivisor: Math.Max(divisor, 1u));
 
     /// <summary>
     /// Creates a new render resource size policy based on the window resolution with an optional scaling factor.

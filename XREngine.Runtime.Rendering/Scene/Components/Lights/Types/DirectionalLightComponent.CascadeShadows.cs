@@ -1302,6 +1302,85 @@ namespace XREngine.Components.Lights
             }
         }
 
+        /// <summary>
+        /// Copies the complete current, rendered, and atlas payload for every
+        /// directional cascade while holding the cascade lock exactly once. The
+        /// result is the storage-buffer ABI shared by all lighting consumers;
+        /// callers must not compose the older independent copy methods because
+        /// a publish may otherwise split current and rendered state.
+        /// </summary>
+        internal void CopyPublishedDirectionalShadowRecords(
+            XRCamera? camera,
+            bool useCascades,
+            Span<DirectionalShadowGpuRecord> destination,
+            out int cascadeCount)
+            => CopyPublishedDirectionalShadowRecords(
+                GetCascadeSourceForCamera(camera),
+                useCascades,
+                destination,
+                out cascadeCount);
+
+        internal void CopyPublishedDirectionalShadowRecords(
+            ShadowRequestSource source,
+            bool useCascades,
+            Span<DirectionalShadowGpuRecord> destination,
+            out int cascadeCount)
+        {
+            int copyCount = Math.Min(MaxCascadeRenderCount, destination.Length);
+            cascadeCount = 0;
+            lock (_cascadeDataLock)
+            {
+                DirectionalCascadeSourceState state = GetCascadeSourceState(source);
+                bool canUseCascades = useCascades && CanRenderDirectionalCascadesForCurrentBackend();
+                cascadeCount = canUseCascades ? Math.Min(state.Slices.Count, copyCount) : 0;
+                for (int i = 0; i < copyCount; i++)
+                {
+                    CascadeShadowSlice? current = i < cascadeCount ? state.Slices[i] : null;
+                    DirectionalCascadeAtlasSlot atlas = canUseCascades && i < cascadeCount
+                        ? state.AtlasSlots[i]
+                        : i == 0 ? _primaryAtlasSlot : default;
+                    bool renderedSampleable = atlas.HasCascadeUniformData && IsDirectionalAtlasSlotSampleable(atlas);
+                    ShadowFallbackMode fallback = renderedSampleable
+                        ? atlas.Fallback
+                        : atlas.Fallback != ShadowFallbackMode.None
+                            ? atlas.Fallback
+                            : ShadowFallbackMode.Lit;
+                    float nearPlane = atlas.HasAllocation ? atlas.NearPlane : NearZ;
+                    float farPlane = atlas.HasAllocation ? MathF.Max(atlas.FarPlane, nearPlane + 0.001f) : 1.0f;
+                    Matrix4x4 currentMatrix = current?.WorldToLightSpaceMatrix ?? Matrix4x4.Identity;
+                    float currentSplit = current?.SplitFarDistance ?? float.MaxValue;
+                    float currentBlend = current?.BlendWidth ?? 0.0f;
+                    float currentBiasMin = current?.BiasMin ?? 0.0f;
+                    float currentBiasMax = current?.BiasMax ?? ShadowSlopeBiasTexels;
+                    float currentReceiverOffset = current?.ReceiverOffset ?? 0.0f;
+                    Matrix4x4 renderedMatrix = renderedSampleable ? atlas.WorldToLightSpaceMatrix : currentMatrix;
+                    float renderedSplit = renderedSampleable ? atlas.SplitFarDistance : currentSplit;
+                    float renderedBlend = renderedSampleable ? atlas.BlendWidth : currentBlend;
+                    float renderedBiasMin = renderedSampleable ? atlas.BiasMin : currentBiasMin;
+                    float renderedBiasMax = renderedSampleable ? atlas.BiasMax : currentBiasMax;
+                    float renderedReceiverOffset = renderedSampleable ? atlas.ReceiverOffset : currentReceiverOffset;
+                    float staleAge = renderedSampleable
+                        ? ResolveRenderedCascadeStaleAge(state.AtlasCascadeStaleFrameCounts[i], atlas.Fallback)
+                        : -1.0f;
+
+                    destination[i] = new DirectionalShadowGpuRecord
+                    {
+                        CurrentWorldToLight = currentMatrix,
+                        RenderedWorldToLight = renderedMatrix,
+                        CurrentSplitBlendBias = new(currentSplit, currentBlend, currentBiasMin, currentBiasMax),
+                        RenderedSplitBlendBias = new(renderedSplit, renderedBlend, renderedBiasMin, renderedBiasMax),
+                        ReceiverOffsetsAge = new(currentReceiverOffset, renderedReceiverOffset, staleAge, 0.0f),
+                        AtlasPacked0 = new(renderedSampleable ? 1 : 0, atlas.HasAllocation ? atlas.PageIndex : -1, (int)fallback, atlas.HasAllocation ? atlas.RecordIndex : -1),
+                        AtlasUvScaleBias = renderedSampleable ? atlas.UvScaleBias : Vector4.Zero,
+                        AtlasDepthParams = new(nearPlane, farPlane, atlas.HasAllocation ? atlas.TexelSize : 0.0f, atlas.HasAllocation ? atlas.ResolutionScale : 1.0f),
+                    };
+                }
+            }
+
+            for (int i = copyCount; i < destination.Length; i++)
+                destination[i] = default;
+        }
+
         private static float ResolveRenderedCascadeStaleAge(
             int staleFrameCount,
             ShadowFallbackMode fallback)
@@ -1711,8 +1790,8 @@ namespace XREngine.Components.Lights
 
         /// <summary>
         /// Completes a cascade visibility request whose caster membership will
-        /// be resolved from the GPU scene. No CPU command buffer was produced,
-        /// so the viewport must not swap a stale updating buffer into authority.
+        /// be resolved from the GPU scene. Its prepared backend package must
+        /// still be swapped into authority even though it has no CPU casters.
         /// </summary>
         private void MarkDirectionalCascadeAtlasGpuVisibilityReady(ShadowRequestSource source, int index)
         {
@@ -1729,7 +1808,7 @@ namespace XREngine.Components.Lights
                 state.AtlasCollectedContentHashes[index] = state.AtlasRequestContentHashes[index];
                 state.AtlasCascadeVisibleSetCached[index] = state.AtlasCollectedContentHashes[index] != 0u;
                 state.AtlasCascadeCollectVisibleNeeded[index] = false;
-                state.AtlasCascadeSwapNeeded[index] = false;
+                state.AtlasCascadeSwapNeeded[index] = true;
             }
         }
 
@@ -3850,12 +3929,21 @@ namespace XREngine.Components.Lights
             if (atlasPage && RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy().IsGpuZeroReadbackStrategy())
             {
                 // GPU-driven shadow passes cull the global GPU scene against the
-                // active cascade camera. Walking the CPU octree four times and
-                // publishing four command collections only duplicates that work.
-                for (int i = 0; i < cascadeCount; i++)
+                // active cascade camera. Skip CPU traversal, not the backend
+                // package contract: even an empty CPU collection needs current
+                // view/resource identity and normal publication. Refresh every
+                // requested render so a first-use resource promotion can retry.
+                if (plan.IsLayered || prepareAtlasGroupedCommands)
                 {
-                    if (ShouldCollectDirectionalCascadeAtlasViewport(source, i))
-                        MarkDirectionalCascadeAtlasGpuVisibilityReady(source, i);
+                    if (cascadeShadowViewports[0].PrepareGpuShadowFramePackage())
+                        for (int i = 0; i < cascadeCount; i++)
+                            MarkDirectionalCascadeAtlasGpuVisibilityReady(source, i);
+                }
+                else
+                {
+                    for (int i = 0; i < cascadeCount; i++)
+                        if (cascadeShadowViewports[i].PrepareGpuShadowFramePackage())
+                            MarkDirectionalCascadeAtlasGpuVisibilityReady(source, i);
                 }
 
                 return;
@@ -3962,7 +4050,7 @@ namespace XREngine.Components.Lights
         /// Builds the per-cascade command buffers needed only when a grouped atlas
         /// render fails after the normal union command buffer has been prepared.
         /// </summary>
-        internal void PrepareSequentialCascadeShadowAtlasCommands(ShadowRequestSource source, int requestedCascadeCount)
+        internal bool PrepareSequentialCascadeShadowAtlasCommands(ShadowRequestSource source, int requestedCascadeCount)
         {
             ShadowRequestSource resolvedSource = source == ShadowRequestSource.Default
                 ? ShadowRequestSource.Desktop
@@ -3973,20 +4061,30 @@ namespace XREngine.Components.Lights
                 Math.Clamp(requestedCascadeCount, 0, MaxCascadeRenderCount),
                 GetPublishedCascadeViewportCount(resolvedSource, viewports));
             if (cascadeCount <= 0)
-                return;
+                return false;
 
             using var sample = RuntimeEngine.Profiler.Start("ShadowAtlas.Directional.SequentialCommandGeneration");
+            bool gpuOwned = RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy().IsGpuZeroReadbackStrategy();
             for (int i = 0; i < cascadeCount; i++)
             {
-                viewports[i].CollectVisible(
-                    false,
-                    collectionVolumeOverride: GetPublishedCascadeCullVolume(resolvedSource, i));
+                if (gpuOwned)
+                {
+                    if (!viewports[i].PrepareGpuShadowFramePackage())
+                        return false;
+                }
+                else
+                {
+                    viewports[i].CollectVisible(
+                        false,
+                        collectionVolumeOverride: GetPublishedCascadeCullVolume(resolvedSource, i));
+                }
                 viewports[i].SwapBuffers();
             }
 
             // Viewport zero now contains a single-cascade set rather than the union
             // required by the next grouped attempt. Force that union to be rebuilt.
             InvalidateDirectionalCascadeAtlasVisibleSetCache(resolvedSource, cascadeCount);
+            return true;
         }
 
         private bool ShouldPrepareAtlasGroupedCascadeCollection(int cascadeCount)
@@ -4206,7 +4304,8 @@ namespace XREngine.Components.Lights
                 using var renderArea = state.PushRenderArea(renderRect);
                 using var cropArea = state.PushCropArea(renderRect);
                 using var renderSample = RuntimeEngine.Profiler.Start("DirectionalCascade.Cascade.CommandRecording");
-                viewport.Render(atlasFbo, null, null, true, ShadowAtlasMaterial);
+                if (!viewport.TryRender(atlasFbo, null, null, true, ShadowAtlasMaterial))
+                    return false;
             }
             finally
             {
@@ -4315,7 +4414,8 @@ namespace XREngine.Components.Lights
                     ? CascadeAtlasInstancedShadowMaterial
                     : CascadeAtlasGeometryShadowMaterial;
                 using var renderSample = RuntimeEngine.Profiler.Start("DirectionalCascade.Group.CommandRecording");
-                viewport.Render(atlasFbo, null, null, true, groupedMaterial);
+                if (!viewport.TryRender(atlasFbo, null, null, true, groupedMaterial))
+                    return false;
             }
             finally
             {
@@ -4357,7 +4457,8 @@ namespace XREngine.Components.Lights
                 var state = viewport.RenderPipelineInstance.RenderState;
                 using var renderArea = state.PushRenderArea(renderRect);
                 using var cropArea = state.PushCropArea(renderRect);
-                viewport.Render(atlasFbo, null, null, true, ShadowAtlasMaterial);
+                if (!viewport.TryRender(atlasFbo, null, null, true, ShadowAtlasMaterial))
+                    return false;
             }
             finally
             {

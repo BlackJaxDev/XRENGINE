@@ -38,6 +38,10 @@ internal sealed class VulkanStagingManager
     internal const ulong ForegroundChunkCapacity = 4UL * 1024UL * 1024UL;
 
     private const int ForegroundReservedBufferCount = 4;
+    // Imported background chunks are bounded independently of the protected
+    // foreground reserve. A streaming burst must defer rather than allocate a
+    // new unbounded transfer source for every queued ticket.
+    internal const int ImportedBackgroundBufferCapacity = 8;
     private const MemoryPropertyFlags ForegroundReserveProperties =
         MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit;
 
@@ -56,6 +60,7 @@ internal sealed class VulkanStagingManager
     }
 
     private int _trimFrameCounter;
+    private int _importedBackgroundLeaseReservations;
 
     public bool CanPool(BufferUsageFlags usage, MemoryPropertyFlags properties)
     {
@@ -131,6 +136,81 @@ internal sealed class VulkanStagingManager
         }
 
         return (entry.Buffer, entry.Memory);
+    }
+
+    /// <summary>
+    /// Acquires a staging lease with its exact resource generation.  Foreground
+    /// callers can require the protected reserve; that path never allocates as a
+    /// fallback because PresentNow admission must remain bounded.
+    /// </summary>
+    public unsafe bool TryAcquireLease(
+        VulkanBackendObjectContext context,
+        ulong requestedSize,
+        BufferUsageFlags usage,
+        MemoryPropertyFlags properties,
+        VoidPtr data,
+        bool foregroundRequired,
+        bool requireForegroundReserve,
+        out VulkanStagingBufferLease lease)
+    {
+        lease = default;
+        if (requestedSize == 0)
+            return false;
+
+        StagingBufferEntry? entry;
+        bool reservedBackgroundCreation = false;
+        using (VulkanFrameLockScope.Enter(_sync, EVulkanFrameWaitReason.UploadLock))
+        {
+            entry = TryTakeReusable(requestedSize, usage, properties, foregroundRequired);
+            if (entry is not null && requireForegroundReserve && !entry.ForegroundReserved)
+                entry = null;
+            if (entry is not null)
+            {
+                ulong publishedGeneration = context.Resources.GetPublishedGeneration(ObjectType.Buffer, entry.Buffer.Handle);
+                if (publishedGeneration == 0 || publishedGeneration != entry.AllocationGeneration)
+                    throw new InvalidOperationException("Vulkan staging lease generation is no longer published.");
+                entry.State = EVulkanStagingBufferState.InUse;
+                entry.IdleFrames = 0;
+                lease = new VulkanStagingBufferLease(
+                    entry.Buffer, entry.Memory, entry.Size, entry.AllocationGeneration, entry.ForegroundReserved);
+            }
+            else if (!requireForegroundReserve)
+            {
+                if (CountImportedBackgroundEntriesNoLock() + _importedBackgroundLeaseReservations >=
+                    ImportedBackgroundBufferCapacity)
+                {
+                    return false;
+                }
+
+                _importedBackgroundLeaseReservations++;
+                reservedBackgroundCreation = true;
+            }
+        }
+
+        if (!lease.IsValid)
+        {
+            if (requireForegroundReserve)
+                return false;
+
+            try
+            {
+                entry = CreateEntry(context, requestedSize, usage, properties, EVulkanStagingBufferState.InUse, foregroundReserved: false);
+                AddCreatedEntry(context, entry);
+            }
+            finally
+            {
+                if (reservedBackgroundCreation)
+                {
+                    using (VulkanFrameLockScope.Enter(_sync, EVulkanFrameWaitReason.UploadLock))
+                        _importedBackgroundLeaseReservations--;
+                }
+            }
+            lease = new VulkanStagingBufferLease(entry.Buffer, entry.Memory, entry.Size, entry.AllocationGeneration, false);
+        }
+
+        if (data != null)
+            context.Resources.Buffers.UpdateFromVoidPtr(context, lease.Buffer, lease.Memory, 0, requestedSize, data);
+        return true;
     }
 
     /// <summary>
@@ -267,6 +347,33 @@ internal sealed class VulkanStagingManager
                 entry.State = EVulkanStagingBufferState.Idle;
                 entry.IdleFrames = 0;
                 return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Tests whether an exact retired allocation is owned by this pool without
+    /// changing its state. The retirement authority uses this before removing a
+    /// queue entry; no arbitrary retired buffer may be recycled as staging.
+    /// </summary>
+    internal bool IsRetiredStagingLease(
+        Buffer buffer,
+        DeviceMemory memory,
+        ulong allocationGeneration)
+    {
+        using (VulkanFrameLockScope.Enter(_sync, EVulkanFrameWaitReason.UploadLock))
+        {
+            for (int index = 0; index < _entries.Count; index++)
+            {
+                StagingBufferEntry entry = _entries[index];
+                if (entry.Buffer.Handle == buffer.Handle &&
+                    entry.Memory.Handle == memory.Handle &&
+                    entry.AllocationGeneration == allocationGeneration)
+                {
+                    return entry.State == EVulkanStagingBufferState.InUse;
+                }
             }
         }
 
@@ -484,6 +591,23 @@ internal sealed class VulkanStagingManager
             if (IsForegroundReserveEntry(_entries[index]))
                 count++;
 
+        return count;
+    }
+
+    private int CountImportedBackgroundEntriesNoLock()
+    {
+        int count = 0;
+        for (int index = 0; index < _entries.Count; index++)
+        {
+            StagingBufferEntry entry = _entries[index];
+            if (!entry.ForegroundReserved &&
+                entry.Usage == BufferUsageFlags.TransferSrcBit &&
+                entry.Properties == ForegroundReserveProperties &&
+                entry.Size <= ForegroundChunkCapacity)
+            {
+                count++;
+            }
+        }
         return count;
     }
 

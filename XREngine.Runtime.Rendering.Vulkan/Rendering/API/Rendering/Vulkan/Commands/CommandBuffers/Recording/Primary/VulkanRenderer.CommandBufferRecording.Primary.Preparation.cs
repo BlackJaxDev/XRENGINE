@@ -40,6 +40,7 @@ namespace XREngine.Rendering.Vulkan
             recordingState.PreserveSwapchainForOverlay = context.PreserveSwapchainForOverlay;
             recordingState.TransitionSwapchainToPresent = context.TransitionSwapchainToPresent;
             recordingState.FrameDataImageIndexOverride = context.FrameDataImageIndexOverride;
+            recordingState.ReadOnlyStorageAuthority = context.ReadOnlyStorageAuthority;
             recordingState.OpenXrTargetContext = context.OpenXrTargetContext;
             recordingState.ExcludeDesktopSwapchainBarriers = context.ExcludeDesktopSwapchainBarriers;
             recordingState.PrimaryCommandPlan = context.PrimaryCommandPlan;
@@ -420,6 +421,8 @@ namespace XREngine.Rendering.Vulkan
                     }
                     recordingState.MeshDrawUniformSlotsByOpIndex[opIndex] = drawSlot;
                     frameDataPrewarmProcessed++;
+                    using VulkanPreparedResourcePlannerThreadScope resourceScope =
+                        EnterRecordingResourceScope(recordingState.FramePlan, in operationContext);
                     using var pipelineScope = RuntimeEngine.Rendering.State.PushRenderingPipelineOverride(
                         operationContext.PipelineInstance);
                     if (!meshRenderer.TryPrewarmFrameDataForRecording(
@@ -572,6 +575,8 @@ namespace XREngine.Rendering.Vulkan
 
                 FrameOpContext operationContext =
                     recordingState.Ops.GetContext(operationIndex);
+                using VulkanPreparedResourcePlannerThreadScope resourceScope =
+                    EnterRecordingResourceScope(framePlan, in operationContext);
                 if (operationContext.OutputSchedulingInstanceIdentity != reservation.OutputId)
                 {
                     recordingState.RecordingDeferredReason =
@@ -814,13 +819,23 @@ namespace XREngine.Rendering.Vulkan
                     "Advanced visibility operation is Unsupported: raster and late raster must share one exact dynamic-rendering target closure.";
                 return false;
             }
-            if (!ResourceRuntime.AdvancedVisibilityPipelines.TryGetComputePipelines(
+            VulkanAdvancedVisibilityPipelineReadiness computePipelineReadiness =
+                ResourceRuntime.AdvancedVisibilityPipelines.TryGetComputePipelines(
                     out VkRenderProgram earlyVisibilityProgram,
                     out VkRenderProgram buildIndirectProgram,
-                    out string pipelineReason))
+                    out string pipelineReason);
+            if (computePipelineReadiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
             {
                 recordingState.RecordingDeferredReason =
-                    $"Advanced visibility operation is Unsupported: compute pipeline realization failed: {pipelineReason}";
+                    computePipelineReadiness is VulkanAdvancedVisibilityPipelineReadiness.Pending or
+                        VulkanAdvancedVisibilityPipelineReadiness.Missing
+                        ? $"Advanced visibility operation is waiting for compute pipeline admission: {pipelineReason}"
+                        : $"Advanced visibility operation is Unsupported: compute pipeline realization failed: {pipelineReason}";
+                if (computePipelineReadiness is VulkanAdvancedVisibilityPipelineReadiness.Pending or
+                    VulkanAdvancedVisibilityPipelineReadiness.Missing)
+                {
+                    recordingState.FailureKind = EVulkanCommandRecordingFailureKind.RetryFrame;
+                }
                 return false;
             }
 
@@ -835,15 +850,26 @@ namespace XREngine.Rendering.Vulkan
                 ref readonly VulkanAdvancedVisibilityOperationPayload payload = ref
                     recordingState.Ops.GetAdvancedVisibility(operationIndex);
                 VulkanAdvancedVisibilityStageRequest request = payload.Request;
-                if (!recordingState.Ops.Stream.TryAssociateAdvancedVisibilityState(
+                VulkanAdvancedVisibilityPipelineReadiness stateAssociationReadiness =
+                    recordingState.Ops.Stream.TryAssociateAdvancedVisibilityState(
                         operationIndex,
                         in request,
                         in familyState,
                         earlyVisibilityProgram,
-                        buildIndirectProgram))
+                        buildIndirectProgram,
+                        out string stateAssociationReason);
+                if (stateAssociationReadiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
                 {
                     recordingState.RecordingDeferredReason =
-                        "Advanced visibility operation is Unsupported: the immutable set-1 family could not be associated with every stage.";
+                        stateAssociationReadiness is VulkanAdvancedVisibilityPipelineReadiness.Pending or
+                            VulkanAdvancedVisibilityPipelineReadiness.Missing
+                            ? $"Advanced visibility operation is waiting for immutable set-1 pipeline admission: {stateAssociationReason}"
+                            : $"Advanced visibility operation is Unsupported: the immutable set-1 family could not be associated with every stage: {stateAssociationReason}";
+                    if (stateAssociationReadiness is VulkanAdvancedVisibilityPipelineReadiness.Pending or
+                        VulkanAdvancedVisibilityPipelineReadiness.Missing)
+                    {
+                        recordingState.FailureKind = EVulkanCommandRecordingFailureKind.RetryFrame;
+                    }
                     return false;
                 }
 
@@ -878,46 +904,69 @@ namespace XREngine.Rendering.Vulkan
                                 $"Advanced visibility operation is Unsupported: sealed late depth-pyramid closure failed: {lateTargetReason}.";
                             return false;
                         }
-                        if (!ResourceRuntime.AdvancedVisibilityPipelines
+                        VulkanAdvancedVisibilityPipelineReadiness latePipelineReadiness =
+                            ResourceRuntime.AdvancedVisibilityPipelines
                                 .TryGetLateVisibilityComputePipelines(
                                     out VkRenderProgram buildDepthPyramidProgram,
                                     out VkRenderProgram lateVisibilityProgram,
-                                    out string latePipelineReason) ||
-                            !recordingState.Ops.Stream
+                                    out string latePipelineReason);
+                        if (latePipelineReadiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
+                        {
+                            recordingState.RecordingDeferredReason =
+                                latePipelineReadiness is VulkanAdvancedVisibilityPipelineReadiness.Pending or
+                                    VulkanAdvancedVisibilityPipelineReadiness.Missing
+                                    ? $"Advanced visibility operation is waiting for sealed late compute pipeline admission: {latePipelineReason}."
+                                    : $"Advanced visibility operation is Unsupported: sealed late compute pipeline failed: {latePipelineReason}.";
+                            if (latePipelineReadiness is VulkanAdvancedVisibilityPipelineReadiness.Pending or
+                                VulkanAdvancedVisibilityPipelineReadiness.Missing)
+                            {
+                                recordingState.FailureKind = EVulkanCommandRecordingFailureKind.RetryFrame;
+                            }
+                            return false;
+                        }
+
+                        VulkanAdvancedVisibilityPipelineReadiness lateAssociationReadiness =
+                            recordingState.Ops.Stream
                                 .TryAssociateAdvancedVisibilityLateClosure(
                                     operationIndex,
                                     in request,
                                     in lateClosure,
                                     buildDepthPyramidProgram,
-                                    lateVisibilityProgram))
+                                    lateVisibilityProgram,
+                                    out string lateAssociationReason);
+                        if (lateAssociationReadiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
                         {
                             recordingState.RecordingDeferredReason =
-                                $"Advanced visibility operation is Unsupported: sealed late compute closure failed: {latePipelineReason}.";
+                                lateAssociationReadiness is VulkanAdvancedVisibilityPipelineReadiness.Pending or
+                                    VulkanAdvancedVisibilityPipelineReadiness.Missing
+                                    ? $"Advanced visibility operation is waiting for sealed late compute association: {lateAssociationReason}."
+                                    : $"Advanced visibility operation is Unsupported: sealed late compute closure failed: {lateAssociationReason}.";
+                            if (lateAssociationReadiness is VulkanAdvancedVisibilityPipelineReadiness.Pending or
+                                VulkanAdvancedVisibilityPipelineReadiness.Missing)
+                            {
+                                recordingState.FailureKind = EVulkanCommandRecordingFailureKind.RetryFrame;
+                            }
                             return false;
                         }
 
-                        int lateSetCount = checked(
-                            (lateClosure.DispatchCount + 1) * (int)familyState.ViewCount);
+                        int lateSetCount = checked(2 * (int)familyState.ViewCount);
                         DescriptorSet[] lateSets = lateStorage.DescriptorSets;
                         lateSets.AsSpan(0, lateSetCount).Clear();
                         for (uint viewIndex = 0u; viewIndex < familyState.ViewCount; ++viewIndex)
-                        for (int mipIndex = 0; mipIndex < lateClosure.DispatchCount; ++mipIndex)
                         {
                             DescriptorImageInfo sampledDescriptor =
-                                lateClosure.PyramidSampledDescriptors[
-                                    checked((int)viewIndex * lateClosure.DispatchCount + mipIndex)];
+                                lateClosure.PyramidSampledDescriptors[checked((int)viewIndex)];
                             DescriptorImageInfo storageDescriptor =
-                                lateClosure.PyramidStorageDescriptors[
-                                    checked((int)viewIndex * lateClosure.DispatchCount + mipIndex)];
+                                lateClosure.PyramidStorageDescriptors[checked((int)viewIndex)];
                             if (!ResourceRuntime.AdvancedVisibilityResources
                                     .TryAcquireLateDepthPyramidDescriptorSet(
                                         in familyState,
                                         operationIndex,
                                         viewIndex,
-                                        checked((uint)mipIndex + 1u),
+                                        0u,
                                         in sampledDescriptor,
                                         in storageDescriptor,
-                                        out lateSets[lateClosure.DescriptorIndex(viewIndex, mipIndex)],
+                                        out lateSets[lateClosure.DescriptorIndex(viewIndex, 0)],
                                         out string descriptorReason))
                             {
                                 recordingState.RecordingDeferredReason =
@@ -936,11 +985,11 @@ namespace XREngine.Rendering.Vulkan
                                         in familyState,
                                         operationIndex,
                                         viewIndex,
-                                        0u,
+                                        1u,
                                         in lateSampledDescriptor,
                                         in lateStorageDescriptor,
                                         out lateSets[lateClosure.DescriptorIndex(
-                                            viewIndex, lateClosure.DispatchCount)],
+                                            viewIndex, 1)],
                                         out string lateDescriptorReason))
                             {
                                 recordingState.RecordingDeferredReason =
@@ -1294,6 +1343,8 @@ namespace XREngine.Rendering.Vulkan
                 if (admittedSignatures.Contains(preparationSignature))
                     continue;
 
+                using VulkanPreparedResourcePlannerThreadScope resourceScope =
+                    EnterRecordingResourceScope(recordingState.FramePlan, in operationContext);
                 using var pipelineScope =
                     RuntimeEngine.Rendering.State.PushRenderingPipelineOverride(
                         operationContext.PipelineInstance);
@@ -1581,6 +1632,8 @@ namespace XREngine.Rendering.Vulkan
 
             ref readonly FrameOperationHeader operationHeader =
                 ref recordingState.Ops.GetHeader(opIndex);
+            using VulkanPreparedResourcePlannerThreadScope resourceScope =
+                EnterRecordingResourceScope(recordingState.FramePlan, recordingState.Ops.GetContext(opIndex));
             if (operationHeader.OpCode ==
                 EVulkanPrimaryPlanNodeKind.MeshTaskDispatchIndirectCount)
             {

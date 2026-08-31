@@ -222,6 +222,48 @@ namespace XREngine.Rendering.OpenGL
                 UnregisterPendingAsyncProgram();
             }
 
+            /// <summary>
+            /// Recovers when a source build completed on the shared context but its program
+            /// binary cannot be loaded by the render context. The source was already linked
+            /// successfully, so this is a cross-context binary handoff failure rather than a
+            /// shader-source failure; poisoning the hash made the affected material program
+            /// permanently pending. Retry once through the render-context source lane.
+            /// </summary>
+            private void RetryAfterSharedContextProgramBinaryHandoffFailure(
+                uint programId,
+                string failure)
+            {
+                if (Hash != 0)
+                {
+                    // The retry selector treats this marker as an explicit one-shot request
+                    // for the render-context source lane. A successful link removes it.
+                    SynchronousSourceRetryHashes.TryAdd(Hash, 0);
+                    InFlightCompilations.TryRemove(Hash, out _);
+                }
+
+                _asyncBinaryUploadQueueWaitPending = false;
+                _asyncCompileDuplicateHashWaitPending = false;
+                _asyncCompileLinkQueueWaitPending = false;
+                _asyncCompileLinkPending = false;
+                _hashComputed = false;
+                InvalidatePreparedLinkData();
+
+                PublishBackendStatus(
+                    EShaderProgramBackendStage.SynchronousFallback,
+                    "SharedContextSource",
+                    "shared-context program binary handoff failed; retrying source link on the render context",
+                    failure);
+                LogRenderingProgramBuildEvent(
+                    "SOURCE_QUEUE_BINARY_HANDOFF_RETRY",
+                    "SynchronousSource",
+                    failure,
+                    _activeBuildFingerprint,
+                    programId,
+                    _preparedCompileInputs);
+                BeginPrepareLinkData();
+                RegisterPendingAsyncProgram();
+            }
+
         }
     }
 }

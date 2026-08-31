@@ -17,6 +17,13 @@ namespace XREngine.Rendering.Commands
 {
     public sealed partial class GPURenderPassCollection
     {
+        private const string HiZDepthPyramidCaptureResourceName = "GpuHiZDepthPyramidCapture";
+        private const string HiZCoarseTilesCaptureResourceName = "GpuHiZCoarseTilesCapture";
+        private const string HiZCoarseTilesBuildEnvironmentVariable = XREngineEnvironmentVariables.GpuHizCoarseTiles;
+        private const string HiZCoarseTilesCullingEnvironmentVariable = XREngineEnvironmentVariables.GpuHizCoarseTilesCull;
+        private const uint HiZCoarseTileSize = 64u;
+        private const uint MaxHiZCoarseTilesPerAxis = 64u;
+
         private sealed class HiZSharedState
         {
             public XRTexture2D? Pyramid;
@@ -40,10 +47,7 @@ namespace XREngine.Rendering.Commands
             private static string? _logPath;
 
             public static bool IsEnabled()
-            {
-                // Always-on for the duration of this investigation. Cheap enough; flushes only once/sec.
-                return true;
-            }
+                => XREnvironment.IsEnabled("XRE_HIZ_STAGE_LOGGING");
 
             public static void Record(string stage, double ms)
             {
@@ -133,10 +137,8 @@ namespace XREngine.Rendering.Commands
         private uint _cpuOcclusionLastSceneCommandCount;
         private CpuOcclusionCameraSnapshot _cpuOcclusionLastCameraSnapshot;
         private bool _cpuOcclusionHasCameraState;
-        private uint _gpuHiZLastSceneCommandCount;
-        private Vector3 _gpuHiZLastCameraPosition;
-        private Matrix4x4 _gpuHiZLastProjection;
-        private bool _gpuHiZHasCameraState;
+        private GpuHiZTemporalSnapshot _gpuHiZLastTemporalSnapshot;
+        private bool _gpuHiZHasTemporalSnapshot;
         private readonly StableViewHiZHistoryTracker _stableHiZHistory = new();
         private readonly StableViewHiZDecision[] _stableHiZDecisions = new StableViewHiZDecision[RenderFrameViewSet.MaxViewCount];
         private RenderFrameViewSet? _stableHiZViewSet;
@@ -167,10 +169,43 @@ namespace XREngine.Rendering.Commands
             public bool History { get; } = history;
         }
 
+        /// <summary>
+        /// Exact GPU Hi-Z reuse contract. This intentionally does not share the
+        /// CPU-query motion tolerances: reusing a prior depth result after any
+        /// camera, depth, clip-space, or view-target change can hide geometry.
+        /// </summary>
+        private readonly struct GpuHiZTemporalSnapshot(
+            CpuOcclusionCameraSnapshot camera,
+            bool reversedDepth,
+            ERenderClipDepthRange clipDepthRange,
+            uint depthWidth,
+            uint depthHeight,
+            int depthSamplerIdentity,
+            bool historyDepth,
+            Matrix4x4 depthViewProjection,
+            ulong viewTargetRevision,
+            ulong sceneRevision)
+        {
+            public CpuOcclusionCameraSnapshot Camera { get; } = camera;
+            public bool ReversedDepth { get; } = reversedDepth;
+            public ERenderClipDepthRange ClipDepthRange { get; } = clipDepthRange;
+            public uint DepthWidth { get; } = depthWidth;
+            public uint DepthHeight { get; } = depthHeight;
+            public int DepthSamplerIdentity { get; } = depthSamplerIdentity;
+            public bool HistoryDepth { get; } = historyDepth;
+            public Matrix4x4 DepthViewProjection { get; } = depthViewProjection;
+            public ulong ViewTargetRevision { get; } = viewTargetRevision;
+            public ulong SceneRevision { get; } = sceneRevision;
+            public bool IsValid { get; } = camera.IsValid && depthWidth != 0u && depthHeight != 0u;
+        }
+
+        private readonly record struct GpuHiZTemporalInvalidation(
+            bool Invalidated,
+            bool CameraCut,
+            bool ProjectionDiscontinuity,
+            bool UnsafeSceneRevision);
+
         private const int TemporalOcclusionHysteresisFrames = 2;
-        private const float TemporalCameraMotionDistanceEpsilon = 0.0001f;
-        private const float TemporalCameraJumpDistance = 2.0f;
-        private const float TemporalProjectionDeltaThreshold = 0.125f;
         private const int CpuOcclusionMaxQueriesPerFrame = 64;
 
         private bool _hiZDepthPyramidReadyForMeshlets;
@@ -199,7 +234,9 @@ namespace XREngine.Rendering.Commands
             _stableHiZDecisionCount = 0;
         }
 
-        private void PrepareStableHiZDecisions(GPUScene scene)
+        private void PrepareStableHiZDecisions(
+            GPUScene scene,
+            in GpuHiZTemporalInvalidation temporalInvalidation)
         {
             _stableHiZDecisionCount = 0;
             if (_stableHiZViewSet is not RenderFrameViewSet viewSet)
@@ -244,10 +281,10 @@ namespace XREngine.Rendering.Commands
                     view.ParentContainsView,
                     relationshipCompatible,
                     depthConventionCompatible,
-                    CameraCut: false,
-                    TrackingJump: false,
-                    ProjectionDiscontinuity: false,
-                    UnsafeSceneRevision: false);
+                    CameraCut: temporalInvalidation.CameraCut,
+                    TrackingJump: temporalInvalidation.CameraCut,
+                    ProjectionDiscontinuity: temporalInvalidation.ProjectionDiscontinuity,
+                    UnsafeSceneRevision: temporalInvalidation.UnsafeSceneRevision);
                 _stableHiZDecisions[_stableHiZDecisionCount++] = _stableHiZHistory.Resolve(request);
             }
         }
@@ -309,11 +346,10 @@ namespace XREngine.Rendering.Commands
         {
             if (_meshletHiZSamplingEnabledForSubmission &&
                 _hiZDepthPyramidReadyForMeshlets &&
-                _hiZDepthPyramid is not null &&
-                _hiZDepthPyramid.Mipmaps.Length != 0)
+                TryGetActiveHiZOcclusionTexture(out XRTexture2D activeTexture, out int activeMaxMip))
             {
-                pyramid = _hiZDepthPyramid;
-                maxMip = _hiZMaxMip;
+                pyramid = activeTexture;
+                maxMip = activeMaxMip;
                 viewProjection = _hiZDepthPyramidViewProjection;
                 usesReversedZ = _hiZDepthPyramidUsesReversedZ;
                 return true;
@@ -325,6 +361,40 @@ namespace XREngine.Rendering.Commands
             usesReversedZ = false;
             return false;
         }
+
+        private bool TryGetActiveHiZOcclusionTexture(out XRTexture2D texture, out int maxMip)
+        {
+            if (IsBoundedCoarseHiZEnabled())
+            {
+                if (_hiZCoarseTiles is not null &&
+                    _hiZCoarseTiles.Mipmaps.Length == 1 &&
+                    _hiZCoarseTilesFrameId == RuntimeEngine.Rendering.State.RenderFrameId)
+                {
+                    texture = _hiZCoarseTiles;
+                    maxMip = 0;
+                    return true;
+                }
+
+                texture = null!;
+                maxMip = 0;
+                return false;
+            }
+
+            if (_hiZDepthPyramid is not null && _hiZDepthPyramid.Mipmaps.Length != 0)
+            {
+                texture = _hiZDepthPyramid;
+                maxMip = _hiZMaxMip;
+                return true;
+            }
+
+            texture = null!;
+            maxMip = 0;
+            return false;
+        }
+
+        private static bool IsBoundedCoarseHiZEnabled()
+            => XREnvironment.IsEnabled(HiZCoarseTilesBuildEnvironmentVariable) &&
+               XREnvironment.IsEnabled(HiZCoarseTilesCullingEnvironmentVariable);
 
         /// <summary>
         /// Enables the completed prior-frame pyramid for the early mesh-task
@@ -542,7 +612,11 @@ namespace XREngine.Rendering.Commands
                 return;
             }
 
-            PrepareStableHiZDecisions(scene);
+            // GPU Hi-Z must evaluate its depth contract after resolving the
+            // actual depth input. Other modes retain the neutral view-history
+            // preparation they used before GPU temporal reuse was introduced.
+            if (mode != EOcclusionCullingMode.GpuHiZ)
+                PrepareStableHiZDecisions(scene, default);
 
             // Multiview meshlet Hi-Z remains disabled until layered depth sampling is validated.
             if (ShouldUseExternalVrSharedVisibilityPassFilter(camera))
@@ -734,21 +808,36 @@ namespace XREngine.Rendering.Commands
                 return;
             }
 
+            GpuHiZTemporalInvalidation temporalInvalidation = EvaluateGpuHiZTemporalInvalidation(scene, camera, depthInput);
+            PrepareStableHiZDecisions(scene, temporalInvalidation);
             bool isReverseZ = camera.IsReversedDepth;
             bool cacheOncePerFrame = RuntimeEngine.Rendering.Settings.CacheGpuHiZOcclusionOncePerFrame;
-            bool invalidateTemporalHiZ = ShouldInvalidateGpuHiZTemporalState(scene, camera);
+            bool invalidateTemporalHiZ = temporalInvalidation.Invalidated;
             uint temporalInvalidations = invalidateTemporalHiZ ? 1u : 0u;
             // This is the current single-refine implementation. Do not label it two-phase:
             // persistent previous-frame visibility plus distinct phase-1/phase-2 indirect
             // draws have not been introduced yet.
             RuntimeEngine.Rendering.Stats.RecordGpuDrivenHiZMode(
                 depthInput.History ? "single-phase-history-depth" : "single-phase-current-depth");
-            if (cacheOncePerFrame)
+            bool boundedCoarseHiZ = IsBoundedCoarseHiZEnabled();
+            if (boundedCoarseHiZ)
+            {
+                // The bounded path is intentionally one current-depth build
+                // dispatch plus one command-test dispatch. It never falls back
+                // to a previous full pyramid when the coarse image is absent.
+                if (!BuildHiZCoarseTilesForDiagnostics(depthSampler, depthWidth, depthHeight, isReverseZ))
+                {
+                    RecordOcclusionFrameStats(candidates, 0u, 0u, temporalInvalidations);
+                    return;
+                }
+            }
+            else if (cacheOncePerFrame)
             {
                 var shared = _hiZSharedCache.GetValue(pipeline, static _ => new HiZSharedState());
                 EnsureSharedHiZDepthPyramid(shared, depthWidth, depthHeight);
                 _hiZDepthPyramid = shared.Pyramid;
                 _hiZMaxMip = shared.MaxMip;
+                PublishHiZDepthPyramidForCapture();
 
                 if (invalidateTemporalHiZ)
                     shared.LastBuiltFrameId = ulong.MaxValue;
@@ -769,6 +858,8 @@ namespace XREngine.Rendering.Commands
                     Crumb("HiZ.BuildPyramid.SHARED.END");
                     shared.LastBuiltFrameId = frameId;
                 }
+
+                BuildHiZCoarseTilesForDiagnostics(depthSampler, depthWidth, depthHeight, isReverseZ);
             }
             else
             {
@@ -783,13 +874,14 @@ namespace XREngine.Rendering.Commands
                 long _bpStart2 = Stopwatch.GetTimestamp();
                 BuildHiZPyramid(depthSampler, isReverseZ);
                 HiZStageStats.Record("BuildPyramid.PerPass", (Stopwatch.GetTimestamp() - _bpStart2) * 1000.0 / Stopwatch.Frequency);
+                BuildHiZCoarseTilesForDiagnostics(depthSampler, depthWidth, depthHeight, isReverseZ);
             }
 
             // A dirty temporal state may still build a pyramid for later frames,
             // but mesh tasks in this frame must not consume depth that can omit a
             // moved camera or newly changed scene.
             _hiZDepthPyramidReadyForMeshlets =
-                _hiZDepthPyramid is not null && !invalidateTemporalHiZ;
+                TryGetActiveHiZOcclusionTexture(out _, out _) && !invalidateTemporalHiZ;
             _hiZDepthPyramidViewProjection = depthInput.ViewProjection;
             _hiZDepthPyramidUsesReversedZ = isReverseZ;
             PublishStableHiZHistories(scene);
@@ -837,7 +929,12 @@ namespace XREngine.Rendering.Commands
             // Write refined visible commands into the ping-pong buffer and final counts into _culledCountBuffer.
             Crumb($"HiZ.Refine.BEGIN pass={RenderPass} cand={candidates}");
             long _refineStart = Stopwatch.GetTimestamp();
-            ApplyHiZOcclusionRefine(scene, camera, depthInput.ViewProjection);
+            if (!ApplyHiZOcclusionRefine(scene, camera, depthInput.ViewProjection))
+            {
+                Crumb($"HiZ.Refine.ABORT pass={RenderPass}");
+                RecordOcclusionFrameStats(candidates, 0u, 0u, temporalInvalidations);
+                return;
+            }
             long refineTicks = Stopwatch.GetTimestamp() - _refineStart;
             HiZStageStats.Record("Refine", refineTicks * 1000.0 / Stopwatch.Frequency);
             RuntimeEngine.Rendering.Stats.RecordGpuDrivenStageTiming(
@@ -968,25 +1065,102 @@ namespace XREngine.Rendering.Commands
             RecordOcclusionFrameStats(candidates, culled, 0u, 0u);
         }
 
-        private bool ShouldInvalidateGpuHiZTemporalState(GPUScene scene, XRCamera camera)
+        private GpuHiZTemporalInvalidation EvaluateGpuHiZTemporalInvalidation(
+            GPUScene scene,
+            XRCamera camera,
+            in GpuHiZDepthInput depthInput)
         {
-            bool sceneChanged = scene.TotalCommandCount != _gpuHiZLastSceneCommandCount;
-            if (sceneChanged)
-                _gpuHiZLastSceneCommandCount = scene.TotalCommandCount;
+            GpuHiZTemporalSnapshot current = new(
+                CpuOcclusionCameraSnapshot.Capture(camera),
+                camera.IsReversedDepth,
+                RuntimeEngine.Rendering.EffectiveClipDepthRange,
+                depthInput.Width,
+                depthInput.Height,
+                RuntimeHelpers.GetHashCode(depthInput.Sampler),
+                depthInput.History,
+                depthInput.ViewProjection,
+                ComputeStableHiZViewTargetRevision(),
+                ComputeStableHiZSceneRevision(scene));
 
-            _ = HasSignificantCameraChange(
-                camera,
-                ref _gpuHiZHasCameraState,
-                ref _gpuHiZLastCameraPosition,
-                ref _gpuHiZLastProjection,
-                out bool cameraMoved);
+            bool firstObservation = !_gpuHiZHasTemporalSnapshot;
+            GpuHiZTemporalSnapshot previous = _gpuHiZLastTemporalSnapshot;
+            bool invalidData = !current.IsValid;
+            bool cameraCut = firstObservation || invalidData ||
+                current.Camera.CameraIdentity != previous.Camera.CameraIdentity ||
+                current.Camera.Position != previous.Camera.Position ||
+                current.Camera.Forward != previous.Camera.Forward ||
+                current.Camera.Up != previous.Camera.Up ||
+                !current.Camera.ViewProjection.Equals(previous.Camera.ViewProjection);
+            bool projectionDiscontinuity = firstObservation || invalidData ||
+                !current.Camera.Projection.Equals(previous.Camera.Projection) ||
+                current.Camera.NearZ != previous.Camera.NearZ ||
+                current.ReversedDepth != previous.ReversedDepth ||
+                current.ClipDepthRange != previous.ClipDepthRange;
 
-            // Visibility history belongs to an exact view. Even sub-jump camera
-            // motion can reveal work that the prior view marked occluded, so the
-            // two-pass early list must be conservatively reseeded whenever the
-            // view moves. The larger jump result remains useful to CPU temporal
-            // policies, but is too permissive for GPU visibility reuse.
-            return sceneChanged || cameraMoved;
+            // Current jitter is intentionally excluded from the projection-cut
+            // classification above. It is still part of the sampling contract:
+            // a changed depth matrix may not sample last frame's pyramid.
+            bool samplingContractChanged = firstObservation || invalidData ||
+                current.DepthWidth != previous.DepthWidth ||
+                current.DepthHeight != previous.DepthHeight ||
+                current.DepthSamplerIdentity != previous.DepthSamplerIdentity ||
+                current.HistoryDepth != previous.HistoryDepth ||
+                !current.DepthViewProjection.Equals(previous.DepthViewProjection) ||
+                current.ViewTargetRevision != previous.ViewTargetRevision;
+            bool unsafeSceneRevision = firstObservation || invalidData ||
+                current.SceneRevision != previous.SceneRevision ||
+                samplingContractChanged;
+
+            _gpuHiZLastTemporalSnapshot = current;
+            _gpuHiZHasTemporalSnapshot = true;
+            return new(
+                cameraCut || projectionDiscontinuity || unsafeSceneRevision,
+                cameraCut,
+                projectionDiscontinuity,
+                unsafeSceneRevision);
+        }
+
+        private ulong ComputeStableHiZViewTargetRevision()
+        {
+            const ulong offsetBasis = 14695981039346656037UL;
+            const ulong prime = 1099511628211UL;
+            ulong revision = offsetBasis;
+            if (_stableHiZViewSet is not RenderFrameViewSet viewSet)
+                return revision;
+
+            revision = (revision ^ (uint)viewSet.ViewCount) * prime;
+            for (int i = 0; i < viewSet.ViewCount; i++)
+            {
+                RenderFrameViewDescriptor view = viewSet.GetView(i);
+                revision = (revision ^ view.EffectiveHistoryKey) * prime;
+                revision = (revision ^ view.Target.ResourceGeneration) * prime;
+                revision = (revision ^ (view.ReversedDepth ? 1UL : 0UL)) * prime;
+                revision = (revision ^ (view.DepthZeroToOne ? 1UL : 0UL)) * prime;
+                revision = AppendStableHiZMatrixRevision(revision, view.ViewMatrix, prime);
+                revision = AppendStableHiZMatrixRevision(revision, view.ProjectionMatrixUnjittered, prime);
+            }
+
+            return revision;
+        }
+
+        private static ulong AppendStableHiZMatrixRevision(ulong revision, in Matrix4x4 matrix, ulong prime)
+        {
+            revision = (revision ^ BitConverter.SingleToUInt32Bits(matrix.M11)) * prime;
+            revision = (revision ^ BitConverter.SingleToUInt32Bits(matrix.M12)) * prime;
+            revision = (revision ^ BitConverter.SingleToUInt32Bits(matrix.M13)) * prime;
+            revision = (revision ^ BitConverter.SingleToUInt32Bits(matrix.M14)) * prime;
+            revision = (revision ^ BitConverter.SingleToUInt32Bits(matrix.M21)) * prime;
+            revision = (revision ^ BitConverter.SingleToUInt32Bits(matrix.M22)) * prime;
+            revision = (revision ^ BitConverter.SingleToUInt32Bits(matrix.M23)) * prime;
+            revision = (revision ^ BitConverter.SingleToUInt32Bits(matrix.M24)) * prime;
+            revision = (revision ^ BitConverter.SingleToUInt32Bits(matrix.M31)) * prime;
+            revision = (revision ^ BitConverter.SingleToUInt32Bits(matrix.M32)) * prime;
+            revision = (revision ^ BitConverter.SingleToUInt32Bits(matrix.M33)) * prime;
+            revision = (revision ^ BitConverter.SingleToUInt32Bits(matrix.M34)) * prime;
+            revision = (revision ^ BitConverter.SingleToUInt32Bits(matrix.M41)) * prime;
+            revision = (revision ^ BitConverter.SingleToUInt32Bits(matrix.M42)) * prime;
+            revision = (revision ^ BitConverter.SingleToUInt32Bits(matrix.M43)) * prime;
+            return (revision ^ BitConverter.SingleToUInt32Bits(matrix.M44)) * prime;
         }
 
         private static bool TryResolveGpuHiZDepthInput(
@@ -1128,7 +1302,7 @@ namespace XREngine.Rendering.Commands
 
             _hiZDepthPyramidOwned = new XRTexture2D
             {
-                Name = "HiZDepthPyramid",
+                Name = HiZDepthPyramidCaptureResourceName,
                 Mipmaps = mips,
                 SizedInternalFormat = ESizedInternalFormat.Rgba32f,
                 MinFilter = ETexMinFilter.NearestMipmapNearest,
@@ -1143,6 +1317,7 @@ namespace XREngine.Rendering.Commands
             // Ensure GPU object is created.
             _hiZDepthPyramidOwned.PushData();
             _hiZDepthPyramid = _hiZDepthPyramidOwned;
+            PublishHiZDepthPyramidForCapture();
         }
 
         private void EnsureSharedHiZDepthPyramid(HiZSharedState shared, uint width, uint height)
@@ -1184,7 +1359,7 @@ namespace XREngine.Rendering.Commands
 
             shared.Pyramid = new XRTexture2D
             {
-                Name = "HiZDepthPyramid(shared)",
+                Name = HiZDepthPyramidCaptureResourceName,
                 Mipmaps = mips,
                 SizedInternalFormat = ESizedInternalFormat.Rgba32f,
                 MinFilter = ETexMinFilter.NearestMipmapNearest,
@@ -1197,6 +1372,114 @@ namespace XREngine.Rendering.Commands
             };
 
             shared.Pyramid.PushData();
+        }
+
+        /// <summary>
+        /// Exposes the live pass-owned pyramid through the declared pipeline
+        /// import without transferring ownership. This is strictly an
+        /// inspection handle; culling continues to bind the private texture.
+        /// </summary>
+        private void PublishHiZDepthPyramidForCapture()
+        {
+            if (_hiZDepthPyramid is not null &&
+                _ownerPipeline is XRRenderPipelineInstance pipeline &&
+                pipeline.Pipeline is DefaultRenderPipeline)
+            {
+                pipeline.BindImportedTexture(_hiZDepthPyramid);
+            }
+        }
+
+        /// <summary>
+        /// Builds a single, fixed-workgroup R32F depth-tile image. Capture-only
+        /// mode leaves the established full pyramid active; when both bounded
+        /// coarse-mode switches are enabled, this same-frame image is the only
+        /// culling input and its absence leaves every candidate visible.
+        /// </summary>
+        private bool BuildHiZCoarseTilesForDiagnostics(
+            XRTexture depthSampler,
+            uint sourceWidth,
+            uint sourceHeight,
+            bool isReversedDepth)
+        {
+            if (!XREnvironment.IsEnabled(HiZCoarseTilesBuildEnvironmentVariable) ||
+                _hiZCoarseTileProgram is null)
+            {
+                return false;
+            }
+
+            uint tileWidth = (sourceWidth + HiZCoarseTileSize - 1u) / HiZCoarseTileSize;
+            uint tileHeight = (sourceHeight + HiZCoarseTileSize - 1u) / HiZCoarseTileSize;
+            if (tileWidth == 0u || tileHeight == 0u ||
+                tileWidth > MaxHiZCoarseTilesPerAxis || tileHeight > MaxHiZCoarseTilesPerAxis)
+            {
+                // No partial image: an oversized source stays conservatively
+                // unavailable for this diagnostic path.
+                return false;
+            }
+
+            EnsureHiZCoarseTiles(tileWidth, tileHeight);
+            if (_hiZCoarseTiles is null)
+                return false;
+
+            long buildRecordStart = Stopwatch.GetTimestamp();
+            _hiZCoarseTileProgram.Use();
+            _hiZCoarseTileProgram.Sampler("depthTexture", depthSampler, 0);
+            _hiZCoarseTileProgram.Uniform("SourceSize", new IVector2((int)sourceWidth, (int)sourceHeight));
+            _hiZCoarseTileProgram.Uniform("TileCount", new IVector2((int)tileWidth, (int)tileHeight));
+            _hiZCoarseTileProgram.Uniform("IsReversedDepth", isReversedDepth ? 1u : 0u);
+            _hiZCoarseTileProgram.BindImageTexture(
+                1u,
+                _hiZCoarseTiles,
+                0,
+                false,
+                0,
+                XRRenderProgram.EImageAccess.WriteOnly,
+                XRRenderProgram.EImageFormat.R32F);
+            using (OcclusionGpuElapsedTiming.Instance.Begin(EOcclusionGpuElapsedStage.Build))
+            {
+                _hiZCoarseTileProgram.DispatchCompute(
+                    tileWidth,
+                    tileHeight,
+                    1u,
+                    EMemoryBarrierMask.ShaderImageAccess | EMemoryBarrierMask.TextureFetch);
+            }
+            _hiZCoarseTilesFrameId = RuntimeEngine.Rendering.State.RenderFrameId;
+            _hiZCoarseSourceSize = new IVector2((int)sourceWidth, (int)sourceHeight);
+            OcclusionTelemetry.RecordHiZBuild(
+                sourceWidth,
+                sourceHeight,
+                Stopwatch.GetElapsedTime(buildRecordStart).TotalMilliseconds);
+            return true;
+        }
+
+        private void EnsureHiZCoarseTiles(uint width, uint height)
+        {
+            if (_hiZCoarseTiles is not null &&
+                _hiZCoarseTiles.Mipmaps.Length == 1 &&
+                _hiZCoarseTiles.Mipmaps[0].Width == width &&
+                _hiZCoarseTiles.Mipmaps[0].Height == height)
+            {
+                return;
+            }
+
+            _hiZCoarseTiles?.Destroy();
+            _hiZCoarseTiles = new XRTexture2D
+            {
+                Name = HiZCoarseTilesCaptureResourceName,
+                Mipmaps = [new Mipmap2D(width, height, EPixelInternalFormat.R32f, EPixelFormat.Red, EPixelType.Float, allocateData: false)],
+                SizedInternalFormat = ESizedInternalFormat.R32f,
+                MinFilter = ETexMinFilter.Nearest,
+                MagFilter = ETexMagFilter.Nearest,
+                UWrap = ETexWrapMode.ClampToEdge,
+                VWrap = ETexWrapMode.ClampToEdge,
+                AutoGenerateMipmaps = false,
+                Resizable = false,
+                RequiresStorageUsage = true,
+            };
+            _hiZCoarseTiles.PushData();
+            _hiZCoarseTilesFrameId = ulong.MaxValue;
+            if (_ownerPipeline is XRRenderPipelineInstance pipeline && pipeline.Pipeline is DefaultRenderPipeline)
+                pipeline.BindImportedTexture(_hiZCoarseTiles);
         }
 
         /// <summary>
@@ -1259,6 +1542,8 @@ namespace XREngine.Rendering.Commands
             if (_hiZDepthPyramid is null)
                 return;
 
+            using var gpuElapsedScope = OcclusionGpuElapsedTiming.Instance.Begin(EOcclusionGpuElapsedStage.Build);
+
             EnsureHiZMipSourceViews(_hiZDepthPyramid);
 
             // Mip 0 init.
@@ -1294,26 +1579,34 @@ namespace XREngine.Rendering.Commands
             }
         }
 
-        private void ApplyHiZOcclusionRefine(GPUScene scene, XRCamera camera, in Matrix4x4 viewProjection)
+        private bool ApplyHiZOcclusionRefine(GPUScene scene, XRCamera camera, in Matrix4x4 viewProjection)
         {
-            if (_hiZDepthPyramid is null)
-                return;
+            if (!TryGetActiveHiZOcclusionTexture(out XRTexture2D activeHiZ, out int activeHiZMaxMip))
+                return false;
 
             if (_copyCount3Program is null)
-                return;
+                return false;
 
-            // Reset output counters (scratch output for occlusion stage)
-            WriteUints(_cullCountScratchBuffer!, 0u, 0u, 0u);
-            WriteUInt(_occlusionOverflowFlagBuffer!, 0u);
+            // Reset scratch output, overflow, and per-view counts in queue order.
+            // A mapped clear here can overwrite queued cull output from a prior frame.
+            if (_perViewDrawCountBuffer is null ||
+                !ClearUIntBufferOnGpu(_cullCountScratchBuffer!, GPUScene.VisibleCountComponents, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command) ||
+                !ClearUIntBufferOnGpu(_occlusionOverflowFlagBuffer!, 1u, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command) ||
+                !ClearUIntBufferOnGpu(_perViewDrawCountBuffer, Math.Max(_activeViewCount, 1u), EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command))
+            {
+                Dbg("Hi-Z refine abort - ordered counter clear unavailable.", "Occlusion");
+                return false;
+            }
 
             // Prepare uniforms
             uint reversed = camera.IsReversedDepth ? 1u : 0u;
 
             _hiZOcclusionProgram!.Use();
             _hiZOcclusionProgram.Uniform("ViewProj", viewProjection);
-            _hiZOcclusionProgram.Uniform("HiZMaxMip", _hiZMaxMip);
+            _hiZOcclusionProgram.Uniform("HiZMaxMip", activeHiZMaxMip);
+            _hiZOcclusionProgram.Uniform("CoarseSourceSize", IsBoundedCoarseHiZEnabled() ? _hiZCoarseSourceSize : default);
             _hiZOcclusionProgram.Uniform("IsReversedDepth", reversed);
-            _hiZOcclusionProgram.Uniform("MaxOutputCommands", (int)CulledSceneToRenderBuffer!.ElementCount);
+            _hiZOcclusionProgram.Uniform("MaxOutputCommands", (int)_occlusionCulledBuffer!.ElementCount);
             _hiZOcclusionProgram.Uniform("TwoPassPhase", 0);
             _hiZOcclusionProgram.Uniform("ActiveViewCount", (int)_activeViewCount);
             _hiZOcclusionProgram.Uniform("CurrentRenderPass", RenderPass);
@@ -1321,7 +1614,7 @@ namespace XREngine.Rendering.Commands
             SetHiZOcclusionClipSpaceUniforms(_hiZOcclusionProgram);
 
             // Bind pyramid and buffers
-            _hiZOcclusionProgram.Sampler("HiZDepth", _hiZDepthPyramid, 0);
+            _hiZOcclusionProgram.Sampler("HiZDepth", activeHiZ, 0);
             _hiZOcclusionProgram.BindBuffer(CulledSceneToRenderBuffer!, 0);
             _hiZOcclusionProgram.BindBuffer(_occlusionCulledBuffer!, 1);
             BindStorageBuffer(_hiZOcclusionProgram, _culledCountBuffer!, 2);
@@ -1334,15 +1627,6 @@ namespace XREngine.Rendering.Commands
             if (_statsBuffer is not null)
                 _hiZOcclusionProgram.BindBuffer(_statsBuffer, 8);
             BindViewSetBuffers(_hiZOcclusionProgram);
-
-            if (_perViewDrawCountBuffer is not null &&
-                !ClearUIntBufferOnGpu(
-                    _perViewDrawCountBuffer,
-                    Math.Max(_activeViewCount, 1u),
-                    EMemoryBarrierMask.ShaderStorage))
-            {
-                ResetPerViewDrawCounts(_activeViewCount);
-            }
 
             // Dispatch sizing.
             //
@@ -1364,7 +1648,18 @@ namespace XREngine.Rendering.Commands
                 : VisibleCommandCount;
 
             uint groups = Math.Max(1u, (dispatchCount + 255u) / 256u);
-            _hiZOcclusionProgram.DispatchCompute(groups, 1, 1, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
+            long testRecordStart = Stopwatch.GetTimestamp();
+            using (OcclusionGpuElapsedTiming.Instance.Begin(EOcclusionGpuElapsedStage.Test))
+            {
+                _hiZOcclusionProgram.DispatchCompute(
+                    groups,
+                    1,
+                    1,
+                    EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
+            }
+            OcclusionTelemetry.RecordHiZTest(
+                dispatchCount,
+                Stopwatch.GetElapsedTime(testRecordStart).TotalMilliseconds);
 
             // Forward occlusion output counts into the primary count buffer for indirect build.
             _copyCount3Program.Use();
@@ -1374,6 +1669,7 @@ namespace XREngine.Rendering.Commands
 
             // Update VisibleCommandCount/InstanceCount from final count buffer in debug/readback mode.
             UpdateVisibleCountersFromBuffer(_culledCountBuffer);
+            return true;
         }
 
         private void SwapCulledBufferAfterOcclusion()
@@ -1468,40 +1764,13 @@ namespace XREngine.Rendering.Commands
             return tier;
         }
 
-        private static bool HasSignificantCameraChange(
-            XRCamera camera,
-            ref bool hasCameraState,
-            ref Vector3 lastCameraPosition,
-            ref Matrix4x4 lastProjection,
-            out bool cameraMoved)
-        {
-            Vector3 position = camera.Transform.RenderTranslation;
-            Matrix4x4 projection = camera.ProjectionMatrix;
-            if (!hasCameraState)
-            {
-                hasCameraState = true;
-                lastCameraPosition = position;
-                lastProjection = projection;
-                cameraMoved = false;
-                return false;
-            }
-
-            float distance = Vector3.Distance(lastCameraPosition, position);
-            float projectionDelta =
-                MathF.Abs(lastProjection.M11 - projection.M11) +
-                MathF.Abs(lastProjection.M22 - projection.M22);
-            lastCameraPosition = position;
-            lastProjection = projection;
-            cameraMoved = distance > TemporalCameraMotionDistanceEpsilon ||
-                projectionDelta > CpuOcclusionTemporalPolicy.StableProjectionDelta;
-            return distance >= TemporalCameraJumpDistance ||
-                projectionDelta > TemporalProjectionDeltaThreshold;
-        }
-
         private void ResetTemporalOcclusionState()
         {
             _temporalOcclusion.Clear();
             _cpuOcclusionLastResolved.Clear();
+            _gpuHiZHasTemporalSnapshot = false;
+            _hiZDepthPyramidReadyForMeshlets = false;
+            _meshletHiZSamplingEnabledForSubmission = false;
         }
 
         private void SubmitCpuOcclusionQueryBatch(GPUScene scene, XRCamera camera, uint candidates, ECpuOcclusionMotionTier motionTier)

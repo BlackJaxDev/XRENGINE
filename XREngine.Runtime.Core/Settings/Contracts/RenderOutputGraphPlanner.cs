@@ -17,7 +17,7 @@ public sealed class RenderOutputGraphPlanner
     private ulong _frameId = ulong.MaxValue;
     private uint _manifestGeneration;
 
-    public RenderOutputGraphPlanner(int nodeCapacity = 256, int edgeCapacity = 512)
+    public RenderOutputGraphPlanner(int nodeCapacity = 4096, int edgeCapacity = 16384)
         => _graph = new RenderOutputDag(nodeCapacity, edgeCapacity);
 
     public RenderOutputDag Graph => _graph;
@@ -150,6 +150,15 @@ public sealed class RenderOutputGraphPlanner
 
         status = default;
         return false;
+    }
+
+    public bool TryGetTerminalNodeIndex(
+        in RenderOutputRequest request,
+        out int nodeIndex)
+    {
+        nodeIndex = -1;
+        return EnsureFrame(request.FrameId) &&
+            _graph.TryGetNodeIndex(GetTerminalNodeKey(request), out nodeIndex);
     }
 
     /// <summary>

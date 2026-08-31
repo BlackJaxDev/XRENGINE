@@ -51,6 +51,8 @@ public partial class OpenGLRenderer
             _disposed = true;
             renderer._openXrExternalSwapchainRenderDepth = Math.Max(0, renderer._openXrExternalSwapchainRenderDepth - 1);
             renderer._openXrExternalSwapchainTargetRegion = previousRegion;
+            if (renderer._openXrExternalSwapchainRenderDepth == 0)
+                renderer.SealReadOnlyStorageEpoch();
         }
     }
 }

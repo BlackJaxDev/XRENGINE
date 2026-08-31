@@ -46,12 +46,10 @@ internal sealed class VulkanProgramPlannerPort(
         ComputeDispatchSnapshot snapshot = program.CaptureComputeSnapshot();
         if (!program.ValidateComputeSnapshot(snapshot, out _))
             return;
-        try
-        {
-            if (program.GetOrCreateComputePipeline(passIndex, frameContext.PassMetadata).Handle == 0)
-                return;
-        }
-        catch { return; }
+        // Native compute pipeline readiness is resolved by the frame-plan
+        // preparation authority before sealing. Do not erase this dispatch
+        // while its asynchronously compiled pipeline is pending: the next
+        // readiness retry must observe the exact program/snapshot request.
         VulkanFrameOperationQueue queue = framePlanner.Operations;
         ComputeDispatchOp operation = ComputeDispatchOp.Rent(
             passIndex,

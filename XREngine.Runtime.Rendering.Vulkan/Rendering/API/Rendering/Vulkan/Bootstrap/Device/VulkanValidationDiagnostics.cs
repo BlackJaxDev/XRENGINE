@@ -16,6 +16,9 @@ internal sealed unsafe class VulkanValidationDiagnostics
     private readonly Dictionary<string, MessageAggregate> _messages =
         new(StringComparer.Ordinal);
     private int _overflowCount;
+    private long _errorCount;
+    private long _warningCount;
+    private long _suppressedWarningCount;
     private readonly object _deviceAddressBindingLock = new();
     private readonly VulkanValidationDeviceAddressBinding[] _deviceAddressBindings =
         new VulkanValidationDeviceAddressBinding[MaximumDeviceAddressBindings];
@@ -43,6 +46,11 @@ internal sealed unsafe class VulkanValidationDiagnostics
             message.Contains("this write is unused", StringComparison.Ordinal) &&
             message.Contains("pColorAttachments", StringComparison.Ordinal))
         {
+            lock (_summaryLock)
+            {
+                _warningCount++;
+                _suppressedWarningCount++;
+            }
             return Vk.False;
         }
 
@@ -182,6 +190,11 @@ internal sealed unsafe class VulkanValidationDiagnostics
         bool isWarning = severity.HasFlag(DebugUtilsMessageSeverityFlagsEXT.WarningBitExt);
         lock (_summaryLock)
         {
+            // Totals remain complete even when bounded sample storage overflows.
+            if (isError)
+                _errorCount++;
+            if (isWarning)
+                _warningCount++;
             if (!_messages.TryGetValue(key, out MessageAggregate? aggregate))
             {
                 if (_messages.Count >= MaximumMessages)
@@ -205,6 +218,38 @@ internal sealed unsafe class VulkanValidationDiagnostics
                 aggregate.WarningCount++;
             aggregate.LastFrameId = submission.FrameId;
             aggregate.LastSample = message;
+        }
+    }
+
+    /// <summary>Copies bounded diagnostics on demand; never called by frame submission.</summary>
+    internal VulkanValidationDiagnosticSnapshot CaptureSnapshot(
+        bool standardValidationEnabled,
+        bool synchronizationValidationEnabled,
+        bool debugMessengerActive)
+    {
+        lock (_summaryLock)
+        {
+            VulkanValidationDiagnosticMessage[] messages = new VulkanValidationDiagnosticMessage[_messages.Count];
+            int index = 0;
+            foreach ((string identity, MessageAggregate aggregate) in _messages)
+            {
+                messages[index++] = new()
+                {
+                    Identity = identity, Count = aggregate.Count,
+                    ErrorCount = aggregate.ErrorCount, WarningCount = aggregate.WarningCount,
+                    FirstFrameId = aggregate.FirstFrameId, LastFrameId = aggregate.LastFrameId,
+                    FirstSample = aggregate.FirstSample, LastSample = aggregate.LastSample,
+                };
+            }
+            return new()
+            {
+                StandardValidationEnabled = standardValidationEnabled,
+                SynchronizationValidationEnabled = synchronizationValidationEnabled,
+                DebugMessengerActive = debugMessengerActive,
+                ErrorCount = _errorCount, WarningCount = _warningCount,
+                SuppressedWarningCount = _suppressedWarningCount,
+                OverflowCount = _overflowCount, Messages = messages,
+            };
         }
     }
 

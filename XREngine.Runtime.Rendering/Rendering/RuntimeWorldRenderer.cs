@@ -212,6 +212,12 @@ public sealed partial class RuntimeWorldRenderer : IRuntimeRenderWorld, IRuntime
         _renderRegistrationCapabilityLease?.Dispose();
         _renderWorldCapabilityLease?.Dispose();
         RuntimeRenderWorldRegistry.Detach(WorldContext, out _);
+        // Publication producers release on the authoring thread; accepted frames
+        // independently retain any immutable shadow bytes they still consume.
+        if (RuntimeEngine.IsRenderThread)
+            Lights.Clear();
+        else
+            RuntimeEngine.EnqueueRenderThreadTask(Lights.Clear, "RuntimeWorldRenderer.ClearLights", RenderThreadJobKind.RenderPipelineResource);
         _physicsDebugRenderer.Dispose();
     }
 }

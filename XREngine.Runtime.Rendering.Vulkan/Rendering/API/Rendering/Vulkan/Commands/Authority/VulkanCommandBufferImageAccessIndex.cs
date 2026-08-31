@@ -13,6 +13,16 @@ internal sealed class VulkanCommandBufferImageAccessIndex(int initialCapacity = 
     public void Clear()
         => _states.Clear();
 
+    /// <summary>
+    /// Reads the newest state for one cell, including an explicitly recorded
+    /// Undefined state. Callers merging partial batches must not fall through
+    /// to an older submitted state for a cell the batch already owns.
+    /// </summary>
+    public bool TryGetSubresource(
+        in VulkanTrackedImageSubresource key,
+        out VulkanImageAccessState state)
+        => _states.TryGetValue(key, out state);
+
     public void Record(
         ulong imageHandle,
         in ImageSubresourceRange range,
@@ -101,6 +111,7 @@ internal sealed class VulkanCommandBufferImageAccessIndex(int initialCapacity = 
 
         VulkanImageAccessState prior = combined.Value;
         if (prior.Layout != current.Layout ||
+            prior.ResourceGeneration != current.ResourceGeneration ||
             (prior.QueueFamilyIndex != Vk.QueueFamilyIgnored &&
              current.QueueFamilyIndex != Vk.QueueFamilyIgnored &&
              prior.QueueFamilyIndex != current.QueueFamilyIndex))

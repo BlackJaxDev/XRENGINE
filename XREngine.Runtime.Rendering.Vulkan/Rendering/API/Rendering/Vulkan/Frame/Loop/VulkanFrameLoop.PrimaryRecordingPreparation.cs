@@ -268,8 +268,10 @@ internal sealed partial class VulkanFrameLoop
                 _resourceRuntime.AllowSynchronousResourceUploads;
             VulkanPrimaryCommandPlan primaryPlan = primaryPlans[imageIndex];
             string replanReason = string.Empty;
+            bool nativeBarrierBindingsSuperseded = false;
             for (int replanAttempt = 0; replanAttempt < 2; replanAttempt++)
             {
+                nativeBarrierBindingsSuperseded = false;
                 ResourcePlannerRuntimeState plannerState = acceptedPlan is null
                     ? CaptureResourcePlannerRuntimeState()
                     : acceptedPlan.PlannerState;
@@ -317,15 +319,24 @@ internal sealed partial class VulkanFrameLoop
                 }
                 VulkanFramePlanningSnapshot frozenPlanningSnapshot =
                     planningSnapshot;
-                if (acceptedPlan is null &&
-                    !TryFreezeNativeBarrierBindings(
-                        in planningSnapshot,
-                        in plannerState,
-                        allowSynchronousResourceUploads,
-                        out frozenPlanningSnapshot,
-                        out string resourcePreparationFailure))
+                try
                 {
-                    replanReason = resourcePreparationFailure;
+                    if (acceptedPlan is null &&
+                        !TryFreezeNativeBarrierBindings(
+                            in planningSnapshot,
+                            ref plannerState,
+                            allowSynchronousResourceUploads,
+                            out frozenPlanningSnapshot,
+                            out string resourcePreparationFailure))
+                    {
+                        replanReason = resourcePreparationFailure;
+                        continue;
+                    }
+                }
+                catch (VulkanNativeBufferBindingSupersededException exception)
+                {
+                    nativeBarrierBindingsSuperseded = true;
+                    replanReason = exception.Message;
                     continue;
                 }
 
@@ -360,7 +371,9 @@ internal sealed partial class VulkanFrameLoop
                                    _telemetry,
                                    EVulkanCpuStage.FrameOpPlan))
                         {
-                            framePlan = acceptedPlan?.LogicalPlan ??
+                            try
+                            {
+                                framePlan = acceptedPlan?.LogicalPlan ??
                                 _framePlanner.FramePlanBuilder.BuildAndSeal(
                                     CurrentFrameSlot,
                                     plannerState.ResourcePlannerRevision,
@@ -370,7 +383,10 @@ internal sealed partial class VulkanFrameLoop
                                     dynamicUiOperations,
                                     new VulkanFramePlanRenderGraphAuthority(
                                         frozenPlanningSnapshot.RenderGraphPlan,
-                                        plannerState.FrameOpResourcePlannerSwitchingState),
+                                        plannerState.FrameOpResourcePlannerSwitchingState,
+                                        _framePlanner,
+                                        _resourceRuntime.BackendObjectContext,
+                                        allowSynchronousResourceUploads),
                                     textureUploadOperations: textureUploadOperations,
                                     preparedMeshIngress: preparedMeshIngress,
                                     authoringOperationCount: staticOperationCount,
@@ -378,16 +394,40 @@ internal sealed partial class VulkanFrameLoop
                                         dynamicUiOperationCount,
                                     authoringTextureUploadOperationCount:
                                         textureUploadOperationCount);
+                            }
+                            catch (VulkanNativeBufferBindingSupersededException exception)
+                            {
+                                nativeBarrierBindingsSuperseded = true;
+                                replanReason = exception.Message;
+                                continue;
+                            }
                         }
                     }
                 }
+                if (acceptedPlan is null)
+                    framePlan.PrepareRecordingPlannerGenerations(in plannerState);
+                else if (!framePlan.HasPreparedRecordingPlannerGenerations)
+                    return CreateDesktopRecordingReadinessFailure(ref attempt, "The accepted plan has no frozen physical-resource generation.");
                 FrameOperationSequence preparedOperations =
                     framePlan.GetNativeStaticOperationsForRecording();
+                if (!TryPrepareReadOnlyStorage(
+                        framePlan,
+                        CurrentFrameSlot,
+                        out VulkanReadOnlyStoragePreparedAuthority? readOnlyStorageAuthority,
+                        out _,
+                        out string storageFailure))
+                {
+                    return CreateDesktopRecordingReadinessFailure(ref attempt, storageFailure);
+                }
                 if (acceptedPlan is null)
                 {
+                    using VulkanResourceRuntime.ReadOnlyStorageRecordingScope storageScope =
+                        ResourceRuntime.EnterReadOnlyStorageRecordingScope(
+                            readOnlyStorageAuthority);
                     computePreparation = _commandRuntime.PrepareComputeFramePlanForRecording(
                         imageIndex,
-                        framePlan);
+                        framePlan,
+                        in plannerState);
                 }
                 if (!computePreparation.Succeeded)
                 {
@@ -432,6 +472,15 @@ internal sealed partial class VulkanFrameLoop
                     ref attempt,
                     result,
                     framePlan);
+                // A sealed accepted packet cannot be rebound in place after a
+                // native resource generation race. Return the typed retry so
+                // the after-acquire path discards it and publishes a fresh plan.
+                if (acceptedPlan is not null && result.RequiresReplan)
+                    return result with
+                    {
+                        Disposition = EVulkanPrimaryCommandRecordingDisposition.Failed,
+                        FailureKind = EVulkanCommandRecordingFailureKind.RetryFrame,
+                    };
                 if (!result.RequiresReplan)
                 {
                     if (meshMaterializationComplete)
@@ -447,6 +496,16 @@ internal sealed partial class VulkanFrameLoop
                 }
                 replanReason = result.Reason ??
                     "primary command recording requested a fresh plan";
+            }
+
+            if (nativeBarrierBindingsSuperseded)
+            {
+                return VulkanPrimaryCommandRecordingResult.Failed(
+                    $"primary command recording exhausted the two-attempt native buffer binding replan limit: {replanReason}",
+                    attempt.ReadinessPolicy,
+                    attempt.WorkClass,
+                    attempt.FrameNumber,
+                    EVulkanCommandRecordingFailureKind.RetryFrame);
             }
 
             return CreateDesktopRecordingReadinessFailure(
@@ -1959,6 +2018,11 @@ internal sealed partial class VulkanFrameLoop
             authority.ClearState,
             authority.Policy,
             authority.TrackedTargetLayout,
+            ReadOnlyStorageAuthority: FrameDataArena is { } arena
+                ? ResourceRuntime.ReadOnlyStoragePreparedMap.CreateAuthority(
+                    arena,
+                    CurrentFrameSlot)
+                : null,
             CommandChainSchedule: commandChainSchedule,
             CallerOwnsSubmissionMarkersUntilRecordingSucceeds:
                 callerOwnsSubmissionMarkersUntilRecordingSucceeds);
@@ -2068,24 +2132,59 @@ internal sealed partial class VulkanFrameLoop
     /// </summary>
     private bool TryFreezeNativeBarrierBindings(
         in VulkanFramePlanningSnapshot planningSnapshot,
-        in ResourcePlannerRuntimeState plannerState,
+        ref ResourcePlannerRuntimeState plannerState,
         bool allowSynchronousResourceUploads,
         out VulkanFramePlanningSnapshot frozenSnapshot,
         out string reason)
     {
         VulkanRenderGraphPlan sourcePlan = planningSnapshot.RenderGraphPlan;
         VulkanBarrierPlan sourceBarriers = sourcePlan.Barriers;
-        if (sourceBarriers.HasCompleteNativeBindings)
+        ulong currentNativeBufferRevision = _resourceRuntime.NativeBufferBindingRevision;
+        if (sourceBarriers.HasCompleteNativeBindings &&
+            sourceBarriers.NativeBufferBindingRevision == currentNativeBufferRevision)
         {
             frozenSnapshot = planningSnapshot;
             reason = string.Empty;
             return true;
         }
 
-        frozenSnapshot = default;
-        reason = $"Prepared resource plan {plannerState.ResourcePlannerRevision} contains unresolved frozen barrier bindings.";
-        return false;
+        // A switching state can own frame-operation plans distinct from the
+        // fallback plan. Refresh every currently required owner at the same
+        // native-buffer epoch; otherwise command-plan resolution can select an
+        // old cached barrier plan after the fallback has been refrozen.
+        for (int attempt = 0; attempt < 2; attempt++)
+        {
+            ulong revisionBeforeRefresh = _resourceRuntime.NativeBufferBindingRevision;
+            if (!_framePlanner.TryFreezeResourcePlannerRenderGraphPlan(
+                    ref plannerState,
+                    _resourceRuntime.BackendObjectContext,
+                    allowSynchronousResourceUploads,
+                    out reason,
+                    out bool nativeBindingsSuperseded))
+            {
+                if (nativeBindingsSuperseded)
+                    continue;
+                frozenSnapshot = default;
+                return false;
+            }
+
+            VulkanBarrierPlan refreshedBarriers = plannerState.RenderGraphPlan.Barriers;
+            if (refreshedBarriers.HasCompleteNativeBindings &&
+                refreshedBarriers.NativeBufferBindingRevision == revisionBeforeRefresh &&
+                revisionBeforeRefresh == _resourceRuntime.NativeBufferBindingRevision)
+            {
+                PublishResourcePlannerRuntimeState(plannerState, commitReusedImageMetadata: false);
+                _framePlanner.PublishPlan(plannerState.RenderGraphPlan);
+                frozenSnapshot = planningSnapshot with { RenderGraphPlan = plannerState.RenderGraphPlan };
+                reason = string.Empty;
+                return true;
+            }
+        }
+
+        throw new VulkanNativeBufferBindingSupersededException(
+            $"Native buffer barrier refreeze for resource plan {plannerState.ResourcePlannerRevision} was superseded before sealing.");
     }
+
 
     private bool TryResolveFrozenBarrierBuffer(
         string resourceName,

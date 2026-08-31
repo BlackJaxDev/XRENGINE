@@ -1081,7 +1081,8 @@ namespace XREngine
                             Rendered |= telemetry.Rendered;
                             SceneRendered |= telemetry.SceneRendered;
                             RenderPhaseSceneRendered |= telemetry.Phase == EFrameOutputPhase.Render && telemetry.SceneRendered;
-                            SubmitObserved |= telemetry.Phase == EFrameOutputPhase.Submit && telemetry.Rendered;
+                            SubmitObserved |= telemetry.Phase is EFrameOutputPhase.Submit or
+                                EFrameOutputPhase.GpuComplete && telemetry.Rendered;
                             PresentObserved |= telemetry.Phase == EFrameOutputPhase.Present && telemetry.Rendered;
                             Mirror |= telemetry.Mirror;
                             SeparateSceneRender |= telemetry.SeparateSceneRender;
@@ -1137,6 +1138,7 @@ namespace XREngine
                                     RenderCpuMs += cpuMs;
                                     break;
                                 case EFrameOutputPhase.Submit:
+                                case EFrameOutputPhase.GpuComplete:
                                     SubmitEventCount++;
                                     SubmitCpuMs += cpuMs;
                                     break;

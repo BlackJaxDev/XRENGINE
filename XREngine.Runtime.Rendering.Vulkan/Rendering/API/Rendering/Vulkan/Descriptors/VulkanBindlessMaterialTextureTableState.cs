@@ -1,4 +1,5 @@
 using Silk.NET.Vulkan;
+using XREngine.Rendering.Materials;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -22,6 +23,7 @@ internal sealed class VulkanBindlessMaterialTextureTableState
     internal bool UsesVariableDescriptorCount;
     internal VkRenderProgram? ScopeProgram;
     internal string ScopeConsumer = string.Empty;
+    internal GPUMaterialTablePublication? ScopePublication;
     internal ulong WritesTotal;
     internal ulong WritesLastFlush;
     internal ulong SlotRetirementsTotal;

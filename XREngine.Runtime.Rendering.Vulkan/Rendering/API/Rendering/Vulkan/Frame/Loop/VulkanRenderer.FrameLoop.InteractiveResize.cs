@@ -142,7 +142,10 @@ internal sealed partial class VulkanFrameLoop
                 snapshot,
                 initialLayout,
                 predecessorCommandBuffer: default,
-                clearSwapchain: true,
+                // Every swapchain image keeps its last completed scene package.
+                // Clear only a never-published image; clearing a valid image here
+                // destroys the frozen scene that modal resize is meant to retain.
+                clearSwapchain: !hasValidPriorContent,
                 out attempt.ImGuiOverlayCommandBuffer);
         }
 

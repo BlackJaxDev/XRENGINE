@@ -46,6 +46,8 @@ internal unsafe sealed class VulkanMappedFrameArena
     internal ulong Identity { get; }
     internal uint DynamicOffsetAlignment { get; }
     internal bool IsActive => Volatile.Read(ref _active) != 0;
+    /// <summary>Whether this cold-created arena may be used as a transfer source by an explicit diagnostic probe.</summary>
+    internal bool SupportsDiagnosticTransferSource => _backend.SupportsDiagnosticTransferSource;
     internal int FrameSlotCount => _chunks.Length;
     internal ulong Capacity => _capacity;
     internal ulong ReservedBytes => Volatile.Read(ref _reservedBytes);
@@ -286,6 +288,25 @@ internal unsafe sealed class VulkanMappedFrameArena
         return $"active={IsActive}, operational={_backend.IsOperational}, generation={generation}, " +
             $"frameSlot={frameSlot}/{_chunks.Length}, chunk={(chunk is null ? "missing" : "ready")}, " +
             $"offset={offset}, length={length}, alignment={DynamicOffsetAlignment}, capacity={chunk?.Capacity ?? 0UL}";
+    }
+
+    /// <summary>
+    /// Describes a rejected host write without modifying arena state. Called
+    /// only from first-failure diagnostics, never from the successful write
+    /// path.
+    /// </summary>
+    internal string DescribeWriteRejection(in VulkanMappedFrameSlice slice)
+    {
+        bool frameSlotInRange = (uint)slice.FrameSlot < (uint)_chunks.Length;
+        Chunk? chunk = frameSlotInRange ? _chunks[slice.FrameSlot] : null;
+        VulkanMappedFrameSlotState slotState = chunk is null
+            ? VulkanMappedFrameSlotState.Invalid
+            : chunk.GetState(slice.Generation);
+        return $"active={IsActive}, operational={_backend.IsOperational}, arenaGeneration={Generation}, " +
+            $"sliceGeneration={slice.Generation}, frameSlot={slice.FrameSlot}/{_chunks.Length}, " +
+            $"slotState={slotState}, writerDepth={Volatile.Read(ref _writerDepth)}, " +
+            $"writerThread={Volatile.Read(ref _writerThreadId)}, currentThread={Environment.CurrentManagedThreadId}, " +
+            $"offset={slice.Offset}, length={slice.Length}";
     }
 
     internal bool TryBeginWrite(VulkanMappedFrameSlice slice, out VulkanMappedFrameWriteScope scope)

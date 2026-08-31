@@ -337,7 +337,7 @@ namespace XREngine.Rendering.Vulkan
                         CommandBuffer child = children![index];
                         ResourceRuntime.CompleteCommandBufferReset(
                             unchecked((ulong)child.Handle));
-                        RemoveCommandBufferState(child);
+                        ClearCommandBufferStateAfterSuccessfulReset(child);
                     }
                     return result;
                 }
@@ -366,13 +366,10 @@ namespace XREngine.Rendering.Vulkan
                                                batch,
                                                EVulkanFrameWaitReason.CommandPool))
                                     {
-                                        batch.IsRecording = false;
                                         if (nativeResetSucceeded)
-                                        {
-                                            CommandBuffers.TrackingBatches.TryRemove(
-                                                childHandle,
-                                                out _);
-                                        }
+                                            batch.ClearCompletedRecording();
+                                        else
+                                            batch.IsRecording = false;
                                     }
                                 }
                             }

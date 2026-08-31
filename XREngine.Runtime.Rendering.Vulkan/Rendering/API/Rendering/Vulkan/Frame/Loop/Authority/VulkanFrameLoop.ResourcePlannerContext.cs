@@ -19,6 +19,15 @@ namespace XREngine.Rendering.Vulkan;
 
 internal sealed partial class VulkanFrameLoop
 {
+    /// <summary>Explicit cold creation for pending resources; query/retained lookup ports stay read-only.</summary>
+    private AbstractRenderAPIObject PrepareResourceGenerationWrapper(GenericRenderObject renderObject, bool generateNow)
+    {
+        AbstractRenderAPIObject wrapper = _resourceRuntime.CreateAPIRenderObject(renderObject);
+        if (generateNow && !wrapper.IsGenerated)
+            wrapper.Generate();
+        return wrapper;
+    }
+
     private const int MaxFrameOpResourcePlannerSwitchingStates = 12;
     private static bool FrameOpResourcePlannerSwitchingEnabled => MaxFrameOpResourcePlannerSwitchingStates > 1;
 
@@ -227,7 +236,12 @@ internal sealed partial class VulkanFrameLoop
                 "The OpenXR eye viewport has no matching rendered Vulkan resource-planner generation.");
         }
 
-        return CreateExternalResourcePlannerReadbackScope(context);
+        if (TryEnterDesktopSubmittedReadbackScope(context, out IDisposable desktopScope))
+            return desktopScope;
+
+        throw new InvalidOperationException(
+            "The desktop viewport has no matching submitted Vulkan resource-planner generation. " +
+            "Capture again after its current resource generation has rendered; readback cannot create unwritten images.");
     }
 
     /// <summary>
@@ -353,6 +367,23 @@ internal sealed partial class VulkanFrameLoop
                     return false;
                 }
 
+                // History preparation can initialize a freshly allocated target
+                // from Undefined to General. Capture the immutable descriptor
+                // manifest only after that tracked layout transition exists.
+                if (!TryPreserveTrackedAutoExposureHistory(pendingState.ResourceAllocator))
+                {
+                    VulkanResourceAllocator? historyAllocator =
+                        ResolveAutoExposureHistoryAllocator(
+                            previousState.ResourceAllocator,
+                            pendingState.ResourceAllocator);
+                    if (historyAllocator is not null)
+                    {
+                        _ = PreserveAutoExposureHistory(
+                            historyAllocator,
+                            pendingState.ResourceAllocator);
+                    }
+                }
+
                 if (!TryCapturePreparedResourceGenerationManifest(
                     generation,
                     pendingState,
@@ -371,20 +402,6 @@ internal sealed partial class VulkanFrameLoop
                 pendingState = scope.CaptureCurrent(CaptureResourcePlannerRuntimeState(), ActiveFrameOpResourcePlannerSwitchingState);
                 pendingState.LastActiveFrameOpContext = context;
                 pendingState.PreparedGenerationManifest = preparedManifest;
-
-                if (!TryPreserveTrackedAutoExposureHistory(pendingState.ResourceAllocator))
-                {
-                    VulkanResourceAllocator? historyAllocator =
-                        ResolveAutoExposureHistoryAllocator(
-                            previousState.ResourceAllocator,
-                            pendingState.ResourceAllocator);
-                    if (historyAllocator is not null)
-                    {
-                        _ = PreserveAutoExposureHistory(
-                            historyAllocator,
-                            pendingState.ResourceAllocator);
-                    }
-                }
 
                 transaction = _resourceGenerationTransactions.Create(
                     BackendObjectContext,
@@ -455,6 +472,13 @@ internal sealed partial class VulkanFrameLoop
         List<VulkanPreparedResourceGenerationManifest.FrameBufferEntry> frameBuffers = [];
         List<VulkanPreparedResourceGenerationManifest.BufferEntry> buffers = [];
 
+        // Views resolve their backing texture through a lookup-only dependency
+        // port. Publish every identity first, including bases not allocated under
+        // their own planner name, so generation is independent of registry order.
+        foreach (RenderTextureResource record in generation.Registry.TextureRecords.Values)
+            if (record.Instance is not null)
+                _ = PrepareResourceGenerationWrapper(record.Instance, generateNow: false);
+
         // Materialize every planner-backed texture before framebuffer generation.
         // Framebuffers can create mip/layer attachment views (BloomBlurTexture is
         // the common case), which legitimately advances the texture descriptor
@@ -469,7 +493,7 @@ internal sealed partial class VulkanFrameLoop
                 continue;
             }
 
-            if (GetOrCreateAPIRenderObject(record.Instance, generateNow: true) is not IVkImageDescriptorSource source ||
+            if (PrepareResourceGenerationWrapper(record.Instance, generateNow: true) is not IVkImageDescriptorSource source ||
                 !source.TryGetDescriptorSnapshot(
                     requestedViewType: null,
                     requestedAspectMask: null,
@@ -492,7 +516,7 @@ internal sealed partial class VulkanFrameLoop
                 continue;
 
             VkFrameBuffer? wrapper =
-                GetOrCreateAPIRenderObject(record.Instance, generateNow: true) as VkFrameBuffer;
+                PrepareResourceGenerationWrapper(record.Instance, generateNow: true) as VkFrameBuffer;
             if (wrapper is null ||
                 !wrapper.TryCaptureRecordedRenderTargetSnapshot(out VulkanRecordedRenderTargetSnapshot snapshot))
             {
@@ -771,13 +795,15 @@ internal sealed partial class VulkanFrameLoop
 
     private EVulkanFrameOpContextKind ResolveFrameOpContextKind(in FrameOpContext context)
     {
-        if (IsRenderingExternalSwapchainTarget)
+        EVulkanFrameOpContextKind openXrContextKind = OutputRuntime.OpenXrBackend
+            .CurrentThreadExecutionState.FrameContext.ContextKind;
+        if (IsRenderingExternalSwapchainTarget ||
+            openXrContextKind is EVulkanFrameOpContextKind.OpenXrEye or
+                EVulkanFrameOpContextKind.OpenXrMirror)
         {
-            EVulkanFrameOpContextKind contextKind =
-                OutputRuntime.OpenXrBackend.CurrentThreadExecutionState.FrameContext.ContextKind;
-            return contextKind == EVulkanFrameOpContextKind.Unknown
+            return openXrContextKind == EVulkanFrameOpContextKind.Unknown
                 ? EVulkanFrameOpContextKind.OpenXrEye
-                : contextKind;
+                : openXrContextKind;
         }
 
         if (RuntimeEngine.Rendering.State.IsLightProbePass)

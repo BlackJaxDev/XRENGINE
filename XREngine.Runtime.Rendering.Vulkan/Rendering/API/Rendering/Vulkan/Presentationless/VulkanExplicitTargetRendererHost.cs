@@ -8,7 +8,7 @@ namespace XREngine.Rendering.Vulkan;
 /// Owns a production Vulkan renderer whose target supports deterministic,
 /// presentation-independent frame submission.
 /// </summary>
-public sealed unsafe class VulkanExplicitTargetRendererHost :
+public sealed unsafe partial class VulkanExplicitTargetRendererHost :
     IRuntimeRendererHost,
     IMaterialTableBackendCapability,
     IDisposable
@@ -54,6 +54,15 @@ public sealed unsafe class VulkanExplicitTargetRendererHost :
     public ulong TargetGeneration => _renderer.ExplicitTargetGeneration;
     public double LastCompletedGpuFrameNanoseconds => _renderer.ExplicitTargetLastCompletedGpuFrameNanoseconds;
     public string PresentationDescription => _renderer.ExplicitTargetPresentationDescription;
+    /// <summary>Enables optional allocation attribution for explicit target frames.</summary>
+    public bool ExplicitTargetAllocationDiagnosticsEnabled
+    {
+        get => _renderer.ExplicitTargetAllocationDiagnosticsEnabled;
+        set => _renderer.ExplicitTargetAllocationDiagnosticsEnabled = value;
+    }
+    /// <summary>Allocation attribution for the most recently completed explicit target frame.</summary>
+    public VulkanExplicitTargetFrameAllocationCounters LastExplicitTargetFrameAllocationCounters
+        => _renderer.LastExplicitTargetFrameAllocationCounters;
     public bool PresentationUsesDesktopCompositor => false;
     public IReadOnlyList<string> EnabledInstanceExtensions => _renderer.EnabledInstanceExtensions;
     public IReadOnlyList<string> EnabledDeviceExtensions => _renderer.EnabledDeviceExtensions;
@@ -72,6 +81,17 @@ public sealed unsafe class VulkanExplicitTargetRendererHost :
         ?? throw new InvalidOperationException("The Vulkan host has no selected graphics queue family.");
     /// <summary>Whether dynamic rendering is enabled for the selected device.</summary>
     public bool SupportsDynamicRendering => _renderer.DeviceContext.SupportsDynamicRendering;
+
+    /// <summary>Captures this device's cumulative native validation evidence before teardown.</summary>
+    public VulkanValidationDiagnosticSnapshot CaptureValidationDiagnostics()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        var device = _renderer.DeviceContext;
+        return device.ValidationDiagnostics.CaptureSnapshot(
+            device.ValidationLayersEnabled,
+            device.SynchronizationValidationEnabled,
+            device.HasDebugMessenger);
+    }
 
     public string AdapterName
     {
@@ -146,6 +166,14 @@ public sealed unsafe class VulkanExplicitTargetRendererHost :
         XRRenderProgram program,
         string consumer)
         => MaterialTableCapability.BeginGlobalMaterialTextureDescriptorScope(program, consumer);
+    bool IMaterialTableBackendCapability.BeginGlobalMaterialTextureDescriptorScope(
+        XRRenderProgram program,
+        string consumer,
+        XREngine.Rendering.Materials.GPUMaterialTablePublication? publication)
+        => MaterialTableCapability.BeginGlobalMaterialTextureDescriptorScope(
+            program,
+            consumer,
+            publication);
     void IMaterialTableBackendCapability.EndGlobalMaterialTextureDescriptorScope(XRRenderProgram program)
         => MaterialTableCapability.EndGlobalMaterialTextureDescriptorScope(program);
     public AdvancedRenderPipelineCapabilities GetAdvancedRenderPipelineCapabilities()
@@ -189,13 +217,105 @@ public sealed unsafe class VulkanExplicitTargetRendererHost :
     /// <see cref="XRViewport.Render(XRFrameBuffer?, IRuntimeRenderWorld?, XRCamera?, bool, XRMaterial?)"/>
     /// path used by a desktop viewport; the host then records and submits the
     /// resulting production frame operations.
+    /// First-use shader linking is synchronous within this explicit preparation
+    /// scope, so shader warmup cannot silently substitute an empty first frame.
+    /// This cold preparation cost is not steady-state performance evidence.
     /// </summary>
-    public void SubmitProductionFrame(
+    public VulkanExplicitProductionSubmissionReceipt SubmitProductionFrame(
         Action<RenderFrameOutputDescription> buildFrame)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentNullException.ThrowIfNull(buildFrame);
-        _renderer.SubmitExplicitProductionFrame(buildFrame);
+        return _renderer.SubmitExplicitProductionFrame(buildFrame);
+    }
+
+    public VulkanExplicitProductionSubmissionReceipt SubmitProductionFrame(
+        Action<RenderFrameOutputDescription> buildFrame,
+        VulkanExplicitProductionBufferStressProbeRequest probeRequest)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        return _renderer.SubmitExplicitProductionFrame(buildFrame, probeRequest);
+    }
+
+    public bool TryGetLastProductionBufferStressProbeEvidence(out VulkanExplicitProductionBufferStressProbeEvidence? evidence)
+        => _renderer.TryGetLastExplicitProductionBufferStressProbeEvidence(out evidence);
+
+    /// <summary>
+    /// Polls optional Hi-Z timestamps without waiting, after authenticating a completed
+    /// production receipt. Samples retain their own source frames and can be older
+    /// than the receipt; callers must not attribute them to the current frame.
+    /// </summary>
+    public bool TryGetProductionOcclusionTiming(
+        in VulkanExplicitProductionSubmissionReceipt receipt,
+        out Occlusion.OcclusionGpuElapsedSample build,
+        out Occlusion.OcclusionGpuElapsedSample test,
+        out Occlusion.OcclusionGpuElapsedRingDiagnostic ring)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        build = default;
+        test = default;
+        ring = default;
+        if (!TryGetProductionSubmissionCompletion(in receipt, out bool completed) || !completed)
+            return false;
+        using var rendererScope = AbstractRenderer.PushThreadCurrent(_renderer);
+        Occlusion.OcclusionGpuElapsedTiming timing = Occlusion.OcclusionGpuElapsedTiming.Instance;
+        timing.Resolve(_renderer, receipt.EngineFrameId);
+        build = timing.GetSample(Occlusion.EOcclusionGpuElapsedStage.Build, receipt.EngineFrameId);
+        test = timing.GetSample(Occlusion.EOcclusionGpuElapsedStage.Test, receipt.EngineFrameId);
+        ring = timing.CaptureRingDiagnostic(_renderer);
+        return true;
+    }
+
+    /// <summary>Nonblocking completion query for an authentic submission from this host.</summary>
+    public bool TryGetProductionSubmissionCompletion(
+        in VulkanExplicitProductionSubmissionReceipt receipt,
+        out bool completed)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        return _renderer.TryGetExplicitProductionSubmissionCompletion(in receipt, out completed);
+    }
+
+    /// <summary>
+    /// Reads the target color only after this exact, current receipt has completed.
+    /// This cold diagnostic path does not change the production zero-readback policy.
+    /// </summary>
+    public bool TryReadbackProductionColor(
+        in VulkanExplicitProductionSubmissionReceipt receipt,
+        int maxByteCount,
+        out byte[]? color,
+        ImageLayout sourceLayout = ImageLayout.TransferSrcOptimal)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        return _renderer.TryReadbackExplicitProductionColor(in receipt, maxByteCount, sourceLayout, out color);
+    }
+
+    /// <summary>
+    /// Reads a bounded GPU buffer range only after this exact, current receipt has completed.
+    /// </summary>
+    public bool TryReadbackProductionBuffer(
+        in VulkanExplicitProductionSubmissionReceipt receipt,
+        XRDataBuffer sourceBuffer,
+        uint sourceByteOffset,
+        Span<byte> destination,
+        out string route)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ArgumentNullException.ThrowIfNull(sourceBuffer);
+        return _renderer.TryReadbackExplicitProductionBuffer(
+            in receipt,
+            sourceBuffer,
+            sourceByteOffset,
+            destination,
+            out route);
+    }
+
+    /// <summary>Captures current native buffer identity from Vulkan's lifetime ledger.</summary>
+    public bool TryDescribeCurrentNativeBuffer(
+        XRDataBuffer sourceBuffer,
+        out VulkanNativeBufferDiagnosticDescription description)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        return _renderer.TryDescribeCurrentNativeBuffer(sourceBuffer, out description);
     }
 
     /// <summary>Reads the last completed color output after the measured interval.</summary>

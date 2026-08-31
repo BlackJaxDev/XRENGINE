@@ -413,6 +413,8 @@ public sealed class RvcRenderPipeline : DefaultRenderPipeline
         Texture(builder, RvcFrameGraphContract.MirrorDebug, internalSize, RvcSampledColorAttachment | RenderPipelineResourceUsage.TransferSource,
             EPixelInternalFormat.Rgba8, EPixelFormat.Rgba, EPixelType.UnsignedByte, ESizedInternalFormat.Rgba8,
             EFrameBufferAttachment.ColorAttachment0, storage: false)
+            .Layers(layerCount)
+            .StereoCompatible(layerCount > 1u)
             .DebugLabel("RVC mirror/debug output")
             .Add();
 
@@ -587,6 +589,9 @@ public sealed class RvcRenderPipeline : DefaultRenderPipeline
 
         if (mipLevelCount > 1u)
             ConfigureRvcMipChain(texture, mipLevelCount, internalFormat, pixelFormat, pixelType);
+
+        if (layerCount > 1u)
+            texture.OVRMultiViewParameters = new(0, layerCount);
 
         texture.Resizable = false;
         texture.SizedInternalFormat = sizedInternalFormat;

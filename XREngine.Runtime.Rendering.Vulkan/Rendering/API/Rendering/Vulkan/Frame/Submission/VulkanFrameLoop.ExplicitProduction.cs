@@ -12,7 +12,7 @@ internal sealed partial class VulkanFrameLoop
     /// target. The callback performs ordinary viewport/pipeline work; this method
     /// owns acquisition, primary recording, queue submission, and completion.
     /// </summary>
-    internal unsafe void ExecuteExplicitProductionFrame(
+    internal unsafe VulkanExplicitProductionSubmissionReceipt ExecuteExplicitProductionFrame(
         Action<RenderFrameOutputDescription> buildFrame)
     {
         ArgumentNullException.ThrowIfNull(buildFrame);
@@ -21,7 +21,8 @@ internal sealed partial class VulkanFrameLoop
 
         try
         {
-            ExecuteExplicitProductionFrameCore(buildFrame);
+            InvalidateExplicitProductionReadbackAuthority();
+            return ExecuteExplicitProductionFrameCore(buildFrame);
         }
         finally
         {
@@ -29,8 +30,30 @@ internal sealed partial class VulkanFrameLoop
         }
     }
 
-    private unsafe void ExecuteExplicitProductionFrameCore(
+    internal unsafe VulkanExplicitProductionSubmissionReceipt ExecuteExplicitProductionFrame(
+        Action<RenderFrameOutputDescription> buildFrame, VulkanExplicitProductionBufferStressProbeRequest probe)
+    {
+        ArgumentNullException.ThrowIfNull(buildFrame);
+        ArgumentNullException.ThrowIfNull(probe);
+        if (!TryEnterExplicitFrameExecution())
+            throw new ObjectDisposedException(nameof(VulkanFrameLoop));
+        try
+        {
+            InvalidateExplicitProductionReadbackAuthority();
+            return ExecuteExplicitProductionFrameCore(buildFrame, probe);
+        }
+        finally
+        {
+            ExitExplicitFrameExecution();
+        }
+    }
+
+    private unsafe VulkanExplicitProductionSubmissionReceipt ExecuteExplicitProductionFrameCore(
         Action<RenderFrameOutputDescription> buildFrame)
+        => ExecuteExplicitProductionFrameCore(buildFrame, null);
+
+    private unsafe VulkanExplicitProductionSubmissionReceipt ExecuteExplicitProductionFrameCore(
+        Action<RenderFrameOutputDescription> buildFrame, VulkanExplicitProductionBufferStressProbeRequest? probe)
     {
         AbstractRenderer renderer = AbstractRenderer.Current
             ?? throw new InvalidOperationException(
@@ -48,6 +71,7 @@ internal sealed partial class VulkanFrameLoop
         CommandBuffer commandBuffer = default;
         ulong frameNumber = unchecked((ulong)OutputRuntime.NextExplicitTargetFrameNumber());
         VulkanAcceptedFramePlan? acceptedPlan = null;
+        ulong engineFrameId = 0UL;
 
         try
         {
@@ -72,6 +96,15 @@ internal sealed partial class VulkanFrameLoop
             uint frameSlot = preview.ExpectedFrameSlotIndex;
             ResourceRuntime.ResidentTemplateFrameSlotLifetimes.ReleaseFrameSlot(
                 planIndex);
+            // Drop cache ownership of superseded payloads before preparing this
+            // frame. Recorded/in-flight references remain protected by the ledger;
+            // the ordinary retirement drains reclaim only completed generations.
+            ResourceRuntime.DrainPendingSupersededDescriptorOwners();
+            _commandRuntime.DrainInvalidatedCommandBufferRecordings(Api, ResourceRuntime);
+            ResourceRuntime.DrainRetiredDescriptorSets(Api, _deviceContext.Device, planIndex);
+            ResourceRuntime.DrainRetiredDescriptorPools(Api, _deviceContext.Device, planIndex);
+            ResourceRuntime.DrainRetiredBufferViews(Api, _deviceContext.Device, planIndex);
+            ResourceRuntime.DrainRetiredBuffers(Api, _deviceContext.Device, _frameTelemetry, planIndex);
             mappedFrameArena = MappedFrameArena;
             mappedFrameGeneration = mappedFrameArena?.Generation ?? 0UL;
             frameDataArena = FrameDataArena;
@@ -103,6 +136,24 @@ internal sealed partial class VulkanFrameLoop
             acceptedPlan = PrepareExplicitProductionLogicalPlan(
                 in preview,
                 frameNumber);
+            engineFrameId = acceptedPlan.SceneEpoch;
+
+            if (probe is
+                {
+                    Checkpoint: EVulkanExplicitProductionBufferStressCheckpoint.AfterLogicalSeal,
+                })
+            {
+                ExecuteAfterLogicalSealBufferStressProbe(probe, acceptedPlan);
+            }
+            try
+            {
+                ValidateExplicitProductionLogicalPlanNativeBufferBindings(acceptedPlan);
+            }
+            catch (VulkanNativeBufferBindingSupersededException exception)
+            {
+                MarkAfterLogicalSealBufferStressProbeRejectedBeforeAcquire(exception);
+                throw;
+            }
 
             lease = target.AcquireFrameTarget(out commandBuffer);
             acquired = true;
@@ -142,6 +193,13 @@ internal sealed partial class VulkanFrameLoop
                     $"but target '{FrameExecutionLabel}' requires {lease.Target.RequiredFinalColorLayout}.");
             }
 
+            SealedSubmissionContract? recordedContract = CaptureExplicitRecordedContract(recording.CommandBuffer);
+            if (probe is
+                {
+                    Checkpoint: EVulkanExplicitProductionBufferStressCheckpoint.AfterNativeRecording,
+                })
+                ExecuteAfterNativeRecordingBufferStressProbe(probe, recording.CommandBuffer, recordedContract);
+
             ulong graphicsSignalValue;
             mappedFrameSlotPrepared = mappedFrameArena is null ||
                 mappedFrameArena.TryPrepareFrameSlotForSubmission(frameSlot, mappedFrameGeneration);
@@ -176,8 +234,20 @@ internal sealed partial class VulkanFrameLoop
                     out graphicsSignalValue,
                     in diagnosticContext,
                     caller: nameof(ExecuteExplicitProductionFrame));
+                // Queue acceptance is irreversible. Publish ownership before even
+                // profiling-scope disposal or diagnostics can throw, and never
+                // reopen these slots through the unsubmitted cancellation path.
+                submitted = receipt.SubmissionAccepted;
+                if (submitted)
+                {
+                    mappedFrameArena?.MarkFrameSlotSubmitted(frameSlot, mappedFrameGeneration);
+                    mappedFrameSlotPrepared = false;
+                    frameDataArena?.MarkFrameSlotSubmitted(frameSlot, frameDataGeneration);
+                    frameDataSlotPrepared = false;
+                    _commandRuntime.Synchronization._frameSlotTimelineValues![planIndex] = graphicsSignalValue;
+                    target.NotifyFrameSubmitted(in lease);
+                }
             }
-            submitted = receipt.SubmissionAccepted;
             if (!receipt.SubmissionAccepted)
             {
                 if (receipt.Result == Result.ErrorDeviceLost)
@@ -185,22 +255,39 @@ internal sealed partial class VulkanFrameLoop
                 throw new InvalidOperationException(
                     $"Vulkan {FrameExecutionLabel} production submission failed ({receipt.Result}).");
             }
+            if (!receipt.LifetimePinsTransferred || !receipt.PostSubmissionPublicationSucceeded)
+                throw new InvalidOperationException("The explicit production submission was accepted but its lifetime publication did not complete.");
 
-            target.NotifyFrameSubmitted(in lease);
+            _lastExplicitProductionReceipt = CreateExplicitProductionReceipt(
+                frameNumber,
+                engineFrameId,
+                frameSlot,
+                preview.TargetGeneration,
+                submittedCommandBuffer,
+                graphicsSignalValue);
+            // Observe real queue overlap before post-submit housekeeping can hide
+            // a short GPU interval. No wait or artificial GPU hold is introduced.
+            if (probe is not null)
+                MarkExplicitProductionBufferStressSubmitted(in _lastExplicitProductionReceipt);
+
             ResourceRuntime.Uploads.PublicationState.QueueRecordedForTimeline(
                 graphicsSignalValue,
                 FrameSubmissionKind);
-            mappedFrameArena?.MarkFrameSlotSubmitted(frameSlot, mappedFrameGeneration);
-            frameDataArena?.MarkFrameSlotSubmitted(frameSlot, frameDataGeneration);
-            mappedFrameSlotPrepared = false;
-            frameDataSlotPrepared = false;
-            _commandRuntime.Synchronization._frameSlotTimelineValues![planIndex] = graphicsSignalValue;
             target.CompleteFrameTarget(in lease);
             ResourceRuntime.Allocations.Staging.Trim(
                 ResourceRuntime.BackendObjectContext ?? throw new InvalidOperationException(
                     "The Vulkan backend object context is not initialized."));
+            _currentExplicitProductionReadbackReceipt = _lastExplicitProductionReceipt;
+            // Copy the exact validated closure into independent receipt authority;
+            // auxiliary readback may reset and reuse the recording's seal storage.
+            CaptureExplicitProductionReadbackResources(
+                ReferenceEquals(recordedContract, CaptureExplicitRecordedContract(submittedCommandBuffer))
+                    ? recordedContract : null);
+            if (probe is null)
+                ObserveExplicitProductionBufferStressSlotReuse(in _lastExplicitProductionReceipt);
+            return _lastExplicitProductionReceipt;
         }
-        catch
+        catch (Exception exception)
         {
             if (!submitted)
             {
@@ -211,13 +298,22 @@ internal sealed partial class VulkanFrameLoop
                 ResourceRuntime.Uploads.CancelRecordedSubmitBatch(
                     IsDeviceLost,
                     $"{FrameExecutionLabel} production frame did not submit");
+                if (mappedFrameSlotPrepared)
+                    _ = mappedFrameArena?.TryCancelFrameSlotSubmission(lease.Target.FrameSlotIndex, mappedFrameGeneration);
+                if (frameDataSlotPrepared)
+                    _ = frameDataArena?.TryCancelFrameSlotSubmission(lease.Target.FrameSlotIndex, frameDataGeneration);
             }
-            if (mappedFrameSlotPrepared)
-                _ = mappedFrameArena?.TryCancelFrameSlotSubmission(lease.Target.FrameSlotIndex, mappedFrameGeneration);
-            if (frameDataSlotPrepared)
-                _ = frameDataArena?.TryCancelFrameSlotSubmission(lease.Target.FrameSlotIndex, frameDataGeneration);
             if (acquired)
                 target.AbortFrameTarget(in lease, submitted);
+            if (!acquired && !submitted && exception is VulkanPresentNowReadinessException
+                { Disposition: EVulkanPresentNowFailureDisposition.RetryFrame } pending)
+            {
+                // Public explicit hosts must receive the same retry disposition
+                // as desktop admission, including budget-limited required uploads.
+                // Cleanup above settles only this unsubmitted attempt; globally
+                // owned upload batches keep their completion authority.
+                throw new VulkanExplicitProductionAdmissionPendingException(pending.Stage.ToString(), pending.Message);
+            }
             throw;
         }
     }
@@ -385,6 +481,12 @@ internal sealed partial class VulkanFrameLoop
         if (!computePreparation.Succeeded)
         {
             acceptedPlan.SettleUnsubmittedSubmissionMarkers();
+            if (computePreparation.Pending)
+            {
+                throw new VulkanExplicitProductionAdmissionPendingException(
+                    "explicit-compute-program",
+                    computePreparation.FormatFailure());
+            }
             throw new InvalidOperationException(computePreparation.FormatFailure());
         }
         watchdog.RecordProgress();
@@ -418,15 +520,28 @@ internal sealed partial class VulkanFrameLoop
                 "ExplicitOutput -> framebuffer dependencies",
                 targetFailure);
         }
-        if (!TryFreezeNativeBarrierBindings(
-                in planningSnapshot,
-                in plannerState,
-                allowSynchronousResourceUploads: true,
-                out VulkanFramePlanningSnapshot frozenPlanningSnapshot,
-                out string freezeFailure))
+        VulkanFramePlanningSnapshot frozenPlanningSnapshot;
+        try
         {
-            acceptedPlan.SettleUnsubmittedSubmissionMarkers();
-            throw new InvalidOperationException(freezeFailure);
+            if (!TryFreezeNativeBarrierBindings(
+                    in planningSnapshot,
+                    ref plannerState,
+                    allowSynchronousResourceUploads: true,
+                    out frozenPlanningSnapshot,
+                    out string freezeFailure))
+            {
+                acceptedPlan.SettleUnsubmittedSubmissionMarkers();
+                throw new InvalidOperationException(freezeFailure);
+            }
+        }
+        catch (VulkanNativeBufferBindingSupersededException exception)
+        {
+            throw watchdog.CreateFailure(
+                EVulkanPresentNowReadinessStage.FramePlanSeal,
+                "native-barrier-bindings",
+                "ExplicitOutput -> resource barrier bindings",
+                exception.Message,
+                disposition: EVulkanPresentNowFailureDisposition.RetryFrame);
         }
         watchdog.RecordProgress();
 
@@ -436,7 +551,10 @@ internal sealed partial class VulkanFrameLoop
             textureUploadOperations);
         acceptedPlan.PreparedMeshIngress.CopyFrom(_preparedMeshIngress);
         _preparedMeshIngress.Clear();
-        FramePlan logicalPlan = _framePlanner.FramePlanBuilder.BuildAndSeal(
+        FramePlan logicalPlan;
+        try
+        {
+            logicalPlan = _framePlanner.FramePlanBuilder.BuildAndSeal(
             frameSlot,
             plannerState.ResourcePlannerRevision,
             staticOperationSignature: 0UL,
@@ -445,14 +563,28 @@ internal sealed partial class VulkanFrameLoop
             acceptedPlan.DynamicUiOperations,
             new VulkanFramePlanRenderGraphAuthority(
                 frozenPlanningSnapshot.RenderGraphPlan,
-                plannerState.FrameOpResourcePlannerSwitchingState),
+                plannerState.FrameOpResourcePlannerSwitchingState,
+                _framePlanner,
+                _resourceRuntime.BackendObjectContext,
+                AllowSynchronousResourceUploads: true),
             textureUploadOperations: acceptedPlan.TextureUploadOperations,
             preparedMeshIngress: acceptedPlan.PreparedMeshIngress,
             authoringOperationCount: acceptedPlan.StaticOperationCount,
             authoringDynamicOverlayOperationCount: 0,
             authoringTextureUploadOperationCount:
                 acceptedPlan.TextureUploadOperationCount,
-            emptyPresentNowOutputContract: provisionalOutputContract);
+                emptyPresentNowOutputContract: provisionalOutputContract);
+        }
+        catch (VulkanNativeBufferBindingSupersededException exception)
+        {
+            throw watchdog.CreateFailure(
+                EVulkanPresentNowReadinessStage.FramePlanSeal,
+                "native-barrier-bindings",
+                "ExplicitOutput -> resource barrier bindings",
+                exception.Message,
+                disposition: EVulkanPresentNowFailureDisposition.RetryFrame);
+        }
+        logicalPlan.PrepareRecordingPlannerGenerations(in plannerState);
         if (!logicalPlan.HasAnyExecutableOutput)
         {
             acceptedPlan.SettleUnsubmittedSubmissionMarkers();
@@ -494,6 +626,21 @@ internal sealed partial class VulkanFrameLoop
                 "A PresentNow explicit output cannot admit AllowDeferral.");
         }
 
+        if (!TryPrepareReadOnlyStorage(
+                logicalPlan, checked((int)preview.ExpectedFrameSlotIndex),
+                out VulkanReadOnlyStoragePreparedAuthority? storageAuthority,
+                out bool materialPending,
+                out string storageFailure))
+        {
+            if (materialPending)
+                throw new VulkanExplicitProductionAdmissionPendingException("explicit-material-backing", storageFailure);
+            throw watchdog.CreateFailure(
+                EVulkanPresentNowReadinessStage.PipelineCompilation,
+                "explicit-immutable-storage", "ExplicitOutput -> immutable buffer descriptors", storageFailure);
+        }
+        using VulkanResourceRuntime.ReadOnlyStorageRecordingScope storageScope =
+            ResourceRuntime.EnterReadOnlyStorageRecordingScope(storageAuthority);
+
         if (outputContract.WorkClass == ERenderOutputWorkClass.PresentNow)
         {
             VulkanPreparedResourcePlanStamp resourcePlanStamp = new(
@@ -532,9 +679,16 @@ internal sealed partial class VulkanFrameLoop
         computePreparation =
             _commandRuntime.PrepareComputeFramePlanForRecording(
                 preview.ExpectedFrameSlotIndex,
-                logicalPlan);
+                logicalPlan,
+                in plannerState);
         if (!computePreparation.Succeeded)
         {
+            if (computePreparation.Pending)
+            {
+                throw new VulkanExplicitProductionAdmissionPendingException(
+                    $"explicit-compute-frame-data:{preview.ExpectedFrameSlotIndex}",
+                    computePreparation.FormatFailure());
+            }
             throw watchdog.CreateFailure(
                 EVulkanPresentNowReadinessStage.PipelineCompilation,
                 $"explicit-compute-frame-data:{preview.ExpectedFrameSlotIndex}",
@@ -679,6 +833,10 @@ internal sealed partial class VulkanFrameLoop
             callerOwnsSubmissionMarkersUntilRecordingSucceeds: true) with
         {
             FrameDataImageIndexOverride = lease.Target.FrameSlotIndex,
+            ReadOnlyStorageAuthority = FrameDataArena is { } arena
+                ? ResourceRuntime.ReadOnlyStoragePreparedMap.CreateAuthority(
+                    arena, checked((int)lease.Target.FrameSlotIndex))
+                : null,
             ExcludeDesktopSwapchainBarriers = true,
         };
         return _commandRuntime.RecordPrimary(in input);

@@ -6,6 +6,7 @@ namespace XREngine.Rendering.Vulkan;
 internal enum EVulkanComputePreparationOutcome : byte
 {
     Success,
+    PipelinePending,
     ProgramLinkFailed,
     PipelineUnavailable,
     PipelineCreationFailed,

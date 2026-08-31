@@ -365,6 +365,10 @@ namespace XREngine.Editor.Mcp
                 renderingCameraWorldPosition = cameraTransform is null ? null : ToMcpVector3(cameraTransform.WorldTranslation),
                 renderingCameraWorldForward = cameraTransform is null ? null : ToMcpVector3(cameraTransform.WorldForward),
                 activeViewportIndex = activeViewport?.Index,
+                // Published owner-thread snapshots distinguish suspended output from a stalled renderer.
+                activeWindowEventSnapshot = activeViewport?.Window?.LatestWindowEventSnapshot,
+                activeWindowSurfaceSnapshot = activeViewport?.Window?.LatestWindowSurfaceSnapshot,
+                effectiveClipDepthRange = RuntimeEngine.Rendering.EffectiveClipDepthRange.ToString(),
                 activeViewportSize = activeViewport is null ? null : new { width = activeViewport.Width, height = activeViewport.Height },
                 activeViewportInternalSize = activeViewport is null ? null : new { width = activeViewport.InternalWidth, height = activeViewport.InternalHeight },
                 activeViewportAutomaticallyCollectVisible = activeViewport?.AutomaticallyCollectVisible,
@@ -670,7 +674,23 @@ namespace XREngine.Editor.Mcp
                 targetRenderHz = timer.TargetRenderFrequency,
                 targetUpdateHz = timer.TargetUpdateFrequency,
                 fixedUpdateHz = timer.FixedUpdateFrequency,
-                vSync = timer.VSync.ToString()
+                vSync = timer.VSync.ToString(),
+                terminalFault = timer.FirstTerminalFault is { } fault
+                    ? new
+                    {
+                        loop = fault.Loop,
+                        phase = fault.Phase,
+                        timestampUtc = fault.TimestampUtc,
+                        managedThreadId = fault.ManagedThreadId,
+                        exceptionType = fault.ExceptionType,
+                        exceptionMessage = fault.ExceptionMessage,
+                        exception = fault.ExceptionDetail,
+                        requestedCollectGeneration = fault.RequestedCollectGeneration,
+                        completedCollectGeneration = fault.CompletedCollectGeneration,
+                        publishedCollectGeneration = fault.PublishedCollectGeneration,
+                        consumedCollectGeneration = fault.ConsumedCollectGeneration
+                    }
+                    : null
             };
 
             return Task.FromResult(new McpToolResponse("Retrieved timing state.", data));

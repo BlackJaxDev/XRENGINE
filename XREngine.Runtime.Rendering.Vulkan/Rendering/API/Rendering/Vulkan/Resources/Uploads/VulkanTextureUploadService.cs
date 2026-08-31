@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -13,14 +14,20 @@ using Image = Silk.NET.Vulkan.Image;
 namespace XREngine.Rendering.Vulkan;
 
 /// <summary>
-/// Synchronized Vulkan imported texture upload service. The service prepares
-/// staging/new image resources on the render thread, then publishes them through
-/// a frame-timeline operation so descriptor swaps are ordered with the copy.
+/// Vulkan imported texture upload service with worker-owned image and staging
+/// preparation. The render owner observes prepared results without blocking and
+/// publishes them through a frame-timeline operation, ordering descriptor swaps
+/// with the copy.
 /// </summary>
 internal sealed partial class VulkanTextureUploadService
 {
+    internal const int MaxTransferBatchChunks = 4;
+    internal const long MaxTransferBatchBytes = 16L * 1024L * 1024L;
+    internal const int MaxTransferCompletionItemsPerFrame = 4;
+    internal const long MaxTransferRetirementBytesPerFrame = 16L * 1024L * 1024L;
     internal VulkanTextureUploadPublicationState PublicationState { get; } = new();
     private const int MaxPreparedUploadsPerDrain = 1;
+    private const int MaxInFlightPreparationWorkers = 2;
     private const double AllocationPressureRetryDelayMilliseconds = 500.0;
 
     private static int s_synchronizedImportedTextureStreamingAvailable = 1;
@@ -28,11 +35,26 @@ internal sealed partial class VulkanTextureUploadService
     private long _nextQueuedUploadSequence;
     private readonly object _prepQueueSync = new();
     private readonly List<VulkanImportedTextureUploadJob> _pendingPrepJobs = [];
-    private readonly List<VulkanSubmittedImportedTextureUpload> _pendingTransferUploads = [];
+    // A job leaves the queue while its worker owns native preparation resources.
+    // Keep that ownership visible until the render owner observes its terminal result.
+    private readonly List<VulkanImportedTextureUploadJob> _inFlightPreparationWorkers = [];
+    private readonly List<VulkanImportedTexturePendingUpload> _readyTransferUploads = [];
+    private readonly List<VulkanSubmittedImportedTextureUploadBatch> _pendingTransferUploads = [];
+    private readonly List<VulkanImportedTexturePendingUpload> _transferBatchScratch = new(4);
     private readonly object _transferQueueSync = new();
     private int _pendingTransferReservations;
     private int _prepDrainScheduled;
     private int _transferDrainScheduled;
+    // A single render-scheduler boundary lets independently completed workers
+    // contribute to the same bounded native batch. It is never a polling wait.
+    private int _transferBatchGatherPending;
+    // Render-owner-only accounting. A completed native batch stays fenced and
+    // owned until its whole completion/publication cost fits this frame.
+    private ulong _transferCompletionBudgetFrameId = ulong.MaxValue;
+    private int _transferRetirementItemsThisFrame;
+    private long _transferRetirementBytesThisFrame;
+    private int _transferPublicationItemsThisFrame;
+    private long _transferPublicationBytesThisFrame;
     private int _preparationRetirementStarted;
     private int _activePreparationDrainCount;
     private readonly ManualResetEventSlim _preparationDrainsIdle = new(initialState: true);
@@ -43,14 +65,45 @@ internal sealed partial class VulkanTextureUploadService
     private static int s_pendingVulkanPrepPackages;
     private static int s_activePrepPackages;
     private static int s_pendingTransferSubmissions;
+    // Prepared chunks are transfer-owned work even before a native batch exists.
+    // Keep this separate from submitted work so host shutdown/readiness never
+    // mistakes a gather boundary for an idle upload service.
+    private static int s_readyTransferChunks;
+    private static long s_readyTransferBytes;
     private static int s_pendingDescriptorPublications;
     private static long s_transferQueueBytesInFlight;
     private static long s_canceledStaleUploads;
     private static long s_failedUploads;
-    private static double s_lastRenderThreadPrepMilliseconds;
     private static double s_lastWorkerPrepMilliseconds;
     private static double s_lastTransferWaitMilliseconds;
     private static double s_lastPublicationMilliseconds;
+    private static long s_workerPreparationStarts;
+    private static long s_workerPreparationCompletions;
+    private static long s_workerPreparationYields;
+    private static long s_workerPreparationCancels;
+    private static long s_ignoredWorkerPreparationDisableOverrides;
+    private static int s_ownedWorkerPreparationJobs;
+    private static long s_chunksPrepared;
+    private static long s_chunksCompleted;
+    private static long s_chunkBytesPrepared;
+    private static long s_chunkBytesCompleted;
+    private static long s_finalPublications;
+    private static long s_coalescedTransferBatches;
+    private static long s_coalescedTransferChunks;
+    private static long s_transferAdmissionDeferrals;
+    private static int s_maxTransferChunksInFlight;
+    private static long s_maxTransferBytesInFlight;
+    private static long s_transferPublicationBudgetDeferrals;
+    private static long s_transferRetirementBudgetDeferrals;
+    private static long s_transferRecordCpuCount;
+    private static double s_lastTransferRecordCpuMilliseconds;
+    private static long s_nativeAllocationCpuCount;
+    private static double s_lastNativeAllocationCpuMilliseconds;
+    private static long s_stagingCopyCpuCount;
+    private static double s_lastStagingCopyCpuMilliseconds;
+    private static long s_transferGpuTimingSamples;
+    private static double s_lastTransferGpuMilliseconds;
+    private static long s_transferGpuTimingUnavailable;
 
     public static bool IsSynchronizedImportedTextureStreamingAvailable
         => Volatile.Read(ref s_synchronizedImportedTextureStreamingAvailable) != 0;
@@ -60,9 +113,68 @@ internal sealed partial class VulkanTextureUploadService
             Volatile.Read(ref s_pendingResidentDataPackages),
             Volatile.Read(ref s_pendingVulkanPrepPackages),
             Volatile.Read(ref s_activePrepPackages),
+            Volatile.Read(ref s_readyTransferChunks),
             Volatile.Read(ref s_pendingTransferSubmissions),
             Volatile.Read(ref s_pendingDescriptorPublications),
             Volatile.Read(ref s_transferQueueBytesInFlight));
+
+    internal VulkanTextureStreamingDiagnosticSnapshot CaptureDiagnosticSnapshot()
+    {
+        int pendingPreparation;
+        double oldestQueueAge;
+        using (VulkanFrameLockScope.Enter(_prepQueueSync, EVulkanFrameWaitReason.UploadLock))
+        {
+            pendingPreparation = _pendingPrepJobs.Count;
+            oldestQueueAge = GetOldestQueueWaitMillisecondsNoLock();
+        }
+
+        return new VulkanTextureStreamingDiagnosticSnapshot(
+            pendingPreparation,
+            Volatile.Read(ref s_ownedWorkerPreparationJobs),
+            Volatile.Read(ref s_readyTransferChunks),
+            Volatile.Read(ref s_readyTransferBytes),
+            Volatile.Read(ref s_pendingTransferSubmissions),
+            Volatile.Read(ref s_transferQueueBytesInFlight),
+            Volatile.Read(ref s_workerPreparationStarts),
+            Volatile.Read(ref s_workerPreparationCompletions),
+            Volatile.Read(ref s_workerPreparationYields),
+            Volatile.Read(ref s_workerPreparationCancels),
+            Volatile.Read(ref s_chunksPrepared),
+            Volatile.Read(ref s_chunksCompleted),
+            Volatile.Read(ref s_chunkBytesPrepared),
+            Volatile.Read(ref s_chunkBytesCompleted),
+            Volatile.Read(ref s_finalPublications),
+            Volatile.Read(ref s_canceledStaleUploads),
+            Volatile.Read(ref s_failedUploads),
+            Volatile.Read(ref s_coalescedTransferBatches),
+            Volatile.Read(ref s_coalescedTransferChunks),
+            Volatile.Read(ref s_transferAdmissionDeferrals),
+            4,
+            VulkanStagingManager.ImportedBackgroundBufferCapacity,
+            MaxTransferBatchChunks,
+            MaxTransferBatchBytes,
+            Volatile.Read(ref s_maxTransferChunksInFlight),
+            Volatile.Read(ref s_maxTransferBytesInFlight),
+            _transferPublicationItemsThisFrame,
+            _transferPublicationBytesThisFrame,
+            _transferRetirementItemsThisFrame,
+            _transferRetirementBytesThisFrame,
+            Volatile.Read(ref s_transferPublicationBudgetDeferrals),
+            Volatile.Read(ref s_transferRetirementBudgetDeferrals),
+            Volatile.Read(ref s_transferRecordCpuCount),
+            Volatile.Read(ref s_lastTransferRecordCpuMilliseconds),
+            Volatile.Read(ref s_nativeAllocationCpuCount),
+            Volatile.Read(ref s_lastNativeAllocationCpuMilliseconds),
+            Volatile.Read(ref s_stagingCopyCpuCount),
+            Volatile.Read(ref s_lastStagingCopyCpuMilliseconds),
+            oldestQueueAge,
+            Volatile.Read(ref s_lastWorkerPrepMilliseconds),
+            Volatile.Read(ref s_lastTransferWaitMilliseconds),
+            Volatile.Read(ref s_lastPublicationMilliseconds),
+            Volatile.Read(ref s_transferGpuTimingSamples),
+            Volatile.Read(ref s_lastTransferGpuMilliseconds),
+            Volatile.Read(ref s_transferGpuTimingUnavailable));
+    }
 
     /// <summary>
     /// Advances the foreground upload readiness barrier. Only VisibleNow
@@ -161,24 +273,37 @@ internal sealed partial class VulkanTextureUploadService
                    _transferQueueSync,
                    EVulkanFrameWaitReason.UploadLock))
         {
-            for (int index = 0; index < _pendingTransferUploads.Count; index++)
+            for (int index = 0; index < _readyTransferUploads.Count; index++)
             {
-                VulkanSubmittedImportedTextureUpload submitted = _pendingTransferUploads[index];
-                VulkanImportedTextureUploadRequest request = submitted.Upload.Request;
+                VulkanImportedTexturePendingUpload submitted = _readyTransferUploads[index];
+                VulkanImportedTextureUploadRequest request = submitted.Request;
                 if (request.PriorityClass == TextureUploadPriorityClass.VisibleNow &&
                     (!filterByRequiredTexture ||
                      IsRequiredTexture(in request, requiredTextures)))
                 {
                     request.TryGetTexture(out XRTexture2D? texture);
-                    manifest.Add(submitted.Upload.Ticket, texture);
+                    manifest.Add(submitted.Ticket, texture);
                     _ = TryPinUploadGeneration(
                         manifest,
                         texture,
-                        submitted.Upload.Ticket);
-                    _ = manifest.MarkCpuPrepared(submitted.Upload.Ticket);
-                    _ = manifest.MarkGpuSubmitted(submitted.Upload.Ticket);
-                    if (submitted.TryGetTerminalFailure(out string failureReason))
-                        manifest.Fail(submitted.Upload.Ticket, failureReason);
+                        submitted.Ticket);
+                    _ = manifest.MarkCpuPrepared(submitted.Ticket);
+                }
+            }
+            for (int index = 0; index < _pendingTransferUploads.Count; index++)
+            {
+                VulkanSubmittedImportedTextureUploadBatch batch = _pendingTransferUploads[index];
+                for (int child = 0; child < batch.Uploads.Length; child++)
+                {
+                    VulkanImportedTexturePendingUpload submitted = batch.Uploads[child];
+                    VulkanImportedTextureUploadRequest request = submitted.Request;
+                    if (request.PriorityClass != TextureUploadPriorityClass.VisibleNow ||
+                        (filterByRequiredTexture && !IsRequiredTexture(in request, requiredTextures))) continue;
+                    request.TryGetTexture(out XRTexture2D? texture);
+                    manifest.Add(submitted.Ticket, texture);
+                    _ = TryPinUploadGeneration(manifest, texture, submitted.Ticket);
+                    _ = manifest.MarkCpuPrepared(submitted.Ticket);
+                    _ = manifest.MarkGpuSubmitted(submitted.Ticket);
                 }
             }
         }
@@ -218,6 +343,8 @@ internal sealed partial class VulkanTextureUploadService
         int pendingResidentData = Volatile.Read(ref s_pendingResidentDataPackages);
         int pendingPrep = Volatile.Read(ref s_pendingVulkanPrepPackages);
         int activePrep = Volatile.Read(ref s_activePrepPackages);
+        int readyTransfers = Volatile.Read(ref s_readyTransferChunks);
+        long readyBytes = Volatile.Read(ref s_readyTransferBytes);
         int pendingTransfers = Volatile.Read(ref s_pendingTransferSubmissions);
         int pendingPublications = Volatile.Read(ref s_pendingDescriptorPublications);
         long transferBytesInFlight = Volatile.Read(ref s_transferQueueBytesInFlight);
@@ -226,6 +353,7 @@ internal sealed partial class VulkanTextureUploadService
                 pendingResidentData,
                 pendingPrep,
                 activePrep,
+                readyTransfers,
                 pendingTransfers,
                 pendingPublications,
                 transferBytesInFlight))
@@ -235,7 +363,7 @@ internal sealed partial class VulkanTextureUploadService
         }
 
         reason =
-            $"Vulkan texture uploads are still active (residentData={pendingResidentData}, prepQueued={pendingPrep}, prepActive={activePrep}, transfers={pendingTransfers}, transferBytes={transferBytesInFlight}, descriptorPublications={pendingPublications})";
+            $"Vulkan texture uploads are still active (residentData={pendingResidentData}, prepQueued={pendingPrep}, prepActive={activePrep}, readyTransfers={readyTransfers}, readyBytes={readyBytes}, transfers={pendingTransfers}, transferBytes={transferBytesInFlight}, descriptorPublications={pendingPublications})";
         return true;
     }
 
@@ -278,18 +406,48 @@ internal sealed partial class VulkanTextureUploadService
         builder.Append("VulkanTextureUploadPendingResidentDataPackages: ").Append(Volatile.Read(ref s_pendingResidentDataPackages)).AppendLine();
         builder.Append("VulkanTextureUploadPendingPrepPackages: ").Append(Volatile.Read(ref s_pendingVulkanPrepPackages)).AppendLine();
         builder.Append("VulkanTextureUploadActivePrepPackages: ").Append(Volatile.Read(ref s_activePrepPackages)).AppendLine();
+        builder.Append("VulkanTextureUploadReadyTransferChunks: ").Append(Volatile.Read(ref s_readyTransferChunks)).AppendLine();
+        builder.Append("VulkanTextureUploadReadyTransferBytes: ").Append(Volatile.Read(ref s_readyTransferBytes)).AppendLine();
         builder.Append("VulkanTextureUploadPendingTransfers: ").Append(Volatile.Read(ref s_pendingTransferSubmissions)).AppendLine();
         builder.Append("VulkanTextureUploadTransferBytesInFlight: ").Append(Volatile.Read(ref s_transferQueueBytesInFlight)).AppendLine();
         builder.Append("VulkanTextureUploadPendingDescriptorPublications: ").Append(Volatile.Read(ref s_pendingDescriptorPublications)).AppendLine();
         builder.Append("VulkanTextureUploadCanceledStale: ").Append(Volatile.Read(ref s_canceledStaleUploads)).AppendLine();
         builder.Append("VulkanTextureUploadFailed: ").Append(Volatile.Read(ref s_failedUploads)).AppendLine();
-        builder.Append("VulkanTextureUploadRenderThreadPrepMs: ").Append(Volatile.Read(ref s_lastRenderThreadPrepMilliseconds).ToString("F3")).AppendLine();
+        builder.Append("VulkanTextureUploadRenderThreadPrepMs: 0.000").AppendLine();
         builder.Append("VulkanTextureUploadWorkerPrepMs: ").Append(Volatile.Read(ref s_lastWorkerPrepMilliseconds).ToString("F3")).AppendLine();
+        builder.Append("VulkanTextureUploadWorkerPrepStarts: ").Append(Volatile.Read(ref s_workerPreparationStarts)).AppendLine();
+        builder.Append("VulkanTextureUploadWorkerPrepCompletions: ").Append(Volatile.Read(ref s_workerPreparationCompletions)).AppendLine();
+        builder.Append("VulkanTextureUploadWorkerPrepYields: ").Append(Volatile.Read(ref s_workerPreparationYields)).AppendLine();
+        builder.Append("VulkanTextureUploadWorkerPrepCancels: ").Append(Volatile.Read(ref s_workerPreparationCancels)).AppendLine();
+        builder.Append("VulkanTextureUploadWorkerPrepOwned: ").Append(Volatile.Read(ref s_ownedWorkerPreparationJobs)).AppendLine();
+        builder.Append("VulkanTextureUploadWorkerOnly: 1").AppendLine();
+        builder.Append("VulkanTextureUploadRequestedAsync: ").Append(RenderDiagnosticsFlags.VkAsyncTextureUpload ? 1 : 0).AppendLine();
+        builder.Append("VulkanTextureUploadRequestedPrepWorker: ").Append(RenderDiagnosticsFlags.VkTextureUploadPrepWorker ? 1 : 0).AppendLine();
+        builder.Append("VulkanTextureUploadIgnoredWorkerDisableOverrides: ").Append(Volatile.Read(ref s_ignoredWorkerPreparationDisableOverrides)).AppendLine();
         builder.Append("VulkanTextureUploadTransferWaitMs: ").Append(Volatile.Read(ref s_lastTransferWaitMilliseconds).ToString("F3")).AppendLine();
         builder.Append("VulkanTextureUploadPublicationMs: ").Append(Volatile.Read(ref s_lastPublicationMilliseconds).ToString("F3")).AppendLine();
+        builder.Append("VulkanTextureUploadChunksPrepared: ").Append(Volatile.Read(ref s_chunksPrepared)).AppendLine();
+        builder.Append("VulkanTextureUploadChunksCompleted: ").Append(Volatile.Read(ref s_chunksCompleted)).AppendLine();
+        builder.Append("VulkanTextureUploadChunkBytesPrepared: ").Append(Volatile.Read(ref s_chunkBytesPrepared)).AppendLine();
+        builder.Append("VulkanTextureUploadChunkBytesCompleted: ").Append(Volatile.Read(ref s_chunkBytesCompleted)).AppendLine();
+        builder.Append("VulkanTextureUploadFinalPublications: ").Append(Volatile.Read(ref s_finalPublications)).AppendLine();
+        builder.Append("VulkanTextureUploadCoalescedBatches: ").Append(Volatile.Read(ref s_coalescedTransferBatches)).AppendLine();
+        builder.Append("VulkanTextureUploadCoalescedChunks: ").Append(Volatile.Read(ref s_coalescedTransferChunks)).AppendLine();
+        builder.Append("VulkanTextureUploadAdmissionDeferrals: ").Append(Volatile.Read(ref s_transferAdmissionDeferrals)).AppendLine();
+        builder.Append("VulkanTextureUploadPublicationBudgetDeferrals: ").Append(Volatile.Read(ref s_transferPublicationBudgetDeferrals)).AppendLine();
+        builder.Append("VulkanTextureUploadRetirementBudgetDeferrals: ").Append(Volatile.Read(ref s_transferRetirementBudgetDeferrals)).AppendLine();
+        builder.Append("VulkanTextureUploadTransferRecordCpuCount: ").Append(Volatile.Read(ref s_transferRecordCpuCount)).AppendLine();
+        builder.Append("VulkanTextureUploadTransferRecordCpuMs: ").Append(Volatile.Read(ref s_lastTransferRecordCpuMilliseconds).ToString("F3")).AppendLine();
+        builder.Append("VulkanTextureUploadNativeAllocationCpuCount: ").Append(Volatile.Read(ref s_nativeAllocationCpuCount)).AppendLine();
+        builder.Append("VulkanTextureUploadNativeAllocationCpuMs: ").Append(Volatile.Read(ref s_lastNativeAllocationCpuMilliseconds).ToString("F3")).AppendLine();
+        builder.Append("VulkanTextureUploadStagingCopyCpuCount: ").Append(Volatile.Read(ref s_stagingCopyCpuCount)).AppendLine();
+        builder.Append("VulkanTextureUploadStagingCopyCpuMs: ").Append(Volatile.Read(ref s_lastStagingCopyCpuMilliseconds).ToString("F3")).AppendLine();
+        builder.Append("VulkanTextureUploadTransferGpuSamples: ").Append(Volatile.Read(ref s_transferGpuTimingSamples)).AppendLine();
+        builder.Append("VulkanTextureUploadTransferGpuMs: ").Append(Volatile.Read(ref s_lastTransferGpuMilliseconds).ToString("F3")).AppendLine();
+        builder.Append("VulkanTextureUploadTransferGpuUnavailable: ").Append(Volatile.Read(ref s_transferGpuTimingUnavailable)).AppendLine();
     }
 
-    private sealed class VulkanImportedTextureUploadJob
+    internal sealed class VulkanImportedTextureUploadJob
     {
         public VulkanImportedTextureUploadJob(
             VulkanImportedTextureUploadRequest request,
@@ -327,9 +485,13 @@ internal sealed partial class VulkanTextureUploadService
         public long NotBeforeTimestamp { get; private set; }
         public VkTexture2D? TextureWrapper { get; set; }
         public VulkanImportedTextureUploadPreparation? Preparation { get; set; }
+        /// <summary>Retained destination ticket between individually fenced staging chunks.</summary>
+        public VulkanImportedTexturePendingUpload? PendingUpload { get; set; }
         public Task<VulkanImportedTextureUploadWorkerResult>? WorkerPrepTask { get; set; }
+        public VulkanImportedTextureUploadWorkerResult? WorkerPrepResult { get; set; }
         public long? PublicationToken { get; set; }
         private int _foregroundRequired;
+        private int _terminalCallbackInvoked;
 
         public bool IsForegroundRequired =>
             Request.PriorityClass == TextureUploadPriorityClass.VisibleNow ||
@@ -351,6 +513,45 @@ internal sealed partial class VulkanTextureUploadService
 
         public void PromoteToForeground()
             => Volatile.Write(ref _foregroundRequired, 1);
+
+        public void InvokeCanceledOnce()
+        {
+            if (Interlocked.Exchange(ref _terminalCallbackInvoked, 1) == 0)
+                OnCanceled?.Invoke();
+        }
+
+        public void InvokeFinishedOnce(XRTexture2D texture)
+        {
+            if (Interlocked.Exchange(ref _terminalCallbackInvoked, 1) == 0)
+                OnFinished?.Invoke(texture);
+        }
+
+        public void InvokeErrorOnce(Exception exception)
+        {
+            if (Interlocked.Exchange(ref _terminalCallbackInvoked, 1) == 0)
+                OnError?.Invoke(exception);
+        }
+    }
+
+    internal static void RecordStagingAdmissionDeferred()
+        => Interlocked.Increment(ref s_transferAdmissionDeferrals);
+
+    private static void UpdateMaximum(ref int target, int value)
+    {
+        int observed;
+        while (value > (observed = Volatile.Read(ref target)) &&
+               Interlocked.CompareExchange(ref target, value, observed) != observed)
+        {
+        }
+    }
+
+    private static void UpdateMaximum(ref long target, long value)
+    {
+        long observed;
+        while (value > (observed = Volatile.Read(ref target)) &&
+               Interlocked.CompareExchange(ref target, value, observed) != observed)
+        {
+        }
     }
 
     public bool ShouldAcceptResult(
@@ -431,8 +632,10 @@ internal sealed partial class VulkanTextureUploadService
         Action<XRTexture2D>? onFinished,
         Action? onCanceled,
         Action<Exception>? onError,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        out VulkanTextureUploadTicket ticket)
     {
+        ticket = default;
         if (!context.IsDeviceOperational ||
             Volatile.Read(ref _preparationRetirementStarted) != 0)
         {
@@ -443,7 +646,8 @@ internal sealed partial class VulkanTextureUploadService
 
         long estimatedBytes = XRTexture2D.CalculateResidentUploadBytes(residentData);
         long sequence = Interlocked.Increment(ref _nextQueuedUploadSequence);
-        VulkanTextureUploadTicket ticket = new(sequence, streamingGeneration);
+        VulkanTextureUploadTicket createdTicket = new(sequence, streamingGeneration);
+        ticket = createdTicket;
         VulkanImportedTextureUploadRequest request = new(
             new WeakReference<XRTexture2D>(texture),
             texture.Name,
@@ -457,7 +661,7 @@ internal sealed partial class VulkanTextureUploadService
             ESizedInternalFormat.Rgba8,
             null,
             estimatedBytes,
-            ticket,
+            createdTicket,
             streamingGeneration,
             priorityClass,
             cancellationToken);
@@ -483,7 +687,7 @@ internal sealed partial class VulkanTextureUploadService
 
         VulkanImportedTextureUploadJob job = new(
             request,
-            ticket,
+            createdTicket,
             residentData,
             includeMipChain,
             sequence,
@@ -492,26 +696,6 @@ internal sealed partial class VulkanTextureUploadService
             onCanceled,
             onError);
         LogCompatibilityPathState(context.Commands);
-        if (!RenderDiagnosticsFlags.VkAsyncTextureUpload &&
-            RuntimeRenderingHostServices.FrameTiming.IsRenderThread)
-        {
-            RecordState(request, VulkanTextureUploadGenerationState.PrepRunning, "async upload prep disabled; preparing immediately on render thread");
-            while (true)
-            {
-                VulkanImportedTextureUploadPrepResult immediateResult = TryPrepareAndEnqueueImportedTextureUpload(
-                    context,
-                    job,
-                    TextureRuntimeDiagnostics.StartTiming(),
-                    0.0,
-                    requiredManifest: null);
-                if (immediateResult == VulkanImportedTextureUploadPrepResult.Deferred)
-                {
-                    return QueueUploadPreparation(context, job);
-                }
-
-                return immediateResult == VulkanImportedTextureUploadPrepResult.Completed;
-            }
-        }
 
         return QueueUploadPreparation(context, job);
     }
@@ -559,14 +743,17 @@ internal sealed partial class VulkanTextureUploadService
         int pendingResidentData,
         int pendingPrep,
         int activePrep,
+        int readyTransfers,
         int pendingTransfers,
         int pendingPublications,
         long transferBytesInFlight)
         => pendingResidentData > 0
             || pendingPrep > 0
             || activePrep > 0
+            || readyTransfers > 0
             || pendingTransfers > 0
             || pendingPublications > 0
             || transferBytesInFlight > 0;
+
 
 }

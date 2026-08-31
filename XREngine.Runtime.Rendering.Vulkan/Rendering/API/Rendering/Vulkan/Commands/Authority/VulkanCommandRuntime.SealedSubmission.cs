@@ -428,6 +428,7 @@ internal sealed partial class VulkanCommandRuntime
         VulkanSealedResourceDependency[] renderTargetResources;
         VulkanSealedNestedCommandDependency[] nestedCommands;
         VulkanSealedQueryResultDependency[] queryResults;
+        SealedSubmissionContract? reusableContract;
         using (VulkanFrameLockScope.Enter(
                    tracker.SyncRoot,
                    EVulkanFrameWaitReason.ResourceLifetimeLock))
@@ -445,6 +446,7 @@ internal sealed partial class VulkanCommandRuntime
                 return false;
             }
             commandResource = resolvedCommandResource;
+            reusableContract = lifetime.ReusableSealedSubmissionContract;
 
             // Descriptor sets retain structural command state, but their
             // payload resources can change between recordings. Seed the seal
@@ -461,8 +463,9 @@ internal sealed partial class VulkanCommandRuntime
                 return false;
             }
 
-            resources = new VulkanSealedResourceDependency[
-                lifetime.TouchedDependencies.Count];
+            resources = ReuseOrAllocate(
+                reusableContract?.Resources,
+                lifetime.TouchedDependencies.Count);
             int descriptorCount = 0;
             for (int index = 0; index < resources.Length; ++index)
             {
@@ -487,7 +490,9 @@ internal sealed partial class VulkanCommandRuntime
                     ++descriptorCount;
             }
 
-            descriptors = new VulkanSealedDescriptorDependency[descriptorCount];
+            descriptors = ReuseOrAllocate(
+                reusableContract?.Descriptors,
+                descriptorCount);
             int descriptorIndex = 0;
             for (int index = 0; index < resources.Length; ++index)
             {
@@ -532,10 +537,12 @@ internal sealed partial class VulkanCommandRuntime
             if (!TryCaptureSealedNestedCommands(
                     tracker,
                     owner,
+                    reusableContract?.NestedCommands,
                     out nestedCommands) ||
                 !TryCaptureSealedRenderTargetResources(
                     tracker,
                     in renderTarget,
+                    reusableContract?.RenderTargetResources,
                     out renderTargetResources))
             {
                 failureReason = RuntimeEngine.Rendering.Stats.Vulkan
@@ -575,6 +582,7 @@ internal sealed partial class VulkanCommandRuntime
             if (!TryCaptureSealedQueryResults(
                     tracker,
                     resources,
+                    reusableContract?.QueryResults,
                     out queryResults))
             {
                 failureReason = RuntimeEngine.Rendering.Stats.Vulkan
@@ -583,7 +591,9 @@ internal sealed partial class VulkanCommandRuntime
             }
             queueOwnershipTransfers = [];
 
-            images = new VulkanSealedImageDependency[recorded.EntrySubresources.Count];
+            images = ReuseOrAllocate(
+                reusableContract?.Images,
+                recorded.EntrySubresources.Count);
             int imageIndex = 0;
             foreach (KeyValuePair<VulkanTrackedImageSubresource, VulkanImageAccessState> entry in
                      recorded.EntrySubresources)
@@ -610,8 +620,9 @@ internal sealed partial class VulkanCommandRuntime
                     entry.Value,
                     state.SubmittedVersion);
             }
-            imageExits = new VulkanSealedImageExitState[
-                recorded.TouchedSubresources.Count];
+            imageExits = ReuseOrAllocate(
+                reusableContract?.ImageExits,
+                recorded.TouchedSubresources.Count);
             for (int exitIndex = 0; exitIndex < imageExits.Length; ++exitIndex)
             {
                 KeyValuePair<VulkanTrackedImageSubresource, VulkanImageAccessState> exit =
@@ -648,7 +659,8 @@ internal sealed partial class VulkanCommandRuntime
                         : null,
                     out VulkanStableCommandSlotHandle stableCommandIdentity))
             {
-                SealedSubmissionContract contract = new(
+                SealedSubmissionContract contract = reusableContract ?? new();
+                contract.Reset(
                     handle,
                     stableCommandIdentity,
                     commandSlot,
@@ -666,6 +678,7 @@ internal sealed partial class VulkanCommandRuntime
                     nestedCommands,
                     queryResults);
                 lifetime.SealedSubmissionContract = contract;
+                lifetime.ReusableSealedSubmissionContract = null;
                 return true;
             }
         }
@@ -685,9 +698,15 @@ internal sealed partial class VulkanCommandRuntime
         return false;
     }
 
+    private static T[] ReuseOrAllocate<T>(T[]? reusable, int requiredLength)
+        => reusable is { Length: var existingLength } && existingLength == requiredLength
+            ? reusable
+            : new T[requiredLength];
+
     private static bool TryCaptureSealedQueryResults(
         VulkanResourceLifetimeTracker tracker,
         ReadOnlySpan<VulkanSealedResourceDependency> resources,
+        VulkanSealedQueryResultDependency[]? reusable,
         out VulkanSealedQueryResultDependency[] queryResults)
     {
         int queryCount = 0;
@@ -710,7 +729,7 @@ internal sealed partial class VulkanCommandRuntime
             return true;
         }
 
-        queryResults = new VulkanSealedQueryResultDependency[queryCount];
+        queryResults = ReuseOrAllocate(reusable, queryCount);
         int destination = 0;
         for (int resourceIndex = 0; resourceIndex < resources.Length; ++resourceIndex)
         {
@@ -736,6 +755,7 @@ internal sealed partial class VulkanCommandRuntime
     private static bool TryCaptureSealedNestedCommands(
         VulkanResourceLifetimeTracker tracker,
         PrimaryCommandArtifactOwner? owner,
+        VulkanSealedNestedCommandDependency[]? reusable,
         out VulkanSealedNestedCommandDependency[] dependencies)
     {
         if (owner is null || owner.RecordedSecondaryArtifactSequence.Count == 0)
@@ -744,9 +764,9 @@ internal sealed partial class VulkanCommandRuntime
             return true;
         }
 
-        dependencies = new
-            VulkanSealedNestedCommandDependency[
-                owner.RecordedSecondaryArtifactSequence.Count];
+        dependencies = ReuseOrAllocate(
+            reusable,
+            owner.RecordedSecondaryArtifactSequence.Count);
         for (int index = 0; index < dependencies.Length; ++index)
         {
             VulkanRecordedCommandArtifactReference artifact = owner
@@ -776,6 +796,7 @@ internal sealed partial class VulkanCommandRuntime
     private static bool TryCaptureSealedRenderTargetResources(
         VulkanResourceLifetimeTracker tracker,
         in VulkanRecordedRenderTargetSnapshot renderTarget,
+        VulkanSealedResourceDependency[]? reusable,
         out VulkanSealedResourceDependency[] dependencies)
     {
         if (!renderTarget.IsComplete)
@@ -785,8 +806,9 @@ internal sealed partial class VulkanCommandRuntime
         }
 
         int framebufferCount = renderTarget.FramebufferHandle == 0UL ? 0 : 1;
-        dependencies = new VulkanSealedResourceDependency[
-            framebufferCount + renderTarget.AttachmentCount * 2];
+        dependencies = ReuseOrAllocate(
+            reusable,
+            framebufferCount + renderTarget.AttachmentCount * 2);
         int destination = 0;
         if (framebufferCount != 0 &&
             !TryCaptureSealedResource(

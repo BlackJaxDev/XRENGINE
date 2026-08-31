@@ -15,4 +15,5 @@ internal enum EVulkanResidentTemplateDependencyKind : byte
     Buffer,
     BufferView,
     RenderPass,
+    Image,
 }

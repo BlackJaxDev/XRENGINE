@@ -13,6 +13,7 @@ public static class RenderQueryTelemetry
     private static long s_hostReadBytes;
     private static long s_copiedBytes;
     private static long s_unsupported;
+    private static string s_lastTimestampPreparationRejection = string.Empty;
 
     public static long Allocations => Volatile.Read(ref s_allocations);
     public static long Releases => Volatile.Read(ref s_releases);
@@ -20,6 +21,8 @@ public static class RenderQueryTelemetry
     public static long HostReadBytes => Volatile.Read(ref s_hostReadBytes);
     public static long CopiedBytes => Volatile.Read(ref s_copiedBytes);
     public static long Unsupported => Volatile.Read(ref s_unsupported);
+    /// <summary>Latest terminal reason a timestamp query was rejected before command recording.</summary>
+    public static string LastTimestampPreparationRejection => Volatile.Read(ref s_lastTimestampPreparationRejection);
 
     public static long GetRecordingCount(ERenderQueryKind kind)
         => Volatile.Read(ref s_recordingsByKind[(int)kind]);
@@ -35,4 +38,6 @@ public static class RenderQueryTelemetry
     public static void RecordHostReadBytes(long bytes) => Interlocked.Add(ref s_hostReadBytes, Math.Max(bytes, 0));
     public static void RecordCopiedBytes(long bytes) => Interlocked.Add(ref s_copiedBytes, Math.Max(bytes, 0));
     public static void RecordUnsupported() => Interlocked.Increment(ref s_unsupported);
+    public static void RecordTimestampPreparationRejection(string reason)
+        => Volatile.Write(ref s_lastTimestampPreparationRejection, reason ?? string.Empty);
 }

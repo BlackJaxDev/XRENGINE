@@ -14,21 +14,24 @@ internal unsafe sealed partial class VulkanQueryAuthority
             return;
         }
 
-        context.Api.GetPhysicalDeviceProperties(device.PhysicalDevice, out PhysicalDeviceProperties properties);
-        uint graphicsFamily = device.QueueFamilies.GraphicsFamilyIndex ?? 0u;
-        uint familyCount = 0u;
-        context.Api.GetPhysicalDeviceQueueFamilyProperties(device.PhysicalDevice, ref familyCount, null);
+        // The selected queue indices came from this immutable physical-device
+        // snapshot.  Re-querying the driver here has produced a zero timestamp
+        // width after logical-device creation on some NVIDIA paths, even though
+        // this exact graphics family was selected from the snapshot.  Keep the
+        // timestamp capability bound to the same discovery facts as the queue.
+        VulkanPhysicalDeviceCapabilitySnapshot physicalCapabilities = device.PhysicalDeviceCapabilities
+            ?? throw new InvalidOperationException("Physical-device capabilities are unavailable while resolving query capabilities.");
+        PhysicalDeviceProperties properties = physicalCapabilities.Properties;
+        uint graphicsFamily = device.QueueFamilies.GraphicsFamilyIndex
+            ?? throw new InvalidOperationException("A graphics queue family is required while resolving query capabilities.");
         uint timestampValidBits = 0u;
         QueueFlags graphicsQueueFlags = 0;
-        if (graphicsFamily < familyCount)
+        QueueFamilyProperties[] families = physicalCapabilities.QueueFamilyArray;
+        if (graphicsFamily < (uint)families.Length)
         {
-            QueueFamilyProperties[] families = new QueueFamilyProperties[checked((int)familyCount)];
-            fixed (QueueFamilyProperties* familiesPtr = families)
-            {
-                context.Api.GetPhysicalDeviceQueueFamilyProperties(device.PhysicalDevice, ref familyCount, familiesPtr);
-                timestampValidBits = families[graphicsFamily].TimestampValidBits;
-                graphicsQueueFlags = families[graphicsFamily].QueueFlags;
-            }
+            QueueFamilyProperties graphicsQueue = families[(int)graphicsFamily];
+            timestampValidBits = graphicsQueue.TimestampValidBits;
+            graphicsQueueFlags = graphicsQueue.QueueFlags;
         }
 
         bool transformFeedbackExtensionEnabled = device.EnabledDeviceExtensions.Contains("VK_EXT_transform_feedback");

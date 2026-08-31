@@ -200,6 +200,9 @@ public static class XREngineEnvironmentVariables
     public const string ForceFullViewport = "XRE_FORCE_FULL_VIEWPORT";
     public const string ForceDebugOpaquePipeline = "XRE_FORCE_DEBUG_OPAQUE_PIPELINE";
     public const string GpuHizDirtyBypass = "XRE_GPU_HIZ_DIRTY_BYPASS";
+    public const string GpuHizCoarseTiles = "XRE_GPU_HIZ_COARSE_TILES";
+    public const string GpuHizCoarseTilesCull = "XRE_GPU_HIZ_COARSE_TILES_CULL";
+    public const string OcclusionGpuTiming = "XRE_OCCLUSION_GPU_TIMING";
     public const string OutputSourceFbo = "XRE_OUTPUT_SOURCE_FBO";
     public const string ShadowAtlasSolveWarnMs = "XRE_SHADOW_ATLAS_SOLVE_WARN_MS";
     public const string DebugCameraInput = "XRE_DEBUG_CAMERA_INPUT";
@@ -211,6 +214,12 @@ public static class XREngineEnvironmentVariables
     public const string MdicGlFinish = "XRE_MDIC_GL_FINISH";
 
     public const string VkRenderTargetMode = "XRE_VK_RENDER_TARGET_MODE";
+    /// <summary>
+    /// Optional root for all Vulkan pipeline persistence. This is intended for
+    /// isolated headless cold/warm validation; normal runs retain their existing
+    /// per-user and repository cache locations.
+    /// </summary>
+    public const string VulkanPipelineCacheRoot = "XRE_VULKAN_PIPELINE_CACHE_ROOT";
     public const string VkCapabilityTier = "XRE_VK_CAPABILITY_TIER";
     public const string VkDescriptorBackend = "XRE_VK_DESCRIPTOR_BACKEND";
     public const string VkProgramBindingBackend = "XRE_VK_PROGRAM_BINDING_BACKEND";
@@ -318,6 +327,7 @@ public static class XREngineEnvironmentVariables
     public const string VulkanPhase524bTsrResolutionScale = "XRE_VULKAN_PHASE524B_TSR_RESOLUTION_SCALE";
     public const string VulkanPhase525Validation = "XRE_VULKAN_PHASE525_VALIDATION";
     public const string VulkanDirectionalCascades = "XRE_VULKAN_DIRECTIONAL_CASCADES";
+    public const string VulkanTransientAttachmentMode = "XRE_VULKAN_TRANSIENT_ATTACHMENT_MODE";
     public const string VulkanExternalValidationAllowlist = "XRE_VULKAN_EXTERNAL_VALIDATION_ALLOWLIST";
     public const string VulkanPromoteOpenXrGpuFamilyCulling = "XRE_VK_PROMOTE_OPENXR_GPU_FAMILY_CULLING";
     public const string VulkanValidateOpenXrGpuFamilyCulling = "XRE_VK_VALIDATE_OPENXR_GPU_FAMILY_CULLING";

@@ -27,6 +27,16 @@ public partial class GLTexture2D
     private int _preparedMipChunkMipIndex = -1;
     private int _preparedMipChunkNextRow;
 
+    /// <summary>
+    /// A bindless handle freezes texture parameters, including the base/max mip range. Keep
+    /// material publication pending while either progressive uploader still owns that range.
+    /// </summary>
+    protected override bool IsReadyForBindlessHandle()
+        => !Data.RuntimeManagedProgressiveUploadActive
+            && !Data.RuntimeManagedProgressiveFinalizePending
+            && !TextureUploadScheduler.Instance.HasPendingUpload(Data)
+            && _progressiveVisibleBaseLevel < 0;
+
     private void ResetUnpackStateForTextureUpload()
         => ResetUnpackStateForTextureUpload(Api);
 
@@ -76,6 +86,26 @@ public partial class GLTexture2D
                 return;
             }
 
+            // Determine this before allocating/reseeding storage. A progressive upload changes
+            // BASE/MAX as mips arrive, so it cannot mutate an identity already frozen by an
+            // ARB bindless handle. Retire that identity once; the new one stays pending until
+            // the final range is stable.
+            bool hasBulkMipData = false;
+            if (Mipmaps is not null && Mipmaps.Length > 0)
+            {
+                long totalBytes = 0;
+                for (int i = 0; i < Mipmaps.Length; ++i)
+                {
+                    DataSource? data = Mipmaps[i]?.Mipmap?.Data;
+                    if (data is not null)
+                        totalBytes += data.Length;
+                }
+                hasBulkMipData = totalBytes >= ProgressivePushDataThresholdBytes && !Data.PreferSynchronousGpuUpload;
+            }
+
+            if (hasBulkMipData && !EnsureBindlessParametersMutable())
+                return;
+
             if (Data.SparseTextureStreamingEnabled
                 && Data.SparseTextureStreamingResidentBaseMipLevel == int.MaxValue)
             {
@@ -96,20 +126,6 @@ public partial class GLTexture2D
             EPixelInternalFormat? internalFormatForce;
             using (RuntimeEngine.Profiler.Start("GLTexture2D.PushData.EnsureStorageAllocated"))
                 internalFormatForce = EnsureStorageAllocated();
-
-            // Determine whether mipmaps carry significant CPU data worth deferring.
-            bool hasBulkMipData = false;
-            if (Mipmaps is not null && Mipmaps.Length > 0)
-            {
-                long totalBytes = 0;
-                for (int i = 0; i < Mipmaps.Length; ++i)
-                {
-                    DataSource? data = Mipmaps[i]?.Mipmap?.Data;
-                    if (data is not null)
-                        totalBytes += data.Length;
-                }
-                hasBulkMipData = totalBytes >= ProgressivePushDataThresholdBytes && !Data.PreferSynchronousGpuUpload;
-            }
 
             if (hasBulkMipData)
             {
@@ -195,6 +211,21 @@ public partial class GLTexture2D
     /// </summary>
     private void FinalizePushData(bool allowPostPushCallback)
     {
+        // Texel uploads are legal after ARB bindless acquisition, but parameter writes are
+        // not. A same-size/non-progressive update therefore keeps its frozen sampler state.
+        if (HasFrozenBindlessParameters)
+        {
+            if (Data.AutoGenerateMipmaps)
+            {
+                using var mipmapProf = RuntimeEngine.Profiler.Start("GLTexture2D.PushData.GenerateMipmaps");
+                GenerateMipmaps();
+            }
+
+            if (allowPostPushCallback)
+                OnPostPushData();
+            return;
+        }
+
         int minLOD = -1000;
         int maxLOD = 1000;
         using (RuntimeEngine.Profiler.Start("GLTexture2D.PushData.ApplyMipRangeParameters"))
@@ -530,6 +561,12 @@ public partial class GLTexture2D
         if (mipIndex < 0 || mipIndex >= Mipmaps.Length)
             return true;
 
+        // Runtime-managed mip promotion can change BASE/MAX while it reveals newly uploaded
+        // levels. Do that only on a fresh identity; the following bindless acquisition stays
+        // pending until the runtime transition completes.
+        if (Data.RuntimeManagedProgressiveUploadActive && !EnsureBindlessParametersMutable())
+            return false;
+
         ApplyPendingImmutableStorageRecreate();
         Generate();
 
@@ -598,7 +635,10 @@ public partial class GLTexture2D
                     _preparedMipChunkNextRow = 0;
                 }
 
-                SetParameters();
+                // A simple prepared texel update may target an already handled texture.
+                // Do not turn that into an illegal parameter write/recreation.
+                if (!HasFrozenBindlessParameters)
+                    SetParameters();
                 IsInvalidated = false;
             }
 

@@ -17,6 +17,12 @@ layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 const uint FLAG_LATE_VISIBLE = 1u << 7u;
 const uint FLAG_OCCLUDED = 1u << 8u;
 const uint FLAG_EARLY_VISIBLE = 1u << 5u;
+const uint FLAG_NEW = 1u << 0u;
+const uint FLAG_RESIZED = 1u << 1u;
+const uint FLAG_INVALID_HISTORY = 1u << 2u;
+const uint FLAG_UNCERTAIN = 1u << 3u;
+const uint VIEW_FLAG_FRAMEBUFFER_TEXTURE_Y_DOWN = 1u << 6u;
+const uint VIEW_FLAG_REVERSED_DEPTH = 1u << 1u;
 const uint PRODUCER_STATIC_MESHLET = 0u;
 const uint PRODUCER_SKINNED_MESHLET = 1u;
 const uint PRODUCER_INDIRECT_INDEXED = 2u;
@@ -49,45 +55,93 @@ void storeVisibilityState(uint candidateIndex, uvec2 draw, uint flags);
 
 #include "../Visibility/VisibilityInterface.glslinc"
 
-bool currentDepthOccludes(vec4 sphere, XRAdvancedViewRecord view)
+bool currentDepthOccludes(
+    vec4 boundsMinimum,
+    vec4 boundsMaximum,
+    XRAdvancedViewRecord view)
 {
-    // The previous center-sample approximation could falsely classify a
-    // partially visible bound as occluded. Keep late recovery conservative
-    // until the projected-rectangle/nearest-depth proof is implemented.
-    return false;
-#if 0
-    vec4 clip = XR_ADV_TransformRowVector(vec4(sphere.xyz, 1.0), view.viewProjectionJittered);
-    if (clip.w <= 0.0)
+    if (any(isnan(boundsMinimum)) || any(isnan(boundsMaximum)) ||
+        any(isinf(boundsMinimum)) || any(isinf(boundsMaximum)) ||
+        any(greaterThan(boundsMinimum.xyz, boundsMaximum.xyz)))
         return false;
 
-    vec3 ndc = clip.xyz / clip.w;
-    vec2 uv = ndc.xy * 0.5 + 0.5;
-    if (any(lessThan(uv, vec2(0.0))) ||
-        any(greaterThan(uv, vec2(1.0))))
+    vec2 minimumNdc = vec2(3.402823e38);
+    vec2 maximumNdc = vec2(-3.402823e38);
+    bool reversedDepth = (view.flags & VIEW_FLAG_REVERSED_DEPTH) != 0u;
+    float nearestDepth = reversedDepth ? 0.0 : 1.0;
+    for (uint corner = 0u; corner < 8u; ++corner)
+    {
+        vec3 position = vec3(
+            (corner & 1u) == 0u ? boundsMinimum.x : boundsMaximum.x,
+            (corner & 2u) == 0u ? boundsMinimum.y : boundsMaximum.y,
+            (corner & 4u) == 0u ? boundsMinimum.z : boundsMaximum.z);
+        vec4 clip = XR_ADV_TransformRowVector(
+            vec4(position, 1.0), view.viewProjectionJittered);
+        if (any(isnan(clip)) || any(isinf(clip)) || clip.w <= 0.00001 ||
+            clip.z < 0.0 || clip.z > clip.w)
+            return false;
+
+        vec3 ndc = clip.xyz / clip.w;
+        minimumNdc = min(minimumNdc, ndc.xy);
+        maximumNdc = max(maximumNdc, ndc.xy);
+        nearestDepth = reversedDepth
+            ? max(nearestDepth, ndc.z)
+            : min(nearestDepth, ndc.z);
+    }
+
+    ivec2 sourceSize = ivec2(max(view.renderSizeAndInverse.xy, vec2(1.0)));
+    if (any(lessThanEqual(sourceSize, ivec2(0))))
+        return false;
+    if (maximumNdc.x < -1.0 || maximumNdc.y < -1.0 ||
+        minimumNdc.x > 1.0 || minimumNdc.y > 1.0)
+        return false;
+    vec2 minimumUv = clamp(minimumNdc * 0.5 + 0.5, vec2(0.0), vec2(1.0));
+    vec2 maximumUv = clamp(maximumNdc * 0.5 + 0.5, vec2(0.0), vec2(1.0));
+    bool framebufferYDown = (view.flags &
+        VIEW_FLAG_FRAMEBUFFER_TEXTURE_Y_DOWN) != 0u;
+    float minimumTextureY = framebufferYDown
+        ? 1.0 - maximumUv.y
+        : minimumUv.y;
+    float maximumTextureY = framebufferYDown
+        ? 1.0 - minimumUv.y
+        : maximumUv.y;
+    vec2 minimumPixel = floor(
+        vec2(minimumUv.x, minimumTextureY) * vec2(sourceSize)) - vec2(1.0);
+    vec2 maximumPixel = ceil(
+        vec2(maximumUv.x, maximumTextureY) * vec2(sourceSize)) + vec2(1.0);
+    if (any(isnan(minimumPixel)) || any(isnan(maximumPixel)) || isnan(nearestDepth) ||
+        nearestDepth < 0.0 || nearestDepth > 1.0)
         return false;
 
-    float projectedRadius =
-        sphere.w / max(abs(clip.w), 0.00001);
-    float diameterPixels =
-        projectedRadius *
-        float(max(
-            textureSize(XR_ADV_DepthPyramidSampled, 0).x,
-            textureSize(XR_ADV_DepthPyramidSampled, 0).y));
-    float mip = clamp(
-        floor(log2(max(diameterPixels, 1.0))),
-        0.0,
-        float(textureQueryLevels(XR_ADV_DepthPyramidSampled) - 1));
-    float currentDepth =
-        textureLod(XR_ADV_DepthPyramidSampled, uv, mip).r;
-    bool reversedDepth = view.depthParams.z != 0.0;
-    float centerDepth = ndc.z;
-    float nearestDepth = reversedDepth
-        ? centerDepth + projectedRadius
-        : centerDepth - projectedRadius;
-    return reversedDepth
-        ? nearestDepth < currentDepth
-        : nearestDepth > currentDepth;
-#endif
+    const int tileSize = 64;
+    const int maxTilesPerAxis = 8;
+    ivec2 tileExtent = (sourceSize + ivec2(tileSize - 1)) / tileSize;
+    if (textureSize(XR_ADV_DepthPyramidSampled, 0) != tileExtent)
+        return false;
+    ivec2 firstTile = clamp(ivec2(floor(minimumPixel)) / tileSize,
+        ivec2(0), tileExtent - ivec2(1));
+    ivec2 lastTile = clamp(ivec2(floor(maximumPixel)) / tileSize,
+        ivec2(0), tileExtent - ivec2(1));
+    ivec2 tileCount = lastTile - firstTile + ivec2(1);
+    if (any(greaterThan(tileCount, ivec2(maxTilesPerAxis))))
+        return false;
+
+    // Every covered coarse tile must prove occlusion. The build shader writes
+    // far depth for NPOT out-of-bounds source samples, so edge tiles remain
+    // conservative without clamped-edge false occluders.
+    for (int y = firstTile.y; y <= lastTile.y; ++y)
+    for (int x = firstTile.x; x <= lastTile.x; ++x)
+    {
+        float tileDepth = texelFetch(XR_ADV_DepthPyramidSampled, ivec2(x, y), 0).r;
+        if (isnan(tileDepth) || isinf(tileDepth) || tileDepth < 0.0 || tileDepth > 1.0)
+            return false;
+        bool tileOccludes = reversedDepth
+            ? nearestDepth < tileDepth - 0.0001
+            : nearestDepth > tileDepth + 0.0001;
+        if (!tileOccludes)
+            return false;
+    }
+    return true;
 }
 
 void main()
@@ -112,6 +166,9 @@ void main()
     VisibilityCandidate candidate;
     candidate.Draw = uvec2(XR_ADV_VisibilityCandidates.records[base], XR_ADV_VisibilityCandidates.records[base + 1u]);
     candidate.BoundsSphere = uintBitsToFloat(uvec4(XR_ADV_VisibilityCandidates.records[base + 4u], XR_ADV_VisibilityCandidates.records[base + 5u], XR_ADV_VisibilityCandidates.records[base + 6u], XR_ADV_VisibilityCandidates.records[base + 7u]));
+    candidate.BoundsMin = uintBitsToFloat(uvec4(XR_ADV_VisibilityCandidates.records[base + 8u], XR_ADV_VisibilityCandidates.records[base + 9u], XR_ADV_VisibilityCandidates.records[base + 10u], XR_ADV_VisibilityCandidates.records[base + 11u]));
+    candidate.BoundsMax = uintBitsToFloat(uvec4(XR_ADV_VisibilityCandidates.records[base + 12u], XR_ADV_VisibilityCandidates.records[base + 13u], XR_ADV_VisibilityCandidates.records[base + 14u], XR_ADV_VisibilityCandidates.records[base + 15u]));
+    candidate.Flags = XR_ADV_VisibilityCandidates.records[base + 19u];
     if (candidate.Draw.x == 0u)
     {
         atomicAdd(XR_ADV_VisibilityCounters.decodeOutOfBounds, 1u);
@@ -127,7 +184,12 @@ void main()
 
     XRAdvancedViewRecord view =
         XR_ADV_LoadView(XR_ADV_VisibilityPush.viewIndex);
-    if (!currentDepthOccludes(candidate.BoundsSphere, view))
+    bool forceVisible = (candidate.Flags &
+        (FLAG_NEW | FLAG_RESIZED | FLAG_INVALID_HISTORY | FLAG_UNCERTAIN)) != 0u;
+    if (forceVisible || !currentDepthOccludes(
+            candidate.BoundsMin,
+            candidate.BoundsMax,
+            view))
     {
         uint outputIndex;
         if (!reserveLateOutput(outputIndex))

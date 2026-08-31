@@ -116,8 +116,7 @@ internal unsafe partial class VkMeshRenderer
 				shaderStageList));
 			generatedProgram.AllowLink();
 
-            VkRenderProgram? vkProgram = WrapperLookup
-                .GetOrCreate(generatedProgram, generateNow: true) as VkRenderProgram;
+            VkRenderProgram? vkProgram = ProgramCreationPort.GetOrCreateProgram(generatedProgram);
 			if (vkProgram is null)
 			{
 				generatedProgram.Destroy();

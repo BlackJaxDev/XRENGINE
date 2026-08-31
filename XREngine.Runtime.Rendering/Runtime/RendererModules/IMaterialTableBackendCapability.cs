@@ -15,6 +15,11 @@ public interface IMaterialTableBackendCapability
         string semantic);
     void FlushMaterialTextureTableUpdates();
     void ReleaseMaterialTextureReference(in Materials.GPUMaterialRetiredHandle retired);
-    bool BeginGlobalMaterialTextureDescriptorScope(XRRenderProgram program, string consumer);
+    bool BeginGlobalMaterialTextureDescriptorScope(XRRenderProgram program, string consumer)
+        => BeginGlobalMaterialTextureDescriptorScope(program, consumer, null);
+    bool BeginGlobalMaterialTextureDescriptorScope(
+        XRRenderProgram program,
+        string consumer,
+        Materials.GPUMaterialTablePublication? publication);
     void EndGlobalMaterialTextureDescriptorScope(XRRenderProgram program);
 }

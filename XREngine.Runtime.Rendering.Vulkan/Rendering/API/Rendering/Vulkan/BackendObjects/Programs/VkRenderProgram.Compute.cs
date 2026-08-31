@@ -13,6 +13,7 @@ using XREngine.Data.Vectors;
 using XREngine.Data.Rendering;
 using XREngine.Diagnostics;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.Materials;
 using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.RenderGraph;
 
@@ -172,21 +173,224 @@ internal unsafe partial class VkRenderProgram
         int passIndex = int.MinValue,
         IReadOnlyCollection<RenderPassMetadata>? passMetadata = null)
     {
+        _ = TryGetOrRequestComputePipeline(passIndex, passMetadata, out Pipeline pipeline, out _);
+        return pipeline;
+    }
+
+    internal VulkanComputePipelineReadiness TryGetOrRequestComputePipeline(
+        int passIndex,
+        IReadOnlyCollection<RenderPassMetadata>? passMetadata,
+        out Pipeline pipeline,
+        out string reason)
+    {
+        pipeline = default;
+        reason = string.Empty;
         if (_computePipeline.Handle != 0)
         {
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanPipelineCacheLookup(cacheHit: true);
-            return _computePipeline;
+            pipeline = _computePipeline;
+            return VulkanComputePipelineReadiness.Ready;
         }
 
         RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanPipelineCacheLookup(cacheHit: false);
 
+        VulkanPipelineManager manager = BackendContext.Resources.PipelineManager;
+        ulong fingerprint = ComputeComputePipelineFingerprint();
+        VulkanComputePipelineCompileKey key = new(
+            unchecked((long)BindingId),
+            fingerprint,
+            LinkGeneration,
+            _pipelineLayout.Handle,
+            manager.CompileDependencyGeneration);
+        if (manager.TryTakeCompletedComputePipeline(key, out VulkanComputePipelineCompileResult completed))
+        {
+            if (TryAdoptCompletedComputePipeline(
+                    completed,
+                    key,
+                    fingerprint,
+                    out pipeline))
+            {
+                return VulkanComputePipelineReadiness.Ready;
+            }
+
+            if (completed.Success && completed.Pipeline.Handle != 0)
+            {
+                reason = "compute pipeline completion became stale before adoption";
+                return VulkanComputePipelineReadiness.Pending;
+            }
+
+            reason = completed.ErrorMessage ?? "compute pipeline compilation failed";
+            return completed.Retryable
+                ? VulkanComputePipelineReadiness.Pending
+                : VulkanComputePipelineReadiness.Failed;
+        }
+
+        manager.RecordComputePipelineCacheMiss(
+            passIndex,
+            passMetadata,
+            $"{Data.Name ?? "UnnamedProgram"}.Compute",
+            Data.Name ?? "UnnamedProgram",
+            fingerprint);
+
+        VulkanComputePipelineBuildRequest request;
+        try
+        {
+            request = CreateComputePipelineBuildRequest(key);
+        }
+        catch (VulkanPipelineCompilationDeferredException exception)
+        {
+            reason = exception.Message;
+            return VulkanComputePipelineReadiness.Pending;
+        }
+
+        bool foregroundRequired = VulkanProgramLinkPreparationScope.RequiresSynchronousLink(
+            BackendContext.Resources);
+        if (!manager.TryEnqueueComputePipelineCompile(
+                request,
+                acceptsBackendWork: BackendContext.IsDeviceOperational,
+                asyncCompilationEnabled: Data.AllowAsyncBackendCompile || foregroundRequired,
+                out reason))
+        {
+            return VulkanComputePipelineReadiness.Pending;
+        }
+
+        if (foregroundRequired)
+        {
+            if (!manager.TryCompleteComputePipelineForForeground(key, out completed, out reason))
+                return VulkanComputePipelineReadiness.Failed;
+            if (TryAdoptCompletedComputePipeline(
+                    completed,
+                    key,
+                    fingerprint,
+                    out pipeline))
+                return VulkanComputePipelineReadiness.Ready;
+            reason = "compute pipeline completion became stale before foreground adoption";
+            return VulkanComputePipelineReadiness.Pending;
+        }
+
+        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanPipelineTelemetry(
+            EVulkanPipelineTelemetryEvent.DrawNotReady);
+        reason = "compute pipeline compilation is pending";
+        return VulkanComputePipelineReadiness.Pending;
+    }
+
+    private bool TryAdoptCompletedComputePipeline(
+        in VulkanComputePipelineCompileResult completed,
+        in VulkanComputePipelineCompileKey key,
+        ulong fingerprint,
+        out Pipeline pipeline)
+    {
+        pipeline = default;
+        if (!completed.Success || completed.Pipeline.Handle == 0)
+            return false;
+
+        VulkanPipelineManager manager = BackendContext.Resources.PipelineManager;
+        if (!ReferenceEquals(completed.Owner, this) ||
+            !IsLinked ||
+            _pipelineLayout.Handle == 0 ||
+            LinkGeneration != key.ProgramLinkGeneration ||
+            _pipelineLayout.Handle != key.PipelineLayoutHandle ||
+            ComputeComputePipelineFingerprint() != fingerprint ||
+            !manager.IsCompilationDependencyGenerationCurrent(key.DependencyGeneration))
+        {
+            ProgramCreationPort.DestroyPipelineImmediate(completed.Pipeline);
+            return false;
+        }
+
+        _computePipeline = completed.Pipeline;
+        pipeline = _computePipeline;
+        return true;
+    }
+
+    private VulkanComputePipelineBuildRequest CreateComputePipelineBuildRequest(
+        in VulkanComputePipelineCompileKey key)
+    {
+        using VulkanPipelineCompilationDependencyLease lease =
+            BackendContext.Resources.PipelineManager.AcquireCompilationDependencyLease();
+        if (lease.Generation != key.DependencyGeneration ||
+            !IsLinked ||
+            _pipelineLayout.Handle == 0 ||
+            LinkGeneration != key.ProgramLinkGeneration ||
+            _pipelineLayout.Handle != key.PipelineLayoutHandle ||
+            ComputeComputePipelineFingerprint() != key.ProgramFingerprint)
+        {
+            throw new VulkanPipelineCompilationDeferredException(
+                "The compute program interface changed while its pipeline request was prepared.");
+        }
+        PipelineShaderStageCreateInfo stage = GetShaderStages(EProgramStageMask.ComputeShaderBit).SingleOrDefault();
+        if (stage.Module.Handle == 0 || stage.PName is null)
+            throw new VulkanPipelineCompilationDeferredException("The compute shader is being regenerated.");
+        return new VulkanComputePipelineBuildRequest(
+            this,
+            ProgramCreationPort,
+            key,
+            _pipelineLayout,
+            [.. _descriptorSetLayouts],
+            stage,
+            _descriptorHeapLayout is { Mappings.Length: > 0 } descriptorHeapLayout
+                ? [.. descriptorHeapLayout.Mappings]
+                : []);
+    }
+
+    internal Pipeline CreateComputePipelineFromRequest(
+        VulkanComputePipelineBuildRequest request,
+        PipelineCache pipelineCache)
+    {
+        if (!BackendContext.Resources.PipelineManager.IsCompilationDependencyGenerationCurrent(request.Key.DependencyGeneration))
+            throw new VulkanPipelineCompilationDeferredException("Compute pipeline request became stale before worker creation.");
         ComputePipelineCreateInfo pipelineInfo = new()
         {
-            SType = StructureType.ComputePipelineCreateInfo
+            SType = StructureType.ComputePipelineCreateInfo,
+            Stage = request.ComputeStage,
+            Layout = request.PipelineLayout,
         };
-
-        _computePipeline = CreateComputePipeline(ref pipelineInfo, BackendContext.Resources.PipelineManager.ActivePipelineCache);
-        return _computePipeline;
+        Result result;
+        Pipeline created;
+        if (request.DescriptorHeapMappings.Length > 0)
+        {
+            fixed (DescriptorSetAndBindingMappingEXTNative* mappingPtr = request.DescriptorHeapMappings)
+            {
+                void* originalPipelinePNext = pipelineInfo.PNext;
+                void* originalStagePNext = pipelineInfo.Stage.PNext;
+                PipelineCreateFlags2CreateInfoNative flags2 = new()
+                {
+                    SType = VulkanDescriptorHeapExt.PipelineCreateFlags2CreateInfoSType,
+                    PNext = originalPipelinePNext,
+                    Flags = unchecked((ulong)pipelineInfo.Flags) | VulkanDescriptorHeapExt.PipelineCreate2DescriptorHeapBit,
+                };
+                ShaderDescriptorSetAndBindingMappingInfoEXTNative mappingInfo = new()
+                {
+                    SType = VulkanDescriptorHeapExt.ShaderDescriptorSetAndBindingMappingInfoSType,
+                    PNext = originalStagePNext,
+                    MappingCount = (uint)request.DescriptorHeapMappings.Length,
+                    Mappings = mappingPtr,
+                };
+                pipelineInfo.PNext = &flags2;
+                pipelineInfo.Stage.PNext = &mappingInfo;
+                result = BackendContext.Resources.PipelineManager.CreateComputePipelinesSynchronized(
+                    pipelineCache,
+                    ref pipelineInfo,
+                    out created);
+                pipelineInfo.Stage.PNext = originalStagePNext;
+                pipelineInfo.PNext = originalPipelinePNext;
+            }
+        }
+        else
+        {
+            result = BackendContext.Resources.PipelineManager.CreateComputePipelinesSynchronized(
+                pipelineCache,
+                ref pipelineInfo,
+                out created);
+        }
+        if (result != Result.Success)
+            throw new InvalidOperationException($"Failed to create compute pipeline ({result}).");
+        request.ProgramServices.RegisterPipeline(created, "VkRenderProgram.ComputeWorker");
+        BackendContext.Resources.LinkPipelineDependencies(
+            created,
+            request.PipelineLayout,
+            request.DescriptorSetLayouts,
+            [request.ComputeStage]);
+        return created;
     }
 
     internal bool TryBuildAndBindComputeDescriptorSets(
@@ -761,6 +965,37 @@ internal unsafe partial class VkRenderProgram
     {
         bufferInfo = default;
 
+        if (snapshot.MaterialTablePublication is not null &&
+            binding.DescriptorType == DescriptorType.StorageBuffer &&
+            binding.Binding == MaterialBindingLayouts.MaterialTableSsboBinding)
+        {
+            if (!BackendContext.Resources.TryResolvePreparedMaterialTable(
+                    snapshot, out VulkanMaterialTablePreparedBinding materialBinding))
+                return false;
+            bufferInfo = new DescriptorBufferInfo
+            {
+                Buffer = materialBinding.Buffer,
+                Offset = 0,
+                Range = materialBinding.Range,
+            };
+            return true;
+        }
+
+        if (snapshot.ReadOnlyStorageBindings is { } immutableBindings &&
+            immutableBindings.TryGet(binding.Binding, out _))
+        {
+            if (!BackendContext.Resources.TryResolvePreparedReadOnlyStorage(
+                    snapshot, binding.Binding, out VulkanFrameDataSlice storageSlice))
+                return false;
+            bufferInfo = new DescriptorBufferInfo
+            {
+                Buffer = storageSlice.Buffer,
+                Offset = storageSlice.Offset,
+                Range = storageSlice.Length,
+            };
+            return true;
+        }
+
         if (snapshot.Buffers.TryGetValue(binding.Binding, out VulkanComputeBufferBinding boundBuffer))
             return TryCreateDescriptorBufferInfo(binding, boundBuffer, out bufferInfo);
 
@@ -1003,6 +1238,7 @@ internal unsafe partial class VkRenderProgram
             planner.DescriptorViewFamilyIdentity,
             out _,
             out ulong resourceSignature);
+		resourceSignature = unchecked(resourceSignature ^ snapshot.PreparedMaterialTableSignature);
         ulong schemaFingerprint = ComputeComputeDescriptorSchemaFingerprint(
             descriptorLayouts,
             descriptorSetLimit);

@@ -64,7 +64,7 @@ internal enum EVulkanSealedResourceMatch
 /// </summary>
 internal sealed class SealedSubmissionContract
 {
-    internal SealedSubmissionContract(
+    internal void Reset(
         ulong commandBufferHandle,
         VulkanStableCommandSlotHandle stableCommandIdentity,
         VulkanResourceSlotHandle commandBufferSlot,
@@ -100,26 +100,26 @@ internal sealed class SealedSubmissionContract
         QueryResults = queryResults;
     }
 
-    internal ulong CommandBufferHandle { get; }
-    internal VulkanStableCommandSlotHandle StableCommandIdentity { get; }
-    internal VulkanResourceSlotHandle CommandBufferSlot { get; }
-    internal VulkanResourceLifetimeRecord CommandBufferResource { get; }
-    internal ulong LifetimeRecordingGeneration { get; }
-    internal ulong ImageRecordingGeneration { get; }
-    internal uint QueueFamilyIndex { get; }
-    internal VulkanSealedResourceDependency[] Resources { get; }
-    internal VulkanSealedDescriptorDependency[] Descriptors { get; }
-    internal VulkanSealedImageDependency[] Images { get; }
-    internal VulkanSealedImageExitState[] ImageExits { get; }
+    internal ulong CommandBufferHandle { get; private set; }
+    internal VulkanStableCommandSlotHandle StableCommandIdentity { get; private set; }
+    internal VulkanResourceSlotHandle CommandBufferSlot { get; private set; }
+    internal VulkanResourceLifetimeRecord CommandBufferResource { get; private set; } = null!;
+    internal ulong LifetimeRecordingGeneration { get; private set; }
+    internal ulong ImageRecordingGeneration { get; private set; }
+    internal uint QueueFamilyIndex { get; private set; }
+    internal VulkanSealedResourceDependency[] Resources { get; private set; } = [];
+    internal VulkanSealedDescriptorDependency[] Descriptors { get; private set; } = [];
+    internal VulkanSealedImageDependency[] Images { get; private set; } = [];
+    internal VulkanSealedImageExitState[] ImageExits { get; private set; } = [];
     /// <summary>
     /// Must be empty. Ownership transfers are deliberately ineligible for
     /// sealed submission because they require live release/acquire resolution.
     /// </summary>
-    internal VulkanQueueOwnershipTransferRequirement[] QueueOwnershipTransfers { get; }
-    internal VulkanRecordedRenderTargetSnapshot RenderTarget { get; }
-    internal VulkanSealedResourceDependency[] RenderTargetResources { get; }
-    internal VulkanSealedNestedCommandDependency[] NestedCommands { get; }
-    internal VulkanSealedQueryResultDependency[] QueryResults { get; }
+    internal VulkanQueueOwnershipTransferRequirement[] QueueOwnershipTransfers { get; private set; } = [];
+    internal VulkanRecordedRenderTargetSnapshot RenderTarget { get; private set; }
+    internal VulkanSealedResourceDependency[] RenderTargetResources { get; private set; } = [];
+    internal VulkanSealedNestedCommandDependency[] NestedCommands { get; private set; } = [];
+    internal VulkanSealedQueryResultDependency[] QueryResults { get; private set; } = [];
 
     internal EVulkanSealedResourceMatch MatchResourceVectorNoLock(
         VulkanResourceLifetimeTracker tracker,

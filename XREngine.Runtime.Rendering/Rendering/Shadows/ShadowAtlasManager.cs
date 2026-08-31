@@ -318,6 +318,10 @@ public sealed partial class ShadowAtlasManager
     private Dictionary<ShadowRequestKey, ShadowAtlasAllocation> _currentAllocations = new();
     private readonly Dictionary<ShadowRequestKey, int> _currentAllocationIndices = new();
     private readonly Dictionary<ShadowRequestKey, ShadowResidentEntry> _residentAllocations = new();
+    // Sampling state is intentionally independent from the depth-content version.
+    // It is retained only for resident requests and lets callers publish bias/filter
+    // changes without scheduling an otherwise unchanged atlas tile for redraw.
+    private readonly Dictionary<ShadowRequestKey, ulong> _publishedReceiverSamplingHashes = new();
     private readonly Dictionary<ShadowAtlasPageKey, List<ShadowRequestKey>> _residentKeysByPage = new();
     private readonly Dictionary<ShadowRequestKey, ShadowLodState> _lodStates = new();
     private readonly Dictionary<ShadowRequestKey, ShadowDemotionState> _demotionStates = new();
@@ -385,6 +389,14 @@ public sealed partial class ShadowAtlasManager
     public ShadowAtlasSolveDiagnostics LastSolveDiagnostics => _lastSolveDiagnostics;
     public IReadOnlyList<ShadowMapRequest> Requests => _requests;
 
+    /// <summary>
+    /// Returns whether a resident tile needs receiver-only sampling parameters
+    /// republished. This never changes the depth redraw decision.
+    /// </summary>
+    public bool IsReceiverSamplingStateChanged(ShadowRequestKey key, ulong samplingHash)
+        => !_publishedReceiverSamplingHashes.TryGetValue(key, out ulong publishedHash) ||
+           publishedHash != samplingHash;
+
     public void Configure(ShadowAtlasManagerSettings settings)
     {
         ShadowAtlasManagerSettings normalized = NormalizeSettings(settings);
@@ -409,6 +421,7 @@ public sealed partial class ShadowAtlasManager
         _renderPlanEntries.Capacity = Math.Max(_renderPlanEntries.Capacity, _settings.MaxRequestsPerFrame);
         _renderPlanMembers.Capacity = Math.Max(_renderPlanMembers.Capacity, _settings.MaxRequestsPerFrame);
         _residentAllocations.EnsureCapacity(_settings.MaxRequestsPerFrame);
+        _publishedReceiverSamplingHashes.EnsureCapacity(_settings.MaxRequestsPerFrame);
         _residentKeysByPage.EnsureCapacity(_settings.MaxRequestsPerFrame);
         _lodStates.EnsureCapacity(_settings.MaxRequestsPerFrame);
         _demotionStates.EnsureCapacity(_settings.MaxRequestsPerFrame);
@@ -785,6 +798,7 @@ public sealed partial class ShadowAtlasManager
             }
 
             _residentAllocations.Clear();
+            _publishedReceiverSamplingHashes.Clear();
             _residentKeysByPage.Clear();
             _previousAllocations.Clear();
             return;
@@ -2314,6 +2328,13 @@ public sealed partial class ShadowAtlasManager
         if (!request.IsDirty)
             return false;
 
+        // A stale tile is an optional temporal bridge, never an unbounded cache.
+        // Once the producer marks changed depth as expired, preserve placement but
+        // publish the conservative unavailable fallback until this exact request
+        // receives a redraw under a later tile/time budget.
+        if ((request.DirtyReason & ShadowDirtyReason.StaleContentAgeLimitReached) != 0)
+            return true;
+
         if (IsDirectionalRequest(request))
             return HasCriticalDirtyReason(request);
 
@@ -2358,7 +2379,8 @@ public sealed partial class ShadowAtlasManager
             ShadowDirtyReason.ProjectionOrCameraFitChanged |
             ShadowDirtyReason.DynamicLight |
             ShadowDirtyReason.ReuseDisabled |
-            ShadowDirtyReason.NeverRendered;
+            ShadowDirtyReason.NeverRendered |
+            ShadowDirtyReason.StaleContentAgeLimitReached;
 
         return (request.DirtyReason & criticalReasons) != 0;
     }
@@ -2444,6 +2466,7 @@ public sealed partial class ShadowAtlasManager
 
         using (RuntimeEngine.Profiler.Start("ShadowAtlasManager.PublishFrameData.UpdateResidents"))
             UpdateResidentAllocations();
+        UpdatePublishedReceiverSamplingHashes();
         Dictionary<ShadowRequestKey, ShadowAtlasAllocation> oldPrevious = _previousAllocations;
         Dictionary<ShadowRequestKey, ShadowAtlasAllocation> publishedCurrentAllocations = _currentAllocations;
         _previousAllocations = _currentAllocations;
@@ -2475,6 +2498,21 @@ public sealed partial class ShadowAtlasManager
 
             RemoveOverlappingResidentAllocations(pair.Key, allocation);
             AddOrUpdateResidentAllocation(pair.Key, allocation, _frameId);
+        }
+    }
+
+    private void UpdatePublishedReceiverSamplingHashes()
+    {
+        for (int i = 0; i < _requests.Count; i++)
+        {
+            ShadowMapRequest request = _requests[i];
+            if (!_currentAllocations.TryGetValue(request.Key, out ShadowAtlasAllocation allocation) ||
+                !allocation.IsResident || allocation.LastRenderedFrame == 0u)
+            {
+                continue;
+            }
+
+            _publishedReceiverSamplingHashes[request.Key] = request.ReceiverSamplingHash;
         }
     }
 
@@ -2592,6 +2630,7 @@ public sealed partial class ShadowAtlasManager
 
     private void ReleaseResidentAllocation(ShadowRequestKey key)
     {
+        _publishedReceiverSamplingHashes.Remove(key);
         if (!_residentAllocations.TryGetValue(key, out ShadowResidentEntry resident))
             return;
 
@@ -2832,6 +2871,7 @@ public sealed partial class ShadowAtlasManager
         _currentAllocations.Clear();
         _currentAllocationIndices.Clear();
         _residentAllocations.Clear();
+        _publishedReceiverSamplingHashes.Clear();
         _residentKeysByPage.Clear();
         _residentRemovalScratch.Clear();
         _residentPageRemovalScratch.Clear();
@@ -3748,9 +3788,10 @@ public sealed partial class ShadowAtlasManager
 
         if (prepareSequentialCommands)
         {
-            light.PrepareSequentialCascadeShadowAtlasCommands(
+            if (!light.PrepareSequentialCascadeShadowAtlasCommands(
                 entry.DirectionalGroup.Source,
-                entry.DirectionalGroup.CascadeCount);
+                entry.DirectionalGroup.CascadeCount))
+                return false;
             collectVisibleNow = false;
         }
 
@@ -4512,6 +4553,9 @@ public sealed partial class ShadowAtlasManager
 
     private static ShadowFallbackMode ResolveSkippedShadowFallback(ShadowMapRequest request)
     {
+        if ((request.DirtyReason & ShadowDirtyReason.StaleContentAgeLimitReached) != 0)
+            return ResolveUnavailableShadowFallback(request, allowStaleTile: false);
+
         if (request.Fallback == ShadowFallbackMode.StaleTile && IsDirectionalRequest(request))
             return ShadowFallbackMode.ContactOnly;
 
@@ -4912,6 +4956,7 @@ public sealed partial class ShadowAtlasManager
         _currentAllocationIndices.Clear();
         _requestIndexByKey.Clear();
         _residentAllocations.Clear();
+        _publishedReceiverSamplingHashes.Clear();
         _residentKeysByPage.Clear();
         _residentRemovalScratch.Clear();
         _residentPageRemovalScratch.Clear();

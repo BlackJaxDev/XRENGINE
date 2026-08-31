@@ -629,6 +629,20 @@ The rendering settings expose `TextureLogMode` with `Disabled`, `Summary`, `Slow
 
 CPU-side imported texture preparation is logged to `log_textures.log` as `Texture.UploadSlow` with `backend=CPU` whenever the decode, clone, resize, mip-build, or total resident-build time crosses its slow threshold. These events include `decodeMs`, `cloneMs`, `resizeMs`, `mipBuildMs`, `totalMs`, and `totalThresholdMs` so raw source decode stalls can be separated from resize/mip generation stalls.
 
+Imported Vulkan image/staging preparation is also worker-only, with at most two
+owned preparation tasks per upload service. The render owner admits lightweight
+jobs, observes completed results without waiting, submits transfers and publishes
+timeline-ordered generations. Denied background admission yields rather than
+blocking a worker; canceled and superseded tasks remain owned until their results
+are observed. Backend retirement must quiesce those workers before freeing their
+resources or destroying the device, and a quiescence timeout aborts cleanup.
+Legacy `XRE_VULKAN_ASYNC_TEXTURE_UPLOAD=0` and
+`XRE_VULKAN_TEXTURE_UPLOAD_PREP_WORKER=0` requests are reported as ignored for this
+imported path; neither restores render-thread preparation. MCP
+`get_texture_streaming_summary.backend_upload_diagnostics` exposes worker
+starts/completions/yields/cancels and retained-job counts. Its render-thread prep
+value is a structural zero for this worker-only path, not a sampled CPU timer.
+
 Fresh third-party texture caches are the preferred streaming authority after the first source import. Texture cache paths include a texture-streaming payload variant key for the current cooked RGBA8/uncompressed residency payload, so future payload changes do not silently reuse old cache files. Warm-cache streaming uses `AssetTextureStreamingSource` and records `Texture.CacheRead` or `Texture.CacheReadSlow` with `cacheReadMs`, `cacheParseMs`, `totalMs`, cache path, original source path, requested residency, mip count, and whether the streamable cooked payload was used.
 
 Texture transition timing now separates `queueWaitMs`, `activeUploadMs`, and `lifecycleMs`. `lifecycleMs` remains the user-visible latency from queue to completion, while `activeUploadMs` tracks actual upload work where the backend can measure it. `Texture.VramSummary` includes stage counters for visible textures without previews, no data, preview queued/resident, promotion queued/promoted, fallback binds, cancellations, and failures.

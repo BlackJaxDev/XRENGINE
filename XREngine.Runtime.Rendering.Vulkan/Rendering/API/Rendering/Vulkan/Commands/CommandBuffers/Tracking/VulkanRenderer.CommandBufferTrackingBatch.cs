@@ -409,7 +409,6 @@ internal sealed partial class VulkanCommandRuntime
             ResetCommandBufferImageLayoutJournal(commandBuffer);
         else
             TrySealRecordedGraphicsSubmissionContract(commandBuffer);
-
         return result;
     }
 

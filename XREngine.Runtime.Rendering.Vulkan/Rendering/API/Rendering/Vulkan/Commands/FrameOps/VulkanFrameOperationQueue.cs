@@ -1,4 +1,5 @@
 using System.Threading;
+using System.Runtime.InteropServices;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -9,8 +10,12 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal sealed class VulkanFrameOperationQueue : IDisposable
 {
+    private const int AdvancedVisibilityLeaseCapacity = 16;
+
     private readonly ThreadLocal<ThreadWorkspace> _threadWorkspace =
         new(static () => new ThreadWorkspace(), trackAllValues: false);
+    private readonly VulkanAdvancedVisibilityInputLease[]
+        _advancedVisibilityInputLeases = CreateAdvancedVisibilityInputLeases();
 
     public Lock SyncRoot { get; } = new();
     public List<FrameOp> Pending { get; } = [];
@@ -32,12 +37,63 @@ internal sealed class VulkanFrameOperationQueue : IDisposable
         => CurrentThread.Reset();
 
     /// <summary>
+    /// Retains one immutable visibility snapshot reference before the authored
+    /// operation crosses into a deferred queue or capture cohort.
+    /// </summary>
+    internal bool TryAcquireAdvancedVisibilityInput(
+        in VulkanAdvancedVisibilityStageRequest request,
+        out VulkanAdvancedVisibilityInputLease lease,
+        out string failureReason)
+    {
+        using (SyncRoot.EnterScope())
+        {
+            for (int index = 0;
+                 index < _advancedVisibilityInputLeases.Length;
+                 ++index)
+            {
+                VulkanAdvancedVisibilityInputLease candidate =
+                    _advancedVisibilityInputLeases[index];
+                if (candidate.MatchesRequest(in request) &&
+                    candidate.TryRetain())
+                {
+                    lease = candidate;
+                    failureReason = "Ready";
+                    return true;
+                }
+            }
+
+            for (int index = 0;
+                 index < _advancedVisibilityInputLeases.Length;
+                 ++index)
+            {
+                VulkanAdvancedVisibilityInputLease candidate =
+                    _advancedVisibilityInputLeases[index];
+                if (!candidate.IsAvailable ||
+                    !candidate.TryCapture(in request, out failureReason))
+                {
+                    continue;
+                }
+
+                lease = candidate;
+                return true;
+            }
+        }
+
+        lease = null!;
+        failureReason =
+            $"The bounded advanced visibility authoring lease arena exhausted its " +
+            $"{AdvancedVisibilityLeaseCapacity} concurrent families.";
+        return false;
+    }
+
+    /// <summary>
     /// Publishes one fully prepared operation into the active capture or the shared
     /// pending stream. Producer-side validation and resource lowering must finish
     /// before this scheduling boundary.
     /// </summary>
     internal void EnqueuePrepared(FrameOp operation)
     {
+        VulkanShadowAtlasDiagnostics.RecordEnqueuedOperation(operation);
         FrameOpCapture? capture = CurrentThread.Capture;
         if (capture is not null)
         {
@@ -90,8 +146,13 @@ internal sealed class VulkanFrameOperationQueue : IDisposable
     {
         FrameOpCapture capture = EndOrderedBatch();
         for (int index = 0; index < capture.Count; index++)
+        {
+            capture.Buffer[index].ReleaseAuthoringSnapshot();
             if (capture.Buffer[index] is SubmissionMarkerOp marker)
                 marker.Fence.Fail();
+            if (capture.Buffer[index] is AdvancedVisibilityOp visibility)
+                visibility.ReleaseInputLease();
+        }
     }
 
     private FrameOpCapture EndOrderedBatch()
@@ -188,6 +249,12 @@ internal sealed class VulkanFrameOperationQueue : IDisposable
         {
             emitOperations();
         }
+        catch
+        {
+            VulkanAdvancedVisibilityInputLease.ReleaseOperations(
+                capture.Buffer.AsSpan(0, capture.Count));
+            throw;
+        }
         finally
         {
             CurrentThread.Capture = previous;
@@ -207,6 +274,12 @@ internal sealed class VulkanFrameOperationQueue : IDisposable
         try
         {
             emitter.Emit(emission);
+        }
+        catch
+        {
+            VulkanAdvancedVisibilityInputLease.ReleaseOperations(
+                capture.Buffer.AsSpan(0, capture.Count));
+            throw;
         }
         finally
         {
@@ -236,6 +309,10 @@ internal sealed class VulkanFrameOperationQueue : IDisposable
         {
             result = new FrameOp[operationCount];
             buffers.Add(operationCount, result);
+        }
+        else
+        {
+            VulkanAdvancedVisibilityInputLease.ReleaseOperations(result);
         }
 
         Array.Copy(capture.Buffer, result, operationCount);
@@ -367,7 +444,31 @@ internal sealed class VulkanFrameOperationQueue : IDisposable
     }
 
     public void Dispose()
-        => _threadWorkspace.Dispose();
+    {
+        using (SyncRoot.EnterScope())
+        {
+            VulkanAdvancedVisibilityInputLease.ReleaseOperations(
+                CollectionsMarshal.AsSpan(Pending));
+            VulkanAdvancedVisibilityInputLease.ReleaseOperations(
+                DrainedFrameOpsBuffer);
+            VulkanAdvancedVisibilityInputLease.ReleaseOperations(
+                DrainedTextureUploadFrameOpsBuffer);
+            Pending.Clear();
+        }
+
+        _threadWorkspace.Dispose();
+    }
+
+    private static VulkanAdvancedVisibilityInputLease[]
+        CreateAdvancedVisibilityInputLeases()
+    {
+        VulkanAdvancedVisibilityInputLease[] leases =
+            new VulkanAdvancedVisibilityInputLease[
+                AdvancedVisibilityLeaseCapacity];
+        for (int index = 0; index < leases.Length; ++index)
+            leases[index] = new();
+        return leases;
+    }
 
     internal sealed class ThreadWorkspace
     {

@@ -381,6 +381,7 @@ internal sealed partial class VulkanFrameLoop
 
     private bool TryRecordStereoLayerBlitCommandBuffer(
         in OpenXrStereoLayerBlitPlan plan,
+        CommandBuffer predecessorCommandBuffer,
         out CommandBuffer commandBuffer)
     {
         commandBuffer = default;
@@ -425,6 +426,9 @@ internal sealed partial class VulkanFrameLoop
             }
 
             begun = true;
+            _commandRuntime.SeedRecordedImageLayoutState(
+                commandBuffer,
+                predecessorCommandBuffer);
             RecordStereoLayerBlits(commandBuffer, in plan);
 
             Result endResult = _commandRuntime.EndCommandBufferTracked(commandBuffer);

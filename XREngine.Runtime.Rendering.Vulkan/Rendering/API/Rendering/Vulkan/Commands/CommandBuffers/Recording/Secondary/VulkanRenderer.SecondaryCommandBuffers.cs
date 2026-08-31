@@ -593,10 +593,8 @@ namespace XREngine.Rendering.Vulkan
             switch (header.OpCode)
             {
                 case EVulkanPrimaryPlanNodeKind.ComputeDispatch:
-                    // Reusable compute descriptors are prepared and refreshed by
-                    // their thin-primary ordinal. Source indices include dynamic
-                    // secondary-owned operations and therefore are not a stable
-                    // cache identity for this binding.
+                    // Descriptor identity is the direct-compute occurrence in
+                    // the sealed stream, including secondary-owned dispatches.
                     ref readonly ComputeDispatchPayload dispatch =
                         ref operations.GetComputeDispatch(opIndex);
                     ref readonly FrameOpContext context =
@@ -605,7 +603,8 @@ namespace XREngine.Rendering.Vulkan
                         in dispatch,
                         in header,
                         in context,
-                        descriptorBindingOrdinal);
+                        operations.Stream.Lane,
+                        ResolveComputeDispatchOccurrenceOrdinal(operations.Stream, opIndex));
                     RecordComputeDispatchPayload(
                         secondaryCommandBuffer,
                         imageIndex,

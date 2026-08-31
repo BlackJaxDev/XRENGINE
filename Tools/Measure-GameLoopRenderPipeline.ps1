@@ -51,6 +51,8 @@ param(
     [long]$MaxSteadyStateRecordCommandBufferAllocatedBytes = 0,
     [int]$StabilityWindowSec = 5,
     [int]$StabilityTimeoutSec = 120,
+    [ValidateSet('FullResourceQuiet', 'OutputScheduling')]
+    [string]$StabilityProfile = 'FullResourceQuiet',
     [int]$MinSteadyStateGpuSceneCommandCount = 0,
     [switch]$NoStabilityGate,
     [int]$ShutdownGraceSec = 20,
@@ -886,6 +888,7 @@ function Test-RenderStatsStability {
         [string]$LogDir,
         [int]$WindowSec,
         [string]$Strategy,
+        [string]$Profile,
         [int]$MinimumGpuSceneCommandCount,
         [object]$State
     )
@@ -987,6 +990,12 @@ function Test-RenderStatsStability {
         'vulkan_retired_resource_plan_images',
         'vulkan_retired_resource_plan_buffers',
         'vulkan_descriptor_pool_create_count',
+        'frame_output_planner_prune_count',
+        'frame_output_global_in_flight_wait_count',
+        'frame_output_force_flush_count'
+    )
+    if ($Profile -eq 'FullResourceQuiet') {
+        $quietProperties += @(
         'vulkan_retired_descriptor_pool_count',
         'vulkan_retired_descriptor_set_count',
         'vulkan_retired_command_buffer_count',
@@ -997,11 +1006,9 @@ function Test-RenderStatsStability {
         'vulkan_retired_image_count',
         'vulkan_retired_image_view_count',
         'vulkan_retired_sampler_count',
-        'vulkan_retired_image_memory_count',
-        'frame_output_planner_prune_count',
-        'frame_output_global_in_flight_wait_count',
-        'frame_output_force_flush_count'
-    )
+            'vulkan_retired_image_memory_count'
+        )
+    }
     # GPU-driven strategies stream their current indirect command payload through
     # one bounded staging buffer per frame. Those retirements are steady upload
     # work, not evidence that startup/resource publication is still changing.
@@ -1413,7 +1420,7 @@ function Measure-Variant {
                     break
                 }
 
-                $stability = Test-RenderStatsStability -LogDir $logDir -WindowSec $StabilityWindowSec -Strategy $strategy -MinimumGpuSceneCommandCount $MinSteadyStateGpuSceneCommandCount -State $stabilityStatsState
+                $stability = Test-RenderStatsStability -LogDir $logDir -WindowSec $StabilityWindowSec -Strategy $strategy -Profile $StabilityProfile -MinimumGpuSceneCommandCount $MinSteadyStateGpuSceneCommandCount -State $stabilityStatsState
                 $stabilityReason = $stability.Reason
                 $stableWorkloadIdentityHash = $stability.WorkloadIdentityHash
                 if ($stability.Stable) {
@@ -1964,6 +1971,7 @@ function Measure-Variant {
         WarmupPhaseSec = $WarmupSec
         SteadyStatePhaseSec = $CaptureSec
         StabilityGateEnabled = -not [bool]$NoStabilityGate
+        StabilityProfile = $StabilityProfile
         MinimumGpuSceneCommandCount = $MinSteadyStateGpuSceneCommandCount
         StabilityReady = $stabilityReady
         StabilityWaitSec = $stabilityWaitSec
@@ -2385,7 +2393,7 @@ $results | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $summaryJson -Enco
     "VulkanPresentationProfile: $VulkanPresentationProfile"
     "GpuTimestampDense: $([bool]$GpuTimestampDense)"
     "WarmupSec: $WarmupSec"
-    "StabilityGate: enabled=$(-not [bool]$NoStabilityGate) windowSec=$StabilityWindowSec timeoutSec=$StabilityTimeoutSec"
+    "StabilityGate: enabled=$(-not [bool]$NoStabilityGate) profile=$StabilityProfile windowSec=$StabilityWindowSec timeoutSec=$StabilityTimeoutSec"
     "BindingFallbackGate: enabled=$([bool]$FailOnSteadyStateBindingFallback)"
     "CaptureSec: $CaptureSec"
     "Phases: startup=process launch to first sample; warmup=$WarmupSec sec minimum; stability=measured quiet window; steady-state capture=$CaptureSec sec."

@@ -595,6 +595,7 @@ internal static class VulkanFrameOperationSemantics
                     hash.Add(indirect.UseCount);
                     hash.Add(
                         (int)indirect.SecondaryRecordingContract.Eligibility);
+                    HashMaterialTableClosure(ref hash, indirect.Draw.ProgramBindingSnapshot);
                     break;
                 case EVulkanPrimaryPlanNodeKind.MeshTaskDispatchIndirectCount:
                     ref readonly MeshTaskDispatchIndirectCountPayload meshTaskDispatch = ref ops.GetMeshTask(i);
@@ -604,6 +605,7 @@ internal static class VulkanFrameOperationSemantics
                     hash.Add(meshTaskDispatch.Stride);
                     hash.Add(meshTaskDispatch.ByteOffset);
                     hash.Add(meshTaskDispatch.CountByteOffset);
+                    HashMaterialTableClosure(ref hash, meshTaskDispatch.ProgramBindingSnapshot);
                     break;
                 case EVulkanPrimaryPlanNodeKind.MemoryBarrier:
                     ref readonly MemoryBarrierPayload barrier = ref ops.GetMemoryBarrier(i);
@@ -771,6 +773,7 @@ internal static class VulkanFrameOperationSemantics
         }
 
         hash.Add(1);
+        HashMaterialTableClosure(ref hash, snapshot);
         if (snapshot.HasPublishedBindingLayoutSignatures)
         {
             hash.Add(snapshot.SamplerUnitBindingLayoutSignature);
@@ -784,6 +787,16 @@ internal static class VulkanFrameOperationSemantics
         hash.Add(VulkanFrameOpSnapshotSignatures.HashSamplerNameBindingLayout(snapshot.SamplersByName));
         hash.Add(VulkanFrameOpSnapshotSignatures.HashImageBindingLayout(snapshot.Images));
         hash.Add(VulkanFrameOpSnapshotSignatures.HashBufferBindingLayout(snapshot.Buffers));
+    }
+
+    private static void HashMaterialTableClosure(ref FrameOpSignatureHasher hash, ComputeDispatchSnapshot? snapshot)
+    {
+        if (snapshot?.MaterialTablePublication is not { } publication)
+            return;
+        hash.Add(publication.OwnerId);
+        hash.Add(publication.DescriptorClosureGeneration);
+        hash.Add(publication.RowByteStride);
+        hash.Add(publication.RowCount);
     }
 
     private static ulong HashUniformBindingLayout(Dictionary<string, ProgramUniformValue> uniforms)

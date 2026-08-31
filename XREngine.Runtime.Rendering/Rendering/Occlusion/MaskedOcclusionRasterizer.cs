@@ -8,23 +8,29 @@ namespace XREngine.Rendering.Occlusion
     {
         private const float ClipEpsilon = 1e-5f;
 
-        public int RasterizeMesh(
+        public CpuSoftwareOcclusionRasterizationResult RasterizeMesh(
             MaskedOcclusionBuffer buffer,
             XRMesh mesh,
             in Matrix4x4 modelMatrix,
             in Matrix4x4 viewProjectionMatrix,
             RenderingParameters? renderOptions,
-            int triangleBudget)
+            int triangleBudget,
+            CpuSoftwareOcclusionRasterWorkBudget workBudget)
         {
             if (triangleBudget <= 0 || mesh.Type != EPrimitiveType.Triangles || mesh.Triangles is not { Count: > 0 } triangles)
-                return 0;
+                return default;
 
             Matrix4x4 modelViewProjection = modelMatrix * viewProjectionMatrix;
-            int rasterized = 0;
+            int inspected = 0;
+            bool wroteCoverage = false;
             int vertexCount = mesh.VertexCount;
             Vertex[] vertices = mesh.Vertices;
-            for (int i = 0; i < triangles.Count && rasterized < triangleBudget; i++)
+            for (int i = 0; i < triangles.Count && inspected < triangleBudget; i++)
             {
+                if (workBudget.IsExhausted)
+                    break;
+
+                inspected++;
                 IndexTriangle triangle = triangles[i];
                 int i0 = triangle.Point0;
                 int i1 = triangle.Point1;
@@ -36,11 +42,10 @@ namespace XREngine.Rendering.Occlusion
                 Vector3 p1 = vertices.Length > i1 ? vertices[i1].Position : mesh.GetPosition((uint)i1);
                 Vector3 p2 = vertices.Length > i2 ? vertices[i2].Position : mesh.GetPosition((uint)i2);
 
-                if (RasterizeTriangle(buffer, p0, p1, p2, modelViewProjection, renderOptions))
-                    rasterized++;
+                wroteCoverage |= RasterizeTriangle(buffer, p0, p1, p2, modelViewProjection, renderOptions, workBudget);
             }
 
-            return rasterized;
+            return new CpuSoftwareOcclusionRasterizationResult(inspected, wroteCoverage);
         }
 
         private static bool RasterizeTriangle(
@@ -49,7 +54,8 @@ namespace XREngine.Rendering.Occlusion
             in Vector3 p1,
             in Vector3 p2,
             in Matrix4x4 modelViewProjection,
-            RenderingParameters? renderOptions)
+            RenderingParameters? renderOptions,
+            CpuSoftwareOcclusionRasterWorkBudget workBudget)
         {
             Vector4 c0 = Vector4.Transform(new Vector4(p0, 1.0f), modelViewProjection);
             Vector4 c1 = Vector4.Transform(new Vector4(p1, 1.0f), modelViewProjection);
@@ -89,6 +95,12 @@ namespace XREngine.Rendering.Occlusion
             int minY = Math.Clamp((int)MathF.Floor(MathF.Min(v0.Position.Y, MathF.Min(v1.Position.Y, v2.Position.Y))), 0, buffer.Height - 1);
             int maxY = Math.Clamp((int)MathF.Ceiling(MathF.Max(v0.Position.Y, MathF.Max(v1.Position.Y, v2.Position.Y))), 0, buffer.Height - 1);
             if (minX > maxX || minY > maxY)
+                return false;
+
+            int pixelWork = checked((maxX - minX + 1) * (maxY - minY + 1));
+            int tileWork = ((maxX / MaskedOcclusionBuffer.TileWidth) - (minX / MaskedOcclusionBuffer.TileWidth) + 1) *
+                           ((maxY / MaskedOcclusionBuffer.TileHeight) - (minY / MaskedOcclusionBuffer.TileHeight) + 1);
+            if (!workBudget.TryReserve(pixelWork, tileWork))
                 return false;
 
             bool wroteAny = false;
@@ -143,6 +155,10 @@ namespace XREngine.Rendering.Occlusion
                     reciprocalDepth += depthDx;
                 }
             }
+
+            // A reservation is made for the complete bounding box before the first write,
+            // so this is an exact completed iteration count, not an estimate of coverage.
+            workBudget.RecordExecutedPixels(pixelWork);
 
             return wroteAny;
         }

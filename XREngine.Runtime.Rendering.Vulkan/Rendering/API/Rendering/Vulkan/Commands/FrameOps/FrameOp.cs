@@ -6,6 +6,7 @@ internal abstract record FrameOp(int PassIndex, XRFrameBuffer? Target, FrameOpCo
     private XRFrameBuffer? _target = Target;
     private FrameOpContext _context = Context;
     private FrameOpResourceUseList _resourceUses;
+    private ComputeDispatchSnapshot? _ownedAuthoringSnapshot;
 
     public int PassIndex
     {
@@ -68,8 +69,34 @@ internal abstract record FrameOp(int PassIndex, XRFrameBuffer? Target, FrameOpCo
     internal FrameOp CreateSealedAuthoringCopy()
     {
         FrameOp copy = (FrameOp)MemberwiseClone();
+        copy._ownedAuthoringSnapshot = null;
         copy._resourceUses = _resourceUses.CreateSealedCopy();
+        copy.OnSealedAuthoringCopyCreated();
         return copy;
+    }
+
+    /// <summary>Owns a detached authoring snapshot until lowering or queue discard.</summary>
+    internal void OwnAuthoringSnapshot(ComputeDispatchSnapshot snapshot)
+    {
+        if (_ownedAuthoringSnapshot is not null)
+            throw new InvalidOperationException("An authoring operation already owns a snapshot.");
+        _ownedAuthoringSnapshot = snapshot;
+    }
+
+    internal void ReleaseAuthoringSnapshot()
+    {
+        ComputeDispatchSnapshot? snapshot = _ownedAuthoringSnapshot;
+        _ownedAuthoringSnapshot = null;
+        snapshot?.ReleaseReadOnlyStorageBindings();
+    }
+
+    /// <summary>
+    /// Retains any external authoring lease copied by
+    /// <see cref="CreateSealedAuthoringCopy"/>. Ordinary operations own only
+    /// their inline record state and require no action.
+    /// </summary>
+    protected virtual void OnSealedAuthoringCopyCreated()
+    {
     }
 
     protected static T RetainForCurrentFrame<T>(T created, in FrameOpContext context)

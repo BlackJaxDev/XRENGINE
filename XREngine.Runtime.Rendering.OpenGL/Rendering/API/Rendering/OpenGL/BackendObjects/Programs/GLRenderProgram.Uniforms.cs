@@ -46,6 +46,12 @@ namespace XREngine.Rendering.OpenGL
                 => Uniform(GetUniformLocation(name), p);
             public void Uniform(string name, uint p)
                 => Uniform(GetUniformLocation(name), p);
+            public void Uniform(string name, UVector2 p)
+                => Uniform(GetUniformLocation(name), p);
+            public void Uniform(string name, UVector3 p)
+                => Uniform(GetUniformLocation(name), p);
+            public void Uniform(string name, UVector4 p)
+                => Uniform(GetUniformLocation(name), p);
             public void Uniform(string name, double p)
                 => Uniform(GetUniformLocation(name), p);
             public void Uniform(string name, Matrix4x4 p)
@@ -129,6 +135,36 @@ namespace XREngine.Rendering.OpenGL
 
                 Api.ProgramUniform1(BindingId, location, p);
             }
+            public void Uniform(int location, UVector2 p)
+            {
+                if (!MarkUniformBinding(location))
+                    return;
+
+                if (!ValidateUniformType(location, GLEnum.UnsignedIntVec2))
+                    return;
+
+                Api.ProgramUniform2(BindingId, location, p.X, p.Y);
+            }
+            public void Uniform(int location, UVector3 p)
+            {
+                if (!MarkUniformBinding(location))
+                    return;
+
+                if (!ValidateUniformType(location, GLEnum.UnsignedIntVec3))
+                    return;
+
+                Api.ProgramUniform3(BindingId, location, p.X, p.Y, p.Z);
+            }
+            public void Uniform(int location, UVector4 p)
+            {
+                if (!MarkUniformBinding(location))
+                    return;
+
+                if (!ValidateUniformType(location, GLEnum.UnsignedIntVec4))
+                    return;
+
+                Api.ProgramUniform4(BindingId, location, p.X, p.Y, p.Z, p.W);
+            }
             public void Uniform(int location, double p)
             {
                 if (!MarkUniformBinding(location))
@@ -175,6 +211,12 @@ namespace XREngine.Rendering.OpenGL
             public void Uniform(string name, Span<float> p)
                 => Uniform(GetUniformLocation(name), p);
             public void Uniform(string name, uint[] p)
+                => Uniform(GetUniformLocation(name), p);
+            public void Uniform(string name, UVector2[] p)
+                => Uniform(GetUniformLocation(name), p);
+            public void Uniform(string name, UVector3[] p)
+                => Uniform(GetUniformLocation(name), p);
+            public void Uniform(string name, UVector4[] p)
                 => Uniform(GetUniformLocation(name), p);
             public void Uniform(string name, double[] p)
                 => Uniform(GetUniformLocation(name), p);
@@ -383,6 +425,45 @@ namespace XREngine.Rendering.OpenGL
                 fixed (uint* ptr = p)
                 {
                     Api.ProgramUniform1(BindingId, location, (uint)p.Length, ptr);
+                }
+            }
+            public void Uniform(int location, UVector2[] p)
+            {
+                if (!MarkUniformBinding(location) || p.Length == 0)
+                    return;
+
+                if (!ValidateUniformArrayType(location, p.Length, GLEnum.UnsignedIntVec2))
+                    return;
+
+                fixed (UVector2* ptr = p)
+                {
+                    Api.ProgramUniform2(BindingId, location, (uint)p.Length, (uint*)ptr);
+                }
+            }
+            public void Uniform(int location, UVector3[] p)
+            {
+                if (!MarkUniformBinding(location) || p.Length == 0)
+                    return;
+
+                if (!ValidateUniformArrayType(location, p.Length, GLEnum.UnsignedIntVec3))
+                    return;
+
+                fixed (UVector3* ptr = p)
+                {
+                    Api.ProgramUniform3(BindingId, location, (uint)p.Length, (uint*)ptr);
+                }
+            }
+            public void Uniform(int location, UVector4[] p)
+            {
+                if (!MarkUniformBinding(location) || p.Length == 0)
+                    return;
+
+                if (!ValidateUniformArrayType(location, p.Length, GLEnum.UnsignedIntVec4))
+                    return;
+
+                fixed (UVector4* ptr = p)
+                {
+                    Api.ProgramUniform4(BindingId, location, (uint)p.Length, (uint*)ptr);
                 }
             }
             public void Uniform(int location, double[] p)

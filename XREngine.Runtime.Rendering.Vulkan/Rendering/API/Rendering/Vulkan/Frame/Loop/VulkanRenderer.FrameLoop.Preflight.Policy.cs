@@ -15,6 +15,7 @@ namespace XREngine.Rendering.Vulkan
                 : _framePlanner.Operations.DrainPending();
             VulkanCommandSynchronizationState.FailUnsubmittedSubmissionMarkers(
                 droppedOps);
+            VulkanAdvancedVisibilityInputLease.ReleaseOperations(droppedOps);
             var liveFramebufferSize = DesktopWsiOutput.EffectiveFramebufferSize;
             var resizeExtents = DesktopWsiOutput.ResizeExtents;
 

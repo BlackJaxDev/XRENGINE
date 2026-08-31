@@ -230,6 +230,13 @@ public static partial class EditorImGuiUI
         {
             ImGui.Text($"  Occluders Selected  : {socSelected:N0}");
             ImGui.Text($"  Occluders Rasterized: {socRasterized:N0}");
+            ImGui.Text($"  Profitability       : {OcclusionTelemetry.CpuSocProfitabilityDecision}");
+            ImGui.Text($"  Candidate Work      : inspected={OcclusionTelemetry.CpuSocCandidatesInspected:N0} dropped={OcclusionTelemetry.CpuSocCandidatesDropped:N0}");
+            ImGui.Text($"  Raster Work         : reserved={OcclusionTelemetry.CpuSocRasterReservedPixels:N0} px / {OcclusionTelemetry.CpuSocRasterReservedTiles:N0} tiles, executed={OcclusionTelemetry.CpuSocRasterExecutedPixels:N0} px");
+            ImGui.Text($"  AABB Test Work      : {OcclusionTelemetry.CpuSocAabbTestCount:N0} tests / {OcclusionTelemetry.CpuSocAabbTestTileWork:N0} tiles, budget bypassed={OcclusionTelemetry.CpuSocAabbTestBudgetBypassed:N0}");
+            if (OcclusionTelemetry.CpuSocRasterBudgetExhausted)
+                ImGui.TextColored(new Vector4(1.0f, 0.85f, 0.4f, 1.0f),
+                    $"  Raster Safety Cap   : exhausted; skipped {OcclusionTelemetry.CpuSocRasterBudgetSkippedTriangles:N0} whole triangles (conservative)");
             ImGui.Text($"  Tiles Closed        : {OcclusionTelemetry.CpuSocTilesClosed:N0}");
             ImGui.Text($"  Tested              : {socTested:N0}");
             if (socSelfSkipped > 0)
@@ -276,6 +283,8 @@ public static partial class EditorImGuiUI
                     $"  Passes Passthrough: {passthroughDirty}  (dirty temporal state â€” pyramid built from stale depth, cull skipped this frame)");
             }
             ImGui.Text($"  Candidates        : {gpuCands:N0}");
+            ImGui.Text($"  Hi-Z CPU record cost (generic only): build={OcclusionTelemetry.LastFrameHiZBuildCpuMs:F3} ms ({OcclusionTelemetry.LastFrameHiZBuildDispatches:N0}, source={OcclusionTelemetry.LastFrameHiZSourcePixels:N0} px), test={OcclusionTelemetry.LastFrameHiZTestCpuMs:F3} ms ({OcclusionTelemetry.LastFrameHiZTestDispatches:N0}, capacity={OcclusionTelemetry.LastFrameHiZTestCapacity:N0})");
+            ImGui.TextDisabled("  Native Advanced direct-dispatch GPU timing is reported by separate Vulkan profiler scopes.");
             if (gpuRbAvail)
             {
                 Vector4 culledColor = gpuOccl > 0
@@ -307,6 +316,8 @@ public static partial class EditorImGuiUI
         // these tell you whether the pass bailed (missing shaders, no depth view, etc.)
         // rather than ran and culled nothing.
         int hizSkipTotal = OcclusionTelemetry.GpuHiZSkippedTotal;
+        ImGui.TextDisabled($"  Hi-Z GPU elapsed (last completed): build={OcclusionTelemetry.HiZBuildGpuMs:F3}ms [source={OcclusionTelemetry.HiZBuildGpuSourceFrame}, age={OcclusionTelemetry.HiZBuildGpuAgeFrames}, seq={OcclusionTelemetry.HiZBuildGpuSequence}] test={OcclusionTelemetry.HiZTestGpuMs:F3}ms [source={OcclusionTelemetry.HiZTestGpuSourceFrame}, age={OcclusionTelemetry.HiZTestGpuAgeFrames}, seq={OcclusionTelemetry.HiZTestGpuSequence}]");
+        ImGui.TextDisabled($"  Hi-Z GPU timing diagnostic: build={OcclusionTelemetry.HiZBuildGpuAvailability}, test={OcclusionTelemetry.HiZTestGpuAvailability}");
         if (hizSkipTotal > 0)
         {
             ImGui.Spacing();

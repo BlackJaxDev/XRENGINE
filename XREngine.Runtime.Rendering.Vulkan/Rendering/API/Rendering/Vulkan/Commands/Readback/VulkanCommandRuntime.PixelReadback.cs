@@ -175,7 +175,9 @@ namespace XREngine.Rendering.Vulkan
                 return false;
 
             ulong rawByteCount = (ulong)(width * height) * sourcePixelSize;
-            if (!TryAllocateReadbackSlice(rawByteCount, out VulkanSynchronousFrameDataArenaLease arenaLease, out VulkanFrameDataSlice stagingSlice))
+            bool guarded = VulkanTextureReadbackDiagnostics.CopyGuardEnabled && rawByteCount % sizeof(uint) == 0;
+            string capturedTransition = string.Empty;
+            if (!TryAllocateReadbackSlice(rawByteCount + (guarded ? sizeof(uint) : 0u), out VulkanSynchronousFrameDataArenaLease arenaLease, out VulkanFrameDataSlice stagingSlice))
                 return false;
             using VulkanSynchronousFrameDataArenaLease ownedArenaLease = arenaLease;
             Silk.NET.Vulkan.Buffer stagingBuffer = stagingSlice.Buffer;
@@ -196,6 +198,9 @@ namespace XREngine.Rendering.Vulkan
                     AccessFlags.TransferReadBit,
                     liveSource.StageMask,
                     PipelineStageFlags.TransferBit);
+
+                if (guarded)
+                    capturedTransition = VulkanTextureReadbackDiagnostics.GetLastTransition();
 
                 BufferImageCopy copy = new()
                 {
@@ -220,6 +225,11 @@ namespace XREngine.Rendering.Vulkan
                     stagingBuffer,
                     1,
                     ref copy);
+
+                // Diagnostic-only tail distinguishes a bad host mapping/fence from
+                // a genuinely empty image copy without touching the image payload.
+                if (guarded)
+                    Api.CmdFillBuffer(scope.CommandBuffer, stagingBuffer, stagingSlice.Offset + rawByteCount, sizeof(uint), 0x5A17C0DEu);
 
                 TransitionPreparedImageForBlit(
                     scope.CommandBuffer,
@@ -246,6 +256,8 @@ namespace XREngine.Rendering.Vulkan
             try
             {
                 int pixelCount = width * height;
+                if (guarded)
+                    VulkanTextureReadbackDiagnostics.PublishMappedRead(stagingSlice, readScope.Bytes, guarded, source.Image.Handle, liveSource.Image.Handle, capturedTransition);
                 rgbaFloats = new float[pixelCount * 4];
                 return TryConvertColorPixelsToRgbaFloat(readScope.Bytes, liveSource.Format, pixelCount, rgbaFloats);
             }

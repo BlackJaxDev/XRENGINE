@@ -896,6 +896,8 @@ internal unsafe sealed class VulkanBufferResourceService(VulkanAllocationAuthori
             record.State |= EVulkanResourceLifetimeState.PendingRetirement;
             record.RetirementTicket = ticket;
             lifetime.Tracker.SetPublishedGenerationNoLock(key, 0UL);
+            if (key.Type == ObjectType.Buffer)
+                lifetime.EnqueueSupersededBufferDescriptorOwner(key, record.Generation);
             return ticket;
         }
     }

@@ -138,13 +138,21 @@ namespace XREngine.Rendering.Commands
                 _meshletEvidenceSnapshotQueuedThisFrame = false;
                 _meshletEvidenceRefreshSnapshotQueuedThisFrame = false;
             }
-            ResetCounters();
+            if (!ResetCounters())
+            {
+                ClearPassPolicySnapshot();
+                return;
+            }
             resetStopwatch.Stop();
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanGpuDrivenStageTiming(
                 RuntimeEngine.Rendering.Stats.Vulkan.EVulkanGpuDrivenStageTiming.Reset,
                 resetStopwatch.Elapsed);
 
-            Cull(scene, camera, deferGpuHiZ: useTwoPassGpuHiZ);
+            if (!Cull(scene, camera, deferGpuHiZ: useTwoPassGpuHiZ))
+            {
+                ClearPassPolicySnapshot();
+                return;
+            }
             LogVulkanCounterDiagnostics("after-cull");
             LogVulkanCullInputDiagnostics(scene, "after-cull");
             bool submitted = useTwoPassGpuHiZ
@@ -155,6 +163,9 @@ namespace XREngine.Rendering.Commands
                 ClearPassPolicySnapshot();
                 return;
             }
+
+            if (!useTwoPassGpuHiZ)
+                StampCompletedSinglePassVisibilityDiagnostic(scene);
 
             QueueAsyncGpuTriangleStatsReadback();
             PostRenderDiagnostics(scene);
@@ -338,16 +349,19 @@ namespace XREngine.Rendering.Commands
 
         #region Counter Management
 
-        private void ResetCounters()
+        private bool ResetCounters()
         {
-            ResetVisibleCounters();
+            // Keep only the managed mirrors on the CPU. GPU-owned counters must
+            // be reset in command order; mapped writes can race an earlier frame.
+            VisibleCommandCount = 0u;
+            VisibleInstanceCount = 0u;
 
             if (_culledCountBuffer is null ||
                 _drawCountBuffer is null ||
                 _cullCountScratchBuffer is null)
             {
                 Dbg($"Reset counters abort - missing base buffers: {DescribeMissingResetCounterBuffers(baseOnly: true)}", "Lifecycle");
-                return;
+                return false;
             }
 
             if (_resetCountersComputeShader is null ||
@@ -361,10 +375,8 @@ namespace XREngine.Rendering.Commands
                 _meshletDispatchCountBuffer is null ||
                 _meshletExpansionOverflowFlagBuffer is null)
             {
-                Dbg($"Reset counters fallback - full shader contract unavailable: {DescribeMissingResetCounterBuffers(baseOnly: false)}", "Lifecycle");
-                ResetBaseCountersOnCpu();
-                LogVulkanCounterDiagnostics("after-reset-cpu-fallback");
-                return;
+                Dbg($"Reset counters abort - full GPU reset contract unavailable: {DescribeMissingResetCounterBuffers(baseOnly: false)}", "Lifecycle");
+                return false;
             }
 
             Dbg("Reset counters dispatch", "Lifecycle");
@@ -383,13 +395,25 @@ namespace XREngine.Rendering.Commands
             _resetCountersComputeShader.BindBuffer(_meshletDispatchCountBuffer, 14);
 
             _resetCountersComputeShader.DispatchCompute(1, 1, 1, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
+
+            if (_occlusionOverflowFlagBuffer is null ||
+                (_perViewDrawCountBuffer is not null &&
+                 !ClearUIntBufferOnGpu(
+                    _perViewDrawCountBuffer,
+                    Math.Max(_activeViewCount, 1u),
+                    EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command)) ||
+                !ClearUIntBufferOnGpu(
+                    _occlusionOverflowFlagBuffer,
+                    1u,
+                    EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command))
+            {
+                Dbg("Reset counters abort - ordered per-view or occlusion counter clear unavailable.", "Lifecycle");
+                return false;
+            }
+
             ResetCountersHook?.Invoke();
-            ResetPerViewDrawCounts(_activeViewCount);
-
-            if (_occlusionOverflowFlagBuffer is not null)
-                WriteUInt(_occlusionOverflowFlagBuffer, 0u);
-
             LogVulkanCounterDiagnostics("after-reset");
+            return true;
         }
 
         private string DescribeMissingResetCounterBuffers(bool baseOnly)
@@ -424,35 +448,6 @@ namespace XREngine.Rendering.Commands
                     builder.Append(',');
                 builder.Append(name);
             }
-        }
-
-        private void ResetBaseCountersOnCpu()
-        {
-            if (_culledCountBuffer is not null)
-            {
-                for (uint i = 0u; i < GPUScene.VisibleCountComponents; i++)
-                    WriteUIntAt(_culledCountBuffer, i, 0u);
-            }
-
-            if (_cullCountScratchBuffer is not null)
-            {
-                for (uint i = 0u; i < GPUScene.VisibleCountComponents; i++)
-                    WriteUIntAt(_cullCountScratchBuffer, i, 0u);
-            }
-
-            if (_drawCountBuffer is not null)
-                WriteUInt(_drawCountBuffer, 0u);
-            if (_cullingOverflowFlagBuffer is not null)
-                WriteUInt(_cullingOverflowFlagBuffer, 0u);
-            if (_indirectOverflowFlagBuffer is not null)
-                WriteUInt(_indirectOverflowFlagBuffer, 0u);
-            if (_truncationFlagBuffer is not null)
-                WriteUInt(_truncationFlagBuffer, 0u);
-            if (_occlusionOverflowFlagBuffer is not null)
-                WriteUInt(_occlusionOverflowFlagBuffer, 0u);
-
-            ResetPerViewDrawCounts(_activeViewCount);
-            ResetCountersHook?.Invoke();
         }
 
         #endregion
@@ -508,11 +503,21 @@ namespace XREngine.Rendering.Commands
             if (!VulkanCounterDiagnosticsEnabled)
                 return;
 
-            string culledDraw = DescribeCounter(_culledCountBuffer, GPUScene.VisibleCountDrawIndex);
-            string culledInstances = DescribeCounter(_culledCountBuffer, GPUScene.VisibleCountInstanceIndex);
-            string culledOverflow = DescribeCounter(_culledCountBuffer, GPUScene.VisibleCountOverflowIndex);
-            string drawCount = DescribeCounter(_drawCountBuffer, 0u);
+            CounterDiagnosticValue culledDraw = ReadCounterDiagnostic(_culledCountBuffer, GPUScene.VisibleCountDrawIndex);
+            CounterDiagnosticValue culledInstances = ReadCounterDiagnostic(_culledCountBuffer, GPUScene.VisibleCountInstanceIndex);
+            CounterDiagnosticValue culledOverflow = ReadCounterDiagnostic(_culledCountBuffer, GPUScene.VisibleCountOverflowIndex);
+            CounterDiagnosticValue drawCount = ReadCounterDiagnostic(_drawCountBuffer, 0u);
+            CounterDiagnosticValue perViewCandidateCount = ReadCounterDiagnostic(_perViewDrawCountBuffer, 0u);
             string materialBuckets = DescribeMaterialTierCountSample();
+            HybridRenderingManager.RecordVulkanGpuCounterDiagnostics(
+                (int)RenderPass,
+                point,
+                HybridRenderingManager.VulkanGpuCounterDiagnosticFieldGroup.Counters,
+                culledDrawCount: culledDraw.Value,
+                culledInstanceCount: culledInstances.Value,
+                culledOverflowCount: culledOverflow.Value,
+                drawCount: drawCount.Value,
+                perViewCandidateCount: perViewCandidateCount.Value);
 
             Debug.VulkanEvery(
                 $"VulkanCounters.{RuntimeHelpers.GetHashCode(this)}.{RenderPass}.{point}",
@@ -524,10 +529,10 @@ namespace XREngine.Rendering.Commands
                 VisibleInstanceCount,
                 _visibleCommandUpperBoundValid,
                 _visibleCommandUpperBound,
-                culledDraw,
-                culledInstances,
-                culledOverflow,
-                drawCount,
+                culledDraw.Text,
+                culledInstances.Text,
+                culledOverflow.Text,
+                drawCount.Text,
                 materialBuckets);
         }
 
@@ -627,10 +632,17 @@ namespace XREngine.Rendering.Commands
 
         private string DescribeCounter(XRDataBuffer? buffer, uint index)
         {
-            if (TryReadCounter(buffer, index, out uint value, out string reason))
-                return value.ToString();
+            return ReadCounterDiagnostic(buffer, index).Text;
+        }
 
-            return reason;
+        private readonly record struct CounterDiagnosticValue(uint? Value, string Text);
+
+        private CounterDiagnosticValue ReadCounterDiagnostic(XRDataBuffer? buffer, uint index)
+        {
+            if (TryReadCounter(buffer, index, out uint value, out string reason))
+                return new(value, value.ToString());
+
+            return new(null, reason);
         }
 
         private bool TryReadCounter(XRDataBuffer? buffer, uint index, out uint value, out string reason)
@@ -661,9 +673,8 @@ namespace XREngine.Rendering.Commands
                     return true;
                 }
 
-                value = ReadUIntAt(buffer, index);
-                reason = "mapped";
-                return true;
+                reason = "<gpu-readback-unavailable>";
+                return false;
             }
             catch (Exception ex)
             {
@@ -1054,19 +1065,26 @@ namespace XREngine.Rendering.Commands
             _materialScatterComputeShader.Uniform(
                 "CompactMaterialTableOutput",
                 UsesCompactMaterialTableSubmission(ZeroReadbackMaterialDrawPath) ? 1u : 0u);
+            uint staticAtlasIndexCount = (uint)Math.Max(scene.GetAtlasIndexCount(EAtlasTier.Static), 0);
+            uint dynamicAtlasIndexCount = (uint)Math.Max(scene.GetAtlasIndexCount(EAtlasTier.Dynamic), 0);
+            uint streamingAtlasIndexCount = (uint)Math.Max(scene.GetAtlasIndexCount(EAtlasTier.Streaming), 0);
+            uint staticAtlasVertexCount = (uint)Math.Max(scene.GetAtlasVertexCount(EAtlasTier.Static), 0);
+            uint dynamicAtlasVertexCount = (uint)Math.Max(scene.GetAtlasVertexCount(EAtlasTier.Dynamic), 0);
+            uint streamingAtlasVertexCount = (uint)Math.Max(scene.GetAtlasVertexCount(EAtlasTier.Streaming), 0);
             _materialScatterComputeShader.Uniform("AtlasIndexCounts", new UVector3(
-                (uint)Math.Max(scene.GetAtlasIndexCount(EAtlasTier.Static), 0),
-                (uint)Math.Max(scene.GetAtlasIndexCount(EAtlasTier.Dynamic), 0),
-                (uint)Math.Max(scene.GetAtlasIndexCount(EAtlasTier.Streaming), 0)));
+                staticAtlasIndexCount,
+                dynamicAtlasIndexCount,
+                streamingAtlasIndexCount));
             _materialScatterComputeShader.Uniform("AtlasVertexCounts", new UVector3(
-                (uint)Math.Max(scene.GetAtlasVertexCount(EAtlasTier.Static), 0),
-                (uint)Math.Max(scene.GetAtlasVertexCount(EAtlasTier.Dynamic), 0),
-                (uint)Math.Max(scene.GetAtlasVertexCount(EAtlasTier.Streaming), 0)));
+                staticAtlasVertexCount,
+                dynamicAtlasVertexCount,
+                streamingAtlasVertexCount));
             _materialScatterComputeShader.Uniform(
                 "StatsEnabled",
-                _statsBuffer is null || IsCpuReadbackCountDisabledForPass()
-                    ? 0u
-                    : 1u);
+                _statsBuffer is not null &&
+                (!IsCpuReadbackCountDisabledForPass() || VulkanCounterDiagnosticsEnabled)
+                    ? 1u
+                    : 0u);
             _materialScatterComputeShader.Uniform(
                 "RejectExactTransparentMultiview",
                 RequiresExactTransparentCandidateRejection ? 1u : 0u);
@@ -1101,7 +1119,118 @@ namespace XREngine.Rendering.Commands
                 _materialScatterComputeShader.DispatchCompute(groups, 1, 1, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
             AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.Command);
             LogVulkanCounterDiagnostics("after-material-scatter");
+            LogMaterialScatterGpuDiagnostics(
+                scene,
+                staticAtlasIndexCount,
+                dynamicAtlasIndexCount,
+                streamingAtlasIndexCount,
+                staticAtlasVertexCount,
+                dynamicAtlasVertexCount,
+                streamingAtlasVertexCount);
             return true;
+        }
+
+        private void LogMaterialScatterGpuDiagnostics(
+            GPUScene scene,
+            uint staticAtlasIndexCount,
+            uint dynamicAtlasIndexCount,
+            uint streamingAtlasIndexCount,
+            uint staticAtlasVertexCount,
+            uint dynamicAtlasVertexCount,
+            uint streamingAtlasVertexCount)
+        {
+            if (!VulkanCounterDiagnosticsEnabled || _statsBuffer is null)
+                return;
+
+            CounterDiagnosticValue visible = ReadCounterDiagnostic(_culledCountBuffer, GPUScene.VisibleCountDrawIndex);
+            CounterDiagnosticValue input = ReadCounterDiagnostic(_statsBuffer, GpuStatsLayout.MaterialScatterInputCount);
+            CounterDiagnosticValue culled = ReadCounterDiagnostic(_statsBuffer, GpuStatsLayout.MaterialScatterCulledCount);
+            CounterDiagnosticValue keys = ReadCounterDiagnostic(_statsBuffer, GpuStatsLayout.MaterialScatterKeyCount);
+            CounterDiagnosticValue metadataLength = ReadCounterDiagnostic(_statsBuffer, GpuStatsLayout.MaterialScatterMetadataLength);
+            CounterDiagnosticValue maxDrawId = ReadCounterDiagnostic(_statsBuffer, GpuStatsLayout.MaterialScatterMaxDrawId);
+            CounterDiagnosticValue emitted = ReadCounterDiagnostic(_statsBuffer, GpuStatsLayout.MaterialScatterEmitted);
+            CounterDiagnosticValue rejectDrawId = ReadCounterDiagnostic(_statsBuffer, GpuStatsLayout.MaterialScatterRejectedDrawId);
+            CounterDiagnosticValue rejectMaterial = ReadCounterDiagnostic(_statsBuffer, GpuStatsLayout.MaterialScatterRejectedMaterial);
+            CounterDiagnosticValue rejectMesh = ReadCounterDiagnostic(_statsBuffer, GpuStatsLayout.MaterialScatterRejectedMesh);
+            CounterDiagnosticValue rejectAtlas = ReadCounterDiagnostic(_statsBuffer, GpuStatsLayout.MaterialScatterRejectedAtlas);
+            CounterDiagnosticValue rejectBucket = ReadCounterDiagnostic(_statsBuffer, GpuStatsLayout.MaterialScatterRejectedBucket);
+            CounterDiagnosticValue rejectBounds = ReadCounterDiagnostic(_statsBuffer, GpuStatsLayout.MaterialScatterRejectedBounds);
+            CounterDiagnosticValue gpuStaticIndices = ReadCounterDiagnostic(_statsBuffer, GpuStatsLayout.MaterialScatterAtlasIndexCountStatic);
+            CounterDiagnosticValue gpuDynamicIndices = ReadCounterDiagnostic(_statsBuffer, GpuStatsLayout.MaterialScatterAtlasIndexCountDynamic);
+            CounterDiagnosticValue gpuStreamingIndices = ReadCounterDiagnostic(_statsBuffer, GpuStatsLayout.MaterialScatterAtlasIndexCountStreaming);
+            CounterDiagnosticValue gpuStaticVertices = ReadCounterDiagnostic(_statsBuffer, GpuStatsLayout.MaterialScatterAtlasVertexCountStatic);
+            CounterDiagnosticValue gpuDynamicVertices = ReadCounterDiagnostic(_statsBuffer, GpuStatsLayout.MaterialScatterAtlasVertexCountDynamic);
+            CounterDiagnosticValue gpuStreamingVertices = ReadCounterDiagnostic(_statsBuffer, GpuStatsLayout.MaterialScatterAtlasVertexCountStreaming);
+            CounterDiagnosticValue rejectAtlasIndexEmpty = ReadCounterDiagnostic(_statsBuffer, GpuStatsLayout.MaterialScatterRejectedAtlasIndexEmpty);
+            CounterDiagnosticValue rejectAtlasVertexEmpty = ReadCounterDiagnostic(_statsBuffer, GpuStatsLayout.MaterialScatterRejectedAtlasVertexEmpty);
+            CounterDiagnosticValue rejectAtlasFirstIndex = ReadCounterDiagnostic(_statsBuffer, GpuStatsLayout.MaterialScatterRejectedAtlasFirstIndex);
+            CounterDiagnosticValue rejectAtlasIndexRange = ReadCounterDiagnostic(_statsBuffer, GpuStatsLayout.MaterialScatterRejectedAtlasIndexRange);
+            CounterDiagnosticValue rejectAtlasBaseVertex = ReadCounterDiagnostic(_statsBuffer, GpuStatsLayout.MaterialScatterRejectedAtlasBaseVertex);
+            HybridRenderingManager.RecordVulkanGpuCounterDiagnostics(
+                (int)RenderPass,
+                "after-material-scatter",
+                HybridRenderingManager.VulkanGpuCounterDiagnosticFieldGroup.MaterialScatter,
+                materialScatterInputCount: input.Value,
+                materialScatterCulledCount: culled.Value,
+                materialScatterKeyCount: keys.Value,
+                materialScatterEmittedCount: emitted.Value,
+                materialScatterRejectedDrawId: rejectDrawId.Value,
+                materialScatterRejectedMaterial: rejectMaterial.Value,
+                materialScatterRejectedMesh: rejectMesh.Value,
+                materialScatterRejectedAtlas: rejectAtlas.Value,
+                materialScatterRejectedBucket: rejectBucket.Value,
+                materialScatterRejectedBounds: rejectBounds.Value,
+                gpuStaticAtlasIndexCount: gpuStaticIndices.Value,
+                gpuDynamicAtlasIndexCount: gpuDynamicIndices.Value,
+                gpuStreamingAtlasIndexCount: gpuStreamingIndices.Value,
+                gpuStaticAtlasVertexCount: gpuStaticVertices.Value,
+                gpuDynamicAtlasVertexCount: gpuDynamicVertices.Value,
+                gpuStreamingAtlasVertexCount: gpuStreamingVertices.Value,
+                rejectedAtlasIndexEmpty: rejectAtlasIndexEmpty.Value,
+                rejectedAtlasVertexEmpty: rejectAtlasVertexEmpty.Value,
+                rejectedAtlasFirstIndex: rejectAtlasFirstIndex.Value,
+                rejectedAtlasIndexRange: rejectAtlasIndexRange.Value,
+                rejectedAtlasBaseVertex: rejectAtlasBaseVertex.Value);
+
+            Debug.VulkanEvery(
+                $"VulkanCounters.MaterialScatter.{RuntimeHelpers.GetHashCode(this)}.{RenderPass}",
+                TimeSpan.FromMilliseconds(250),
+                "[MaterialScatterGpu] pass={0} visible={1} metadataBuffer={2} meshData={3} materialLookup={4} compact={5} input={6} culled={7} keys={8} metadataLength={9} maxDrawId={10} emitted={11} rejectDrawId={12} rejectMaterial={13} rejectMesh={14} rejectAtlas={15} rejectBucket={16} rejectBounds={17} cpuAtlasIndices=({18},{19},{20}) cpuAtlasVertices=({21},{22},{23}) gpuAtlasIndices=({24},{25},{26}) gpuAtlasVertices=({27},{28},{29}) atlasRejects=(emptyIndex={30},emptyVertex={31},firstIndex={32},indexRange={33},baseVertex={34})",
+                RenderPass,
+                visible.Text,
+                scene.DrawMetadataBuffer.ElementCount,
+                scene.MeshDataBuffer.ElementCount,
+                _materialSlotLookupBuffer?.ElementCount ?? 0u,
+                UsesCompactMaterialTableSubmission(ZeroReadbackMaterialDrawPath),
+                input.Text,
+                culled.Text,
+                keys.Text,
+                metadataLength.Text,
+                maxDrawId.Text,
+                emitted.Text,
+                rejectDrawId.Text,
+                rejectMaterial.Text,
+                rejectMesh.Text,
+                rejectAtlas.Text,
+                rejectBucket.Text,
+                rejectBounds.Text,
+                staticAtlasIndexCount,
+                dynamicAtlasIndexCount,
+                streamingAtlasIndexCount,
+                staticAtlasVertexCount,
+                dynamicAtlasVertexCount,
+                streamingAtlasVertexCount,
+                gpuStaticIndices.Text,
+                gpuDynamicIndices.Text,
+                gpuStreamingIndices.Text,
+                gpuStaticVertices.Text,
+                gpuDynamicVertices.Text,
+                gpuStreamingVertices.Text,
+                rejectAtlasIndexEmpty.Text,
+                rejectAtlasVertexEmpty.Text,
+                rejectAtlasFirstIndex.Text,
+                rejectAtlasIndexRange.Text,
+                rejectAtlasBaseVertex.Text);
         }
 
         /// <summary>
@@ -1356,7 +1485,17 @@ namespace XREngine.Rendering.Commands
                 return;
             }
 
-            WriteUints(_transparencyDomainCountBuffer, 0u, 0u, 0u, 0u);
+            if (!ClearUIntBufferOnGpu(
+                    _transparencyDomainCountBuffer,
+                    GPUTransparencyLayout.DomainCountBufferUIntCount,
+                    EMemoryBarrierMask.ShaderStorage))
+            {
+                Dbg("Transparency classification skipped because its ordered domain-count clear is unavailable.", "Lifecycle");
+                MaskedVisibleCommandCount = 0u;
+                ApproximateTransparentVisibleCommandCount = 0u;
+                ExactTransparentVisibleCommandCount = 0u;
+                return;
+            }
 
             _classifyTransparencyComputeShader.Uniform("MaxVisibleCommands", (int)CommandCapacity);
             CulledSceneToRenderBuffer.BindTo(_classifyTransparencyComputeShader, GPUTransparencyBindings.ClassifyInputCommands);
@@ -1444,7 +1583,12 @@ namespace XREngine.Rendering.Commands
             scene.AllLoadedTransparencyMetadataBuffer.BindTo(
                 _buildKeysComputeShader,
                 GPUBatchingBindings.BuildKeysTransparencyMetadata);
-            scene.CullControlBuffer.BindTo(_buildKeysComputeShader, 5u);
+            // GPURenderBuildKeys consumes full DrawMetadata records here; binding the
+            // compact cull-control stream aliases its first words as metadata and
+            // produces invalid material-scatter keys.
+            scene.DrawMetadataBuffer.BindTo(
+                _buildKeysComputeShader,
+                GPUBatchingBindings.BuildKeysDrawMetadata);
             _culledCommandViewMaskBuffer.BindTo(
                 _buildKeysComputeShader,
                 GPUBatchingBindings.BuildKeysExactViewMasks);
@@ -1822,7 +1966,6 @@ namespace XREngine.Rendering.Commands
                 }
             }
 
-            _materialTable.TrimTrailingUnused(128u);
             _materialTable.PushDirtyRanges();
 
             if (materialCapability is not null)
@@ -2850,6 +2993,9 @@ namespace XREngine.Rendering.Commands
             _hiZDepthPyramidOwned?.Destroy();
             _hiZDepthPyramidOwned = null;
             _hiZDepthPyramid = null;
+            _hiZCoarseTiles?.Destroy();
+            _hiZCoarseTiles = null;
+            _hiZCoarseTilesFrameId = ulong.MaxValue;
             _materialSlotLookupUploadedBuffer = null;
             _materialSlotLookupSignature = 0ul;
             _materialSlotLookupUploadedElementCount = 0u;
@@ -2876,6 +3022,7 @@ namespace XREngine.Rendering.Commands
 
             _hiZInitProgram?.Destroy();
             _hiZGenProgram?.Destroy();
+            _hiZCoarseTileProgram?.Destroy();
             _hiZPhaseOneProgram?.Destroy();
             _hiZOcclusionProgram?.Destroy();
             _copyCount3Program?.Destroy();

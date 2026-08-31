@@ -19,6 +19,11 @@ namespace XREngine.Rendering.Occlusion
                 return true;
             }
 
+            return TestVisible(buffer, projected);
+        }
+
+        public static bool TestVisible(MaskedOcclusionBuffer buffer, in ProjectedAabb projected)
+        {
             if (projected.OutsideFrustum)
                 return false;
 

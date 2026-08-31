@@ -13,6 +13,8 @@ internal sealed class VulkanLifetimeAuthority(
     VulkanResourceRetirementQueue retirement)
 {
     private VulkanRetirementDependencyPublicationPort? _retirementDependencyPublications;
+    private readonly System.Collections.Concurrent.ConcurrentQueue<VulkanSupersededBufferDescriptorOwner>
+        _supersededBufferDescriptorOwners = new();
 
     internal VulkanResourceLifetimeTracker Tracker { get; } =
         tracker ?? throw new ArgumentNullException(nameof(tracker));
@@ -39,4 +41,17 @@ internal sealed class VulkanLifetimeAuthority(
     internal void PublishTrackingDependenciesBeforeRetirement(
         VulkanResourceLifetimeKey resourceKey)
         => Volatile.Read(ref _retirementDependencyPublications)?.Publish(resourceKey);
+
+    internal void EnqueueSupersededBufferDescriptorOwner(
+        VulkanResourceLifetimeKey resourceKey,
+        ulong generation)
+    {
+        if (resourceKey.Type == Silk.NET.Vulkan.ObjectType.Buffer && generation != 0)
+            _supersededBufferDescriptorOwners.Enqueue(
+                new VulkanSupersededBufferDescriptorOwner(resourceKey, generation));
+    }
+
+    internal bool TryDequeueSupersededBufferDescriptorOwner(
+        out VulkanSupersededBufferDescriptorOwner owner)
+        => _supersededBufferDescriptorOwners.TryDequeue(out owner);
 }

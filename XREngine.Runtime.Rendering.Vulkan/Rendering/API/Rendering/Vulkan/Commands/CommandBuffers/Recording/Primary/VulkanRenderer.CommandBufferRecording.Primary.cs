@@ -29,6 +29,9 @@ namespace XREngine.Rendering.Vulkan
             CapturePrimaryCommandBufferRecordingContext(in context, ref recordingState);
 
             InitializePrimaryCommandBufferRecordingState(ref recordingState);
+            using VulkanResourceRuntime.ReadOnlyStorageRecordingScope
+                readOnlyStorageScope = ResourceRuntime.EnterReadOnlyStorageRecordingScope(
+                    recordingState.ReadOnlyStorageAuthority);
             if (!TryPreparePrimaryFrameData(
                     ref recordingState,
                     out VulkanMeshFrameDataReservationManifest frameDataManifest))
@@ -55,10 +58,9 @@ namespace XREngine.Rendering.Vulkan
                 }
                 if (!primaryOperationsRecorded)
                 {
-                    _ = EndCommandBufferTracked(
-                        recordingState.CommandBuffer,
-                        cacheVariant: false,
-                        out _);
+                    // A rejected plan can leave dynamic rendering active. Do not
+                    // attempt to publish or end partial work; the next recording
+                    // reset is the Vulkan-authoritative way to discard it.
                     _ = TryAbandonCommandBufferRecording(recordingState.CommandBuffer);
                     return false;
                 }
@@ -81,10 +83,9 @@ namespace XREngine.Rendering.Vulkan
                 recordingState.RecordingDeferredReason = exception.Message;
                 recordingState.FailureKind =
                     EVulkanCommandRecordingFailureKind.ReplanRequired;
-                _ = EndCommandBufferTracked(
-                    recordingState.CommandBuffer,
-                    cacheVariant: false,
-                    out _);
+                // Plan preconditions are allowed to fail from inside a render
+                // scope. Abandon the partial recording directly so Vulkan never
+                // receives vkEndCommandBuffer while that scope is active.
                 _ = TryAbandonCommandBufferRecording(recordingState.CommandBuffer);
                 return false;
             }

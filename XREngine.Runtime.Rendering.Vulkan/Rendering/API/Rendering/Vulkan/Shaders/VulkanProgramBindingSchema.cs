@@ -8,6 +8,7 @@ internal sealed class VulkanProgramBindingSchema
 {
     private readonly Dictionary<string, VulkanAutoUniformBindingSchema> _autoUniformBlocks;
     private readonly ulong[] _frequencyPublicationLayoutSignatures;
+    private readonly bool[] _frequencyDependsOnMaterialOrRuntime;
 
     private VulkanProgramBindingSchema(
         ulong programLinkGeneration,
@@ -37,6 +38,8 @@ internal sealed class VulkanProgramBindingSchema
         HasUnknownAutoUniformFrequency = hasUnknownAutoUniformFrequency;
         _frequencyPublicationLayoutSignatures =
             BuildFrequencyPublicationLayoutSignatures(autoUniformBlocks);
+        _frequencyDependsOnMaterialOrRuntime =
+            BuildFrequencyMaterialOrRuntimeDependencies(autoUniformBlocks);
         DescriptorBindings = descriptorBindings;
     }
 
@@ -114,6 +117,31 @@ internal sealed class VulkanProgramBindingSchema
         return (uint)index < (uint)_frequencyPublicationLayoutSignatures.Length
             ? _frequencyPublicationLayoutSignatures[index]
             : 0UL;
+    }
+
+    internal bool FrequencyDependsOnMaterialOrRuntime(
+        EVulkanBindingFrequency frequency)
+    {
+        int index = (int)frequency;
+        return (uint)index < (uint)_frequencyDependsOnMaterialOrRuntime.Length &&
+            _frequencyDependsOnMaterialOrRuntime[index];
+    }
+
+    private static bool[] BuildFrequencyMaterialOrRuntimeDependencies(
+        Dictionary<string, VulkanAutoUniformBindingSchema> schemas)
+    {
+        bool[] dependencies = new bool[(int)EVulkanBindingFrequency.Count];
+        foreach (VulkanAutoUniformBindingSchema schema in schemas.Values)
+        {
+            int index = (int)schema.Block.Frequency;
+            if ((uint)index < (uint)dependencies.Length &&
+                schema.HasMaterialOrRuntimeSources)
+            {
+                dependencies[index] = true;
+            }
+        }
+
+        return dependencies;
     }
 
     private static ulong[] BuildFrequencyPublicationLayoutSignatures(

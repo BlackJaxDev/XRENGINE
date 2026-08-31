@@ -36,6 +36,15 @@ internal sealed record IndirectDrawOp(
     public VulkanIndirectSecondaryRecordingContract SecondaryRecordingContract { get; private set; } = SecondaryRecordingContract;
     public override EVulkanPrimaryPlanNodeKind Kind => EVulkanPrimaryPlanNodeKind.IndirectDraw;
 
+    protected override void OnSealedAuthoringCopyCreated()
+    {
+        if (_draw.ProgramBindingSnapshot is not { } snapshot)
+            return;
+        ComputeDispatchSnapshot copy = snapshot.CreateSealedCopy();
+        _draw = _draw with { ProgramBindingSnapshot = copy };
+        OwnAuthoringSnapshot(copy);
+    }
+
     internal static IndirectDrawOp Rent(
         int passIndex,
         XRFrameBuffer? target,

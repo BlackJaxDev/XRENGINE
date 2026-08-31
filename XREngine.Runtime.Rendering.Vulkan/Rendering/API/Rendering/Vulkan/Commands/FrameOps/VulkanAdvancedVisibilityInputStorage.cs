@@ -1,9 +1,9 @@
 namespace XREngine.Rendering.Vulkan;
 
 /// <summary>
-/// Frame-plan-owned copy of the mutable advanced-preparation columns. The
-/// shared extractor is allowed to advance as soon as authoring completes, so
-/// deferred readiness and recording must consume these retained columns.
+/// Retained copy of the mutable advanced-preparation columns. Authoring leases
+/// capture under the shared preparation lock; frame-plan storage then copies
+/// only from that immutable lease and never revisits the live extractor.
 /// </summary>
 internal sealed class VulkanAdvancedVisibilityInputStorage
 {
@@ -83,17 +83,85 @@ internal sealed class VulkanAdvancedVisibilityInputStorage
     }
 
     /// <summary>
-    /// Copies the first stage in a visibility family and verifies that later
-    /// stages address the same authoring generation. The before/after checks
-    /// make a concurrent extractor advance fail closed instead of publishing a
-    /// torn retained image.
+    /// Captures the exact authoring generation while the shared preparation
+    /// service prevents its extractor from advancing.
+    /// </summary>
+    internal bool TryCaptureAtAuthoring(
+        in VulkanAdvancedVisibilityStageRequest request,
+        out string failureReason)
+    {
+        Reset();
+        if (!request.IsValid)
+        {
+            failureReason = "The advanced visibility authoring request is incomplete.";
+            return false;
+        }
+
+        AdvancedPreparationPublication publication = request.Publication;
+        int payloadCount = checked((int)publication.DrawCount);
+        int indirectRangeCount = checked((int)publication.IndirectRangeCount);
+        EnsureCapacity(ref _payloads, payloadCount, "payload");
+        EnsureCapacity(ref _candidates, payloadCount, "candidate");
+        EnsureCapacity(ref _producers, payloadCount, "producer");
+        EnsureCapacity(
+            ref _indirectRanges,
+            indirectRangeCount,
+            "indirect-range");
+        EnsureCapacity(
+            ref _indirectPayloadIndices,
+            payloadCount,
+            "indirect-payload-index");
+
+        if (!AdvancedSharedPreparationService.Instance.TryCopyVisibilityColumns(
+                request.Extractor,
+                in publication,
+                _payloads.AsSpan(0, payloadCount),
+                _candidates.AsSpan(0, payloadCount),
+                _producers.AsSpan(0, payloadCount),
+                _indirectRanges.AsSpan(0, indirectRangeCount),
+                _indirectPayloadIndices.AsSpan(0, payloadCount),
+                out AdvancedIndirectPreparationResult indirect))
+        {
+            failureReason =
+                "The advanced visibility publication changed before its authoring columns could be retained.";
+            return false;
+        }
+
+        if (indirect.PayloadCount != publication.DrawCount ||
+            indirect.RangeCount != publication.IndirectRangeCount)
+        {
+            Reset();
+            failureReason =
+                "The advanced visibility publication does not match its retained indirect column shape.";
+            return false;
+        }
+
+        _familyRequest = request;
+        Publication = publication;
+        Indirect = indirect;
+        _payloadCount = payloadCount;
+        _candidateCount = payloadCount;
+        _producerCount = payloadCount;
+        _indirectRangeCount = indirectRangeCount;
+        _indirectPayloadIndexCount = payloadCount;
+        _captured = true;
+        failureReason = "Ready";
+        return true;
+    }
+
+    /// <summary>
+    /// Copies the first stage in a visibility family from an immutable
+    /// authoring lease and verifies that later stages address the same family.
     /// </summary>
     internal void CaptureOrValidate(
-        in VulkanAdvancedVisibilityStageRequest request)
+        in VulkanAdvancedVisibilityStageRequest request,
+        VulkanAdvancedVisibilityInputStorage authoringInput)
     {
+        ArgumentNullException.ThrowIfNull(authoringInput);
         if (_captured)
         {
-            if (!MatchesRequest(in request))
+            if (!MatchesRequest(in request) ||
+                !authoringInput.MatchesRequest(in request))
             {
                 throw new VulkanPlanPreconditionException(
                     "A frame-operation stream cannot retain more than one advanced visibility input family.");
@@ -101,39 +169,22 @@ internal sealed class VulkanAdvancedVisibilityInputStorage
 
             return;
         }
-
-        AdvancedPreparationExtractor extractor = request.Extractor;
-        AdvancedPreparationPublication publication = request.Publication;
-        if (!request.IsValid ||
-            !extractor.MatchesPublication(in publication))
+        if (!authoringInput.MatchesRequest(in request))
         {
             throw new VulkanPlanPreconditionException(
-                "The advanced visibility extractor changed before its frame-owned input columns were retained.");
+                "The advanced visibility authoring lease does not match the frame-operation family.");
         }
 
         ReadOnlySpan<AdvancedVisibilityPayload> payloads =
-            extractor.VisibilityPayloads;
+            authoringInput.Payloads;
         ReadOnlySpan<AdvancedVisibilityCandidate> candidates =
-            extractor.VisibilityCandidates;
+            authoringInput.Candidates;
         ReadOnlySpan<EAdvancedGeometryProducer> producers =
-            extractor.VisibilityProducers;
+            authoringInput.Producers;
         ReadOnlySpan<AdvancedIndirectRange> indirectRanges =
-            extractor.IndirectRanges;
+            authoringInput.IndirectRanges;
         ReadOnlySpan<int> indirectPayloadIndices =
-            extractor.IndirectPayloadIndices;
-        AdvancedIndirectPreparationResult indirect = extractor.IndirectResult;
-
-        if (publication.DrawCount != (uint)payloads.Length ||
-            candidates.Length != payloads.Length ||
-            producers.Length != payloads.Length ||
-            indirectPayloadIndices.Length != payloads.Length ||
-            publication.IndirectRangeCount != (uint)indirectRanges.Length ||
-            indirect.PayloadCount != (uint)payloads.Length ||
-            indirect.RangeCount != (uint)indirectRanges.Length)
-        {
-            throw new VulkanPlanPreconditionException(
-                "The advanced visibility publication does not match its extractor column shape.");
-        }
+            authoringInput.IndirectPayloadIndices;
 
         EnsureCapacity(ref _payloads, payloads.Length, "payload");
         EnsureCapacity(ref _candidates, candidates.Length, "candidate");
@@ -153,15 +204,9 @@ internal sealed class VulkanAdvancedVisibilityInputStorage
         indirectRanges.CopyTo(_indirectRanges);
         indirectPayloadIndices.CopyTo(_indirectPayloadIndices);
 
-        if (!extractor.MatchesPublication(in publication))
-        {
-            throw new VulkanPlanPreconditionException(
-                "The advanced visibility extractor changed while its frame-owned input columns were retained.");
-        }
-
         _familyRequest = request;
-        Publication = publication;
-        Indirect = indirect;
+        Publication = authoringInput.Publication;
+        Indirect = authoringInput.Indirect;
         _payloadCount = payloads.Length;
         _candidateCount = candidates.Length;
         _producerCount = producers.Length;

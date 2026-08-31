@@ -33,6 +33,11 @@ public partial class OpenGLRenderer : IMaterialTableBackendCapability
         => ReleaseResidentBindlessTextureHandle(retired.Handle);
     bool IMaterialTableBackendCapability.BeginGlobalMaterialTextureDescriptorScope(XRRenderProgram program, string consumer)
         => true;
+    bool IMaterialTableBackendCapability.BeginGlobalMaterialTextureDescriptorScope(
+        XRRenderProgram program,
+        string consumer,
+        XREngine.Rendering.Materials.GPUMaterialTablePublication? publication)
+        => true;
     void IMaterialTableBackendCapability.EndGlobalMaterialTextureDescriptorScope(XRRenderProgram program)
     {
     }

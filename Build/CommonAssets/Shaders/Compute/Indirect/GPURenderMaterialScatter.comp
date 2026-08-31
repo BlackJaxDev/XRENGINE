@@ -25,6 +25,17 @@ const uint STATS_MATERIAL_SCATTER_MAX_DRAW_ID = 30u;
 const uint STATS_MATERIAL_SCATTER_METADATA_LENGTH = 31u;
 const uint STATS_MATERIAL_SCATTER_CULLED_COUNT = 32u;
 const uint STATS_MATERIAL_SCATTER_KEY_COUNT = 33u;
+const uint STATS_MATERIAL_SCATTER_ATLAS_INDEX_STATIC = 46u;
+const uint STATS_MATERIAL_SCATTER_ATLAS_INDEX_DYNAMIC = 47u;
+const uint STATS_MATERIAL_SCATTER_ATLAS_INDEX_STREAMING = 48u;
+const uint STATS_MATERIAL_SCATTER_ATLAS_VERTEX_STATIC = 49u;
+const uint STATS_MATERIAL_SCATTER_ATLAS_VERTEX_DYNAMIC = 50u;
+const uint STATS_MATERIAL_SCATTER_ATLAS_VERTEX_STREAMING = 51u;
+const uint STATS_MATERIAL_SCATTER_REJECTED_ATLAS_INDEX_EMPTY = 52u;
+const uint STATS_MATERIAL_SCATTER_REJECTED_ATLAS_VERTEX_EMPTY = 53u;
+const uint STATS_MATERIAL_SCATTER_REJECTED_ATLAS_FIRST_INDEX = 54u;
+const uint STATS_MATERIAL_SCATTER_REJECTED_ATLAS_INDEX_RANGE = 55u;
+const uint STATS_MATERIAL_SCATTER_REJECTED_ATLAS_BASE_VERTEX = 56u;
 const uint METADATA_UINTS = 4u;
 const uint DOMAIN_EXACT = 3u;
 
@@ -239,6 +250,16 @@ DrawCandidate BuildDrawCandidate(
     {
         atomicOr(overflowFlag, 1u);
         RecordStat(STATS_MATERIAL_SCATTER_REJECTED_ATLAS, 1u);
+        if (atlasIndexCount == 0u)
+            RecordStat(STATS_MATERIAL_SCATTER_REJECTED_ATLAS_INDEX_EMPTY, 1u);
+        else if (atlasVertexCount == 0u)
+            RecordStat(STATS_MATERIAL_SCATTER_REJECTED_ATLAS_VERTEX_EMPTY, 1u);
+        else if (firstIndex >= atlasIndexCount)
+            RecordStat(STATS_MATERIAL_SCATTER_REJECTED_ATLAS_FIRST_INDEX, 1u);
+        else if (indexCount > atlasIndexCount - firstIndex)
+            RecordStat(STATS_MATERIAL_SCATTER_REJECTED_ATLAS_INDEX_RANGE, 1u);
+        else
+            RecordStat(STATS_MATERIAL_SCATTER_REJECTED_ATLAS_BASE_VERTEX, 1u);
         return candidate;
     }
 
@@ -406,6 +427,12 @@ void main()
         stats[STATS_MATERIAL_SCATTER_METADATA_LENGTH] = uint(Draws.length());
         stats[STATS_MATERIAL_SCATTER_CULLED_COUNT] = CulledCount;
         stats[STATS_MATERIAL_SCATTER_KEY_COUNT] = availableKeyCount;
+        stats[STATS_MATERIAL_SCATTER_ATLAS_INDEX_STATIC] = AtlasIndexCounts.x;
+        stats[STATS_MATERIAL_SCATTER_ATLAS_INDEX_DYNAMIC] = AtlasIndexCounts.y;
+        stats[STATS_MATERIAL_SCATTER_ATLAS_INDEX_STREAMING] = AtlasIndexCounts.z;
+        stats[STATS_MATERIAL_SCATTER_ATLAS_VERTEX_STATIC] = AtlasVertexCounts.x;
+        stats[STATS_MATERIAL_SCATTER_ATLAS_VERTEX_DYNAMIC] = AtlasVertexCounts.y;
+        stats[STATS_MATERIAL_SCATTER_ATLAS_VERTEX_STREAMING] = AtlasVertexCounts.z;
     }
     bool inputValid =
         sortedIndex < CulledCount &&

@@ -118,6 +118,8 @@ public enum ShadowDirtyReason
     NeverRendered = 1 << 8,
     ReuseDisabled = 1 << 9,
     DynamicLight = 1 << 10,
+    /// <summary>Dirty depth content has reached the bounded stale-reuse age.</summary>
+    StaleContentAgeLimitReached = 1 << 11,
 }
 
 public readonly record struct ShadowRequestKey(
@@ -173,7 +175,10 @@ public readonly record struct ShadowMapRequest(
     bool EditorPinned,
     StereoVisibility StereoVis,
     SkipReason ForcedSkipReason = SkipReason.None,
-    DirectionalCascadeSampleState DirectionalCascadeSample = default);
+    DirectionalCascadeSampleState DirectionalCascadeSample = default,
+    ulong ReceiverSamplingHash = 0u,
+    bool ReceiverSamplingChanged = false,
+    ShadowInvalidationDomain InvalidationDomains = ShadowInvalidationDomain.None);
 
 public readonly record struct DirectionalCascadeSampleState(
     bool IsValid,

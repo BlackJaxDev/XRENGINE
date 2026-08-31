@@ -78,7 +78,7 @@ internal readonly unsafe struct VulkanTrackedCommandEncoder(VulkanCommandRuntime
         => Runtime.TrackCommandBufferResource(
             commandBuffer,
             new VulkanResourceLifetimeKey(type, handle),
-            $"TrackedCommandEncoder.{type}");
+            "TrackedCommandEncoder.Track");
 
     /// <summary>
     /// Records the secondary command buffers executed by one primary command in

@@ -250,14 +250,10 @@ namespace XREngine.Rendering.Vulkan
             ReadOnlySpan<VulkanFrozenSwapchainBarrier> swapchainBarriers =
                 barrierPlan.GetSwapchainBarriersForPass(passIndex);
 
-            // If the barrier planner doesn't recognise this pass at all, it has no planned
-            // layout transitions. Emit a conservative full-pipeline memory barrier so that
-            // all prior writes are visible to subsequent reads. We intentionally do NOT
-            // substitute image barriers from another pass because those barriers carry
-            // OldLayout values that may not match the images' actual layouts, causing
-            // undefined behaviour (observed as CmdBlitImage segfaults on NVIDIA drivers).
-            // Ops that need specific image layout transitions (e.g. blits) handle them
-            // internally via TransitionForBlit.
+            // An operation outside the frozen graph has no trustworthy resource or
+            // stage/access contract. Do not hide the stale publication behind an
+            // AllCommands barrier: abandon this command buffer and let the frame-plan
+            // retry publish the exact pass generation.
             if (passIndex != VulkanBarrierPlanner.SwapchainPassIndex &&
                 !recordingState.RenderGraphPlan.CompiledGraph.Plan.Execution.TryGetPassOrder(passIndex, out _))
             {
@@ -280,29 +276,10 @@ namespace XREngine.Rendering.Vulkan
                 Debug.VulkanWarningEvery(
                     "Vulkan.UnknownPassBarrier.ContextPlanMismatch",
                     TimeSpan.FromSeconds(2),
-                    "[Vulkan] Operation pass is unknown to the frozen barrier plan; emitting a conservative memory barrier. {0}",
+                    "[Vulkan] Operation pass is unknown to the frozen barrier plan; rejecting the stale recording. {0}",
                     diagnostic);
-
-                MemoryBarrier safetyBarrier = new()
-                {
-                    SType = StructureType.MemoryBarrier,
-                    SrcAccessMask = AccessFlags.MemoryWriteBit,
-                    DstAccessMask = AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit,
-                };
-
-                CmdPipelineBarrierTracked(
-                    recordingState.CommandBuffer,
-                    PipelineStageFlags.AllCommandsBit,
-                    PipelineStageFlags.AllCommandsBit,
-                    DependencyFlags.None,
-                    1,
-                    &safetyBarrier,
-                    0,
-                    null,
-                    0,
-                    null);
-
-                return 0;
+                throw new VulkanPlanPreconditionException(
+                    $"Operation pass is absent from the frozen render graph. {diagnostic}");
             }
 
             int queueOwnershipTransfers = 0;
@@ -354,13 +331,13 @@ namespace XREngine.Rendering.Vulkan
             {
                 _deviceContext.CmdBeginLabel(recordingState.CommandBuffer, "PassBarriers");
                 EmitPlannedSwapchainBarriers(ref recordingState, recordingState.CommandBuffer, swapchainBarriers);
-                EmitPlannedImageBarriers(
+                EmitPlannedResourceBarrierBatch(
                     recordingState.CommandBuffer,
                     imageBarriers,
+                    bufferBarriers,
                     recordingState.ExcludeDesktopSwapchainBarriers
                         ? recordingState.SwapchainTarget.Image
                         : default);
-                EmitPlannedBufferBarriers(recordingState.CommandBuffer, bufferBarriers);
                 _deviceContext.CmdEndLabel(recordingState.CommandBuffer);
 
                 RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanBarrierPlannerPass(

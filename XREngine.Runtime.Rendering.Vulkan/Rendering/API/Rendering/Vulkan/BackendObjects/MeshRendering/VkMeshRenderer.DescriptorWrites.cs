@@ -229,6 +229,15 @@ internal unsafe partial class VkMeshRenderer
 			skippedDispatch: false,
 			reason);
 
+	/// <summary>
+	/// Records the failure context that is surfaced when descriptor preparation
+	/// declines a draw. This is called only from failure paths, so formatting the
+	/// binding identity cannot add work to successful descriptor publication.
+	/// </summary>
+	private bool FailDescriptorWrite(DescriptorBindingInfo binding, string reason)
+		=> FailDescriptorPreparation(
+			$"descriptor binding '{binding.Name ?? "<unnamed>"}' (set={binding.Set}, binding={binding.Binding}, type={binding.DescriptorType}): {reason}");
+
 	private void RecordDescriptorFallback(DescriptorBindingInfo binding, int count = 1)
 		=> RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorFallback(
 			_program?.Data?.Name,
@@ -277,7 +286,7 @@ internal unsafe partial class VkMeshRenderer
 			if (binding.Set >= frameSets.Length)
 			{
 				WarnOnce($"Descriptor set {binding.Set} is not available for pipeline layout.");
-				return false;
+				return FailDescriptorWrite(binding, $"descriptor set {binding.Set} is unavailable for the pipeline layout (set count={frameSets.Length})");
 			}
 
 			uint descriptorCount = VulkanBindlessMaterialDescriptors.ResolveDescriptorCount(binding);
@@ -297,8 +306,16 @@ internal unsafe partial class VkMeshRenderer
 							bindingSnapshot))
 					{
 						WarnOnce($"[WriteDesc] FAILED to resolve buffer binding '{binding.Name}' (set={binding.Set}, binding={binding.Binding}, type={binding.DescriptorType}) for mesh '{Mesh?.Name ?? "?"}' program '{_program?.Data?.Name ?? "?"}'");
-						RecordDescriptorFailure(binding, "buffer resolution failed");
-						return false;
+						VulkanDescriptorResolutionDiagnostics
+							.CaptureFirstDirectionalShadowRecordsFailure(
+								binding,
+								_program,
+								Mesh,
+								material,
+								bindingSnapshot);
+						RecordDescriptorFailure(binding,
+							$"buffer resolution failed (mesh={Mesh?.Name}, material={material.Name}, capturedStorage={bindingSnapshot?.ReadOnlyStorageBindings is not null})");
+						return FailDescriptorWrite(binding, "buffer resolution failed");
 					}
 
 					DescriptorWriteKey bufferKey = CreateDescriptorWriteKey(
@@ -348,7 +365,7 @@ internal unsafe partial class VkMeshRenderer
 					{
 						WarnOnce($"[WriteDesc] FAILED to resolve image binding '{binding.Name}' (set={binding.Set}, binding={binding.Binding}, type={binding.DescriptorType}) for mesh '{Mesh?.Name ?? "?"}' program '{_program?.Data?.Name ?? "?"}'");
 						RecordDescriptorFailure(binding, "image resolution failed");
-						return false;
+						return FailDescriptorWrite(binding, "image resolution failed");
 					}
 
 					DescriptorWriteKey imageKey = CreateDescriptorWriteKey(
@@ -380,7 +397,7 @@ internal unsafe partial class VkMeshRenderer
 					if (!TryResolveTexelBuffers(binding, material, descriptorCount, texelBufferViews, out int texelStart))
 					{
 						RecordDescriptorFailure(binding, "texel buffer resolution failed");
-						return false;
+						return FailDescriptorWrite(binding, "texel buffer resolution failed");
 					}
 
 					DescriptorWriteKey texelKey = CreateDescriptorWriteKey(
@@ -411,7 +428,7 @@ internal unsafe partial class VkMeshRenderer
 
 				default:
 					WarnOnce($"Unsupported descriptor type '{binding.DescriptorType}' for binding '{binding.Name}'.");
-					return false;
+					return FailDescriptorWrite(binding, "descriptor type is unsupported by the writer");
 			}
 		}
 
@@ -440,8 +457,13 @@ internal unsafe partial class VkMeshRenderer
 
 			if (writeSpan.Length > 0)
 			{
-				if (!ValidateDescriptorWrites(writePtr, writeSpan.Length))
-					return false;
+				if (!ValidateDescriptorWrites(writePtr, writeSpan.Length, out int validationWriteIndex, out string validationReason))
+				{
+					if (TryGetDescriptorWriteBinding(validationWriteIndex, bufferMap, imageMap, texelMap, out DescriptorBindingInfo validationBinding))
+						return FailDescriptorWrite(validationBinding, $"validation failed: {validationReason}");
+
+					return FailDescriptorPreparation($"descriptor write validation failed: {validationReason}");
+				}
 
 				if (BackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap)
 				{
@@ -452,7 +474,7 @@ internal unsafe partial class VkMeshRenderer
 					if (payload is null)
 					{
 						WarnOnce($"Skipping descriptor heap update for mesh '{Mesh?.Name ?? "?"}' because descriptor slot {descriptorSlotIndex} has no heap push payload.");
-						return false;
+						return FailDescriptorPreparation($"descriptor heap push payload is unavailable for slot {descriptorSlotIndex}");
 					}
 
 					foreach (var (_, bufferIndex, binding, descriptorCount) in bufferMap)
@@ -461,14 +483,14 @@ internal unsafe partial class VkMeshRenderer
 						{
 							WarnOnce($"[WriteDescHeap] FAILED buffer binding '{binding.Name}' (set={binding.Set}, binding={binding.Binding}, type={binding.DescriptorType}) for mesh '{Mesh?.Name ?? "?"}': program missing");
 							RecordDescriptorFailure(binding, "descriptor heap buffer write failed: program missing");
-							return false;
+							return FailDescriptorWrite(binding, "descriptor heap buffer write failed because the program is unavailable");
 						}
 
 						if (!BackendContext.Resources.DescriptorLifetime.TryWriteDescriptorHeapBinding(_program, binding, payload, bufferPtr + bufferIndex, null, null, descriptorCount, out string heapReason))
 						{
 							WarnOnce($"[WriteDescHeap] FAILED buffer binding '{binding.Name}' (set={binding.Set}, binding={binding.Binding}, type={binding.DescriptorType}) for mesh '{Mesh?.Name ?? "?"}': {heapReason}");
 							RecordDescriptorFailure(binding, $"descriptor heap buffer write failed: {heapReason}");
-							return false;
+							return FailDescriptorWrite(binding, $"descriptor heap buffer write failed: {heapReason}");
 						}
 					}
 
@@ -478,14 +500,14 @@ internal unsafe partial class VkMeshRenderer
 						{
 							WarnOnce($"[WriteDescHeap] FAILED image binding '{binding.Name}' (set={binding.Set}, binding={binding.Binding}, type={binding.DescriptorType}) for mesh '{Mesh?.Name ?? "?"}': program missing");
 							RecordDescriptorFailure(binding, "descriptor heap image write failed: program missing");
-							return false;
+							return FailDescriptorWrite(binding, "descriptor heap image write failed because the program is unavailable");
 						}
 
 						if (!BackendContext.Resources.DescriptorLifetime.TryWriteDescriptorHeapBinding(_program, binding, payload, null, imagePtr + imageIndex, null, descriptorCount, out string heapReason))
 						{
 							WarnOnce($"[WriteDescHeap] FAILED image binding '{binding.Name}' (set={binding.Set}, binding={binding.Binding}, type={binding.DescriptorType}) for mesh '{Mesh?.Name ?? "?"}': {heapReason}");
 							RecordDescriptorFailure(binding, $"descriptor heap image write failed: {heapReason}");
-							return false;
+							return FailDescriptorWrite(binding, $"descriptor heap image write failed: {heapReason}");
 						}
 					}
 
@@ -495,14 +517,14 @@ internal unsafe partial class VkMeshRenderer
 						{
 							WarnOnce($"[WriteDescHeap] FAILED texel binding '{binding.Name}' (set={binding.Set}, binding={binding.Binding}, type={binding.DescriptorType}) for mesh '{Mesh?.Name ?? "?"}': program missing");
 							RecordDescriptorFailure(binding, "descriptor heap texel write failed: program missing");
-							return false;
+							return FailDescriptorWrite(binding, "descriptor heap texel write failed because the program is unavailable");
 						}
 
 						if (!BackendContext.Resources.DescriptorLifetime.TryWriteDescriptorHeapBinding(_program, binding, payload, null, null, texelPtr + texelIndex, descriptorCount, out string heapReason))
 						{
 							WarnOnce($"[WriteDescHeap] FAILED texel binding '{binding.Name}' (set={binding.Set}, binding={binding.Binding}, type={binding.DescriptorType}) for mesh '{Mesh?.Name ?? "?"}': {heapReason}");
 							RecordDescriptorFailure(binding, $"descriptor heap texel write failed: {heapReason}");
-							return false;
+							return FailDescriptorWrite(binding, $"descriptor heap texel write failed: {heapReason}");
 						}
 					}
 				}
@@ -518,10 +540,11 @@ internal unsafe partial class VkMeshRenderer
 						TimeSpan.FromSeconds(1),
 						"[Vulkan] Deferred mesh descriptor update because a render-resource generation retired concurrently: {0}",
 						updateFailureReason);
-					return false;
+					return FailDescriptorPreparation($"descriptor update rejected by resource-generation admission: {updateFailureReason}");
 				}
 				if (recordDescriptorTableGeneration)
 					BackendContext.Resources.DescriptorLifetime.RecordTableGeneration();
+				RecordPublishedDirectionalShadowAtlasReceipts(imageMap, imageSpan);
 				RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorRecordsWritten(
 					writeSpan.Length);
 
@@ -551,6 +574,82 @@ internal unsafe partial class VkMeshRenderer
 			compatibilityTicks,
 			writes.Count);
 		return true;
+	}
+
+	/// <summary>
+	/// Captures the native image identity only after the descriptor update has been
+	/// accepted by the active descriptor backend. Resolution is intentionally not a receipt.
+	/// </summary>
+	private void RecordPublishedDirectionalShadowAtlasReceipts(
+		VulkanDescriptorScratchBuffer<(int writeIndex, int imageIndex, DescriptorBindingInfo binding, uint descriptorCount)> imageMap,
+		ReadOnlySpan<DescriptorImageInfo> imageInfos)
+	{
+		if (!VulkanShadowAtlasDiagnostics.IsEnabled)
+			return;
+
+		for (int mapIndex = 0; mapIndex < imageMap.Count; mapIndex++)
+		{
+			var (_, imageIndex, binding, descriptorCount) = imageMap[mapIndex];
+			if (!string.Equals(binding.Name, "DirectionalShadowAtlas", StringComparison.Ordinal))
+				continue;
+
+			for (uint descriptorIndex = 0; descriptorIndex < descriptorCount; descriptorIndex++)
+			{
+				DescriptorImageInfo imageInfo = imageInfos[checked(imageIndex + (int)descriptorIndex)];
+				if (!BackendContext.Resources.Images.TryGetBackingImage(imageInfo.ImageView, out Image image))
+					continue;
+
+				ImageSubresourceRange viewRange = new()
+				{
+					BaseMipLevel = 0u,
+					LevelCount = 1u,
+					BaseArrayLayer = 0u,
+					LayerCount = 1u,
+				};
+				if (BackendContext.Resources.Images.TryGetDescriptorHeapCreateInfo(imageInfo.ImageView, out ImageViewCreateInfo viewInfo))
+					viewRange = viewInfo.SubresourceRange;
+
+				VulkanShadowAtlasDiagnostics.RecordDirectionalShadowAtlasConsumer(
+					binding.Name,
+					image,
+					GetResourceGeneration(ObjectType.Image, image.Handle),
+					imageInfo.ImageView,
+					GetResourceGeneration(ObjectType.ImageView, imageInfo.ImageView.Handle),
+					in viewRange);
+			}
+		}
+	}
+
+	private static bool TryGetDescriptorWriteBinding(
+		int writeIndex,
+		VulkanDescriptorScratchBuffer<(int writeIndex, int bufferIndex, DescriptorBindingInfo binding, uint descriptorCount)> bufferMap,
+		VulkanDescriptorScratchBuffer<(int writeIndex, int imageIndex, DescriptorBindingInfo binding, uint descriptorCount)> imageMap,
+		VulkanDescriptorScratchBuffer<(int writeIndex, int texelIndex, DescriptorBindingInfo binding, uint descriptorCount)> texelMap,
+		out DescriptorBindingInfo binding)
+	{
+		for (int index = 0; index < bufferMap.Count; index++)
+			if (bufferMap[index].writeIndex == writeIndex)
+			{
+				binding = bufferMap[index].binding;
+				return true;
+			}
+
+		for (int index = 0; index < imageMap.Count; index++)
+			if (imageMap[index].writeIndex == writeIndex)
+			{
+				binding = imageMap[index].binding;
+				return true;
+			}
+
+		for (int index = 0; index < texelMap.Count; index++)
+			if (texelMap[index].writeIndex == writeIndex)
+			{
+				binding = texelMap[index].binding;
+				return true;
+			}
+
+		binding = default;
+		return false;
 	}
 
 	private static DescriptorWriteKey CreateDescriptorWriteKey(
@@ -681,25 +780,42 @@ internal unsafe partial class VkMeshRenderer
 	}
 
 	private bool ValidateDescriptorWrites(WriteDescriptorSet* writes, int count)
+		=> ValidateDescriptorWrites(writes, count, out _);
+
+	private bool ValidateDescriptorWrites(WriteDescriptorSet* writes, int count, out string reason)
+		=> ValidateDescriptorWrites(writes, count, out _, out reason);
+
+	private bool ValidateDescriptorWrites(WriteDescriptorSet* writes, int count, out int failedWriteIndex, out string reason)
 	{
+		failedWriteIndex = -1;
+		reason = string.Empty;
 		for (int i = 0; i < count; i++)
 		{
 			WriteDescriptorSet write = writes[i];
 			switch (write.DescriptorType)
 			{
 				case DescriptorType.CombinedImageSampler:
-					if (!ValidateImageDescriptors(write, requireImageView: true, requireSampler: true, i))
+					if (!ValidateImageDescriptors(write, requireImageView: true, requireSampler: true, i, out reason))
+					{
+						failedWriteIndex = i;
 						return false;
+					}
 					break;
 				case DescriptorType.Sampler:
-					if (!ValidateImageDescriptors(write, requireImageView: false, requireSampler: true, i))
+					if (!ValidateImageDescriptors(write, requireImageView: false, requireSampler: true, i, out reason))
+					{
+						failedWriteIndex = i;
 						return false;
+					}
 					break;
 				case DescriptorType.SampledImage:
 				case DescriptorType.StorageImage:
 				case DescriptorType.InputAttachment:
-					if (!ValidateImageDescriptors(write, requireImageView: true, requireSampler: false, i))
+					if (!ValidateImageDescriptors(write, requireImageView: true, requireSampler: false, i, out reason))
+					{
+						failedWriteIndex = i;
 						return false;
+					}
 					break;
 				case DescriptorType.UniformBuffer:
 				case DescriptorType.UniformBufferDynamic:
@@ -707,6 +823,8 @@ internal unsafe partial class VkMeshRenderer
 					if (write.PBufferInfo is null || HasZeroBuffer(write.PBufferInfo, write.DescriptorCount))
 					{
 						WarnOnce($"Skipping descriptor update for mesh '{Mesh?.Name ?? "?"}' because write[{i}] has an invalid buffer descriptor.");
+						reason = $"write[{i}] type={write.DescriptorType} has an invalid buffer descriptor";
+						failedWriteIndex = i;
 						return false;
 					}
 					break;
@@ -715,6 +833,8 @@ internal unsafe partial class VkMeshRenderer
 					if (write.PTexelBufferView is null || HasZeroBufferView(write.PTexelBufferView, write.DescriptorCount))
 					{
 						WarnOnce($"Skipping descriptor update for mesh '{Mesh?.Name ?? "?"}' because write[{i}] has an invalid texel buffer view.");
+						reason = $"write[{i}] type={write.DescriptorType} has an invalid texel buffer view";
+						failedWriteIndex = i;
 						return false;
 					}
 					break;
@@ -724,11 +844,13 @@ internal unsafe partial class VkMeshRenderer
 		return true;
 	}
 
-	private bool ValidateImageDescriptors(WriteDescriptorSet write, bool requireImageView, bool requireSampler, int writeIndex)
+	private bool ValidateImageDescriptors(WriteDescriptorSet write, bool requireImageView, bool requireSampler, int writeIndex, out string reason)
 	{
+		reason = string.Empty;
 		if (write.PImageInfo is null)
 		{
 			WarnOnce($"Skipping descriptor update for mesh '{Mesh?.Name ?? "?"}' because write[{writeIndex}] has no image descriptor data.");
+			reason = $"write[{writeIndex}] type={write.DescriptorType} has no image descriptor data";
 			return false;
 		}
 
@@ -738,6 +860,7 @@ internal unsafe partial class VkMeshRenderer
 			if (requireImageView && info.ImageView.Handle == 0)
 			{
 				WarnOnce($"Skipping descriptor update for mesh '{Mesh?.Name ?? "?"}' because write[{writeIndex}].image[{i}] has no image view.");
+				reason = $"write[{writeIndex}].image[{i}] type={write.DescriptorType} has no image view";
 				return false;
 			}
 
@@ -747,18 +870,21 @@ internal unsafe partial class VkMeshRenderer
 					? $" backed by image 0x{backingImage.Handle:X}"
 					: string.Empty;
 				WarnOnce($"Skipping descriptor update for mesh '{Mesh?.Name ?? "?"}' because write[{writeIndex}].image[{i}] references a retired image view{backing}.");
+				reason = $"write[{writeIndex}].image[{i}] type={write.DescriptorType} references a retired image view{backing}";
 				return false;
 			}
 
 			if (requireSampler && info.Sampler.Handle == 0)
 			{
 				WarnOnce($"Skipping descriptor update for mesh '{Mesh?.Name ?? "?"}' because write[{writeIndex}].image[{i}] has no sampler.");
+				reason = $"write[{writeIndex}].image[{i}] type={write.DescriptorType} has no sampler";
 				return false;
 			}
 
 			if (requireSampler && !BackendContext.Resources.Descriptors.IsLiveSampler(info.Sampler))
 			{
 				WarnOnce($"Skipping descriptor update for mesh '{Mesh?.Name ?? "?"}' because write[{writeIndex}].image[{i}] references a retired sampler.");
+				reason = $"write[{writeIndex}].image[{i}] type={write.DescriptorType} references a retired sampler";
 				return false;
 			}
 		}

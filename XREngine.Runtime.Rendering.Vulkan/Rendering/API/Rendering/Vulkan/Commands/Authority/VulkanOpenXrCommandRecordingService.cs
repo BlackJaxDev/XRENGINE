@@ -59,7 +59,8 @@ internal sealed class VulkanOpenXrCommandRecordingService
         RenderOutputRequest outputContract = prepared.OutputContract;
         if (!prepared.IsValid)
         {
-            if (outputContract.WorkClass == ERenderOutputWorkClass.PresentNow)
+            if (outputContract.IsDefined &&
+                outputContract.WorkClass == ERenderOutputWorkClass.PresentNow)
             {
                 throw new VulkanPresentNowReadinessException(
                     outputContract.FrameId,
@@ -187,6 +188,11 @@ internal sealed class VulkanOpenXrCommandRecordingService
         VulkanOpenXrBackend backend,
         in VulkanOpenXrFrameContext frameContext)
         => new OpenXrExternalSwapchainRenderScope(backend, in frameContext);
+
+    internal VulkanOpenXrFrameContextScope EnterFrameContextScope(
+        VulkanOpenXrBackend backend,
+        in VulkanOpenXrFrameContext frameContext)
+        => new(backend, in frameContext);
 
     internal IDisposable EnterSynchronousUploadBlockScope(VulkanOpenXrBackend backend)
         => new SynchronousResourceUploadBlockScope(backend);

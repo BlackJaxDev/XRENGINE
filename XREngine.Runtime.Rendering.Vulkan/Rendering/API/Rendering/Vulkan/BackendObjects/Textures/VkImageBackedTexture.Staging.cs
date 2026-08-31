@@ -83,14 +83,46 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             return false;
         }
 
-        (buffer, memory) = BackendContext.Resources.Allocations.Staging.Acquire(
-            BackendContext,
-            (ulong)data.Length,
-            BufferUsageFlags.TransferSrcBit,
-            MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
-            data.Address,
-            foregroundRequired);
-        return buffer.Handle != 0;
+        if (foregroundRequired)
+        {
+            if (!BackendContext.Resources.Allocations.Staging.TryAcquireLease(
+                    BackendContext,
+                    (ulong)data.Length,
+                    BufferUsageFlags.TransferSrcBit,
+                    MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
+                    data.Address,
+                    foregroundRequired: true,
+                    requireForegroundReserve: true,
+                    out VulkanStagingBufferLease lease))
+            {
+                buffer = default;
+                memory = default;
+                return false;
+            }
+
+            buffer = lease.Buffer;
+            memory = lease.Memory;
+            return true;
+        }
+
+        if (!BackendContext.Resources.Allocations.Staging.TryAcquireLease(
+                BackendContext,
+                (ulong)data.Length,
+                BufferUsageFlags.TransferSrcBit,
+                MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
+                data.Address,
+                foregroundRequired: false,
+                requireForegroundReserve: false,
+                out VulkanStagingBufferLease backgroundLease))
+        {
+            buffer = default;
+            memory = default;
+            return false;
+        }
+
+        buffer = backgroundLease.Buffer;
+        memory = backgroundLease.Memory;
+        return true;
     }
 
     #endregion

@@ -166,9 +166,9 @@ public static class RenderDiagnosticsFlags
     public static volatile bool VkSkipImGui;
 
     /// <summary>
-    /// Enables the Vulkan imported-texture upload preparation queue. Default <b>true</b>. Seed:
-    /// <c>XRE_VULKAN_ASYNC_TEXTURE_UPLOAD=0</c> disables and routes scheduling through the
-    /// synchronous compatibility path.
+    /// Legacy Vulkan upload diagnostic preference. Imported textures always use
+    /// queued worker preparation; <c>XRE_VULKAN_ASYNC_TEXTURE_UPLOAD=0</c> is
+    /// reported as ignored by that path and cannot enable synchronous preparation.
     /// </summary>
     public static volatile bool VkAsyncTextureUpload = true;
 
@@ -180,9 +180,9 @@ public static class RenderDiagnosticsFlags
     public static volatile bool VkTextureUploadTransferQueue = true;
 
     /// <summary>
-    /// Requests worker-side Vulkan upload preparation. Default <b>true</b>; set
-    /// <c>XRE_VULKAN_TEXTURE_UPLOAD_PREP_WORKER=0</c> to use the budgeted render-thread
-    /// compatibility drain.
+    /// Legacy worker-preparation diagnostic preference. Imported Vulkan uploads
+    /// always prepare on workers; <c>XRE_VULKAN_TEXTURE_UPLOAD_PREP_WORKER=0</c>
+    /// is reported as ignored rather than moving work onto the render thread.
     /// </summary>
     public static volatile bool VkTextureUploadPrepWorker;
 

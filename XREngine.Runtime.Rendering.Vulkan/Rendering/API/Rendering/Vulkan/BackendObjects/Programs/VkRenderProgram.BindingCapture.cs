@@ -17,8 +17,24 @@ internal unsafe partial class VkRenderProgram
 
         public void Reset()
         {
+            Drain(Active);
+            Drain(Free);
             Active = null;
             Free = null;
+        }
+
+        private static void Drain(BindingCaptureState? state)
+        {
+            while (state is not null)
+            {
+                BindingCaptureState? next = state.NextFree ?? state.Parent;
+                state.Clear();
+                state.ReleaseFrameSnapshots();
+                state.Owner = null;
+                state.Parent = null;
+                state.NextFree = null;
+                state = next;
+            }
         }
     }
 
@@ -48,6 +64,7 @@ internal unsafe partial class VkRenderProgram
             new(StringComparer.Ordinal);
         internal Dictionary<uint, ProgramImageBinding> ImagesByUnit = [];
         internal Dictionary<uint, XRDataBuffer> BuffersByBinding { get; } = [];
+        internal ReadOnlyStorageBindingSet? ReadOnlyStorageBindings;
         internal int TypedPublicationDepth;
         internal int TypedResourcePublicationDepth;
         internal bool TypedResourcePublicationRequiresReadyResources;
@@ -66,6 +83,22 @@ internal unsafe partial class VkRenderProgram
             RequiredSamplerNames.Clear();
             ImagesByUnit.Clear();
             BuffersByBinding.Clear();
+            ReadOnlyStorageBindings?.Dispose();
+            ReadOnlyStorageBindings = null;
+            TypedPublicationDepth = 0;
+            TypedResourcePublicationDepth = 0;
+            TypedResourcePublicationRequiresReadyResources = false;
+            TypedPublicationFrequency = default;
+            TypedPublicationGeneration = 0;
+            MutableLegacyPublicationDepth = 0;
+        }
+
+        internal void ReleaseFrameSnapshots()
+        {
+            foreach (ComputeDispatchSnapshot snapshot in _frameSnapshots)
+                snapshot.ReleaseReadOnlyStorageBindings();
+            _frameSnapshotFrame = 0;
+            _frameSnapshotCursor = 0;
         }
 
         internal void RecordUniform(string name)
@@ -132,6 +165,7 @@ internal unsafe partial class VkRenderProgram
 
             if (_frameSnapshotFrame != frameId)
             {
+                ReleaseFrameSnapshots();
                 _frameSnapshotFrame = frameId;
                 _frameSnapshotCursor = 0;
             }
@@ -168,6 +202,11 @@ internal unsafe partial class VkRenderProgram
         }
 
         CurrentBindingCaptureWorkspace.Active = state.Parent;
+        // Captured snapshots retain their own publication leases. The workspace
+        // state must release its source lease before it becomes reusable. The
+        // returned frame snapshots remain alive until their frame is retired;
+        // clearing them here erases the just-captured draw and reuses its slot.
+        state.Clear();
         state.Owner = null;
         state.Parent = null;
         state.NextFree = CurrentBindingCaptureWorkspace.Free;

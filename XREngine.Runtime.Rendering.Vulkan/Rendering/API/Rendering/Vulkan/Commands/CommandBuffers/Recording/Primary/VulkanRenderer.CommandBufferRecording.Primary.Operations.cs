@@ -1,5 +1,7 @@
 using System;
+using System.Diagnostics;
 using Silk.NET.Vulkan;
+using XREngine.Rendering.Occlusion;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -11,16 +13,28 @@ internal sealed partial class VulkanCommandRuntime
         using var mainLoopProfileScope = RuntimeRenderingHostServices.Profiling.StartProfileScope("Vulkan.RecordPrimary.MainOpLoop");
         for (int operationIndex = 0; operationIndex < recordingState.Ops.Length; operationIndex++)
         {
-            if (recordingState.PipelineDeferredOperationIndices.Contains(operationIndex))
-                continue;
-
             ref readonly FrameOperationHeader header = ref recordingState.Ops.GetHeader(operationIndex);
+            if (recordingState.PipelineDeferredOperationIndices.Contains(operationIndex))
+            {
+                VulkanShadowAtlasDiagnostics.RecordPrimaryOperation(
+                    EVulkanShadowAtlasFrameOperationReceiptStage.PrimaryDeferredByPlan,
+                    header.OpCode,
+                    header.PassIndex,
+                    recordingState.Ops.GetTarget(operationIndex));
+                continue;
+            }
+
             ref readonly VulkanPrimaryPlanNode primaryNode = ref recordingState.PrimaryCommandPlan.GetNode(operationIndex);
             if (primaryNode.OperationIndex != operationIndex)
                 throw new VulkanPlanPreconditionException("A terminal or mismatched primary-plan node appeared in the frame-operation range.");
 
             try
             {
+                VulkanShadowAtlasDiagnostics.RecordPrimaryOperation(
+                    EVulkanShadowAtlasFrameOperationReceiptStage.PrimaryAdmission,
+                    header.OpCode,
+                    header.PassIndex,
+                    recordingState.Ops.GetTarget(operationIndex));
                 if (!header.RequiresPrimaryRecordingContext)
                 {
                     using (VulkanCpuStageScope dispatchStage =
@@ -235,23 +249,16 @@ internal sealed partial class VulkanCommandRuntime
 
         for (uint viewIndex = 0u; viewIndex < payload.State.ViewCount; ++viewIndex)
         {
-        if (!payload.State.TryGetViewSegment(viewIndex, out uint payloadBase, out uint rangeBase))
-            throw new VulkanPlanPreconditionException("Advanced late visibility could not resolve a sealed view segment.");
-        for (int mipIndex = 0; mipIndex < closure.DispatchCount; ++mipIndex)
-        {
-            uint destinationMip = checked((uint)mipIndex + 1u);
-            VulkanPhysicalImageGroup source = destinationMip == 1u
-                ? closure.DepthGroup : closure.PyramidGroup;
-            uint sourceMip = destinationMip == 1u ? 0u : destinationMip - 1u;
+            if (!payload.State.TryGetViewSegment(viewIndex, out uint payloadBase, out uint rangeBase))
+                throw new VulkanPlanPreconditionException("Advanced late visibility could not resolve a sealed view segment.");
             EmitAdvancedVisibilityImageBarrier(
-                state.CommandBuffer, source, sourceMip, viewIndex,
+                state.CommandBuffer, closure.DepthGroup, 0u, viewIndex,
                 ImageLayout.ShaderReadOnlyOptimal,
                 AccessFlags.ShaderReadBit,
                 PipelineStageFlags.ComputeShaderBit,
                 allowUndefined: false);
             EmitAdvancedVisibilityImageBarrier(
-                state.CommandBuffer, closure.PyramidGroup, destinationMip,
-                viewIndex,
+                state.CommandBuffer, closure.PyramidGroup, 0u, viewIndex,
                 ImageLayout.General,
                 AccessFlags.ShaderWriteBit,
                 PipelineStageFlags.ComputeShaderBit,
@@ -261,57 +268,67 @@ internal sealed partial class VulkanCommandRuntime
                 payload.BuildDepthPyramidPipeline);
             BindAdvancedVisibilityDescriptorSets(state.CommandBuffer,
                 PipelineBindPoint.Compute, depth.PipelineLayout, in payload,
-                closure.DescriptorSets![closure.DescriptorIndex(viewIndex, mipIndex)]);
+                closure.DescriptorSets![closure.DescriptorIndex(viewIndex, 0)]);
             PushConstantsTracked(state.CommandBuffer, depth.PipelineLayout,
                 VulkanMeshRenderingConventions.GetCommonPushConstantStageFlags(
                     DeviceContext), 0u,
                 new AdvancedVisibilityPreparationPushConstants(
                     viewIndex, payloadBase, payload.State.PayloadCapacity, rangeBase));
-            uint groupsX = Math.Max(1u, closure.PyramidGroup.ResolvedExtent.Width >> (int)destinationMip);
-            uint groupsY = Math.Max(1u, closure.PyramidGroup.ResolvedExtent.Height >> (int)destinationMip);
-            Api.CmdDispatch(state.CommandBuffer, DivideRoundUp(groupsX, 8u),
-                DivideRoundUp(groupsY, 8u), 1u);
+            long buildRecordStart = Stopwatch.GetTimestamp();
+            using (VulkanGpuProfilerScope gpuScope = TryBeginVulkanGpuProfilerScope(
+                       state.CommandBuffer, NativeHiZBuildGpuProfilerPath))
+            {
+                Api.CmdDispatch(state.CommandBuffer,
+                    DivideRoundUp(closure.DepthGroup.ResolvedExtent.Width, 64u),
+                    DivideRoundUp(closure.DepthGroup.ResolvedExtent.Height, 64u), 1u);
+            }
+            OcclusionTelemetry.RecordHiZBuild(
+                closure.DepthGroup.ResolvedExtent.Width,
+                closure.DepthGroup.ResolvedExtent.Height,
+                Stopwatch.GetElapsedTime(buildRecordStart).TotalMilliseconds);
             EmitAdvancedVisibilityImageBarrier(
-                state.CommandBuffer, closure.PyramidGroup, destinationMip,
-                viewIndex,
+                state.CommandBuffer, closure.PyramidGroup, 0u, viewIndex,
                 ImageLayout.ShaderReadOnlyOptimal,
                 AccessFlags.ShaderReadBit,
                 PipelineStageFlags.ComputeShaderBit,
                 allowUndefined: false);
-        }
 
-        BindPipelineTracked(state.CommandBuffer, PipelineBindPoint.Compute,
-            payload.LateVisibilityPipeline);
-        BindAdvancedVisibilityDescriptorSets(state.CommandBuffer,
-            PipelineBindPoint.Compute, late.PipelineLayout, in payload,
-            closure.DescriptorSets![closure.DescriptorIndex(
-                viewIndex, closure.DispatchCount)]);
-        PushConstantsTracked(state.CommandBuffer, late.PipelineLayout,
-            VulkanMeshRenderingConventions.GetCommonPushConstantStageFlags(
-                DeviceContext), 0u,
-            new AdvancedVisibilityPreparationPushConstants(
-                viewIndex, payloadBase, payload.State.PayloadCapacity, rangeBase));
-        Api.CmdDispatch(state.CommandBuffer, DivideRoundUp(payload.State.PayloadCapacity, 256u), 1u, 1u);
-        EmitMemoryBarrierMask(state.CommandBuffer, EMemoryBarrierMask.ShaderStorage);
+            BindPipelineTracked(state.CommandBuffer, PipelineBindPoint.Compute,
+                payload.LateVisibilityPipeline);
+            BindAdvancedVisibilityDescriptorSets(state.CommandBuffer,
+                PipelineBindPoint.Compute, late.PipelineLayout, in payload,
+                closure.DescriptorSets![closure.DescriptorIndex(viewIndex, 1)]);
+            PushConstantsTracked(state.CommandBuffer, late.PipelineLayout,
+                VulkanMeshRenderingConventions.GetCommonPushConstantStageFlags(
+                    DeviceContext), 0u,
+                new AdvancedVisibilityPreparationPushConstants(
+                    viewIndex, payloadBase, payload.State.PayloadCapacity, rangeBase));
+            long testRecordStart = Stopwatch.GetTimestamp();
+            using (VulkanGpuProfilerScope gpuScope = TryBeginVulkanGpuProfilerScope(
+                       state.CommandBuffer, NativeHiZTestGpuProfilerPath))
+            {
+                Api.CmdDispatch(state.CommandBuffer, DivideRoundUp(payload.State.PayloadCapacity, 256u), 1u, 1u);
+            }
+            OcclusionTelemetry.RecordHiZTest(
+                payload.State.PayloadCapacity,
+                Stopwatch.GetElapsedTime(testRecordStart).TotalMilliseconds);
+            EmitMemoryBarrierMask(state.CommandBuffer, EMemoryBarrierMask.ShaderStorage);
         }
 
         // The graph transition into LateRaster owns the attachment layout.
-        // This physical compute pass exits with every produced pyramid mip in
-        // General, matching its declared read/write storage use rather than
+        // This physical compute pass exits with the produced coarse tile
+        // level in General, matching its declared read/write storage use rather than
         // leaking the internal sampled layout across the pass boundary.
         for (uint viewIndex = 0u; viewIndex < payload.State.ViewCount; ++viewIndex)
-        for (int mipIndex = 0; mipIndex < closure.DispatchCount; ++mipIndex)
-        {
             EmitAdvancedVisibilityImageBarrier(
                 state.CommandBuffer,
                 closure.PyramidGroup,
-                checked((uint)mipIndex + 1u),
+                0u,
                 viewIndex,
                 ImageLayout.General,
                 AccessFlags.ShaderReadBit | AccessFlags.ShaderWriteBit,
                 PipelineStageFlags.ComputeShaderBit,
                 allowUndefined: false);
-        }
         return info.OperationIndex;
     }
 
@@ -627,7 +644,8 @@ internal sealed partial class VulkanCommandRuntime
                 PushConstantsTracked(
                     state.CommandBuffer,
                     raster.PipelineLayout,
-                    ShaderStageFlags.VertexBit | ShaderStageFlags.FragmentBit,
+                    VulkanMeshRenderingConventions.GetCommonPushConstantStageFlags(
+                        DeviceContext),
                     0u,
                     new AdvancedVisibilityMeshRasterPushConstants(
                         indirectRange.FirstPayloadIndex,
@@ -644,7 +662,8 @@ internal sealed partial class VulkanCommandRuntime
                 PushConstantsTracked(
                     state.CommandBuffer,
                     raster.PipelineLayout,
-                    ShaderStageFlags.MeshBitExt | ShaderStageFlags.FragmentBit,
+                    VulkanMeshRenderingConventions.GetCommonPushConstantStageFlags(
+                        DeviceContext),
                     0u,
                     new AdvancedVisibilityMeshRasterPushConstants(
                         indirectRange.FirstPayloadIndex,
@@ -657,7 +676,8 @@ internal sealed partial class VulkanCommandRuntime
                 PushConstantsTracked(
                     state.CommandBuffer,
                     raster.PipelineLayout,
-                    ShaderStageFlags.VertexBit | ShaderStageFlags.FragmentBit,
+                    VulkanMeshRenderingConventions.GetCommonPushConstantStageFlags(
+                        DeviceContext),
                     0u,
                     new AdvancedVisibilityMeshRasterPushConstants(
                         indirectRange.FirstPayloadIndex,
@@ -938,7 +958,8 @@ internal sealed partial class VulkanCommandRuntime
             in payload,
             in header,
             in context,
-            ResolveCommandChainInlineOperationIndex(state.Ops.Stream, info.OperationIndex));
+            state.Ops.Stream.Lane,
+            ResolveComputeDispatchOccurrenceOrdinal(state.Ops.Stream, info.OperationIndex));
         RecordComputeDispatchPayload(state.CommandBuffer, state.FrameDataImageIndex, in payload, descriptorKey);
         CmdEndLabel(state.CommandBuffer);
         return info.OperationIndex;
@@ -958,9 +979,13 @@ internal sealed partial class VulkanCommandRuntime
         if (payload.Operation == ERenderQueryOperation.CopyResults &&
             payload.Query.CopyResults(state.CommandBuffer, payload.ResultDestination, payload.ResultDestinationOffset, payload.ResultStride, payload.IncludeAvailability) != ERenderQueryReadStatus.Ready)
             state.FrameOpsRequireRerecordLocal = true;
-        else if (payload.Operation == ERenderQueryOperation.WriteTimestamp && state.RecordingScratch.PreparedInlineQueries.Contains(payload.Query) &&
-                 payload.Query.WriteTimestamp(state.CommandBuffer, payload.TimestampStage, payload.PointIndex) != ERenderQueryReadStatus.Ready)
+        else if (payload.Operation == ERenderQueryOperation.WriteTimestamp && state.RecordingScratch.PreparedInlineQueries.Contains(payload.Query))
+        {
+            // Timestamp epochs are consumed by a successful host read. Keep the metadata
+            // for this submission, but make the primary artifact one-shot for the next frame.
+            _ = payload.Query.WriteTimestamp(state.CommandBuffer, payload.TimestampStage, payload.PointIndex);
             state.FrameOpsRequireRerecordLocal = true;
+        }
         else if (payload.Operation == ERenderQueryOperation.WriteProperties &&
                  (!state.RecordingScratch.PreparedInlineQueries.Contains(payload.Query) || payload.Query.WriteProperties(CreateQueryCommandEncoder(), state.CommandBuffer, payload.SourceHandles.Span) != ERenderQueryReadStatus.Ready))
             state.FrameOpsRequireRerecordLocal = true;
@@ -1155,6 +1180,25 @@ internal sealed partial class VulkanCommandRuntime
 
     private int RecordIndirectDrawPayload(scoped ref PrimaryCommandBufferRecordingState state, in IndirectDrawPayload payload, in VulkanPrimaryOperationRecordingInfo info)
     {
+        // Producer-complete indirect packets have an immutable secondary-command
+        // path. Pipeline admission intentionally does not re-warm a reusable
+        // secondary, so this must be attempted before the direct fallback. The
+        // fallback remains necessary when the packet cannot satisfy secondary
+        // inheritance or resource-preparation invariants.
+        int secondaryRunCount = CountContiguousIndirectCommandChainRun(
+            ref state,
+            info.OperationIndex,
+            info.PassIndex);
+        if (secondaryRunCount > 0 &&
+            TryExecuteIndirectCommandChainSecondaryRun(
+                ref state,
+                info.OperationIndex,
+                secondaryRunCount,
+                info.PassIndex))
+        {
+            return checked(info.OperationIndex + secondaryRunCount - 1);
+        }
+
         XRFrameBuffer? target = state.Ops.GetTarget(info.OperationIndex);
         EmitIndirectDrawRunReadBarrier(ref state);
         if (info.BeginsRendering) BeginRenderPassForTarget(ref state, target, info.PassIndex, state.ActiveContext);
@@ -1192,6 +1236,25 @@ internal sealed partial class VulkanCommandRuntime
     private bool UpdatePrimaryResourcePlannerContext(scoped ref PrimaryCommandBufferRecordingState state)
     {
         state.RenderGraphPlan = ResolvePrimaryRenderGraphPlan(ref state, in state.ActiveContext);
+        if (state.ActiveResourcePlannerScopeSet)
+        {
+            state.ActiveResourcePlannerScope.Dispose();
+            state.ActiveResourcePlannerScopeSet = false;
+        }
+        if (state.FramePlan is not null &&
+            (state.ActiveContext.ResourceRegistry is not null || state.ActiveContext.PassMetadata is { Count: > 0 }))
+        {
+            if (!state.FramePlan.TryGetRecordingPlannerGeneration(in state.ActiveContext, out ResourcePlannerRuntimeGeneration generation))
+            {
+                throw new VulkanPlanPreconditionException(
+                    "Primary recording has no frozen physical-resource generation for its operation context.");
+            }
+            // Attachment wrappers and prepared compute descriptors must resolve
+            // the same frozen physical images, not the planner publication which
+            // happened to be current before this accepted frame was prepared.
+            state.ActiveResourcePlannerScope = new(ThreadWorkspace.Current, this, generation);
+            state.ActiveResourcePlannerScopeSet = true;
+        }
         state.PlannerContext = state.ActiveContext;
         state.HasPlannerContext = true;
         return true;

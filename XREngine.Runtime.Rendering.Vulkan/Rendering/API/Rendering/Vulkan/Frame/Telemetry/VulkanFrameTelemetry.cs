@@ -40,6 +40,9 @@ internal sealed class VulkanFrameTelemetry
     internal readonly VulkanDiagnosticOptions _diagnosticOptions = VulkanDiagnosticOptions.Resolve();
     internal QueryPool[]? _frameTimingQueryPools;
     internal bool[]? _frameTimingQueryReady;
+    internal ulong[]? _frameTimingSubmittedRenderFrameIds;
+    internal ulong[]? _frameTimingSubmittedSequences;
+    internal long _frameTimingSubmissionSequence;
     internal bool _frameTimingGpuEnabled;
     internal double _frameTimingTimestampPeriodNanoseconds = 1.0;
     internal QueryPool[]? _vulkanGpuProfilerQueryPools;
@@ -340,12 +343,23 @@ internal sealed class VulkanFrameTelemetry
         }
     }
 
-    internal void MarkFrameTimingSubmitted(int frameSlot)
+    internal void MarkFrameTimingSubmitted(int frameSlot, ulong submittedRenderFrameId)
     {
         if (_frameTimingQueryReady is not null &&
-            (uint)frameSlot < (uint)_frameTimingQueryReady.Length)
+            _frameTimingSubmittedRenderFrameIds is not null &&
+            _frameTimingSubmittedSequences is not null &&
+            (uint)frameSlot < (uint)_frameTimingQueryReady.Length &&
+            (uint)frameSlot < (uint)_frameTimingSubmittedRenderFrameIds.Length &&
+            (uint)frameSlot < (uint)_frameTimingSubmittedSequences.Length)
         {
             _frameTimingQueryReady[frameSlot] = true;
+            ulong sequence = unchecked((ulong)Interlocked.Increment(ref _frameTimingSubmissionSequence));
+            _frameTimingSubmittedRenderFrameIds[frameSlot] = submittedRenderFrameId;
+            _frameTimingSubmittedSequences[frameSlot] = sequence;
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanFrameGpuCommandBufferTimingPending(
+                submittedRenderFrameId,
+                sequence,
+                frameSlot);
         }
 
         if (_vulkanGpuProfilerQueryReady is null ||
@@ -357,8 +371,7 @@ internal sealed class VulkanFrameTelemetry
             return;
         }
 
-        _vulkanGpuProfilerSubmittedFrameIds[frameSlot] =
-            RuntimeEngine.Rendering.State.RenderFrameId;
+        _vulkanGpuProfilerSubmittedFrameIds[frameSlot] = submittedRenderFrameId;
         _vulkanGpuProfilerQueryReady[frameSlot] =
             _vulkanGpuProfilerPendingScopes[frameSlot].Count > 0;
     }
@@ -373,15 +386,35 @@ internal sealed class VulkanFrameTelemetry
         if (!_frameTimingGpuEnabled ||
             _frameTimingQueryPools is null ||
             _frameTimingQueryReady is null ||
+            _frameTimingSubmittedRenderFrameIds is null ||
+            _frameTimingSubmittedSequences is null ||
             (uint)frameSlot >= (uint)_frameTimingQueryPools.Length ||
-            !_frameTimingQueryReady[frameSlot])
+            (uint)frameSlot >= (uint)_frameTimingSubmittedRenderFrameIds.Length ||
+            (uint)frameSlot >= (uint)_frameTimingSubmittedSequences.Length)
         {
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanFrameGpuCommandBufferTimingDisabled();
             return new(default, completedGpuProfiler);
         }
 
+        if (!_frameTimingQueryReady[frameSlot])
+        {
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanFrameGpuCommandBufferTimingUnavailable();
+            return new(default, completedGpuProfiler);
+        }
+
+        ulong sourceRenderFrameId = _frameTimingSubmittedRenderFrameIds[frameSlot];
+        ulong sequence = _frameTimingSubmittedSequences[frameSlot];
+
         QueryPool queryPool = _frameTimingQueryPools[frameSlot];
         if (queryPool.Handle == 0)
+        {
+            ConsumeFrameTimingQuery(frameSlot);
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanFrameGpuCommandBufferTimingUnavailable(
+                sourceRenderFrameId,
+                sequence,
+                frameSlot);
             return new(default, completedGpuProfiler);
+        }
 
         const uint queryCount = 2;
         ulong* timestamps = stackalloc ulong[(int)queryCount];
@@ -394,21 +427,56 @@ internal sealed class VulkanFrameTelemetry
             timestamps,
             (ulong)sizeof(ulong),
             QueryResultFlags.Result64Bit);
-        if (result != Result.Success)
+        if (result == Result.NotReady)
+        {
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanFrameGpuCommandBufferTimingPending(
+                sourceRenderFrameId,
+                sequence,
+                frameSlot);
             return new(default, completedGpuProfiler);
+        }
+        if (result != Result.Success)
+        {
+            ConsumeFrameTimingQuery(frameSlot);
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanFrameGpuCommandBufferTimingUnavailable(
+                sourceRenderFrameId,
+                sequence,
+                frameSlot);
+            return new(default, completedGpuProfiler);
+        }
 
         ulong start = timestamps[0];
         ulong end = timestamps[1];
         if (end < start)
+        {
+            ConsumeFrameTimingQuery(frameSlot);
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanFrameGpuCommandBufferTimingUnavailable(
+                sourceRenderFrameId,
+                sequence,
+                frameSlot);
             return new(queryPool, completedGpuProfiler);
+        }
 
-        double gpuMilliseconds =
-            (end - start) * _frameTimingTimestampPeriodNanoseconds /
-            1_000_000.0;
-        RuntimeEngine.Rendering.Stats.Vulkan
-            .RecordVulkanFrameGpuCommandBufferTime(
-                TimeSpan.FromMilliseconds(gpuMilliseconds));
+        ulong elapsedNanoseconds = checked((ulong)Math.Round(
+            (end - start) * _frameTimingTimestampPeriodNanoseconds));
+        ConsumeFrameTimingQuery(frameSlot);
+        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanFrameGpuCommandBufferTimingCompleted(
+            elapsedNanoseconds,
+            sourceRenderFrameId,
+            RuntimeEngine.Rendering.State.RenderFrameId,
+            sequence,
+            frameSlot);
         return new(queryPool, completedGpuProfiler);
+    }
+
+    private void ConsumeFrameTimingQuery(int frameSlot)
+    {
+        if (_frameTimingQueryReady is not null && (uint)frameSlot < (uint)_frameTimingQueryReady.Length)
+            _frameTimingQueryReady[frameSlot] = false;
+        if (_frameTimingSubmittedRenderFrameIds is not null && (uint)frameSlot < (uint)_frameTimingSubmittedRenderFrameIds.Length)
+            _frameTimingSubmittedRenderFrameIds[frameSlot] = 0u;
+        if (_frameTimingSubmittedSequences is not null && (uint)frameSlot < (uint)_frameTimingSubmittedSequences.Length)
+            _frameTimingSubmittedSequences[frameSlot] = 0u;
     }
 
     private unsafe QueryPool SampleGpuProfilerQueries(

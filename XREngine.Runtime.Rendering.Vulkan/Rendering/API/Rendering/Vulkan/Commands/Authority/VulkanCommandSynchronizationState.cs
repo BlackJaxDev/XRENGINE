@@ -400,6 +400,37 @@ internal sealed unsafe class VulkanCommandSynchronizationState
     }
 
     /// <summary>
+    /// Clears image-layout state invalidated by a successful native command
+    /// reset while preserving the command-local journal's allocated capacity.
+    /// Full removal is reserved for native command-buffer destruction.
+    /// </summary>
+    internal void ClearRecordedImageLayoutsAfterSuccessfulReset(CommandBuffer commandBuffer)
+    {
+        if (commandBuffer.Handle == 0)
+            return;
+
+        lock (_vulkanImageLayoutLock)
+        {
+            if (!_recordedImageLayoutsByCommandBuffer.TryGetValue(
+                    unchecked((ulong)commandBuffer.Handle),
+                    out VulkanRecordedImageLayoutState? recorded))
+            {
+                return;
+            }
+
+            recorded.Subresources.Clear();
+            recorded.EntrySubresources.Clear();
+            recorded.SecondaryDescriptorRequirements.Clear();
+            recorded.SecondaryDescriptorImagePayloadGenerations.Clear();
+            recorded.TouchedSubresources.Clear();
+            recorded.QueueOwnershipTransfers.Clear();
+            recorded.EntryStateIncomplete = false;
+            recorded.EntryStateFailure = default;
+            recorded.RecordingGeneration = 0;
+        }
+    }
+
+    /// <summary>
     /// Resolves one common submitted layout across the requested image range.
     /// This is the renderer-free read side of the command authority's image
     /// state ledger; output target selection consumes the resulting value as a

@@ -311,6 +311,12 @@ public sealed partial class BackendReadyFramePackage
         EAdvancedViewRecordFlags flags = EAdvancedViewRecordFlags.DepthZeroToOne;
         if (camera.IsReversedDepth)
             flags |= EAdvancedViewRecordFlags.ReversedDepth;
+        if (RenderClipSpacePolicy.FramebufferTextureYDirection(
+                RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend) ==
+            ERenderClipSpaceYDirection.YDown)
+        {
+            flags |= EAdvancedViewRecordFlags.FramebufferTextureYDown;
+        }
         return CreateCanonicalViewRecord(
             0u, view, projection, projectionUnjittered, view * projection,
             view * projectionUnjittered, view * projection,
@@ -373,6 +379,12 @@ public sealed partial class BackendReadyFramePackage
             flags |= EAdvancedViewRecordFlags.Foveated;
         if (source.Kind is EVrOutputViewKind.CyclopeanDesktop)
             flags |= EAdvancedViewRecordFlags.Mirror;
+        if (RenderClipSpacePolicy.FramebufferTextureYDirection(
+                RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend) ==
+            ERenderClipSpaceYDirection.YDown)
+        {
+            flags |= EAdvancedViewRecordFlags.FramebufferTextureYDown;
+        }
         return flags;
     }
 

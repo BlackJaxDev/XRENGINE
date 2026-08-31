@@ -102,6 +102,7 @@ namespace XREngine.Rendering.Vulkan
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
                        "Vulkan.FrameLifecycle.DrainRetiredResources"))
             {
+                ResourceRuntime.DrainPendingSupersededDescriptorOwners();
                 _commandRuntime.DrainInvalidatedCommandBufferRecordings(
                     Api, ResourceRuntime);
                 _commandRuntime.DrainRetiredSynchronousSubmissions();
@@ -202,9 +203,11 @@ namespace XREngine.Rendering.Vulkan
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
                        "Vulkan.FrameLifecycle.PreCollectNextSlotWait"))
             {
-                WaitForTimelineValue(
+                WaitForNextDesktopFrameSlotTimelineValue(
                     _commandRuntime.Synchronization._graphicsTimelineSemaphore,
-                    targetValue);
+                    targetValue,
+                    in attempt,
+                    nextFrameSlot);
             }
             TimeSpan elapsed = Stopwatch.GetElapsedTime(waitStart);
             Volatile.Write(

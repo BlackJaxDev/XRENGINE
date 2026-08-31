@@ -30,6 +30,25 @@ internal unsafe sealed class VulkanProgramCreationPort(VulkanBackendObjectContex
     internal VkShader? GetOrCreateShader(XRShader shader)
         => context.Resources.CreateAPIRenderObject(shader) as VkShader;
 
+    /// <summary>Publishes a newly generated mesh program through the explicit cold factory.</summary>
+    internal VkRenderProgram? GetOrCreateProgram(XRRenderProgram program)
+    {
+        if (context.Resources.CreateAPIRenderObject(program) is not VkRenderProgram wrapper)
+            return null;
+        if (!wrapper.IsGenerated)
+            wrapper.Generate();
+        return wrapper;
+    }
+
+    /// <summary>Creates an assigned texture only for callers admitted to synchronous resource preparation.</summary>
+    internal AbstractRenderAPIObject GetOrCreateTexture(XRTexture texture)
+    {
+        AbstractRenderAPIObject wrapper = context.Resources.CreateAPIRenderObject(texture);
+        if (!wrapper.IsGenerated)
+            wrapper.Generate();
+        return wrapper;
+    }
+
     internal uint GetRenderPassColorAttachmentCount(RenderPass renderPass)
         => renderPass.Handle != 0 && context.Resources.RenderPassColorAttachmentCounts.TryGetValue(renderPass.Handle, out uint count)
             ? count
@@ -229,12 +248,13 @@ internal unsafe sealed class VulkanProgramCreationPort(VulkanBackendObjectContex
 
             if (!TryAllocateComputeDescriptorSetBatch(
                     context, cache, schemaKey, layouts, poolSizes, poolSizeCount,
-                    usesUpdateAfterBind, out descriptorSets))
+                    usesUpdateAfterBind, out descriptorSets, out DescriptorPool allocationPool))
             {
                 return false;
             }
 
             cache.CachedSets.Add(key, descriptorSets);
+            cache.CachedSetPools.Add(key, allocationPool);
             isNewAllocation = true;
             return true;
         }
@@ -248,9 +268,11 @@ internal unsafe sealed class VulkanProgramCreationPort(VulkanBackendObjectContex
         DescriptorPoolSize[] poolSizes,
         int poolSizeCount,
         bool usesUpdateAfterBind,
-        out DescriptorSet[] descriptorSets)
+        out DescriptorSet[] descriptorSets,
+        out DescriptorPool allocationPool)
     {
         descriptorSets = Array.Empty<DescriptorSet>();
+        allocationPool = default;
         if (!cache.PoolsBySchema.TryGetValue(schemaKey, out List<ComputeDescriptorPoolBlock>? blocks))
             cache.PoolsBySchema.Add(schemaKey, blocks = []);
 
@@ -263,6 +285,7 @@ internal unsafe sealed class VulkanProgramCreationPort(VulkanBackendObjectContex
             if (result == Result.Success)
             {
                 block.AllocatedAllocations++;
+                allocationPool = block.Pool;
                 return true;
             }
             if (result is Result.ErrorOutOfPoolMemory or Result.ErrorFragmentedPool)
@@ -280,6 +303,7 @@ internal unsafe sealed class VulkanProgramCreationPort(VulkanBackendObjectContex
         if (allocate != Result.Success)
             return false;
         createdBlock.AllocatedAllocations++;
+        allocationPool = createdBlock.Pool;
         return true;
     }
 

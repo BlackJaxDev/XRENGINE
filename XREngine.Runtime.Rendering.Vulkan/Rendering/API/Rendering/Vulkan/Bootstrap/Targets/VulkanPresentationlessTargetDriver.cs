@@ -17,11 +17,18 @@ internal sealed unsafe class VulkanPresentationlessTargetDriver :
     private VulkanTargetOutputContext? _targetContext;
     private VulkanPresentationlessFrameSlot[] _slots = [];
     private bool[] _slotSubmitted = [];
+    // A production submission can use this target's slot without passing
+    // through EndFrameRecording. Submission alone therefore cannot prove that
+    // the target-owned timestamp pool was reset and written.
+    private bool[] _slotTimestampRecorded = [];
     private bool[] _colorInitialized = [];
     private float _timestampPeriodNanoseconds;
     private int _nextSlot;
     private int _lastSubmittedSlot = -1;
     private bool _deviceLost;
+    private long _lastBeginTrackedCommandBufferAllocatedBytes;
+    private long _lastBeginFrameResourceTrackingAllocatedBytes;
+    private VulkanCommandBufferBeginAllocationCounters _lastBeginCommandBufferAllocationCounters;
 
     public VulkanPresentationlessTargetDriver(RendererHostContext hostContext)
     {
@@ -47,6 +54,16 @@ internal sealed unsafe class VulkanPresentationlessTargetDriver :
     public bool IsDeviceLost => _deviceLost;
     public double LastCompletedGpuFrameNanoseconds { get; private set; }
     public string PresentationDescription => "Engine-owned presentationless image ring; no Vulkan acquire or present operation.";
+
+    internal long LastBeginTrackedCommandBufferAllocatedBytes
+        => _lastBeginTrackedCommandBufferAllocatedBytes;
+
+    internal long LastBeginFrameResourceTrackingAllocatedBytes
+        => _lastBeginFrameResourceTrackingAllocatedBytes;
+
+    internal VulkanCommandBufferBeginAllocationCounters LastBeginCommandBufferAllocationCounters
+        => _lastBeginCommandBufferAllocationCounters;
+
 
     public VulkanExplicitFrameTargetPreview PreviewNextFrameTarget()
     {
@@ -108,6 +125,7 @@ internal sealed unsafe class VulkanPresentationlessTargetDriver :
         _timestampPeriodNanoseconds = Math.Max(properties.Limits.TimestampPeriod, 0.0001f);
         _slots = new VulkanPresentationlessFrameSlot[checked((int)_output.FrameSlotCount)];
         _slotSubmitted = new bool[_slots.Length];
+        _slotTimestampRecorded = new bool[_slots.Length];
         _colorInitialized = new bool[_slots.Length];
         TargetGeneration = 1;
 
@@ -131,6 +149,7 @@ internal sealed unsafe class VulkanPresentationlessTargetDriver :
 
         _slots = [];
         _slotSubmitted = [];
+        _slotTimestampRecorded = [];
         _colorInitialized = [];
         _targetContext = null;
         _nextSlot = 0;
@@ -153,8 +172,15 @@ internal sealed unsafe class VulkanPresentationlessTargetDriver :
         Fence fence = slot.Fence;
         ThrowIfDeviceFailure(api.WaitForFences(device, 1, in fence, true, ulong.MaxValue), "wait for presentationless frame slot");
         renderer.NotifyVulkanFenceCompleted(fence);
-        if (_slotSubmitted[slotIndex])
+        if (_slotSubmitted[slotIndex] && _slotTimestampRecorded[slotIndex])
+        {
             SampleFrameTimestamp(api, device, in slot);
+            // The completed submission's queries are consumed before its
+            // command pool is reset. A new recording must publish a new
+            // successful submission before this slot becomes queryable again.
+            _slotSubmitted[slotIndex] = false;
+        }
+        _slotTimestampRecorded[slotIndex] = false;
         ThrowIfDeviceFailure(api.ResetFences(device, 1, in fence), "reset presentationless frame fence");
         Result resetCommandPoolResult = renderer.ResetVulkanCommandPoolTracked(
             slot.CommandPool,
@@ -213,17 +239,33 @@ internal sealed unsafe class VulkanPresentationlessTargetDriver :
             SType = StructureType.CommandBufferBeginInfo,
             Flags = CommandBufferUsageFlags.OneTimeSubmitBit,
         };
-        ThrowIfDeviceFailure(
-            renderer.BeginCommandBufferTracked(
-                commandBuffer,
-                ref begin,
-                "Presentationless.BeginFrameRecording"),
-            "begin presentationless command buffer");
+        long allocationCheckpoint = GC.GetAllocatedBytesForCurrentThread();
+        VulkanCommandBufferBeginAllocationDiagnostics.Enabled = true;
+        try
+        {
+            ThrowIfDeviceFailure(
+                renderer.BeginCommandBufferTracked(
+                    commandBuffer,
+                    ref begin,
+                    "Presentationless.BeginFrameRecording"),
+                "begin presentationless command buffer");
+            _lastBeginCommandBufferAllocationCounters =
+                VulkanCommandBufferBeginAllocationDiagnostics.Last;
+        }
+        finally
+        {
+            VulkanCommandBufferBeginAllocationDiagnostics.Enabled = false;
+        }
+        _lastBeginTrackedCommandBufferAllocatedBytes =
+            GC.GetAllocatedBytesForCurrentThread() - allocationCheckpoint;
+        allocationCheckpoint = GC.GetAllocatedBytesForCurrentThread();
         renderer.TrackCommandBufferResource(
             commandBuffer,
             ObjectType.QueryPool,
             slot.TimestampQueryPool.Handle,
             "Presentationless.TimestampQueryPool");
+        _lastBeginFrameResourceTrackingAllocatedBytes =
+            GC.GetAllocatedBytesForCurrentThread() - allocationCheckpoint;
         renderer.VulkanApi.CmdResetQueryPool(commandBuffer, slot.TimestampQueryPool, 0, 2);
         renderer.VulkanApi.CmdWriteTimestamp(
             commandBuffer,
@@ -248,6 +290,7 @@ internal sealed unsafe class VulkanPresentationlessTargetDriver :
         ThrowIfDeviceFailure(
             renderer.EndCommandBufferTracked(commandBuffer),
             "end presentationless command buffer");
+        _slotTimestampRecorded[slotIndex] = true;
     }
 
     public void NotifyFrameSubmitted(in VulkanFrameTargetLease lease)
@@ -275,7 +318,9 @@ internal sealed unsafe class VulkanPresentationlessTargetDriver :
         if (submissionAccepted || _deviceLost)
             return;
 
-        RestoreFrameSlotFence(ResolveSlotIndex(in lease));
+        int slotIndex = ResolveSlotIndex(in lease);
+        _slotTimestampRecorded[slotIndex] = false;
+        RestoreFrameSlotFence(slotIndex);
     }
 
     public byte[] ReadbackLastSubmittedColor(int maxByteCount, ImageLayout sourceLayout)
@@ -301,7 +346,13 @@ internal sealed unsafe class VulkanPresentationlessTargetDriver :
         Fence fence = slot.Fence;
         ThrowIfDeviceFailure(api.WaitForFences(device, 1, in fence, true, ulong.MaxValue), "wait for presentationless readback source");
         renderer.NotifyVulkanFenceCompleted(fence);
-        SampleFrameTimestamp(api, device, in slot);
+        if (_slotSubmitted[_lastSubmittedSlot] &&
+            _slotTimestampRecorded[_lastSubmittedSlot])
+        {
+            SampleFrameTimestamp(api, device, in slot);
+            _slotSubmitted[_lastSubmittedSlot] = false;
+        }
+        _slotTimestampRecorded[_lastSubmittedSlot] = false;
         ThrowIfDeviceFailure(api.ResetFences(device, 1, in fence), "reset presentationless readback fence");
         Result resetReadbackCommandPoolResult = renderer.ResetVulkanCommandPoolTracked(
             slot.CommandPool,

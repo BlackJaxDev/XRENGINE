@@ -78,6 +78,8 @@ namespace XREngine.Editor.Mcp
             VulkanFrameTelemetryPublication vulkanFrame = VulkanStats.LatestVulkanFrameTelemetry;
             VulkanResidentTemplateBroadFallbackSnapshot residentTemplateBroadFallback =
                 VulkanStats.VulkanResidentTemplateLastBroadFallback;
+            VulkanGpuCommandBufferTimingSnapshot gpuCommandBufferTiming =
+                VulkanStats.VulkanFrameGpuCommandBufferTimingSnapshot;
             EngineWorkScheduler? workScheduler = Engine.WorkScheduler;
             EngineWorkSchedulerMetrics schedulerMetrics =
                 workScheduler?.Metrics ?? default;
@@ -101,6 +103,10 @@ namespace XREngine.Editor.Mcp
             VulkanDesktopFrameTerminalDiagnostic desktopFrameTerminal =
                 activeVulkanRenderer is not null
                     ? activeVulkanRenderer.CaptureDesktopFrameTerminalDiagnostic()
+                    : default;
+            OcclusionGpuElapsedRingDiagnostic hiZGpuTimingRing =
+                activeVulkanRenderer is not null
+                    ? OcclusionGpuElapsedTiming.Instance.CaptureRingDiagnostic(activeVulkanRenderer)
                     : default;
             RvcFrameProfileSnapshot rvcFrameProfile = RuntimeEngine.Rendering.Stats.Rvc.FrameProfile;
             var gpuScene = context.RenderWorld.VisualScene.GPUCommands;
@@ -399,6 +405,79 @@ namespace XREngine.Editor.Mcp
                         cpu_query_async_occluded = OcclusionTelemetry.CpuQueryAsyncOccluded,
                         cpu_soc_tested = OcclusionTelemetry.CpuSocTested,
                         cpu_soc_culled = OcclusionTelemetry.CpuSocCulled,
+                        cpu_soc_occluders_selected = OcclusionTelemetry.CpuSocOccludersSelected,
+                        cpu_soc_occluders_rasterized = OcclusionTelemetry.CpuSocOccludersRasterized,
+                        cpu_soc_tiles_closed = OcclusionTelemetry.CpuSocTilesClosed,
+                        cpu_soc_selection_milliseconds = OcclusionTelemetry.CpuSocSelectionMilliseconds,
+                        cpu_soc_sort_milliseconds = OcclusionTelemetry.CpuSocSortMilliseconds,
+                        cpu_soc_raster_milliseconds = OcclusionTelemetry.CpuSocRasterMilliseconds,
+                        cpu_soc_test_milliseconds = OcclusionTelemetry.CpuSocTestMilliseconds,
+                        cpu_soc_profitability = OcclusionTelemetry.CpuSocProfitabilityDecision.ToString(),
+                        cpu_soc_candidates_inspected = OcclusionTelemetry.CpuSocCandidatesInspected,
+                        cpu_soc_candidates_dropped = OcclusionTelemetry.CpuSocCandidatesDropped,
+                        cpu_soc_raster_reserved_pixels = OcclusionTelemetry.CpuSocRasterReservedPixels,
+                        cpu_soc_raster_executed_pixels = OcclusionTelemetry.CpuSocRasterExecutedPixels,
+                        cpu_soc_raster_reserved_tiles = OcclusionTelemetry.CpuSocRasterReservedTiles,
+                        cpu_soc_raster_budget_skipped_triangles = OcclusionTelemetry.CpuSocRasterBudgetSkippedTriangles,
+                        cpu_soc_raster_budget_exhausted = OcclusionTelemetry.CpuSocRasterBudgetExhausted,
+                        cpu_soc_aabb_test_tile_work = OcclusionTelemetry.CpuSocAabbTestTileWork,
+                        cpu_soc_aabb_test_count = OcclusionTelemetry.CpuSocAabbTestCount,
+                        cpu_soc_aabb_test_budget_bypassed = OcclusionTelemetry.CpuSocAabbTestBudgetBypassed,
+                        hiz_cpu_dispatch_record_cost = new
+                        {
+                            coverage = "generic Hi-Z dispatches only; native Advanced direct dispatches use separate Vulkan profiler scopes",
+                            build_dispatches = OcclusionTelemetry.LastFrameHiZBuildDispatches,
+                            test_dispatches = OcclusionTelemetry.LastFrameHiZTestDispatches,
+                            source_pixels = OcclusionTelemetry.LastFrameHiZSourcePixels,
+                            test_capacity = OcclusionTelemetry.LastFrameHiZTestCapacity,
+                            build_cpu_milliseconds = OcclusionTelemetry.LastFrameHiZBuildCpuMs,
+                            test_cpu_milliseconds = OcclusionTelemetry.LastFrameHiZTestCpuMs,
+                        },
+                        hiz_gpu_elapsed_timing = new
+                        {
+                            coverage = "generic Hi-Z dispatches only; delayed non-blocking timestamps",
+                            ring = new
+                            {
+                                capacity = hiZGpuTimingRing.Capacity,
+                                available = hiZGpuTimingRing.Available,
+                                open = hiZGpuTimingRing.Open,
+                                pending = hiZGpuTimingRing.Pending,
+                                quarantined = hiZGpuTimingRing.Quarantined,
+                                start_ready = hiZGpuTimingRing.StartReady,
+                                end_ready = hiZGpuTimingRing.EndReady,
+                                start_abandoned = hiZGpuTimingRing.StartAbandoned,
+                                end_abandoned = hiZGpuTimingRing.EndAbandoned,
+                            },
+                            query_io = new
+                            {
+                                timestamp_recorded = RenderQueryTelemetry.GetRecordingCount(ERenderQueryKind.Timestamp),
+                                read_ready = RenderQueryTelemetry.GetReadCount(ERenderQueryReadStatus.Ready),
+                                read_not_ready = RenderQueryTelemetry.GetReadCount(ERenderQueryReadStatus.NotReady),
+                                read_invalid_state = RenderQueryTelemetry.GetReadCount(ERenderQueryReadStatus.InvalidState),
+                                read_stale_ticket = RenderQueryTelemetry.GetReadCount(ERenderQueryReadStatus.StaleTicket),
+                                preparation_unsupported = RenderQueryTelemetry.Unsupported,
+                                last_preparation_rejection = RenderQueryTelemetry.LastTimestampPreparationRejection,
+                            },
+                            build = new
+                            {
+                                diagnostic = OcclusionTelemetry.HiZBuildGpuAvailability.ToString(),
+                                last_completed_milliseconds = OcclusionTelemetry.HiZBuildGpuMs,
+                                source_frame = OcclusionTelemetry.HiZBuildGpuSourceFrame,
+                                age_frames = OcclusionTelemetry.HiZBuildGpuAgeFrames,
+                                sequence = OcclusionTelemetry.HiZBuildGpuSequence,
+                            },
+                            test = new
+                            {
+                                diagnostic = OcclusionTelemetry.HiZTestGpuAvailability.ToString(),
+                                last_completed_milliseconds = OcclusionTelemetry.HiZTestGpuMs,
+                                source_frame = OcclusionTelemetry.HiZTestGpuSourceFrame,
+                                age_frames = OcclusionTelemetry.HiZTestGpuAgeFrames,
+                                sequence = OcclusionTelemetry.HiZTestGpuSequence,
+                            },
+                        },
+                        gpu_occlusion_readback_status = OcclusionTelemetry.LastFrameGpuOcclusionAvailable
+                            ? "available"
+                            : "unavailable-no-cpu-readable-occlusion-count",
                         cpu_view_snapshots = OcclusionTelemetry.GetCpuViewSnapshots(),
                     },
                     vr = new
@@ -496,6 +575,22 @@ namespace XREngine.Editor.Mcp
                                 : null,
                             total_ms = vulkanFrame.TotalElapsed.TotalMilliseconds,
                             gpu_command_buffer_ms = VulkanStats.VulkanFrameGpuCommandBufferMs,
+                            gpu_command_buffer_timing = new
+                            {
+                                availability = gpuCommandBufferTiming.Current.Availability.ToString(),
+                                live_source_render_frame_id = gpuCommandBufferTiming.Current.SourceRenderFrameId,
+                                live_sequence = gpuCommandBufferTiming.Current.Sequence,
+                                live_image_slot = gpuCommandBufferTiming.Current.ImageSlot,
+                                last_completed = new
+                                {
+                                    availability = gpuCommandBufferTiming.LastCompleted.Availability.ToString(),
+                                    source_render_frame_id = gpuCommandBufferTiming.LastCompleted.SourceRenderFrameId,
+                                    age_frames = gpuCommandBufferTiming.LastCompleted.AgeFrames,
+                                    sequence = gpuCommandBufferTiming.LastCompleted.Sequence,
+                                    image_slot = gpuCommandBufferTiming.LastCompleted.ImageSlot,
+                                    elapsed_nanoseconds = gpuCommandBufferTiming.LastCompleted.ElapsedNanoseconds,
+                                },
+                            },
                             presentation_profile = new
                             {
                                 requested = vulkanFrame.PresentationProfile.RequestedProfile.ToString(),

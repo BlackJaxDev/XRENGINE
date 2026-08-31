@@ -99,12 +99,32 @@ internal sealed partial class VulkanFrameLoop
         XRFrameBuffer? drawFrameBuffer = _commandRuntime.ActiveBoundDrawFrameBuffer;
         if (drawFrameBuffer is null)
             _commandRuntime.ActiveState.SetCurrentTargetExtent(
-                TryResolveExternalSwapchainTargetExtent(out Extent2D externalExtent) ? externalExtent : OutputRuntime.Desktop.Extent);
+                ResolveUnboundDrawTargetExtent());
         else
             _commandRuntime.ActiveState.SetCurrentTargetExtent(new Extent2D(Math.Max(drawFrameBuffer.Width, 1u), Math.Max(drawFrameBuffer.Height, 1u)));
 
         if (frameBuffer is not null)
             (GetOrCreateAPIRenderObject(frameBuffer, generateNow: true) as VkFrameBuffer)?.Generate();
+    }
+
+    /// <summary>
+    /// Resolves the extent used by the default viewport and scissor while no engine framebuffer is bound.
+    /// Presentationless explicit frames have no desktop swapchain, so their scoped output must win over the
+    /// desktop placeholder extent. OpenXR remains the higher-priority externally owned target authority.
+    /// </summary>
+    private Extent2D ResolveUnboundDrawTargetExtent()
+    {
+        if (TryResolveExternalSwapchainTargetExtent(out Extent2D externalExtent))
+            return externalExtent;
+
+        RenderFrameOutputDescription? output = AbstractRenderer.Current?.CurrentFrameOutput;
+        if (output is { IsValid: true } explicitOutput &&
+            explicitOutput.ExecutionMode is RenderExecutionMode.Presentationless or RenderExecutionMode.Component)
+        {
+            return new Extent2D(explicitOutput.Properties.Width, explicitOutput.Properties.Height);
+        }
+
+        return OutputRuntime.Desktop.Extent;
     }
 
     internal void Clear(bool color, bool depth, bool stencil)

@@ -2,7 +2,7 @@ namespace XREngine.Rendering.Materials
 {
 public partial class GPUMaterialTable
     {
-        private struct DirtyByteRange
+        internal struct DirtyByteRange
         {
             public uint ByteOffset;
             public uint ByteEndExclusive;

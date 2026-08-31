@@ -124,7 +124,7 @@ internal unsafe partial class VkMeshRenderer
 		{
 			try
 			{
-				apiTextureObject = WrapperLookup.GetOrCreate(texture, generateNow: true);
+				apiTextureObject = ProgramCreationPort.GetOrCreateTexture(texture);
 			}
 			catch (VulkanOutOfMemoryException ex)
 			{

@@ -233,6 +233,27 @@ internal unsafe sealed partial class VulkanQueryAuthority : IVulkanQueryArenaFac
     }
 
     /// <summary>
+    /// Cancels query epochs recorded into a command buffer that the lifetime
+    /// authority has already proved will never reach queue submission.
+    /// </summary>
+    internal static void AbandonRecordedResultEpochs(
+        VulkanResourceLifetimeTracker lifetime,
+        CommandBuffer commandBuffer)
+    {
+        List<VkRenderQuery> recordedQueries = [];
+        lock (lifetime.SyncRoot)
+        {
+            foreach (List<VkRenderQuery> queries in lifetime.RenderQueriesByPool.Values)
+                recordedQueries.AddRange(queries);
+        }
+
+        // Do not hold the lifetime lock while a query may release its pool and
+        // unregister itself from that same ledger.
+        for (int index = 0; index < recordedQueries.Count; ++index)
+            recordedQueries[index].AbandonRecordedResultEpoch(commandBuffer);
+    }
+
+    /// <summary>
     /// Records a specialized query through the frozen command encoder captured by
     /// the caller. Providers therefore cannot depend on the mutable renderer facade.
     /// </summary>

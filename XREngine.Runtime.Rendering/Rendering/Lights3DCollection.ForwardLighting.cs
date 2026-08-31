@@ -41,6 +41,11 @@ namespace XREngine.Scene
         private XRDataBuffer? _forwardSpotShadowMetadataBuffer;
         private XRDataBuffer? _emptyForwardPlusLocalLightsBuffer;
         private XRDataBuffer? _emptyForwardPlusVisibleIndicesBuffer;
+        private readonly DirectionalShadowGpuRecord[] _forwardDirectionalShadowRecords = new DirectionalShadowGpuRecord[ForwardDirectionalShadowRecordCount];
+        private ReadOnlyStoragePublication? _forwardDirectionalShadowRecordPublication;
+        private ulong _forwardDirectionalShadowRecordGeneration;
+        private const uint ForwardDirectionalShadowRecordsBinding = 39;
+        private const ulong ForwardDirectionalShadowRecordsAbiSignature = 0x4453_4852_3232_3442UL;
 
         [ThreadStatic] private static DirectionalLightComponent[]? t_forwardDirectionalLightSnapshot;
         [ThreadStatic] private static PointLightComponent[]? t_forwardPointLightSnapshot;
@@ -221,6 +226,36 @@ namespace XREngine.Scene
             program.BindBuffer(_forwardSpotLightsBuffer!, ForwardSpotLightsBinding);
             program.BindBuffer(_forwardPointShadowMetadataBuffer!, ForwardPointShadowMetadataBinding);
             program.BindBuffer(_forwardSpotShadowMetadataBuffer!, ForwardSpotShadowMetadataBinding);
+            if (_forwardDirectionalShadowRecordPublication is not null)
+                program.BindReadOnlyStorage(_forwardDirectionalShadowRecordPublication.Value, ForwardDirectionalShadowRecordsBinding);
+        }
+
+        private void UploadForwardDirectionalShadowRecords(
+            DirectionalLightComponent[] directionalLights,
+            int directionalLightCount,
+            XRCamera? directionalShadowCamera)
+        {
+            Array.Clear(_forwardDirectionalShadowRecords);
+            for (int i = 0; i < directionalLightCount; i++)
+            {
+                directionalLights[i].CopyPublishedDirectionalShadowRecords(
+                    directionalShadowCamera,
+                    _directionalUseCascadedShadows[i] != 0,
+                    _forwardDirectionalShadowRecords.AsSpan(i * ForwardMaxCascades, ForwardMaxCascades),
+                    out _);
+            }
+
+            ReadOnlySpan<byte> bytes = MemoryMarshal.AsBytes(_forwardDirectionalShadowRecords.AsSpan());
+            if (_forwardDirectionalShadowRecordPublication is { } current && current.ByteContentEquals(bytes))
+                return;
+
+            ReadOnlyStoragePublication next = ReadOnlyStoragePublication.CopyFrom(
+                bytes,
+                (ulong)RuntimeHelpers.GetHashCode(this),
+                ++_forwardDirectionalShadowRecordGeneration,
+                ForwardDirectionalShadowRecordsAbiSignature);
+            _forwardDirectionalShadowRecordPublication?.Dispose();
+            _forwardDirectionalShadowRecordPublication = next;
         }
 
         private void EnsureEmptyForwardPlusBuffers()
@@ -359,7 +394,7 @@ namespace XREngine.Scene
                 WorldToLightSpaceProjMatrix = worldToLightSpaceProjMatrix,
             };
 
-        private static unsafe ForwardDirectionalLightGpu CreateForwardDirectionalLightGpu(DirectionalLightComponent light, XRCamera? directionalShadowCamera)
+        private static ForwardDirectionalLightGpu CreateForwardDirectionalLightGpu(DirectionalLightComponent light, XRCamera? directionalShadowCamera)
         {
             Matrix4x4 lightView = light.ShadowCamera?.Transform.InverseRenderMatrix ?? Matrix4x4.Identity;
             Matrix4x4 lightProj = light.ShadowCamera?.ProjectionMatrix ?? Matrix4x4.Identity;
@@ -374,53 +409,7 @@ namespace XREngine.Scene
                 WorldToLightSpaceMatrix = lightViewProj,
             };
 
-            Span<float> cascadeSplits = stackalloc float[ForwardMaxCascades];
-            Span<float> cascadeBlendWidths = stackalloc float[ForwardMaxCascades];
-            Span<float> cascadeBiasMins = stackalloc float[ForwardMaxCascades];
-            Span<float> cascadeBiasMaxes = stackalloc float[ForwardMaxCascades];
-            Span<float> cascadeReceiverOffsets = stackalloc float[ForwardMaxCascades];
-            Span<Matrix4x4> cascadeMatrices = stackalloc Matrix4x4[ForwardMaxCascades];
-            Span<float> renderedCascadeSplits = stackalloc float[ForwardMaxCascades];
-            Span<float> renderedCascadeBlendWidths = stackalloc float[ForwardMaxCascades];
-            Span<float> renderedCascadeBiasMins = stackalloc float[ForwardMaxCascades];
-            Span<float> renderedCascadeBiasMaxes = stackalloc float[ForwardMaxCascades];
-            Span<float> renderedCascadeReceiverOffsets = stackalloc float[ForwardMaxCascades];
-            Span<float> renderedCascadeStaleAges = stackalloc float[ForwardMaxCascades];
-            Span<Matrix4x4> renderedCascadeMatrices = stackalloc Matrix4x4[ForwardMaxCascades];
-            light.CopyPublishedCascadeUniformData(
-                directionalShadowCamera,
-                cascadeSplits,
-                cascadeBlendWidths,
-                cascadeBiasMins,
-                cascadeBiasMaxes,
-                cascadeReceiverOffsets,
-                cascadeMatrices,
-                out int cascadeCount);
-            light.CopyPublishedRenderedCascadeUniformData(
-                directionalShadowCamera,
-                renderedCascadeSplits,
-                renderedCascadeBlendWidths,
-                renderedCascadeBiasMins,
-                renderedCascadeBiasMaxes,
-                renderedCascadeReceiverOffsets,
-                renderedCascadeMatrices,
-                renderedCascadeStaleAges,
-                out _);
-
-            data.CascadeCount = Math.Clamp(cascadeCount, 0, ForwardMaxCascades);
-            CopyFloatSpan(data.CascadeSplits, cascadeSplits);
-            CopyFloatSpan(data.CascadeBlendWidths, cascadeBlendWidths);
-            CopyFloatSpan(data.CascadeBiasMin, cascadeBiasMins);
-            CopyFloatSpan(data.CascadeBiasMax, cascadeBiasMaxes);
-            CopyFloatSpan(data.CascadeReceiverOffsets, cascadeReceiverOffsets);
-            CopyMatrixSpan(data.CascadeMatrices, cascadeMatrices);
-            CopyFloatSpan(data.RenderedCascadeSplits, renderedCascadeSplits);
-            CopyFloatSpan(data.RenderedCascadeBlendWidths, renderedCascadeBlendWidths);
-            CopyFloatSpan(data.RenderedCascadeBiasMin, renderedCascadeBiasMins);
-            CopyFloatSpan(data.RenderedCascadeBiasMax, renderedCascadeBiasMaxes);
-            CopyFloatSpan(data.RenderedCascadeReceiverOffsets, renderedCascadeReceiverOffsets);
-            CopyMatrixSpan(data.RenderedCascadeMatrices, renderedCascadeMatrices);
-            CopyFloatSpan(data.RenderedCascadeStaleAge, renderedCascadeStaleAges);
+            data.CascadeCount = Math.Clamp(light.GetActiveCascadeCount(directionalShadowCamera), 0, ForwardMaxCascades);
 
             return data;
         }
@@ -499,18 +488,6 @@ namespace XREngine.Scene
                 DirectionInnerCutoff = new Vector4(light.Transform.RenderForward, light.InnerCutoff),
                 OuterCutoffExponentPadding = new Vector4(light.OuterCutoff, light.Exponent, 0.0f, 0.0f),
             };
-        }
-
-        private static unsafe void CopyFloatSpan(float* destination, ReadOnlySpan<float> source)
-        {
-            for (int i = 0; i < source.Length; i++)
-                destination[i] = source[i];
-        }
-
-        private static unsafe void CopyMatrixSpan(float* destination, ReadOnlySpan<Matrix4x4> source)
-        {
-            for (int i = 0; i < source.Length; i++)
-                Unsafe.WriteUnaligned(destination + (i * 16), source[i]);
         }
 
         private static bool IsTexture2D(XRTexture texture)
@@ -1241,6 +1218,13 @@ namespace XREngine.Scene
                 }
             }
 
+            UploadForwardDirectionalShadowRecords(
+                directionalLights,
+                directionalLightCount,
+                directionalShadowCamera);
+            if (_forwardDirectionalShadowRecordPublication is not null)
+                program.BindReadOnlyStorage(_forwardDirectionalShadowRecordPublication.Value, ForwardDirectionalShadowRecordsBinding);
+
             program.Uniform("DirectionalShadowMapEnabled", _directionalShadowMapEnabled);
             program.Uniform("DirectionalUseCascadedShadows", _directionalUseCascadedShadows);
             program.Uniform("DirectionalShadowBiasProjectionParams", _directionalShadowBiasProjectionParams);
@@ -1248,9 +1232,6 @@ namespace XREngine.Scene
             program.Uniform("DirectionalShadowMapEncoding", _directionalShadowMapEncoding);
             program.Uniform("DirectionalShadowMomentParams0", _directionalShadowMomentParams0);
             program.Uniform("DirectionalShadowMomentFilterParams", _directionalShadowMomentFilterParams);
-            program.Uniform("DirectionalShadowAtlasPacked0", _directionalShadowAtlasPacked0);
-            program.Uniform("DirectionalShadowAtlasParams0", _directionalShadowAtlasParams0);
-            program.Uniform("DirectionalShadowAtlasParams1", _directionalShadowAtlasParams1);
             program.Uniform("DirectionalShadowAtlasMaxStaleFrames", (float)RuntimeEngine.Rendering.Settings.MaxDirectionalCascadeAtlasStaleFrames);
 
             LogForwardDirectionalShadowBinding(

@@ -89,6 +89,130 @@ internal sealed unsafe partial class VulkanPipelineManager
         return _vulkanGraphicsPipelineCompileJobs.ContainsKey(key);
     }
 
+    internal bool TryTakeCompletedComputePipeline(
+        in VulkanComputePipelineCompileKey key,
+        out VulkanComputePipelineCompileResult result)
+    {
+        result = default;
+        using (VulkanFrameLockScope.Enter(
+                   _vulkanGraphicsPipelineCompileJobsLock,
+                   EVulkanFrameWaitReason.PipelineCompilerLock))
+        {
+            if (_vulkanComputePipelineCompletedResults.TryGetValue(key, out result))
+            {
+                if (result.Retryable)
+                    _vulkanComputePipelineCompletedResults.Remove(key);
+                return true;
+            }
+            if (!_vulkanComputePipelineCompileJobs.TryGetValue(key, out VulkanComputePipelineCompileJob? job) || !job.Task.IsCompleted)
+                return false;
+
+            try
+            {
+                result = job.Task.GetAwaiter().GetResult();
+            }
+            catch (Exception exception)
+            {
+                result = new(false, default, exception.GetBaseException().Message, 0.0);
+            }
+            _vulkanComputePipelineCompileJobs.TryRemove(key, out _);
+            if (!IsCompilationDependencyGenerationCurrent(key.DependencyGeneration) && result.Pipeline.Handle != 0)
+            {
+                job.Request.ProgramServices.DestroyPipelineImmediate(result.Pipeline);
+                result = new(false, default, "compute pipeline dependency generation changed before publication", result.CompileMilliseconds, Retryable: true);
+            }
+            _vulkanComputePipelineCompletedResults[key] = result;
+            Interlocked.Increment(ref _vulkanPipelineCompileActivityGeneration);
+            return true;
+        }
+    }
+
+    internal bool TryEnqueueComputePipelineCompile(
+        VulkanComputePipelineBuildRequest request,
+        bool acceptsBackendWork,
+        bool asyncCompilationEnabled,
+        out string rejectReason)
+    {
+        rejectReason = string.Empty;
+        if (!IsAsyncCompilationEnabled(RequireDeviceContext().IsReady, acceptsBackendWork, asyncCompilationEnabled))
+        {
+            rejectReason = "async Vulkan compute pipeline compilation is disabled";
+            return false;
+        }
+        using (VulkanFrameLockScope.Enter(
+                   _vulkanGraphicsPipelineCompileJobsLock,
+                   EVulkanFrameWaitReason.PipelineCompilerLock))
+        {
+            if (Volatile.Read(ref _vulkanPipelineCompileDependencyMutationActive) != 0)
+            {
+                rejectReason = "shader or pipeline-layout dependencies are being replaced";
+                return false;
+            }
+            if (_vulkanComputePipelineCompileJobs.ContainsKey(request.Key))
+                return true;
+            VulkanPipelineCompileTask task = EnsureVulkanPipelineCompileTask();
+            Task<VulkanComputePipelineCompileResult> compileTask = task.Enqueue(
+                () => CreateComputePipelineOnWorker(request, BackgroundPipelineCache),
+                foregroundRequired: false,
+                out Action promoteToForeground);
+            _vulkanComputePipelineCompileJobs[request.Key] = new(request, compileTask, promoteToForeground);
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanPipelineTelemetry(
+                EVulkanPipelineTelemetryEvent.AsyncQueued,
+                backgroundCompile: true);
+            Interlocked.Increment(ref _asyncQueueCount);
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Promotes one already-captured compute request at an explicit preparation
+    /// boundary. Normal frame recording must observe <c>Pending</c> instead of
+    /// waiting for native pipeline creation on the render thread.
+    /// </summary>
+    internal bool TryCompleteComputePipelineForForeground(
+        in VulkanComputePipelineCompileKey key,
+        out VulkanComputePipelineCompileResult result,
+        out string reason)
+    {
+        Interlocked.Increment(ref _foregroundPipelineWaitCount);
+        result = default;
+        reason = string.Empty;
+
+        VulkanComputePipelineCompileJob? job;
+        using (VulkanFrameLockScope.Enter(
+                   _vulkanGraphicsPipelineCompileJobsLock,
+                   EVulkanFrameWaitReason.PipelineCompilerLock))
+        {
+            if (_vulkanComputePipelineCompletedResults.TryGetValue(key, out result))
+                return result.Success && result.Pipeline.Handle != 0;
+
+            if (!_vulkanComputePipelineCompileJobs.TryGetValue(key, out job))
+            {
+                reason = "compute pipeline compile was not admitted";
+                return false;
+            }
+        }
+
+        job.PromoteToForeground();
+        if (!job.Task.Wait(ForegroundPipelineCompileTimeout))
+        {
+            reason = $"compute pipeline compile exceeded {ForegroundPipelineCompileTimeout.TotalSeconds:F0}s foreground timeout";
+            return false;
+        }
+
+        if (!TryTakeCompletedComputePipeline(key, out result))
+        {
+            reason = "compute pipeline compile completed but could not be published";
+            return false;
+        }
+
+        if (result.Success && result.Pipeline.Handle != 0)
+            return true;
+
+        reason = result.ErrorMessage ?? "compute pipeline compilation failed";
+        return false;
+    }
+
     /// <summary>Waits for an admission-critical compile and publishes its result.</summary>
     internal bool TryCompleteGraphicsPipelineForForeground(
         in VulkanGraphicsPipelineCompileKey key,
@@ -97,6 +221,7 @@ internal sealed unsafe partial class VulkanPipelineManager
         out string reason,
         out bool retryable)
     {
+        Interlocked.Increment(ref _foregroundPipelineWaitCount);
         result = default;
         reason = string.Empty;
         retryable = false;
@@ -294,6 +419,7 @@ internal sealed unsafe partial class VulkanPipelineManager
                 backgroundCompile: true,
                 queueDepth: activeJobCount + 1,
                 queueCapacity: capacity);
+            Interlocked.Increment(ref _asyncQueueCount);
 
             job.PublicationTask = task.ContinueWith(
                 static (completedTask, state) =>
@@ -331,6 +457,37 @@ internal sealed unsafe partial class VulkanPipelineManager
         }
 
         return count;
+    }
+
+    private int CountActiveVulkanComputePipelineCompileJobs()
+    {
+        int count = 0;
+        foreach (VulkanComputePipelineCompileJob job in _vulkanComputePipelineCompileJobs.Values)
+            if (!job.Task.IsCompleted)
+                count++;
+        return count;
+    }
+
+    internal VulkanComputePipelineCompileResult CreateComputePipelineOnWorker(
+        VulkanComputePipelineBuildRequest request,
+        PipelineCache backgroundPipelineCache)
+    {
+        long start = Stopwatch.GetTimestamp();
+        try
+        {
+            Pipeline pipeline = request.Program.CreateComputePipelineFromRequest(request, backgroundPipelineCache);
+            double elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+            PublishBackgroundPipelineCache(elapsedMs);
+            return new(true, pipeline, null, elapsedMs, Owner: request.Program);
+        }
+        catch (VulkanPipelineCompilationDeferredException exception)
+        {
+            return new(false, default, exception.Message, Stopwatch.GetElapsedTime(start).TotalMilliseconds, Retryable: true);
+        }
+        catch (Exception exception)
+        {
+            return new(false, default, exception.Message, Stopwatch.GetElapsedTime(start).TotalMilliseconds);
+        }
     }
 
     /// <summary>
@@ -475,6 +632,7 @@ internal sealed unsafe partial class VulkanPipelineManager
             if (outermostMutation)
             {
                 VulkanGraphicsPipelineCompileJob[] jobs;
+                VulkanComputePipelineCompileJob[] computeJobs;
                 using (VulkanFrameLockScope.Enter(
                            _vulkanGraphicsPipelineCompileJobsLock,
                            EVulkanFrameWaitReason.PipelineCompilerLock))
@@ -486,10 +644,13 @@ internal sealed unsafe partial class VulkanPipelineManager
                         ref _vulkanPipelineCompileDependencyGeneration);
                     _vulkanGraphicsPipelineCompletedResults.Clear();
                     _vulkanGraphicsPipelinePermanentFailures.Clear();
+                    _vulkanComputePipelineCompletedResults.Clear();
                     jobs = [.. _vulkanGraphicsPipelineCompileJobs.Values];
+                    computeJobs = [.. _vulkanComputePipelineCompileJobs.Values];
                 }
 
                 DrainPipelineCompileJobs(jobs, reason);
+                DrainComputePipelineCompileJobs(computeJobs, reason);
             }
 
             return new VulkanPipelineCompilationMutationLease(
@@ -592,15 +753,50 @@ internal sealed unsafe partial class VulkanPipelineManager
         }
     }
 
+    private void DrainComputePipelineCompileJobs(
+        VulkanComputePipelineCompileJob[] jobs,
+        string reason)
+    {
+        // Promotion releases jobs blocked behind the background-frame gate
+        // before a layout/shader mutation waits for their captured pointers.
+        foreach (VulkanComputePipelineCompileJob job in jobs)
+            job.PromoteToForeground();
+        foreach (VulkanComputePipelineCompileJob job in jobs)
+        {
+            try
+            {
+                job.Task.Wait();
+                using (VulkanFrameLockScope.Enter(
+                           _vulkanGraphicsPipelineCompileJobsLock,
+                           EVulkanFrameWaitReason.PipelineCompilerLock))
+                    _vulkanComputePipelineCompileJobs.TryRemove(job.Request.Key, out _);
+                if (job.Task.IsCompletedSuccessfully && job.Task.Result.Pipeline.Handle != 0)
+                    job.Request.ProgramServices.DestroyPipelineImmediate(job.Task.Result.Pipeline);
+            }
+            catch (Exception exception)
+            {
+                Debug.VulkanWarning(
+                    "[Vulkan] Async compute pipeline compile job failed while quiescing for {0}: {1}: {2}",
+                    reason,
+                    exception.GetType().Name,
+                    exception.Message);
+            }
+        }
+    }
+
     internal void DrainPipelineCompileQueueForShutdown()
     {
         Interlocked.Exchange(ref _vulkanPipelineCompileShutdownStarted, 1);
 
         VulkanGraphicsPipelineCompileJob[] jobs;
+        VulkanComputePipelineCompileJob[] computeJobs;
         using (VulkanFrameLockScope.Enter(
                    _vulkanGraphicsPipelineCompileJobsLock,
                    EVulkanFrameWaitReason.PipelineCompilerLock))
+        {
             jobs = [.. _vulkanGraphicsPipelineCompileJobs.Values];
+            computeJobs = [.. _vulkanComputePipelineCompileJobs.Values];
+        }
 
         foreach (VulkanGraphicsPipelineCompileJob job in jobs)
         {
@@ -614,6 +810,8 @@ internal sealed unsafe partial class VulkanPipelineManager
                 Debug.VulkanWarning($"[Vulkan] Async pipeline compile job failed during shutdown drain: {ex.GetType().Name}: {ex.Message}");
             }
         }
+
+        DrainComputePipelineCompileJobs(computeJobs, "pipeline compiler shutdown");
 
         foreach (VulkanGraphicsPipelineCompileJob job in jobs)
         {
@@ -639,6 +837,7 @@ internal sealed unsafe partial class VulkanPipelineManager
                    _vulkanGraphicsPipelineCompileJobsLock,
                    EVulkanFrameWaitReason.PipelineCompilerLock))
             _vulkanGraphicsPipelineProgramCompileJobs.Clear();
+        _vulkanComputePipelineCompletedResults.Clear();
 
         _vulkanPipelineCompileGate?.Dispose();
         _vulkanPipelineCompileGate = null;

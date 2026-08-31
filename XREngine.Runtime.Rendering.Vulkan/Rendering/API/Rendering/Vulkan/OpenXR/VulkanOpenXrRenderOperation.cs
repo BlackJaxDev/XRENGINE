@@ -1,5 +1,6 @@
 using System;
 using XREngine.Rendering;
+using XREngine.Rendering.Occlusion;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -19,6 +20,7 @@ internal readonly struct VulkanOpenXrRenderOperation : IDisposable
         _previousActive = renderer.Active;
         renderer.Active = true;
         _currentRendererScope = AbstractRenderer.PushThreadCurrent(renderer);
+        OcclusionGpuElapsedTiming.Instance.Resolve(renderer, RuntimeEngine.Rendering.State.RenderFrameId);
     }
 
     public void Dispose()

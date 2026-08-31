@@ -27,9 +27,9 @@ internal sealed class VulkanAdvancedVisibilityResourceRuntime
     private const uint PersistentStateRecordByteLength = 32u;
     private const ulong PersistentStateCapacityBytes = 16UL * 1024UL * 1024UL;
     private const string PersistentStateOwner = "AdvancedVisibility.PersistentState";
-    // A sealed pyramid dispatch needs one descriptor set per destination mip.
-    // Do not update a set already captured by a recorded command buffer.
-    private const uint MaxLateDepthPyramidMipLevels = 16u;
+    // The bounded Phase 5.2 pyramid is one tile-local level. Do not update a
+    // descriptor set already captured by a recorded command buffer.
+    private const uint LateDescriptorSetsPerView = 2u;
     private const uint MaxLateVisibilityViews = RenderFrameViewSet.MaxViewCount;
     // A frame plan has a bounded number of independently sealed late passes.
     // Each pass owns its descriptor table family for the entire frame
@@ -767,7 +767,7 @@ internal sealed class VulkanAdvancedVisibilityResourceRuntime
         // allocate those tables separately rather than recycling the normal
         // table while a primary command buffer may still reference it.
         uint lateSetCount = checked((uint)_states.Length *
-            MaxLateVisibilityOperationsPerFrame * MaxLateDepthPyramidMipLevels *
+            MaxLateVisibilityOperationsPerFrame * LateDescriptorSetsPerView *
             MaxLateVisibilityViews);
         DescriptorPoolSize* latePoolSizes = stackalloc DescriptorPoolSize[3]
         {
@@ -993,7 +993,7 @@ internal sealed class VulkanAdvancedVisibilityResourceRuntime
     }
 
     /// <summary>
-    /// Seals a unique set-1 descriptor table for one depth-pyramid mip. Its
+    /// Seals a unique set-1 descriptor table for one coarse build/test role. Its
     /// storage bindings mirror the exact frame-slot visibility allocation,
     /// while its two image bindings are permanently written for this frame
     /// generation. Late operations have independent bounded table families;
@@ -1003,7 +1003,7 @@ internal sealed class VulkanAdvancedVisibilityResourceRuntime
         in VulkanAdvancedVisibilityResourceState state,
         int lateOperationKey,
         uint viewIndex,
-        uint destinationMip,
+        uint descriptorRole,
         in DescriptorImageInfo sampled,
         in DescriptorImageInfo storage,
         out DescriptorSet descriptorSet,
@@ -1011,7 +1011,7 @@ internal sealed class VulkanAdvancedVisibilityResourceRuntime
     {
         descriptorSet = default;
         if (!state.IsValid || lateOperationKey < 0 || viewIndex >= state.ViewCount ||
-            destinationMip >= MaxLateDepthPyramidMipLevels ||
+            descriptorRole >= LateDescriptorSetsPerView ||
             sampled.ImageView.Handle == 0 || sampled.Sampler.Handle == 0 ||
             storage.ImageView.Handle == 0 || _device is not { IsOperational: true } device)
         {
@@ -1032,9 +1032,9 @@ internal sealed class VulkanAdvancedVisibilityResourceRuntime
             }
 
             int setsPerOperation = checked(
-                (int)(MaxLateDepthPyramidMipLevels * MaxLateVisibilityViews));
+                (int)(LateDescriptorSetsPerView * MaxLateVisibilityViews));
             int index = checked(operationSlot * setsPerOperation +
-                (int)(viewIndex * MaxLateDepthPyramidMipLevels + destinationMip));
+                (int)(viewIndex * LateDescriptorSetsPerView + descriptorRole));
             if ((uint)index >= (uint)_lateDescriptorSets.Length ||
                 _lateDescriptorSets[index].Handle == 0)
             {
@@ -1176,18 +1176,19 @@ internal sealed class VulkanAdvancedVisibilityResourceRuntime
                 $"The frozen physical-resource generation has no allocation for depth '{depthTargetName}' or pyramid '{pyramidTargetName}'.";
             return false;
         }
+        uint expectedPyramidWidth = DivideRoundUp(depthGroup.ResolvedExtent.Width, 64u);
+        uint expectedPyramidHeight = DivideRoundUp(depthGroup.ResolvedExtent.Height, 64u);
         if (!depthGroup.IsAllocated || !pyramidGroup.IsAllocated ||
             depthGroup.Image.Handle == pyramidGroup.Image.Handle ||
             depthGroup.Samples != SampleCountFlags.Count1Bit ||
             pyramidGroup.Samples != SampleCountFlags.Count1Bit ||
             !VulkanBarrierUsageMapper.IsDepthFormat(depthGroup.Format) ||
             pyramidGroup.Format != Format.R32Sfloat ||
-            depthGroup.ResolvedExtent.Width != pyramidGroup.ResolvedExtent.Width ||
-            depthGroup.ResolvedExtent.Height != pyramidGroup.ResolvedExtent.Height ||
             depthGroup.ResolvedExtent.Depth != pyramidGroup.ResolvedExtent.Depth ||
+            expectedPyramidWidth != pyramidGroup.ResolvedExtent.Width ||
+            expectedPyramidHeight != pyramidGroup.ResolvedExtent.Height ||
             depthGroup.Template.Layers != pyramidGroup.Template.Layers ||
-            pyramidGroup.MipLevels < 2u ||
-            pyramidGroup.MipLevels > MaxLateDepthPyramidMipLevels ||
+            pyramidGroup.MipLevels != 1u ||
             viewCount == 0u || viewCount > MaxLateVisibilityViews ||
             viewCount > Math.Max(1u, depthGroup.Template.Layers) ||
             viewCount > Math.Max(1u, pyramidGroup.Template.Layers) ||
@@ -1195,15 +1196,15 @@ internal sealed class VulkanAdvancedVisibilityResourceRuntime
             (pyramidGroup.Usage & (ImageUsageFlags.SampledBit | ImageUsageFlags.StorageBit)) !=
                 (ImageUsageFlags.SampledBit | ImageUsageFlags.StorageBit))
         {
-            reason = "The frozen late-visibility images do not provide distinct, extent-compatible depth/R32F pyramid resources with the required layers and sampled/storage usage.";
+            reason = "The frozen late-visibility images do not provide distinct depth/R32F coarse-tile resources with ceil(depthExtent / 64) extent, matching layers, and sampled/storage usage.";
             return false;
         }
 
         bool captureSucceeded = false;
         try
         {
-            int dispatchCount = checked((int)pyramidGroup.MipLevels - 1);
-            int descriptorCount = checked(dispatchCount * (int)viewCount);
+            const int dispatchCount = 1;
+            int descriptorCount = checked((int)viewCount);
             DescriptorImageInfo[] sampled = storage.PyramidSampled;
             DescriptorImageInfo[] storageDescriptors = storage.PyramidStorage;
             DescriptorImageInfo[] lateSampled = storage.LateSampled;
@@ -1213,31 +1214,20 @@ internal sealed class VulkanAdvancedVisibilityResourceRuntime
             lateSampled.AsSpan(0, checked((int)viewCount)).Clear();
             lateStorage.AsSpan(0, checked((int)viewCount)).Clear();
             for (uint viewIndex = 0u; viewIndex < viewCount; ++viewIndex)
-            for (uint mip = 1u; mip < pyramidGroup.MipLevels; ++mip)
             {
-                ImageView sourceView;
-                if (mip == 1u)
+                if (!TryAcquireTrackedView(context, storage, depthGroup, Format.Undefined,
+                        ImageAspectFlags.DepthBit, 0u, 1u, viewIndex, out ImageView sourceView))
                 {
-                    if (!TryAcquireTrackedView(context, storage, depthGroup, Format.Undefined,
-                            ImageAspectFlags.DepthBit, 0u, 1u, viewIndex, out sourceView))
-                    {
-                        reason = "The frozen depth source image view could not be acquired.";
-                        return false;
-                    }
-                }
-                else if (!TryAcquireTrackedView(context, storage, pyramidGroup, pyramidGroup.Format,
-                             ImageAspectFlags.ColorBit, mip - 1u, 1u, viewIndex, out sourceView))
-                {
-                    reason = "A frozen depth-pyramid source mip view could not be acquired.";
+                    reason = "The frozen depth source image view could not be acquired.";
                     return false;
                 }
                 if (!TryAcquireTrackedView(context, storage, pyramidGroup, pyramidGroup.Format,
-                        ImageAspectFlags.ColorBit, mip, 1u, viewIndex, out ImageView storageView))
+                        ImageAspectFlags.ColorBit, 0u, 1u, viewIndex, out ImageView storageView))
                 {
-                    reason = "A frozen depth-pyramid storage mip view could not be acquired.";
+                    reason = "The frozen coarse depth-pyramid storage view could not be acquired.";
                     return false;
                 }
-                int index = checked((int)viewIndex * dispatchCount + (int)mip - 1);
+                int index = checked((int)viewIndex);
                 sampled[index] = new DescriptorImageInfo
                 {
                     Sampler = sampler,
@@ -1251,23 +1241,16 @@ internal sealed class VulkanAdvancedVisibilityResourceRuntime
                 };
             }
 
-            // Each late test samples one layer whose logical mip zero is
-            // physical mip one. Physical mip zero is intentionally not
-            // populated by the depth-to-R32 reduction shader.
+            // The late test samples the exact coarse tile level written by
+            // the build dispatch. Its sampled view is identical to the
+            // already-acquired storage view (mip zero, one layer), so reuse
+            // that acquisition rather than taking an unbalanced third view.
             for (uint viewIndex = 0u; viewIndex < viewCount; ++viewIndex)
             {
-                if (!TryAcquireTrackedView(context, storage, pyramidGroup, pyramidGroup.Format,
-                        ImageAspectFlags.ColorBit, 1u,
-                        pyramidGroup.MipLevels - 1u, viewIndex,
-                        out ImageView lateSampledView))
-                {
-                    reason = "A frozen per-view late-visibility sampled pyramid view could not be acquired.";
-                    return false;
-                }
                 lateSampled[viewIndex] = new DescriptorImageInfo
                 {
                     Sampler = sampler,
-                    ImageView = lateSampledView,
+                    ImageView = storageDescriptors[checked((int)viewIndex)].ImageView,
                     ImageLayout = ImageLayout.ShaderReadOnlyOptimal,
                 };
                 lateStorage[viewIndex] = storageDescriptors[
@@ -1329,6 +1312,9 @@ internal sealed class VulkanAdvancedVisibilityResourceRuntime
             "AdvancedVisibility.LateDepthPyramid",
             out view);
     }
+
+    private static uint DivideRoundUp(uint value, uint divisor)
+        => checked((Math.Max(value, 1u) + divisor - 1u) / divisor);
 
     private static bool TryAcquireTrackedView(
         VulkanBackendObjectContext context,

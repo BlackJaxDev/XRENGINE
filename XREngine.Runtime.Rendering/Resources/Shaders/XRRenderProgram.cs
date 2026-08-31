@@ -781,6 +781,7 @@ namespace XREngine.Rendering
         public event Action<uint, IRenderTextureResource, int, bool, int, EImageAccess, EImageFormat>? BindImageTextureRequested = null;
         public event Action<uint, uint, uint, IEnumerable<(uint unit, IRenderTextureResource texture, int level, int? layer, EImageAccess access, EImageFormat format)>?>? DispatchComputeRequested = null;
         public event Action<uint, XRDataBuffer>? BindBufferRequested = null;
+        public event Action<ReadOnlyStorageBinding>? BindReadOnlyStorageRequested = null;
 
         /// <summary>
         /// Mask of the shader types included in the program.
@@ -1310,6 +1311,28 @@ namespace XREngine.Rendering
             if (buffer is null)
                 throw new ArgumentNullException(nameof(buffer), "Cannot bind a null buffer to the shader program.");
             BindBufferRequested?.Invoke(location, buffer);
+        }
+
+        /// <summary>
+        /// Binds immutable publication bytes for backend-owned storage lowering.
+        /// This deliberately does not use the mutable <see cref="XRDataBuffer"/>
+        /// binding path: queued work retains the publication set independently.
+        /// </summary>
+        public void BindReadOnlyStorage(
+            ReadOnlyStoragePublication publication,
+            uint binding,
+            int offset = 0,
+            int? length = null)
+        {
+            int resolvedLength = length ?? publication.Length - offset;
+            ReadOnlyStorageBinding storageBinding = new(
+                binding,
+                publication,
+                offset,
+                resolvedLength);
+            if (!storageBinding.IsValid)
+                throw new ArgumentOutOfRangeException(nameof(offset), "The read-only storage range is invalid.");
+            BindReadOnlyStorageRequested?.Invoke(storageBinding);
         }
 
         public bool TryResolveShaderStorageBufferBinding(string blockName, out uint binding)

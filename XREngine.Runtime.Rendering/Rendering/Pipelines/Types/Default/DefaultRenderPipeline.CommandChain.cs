@@ -635,9 +635,13 @@ public partial class DefaultRenderPipeline
         transparencyChoice.ConditionEvaluator = ShouldRunTransparencyPasses;
         {
             var transparencyCommands = new ViewportRenderCommandContainer(this);
-            transparencyCommands.Add<VPRC_RenderQuadToFBO>().SetTargets(SceneCopyFBOName, TransparentSceneCopyFBOName);
+            transparencyCommands.Add<VPRC_RenderQuadToFBO>()
+                .SetTargets(SceneCopyFBOName, TransparentSceneCopyFBOName)
+                .SetRenderGraphResources(DefaultRenderPipelineQuadDescriptors.SceneCopy());
             transparencyCommands.Add<VPRC_RenderQuadToFBO>().SetOptions(DeferredTransparencyBlurFBOName, renderToSourceFrameBuffer: true);
-            transparencyCommands.Add<VPRC_RenderQuadToFBO>().SetTargets(SceneCopyFBOName, TransparentSceneCopyFBOName);
+            transparencyCommands.Add<VPRC_RenderQuadToFBO>()
+                .SetTargets(SceneCopyFBOName, TransparentSceneCopyFBOName)
+                .SetRenderGraphResources(DefaultRenderPipelineQuadDescriptors.SceneCopy());
             transparencyCommands.Add<VPRC_ClearTextureByName>().SetOptions(TransparentAccumTextureName, ColorF4.Transparent);
             transparencyCommands.Add<VPRC_ClearTextureByName>().SetOptions(TransparentRevealageTextureName, ColorF4.White);
             using (transparencyCommands.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(TransparentAccumulationFBOName, true, false, false, false)))

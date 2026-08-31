@@ -16,12 +16,14 @@ internal sealed class VulkanImportedTextureUploadWorkerResult(
     VulkanImportedTexturePendingUpload? pendingUpload,
     string? failureReason,
     bool canceled,
+    bool yielded,
     double prepMilliseconds,
     Exception? exception)
 {
     public VulkanImportedTexturePendingUpload? PendingUpload { get; } = pendingUpload;
     public string? FailureReason { get; } = failureReason;
     public bool Canceled { get; } = canceled;
+    public bool Yielded { get; } = yielded;
     public double PrepMilliseconds { get; } = prepMilliseconds;
     public Exception? Exception { get; } = exception;
 }

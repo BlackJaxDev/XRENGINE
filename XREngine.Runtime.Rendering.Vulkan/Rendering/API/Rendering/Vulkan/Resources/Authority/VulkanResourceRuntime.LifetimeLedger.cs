@@ -224,7 +224,10 @@ internal sealed partial class VulkanResourceRuntime
             owner,
             out ulong generation,
             out _,
-            out int invalidatedDescriptorSetCount);
+            out int invalidatedDescriptorSetCount,
+            out bool beganRetirement);
+        if (beganRetirement && key.Type == ObjectType.Buffer)
+            Lifetime.EnqueueSupersededBufferDescriptorOwner(key, generation);
         if (invalidatedDescriptorSetCount != 0)
             Debug.VulkanEvery(
                 $"Vulkan.ResourceLifetime.TargetedDescriptorInvalidation.{key.Type}",
@@ -241,10 +244,12 @@ internal sealed partial class VulkanResourceRuntime
         string owner,
         out ulong generation,
         out ulong[] dependentCommandBuffers,
-        out int invalidatedDescriptorSetCount)
+        out int invalidatedDescriptorSetCount,
+        out bool beganRetirement)
     {
         dependentCommandBuffers = [];
         invalidatedDescriptorSetCount = 0;
+        beganRetirement = false;
         lock (Lifetime.Tracker.SyncRoot)
         {
             VulkanResourceLifetimeRecord resource =
@@ -271,6 +276,7 @@ internal sealed partial class VulkanResourceRuntime
             resource.State |= EVulkanResourceLifetimeState.PendingRetirement;
             resource.RetirementTicket = ticket;
             Lifetime.Tracker.SetPublishedGenerationNoLock(key, 0UL);
+            beganRetirement = true;
 
             invalidatedDescriptorSetCount =
                 Descriptors.InvalidateResourceReferencesNoLock(Lifetime, key);

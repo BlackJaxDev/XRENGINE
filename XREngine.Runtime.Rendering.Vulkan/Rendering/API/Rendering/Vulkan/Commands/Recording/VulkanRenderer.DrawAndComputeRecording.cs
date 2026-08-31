@@ -89,7 +89,8 @@ namespace XREngine.Rendering.Vulkan
                 !TryBindPreparedGlobalMaterialTextureDescriptorSet(
                     commandBuffer,
                     bindlessMaterialTextures.Program,
-                    bindlessMaterialTextures.Consumer))
+                    bindlessMaterialTextures.Consumer,
+                    op.Draw.ProgramBindingSnapshot?.MaterialTablePublication))
             {
                 return;
             }
@@ -260,7 +261,7 @@ namespace XREngine.Rendering.Vulkan
             Silk.NET.Vulkan.Buffer indirectBuffer = RequirePreparedBuffer(op.IndirectBuffer, "indirect draw command");
             if (allowInlineBarrier) EmitIndirectReadBarrier(commandBuffer); else RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanAdhocBarrier(0, 1);
             if (op.DrawCount == 0) return;
-            if (op.BindlessMaterialTextures is { } binding && !TryBindPreparedGlobalMaterialTextureDescriptorSet(commandBuffer, binding.Program, binding.Consumer)) return;
+            if (op.BindlessMaterialTextures is { } binding && !TryBindPreparedGlobalMaterialTextureDescriptorSet(commandBuffer, binding.Program, binding.Consumer, op.Draw.ProgramBindingSnapshot?.MaterialTablePublication)) return;
             TrackVulkanCommandBufferResource(commandBuffer, ObjectType.Buffer, indirectBuffer.Handle, "IndirectDraw.Commands");
             if (op.UseCount && _deviceContext.Capabilities.Supports(EVulkanDeviceCapability.DrawIndirectCount))
             {
@@ -320,7 +321,8 @@ namespace XREngine.Rendering.Vulkan
                 !TryBindPreparedGlobalMaterialTextureDescriptorSet(
                     commandBuffer,
                     bindlessMaterialTextures.Program,
-                    bindlessMaterialTextures.Consumer))
+                    bindlessMaterialTextures.Consumer,
+                    op.ProgramBindingSnapshot.MaterialTablePublication))
             {
                 return;
             }
@@ -437,7 +439,8 @@ namespace XREngine.Rendering.Vulkan
                  !TryBindPreparedGlobalMaterialTextureDescriptorSet(
                      commandBuffer,
                      materialBinding.Program,
-                     materialBinding.Consumer)))
+                     materialBinding.Consumer,
+                     op.ProgramBindingSnapshot.MaterialTablePublication)))
             {
                 return;
             }
@@ -470,7 +473,17 @@ namespace XREngine.Rendering.Vulkan
 
             BindPipelineTracked(commandBuffer, PipelineBindPoint.Compute, pipeline);
             EnsureComputeStorageImageLayoutsForDispatch(commandBuffer, payload.Snapshot);
-            PushConstantsTracked(commandBuffer, payload.Program.PipelineLayout, CommonPushConstantStageFlags, 0, new ComputeDispatchPushConstants(payload.GroupsX, payload.GroupsY, payload.GroupsZ, 0u));
+            PushConstantsTracked(
+                commandBuffer,
+                payload.Program.PipelineLayout,
+                VulkanMeshRenderingConventions.GetCommonPushConstantStageFlags(
+                    _deviceContext),
+                0,
+                new ComputeDispatchPushConstants(
+                    payload.GroupsX,
+                    payload.GroupsY,
+                    payload.GroupsZ,
+                    0u));
             if (!payload.Program.TryBuildAndBindComputeDescriptorSets(CreateProgramRecordingRequest(commandBuffer), imageIndex, payload.Snapshot, reusableDescriptorKey, PipelineBindPoint.Compute, out _, out DescriptorSet[] boundDescriptorSets, out var tempBuffers))
             {
                 foreach ((Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory) in tempBuffers) DestroyBuffer(buffer, memory);

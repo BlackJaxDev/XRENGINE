@@ -56,7 +56,7 @@ public partial class OpenGLRenderer : AbstractRenderer<GL>, ISparseTextureStream
     public NVBindlessMultiDrawIndirectCount? NVBindlessMultiDrawIndirectCount { get; }
     public ArbMultiDrawIndirect? ArbMultiDrawIndirect { get; }
     public ArbParallelShaderCompile? ARBParallelShaderCompile { get; }
-    public ArbBindlessTexture? ARBBindlessTexture { get; }
+    public ArbBindlessTexture? ARBBindlessTexture { get; private set; }
 
     private static string? _version = null;
     public string? Version
@@ -211,6 +211,7 @@ public partial class OpenGLRenderer : AbstractRenderer<GL>, ISparseTextureStream
 
         CancelPendingFrontLuminanceReadback();
         DisposeGpuRenderStatsReadbacks();
+        DisposeReadOnlyStorageArena();
 
         // Clean up cached luminance front resources
         if (!ShouldOrphanGLHandlesForShutdown)
@@ -450,6 +451,6 @@ public partial class OpenGLRenderer : AbstractRenderer<GL>, ISparseTextureStream
 
     protected override void RenderFrameCallback(double delta)
     {
-
+        SealReadOnlyStorageEpoch();
     }
 }

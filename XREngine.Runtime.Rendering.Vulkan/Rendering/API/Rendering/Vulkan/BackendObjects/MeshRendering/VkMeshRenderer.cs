@@ -163,6 +163,8 @@ internal unsafe partial class VkMeshRenderer(
     private readonly Dictionary<DescriptorAllocationKey, DescriptorAllocation> _descriptorAllocations = new();
     private readonly Dictionary<int, DescriptorAllocation> _descriptorAllocationsByDrawSlot = new();
     private readonly Dictionary<DescriptorOwnerLookupKey, DescriptorAllocation> _descriptorAllocationsByOwner = new();
+    private readonly Queue<(DescriptorAllocationKey Key, DescriptorAllocation Allocation)>
+        _pendingSupersededDescriptorAllocationRetirements = new();
     private bool _descriptorDirty = true;
     private ulong _descriptorSchemaFingerprint;
     private ulong _descriptorResourceFingerprint;
@@ -954,26 +956,17 @@ internal unsafe partial class VkMeshRenderer(
             return SetPrepareResult(false, "PipelineMissing", "No active rendering pipeline is available for indirect draw capture.", out reason);
 
         VulkanMeshProducerSnapshot producer = CommandOperations.CaptureIndirectProducerSnapshot(target);
-        bool preparedForIndirect;
-        if (producer.IsPrewarmingExternalSwapchainTarget)
-        {
-            preparedForIndirect = TryPrepareCapturedProgramForRecording(effectiveMaterial, preparedProgram, preparedProgramIdentity, preparedProgramLinkGeneration, programBindingSnapshot, 0, out reason);
-        }
-        else if (producer.IsExternalSwapchainTarget)
-        {
-            preparedForIndirect = TryReuseCapturedProgramForIndirectDrawSnapshot(effectiveMaterial, preparedProgram, preparedProgramIdentity, preparedProgramLinkGeneration, programBindingSnapshot, 0, out reason);
-            if (!preparedForIndirect)
-                preparedForIndirect = TryPrepareCapturedProgramForRecording(effectiveMaterial, preparedProgram, preparedProgramIdentity, preparedProgramLinkGeneration, programBindingSnapshot, 0, out reason);
-        }
-        else
-        {
-            preparedForIndirect = TryReuseCapturedProgramForIndirectDrawSnapshot(effectiveMaterial, preparedProgram, preparedProgramIdentity, preparedProgramLinkGeneration, programBindingSnapshot, 0, out reason);
-
-            if (!preparedForIndirect)
-                preparedForIndirect = TryPrepareCapturedProgramForRecording(effectiveMaterial, preparedProgram, preparedProgramIdentity, preparedProgramLinkGeneration, programBindingSnapshot, 0, out reason);
-        }
-
-        if (!preparedForIndirect)
+        // Immutable storage is lowered only after the accepted frame slot has
+        // reset and published its authority. Producer capture happens before
+        // that point, so descriptor resolution here would observe no authority
+        // and must not prewarm or allocate. Primary recording repeats the
+        // captured-program preparation under the prepared authority.
+        if (!TryPrepareCapturedProgramForIndirectDrawEnqueue(
+                effectiveMaterial,
+                preparedProgram,
+                preparedProgramIdentity,
+                preparedProgramLinkGeneration,
+                out reason))
             return false;
 
         XRFrameBuffer? effectiveTarget = producer.Target;

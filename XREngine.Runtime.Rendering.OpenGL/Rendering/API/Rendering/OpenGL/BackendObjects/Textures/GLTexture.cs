@@ -8,7 +8,7 @@ using static XREngine.Rendering.OpenGL.OpenGLRenderer;
 
 namespace XREngine.Rendering.OpenGL
 {
-    public abstract class GLTexture<T>(OpenGLRenderer renderer, T data) : GLObject<T>(renderer, data), IGLTexture where T : XRTexture
+    public abstract class GLTexture<T>(OpenGLRenderer renderer, T data) : GLObject<T>(renderer, data), IGLTexture, IGLBindlessTexture where T : XRTexture
     {
         public override EGLObjectType Type => EGLObjectType.Texture;
 
@@ -81,6 +81,9 @@ namespace XREngine.Rendering.OpenGL
 
         private int _pendingPropertyUpdates;
         private int _propertyUpdateEnqueued;
+        private ulong _bindlessHandle;
+        private int _bindlessParametersFrozen;
+        private int _bindlessParametersDirty;
 
         private void QueuePropertyUpdate(string? propertyName)
         {
@@ -98,6 +101,15 @@ namespace XREngine.Rendering.OpenGL
 
             if (mask == TexturePropertyUpdateMask.None)
                 return;
+
+            // ARB_bindless_texture freezes a texture's sampler state as soon as a
+            // handle is obtained. Defer the change until material-table preparation,
+            // where a new texture identity and handle can be published atomically.
+            if (Volatile.Read(ref _bindlessParametersFrozen) != 0)
+            {
+                Volatile.Write(ref _bindlessParametersDirty, 1);
+                return;
+            }
 
             Interlocked.Or(ref _pendingPropertyUpdates, (int)mask);
 
@@ -137,6 +149,12 @@ namespace XREngine.Rendering.OpenGL
 
             if (mask == TexturePropertyUpdateMask.None)
                 return;
+
+            if (Volatile.Read(ref _bindlessParametersFrozen) != 0)
+            {
+                Volatile.Write(ref _bindlessParametersDirty, 1);
+                return;
+            }
 
             // Check if the texture has been generated and is a valid texture object.
             // Property changes can be queued before the texture is created, in which case
@@ -192,6 +210,12 @@ namespace XREngine.Rendering.OpenGL
         {
             Interlocked.Exchange(ref _pendingPropertyUpdates, 0);
 
+            // ARB_bindless_texture freezes every texture parameter when its handle is
+            // acquired. This method also has direct callers, so the public bind and
+            // queued-property guards are insufficient on their own.
+            if (DeferBindlessParameterUpdateIfFrozen())
+                return;
+
             int param;
             if (!IsMultisampleTarget)
             {
@@ -245,6 +269,9 @@ namespace XREngine.Rendering.OpenGL
 
         public virtual void Bind()
         {
+            if (Volatile.Read(ref _bindlessParametersDirty) != 0)
+                PrepareForBindlessHandle();
+
             uint id = BindingId;
             if (id == InvalidBindingId)
             {
@@ -300,6 +327,11 @@ namespace XREngine.Rendering.OpenGL
 
         private void VerifySettings()
         {
+            // Obtaining an ARB bindless handle freezes texture parameters. Binding a
+            // material table texture must therefore never replay SetParameters().
+            if (Volatile.Read(ref _bindlessParametersFrozen) != 0)
+                return;
+
             if (!IsInvalidated || IsPushing)
             {
                 SetParameters();
@@ -313,6 +345,97 @@ namespace XREngine.Rendering.OpenGL
             IsInvalidated = false;
             using (RuntimeEngine.Profiler.Start("GLTexture.VerifySettings.PushData"))
                 PushData();
+        }
+
+        /// <summary>
+        /// Prevents parameter writes after an ARB bindless texture handle has frozen them.
+        /// Derived texture implementations must use this before their own DSA parameter writes.
+        /// </summary>
+        protected bool DeferBindlessParameterUpdateIfFrozen()
+        {
+            if (Volatile.Read(ref _bindlessParametersFrozen) == 0)
+                return false;
+
+            Volatile.Write(ref _bindlessParametersDirty, 1);
+            return true;
+        }
+
+        /// <summary>
+        /// Makes the texture identity mutable before an operation that will change sampling
+        /// parameters. A bindless handle freezes those parameters permanently, so a later
+        /// progressive mip promotion must retire that identity once before changing its visible
+        /// mip range. Returns false when the render-thread recreation was deferred.
+        /// </summary>
+        protected bool EnsureBindlessParametersMutable()
+        {
+            if (Volatile.Read(ref _bindlessParametersFrozen) == 0)
+                return true;
+
+            Volatile.Write(ref _bindlessParametersDirty, 1);
+            PrepareForBindlessHandle();
+            return Volatile.Read(ref _bindlessParametersFrozen) == 0;
+        }
+
+        /// <summary>Whether an acquired bindless handle has frozen this texture's parameters.</summary>
+        protected bool HasFrozenBindlessParameters
+            => Volatile.Read(ref _bindlessParametersFrozen) != 0;
+
+        void IGLBindlessTexture.PrepareForBindlessHandle()
+            => PrepareForBindlessHandle();
+
+        bool IGLBindlessTexture.IsReadyForBindlessHandle()
+            => IsReadyForBindlessHandle();
+
+        void IGLBindlessTexture.MarkBindlessHandleAcquired(ulong handle)
+            => MarkBindlessHandleAcquired(handle);
+
+        /// <summary>
+        /// Base textures have no progressive sampling-range transition. Derived texture types
+        /// override this when native parameter writes remain pending.
+        /// </summary>
+        protected virtual bool IsReadyForBindlessHandle()
+            => true;
+
+        internal void PrepareForBindlessHandle()
+        {
+            if (Volatile.Read(ref _bindlessParametersDirty) == 0)
+                return;
+
+            if (!RuntimeEngine.IsRenderThread)
+            {
+                RuntimeEngine.InvokeOnMainThread(PrepareForBindlessHandle, "GLTexture.RecreateBindlessTexture", true);
+                return;
+            }
+
+            ulong handle = _bindlessHandle;
+            _bindlessHandle = 0ul;
+            Volatile.Write(ref _bindlessParametersDirty, 0);
+            Volatile.Write(ref _bindlessParametersFrozen, 0);
+            if (handle != 0ul)
+                Renderer.ReleaseResidentBindlessTextureHandle(handle);
+
+            Destroy();
+            Generate();
+            IsInvalidated = true;
+        }
+
+        internal void MarkBindlessHandleAcquired(ulong handle)
+        {
+            _bindlessHandle = handle;
+            Volatile.Write(ref _bindlessParametersDirty, 0);
+            Volatile.Write(ref _bindlessParametersFrozen, 1);
+        }
+
+        protected internal override void PreDeleted()
+        {
+            ulong handle = _bindlessHandle;
+            _bindlessHandle = 0ul;
+            Volatile.Write(ref _bindlessParametersDirty, 0);
+            Volatile.Write(ref _bindlessParametersFrozen, 0);
+            if (handle != 0ul)
+                Renderer.ReleaseResidentBindlessTextureHandle(handle);
+
+            base.PreDeleted();
         }
 
         public void Unbind()

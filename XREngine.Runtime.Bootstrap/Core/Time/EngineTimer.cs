@@ -162,6 +162,8 @@ namespace XREngine.Timers
         private long _fixedUpdateAccumulatorTicks;
         private long _fixedUpdateClockTimestampTicks;
         private ECollectVisibleLatePolicy _collectVisibleLatePolicy = ReadCollectVisibleLatePolicyFromEnvironment();
+        private EngineTimerTerminalFault? _firstTerminalFault;
+        private string _collectVisiblePhase = "Idle";
 
         public ECollectVisibleLatePolicy CollectVisibleLatePolicy
         {
@@ -180,6 +182,7 @@ namespace XREngine.Timers
         public long RequiredCollectGeneration => _visibilityGenerationGate.RequiredGeneration;
 
         public bool IsRunning => _watch.IsRunning;
+        public EngineTimerTerminalFault? FirstTerminalFault => Volatile.Read(ref _firstTerminalFault);
 
         public DeltaManager Render { get; } = new();
         public DeltaManager Update { get; } = new();
@@ -217,6 +220,8 @@ namespace XREngine.Timers
                     "The previous engine loop is still stopping. Call StopAndWait before restarting it.");
 
             _watch.Start();
+            Interlocked.Exchange(ref _firstTerminalFault, null);
+            Volatile.Write(ref _collectVisiblePhase, "RunGameLoop");
             _renderDone = new ManualResetEventSlim(false);
             _visibilityGenerationGate.Reset();
             _renderReadyForNextCollectSignaled = 0;
@@ -367,6 +372,7 @@ namespace XREngine.Timers
                 }
                 catch (Exception e)
                 {
+                    CaptureTerminalFault(e, "CollectVisibleThread", Volatile.Read(ref _collectVisiblePhase));
                     Debug.LogException(e);
                     Stop();
                     return;
@@ -395,6 +401,7 @@ namespace XREngine.Timers
                     //Collects visible object and generates render commands for the game's current state
                     using (Engine.Profiler.Start("EngineTimer.CollectVisibleThread.DispatchCollectVisible", ProfilerScopeKind.AlwaysOnHotPathLoop))
                     {
+                        Volatile.Write(ref _collectVisiblePhase, "DispatchCollectVisible");
                         if (!DispatchCollectVisible())
                         {
                             Stop();
@@ -406,6 +413,7 @@ namespace XREngine.Timers
                     //Wait for the render thread to swap update buffers with render buffers
                     using (Engine.Profiler.Start("EngineTimer.CollectVisibleThread.WaitForRender", ProfilerScopeKind.AlwaysOnHotPathLoop))
                     {
+                        Volatile.Write(ref _collectVisiblePhase, "WaitForRender");
                         long waitStartTicks = TimeTicks();
                         _renderDone.Wait(-1);
                         RuntimeEngine.Rendering.Stats.FrameLifecycle.RecordCollectWaitForRender(TimeTicks() - waitStartTicks);
@@ -424,6 +432,7 @@ namespace XREngine.Timers
 
                     using (Engine.Profiler.Start("EngineTimer.CollectVisibleThread.ProcessCollectVisibleSwapJobs", ProfilerScopeKind.AlwaysOnHotPathLoop))
                     {
+                        Volatile.Write(ref _collectVisiblePhase, "ProcessCollectVisibleSwapJobs");
                         Engine.SetFrameSwapThread(true);
                         try
                         {
@@ -437,11 +446,13 @@ namespace XREngine.Timers
 
                     using (Engine.Profiler.Start("EngineTimer.CollectVisibleThread.DispatchSwapBuffers", ProfilerScopeKind.AlwaysOnHotPathLoop))
                     {
+                        Volatile.Write(ref _collectVisiblePhase, "DispatchSwapBuffers");
                         DispatchSwapBuffers();
                     }
 
                     // Publish only after every swap listener completed. A failed listener leaves
                     // this generation unavailable and terminates the loop through the outer catch.
+                    Volatile.Write(ref _collectVisiblePhase, "GatePublish");
                     _visibilityGenerationGate.Publish(collectGeneration);
                 }
             }
@@ -689,7 +700,10 @@ namespace XREngine.Timers
         /// Retrives the current timestamp from the stopwatch.
         /// </summary>
         /// <returns></returns>
-        public long TimeTicks() => _watch.ElapsedTicks;
+        public long TimeTicks()
+            => Volatile.Read(ref _explicitFrameOwnerThreadId) != 0
+                ? Volatile.Read(ref _explicitFrameTimestampTicks)
+                : _watch.ElapsedTicks;
 
         public double TimeDouble() => TicksToSecondsDouble(TimeTicks());
 
@@ -864,6 +878,7 @@ namespace XREngine.Timers
             }
             catch (Exception e)
             {
+                CaptureTerminalFault(e, "RenderThread", "DispatchRender");
                 Debug.LogException(e);
                 Stop();
                 return false;
@@ -898,9 +913,30 @@ namespace XREngine.Timers
             }
             catch (Exception e)
             {
+                CaptureTerminalFault(e, "CollectVisibleThread", "DispatchCollectVisible");
                 Debug.LogException(e);
                 return false;
             }
+        }
+
+        private void CaptureTerminalFault(Exception exception, string loop, string phase)
+        {
+            if (Volatile.Read(ref _firstTerminalFault) is not null)
+                return;
+
+            EngineTimerTerminalFault fault = new(
+                loop,
+                phase,
+                DateTime.UtcNow,
+                Environment.CurrentManagedThreadId,
+                exception.GetType().FullName ?? exception.GetType().Name,
+                exception.Message,
+                exception.ToString(),
+                _visibilityGenerationGate.RequestedGeneration,
+                _visibilityGenerationGate.CompletedGeneration,
+                _visibilityGenerationGate.PublishedGeneration,
+                _visibilityGenerationGate.ConsumedGeneration);
+            _ = Interlocked.CompareExchange(ref _firstTerminalFault, fault, null);
         }
 
         public void DispatchSwapBuffers()

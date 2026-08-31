@@ -83,6 +83,19 @@ internal sealed partial class VulkanFrameLoop
     private unsafe void ExecuteExplicitTargetFrameCore(
         Action<Vk, CommandBuffer, VulkanRenderFrameTarget> record)
     {
+        bool captureAllocations = ExplicitTargetAllocationDiagnosticsEnabled;
+        long allocationCheckpoint = captureAllocations
+            ? GC.GetAllocatedBytesForCurrentThread()
+            : 0L;
+        long acquireAllocatedBytes = 0L;
+        long beginAllocatedBytes = 0L;
+        long beginTrackedCommandBufferAllocatedBytes = 0L;
+        long beginFrameResourceTrackingAllocatedBytes = 0L;
+        VulkanCommandBufferBeginAllocationCounters beginCommandBufferAllocationCounters = default;
+        long recordAllocatedBytes = 0L;
+        long endAllocatedBytes = 0L;
+        long submitAllocatedBytes = 0L;
+        long completeAllocatedBytes = 0L;
         IVulkanExplicitFrameTargetDriver target = RequireExplicitFrameTarget();
         VulkanFrameTargetLease lease = default;
         bool acquired = false;
@@ -103,6 +116,12 @@ internal sealed partial class VulkanFrameLoop
             long acquireStart = Stopwatch.GetTimestamp();
             lease = target.AcquireFrameTarget(
                 out CommandBuffer commandBuffer);
+            if (captureAllocations)
+            {
+                acquireAllocatedBytes =
+                    GC.GetAllocatedBytesForCurrentThread() - allocationCheckpoint;
+                allocationCheckpoint = GC.GetAllocatedBytesForCurrentThread();
+            }
             acquired = true;
             if (!lease.IsValid)
             {
@@ -121,8 +140,35 @@ internal sealed partial class VulkanFrameLoop
 
             long recordStart = Stopwatch.GetTimestamp();
             target.BeginFrameRecording(in lease, commandBuffer);
+            if (captureAllocations)
+            {
+                beginAllocatedBytes =
+                    GC.GetAllocatedBytesForCurrentThread() - allocationCheckpoint;
+                allocationCheckpoint = GC.GetAllocatedBytesForCurrentThread();
+                if (target is VulkanPresentationlessTargetDriver presentationlessTarget)
+                {
+                    beginTrackedCommandBufferAllocatedBytes =
+                        presentationlessTarget.LastBeginTrackedCommandBufferAllocatedBytes;
+                    beginFrameResourceTrackingAllocatedBytes =
+                        presentationlessTarget.LastBeginFrameResourceTrackingAllocatedBytes;
+                    beginCommandBufferAllocationCounters =
+                        presentationlessTarget.LastBeginCommandBufferAllocationCounters;
+                }
+            }
             record(Api, commandBuffer, lease.Target);
+            if (captureAllocations)
+            {
+                recordAllocatedBytes =
+                    GC.GetAllocatedBytesForCurrentThread() - allocationCheckpoint;
+                allocationCheckpoint = GC.GetAllocatedBytesForCurrentThread();
+            }
             target.EndFrameRecording(in lease, commandBuffer);
+            if (captureAllocations)
+            {
+                endAllocatedBytes =
+                    GC.GetAllocatedBytesForCurrentThread() - allocationCheckpoint;
+                allocationCheckpoint = GC.GetAllocatedBytesForCurrentThread();
+            }
             frameTrace.RecordStage(
                 EVulkanFrameStage.CommandRecord,
                 Stopwatch.GetElapsedTime(recordStart),
@@ -166,6 +212,12 @@ internal sealed partial class VulkanFrameLoop
                     target.NotifyFrameSubmitted(in lease);
                 }
             }
+            if (captureAllocations)
+            {
+                submitAllocatedBytes =
+                    GC.GetAllocatedBytesForCurrentThread() - allocationCheckpoint;
+                allocationCheckpoint = GC.GetAllocatedBytesForCurrentThread();
+            }
             frameTrace.RecordStage(
                 EVulkanFrameStage.QueueSubmit,
                 Stopwatch.GetElapsedTime(submitStart),
@@ -202,6 +254,9 @@ internal sealed partial class VulkanFrameLoop
 
             long completionStart = Stopwatch.GetTimestamp();
             target.CompleteFrameTarget(in lease);
+            if (captureAllocations)
+                completeAllocatedBytes =
+                    GC.GetAllocatedBytesForCurrentThread() - allocationCheckpoint;
             frameTrace.RecordStage(
                 EVulkanFrameStage.OutputComplete,
                 Stopwatch.GetElapsedTime(completionStart),
@@ -217,6 +272,21 @@ internal sealed partial class VulkanFrameLoop
         }
         finally
         {
+            if (captureAllocations)
+            {
+                PublishExplicitTargetFrameAllocationCounters(
+                    acquireAllocatedBytes,
+                    beginAllocatedBytes,
+                    beginTrackedCommandBufferAllocatedBytes,
+                    beginFrameResourceTrackingAllocatedBytes,
+                    beginCommandBufferAllocationCounters.BindStateInitialization,
+                    beginCommandBufferAllocationCounters.TrackingInitialization,
+                    beginCommandBufferAllocationCounters.NativeBegin,
+                    recordAllocatedBytes,
+                    endAllocatedBytes,
+                    submitAllocatedBytes,
+                    completeAllocatedBytes);
+            }
             frameTrace.PublishAfterFrame(
                 Stopwatch.GetElapsedTime(frameStart),
                 frameOutcome);

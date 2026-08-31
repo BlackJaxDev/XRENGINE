@@ -21,4 +21,12 @@ internal sealed record MeshTaskDispatchIndirectCountOp(
 {
     public override EVulkanPrimaryPlanNodeKind Kind => EVulkanPrimaryPlanNodeKind.MeshTaskDispatchIndirectCount;
 
+    public ComputeDispatchSnapshot ProgramBindingSnapshot { get; private set; } = ProgramBindingSnapshot;
+
+    protected override void OnSealedAuthoringCopyCreated()
+    {
+        ProgramBindingSnapshot = ProgramBindingSnapshot.CreateSealedCopy();
+        OwnAuthoringSnapshot(ProgramBindingSnapshot);
+    }
+
 }

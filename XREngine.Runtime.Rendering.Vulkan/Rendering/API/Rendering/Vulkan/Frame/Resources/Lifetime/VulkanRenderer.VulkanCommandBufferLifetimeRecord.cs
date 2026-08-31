@@ -1,4 +1,5 @@
 using Silk.NET.Vulkan;
+using XREngine.Rendering.Materials;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -14,7 +15,18 @@ internal sealed class VulkanCommandBufferLifetimeRecord
     public ulong AllocatingCommandPoolGeneration;
     public VulkanStableCommandSlotHandle StableCommandIdentity;
     public SealedSubmissionContract? SealedSubmissionContract;
+    // Only a successful, completion-validated native reset can release these
+    // arrays to scratch. Generic gateway invalidation does not end old readers.
+    public SealedSubmissionContract? ReusableSealedSubmissionContract;
     public VulkanSubmissionPinReceipt SubmissionPinReceipt { get; } = new();
+    public readonly List<GPUMaterialTableDescriptorClosure> MaterialDescriptorClosures = new(2);
+
+    public void ReleaseMaterialDescriptorClosures()
+    {
+        foreach (GPUMaterialTableDescriptorClosure closure in MaterialDescriptorClosures)
+            closure.Dispose();
+        MaterialDescriptorClosures.Clear();
+    }
 
     public void RefreshTouchedDependencies()
     {
@@ -25,5 +37,7 @@ internal sealed class VulkanCommandBufferLifetimeRecord
     }
 
     public void InvalidateSealedSubmissionContract()
-        => SealedSubmissionContract = null;
+    {
+        SealedSubmissionContract = null;
+    }
 }

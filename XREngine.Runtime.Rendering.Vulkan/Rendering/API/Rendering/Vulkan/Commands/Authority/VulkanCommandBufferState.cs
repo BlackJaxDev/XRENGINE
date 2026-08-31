@@ -145,6 +145,26 @@ internal sealed class VulkanCommandBufferState
     }
 
     /// <summary>
+    /// Clears state invalidated by a successful native reset without dropping
+    /// the command buffer's reusable tracking batch.
+    /// </summary>
+    internal void ClearBindStateAfterSuccessfulReset(CommandBuffer commandBuffer)
+    {
+        if (commandBuffer.Handle == 0)
+            return;
+
+        ulong handle = unchecked((ulong)commandBuffer.Handle);
+        lock (BindStateGate)
+        {
+            BindStates.Remove(handle);
+            ImageIndices.Remove(handle);
+        }
+
+        InvalidatedBuffersPendingReset.TryRemove(handle, out _);
+        RemoveInvalidatedCommandHandle(handle);
+    }
+
+    /// <summary>
     /// Publishes pending-reset membership into a fixed open-addressed set used
     /// by the submit gateway. The concurrent dictionary remains the cold
     /// enumerable reset queue and is not consulted by stable submissions.

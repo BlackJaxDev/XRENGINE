@@ -17,6 +17,9 @@ public partial class OpenGLRenderer
         if (GetOrCreateAPIRenderObject(texture, generateNow: true) is not GLObjectBase glObject)
             return false;
 
+        if (glObject is IGLBindlessTexture bindlessTexture)
+            bindlessTexture.PrepareForBindlessHandle();
+
         if (glObject is IGLTexture glTexture)
         {
             if (glTexture.TextureTarget != ETextureTarget.Texture2D)
@@ -25,6 +28,14 @@ public partial class OpenGLRenderer
             glTexture.Bind();
         }
 
+        // Bind starts or advances budgeted progressive uploads. Do not acquire a handle until
+        // that work has restored the final mip range: ARB_bindless_texture freezes all texture
+        // parameters for this identity. Returning pending lets material admission retry without
+        // a CPU fallback or a synchronous full-texture upload.
+        if (glObject is IGLBindlessTexture bindlessReadiness
+            && !bindlessReadiness.IsReadyForBindlessHandle())
+            return false;
+
         uint textureId = glObject.BindingId;
         if (textureId == GLObjectBase.InvalidBindingId || textureId == 0u || !Api.IsTexture(textureId))
             return false;
@@ -32,6 +43,9 @@ public partial class OpenGLRenderer
         handle = ARBBindlessTexture.GetTextureHandle(textureId);
         if (handle == 0ul)
             return false;
+
+        if (glObject is IGLBindlessTexture bindlessTextureState)
+            bindlessTextureState.MarkBindlessHandleAcquired(handle);
 
         if (!ARBBindlessTexture.IsTextureHandleResident(handle))
             ARBBindlessTexture.MakeTextureHandleResident(handle);

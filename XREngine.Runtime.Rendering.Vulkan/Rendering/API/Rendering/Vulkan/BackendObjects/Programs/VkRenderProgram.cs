@@ -47,6 +47,7 @@ internal unsafe partial class VkRenderProgram(
     private readonly Dictionary<string, XRTexture> _samplersByName = new(StringComparer.Ordinal);
     private readonly Dictionary<uint, ProgramImageBinding> _imagesByUnit = new();
     private readonly Dictionary<uint, XRDataBuffer> _buffersByBinding = new();
+    private ReadOnlyStorageBindingSet? _readOnlyStorageBindings;
     private ComputeDispatchSnapshot? _appliedBindingSnapshot;
     private readonly List<ComputeDispatchSnapshot> _frameBindingSnapshotPool = [];
     private ulong _frameBindingSnapshotPoolFrame;
@@ -189,6 +190,7 @@ internal unsafe partial class VkRenderProgram(
         Data.SamplerRequestedByLocation += Sampler;
         Data.BindImageTextureRequested += BindImageTexture;
         Data.BindBufferRequested += BindBuffer;
+        Data.BindReadOnlyStorageRequested += BindReadOnlyStorage;
 
         Data.LinkRequested += OnLinkRequested;
         Data.UseRequested += OnUseRequested;
@@ -257,6 +259,7 @@ internal unsafe partial class VkRenderProgram(
         Data.SamplerRequestedByLocation -= Sampler;
         Data.BindImageTextureRequested -= BindImageTexture;
         Data.BindBufferRequested -= BindBuffer;
+        Data.BindReadOnlyStorageRequested -= BindReadOnlyStorage;
 
         Data.LinkRequested -= OnLinkRequested;
         Data.UseRequested -= OnUseRequested;

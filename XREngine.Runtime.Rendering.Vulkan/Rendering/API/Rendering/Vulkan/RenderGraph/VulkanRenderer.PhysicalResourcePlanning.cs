@@ -274,7 +274,15 @@ internal sealed partial class VulkanFramePlanner
 
         try
         {
-            pendingAllocator.UpdatePlan(request.PendingPlanner.CurrentPlan);
+            VulkanTransientAttachmentPlan transientAttachmentPlan = VulkanTransientAttachmentPlan.Build(
+                request.PendingPlanner.CurrentPlan,
+                request.CompiledGraph.Plan,
+                request.PendingPlanner,
+                request.Context,
+                request.IsOpenXrOrVr);
+            pendingAllocator.UpdatePlan(
+                request.PendingPlanner.CurrentPlan,
+                transientAttachmentPlan);
             pendingAllocator.RebuildPhysicalPlan(
                 request.BackendContext,
                 request.SupportsTransformFeedback,

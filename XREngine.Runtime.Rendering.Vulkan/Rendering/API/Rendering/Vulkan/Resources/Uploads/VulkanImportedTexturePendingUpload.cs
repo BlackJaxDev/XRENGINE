@@ -29,14 +29,17 @@ internal sealed class VulkanImportedTexturePendingUpload(
     uint arrayLayers,
     long committedBytes,
     ulong publicationToken,
-    VulkanImportedTextureUploadStagingResource[] stagingResources,
+    TextureStreamingResidentData residentData,
+    bool includeMipChain,
     Func<bool>? shouldAcceptResult,
     Action<XRTexture2D>? onFinished,
     Action? onCanceled,
     Action<Exception>? onError)
 {
     private int _preparedResourcesReleased;
-    private int _stagingResourcesReleased;
+    private VulkanImportedTextureUploadStagingResource[] _stagingResources = [];
+    private int _nextMipLevel;
+    private uint _nextMipRow;
 
     public VulkanImportedTextureUploadRequest Request { get; } = request;
     public VulkanTextureUploadTicket Ticket { get; } = ticket;
@@ -62,7 +65,18 @@ internal sealed class VulkanImportedTexturePendingUpload(
     public uint ArrayLayers { get; } = arrayLayers;
     public long CommittedBytes { get; } = committedBytes;
     public ulong PublicationToken { get; } = publicationToken;
-    public VulkanImportedTextureUploadStagingResource[] StagingResources { get; } = stagingResources;
+    /// <summary>
+    /// Immutable decoded source retained by the ticket.  Staging is deliberately
+    /// not built here: one worker-admitted chunk owns one bounded staging lease.
+    /// </summary>
+    public TextureStreamingResidentData ResidentData { get; } = residentData;
+    public bool IncludeMipChain { get; } = includeMipChain;
+    public VulkanImportedTextureUploadStagingResource[] StagingResources => Volatile.Read(ref _stagingResources);
+    public int NextMipLevel => Volatile.Read(ref _nextMipLevel);
+    public uint NextMipRow => Volatile.Read(ref _nextMipRow);
+    public bool HasRecordedChunk { get; private set; }
+    public bool CurrentChunkIsFinal { get; private set; }
+    internal VulkanTextureUploadService.VulkanImportedTextureUploadJob? OwnerJob { get; set; }
     public Func<bool>? ShouldAcceptResult { get; } = shouldAcceptResult;
     public Action<XRTexture2D>? OnFinished { get; } = onFinished;
     public Action? OnCanceled { get; } = onCanceled;
@@ -70,6 +84,9 @@ internal sealed class VulkanImportedTexturePendingUpload(
     public long PreparedTimestamp { get; } = TextureRuntimeDiagnostics.StartTiming();
     public long RecordTimestamp { get; private set; }
     public long PublicationTimestamp { get; private set; }
+
+    internal bool IsPreparedResourcesReleased
+        => Volatile.Read(ref _preparedResourcesReleased) != 0;
 
     public bool TryGetTexture(out XRTexture2D? texture)
         => Request.TryGetTexture(out texture);
@@ -87,6 +104,63 @@ internal sealed class VulkanImportedTexturePendingUpload(
             ArrayLayers,
             StagingResources,
             out failureReason);
+
+    /// <summary>
+    /// Validates the immutable native ownership captured for one recorded
+    /// chunk. This is deliberately checked immediately before command
+    /// recording: retirement or a stale yielded result must fail closed rather
+    /// than pass a null/recycled handle to the Vulkan driver.
+    /// </summary>
+    internal bool TryValidateTransferOwnership(
+        VulkanResourceRuntime resources,
+        out string? failureReason)
+    {
+        failureReason = null;
+        if (IsPreparedResourcesReleased || Image.Handle == 0 || Memory.Handle == 0 ||
+            ImageView.Handle == 0)
+        {
+            failureReason =
+                $"Imported texture upload '{Request.TextureName ?? "<unnamed>"}' token={PublicationToken} lost its destination native ownership before transfer recording.";
+            return false;
+        }
+
+        ulong imageGeneration = resources.GetPublishedGeneration(ObjectType.Image, Image.Handle);
+        ulong viewGeneration = resources.GetPublishedGeneration(ObjectType.ImageView, ImageView.Handle);
+        // Some image-backed texture configurations deliberately omit a sampler;
+        // only validate its generation when this upload captured one.
+        ulong samplerGeneration = Sampler.Handle == 0
+            ? 1UL
+            : resources.GetPublishedGeneration(ObjectType.Sampler, Sampler.Handle);
+        if (imageGeneration == 0 || viewGeneration == 0 || samplerGeneration == 0)
+        {
+            failureReason =
+                $"Imported texture upload '{Request.TextureName ?? "<unnamed>"}' token={PublicationToken} has an unpublished destination generation before transfer recording.";
+            return false;
+        }
+
+        VulkanImportedTextureUploadStagingResource[] staging = StagingResources;
+        if (staging.Length == 0)
+        {
+            failureReason =
+                $"Imported texture upload '{Request.TextureName ?? "<unnamed>"}' token={PublicationToken} has no prepared staging chunk.";
+            return false;
+        }
+
+        for (int index = 0; index < staging.Length; index++)
+        {
+            VulkanImportedTextureUploadStagingResource resource = staging[index];
+            if (resource.Buffer.Handle == 0 || resource.Memory.Handle == 0 ||
+                resource.AllocationGeneration == 0 ||
+                resources.GetPublishedGeneration(ObjectType.Buffer, resource.Buffer.Handle) != resource.AllocationGeneration)
+            {
+                failureReason =
+                    $"Imported texture upload '{Request.TextureName ?? "<unnamed>"}' token={PublicationToken} staging chunk {index} no longer has its captured buffer generation.";
+                return false;
+            }
+        }
+
+        return TryValidateCopyRegions(out failureReason);
+    }
 
     public void MarkRecordStarted()
         => RecordTimestamp = TextureRuntimeDiagnostics.StartTiming();
@@ -110,8 +184,27 @@ internal sealed class VulkanImportedTexturePendingUpload(
     public bool TryMarkPreparedResourcesReleased()
         => Interlocked.Exchange(ref _preparedResourcesReleased, 1) == 0;
 
-    /// <summary>Ensures pooled staging buffers are returned or retired exactly once.</summary>
-    public bool TryMarkStagingResourcesReleased()
-        => Interlocked.Exchange(ref _stagingResourcesReleased, 1) == 0;
+    internal void SetPreparedChunk(
+        VulkanImportedTextureUploadStagingResource staging,
+        int nextMipLevel,
+        uint nextMipRow,
+        bool isFinal)
+    {
+        if (StagingResources.Length != 0)
+            throw new InvalidOperationException("An imported texture ticket already owns a staging chunk.");
+
+        Volatile.Write(ref _stagingResources, [staging]);
+        Volatile.Write(ref _nextMipLevel, nextMipLevel);
+        Volatile.Write(ref _nextMipRow, nextMipRow);
+        CurrentChunkIsFinal = isFinal;
+    }
+
+    internal VulkanImportedTextureUploadStagingResource[] DetachPreparedChunk()
+    {
+        VulkanImportedTextureUploadStagingResource[] staging = Interlocked.Exchange(ref _stagingResources, []);
+        if (staging.Length != 0)
+            HasRecordedChunk = true;
+        return staging;
+    }
 }
 

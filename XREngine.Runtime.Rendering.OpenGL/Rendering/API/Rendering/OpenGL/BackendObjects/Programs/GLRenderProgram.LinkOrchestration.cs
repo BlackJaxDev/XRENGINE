@@ -96,6 +96,13 @@ namespace XREngine.Rendering.OpenGL
                 Data.UniformSetIVector3ArrayRequested += Uniform;
                 Data.UniformSetIVector4ArrayRequested += Uniform;
 
+                Data.UniformSetUVector2Requested += Uniform;
+                Data.UniformSetUVector3Requested += Uniform;
+                Data.UniformSetUVector4Requested += Uniform;
+                Data.UniformSetUVector2ArrayRequested += Uniform;
+                Data.UniformSetUVector3ArrayRequested += Uniform;
+                Data.UniformSetUVector4ArrayRequested += Uniform;
+
                 Data.UniformSetBoolRequested += Uniform;
                 Data.UniformSetBoolArrayRequested += Uniform;
                 
@@ -113,6 +120,7 @@ namespace XREngine.Rendering.OpenGL
                 Data.BindImageTextureRequested += BindImageTexture;
                 Data.DispatchComputeRequested += DispatchCompute;
                 Data.BindBufferRequested += BindBuffer;
+                Data.BindReadOnlyStorageRequested += BindReadOnlyStorage;
 
                 Data.LinkRequested += LinkRequested;
                 Data.UseRequested += UseRequested;
@@ -154,6 +162,9 @@ namespace XREngine.Rendering.OpenGL
 
                 Api.BindBufferBase(GLEnum.ShaderStorageBuffer, index, glBuf.BindingId);
             }
+
+            private void BindReadOnlyStorage(ReadOnlyStorageBinding binding)
+                => Renderer.BindReadOnlyStorage(binding);
 
             private void BindImageTexture(uint unit, IRenderTextureResource texture, int level, bool layered, int layer, EImageAccess access, EImageFormat format)
             {
@@ -365,9 +376,12 @@ namespace XREngine.Rendering.OpenGL
                 Data.UniformSetIVector3ArrayRequested -= Uniform;
                 Data.UniformSetIVector4ArrayRequested -= Uniform;
 
-                //Data.UniformSetUVector2Requested -= Uniform;
-                //Data.UniformSetUVector3Requested -= Uniform;
-                //Data.UniformSetUVector4Requested -= Uniform;
+                Data.UniformSetUVector2Requested -= Uniform;
+                Data.UniformSetUVector3Requested -= Uniform;
+                Data.UniformSetUVector4Requested -= Uniform;
+                Data.UniformSetUVector2ArrayRequested -= Uniform;
+                Data.UniformSetUVector3ArrayRequested -= Uniform;
+                Data.UniformSetUVector4ArrayRequested -= Uniform;
 
                 Data.UniformSetBoolRequested -= Uniform;
                 Data.UniformSetBoolArrayRequested -= Uniform;
@@ -386,6 +400,7 @@ namespace XREngine.Rendering.OpenGL
                 Data.BindImageTextureRequested -= BindImageTexture;
                 Data.DispatchComputeRequested -= DispatchCompute;
                 Data.BindBufferRequested -= BindBuffer;
+                Data.BindReadOnlyStorageRequested -= BindReadOnlyStorage;
 
                 Data.LinkRequested -= LinkRequested;
                 Data.UseRequested -= UseRequested;
@@ -575,10 +590,9 @@ namespace XREngine.Rendering.OpenGL
                                     compileResult.LinkMilliseconds,
                                     binaryLoadMilliseconds: binaryLoadMilliseconds,
                                     failureReason: failure);
-                                MarkHashFailed(failure);
-                                InFlightCompilations.TryRemove(Hash, out _);
-                                _asyncCompileDuplicateHashWaitPending = false;
-                                MarkBuildFailed();
+                                RetryAfterSharedContextProgramBinaryHandoffFailure(
+                                    pendingId2,
+                                    failure);
                                 return IsLinked;
                             }
 

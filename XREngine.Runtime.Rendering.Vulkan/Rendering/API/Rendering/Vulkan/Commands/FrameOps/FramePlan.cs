@@ -5,7 +5,7 @@ namespace XREngine.Rendering.Vulkan;
 /// streams. Its arrays are owned by one <see cref="FramePlanBuilder"/> slot and
 /// remain immutable until that same slot begins a later frame.
 /// </summary>
-internal sealed class FramePlan
+internal sealed partial class FramePlan
 {
     private FrameOperationStream _operations = new();
     private FrameOperationStream _dynamicOverlayOperations = new();
@@ -82,6 +82,8 @@ internal sealed class FramePlan
     internal int OperationKeyCount => _operationKeyCount;
     internal ReadOnlySpan<VulkanFrameOpPlannerStateKey> StaticPlannerContextKeys
         => _staticPlannerContextKeys.AsSpan(0, _staticPlannerContextKeyCount);
+    internal ReadOnlySpan<FrameOpContext> StaticPlannerContexts
+        => _staticPlannerContexts.AsSpan(0, _staticPlannerContextKeyCount);
     internal ReadOnlySpan<VulkanRenderGraphPlan> StaticPlannerContextPlans
         => _staticPlannerContextPlans.AsSpan(0, _staticPlannerContextKeyCount);
     internal bool IsPinned

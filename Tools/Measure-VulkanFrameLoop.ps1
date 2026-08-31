@@ -27,6 +27,8 @@ param(
     [long]$MaxSteadyStateRecordCommandBufferAllocatedBytes = 0,
     [int]$StabilityWindowSec = 5,
     [int]$StabilityTimeoutSec = 120,
+    [ValidateSet('FullResourceQuiet', 'OutputScheduling')]
+    [string]$StabilityProfile = 'FullResourceQuiet',
     [switch]$NoStabilityGate,
     [int]$ShutdownGraceSec = 20,
     [int]$NoSampleHangSec = 15,
@@ -72,6 +74,7 @@ $arguments = @{
     MinSteadyStateCommandBufferCleanReuseRatio = $MinSteadyStateCommandBufferCleanReuseRatio
     StabilityWindowSec = $StabilityWindowSec
     StabilityTimeoutSec = $StabilityTimeoutSec
+    StabilityProfile = $StabilityProfile
     ShutdownGraceSec = $ShutdownGraceSec
     NoSampleHangSec = $NoSampleHangSec
     RetainedRunCount = $RetainedRunCount

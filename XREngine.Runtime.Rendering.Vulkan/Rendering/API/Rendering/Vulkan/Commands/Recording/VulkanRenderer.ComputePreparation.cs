@@ -55,11 +55,13 @@ internal sealed partial class VulkanCommandRuntime
     /// </summary>
     internal VulkanComputePreparationResult PrepareComputeFrameOpsForRecording(
         uint imageIndex,
-        FrameOperationSequence operations)
+        FrameOperationSequence operations,
+        FramePlan? framePlan = null)
         => PrepareComputeFrameOps(
             imageIndex,
             operations,
-            prepareDescriptors: true);
+            prepareDescriptors: true,
+            framePlan);
 
     /// <summary>
     /// Publishes all compute resources for one exact sealed frame-data slot.
@@ -68,24 +70,29 @@ internal sealed partial class VulkanCommandRuntime
     /// </summary>
     internal VulkanComputePreparationResult PrepareComputeFramePlanForRecording(
         uint frameDataImageIndex,
-        FramePlan framePlan)
+        FramePlan framePlan,
+        in ResourcePlannerRuntimeState plannerState)
     {
         ArgumentNullException.ThrowIfNull(framePlan);
+        if (!framePlan.HasPreparedRecordingPlannerGenerations)
+            return new(EVulkanComputePreparationOutcome.DescriptorPreparationFailed,
+                0, framePlan.OperationCount, "<unresolved physical planner generation>");
         VulkanComputePreparationResult preparation =
             PrepareComputeFrameOpsForRecording(
                 frameDataImageIndex,
-                framePlan.GetNativeStaticOperationsForRecording());
+                framePlan.GetNativeStaticOperationsForRecording(), framePlan);
         return preparation.Succeeded
             ? PrepareComputeFrameOpsForRecording(
                 frameDataImageIndex,
-                framePlan.GetNativeDynamicOverlayOperationsForRecording())
+                framePlan.GetNativeDynamicOverlayOperationsForRecording(), framePlan)
             : preparation;
     }
 
     private VulkanComputePreparationResult PrepareComputeFrameOps(
         uint imageIndex,
         FrameOperationSequence operations,
-        bool prepareDescriptors)
+        bool prepareDescriptors,
+        FramePlan? framePlan)
     {
         for (int operationIndex = 0; operationIndex < operations.Length; operationIndex++)
         {
@@ -168,7 +175,7 @@ internal sealed partial class VulkanCommandRuntime
             if (header.OpCode == EVulkanPrimaryPlanNodeKind.ComputeDispatch)
             {
                 int descriptorBindingOrdinal =
-                    ResolveCommandChainInlineOperationIndex(
+                    ResolveComputeDispatchOccurrenceOrdinal(
                         operations.Stream,
                         operationIndex);
                 ref readonly ComputeDispatchPayload preparedDispatch =
@@ -178,18 +185,29 @@ internal sealed partial class VulkanCommandRuntime
                         in preparedDispatch,
                         in header,
                         in operationContext,
+                        operations.Stream.Lane,
                         descriptorBindingOrdinal);
             }
 
-            if (program.TryPrepareComputeDispatchResources(
-                VulkanProgramPlannerRequest.From(frameContext),
-                imageIndex,
-                snapshot,
-                reusableDescriptorKey,
-                excludeGlobalTextureArray))
+            bool resourcesReady;
+            if (framePlan is not null)
             {
-                continue;
+                if (!framePlan.TryGetRecordingPlannerGeneration(frameContext, out ResourcePlannerRuntimeGeneration generation))
+                    return new(EVulkanComputePreparationOutcome.DescriptorPreparationFailed,
+                        operationIndex, operations.Length, program.Data.Name);
+                using VulkanPreparedResourcePlannerThreadScope plannerScope =
+                    new(ThreadWorkspace.Current, this, generation);
+                resourcesReady = program.TryPrepareComputeDispatchResources(
+                    VulkanProgramPlannerRequest.From(frameContext), imageIndex, snapshot,
+                    reusableDescriptorKey, excludeGlobalTextureArray);
             }
+            else
+                resourcesReady = program.TryPrepareComputeDispatchResources(
+                    VulkanProgramPlannerRequest.From(frameContext), imageIndex, snapshot,
+                    reusableDescriptorKey, excludeGlobalTextureArray);
+
+            if (resourcesReady)
+                continue;
 
             return new(
                 EVulkanComputePreparationOutcome.DescriptorPreparationFailed,
@@ -232,25 +250,26 @@ internal sealed partial class VulkanCommandRuntime
                 program.Data.Name);
         }
 
-        try
+        VulkanComputePipelineReadiness readiness = program.TryGetOrRequestComputePipeline(
+            passIndex,
+            passMetadata,
+            out _,
+            out string reason);
+        return readiness switch
         {
-            if (program.GetOrCreateComputePipeline(passIndex, passMetadata).Handle != 0)
-                return VulkanComputePreparationResult.Success;
-
-            return new(
-                EVulkanComputePreparationOutcome.PipelineUnavailable,
+            VulkanComputePipelineReadiness.Ready => VulkanComputePreparationResult.Success,
+            VulkanComputePipelineReadiness.Pending => new(
+                EVulkanComputePreparationOutcome.PipelinePending,
                 operationIndex,
                 operationCount,
-                program.Data.Name);
-        }
-        catch (Exception exception)
-        {
-            return new(
+                program.Data.Name,
+                new InvalidOperationException(reason)),
+            _ => new(
                 EVulkanComputePreparationOutcome.PipelineCreationFailed,
                 operationIndex,
                 operationCount,
                 program.Data.Name,
-                exception);
-        }
+                new InvalidOperationException(reason)),
+        };
     }
 }

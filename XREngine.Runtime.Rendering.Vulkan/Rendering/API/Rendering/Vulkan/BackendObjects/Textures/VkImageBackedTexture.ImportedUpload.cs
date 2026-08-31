@@ -173,7 +173,8 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             switch (preparation.Step)
             {
                 case VulkanImportedTextureUploadPreparationStep.CreateImage:
-                    if (!TryCreateImportedUploadImage(
+                    long allocationStart = TextureRuntimeDiagnostics.StartTiming();
+                    bool imageCreated = TryCreateImportedUploadImage(
                             preparation.Extent,
                             preparation.MipLevels,
                             preparation.ArrayLayers,
@@ -182,7 +183,10 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
                             out preparation.Image,
                             out preparation.Memory,
                             out preparation.CommittedBytes,
-                            out failureReason))
+                            out failureReason);
+                    VulkanTextureUploadService.RecordImportedTextureNativeAllocationCpu(
+                        TextureRuntimeDiagnostics.ElapsedMilliseconds(allocationStart));
+                    if (!imageCreated)
                     {
                         return false;
                     }
@@ -199,43 +203,15 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
                         preparation.ArrayLayers);
                     preparation.Step = CreateSampler
                         ? VulkanImportedTextureUploadPreparationStep.CreateSampler
-                        : VulkanImportedTextureUploadPreparationStep.CreateNextStagingMip;
+                        : VulkanImportedTextureUploadPreparationStep.Complete;
                     return true;
 
                 case VulkanImportedTextureUploadPreparationStep.CreateSampler:
                     preparation.Sampler = CreateImportedUploadSampler();
-                    preparation.Step = VulkanImportedTextureUploadPreparationStep.CreateNextStagingMip;
-                    return true;
-
-                case VulkanImportedTextureUploadPreparationStep.CreateNextStagingMip:
-                    if (TryPrepareNextImportedUploadStagingMip(preparation, out failureReason))
-                        return true;
-
-                    if (!string.IsNullOrEmpty(failureReason))
-                        return false;
-
-                    if (preparation.StagingResources.Count == 0)
-                    {
-                        failureReason = "resident data did not produce any staging uploads";
-                        return false;
-                    }
-
                     preparation.Step = VulkanImportedTextureUploadPreparationStep.Complete;
                     return true;
 
                 case VulkanImportedTextureUploadPreparationStep.Complete:
-                    if (!VulkanImportedTextureUploadValidation.TryValidateCopyRegions(
-                            preparation.Request.TextureName,
-                            preparation.PublicationToken,
-                            preparation.Extent,
-                            preparation.MipLevels,
-                            preparation.ArrayLayers,
-                            preparation.StagingResources,
-                            out failureReason))
-                    {
-                        return false;
-                    }
-
                     pendingUpload = new VulkanImportedTexturePendingUpload(
                         preparation.Request,
                         preparation.Ticket,
@@ -253,7 +229,8 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
                         preparation.ArrayLayers,
                         preparation.CommittedBytes,
                         preparation.PublicationToken,
-                        [.. preparation.StagingResources],
+                        preparation.ResidentData,
+                        preparation.IncludeMipChain,
                         preparation.ShouldAcceptResult,
                         preparation.OnFinished,
                         preparation.OnCanceled,
@@ -263,7 +240,6 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
                     preparation.Memory = default;
                     preparation.ImageView = default;
                     preparation.Sampler = default;
-                    preparation.StagingResources.Clear();
                     completed = true;
                     return true;
             }
@@ -278,90 +254,150 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         return false;
     }
 
-    private bool TryPrepareNextImportedUploadStagingMip(
-        VulkanImportedTextureUploadPreparation preparation,
+    /// <summary>
+    /// Worker-only chunk staging.  A ticket retains decoded resident data and
+    /// destination ownership, but it can hold exactly one bounded native staging
+    /// lease until that chunk's graphics fence completes.
+    /// </summary>
+    internal EVulkanImportedTextureChunkPreparation TryPrepareNextSynchronizedImportedUploadChunk(
+        VulkanImportedTexturePendingUpload upload,
+        bool foregroundRequired,
         out string? failureReason)
     {
         failureReason = null;
-        uint levelCount = Math.Min((uint)preparation.ResidentData.Mipmaps.Length, preparation.MipLevels);
-
-        while (preparation.NextMipLevel < levelCount)
+        if (upload.StagingResources.Length != 0)
         {
-            uint level = (uint)preparation.NextMipLevel++;
-            Mipmap2D? mip = preparation.ResidentData.Mipmaps[level];
-            if (mip is null)
-                continue;
+            failureReason = "imported texture ticket already owns an in-flight staging chunk";
+            return EVulkanImportedTextureChunkPreparation.Failed;
+        }
 
-            DataSource? uploadData = VkFormatConversions.CreateNormalizedUploadData2D(mip, preparation.Format, out bool ownsUploadData);
+        uint levelCount = Math.Min((uint)upload.ResidentData.Mipmaps.Length, upload.MipLevels);
+        int nextMipLevel = upload.NextMipLevel;
+        uint firstRow = upload.NextMipRow;
+
+        while (nextMipLevel < levelCount)
+        {
+            uint level = (uint)nextMipLevel;
+            Mipmap2D? mip = upload.ResidentData.Mipmaps[level];
+            if (mip is null)
+            {
+                nextMipLevel++;
+                firstRow = 0;
+                continue;
+            }
+
+            DataSource? uploadData = VkFormatConversions.CreateNormalizedUploadData2D(mip, upload.Format, out bool ownsUploadData);
             try
             {
                 Extent3D mipExtent = new(Math.Max(mip.Width, 1u), Math.Max(mip.Height, 1u), 1u);
                 if (uploadData is null || uploadData.Length == 0)
                 {
                     failureReason = $"mip {level} has no normalized upload bytes";
-                    return false;
+                    return EVulkanImportedTextureChunkPreparation.Failed;
                 }
 
                 uint rowCount = Math.Max(mipExtent.Height, 1u);
                 if ((ulong)uploadData.Length % rowCount != 0)
                 {
                     failureReason = $"normalized mip {level} byte count {uploadData.Length:N0} cannot be divided into {rowCount} rows for bounded staging";
-                    return false;
+                    return EVulkanImportedTextureChunkPreparation.Failed;
                 }
 
                 ulong bytesPerRow = (ulong)uploadData.Length / rowCount;
                 if (bytesPerRow == 0 || bytesPerRow > VulkanStagingManager.ForegroundChunkCapacity)
                 {
                     failureReason = $"normalized mip {level} row size {bytesPerRow:N0} exceeds the {VulkanStagingManager.ForegroundChunkCapacity:N0}-byte foreground staging chunk";
-                    return false;
+                    return EVulkanImportedTextureChunkPreparation.Failed;
+                }
+
+                if (firstRow >= rowCount)
+                {
+                    nextMipLevel++;
+                    firstRow = 0;
+                    continue;
                 }
 
                 uint rowsPerChunk = (uint)Math.Max(1UL, VulkanStagingManager.ForegroundChunkCapacity / bytesPerRow);
-                bool foregroundRequired = preparation.Request.PriorityClass == TextureUploadPriorityClass.VisibleNow;
-                for (uint firstRow = 0; firstRow < rowCount; firstRow += rowsPerChunk)
+                uint chunkRows = Math.Min(rowsPerChunk, rowCount - firstRow);
+                ulong chunkBytes = bytesPerRow * chunkRows;
+                long stagingCopyStart = TextureRuntimeDiagnostics.StartTiming();
+                bool stagingAllocated = TryAllocateImportedStagingBuffer(
+                        new DataSource(uploadData.Address + (long)(firstRow * bytesPerRow), checked((uint)chunkBytes)),
+                        out Buffer stagingBuffer,
+                        out DeviceMemory stagingMemory,
+                        foregroundRequired);
+                VulkanTextureUploadService.RecordImportedTextureStagingCopyCpu(
+                    TextureRuntimeDiagnostics.ElapsedMilliseconds(stagingCopyStart));
+                if (!stagingAllocated)
                 {
-                    uint chunkRows = Math.Min(rowsPerChunk, rowCount - firstRow);
-                    ulong chunkBytes = bytesPerRow * chunkRows;
-                    if (!TryAllocateImportedStagingBuffer(
-                            new DataSource(uploadData.Address + (long)(firstRow * bytesPerRow), checked((uint)chunkBytes)),
-                            out Buffer stagingBuffer,
-                            out DeviceMemory stagingMemory,
-                            foregroundRequired))
-                    {
-                        failureReason = $"could not create bounded staging buffer for mip {level}, rows {firstRow}-{firstRow + chunkRows - 1}";
-                        return false;
-                    }
+                    failureReason = $"bounded staging lease is unavailable for mip {level}, rows {firstRow}-{firstRow + chunkRows - 1}";
+                    return EVulkanImportedTextureChunkPreparation.Deferred;
+                }
 
-                    BufferImageCopy region = new()
+                BufferImageCopy region = new()
+                {
+                    BufferOffset = 0,
+                    BufferRowLength = 0,
+                    BufferImageHeight = 0,
+                    ImageSubresource = new ImageSubresourceLayers
                     {
-                        BufferOffset = 0,
-                        BufferRowLength = 0,
-                        BufferImageHeight = 0,
-                        ImageSubresource = new ImageSubresourceLayers
-                        {
-                            AspectMask = preparation.AspectMask,
-                            MipLevel = level,
-                            BaseArrayLayer = 0,
-                            LayerCount = 1,
-                        },
-                        ImageOffset = new Offset3D(0, (int)firstRow, 0),
-                        ImageExtent = new Extent3D(mipExtent.Width, chunkRows, 1u),
-                    };
+                        AspectMask = upload.AspectMask,
+                        MipLevel = level,
+                        BaseArrayLayer = 0,
+                        LayerCount = 1,
+                    },
+                    ImageOffset = new Offset3D(0, (int)firstRow, 0),
+                    ImageExtent = new Extent3D(mipExtent.Width, chunkRows, 1u),
+                };
 
-                    preparation.StagingResources.Add(new VulkanImportedTextureUploadStagingResource(
+                uint nextRow = firstRow + chunkRows;
+                int followingMip = nextMipLevel;
+                uint followingRow = nextRow;
+                if (followingRow >= rowCount)
+                {
+                    followingMip++;
+                    followingRow = 0;
+                }
+
+                bool final = !HasRemainingImportedUploadRows(upload, followingMip, followingRow);
+                upload.SetPreparedChunk(
+                    new VulkanImportedTextureUploadStagingResource(
                         default,
                         stagingBuffer,
                         stagingMemory,
                         region,
-                        chunkBytes));
-                }
-                return true;
+                        chunkBytes,
+                        BackendContext.Resources.GetPublishedGeneration(ObjectType.Buffer, stagingBuffer.Handle)),
+                    followingMip,
+                    followingRow,
+                    final);
+                return EVulkanImportedTextureChunkPreparation.Prepared;
             }
             finally
             {
                 if (ownsUploadData)
                     uploadData?.Dispose();
             }
+        }
+
+        failureReason = "resident data did not produce any staging uploads";
+        return EVulkanImportedTextureChunkPreparation.Failed;
+    }
+
+    private static bool HasRemainingImportedUploadRows(
+        VulkanImportedTexturePendingUpload upload,
+        int nextMipLevel,
+        uint nextMipRow)
+    {
+        uint levelCount = Math.Min((uint)upload.ResidentData.Mipmaps.Length, upload.MipLevels);
+        for (int index = nextMipLevel; index < levelCount; index++)
+        {
+            Mipmap2D? mip = upload.ResidentData.Mipmaps[index];
+            if (mip is null)
+                continue;
+            uint rows = Math.Max(mip.Height, 1u);
+            if (index != nextMipLevel || nextMipRow < rows)
+                return true;
         }
 
         return false;

@@ -18,7 +18,7 @@ namespace XREngine.Rendering.Occlusion
     ///   count readback (i.e. GpuIndirectInstrumented). For GpuIndirectZeroReadback,
     ///   <see cref="LastFrameGpuOcclusionAvailable"/> is false and the UI explains why.
     /// </summary>
-    public static class OcclusionTelemetry
+    public static partial class OcclusionTelemetry
     {
         internal sealed class CpuViewCounters(OcclusionViewKey key)
         {
@@ -280,6 +280,17 @@ namespace XREngine.Rendering.Occlusion
         private static int _cpuSocOccludersSelected;
         private static int _cpuSocOccludersRasterized;
         private static int _cpuSocTilesClosed;
+        private static int _cpuSocCandidatesInspected;
+        private static int _cpuSocCandidatesDropped;
+        private static int _cpuSocRasterReservedPixels;
+        private static int _cpuSocRasterExecutedPixels;
+        private static int _cpuSocRasterReservedTiles;
+        private static int _cpuSocRasterBudgetSkippedTriangles;
+        private static int _cpuSocRasterBudgetExhausted;
+        private static int _cpuSocAabbTestTileWork;
+        private static int _cpuSocAabbTestCount;
+        private static int _cpuSocAabbTestBudgetBypassed;
+        private static int _cpuSocProfitabilityDecision = (int)ECpuSoftwareOcclusionProfitabilityDecision.Unmeasured;
         private static long _cpuSocBeginMicros;
         private static long _cpuSocSelectionMicros;
         private static long _cpuSocSortMicros;
@@ -292,6 +303,17 @@ namespace XREngine.Rendering.Occlusion
         private static int _lastFrameCpuSocOccludersSelected;
         private static int _lastFrameCpuSocOccludersRasterized;
         private static int _lastFrameCpuSocTilesClosed;
+        private static int _lastFrameCpuSocCandidatesInspected;
+        private static int _lastFrameCpuSocCandidatesDropped;
+        private static int _lastFrameCpuSocRasterReservedPixels;
+        private static int _lastFrameCpuSocRasterExecutedPixels;
+        private static int _lastFrameCpuSocRasterReservedTiles;
+        private static int _lastFrameCpuSocRasterBudgetSkippedTriangles;
+        private static int _lastFrameCpuSocRasterBudgetExhausted;
+        private static int _lastFrameCpuSocAabbTestTileWork;
+        private static int _lastFrameCpuSocAabbTestCount;
+        private static int _lastFrameCpuSocAabbTestBudgetBypassed;
+        private static int _lastFrameCpuSocProfitabilityDecision = (int)ECpuSoftwareOcclusionProfitabilityDecision.Unmeasured;
         private static long _lastFrameCpuSocBeginMicros;
         private static long _lastFrameCpuSocSelectionMicros;
         private static long _lastFrameCpuSocSortMicros;
@@ -421,6 +443,29 @@ namespace XREngine.Rendering.Occlusion
         public static int CpuSocOccludersRasterized => _lastFrameCpuSocOccludersRasterized;
         /// <summary>Last completed frame: SOC tiles that reached full coverage.</summary>
         public static int CpuSocTilesClosed => _lastFrameCpuSocTilesClosed;
+        /// <summary>Last completed frame: command and submesh entries inspected by SOC selection.</summary>
+        public static int CpuSocCandidatesInspected => _lastFrameCpuSocCandidatesInspected;
+        /// <summary>Last completed frame: candidate entries rejected by a safety or selection bound.</summary>
+        public static int CpuSocCandidatesDropped => _lastFrameCpuSocCandidatesDropped;
+        /// <summary>Last completed frame: raster bounding-box pixel iterations reserved before writes.</summary>
+        public static int CpuSocRasterReservedPixels => _lastFrameCpuSocRasterReservedPixels;
+        /// <summary>Last completed frame: raster pixel iterations actually completed.</summary>
+        public static int CpuSocRasterExecutedPixels => _lastFrameCpuSocRasterExecutedPixels;
+        /// <summary>Last completed frame: raster bounding-box tile visits reserved before writes.</summary>
+        public static int CpuSocRasterReservedTiles => _lastFrameCpuSocRasterReservedTiles;
+        /// <summary>Last completed frame: whole triangles skipped because the raster work budget was exhausted.</summary>
+        public static int CpuSocRasterBudgetSkippedTriangles => _lastFrameCpuSocRasterBudgetSkippedTriangles;
+        /// <summary>Last completed frame: true when SOC raster safety work was exhausted.</summary>
+        public static bool CpuSocRasterBudgetExhausted => _lastFrameCpuSocRasterBudgetExhausted != 0;
+        /// <summary>Last completed frame: software AABB mask tiles inspected.</summary>
+        public static int CpuSocAabbTestTileWork => _lastFrameCpuSocAabbTestTileWork;
+        /// <summary>Last completed frame: all-or-nothing software AABB mask tests reserved.</summary>
+        public static int CpuSocAabbTestCount => _lastFrameCpuSocAabbTestCount;
+        /// <summary>Last completed frame: AABB tests bypassed fail-visible by the work budget.</summary>
+        public static int CpuSocAabbTestBudgetBypassed => _lastFrameCpuSocAabbTestBudgetBypassed;
+        /// <summary>Last completed frame: profitability admission decision for CPU software occlusion.</summary>
+        public static ECpuSoftwareOcclusionProfitabilityDecision CpuSocProfitabilityDecision
+            => (ECpuSoftwareOcclusionProfitabilityDecision)_lastFrameCpuSocProfitabilityDecision;
         /// <summary>Last completed frame: SOC frame setup time in milliseconds.</summary>
         public static double CpuSocBeginMilliseconds => _lastFrameCpuSocBeginMicros / 1000.0;
         /// <summary>Last completed frame: SOC occluder candidate-selection time in milliseconds.</summary>
@@ -608,6 +653,7 @@ namespace XREngine.Rendering.Occlusion
         /// <summary>Called by RuntimeEngine.Rendering.Stats.BeginFrame to snapshot and reset counters.</summary>
         public static void BeginFrame()
         {
+            SnapshotHiZWork();
             lock (CpuViewCountersLock)
             {
                 int epoch = ++_cpuViewTelemetryEpoch;
@@ -651,6 +697,17 @@ namespace XREngine.Rendering.Occlusion
             _lastFrameCpuSocOccludersSelected = _cpuSocOccludersSelected;
             _lastFrameCpuSocOccludersRasterized = _cpuSocOccludersRasterized;
             _lastFrameCpuSocTilesClosed = _cpuSocTilesClosed;
+            _lastFrameCpuSocCandidatesInspected = _cpuSocCandidatesInspected;
+            _lastFrameCpuSocCandidatesDropped = _cpuSocCandidatesDropped;
+            _lastFrameCpuSocRasterReservedPixels = _cpuSocRasterReservedPixels;
+            _lastFrameCpuSocRasterExecutedPixels = _cpuSocRasterExecutedPixels;
+            _lastFrameCpuSocRasterReservedTiles = _cpuSocRasterReservedTiles;
+            _lastFrameCpuSocRasterBudgetSkippedTriangles = _cpuSocRasterBudgetSkippedTriangles;
+            _lastFrameCpuSocRasterBudgetExhausted = _cpuSocRasterBudgetExhausted;
+            _lastFrameCpuSocAabbTestTileWork = _cpuSocAabbTestTileWork;
+            _lastFrameCpuSocAabbTestCount = _cpuSocAabbTestCount;
+            _lastFrameCpuSocAabbTestBudgetBypassed = _cpuSocAabbTestBudgetBypassed;
+            _lastFrameCpuSocProfitabilityDecision = _cpuSocProfitabilityDecision;
             _lastFrameCpuSocBeginMicros = _cpuSocBeginMicros;
             _lastFrameCpuSocSelectionMicros = _cpuSocSelectionMicros;
             _lastFrameCpuSocSortMicros = _cpuSocSortMicros;
@@ -705,6 +762,17 @@ namespace XREngine.Rendering.Occlusion
             _cpuSocOccludersSelected = 0;
             _cpuSocOccludersRasterized = 0;
             _cpuSocTilesClosed = 0;
+            _cpuSocCandidatesInspected = 0;
+            _cpuSocCandidatesDropped = 0;
+            _cpuSocRasterReservedPixels = 0;
+            _cpuSocRasterExecutedPixels = 0;
+            _cpuSocRasterReservedTiles = 0;
+            _cpuSocRasterBudgetSkippedTriangles = 0;
+            _cpuSocRasterBudgetExhausted = 0;
+            _cpuSocAabbTestTileWork = 0;
+            _cpuSocAabbTestCount = 0;
+            _cpuSocAabbTestBudgetBypassed = 0;
+            _cpuSocProfitabilityDecision = (int)ECpuSoftwareOcclusionProfitabilityDecision.Unmeasured;
             _cpuSocBeginMicros = 0;
             _cpuSocSelectionMicros = 0;
             _cpuSocSortMicros = 0;
@@ -1003,6 +1071,25 @@ namespace XREngine.Rendering.Occlusion
                 Interlocked.Exchange(ref _cpuSocForceVisible, 1);
         }
 
+        /// <summary>Records how the CPU SOC profitability gate treated the current frame.</summary>
+        public static void RecordCpuSocProfitabilityDecision(ECpuSoftwareOcclusionProfitabilityDecision decision)
+            => Interlocked.Exchange(ref _cpuSocProfitabilityDecision, (int)decision);
+
+        /// <summary>Records the all-or-nothing software AABB mask work completed this frame.</summary>
+        public static void RecordCpuSocAabbTestWork()
+            => Interlocked.Increment(ref _cpuSocAabbTestCount);
+
+        /// <summary>Records mask tiles inspected by an AABB query whose full work was reserved.</summary>
+        public static void RecordCpuSocAabbTestTileWork(int tileWork)
+        {
+            if (tileWork > 0)
+                Interlocked.Add(ref _cpuSocAabbTestTileWork, tileWork);
+        }
+
+        /// <summary>Records an AABB visibility query bypassed fail-visible by the safety budget.</summary>
+        public static void RecordCpuSocAabbTestBudgetBypassed()
+            => Interlocked.Increment(ref _cpuSocAabbTestBudgetBypassed);
+
         /// <summary>Records CPU SOC occluder selection, sorting, and rasterization summary.</summary>
         public static void RecordCpuSocOccluders(
             int selected,
@@ -1010,7 +1097,14 @@ namespace XREngine.Rendering.Occlusion
             int tilesClosed,
             double selectionMilliseconds,
             double sortMilliseconds,
-            double rasterMilliseconds)
+            double rasterMilliseconds,
+            int candidatesInspected,
+            int candidatesDropped,
+            int rasterReservedPixels,
+            int rasterExecutedPixels,
+            int rasterReservedTiles,
+            int rasterBudgetSkippedTriangles,
+            bool rasterBudgetExhausted)
         {
             if (selected > 0)
                 Interlocked.Add(ref _cpuSocOccludersSelected, selected);
@@ -1018,6 +1112,20 @@ namespace XREngine.Rendering.Occlusion
                 Interlocked.Add(ref _cpuSocOccludersRasterized, rasterized);
             if (tilesClosed > 0)
                 Interlocked.Add(ref _cpuSocTilesClosed, tilesClosed);
+            if (candidatesInspected > 0)
+                Interlocked.Add(ref _cpuSocCandidatesInspected, candidatesInspected);
+            if (candidatesDropped > 0)
+                Interlocked.Add(ref _cpuSocCandidatesDropped, candidatesDropped);
+            if (rasterReservedPixels > 0)
+                Interlocked.Add(ref _cpuSocRasterReservedPixels, rasterReservedPixels);
+            if (rasterExecutedPixels > 0)
+                Interlocked.Add(ref _cpuSocRasterExecutedPixels, rasterExecutedPixels);
+            if (rasterReservedTiles > 0)
+                Interlocked.Add(ref _cpuSocRasterReservedTiles, rasterReservedTiles);
+            if (rasterBudgetSkippedTriangles > 0)
+                Interlocked.Add(ref _cpuSocRasterBudgetSkippedTriangles, rasterBudgetSkippedTriangles);
+            if (rasterBudgetExhausted)
+                Interlocked.Exchange(ref _cpuSocRasterBudgetExhausted, 1);
             Interlocked.Add(ref _cpuSocSelectionMicros, ToMicroseconds(selectionMilliseconds));
             Interlocked.Add(ref _cpuSocSortMicros, ToMicroseconds(sortMilliseconds));
             Interlocked.Add(ref _cpuSocRasterMicros, ToMicroseconds(rasterMilliseconds));

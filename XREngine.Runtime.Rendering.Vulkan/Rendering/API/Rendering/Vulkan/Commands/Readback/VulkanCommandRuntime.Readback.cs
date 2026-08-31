@@ -29,66 +29,80 @@ internal sealed partial class VulkanCommandRuntime
         }
 
         ulong byteCount = checked((ulong)destination.Length);
-        var (stagingBuffer, stagingMemory) = CreateReadbackBuffer(byteCount);
-        try
+        if (!ResourceRuntime.TryAcquireSynchronousFrameDataArenaLease(
+                out VulkanSynchronousFrameDataArenaLease arenaLease))
         {
-            using (var scope = NewCommandScope())
-            {
-                BufferMemoryBarrier sourceBarrier = new()
-                {
-                    SType = StructureType.BufferMemoryBarrier,
-                    SrcAccessMask =
-                        AccessFlags.ShaderWriteBit |
-                        AccessFlags.TransferWriteBit |
-                        AccessFlags.MemoryWriteBit,
-                    DstAccessMask = AccessFlags.TransferReadBit,
-                    SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
-                    DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
-                    Buffer = source,
-                    Offset = sourceByteOffset,
-                    Size = byteCount,
-                };
-
-                CmdPipelineBarrierTracked(
-                    scope.CommandBuffer,
-                    PipelineStageFlags.AllCommandsBit,
-                    PipelineStageFlags.TransferBit,
-                    0,
-                    0,
-                    null,
-                    1,
-                    &sourceBarrier,
-                    0,
-                    null);
-
-                BufferCopy copy = new()
-                {
-                    SrcOffset = sourceByteOffset,
-                    DstOffset = 0,
-                    Size = byteCount,
-                };
-                CmdCopyBufferTracked(scope.CommandBuffer, source, stagingBuffer, 1, ref copy);
-            }
-
-            if (!ResourceRuntime.Buffers.TryCreateMappedSlice(
-                    ReadbackContext, stagingBuffer, stagingMemory, 0, byteCount, out VulkanMappedMemorySlice mappedSlice) ||
-                !ResourceRuntime.Buffers.TryAcquireRead(ReadbackContext, in mappedSlice, out VulkanMappedMemoryReadLease readLease))
-            {
-                reason = "<map-failed>";
-                return false;
-            }
-
-            using (readLease)
-            {
-                readLease.Bytes[..destination.Length].CopyTo(destination);
-                reason = "gpu";
-                return true;
-            }
+            reason = "<synchronous-readback-arena-unavailable>";
+            return false;
         }
-        finally
+
+        using VulkanSynchronousFrameDataArenaLease ownedArenaLease = arenaLease;
+        VulkanFrameDataArena arena = ownedArenaLease.Arena;
+        if (!arena.TryAllocate(
+                0,
+                EVulkanFrameDataLane.Readback,
+                byteCount,
+                alignment: 4,
+                out VulkanFrameDataSlice stagingSlice))
         {
-            DestroyReadbackBuffer(stagingBuffer, stagingMemory);
+            reason = "<synchronous-readback-reservation-rejected>";
+            return false;
         }
+
+        // NewSynchronousFrameDataCommandScope submits on the graphics queue and
+        // does not return until its own fence has completed. Its readback lane
+        // also emits the transfer-to-host dependency before reopening the slot.
+        using (CommandScope scope = NewSynchronousFrameDataCommandScope(stagingSlice))
+        {
+            BufferMemoryBarrier sourceBarrier = new()
+            {
+                SType = StructureType.BufferMemoryBarrier,
+                SrcAccessMask =
+                    AccessFlags.ShaderWriteBit |
+                    AccessFlags.TransferWriteBit |
+                    AccessFlags.MemoryWriteBit,
+                DstAccessMask = AccessFlags.TransferReadBit,
+                SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                Buffer = source,
+                Offset = sourceByteOffset,
+                Size = byteCount,
+            };
+            CmdPipelineBarrierTracked(
+                scope.CommandBuffer,
+                PipelineStageFlags.AllCommandsBit,
+                PipelineStageFlags.TransferBit,
+                0,
+                0,
+                null,
+                1,
+                &sourceBarrier,
+                0,
+                null);
+            BufferCopy copy = new()
+            {
+                SrcOffset = sourceByteOffset,
+                DstOffset = stagingSlice.Offset,
+                Size = byteCount,
+            };
+            CmdCopyBufferTracked(
+                scope.CommandBuffer,
+                source,
+                stagingSlice.Buffer,
+                1,
+                ref copy);
+        }
+
+        if (!arena.TryBeginRead(stagingSlice, out VulkanFrameDataReadScope readScope))
+        {
+            reason = "<synchronous-readback-map-rejected>";
+            return false;
+        }
+
+        using (readScope)
+            readScope.Bytes[..destination.Length].CopyTo(destination);
+        reason = "gpu-fence-complete";
+        return true;
     }
 
     internal unsafe void BeginDepthReadbackAsync(

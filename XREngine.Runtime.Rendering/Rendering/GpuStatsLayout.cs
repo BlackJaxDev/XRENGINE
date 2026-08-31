@@ -45,6 +45,19 @@ namespace XREngine.Rendering
         public const uint MaterialScatterCulledCount = 32;
         public const uint MaterialScatterKeyCount = 33;
 
+        // Explicit diagnostic-only material-scatter atlas inputs and rejection reasons.
+        public const uint MaterialScatterAtlasIndexCountStatic = 46;
+        public const uint MaterialScatterAtlasIndexCountDynamic = 47;
+        public const uint MaterialScatterAtlasIndexCountStreaming = 48;
+        public const uint MaterialScatterAtlasVertexCountStatic = 49;
+        public const uint MaterialScatterAtlasVertexCountDynamic = 50;
+        public const uint MaterialScatterAtlasVertexCountStreaming = 51;
+        public const uint MaterialScatterRejectedAtlasIndexEmpty = 52;
+        public const uint MaterialScatterRejectedAtlasVertexEmpty = 53;
+        public const uint MaterialScatterRejectedAtlasFirstIndex = 54;
+        public const uint MaterialScatterRejectedAtlasIndexRange = 55;
+        public const uint MaterialScatterRejectedAtlasBaseVertex = 56;
+
         public const uint BvhRawNodeCount = 34;
         public const uint BvhSafeNodeCount = 35;
 
@@ -59,6 +72,6 @@ namespace XREngine.Rendering
         public const uint BvhMaxQueueOccupancy = 44;
         public const uint BvhQueueOverflows = 45;
 
-        public const uint FieldCount = 46;
+        public const uint FieldCount = 57;
     }
 }
