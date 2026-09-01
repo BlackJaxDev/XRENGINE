@@ -19,10 +19,55 @@ internal sealed partial class VulkanTextureUploadService
         if (Interlocked.CompareExchange(ref _prepDrainScheduled, 1, 0) != 0)
             return;
 
-        RuntimeRenderingHostServices.Scheduling.EnqueueRenderThreadCoroutine(
-            () => DrainQueuedUploadPreparation(context),
-            "VulkanTextureUploadService.DrainUploadPrepQueue",
-            RenderThreadJobKind.TextureUpload);
+        try
+        {
+            RuntimeRenderingHostServices.Scheduling.EnqueueRenderThreadCoroutine(
+                () => DrainScheduledUploadPreparation(context),
+                "VulkanTextureUploadService.DrainUploadPrepQueue",
+                RenderThreadJobKind.TextureUpload);
+        }
+        catch
+        {
+            // A synchronous scheduler rejection did not publish a coroutine, so
+            // release ownership and let a later producer retry the drain.
+            Interlocked.Exchange(ref _prepDrainScheduled, 0);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Owns exceptional completion of the scheduled preparation coroutine. Normal
+    /// completion clears and rechecks the scheduling bit while holding the queue
+    /// contract in <c>HasQueuedPrepWorkOrCompleteDrain</c>; clearing it again here
+    /// could erase ownership published by a concurrently enqueued successor drain.
+    /// </summary>
+    private bool DrainScheduledUploadPreparation(VulkanTextureUploadSchedulingContext context)
+    {
+        try
+        {
+            return DrainQueuedUploadPreparation(context);
+        }
+        catch
+        {
+            // Do not turn an unexpected one-shot scheduler failure into a
+            // permanent admission failure for future texture uploads.
+            Interlocked.Exchange(ref _prepDrainScheduled, 0);
+            if (Volatile.Read(ref _preparationRetirementStarted) == 0)
+                EnsurePrepDrainScheduled(context);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Worker completion is an independent forward-progress edge. Recheck the
+    /// render-thread drain even when no producer enqueues another upload, so a
+    /// saturated worker lane cannot leave its retained jobs behind.
+    /// </summary>
+    private void RearmPrepDrainAfterWorkerCompletion(
+        VulkanTextureUploadSchedulingContext context)
+    {
+        if (Volatile.Read(ref _preparationRetirementStarted) == 0)
+            EnsurePrepDrainScheduled(context);
     }
 
     private bool DrainQueuedUploadPreparation(VulkanTextureUploadSchedulingContext context)
@@ -44,7 +89,10 @@ internal sealed partial class VulkanTextureUploadService
         VulkanTextureUploadManifest? requiredManifest = null)
     {
         if (!context.IsDeviceOperational)
+        {
+            Interlocked.Exchange(ref _prepDrainScheduled, 0);
             return true;
+        }
 
         // Generic render-job pumps do not guarantee an ambient window owner.
         // Bind this frozen request to its exact live renderer generation for
@@ -631,7 +679,7 @@ internal sealed partial class VulkanTextureUploadService
             Interlocked.Increment(ref s_ownedWorkerPreparationJobs);
             try
             {
-                job.WorkerPrepTask = StartPreparationWorker(() =>
+                Task<VulkanImportedTextureUploadWorkerResult> workerTask = StartPreparationWorker(() =>
                 {
                     Interlocked.Increment(ref s_activePrepPackages);
                     try
@@ -645,6 +693,20 @@ internal sealed partial class VulkanTextureUploadService
                             Interlocked.Exchange(ref s_activePrepPackages, 0);
                     }
                 });
+                job.WorkerPrepTask = workerTask;
+                _ = workerTask.ContinueWith(
+                    static (_, state) =>
+                    {
+                        (VulkanTextureUploadService service,
+                            VulkanTextureUploadSchedulingContext schedulingContext) =
+                            ((VulkanTextureUploadService,
+                                VulkanTextureUploadSchedulingContext))state!;
+                        service.RearmPrepDrainAfterWorkerCompletion(schedulingContext);
+                    },
+                    (this, context),
+                    CancellationToken.None,
+                    TaskContinuationOptions.ExecuteSynchronously,
+                    TaskScheduler.Default);
                 Interlocked.Increment(ref s_workerPreparationStarts);
                 return true;
             }
@@ -676,7 +738,7 @@ internal sealed partial class VulkanTextureUploadService
             Interlocked.Increment(ref s_ownedWorkerPreparationJobs);
             try
             {
-                job.WorkerPrepTask = StartPreparationWorker(() =>
+                Task<VulkanImportedTextureUploadWorkerResult> workerTask = StartPreparationWorker(() =>
                 {
                     Interlocked.Increment(ref s_activePrepPackages);
                     try
@@ -690,6 +752,20 @@ internal sealed partial class VulkanTextureUploadService
                             Interlocked.Exchange(ref s_activePrepPackages, 0);
                     }
                 });
+                job.WorkerPrepTask = workerTask;
+                _ = workerTask.ContinueWith(
+                    static (_, state) =>
+                    {
+                        (VulkanTextureUploadService service,
+                            VulkanTextureUploadSchedulingContext schedulingContext) =
+                            ((VulkanTextureUploadService,
+                                VulkanTextureUploadSchedulingContext))state!;
+                        service.RearmPrepDrainAfterWorkerCompletion(schedulingContext);
+                    },
+                    (this, context),
+                    CancellationToken.None,
+                    TaskContinuationOptions.ExecuteSynchronously,
+                    TaskScheduler.Default);
                 Interlocked.Increment(ref s_workerPreparationStarts);
                 return true;
             }

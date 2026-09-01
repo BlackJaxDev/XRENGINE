@@ -119,6 +119,11 @@ public static partial class EditorUnitTests
                 : frameCounters;
             double cpuFrameMs = RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameTotalMs;
             double gpuCmdMs = RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameGpuCommandBufferMs;
+            double dispatchCpuMs = RuntimeEngine.Rendering.Stats.FrameOutputs.LastWholeFrameMs;
+            double renderWaitForCollectMs =
+                RuntimeEngine.Rendering.Stats.FrameLifecycle.RenderWaitForCollectMs;
+            double collectWaitForRenderMs =
+                RuntimeEngine.Rendering.Stats.FrameLifecycle.CollectWaitForRenderMs;
             double vrHz = ResolveVrRenderHz();
             double vrPassMs = RuntimeEngine.Rendering.Stats.Vr.VrRenderPassTimeMs;
             int fallbackEvents = RuntimeEngine.Rendering.Stats.GpuFallback.GpuCpuFallbackEvents;
@@ -160,10 +165,18 @@ public static partial class EditorUnitTests
             AppendFixed(builder, averageHz, "F0", 3);
             builder.Append("hz ");
             AppendFixed(builder, renderMs, "F2", 6);
-            builder.Append("ms | cpu ");
+            builder.Append("ms interval | dispatch ");
+            AppendFixed(builder, dispatchCpuMs, "F2", 6);
+            builder.Append("ms | vk ");
             AppendFixed(builder, cpuFrameMs, "F2", 6);
             builder.Append("ms | gpu ");
             AppendFixed(builder, gpuCmdMs, "F2", 6);
+            builder.Append("ms");
+
+            builder.Append("\nwait:   render<-collect ");
+            AppendFixed(builder, renderWaitForCollectMs, "F2", 6);
+            builder.Append("ms | collect<-render ");
+            AppendFixed(builder, collectWaitForRenderMs, "F2", 6);
             builder.Append("ms");
 
             if (Engine.EffectiveSettings.EnableNvidiaDlssFrameGeneration)

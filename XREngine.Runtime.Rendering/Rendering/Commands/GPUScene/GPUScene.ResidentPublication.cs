@@ -4,6 +4,7 @@ public partial class GPUScene
 {
     private readonly AdvancedGpuScenePublisher _advancedScenePublisher = new();
     private AdvancedGlobalResourceCapture _advancedGlobalResources;
+    private int _advancedPublicationRequested;
 
     /// <summary>
     /// Canonical renderer-neutral scene authority dual-published with the legacy
@@ -38,6 +39,20 @@ public partial class GPUScene
 
     public AdvancedGlobalResourceCapture AdvancedGlobalResources
         => _advancedGlobalResources;
+
+    /// <summary>
+    /// Gets whether a pipeline that consumes the canonical resident scene has
+    /// requested a publication for the pending swap boundary.
+    /// </summary>
+    internal bool AdvancedPublicationRequested
+        => System.Threading.Volatile.Read(ref _advancedPublicationRequested) != 0;
+
+    /// <summary>
+    /// Requests canonical resident-scene publication at the next swap boundary.
+    /// Multiple viewports coalesce into one allocation-free request bit.
+    /// </summary>
+    internal void RequestAdvancedResidentPublication()
+        => System.Threading.Interlocked.Exchange(ref _advancedPublicationRequested, 1);
 
     public void SetAdvancedGlobalResources(in AdvancedGlobalResourceCapture capture)
         => _advancedGlobalResources = capture;
@@ -92,9 +107,14 @@ public partial class GPUScene
     public bool WasCanonicalDrawAddedThisPublication(AdvancedGpuHandle draw)
         => _advancedScenePublisher.WasDrawAddedThisPublication(draw);
 
-    private void PublishAdvancedResidentScene()
-        => _advancedScenePublisher.Publish(
+    private void PublishAdvancedResidentSceneIfRequested()
+    {
+        if (System.Threading.Interlocked.Exchange(ref _advancedPublicationRequested, 0) == 0)
+            return;
+
+        _advancedScenePublisher.Publish(
             this,
             RuntimeEngine.Rendering.State.RenderFrameId,
             in _advancedGlobalResources);
+    }
 }

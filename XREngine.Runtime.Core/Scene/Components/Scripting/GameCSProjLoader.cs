@@ -42,7 +42,7 @@ namespace XREngine.Components.Scripting
         [RequiresUnreferencedCode("Calls System.Reflection.Assembly.GetExportedTypes()")]
         private static void LoadFromAssembly(string id, object source, AssemblyLoadContext context, Assembly assembly)
         {
-            Type[] exported = assembly.GetExportedTypes();
+            IReadOnlyList<Type> exported = XREngine.Core.XRLoadableTypeCatalog.GetExportedTypes(assembly);
             Type[] components = [.. exported.Where(t => t.IsSubclassOf(typeof(XRComponent)))];
             Type[] menuItems = [.. exported.Where(t => typeof(IRuntimeMenuItem).IsAssignableFrom(t) && !t.IsInterface)];
             

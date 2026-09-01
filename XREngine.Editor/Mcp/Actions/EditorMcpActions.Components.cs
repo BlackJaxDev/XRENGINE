@@ -751,21 +751,7 @@ namespace XREngine.Editor.Mcp
             Type baseType = typeof(XRAsset);
             foreach (Assembly assembly in AppDomain.CurrentDomain.GetAssemblies())
             {
-                Type[]? assemblyTypes = null;
-                try
-                {
-                    assemblyTypes = assembly.GetTypes();
-                }
-                catch (ReflectionTypeLoadException ex)
-                {
-                    assemblyTypes = ex.Types.Where(t => t is not null).Cast<Type>().ToArray();
-                }
-                catch
-                {
-                    continue;
-                }
-
-                foreach (Type candidate in assemblyTypes)
+                foreach (Type candidate in XREngine.Core.XRLoadableTypeCatalog.GetTypes(assembly))
                 {
                     if (!baseType.IsAssignableFrom(candidate) || candidate.IsAbstract)
                         continue;

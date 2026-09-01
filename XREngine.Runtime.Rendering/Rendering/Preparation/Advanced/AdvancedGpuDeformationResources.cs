@@ -1122,8 +1122,16 @@ public sealed class AdvancedGpuDeformationResources :
         _aggregateShader ??= ShaderHelper.LoadEngineShader(
             AdvancedDeformationBackendContract.AggregateShaderPath,
             EShaderType.Compute);
-        return _aggregateProgram ??=
-            new XRRenderProgram(true, false, _aggregateShader);
+        if (_aggregateProgram is not null)
+            return _aggregateProgram;
+
+        XRRenderProgram program = new(false, false, _aggregateShader)
+        {
+            Name = "AdvancedDeformation.Aggregate",
+            AllowAsyncBackendCompile = true,
+        };
+        program.AllowLink();
+        return _aggregateProgram = program;
     }
 
     private ulong MaximumSubmissionValue()

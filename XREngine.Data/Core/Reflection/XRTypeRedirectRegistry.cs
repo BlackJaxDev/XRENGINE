@@ -60,21 +60,7 @@ namespace XREngine.Core
 
                 foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
                 {
-                    Type[] types;
-                    try
-                    {
-                        types = asm.GetTypes();
-                    }
-                    catch (ReflectionTypeLoadException ex)
-                    {
-                        types = ex.Types.Where(t => t is not null).Cast<Type>().ToArray();
-                    }
-                    catch
-                    {
-                        continue;
-                    }
-
-                    foreach (var type in types)
+                    foreach (Type type in XRLoadableTypeCatalog.GetTypes(asm))
                     {
                         XRTypeRedirectAttribute[] attrs;
                         try

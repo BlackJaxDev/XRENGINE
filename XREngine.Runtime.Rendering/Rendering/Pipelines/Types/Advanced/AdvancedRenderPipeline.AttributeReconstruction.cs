@@ -71,10 +71,7 @@ public partial class AdvancedRenderPipeline
     }
 
     private void InvalidateReconstructionResourceProfile()
-    {
-        foreach (XRRenderPipelineInstance instance in Instances)
-            instance.InvalidatePhysicalResources();
-    }
+        => InvalidateOwnedInstancePhysicalResources("AttributeReconstructionProfileChanged");
 
     private void DeclareAttributeReconstructionResources(
         RenderPipelineResourceLayoutBuilder builder)

@@ -28,6 +28,7 @@ internal static class NativeFbxSceneImporter
         ModelImportProducerMetadata ProducerMetadata);
 
     private const long DefaultMaterialCacheKey = long.MinValue;
+    private const string ImportedContentBasisNodeName = "FbxImportedContentBasis";
 
     private sealed class MeshChunkBuilder(int materialSlot, int initialVertexCapacity, int initialIndexCapacity)
     {
@@ -231,11 +232,25 @@ internal static class NativeFbxSceneImporter
                 ReportProgress(onProgress, 0.18f);
 
                 SceneNode rootNode = new(Path.GetFileNameWithoutExtension(sourceFilePath)) { Layer = importLayer };
-                ApplyLocalMatrix(rootNode, CreateImportRootMatrix(scaleConversion, zUp, rootTransformMatrix));
+                Matrix4x4 axisConversion = ResolveImportAxisConversion(semantic.GlobalSettings, zUp);
+                Matrix4x4 contentBasis = CreateImportContentBasisMatrix(scaleConversion, axisConversion);
+                Matrix4x4 scenePlacement = rootTransformMatrix ?? Matrix4x4.Identity;
+                Matrix4x4 importWorld = contentBasis * scenePlacement;
+                if (scenePlacement != Matrix4x4.Identity)
+                    ApplyLocalMatrix(rootNode, scenePlacement);
+                SceneNode contentRoot = rootNode;
+                if (contentBasis != Matrix4x4.Identity)
+                {
+                    // Keep the returned asset root in canonical engine space. Axis/unit
+                    // conversion belongs to imported content so humanoid root-relative
+                    // bind transforms retain it instead of cancelling it at the owner root.
+                    contentRoot = new SceneNode(rootNode, ImportedContentBasisNodeName) { Layer = importLayer };
+                    ApplyLocalMatrix(contentRoot, contentBasis);
+                }
 
                 Dictionary<long, SceneNode> nodesByObjectId;
                 using (IDisposable? buildSceneGraphScope = XREngine.Fbx.FbxTrace.StartProfilerScopeNamed("NativeImporter", "Import.BuildSceneGraph"))
-                    nodesByObjectId = BuildSceneNodes(rootNode, semantic, importLayer, cancellationToken);
+                    nodesByObjectId = BuildSceneNodes(contentRoot, semantic, importLayer, cancellationToken);
                 XREngine.Fbx.FbxTrace.Info("NativeImporter", $"Created {nodesByObjectId.Count:N0} authored scene node(s) beneath imported root '{rootNode.Name}'.");
                 ReportProgress(onProgress, 0.22f);
 
@@ -302,7 +317,11 @@ internal static class NativeFbxSceneImporter
 
                             IReadOnlyDictionary<int, Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>>? skinWeightsByControlPoint =
                                 hasSkinBinding
-                                    ? BuildSkinWeightsByControlPoint(skinBinding, sceneNode.Transform.WorldMatrix, nodesByObjectId)
+                                    ? BuildSkinWeightsByControlPoint(
+                                        skinBinding,
+                                        sceneNode.Transform.BindMatrix,
+                                        importWorld,
+                                        nodesByObjectId)
                                     : null;
 
                             workItems.Add(new MeshBuildWorkItem(
@@ -929,6 +948,13 @@ internal static class NativeFbxSceneImporter
         FbxSkinBinding skinBinding,
         Matrix4x4 meshWorldMatrix,
         IReadOnlyDictionary<long, SceneNode> nodesByObjectId)
+        => BuildSkinWeightsByControlPoint(skinBinding, meshWorldMatrix, Matrix4x4.Identity, nodesByObjectId);
+
+    private static Dictionary<int, Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>> BuildSkinWeightsByControlPoint(
+        FbxSkinBinding skinBinding,
+        Matrix4x4 meshBindWorldMatrix,
+        Matrix4x4 importRootBindMatrix,
+        IReadOnlyDictionary<long, SceneNode> nodesByObjectId)
     {
         using IDisposable? profilerScope = XREngine.Fbx.FbxTrace.StartProfilerScope("NativeImporter");
         Dictionary<int, Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>> weightsByControlPoint = new();
@@ -938,9 +964,25 @@ internal static class NativeFbxSceneImporter
                 continue;
 
             TransformBase boneTransform = boneNode.Transform;
-            Matrix4x4 bindInvWorldMatrix = Matrix4x4.Invert(boneTransform.WorldMatrix, out Matrix4x4 inverseBoneWorld)
-                ? meshWorldMatrix * inverseBoneWorld
-                : cluster.InverseBindMatrix;
+            Matrix4x4 bindInvWorldMatrix;
+            if (cluster.HasTransformLinkMatrix)
+            {
+                // Both matrices use the engine's row-vector convention. GeometryTransform
+                // is already baked into vertex positions, so it must not participate here.
+                Matrix4x4 authoredLinkEngine = cluster.TransformLinkMatrix * importRootBindMatrix;
+                if (Matrix4x4.Invert(authoredLinkEngine, out Matrix4x4 inverseAuthoredLink))
+                    bindInvWorldMatrix = meshBindWorldMatrix * inverseAuthoredLink;
+                else
+                {
+                    XREngine.Fbx.FbxTrace.Warning("NativeImporter", $"Cluster '{cluster.BoneName}' ({cluster.ClusterObjectId}) has a non-invertible authored TransformLink; falling back to the imported bone bind matrix.");
+                    bindInvWorldMatrix = meshBindWorldMatrix * boneTransform.InverseBindMatrix;
+                }
+            }
+            else
+            {
+                XREngine.Fbx.FbxTrace.Warning("NativeImporter", $"Cluster '{cluster.BoneName}' ({cluster.ClusterObjectId}) has no authored TransformLink; falling back to the imported bone bind matrix.");
+                bindInvWorldMatrix = meshBindWorldMatrix * boneTransform.InverseBindMatrix;
+            }
             foreach ((int controlPointIndex, float weight) in cluster.ControlPointWeights)
             {
                 if (controlPointIndex < 0 || weight <= 0.0f)
@@ -1458,15 +1500,30 @@ internal static class NativeFbxSceneImporter
             : fallback;
     }
 
-    private static Matrix4x4 CreateImportRootMatrix(float scaleConversion, bool zUp, Matrix4x4? rootTransformMatrix)
+    private static Matrix4x4 ResolveImportAxisConversion(FbxGlobalSettings? globalSettings, bool forceZUp)
+    {
+        // Preserve the explicit compatibility override for files without useful
+        // metadata. System.Numerics row-vector convention requires -90 degrees
+        // to map source +Z up to canonical +Y up.
+        if (forceZUp)
+            return Matrix4x4.CreateRotationX(float.DegreesToRadians(-90.0f));
+
+        return globalSettings is not null
+            && FbxAxisSystemConversion.TryCreateCanonicalYUpRotation(
+                globalSettings.AxisSystem,
+                out Matrix4x4 conversion)
+                    ? conversion
+                    : Matrix4x4.Identity;
+    }
+
+    private static Matrix4x4 CreateImportContentBasisMatrix(
+        float scaleConversion,
+        Matrix4x4 axisConversion)
     {
         Matrix4x4 importMatrix = Matrix4x4.Identity;
         if (scaleConversion != 1.0f)
             importMatrix *= Matrix4x4.CreateScale(scaleConversion);
-        if (zUp)
-            importMatrix *= Matrix4x4.CreateRotationX(float.DegreesToRadians(90.0f));
-        if (rootTransformMatrix.HasValue)
-            importMatrix *= rootTransformMatrix.Value;
+        importMatrix *= axisConversion;
         return importMatrix;
     }
 

@@ -145,10 +145,9 @@ namespace XREngine.Rendering.Vulkan
                         $"Presentation was accepted without truthful new-frame identity " +
                         $"(recorded={attempt.ScenePrimaryRecordedThisFrame}, " +
                         $"submitted={attempt.Submitted}, serial={attempt.GraphicsSignalValue}).");
-                    _presentNowTerminalFailure ??= failure;
-                    attempt.DeferredFailure ??= failure;
-                    Debug.VulkanError(
-                        $"[Vulkan][PresentNow][RendererPaused] {failure.Message}");
+                    StorePresentNowTerminalFailure(ref attempt, failure);
+                    attempt.DeferredFailure ??=
+                        _presentNowTerminalFailure;
                 }
             }
             RecordDesktopPresentBookkeeping(
@@ -162,6 +161,11 @@ namespace XREngine.Rendering.Vulkan
                     ref attempt);
                 TryCompleteResizeReleaseHandoffAfterSuccessorPresent(
                     ref attempt);
+                if (IsSuccessfulPresentNowRecoveryFrame(
+                        ref attempt,
+                        result,
+                        presentAccepted))
+                    CompletePresentNowRecoveryProbe(ref attempt);
             }
             if (VulkanFrameDiagnosticsTraceEnabled)
             {

@@ -104,12 +104,71 @@ generation becomes active, the legacy integer `ResourceGeneration` stamp
 increments, and the old generation is retired. On failure, the pending
 generation is disposed and the active generation keeps rendering.
 
+Each generation also carries two stable ownership identities:
+
+- `ResourceGenerationKey.PipelineRevision` is local to the pipeline instance and
+  changes whenever a different pipeline asset reference is applied, including
+  replacement by another asset of the same concrete type.
+- `RenderResourceGeneration.OwnerPipeline` retains the exact asset that declared
+  and materialized the generation. Retirement and destruction callbacks use
+  this retained owner even if the camera has since selected another asset.
+
+These identities prevent structurally equivalent resource keys from crossing an
+asset boundary and prevent delayed retirement from invoking callbacks on the
+successor asset.
+
+## Pipeline Asset Transitions
+
+Camera pipeline changes use `XRCamera.ReplaceRenderPipelineAsset`. Assigning the
+same asset reference is a strict no-op; every different reference synchronizes
+the camera's bound viewports. The runtime instance collapses queued changes to
+the latest requested asset and applies the transition on the render thread
+before command recording.
+
+An applied transition removes instance ownership from the outgoing asset,
+advances the pipeline revision, clears pipeline variables and transient runtime
+state, and force-rebuilds `RenderCommandCollection` publications even when the
+incoming pass list is structurally equivalent. Old active generations remain
+owned and fence-retired by their creating asset, but they cannot validate a
+command chain from the new revision. A successor with an empty declared layout
+explicitly retires the old managed generation and uses the imported output or
+legacy resource path. This makes cross-type, same-type/different-asset, and
+managed-to-layoutless changes use one lifecycle.
+
+The transition request, the applying asset, and the fully applied asset are
+distinct states protected by the instance transition lock. Output binding uses
+the applying asset while a transition callback is running and the fully applied
+asset otherwise; it never samples the request-facing camera property as a
+partially published target. A vetoed property mutation aborts before ownership
+or revision state changes, while a callback failure removes any partially
+published asset membership before the next request is considered.
+
+Asset instance membership, command-chain publication, and pipeline-owned
+settings invalidation are render-thread mutations. Each delayed callback also
+checks the asset owner, pipeline revision, and command generation while holding
+the transition lock through the mutation, so a stale snapshot cannot invalidate
+or rebuild a successor asset. Terminal teardown is best effort: every pending,
+active, retired, and legacy resource set receives cleanup even if an earlier
+callback fails, and individual notification subscribers cannot prevent the
+remaining teardown steps.
+
+Layout classification is intentionally tri-state while a transition is being
+described. The last successfully applied layoutless key remains authoritative
+until empty-layout cleanup succeeds, so a transient description or cleanup
+failure cannot make stale legacy resources appear current. Readiness likewise
+rejects any outstanding transition request, including a request that has not yet
+reached the render thread.
+
 ## Resize And Settings Changes
 
 Internal-resolution resize, display-region resize, rendering settings changes,
 and AA settings changes request a new generation instead of emptying the active
-registry. The active generation remains available until the replacement
-generation commits.
+registry. `XRViewport` batches its display extent, camera Full/Scale/Manual
+internal-resolution policy, and pipeline AA/upscale policy, then publishes one
+coherent display/internal profile. The pipeline instance owns the generic
+generation request; concrete Default and Advanced hooks invalidate only their
+ancillary histories. The active generation remains available until the
+replacement generation commits.
 
 Resize-sized generation requests are debounced for 125 ms and capped at 300 ms
 of coalescing so interactive window and scene-panel drags do not rebuild every
@@ -134,6 +193,10 @@ internal generation is committed only after the matching viewport internal
 resolution and render-pipeline generation are active; stale pending generations
 are rejected. This keeps live window borders responsive while avoiding a
 partially committed registry or stale exact-size diagnostics.
+
+Resize completion compares each viewport's active generation with that
+viewport's actual display and actual internal extent. It does not assume that
+all viewports or automatic-upscale modes use the full pending window size.
 
 ## Default Pipeline Coverage
 
@@ -175,6 +238,12 @@ allocation fails, the active plan remains in use and the failure is logged.
 After a successful swap, old Vulkan physical resources are retired through the
 renderer's existing frame-slot destruction queues; any remaining conservative
 idle bridge stays explicit and diagnosed.
+
+Resizable Vulkan buffers choose both memory policy and backing allocation from
+the same rounded planned capacity. This matters at the 64 KiB static-upload
+threshold: deriving policy from a smaller logical length while allocating the
+rounded capacity can misclassify a device-local buffer as host-visible and make
+a later generation attempt an illegal mapped upload.
 
 ## Diagnostics And Tests
 

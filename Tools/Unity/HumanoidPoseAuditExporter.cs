@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.IO.Compression;
+using System.Text;
 #if UNITY_EDITOR
 using UnityEditor;
 #endif
@@ -11,16 +13,37 @@ using UnityEngine.Playables;
 [ExecuteAlways]
 public sealed class HumanoidPoseAuditExporter : MonoBehaviour
 {
+#if UNITY_EDITOR
+    [Serializable]
+    private sealed class CorpusBatchCaseList
+    {
+        public CorpusBatchCase[] Cases = Array.Empty<CorpusBatchCase>();
+    }
+
+    [Serializable]
+    private sealed class CorpusBatchCase
+    {
+        public string ModelAssetPath = string.Empty;
+        public string ClipAssetPath = string.Empty;
+        public string OutputPath = string.Empty;
+        public string AvatarProfileOutputPath = string.Empty;
+        public int SampleRate;
+    }
+#endif
+
     [Serializable]
     private sealed class PoseAuditReport
     {
-        public int SchemaVersion = 6;
+        public int SchemaVersion = 7;
         public string Source = "UnityMecanim";
         public string ClipName = string.Empty;
         public string AvatarName = string.Empty;
-        public string BodyPositionSpace = "HumanPose bodyPosition: world-space center of mass normalized by Animator.humanScale";
+        public string BodyPositionSpace = "Diagnostic HumanPose bodyPosition; solved Body is exported separately in CommonPoseSpace.";
+        public string CommonPoseSpace = "Right-handed model-root space in meters (+X right, +Y up, +Z forward); rotations are right-handed relative to that root.";
         public string BoneRootSpace = "Animator GameObject local space";
         public string BoneWorldSpace = "Unity world space";
+        public List<string> RequiredBoneRoles = new();
+        public List<string> RequiredMuscleChannels = new();
         public float DurationSeconds;
         public int SampleRate;
         public int SampleCount;
@@ -41,6 +64,9 @@ public sealed class HumanoidPoseAuditExporter : MonoBehaviour
         public float TimeSeconds;
         public PoseVector3 BodyPosition = new();
         public PoseQuaternion BodyRotation = new();
+        public bool HasSolvedBodyModelRootPose;
+        public PoseVector3 SolvedBodyModelRootPositionMeters = new();
+        public PoseQuaternion SolvedBodyModelRootRotation = new();
         public PoseVector3 CharacterRootLocalPosition = new();
         public PoseQuaternion CharacterRootLocalRotation = new();
         public PoseVector3 CharacterRootWorldPosition = new();
@@ -51,6 +77,10 @@ public sealed class HumanoidPoseAuditExporter : MonoBehaviour
         public PoseQuaternion RootMotionDeltaRotation = new();
         public PoseVector3 HipsLocalPosition = new();
         public PoseQuaternion HipsLocalRotation = new();
+        public PoseVector3 HipsModelRootPositionMeters = new();
+        public PoseQuaternion HipsModelRootRotation = new();
+        public PoseVector3 HipsWorldPositionMeters = new();
+        public PoseQuaternion HipsWorldRotation = new();
         public float LeftFeetBottomHeight;
         public float RightFeetBottomHeight;
         public List<NamedFloat> Muscles = new();
@@ -279,6 +309,9 @@ public sealed class HumanoidPoseAuditExporter : MonoBehaviour
         public PoseQuaternion PoseDeltaFromNeutralRotation = new();
         public PoseVector3 RootSpacePosition = new();
         public PoseVector3 WorldPosition = new();
+        public PoseQuaternion WorldRotation = new();
+        public PoseVector3 ModelRootPositionMeters = new();
+        public PoseQuaternion ModelRootRotation = new();
     }
 
     [Serializable]
@@ -445,6 +478,66 @@ public sealed class HumanoidPoseAuditExporter : MonoBehaviour
             UnityEngine.Object.DestroyImmediate(instance);
         }
     }
+
+    /// <summary>
+    /// Captures a checked-in corpus of Unity humanoid avatar/clip pairs from a
+    /// JSON case list. Invoke Unity with <c>-poseAuditCorpus &lt;path&gt;</c>.
+    /// Each case contains ModelAssetPath, ClipAssetPath, OutputPath, and
+    /// optional AvatarProfileOutputPath and SampleRate properties.
+    /// </summary>
+    public static void ExportCorpusBatch()
+    {
+        string caseListPath = GetRequiredCommandLineArgument("-poseAuditCorpus");
+        string fullCaseListPath = Path.GetFullPath(caseListPath);
+        if (!File.Exists(fullCaseListPath))
+            throw new InvalidOperationException("Could not find pose-audit corpus case list at '" + fullCaseListPath + "'.");
+
+        CorpusBatchCaseList? caseList = JsonUtility.FromJson<CorpusBatchCaseList>(File.ReadAllText(fullCaseListPath));
+        if (caseList?.Cases == null || caseList.Cases.Length == 0)
+            throw new InvalidOperationException("Pose-audit corpus case list must contain at least one case.");
+
+        for (int i = 0; i < caseList.Cases.Length; i++)
+        {
+            CorpusBatchCase? nullableBatchCase = caseList.Cases[i];
+            if (nullableBatchCase == null)
+                throw new InvalidOperationException("Pose-audit corpus case " + i + " is null.");
+            CorpusBatchCase batchCase = nullableBatchCase;
+            if (string.IsNullOrWhiteSpace(batchCase.ModelAssetPath)
+                || string.IsNullOrWhiteSpace(batchCase.ClipAssetPath)
+                || string.IsNullOrWhiteSpace(batchCase.OutputPath))
+                throw new InvalidOperationException(
+                    "Pose-audit corpus case " + i + " requires ModelAssetPath, ClipAssetPath, and OutputPath.");
+
+            GameObject modelAsset = AssetDatabase.LoadAssetAtPath<GameObject>(batchCase.ModelAssetPath);
+            if (modelAsset == null)
+                throw new InvalidOperationException("Could not load humanoid model asset at '" + batchCase.ModelAssetPath + "'.");
+
+            AnimationClip clip = AssetDatabase.LoadAssetAtPath<AnimationClip>(batchCase.ClipAssetPath);
+            if (clip == null)
+                throw new InvalidOperationException("Could not load animation clip asset at '" + batchCase.ClipAssetPath + "'.");
+
+            GameObject instance = UnityEngine.Object.Instantiate(modelAsset);
+            instance.hideFlags = HideFlags.HideAndDontSave;
+            instance.name = modelAsset.name + "_PoseAuditCorpusSource";
+            try
+            {
+                Animator animator = instance.GetComponentInChildren<Animator>(true);
+                if (animator == null || !animator.isHuman)
+                    throw new InvalidOperationException(
+                        "Corpus model '" + batchCase.ModelAssetPath + "' is missing a valid humanoid Animator/Avatar.");
+
+                int sampleRate = batchCase.SampleRate > 0
+                    ? batchCase.SampleRate
+                    : Mathf.Max(1, Mathf.RoundToInt(clip.frameRate > 0.0f ? clip.frameRate : 30.0f));
+                ExportAnimator(animator, clip, batchCase.OutputPath,
+                    batchCase.AvatarProfileOutputPath, sampleRate);
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(instance);
+            }
+        }
+    }
 #endif
 
     private static void ExportAnimator(
@@ -469,7 +562,7 @@ public sealed class HumanoidPoseAuditExporter : MonoBehaviour
             var report = SampleAnimator(cloneAnimator, clip, sampleRate);
             string fullPath = ResolveOutputPath(outputPath);
             Directory.CreateDirectory(Path.GetDirectoryName(fullPath) ?? ".");
-            File.WriteAllText(fullPath, JsonUtility.ToJson(report, true));
+            WriteReport(fullPath, report);
             Debug.Log("[HumanoidPoseAuditExporter] Wrote pose audit to " + fullPath);
 
             if (!string.IsNullOrWhiteSpace(avatarProfileOutputPath))
@@ -656,6 +749,12 @@ public sealed class HumanoidPoseAuditExporter : MonoBehaviour
             AvatarSettings = ReadAvatarSettings(animator.avatar),
             RootMotionSettings = ReadRootMotionSettings(clip),
         };
+        foreach (BoneDefinition bone in BonesToSample)
+            if (animator.GetBoneTransform(bone.Bone) != null)
+                report.RequiredBoneRoles.Add(bone.Name);
+        string[] requiredMuscleNames = HumanTrait.MuscleName;
+        for (int i = 0; i < requiredMuscleNames.Length; i++)
+            report.RequiredMuscleChannels.Add(requiredMuscleNames[i]);
 
         animator.cullingMode = AnimatorCullingMode.AlwaysAnimate;
         PopulateMuscleDefaultRanges(report);
@@ -796,11 +895,26 @@ public sealed class HumanoidPoseAuditExporter : MonoBehaviour
             RightFeetBottomHeight = animator.rightFeetBottomHeight,
         };
 
+        // HumanPose Body is Unity's solved humanoid output.  Its position is
+        // normalized by humanScale, so scale it before moving it into the
+        // Animator's model-root frame.  Raw HumanPose values above stay solely
+        // as diagnostics and are never used by schema-7 conformance metrics.
+        Transform root = animator.transform;
+        sample.SolvedBodyModelRootPositionMeters = PoseVector3.From(
+            root.InverseTransformPoint(humanPose.bodyPosition * animator.humanScale));
+        sample.SolvedBodyModelRootRotation = PoseQuaternion.From(
+            Quaternion.Inverse(root.rotation) * humanPose.bodyRotation);
+        sample.HasSolvedBodyModelRootPose = true;
+
         Transform hips = animator.GetBoneTransform(HumanBodyBones.Hips);
         if (hips != null)
         {
             sample.HipsLocalPosition = PoseVector3.From(hips.localPosition);
             sample.HipsLocalRotation = PoseQuaternion.From(hips.localRotation);
+            sample.HipsModelRootPositionMeters = PoseVector3.From(root.InverseTransformPoint(hips.position));
+            sample.HipsModelRootRotation = PoseQuaternion.From(Quaternion.Inverse(root.rotation) * hips.rotation);
+            sample.HipsWorldPositionMeters = PoseVector3.From(hips.position);
+            sample.HipsWorldRotation = PoseQuaternion.From(hips.rotation);
         }
 
         string[] muscleNames = HumanTrait.MuscleName;
@@ -825,7 +939,6 @@ public sealed class HumanoidPoseAuditExporter : MonoBehaviour
             });
         }
 
-        Transform root = animator.transform;
         foreach (BoneDefinition bone in BonesToSample)
         {
             Transform boneTransform = animator.GetBoneTransform(bone.Bone);
@@ -854,6 +967,9 @@ public sealed class HumanoidPoseAuditExporter : MonoBehaviour
                     Quaternion.Inverse(neutralBindRelativeRotation) * bindRelativeRotation),
                 RootSpacePosition = PoseVector3.From(root.InverseTransformPoint(boneTransform.position)),
                 WorldPosition = PoseVector3.From(boneTransform.position),
+                WorldRotation = PoseQuaternion.From(boneTransform.rotation),
+                ModelRootPositionMeters = PoseVector3.From(root.InverseTransformPoint(boneTransform.position)),
+                ModelRootRotation = PoseQuaternion.From(Quaternion.Inverse(root.rotation) * boneTransform.rotation),
             });
         }
 
@@ -2062,6 +2178,26 @@ public sealed class HumanoidPoseAuditExporter : MonoBehaviour
             return rawPath;
 
         return Path.GetFullPath(Path.Combine(Directory.GetParent(Application.dataPath).FullName, rawPath));
+    }
+
+    /// <summary>
+    /// Writes JSON directly or a deterministic gzip member when the output name
+    /// ends in <c>.json.gz</c>.  GZipStream does not include a wall-clock timestamp,
+    /// so identical Unity report bytes produce identical checked-in artifacts.
+    /// </summary>
+    private static void WriteReport(string fullPath, PoseAuditReport report)
+    {
+        string json = JsonUtility.ToJson(report, true);
+        if (!fullPath.EndsWith(".json.gz", StringComparison.OrdinalIgnoreCase))
+        {
+            File.WriteAllText(fullPath, json, new UTF8Encoding(false));
+            return;
+        }
+
+        byte[] bytes = new UTF8Encoding(false).GetBytes(json);
+        using FileStream output = new(fullPath, FileMode.Create, FileAccess.Write, FileShare.Read);
+        using var gzip = new GZipStream(output, System.IO.Compression.CompressionLevel.Optimal, leaveOpen: false);
+        gzip.Write(bytes, 0, bytes.Length);
     }
 
     private static void DisableBehaviours(GameObject cloneRoot)

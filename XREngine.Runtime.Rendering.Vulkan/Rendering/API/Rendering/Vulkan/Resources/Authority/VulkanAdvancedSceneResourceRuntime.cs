@@ -16,7 +16,11 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
     private const int PublicationCapacityPerFrameSlot = 256;
     private const int ReceiptCapacityPerFrameSlot = 1024;
     private const int SamplerCacheCapacity = 4096;
-    private const ulong StorageCapacityPerFrameSlot = 8ul * 1024ul * 1024ul;
+    // The sealed scene table image is rebuilt after target invalidation (for
+    // example, a desktop resize). Keep this boundary-owned lane large enough
+    // for the observed full canonical publication without permitting native
+    // arena growth from the frame-preparation hot path.
+    private const ulong StorageCapacityPerFrameSlot = 32ul * 1024ul * 1024ul;
     private const uint StorageAlignment = 16u;
     private const uint FallbackTableByteLength = 1024u;
     private const EAdvancedSamplerRecordFlags SupportedSamplerFlags =
@@ -144,6 +148,13 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
                     "The canonical Vulkan frame-data arena is unavailable.",
                     out reason);
             }
+            if (!TryValidateStorageReservationBudget(arena, out string storageBudgetReason))
+            {
+                return SetUnavailable(
+                    EVulkanAdvancedSceneResourceFailure.FrameStorageCapacity,
+                    storageBudgetReason,
+                    out reason);
+            }
             if (!arena.TryReserveLaneCapacity(
                     EVulkanFrameDataLane.AdvancedSceneStorage,
                     StorageCapacityPerFrameSlot,
@@ -151,7 +162,9 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
             {
                 return SetUnavailable(
                     EVulkanAdvancedSceneResourceFailure.FrameStorageCapacity,
-                    $"Failed to reserve {StorageCapacityPerFrameSlot} bytes per frame slot for advanced-scene storage.",
+                    $"Failed to reserve the declared {StorageCapacityPerFrameSlot}-byte advanced-scene storage budget per frame slot " +
+                    $"({GetStorageReservationBytes()} bytes across {_slots.Length} slots). The frame-data arena enforces a " +
+                    $"{VulkanFrameDataArena.MaximumMappedBytes}-byte aggregate mapped-memory guard.",
                     out reason);
             }
 
@@ -191,12 +204,14 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
                     EVulkanAdvancedSceneResourceFailure.None;
                 AvailabilityReason = "Ready";
                 Debug.Vulkan(
-                    "[VulkanAdvancedScene] Descriptor-indexing resource runtime ready: frameSlots={0}, descriptorCapacity={1}, globalSet={2}, resourceSet={3}, storageBytesPerSlot={4}.",
+                    "[VulkanAdvancedScene] Descriptor-indexing resource runtime ready: frameSlots={0}, descriptorCapacity={1}, globalSet={2}, resourceSet={3}, storageBytesPerSlot={4}, storageReservationBytes={5}, frameArenaAllocatedBytes={6}.",
                     _slots.Length,
                     DescriptorCapacity,
                     GlobalSetIndex,
                     ResourceSetIndex,
-                    StorageCapacityPerFrameSlot);
+                    StorageCapacityPerFrameSlot,
+                    GetStorageReservationBytes(),
+                    arena.AllocatedBytes);
                 reason = "Ready";
                 return true;
             }
@@ -540,6 +555,42 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
         }
     }
 
+    /// <summary>
+    /// Validates the fixed scene-lane declaration before native allocation.
+    /// The arena repeats this check while reserving, but reporting the exact
+    /// requested reservation here makes an invalid startup budget actionable.
+    /// </summary>
+    private bool TryValidateStorageReservationBudget(
+        VulkanFrameDataArena arena,
+        out string reason)
+    {
+        ulong reservationBytes = GetStorageReservationBytes();
+        ulong allocatedBytes = unchecked((ulong)Math.Max(arena.AllocatedBytes, 0L));
+        if (reservationBytes > VulkanFrameDataArena.MaximumMappedBytes ||
+            allocatedBytes > VulkanFrameDataArena.MaximumMappedBytes - reservationBytes)
+        {
+            reason =
+                $"The declared advanced-scene reservation of {StorageCapacityPerFrameSlot} bytes per frame slot " +
+                $"({reservationBytes} bytes across {_slots.Length} slots) cannot fit within the " +
+                $"{VulkanFrameDataArena.MaximumMappedBytes}-byte frame-data arena aggregate guard after {allocatedBytes} bytes are already allocated.";
+            return false;
+        }
+
+        reason = "Ready";
+        return true;
+    }
+
+    private ulong GetStorageReservationBytes()
+        => checked(StorageCapacityPerFrameSlot * (ulong)_slots.Length);
+
+    private static string DescribeStorageCapacityExhaustion(
+        ulong requiredBytes,
+        ulong consumedBytes,
+        ulong compactRequiredBytes)
+        => $"Frame-slot advanced-scene storage requires {requiredBytes} bytes after {consumedBytes} of the declared " +
+           $"{StorageCapacityPerFrameSlot}-byte budget were consumed (compact rebuild requires {compactRequiredBytes} bytes). " +
+           "This boundary-owned lane is fixed for the renderer generation and cannot grow from frame preparation; the failure is not retryable.";
+
     private bool TryBuildPublication(
         VulkanAdvancedSceneResourceSlot slot,
         int frameSlot,
@@ -678,7 +729,10 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
         else if (!retainFits)
         {
             failure = EVulkanAdvancedSceneResourceFailure.FrameStorageCapacity;
-            reason = $"Frame-slot advanced-scene storage requires {requiredStorage} more bytes after {retainedConsumedStorage} of {StorageCapacityPerFrameSlot} bytes were consumed.";
+            reason = DescribeStorageCapacityExhaustion(
+                requiredStorage,
+                retainedConsumedStorage,
+                compactRequiredStorage);
             return false;
         }
         if (!TryRetainPlannedResidentSlices(slot, allocationPlan) ||
@@ -717,7 +771,10 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
             }
             failure =
                 EVulkanAdvancedSceneResourceFailure.FrameStorageCapacity;
-            reason = $"Frame-slot advanced-scene storage requires {requiredStorage} more bytes after {consumedStorage} of {StorageCapacityPerFrameSlot} bytes were consumed.";
+            reason = DescribeStorageCapacityExhaustion(
+                requiredStorage,
+                consumedStorage,
+                allocationPlan.CompactRequiredBytes);
             return false;
         }
         ulong plannedEndCursor = checked(consumedStorage + requiredStorage);

@@ -23,6 +23,7 @@ internal enum EDesktopFrameReason
     RecordingFailed,
     OverlayRecordingFailed,
     RecordingDirtied,
+    PresentNowReadinessRetry,
     PresentNowReadinessFailed,
     SubmitFailed,
     PresentOutOfDate,

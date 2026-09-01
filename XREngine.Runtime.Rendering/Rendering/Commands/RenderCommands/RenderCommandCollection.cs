@@ -277,7 +277,31 @@ namespace XREngine.Rendering.Commands
         internal static CpuSoftwareOcclusionCuller CpuSoftwareOcclusion => s_cpuSoftwareOcclusionCuller;
 
         public bool IsShadowPass => IsOwnedByShadowPipeline;
-        public void SetRenderPasses(Dictionary<int, IComparer<RenderCommand>?> passIndicesAndSorters, IEnumerable<RenderPassMetadata>? passMetadata = null)
+
+        /// <summary>
+        /// Rebuilds the pass collections for a render-pipeline asset transition, even when the
+        /// incoming pass configuration is structurally identical to the current configuration.
+        /// </summary>
+        /// <remarks>
+        /// Pass metadata and sorter equivalence intentionally remains an early-out for ordinary
+        /// configuration updates. Asset replacement is different: previously published command
+        /// and backend-ready state belongs to the outgoing pipeline and must not leak into the
+        /// incoming pipeline's first frame.
+        /// </remarks>
+        public void ResetForPipelineTransition(
+            Dictionary<int, IComparer<RenderCommand>?> passIndicesAndSorters,
+            IEnumerable<RenderPassMetadata>? passMetadata = null)
+            => SetRenderPassesCore(passIndicesAndSorters, passMetadata, forceRebuild: true);
+
+        public void SetRenderPasses(
+            Dictionary<int, IComparer<RenderCommand>?> passIndicesAndSorters,
+            IEnumerable<RenderPassMetadata>? passMetadata = null)
+            => SetRenderPassesCore(passIndicesAndSorters, passMetadata, forceRebuild: false);
+
+        private void SetRenderPassesCore(
+            Dictionary<int, IComparer<RenderCommand>?> passIndicesAndSorters,
+            IEnumerable<RenderPassMetadata>? passMetadata,
+            bool forceRebuild)
         {
             using (_lock.EnterScope())
             {
@@ -285,29 +309,20 @@ namespace XREngine.Rendering.Commands
 
                 Dictionary<int, RenderPassMetadata> incomingPassMetadata = BuildPassMetadata(passMetadata);
                 EnsureDefaultPassMetadata(passIndicesAndSorters.Keys, incomingPassMetadata);
-                if (HasEquivalentPassConfiguration(passIndicesAndSorters, incomingPassMetadata))
+                if (!forceRebuild && HasEquivalentPassConfiguration(passIndicesAndSorters, incomingPassMetadata))
                     return;
 
                 string ownerName = _ownerPipeline?.DebugName ?? "<no-owner>";
-                Debug.Rendering($"[RenderCommandCollection] SetRenderPasses called. Owner={ownerName} PassCount={passIndicesAndSorters.Count} Keys=[{string.Join(",", passIndicesAndSorters.Keys.OrderBy(static x => x))}]");
+                Debug.Rendering($"[RenderCommandCollection] SetRenderPasses called. Owner={ownerName} ForceRebuild={forceRebuild} PassCount={passIndicesAndSorters.Count} Keys=[{string.Join(",", passIndicesAndSorters.Keys.OrderBy(static x => x))}]");
+
+                ClearPipelineTransitionPublicationsNoLock();
 
                 _updatingPasses = passIndicesAndSorters.ToDictionary(x => x.Key, x => CreatePassCollection(x.Value));
                 _passSorterTypes = passIndicesAndSorters.ToDictionary(x => x.Key, x => x.Value?.GetType());
                 _updatingPassSortOrderCounters = passIndicesAndSorters.Keys.ToDictionary(static key => key, static _ => 0L);
 
                 _renderingPasses = [];
-                _renderingPassCommandCounts.Clear();
-                _renderingPassCommandCounts.EnsureCapacity(_renderingPasses.Count);
-                _renderingPassMeshCommandCounts.Clear();
-                _renderingPassMeshCommandCounts.EnsureCapacity(_renderingPasses.Count);
-                _renderingPassCommandSetSignatures.Clear();
-                _renderingShadowCasterCommandSetSignature = 0u;
-                _renderingCommandCount = 0;
-                _renderingMeshCommandCount = 0;
                 _gpuPasses = [];
-                _updatingRevision++;
-                _updatingBackendReadyPackage.Reset();
-                _renderingBackendReadyPackage.Reset();
 
                 _passMetadata = incomingPassMetadata;
 
@@ -327,6 +342,50 @@ namespace XREngine.Rendering.Commands
                         _passMetadata[pass.Key] = new RenderPassMetadata(pass.Key, $"Pass{pass.Key}", ERenderGraphPassStage.Graphics);
                 }
             }
+        }
+
+        /// <summary>
+        /// Clears all producer and consumer state that is scoped to the outgoing pipeline asset.
+        /// The caller owns both collection locks, so no render-side reader can observe a partially
+        /// reset publication.
+        /// </summary>
+        private void ClearPipelineTransitionPublicationsNoLock()
+        {
+            foreach (ICollection<RenderCommand> pass in _updatingPasses.Values)
+                pass.Clear();
+
+            foreach (ICollection<RenderCommand> pass in _renderingPasses.Values)
+                pass.Clear();
+
+            ClearSwapQueueNoLock(_updatingSwapQueue, _updatingSwapQueueMembership);
+            ClearSwapQueueNoLock(_renderingSwapQueue, _renderingSwapQueueMembership);
+
+            _renderingPassCommandCounts.Clear();
+            _renderingPassMeshCommandCounts.Clear();
+            _renderingPassCommandSetSignatures.Clear();
+            _renderingShadowCasterCommandSetSignature = 0u;
+            _renderingCommandCount = 0;
+            _renderingMeshCommandCount = 0;
+            _numCommandsRecentlyAddedToUpdate = 0;
+            _updatingBackendReadyIdentity = BackendReadyFramePackageIdentity.Unspecified;
+            _updatingRevision++;
+            _updatingBackendReadyPackage.Reset();
+            _renderingBackendReadyPackage.Reset();
+        }
+
+        private static void ClearSwapQueueNoLock(
+            List<RenderCommand> queue,
+            HashSet<RenderCommand> membership)
+        {
+            for (int commandIndex = 0; commandIndex < queue.Count; commandIndex++)
+            {
+                RenderCommand command = queue[commandIndex];
+                if (command is not null)
+                    command._authoritativePublishQueued = false;
+            }
+
+            queue.Clear();
+            membership.Clear();
         }
 
         private static ICollection<RenderCommand> CreatePassCollection(IComparer<RenderCommand>? sorter)
@@ -643,14 +702,25 @@ namespace XREngine.Rendering.Commands
             int viewportWidth = 0,
             int viewportHeight = 0)
         {
+            XRRenderPipelineInstance? ownerPipeline =
+                _ownerPipeline as XRRenderPipelineInstance;
+            RenderPipeline? pipeline = ownerPipeline?.Pipeline;
             IReadOnlyCollection<RenderPassMetadata>? passMetadata =
-                (_ownerPipeline as XRRenderPipelineInstance)?.Pipeline?.PassMetadata;
+                pipeline?.PassMetadata;
             _updatingBackendReadyPackage.Prepare(
                 _updatingBackendReadyIdentity,
                 Interlocked.Increment(ref _backendReadyPackageGeneration),
                 _updatingRevision,
                 _updatingPasses,
                 passMetadata);
+
+            if (pipeline?.RequiresCanonicalGpuScenePublication != true)
+            {
+                _updatingBackendReadyPackage.ResetCanonical();
+                return;
+            }
+
+            scene?.RequestAdvancedResidentPublication();
             _updatingBackendReadyPackage.PrepareCanonicalFromScene(
                 scene,
                 camera,

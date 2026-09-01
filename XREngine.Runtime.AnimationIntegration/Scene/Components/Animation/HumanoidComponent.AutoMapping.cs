@@ -358,24 +358,61 @@ public partial class HumanoidComponent
         AssignTopologyRole(EHumanoidAvatarBoneRole.Spine, spine, 0.92f, "First stable joint on the ascending torso chain.", assigned);
         AssignTopologyRole(EHumanoidAvatarBoneRole.Head, head, 0.88f, "Top branching joint on the ascending torso chain.", assigned);
 
+        int neckIndex = FindTorsoAliasIndex(path, 1, headIndex, "neck");
+        if (neckIndex < 0 && headIndex > 0)
+            neckIndex = headIndex - 1;
+
         int shoulderLevel = FindShoulderLevel(path, headIndex, byNode, bodyRight, skeletonHeight);
-        if (shoulderLevel > 0 && shoulderLevel < headIndex)
-            AssignTopologyRole(EHumanoidAvatarBoneRole.Chest, path[shoulderLevel], 0.86f, "Torso joint supporting bilateral lateral arm branches.", assigned);
-
-        // Reserve the joint immediately below Head for Neck. UpperChest only
-        // exists when the torso has another distinct joint between Chest and
-        // Neck; otherwise assigning it would consume the neck transform.
-        if (shoulderLevel > 0 && shoulderLevel + 2 < headIndex)
-            AssignTopologyRole(EHumanoidAvatarBoneRole.UpperChest, path[shoulderLevel + 1], 0.78f, "Upper torso joint between the shoulder level and neck.", assigned);
-
-        if (headIndex > 0)
+        int chestIndex = FindTorsoAliasIndex(path, 1, neckIndex, "chest", "upperchest");
+        int upperChestIndex = chestIndex >= 0
+            ? FindTorsoAliasIndex(path, chestIndex + 1, neckIndex, "upperchest")
+            : -1;
+        if (chestIndex < 0 && shoulderLevel > 0 && shoulderLevel < neckIndex)
         {
-            SceneNode neck = path[headIndex - 1];
+            // The lateral-arm branch is the upper torso joint when another
+            // distinct joint exists below it; otherwise it is the Chest itself.
+            if (shoulderLevel > 1)
+            {
+                chestIndex = shoulderLevel - 1;
+                upperChestIndex = shoulderLevel;
+            }
+            else
+            {
+                chestIndex = shoulderLevel;
+            }
+        }
+
+        if (chestIndex > 0 && chestIndex < neckIndex)
+            AssignTopologyRole(EHumanoidAvatarBoneRole.Chest, path[chestIndex], 0.88f, "Torso joint below the optional upper-chest/shoulder level.", assigned);
+        if (upperChestIndex > chestIndex && upperChestIndex < neckIndex)
+            AssignTopologyRole(EHumanoidAvatarBoneRole.UpperChest, path[upperChestIndex], 0.86f, "Optional upper torso joint supporting the shoulder level.", assigned);
+
+        if (neckIndex > 0 && neckIndex < headIndex)
+        {
+            SceneNode neck = path[neckIndex];
             float neckAlias = AliasScore(neck.Name, "neck");
             float neckLength = Vector3.Distance(byNode[neck].Position, byNode[head].Position);
             if (neckAlias > 0.0f || neckLength < skeletonHeight * 0.18f)
                 AssignTopologyRole(EHumanoidAvatarBoneRole.Neck, neck, 0.76f + neckAlias * 0.12f, "Short terminal torso joint immediately below the head.", assigned);
         }
+    }
+
+    private static int FindTorsoAliasIndex(
+        List<SceneNode> path,
+        int startIndex,
+        int endExclusive,
+        string alias,
+        string? excludedAlias = null)
+    {
+        int boundedEnd = Math.Min(endExclusive, path.Count);
+        for (int i = Math.Max(0, startIndex); i < boundedEnd; i++)
+        {
+            if (excludedAlias is not null && AliasScore(path[i].Name, excludedAlias) >= 0.9f)
+                continue;
+            if (AliasScore(path[i].Name, alias) >= 0.9f)
+                return i;
+        }
+        return -1;
     }
 
     private static int SelectHeadIndex(
@@ -427,7 +464,8 @@ public partial class HumanoidComponent
     {
         var torsoNodes = new HashSet<SceneNode>(path, ReferenceEqualityComparer.Instance);
         for (int i = headIndex - 1; i > 0; i--)
-            if (AliasScore(path[i].Name, "chest", "upperchest") >= 0.9f)
+            if (AliasScore(path[i].Name, "upperchest") < 0.9f
+                && AliasScore(path[i].Name, "chest") >= 0.9f)
                 return i;
 
         int bestIndex = -1;

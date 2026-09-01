@@ -150,19 +150,14 @@ public static class FbxDeformerParser
             return null;
 
         Matrix4x4 transformMatrix = reader.TryReadMatrix4x4Child(clusterObject.NodeIndex, "Transform") ?? Matrix4x4.Identity;
-        Matrix4x4 transformLinkMatrix = reader.TryReadMatrix4x4Child(clusterObject.NodeIndex, "TransformLink") ?? Matrix4x4.Identity;
+        Matrix4x4? authoredTransformLink = reader.TryReadMatrix4x4Child(clusterObject.NodeIndex, "TransformLink");
+        Matrix4x4 transformLinkMatrix = authoredTransformLink ?? Matrix4x4.Identity;
 
-        // FBX stores matrices in row-major column-vector convention.  Reading them directly
-        // into System.Numerics (row-major, row-vector) preserves the raw bytes, so the
-        // loaded values are the column-vector matrices as-is (NOT their transposes).
-        //
-        // The column-vector inverse-bind is:  invBind_CV = inverse(TransformLink) * Transform
-        // The row-vector equivalent is:       invBind_RV = transpose(invBind_CV)
-        //
-        // We compute invBind_CV first, then transpose, because the engine and the vertex
-        // shader (row_major SSBOs + row-vector multiplication) expect row-vector matrices.
+        // The structural reader has already converted FBX matrices to System.Numerics'
+        // row-vector convention.  Do not transpose them again: the FBX skin bind is the
+        // mesh bind transform followed by the inverse linked-bone bind transform.
         Matrix4x4 inverseBindMatrix = Matrix4x4.Invert(transformLinkMatrix, out Matrix4x4 inverseLink)
-            ? Matrix4x4.Transpose(inverseLink * transformMatrix)
+            ? transformMatrix * inverseLink
             : Matrix4x4.Identity;
 
         Dictionary<int, float> controlPointWeights = new(indices.Length);
@@ -190,7 +185,8 @@ public static class FbxDeformerParser
             transformMatrix,
             transformLinkMatrix,
             inverseBindMatrix,
-            controlPointWeights);
+            controlPointWeights,
+            authoredTransformLink.HasValue);
     }
 
     private static void AddConnectedClusters(FbxSemanticDocument semantic, int skinObjectIndex, HashSet<long> clusterObjectIds, bool inbound)

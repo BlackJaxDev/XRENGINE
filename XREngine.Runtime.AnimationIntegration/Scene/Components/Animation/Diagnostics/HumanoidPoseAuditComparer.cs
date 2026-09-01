@@ -58,6 +58,18 @@ namespace XREngine.Components.Animation
             if (reference.Samples.Count != actual.Samples.Count)
                 report.Warnings.Add($"Sample count mismatch: reference={reference.Samples.Count}, actual={actual.Samples.Count}.");
 
+            if (reference.SchemaVersion < HumanoidPoseAuditReport.CurrentSchemaVersion
+                || actual.SchemaVersion < HumanoidPoseAuditReport.CurrentSchemaVersion)
+            {
+                AddFailure(report, "SchemaVersion", "Schema-7 common-space fields are required for a conformance comparison.", null);
+                return report;
+            }
+
+            ValidateDeclaredCoverage(reference, "reference", report);
+            ValidateDeclaredCoverage(actual, "actual", report);
+            if (report.Failures.Count > 0)
+                return report;
+
             var bodyPosition = new MetricAccumulator();
             var bodyRotation = new MetricAccumulator();
             var projectedRootPosition = new MetricAccumulator();
@@ -66,10 +78,18 @@ namespace XREngine.Components.Animation
             var temporalRootRotation = new MetricAccumulator();
             var composedHipsPosition = new MetricAccumulator();
             var composedHipsRotation = new MetricAccumulator();
+            var solvedBodyPosition = new MetricAccumulator();
+            var solvedBodyRotation = new MetricAccumulator();
+            var hipsModelRootPosition = new MetricAccumulator();
+            var hipsModelRootRotation = new MetricAccumulator();
+            var hipsWorldPosition = new MetricAccumulator();
+            var hipsWorldRotation = new MetricAccumulator();
             var muscles = new Dictionary<string, MetricAccumulator>(StringComparer.Ordinal);
             var boneLocalPositions = new Dictionary<string, MetricAccumulator>(StringComparer.Ordinal);
             var boneRotations = new Dictionary<string, MetricAccumulator>(StringComparer.Ordinal);
             var boneRootSpacePositions = new Dictionary<string, MetricAccumulator>(StringComparer.Ordinal);
+            var boneModelRootPositions = new Dictionary<string, MetricAccumulator>(StringComparer.Ordinal);
+            var boneWorldRotations = new Dictionary<string, MetricAccumulator>(StringComparer.Ordinal);
             bool convertSourceReferenceToXre = IsSourceToXreComparison(reference, actual);
             float referencePositionScale = convertSourceReferenceToXre
                 ? ResolveEngineUnitsPerSourceMeter(actual)
@@ -111,6 +131,15 @@ namespace XREngine.Components.Animation
                     timeMismatchLogged = true;
                     report.Warnings.Add($"Sample time mismatch at index {i}: reference={referenceSample.TimeSeconds:F6}, actual={actualSample.TimeSeconds:F6}.");
                 }
+
+                solvedBodyPosition.Add(Vector3.Distance(
+                    referenceSample.SolvedBodyModelRootPositionMeters.Value,
+                    actualSample.SolvedBodyModelRootPositionMeters.Value), referenceSample, actualSample);
+                solvedBodyRotation.Add(QuaternionAngleDegrees(
+                    referenceSample.SolvedBodyModelRootRotation.Value,
+                    actualSample.SolvedBodyModelRootRotation.Value), referenceSample, actualSample);
+                AccumulateCommonHipsErrors(referenceSample, actualSample,
+                    hipsModelRootPosition, hipsModelRootRotation, hipsWorldPosition, hipsWorldRotation);
 
                 if (!convertSourceReferenceToXre)
                 {
@@ -162,6 +191,8 @@ namespace XREngine.Components.Animation
                     boneLocalPositions,
                     boneRotations,
                     boneRootSpacePositions,
+                    boneModelRootPositions,
+                    boneWorldRotations,
                     convertSourceReferenceToXre,
                     referencePositionScale);
             }
@@ -176,11 +207,38 @@ namespace XREngine.Components.Animation
             report.TemporalRootMotionRotationErrorDegrees = temporalRootRotation.ToMetric();
             report.ComposedHipsLocalPositionError = composedHipsPosition.ToMetric();
             report.ComposedHipsLocalRotationErrorDegrees = composedHipsRotation.ToMetric();
+            report.SolvedBodyModelRootPositionErrorMeters = solvedBodyPosition.ToMetric();
+            report.SolvedBodyModelRootRotationErrorDegrees = solvedBodyRotation.ToMetric();
+            report.HipsModelRootPositionErrorMeters = hipsModelRootPosition.ToMetric();
+            report.HipsModelRootRotationErrorDegrees = hipsModelRootRotation.ToMetric();
+            report.HipsWorldPositionErrorMeters = hipsWorldPosition.ToMetric();
+            report.HipsWorldRotationErrorDegrees = hipsWorldRotation.ToMetric();
             report.MuscleAbsoluteError = ToMetricEntries(muscles);
             report.BoneLocalPositionError = ToMetricEntries(boneLocalPositions);
             report.BoneLocalRotationErrorDegrees = ToMetricEntries(boneRotations);
             report.BoneRootSpacePositionError = ToMetricEntries(boneRootSpacePositions);
+            report.BoneModelRootPositionErrorMeters = ToMetricEntries(boneModelRootPositions);
+            report.BoneWorldRotationErrorDegrees = ToMetricEntries(boneWorldRotations);
             return report;
+        }
+
+        private static void AccumulateCommonHipsErrors(
+            HumanoidPoseAuditSample referenceSample, HumanoidPoseAuditSample actualSample,
+            MetricAccumulator modelPosition, MetricAccumulator modelRotation,
+            MetricAccumulator worldPosition, MetricAccumulator worldRotation)
+        {
+            modelPosition.Add(Vector3.Distance(
+                referenceSample.HipsModelRootPositionMeters!.Value,
+                actualSample.HipsModelRootPositionMeters!.Value), referenceSample, actualSample);
+            modelRotation.Add(QuaternionAngleDegrees(
+                referenceSample.HipsModelRootRotation!.Value,
+                actualSample.HipsModelRootRotation!.Value), referenceSample, actualSample);
+            worldPosition.Add(Vector3.Distance(
+                referenceSample.HipsWorldPositionMeters!.Value,
+                actualSample.HipsWorldPositionMeters!.Value), referenceSample, actualSample);
+            worldRotation.Add(QuaternionAngleDegrees(
+                referenceSample.HipsWorldRotation!.Value,
+                actualSample.HipsWorldRotation!.Value), referenceSample, actualSample);
         }
 
         private static void AccumulateComposedHipsErrors(
@@ -338,6 +396,8 @@ namespace XREngine.Components.Animation
             Dictionary<string, MetricAccumulator> localPositionAccumulators,
             Dictionary<string, MetricAccumulator> rotationAccumulators,
             Dictionary<string, MetricAccumulator> rootSpacePositionAccumulators,
+            Dictionary<string, MetricAccumulator> modelRootPositionAccumulators,
+            Dictionary<string, MetricAccumulator> worldRotationAccumulators,
             bool convertSourceReferenceToXre,
             float referencePositionScale)
         {
@@ -360,8 +420,8 @@ namespace XREngine.Components.Animation
                 GetOrAdd(rotationAccumulators, entry.Name)
                     .Add(
                         QuaternionAngleDegrees(
-                            ConvertReferenceRotation(entry.LocalRotation.Value, convertSourceReferenceToXre),
-                            actualBone.LocalRotation.Value),
+                            ConvertReferenceRotation(entry.PoseDeltaFromNeutralRotation.Value, convertSourceReferenceToXre),
+                            actualBone.PoseDeltaFromNeutralRotation.Value),
                         referenceSample,
                         actualSample);
                 GetOrAdd(rootSpacePositionAccumulators, entry.Name)
@@ -374,8 +434,72 @@ namespace XREngine.Components.Animation
                             actualBone.RootSpacePosition.Value),
                         referenceSample,
                         actualSample);
+                GetOrAdd(modelRootPositionAccumulators, entry.Name)
+                    .Add(Vector3.Distance(entry.ModelRootPositionMeters.Value, actualBone.ModelRootPositionMeters.Value),
+                        referenceSample, actualSample);
+                GetOrAdd(worldRotationAccumulators, entry.Name)
+                    .Add(QuaternionAngleDegrees(entry.WorldRotation.Value, actualBone.WorldRotation.Value),
+                        referenceSample, actualSample);
             }
         }
+
+        private static void ValidateDeclaredCoverage(
+            HumanoidPoseAuditReport reportToValidate,
+            string side,
+            HumanoidPoseAuditComparisonReport comparison)
+        {
+            if (reportToValidate.RequiredBoneRoles.Count == 0)
+                AddFailure(comparison, "RequiredBoneRolesMissing", $"The {side} report declares no required bone roles.", null);
+            if (reportToValidate.RequiredMuscleChannels.Count == 0)
+                AddFailure(comparison, "RequiredMuscleChannelsMissing", $"The {side} report declares no required muscle channels.", null);
+
+            ValidateNoDuplicates(reportToValidate.RequiredBoneRoles, $"{side}:RequiredBoneRoles", comparison, null);
+            ValidateNoDuplicates(reportToValidate.RequiredMuscleChannels, $"{side}:RequiredMuscleChannels", comparison, null);
+            for (int i = 0; i < reportToValidate.Samples.Count; i++)
+            {
+                HumanoidPoseAuditSample sample = reportToValidate.Samples[i];
+                ValidateSampleCoverage(reportToValidate.RequiredBoneRoles, sample.Bones.Select(static bone => bone.Name),
+                    $"{side}:BoneRole", comparison, sample.Index);
+                ValidateSampleCoverage(reportToValidate.RequiredMuscleChannels, sample.Muscles.Select(static channel => channel.Name),
+                    $"{side}:MuscleChannel", comparison, sample.Index);
+                if (!sample.HasSolvedBodyModelRootPose)
+                    AddFailure(comparison, "SolvedBodyCommonPoseMissing", $"The {side} sample has no solved Body model-root pose.", sample.Index);
+                if (sample.HipsModelRootPositionMeters is null || sample.HipsModelRootRotation is null
+                    || sample.HipsWorldPositionMeters is null || sample.HipsWorldRotation is null)
+                    AddFailure(comparison, "HipsCommonPoseMissing", $"The {side} sample is missing one or more required schema-7 Hips poses.", sample.Index);
+            }
+        }
+
+        private static void ValidateSampleCoverage(
+            IReadOnlyList<string> required, IEnumerable<string> actual, string category,
+            HumanoidPoseAuditComparisonReport comparison, int sampleIndex)
+        {
+            var actualCounts = actual.GroupBy(static value => value, StringComparer.Ordinal)
+                .ToDictionary(static group => group.Key, static group => group.Count(), StringComparer.Ordinal);
+            foreach (string name in required)
+            {
+                if (!actualCounts.TryGetValue(name, out int count))
+                    AddFailure(comparison, category + "Missing", $"Required '{name}' is absent.", sampleIndex);
+                else if (count != 1)
+                    AddFailure(comparison, category + "Duplicate", $"Required '{name}' occurs {count} times.", sampleIndex);
+            }
+        }
+
+        private static void ValidateNoDuplicates(
+            IReadOnlyList<string> values, string category, HumanoidPoseAuditComparisonReport comparison, int? sampleIndex)
+        {
+            foreach (IGrouping<string, string> group in values.GroupBy(static value => value, StringComparer.Ordinal))
+                if (group.Count() != 1)
+                    AddFailure(comparison, category + "Duplicate", $"Declared '{group.Key}' occurs {group.Count()} times.", sampleIndex);
+        }
+
+        private static void AddFailure(HumanoidPoseAuditComparisonReport report, string code, string message, int? sampleIndex)
+            => report.Failures.Add(new HumanoidPoseAuditComparisonFailure
+            {
+                Code = code,
+                Message = message,
+                SampleIndex = sampleIndex,
+            });
 
         private static HumanoidPoseAuditBoneSample? FindBone(HumanoidPoseAuditSample sample, string name)
         {

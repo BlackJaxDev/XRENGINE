@@ -73,7 +73,7 @@ public sealed class RenderPipelineScript
         if (XRRuntimeEnvironment.IsAotRuntimeBuild)
             return new ScriptCommandRegistry(lookup, methodNames);
 
-        foreach (Type type in baseType.Assembly.GetTypes())
+        foreach (Type type in XREngine.Core.XRLoadableTypeCatalog.GetTypes(baseType.Assembly))
         {
             if (type.IsAbstract || type.ContainsGenericParameters || !baseType.IsAssignableFrom(type) || type.GetConstructor(Type.EmptyTypes) is null)
                 continue;

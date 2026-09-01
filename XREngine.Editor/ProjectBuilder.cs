@@ -434,21 +434,7 @@ internal static class ProjectBuilder
     {
         foreach (Assembly assembly in assemblies.DistinctBy(a => a.FullName, StringComparer.Ordinal))
         {
-            Type[] types;
-            try
-            {
-                types = assembly.GetTypes();
-            }
-            catch (ReflectionTypeLoadException ex)
-            {
-                types = ex.Types.Where(t => t is not null).Cast<Type>().ToArray();
-            }
-            catch
-            {
-                continue;
-            }
-
-            foreach (Type type in types)
+            foreach (Type type in XREngine.Core.XRLoadableTypeCatalog.GetTypes(assembly))
                 yield return type;
         }
     }

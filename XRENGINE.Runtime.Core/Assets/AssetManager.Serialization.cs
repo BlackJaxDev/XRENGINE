@@ -501,19 +501,9 @@ namespace XREngine
 
             foreach (Assembly assembly in EnumerateYamlTypeConverterAssemblies())
             {
-                Type?[] types;
-                try
+                foreach (Type type in XREngine.Core.XRLoadableTypeCatalog.GetTypes(assembly))
                 {
-                    types = assembly.GetTypes();
-                }
-                catch (ReflectionTypeLoadException ex)
-                {
-                    types = ex.Types ?? [];
-                }
-
-                foreach (Type? type in types)
-                {
-                    if (type is null || type.IsAbstract || type.IsInterface)
+                    if (type.IsAbstract || type.IsInterface)
                         continue;
 
                     if (!typeof(IYamlTypeConverter).IsAssignableFrom(type))

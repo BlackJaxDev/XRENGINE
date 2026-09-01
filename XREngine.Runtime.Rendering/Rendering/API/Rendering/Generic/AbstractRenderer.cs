@@ -315,6 +315,15 @@ namespace XREngine.Rendering
         internal virtual void NotifyRenderResourcesChanged(RenderResourceChangeKind kind, string? reason)
             => NotifyRenderResourcesChanged(reason);
 
+        /// <summary>
+        /// Requests one backend-owned frame-admission recovery probe after an
+        /// explicit host or pipeline state change. Backends without a persistent
+        /// admission circuit breaker do not need to override this hook.
+        /// </summary>
+        internal virtual void RequestFrameAdmissionRecovery(string reason)
+        {
+        }
+
         internal virtual IDisposable? EnterRenderPipelineFrameResourceScope(
             XRRenderPipelineInstance pipeline,
             XRViewport? viewport)

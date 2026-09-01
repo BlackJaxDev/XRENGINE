@@ -47,6 +47,10 @@ namespace XREngine.Components.Animation
         private readonly float[] _canonicalProjectionMuscleValues = new float[HumanoidMuscleValueCount];
         private readonly float[] _loopProjectionStartMuscleValues = new float[HumanoidMuscleValueCount];
         private readonly float[] _loopProjectionEndMuscleValues = new float[HumanoidMuscleValueCount];
+        private ImportedHumanoidProjectionFootGoals _canonicalProjectionFootGoals;
+        private ImportedHumanoidProjectionFootGoals _loopProjectionStartFootGoals;
+        private ImportedHumanoidProjectionFootGoals _loopProjectionEndFootGoals;
+        private readonly ImportedHumanoidProjectionPoseSampleBuffer _projectionPoseScratch = new();
         private HumanoidProjectedRootPose _projectedRootLoopPose = HumanoidProjectedRootPose.Identity;
         private HumanoidLoopPoseCorrection _bodyLoopPoseCorrection = HumanoidLoopPoseCorrection.Identity;
         private HumanoidProjectedRootPose _appliedRootMotionPose = HumanoidProjectedRootPose.Identity;
@@ -106,6 +110,7 @@ namespace XREngine.Components.Animation
         }
 
         private long _playbackTimeTicks;
+        private long _effectiveSampleTimeTicks;
 
         public bool IsPlaying => _isPlaying;
         public bool IsPaused => _isPaused;
@@ -364,7 +369,8 @@ namespace XREngine.Components.Animation
             // Bind members to this component/SceneNode via the anim state machine.
             // Seed the underlying property animations to a canonical clip time.
             long initialTicks = GetInitialPlaybackTicks(clip, Speed);
-            StartAllPropertyAnimations(clip, ResolveEffectiveSampleTimeTicks(clip, initialTicks));
+            _effectiveSampleTimeTicks = ResolveEffectiveSampleTimeTicks(clip, initialTicks);
+            StartAllPropertyAnimations(clip, _effectiveSampleTimeTicks);
             UpdateEffectiveHumanoidSamplePhase(clip, initialTicks);
             SetPlaybackTimeTicks(initialTicks);
             PrimeImportedAnimationEventClock(clip, initialTicks);
@@ -453,7 +459,14 @@ namespace XREngine.Components.Animation
             EnsureInitialized();
 
             long previousEventTicks = _sourceEventUnwrappedPlaybackTimeTicks;
-            long evaluationTicks = NormalizePlaybackTime(SecondsToStopwatchTicks(timeSeconds), Animation, wrapLooped: false);
+            long requestedTicks = SecondsToStopwatchTicks(timeSeconds);
+            long evaluationTicks = NormalizePlaybackTime(requestedTicks, Animation, wrapLooped: false);
+            // Unity's cyclic source owns the exact duration boundary as the wrapped
+            // start sample. Values beyond that boundary remain clamped editor seeks;
+            // signed/multi-cycle addressing belongs to EvaluateAtUnwrappedTime.
+            if (Animation.UsesCyclicSourcePlayback
+                && requestedTicks == GetClipLengthTicks(Animation))
+                evaluationTicks = 0L;
             SetAllPropertyAnimationTimesForPlayback(Animation, evaluationTicks);
             SetPlaybackTimeTicks(evaluationTicks);
             _sourceEventUnwrappedPlaybackTimeTicks = evaluationTicks;
@@ -922,13 +935,21 @@ namespace XREngine.Components.Animation
             HumanoidProjectedRootPose sourceGenerator;
             if (needsEndpointMuscles)
             {
-                CaptureProjectedLoopMuscles(0.0f, _loopProjectionStartMuscleValues);
-                CaptureProjectedLoopMuscles(clip.LengthInSeconds, _loopProjectionEndMuscleValues);
+                CaptureProjectedProjectionPose(
+                    0.0f,
+                    _loopProjectionStartMuscleValues,
+                    out _loopProjectionStartFootGoals);
+                CaptureProjectedProjectionPose(
+                    clip.LengthInSeconds,
+                    _loopProjectionEndMuscleValues,
+                    out _loopProjectionEndFootGoals);
                 if (!humanoid.TryCalculateLoopEvaluation(
                     sourceStart,
                     sourceEnd,
                     _loopProjectionStartMuscleValues,
                     _loopProjectionEndMuscleValues,
+                    _loopProjectionStartFootGoals,
+                    _loopProjectionEndFootGoals,
                     settings,
                     out _bodyLoopPoseCorrection,
                     out sourceGenerator))
@@ -1072,34 +1093,116 @@ namespace XREngine.Components.Animation
                 sample.SetRotationComponent(channel, value);
         }
 
-        private void CaptureProjectedLoopMuscles(float timeSeconds, Span<float> destination)
+        private void CaptureProjectedProjectionPose(
+            float timeSeconds,
+            Span<float> muscleDestination,
+            out ImportedHumanoidProjectionFootGoals footGoals)
         {
-            destination.Clear();
+            muscleDestination.Clear();
+            footGoals = default;
             foreach (AnimationMember member in _animatedMembersSnapshot)
             {
-                if (member.MemberName is not ("SetImportedRawValue" or "SetValue")
-                    || member.Animation is not BasePropAnim animation
-                    || animation.GetValueGeneric(timeSeconds) is not float amount)
+                if (member.MemberType != EAnimationMemberType.Method
+                    || member.Animation is not BasePropAnim animation)
                     continue;
 
                 RestoreBaselineMethodArguments(member);
-                if (ShouldApplyRuntimeClipRemap(member.MemberName))
-                    RemapHumanoidMuscle(member, ref amount);
+                object? animatedValue = animation.GetValueGeneric(timeSeconds);
+                if (member.MemberName is "SetImportedRawValue" or "SetValue"
+                    && animatedValue is float amount)
+                {
+                    if (ShouldApplyRuntimeClipRemap(member.MemberName))
+                        RemapHumanoidMuscle(member, ref amount);
 
-                if (member.MethodArguments.Length == 0
-                    || !TryGetHumanoidValue(member.MethodArguments[0], out EHumanoidValue value))
+                    if (member.MethodArguments.Length == 0
+                        || !TryGetHumanoidValue(member.MethodArguments[0], out EHumanoidValue value))
+                        continue;
+
+                    bool flipImportedMuscleZ = member.MemberName == "SetImportedRawValue"
+                        && member.MethodArguments.Length > 2
+                        && member.MethodArguments[2] is true;
+                    if (member.MemberName == "SetImportedRawValue")
+                        amount = HumanoidComponent.ConvertImportedHumanoidAmount(value, amount, flipImportedMuscleZ);
+
+                    int index = (int)value;
+                    if ((uint)index < (uint)muscleDestination.Length)
+                        muscleDestination[index] = amount;
+                    continue;
+                }
+
+                if (member.MemberName is not ("SetAnimatedIKPosition"
+                    or "SetAnimatedIKPositionX"
+                    or "SetAnimatedIKPositionY"
+                    or "SetAnimatedIKPositionZ"))
                     continue;
 
-                bool flipImportedMuscleZ = member.MemberName == "SetImportedRawValue"
-                    && member.MethodArguments.Length > 2
-                    && member.MethodArguments[2] is true;
-                if (member.MemberName == "SetImportedRawValue")
-                    amount = HumanoidComponent.ConvertImportedHumanoidAmount(value, amount, flipImportedMuscleZ);
+                if (ShouldApplyRuntimeClipRemap(member.MemberName))
+                    RemapAnimatedIKPosition(member, ref animatedValue);
+                if (member.MethodArguments.Length == 0
+                    || !TryGetLimbGoal(member.MethodArguments[0], out ELimbEndEffector goal)
+                    || goal is not (ELimbEndEffector.LeftFoot or ELimbEndEffector.RightFoot))
+                    continue;
 
-                int index = (int)value;
-                if ((uint)index < (uint)destination.Length)
-                    destination[index] = amount;
+                if (member.MemberName == "SetAnimatedIKPosition" && animatedValue is Vector3 position)
+                    footGoals.Set(goal, position);
+                else if (animatedValue is float component)
+                    SetProjectionFootGoalComponent(ref footGoals, goal, member.MemberName, component);
             }
+
+            CaptureSourceProjectionFootGoals(timeSeconds, out footGoals);
+        }
+
+        private void CaptureSourceProjectionFootGoals(
+            float timeSeconds,
+            out ImportedHumanoidProjectionFootGoals footGoals)
+        {
+            _projectionPoseScratch.Clear();
+            Animation?.PublishImportedHumanoidProjectionMusclesAtTime(
+                timeSeconds,
+                _projectionPoseScratch);
+            footGoals = _projectionPoseScratch.FootGoals;
+
+            bool sourceMirror = Animation?.ImportedHumanoidRootMotionSettings?.Mirror == true;
+            if (sourceMirror != IsClipHumanoidMirrorEnabled)
+                footGoals.Mirror();
+            if (FlipIKPositionLeftRight)
+                footGoals.SwapSides();
+            if (FlipIKPositionZ)
+                footGoals.FlipZ();
+        }
+
+        private void CaptureCurrentSourceProjectionFootGoals(
+            out ImportedHumanoidProjectionFootGoals footGoals)
+        {
+            _projectionPoseScratch.Clear();
+            Animation?.PublishImportedHumanoidProjectionMusclesAtTime(
+                StopwatchTicksToSeconds(_effectiveSampleTimeTicks),
+                _projectionPoseScratch);
+            footGoals = _projectionPoseScratch.FootGoals;
+
+            bool sourceMirror = Animation?.ImportedHumanoidRootMotionSettings?.Mirror == true;
+            if (sourceMirror != IsClipHumanoidMirrorEnabled)
+                footGoals.Mirror();
+            if (FlipIKPositionLeftRight)
+                footGoals.SwapSides();
+            if (FlipIKPositionZ)
+                footGoals.FlipZ();
+        }
+
+        private static void SetProjectionFootGoalComponent(
+            ref ImportedHumanoidProjectionFootGoals goals,
+            ELimbEndEffector goal,
+            string memberName,
+            float component)
+        {
+            int componentIndex = memberName switch
+            {
+                "SetAnimatedIKPositionX" => 0,
+                "SetAnimatedIKPositionY" => 1,
+                "SetAnimatedIKPositionZ" => 2,
+                _ => -1,
+            };
+            goals.SetComponent(goal, componentIndex, component);
         }
 
         internal static long CountWrappedCycles(long unwrappedTicks, long lengthTicks)
@@ -1219,6 +1322,7 @@ namespace XREngine.Components.Animation
             _animatedQuaternionTargetsSnapshot = [];
             _propertyAnimationsSnapshot = [];
             _rootMotionPolicy = null;
+            _effectiveSampleTimeTicks = 0L;
             _effectiveHumanoidSamplePhase = 0.0f;
             _cycleOffsetSourceWrapped = false;
             ClearImportedBodyRootMemberCache();
@@ -1230,6 +1334,10 @@ namespace XREngine.Components.Animation
             _bodyFrameProjectionCacheValid = true;
             Array.Clear(_loopProjectionStartMuscleValues);
             Array.Clear(_loopProjectionEndMuscleValues);
+            _canonicalProjectionFootGoals.Clear();
+            _loopProjectionStartFootGoals.Clear();
+            _loopProjectionEndFootGoals.Clear();
+            _projectionPoseScratch.Clear();
             _loggedMissingHumanoidForRootMotion = false;
             _loggedMissingRootMotionTarget = false;
             ResetImportedAnimationBindings();
@@ -1378,7 +1486,10 @@ namespace XREngine.Components.Animation
             ReadCanonicalImportedBodyComponent(_rootRotationYMember, EHumanoidImportedBodySampleChannels.RotationY, canonicalTime);
             ReadCanonicalImportedBodyComponent(_rootRotationZMember, EHumanoidImportedBodySampleChannels.RotationZ, canonicalTime);
             ReadCanonicalImportedBodyComponent(_rootRotationWMember, EHumanoidImportedBodySampleChannels.RotationW, canonicalTime);
-            CaptureProjectedLoopMuscles(canonicalTime, _canonicalProjectionMuscleValues);
+            CaptureProjectedProjectionPose(
+                canonicalTime,
+                _canonicalProjectionMuscleValues,
+                out _canonicalProjectionFootGoals);
         }
 
         private void ReadCanonicalImportedBodyComponent(
@@ -1488,7 +1599,8 @@ namespace XREngine.Components.Animation
                 _hasBodyLoopPoseCorrection
                     ? _bodyLoopPoseCorrection.AtPhase(_effectiveHumanoidSamplePhase)
                     : null,
-                _canonicalProjectionMuscleValues) == true;
+                _canonicalProjectionMuscleValues,
+                _canonicalProjectionFootGoals) == true;
 
             if (humanoid is not null && !ownsImportedBodySampleTransaction)
             {
@@ -1498,7 +1610,7 @@ namespace XREngine.Components.Animation
             }
 
             if (ownsImportedBodySampleTransaction)
-                PublishImportedHumanoidProjectionMuscles(humanoid!);
+                PublishImportedHumanoidProjectionPose(humanoid!);
 
             try
             {
@@ -1564,34 +1676,76 @@ namespace XREngine.Components.Animation
             return true;
         }
 
-        private void PublishImportedHumanoidProjectionMuscles(HumanoidComponent humanoid)
+        private void PublishImportedHumanoidProjectionPose(HumanoidComponent humanoid)
         {
             if (_rootMotionPolicy is not { BakePositionYIntoPose: false, PositionYBasis: EImportedHumanoidRootPositionYBasis.Feet })
                 return;
 
+            ImportedHumanoidProjectionFootGoals footGoals = default;
             foreach (AnimationMember member in _animatedMembersSnapshot)
             {
-                if (member.MemberType != EAnimationMemberType.Method
-                    || member.MemberName is not ("SetValue" or "SetImportedRawValue")
-                    || !TryGetAnimatedFloat(member, out float amount))
+                if (member.MemberType != EAnimationMemberType.Method)
                     continue;
 
                 RestoreBaselineMethodArguments(member);
-                if (ShouldApplyRuntimeClipRemap(member.MemberName))
-                    RemapHumanoidMuscle(member, ref amount);
+                if (member.MemberName is "SetValue" or "SetImportedRawValue"
+                    && TryGetAnimatedFloat(member, out float amount))
+                {
+                    if (ShouldApplyRuntimeClipRemap(member.MemberName))
+                        RemapHumanoidMuscle(member, ref amount);
 
-                if (member.MethodArguments.Length == 0
-                    || !TryGetHumanoidValue(member.MethodArguments[0], out EHumanoidValue value))
+                    if (member.MethodArguments.Length == 0
+                        || !TryGetHumanoidValue(member.MethodArguments[0], out EHumanoidValue value))
+                        continue;
+
+                    bool flipImportedMuscleZ = member.MemberName == "SetImportedRawValue"
+                        && member.MethodArguments.Length > 2
+                        && member.MethodArguments[2] is true;
+                    humanoid.SetImportedHumanoidProjectionMuscle(
+                        value,
+                        amount,
+                        flipImportedMuscleZ);
+                    continue;
+                }
+
+                if (!TryGetBaselineLimbGoal(member, out ELimbEndEffector goal)
+                    || goal is not (ELimbEndEffector.LeftFoot or ELimbEndEffector.RightFoot))
                     continue;
 
-                bool flipImportedMuscleZ = member.MemberName == "SetImportedRawValue"
-                    && member.MethodArguments.Length > 2
-                    && member.MethodArguments[2] is true;
-                humanoid.SetImportedHumanoidProjectionMuscle(
-                    value,
-                    amount,
-                    flipImportedMuscleZ);
+                if (member.MemberName == "SetAnimatedIKPosition"
+                    && TryGetAnimatedVector3(member, out Vector3 position))
+                {
+                    if (ShouldApplyRuntimeClipRemap(member.MemberName))
+                        RemapAnimatedIKPosition(member, ref position);
+                    if (member.MethodArguments.Length > 0
+                        && TryGetLimbGoal(member.MethodArguments[0], out goal))
+                        footGoals.Set(goal, position);
+                    continue;
+                }
+
+                if (member.MemberName is not ("SetAnimatedIKPositionX"
+                    or "SetAnimatedIKPositionY"
+                    or "SetAnimatedIKPositionZ")
+                    || !TryGetAnimatedFloat(member, out float component))
+                    continue;
+
+                if (ShouldApplyRuntimeClipRemap(member.MemberName))
+                    RemapAnimatedIKPosition(member, ref component);
+                if (member.MethodArguments.Length > 0
+                    && TryGetLimbGoal(member.MethodArguments[0], out goal))
+                    SetProjectionFootGoalComponent(ref footGoals, goal, member.MemberName, component);
             }
+
+            CaptureCurrentSourceProjectionFootGoals(out footGoals);
+
+            if (footGoals.HasLeft)
+                humanoid.SetImportedHumanoidProjectionGoalPosition(
+                    ELimbEndEffector.LeftFoot,
+                    footGoals.LeftPosition);
+            if (footGoals.HasRight)
+                humanoid.SetImportedHumanoidProjectionGoalPosition(
+                    ELimbEndEffector.RightFoot,
+                    footGoals.RightPosition);
         }
 
         private bool TryApplyImportedBodyRootChannel(AnimationMember member)
@@ -2439,6 +2593,7 @@ namespace XREngine.Components.Animation
         private void SetAllPropertyAnimationTimesForPlayback(AnimationClip clip, long playbackTimeTicks)
         {
             long sampleTimeTicks = ResolveEffectiveSampleTimeTicks(clip, playbackTimeTicks);
+            _effectiveSampleTimeTicks = sampleTimeTicks;
             SetAllPropertyAnimationTimes(clip, sampleTimeTicks, wrapLooped: false);
             UpdateEffectiveHumanoidSamplePhase(clip, playbackTimeTicks);
         }

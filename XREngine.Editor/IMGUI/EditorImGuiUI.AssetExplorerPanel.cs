@@ -2975,20 +2975,8 @@ public static partial class EditorImGuiUI
             Type baseType = typeof(XRAsset);
             foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
             {
-                Type[] types;
-                try
+                foreach (Type type in XREngine.Core.XRLoadableTypeCatalog.GetTypes(assembly))
                 {
-                    types = assembly.GetTypes();
-                }
-                catch (ReflectionTypeLoadException ex)
-                {
-                    types = ex.Types.Where(t => t is not null).Cast<Type>().ToArray();
-                }
-
-                foreach (var type in types)
-                {
-                    if (type is null)
-                        continue;
                     if (!baseType.IsAssignableFrom(type))
                         continue;
                     if (type.IsAbstract || type.IsInterface)

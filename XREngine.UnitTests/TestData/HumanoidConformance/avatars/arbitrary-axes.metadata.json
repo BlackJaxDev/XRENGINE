@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "fixtureVersion": "2.0.0",
+  "fixture": "arbitrary-axes.ascii.fbx",
+  "mappingMode": "persisted-corrections",
+  "requiredRoleCoverage": "complete",
+  "bindAxisCoverage": "FBX declares +Z up / -Y front; root and primary chains use deliberately non-canonical authored axes",
+  "sourceGeneration": "Generated locally by Tools/Unity/Phase10FixtureGenerator.cs with Unity FBX Exporter, then axis-converted to Maya Z-up with Autodesk FBX SDK; no third-party avatar source data."
+}

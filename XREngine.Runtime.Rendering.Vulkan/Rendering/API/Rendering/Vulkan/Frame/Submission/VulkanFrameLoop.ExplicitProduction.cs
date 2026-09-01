@@ -288,7 +288,7 @@ internal sealed partial class VulkanFrameLoop
                 ObserveExplicitProductionBufferStressSlotReuse(in _lastExplicitProductionReceipt);
             return _lastExplicitProductionReceipt;
         }
-        catch (Exception exception)
+        catch (Exception)
         {
             if (!submitted)
             {
@@ -306,15 +306,6 @@ internal sealed partial class VulkanFrameLoop
             }
             if (acquired)
                 target.AbortFrameTarget(in lease, submitted);
-            if (!acquired && !submitted && exception is VulkanPresentNowReadinessException
-                { Disposition: EVulkanPresentNowFailureDisposition.RetryFrame } pending)
-            {
-                // Public explicit hosts must receive the same retry disposition
-                // as desktop admission, including budget-limited required uploads.
-                // Cleanup above settles only this unsubmitted attempt; globally
-                // owned upload batches keep their completion authority.
-                throw new VulkanExplicitProductionAdmissionPendingException(pending.Stage.ToString(), pending.Message);
-            }
             throw;
         }
     }
@@ -537,12 +528,9 @@ internal sealed partial class VulkanFrameLoop
         }
         catch (VulkanNativeBufferBindingSupersededException exception)
         {
-            throw watchdog.CreateFailure(
-                EVulkanPresentNowReadinessStage.FramePlanSeal,
+            throw new VulkanExplicitProductionAdmissionPendingException(
                 "native-barrier-bindings",
-                "ExplicitOutput -> resource barrier bindings",
-                exception.Message,
-                disposition: EVulkanPresentNowFailureDisposition.RetryFrame);
+                exception.Message);
         }
         watchdog.RecordProgress();
 
@@ -578,12 +566,9 @@ internal sealed partial class VulkanFrameLoop
         }
         catch (VulkanNativeBufferBindingSupersededException exception)
         {
-            throw watchdog.CreateFailure(
-                EVulkanPresentNowReadinessStage.FramePlanSeal,
+            throw new VulkanExplicitProductionAdmissionPendingException(
                 "native-barrier-bindings",
-                "ExplicitOutput -> resource barrier bindings",
-                exception.Message,
-                disposition: EVulkanPresentNowFailureDisposition.RetryFrame);
+                exception.Message);
         }
         logicalPlan.PrepareRecordingPlannerGenerations(in plannerState);
         if (!logicalPlan.HasAnyExecutableOutput)
@@ -666,14 +651,19 @@ internal sealed partial class VulkanFrameLoop
                     out bool pipelineRetryable,
                     out string pipelineFailure))
             {
+                if (pipelineRetryable)
+                {
+                    throw new VulkanExplicitProductionAdmissionPendingException(
+                        "explicit-graphics-pipeline",
+                        pipelineFailure);
+                }
+
                 throw watchdog.CreateFailure(
                     EVulkanPresentNowReadinessStage.PipelineCompilation,
                     "explicit-graphics-pipeline",
                     "ExplicitOutput -> graphics pipeline manifest",
                     pipelineFailure,
-                    disposition: pipelineRetryable
-                        ? EVulkanPresentNowFailureDisposition.RetryFrame
-                        : EVulkanPresentNowFailureDisposition.RendererTerminal);
+                    disposition: EVulkanPresentNowFailureDisposition.RendererTerminal);
             }
         }
 

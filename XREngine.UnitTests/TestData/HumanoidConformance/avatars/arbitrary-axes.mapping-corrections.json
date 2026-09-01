@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 3,
+  "fixtureVersion": "2.0.0",
+  "fixture": "arbitrary-axes.ascii.fbx",
+  "mappingMode": "persisted-corrections",
+  "rootPath": ".",
+  "sourceFbxSha256": "006A4CCFDFFAFFBA7CDCD1965FA758B5C291152ADD22CE0E70203E91076537A0",
+  "expectedAvatarDefinitionSignature": "13CF8953C2F677A369B51FA49A80C027B5122E6F570CCDCA4614617C0A5F74DC",
+  "roles": {
+    "Hips": "FbxImportedContentBasis/AxisLab/pelvis_core",
+    "Spine": "FbxImportedContentBasis/AxisLab/pelvis_core/trunk_a",
+    "Chest": "FbxImportedContentBasis/AxisLab/pelvis_core/trunk_a/trunk_b",
+    "UpperChest": "FbxImportedContentBasis/AxisLab/pelvis_core/trunk_a/trunk_b/thorax_tip",
+    "Neck": "FbxImportedContentBasis/AxisLab/pelvis_core/trunk_a/trunk_b/thorax_tip/cervical",
+    "Head": "FbxImportedContentBasis/AxisLab/pelvis_core/trunk_a/trunk_b/thorax_tip/cervical/cranium",
+    "LeftShoulder": "FbxImportedContentBasis/AxisLab/pelvis_core/trunk_a/trunk_b/thorax_tip/clavicle_port",
+    "LeftUpperArm": "FbxImportedContentBasis/AxisLab/pelvis_core/trunk_a/trunk_b/thorax_tip/clavicle_port/limb_port_1",
+    "LeftLowerArm": "FbxImportedContentBasis/AxisLab/pelvis_core/trunk_a/trunk_b/thorax_tip/clavicle_port/limb_port_1/limb_port_2",
+    "LeftHand": "FbxImportedContentBasis/AxisLab/pelvis_core/trunk_a/trunk_b/thorax_tip/clavicle_port/limb_port_1/limb_port_2/palm_port",
+    "RightShoulder": "FbxImportedContentBasis/AxisLab/pelvis_core/trunk_a/trunk_b/thorax_tip/clavicle_starboard",
+    "RightUpperArm": "FbxImportedContentBasis/AxisLab/pelvis_core/trunk_a/trunk_b/thorax_tip/clavicle_starboard/limb_starboard_1",
+    "RightLowerArm": "FbxImportedContentBasis/AxisLab/pelvis_core/trunk_a/trunk_b/thorax_tip/clavicle_starboard/limb_starboard_1/limb_starboard_2",
+    "RightHand": "FbxImportedContentBasis/AxisLab/pelvis_core/trunk_a/trunk_b/thorax_tip/clavicle_starboard/limb_starboard_1/limb_starboard_2/palm_starboard",
+    "LeftUpperLeg": "FbxImportedContentBasis/AxisLab/pelvis_core/stride_port_1",
+    "LeftLowerLeg": "FbxImportedContentBasis/AxisLab/pelvis_core/stride_port_1/stride_port_2",
+    "LeftFoot": "FbxImportedContentBasis/AxisLab/pelvis_core/stride_port_1/stride_port_2/sole_port",
+    "RightUpperLeg": "FbxImportedContentBasis/AxisLab/pelvis_core/stride_starboard_1",
+    "RightLowerLeg": "FbxImportedContentBasis/AxisLab/pelvis_core/stride_starboard_1/stride_starboard_2",
+    "RightFoot": "FbxImportedContentBasis/AxisLab/pelvis_core/stride_starboard_1/stride_starboard_2/sole_starboard"
+  }
+}

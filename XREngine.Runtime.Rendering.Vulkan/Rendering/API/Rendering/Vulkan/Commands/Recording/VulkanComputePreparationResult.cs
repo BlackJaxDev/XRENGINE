@@ -11,7 +11,7 @@ internal readonly record struct VulkanComputePreparationResult(
     int OperationIndex,
     int OperationCount,
     string? ProgramName,
-    Exception? Exception = null)
+    string? FailureReason = null)
 {
     public bool Succeeded => Outcome == EVulkanComputePreparationOutcome.Success;
     public bool Pending => Outcome == EVulkanComputePreparationOutcome.PipelinePending;
@@ -26,14 +26,14 @@ internal readonly record struct VulkanComputePreparationResult(
         {
             EVulkanComputePreparationOutcome.PipelinePending =>
                 $"Compute pipeline '{programName}' is pending asynchronous preparation before recording" +
-                $"{(string.IsNullOrWhiteSpace(Exception?.Message) ? "." : $": {Exception.Message}")}",
+                $"{(string.IsNullOrWhiteSpace(FailureReason) ? "." : $": {FailureReason}")}",
             EVulkanComputePreparationOutcome.ProgramLinkFailed =>
                 $"Compute program '{programName}' is not linkable before recording.",
             EVulkanComputePreparationOutcome.PipelineUnavailable =>
                 $"Compute pipeline '{programName}' is unavailable before recording.",
             EVulkanComputePreparationOutcome.PipelineCreationFailed =>
                 $"Compute pipeline '{programName}' preparation failed: " +
-                $"{Exception?.GetType().Name ?? "UnknownException"}: {Exception?.Message ?? "no detail"}",
+                $"{FailureReason ?? "no detail"}",
             EVulkanComputePreparationOutcome.DescriptorPreparationFailed =>
                 $"Compute descriptor resources for '{programName}' could not be prepared before recording " +
                 $"(op {OperationIndex}/{OperationCount}).",

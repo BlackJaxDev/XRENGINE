@@ -398,6 +398,11 @@ namespace XREngine.Rendering
             _consecutiveRenderFailures = 0;
             _renderDisabledUntilUtc = default;
             _lastRenderException = null;
+            if (_renderer is not null)
+            {
+                _renderer.RequestFrameAdmissionRecovery(
+                    "XRWindow render circuit breaker reset after an explicit render-state change");
+            }
         }
 
         private void DisableRenderingPermanently(string reason, Exception? exception = null)
@@ -1303,33 +1308,22 @@ namespace XREngine.Rendering
 
         private bool AreFullInternalResizeResourcesReady(Vector2D<int> pending)
         {
+            WindowResizeExtents extents = _resizeController.Extents;
+            if (!ExtentMatches(extents.PresentationExtent, pending) ||
+                !ExtentMatches(extents.PipelineOutputExtent, pending))
+            {
+                return false;
+            }
+
             foreach (XRViewport viewport in Viewports)
             {
-                if (viewport.InternalWidth != pending.X ||
-                    viewport.InternalHeight != pending.Y)
-                {
+                if (viewport.Width <= 0 || viewport.Height <= 0 ||
+                    viewport.InternalWidth <= 0 || viewport.InternalHeight <= 0)
                     return false;
-                }
 
                 var pipelineInstance = viewport.RenderPipelineInstance;
-                if (pipelineInstance.PendingGeneration is not null)
+                if (!pipelineInstance.IsCurrentResourceProfileReady(viewport))
                     return false;
-
-                var activeGeneration = pipelineInstance.ActiveGeneration;
-                if (activeGeneration is null)
-                    continue;
-
-                int expectedDisplayWidth = Math.Max(1, viewport.Width);
-                int expectedDisplayHeight = Math.Max(1, viewport.Height);
-                uint expectedInternalWidth = (uint)pending.X;
-                uint expectedInternalHeight = (uint)pending.Y;
-                if (activeGeneration.Key.DisplayWidth != (uint)expectedDisplayWidth ||
-                    activeGeneration.Key.DisplayHeight != (uint)expectedDisplayHeight ||
-                    activeGeneration.Key.InternalWidth != expectedInternalWidth ||
-                    activeGeneration.Key.InternalHeight != expectedInternalHeight)
-                {
-                    return false;
-                }
             }
 
             return true;

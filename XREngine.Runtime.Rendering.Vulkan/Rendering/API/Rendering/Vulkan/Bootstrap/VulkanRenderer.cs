@@ -225,6 +225,9 @@ public sealed partial class VulkanRenderer :
     public override void ProcessPendingUploads()
         => _frameLoop.ProcessPendingUploads();
 
+    internal override void RequestFrameAdmissionRecovery(string reason)
+        => _frameLoop.RequestPresentNowRecovery(reason);
+
     public override void Initialize() => _frameLoop.Initialize();
 
     /// <summary>

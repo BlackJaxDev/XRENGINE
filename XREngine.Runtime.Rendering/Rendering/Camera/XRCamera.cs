@@ -292,6 +292,10 @@ namespace XREngine.Rendering
         /// </summary>
         private RenderPipeline? _renderPipeline = null;
 
+        // This is deliberately independent of XRBase property notifications. Render consumers use
+        // it to distinguish two different asset instances even when they expose the same metadata.
+        private ulong _pipelineAssignmentRevision;
+
         /// <summary>
         /// Cached projection matrix with oblique near plane clipping applied.
         /// Recalculated when transform changes or oblique plane is set.
@@ -1695,18 +1699,37 @@ namespace XREngine.Rendering
                 ?? (RuntimeRenderingHostServices.HasConcreteHost
                     ? CreateAndAssignDefaultRenderPipeline()
                     : null!);
-            set
-            {
-                bool notificationsSuppressed = XRBase.ArePropertyNotificationsSuppressed;
-                if (!SetField(ref _renderPipeline, value))
-                    return;
+            set => ReplaceRenderPipelineAsset(value ?? throw new ArgumentNullException(nameof(value)));
+        }
 
-                // Snapshot restoration can suppress XRBase notifications. Keep
-                // every camera-bound viewport on the configured source asset even
-                // across that path instead of leaving a stale runtime override.
-                if (notificationsSuppressed)
-                    SynchronizeRenderPipelineWithViewports();
-            }
+        /// <summary>
+        /// Gets a monotonically increasing identity for the configured render-pipeline asset.
+        /// It changes only when a different asset instance replaces the current assignment.
+        /// </summary>
+        public ulong PipelineAssignmentRevision => _pipelineAssignmentRevision;
+
+        /// <summary>
+        /// Replaces this camera's configured render-pipeline asset and synchronizes every bound
+        /// viewport. Reassigning the same asset instance is a strict no-op.
+        /// </summary>
+        /// <param name="pipeline">The non-null asset that should render this camera.</param>
+        public void ReplaceRenderPipelineAsset(RenderPipeline pipeline)
+        {
+            ArgumentNullException.ThrowIfNull(pipeline);
+            if (ReferenceEquals(_renderPipeline, pipeline))
+                return;
+
+            bool notificationsSuppressed = XRBase.ArePropertyNotificationsSuppressed;
+            if (!SetField(ref _renderPipeline, pipeline, nameof(RenderPipeline)))
+                return;
+
+            _pipelineAssignmentRevision++;
+
+            // Snapshot restoration can suppress XRBase notifications. Keep every camera-bound
+            // viewport on the configured source asset across that path instead of leaving a stale
+            // runtime override.
+            if (notificationsSuppressed)
+                SynchronizeRenderPipelineWithViewports();
         }
 
         /// <summary>

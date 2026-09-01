@@ -1,0 +1,1843 @@
+{
+  "SchemaVersion": 1,
+  "CorpusId": "xrengine-humanoid-phase10",
+  "CorpusVersion": "1.0.0",
+  "Provenance": "Phase 10 checked-in corpus with content-addressed Unity schema-7 pose-audit references.",
+  "RequiresUnityInstallation": false,
+  "RequiredCoverage": 33488896,
+  "SourceFiles": [
+    {
+      "Id": "avatar-conventional-fbx",
+      "ArtifactKind": "AvatarModel",
+      "RelativePath": "avatars/conventional-standard.fbx",
+      "Sha256": "E74D0F755F883260B67E0C1D8B1856E2D609794347ECC7753676DB92F5AF25C5",
+      "Provenance": "Synthetic XRENGINE fixture generated locally by Phase10FixtureGenerator.",
+      "Signature": "sha256:E74D0F755F883260B67E0C1D8B1856E2D609794347ECC7753676DB92F5AF25C5"
+    },
+    {
+      "Id": "avatar-arbitrary-fbx",
+      "ArtifactKind": "AvatarModel",
+      "RelativePath": "avatars/arbitrary-axes.ascii.fbx",
+      "Sha256": "006A4CCFDFFAFFBA7CDCD1965FA758B5C291152ADD22CE0E70203E91076537A0",
+      "Provenance": "Synthetic XRENGINE Z-up fixture generated locally by Phase10FixtureGenerator.",
+      "Signature": "sha256:006A4CCFDFFAFFBA7CDCD1965FA758B5C291152ADD22CE0E70203E91076537A0"
+    },
+    {
+      "Id": "avatar-lean-fbx",
+      "ArtifactKind": "AvatarModel",
+      "RelativePath": "avatars/lean-optional-absent.fbx",
+      "Sha256": "A2A3567DE2284737DCCA33FC94ED5DE996677A2E436BBF1BB08DBEE865B8E3F6",
+      "Provenance": "Synthetic XRENGINE fixture generated locally by Phase10FixtureGenerator.",
+      "Signature": "sha256:A2A3567DE2284737DCCA33FC94ED5DE996677A2E436BBF1BB08DBEE865B8E3F6"
+    },
+    {
+      "Id": "avatar-arbitrary-corrections",
+      "ArtifactKind": "MappingCorrection",
+      "RelativePath": "avatars/arbitrary-axes.mapping-corrections.json",
+      "Sha256": "98A65340F0773A5D0DD67505017B1FF245B45E490ED381B886FB709B6B8967B5",
+      "Provenance": "Persisted mapping correction for the arbitrary Z-up fixture.",
+      "Signature": "mapping-sha256:154EEA2A624D364E607E111DCFD99D8A80E2B4770B11FD68E87E62199A85B2F5"
+    },
+    {
+      "Id": "reference-arbitrary-zup-basic-walk",
+      "ArtifactKind": "KnownAnswerReference",
+      "RelativePath": "references/arbitrary-zup-basic-walk.json.gz",
+      "Sha256": "07E8DD2E07F39A6A3C5BBE038405795F59BD8B552690375114A793971DA2063D",
+      "Provenance": "Unity 2022.3.22f1 schema-7 deterministic humanoid pose audit.",
+      "Signature": "pose-audit-schema7-sha256:07E8DD2E07F39A6A3C5BBE038405795F59BD8B552690375114A793971DA2063D"
+    },
+    {
+      "Id": "reference-arbitrary-zup-sexy-walk-no-ik",
+      "ArtifactKind": "KnownAnswerReference",
+      "RelativePath": "references/arbitrary-zup-sexy-walk-no-ik.json.gz",
+      "Sha256": "507F49FB4DBAEC6FA33EEC680A68C489720B8E6C85990C0A0A3E0B429E8612FC",
+      "Provenance": "Unity 2022.3.22f1 schema-7 deterministic humanoid pose audit.",
+      "Signature": "pose-audit-schema7-sha256:507F49FB4DBAEC6FA33EEC680A68C489720B8E6C85990C0A0A3E0B429E8612FC"
+    },
+    {
+      "Id": "reference-arbitrary-zup-sexy-walk",
+      "ArtifactKind": "KnownAnswerReference",
+      "RelativePath": "references/arbitrary-zup-sexy-walk.json.gz",
+      "Sha256": "FB39A25560061C14571744ED0EC0B2BE14BF88AEDCA703E68E9C0D4E2213C799",
+      "Provenance": "Unity 2022.3.22f1 schema-7 deterministic humanoid pose audit.",
+      "Signature": "pose-audit-schema7-sha256:FB39A25560061C14571744ED0EC0B2BE14BF88AEDCA703E68E9C0D4E2213C799"
+    },
+    {
+      "Id": "reference-arbitrary-zup-shutka-walk",
+      "ArtifactKind": "KnownAnswerReference",
+      "RelativePath": "references/arbitrary-zup-shutka-walk.json.gz",
+      "Sha256": "625CDBDD2A35E9AA7A69EEA5148B26245F0C3A720000D12707C485B02055AAD8",
+      "Provenance": "Unity 2022.3.22f1 schema-7 deterministic humanoid pose audit.",
+      "Signature": "pose-audit-schema7-sha256:625CDBDD2A35E9AA7A69EEA5148B26245F0C3A720000D12707C485B02055AAD8"
+    },
+    {
+      "Id": "reference-arbitrary-zup-test-anim",
+      "ArtifactKind": "KnownAnswerReference",
+      "RelativePath": "references/arbitrary-zup-test-anim.json.gz",
+      "Sha256": "AFA8CC3D10571BF9F2D2860B34B676B988D81E5FBAAFEFAC5178714B80E5AEE9",
+      "Provenance": "Unity 2022.3.22f1 schema-7 deterministic humanoid pose audit.",
+      "Signature": "pose-audit-schema7-sha256:AFA8CC3D10571BF9F2D2860B34B676B988D81E5FBAAFEFAC5178714B80E5AEE9"
+    },
+    {
+      "Id": "reference-conventional-basic-walk",
+      "ArtifactKind": "KnownAnswerReference",
+      "RelativePath": "references/conventional-basic-walk.json.gz",
+      "Sha256": "E00D9C8A70B2AEED7F6966C544A8C2555B9004B94DC9B1699F3FE3CEB5BE3144",
+      "Provenance": "Unity 2022.3.22f1 schema-7 deterministic humanoid pose audit.",
+      "Signature": "pose-audit-schema7-sha256:E00D9C8A70B2AEED7F6966C544A8C2555B9004B94DC9B1699F3FE3CEB5BE3144"
+    },
+    {
+      "Id": "reference-conventional-sexy-walk-no-ik",
+      "ArtifactKind": "KnownAnswerReference",
+      "RelativePath": "references/conventional-sexy-walk-no-ik.json.gz",
+      "Sha256": "6D2D3AD9A65462C60E49C0CEA9B4AB7AC86289A1123E1FA74973DA60A07FA31C",
+      "Provenance": "Unity 2022.3.22f1 schema-7 deterministic humanoid pose audit.",
+      "Signature": "pose-audit-schema7-sha256:6D2D3AD9A65462C60E49C0CEA9B4AB7AC86289A1123E1FA74973DA60A07FA31C"
+    },
+    {
+      "Id": "reference-conventional-sexy-walk",
+      "ArtifactKind": "KnownAnswerReference",
+      "RelativePath": "references/conventional-sexy-walk.json.gz",
+      "Sha256": "DDBB1B5D0A9BBD45B389428BABBB9D96A4E3426DBB03201FE5259E3313A40467",
+      "Provenance": "Unity 2022.3.22f1 schema-7 deterministic humanoid pose audit.",
+      "Signature": "pose-audit-schema7-sha256:DDBB1B5D0A9BBD45B389428BABBB9D96A4E3426DBB03201FE5259E3313A40467"
+    },
+    {
+      "Id": "reference-conventional-shutka-walk",
+      "ArtifactKind": "KnownAnswerReference",
+      "RelativePath": "references/conventional-shutka-walk.json.gz",
+      "Sha256": "60E560966AB136C1F8A39E6CDAC1B9610351D08D8855A28E8934FF2ADFD00A33",
+      "Provenance": "Unity 2022.3.22f1 schema-7 deterministic humanoid pose audit.",
+      "Signature": "pose-audit-schema7-sha256:60E560966AB136C1F8A39E6CDAC1B9610351D08D8855A28E8934FF2ADFD00A33"
+    },
+    {
+      "Id": "reference-conventional-test-anim",
+      "ArtifactKind": "KnownAnswerReference",
+      "RelativePath": "references/conventional-test-anim.json.gz",
+      "Sha256": "068FB5FD4D303581B63C0F33925408935AD4D4D34EF8554AC4734409AC9DA23A",
+      "Provenance": "Unity 2022.3.22f1 schema-7 deterministic humanoid pose audit.",
+      "Signature": "pose-audit-schema7-sha256:068FB5FD4D303581B63C0F33925408935AD4D4D34EF8554AC4734409AC9DA23A"
+    },
+    {
+      "Id": "reference-lean-optional-absent-basic-walk",
+      "ArtifactKind": "KnownAnswerReference",
+      "RelativePath": "references/lean-optional-absent-basic-walk.json.gz",
+      "Sha256": "2D96E4F8FBADD06F9866BC807DD4308EFF1F5D739568C4F50356E6D3898639C6",
+      "Provenance": "Unity 2022.3.22f1 schema-7 deterministic humanoid pose audit.",
+      "Signature": "pose-audit-schema7-sha256:2D96E4F8FBADD06F9866BC807DD4308EFF1F5D739568C4F50356E6D3898639C6"
+    },
+    {
+      "Id": "reference-lean-optional-absent-sexy-walk-no-ik",
+      "ArtifactKind": "KnownAnswerReference",
+      "RelativePath": "references/lean-optional-absent-sexy-walk-no-ik.json.gz",
+      "Sha256": "637EDD552E99B791C4F1846D0359E8B4BCD8583B51E8A77DC660483905975AA7",
+      "Provenance": "Unity 2022.3.22f1 schema-7 deterministic humanoid pose audit.",
+      "Signature": "pose-audit-schema7-sha256:637EDD552E99B791C4F1846D0359E8B4BCD8583B51E8A77DC660483905975AA7"
+    },
+    {
+      "Id": "reference-lean-optional-absent-sexy-walk",
+      "ArtifactKind": "KnownAnswerReference",
+      "RelativePath": "references/lean-optional-absent-sexy-walk.json.gz",
+      "Sha256": "88BB21E47D63FDE130480837E20B6D9F7026598DE396C3CEF913E9173EA8C268",
+      "Provenance": "Unity 2022.3.22f1 schema-7 deterministic humanoid pose audit.",
+      "Signature": "pose-audit-schema7-sha256:88BB21E47D63FDE130480837E20B6D9F7026598DE396C3CEF913E9173EA8C268"
+    },
+    {
+      "Id": "reference-lean-optional-absent-shutka-walk",
+      "ArtifactKind": "KnownAnswerReference",
+      "RelativePath": "references/lean-optional-absent-shutka-walk.json.gz",
+      "Sha256": "679D6A36730590E7770E6DF3524B09CD948ADF0962EC1B5580D99F4EDA425B0C",
+      "Provenance": "Unity 2022.3.22f1 schema-7 deterministic humanoid pose audit.",
+      "Signature": "pose-audit-schema7-sha256:679D6A36730590E7770E6DF3524B09CD948ADF0962EC1B5580D99F4EDA425B0C"
+    },
+    {
+      "Id": "reference-lean-optional-absent-test-anim",
+      "ArtifactKind": "KnownAnswerReference",
+      "RelativePath": "references/lean-optional-absent-test-anim.json.gz",
+      "Sha256": "0BD7E4558E751C5D173ECA8E4E8E768ECF76D62D3E5416BCCA5C73D65F1BF652",
+      "Provenance": "Unity 2022.3.22f1 schema-7 deterministic humanoid pose audit.",
+      "Signature": "pose-audit-schema7-sha256:0BD7E4558E751C5D173ECA8E4E8E768ECF76D62D3E5416BCCA5C73D65F1BF652"
+    },
+    {
+      "Id": "clip-basic-walk",
+      "ArtifactKind": "AnimationClip",
+      "RelativePath": "clips/repository-walks/Basic Walk.anim",
+      "Sha256": "08B510A610CACCCC14D2E30CAEFDD6C86B6B06D98125F05AE9EBBA63EC767E68",
+      "Provenance": "Repository walk copied byte-for-byte from Assets/Walks for the Phase 10 corpus.",
+      "Signature": "clip-manifest-sha256:8860EC125B39503E23B026D9318F690F2A624958C5C83C90BEEF6DE9E7A2A8D0"
+    },
+    {
+      "Id": "clip-sexy-walk-no-ik",
+      "ArtifactKind": "AnimationClip",
+      "RelativePath": "clips/repository-walks/Sexy Walk No IK.anim",
+      "Sha256": "62A25D9B068821E48B7677127406BCFBC3FAA9448C631A59DFA67F6894E3B3FE",
+      "Provenance": "Repository walk copied byte-for-byte from Assets/Walks for the Phase 10 corpus.",
+      "Signature": "clip-manifest-sha256:47419158199327BD29624D7AAC921D63DAF3735C32F911EEE373A5790345C40D"
+    },
+    {
+      "Id": "clip-sexy-walk",
+      "ArtifactKind": "AnimationClip",
+      "RelativePath": "clips/repository-walks/Sexy Walk.anim",
+      "Sha256": "2BAA72EF13646923EA11E8333B3107A0701E0F3565B4C7A07E6AA8A8873E9D58",
+      "Provenance": "Repository walk copied byte-for-byte from Assets/Walks for the Phase 10 corpus.",
+      "Signature": "clip-manifest-sha256:B1CC71D3A4E9E0593AFA8D7A204EC45BA3ADE7FD3CA3C75A57A527A20B634A82"
+    },
+    {
+      "Id": "clip-shutka-walk",
+      "ArtifactKind": "AnimationClip",
+      "RelativePath": "clips/repository-walks/Shutka Walk.anim",
+      "Sha256": "69ABF7C86268A1E72CBD1E819534C27D6302C89FE3B0E263BDE8B9E659157E00",
+      "Provenance": "Repository walk copied byte-for-byte from Assets/Walks for the Phase 10 corpus.",
+      "Signature": "clip-manifest-sha256:AACE4CFFC9943C19693B3190730CE4FF6836EA8070B72F35EC74075F17F43744"
+    },
+    {
+      "Id": "clip-test-anim",
+      "ArtifactKind": "AnimationClip",
+      "RelativePath": "clips/repository-walks/Test Anim.anim",
+      "Sha256": "872243DD22C74917571DE3DE6DF5B4707FD861258DCDAF050928F496417354C8",
+      "Provenance": "Repository walk copied byte-for-byte from Assets/Walks for the Phase 10 corpus.",
+      "Signature": "clip-manifest-sha256:B168BB817A36D6DF8CF661CBFB45A77CB629C14CFF0E863D0F5172F6D3B743F6"
+    },
+    {
+      "Id": "clip-unity-compressed-rotation",
+      "ArtifactKind": "AnimationClip",
+      "RelativePath": "clips/unity-anim-v1/compressed-rotation-v6.anim",
+      "Sha256": "D0C2EB02CE7EE2B4F5349C2FBD3616D58A58B94CD4A0EE81167691D8733662C7",
+      "Provenance": "Unity serialization fixture copied byte-for-byte from docs/developer-guides/animation/fixtures/unity-anim-v1.",
+      "Signature": "clip-manifest-sha256:B2F948B24542A4C715D4440EB398E80E09DD21AD822BB1083C937D44003672D6"
+    },
+    {
+      "Id": "clip-unity-editable-families",
+      "ArtifactKind": "AnimationClip",
+      "RelativePath": "unity-project/Assets/Clips/editable-families-v7.anim",
+      "Sha256": "895C3181287AA4DF6F08048F310EFDFD77186F45AFFB8C49F4057333CA513CFB",
+      "Provenance": "Unity serializedVersion-7 fixture derived from the redistributable editable-families fixture with XREvent_ callbacks and reserved scalar/non-null PPtr adapter bindings.",
+      "Signature": "clip-manifest-sha256:59492D4C3480D76C0F186771FEEBAA678E530E0BE57840E6612CC0194DA8E7B4"
+    },
+    {
+      "Id": "clip-unity-packed-dense-constant",
+      "ArtifactKind": "AnimationClip",
+      "RelativePath": "clips/unity-anim-v1/packed-dense-constant-v6.anim",
+      "Sha256": "B838DEE33CCDF60F1A8863B47362226A7195EA221778208A83DD0C1D7EE436F4",
+      "Provenance": "Unity serialization fixture copied byte-for-byte from docs/developer-guides/animation/fixtures/unity-anim-v1.",
+      "Signature": "clip-manifest-sha256:5BE5AFB01B4297B679F1E06F800A4720B1B94CAA390A61007F8BA06AA7EA6DA1"
+    },
+    {
+      "Id": "clip-unity-packed-streamed",
+      "ArtifactKind": "AnimationClip",
+      "RelativePath": "clips/unity-anim-v1/packed-streamed-v6.anim",
+      "Sha256": "8444F2005BA9E5A28E49D2762E55879C6CA78D472A22847F147D6871D6F792EC",
+      "Provenance": "Unity serialization fixture copied byte-for-byte from docs/developer-guides/animation/fixtures/unity-anim-v1.",
+      "Signature": "clip-manifest-sha256:F39DA2982391D2A28303E57AD5516ABC15693745F5571A4E1427D8BF946817A5"
+    },
+    {
+      "Id": "clip-unity-packed-typed-bindings",
+      "ArtifactKind": "AnimationClip",
+      "RelativePath": "clips/unity-anim-v1/packed-typed-bindings-v6.anim",
+      "Sha256": "673D73B68A2537CF99A6D99C9871900ED643331C630247817E199CCE4DBD19EA",
+      "Provenance": "Unity serialization fixture copied byte-for-byte from docs/developer-guides/animation/fixtures/unity-anim-v1.",
+      "Signature": "clip-manifest-sha256:3890091D6D1E5D3D26D53467313A4050BC9BBD818138CAD3C289E68EE52B90AB"
+    }
+  ],
+  "CaptureTools": [
+    {
+      "Id": "unity-humanoid-pose-audit-exporter",
+      "RelativeRepositoryPath": "XREngine.UnitTests/TestData/HumanoidConformance/unity-project/Assets/HumanoidPoseAuditExporter.schema7.cs",
+      "Sha256": "7AE517AC5D733E0EBA9AA4BBE0359289153DAEC01152A8641E73DC99C6C83D74",
+      "Version": "schema-7-2026-08-31",
+      "Provenance": "Checked-in Unity known-answer exporter source."
+    }
+  ],
+  "AssetChecks": [
+    { "Id": "conventional-model-import", "SourceFileId": "avatar-conventional-fbx", "Kind": "ValidModelImport", "ExpectedToPass": true, "ExpectedCapabilities": 0, "Provenance": "Synthetic model must import." },
+    { "Id": "conventional-humanoid-matrix", "SourceFileId": "avatar-conventional-fbx", "Kind": "HumanoidMatrixAvatar", "ExpectedToPass": true, "ExpectedCapabilities": 0, "Provenance": "Synthetic conventional rig is a humanoid matrix avatar." },
+    { "Id": "arbitrary-model-import", "SourceFileId": "avatar-arbitrary-fbx", "Kind": "ValidModelImport", "ExpectedToPass": true, "ExpectedCapabilities": 0, "Provenance": "Synthetic Z-up model must import." },
+    { "Id": "arbitrary-humanoid-matrix", "SourceFileId": "avatar-arbitrary-fbx", "Kind": "HumanoidMatrixAvatar", "ExpectedToPass": true, "ExpectedCapabilities": 0, "Provenance": "Persisted mapping makes the synthetic Z-up rig a humanoid matrix avatar." },
+    { "Id": "lean-model-import", "SourceFileId": "avatar-lean-fbx", "Kind": "ValidModelImport", "ExpectedToPass": true, "ExpectedCapabilities": 0, "Provenance": "Synthetic lean model must import." },
+    { "Id": "lean-humanoid-matrix", "SourceFileId": "avatar-lean-fbx", "Kind": "HumanoidMatrixAvatar", "ExpectedToPass": true, "ExpectedCapabilities": 0, "Provenance": "Synthetic lean rig is a humanoid matrix avatar." },
+    { "Id": "basic-walk-animation", "SourceFileId": "clip-basic-walk", "Kind": "AnimationBehaviorAndImport", "ExpectedToPass": true, "ExpectedCapabilities": 0, "Provenance": "Repository walk imports and executes through the animation conformance path." },
+    { "Id": "sexy-walk-no-ik-animation", "SourceFileId": "clip-sexy-walk-no-ik", "Kind": "AnimationBehaviorAndImport", "ExpectedToPass": true, "ExpectedCapabilities": 0, "Provenance": "Repository walk imports and executes through the animation conformance path." },
+    { "Id": "sexy-walk-animation", "SourceFileId": "clip-sexy-walk", "Kind": "AnimationBehaviorAndImport", "ExpectedToPass": true, "ExpectedCapabilities": 0, "Provenance": "Repository walk imports and executes through the animation conformance path." },
+    { "Id": "shutka-walk-animation", "SourceFileId": "clip-shutka-walk", "Kind": "AnimationBehaviorAndImport", "ExpectedToPass": true, "ExpectedCapabilities": 0, "Provenance": "Repository walk imports and executes through the animation conformance path." },
+    { "Id": "test-anim-animation", "SourceFileId": "clip-test-anim", "Kind": "AnimationBehaviorAndImport", "ExpectedToPass": true, "ExpectedCapabilities": 0, "Provenance": "Repository walk imports and executes through the animation conformance path." },
+    { "Id": "compressed-rotation-import", "SourceFileId": "clip-unity-compressed-rotation", "Kind": "AnimationImport", "ExpectedToPass": true, "ExpectedCapabilities": 4096, "Provenance": "Serialized compressed rotation fixture must retain source encoding." },
+    { "Id": "editable-families-import", "SourceFileId": "clip-unity-editable-families", "Kind": "AnimationImport", "ExpectedToPass": true, "ExpectedCapabilities": 3072, "Provenance": "Serialized fixture contains events and object-reference adapter bindings." },
+    { "Id": "packed-dense-constant-import", "SourceFileId": "clip-unity-packed-dense-constant", "Kind": "AnimationImport", "ExpectedToPass": true, "ExpectedCapabilities": 8192, "Provenance": "Serialized dense/constant fixture must retain source encoding." },
+    { "Id": "packed-streamed-import", "SourceFileId": "clip-unity-packed-streamed", "Kind": "AnimationImport", "ExpectedToPass": true, "ExpectedCapabilities": 16384, "Provenance": "Serialized streamed fixture must retain source encoding." },
+    { "Id": "packed-typed-bindings-import", "SourceFileId": "clip-unity-packed-typed-bindings", "Kind": "AnimationImport", "ExpectedToPass": true, "ExpectedCapabilities": 2048, "Provenance": "Serialized typed-binding fixture must retain object-reference binding behavior." }
+  ],
+  "Avatars": [
+    {
+      "Id": "conventional",
+      "SourceFileId": "avatar-conventional-fbx",
+      "AvatarDefinitionSignature": "0B638CF8473D54BE509075CE3AFDBDDA6C91259DFF6C893349EE1B9574DE09D8",
+      "ImportSettingsHash": "C171DF8F542E9B1D4B26AEA56417D611BD2F33C77ED3A3A2A05A79BCA921E76D",
+      "MappingMode": "Automatic",
+      "MappingCorrectionsSourceFileId": "",
+      "HasConventionalBoneNames": true,
+      "HasArbitraryBoneNames": false,
+      "HasDistinctBindAxesAndProportions": false,
+      "HasMissingOptionalRoles": false,
+      "IsIntegrationOnly": false,
+      "CompatibleClipIds": [
+        "basic-walk",
+        "sexy-walk-no-ik",
+        "sexy-walk",
+        "shutka-walk",
+        "test-anim"
+      ],
+      "CoordinateSpaces": {
+        "RootTranslation": "XREngine.WorldMeters",
+        "RootRotation": "XREngine.WorldDegrees",
+        "Body": "UnityHumanoidBodySpace",
+        "HipsLocal": "AvatarHipsLocal",
+        "HipsWorld": "XREngine.WorldMeters",
+        "BoneLocalRotation": "AvatarBoneLocalDegrees",
+        "Endpoint": "XREngine.WorldMeters"
+      }
+    },
+    {
+      "Id": "arbitrary-zup",
+      "SourceFileId": "avatar-arbitrary-fbx",
+      "AvatarDefinitionSignature": "13CF8953C2F677A369B51FA49A80C027B5122E6F570CCDCA4614617C0A5F74DC",
+      "ImportSettingsHash": "C171DF8F542E9B1D4B26AEA56417D611BD2F33C77ED3A3A2A05A79BCA921E76D",
+      "MappingMode": "PersistedCorrection",
+      "MappingCorrectionsSourceFileId": "avatar-arbitrary-corrections",
+      "HasConventionalBoneNames": false,
+      "HasArbitraryBoneNames": true,
+      "HasDistinctBindAxesAndProportions": true,
+      "HasMissingOptionalRoles": false,
+      "IsIntegrationOnly": false,
+      "CompatibleClipIds": [
+        "basic-walk",
+        "sexy-walk-no-ik",
+        "sexy-walk",
+        "shutka-walk",
+        "test-anim"
+      ],
+      "CoordinateSpaces": {
+        "RootTranslation": "XREngine.WorldMeters",
+        "RootRotation": "XREngine.WorldDegrees",
+        "Body": "UnityHumanoidBodySpace",
+        "HipsLocal": "AvatarHipsLocal",
+        "HipsWorld": "XREngine.WorldMeters",
+        "BoneLocalRotation": "AvatarBoneLocalDegrees",
+        "Endpoint": "XREngine.WorldMeters"
+      }
+    },
+    {
+      "Id": "lean-optional-absent",
+      "SourceFileId": "avatar-lean-fbx",
+      "AvatarDefinitionSignature": "C640E6946611005DC3264AF2FE6C1AE66C1B1FD82615E03F780B3C85E7BD4A1B",
+      "ImportSettingsHash": "C171DF8F542E9B1D4B26AEA56417D611BD2F33C77ED3A3A2A05A79BCA921E76D",
+      "MappingMode": "Automatic",
+      "MappingCorrectionsSourceFileId": "",
+      "HasConventionalBoneNames": true,
+      "HasArbitraryBoneNames": false,
+      "HasDistinctBindAxesAndProportions": true,
+      "HasMissingOptionalRoles": true,
+      "IsIntegrationOnly": false,
+      "CompatibleClipIds": [
+        "basic-walk",
+        "sexy-walk-no-ik",
+        "sexy-walk",
+        "shutka-walk",
+        "test-anim"
+      ],
+      "CoordinateSpaces": {
+        "RootTranslation": "XREngine.WorldMeters",
+        "RootRotation": "XREngine.WorldDegrees",
+        "Body": "UnityHumanoidBodySpace",
+        "HipsLocal": "AvatarHipsLocal",
+        "HipsWorld": "XREngine.WorldMeters",
+        "BoneLocalRotation": "AvatarBoneLocalDegrees",
+        "Endpoint": "XREngine.WorldMeters"
+      }
+    }
+  ],
+  "Clips": [
+    {
+      "Id": "basic-walk",
+      "SourceFileId": "clip-basic-walk",
+      "ClipSignature": "8860EC125B39503E23B026D9318F690F2A624958C5C83C90BEEF6DE9E7A2A8D0",
+      "ImportSettingsHash": "66CCAC4252FF736CE03F04B6FA416E5BF8BCABCF14D08104FB7B01677AF86B86",
+      "IsIntegrationOnly": false,
+      "ExpectedCapabilities": 16973824,
+      "CompatibleAvatarIds": [
+        "conventional",
+        "arbitrary-zup",
+        "lean-optional-absent"
+      ],
+      "CoordinateSpaces": {
+        "RootTranslation": "XREngine.WorldMeters",
+        "RootRotation": "XREngine.WorldDegrees",
+        "Body": "UnityHumanoidBodySpace",
+        "HipsLocal": "AvatarHipsLocal",
+        "HipsWorld": "XREngine.WorldMeters",
+        "BoneLocalRotation": "AvatarBoneLocalDegrees",
+        "Endpoint": "XREngine.WorldMeters"
+      }
+    },
+    {
+      "Id": "sexy-walk-no-ik",
+      "SourceFileId": "clip-sexy-walk-no-ik",
+      "ClipSignature": "47419158199327BD29624D7AAC921D63DAF3735C32F911EEE373A5790345C40D",
+      "ImportSettingsHash": "601E32DF93D76974124A361A4E942FD3060727B04E7C4A8E1384E6D7DE8666A1",
+      "IsIntegrationOnly": false,
+      "ExpectedCapabilities": 16973824,
+      "CompatibleAvatarIds": [
+        "conventional",
+        "arbitrary-zup",
+        "lean-optional-absent"
+      ],
+      "CoordinateSpaces": {
+        "RootTranslation": "XREngine.WorldMeters",
+        "RootRotation": "XREngine.WorldDegrees",
+        "Body": "UnityHumanoidBodySpace",
+        "HipsLocal": "AvatarHipsLocal",
+        "HipsWorld": "XREngine.WorldMeters",
+        "BoneLocalRotation": "AvatarBoneLocalDegrees",
+        "Endpoint": "XREngine.WorldMeters"
+      }
+    },
+    {
+      "Id": "sexy-walk",
+      "SourceFileId": "clip-sexy-walk",
+      "ClipSignature": "B1CC71D3A4E9E0593AFA8D7A204EC45BA3ADE7FD3CA3C75A57A527A20B634A82",
+      "ImportSettingsHash": "601E32DF93D76974124A361A4E942FD3060727B04E7C4A8E1384E6D7DE8666A1",
+      "IsIntegrationOnly": false,
+      "ExpectedCapabilities": 16973824,
+      "CompatibleAvatarIds": [
+        "conventional",
+        "arbitrary-zup",
+        "lean-optional-absent"
+      ],
+      "CoordinateSpaces": {
+        "RootTranslation": "XREngine.WorldMeters",
+        "RootRotation": "XREngine.WorldDegrees",
+        "Body": "UnityHumanoidBodySpace",
+        "HipsLocal": "AvatarHipsLocal",
+        "HipsWorld": "XREngine.WorldMeters",
+        "BoneLocalRotation": "AvatarBoneLocalDegrees",
+        "Endpoint": "XREngine.WorldMeters"
+      }
+    },
+    {
+      "Id": "shutka-walk",
+      "SourceFileId": "clip-shutka-walk",
+      "ClipSignature": "AACE4CFFC9943C19693B3190730CE4FF6836EA8070B72F35EC74075F17F43744",
+      "ImportSettingsHash": "AB26C26C992DFC7AA4226AB0790A846CF78B9B3BF714C009E70C6AC71755F225",
+      "IsIntegrationOnly": false,
+      "ExpectedCapabilities": 16973824,
+      "CompatibleAvatarIds": [
+        "conventional",
+        "arbitrary-zup",
+        "lean-optional-absent"
+      ],
+      "CoordinateSpaces": {
+        "RootTranslation": "XREngine.WorldMeters",
+        "RootRotation": "XREngine.WorldDegrees",
+        "Body": "UnityHumanoidBodySpace",
+        "HipsLocal": "AvatarHipsLocal",
+        "HipsWorld": "XREngine.WorldMeters",
+        "BoneLocalRotation": "AvatarBoneLocalDegrees",
+        "Endpoint": "XREngine.WorldMeters"
+      }
+    },
+    {
+      "Id": "test-anim",
+      "SourceFileId": "clip-test-anim",
+      "ClipSignature": "B168BB817A36D6DF8CF661CBFB45A77CB629C14CFF0E863D0F5172F6D3B743F6",
+      "ImportSettingsHash": "8C27ABE4DC5009B5B4FA7835098D85CAC4BDCD2D119DC9E8878F01B223A191CB",
+      "IsIntegrationOnly": false,
+      "ExpectedCapabilities": 16973824,
+      "CompatibleAvatarIds": [
+        "conventional",
+        "arbitrary-zup",
+        "lean-optional-absent"
+      ],
+      "CoordinateSpaces": {
+        "RootTranslation": "XREngine.WorldMeters",
+        "RootRotation": "XREngine.WorldDegrees",
+        "Body": "UnityHumanoidBodySpace",
+        "HipsLocal": "AvatarHipsLocal",
+        "HipsWorld": "XREngine.WorldMeters",
+        "BoneLocalRotation": "AvatarBoneLocalDegrees",
+        "Endpoint": "XREngine.WorldMeters"
+      }
+    },
+    {
+      "Id": "unity-compressed-rotation",
+      "SourceFileId": "clip-unity-compressed-rotation",
+      "ClipSignature": "B2F948B24542A4C715D4440EB398E80E09DD21AD822BB1083C937D44003672D6",
+      "ImportSettingsHash": "9D5F9408F1C09B24A8B7706B6389192378A67661E786A46B60676BC16F04A3CB",
+      "IsIntegrationOnly": true,
+      "ExpectedCapabilities": 0,
+      "CompatibleAvatarIds": [],
+      "CoordinateSpaces": {
+        "RootTranslation": "XREngine.WorldMeters",
+        "RootRotation": "XREngine.WorldDegrees",
+        "Body": "UnityHumanoidBodySpace",
+        "HipsLocal": "AvatarHipsLocal",
+        "HipsWorld": "XREngine.WorldMeters",
+        "BoneLocalRotation": "AvatarBoneLocalDegrees",
+        "Endpoint": "XREngine.WorldMeters"
+      }
+    },
+    {
+      "Id": "unity-editable-families",
+      "SourceFileId": "clip-unity-editable-families",
+      "ClipSignature": "59492D4C3480D76C0F186771FEEBAA678E530E0BE57840E6612CC0194DA8E7B4",
+      "ImportSettingsHash": "9D5F9408F1C09B24A8B7706B6389192378A67661E786A46B60676BC16F04A3CB",
+      "IsIntegrationOnly": true,
+      "ExpectedCapabilities": 0,
+      "CompatibleAvatarIds": [],
+      "CoordinateSpaces": {
+        "RootTranslation": "XREngine.WorldMeters",
+        "RootRotation": "XREngine.WorldDegrees",
+        "Body": "UnityHumanoidBodySpace",
+        "HipsLocal": "AvatarHipsLocal",
+        "HipsWorld": "XREngine.WorldMeters",
+        "BoneLocalRotation": "AvatarBoneLocalDegrees",
+        "Endpoint": "XREngine.WorldMeters"
+      }
+    },
+    {
+      "Id": "unity-packed-dense-constant",
+      "SourceFileId": "clip-unity-packed-dense-constant",
+      "ClipSignature": "5BE5AFB01B4297B679F1E06F800A4720B1B94CAA390A61007F8BA06AA7EA6DA1",
+      "ImportSettingsHash": "9D5F9408F1C09B24A8B7706B6389192378A67661E786A46B60676BC16F04A3CB",
+      "IsIntegrationOnly": true,
+      "ExpectedCapabilities": 0,
+      "CompatibleAvatarIds": [],
+      "CoordinateSpaces": {
+        "RootTranslation": "XREngine.WorldMeters",
+        "RootRotation": "XREngine.WorldDegrees",
+        "Body": "UnityHumanoidBodySpace",
+        "HipsLocal": "AvatarHipsLocal",
+        "HipsWorld": "XREngine.WorldMeters",
+        "BoneLocalRotation": "AvatarBoneLocalDegrees",
+        "Endpoint": "XREngine.WorldMeters"
+      }
+    },
+    {
+      "Id": "unity-packed-streamed",
+      "SourceFileId": "clip-unity-packed-streamed",
+      "ClipSignature": "F39DA2982391D2A28303E57AD5516ABC15693745F5571A4E1427D8BF946817A5",
+      "ImportSettingsHash": "5B40409E1623BBB2DD3BE94082D3E15AB7A22E6780B1113AA815B949DC5FC8AA",
+      "IsIntegrationOnly": true,
+      "ExpectedCapabilities": 0,
+      "CompatibleAvatarIds": [],
+      "CoordinateSpaces": {
+        "RootTranslation": "XREngine.WorldMeters",
+        "RootRotation": "XREngine.WorldDegrees",
+        "Body": "UnityHumanoidBodySpace",
+        "HipsLocal": "AvatarHipsLocal",
+        "HipsWorld": "XREngine.WorldMeters",
+        "BoneLocalRotation": "AvatarBoneLocalDegrees",
+        "Endpoint": "XREngine.WorldMeters"
+      }
+    },
+    {
+      "Id": "unity-packed-typed-bindings",
+      "SourceFileId": "clip-unity-packed-typed-bindings",
+      "ClipSignature": "3890091D6D1E5D3D26D53467313A4050BC9BBD818138CAD3C289E68EE52B90AB",
+      "ImportSettingsHash": "9D5F9408F1C09B24A8B7706B6389192378A67661E786A46B60676BC16F04A3CB",
+      "IsIntegrationOnly": true,
+      "ExpectedCapabilities": 0,
+      "CompatibleAvatarIds": [],
+      "CoordinateSpaces": {
+        "RootTranslation": "XREngine.WorldMeters",
+        "RootRotation": "XREngine.WorldDegrees",
+        "Body": "UnityHumanoidBodySpace",
+        "HipsLocal": "AvatarHipsLocal",
+        "HipsWorld": "XREngine.WorldMeters",
+        "BoneLocalRotation": "AvatarBoneLocalDegrees",
+        "Endpoint": "XREngine.WorldMeters"
+      }
+    }
+  ],
+  "Matrix": [
+    {
+      "Id": "conventional-basic-walk-direct",
+      "AvatarId": "conventional",
+      "ClipId": "basic-walk",
+      "PlaybackMode": 0,
+      "ReferenceFileId": "reference-conventional-basic-walk",
+      "ReferenceSignature": "pose-audit-schema7-sha256:E00D9C8A70B2AEED7F6966C544A8C2555B9004B94DC9B1699F3FE3CEB5BE3144",
+      "AvatarDefinitionSignature": "0B638CF8473D54BE509075CE3AFDBDDA6C91259DFF6C893349EE1B9574DE09D8",
+      "ClipSignature": "8860EC125B39503E23B026D9318F690F2A624958C5C83C90BEEF6DE9E7A2A8D0",
+      "Provenance": "Unity 2022.3.22f1 schema-7 deterministic pose audit bound to this avatar and clip source pair.",
+      "KnownAnswer": {
+        "CaptureToolId": "unity-humanoid-pose-audit-exporter",
+        "SourceUnityEditorVersion": "2022.3.22f1",
+        "SerializedClipVersion": "UnityAnimationClip-v6-or-v7",
+        "ReferenceSchemaVersion": 7,
+        "SourceAvatarSha256": "E74D0F755F883260B67E0C1D8B1856E2D609794347ECC7753676DB92F5AF25C5",
+        "SourceClipSha256": "08B510A610CACCCC14D2E30CAEFDD6C86B6B06D98125F05AE9EBBA63EC767E68",
+        "AvatarDefinitionSignature": "0B638CF8473D54BE509075CE3AFDBDDA6C91259DFF6C893349EE1B9574DE09D8",
+        "AvatarImportSettingsSha256": "C171DF8F542E9B1D4B26AEA56417D611BD2F33C77ED3A3A2A05A79BCA921E76D",
+        "ClipImportSettingsSha256": "66CCAC4252FF736CE03F04B6FA416E5BF8BCABCF14D08104FB7B01677AF86B86",
+        "CaptureToolIdentity": "unity-humanoid-pose-audit-exporter",
+        "CaptureToolVersion": "schema-7-2026-08-31",
+        "CaptureToolSha256": "7AE517AC5D733E0EBA9AA4BBE0359289153DAEC01152A8641E73DC99C6C83D74",
+        "CoordinateSpaces": {
+          "RootTranslation": "XREngine.WorldMeters",
+          "RootRotation": "XREngine.WorldDegrees",
+          "Body": "UnityHumanoidBodySpace",
+          "HipsLocal": "AvatarHipsLocal",
+          "HipsWorld": "XREngine.WorldMeters",
+          "BoneLocalRotation": "AvatarBoneLocalDegrees",
+          "Endpoint": "XREngine.WorldMeters"
+        },
+        "Tolerances": {
+          "RootTranslationMeters": 0.001,
+          "RootRotationDegrees": 0.1,
+          "EndpointMeters": 0.002,
+          "BoneLocalRotationDegrees": 0.2,
+          "TenLoopDriftMeters": 0.002,
+          "TenLoopDriftDegrees": 0.2
+        }
+      },
+      "IsIntegrationOnly": false,
+      "ExpectedCapabilities": 16973824,
+      "CoordinateSpaces": {
+        "RootTranslation": "XREngine.WorldMeters",
+        "RootRotation": "XREngine.WorldDegrees",
+        "Body": "UnityHumanoidBodySpace",
+        "HipsLocal": "AvatarHipsLocal",
+        "HipsWorld": "XREngine.WorldMeters",
+        "BoneLocalRotation": "AvatarBoneLocalDegrees",
+        "Endpoint": "XREngine.WorldMeters"
+      },
+      "Tolerances": {
+        "RootTranslationMeters": 0.001,
+        "RootRotationDegrees": 0.1,
+        "EndpointMeters": 0.002,
+        "BoneLocalRotationDegrees": 0.2,
+        "TenLoopDriftMeters": 0.002,
+        "TenLoopDriftDegrees": 0.2
+      }
+    },
+    {
+      "Id": "conventional-sexy-walk-no-ik-direct",
+      "AvatarId": "conventional",
+      "ClipId": "sexy-walk-no-ik",
+      "PlaybackMode": 0,
+      "ReferenceFileId": "reference-conventional-sexy-walk-no-ik",
+      "ReferenceSignature": "pose-audit-schema7-sha256:6D2D3AD9A65462C60E49C0CEA9B4AB7AC86289A1123E1FA74973DA60A07FA31C",
+      "AvatarDefinitionSignature": "0B638CF8473D54BE509075CE3AFDBDDA6C91259DFF6C893349EE1B9574DE09D8",
+      "ClipSignature": "47419158199327BD29624D7AAC921D63DAF3735C32F911EEE373A5790345C40D",
+      "Provenance": "Unity 2022.3.22f1 schema-7 deterministic pose audit bound to this avatar and clip source pair.",
+      "KnownAnswer": {
+        "CaptureToolId": "unity-humanoid-pose-audit-exporter",
+        "SourceUnityEditorVersion": "2022.3.22f1",
+        "SerializedClipVersion": "UnityAnimationClip-v6-or-v7",
+        "ReferenceSchemaVersion": 7,
+        "SourceAvatarSha256": "E74D0F755F883260B67E0C1D8B1856E2D609794347ECC7753676DB92F5AF25C5",
+        "SourceClipSha256": "62A25D9B068821E48B7677127406BCFBC3FAA9448C631A59DFA67F6894E3B3FE",
+        "AvatarDefinitionSignature": "0B638CF8473D54BE509075CE3AFDBDDA6C91259DFF6C893349EE1B9574DE09D8",
+        "AvatarImportSettingsSha256": "C171DF8F542E9B1D4B26AEA56417D611BD2F33C77ED3A3A2A05A79BCA921E76D",
+        "ClipImportSettingsSha256": "601E32DF93D76974124A361A4E942FD3060727B04E7C4A8E1384E6D7DE8666A1",
+        "CaptureToolIdentity": "unity-humanoid-pose-audit-exporter",
+        "CaptureToolVersion": "schema-7-2026-08-31",
+        "CaptureToolSha256": "7AE517AC5D733E0EBA9AA4BBE0359289153DAEC01152A8641E73DC99C6C83D74",
+        "CoordinateSpaces": {
+          "RootTranslation": "XREngine.WorldMeters",
+          "RootRotation": "XREngine.WorldDegrees",
+          "Body": "UnityHumanoidBodySpace",
+          "HipsLocal": "AvatarHipsLocal",
+          "HipsWorld": "XREngine.WorldMeters",
+          "BoneLocalRotation": "AvatarBoneLocalDegrees",
+          "Endpoint": "XREngine.WorldMeters"
+        },
+        "Tolerances": {
+          "RootTranslationMeters": 0.001,
+          "RootRotationDegrees": 0.1,
+          "EndpointMeters": 0.002,
+          "BoneLocalRotationDegrees": 0.2,
+          "TenLoopDriftMeters": 0.002,
+          "TenLoopDriftDegrees": 0.2
+        }
+      },
+      "IsIntegrationOnly": false,
+      "ExpectedCapabilities": 16973824,
+      "CoordinateSpaces": {
+        "RootTranslation": "XREngine.WorldMeters",
+        "RootRotation": "XREngine.WorldDegrees",
+        "Body": "UnityHumanoidBodySpace",
+        "HipsLocal": "AvatarHipsLocal",
+        "HipsWorld": "XREngine.WorldMeters",
+        "BoneLocalRotation": "AvatarBoneLocalDegrees",
+        "Endpoint": "XREngine.WorldMeters"
+      },
+      "Tolerances": {
+        "RootTranslationMeters": 0.001,
+        "RootRotationDegrees": 0.1,
+        "EndpointMeters": 0.002,
+        "BoneLocalRotationDegrees": 0.2,
+        "TenLoopDriftMeters": 0.002,
+        "TenLoopDriftDegrees": 0.2
+      }
+    },
+    {
+      "Id": "conventional-sexy-walk-direct",
+      "AvatarId": "conventional",
+      "ClipId": "sexy-walk",
+      "PlaybackMode": 0,
+      "ReferenceFileId": "reference-conventional-sexy-walk",
+      "ReferenceSignature": "pose-audit-schema7-sha256:DDBB1B5D0A9BBD45B389428BABBB9D96A4E3426DBB03201FE5259E3313A40467",
+      "AvatarDefinitionSignature": "0B638CF8473D54BE509075CE3AFDBDDA6C91259DFF6C893349EE1B9574DE09D8",
+      "ClipSignature": "B1CC71D3A4E9E0593AFA8D7A204EC45BA3ADE7FD3CA3C75A57A527A20B634A82",
+      "Provenance": "Unity 2022.3.22f1 schema-7 deterministic pose audit bound to this avatar and clip source pair.",
+      "KnownAnswer": {
+        "CaptureToolId": "unity-humanoid-pose-audit-exporter",
+        "SourceUnityEditorVersion": "2022.3.22f1",
+        "SerializedClipVersion": "UnityAnimationClip-v6-or-v7",
+        "ReferenceSchemaVersion": 7,
+        "SourceAvatarSha256": "E74D0F755F883260B67E0C1D8B1856E2D609794347ECC7753676DB92F5AF25C5",
+        "SourceClipSha256": "2BAA72EF13646923EA11E8333B3107A0701E0F3565B4C7A07E6AA8A8873E9D58",
+        "AvatarDefinitionSignature": "0B638CF8473D54BE509075CE3AFDBDDA6C91259DFF6C893349EE1B9574DE09D8",
+        "AvatarImportSettingsSha256": "C171DF8F542E9B1D4B26AEA56417D611BD2F33C77ED3A3A2A05A79BCA921E76D",
+        "ClipImportSettingsSha256": "601E32DF93D76974124A361A4E942FD3060727B04E7C4A8E1384E6D7DE8666A1",
+        "CaptureToolIdentity": "unity-humanoid-pose-audit-exporter",
+        "CaptureToolVersion": "schema-7-2026-08-31",
+        "CaptureToolSha256": "7AE517AC5D733E0EBA9AA4BBE0359289153DAEC01152A8641E73DC99C6C83D74",
+        "CoordinateSpaces": {
+          "RootTranslation": "XREngine.WorldMeters",
+          "RootRotation": "XREngine.WorldDegrees",
+          "Body": "UnityHumanoidBodySpace",
+          "HipsLocal": "AvatarHipsLocal",
+          "HipsWorld": "XREngine.WorldMeters",
+          "BoneLocalRotation": "AvatarBoneLocalDegrees",
+          "Endpoint": "XREngine.WorldMeters"
+        },
+        "Tolerances": {
+          "RootTranslationMeters": 0.001,
+          "RootRotationDegrees": 0.1,
+          "EndpointMeters": 0.002,
+          "BoneLocalRotationDegrees": 0.2,
+          "TenLoopDriftMeters": 0.002,
+          "TenLoopDriftDegrees": 0.2
+        }
+      },
+      "IsIntegrationOnly": false,
+      "ExpectedCapabilities": 16973824,
+      "CoordinateSpaces": {
+        "RootTranslation": "XREngine.WorldMeters",
+        "RootRotation": "XREngine.WorldDegrees",
+        "Body": "UnityHumanoidBodySpace",
+        "HipsLocal": "AvatarHipsLocal",
+        "HipsWorld": "XREngine.WorldMeters",
+        "BoneLocalRotation": "AvatarBoneLocalDegrees",
+        "Endpoint": "XREngine.WorldMeters"
+      },
+      "Tolerances": {
+        "RootTranslationMeters": 0.001,
+        "RootRotationDegrees": 0.1,
+        "EndpointMeters": 0.002,
+        "BoneLocalRotationDegrees": 0.2,
+        "TenLoopDriftMeters": 0.002,
+        "TenLoopDriftDegrees": 0.2
+      }
+    },
+    {
+      "Id": "conventional-shutka-walk-direct",
+      "AvatarId": "conventional",
+      "ClipId": "shutka-walk",
+      "PlaybackMode": 0,
+      "ReferenceFileId": "reference-conventional-shutka-walk",
+      "ReferenceSignature": "pose-audit-schema7-sha256:60E560966AB136C1F8A39E6CDAC1B9610351D08D8855A28E8934FF2ADFD00A33",
+      "AvatarDefinitionSignature": "0B638CF8473D54BE509075CE3AFDBDDA6C91259DFF6C893349EE1B9574DE09D8",
+      "ClipSignature": "AACE4CFFC9943C19693B3190730CE4FF6836EA8070B72F35EC74075F17F43744",
+      "Provenance": "Unity 2022.3.22f1 schema-7 deterministic pose audit bound to this avatar and clip source pair.",
+      "KnownAnswer": {
+        "CaptureToolId": "unity-humanoid-pose-audit-exporter",
+        "SourceUnityEditorVersion": "2022.3.22f1",
+        "SerializedClipVersion": "UnityAnimationClip-v6-or-v7",
+        "ReferenceSchemaVersion": 7,
+        "SourceAvatarSha256": "E74D0F755F883260B67E0C1D8B1856E2D609794347ECC7753676DB92F5AF25C5",
+        "SourceClipSha256": "69ABF7C86268A1E72CBD1E819534C27D6302C89FE3B0E263BDE8B9E659157E00",
+        "AvatarDefinitionSignature": "0B638CF8473D54BE509075CE3AFDBDDA6C91259DFF6C893349EE1B9574DE09D8",
+        "AvatarImportSettingsSha256": "C171DF8F542E9B1D4B26AEA56417D611BD2F33C77ED3A3A2A05A79BCA921E76D",
+        "ClipImportSettingsSha256": "AB26C26C992DFC7AA4226AB0790A846CF78B9B3BF714C009E70C6AC71755F225",
+        "CaptureToolIdentity": "unity-humanoid-pose-audit-exporter",
+        "CaptureToolVersion": "schema-7-2026-08-31",
+        "CaptureToolSha256": "7AE517AC5D733E0EBA9AA4BBE0359289153DAEC01152A8641E73DC99C6C83D74",
+        "CoordinateSpaces": {
+          "RootTranslation": "XREngine.WorldMeters",
+          "RootRotation": "XREngine.WorldDegrees",
+          "Body": "UnityHumanoidBodySpace",
+          "HipsLocal": "AvatarHipsLocal",
+          "HipsWorld": "XREngine.WorldMeters",
+          "BoneLocalRotation": "AvatarBoneLocalDegrees",
+          "Endpoint": "XREngine.WorldMeters"
+        },
+        "Tolerances": {
+          "RootTranslationMeters": 0.001,
+          "RootRotationDegrees": 0.1,
+          "EndpointMeters": 0.002,
+          "BoneLocalRotationDegrees": 0.2,
+          "TenLoopDriftMeters": 0.002,
+          "TenLoopDriftDegrees": 0.2
+        }
+      },
+      "IsIntegrationOnly": false,
+      "ExpectedCapabilities": 16973824,
+      "CoordinateSpaces": {
+        "RootTranslation": "XREngine.WorldMeters",
+        "RootRotation": "XREngine.WorldDegrees",
+        "Body": "UnityHumanoidBodySpace",
+        "HipsLocal": "AvatarHipsLocal",
+        "HipsWorld": "XREngine.WorldMeters",
+        "BoneLocalRotation": "AvatarBoneLocalDegrees",
+        "Endpoint": "XREngine.WorldMeters"
+      },
+      "Tolerances": {
+        "RootTranslationMeters": 0.001,
+        "RootRotationDegrees": 0.1,
+        "EndpointMeters": 0.002,
+        "BoneLocalRotationDegrees": 0.2,
+        "TenLoopDriftMeters": 0.002,
+        "TenLoopDriftDegrees": 0.2
+      }
+    },
+    {
+      "Id": "conventional-test-anim-direct",
+      "AvatarId": "conventional",
+      "ClipId": "test-anim",
+      "PlaybackMode": 0,
+      "ReferenceFileId": "reference-conventional-test-anim",
+      "ReferenceSignature": "pose-audit-schema7-sha256:068FB5FD4D303581B63C0F33925408935AD4D4D34EF8554AC4734409AC9DA23A",
+      "AvatarDefinitionSignature": "0B638CF8473D54BE509075CE3AFDBDDA6C91259DFF6C893349EE1B9574DE09D8",
+      "ClipSignature": "B168BB817A36D6DF8CF661CBFB45A77CB629C14CFF0E863D0F5172F6D3B743F6",
+      "Provenance": "Unity 2022.3.22f1 schema-7 deterministic pose audit bound to this avatar and clip source pair.",
+      "KnownAnswer": {
+        "CaptureToolId": "unity-humanoid-pose-audit-exporter",
+        "SourceUnityEditorVersion": "2022.3.22f1",
+        "SerializedClipVersion": "UnityAnimationClip-v6-or-v7",
+        "ReferenceSchemaVersion": 7,
+        "SourceAvatarSha256": "E74D0F755F883260B67E0C1D8B1856E2D609794347ECC7753676DB92F5AF25C5",
+        "SourceClipSha256": "872243DD22C74917571DE3DE6DF5B4707FD861258DCDAF050928F496417354C8",
+        "AvatarDefinitionSignature": "0B638CF8473D54BE509075CE3AFDBDDA6C91259DFF6C893349EE1B9574DE09D8",
+        "AvatarImportSettingsSha256": "C171DF8F542E9B1D4B26AEA56417D611BD2F33C77ED3A3A2A05A79BCA921E76D",
+        "ClipImportSettingsSha256": "8C27ABE4DC5009B5B4FA7835098D85CAC4BDCD2D119DC9E8878F01B223A191CB",
+        "CaptureToolIdentity": "unity-humanoid-pose-audit-exporter",
+        "CaptureToolVersion": "schema-7-2026-08-31",
+        "CaptureToolSha256": "7AE517AC5D733E0EBA9AA4BBE0359289153DAEC01152A8641E73DC99C6C83D74",
+        "CoordinateSpaces": {
+          "RootTranslation": "XREngine.WorldMeters",
+          "RootRotation": "XREngine.WorldDegrees",
+          "Body": "UnityHumanoidBodySpace",
+          "HipsLocal": "AvatarHipsLocal",
+          "HipsWorld": "XREngine.WorldMeters",
+          "BoneLocalRotation": "AvatarBoneLocalDegrees",
+          "Endpoint": "XREngine.WorldMeters"
+        },
+        "Tolerances": {
+          "RootTranslationMeters": 0.001,
+          "RootRotationDegrees": 0.1,
+          "EndpointMeters": 0.002,
+          "BoneLocalRotationDegrees": 0.2,
+          "TenLoopDriftMeters": 0.002,
+          "TenLoopDriftDegrees": 0.2
+        }
+      },
+      "IsIntegrationOnly": false,
+      "ExpectedCapabilities": 16973824,
+      "CoordinateSpaces": {
+        "RootTranslation": "XREngine.WorldMeters",
+        "RootRotation": "XREngine.WorldDegrees",
+        "Body": "UnityHumanoidBodySpace",
+        "HipsLocal": "AvatarHipsLocal",
+        "HipsWorld": "XREngine.WorldMeters",
+        "BoneLocalRotation": "AvatarBoneLocalDegrees",
+        "Endpoint": "XREngine.WorldMeters"
+      },
+      "Tolerances": {
+        "RootTranslationMeters": 0.001,
+        "RootRotationDegrees": 0.1,
+        "EndpointMeters": 0.002,
+        "BoneLocalRotationDegrees": 0.2,
+        "TenLoopDriftMeters": 0.002,
+        "TenLoopDriftDegrees": 0.2
+      }
+    },
+    {
+      "Id": "arbitrary-zup-basic-walk-direct",
+      "AvatarId": "arbitrary-zup",
+      "ClipId": "basic-walk",
+      "PlaybackMode": 0,
+      "ReferenceFileId": "reference-arbitrary-zup-basic-walk",
+      "ReferenceSignature": "pose-audit-schema7-sha256:07E8DD2E07F39A6A3C5BBE038405795F59BD8B552690375114A793971DA2063D",
+      "AvatarDefinitionSignature": "13CF8953C2F677A369B51FA49A80C027B5122E6F570CCDCA4614617C0A5F74DC",
+      "ClipSignature": "8860EC125B39503E23B026D9318F690F2A624958C5C83C90BEEF6DE9E7A2A8D0",
+      "Provenance": "Unity 2022.3.22f1 schema-7 deterministic pose audit bound to this avatar and clip source pair.",
+      "KnownAnswer": {
+        "CaptureToolId": "unity-humanoid-pose-audit-exporter",
+        "SourceUnityEditorVersion": "2022.3.22f1",
+        "SerializedClipVersion": "UnityAnimationClip-v6-or-v7",
+        "ReferenceSchemaVersion": 7,
+        "SourceAvatarSha256": "006A4CCFDFFAFFBA7CDCD1965FA758B5C291152ADD22CE0E70203E91076537A0",
+        "SourceClipSha256": "08B510A610CACCCC14D2E30CAEFDD6C86B6B06D98125F05AE9EBBA63EC767E68",
+        "AvatarDefinitionSignature": "13CF8953C2F677A369B51FA49A80C027B5122E6F570CCDCA4614617C0A5F74DC",
+        "AvatarImportSettingsSha256": "C171DF8F542E9B1D4B26AEA56417D611BD2F33C77ED3A3A2A05A79BCA921E76D",
+        "ClipImportSettingsSha256": "66CCAC4252FF736CE03F04B6FA416E5BF8BCABCF14D08104FB7B01677AF86B86",
+        "CaptureToolIdentity": "unity-humanoid-pose-audit-exporter",
+        "CaptureToolVersion": "schema-7-2026-08-31",
+        "CaptureToolSha256": "7AE517AC5D733E0EBA9AA4BBE0359289153DAEC01152A8641E73DC99C6C83D74",
+        "CoordinateSpaces": {
+          "RootTranslation": "XREngine.WorldMeters",
+          "RootRotation": "XREngine.WorldDegrees",
+          "Body": "UnityHumanoidBodySpace",
+          "HipsLocal": "AvatarHipsLocal",
+          "HipsWorld": "XREngine.WorldMeters",
+          "BoneLocalRotation": "AvatarBoneLocalDegrees",
+          "Endpoint": "XREngine.WorldMeters"
+        },
+        "Tolerances": {
+          "RootTranslationMeters": 0.001,
+          "RootRotationDegrees": 0.1,
+          "EndpointMeters": 0.002,
+          "BoneLocalRotationDegrees": 0.2,
+          "TenLoopDriftMeters": 0.002,
+          "TenLoopDriftDegrees": 0.2
+        }
+      },
+      "IsIntegrationOnly": false,
+      "ExpectedCapabilities": 16973824,
+      "CoordinateSpaces": {
+        "RootTranslation": "XREngine.WorldMeters",
+        "RootRotation": "XREngine.WorldDegrees",
+        "Body": "UnityHumanoidBodySpace",
+        "HipsLocal": "AvatarHipsLocal",
+        "HipsWorld": "XREngine.WorldMeters",
+        "BoneLocalRotation": "AvatarBoneLocalDegrees",
+        "Endpoint": "XREngine.WorldMeters"
+      },
+      "Tolerances": {
+        "RootTranslationMeters": 0.001,
+        "RootRotationDegrees": 0.1,
+        "EndpointMeters": 0.002,
+        "BoneLocalRotationDegrees": 0.2,
+        "TenLoopDriftMeters": 0.002,
+        "TenLoopDriftDegrees": 0.2
+      }
+    },
+    {
+      "Id": "arbitrary-zup-sexy-walk-no-ik-direct",
+      "AvatarId": "arbitrary-zup",
+      "ClipId": "sexy-walk-no-ik",
+      "PlaybackMode": 0,
+      "ReferenceFileId": "reference-arbitrary-zup-sexy-walk-no-ik",
+      "ReferenceSignature": "pose-audit-schema7-sha256:507F49FB4DBAEC6FA33EEC680A68C489720B8E6C85990C0A0A3E0B429E8612FC",
+      "AvatarDefinitionSignature": "13CF8953C2F677A369B51FA49A80C027B5122E6F570CCDCA4614617C0A5F74DC",
+      "ClipSignature": "47419158199327BD29624D7AAC921D63DAF3735C32F911EEE373A5790345C40D",
+      "Provenance": "Unity 2022.3.22f1 schema-7 deterministic pose audit bound to this avatar and clip source pair.",
+      "KnownAnswer": {
+        "CaptureToolId": "unity-humanoid-pose-audit-exporter",
+        "SourceUnityEditorVersion": "2022.3.22f1",
+        "SerializedClipVersion": "UnityAnimationClip-v6-or-v7",
+        "ReferenceSchemaVersion": 7,
+        "SourceAvatarSha256": "006A4CCFDFFAFFBA7CDCD1965FA758B5C291152ADD22CE0E70203E91076537A0",
+        "SourceClipSha256": "62A25D9B068821E48B7677127406BCFBC3FAA9448C631A59DFA67F6894E3B3FE",
+        "AvatarDefinitionSignature": "13CF8953C2F677A369B51FA49A80C027B5122E6F570CCDCA4614617C0A5F74DC",
+        "AvatarImportSettingsSha256": "C171DF8F542E9B1D4B26AEA56417D611BD2F33C77ED3A3A2A05A79BCA921E76D",
+        "ClipImportSettingsSha256": "601E32DF93D76974124A361A4E942FD3060727B04E7C4A8E1384E6D7DE8666A1",
+        "CaptureToolIdentity": "unity-humanoid-pose-audit-exporter",
+        "CaptureToolVersion": "schema-7-2026-08-31",
+        "CaptureToolSha256": "7AE517AC5D733E0EBA9AA4BBE0359289153DAEC01152A8641E73DC99C6C83D74",
+        "CoordinateSpaces": {
+          "RootTranslation": "XREngine.WorldMeters",
+          "RootRotation": "XREngine.WorldDegrees",
+          "Body": "UnityHumanoidBodySpace",
+          "HipsLocal": "AvatarHipsLocal",
+          "HipsWorld": "XREngine.WorldMeters",
+          "BoneLocalRotation": "AvatarBoneLocalDegrees",
+          "Endpoint": "XREngine.WorldMeters"
+        },
+        "Tolerances": {
+          "RootTranslationMeters": 0.001,
+          "RootRotationDegrees": 0.1,
+          "EndpointMeters": 0.002,
+          "BoneLocalRotationDegrees": 0.2,
+          "TenLoopDriftMeters": 0.002,
+          "TenLoopDriftDegrees": 0.2
+        }
+      },
+      "IsIntegrationOnly": false,
+      "ExpectedCapabilities": 16973824,
+      "CoordinateSpaces": {
+        "RootTranslation": "XREngine.WorldMeters",
+        "RootRotation": "XREngine.WorldDegrees",
+        "Body": "UnityHumanoidBodySpace",
+        "HipsLocal": "AvatarHipsLocal",
+        "HipsWorld": "XREngine.WorldMeters",
+        "BoneLocalRotation": "AvatarBoneLocalDegrees",
+        "Endpoint": "XREngine.WorldMeters"
+      },
+      "Tolerances": {
+        "RootTranslationMeters": 0.001,
+        "RootRotationDegrees": 0.1,
+        "EndpointMeters": 0.002,
+        "BoneLocalRotationDegrees": 0.2,
+        "TenLoopDriftMeters": 0.002,
+        "TenLoopDriftDegrees": 0.2
+      }
+    },
+    {
+      "Id": "arbitrary-zup-sexy-walk-direct",
+      "AvatarId": "arbitrary-zup",
+      "ClipId": "sexy-walk",
+      "PlaybackMode": 0,
+      "ReferenceFileId": "reference-arbitrary-zup-sexy-walk",
+      "ReferenceSignature": "pose-audit-schema7-sha256:FB39A25560061C14571744ED0EC0B2BE14BF88AEDCA703E68E9C0D4E2213C799",
+      "AvatarDefinitionSignature": "13CF8953C2F677A369B51FA49A80C027B5122E6F570CCDCA4614617C0A5F74DC",
+      "ClipSignature": "B1CC71D3A4E9E0593AFA8D7A204EC45BA3ADE7FD3CA3C75A57A527A20B634A82",
+      "Provenance": "Unity 2022.3.22f1 schema-7 deterministic pose audit bound to this avatar and clip source pair.",
+      "KnownAnswer": {
+        "CaptureToolId": "unity-humanoid-pose-audit-exporter",
+        "SourceUnityEditorVersion": "2022.3.22f1",
+        "SerializedClipVersion": "UnityAnimationClip-v6-or-v7",
+        "ReferenceSchemaVersion": 7,
+        "SourceAvatarSha256": "006A4CCFDFFAFFBA7CDCD1965FA758B5C291152ADD22CE0E70203E91076537A0",
+        "SourceClipSha256": "2BAA72EF13646923EA11E8333B3107A0701E0F3565B4C7A07E6AA8A8873E9D58",
+        "AvatarDefinitionSignature": "13CF8953C2F677A369B51FA49A80C027B5122E6F570CCDCA4614617C0A5F74DC",
+        "AvatarImportSettingsSha256": "C171DF8F542E9B1D4B26AEA56417D611BD2F33C77ED3A3A2A05A79BCA921E76D",
+        "ClipImportSettingsSha256": "601E32DF93D76974124A361A4E942FD3060727B04E7C4A8E1384E6D7DE8666A1",
+        "CaptureToolIdentity": "unity-humanoid-pose-audit-exporter",
+        "CaptureToolVersion": "schema-7-2026-08-31",
+        "CaptureToolSha256": "7AE517AC5D733E0EBA9AA4BBE0359289153DAEC01152A8641E73DC99C6C83D74",
+        "CoordinateSpaces": {
+          "RootTranslation": "XREngine.WorldMeters",
+          "RootRotation": "XREngine.WorldDegrees",
+          "Body": "UnityHumanoidBodySpace",
+          "HipsLocal": "AvatarHipsLocal",
+          "HipsWorld": "XREngine.WorldMeters",
+          "BoneLocalRotation": "AvatarBoneLocalDegrees",
+          "Endpoint": "XREngine.WorldMeters"
+        },
+        "Tolerances": {
+          "RootTranslationMeters": 0.001,
+          "RootRotationDegrees": 0.1,
+          "EndpointMeters": 0.002,
+          "BoneLocalRotationDegrees": 0.2,
+          "TenLoopDriftMeters": 0.002,
+          "TenLoopDriftDegrees": 0.2
+        }
+      },
+      "IsIntegrationOnly": false,
+      "ExpectedCapabilities": 16973824,
+      "CoordinateSpaces": {
+        "RootTranslation": "XREngine.WorldMeters",
+        "RootRotation": "XREngine.WorldDegrees",
+        "Body": "UnityHumanoidBodySpace",
+        "HipsLocal": "AvatarHipsLocal",
+        "HipsWorld": "XREngine.WorldMeters",
+        "BoneLocalRotation": "AvatarBoneLocalDegrees",
+        "Endpoint": "XREngine.WorldMeters"
+      },
+      "Tolerances": {
+        "RootTranslationMeters": 0.001,
+        "RootRotationDegrees": 0.1,
+        "EndpointMeters": 0.002,
+        "BoneLocalRotationDegrees": 0.2,
+        "TenLoopDriftMeters": 0.002,
+        "TenLoopDriftDegrees": 0.2
+      }
+    },
+    {
+      "Id": "arbitrary-zup-shutka-walk-direct",
+      "AvatarId": "arbitrary-zup",
+      "ClipId": "shutka-walk",
+      "PlaybackMode": 0,
+      "ReferenceFileId": "reference-arbitrary-zup-shutka-walk",
+      "ReferenceSignature": "pose-audit-schema7-sha256:625CDBDD2A35E9AA7A69EEA5148B26245F0C3A720000D12707C485B02055AAD8",
+      "AvatarDefinitionSignature": "13CF8953C2F677A369B51FA49A80C027B5122E6F570CCDCA4614617C0A5F74DC",
+      "ClipSignature": "AACE4CFFC9943C19693B3190730CE4FF6836EA8070B72F35EC74075F17F43744",
+      "Provenance": "Unity 2022.3.22f1 schema-7 deterministic pose audit bound to this avatar and clip source pair.",
+      "KnownAnswer": {
+        "CaptureToolId": "unity-humanoid-pose-audit-exporter",
+        "SourceUnityEditorVersion": "2022.3.22f1",
+        "SerializedClipVersion": "UnityAnimationClip-v6-or-v7",
+        "ReferenceSchemaVersion": 7,
+        "SourceAvatarSha256": "006A4CCFDFFAFFBA7CDCD1965FA758B5C291152ADD22CE0E70203E91076537A0",
+        "SourceClipSha256": "69ABF7C86268A1E72CBD1E819534C27D6302C89FE3B0E263BDE8B9E659157E00",
+        "AvatarDefinitionSignature": "13CF8953C2F677A369B51FA49A80C027B5122E6F570CCDCA4614617C0A5F74DC",
+        "AvatarImportSettingsSha256": "C171DF8F542E9B1D4B26AEA56417D611BD2F33C77ED3A3A2A05A79BCA921E76D",
+        "ClipImportSettingsSha256": "AB26C26C992DFC7AA4226AB0790A846CF78B9B3BF714C009E70C6AC71755F225",
+        "CaptureToolIdentity": "unity-humanoid-pose-audit-exporter",
+        "CaptureToolVersion": "schema-7-2026-08-31",
+        "CaptureToolSha256": "7AE517AC5D733E0EBA9AA4BBE0359289153DAEC01152A8641E73DC99C6C83D74",
+        "CoordinateSpaces": {
+          "RootTranslation": "XREngine.WorldMeters",
+          "RootRotation": "XREngine.WorldDegrees",
+          "Body": "UnityHumanoidBodySpace",
+          "HipsLocal": "AvatarHipsLocal",
+          "HipsWorld": "XREngine.WorldMeters",
+          "BoneLocalRotation": "AvatarBoneLocalDegrees",
+          "Endpoint": "XREngine.WorldMeters"
+        },
+        "Tolerances": {
+          "RootTranslationMeters": 0.001,
+          "RootRotationDegrees": 0.1,
+          "EndpointMeters": 0.002,
+          "BoneLocalRotationDegrees": 0.2,
+          "TenLoopDriftMeters": 0.002,
+          "TenLoopDriftDegrees": 0.2
+        }
+      },
+      "IsIntegrationOnly": false,
+      "ExpectedCapabilities": 16973824,
+      "CoordinateSpaces": {
+        "RootTranslation": "XREngine.WorldMeters",
+        "RootRotation": "XREngine.WorldDegrees",
+        "Body": "UnityHumanoidBodySpace",
+        "HipsLocal": "AvatarHipsLocal",
+        "HipsWorld": "XREngine.WorldMeters",
+        "BoneLocalRotation": "AvatarBoneLocalDegrees",
+        "Endpoint": "XREngine.WorldMeters"
+      },
+      "Tolerances": {
+        "RootTranslationMeters": 0.001,
+        "RootRotationDegrees": 0.1,
+        "EndpointMeters": 0.002,
+        "BoneLocalRotationDegrees": 0.2,
+        "TenLoopDriftMeters": 0.002,
+        "TenLoopDriftDegrees": 0.2
+      }
+    },
+    {
+      "Id": "arbitrary-zup-test-anim-direct",
+      "AvatarId": "arbitrary-zup",
+      "ClipId": "test-anim",
+      "PlaybackMode": 0,
+      "ReferenceFileId": "reference-arbitrary-zup-test-anim",
+      "ReferenceSignature": "pose-audit-schema7-sha256:AFA8CC3D10571BF9F2D2860B34B676B988D81E5FBAAFEFAC5178714B80E5AEE9",
+      "AvatarDefinitionSignature": "13CF8953C2F677A369B51FA49A80C027B5122E6F570CCDCA4614617C0A5F74DC",
+      "ClipSignature": "B168BB817A36D6DF8CF661CBFB45A77CB629C14CFF0E863D0F5172F6D3B743F6",
+      "Provenance": "Unity 2022.3.22f1 schema-7 deterministic pose audit bound to this avatar and clip source pair.",
+      "KnownAnswer": {
+        "CaptureToolId": "unity-humanoid-pose-audit-exporter",
+        "SourceUnityEditorVersion": "2022.3.22f1",
+        "SerializedClipVersion": "UnityAnimationClip-v6-or-v7",
+        "ReferenceSchemaVersion": 7,
+        "SourceAvatarSha256": "006A4CCFDFFAFFBA7CDCD1965FA758B5C291152ADD22CE0E70203E91076537A0",
+        "SourceClipSha256": "872243DD22C74917571DE3DE6DF5B4707FD861258DCDAF050928F496417354C8",
+        "AvatarDefinitionSignature": "13CF8953C2F677A369B51FA49A80C027B5122E6F570CCDCA4614617C0A5F74DC",
+        "AvatarImportSettingsSha256": "C171DF8F542E9B1D4B26AEA56417D611BD2F33C77ED3A3A2A05A79BCA921E76D",
+        "ClipImportSettingsSha256": "8C27ABE4DC5009B5B4FA7835098D85CAC4BDCD2D119DC9E8878F01B223A191CB",
+        "CaptureToolIdentity": "unity-humanoid-pose-audit-exporter",
+        "CaptureToolVersion": "schema-7-2026-08-31",
+        "CaptureToolSha256": "7AE517AC5D733E0EBA9AA4BBE0359289153DAEC01152A8641E73DC99C6C83D74",
+        "CoordinateSpaces": {
+          "RootTranslation": "XREngine.WorldMeters",
+          "RootRotation": "XREngine.WorldDegrees",
+          "Body": "UnityHumanoidBodySpace",
+          "HipsLocal": "AvatarHipsLocal",
+          "HipsWorld": "XREngine.WorldMeters",
+          "BoneLocalRotation": "AvatarBoneLocalDegrees",
+          "Endpoint": "XREngine.WorldMeters"
+        },
+        "Tolerances": {
+          "RootTranslationMeters": 0.001,
+          "RootRotationDegrees": 0.1,
+          "EndpointMeters": 0.002,
+          "BoneLocalRotationDegrees": 0.2,
+          "TenLoopDriftMeters": 0.002,
+          "TenLoopDriftDegrees": 0.2
+        }
+      },
+      "IsIntegrationOnly": false,
+      "ExpectedCapabilities": 16973824,
+      "CoordinateSpaces": {
+        "RootTranslation": "XREngine.WorldMeters",
+        "RootRotation": "XREngine.WorldDegrees",
+        "Body": "UnityHumanoidBodySpace",
+        "HipsLocal": "AvatarHipsLocal",
+        "HipsWorld": "XREngine.WorldMeters",
+        "BoneLocalRotation": "AvatarBoneLocalDegrees",
+        "Endpoint": "XREngine.WorldMeters"
+      },
+      "Tolerances": {
+        "RootTranslationMeters": 0.001,
+        "RootRotationDegrees": 0.1,
+        "EndpointMeters": 0.002,
+        "BoneLocalRotationDegrees": 0.2,
+        "TenLoopDriftMeters": 0.002,
+        "TenLoopDriftDegrees": 0.2
+      }
+    },
+    {
+      "Id": "lean-optional-absent-basic-walk-direct",
+      "AvatarId": "lean-optional-absent",
+      "ClipId": "basic-walk",
+      "PlaybackMode": 0,
+      "ReferenceFileId": "reference-lean-optional-absent-basic-walk",
+      "ReferenceSignature": "pose-audit-schema7-sha256:2D96E4F8FBADD06F9866BC807DD4308EFF1F5D739568C4F50356E6D3898639C6",
+      "AvatarDefinitionSignature": "C640E6946611005DC3264AF2FE6C1AE66C1B1FD82615E03F780B3C85E7BD4A1B",
+      "ClipSignature": "8860EC125B39503E23B026D9318F690F2A624958C5C83C90BEEF6DE9E7A2A8D0",
+      "Provenance": "Unity 2022.3.22f1 schema-7 deterministic pose audit bound to this avatar and clip source pair.",
+      "KnownAnswer": {
+        "CaptureToolId": "unity-humanoid-pose-audit-exporter",
+        "SourceUnityEditorVersion": "2022.3.22f1",
+        "SerializedClipVersion": "UnityAnimationClip-v6-or-v7",
+        "ReferenceSchemaVersion": 7,
+        "SourceAvatarSha256": "A2A3567DE2284737DCCA33FC94ED5DE996677A2E436BBF1BB08DBEE865B8E3F6",
+        "SourceClipSha256": "08B510A610CACCCC14D2E30CAEFDD6C86B6B06D98125F05AE9EBBA63EC767E68",
+        "AvatarDefinitionSignature": "C640E6946611005DC3264AF2FE6C1AE66C1B1FD82615E03F780B3C85E7BD4A1B",
+        "AvatarImportSettingsSha256": "C171DF8F542E9B1D4B26AEA56417D611BD2F33C77ED3A3A2A05A79BCA921E76D",
+        "ClipImportSettingsSha256": "66CCAC4252FF736CE03F04B6FA416E5BF8BCABCF14D08104FB7B01677AF86B86",
+        "CaptureToolIdentity": "unity-humanoid-pose-audit-exporter",
+        "CaptureToolVersion": "schema-7-2026-08-31",
+        "CaptureToolSha256": "7AE517AC5D733E0EBA9AA4BBE0359289153DAEC01152A8641E73DC99C6C83D74",
+        "CoordinateSpaces": {
+          "RootTranslation": "XREngine.WorldMeters",
+          "RootRotation": "XREngine.WorldDegrees",
+          "Body": "UnityHumanoidBodySpace",
+          "HipsLocal": "AvatarHipsLocal",
+          "HipsWorld": "XREngine.WorldMeters",
+          "BoneLocalRotation": "AvatarBoneLocalDegrees",
+          "Endpoint": "XREngine.WorldMeters"
+        },
+        "Tolerances": {
+          "RootTranslationMeters": 0.001,
+          "RootRotationDegrees": 0.1,
+          "EndpointMeters": 0.002,
+          "BoneLocalRotationDegrees": 0.2,
+          "TenLoopDriftMeters": 0.002,
+          "TenLoopDriftDegrees": 0.2
+        }
+      },
+      "IsIntegrationOnly": false,
+      "ExpectedCapabilities": 16973824,
+      "CoordinateSpaces": {
+        "RootTranslation": "XREngine.WorldMeters",
+        "RootRotation": "XREngine.WorldDegrees",
+        "Body": "UnityHumanoidBodySpace",
+        "HipsLocal": "AvatarHipsLocal",
+        "HipsWorld": "XREngine.WorldMeters",
+        "BoneLocalRotation": "AvatarBoneLocalDegrees",
+        "Endpoint": "XREngine.WorldMeters"
+      },
+      "Tolerances": {
+        "RootTranslationMeters": 0.001,
+        "RootRotationDegrees": 0.1,
+        "EndpointMeters": 0.002,
+        "BoneLocalRotationDegrees": 0.2,
+        "TenLoopDriftMeters": 0.002,
+        "TenLoopDriftDegrees": 0.2
+      }
+    },
+    {
+      "Id": "lean-optional-absent-sexy-walk-no-ik-direct",
+      "AvatarId": "lean-optional-absent",
+      "ClipId": "sexy-walk-no-ik",
+      "PlaybackMode": 0,
+      "ReferenceFileId": "reference-lean-optional-absent-sexy-walk-no-ik",
+      "ReferenceSignature": "pose-audit-schema7-sha256:637EDD552E99B791C4F1846D0359E8B4BCD8583B51E8A77DC660483905975AA7",
+      "AvatarDefinitionSignature": "C640E6946611005DC3264AF2FE6C1AE66C1B1FD82615E03F780B3C85E7BD4A1B",
+      "ClipSignature": "47419158199327BD29624D7AAC921D63DAF3735C32F911EEE373A5790345C40D",
+      "Provenance": "Unity 2022.3.22f1 schema-7 deterministic pose audit bound to this avatar and clip source pair.",
+      "KnownAnswer": {
+        "CaptureToolId": "unity-humanoid-pose-audit-exporter",
+        "SourceUnityEditorVersion": "2022.3.22f1",
+        "SerializedClipVersion": "UnityAnimationClip-v6-or-v7",
+        "ReferenceSchemaVersion": 7,
+        "SourceAvatarSha256": "A2A3567DE2284737DCCA33FC94ED5DE996677A2E436BBF1BB08DBEE865B8E3F6",
+        "SourceClipSha256": "62A25D9B068821E48B7677127406BCFBC3FAA9448C631A59DFA67F6894E3B3FE",
+        "AvatarDefinitionSignature": "C640E6946611005DC3264AF2FE6C1AE66C1B1FD82615E03F780B3C85E7BD4A1B",
+        "AvatarImportSettingsSha256": "C171DF8F542E9B1D4B26AEA56417D611BD2F33C77ED3A3A2A05A79BCA921E76D",
+        "ClipImportSettingsSha256": "601E32DF93D76974124A361A4E942FD3060727B04E7C4A8E1384E6D7DE8666A1",
+        "CaptureToolIdentity": "unity-humanoid-pose-audit-exporter",
+        "CaptureToolVersion": "schema-7-2026-08-31",
+        "CaptureToolSha256": "7AE517AC5D733E0EBA9AA4BBE0359289153DAEC01152A8641E73DC99C6C83D74",
+        "CoordinateSpaces": {
+          "RootTranslation": "XREngine.WorldMeters",
+          "RootRotation": "XREngine.WorldDegrees",
+          "Body": "UnityHumanoidBodySpace",
+          "HipsLocal": "AvatarHipsLocal",
+          "HipsWorld": "XREngine.WorldMeters",
+          "BoneLocalRotation": "AvatarBoneLocalDegrees",
+          "Endpoint": "XREngine.WorldMeters"
+        },
+        "Tolerances": {
+          "RootTranslationMeters": 0.001,
+          "RootRotationDegrees": 0.1,
+          "EndpointMeters": 0.002,
+          "BoneLocalRotationDegrees": 0.2,
+          "TenLoopDriftMeters": 0.002,
+          "TenLoopDriftDegrees": 0.2
+        }
+      },
+      "IsIntegrationOnly": false,
+      "ExpectedCapabilities": 16973824,
+      "CoordinateSpaces": {
+        "RootTranslation": "XREngine.WorldMeters",
+        "RootRotation": "XREngine.WorldDegrees",
+        "Body": "UnityHumanoidBodySpace",
+        "HipsLocal": "AvatarHipsLocal",
+        "HipsWorld": "XREngine.WorldMeters",
+        "BoneLocalRotation": "AvatarBoneLocalDegrees",
+        "Endpoint": "XREngine.WorldMeters"
+      },
+      "Tolerances": {
+        "RootTranslationMeters": 0.001,
+        "RootRotationDegrees": 0.1,
+        "EndpointMeters": 0.002,
+        "BoneLocalRotationDegrees": 0.2,
+        "TenLoopDriftMeters": 0.002,
+        "TenLoopDriftDegrees": 0.2
+      }
+    },
+    {
+      "Id": "lean-optional-absent-sexy-walk-direct",
+      "AvatarId": "lean-optional-absent",
+      "ClipId": "sexy-walk",
+      "PlaybackMode": 0,
+      "ReferenceFileId": "reference-lean-optional-absent-sexy-walk",
+      "ReferenceSignature": "pose-audit-schema7-sha256:88BB21E47D63FDE130480837E20B6D9F7026598DE396C3CEF913E9173EA8C268",
+      "AvatarDefinitionSignature": "C640E6946611005DC3264AF2FE6C1AE66C1B1FD82615E03F780B3C85E7BD4A1B",
+      "ClipSignature": "B1CC71D3A4E9E0593AFA8D7A204EC45BA3ADE7FD3CA3C75A57A527A20B634A82",
+      "Provenance": "Unity 2022.3.22f1 schema-7 deterministic pose audit bound to this avatar and clip source pair.",
+      "KnownAnswer": {
+        "CaptureToolId": "unity-humanoid-pose-audit-exporter",
+        "SourceUnityEditorVersion": "2022.3.22f1",
+        "SerializedClipVersion": "UnityAnimationClip-v6-or-v7",
+        "ReferenceSchemaVersion": 7,
+        "SourceAvatarSha256": "A2A3567DE2284737DCCA33FC94ED5DE996677A2E436BBF1BB08DBEE865B8E3F6",
+        "SourceClipSha256": "2BAA72EF13646923EA11E8333B3107A0701E0F3565B4C7A07E6AA8A8873E9D58",
+        "AvatarDefinitionSignature": "C640E6946611005DC3264AF2FE6C1AE66C1B1FD82615E03F780B3C85E7BD4A1B",
+        "AvatarImportSettingsSha256": "C171DF8F542E9B1D4B26AEA56417D611BD2F33C77ED3A3A2A05A79BCA921E76D",
+        "ClipImportSettingsSha256": "601E32DF93D76974124A361A4E942FD3060727B04E7C4A8E1384E6D7DE8666A1",
+        "CaptureToolIdentity": "unity-humanoid-pose-audit-exporter",
+        "CaptureToolVersion": "schema-7-2026-08-31",
+        "CaptureToolSha256": "7AE517AC5D733E0EBA9AA4BBE0359289153DAEC01152A8641E73DC99C6C83D74",
+        "CoordinateSpaces": {
+          "RootTranslation": "XREngine.WorldMeters",
+          "RootRotation": "XREngine.WorldDegrees",
+          "Body": "UnityHumanoidBodySpace",
+          "HipsLocal": "AvatarHipsLocal",
+          "HipsWorld": "XREngine.WorldMeters",
+          "BoneLocalRotation": "AvatarBoneLocalDegrees",
+          "Endpoint": "XREngine.WorldMeters"
+        },
+        "Tolerances": {
+          "RootTranslationMeters": 0.001,
+          "RootRotationDegrees": 0.1,
+          "EndpointMeters": 0.002,
+          "BoneLocalRotationDegrees": 0.2,
+          "TenLoopDriftMeters": 0.002,
+          "TenLoopDriftDegrees": 0.2
+        }
+      },
+      "IsIntegrationOnly": false,
+      "ExpectedCapabilities": 16973824,
+      "CoordinateSpaces": {
+        "RootTranslation": "XREngine.WorldMeters",
+        "RootRotation": "XREngine.WorldDegrees",
+        "Body": "UnityHumanoidBodySpace",
+        "HipsLocal": "AvatarHipsLocal",
+        "HipsWorld": "XREngine.WorldMeters",
+        "BoneLocalRotation": "AvatarBoneLocalDegrees",
+        "Endpoint": "XREngine.WorldMeters"
+      },
+      "Tolerances": {
+        "RootTranslationMeters": 0.001,
+        "RootRotationDegrees": 0.1,
+        "EndpointMeters": 0.002,
+        "BoneLocalRotationDegrees": 0.2,
+        "TenLoopDriftMeters": 0.002,
+        "TenLoopDriftDegrees": 0.2
+      }
+    },
+    {
+      "Id": "lean-optional-absent-shutka-walk-direct",
+      "AvatarId": "lean-optional-absent",
+      "ClipId": "shutka-walk",
+      "PlaybackMode": 0,
+      "ReferenceFileId": "reference-lean-optional-absent-shutka-walk",
+      "ReferenceSignature": "pose-audit-schema7-sha256:679D6A36730590E7770E6DF3524B09CD948ADF0962EC1B5580D99F4EDA425B0C",
+      "AvatarDefinitionSignature": "C640E6946611005DC3264AF2FE6C1AE66C1B1FD82615E03F780B3C85E7BD4A1B",
+      "ClipSignature": "AACE4CFFC9943C19693B3190730CE4FF6836EA8070B72F35EC74075F17F43744",
+      "Provenance": "Unity 2022.3.22f1 schema-7 deterministic pose audit bound to this avatar and clip source pair.",
+      "KnownAnswer": {
+        "CaptureToolId": "unity-humanoid-pose-audit-exporter",
+        "SourceUnityEditorVersion": "2022.3.22f1",
+        "SerializedClipVersion": "UnityAnimationClip-v6-or-v7",
+        "ReferenceSchemaVersion": 7,
+        "SourceAvatarSha256": "A2A3567DE2284737DCCA33FC94ED5DE996677A2E436BBF1BB08DBEE865B8E3F6",
+        "SourceClipSha256": "69ABF7C86268A1E72CBD1E819534C27D6302C89FE3B0E263BDE8B9E659157E00",
+        "AvatarDefinitionSignature": "C640E6946611005DC3264AF2FE6C1AE66C1B1FD82615E03F780B3C85E7BD4A1B",
+        "AvatarImportSettingsSha256": "C171DF8F542E9B1D4B26AEA56417D611BD2F33C77ED3A3A2A05A79BCA921E76D",
+        "ClipImportSettingsSha256": "AB26C26C992DFC7AA4226AB0790A846CF78B9B3BF714C009E70C6AC71755F225",
+        "CaptureToolIdentity": "unity-humanoid-pose-audit-exporter",
+        "CaptureToolVersion": "schema-7-2026-08-31",
+        "CaptureToolSha256": "7AE517AC5D733E0EBA9AA4BBE0359289153DAEC01152A8641E73DC99C6C83D74",
+        "CoordinateSpaces": {
+          "RootTranslation": "XREngine.WorldMeters",
+          "RootRotation": "XREngine.WorldDegrees",
+          "Body": "UnityHumanoidBodySpace",
+          "HipsLocal": "AvatarHipsLocal",
+          "HipsWorld": "XREngine.WorldMeters",
+          "BoneLocalRotation": "AvatarBoneLocalDegrees",
+          "Endpoint": "XREngine.WorldMeters"
+        },
+        "Tolerances": {
+          "RootTranslationMeters": 0.001,
+          "RootRotationDegrees": 0.1,
+          "EndpointMeters": 0.002,
+          "BoneLocalRotationDegrees": 0.2,
+          "TenLoopDriftMeters": 0.002,
+          "TenLoopDriftDegrees": 0.2
+        }
+      },
+      "IsIntegrationOnly": false,
+      "ExpectedCapabilities": 16973824,
+      "CoordinateSpaces": {
+        "RootTranslation": "XREngine.WorldMeters",
+        "RootRotation": "XREngine.WorldDegrees",
+        "Body": "UnityHumanoidBodySpace",
+        "HipsLocal": "AvatarHipsLocal",
+        "HipsWorld": "XREngine.WorldMeters",
+        "BoneLocalRotation": "AvatarBoneLocalDegrees",
+        "Endpoint": "XREngine.WorldMeters"
+      },
+      "Tolerances": {
+        "RootTranslationMeters": 0.001,
+        "RootRotationDegrees": 0.1,
+        "EndpointMeters": 0.002,
+        "BoneLocalRotationDegrees": 0.2,
+        "TenLoopDriftMeters": 0.002,
+        "TenLoopDriftDegrees": 0.2
+      }
+    },
+    {
+      "Id": "lean-optional-absent-test-anim-direct",
+      "AvatarId": "lean-optional-absent",
+      "ClipId": "test-anim",
+      "PlaybackMode": 0,
+      "ReferenceFileId": "reference-lean-optional-absent-test-anim",
+      "ReferenceSignature": "pose-audit-schema7-sha256:0BD7E4558E751C5D173ECA8E4E8E768ECF76D62D3E5416BCCA5C73D65F1BF652",
+      "AvatarDefinitionSignature": "C640E6946611005DC3264AF2FE6C1AE66C1B1FD82615E03F780B3C85E7BD4A1B",
+      "ClipSignature": "B168BB817A36D6DF8CF661CBFB45A77CB629C14CFF0E863D0F5172F6D3B743F6",
+      "Provenance": "Unity 2022.3.22f1 schema-7 deterministic pose audit bound to this avatar and clip source pair.",
+      "KnownAnswer": {
+        "CaptureToolId": "unity-humanoid-pose-audit-exporter",
+        "SourceUnityEditorVersion": "2022.3.22f1",
+        "SerializedClipVersion": "UnityAnimationClip-v6-or-v7",
+        "ReferenceSchemaVersion": 7,
+        "SourceAvatarSha256": "A2A3567DE2284737DCCA33FC94ED5DE996677A2E436BBF1BB08DBEE865B8E3F6",
+        "SourceClipSha256": "872243DD22C74917571DE3DE6DF5B4707FD861258DCDAF050928F496417354C8",
+        "AvatarDefinitionSignature": "C640E6946611005DC3264AF2FE6C1AE66C1B1FD82615E03F780B3C85E7BD4A1B",
+        "AvatarImportSettingsSha256": "C171DF8F542E9B1D4B26AEA56417D611BD2F33C77ED3A3A2A05A79BCA921E76D",
+        "ClipImportSettingsSha256": "8C27ABE4DC5009B5B4FA7835098D85CAC4BDCD2D119DC9E8878F01B223A191CB",
+        "CaptureToolIdentity": "unity-humanoid-pose-audit-exporter",
+        "CaptureToolVersion": "schema-7-2026-08-31",
+        "CaptureToolSha256": "7AE517AC5D733E0EBA9AA4BBE0359289153DAEC01152A8641E73DC99C6C83D74",
+        "CoordinateSpaces": {
+          "RootTranslation": "XREngine.WorldMeters",
+          "RootRotation": "XREngine.WorldDegrees",
+          "Body": "UnityHumanoidBodySpace",
+          "HipsLocal": "AvatarHipsLocal",
+          "HipsWorld": "XREngine.WorldMeters",
+          "BoneLocalRotation": "AvatarBoneLocalDegrees",
+          "Endpoint": "XREngine.WorldMeters"
+        },
+        "Tolerances": {
+          "RootTranslationMeters": 0.001,
+          "RootRotationDegrees": 0.1,
+          "EndpointMeters": 0.002,
+          "BoneLocalRotationDegrees": 0.2,
+          "TenLoopDriftMeters": 0.002,
+          "TenLoopDriftDegrees": 0.2
+        }
+      },
+      "IsIntegrationOnly": false,
+      "ExpectedCapabilities": 16973824,
+      "CoordinateSpaces": {
+        "RootTranslation": "XREngine.WorldMeters",
+        "RootRotation": "XREngine.WorldDegrees",
+        "Body": "UnityHumanoidBodySpace",
+        "HipsLocal": "AvatarHipsLocal",
+        "HipsWorld": "XREngine.WorldMeters",
+        "BoneLocalRotation": "AvatarBoneLocalDegrees",
+        "Endpoint": "XREngine.WorldMeters"
+      },
+      "Tolerances": {
+        "RootTranslationMeters": 0.001,
+        "RootRotationDegrees": 0.1,
+        "EndpointMeters": 0.002,
+        "BoneLocalRotationDegrees": 0.2,
+        "TenLoopDriftMeters": 0.002,
+        "TenLoopDriftDegrees": 0.2
+      }
+    },
+    {
+      "Id": "conventional-sexy-walk-route-1",
+      "AvatarId": "conventional",
+      "ClipId": "sexy-walk",
+      "PlaybackMode": 1,
+      "ReferenceFileId": "reference-conventional-sexy-walk",
+      "ReferenceSignature": "pose-audit-schema7-sha256:DDBB1B5D0A9BBD45B389428BABBB9D96A4E3426DBB03201FE5259E3313A40467",
+      "AvatarDefinitionSignature": "0B638CF8473D54BE509075CE3AFDBDDA6C91259DFF6C893349EE1B9574DE09D8",
+      "ClipSignature": "B1CC71D3A4E9E0593AFA8D7A204EC45BA3ADE7FD3CA3C75A57A527A20B634A82",
+      "Provenance": "Unity 2022.3.22f1 schema-7 deterministic pose audit bound to this avatar and clip source pair.",
+      "KnownAnswer": {
+        "CaptureToolId": "unity-humanoid-pose-audit-exporter",
+        "SourceUnityEditorVersion": "2022.3.22f1",
+        "SerializedClipVersion": "UnityAnimationClip-v6-or-v7",
+        "ReferenceSchemaVersion": 7,
+        "SourceAvatarSha256": "E74D0F755F883260B67E0C1D8B1856E2D609794347ECC7753676DB92F5AF25C5",
+        "SourceClipSha256": "2BAA72EF13646923EA11E8333B3107A0701E0F3565B4C7A07E6AA8A8873E9D58",
+        "AvatarDefinitionSignature": "0B638CF8473D54BE509075CE3AFDBDDA6C91259DFF6C893349EE1B9574DE09D8",
+        "AvatarImportSettingsSha256": "C171DF8F542E9B1D4B26AEA56417D611BD2F33C77ED3A3A2A05A79BCA921E76D",
+        "ClipImportSettingsSha256": "601E32DF93D76974124A361A4E942FD3060727B04E7C4A8E1384E6D7DE8666A1",
+        "CaptureToolIdentity": "unity-humanoid-pose-audit-exporter",
+        "CaptureToolVersion": "schema-7-2026-08-31",
+        "CaptureToolSha256": "7AE517AC5D733E0EBA9AA4BBE0359289153DAEC01152A8641E73DC99C6C83D74",
+        "CoordinateSpaces": {
+          "RootTranslation": "XREngine.WorldMeters",
+          "RootRotation": "XREngine.WorldDegrees",
+          "Body": "UnityHumanoidBodySpace",
+          "HipsLocal": "AvatarHipsLocal",
+          "HipsWorld": "XREngine.WorldMeters",
+          "BoneLocalRotation": "AvatarBoneLocalDegrees",
+          "Endpoint": "XREngine.WorldMeters"
+        },
+        "Tolerances": {
+          "RootTranslationMeters": 0.001,
+          "RootRotationDegrees": 0.1,
+          "EndpointMeters": 0.002,
+          "BoneLocalRotationDegrees": 0.2,
+          "TenLoopDriftMeters": 0.002,
+          "TenLoopDriftDegrees": 0.2
+        }
+      },
+      "IsIntegrationOnly": false,
+      "ExpectedCapabilities": 17235968,
+      "CoordinateSpaces": {
+        "RootTranslation": "XREngine.WorldMeters",
+        "RootRotation": "XREngine.WorldDegrees",
+        "Body": "UnityHumanoidBodySpace",
+        "HipsLocal": "AvatarHipsLocal",
+        "HipsWorld": "XREngine.WorldMeters",
+        "BoneLocalRotation": "AvatarBoneLocalDegrees",
+        "Endpoint": "XREngine.WorldMeters"
+      },
+      "Tolerances": {
+        "RootTranslationMeters": 0.001,
+        "RootRotationDegrees": 0.1,
+        "EndpointMeters": 0.002,
+        "BoneLocalRotationDegrees": 0.2,
+        "TenLoopDriftMeters": 0.002,
+        "TenLoopDriftDegrees": 0.2
+      }
+    },
+    {
+      "Id": "conventional-sexy-walk-route-2",
+      "AvatarId": "conventional",
+      "ClipId": "sexy-walk",
+      "PlaybackMode": 2,
+      "ReferenceFileId": "reference-conventional-sexy-walk",
+      "ReferenceSignature": "pose-audit-schema7-sha256:DDBB1B5D0A9BBD45B389428BABBB9D96A4E3426DBB03201FE5259E3313A40467",
+      "AvatarDefinitionSignature": "0B638CF8473D54BE509075CE3AFDBDDA6C91259DFF6C893349EE1B9574DE09D8",
+      "ClipSignature": "B1CC71D3A4E9E0593AFA8D7A204EC45BA3ADE7FD3CA3C75A57A527A20B634A82",
+      "Provenance": "Unity 2022.3.22f1 schema-7 deterministic pose audit bound to this avatar and clip source pair.",
+      "KnownAnswer": {
+        "CaptureToolId": "unity-humanoid-pose-audit-exporter",
+        "SourceUnityEditorVersion": "2022.3.22f1",
+        "SerializedClipVersion": "UnityAnimationClip-v6-or-v7",
+        "ReferenceSchemaVersion": 7,
+        "SourceAvatarSha256": "E74D0F755F883260B67E0C1D8B1856E2D609794347ECC7753676DB92F5AF25C5",
+        "SourceClipSha256": "2BAA72EF13646923EA11E8333B3107A0701E0F3565B4C7A07E6AA8A8873E9D58",
+        "AvatarDefinitionSignature": "0B638CF8473D54BE509075CE3AFDBDDA6C91259DFF6C893349EE1B9574DE09D8",
+        "AvatarImportSettingsSha256": "C171DF8F542E9B1D4B26AEA56417D611BD2F33C77ED3A3A2A05A79BCA921E76D",
+        "ClipImportSettingsSha256": "601E32DF93D76974124A361A4E942FD3060727B04E7C4A8E1384E6D7DE8666A1",
+        "CaptureToolIdentity": "unity-humanoid-pose-audit-exporter",
+        "CaptureToolVersion": "schema-7-2026-08-31",
+        "CaptureToolSha256": "7AE517AC5D733E0EBA9AA4BBE0359289153DAEC01152A8641E73DC99C6C83D74",
+        "CoordinateSpaces": {
+          "RootTranslation": "XREngine.WorldMeters",
+          "RootRotation": "XREngine.WorldDegrees",
+          "Body": "UnityHumanoidBodySpace",
+          "HipsLocal": "AvatarHipsLocal",
+          "HipsWorld": "XREngine.WorldMeters",
+          "BoneLocalRotation": "AvatarBoneLocalDegrees",
+          "Endpoint": "XREngine.WorldMeters"
+        },
+        "Tolerances": {
+          "RootTranslationMeters": 0.001,
+          "RootRotationDegrees": 0.1,
+          "EndpointMeters": 0.002,
+          "BoneLocalRotationDegrees": 0.2,
+          "TenLoopDriftMeters": 0.002,
+          "TenLoopDriftDegrees": 0.2
+        }
+      },
+      "IsIntegrationOnly": false,
+      "ExpectedCapabilities": 17760256,
+      "CoordinateSpaces": {
+        "RootTranslation": "XREngine.WorldMeters",
+        "RootRotation": "XREngine.WorldDegrees",
+        "Body": "UnityHumanoidBodySpace",
+        "HipsLocal": "AvatarHipsLocal",
+        "HipsWorld": "XREngine.WorldMeters",
+        "BoneLocalRotation": "AvatarBoneLocalDegrees",
+        "Endpoint": "XREngine.WorldMeters"
+      },
+      "Tolerances": {
+        "RootTranslationMeters": 0.001,
+        "RootRotationDegrees": 0.1,
+        "EndpointMeters": 0.002,
+        "BoneLocalRotationDegrees": 0.2,
+        "TenLoopDriftMeters": 0.002,
+        "TenLoopDriftDegrees": 0.2
+      }
+    },
+    {
+      "Id": "conventional-sexy-walk-route-3",
+      "AvatarId": "conventional",
+      "ClipId": "sexy-walk",
+      "PlaybackMode": 3,
+      "ReferenceFileId": "reference-conventional-sexy-walk",
+      "ReferenceSignature": "pose-audit-schema7-sha256:DDBB1B5D0A9BBD45B389428BABBB9D96A4E3426DBB03201FE5259E3313A40467",
+      "AvatarDefinitionSignature": "0B638CF8473D54BE509075CE3AFDBDDA6C91259DFF6C893349EE1B9574DE09D8",
+      "ClipSignature": "B1CC71D3A4E9E0593AFA8D7A204EC45BA3ADE7FD3CA3C75A57A527A20B634A82",
+      "Provenance": "Unity 2022.3.22f1 schema-7 deterministic pose audit bound to this avatar and clip source pair.",
+      "KnownAnswer": {
+        "CaptureToolId": "unity-humanoid-pose-audit-exporter",
+        "SourceUnityEditorVersion": "2022.3.22f1",
+        "SerializedClipVersion": "UnityAnimationClip-v6-or-v7",
+        "ReferenceSchemaVersion": 7,
+        "SourceAvatarSha256": "E74D0F755F883260B67E0C1D8B1856E2D609794347ECC7753676DB92F5AF25C5",
+        "SourceClipSha256": "2BAA72EF13646923EA11E8333B3107A0701E0F3565B4C7A07E6AA8A8873E9D58",
+        "AvatarDefinitionSignature": "0B638CF8473D54BE509075CE3AFDBDDA6C91259DFF6C893349EE1B9574DE09D8",
+        "AvatarImportSettingsSha256": "C171DF8F542E9B1D4B26AEA56417D611BD2F33C77ED3A3A2A05A79BCA921E76D",
+        "ClipImportSettingsSha256": "601E32DF93D76974124A361A4E942FD3060727B04E7C4A8E1384E6D7DE8666A1",
+        "CaptureToolIdentity": "unity-humanoid-pose-audit-exporter",
+        "CaptureToolVersion": "schema-7-2026-08-31",
+        "CaptureToolSha256": "7AE517AC5D733E0EBA9AA4BBE0359289153DAEC01152A8641E73DC99C6C83D74",
+        "CoordinateSpaces": {
+          "RootTranslation": "XREngine.WorldMeters",
+          "RootRotation": "XREngine.WorldDegrees",
+          "Body": "UnityHumanoidBodySpace",
+          "HipsLocal": "AvatarHipsLocal",
+          "HipsWorld": "XREngine.WorldMeters",
+          "BoneLocalRotation": "AvatarBoneLocalDegrees",
+          "Endpoint": "XREngine.WorldMeters"
+        },
+        "Tolerances": {
+          "RootTranslationMeters": 0.001,
+          "RootRotationDegrees": 0.1,
+          "EndpointMeters": 0.002,
+          "BoneLocalRotationDegrees": 0.2,
+          "TenLoopDriftMeters": 0.002,
+          "TenLoopDriftDegrees": 0.2
+        }
+      },
+      "IsIntegrationOnly": false,
+      "ExpectedCapabilities": 18808832,
+      "CoordinateSpaces": {
+        "RootTranslation": "XREngine.WorldMeters",
+        "RootRotation": "XREngine.WorldDegrees",
+        "Body": "UnityHumanoidBodySpace",
+        "HipsLocal": "AvatarHipsLocal",
+        "HipsWorld": "XREngine.WorldMeters",
+        "BoneLocalRotation": "AvatarBoneLocalDegrees",
+        "Endpoint": "XREngine.WorldMeters"
+      },
+      "Tolerances": {
+        "RootTranslationMeters": 0.001,
+        "RootRotationDegrees": 0.1,
+        "EndpointMeters": 0.002,
+        "BoneLocalRotationDegrees": 0.2,
+        "TenLoopDriftMeters": 0.002,
+        "TenLoopDriftDegrees": 0.2
+      }
+    },
+    {
+      "Id": "conventional-sexy-walk-route-4",
+      "AvatarId": "conventional",
+      "ClipId": "sexy-walk",
+      "PlaybackMode": 4,
+      "ReferenceFileId": "reference-conventional-sexy-walk",
+      "ReferenceSignature": "pose-audit-schema7-sha256:DDBB1B5D0A9BBD45B389428BABBB9D96A4E3426DBB03201FE5259E3313A40467",
+      "AvatarDefinitionSignature": "0B638CF8473D54BE509075CE3AFDBDDA6C91259DFF6C893349EE1B9574DE09D8",
+      "ClipSignature": "B1CC71D3A4E9E0593AFA8D7A204EC45BA3ADE7FD3CA3C75A57A527A20B634A82",
+      "Provenance": "Unity 2022.3.22f1 schema-7 deterministic pose audit bound to this avatar and clip source pair.",
+      "KnownAnswer": {
+        "CaptureToolId": "unity-humanoid-pose-audit-exporter",
+        "SourceUnityEditorVersion": "2022.3.22f1",
+        "SerializedClipVersion": "UnityAnimationClip-v6-or-v7",
+        "ReferenceSchemaVersion": 7,
+        "SourceAvatarSha256": "E74D0F755F883260B67E0C1D8B1856E2D609794347ECC7753676DB92F5AF25C5",
+        "SourceClipSha256": "2BAA72EF13646923EA11E8333B3107A0701E0F3565B4C7A07E6AA8A8873E9D58",
+        "AvatarDefinitionSignature": "0B638CF8473D54BE509075CE3AFDBDDA6C91259DFF6C893349EE1B9574DE09D8",
+        "AvatarImportSettingsSha256": "C171DF8F542E9B1D4B26AEA56417D611BD2F33C77ED3A3A2A05A79BCA921E76D",
+        "ClipImportSettingsSha256": "601E32DF93D76974124A361A4E942FD3060727B04E7C4A8E1384E6D7DE8666A1",
+        "CaptureToolIdentity": "unity-humanoid-pose-audit-exporter",
+        "CaptureToolVersion": "schema-7-2026-08-31",
+        "CaptureToolSha256": "7AE517AC5D733E0EBA9AA4BBE0359289153DAEC01152A8641E73DC99C6C83D74",
+        "CoordinateSpaces": {
+          "RootTranslation": "XREngine.WorldMeters",
+          "RootRotation": "XREngine.WorldDegrees",
+          "Body": "UnityHumanoidBodySpace",
+          "HipsLocal": "AvatarHipsLocal",
+          "HipsWorld": "XREngine.WorldMeters",
+          "BoneLocalRotation": "AvatarBoneLocalDegrees",
+          "Endpoint": "XREngine.WorldMeters"
+        },
+        "Tolerances": {
+          "RootTranslationMeters": 0.001,
+          "RootRotationDegrees": 0.1,
+          "EndpointMeters": 0.002,
+          "BoneLocalRotationDegrees": 0.2,
+          "TenLoopDriftMeters": 0.002,
+          "TenLoopDriftDegrees": 0.2
+        }
+      },
+      "IsIntegrationOnly": false,
+      "ExpectedCapabilities": 19070976,
+      "CoordinateSpaces": {
+        "RootTranslation": "XREngine.WorldMeters",
+        "RootRotation": "XREngine.WorldDegrees",
+        "Body": "UnityHumanoidBodySpace",
+        "HipsLocal": "AvatarHipsLocal",
+        "HipsWorld": "XREngine.WorldMeters",
+        "BoneLocalRotation": "AvatarBoneLocalDegrees",
+        "Endpoint": "XREngine.WorldMeters"
+      },
+      "Tolerances": {
+        "RootTranslationMeters": 0.001,
+        "RootRotationDegrees": 0.1,
+        "EndpointMeters": 0.002,
+        "BoneLocalRotationDegrees": 0.2,
+        "TenLoopDriftMeters": 0.002,
+        "TenLoopDriftDegrees": 0.2
+      }
+    },
+    {
+      "Id": "conventional-sexy-walk-route-5",
+      "AvatarId": "conventional",
+      "ClipId": "sexy-walk",
+      "PlaybackMode": 5,
+      "ReferenceFileId": "reference-conventional-sexy-walk",
+      "ReferenceSignature": "pose-audit-schema7-sha256:DDBB1B5D0A9BBD45B389428BABBB9D96A4E3426DBB03201FE5259E3313A40467",
+      "AvatarDefinitionSignature": "0B638CF8473D54BE509075CE3AFDBDDA6C91259DFF6C893349EE1B9574DE09D8",
+      "ClipSignature": "B1CC71D3A4E9E0593AFA8D7A204EC45BA3ADE7FD3CA3C75A57A527A20B634A82",
+      "Provenance": "Unity 2022.3.22f1 schema-7 deterministic pose audit bound to this avatar and clip source pair.",
+      "KnownAnswer": {
+        "CaptureToolId": "unity-humanoid-pose-audit-exporter",
+        "SourceUnityEditorVersion": "2022.3.22f1",
+        "SerializedClipVersion": "UnityAnimationClip-v6-or-v7",
+        "ReferenceSchemaVersion": 7,
+        "SourceAvatarSha256": "E74D0F755F883260B67E0C1D8B1856E2D609794347ECC7753676DB92F5AF25C5",
+        "SourceClipSha256": "2BAA72EF13646923EA11E8333B3107A0701E0F3565B4C7A07E6AA8A8873E9D58",
+        "AvatarDefinitionSignature": "0B638CF8473D54BE509075CE3AFDBDDA6C91259DFF6C893349EE1B9574DE09D8",
+        "AvatarImportSettingsSha256": "C171DF8F542E9B1D4B26AEA56417D611BD2F33C77ED3A3A2A05A79BCA921E76D",
+        "ClipImportSettingsSha256": "601E32DF93D76974124A361A4E942FD3060727B04E7C4A8E1384E6D7DE8666A1",
+        "CaptureToolIdentity": "unity-humanoid-pose-audit-exporter",
+        "CaptureToolVersion": "schema-7-2026-08-31",
+        "CaptureToolSha256": "7AE517AC5D733E0EBA9AA4BBE0359289153DAEC01152A8641E73DC99C6C83D74",
+        "CoordinateSpaces": {
+          "RootTranslation": "XREngine.WorldMeters",
+          "RootRotation": "XREngine.WorldDegrees",
+          "Body": "UnityHumanoidBodySpace",
+          "HipsLocal": "AvatarHipsLocal",
+          "HipsWorld": "XREngine.WorldMeters",
+          "BoneLocalRotation": "AvatarBoneLocalDegrees",
+          "Endpoint": "XREngine.WorldMeters"
+        },
+        "Tolerances": {
+          "RootTranslationMeters": 0.001,
+          "RootRotationDegrees": 0.1,
+          "EndpointMeters": 0.002,
+          "BoneLocalRotationDegrees": 0.2,
+          "TenLoopDriftMeters": 0.002,
+          "TenLoopDriftDegrees": 0.2
+        }
+      },
+      "IsIntegrationOnly": false,
+      "ExpectedCapabilities": 21168128,
+      "CoordinateSpaces": {
+        "RootTranslation": "XREngine.WorldMeters",
+        "RootRotation": "XREngine.WorldDegrees",
+        "Body": "UnityHumanoidBodySpace",
+        "HipsLocal": "AvatarHipsLocal",
+        "HipsWorld": "XREngine.WorldMeters",
+        "BoneLocalRotation": "AvatarBoneLocalDegrees",
+        "Endpoint": "XREngine.WorldMeters"
+      },
+      "Tolerances": {
+        "RootTranslationMeters": 0.001,
+        "RootRotationDegrees": 0.1,
+        "EndpointMeters": 0.002,
+        "BoneLocalRotationDegrees": 0.2,
+        "TenLoopDriftMeters": 0.002,
+        "TenLoopDriftDegrees": 0.2
+      }
+    },
+    {
+      "Id": "conventional-sexy-walk-route-6",
+      "AvatarId": "conventional",
+      "ClipId": "sexy-walk",
+      "PlaybackMode": 6,
+      "ReferenceFileId": "reference-conventional-sexy-walk",
+      "ReferenceSignature": "pose-audit-schema7-sha256:DDBB1B5D0A9BBD45B389428BABBB9D96A4E3426DBB03201FE5259E3313A40467",
+      "AvatarDefinitionSignature": "0B638CF8473D54BE509075CE3AFDBDDA6C91259DFF6C893349EE1B9574DE09D8",
+      "ClipSignature": "B1CC71D3A4E9E0593AFA8D7A204EC45BA3ADE7FD3CA3C75A57A527A20B634A82",
+      "Provenance": "Unity 2022.3.22f1 schema-7 deterministic pose audit bound to this avatar and clip source pair.",
+      "KnownAnswer": {
+        "CaptureToolId": "unity-humanoid-pose-audit-exporter",
+        "SourceUnityEditorVersion": "2022.3.22f1",
+        "SerializedClipVersion": "UnityAnimationClip-v6-or-v7",
+        "ReferenceSchemaVersion": 7,
+        "SourceAvatarSha256": "E74D0F755F883260B67E0C1D8B1856E2D609794347ECC7753676DB92F5AF25C5",
+        "SourceClipSha256": "2BAA72EF13646923EA11E8333B3107A0701E0F3565B4C7A07E6AA8A8873E9D58",
+        "AvatarDefinitionSignature": "0B638CF8473D54BE509075CE3AFDBDDA6C91259DFF6C893349EE1B9574DE09D8",
+        "AvatarImportSettingsSha256": "C171DF8F542E9B1D4B26AEA56417D611BD2F33C77ED3A3A2A05A79BCA921E76D",
+        "ClipImportSettingsSha256": "601E32DF93D76974124A361A4E942FD3060727B04E7C4A8E1384E6D7DE8666A1",
+        "CaptureToolIdentity": "unity-humanoid-pose-audit-exporter",
+        "CaptureToolVersion": "schema-7-2026-08-31",
+        "CaptureToolSha256": "7AE517AC5D733E0EBA9AA4BBE0359289153DAEC01152A8641E73DC99C6C83D74",
+        "CoordinateSpaces": {
+          "RootTranslation": "XREngine.WorldMeters",
+          "RootRotation": "XREngine.WorldDegrees",
+          "Body": "UnityHumanoidBodySpace",
+          "HipsLocal": "AvatarHipsLocal",
+          "HipsWorld": "XREngine.WorldMeters",
+          "BoneLocalRotation": "AvatarBoneLocalDegrees",
+          "Endpoint": "XREngine.WorldMeters"
+        },
+        "Tolerances": {
+          "RootTranslationMeters": 0.001,
+          "RootRotationDegrees": 0.1,
+          "EndpointMeters": 0.002,
+          "BoneLocalRotationDegrees": 0.2,
+          "TenLoopDriftMeters": 0.002,
+          "TenLoopDriftDegrees": 0.2
+        }
+      },
+      "IsIntegrationOnly": false,
+      "ExpectedCapabilities": 25362432,
+      "CoordinateSpaces": {
+        "RootTranslation": "XREngine.WorldMeters",
+        "RootRotation": "XREngine.WorldDegrees",
+        "Body": "UnityHumanoidBodySpace",
+        "HipsLocal": "AvatarHipsLocal",
+        "HipsWorld": "XREngine.WorldMeters",
+        "BoneLocalRotation": "AvatarBoneLocalDegrees",
+        "Endpoint": "XREngine.WorldMeters"
+      },
+      "Tolerances": {
+        "RootTranslationMeters": 0.001,
+        "RootRotationDegrees": 0.1,
+        "EndpointMeters": 0.002,
+        "BoneLocalRotationDegrees": 0.2,
+        "TenLoopDriftMeters": 0.002,
+        "TenLoopDriftDegrees": 0.2
+      }
+    }
+  ]
+}

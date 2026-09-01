@@ -234,17 +234,23 @@ namespace XREngine.Rendering.Vulkan
                     return;
                 }
 
-                // Determine usage and memory flags
+                // Determine usage and memory flags. Resizable buffers select their memory route
+                // from the rounded allocation capacity, not the current logical byte length. The
+                // allocation branch below uses that capacity too; using different sizes here can
+                // record a 64 KiB device-local allocation as host-visible and later try to map it.
+                ulong requiredByteSize = Data.Length;
+                bool useCapacityBackedAllocation = Data.Resizable && !Data.HasGpuCompressedPayload;
+                ulong requestedAllocationBytes = useCapacityBackedAllocation
+                    ? ResolveResizableBufferCapacity(_bufferSize, requiredByteSize)
+                    : Math.Max(requiredByteSize, 1UL);
                 BufferUsageFlags usage = ResolveVkUsageFlags(Data.Target, Data.Usage);
-                MemoryPropertyFlags memProps = ResolveMemoryProperties(Data, Data.Length);
+                MemoryPropertyFlags memProps = ResolveMemoryProperties(Data, requestedAllocationBytes);
                 bool enableDeviceAddress =
                     BackendContext.Resources.Buffers.ShouldEnableDeviceAddress(BackendContext, Data) ||
                     BackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap;
                 if (enableDeviceAddress)
                     usage |= BufferUsageFlags.ShaderDeviceAddressBit;
 
-                ulong requiredByteSize = Data.Length;
-                bool useCapacityBackedAllocation = Data.Resizable && !Data.HasGpuCompressedPayload;
                 bool needsRecreate =
                     _vkBuffer is null ||
                     _vkMemory is null ||
@@ -258,9 +264,6 @@ namespace XREngine.Rendering.Vulkan
                 if (needsRecreate)
                 {
                     bool replacesExistingBacking = _vkBuffer.HasValue || _vkMemory.HasValue;
-                    ulong requestedAllocationBytes = useCapacityBackedAllocation
-                        ? ResolveResizableBufferCapacity(_bufferSize, requiredByteSize)
-                        : Math.Max(requiredByteSize, 1UL);
                     if (!CanAllocateBufferVram(requestedAllocationBytes))
                         return;
 

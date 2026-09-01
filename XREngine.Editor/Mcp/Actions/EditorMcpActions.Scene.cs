@@ -6,6 +6,7 @@ using System.Numerics;
 using System.Threading.Tasks;
 using XREngine;
 using XREngine.Components.Scene.Transforms;
+using XREngine.Core.Files;
 using XREngine.Data.Core;
 using XREngine.Data.Transforms.Rotations;
 using XREngine.Editor;
@@ -818,6 +819,74 @@ namespace XREngine.Editor.Mcp
                 nearDepthValue = camera.GetNearDepthValue(),
                 farDepthValue = camera.GetFarDepthValue(),
                 cameraNodeId = pawn.SceneNode?.ID
+            }));
+        }
+
+        /// <summary>
+        /// Replaces the render-pipeline asset assigned to the active editor camera.
+        /// </summary>
+        [XRMcp(Name = "set_editor_camera_render_pipeline_asset", Permission = McpPermissionLevel.Mutate, PermissionReason = "Replaces the active editor camera render-pipeline asset for bounded rendering diagnostics.")]
+        [McpThreadAffinity(McpThreadAffinity.Update)]
+        [Description("Assign a loaded render-pipeline asset to the active editor camera by ID, path, or name.")]
+        public static Task<McpToolResponse> SetEditorCameraRenderPipelineAssetAsync(
+            McpToolContext context,
+            [McpName("asset_id"), Description("Optional render-pipeline asset GUID.")] string? assetId = null,
+            [McpName("asset_path"), Description("Optional render-pipeline asset path.")] string? assetPath = null,
+            [McpName("asset_name"), Description("Optional loaded render-pipeline asset name.")] string? assetName = null,
+            [McpName("exact_asset_name"), Description("When resolving by asset_name, require an exact match.")] bool exactAssetName = true)
+        {
+            if (string.IsNullOrWhiteSpace(assetId)
+                && string.IsNullOrWhiteSpace(assetPath)
+                && string.IsNullOrWhiteSpace(assetName))
+            {
+                return Task.FromResult(new McpToolResponse(
+                    "Provide asset_id, asset_path, or asset_name for the render-pipeline asset.",
+                    isError: true));
+            }
+
+            if (ResolveEditorCameraPawn(context.WorldOrNull) is not { } pawn)
+                return Task.FromResult(new McpToolResponse("No editor camera pawn available.", isError: true));
+
+            if (pawn.CameraComponent?.Camera is not { } camera)
+                return Task.FromResult(new McpToolResponse("Editor camera is unavailable.", isError: true));
+
+            if (!TryResolveAssetReference(
+                    typeof(RenderPipeline),
+                    assetId,
+                    assetPath,
+                    assetName,
+                    exactAssetName,
+                    out XRAsset? resolvedAsset,
+                    out string? assetError)
+                || resolvedAsset is not RenderPipeline pipeline)
+            {
+                return Task.FromResult(new McpToolResponse(
+                    assetError ?? "The requested render-pipeline asset could not be resolved.",
+                    isError: true));
+            }
+
+            RenderPipeline previousPipeline = camera.RenderPipeline;
+            bool changed = !ReferenceEquals(previousPipeline, pipeline);
+            if (changed)
+            {
+                camera.ReplaceRenderPipelineAsset(pipeline);
+                pawn.InvalidateView();
+            }
+
+            string message = changed
+                ? "Updated editor camera render-pipeline asset."
+                : "Editor camera already uses the requested render-pipeline asset.";
+            return Task.FromResult(new McpToolResponse(message, new
+            {
+                cameraNodeId = pawn.SceneNode?.ID,
+                changed,
+                previousPipelineId = previousPipeline.ID,
+                previousPipelineName = previousPipeline.Name,
+                previousPipelineType = previousPipeline.GetType().FullName ?? previousPipeline.GetType().Name,
+                pipelineId = pipeline.ID,
+                pipelineName = pipeline.Name,
+                pipelineType = pipeline.GetType().FullName ?? pipeline.GetType().Name,
+                assignmentRevision = camera.PipelineAssignmentRevision
             }));
         }
 

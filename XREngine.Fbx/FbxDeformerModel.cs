@@ -9,7 +9,8 @@ public sealed record FbxClusterBinding(
     Matrix4x4 TransformMatrix,
     Matrix4x4 TransformLinkMatrix,
     Matrix4x4 InverseBindMatrix,
-    IReadOnlyDictionary<int, float> ControlPointWeights);
+    IReadOnlyDictionary<int, float> ControlPointWeights,
+    bool HasTransformLinkMatrix = true);
 
 public sealed record FbxSkinBinding(
     long GeometryObjectId,

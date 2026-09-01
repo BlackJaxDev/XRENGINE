@@ -69,6 +69,17 @@ namespace XREngine.Rendering
         /// </summary>
         private BoundingRectangle _internalResolutionRegion = new();
 
+        // Display, camera-policy, and pipeline-policy changes are committed as one profile.
+        // CameraComponent reacts to Resized by changing internal resolution, so notifying the
+        // pipeline before that callback completes would materialize transient full-size targets.
+        private int _extentUpdateDepth;
+        private bool _extentProfileDirty;
+        private bool _displayExtentChanged;
+        private bool _internalExtentChanged;
+        private bool _advanceExtentRevision;
+        private string _extentProfileReason = "ViewportProfileChanged";
+        private long _extentRevision;
+
         /// <summary>
         /// The render pipeline instance that manages the rendering process for this viewport.
         /// Contains the mesh render commands, framebuffers, and other rendering state.
@@ -79,7 +90,11 @@ namespace XREngine.Rendering
         /// Stable output ownership used to realize the configured pipeline asset for this viewport.
         /// Output-local capabilities and reservations are bound without replacing the source asset.
         /// </summary>
+        private readonly object _pipelineRequestSync = new();
         private RenderPipelineRequest _pipelineRequest;
+        private long _pipelineOutputBindingRevision;
+        private long _appliedPipelineOutputBindingRevision;
+        private int _pipelineOutputBindingRefreshQueued;
 
         /// <summary>
         /// When true, the render pipeline is automatically updated to match the camera's RenderPipeline property.
@@ -440,6 +455,13 @@ namespace XREngine.Rendering
         public XRRenderPipelineInstance RenderPipelineInstance => _renderPipeline;
 
         /// <summary>
+        /// Gets the monotonic revision of the viewport's published display/internal extent tuple.
+        /// Interactive presentation-only changes advance this value without rebuilding resources.
+        /// </summary>
+        [YamlIgnore]
+        public ulong ExtentRevision => unchecked((ulong)System.Threading.Interlocked.Read(ref _extentRevision));
+
+        /// <summary>
         /// Describes the output purpose and view topology this viewport owns. Pipeline selection
         /// uses this request instead of inferring desktop, capture, or OpenXR ownership from a
         /// concrete pipeline type.
@@ -447,15 +469,25 @@ namespace XREngine.Rendering
         [YamlIgnore]
         public RenderPipelineRequest PipelineRequest
         {
-            get => _pipelineRequest.OutputId == 0
-                ? _pipelineRequest with { OutputId = _frameOutputIdentity }
-                : _pipelineRequest;
+            get
+            {
+                RenderPipelineRequest request;
+                lock (_pipelineRequestSync)
+                    request = _pipelineRequest;
+
+                return request.OutputId == 0
+                    ? request with { OutputId = _frameOutputIdentity }
+                    : request;
+            }
             set
             {
                 RenderPipelineRequest normalized = value.OutputId == 0
                     ? value with { OutputId = _frameOutputIdentity }
                     : value;
-                if (!SetField(ref _pipelineRequest, normalized))
+                bool changed;
+                lock (_pipelineRequestSync)
+                    changed = SetField(ref _pipelineRequest, normalized);
+                if (!changed)
                     return;
 
                 RefreshRenderPipelineOutputBinding();
@@ -482,10 +514,7 @@ namespace XREngine.Rendering
 
                 RenderPipeline configuredPipeline = camera.GetOrCreateRenderPipeline();
                 if (!ReferenceEquals(_renderPipeline.AssignedPipeline, configuredPipeline))
-                {
-                    _renderPipeline.Pipeline = configuredPipeline;
-                    RefreshRenderPipelineOutputBinding();
-                }
+                    _renderPipeline.RequestPipelineChange(configuredPipeline, this);
                 return configuredPipeline;
             }
             set
@@ -504,24 +533,13 @@ namespace XREngine.Rendering
                         // The camera asset is authoritative. Runtime policy changes
                         // must update that source so the inspector and every bound
                         // viewport observe the same pipeline definition.
-                        camera.RenderPipeline = value;
+                        camera.ReplaceRenderPipelineAsset(value);
                         if (ReferenceEquals(_renderPipeline.AssignedPipeline, value))
                             return;
                     }
                 }
 
-                _renderPipeline.Pipeline = value;
-
-                if (value is ISceneRenderPipelineFeatureProvider features &&
-                    features.Stereo != _pipelineRequest.Stereo)
-                {
-                    PipelineRequest = _pipelineRequest with
-                    {
-                        Stereo = features.Stereo,
-                    };
-                }
-
-                RefreshRenderPipelineOutputBinding();
+                _renderPipeline.RequestPipelineChange(value, this);
             }
         }
 
@@ -539,15 +557,45 @@ namespace XREngine.Rendering
 
         internal bool IsDestroyed => _destroyed;
 
-        private void RefreshRenderPipelineOutputBinding()
+        internal void RefreshRenderPipelineOutputBinding()
         {
-            if (_destroyed)
+            System.Threading.Interlocked.Increment(ref _pipelineOutputBindingRevision);
+            if (RuntimeEngine.IsRenderThread ||
+                !RuntimeRenderingHostServices.FrameTiming.IsRendererActive)
             {
-                _renderPipeline.ClearAdvancedOutputBinding();
+                ApplyLatestRenderPipelineOutputBindingRefresh();
                 return;
             }
 
-            RuntimeEngine.Rendering.RefreshRenderPipelineOutputBinding(this);
+            if (System.Threading.Interlocked.Exchange(
+                    ref _pipelineOutputBindingRefreshQueued,
+                    1) != 0)
+            {
+                return;
+            }
+
+            RuntimeEngine.EnqueueRenderThreadTask(
+                ApplyLatestRenderPipelineOutputBindingRefresh,
+                $"XRViewport.RefreshRenderPipelineOutputBinding[{Index}]",
+                RenderThreadJobKind.RenderPipelineResource);
+        }
+
+        private void ApplyLatestRenderPipelineOutputBindingRefresh()
+        {
+            System.Threading.Interlocked.Exchange(ref _pipelineOutputBindingRefreshQueued, 0);
+            long requestedRevision = System.Threading.Interlocked.Read(
+                ref _pipelineOutputBindingRevision);
+            if (System.Threading.Interlocked.Read(ref _appliedPipelineOutputBindingRevision) == requestedRevision)
+                return;
+
+            if (_destroyed)
+                _renderPipeline.ClearAdvancedOutputBinding();
+            else
+                RuntimeEngine.Rendering.RefreshRenderPipelineOutputBinding(this);
+
+            System.Threading.Interlocked.Exchange(
+                ref _appliedPipelineOutputBindingRevision,
+                requestedRevision);
         }
 
         internal void SynchronizeRenderPipelineFromCamera(XRCamera camera)
@@ -559,14 +607,59 @@ namespace XREngine.Rendering
         }
 
         private void SynchronizeRenderPipelineFromActiveCamera()
-        {
-            RenderPipeline = ActiveCamera?.GetOrCreateRenderPipeline();
+            => RenderPipeline = ActiveCamera?.GetOrCreateRenderPipeline();
 
-            // When the camera's pipeline changes, push current sizing into the
-            // existing runtime instance so the new command chain sees valid targets
-            // immediately instead of waiting for a later resize.
-            _renderPipeline.InternalResolutionResized(InternalWidth, InternalHeight, this);
-            _renderPipeline.ViewportResized(Width, Height, this);
+        /// <summary>
+        /// Completes the viewport-facing half of an applied render-thread pipeline transition.
+        /// Output binding is resolved before the target generation is described because the
+        /// Advanced pipeline includes that reservation in its resource layout.
+        /// </summary>
+        internal void HandleAppliedRenderPipelineTransition(RenderPipeline? pipeline)
+        {
+            if (_destroyed)
+            {
+                _renderPipeline.ClearAdvancedOutputBinding();
+                return;
+            }
+
+            BeginExtentProfileUpdate();
+            try
+            {
+                bool pipelineRequestChanged = false;
+                RenderPipelineRequest currentRequest = PipelineRequest;
+                if (pipeline is ISceneRenderPipelineFeatureProvider features &&
+                    features.Stereo != currentRequest.Stereo)
+                {
+                    PipelineRequest = currentRequest with
+                    {
+                        Stereo = features.Stereo,
+                    };
+                    pipelineRequestChanged = true;
+                }
+
+                if (!pipelineRequestChanged)
+                    RefreshRenderPipelineOutputBinding();
+
+                bool interactiveResize = Window?.IsInteractiveResizeInProgress == true;
+                if (!interactiveResize)
+                {
+                    ApplyBaseInternalResolutionPolicy();
+                    _renderPipeline.ApplyAutomaticInternalResolutionPolicy(this);
+                }
+
+                MarkExtentProfileDirty(
+                    displayChanged: true,
+                    internalChanged: !interactiveResize,
+                    "RenderPipelineAssetChanged",
+                    advanceRevision: false);
+            }
+            finally
+            {
+                EndExtentProfileUpdate();
+            }
+
+            Window?.InvalidateScenePanelResources();
+            Window?.RequestRenderStateRecheck(resetCircuitBreaker: true);
         }
 
         /// <summary>
@@ -808,6 +901,7 @@ namespace XREngine.Rendering
             SetCollectVisibleSubscription(false);
             _renderPipeline.MeshRenderCommands.CancelBackendReadyFramePackages();
             RuntimeEngine.Rendering.ReleaseVulkanUpscaleBridge(this, "viewport destroyed");
+            _renderPipeline.RequestTerminalTeardown();
             AssociatedPlayer = null;
             CameraComponent = null;
             Camera = null;
@@ -2334,25 +2428,53 @@ namespace XREngine.Rendering
             int internalResolutionWidth = -1,
             int internalResolutionHeight = -1)
         {
-            UpdateRegionFromWindowSize(windowWidth, windowHeight);
+            int previousWidth = _region.Width;
+            int previousHeight = _region.Height;
+            BeginExtentProfileUpdate();
+            try
+            {
+                UpdateRegionFromWindowSize(windowWidth, windowHeight);
+                bool displayChanged = previousWidth != _region.Width || previousHeight != _region.Height;
 
-            if (setInternalResolution)
-                SetInternalResolution(
-                    internalResolutionWidth <= 0 ? _region.Width : internalResolutionWidth,
-                    internalResolutionHeight <= 0 ? _region.Height : internalResolutionHeight,
-                    true);
+                bool explicitInternalExtent = internalResolutionWidth > 0 || internalResolutionHeight > 0;
+                if (setInternalResolution && (AllowAutomaticInternalResolution || explicitInternalExtent))
+                {
+                    SetInternalResolution(
+                        internalResolutionWidth <= 0 ? _region.Width : internalResolutionWidth,
+                        internalResolutionHeight <= 0 ? _region.Height : internalResolutionHeight,
+                        true);
+                }
 
-            ResizeCameraComponentUI();
-            SetAspectRatioToCamera();
-            ResizeRenderPipeline();
-            Resized?.Invoke(this);
+                ResizeCameraComponentUI();
+                SetAspectRatioToCamera();
+
+                // CameraComponent applies Full/Scale/Manual policy from this callback. Keep the
+                // pipeline notification batched until it and the pipeline AA/upscale policy agree.
+                Resized?.Invoke(this);
+                if (!explicitInternalExtent)
+                    ApplyBaseInternalResolutionPolicy();
+                _renderPipeline.ApplyAutomaticInternalResolutionPolicy(this);
+                MarkExtentProfileDirty(
+                    displayChanged,
+                    internalChanged: false,
+                    "ViewportResized",
+                    advanceRevision: displayChanged);
+            }
+            finally
+            {
+                EndExtentProfileUpdate();
+            }
         }
 
         public void SetPresentationOutputExtent(uint windowWidth, uint windowHeight)
         {
+            int previousWidth = _region.Width;
+            int previousHeight = _region.Height;
             UpdateRegionFromWindowSize(windowWidth, windowHeight);
             ResizeCameraComponentUI();
             SetAspectRatioToCamera();
+            if (previousWidth != _region.Width || previousHeight != _region.Height)
+                System.Threading.Interlocked.Increment(ref _extentRevision);
         }
 
         public void SetFullInternalExtent(uint windowWidth, uint windowHeight)
@@ -2402,7 +2524,11 @@ namespace XREngine.Rendering
 
             _internalResolutionRegion.Width = newWidth;
             _internalResolutionRegion.Height = newHeight;
-            _renderPipeline.InternalResolutionResized(InternalWidth, InternalHeight, this);
+            MarkExtentProfileDirty(
+                displayChanged: false,
+                internalChanged: true,
+                "InternalResolutionResized",
+                advanceRevision: true);
             InternalResolutionResized?.Invoke(this);
         }
 
@@ -2416,12 +2542,77 @@ namespace XREngine.Rendering
         public void SetInternalResolutionPercentage(float widthPercent, float heightPercent)
             => SetInternalResolution((int)(widthPercent * _region.Width), (int)(heightPercent * _region.Height), true);
 
-        /// <summary>
-        /// Notifies the render pipeline that the viewport display dimensions have changed.
-        /// Called internally by Resize() to update framebuffer sizes and other resolution-dependent resources.
-        /// </summary>
-        private void ResizeRenderPipeline()
-            => _renderPipeline.ViewportResized(Width, Height, this);
+        internal void ApplyBaseInternalResolutionPolicy()
+        {
+            if (!AllowAutomaticInternalResolution || Width <= 0 || Height <= 0)
+                return;
+
+            if (CameraComponent is { } cameraComponent)
+            {
+                cameraComponent.ApplyInternalResolutionToViewport(this);
+                return;
+            }
+
+            SetInternalResolution(Width, Height, correctAspect: true);
+        }
+
+        private void BeginExtentProfileUpdate()
+            => _extentUpdateDepth++;
+
+        private void EndExtentProfileUpdate()
+        {
+            if (_extentUpdateDepth <= 0)
+                throw new InvalidOperationException("Viewport extent profile batching is unbalanced.");
+
+            _extentUpdateDepth--;
+            if (_extentUpdateDepth == 0)
+                FlushExtentProfileChange();
+        }
+
+        private void MarkExtentProfileDirty(
+            bool displayChanged,
+            bool internalChanged,
+            string reason,
+            bool advanceRevision)
+        {
+            _extentProfileDirty = true;
+            _displayExtentChanged |= displayChanged;
+            _internalExtentChanged |= internalChanged;
+            _extentProfileReason = reason;
+            _advanceExtentRevision |= advanceRevision;
+
+            if (_extentUpdateDepth == 0)
+                FlushExtentProfileChange();
+        }
+
+        private void FlushExtentProfileChange()
+        {
+            if (!_extentProfileDirty)
+                return;
+
+            bool displayChanged = _displayExtentChanged;
+            bool internalChanged = _internalExtentChanged;
+            bool advanceRevision = _advanceExtentRevision;
+            string reason = _extentProfileReason;
+            _extentProfileDirty = false;
+            _displayExtentChanged = false;
+            _internalExtentChanged = false;
+            _advanceExtentRevision = false;
+            _extentProfileReason = "ViewportProfileChanged";
+
+            if (advanceRevision)
+                System.Threading.Interlocked.Increment(ref _extentRevision);
+
+            _renderPipeline.ViewportProfileChanged(
+                Width,
+                Height,
+                InternalWidth,
+                InternalHeight,
+                this,
+                displayChanged,
+                internalChanged,
+                reason);
+        }
 
         /// <summary>
         /// Updates the camera's aspect ratio to match the viewport dimensions.

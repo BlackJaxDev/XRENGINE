@@ -119,7 +119,7 @@ namespace XREngine
             {
                 foreach (XRViewport viewport in RuntimeEngine.EnumerateActiveViewports(
                              RuntimeEngine.EViewportEnumerationMode.IncludeVrEyeViewports))
-                    ApplyRenderPipelineOutputBinding(viewport);
+                    viewport.RefreshRenderPipelineOutputBinding();
             }
 
             private static void ApplyRenderPipelineOutputBinding(XRViewport viewport)
@@ -131,7 +131,8 @@ namespace XREngine
                 }
 
                 RenderPipelineRequest request = viewport.PipelineRequest;
-                RenderPipeline? pipeline = viewport.RenderPipeline;
+                RenderPipeline? pipeline =
+                    viewport.RenderPipelineInstance.PipelineForOutputBinding;
                 if (pipeline is null)
                 {
                     viewport.RenderPipelineInstance.ClearAdvancedOutputBinding();

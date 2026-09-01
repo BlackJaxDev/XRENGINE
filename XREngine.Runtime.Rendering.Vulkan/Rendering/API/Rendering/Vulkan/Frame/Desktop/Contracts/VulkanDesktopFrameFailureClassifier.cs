@@ -113,7 +113,8 @@ internal static class VulkanDesktopFrameFailureClassifier
             EDesktopFrameReason.FrameSlotBusy or
             EDesktopFrameReason.RecordingDeferred or
             EDesktopFrameReason.RecordingResourceRetired or
-            EDesktopFrameReason.RecordingDirtied =>
+            EDesktopFrameReason.RecordingDirtied or
+            EDesktopFrameReason.PresentNowReadinessRetry =>
                 EVulkanDesktopFrameFailureKind.AdmissionDeferred,
             EDesktopFrameReason.PresentNowReadinessFailed =>
                 EVulkanDesktopFrameFailureKind.ReadinessFailed,
@@ -180,6 +181,7 @@ internal static class VulkanDesktopFrameFailureClassifier
             EDesktopFrameReason.AcquireDeviceLost or
             EDesktopFrameReason.AcquireUnexpectedFailure =>
                 EVulkanFrameStage.OutputAcquire,
+            EDesktopFrameReason.PresentNowReadinessRetry or
             EDesktopFrameReason.PresentNowReadinessFailed =>
                 EVulkanFrameStage.ResourcePrepare,
             EDesktopFrameReason.RecordingDeferred or

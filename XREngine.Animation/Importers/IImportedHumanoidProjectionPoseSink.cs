@@ -1,3 +1,5 @@
+using System.Numerics;
+using XREngine.Animation.IK;
 using XREngine.Components.Animation;
 
 namespace XREngine.Animation.Importers;
@@ -13,4 +15,13 @@ public interface IImportedHumanoidProjectionPoseSink
         EHumanoidValue value,
         float amount,
         bool flipImportedMuscleZ);
+
+    /// <summary>
+    /// Receives one complete authored Body-relative IK goal position before
+    /// Loop Pose correction. Feet-based root projection consumes the foot
+    /// goals directly; hand goals are intentionally ignored by that policy.
+    /// </summary>
+    void SetImportedHumanoidProjectionGoalPosition(
+        ELimbEndEffector goal,
+        Vector3 position);
 }

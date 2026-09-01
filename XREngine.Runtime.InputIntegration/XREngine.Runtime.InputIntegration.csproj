@@ -34,10 +34,8 @@
 
   <ItemGroup>
     <!-- Scene bindings expose OpenVR device types, but Input owns their runtime cargo. -->
-    <Reference Include="OpenVR.NET">
-      <HintPath>..\Build\Submodules\OpenVR.NET\OpenVR.NET\bin\$(Configuration)\net6.0\OpenVR.NET.dll</HintPath>
-      <Private>false</Private>
-    </Reference>
+    <ProjectReference Include="..\Build\Submodules\OpenVR.NET\OpenVR.NET\OpenVR.NET.csproj"
+                      Private="false" />
   </ItemGroup>
 
 </Project>

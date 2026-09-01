@@ -16,6 +16,7 @@ namespace XREngine.Rendering.Resources;
 /// <param name="ReservedViewCount">The number of reserved views.</param>
 /// <param name="ReservedEyeIndex">The index of the reserved eye.</param>
 /// <param name="SettingsRevision">The immutable structural-settings revision used to build this key.</param>
+/// <param name="PipelineRevision">The viewport-instance-local pipeline asset revision that owns this generation.</param>
 public readonly record struct ResourceGenerationKey(
     string PipelineName,
     uint DisplayWidth,
@@ -32,7 +33,8 @@ public readonly record struct ResourceGenerationKey(
     RenderPipelineExternalTargetKind ExternalTargetKind = RenderPipelineExternalTargetKind.None,
     ulong SettingsRevision = 0,
     XREngine.Data.Rendering.EPixelInternalFormat OutputColorFormat = XREngine.Data.Rendering.EPixelInternalFormat.Rgba8,
-    XREngine.Data.Rendering.EPixelInternalFormat OutputDepthFormat = XREngine.Data.Rendering.EPixelInternalFormat.Depth24Stencil8)
+    XREngine.Data.Rendering.EPixelInternalFormat OutputDepthFormat = XREngine.Data.Rendering.EPixelInternalFormat.Depth24Stencil8,
+    ulong PipelineRevision = 0)
 {
     /// <summary>
     /// Converts this resource generation key into a render pipeline resource profile that can be used to configure the render pipeline.
@@ -60,5 +62,5 @@ public readonly record struct ResourceGenerationKey(
     /// </summary>
     /// <returns>A string representation of the resource generation key.</returns>
     public override string ToString()
-        => $"{PipelineName} display={DisplayWidth}x{DisplayHeight} internal={InternalWidth}x{InternalHeight} hdr={OutputHDR} aa={AntiAliasingMode} msaa={MsaaSampleCount} stereo={Stereo} features=0x{FeatureMask:X} settingsRev={SettingsRevision} external={ExternalTargetKind} views={ReservedViewCount} eye={ReservedEyeIndex} color={OutputColorFormat} depth={OutputDepthFormat}";
+        => $"{PipelineName} pipelineRev={PipelineRevision} display={DisplayWidth}x{DisplayHeight} internal={InternalWidth}x{InternalHeight} hdr={OutputHDR} aa={AntiAliasingMode} msaa={MsaaSampleCount} stereo={Stereo} features=0x{FeatureMask:X} settingsRev={SettingsRevision} external={ExternalTargetKind} views={ReservedViewCount} eye={ReservedEyeIndex} color={OutputColorFormat} depth={OutputDepthFormat}";
 }

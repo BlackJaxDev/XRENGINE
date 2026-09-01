@@ -41,6 +41,14 @@ internal struct VulkanPresentNowReadinessWatchdog
         EVulkanPresentNowFailureDisposition disposition =
             EVulkanPresentNowFailureDisposition.RendererTerminal)
     {
+        if (disposition == EVulkanPresentNowFailureDisposition.RetryFrame)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(disposition),
+                disposition,
+                "Expected PresentNow retries must use CreateRetry and typed control flow.");
+        }
+
         long now = Stopwatch.GetTimestamp();
         return new VulkanPresentNowReadinessException(
             _frameId,
@@ -52,6 +60,23 @@ internal struct VulkanPresentNowReadinessWatchdog
             detail,
             innerException,
             disposition);
+    }
+
+    internal readonly VulkanPresentNowReadinessRetry CreateRetry(
+        EVulkanPresentNowReadinessStage stage,
+        string activeTicket,
+        string dependencyChain,
+        string detail)
+    {
+        long now = Stopwatch.GetTimestamp();
+        return new VulkanPresentNowReadinessRetry(
+            _frameId,
+            stage,
+            activeTicket,
+            dependencyChain,
+            Stopwatch.GetElapsedTime(_startTimestamp, now),
+            Stopwatch.GetElapsedTime(_lastProgressTimestamp, now),
+            detail);
     }
 
     private static long ResolveTimeoutTicks()

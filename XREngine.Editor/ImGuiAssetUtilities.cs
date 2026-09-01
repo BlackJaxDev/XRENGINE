@@ -525,20 +525,8 @@ internal static class ImGuiAssetUtilities
         // Fall back to matching by simple Name.
         foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
         {
-            Type?[] types;
-            try
+            foreach (Type candidate in XREngine.Core.XRLoadableTypeCatalog.GetTypes(assembly))
             {
-                types = assembly.GetTypes();
-            }
-            catch (ReflectionTypeLoadException ex)
-            {
-                types = ex.Types ?? [];
-            }
-
-            foreach (Type? candidate in types)
-            {
-                if (candidate is null)
-                    continue;
                 if (!typeof(XRAsset).IsAssignableFrom(candidate))
                     continue;
                 if (string.Equals(candidate.Name, typeName, StringComparison.Ordinal))

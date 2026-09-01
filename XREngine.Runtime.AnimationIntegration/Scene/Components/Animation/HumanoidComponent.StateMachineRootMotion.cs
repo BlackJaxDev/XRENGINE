@@ -214,7 +214,11 @@ public partial class HumanoidComponent
                 if (!TryEvaluateNativeHumanoidPose(compiled, leaf.CanonicalProjectionMuscles, includeTranslationDof: false))
                     return false;
                 SetLeafBodyEvaluationFields(leaf, useCanonicalSample: true);
-                if (!TryCalculateProjectedFeetHeight(compiled, leaf.Policy, out canonicalFeetY))
+                if (!TryCalculateProjectedFeetHeight(
+                    compiled,
+                    leaf.Policy,
+                    leaf.CanonicalProjectionFootGoals,
+                    out canonicalFeetY))
                     return false;
                 leaf.SetCanonicalFeetY(canonicalFeetY);
             }
@@ -223,7 +227,11 @@ public partial class HumanoidComponent
             if (!TryEvaluateNativeHumanoidPose(compiled, leaf.CurrentProjectionMuscles, includeTranslationDof: true))
                 return false;
             SetLeafBodyEvaluationFields(leaf, useCanonicalSample: false);
-            if (!TryCalculateProjectedFeetHeight(compiled, leaf.Policy, out float currentFeetY))
+            if (!TryCalculateProjectedFeetHeight(
+                compiled,
+                leaf.Policy,
+                leaf.CurrentProjectionFootGoals,
+                out float currentFeetY))
                 return false;
             leaf.AddProjectedFeetDelta(currentFeetY - canonicalFeetY);
         }
