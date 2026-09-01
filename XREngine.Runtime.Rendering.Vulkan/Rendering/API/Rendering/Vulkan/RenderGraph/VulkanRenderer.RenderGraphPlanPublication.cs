@@ -343,7 +343,12 @@ internal sealed partial class VulkanFramePlanner
 
         if (allowSynchronousResourceUploads)
             _ = vkBuffer.TryEnsureReadyForRendering(allowSynchronousUpload: true);
-        if (vkBuffer.BufferHandle is not { } resolvedBuffer || resolvedBuffer.Handle == 0)
+        // A logical buffer may have grown since the retained native allocation
+        // was published. Lookup-only preparation must not inflate a barrier to
+        // that new CPU size or consume storage whose upload is still pending.
+        if ((!allowSynchronousResourceUploads &&
+             (!vkBuffer.IsReadyForRendering || vkBuffer.AllocatedByteSize < dataBuffer.Length)) ||
+            vkBuffer.BufferHandle is not { } resolvedBuffer || resolvedBuffer.Handle == 0)
         {
             nativeBuffer = default;
             nativeSize = 0;
@@ -356,9 +361,9 @@ internal sealed partial class VulkanFramePlanner
         }
 
         nativeBuffer = resolvedBuffer;
-        nativeSize = Math.Max(
-            Math.Max(vkBuffer.AllocatedByteSize, dataBuffer.Length),
-            1UL);
+        nativeSize = allowSynchronousResourceUploads
+            ? Math.Max(Math.Max(vkBuffer.AllocatedByteSize, dataBuffer.Length), 1UL)
+            : Math.Max(vkBuffer.AllocatedByteSize, 1UL);
         nativeGeneration = backendContext.Resources.GetPublishedGeneration(ObjectType.Buffer, nativeBuffer.Handle);
         if (nativeGeneration == 0UL)
         {

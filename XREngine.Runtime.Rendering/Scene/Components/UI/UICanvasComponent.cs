@@ -253,6 +253,9 @@ namespace XREngine.Components
 
         bool IRuntimeScreenSpaceUserInterface.IsScreenSpace => CanvasDrawSpaceOrDefault == ECanvasDrawSpace.Screen;
 
+        bool IRuntimeScreenSpaceUserInterface.CompletedRenderCommandChainThisFrame
+            => _renderPipeline.CompletedCommandChainThisFrame;
+
         public void ResizeScreenSpace(Vector2 size)
         {
             var canvasTransform = GetCanvasTransformOrNull(true);
@@ -320,6 +323,7 @@ namespace XREngine.Components
         {
             int descriptorGeneration =
                 _renderPipeline.ActiveGeneration?.Registry.DescriptorRevision ?? 0;
+            var dimensions = _renderPipeline.ResolveBackendReadyFramePackageDimensions(viewport);
             BackendReadyFramePackageIdentity identity = new(
                 RuntimeRenderingHostServices.FrameTiming.CollectFrameId,
                 RuntimeRenderingHostServices.FrameTiming.RequestedCollectGeneration,
@@ -327,10 +331,10 @@ namespace XREngine.Components
                 _renderPipeline.ResourceGeneration,
                 descriptorGeneration,
                 ResolveRenderGraphGeneration(_renderPipeline.Pipeline?.PassMetadata),
-                viewport.Width,
-                viewport.Height,
-                viewport.InternalWidth,
-                viewport.InternalHeight);
+                dimensions.DisplayWidth,
+                dimensions.DisplayHeight,
+                dimensions.InternalWidth,
+                dimensions.InternalHeight);
             _renderPipeline.MeshRenderCommands.PrepareBackendReadyFramePackage(identity);
         }
 

@@ -10,8 +10,8 @@ namespace XREngine.Components.Animation;
 /// </summary>
 public sealed class HumanoidAvatarDefinitionMetadata
 {
-    public const int CurrentSchemaVersion = 3;
-    public const int CurrentAutoMappingAlgorithmVersion = 2;
+    public const int CurrentSchemaVersion = 6;
+    public const int CurrentAutoMappingAlgorithmVersion = 4;
 
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
     public int AutoMappingAlgorithmVersion { get; set; } = CurrentAutoMappingAlgorithmVersion;
@@ -24,11 +24,22 @@ public sealed class HumanoidAvatarDefinitionMetadata
     public EHumanoidAvatarSourceProvenance SourceProvenance { get; set; }
     public string SourceModelContentSha256 { get; set; } = string.Empty;
     public string CoordinateContractId { get; set; } = ImportedAnimationCoordinateContract.CurrentContractId;
+    /// <summary>
+    /// Versioned contract that produced generated canonical-pose corrections.
+    /// Missing or stale values force correction regeneration.
+    /// </summary>
+    public string CanonicalPoseAuthoringModelId { get; set; } = string.Empty;
     public float HumanScale { get; set; }
     public float ModelUnitsPerMeter { get; set; } = 1.0f;
     public float MuscleInputScale { get; set; } = 1.0f;
     public HumanoidAvatarSolverSettings SolverSettings { get; set; } = new();
     public HumanoidAvatarBodyAxes BodyAxes { get; set; } = new();
+    /// <summary>
+    /// Explicit body mass and orientation metadata used by humanoid playback.
+    /// Definitions authored before this data was introduced remain incomplete
+    /// until they are refreshed and explicitly confirmed.
+    /// </summary>
+    public HumanoidAvatarBodyDefinition? BodyDefinition { get; set; }
     public HumanoidAvatarBoneBinding[] Bones { get; set; } = [];
     public HumanoidAvatarMuscleLimit[] MuscleLimits { get; set; } = [];
     public HumanoidAvatarTwistChain[] TwistChains { get; set; } = [];

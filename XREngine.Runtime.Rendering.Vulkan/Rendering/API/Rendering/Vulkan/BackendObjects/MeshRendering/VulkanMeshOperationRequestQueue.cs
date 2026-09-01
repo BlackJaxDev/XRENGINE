@@ -338,6 +338,35 @@ internal sealed class VulkanMeshOperationRequestQueue
         }
     }
 
+    /// <summary>
+    /// Discards the currently published request cohort without disturbing a prior
+    /// caller-owned drain. This is used when a resize-owned desktop frame cannot
+    /// acquire or reuse a slot, so its canonical-publication pins cannot outlive
+    /// the dropped requests.
+    /// </summary>
+    internal int DiscardPending()
+    {
+        lock (_gate)
+        {
+            int discardedCount = _count;
+            if (discardedCount == 0)
+                return 0;
+
+            Array.Clear(_entries);
+            Array.Clear(_lanes);
+            _head = 0;
+            _count = 0;
+            _terminalCompositionCount = 0;
+            _uiCount = 0;
+            _mainSceneCount = 0;
+            _shadowCount = 0;
+            _framePlanCapacityExceededCount = 0;
+            _lastCapacityFailure = default;
+            _publishedPublicationPins.ReleaseAll();
+            return discardedCount;
+        }
+    }
+
     private static int ResolveBackgroundSchedulingCapacity()
     {
         string? configured = Environment.GetEnvironmentVariable(

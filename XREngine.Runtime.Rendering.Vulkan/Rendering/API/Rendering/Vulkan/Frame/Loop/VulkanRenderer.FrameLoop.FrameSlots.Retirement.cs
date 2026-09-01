@@ -61,6 +61,10 @@ namespace XREngine.Rendering.Vulkan
                 Api, _deviceContext.Device, frameSlot);
             ResourceRuntime.DrainRetiredDescriptorSetLayouts(
                 Api, _deviceContext.Device, frameSlot);
+            ResourceRuntime.DrainRetiredQueryPools(
+                Api, _deviceContext.Device, frameSlot);
+            ResourceRuntime.DrainRetiredBufferViews(
+                Api, _deviceContext.Device, frameSlot);
             int pooledBuffers = ResourceRuntime.DrainRetiredBuffers(
                 Api,
                 _deviceContext.Device,

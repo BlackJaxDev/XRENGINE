@@ -42,7 +42,6 @@ internal sealed partial class VulkanCommandRuntime
             in renderGraphPlan,
             useDynamicRendering,
             includeSwapchainDepth: true,
-            framePlan.StaticOperationSignature,
             ref watchdog,
             out retryable,
             out reason))
@@ -58,7 +57,6 @@ internal sealed partial class VulkanCommandRuntime
             in renderGraphPlan,
             useDynamicRendering,
             includeSwapchainDepth: !preserveSwapchainForOverlay,
-            framePlan.DynamicOverlaySignature,
             ref watchdog,
             out retryable,
             out reason);
@@ -72,7 +70,6 @@ internal sealed partial class VulkanCommandRuntime
         in VulkanRenderGraphPlan renderGraphPlan,
         bool useDynamicRendering,
         bool includeSwapchainDepth,
-        ulong recordingStructuralSignature,
         ref VulkanPresentNowReadinessWatchdog watchdog,
         out bool retryable,
         out string reason)
@@ -112,12 +109,19 @@ internal sealed partial class VulkanCommandRuntime
 
         EMeshSubmissionStrategy submissionStrategy =
             RuntimeEngine.Rendering.ResolveMeshSubmissionStrategy();
+        ulong targetCompatibilitySignature =
+            VulkanPipelineVariantManifest.ComputeTargetCompatibilitySignature(
+                resourcePlanStamp.ResourceAllocationSignature,
+                recordingState.SwapchainTarget,
+                useDynamicRendering,
+                ResourceRuntime.SwapchainRenderPass);
         VulkanPipelineVariantManifest manifest = GetOrBuildPipelineVariantManifest(
             renderGraphPlan.CompiledGraph.Plan,
             operations,
             submissionStrategy,
             useDynamicRendering,
-            recordingStructuralSignature);
+            targetCompatibilitySignature,
+            framePlan);
         for (int index = 0; index < manifest.Requirements.Count; index++)
         {
             VulkanPipelineVariantRequirement requirement = manifest.Requirements[index];
@@ -155,13 +159,15 @@ internal sealed partial class VulkanCommandRuntime
         FrameOperationSequence operations,
         EMeshSubmissionStrategy submissionStrategy,
         bool dynamicRendering,
-        ulong recordingStructuralSignature)
+        ulong targetCompatibilitySignature,
+        FramePlan framePlan)
         => ResourceRuntime.PipelineManager.GetOrBuildVariantManifest(
             plan,
             operations,
             submissionStrategy,
             dynamicRendering,
-            recordingStructuralSignature);
+            targetCompatibilitySignature,
+            framePlan);
 
     private bool TryResolveGraphicsPipelinePrewarmTarget(
         XRFrameBuffer? target,
@@ -195,7 +201,9 @@ internal sealed partial class VulkanCommandRuntime
                 return true;
             }
 
-            renderPass = ResourceRuntime.SwapchainRenderPass;
+            renderPass = swapchainTarget.RenderPass.Handle != 0
+                ? swapchainTarget.RenderPass
+                : ResourceRuntime.SwapchainRenderPass;
             if (renderPass.Handle != 0)
                 return true;
 
@@ -215,7 +223,11 @@ internal sealed partial class VulkanCommandRuntime
             reason = $"target '{target.Name ?? "<unnamed>"}' has no prepared native framebuffer state";
             return false;
         }
-        ImageLayout[]? trackedLayouts = QueryCurrentAttachmentLayouts(target, frameBuffer);
+        ImageLayout[]? trackedLayouts = QueryCurrentAttachmentLayouts(
+            target,
+            frameBuffer,
+            commandBuffer: default,
+            allowSynchronousResourceUploads: false);
         FrameBufferAttachmentSignature[] attachmentSignature =
             frameBuffer.ResolveAttachmentSignatureForPass(
                 passIndex,

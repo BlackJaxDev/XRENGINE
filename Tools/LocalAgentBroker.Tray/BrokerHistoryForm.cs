@@ -11,25 +11,15 @@ internal sealed class BrokerHistoryForm : Form
     private readonly ListView _runList;
     private readonly Label _titleLabel;
     private readonly Label _metadataLabel;
-    private readonly RichTextBox _conversation;
-    private readonly MarkdownRichTextRenderer _markdownRenderer;
-    private readonly RichTextBoxMotionController _motionController;
+    private readonly BrokerConversationView _conversation;
     private readonly ToolStripButton _deleteButton;
     private IReadOnlyList<BrokerHistoryRecord> _allRecords = [];
     private string? _selectedRunId;
-    private string? _renderedRunId;
-    private string _renderedResponseText = string.Empty;
-    private string _renderedFailureText = string.Empty;
     private string _renderedListVersion = string.Empty;
-    private MarkdownPreviewDocument _renderedResponsePreview = MarkdownPreviewDocument.Empty;
-    private int _responsePreviewStart;
-    private int _responsePreviewLength;
-    private bool _renderedWasActive;
-    private bool _forceFullRender;
     private bool _isDarkTheme;
     private bool _allowClose;
 
-    public BrokerHistoryForm()
+    public BrokerHistoryForm(string previewUserDataDirectory)
     {
         Text = "Local Agent Broker — Prompt History";
         StartPosition = FormStartPosition.CenterScreen;
@@ -53,6 +43,11 @@ internal sealed class BrokerHistoryForm : Form
         _deleteButton = new ToolStripButton("Delete selected") { Enabled = false };
         _deleteButton.Click += (_, _) => RequestDeleteSelected();
         toolbar.Items.Add(_deleteButton);
+        var rawButton = new ToolStripButton("Raw text") { CheckOnClick = true };
+        toolbar.Items.Add(rawButton);
+        var copyButton = new ToolStripButton("Copy response");
+        copyButton.Click += (_, _) => CopyResponse();
+        toolbar.Items.Add(copyButton);
         var settingsButton = new ToolStripButton("Settings");
         settingsButton.Click += (_, _) => SettingsRequested?.Invoke();
         toolbar.Items.Add(settingsButton);
@@ -108,19 +103,8 @@ internal sealed class BrokerHistoryForm : Form
             ForeColor = Color.FromArgb(95, 104, 120),
             Margin = new Padding(0, 0, 0, 16),
         };
-        _conversation = new RichTextBox
-        {
-            Dock = DockStyle.Fill,
-            BorderStyle = BorderStyle.None,
-            BackColor = Color.White,
-            ForeColor = Color.FromArgb(38, 43, 52),
-            ReadOnly = true,
-            DetectUrls = true,
-            Font = new Font("Segoe UI", 10F),
-        };
-        _markdownRenderer = new MarkdownRichTextRenderer(_conversation);
-        _motionController = new RichTextBoxMotionController(_conversation);
-        _conversation.LinkClicked += OpenConversationLink;
+        _conversation = new BrokerConversationView(previewUserDataDirectory) { Dock = DockStyle.Fill };
+        rawButton.CheckedChanged += (_, _) => _conversation.SetRawView(rawButton.Checked);
         details.Controls.Add(_titleLabel, 0, 0);
         details.Controls.Add(_metadataLabel, 0, 1);
         details.Controls.Add(_conversation, 0, 2);
@@ -158,8 +142,7 @@ internal sealed class BrokerHistoryForm : Form
         _metadataLabel.ForeColor = BrokerTheme.MutedTextColor(_isDarkTheme);
         _conversation.BackColor = BrokerTheme.SurfaceColor(_isDarkTheme);
         _conversation.ForeColor = BrokerTheme.TextColor(_isDarkTheme);
-        _markdownRenderer.SetTheme(_isDarkTheme);
-        _forceFullRender = true;
+        _conversation.SetTheme(_isDarkTheme);
         RebuildList(force: true);
         if (_selectedRunId is not null)
             SelectRun(_selectedRunId);
@@ -247,8 +230,6 @@ internal sealed class BrokerHistoryForm : Form
         if (_runList.SelectedItems.Count == 0)
             return;
         string? selectedRunId = _runList.SelectedItems[0].Tag as string;
-        if (!string.Equals(selectedRunId, _selectedRunId, StringComparison.Ordinal))
-            ResetRenderedConversation();
         _selectedRunId = selectedRunId;
         RenderSelected();
     }
@@ -262,8 +243,6 @@ internal sealed class BrokerHistoryForm : Form
             item.Selected = true;
             item.Focused = true;
             item.EnsureVisible();
-            if (!string.Equals(runId, _selectedRunId, StringComparison.Ordinal))
-                ResetRenderedConversation();
             _selectedRunId = runId;
             RenderSelected();
             return;
@@ -280,10 +259,8 @@ internal sealed class BrokerHistoryForm : Form
             _metadataLabel.Text = _allRecords.Count == 0
                 ? "Accepted broker prompts will appear here automatically."
                 : string.Empty;
-            _motionController.Reset(followTail: false);
-            _conversation.Clear();
+            _conversation.ShowRecord(null);
             _deleteButton.Enabled = false;
-            ResetRenderedConversation();
             return;
         }
 
@@ -304,207 +281,7 @@ internal sealed class BrokerHistoryForm : Form
             + $"{record.Usage.InputTokens:N0} in / {record.Usage.OutputTokens:N0} out";
         _deleteButton.Enabled = !record.IsActive;
 
-        string response = record.ResponseText;
-        string failure = BuildFailureText(record);
-        bool isSameRun = string.Equals(record.RunId, _renderedRunId, StringComparison.Ordinal);
-        bool canAppendResponse = isSameRun
-            && !_forceFullRender
-            && HasValidResponsePreviewRange()
-            && response.Length > _renderedResponseText.Length
-            && response.StartsWith(_renderedResponseText, StringComparison.Ordinal)
-            && string.Equals(failure, _renderedFailureText, StringComparison.Ordinal);
-        if (canAppendResponse)
-        {
-            AppendResponseDelta(response);
-            _renderedResponseText = response;
-            _renderedWasActive = record.IsActive;
-            return;
-        }
-
-        bool conversationUnchanged = isSameRun
-            && !_forceFullRender
-            && string.Equals(response, _renderedResponseText, StringComparison.Ordinal)
-            && string.Equals(failure, _renderedFailureText, StringComparison.Ordinal)
-            && (response.Length > 0 || record.IsActive == _renderedWasActive);
-        if (conversationUnchanged)
-            return;
-
-        if (!isSameRun)
-            _motionController.Reset(record.IsActive);
-        RichTextUpdateState updateState = _motionController.BeginContentUpdate();
-        try
-        {
-            _conversation.SuspendLayout();
-            try
-            {
-                _conversation.Clear();
-                if (!string.IsNullOrWhiteSpace(record.SystemInstructions))
-                    AppendSection("SYSTEM", record.SystemInstructions, SystemHeadingColor());
-                AppendSection("PROMPT", record.PromptText, PromptHeadingColor());
-                AppendResponseSection(record, response);
-                if (failure.Length > 0)
-                    AppendSection("FAILURE", failure, FailureHeadingColor());
-            }
-            finally
-            {
-                _conversation.ResumeLayout();
-            }
-
-            _renderedRunId = record.RunId;
-            _renderedResponseText = response;
-            _renderedFailureText = failure;
-            _renderedWasActive = record.IsActive;
-            _forceFullRender = false;
-
-            RichTextUpdateState completionState = isSameRun
-                ? updateState
-                : new RichTextUpdateState(
-                    Point.Empty,
-                    record.IsActive ? _conversation.TextLength : 0,
-                    0,
-                    record.IsActive);
-            _motionController.EndContentUpdate(completionState);
-        }
-        catch
-        {
-            _motionController.AbortContentUpdate(updateState);
-            throw;
-        }
-    }
-
-    private void AppendSection(string heading, string body, Color headingColor)
-    {
-        AppendHeading(heading, headingColor);
-        _conversation.AppendText(body.TrimEnd() + Environment.NewLine + Environment.NewLine);
-    }
-
-    private void AppendHeading(string heading, Color headingColor)
-    {
-        _conversation.SelectionColor = headingColor;
-        using var headingFont = new Font(_conversation.Font, FontStyle.Bold);
-        _conversation.SelectionFont = headingFont;
-        _conversation.AppendText(heading + Environment.NewLine);
-        _conversation.SelectionColor = _conversation.ForeColor;
-        _conversation.SelectionFont = _conversation.Font;
-    }
-
-    private void AppendResponseSection(BrokerHistoryRecord record, string response)
-    {
-        AppendHeading("RESPONSE", ResponseHeadingColor());
-        _responsePreviewStart = _conversation.TextLength;
-        _renderedResponsePreview = response.Length > 0
-            ? MarkdownPreviewParser.Parse(response)
-            : new MarkdownPreviewDocument(
-                record.IsActive ? "Waiting for output…" : "No response text was returned.",
-                []);
-        _conversation.AppendText(_renderedResponsePreview.Text);
-        _responsePreviewLength = _renderedResponsePreview.Text.Length;
-        _markdownRenderer.Apply(
-            _renderedResponsePreview,
-            _responsePreviewStart,
-            previewStart: 0,
-            fadeFromPreviewOffset: int.MaxValue);
-        if (!record.IsActive)
-            _conversation.AppendText(Environment.NewLine + Environment.NewLine);
-    }
-
-    private void AppendResponseDelta(string response)
-    {
-        MarkdownPreviewDocument preview = MarkdownPreviewParser.Parse(response);
-        int commonPrefix = CommonPrefixLength(_renderedResponsePreview.Text, preview.Text);
-        int replacementStart = StartOfLine(preview.Text, commonPrefix);
-        replacementStart = Math.Min(replacementStart, _renderedResponsePreview.Text.Length);
-
-        RichTextUpdateState updateState = _motionController.BeginContentUpdate();
-        try
-        {
-            _conversation.Select(
-                _responsePreviewStart + replacementStart,
-                _responsePreviewLength - replacementStart);
-            _conversation.SelectedText = preview.Text[replacementStart..];
-            _responsePreviewLength = preview.Text.Length;
-            IReadOnlyList<RichTextFadeRun> fadeRuns = _markdownRenderer.Apply(
-                preview,
-                _responsePreviewStart,
-                replacementStart,
-                commonPrefix);
-            _renderedResponsePreview = preview;
-            _motionController.EndContentUpdate(updateState, fadeRuns);
-        }
-        catch
-        {
-            _motionController.AbortContentUpdate(updateState);
-            throw;
-        }
-    }
-
-    private void ResetRenderedConversation()
-    {
-        _renderedRunId = null;
-        _renderedResponseText = string.Empty;
-        _renderedFailureText = string.Empty;
-        _renderedWasActive = false;
-        _renderedResponsePreview = MarkdownPreviewDocument.Empty;
-        _responsePreviewStart = 0;
-        _responsePreviewLength = 0;
-        _forceFullRender = true;
-    }
-
-    protected override void Dispose(bool disposing)
-    {
-        if (disposing)
-        {
-            _motionController.Dispose();
-            _markdownRenderer.Dispose();
-        }
-        base.Dispose(disposing);
-    }
-
-    private static int CommonPrefixLength(string first, string second)
-    {
-        int length = Math.Min(first.Length, second.Length);
-        int index = 0;
-        while (index < length && first[index] == second[index])
-            index++;
-        return index;
-    }
-
-    private static int StartOfLine(string text, int offset)
-    {
-        int searchStart = Math.Min(offset, text.Length) - 1;
-        if (searchStart < 0)
-            return 0;
-        int newline = text.LastIndexOf('\n', searchStart);
-        return newline < 0 ? 0 : newline + 1;
-    }
-
-    private bool HasValidResponsePreviewRange()
-    {
-        if (_responsePreviewStart < 0
-            || _responsePreviewLength < 0
-            || _responsePreviewStart + _responsePreviewLength > _conversation.TextLength
-            || _responsePreviewLength != _renderedResponsePreview.Text.Length)
-        {
-            return false;
-        }
-
-        return _conversation.Text.AsSpan(
-            _responsePreviewStart,
-            _responsePreviewLength).SequenceEqual(_renderedResponsePreview.Text);
-    }
-
-    private static void OpenConversationLink(object? sender, LinkClickedEventArgs eventArgs)
-    {
-        if (!Uri.TryCreate(eventArgs.LinkText, UriKind.Absolute, out Uri? uri)
-            || uri.Scheme is not ("http" or "https"))
-        {
-            return;
-        }
-
-        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(uri.AbsoluteUri)
-        {
-            UseShellExecute = true,
-        });
+        _conversation.ShowRecord(record);
     }
 
     private void RequestDeleteSelected()
@@ -531,6 +308,21 @@ internal sealed class BrokerHistoryForm : Form
         Hide();
     }
 
+    private void CopyResponse()
+    {
+        string? response = _allRecords.FirstOrDefault(record => record.RunId == _selectedRunId)?.ResponseText;
+        if (string.IsNullOrEmpty(response))
+            return;
+        try
+        {
+            Clipboard.SetText(response);
+        }
+        catch (System.Runtime.InteropServices.ExternalException)
+        {
+            MessageBox.Show(this, "The clipboard is busy. Please try again.", "Copy response", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+    }
+
     private static bool MatchesFilter(BrokerHistoryRecord record, string filter)
         => filter.Length == 0
             || record.Objective.Contains(filter, StringComparison.OrdinalIgnoreCase)
@@ -550,15 +342,6 @@ internal sealed class BrokerHistoryForm : Form
             _ => record.Status.ToString(),
         };
 
-    private static string BuildFailureText(BrokerHistoryRecord record)
-    {
-        if (string.IsNullOrWhiteSpace(record.FailureSummary))
-            return string.Empty;
-        return string.IsNullOrWhiteSpace(record.FailureDetail)
-            ? record.FailureSummary
-            : $"{record.FailureSummary}\n\n{record.FailureDetail}";
-    }
-
     private static Color StatusColor(AgentRunStatus status, bool dark)
         => status switch
         {
@@ -569,18 +352,6 @@ internal sealed class BrokerHistoryForm : Form
             AgentRunStatus.Cancelled => dark ? Color.FromArgb(165, 169, 178) : Color.FromArgb(110, 110, 118),
             _ => BrokerTheme.TextColor(dark),
         };
-
-    private Color SystemHeadingColor()
-        => _isDarkTheme ? Color.FromArgb(190, 154, 230) : Color.FromArgb(112, 86, 155);
-
-    private Color PromptHeadingColor()
-        => _isDarkTheme ? Color.FromArgb(105, 169, 245) : Color.FromArgb(38, 101, 175);
-
-    private Color ResponseHeadingColor()
-        => _isDarkTheme ? Color.FromArgb(91, 190, 127) : Color.FromArgb(36, 128, 82);
-
-    private Color FailureHeadingColor()
-        => _isDarkTheme ? Color.FromArgb(242, 112, 112) : Color.FromArgb(180, 54, 54);
 
     private static string OneLine(string text)
     {

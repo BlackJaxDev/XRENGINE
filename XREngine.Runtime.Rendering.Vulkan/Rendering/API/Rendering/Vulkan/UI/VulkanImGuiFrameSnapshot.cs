@@ -12,12 +12,13 @@ internal unsafe sealed class VulkanImGuiFrameSnapshot
     public Vector2 FramebufferScale { get; private set; }
     public uint FramebufferWidth { get; private set; }
     public uint FramebufferHeight { get; private set; }
+    public ulong SourceRenderFrameId { get; private set; }
     public int TotalVertexCount { get; private set; }
     public int TotalIndexCount { get; private set; }
     public int CommandListCount { get; private set; }
     public List<VulkanImGuiCommandListSnapshot> CommandLists { get; } = [];
 
-    public void Capture(ImDrawDataPtr drawData)
+    public void Capture(ImDrawDataPtr drawData, ulong sourceRenderFrameId)
     {
         ImDrawData* native = drawData.NativePtr;
         ImDrawList** lists = (ImDrawList**)native->CmdLists.Data;
@@ -43,6 +44,7 @@ internal unsafe sealed class VulkanImGuiFrameSnapshot
         FramebufferScale = drawData.FramebufferScale;
         FramebufferWidth = ComputeFramebufferExtent(drawData.DisplaySize.X, drawData.FramebufferScale.X);
         FramebufferHeight = ComputeFramebufferExtent(drawData.DisplaySize.Y, drawData.FramebufferScale.Y);
+        SourceRenderFrameId = sourceRenderFrameId;
         TotalVertexCount = totalVertices;
         TotalIndexCount = totalIndices;
         CommandListCount = drawData.CmdListsCount;

@@ -402,7 +402,8 @@ internal unsafe partial class VkRenderProgram
         out DescriptorPool descriptorPool,
         out DescriptorSet[] boundDescriptorSets,
         out IReadOnlyList<(Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory)> tempUniformBuffers,
-        bool excludeGlobalTextureArray = false)
+        bool excludeGlobalTextureArray = false,
+        bool allowSynchronousResourceUploads = true)
     {
         descriptorPool = default;
         boundDescriptorSets = Array.Empty<DescriptorSet>();
@@ -493,7 +494,9 @@ internal unsafe partial class VkRenderProgram
                 snapshot,
                 reusableDescriptorBindingKey,
                 descriptorSetLimit,
-                reportFailures: true))
+                reportFailures: true,
+                allowSynchronousResourceUploads:
+                    allowSynchronousResourceUploads))
             return false;
         VulkanComputeDescriptorScratchBuilder scratch = _computeDescriptorScratch;
 
@@ -576,16 +579,24 @@ internal unsafe partial class VkRenderProgram
             descriptorSetLimit);
         ulong bindingFingerprint = ComputeComputeDescriptorBindingFingerprint(pendingWriteArray.AsSpan(0, scratch.WriteCount), bufferArray.AsSpan(0, scratch.BufferCount), imageArray.AsSpan(0, scratch.ImageCount), texelArray.AsSpan(0, scratch.TexelCount));
         ulong cacheBindingFingerprint = reusableDescriptorBindingKey == 0UL ? bindingFingerprint : reusableDescriptorBindingKey;
-        if (!ProgramCreationPort.TryGetOrCreateComputeDescriptorSets(
-            imageIndex,
-            schemaFingerprint,
-            cacheBindingFingerprint,
-            descriptorLayouts,
-            scratch.PoolSizeArray,
-            scratch.PoolSizeCount,
-            DescriptorLayoutsUseUpdateAfterBind(descriptorLayouts.Length),
-            out DescriptorSet[] descriptorSets,
-            out bool isNewAllocation))
+        bool isNewAllocation = false;
+        bool descriptorSetsReady = allowSynchronousResourceUploads
+            ? ProgramCreationPort.TryGetOrCreateComputeDescriptorSets(
+                imageIndex,
+                schemaFingerprint,
+                cacheBindingFingerprint,
+                descriptorLayouts,
+                scratch.PoolSizeArray,
+                scratch.PoolSizeCount,
+                DescriptorLayoutsUseUpdateAfterBind(descriptorLayouts.Length),
+                out DescriptorSet[] descriptorSets,
+                out isNewAllocation)
+            : ProgramCreationPort.TryGetPreparedComputeDescriptorSets(
+                imageIndex,
+                schemaFingerprint,
+                cacheBindingFingerprint,
+                out descriptorSets);
+        if (!descriptorSetsReady)
         {
             WarnComputeOnce("Failed to acquire cached Vulkan compute descriptor sets.");
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorBindingFailure(
@@ -600,7 +611,8 @@ internal unsafe partial class VkRenderProgram
             return false;
         }
 
-        bool shouldUpdateDescriptorData = isNewAllocation || reusableDescriptorBindingKey != 0UL;
+        bool shouldUpdateDescriptorData = allowSynchronousResourceUploads &&
+            (isNewAllocation || reusableDescriptorBindingKey != 0UL);
         if (shouldUpdateDescriptorData)
             UpdateComputeDescriptorSets(descriptorSets, scratch);
 
@@ -671,7 +683,8 @@ internal unsafe partial class VkRenderProgram
         ComputeDispatchSnapshot snapshot,
         ulong bindingKey,
         uint descriptorSetLimit,
-        bool reportFailures)
+        bool reportFailures,
+        bool allowSynchronousResourceUploads = true)
     {
         VulkanComputeDescriptorScratchBuilder scratch = _computeDescriptorScratch;
         scratch.Reset();
@@ -690,7 +703,13 @@ internal unsafe partial class VkRenderProgram
                 DescriptorType.StorageBuffer or
                 DescriptorType.StorageBufferDynamic)
             {
-                if (!TryResolveComputeBuffer(binding, imageIndex, snapshot, bindingKey, out DescriptorBufferInfo info))
+                if (!TryResolveComputeBuffer(
+                        binding,
+                        imageIndex,
+                        snapshot,
+                        bindingKey,
+                        allowSynchronousResourceUploads,
+                        out DescriptorBufferInfo info))
                     unresolved = true;
                 else
                 {
@@ -701,7 +720,11 @@ internal unsafe partial class VkRenderProgram
             }
             else if (binding.DescriptorType is DescriptorType.CombinedImageSampler or DescriptorType.SampledImage or DescriptorType.Sampler or DescriptorType.StorageImage)
             {
-                if (!TryResolveComputeImage(binding, snapshot, out DescriptorImageInfo info))
+                if (!TryResolveComputeImage(
+                        binding,
+                        snapshot,
+                        allowSynchronousResourceUploads,
+                        out DescriptorImageInfo info))
                     unresolved = true;
                 else
                 {
@@ -712,7 +735,11 @@ internal unsafe partial class VkRenderProgram
             }
             else if (binding.DescriptorType is DescriptorType.UniformTexelBuffer or DescriptorType.StorageTexelBuffer)
             {
-                if (!TryResolveComputeTexelBuffer(binding, snapshot, out BufferView view))
+                if (!TryResolveComputeTexelBuffer(
+                        binding,
+                        snapshot,
+                        allowSynchronousResourceUploads,
+                        out BufferView view))
                     unresolved = true;
                 else
                 {
@@ -961,6 +988,7 @@ internal unsafe partial class VkRenderProgram
         uint imageIndex,
         ComputeDispatchSnapshot snapshot,
         ulong dispatchKey,
+        bool allowSynchronousResourceUploads,
         out DescriptorBufferInfo bufferInfo)
     {
         bufferInfo = default;
@@ -1002,7 +1030,14 @@ internal unsafe partial class VkRenderProgram
         if ((binding.DescriptorType is DescriptorType.UniformBuffer or DescriptorType.UniformBufferDynamic) &&
             TryGetAutoUniformBlockFuzzy(binding.Name, binding.Set, binding.Binding, out AutoUniformBlockInfo block))
         {
-            if (TryGetOrUpdateComputeAutoUniformBuffer(imageIndex, binding, snapshot, block, dispatchKey, out bufferInfo))
+            if (TryGetOrUpdateComputeAutoUniformBuffer(
+                    imageIndex,
+                    binding,
+                    snapshot,
+                    block,
+                    dispatchKey,
+                    allowSynchronousResourceUploads,
+                    out bufferInfo))
                 return true;
         }
 
@@ -1017,7 +1052,12 @@ internal unsafe partial class VkRenderProgram
 
         if (binding.Requirement == EVulkanDescriptorBindingRequirement.Optional &&
             (binding.DescriptorType is DescriptorType.UniformBuffer or DescriptorType.UniformBufferDynamic) &&
-            TryGetOrUpdateComputeFallbackUniformBuffer(imageIndex, binding, dispatchKey, out bufferInfo))
+            TryGetOrUpdateComputeFallbackUniformBuffer(
+                imageIndex,
+                binding,
+                dispatchKey,
+                allowSynchronousResourceUploads,
+                out bufferInfo))
         {
             RecordComputeDescriptorFallback(binding);
             return true;
@@ -1030,6 +1070,7 @@ internal unsafe partial class VkRenderProgram
         uint imageIndex,
         DescriptorBindingInfo binding,
         ulong dispatchKey,
+        bool allowSynchronousResourceUploads,
         out DescriptorBufferInfo bufferInfo)
     {
         bufferInfo = default;
@@ -1043,7 +1084,12 @@ internal unsafe partial class VkRenderProgram
             binding.Name ?? string.Empty,
             dispatchKey);
 
-        if (!TryGetOrCreateComputeUniformBuffer(key, fallbackSize, out ComputeUniformBuffer resource, out bool created))
+        if (!TryGetOrCreateComputeUniformBuffer(
+                key,
+                fallbackSize,
+                allowSynchronousResourceUploads,
+                out ComputeUniformBuffer resource,
+                out bool created))
             return false;
 
         if (created && !ClearComputeUniformBuffer(resource, fallbackSize))
@@ -1070,6 +1116,7 @@ internal unsafe partial class VkRenderProgram
         ComputeDispatchSnapshot snapshot,
         AutoUniformBlockInfo block,
         ulong dispatchKey,
+        bool allowSynchronousResourceUploads,
         out DescriptorBufferInfo bufferInfo)
     {
         bufferInfo = default;
@@ -1083,7 +1130,12 @@ internal unsafe partial class VkRenderProgram
             block.InstanceName,
             dispatchKey);
 
-        if (!TryGetOrCreateComputeUniformBuffer(key, size, out ComputeUniformBuffer resource, out _))
+        if (!TryGetOrCreateComputeUniformBuffer(
+                key,
+                size,
+                allowSynchronousResourceUploads,
+                out ComputeUniformBuffer resource,
+                out _))
             return false;
 
         if (!TryWriteComputeAutoUniformBuffer(resource, size, snapshot, block))
@@ -1108,7 +1160,8 @@ internal unsafe partial class VkRenderProgram
         uint imageIndex,
         ComputeDispatchSnapshot snapshot,
         ulong reusableDescriptorBindingKey,
-        bool excludeGlobalTextureArray = false)
+        bool excludeGlobalTextureArray = false,
+        bool allowSynchronousResourceUploads = true)
     {
         if (excludeGlobalTextureArray && !_canBindGlobalTextureArraySeparately)
             return false;
@@ -1142,6 +1195,7 @@ internal unsafe partial class VkRenderProgram
                     snapshot,
                     block,
                     reusableDescriptorBindingKey,
+                    allowSynchronousResourceUploads,
                     out _))
                 {
                     return false;
@@ -1160,6 +1214,7 @@ internal unsafe partial class VkRenderProgram
                     imageIndex,
                     binding,
                     reusableDescriptorBindingKey,
+                    allowSynchronousResourceUploads,
                     out _))
             {
                 RecordComputeDescriptorFailure(binding, "optional fallback uniform buffer preparation failed", skippedDispatch: true);
@@ -1176,7 +1231,8 @@ internal unsafe partial class VkRenderProgram
             snapshot,
             reusableDescriptorBindingKey,
             descriptorLayouts,
-            descriptorSetLimit);
+            descriptorSetLimit,
+            allowSynchronousResourceUploads);
     }
     internal bool TryRefreshReusableComputeDispatchFrameData(in VulkanProgramPlannerRequest planner, uint imageIndex, ComputeDispatchSnapshot snapshot, ulong reusableDescriptorBindingKey)
     {
@@ -1229,7 +1285,8 @@ internal unsafe partial class VkRenderProgram
         ComputeDispatchSnapshot snapshot,
         ulong reusableDescriptorBindingKey,
         DescriptorSetLayout[] descriptorLayouts,
-        uint descriptorSetLimit)
+        uint descriptorSetLimit,
+        bool allowSynchronousResourceUploads = true)
     {
         if (reusableDescriptorBindingKey == 0UL)
             return true;
@@ -1263,20 +1320,29 @@ internal unsafe partial class VkRenderProgram
                 snapshot,
                 reusableDescriptorBindingKey,
                 descriptorSetLimit,
-                reportFailures: true))
+                reportFailures: true,
+                allowSynchronousResourceUploads:
+                    allowSynchronousResourceUploads))
             return false;
 
         VulkanComputeDescriptorScratchBuilder scratch = _computeDescriptorScratch;
-        if (!ProgramCreationPort.TryGetOrCreateComputeDescriptorSets(
-            imageIndex,
-            schemaFingerprint,
-            reusableDescriptorBindingKey,
-            descriptorLayouts,
-            scratch.PoolSizeArray,
-            scratch.PoolSizeCount,
-            _descriptorSetsRequireUpdateAfterBind,
-            out DescriptorSet[] descriptorSets,
-            out _))
+        bool descriptorSetsReady = allowSynchronousResourceUploads
+            ? ProgramCreationPort.TryGetOrCreateComputeDescriptorSets(
+                imageIndex,
+                schemaFingerprint,
+                reusableDescriptorBindingKey,
+                descriptorLayouts,
+                scratch.PoolSizeArray,
+                scratch.PoolSizeCount,
+                _descriptorSetsRequireUpdateAfterBind,
+                out DescriptorSet[] descriptorSets,
+                out _)
+            : ProgramCreationPort.TryGetPreparedComputeDescriptorSets(
+                imageIndex,
+                schemaFingerprint,
+                reusableDescriptorBindingKey,
+                out descriptorSets);
+        if (!descriptorSetsReady)
         {
             return false;
         }
@@ -1360,6 +1426,7 @@ internal unsafe partial class VkRenderProgram
     private bool TryGetOrCreateComputeUniformBuffer(
         ComputeUniformBufferKey key,
         uint size,
+        bool allowSynchronousResourceUploads,
         out ComputeUniformBuffer resource,
         out bool created)
     {
@@ -1372,6 +1439,9 @@ internal unsafe partial class VkRenderProgram
         {
             return true;
         }
+
+        if (!allowSynchronousResourceUploads)
+            return false;
 
         if (resource.Buffer.Handle != 0 || resource.Memory.Handle != 0)
             ReleaseComputeUniformBuffer(resource);
@@ -1481,7 +1551,11 @@ internal unsafe partial class VkRenderProgram
         return true;
     }
 
-    private bool TryResolveComputeImage(DescriptorBindingInfo binding, ComputeDispatchSnapshot snapshot, out DescriptorImageInfo imageInfo)
+    private bool TryResolveComputeImage(
+        DescriptorBindingInfo binding,
+        ComputeDispatchSnapshot snapshot,
+        bool allowSynchronousResourceUploads,
+        out DescriptorImageInfo imageInfo)
     {
         imageInfo = default;
 
@@ -1490,7 +1564,16 @@ internal unsafe partial class VkRenderProgram
             if (!snapshot.Images.TryGetValue(binding.Binding, out ProgramImageBinding imageBinding))
                 return false;
 
-            if (!TryResolveTextureDescriptor(binding, imageBinding.Texture, includeSampler: false, requiresSampledUsage: false, requiresStorageUsage: true, ImageLayout.General, imageBinding, out imageInfo))
+            if (!TryResolveTextureDescriptor(
+                    binding,
+                    imageBinding.Texture,
+                    includeSampler: false,
+                    requiresSampledUsage: false,
+                    requiresStorageUsage: true,
+                    ImageLayout.General,
+                    imageBinding,
+                    allowSynchronousResourceUploads,
+                    out imageInfo))
                 return false;
 
             return true;
@@ -1524,10 +1607,23 @@ internal unsafe partial class VkRenderProgram
 
         bool includeSampler = binding.DescriptorType is DescriptorType.CombinedImageSampler or DescriptorType.Sampler;
         bool requiresSampledUsage = binding.DescriptorType is DescriptorType.CombinedImageSampler or DescriptorType.Sampler or DescriptorType.SampledImage;
-        return TryResolveTextureDescriptor(binding, texture, includeSampler, requiresSampledUsage, requiresStorageUsage: false, ImageLayout.ShaderReadOnlyOptimal, storageImageBinding: null, out imageInfo);
+        return TryResolveTextureDescriptor(
+            binding,
+            texture,
+            includeSampler,
+            requiresSampledUsage,
+            requiresStorageUsage: false,
+            ImageLayout.ShaderReadOnlyOptimal,
+            storageImageBinding: null,
+            allowSynchronousResourceUploads,
+            out imageInfo);
     }
 
-    private bool TryResolveComputeTexelBuffer(DescriptorBindingInfo binding, ComputeDispatchSnapshot snapshot, out BufferView texelView)
+    private bool TryResolveComputeTexelBuffer(
+        DescriptorBindingInfo binding,
+        ComputeDispatchSnapshot snapshot,
+        bool allowSynchronousResourceUploads,
+        out BufferView texelView)
     {
         texelView = default;
 
@@ -1544,7 +1640,10 @@ internal unsafe partial class VkRenderProgram
             RecordComputeDescriptorFallback(binding);
         }
 
-        return TryResolveTexelBufferDescriptor(texture, out texelView);
+        return TryResolveTexelBufferDescriptor(
+            texture,
+            allowSynchronousResourceUploads,
+            out texelView);
     }
 
     private bool TryResolveTextureDescriptor(
@@ -1555,15 +1654,89 @@ internal unsafe partial class VkRenderProgram
         bool requiresStorageUsage,
         ImageLayout layout,
         ProgramImageBinding? storageImageBinding,
+        bool allowSynchronousResourceUploads,
         out DescriptorImageInfo imageInfo)
     {
         imageInfo = default;
         if (texture is null)
             return false;
 
-        bool allowSynchronousTextureUpload = BackendContext.Resources.AllowSynchronousResourceUploads;
+        bool allowSynchronousTextureUpload = allowSynchronousResourceUploads &&
+            BackendContext.Resources.AllowSynchronousResourceUploads;
         if (WrapperLookup.GetOrCreate(texture, generateNow: allowSynchronousTextureUpload) is not IVkImageDescriptorSource source)
             return false;
+
+        if (!allowSynchronousTextureUpload)
+        {
+            if (!source.TryGetDescriptorSnapshot(
+                    requestedViewType: binding.ExpectedImageViewType,
+                    requestedAspectMask: null,
+                    reason: $"compute descriptor '{binding.Name}'",
+                    allowSynchronousUpload: false,
+                    out VkImageDescriptorSnapshot publishedSnapshot))
+            {
+                return false;
+            }
+
+            if ((requiresSampledUsage &&
+                 (publishedSnapshot.Usage & ImageUsageFlags.SampledBit) == 0) ||
+                (requiresStorageUsage &&
+                 (publishedSnapshot.Usage & ImageUsageFlags.StorageBit) == 0))
+            {
+                return false;
+            }
+
+            ImageView publishedView = storageImageBinding is { } storageBinding
+                ? source.TryGetPublishedStorageDescriptorView(
+                    storageBinding.Level,
+                    storageBinding.Layered,
+                    storageBinding.Layer,
+                    out ImageView storageView)
+                    ? storageView
+                    : default
+                : publishedSnapshot.View;
+            if (IsCombinedDepthStencilFormat(publishedSnapshot.Format) &&
+                (publishedSnapshot.Aspect &
+                 (ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit)) ==
+                (ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit))
+            {
+                if (!source.TryGetDescriptorSnapshot(
+                        requestedViewType: binding.ExpectedImageViewType,
+                        requestedAspectMask: ImageAspectFlags.DepthBit,
+                        reason: $"compute descriptor '{binding.Name}' depth view",
+                        allowSynchronousUpload: false,
+                        out VkImageDescriptorSnapshot depthSnapshot))
+                {
+                    return false;
+                }
+
+                publishedView = depthSnapshot.View;
+            }
+            if (publishedView.Handle == 0)
+                return false;
+
+            Sampler publishedSampler = includeSampler ? publishedSnapshot.Sampler : default;
+            if (includeSampler &&
+                (publishedSampler.Handle == 0 ||
+                 !BackendContext.Resources.Descriptors.IsLiveSampler(publishedSampler)))
+            {
+                return false;
+            }
+
+            imageInfo = new DescriptorImageInfo
+            {
+                ImageLayout = BackendContext.Resources.Descriptors
+                    .ResolveDescriptorImageLayout(
+                        source,
+                        in publishedSnapshot,
+                        requiresStorageUsage
+                            ? DescriptorType.StorageImage
+                            : DescriptorType.SampledImage),
+                ImageView = publishedView,
+                Sampler = publishedSampler,
+            };
+            return true;
+        }
 
         if (!source.TryEnsureDescriptorReadyForUse($"compute descriptor '{binding.Name}'", allowSynchronousTextureUpload))
         {
@@ -1702,13 +1875,21 @@ internal unsafe partial class VkRenderProgram
             or Format.D32SfloatS8Uint
             or Format.D16UnormS8Uint;
 
-    private bool TryResolveTexelBufferDescriptor(XRTexture texture, out BufferView texelView)
+    private bool TryResolveTexelBufferDescriptor(
+        XRTexture texture,
+        bool allowSynchronousResourceUploads,
+        out BufferView texelView)
     {
         texelView = default;
         if (texture is null)
             return false;
 
-        if (WrapperLookup.GetOrCreate(texture, generateNow: true) is not IVkTexelBufferDescriptorSource source)
+        bool allowSynchronousTextureUpload = allowSynchronousResourceUploads &&
+            BackendContext.Resources.AllowSynchronousResourceUploads;
+        if (WrapperLookup.GetOrCreate(
+                texture,
+                generateNow: allowSynchronousTextureUpload) is not
+            IVkTexelBufferDescriptorSource source)
             return false;
 
         texelView = source.DescriptorBufferView;

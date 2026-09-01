@@ -834,8 +834,11 @@ namespace XREngine.Components.Animation
             Vector3 authoredLocalPosition = GetAnimatedGoalLocalPosition(goal);
             Vector3 localPosition = authoredLocalPosition * scale;
             Quaternion localRotation = GetAnimatedGoalLocalRotation(goal);
-            Matrix4x4 bodyMatrix = GetAnimatedGoalBodyMatrix();
-            Quaternion bodyRotation = GetAnimatedGoalBodyRotation();
+            if (!Humanoid.TryGetCommittedBodyFrameWorld(out Matrix4x4 bodyMatrix, out Quaternion bodyRotation))
+            {
+                RecordAnimatedGoalStatus(goal, EHumanoidIKGoalApplicationStatus.SkippedBodyFrameUnavailable);
+                return;
+            }
 
             bool hasGoalRotationOffset = TryEnsureAnimatedGoalRotationOffset(goal);
             Quaternion goalRotationOffset = hasGoalRotationOffset
@@ -938,34 +941,6 @@ namespace XREngine.Components.Animation
             ELimbEndEffector.RightHand => EHumanoidAvatarBoneRole.RightHand,
             _ => EHumanoidAvatarBoneRole.Hips,
         };
-
-        private Matrix4x4 GetAnimatedGoalBodyMatrix()
-        {
-            var body = Humanoid.Hips.Node?.GetTransformAs<Transform>(true);
-            if (body is not null)
-            {
-                body.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: false);
-                return body.WorldMatrix;
-            }
-
-            var root = Root ?? Transform;
-            root.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: false);
-            return root.WorldMatrix;
-        }
-
-        private Quaternion GetAnimatedGoalBodyRotation()
-        {
-            var body = Humanoid.Hips.Node?.GetTransformAs<Transform>(true);
-            if (body is not null)
-            {
-                body.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: false);
-                return body.WorldRotation;
-            }
-
-            var root = Root ?? Transform;
-            root.RecalculateMatrices(forceWorldRecalc: true, setRenderMatrixNow: false);
-            return root.WorldRotation;
-        }
 
         private Transform EnsureAnimatedGoalTransform(ELimbEndEffector goal)
         {

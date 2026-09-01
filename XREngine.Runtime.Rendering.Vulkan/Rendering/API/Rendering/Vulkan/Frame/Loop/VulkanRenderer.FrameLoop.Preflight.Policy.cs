@@ -16,15 +16,17 @@ namespace XREngine.Rendering.Vulkan
             VulkanCommandSynchronizationState.FailUnsubmittedSubmissionMarkers(
                 droppedOps);
             VulkanAdvancedVisibilityInputLease.ReleaseOperations(droppedOps);
+            int droppedMeshRequests = MeshOperationRequests.DiscardPending();
             var liveFramebufferSize = DesktopWsiOutput.EffectiveFramebufferSize;
             var resizeExtents = DesktopWsiOutput.ResizeExtents;
 
             Debug.VulkanEvery(
                 $"Vulkan.Frame.{GetHashCode()}.ResizeSkip",
                 TimeSpan.FromMilliseconds(500),
-                "[Vulkan] Skipping present tick while resize/presentation resources settle. Reason={0} DroppedFrameOps={1} Live={2}x{3} Swapchain={4}x{5} Presentation={6}x{7} Output={8}x{9} Internal={10}x{11}",
+                "[Vulkan] Skipping present tick while resize/presentation resources settle. Reason={0} DroppedFrameOps={1} DroppedMeshRequests={2} Live={3}x{4} Swapchain={5}x{6} Presentation={7}x{8} Output={9}x{10} Internal={11}x{12}",
                 reason,
                 droppedOps.Length,
+                droppedMeshRequests,
                 liveFramebufferSize.X,
                 liveFramebufferSize.Y,
                 OutputRuntime.Desktop.Extent.Width,

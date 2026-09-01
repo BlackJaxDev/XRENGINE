@@ -113,14 +113,10 @@ namespace XREngine.Rendering.Vulkan
                 (!attempt.SurfaceMatchesSwapchain &&
                  !attempt.CanPresentMismatchedSwapchainExtent))
             {
-                string reason =
-                    $"Swapchain resize/recreate pending. Pending={_outputRuntime._desktopSwapchainPolicy.PendingSurfaceWidth}x{_outputRuntime._desktopSwapchainPolicy.PendingSurfaceHeight} " +
-                    $"Live={attempt.LiveSurfaceWidth}x{attempt.LiveSurfaceHeight} " +
-                    $"Swapchain={OutputRuntime.Desktop.Extent.Width}x{OutputRuntime.Desktop.Extent.Height}";
                 return StopDesktopFrameForPreflightStatus(
                     ref attempt,
                     EVulkanDesktopPreflightStatus.ResizePending,
-                    reason);
+                    "Swapchain resize/recreate pending");
             }
 
             bool frameGenerationProxyRequired =

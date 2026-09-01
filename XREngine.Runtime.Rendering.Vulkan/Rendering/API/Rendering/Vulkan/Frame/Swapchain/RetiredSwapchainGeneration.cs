@@ -5,7 +5,7 @@ using Semaphore = Silk.NET.Vulkan.Semaphore;
 namespace XREngine.Rendering.Vulkan;
 
 /// <summary>
-/// Owns one superseded desktop swapchain generation until its marker fences complete.
+/// Owns a superseded generation through graphics and presentation-engine completion.
 /// </summary>
 internal sealed record RetiredSwapchainGeneration(
     SwapchainKHR Swapchain,
@@ -17,7 +17,7 @@ internal sealed record RetiredSwapchainGeneration(
     RenderPass ClearRenderPass,
     RenderPass LoadRenderPass,
     Fence GraphicsMarkerFence,
-    Fence PresentMarkerFence,
+    VulkanWsiPresentCompletion? PresentCompletion,
     bool StreamlineProxy,
     uint Width,
     uint Height,

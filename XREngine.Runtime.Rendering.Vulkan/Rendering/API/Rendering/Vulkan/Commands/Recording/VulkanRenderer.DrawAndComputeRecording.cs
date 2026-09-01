@@ -465,14 +465,18 @@ namespace XREngine.Rendering.Vulkan
             CommandBuffer commandBuffer,
             uint imageIndex,
             in ComputeDispatchPayload payload,
-            ulong reusableDescriptorKey)
+            ulong reusableDescriptorKey,
+            bool allowSynchronousResourceUploads = true)
         {
             Pipeline pipeline = payload.Program.ComputePipeline;
             if (pipeline.Handle == 0)
                 throw new InvalidOperationException($"Compute pipeline '{payload.Program.Data.Name ?? "UnnamedProgram"}' became unavailable after enqueue.");
 
             BindPipelineTracked(commandBuffer, PipelineBindPoint.Compute, pipeline);
-            EnsureComputeStorageImageLayoutsForDispatch(commandBuffer, payload.Snapshot);
+            EnsureComputeStorageImageLayoutsForDispatch(
+                commandBuffer,
+                payload.Snapshot,
+                allowSynchronousResourceUploads);
             PushConstantsTracked(
                 commandBuffer,
                 payload.Program.PipelineLayout,
@@ -484,7 +488,7 @@ namespace XREngine.Rendering.Vulkan
                     payload.GroupsY,
                     payload.GroupsZ,
                     0u));
-            if (!payload.Program.TryBuildAndBindComputeDescriptorSets(CreateProgramRecordingRequest(commandBuffer), imageIndex, payload.Snapshot, reusableDescriptorKey, PipelineBindPoint.Compute, out _, out DescriptorSet[] boundDescriptorSets, out var tempBuffers))
+            if (!payload.Program.TryBuildAndBindComputeDescriptorSets(CreateProgramRecordingRequest(commandBuffer), imageIndex, payload.Snapshot, reusableDescriptorKey, PipelineBindPoint.Compute, out _, out DescriptorSet[] boundDescriptorSets, out var tempBuffers, allowSynchronousResourceUploads: allowSynchronousResourceUploads))
             {
                 foreach ((Silk.NET.Vulkan.Buffer buffer, DeviceMemory memory) in tempBuffers) DestroyBuffer(buffer, memory);
                 throw new VulkanPlanPreconditionException($"Prepared compute descriptors became unavailable while recording '{payload.Program.Data.Name ?? "UnnamedProgram"}'.");
@@ -503,19 +507,22 @@ namespace XREngine.Rendering.Vulkan
         /// </summary>
         private void EnsureComputeSampledImageLayoutsForDispatch(
             CommandBuffer commandBuffer,
-            ComputeDispatchSnapshot snapshot)
+            ComputeDispatchSnapshot snapshot,
+            bool allowSynchronousResourceUploads = true)
         {
             foreach (XRTexture texture in snapshot.Samplers.Values)
                 TransitionComputeDescriptorTextureForSampling(
                     commandBuffer,
                     texture,
-                    snapshot);
+                    snapshot,
+                    allowSynchronousResourceUploads);
 
             foreach (XRTexture texture in snapshot.SamplersByName.Values)
                 TransitionComputeDescriptorTextureForSampling(
                     commandBuffer,
                     texture,
-                    snapshot);
+                    snapshot,
+                    allowSynchronousResourceUploads);
         }
 
         /// <summary>
@@ -528,11 +535,77 @@ namespace XREngine.Rendering.Vulkan
         private void TransitionComputeDescriptorTextureForSampling(
             CommandBuffer commandBuffer,
             XRTexture texture,
-            ComputeDispatchSnapshot snapshot)
+            ComputeDispatchSnapshot snapshot,
+            bool allowSynchronousResourceUploads)
         {
-            if (ResourceRuntime.BackendObjects.Get(texture) is not IVkImageDescriptorSource source ||
-                source.DescriptorImage.Handle == 0 ||
-                !ComputeSnapshotWritesImage(snapshot, source.DescriptorImage))
+            if (ResourceRuntime.BackendObjects.Get(texture) is not IVkImageDescriptorSource source)
+            {
+                if (!allowSynchronousResourceUploads)
+                    throw new VulkanPlanPreconditionException(
+                        $"Sampled compute image '{texture.Name ?? "<unnamed>"}' has no published Vulkan descriptor source.");
+                TransitionDescriptorTextureForSampling(
+                    commandBuffer,
+                    texture,
+                    target: null,
+                    passIndex: 0,
+                    passMetadata: null);
+                return;
+            }
+
+            if (!allowSynchronousResourceUploads)
+            {
+                if (!source.TryGetDescriptorSnapshot(
+                        requestedViewType: null,
+                        requestedAspectMask: null,
+                        reason: "sampled compute image transition",
+                        allowSynchronousUpload: false,
+                        out VkImageDescriptorSnapshot publishedSnapshot) ||
+                    !TryGetDescriptorHeapImageViewCreateInfo(
+                        publishedSnapshot.View,
+                        out ImageViewCreateInfo publishedViewInfo) ||
+                    publishedViewInfo.Image.Handle != publishedSnapshot.Image.Handle)
+                {
+                    throw new VulkanPlanPreconditionException(
+                        $"Sampled compute image '{texture.Name ?? "<unnamed>"}' has no registered published view tuple.");
+                }
+
+                ImageLayout publishedLayout = ResourceRuntime.Descriptors
+                    .ResolveDescriptorImageLayout(
+                        source,
+                        in publishedSnapshot,
+                        DescriptorType.CombinedImageSampler);
+                ImageSubresourceRange publishedRange = publishedViewInfo.SubresourceRange;
+                ImageAspectFlags publishedAspect = NormalizeBarrierAspectMask(
+                    publishedSnapshot.Format,
+                    publishedRange.AspectMask);
+                uint publishedMipLevels = Math.Max(publishedRange.LevelCount, 1u);
+                uint publishedArrayLayers = Math.Max(publishedRange.LayerCount, 1u);
+                for (uint mipOffset = 0; mipOffset < publishedMipLevels; mipOffset++)
+                for (uint layerOffset = 0; layerOffset < publishedArrayLayers; layerOffset++)
+                {
+                    ImageSubresourceRange range = new()
+                    {
+                        AspectMask = publishedAspect,
+                        BaseMipLevel = publishedRange.BaseMipLevel + mipOffset,
+                        LevelCount = 1u,
+                        BaseArrayLayer = publishedRange.BaseArrayLayer + layerOffset,
+                        LayerCount = 1u,
+                    };
+                    TransitionDescriptorImageRangeForSampling(
+                        commandBuffer, publishedSnapshot.Image, range,
+                        publishedLayout, target: null, passIndex: 0,
+                        passMetadata: null);
+                }
+
+                return;
+            }
+
+            Image descriptorImage = source.DescriptorImage;
+            if (descriptorImage.Handle == 0 ||
+                !ComputeSnapshotWritesImage(
+                    snapshot,
+                    descriptorImage,
+                    allowSynchronousResourceUploads: true))
             {
                 TransitionDescriptorTextureForSampling(
                     commandBuffer,
@@ -544,12 +617,12 @@ namespace XREngine.Rendering.Vulkan
             }
 
             ImageLayout targetLayout = ResourceRuntime.Descriptors.ResolveDescriptorImageLayout(
-                source,
-                DescriptorType.CombinedImageSampler);
+                source, DescriptorType.CombinedImageSampler);
+            ImageView descriptorView = source.DescriptorView;
             if (!TryGetDescriptorHeapImageViewCreateInfo(
-                    source.DescriptorView,
+                    descriptorView,
                     out ImageViewCreateInfo sampledViewInfo) ||
-                sampledViewInfo.Image.Handle != source.DescriptorImage.Handle)
+                sampledViewInfo.Image.Handle != descriptorImage.Handle)
             {
                 TransitionDescriptorTextureForSampling(
                     commandBuffer,
@@ -579,7 +652,7 @@ namespace XREngine.Rendering.Vulkan
                 };
                 TransitionDescriptorImageRangeForSampling(
                     commandBuffer,
-                    source.DescriptorImage,
+                    descriptorImage,
                     range,
                     targetLayout,
                     target: null,
@@ -590,12 +663,31 @@ namespace XREngine.Rendering.Vulkan
 
         private bool ComputeSnapshotWritesImage(
             ComputeDispatchSnapshot snapshot,
-            Image sampledImage)
+            Image sampledImage,
+            bool allowSynchronousResourceUploads)
         {
             foreach (ProgramImageBinding binding in snapshot.Images.Values)
             {
-                if (ResourceRuntime.BackendObjects.Get(binding.Texture) is IVkImageDescriptorSource storageSource &&
-                    storageSource.DescriptorImage.Handle == sampledImage.Handle)
+                if (ResourceRuntime.BackendObjects.Get(binding.Texture) is not
+                    IVkImageDescriptorSource storageSource)
+                    continue;
+                VkImageDescriptorSnapshot storageSnapshot = default;
+                if (!allowSynchronousResourceUploads &&
+                    !storageSource.TryGetDescriptorSnapshot(
+                        requestedViewType: null,
+                        requestedAspectMask: null,
+                        reason: "sampled compute storage overlap",
+                        allowSynchronousUpload: false,
+                        out storageSnapshot))
+                {
+                    throw new VulkanPlanPreconditionException(
+                        "Compute storage-image overlap has no published descriptor tuple.");
+                }
+
+                Image storageImage = allowSynchronousResourceUploads
+                    ? storageSource.DescriptorImage
+                    : storageSnapshot.Image;
+                if (storageImage.Handle == sampledImage.Handle)
                 {
                     return true;
                 }
@@ -604,7 +696,10 @@ namespace XREngine.Rendering.Vulkan
             return false;
         }
 
-        private unsafe void EnsureComputeStorageImageLayoutsForDispatch(CommandBuffer commandBuffer, ComputeDispatchSnapshot snapshot)
+        private unsafe void EnsureComputeStorageImageLayoutsForDispatch(
+            CommandBuffer commandBuffer,
+            ComputeDispatchSnapshot snapshot,
+            bool allowSynchronousResourceUploads = true)
         {
             foreach (ProgramImageBinding binding in snapshot.Images.Values)
             {
@@ -616,23 +711,48 @@ namespace XREngine.Rendering.Vulkan
                     throw new VulkanPlanPreconditionException(
                         $"Compute storage image '{texture.Name ?? "<unnamed>"}' has no prepared Vulkan image wrapper.");
 
-                if (!source.UsesAllocatorImage)
+                VkImageDescriptorSnapshot publishedSnapshot = default;
+                if (!allowSynchronousResourceUploads &&
+                    !source.TryGetDescriptorSnapshot(
+                        requestedViewType: null,
+                        requestedAspectMask: null,
+                        reason: "compute storage image layout",
+                        allowSynchronousUpload: false,
+                        out publishedSnapshot))
+                {
+                    throw new VulkanPlanPreconditionException(
+                        $"Compute storage image '{texture.Name ?? "<unnamed>"}' has no published descriptor snapshot.");
+                }
+
+                if ((!allowSynchronousResourceUploads && !publishedSnapshot.UsesAllocatorImage) ||
+                    (allowSynchronousResourceUploads && !source.UsesAllocatorImage))
                     continue;
 
-                if ((source.DescriptorUsage & ImageUsageFlags.StorageBit) == 0)
+                ImageUsageFlags usage = allowSynchronousResourceUploads
+                    ? source.DescriptorUsage
+                    : publishedSnapshot.Usage;
+                if ((usage & ImageUsageFlags.StorageBit) == 0)
                     continue;
 
-                uint mipLevels = Math.Max(source.DescriptorMipLevels, 1u);
-                uint arrayLayers = Math.Max(source.DescriptorArrayLayers, 1u);
+                uint mipLevels = allowSynchronousResourceUploads
+                    ? Math.Max(source.DescriptorMipLevels, 1u)
+                    : Math.Max(publishedSnapshot.MipLevels, 1u);
+                uint arrayLayers = allowSynchronousResourceUploads
+                    ? Math.Max(source.DescriptorArrayLayers, 1u)
+                    : Math.Max(publishedSnapshot.ArrayLayers, 1u);
                 uint baseMipLevel = binding.Level < 0 ? 0u : Math.Min((uint)binding.Level, mipLevels - 1u);
                 uint baseArrayLayer = binding.Layered || binding.Layer < 0 ? 0u : Math.Min((uint)binding.Layer, arrayLayers - 1u);
                 uint layerCount = binding.Layered || binding.Layer < 0 ? arrayLayers - baseArrayLayer : 1u;
-                Image image = source.DescriptorImage;
+                Image image = allowSynchronousResourceUploads
+                    ? source.DescriptorImage
+                    : publishedSnapshot.Image;
                 if (image.Handle == 0)
                     throw new VulkanPlanPreconditionException(
                         $"Compute storage image '{texture.Name ?? "<unnamed>"}' has no published Vulkan image handle.");
 
-                ImageAspectFlags aspect = source.DescriptorAspect;
+                ImageAspectFlags aspect = allowSynchronousResourceUploads
+                    ? source.DescriptorAspect
+                    : publishedSnapshot.Aspect;
                 if (aspect == 0)
                     aspect = ImageAspectFlags.ColorBit;
 

@@ -1,3 +1,5 @@
+using Silk.NET.Vulkan;
+
 namespace XREngine.Rendering.Vulkan;
 
 internal sealed partial class VulkanResourceRuntime
@@ -132,6 +134,80 @@ internal sealed partial class VulkanResourceRuntime
 
             return true;
         }
+    }
+
+    /// <summary>
+    /// Validates the exact image, image-view, and sampler generations retained
+    /// for a long-lived presentation replay. Unlike ordinary publication
+    /// validation, a retained source may no longer be the current publication;
+    /// its structural lease keeps the exact native generations alive.
+    /// </summary>
+    internal bool TryValidateRetainedPresentationSourceForReplay(
+        in VulkanPresentationSourceTuple source,
+        VulkanResidentTemplateDependencyLease? lease,
+        out string failureReason)
+    {
+        failureReason = string.Empty;
+        if (!source.HasLogicalSource || !source.IsComplete || lease is null || !lease.IsActive)
+        {
+            failureReason = "The retained presentation source or its lifetime lease is incomplete.";
+            return false;
+        }
+
+        ReadOnlySpan<VulkanResourceSlotHandle> dependencies = lease.Dependencies;
+        if (dependencies.Length != 3)
+        {
+            failureReason = "The retained presentation source does not own its exact image, view, and sampler generations.";
+            return false;
+        }
+
+        VulkanResourceLifetimeTracker tracker = Lifetime.Tracker;
+        lock (tracker.SyncRoot)
+        {
+            return TryValidateRetainedPresentationDependency(
+                       tracker,
+                       dependencies[0],
+                       ObjectType.Image,
+                       source.Image.Handle,
+                       source.ImageAllocationGeneration,
+                       out failureReason) &&
+                   TryValidateRetainedPresentationDependency(
+                       tracker,
+                       dependencies[1],
+                       ObjectType.ImageView,
+                       source.ImageView.Handle,
+                       source.ImageViewGeneration,
+                       out failureReason) &&
+                   TryValidateRetainedPresentationDependency(
+                       tracker,
+                       dependencies[2],
+                       ObjectType.Sampler,
+                       source.Sampler.Handle,
+                       source.SamplerGeneration,
+                       out failureReason);
+        }
+    }
+
+    private static bool TryValidateRetainedPresentationDependency(
+        VulkanResourceLifetimeTracker tracker,
+        VulkanResourceSlotHandle slot,
+        ObjectType type,
+        ulong handle,
+        ulong generation,
+        out string failureReason)
+    {
+        if (!tracker.TryResolveResourceSlotNoLock(slot, out VulkanResourceLifetimeRecord resource) ||
+            resource.Key != new VulkanResourceLifetimeKey(type, handle) ||
+            resource.Generation != generation ||
+            resource.Pins.TemplateReferenceCount <= 0 ||
+            (resource.State & EVulkanResourceLifetimeState.Destroyed) != 0)
+        {
+            failureReason = "The retained presentation source no longer owns its exact native generation.";
+            return false;
+        }
+
+        failureReason = string.Empty;
+        return true;
     }
 
     /// <summary>

@@ -172,7 +172,12 @@ internal sealed partial class VulkanCommandRuntime
                 1,
                 0,
                 target.Extent,
-                target.InitialColorLayout,
+                // Primary recording brings either swapchain blit endpoint into
+                // color-attachment layout first and expects the blit to restore
+                // it. The acquire-time layout may be PresentSrcKhr from the
+                // previous frame; restoring that stale layout desynchronizes
+                // the recorder's subsequent overlay/final-present barriers.
+                ImageLayout.ColorAttachmentOptimal,
                 PipelineStageFlags.ColorAttachmentOutputBit,
                 AccessFlags.ColorAttachmentReadBit | AccessFlags.ColorAttachmentWriteBit);
         }

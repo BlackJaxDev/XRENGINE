@@ -227,10 +227,13 @@ internal sealed class VulkanResourceLifetimeTracker
     internal long RetirementSerial;
     internal ulong LastGraphicsSequence;
     internal ulong CompletedGraphicsSequence;
+    internal ulong ObservedGraphicsSequence;
     internal ulong LastTransferSequence;
     internal ulong CompletedTransferSequence;
+    internal ulong ObservedTransferSequence;
     internal ulong LastOtherSequence;
     internal ulong CompletedOtherSequence;
+    internal ulong ObservedOtherSequence;
     internal long ForcedResourceDestructionCount;
     internal bool DeviceLost;
     internal int ForcedRetirementDrainDepth;
@@ -856,16 +859,158 @@ internal sealed class VulkanResourceLifetimeTracker
         EVulkanLifetimeQueueDomain domain,
         ulong queueSequence)
     {
+        if (queueSequence == 0)
+            return;
+
+        ulong queueHandle = 0;
+        for (int index = 0; index < LifetimeSubmissions.Count; ++index)
+        {
+            VulkanLifetimeSubmission submission = LifetimeSubmissions[index];
+            if (submission.QueueDomain != domain ||
+                submission.QueueSequence != queueSequence)
+            {
+                continue;
+            }
+
+            queueHandle = submission.QueueHandle;
+            break;
+        }
+
+        // A completion event must name a currently published submission. If a
+        // previous event already reaped it, it has already contributed to the
+        // frontier and there is no new native proof to record.
+        if (queueHandle == 0)
+            return;
+
+        // SubmitToQueueTrackedWithDisposition keeps its submission-state gate
+        // through both vkQueueSubmit and lifetime publication. Consequently a
+        // lower per-domain sequence on this queue was submitted to Vulkan no
+        // later than the completed submission. Do not extend this proof to a
+        // different queue in the same domain: graphics and secondary graphics
+        // queues execute independently.
+        for (int index = 0; index < LifetimeSubmissions.Count; ++index)
+        {
+            VulkanLifetimeSubmission submission = LifetimeSubmissions[index];
+            if (submission.QueueDomain != domain ||
+                submission.QueueHandle != queueHandle ||
+                submission.QueueSequence > queueSequence ||
+                submission.CompletionObserved)
+            {
+                continue;
+            }
+
+            LifetimeSubmissions[index] = submission with
+            {
+                CompletionObserved = true,
+            };
+        }
+
+        SetObservedSequenceNoLock(
+            domain,
+            Math.Max(GetObservedSequenceNoLock(domain), queueSequence));
+        AdvanceCompletionFrontierNoLock(domain);
+    }
+
+    /// <summary>
+    /// Compacts lifetime entries whose native completion has already been
+    /// observed. Call while <see cref="SyncRoot"/> is held after completion
+    /// polling so completed bookkeeping cannot grow indefinitely.
+    /// </summary>
+    internal void ReapObservedSubmissionsNoLock()
+    {
+        int writeIndex = 0;
+        for (int readIndex = 0; readIndex < LifetimeSubmissions.Count; ++readIndex)
+        {
+            VulkanLifetimeSubmission submission = LifetimeSubmissions[readIndex];
+            if (submission.CompletionObserved)
+                continue;
+
+            if (writeIndex != readIndex)
+                LifetimeSubmissions[writeIndex] = submission;
+            writeIndex++;
+        }
+
+        int removedCount = LifetimeSubmissions.Count - writeIndex;
+        if (removedCount != 0)
+            LifetimeSubmissions.RemoveRange(writeIndex, removedCount);
+
+        AdvanceCompletionFrontierNoLock(EVulkanLifetimeQueueDomain.Graphics);
+        AdvanceCompletionFrontierNoLock(EVulkanLifetimeQueueDomain.Transfer);
+        AdvanceCompletionFrontierNoLock(EVulkanLifetimeQueueDomain.Other);
+    }
+
+    private void AdvanceCompletionFrontierNoLock(EVulkanLifetimeQueueDomain domain)
+    {
+        ulong firstPendingSequence = 0;
+        for (int index = 0; index < LifetimeSubmissions.Count; ++index)
+        {
+            VulkanLifetimeSubmission submission = LifetimeSubmissions[index];
+            if (submission.QueueDomain != domain || submission.CompletionObserved)
+                continue;
+
+            if (firstPendingSequence == 0 ||
+                submission.QueueSequence < firstPendingSequence)
+            {
+                firstPendingSequence = submission.QueueSequence;
+            }
+        }
+
+        ulong frontier = firstPendingSequence == 0
+            ? GetObservedSequenceNoLock(domain)
+            : firstPendingSequence - 1;
+        SetCompletedSequenceNoLock(
+            domain,
+            Math.Max(GetCompletedSequenceNoLock(domain), frontier));
+    }
+
+    private ulong GetCompletedSequenceNoLock(EVulkanLifetimeQueueDomain domain)
+        => domain switch
+        {
+            EVulkanLifetimeQueueDomain.Graphics => CompletedGraphicsSequence,
+            EVulkanLifetimeQueueDomain.Transfer => CompletedTransferSequence,
+            _ => CompletedOtherSequence,
+        };
+
+    private void SetCompletedSequenceNoLock(
+        EVulkanLifetimeQueueDomain domain,
+        ulong sequence)
+    {
         switch (domain)
         {
             case EVulkanLifetimeQueueDomain.Graphics:
-                CompletedGraphicsSequence = Math.Max(CompletedGraphicsSequence, queueSequence);
+                CompletedGraphicsSequence = sequence;
                 break;
             case EVulkanLifetimeQueueDomain.Transfer:
-                CompletedTransferSequence = Math.Max(CompletedTransferSequence, queueSequence);
+                CompletedTransferSequence = sequence;
                 break;
             default:
-                CompletedOtherSequence = Math.Max(CompletedOtherSequence, queueSequence);
+                CompletedOtherSequence = sequence;
+                break;
+        }
+    }
+
+    private ulong GetObservedSequenceNoLock(EVulkanLifetimeQueueDomain domain)
+        => domain switch
+        {
+            EVulkanLifetimeQueueDomain.Graphics => ObservedGraphicsSequence,
+            EVulkanLifetimeQueueDomain.Transfer => ObservedTransferSequence,
+            _ => ObservedOtherSequence,
+        };
+
+    private void SetObservedSequenceNoLock(
+        EVulkanLifetimeQueueDomain domain,
+        ulong sequence)
+    {
+        switch (domain)
+        {
+            case EVulkanLifetimeQueueDomain.Graphics:
+                ObservedGraphicsSequence = sequence;
+                break;
+            case EVulkanLifetimeQueueDomain.Transfer:
+                ObservedTransferSequence = sequence;
+                break;
+            default:
+                ObservedOtherSequence = sequence;
                 break;
         }
     }
@@ -885,12 +1030,27 @@ internal sealed class VulkanResourceLifetimeTracker
             CompletedGraphicsSequence = Math.Max(
                 CompletedGraphicsSequence,
                 LastGraphicsSequence);
+            ObservedGraphicsSequence = Math.Max(
+                ObservedGraphicsSequence,
+                LastGraphicsSequence);
             CompletedTransferSequence = Math.Max(
                 CompletedTransferSequence,
+                LastTransferSequence);
+            ObservedTransferSequence = Math.Max(
+                ObservedTransferSequence,
                 LastTransferSequence);
             CompletedOtherSequence = Math.Max(
                 CompletedOtherSequence,
                 LastOtherSequence);
+            ObservedOtherSequence = Math.Max(
+                ObservedOtherSequence,
+                LastOtherSequence);
+            // Device idleness proves every entry in the software ledger, so
+            // retaining any of them as unresolved would artificially cap the
+            // frontier for later submissions. Clearing is safe here because
+            // the device-wide native wait provides stronger proof than a
+            // per-queue fence or timeline marker.
+            LifetimeSubmissions.Clear();
         }
     }
 

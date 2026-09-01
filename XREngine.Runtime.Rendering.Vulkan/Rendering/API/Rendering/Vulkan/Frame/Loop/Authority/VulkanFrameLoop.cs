@@ -87,6 +87,7 @@ internal sealed partial class VulkanFrameLoop
     private readonly bool _injectResidentTemplateDeviceLoss;
     private int _residentTemplateDeviceLossInjected;
     private long _lastAcceptedPresentCompletedTimestamp;
+    private readonly VulkanRenderer _ownerRenderer;
     private readonly long _backendGeneration;
 
     internal VulkanFrameLoop(
@@ -98,6 +99,7 @@ internal sealed partial class VulkanFrameLoop
         VulkanCommandRuntime commandRuntime,
         VulkanFrameTelemetry telemetry,
         IVulkanRendererTargetDriver targetDriver,
+        VulkanRenderer ownerRenderer,
         long backendGeneration,
         Silk.NET.Windowing.IWindow? window)
     {
@@ -109,6 +111,7 @@ internal sealed partial class VulkanFrameLoop
         _commandRuntime = commandRuntime;
         _telemetry = telemetry;
         _targetDriver = targetDriver;
+        _ownerRenderer = ownerRenderer ?? throw new ArgumentNullException(nameof(ownerRenderer));
         _backendGeneration = backendGeneration;
         _injectResidentTemplateDeviceLoss = XREnvironment.IsEnabled(
             XREngineEnvironmentVariables.VulkanResidentTemplateDeviceLossInject);
@@ -749,6 +752,7 @@ internal sealed partial class VulkanFrameLoop
         long phaseStarted = BeginDesktopFramePhase(
             EVulkanFrameStage.SnapshotHandoff);
         _telemetry.PublishDescriptorTableGeneration(_resourceRuntime.DescriptorTableGeneration);
+        _resourceRuntime.BeginRetirementMeteringFrame(unchecked((long)attempt.FrameNumber));
         _resourceRuntime.Descriptors.Heap.BeginFrame(attempt.FrameNumber);
         RecordDesktopFrameGap(ref attempt);
         CompleteDesktopFramePhaseTiming(
@@ -862,6 +866,14 @@ internal sealed partial class VulkanFrameLoop
         long settlementStarted = BeginDesktopFramePhase(
             EVulkanFrameStage.FrameSettlement);
         Exception? settlementFailure = SettleDesktopFrameAttempt(ref attempt);
+        try
+        {
+            attempt.PresentReservation.Owner?.Cancel(in attempt.PresentReservation);
+        }
+        catch (Exception failure)
+        {
+            AddDesktopSettlementFailure(ref settlementFailure, failure);
+        }
         CompleteDesktopFramePhaseTiming(
             ref attempt,
             EVulkanFrameStage.FrameSettlement,

@@ -204,7 +204,7 @@ internal sealed unsafe partial class VulkanPipelineManager
     }
 
     /// <summary>
-    /// Resolves a recording-specific pipeline manifest from the cache owned by
+    /// Resolves a pipeline-compatible manifest from the cache owned by
     /// this pipeline authority. The renderer facade may request a manifest, but
     /// cache mutation remains generation-local resource state.
     /// </summary>
@@ -213,14 +213,17 @@ internal sealed unsafe partial class VulkanPipelineManager
         FrameOperationSequence operations,
         EMeshSubmissionStrategy submissionStrategy,
         bool dynamicRendering,
-        ulong recordingStructuralSignature,
+        ulong targetCompatibilitySignature,
         FramePlan? framePlan = null)
     {
-        ulong renderGraphPlanSignature = framePlan?.RenderGraphPlanSignature ??
-            plan.CompatibilityIdentity;
+        ulong renderGraphPlanSignature =
+            VulkanPipelineVariantManifest.ComputePlanCompatibilitySignature(
+                plan, framePlan, targetCompatibilitySignature);
+        ulong pipelineDemandSignature = VulkanPipelineVariantManifest.ComputeDemandSignature(
+            plan, operations, dynamicRendering, renderGraphPlanSignature, framePlan);
         VulkanPipelineManifestCacheKey key = new(
             renderGraphPlanSignature,
-            recordingStructuralSignature,
+            pipelineDemandSignature,
             submissionStrategy,
             dynamicRendering);
         using (VulkanFrameLockScope.Enter(
@@ -235,7 +238,7 @@ internal sealed unsafe partial class VulkanPipelineManager
                 operations,
                 submissionStrategy,
                 dynamicRendering,
-                recordingStructuralSignature,
+                pipelineDemandSignature,
                 renderGraphPlanSignature,
                 framePlan);
             while (_pipelineVariantManifestCache.Count >= MaxCachedPipelineVariantManifests &&

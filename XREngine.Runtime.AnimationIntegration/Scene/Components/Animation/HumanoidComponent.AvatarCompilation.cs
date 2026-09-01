@@ -1,5 +1,6 @@
 using System.Numerics;
 using XREngine.Scene;
+using XREngine.Scene.Transforms;
 
 namespace XREngine.Components.Animation;
 
@@ -15,12 +16,17 @@ public partial class HumanoidComponent
     {
         _compiledAvatarDefinition = null;
         _nativePoseWorkspace.UnbindDefinition();
+        _currentBodyFrameDiagnostic = default;
+        _lastNativeFrameAccepted = false;
+        _hasCanonicalProjectedFeetY = false;
+        _canonicalProjectedFeetOwner = null;
     }
 
-    private bool TryGetCompiledAvatarDefinition(out CompiledHumanoidAvatarDefinition compiled)
+    internal bool TryGetCompiledAvatarDefinition(out CompiledHumanoidAvatarDefinition compiled)
     {
         compiled = _compiledAvatarDefinition!;
         return compiled is not null
+            && AvatarDefinition.IsFinalized
             && compiled.SchemaVersion == AvatarDefinition.SchemaVersion
             && compiled.DefinitionRevision == AvatarDefinition.DefinitionRevision
             && string.Equals(
@@ -78,20 +84,16 @@ public partial class HumanoidComponent
         out Quaternion rotationOffset)
     {
         if (!TryGetCompiledAvatarDefinition(out CompiledHumanoidAvatarDefinition compiled)
-            || compiled.GetNode(EHumanoidAvatarBoneRole.Hips) is null
             || compiled.GetNode(goalRole) is null
             || !TryGetFiniteRotation(
-                compiled.NeutralWorldTransforms[(int)EHumanoidAvatarBoneRole.Hips],
-                out Quaternion hipsRotation)
-            || !TryGetFiniteRotation(
-                compiled.NeutralWorldTransforms[(int)goalRole],
+                compiled.ZeroMuscleModelRootTransforms[(int)goalRole] * compiled.BodyDefinition.InverseNeutralBodyFrame,
                 out Quaternion goalRotation))
         {
             rotationOffset = Quaternion.Identity;
             return false;
         }
 
-        rotationOffset = Quaternion.Normalize(Quaternion.Inverse(hipsRotation) * goalRotation);
+        rotationOffset = goalRotation;
         if (!IsFinite(rotationOffset))
         {
             rotationOffset = Quaternion.Identity;
@@ -141,6 +143,8 @@ public partial class HumanoidComponent
         var hasTranslationDegreesOfFreedom = new bool[CompiledHumanoidAvatarDefinition.RoleCount];
         var axisMappings = new BoneAxisMapping[CompiledHumanoidAvatarDefinition.RoleCount];
         var hasAxisMappings = new bool[CompiledHumanoidAvatarDefinition.RoleCount];
+        var jointBases = new Quaternion[CompiledHumanoidAvatarDefinition.RoleCount];
+        var hasContinuousJointBases = new bool[CompiledHumanoidAvatarDefinition.RoleCount];
         var jointLimits = new HumanoidAvatarJointLimit[CompiledHumanoidAvatarDefinition.RoleCount];
         var semanticParents = new EHumanoidAvatarBoneRole?[CompiledHumanoidAvatarDefinition.RoleCount];
 
@@ -153,6 +157,7 @@ public partial class HumanoidComponent
             postRotations[i] = Quaternion.Identity;
             rotationOrders[i] = EHumanoidAvatarRotationOrder.ZXY;
             axisMappings[i] = BoneAxisMapping.Default;
+            jointBases[i] = Quaternion.Identity;
             jointLimits[i] = new HumanoidAvatarJointLimit();
         }
 
@@ -175,6 +180,25 @@ public partial class HumanoidComponent
             hasAxisMappings[roleIndex] = binding.HasAxisMapping;
             jointLimits[roleIndex] = CopyJointLimit(binding.JointLimit);
             semanticParents[roleIndex] = binding.ParentRole;
+        }
+
+        for (int i = 0; i < nodes.Length; i++)
+        {
+            if (nodes[i] is null)
+                continue;
+
+            EHumanoidAvatarBoneRole role = (EHumanoidAvatarBoneRole)i;
+            if (!HumanoidCanonicalPoseAuthoring.TryCreateJointBasis(
+                    definition.Bones,
+                    definition.BodyAxes,
+                    role,
+                    out jointBases[i]))
+            {
+                InvalidateCompiledAvatarDefinition();
+                diagnostic = $"Canonical joint frame for humanoid role {role} is degenerate.";
+                return false;
+            }
+            hasContinuousJointBases[i] = true;
         }
 
         var muscleRanges = new Vector2[CompiledHumanoidAvatarDefinition.MuscleCount];
@@ -203,6 +227,8 @@ public partial class HumanoidComponent
                 hasTranslationDegreesOfFreedom,
                 axisMappings,
                 hasAxisMappings,
+                jointBases,
+                hasContinuousJointBases,
                 jointLimits,
                 semanticParents,
                 auxiliaryBones,
@@ -218,15 +244,38 @@ public partial class HumanoidComponent
             return false;
         }
 
+        Matrix4x4[] neutralBodyPose = CreateZeroMuscleModelRootPose(
+            boneSolvePlans,
+            boneSolvePlanOrder,
+            auxiliaryBones);
         if (!TryCompileTwistChains(
                 definition.TwistChains,
                 auxiliaryBones,
+                boneSolvePlans,
+                neutralBodyPose,
                 out CompiledHumanoidAvatarTwistChain[] twistChains,
                 out diagnostic))
         {
             InvalidateCompiledAvatarDefinition();
             return false;
         }
+
+        if (!TryCompileBodyHierarchyGuards(nodes, auxiliaryBones, out CompiledHumanoidHierarchyGuard[] bodyHierarchyGuards, out diagnostic)
+            || !CompiledHumanoidBodyDefinition.TryCompile(
+                definition.BodyDefinition, boneSolvePlans, neutralBodyPose,
+                out CompiledHumanoidBodyDefinition bodyDefinition, out diagnostic))
+        {
+            InvalidateCompiledAvatarDefinition();
+            AvatarDefinitionPlaybackDiagnostic = diagnostic;
+            definition.Status = EHumanoidAvatarDefinitionStatus.Invalid;
+            definition.EditorConfirmed = false;
+            definition.Diagnostics = [.. definition.Diagnostics, $"Error: {diagnostic}"];
+            return false;
+        }
+        var hipsParentChain = new List<TransformBase>();
+        for (TransformBase? parent = nodes[(int)EHumanoidAvatarBoneRole.Hips]?.Transform.Parent;
+            parent is not null && !ReferenceEquals(parent, SceneNode.Transform); parent = parent.Parent)
+            hipsParentChain.Add(parent);
 
         var compiledDefinition = new CompiledHumanoidAvatarDefinition(
             definition.SchemaVersion,
@@ -235,6 +284,7 @@ public partial class HumanoidComponent
             nodes,
             neutralLocal,
             neutralWorld,
+            neutralBodyPose,
             canonicalCorrections,
             preRotations,
             postRotations,
@@ -246,6 +296,7 @@ public partial class HumanoidComponent
             muscleRanges,
             CopySolverSettings(definition.SolverSettings),
             CopyBodyAxes(definition.BodyAxes),
+            bodyDefinition,
             definition.HumanScale,
             definition.ModelUnitsPerMeter,
             twistChains,
@@ -255,11 +306,37 @@ public partial class HumanoidComponent
             concreteCommitTargets,
             concreteCommitOrder,
             hipsParentInModelRootFrame,
-            inverseHipsParentInModelRootFrame);
+            inverseHipsParentInModelRootFrame,
+            SceneNode.Transform,
+            hipsParentChain.ToArray(),
+            bodyHierarchyGuards);
         _compiledAvatarDefinition = compiledDefinition;
         _nativePoseWorkspace.BindDefinition(compiledDefinition);
         diagnostic = string.Empty;
         return true;
+    }
+
+    /// <summary>Compiles the exact zero-muscle FK reference, including canonical-pose corrections.</summary>
+    private static Matrix4x4[] CreateZeroMuscleModelRootPose(
+        CompiledHumanoidBoneSolvePlan[] plans, int[] order, CompiledHumanoidAvatarAuxiliaryBone[] auxiliaries)
+    {
+        var result = new Matrix4x4[plans.Length];
+        for (int i = 0; i < order.Length; i++)
+        {
+            int index = order[i];
+            ref readonly CompiledHumanoidBoneSolvePlan plan = ref plans[index];
+            Matrix4x4 local = Matrix4x4.CreateScale(plan.NeutralScale)
+                * Matrix4x4.CreateFromQuaternion(plan.ZeroMuscleRotation)
+                * Matrix4x4.CreateTranslation(plan.NeutralTranslation);
+            ReadOnlySpan<CompiledHumanoidParentBridgeSegment> segments = plan.ParentBridgeSegments;
+            for (int j = 0; j < segments.Length; j++)
+                local *= segments[j].AuxiliaryBoneIndex >= 0
+                    ? auxiliaries[segments[j].AuxiliaryBoneIndex].NeutralLocalTransform
+                    : segments[j].NeutralLocalTransform;
+            result[index] = plan.MappedAncestorPlanIndex >= 0
+                ? local * result[plan.MappedAncestorPlanIndex] : local;
+        }
+        return result;
     }
 
     private bool TryCompileBoneSolvePlans(
@@ -273,6 +350,8 @@ public partial class HumanoidComponent
         bool[] hasTranslationDegreesOfFreedom,
         BoneAxisMapping[] axisMappings,
         bool[] hasAxisMappings,
+        Quaternion[] jointBases,
+        bool[] hasContinuousJointBases,
         HumanoidAvatarJointLimit[] jointLimits,
         EHumanoidAvatarBoneRole?[] semanticParents,
         CompiledHumanoidAvatarAuxiliaryBone[] auxiliaryBones,
@@ -412,7 +491,8 @@ public partial class HumanoidComponent
                             hasTranslationDegreesOfFreedom[i], axisMappings[i], hasAxisMappings[i],
                             compiledLimit, semanticParents[i],
                             ancestorIndex >= 0 ? (EHumanoidAvatarBoneRole)ancestorIndex : null,
-                            ancestorIndex, zeroMuscleRotation, inverseRestJoint),
+                            ancestorIndex, zeroMuscleRotation, inverseRestJoint,
+                            jointBases[i], hasContinuousJointBases[i]),
                         0.0f, 0.0f, 0.0f),
                     zeroMuscleRotation))
             {
@@ -444,7 +524,9 @@ public partial class HumanoidComponent
                 ancestorIndex >= 0 ? (EHumanoidAvatarBoneRole)ancestorIndex : null,
                 ancestorIndex,
                 zeroMuscleRotation,
-                inverseRestJoint);
+                inverseRestJoint,
+                jointBases[i],
+                hasContinuousJointBases[i]);
         }
 
         int hipsIndex = (int)EHumanoidAvatarBoneRole.Hips;
@@ -786,6 +868,8 @@ public partial class HumanoidComponent
     private static bool TryCompileTwistChains(
         HumanoidAvatarTwistChain[] source,
         CompiledHumanoidAvatarAuxiliaryBone[] auxiliaryBones,
+        CompiledHumanoidBoneSolvePlan[] boneSolvePlans,
+        Matrix4x4[] zeroMuscleModelRootTransforms,
         out CompiledHumanoidAvatarTwistChain[] compiled,
         out string diagnostic)
     {
@@ -815,6 +899,24 @@ public partial class HumanoidComponent
                 return false;
             }
 
+            if (!TryCompileTransportedTwistAxis(
+                    chain.ProximalRole,
+                    chain.DistalRole,
+                    boneSolvePlans,
+                    zeroMuscleModelRootTransforms,
+                    out Vector3 proximalRemainderAxis)
+                || !TryCompileTransportedTwistAxis(
+                    chain.DistalRole,
+                    chain.EndRole,
+                    boneSolvePlans,
+                    zeroMuscleModelRootTransforms,
+                    out Vector3 distalRemainderAxis))
+            {
+                compiled = [];
+                diagnostic = $"Twist chain '{chain.Name}' has a degenerate zero-pose segment axis.";
+                return false;
+            }
+
             compiled[i] = new CompiledHumanoidAvatarTwistChain(
                 chain.Name,
                 chain.ProximalRole,
@@ -822,11 +924,61 @@ public partial class HumanoidComponent
                 chain.EndRole,
                 chain.ProximalDistribution,
                 chain.DistalDistribution,
+                proximalRemainderAxis,
+                distalRemainderAxis,
                 chainAuxiliaryBones);
         }
 
         diagnostic = string.Empty;
         return true;
+    }
+
+    private static bool TryCompileTransportedTwistAxis(
+        EHumanoidAvatarBoneRole sourceRole,
+        EHumanoidAvatarBoneRole destinationRole,
+        ReadOnlySpan<CompiledHumanoidBoneSolvePlan> plans,
+        ReadOnlySpan<Matrix4x4> zeroMuscleModelRootTransforms,
+        out Vector3 axisInDestinationParent)
+    {
+        axisInDestinationParent = Vector3.Zero;
+        int sourceIndex = (int)sourceRole;
+        int destinationIndex = (int)destinationRole;
+        if ((uint)sourceIndex >= (uint)plans.Length
+            || (uint)destinationIndex >= (uint)plans.Length
+            || plans[sourceIndex].Node is null
+            || plans[destinationIndex].Node is null
+            || (uint)sourceIndex >= (uint)zeroMuscleModelRootTransforms.Length
+            || (uint)destinationIndex >= (uint)zeroMuscleModelRootTransforms.Length)
+            return false;
+
+        Matrix4x4 source = zeroMuscleModelRootTransforms[sourceIndex];
+        Matrix4x4 destination = zeroMuscleModelRootTransforms[destinationIndex];
+        if (!Matrix4x4.Decompose(source, out _, out Quaternion sourceRotation, out _)
+            || !Matrix4x4.Decompose(destination, out _, out Quaternion destinationRotation, out _)
+            || !IsFiniteNonZero(sourceRotation)
+            || !IsFiniteNonZero(destinationRotation))
+            return false;
+
+        Vector3 sourceAxisLocal = Vector3.Transform(
+            Vector3.UnitY,
+            plans[sourceIndex].JointBasisToZeroLocal);
+        Vector3 modelRootAxis = Vector3.Transform(
+            sourceAxisLocal,
+            Quaternion.Normalize(sourceRotation));
+        Vector3 axisInDestinationLocal = Vector3.Transform(
+            modelRootAxis,
+            Quaternion.Inverse(Quaternion.Normalize(destinationRotation)));
+        axisInDestinationParent = Vector3.Transform(
+            axisInDestinationLocal,
+            plans[destinationIndex].ZeroMuscleRotation);
+        float localLengthSquared = axisInDestinationParent.LengthSquared();
+        if (!float.IsFinite(localLengthSquared) || localLengthSquared <= 1e-12f)
+            return false;
+
+        axisInDestinationParent /= MathF.Sqrt(localLengthSquared);
+        return float.IsFinite(axisInDestinationParent.X)
+            && float.IsFinite(axisInDestinationParent.Y)
+            && float.IsFinite(axisInDestinationParent.Z);
     }
 
     private static HumanoidAvatarJointLimit CopyJointLimit(HumanoidAvatarJointLimit? source)

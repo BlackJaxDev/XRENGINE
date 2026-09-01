@@ -167,6 +167,8 @@ internal sealed partial class VulkanCommandRuntime
                 input.FramePlan.DynamicOverlaySignature,
                 forceRecord: input.Policy.FreshSerialRecording,
                 includeDepthAttachment: !input.Policy.PreserveSwapchainForOverlay,
+                releaseInlinePrimaryBeforeSecondaryMutation:
+                    !input.Policy.PreserveSwapchainForOverlay,
                 input.RecordingTarget,
                 input.Policy))
         {

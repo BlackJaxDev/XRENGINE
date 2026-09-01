@@ -36,6 +36,43 @@ internal unsafe sealed class VkRenderBuffer(
     internal VulkanPhysicalImageGroup? PhysicalGroup => _physicalGroup;
 
     /// <summary>
+    /// Returns the already-published render-buffer image only when it remains the
+    /// current planner backing. This is intentionally a lookup-only admission
+    /// check for modal command recording; it never refreshes or allocates.
+    /// </summary>
+    internal bool TryGetPublishedBackingImage(out Image image)
+    {
+        image = default;
+        if (_image.Handle == 0)
+            return false;
+
+        if (_physicalGroup is null)
+        {
+            image = _image;
+            return true;
+        }
+
+        if (!string.IsNullOrWhiteSpace(Data.Name) &&
+            (!ResourcePublications.TryGetPhysicalImageGroup(
+                 ResourcePublications.GetCurrentGeneration(),
+                 Data.Name,
+                 out VulkanPhysicalImageGroup? activeGroup) ||
+             activeGroup is null ||
+             !ReferenceEquals(activeGroup, _physicalGroup) ||
+             !activeGroup.IsAllocated ||
+             activeGroup.Image.Handle != _image.Handle))
+        {
+            return false;
+        }
+
+        if (!_physicalGroup.IsAllocated || _physicalGroup.Image.Handle != _image.Handle)
+            return false;
+
+        image = _image;
+        return true;
+    }
+
+    /// <summary>
     /// If this render buffer uses a physical-group-backed image, checks whether the
     /// group has reallocated and refreshes the cached image/memory/view handles.
     /// </summary>

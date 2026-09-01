@@ -181,9 +181,10 @@ internal sealed partial class VulkanFrameLoop
         }
     }
 
-    private bool TryPresentToQueueTracked(
+    private unsafe bool TryPresentToQueueTracked(
         Queue queue,
         ref PresentInfoKHR presentInfo,
+        in VulkanWsiPresentReservation presentReservation,
         out Result result,
         out string failureReason,
         out Exception? postDispatchFailure,
@@ -226,22 +227,41 @@ internal sealed partial class VulkanFrameLoop
                 queueAdmissionStarted,
                 nativePresentStarted);
 
-            if (OutputRuntime.Desktop.StreamlineFrameGenerationActive)
+            VulkanWsiPresentCompletion completion = presentReservation.Owner
+                ?? throw new InvalidOperationException("Desktop presentation was not reserved before acquisition.");
+            completion.RequireReservedForDispatch(in presentReservation);
+            Fence presentFence = presentReservation.Fence;
+            void* previousNext = presentInfo.PNext;
+            SwapchainPresentFenceInfoEXT fenceInfo = new()
             {
-                dispatched = NvidiaDlssManager.Native.TryQueueProxyPresent(
-                    StreamlineDeviceBinding,
-                    queue,
-                    ref presentInfo,
-                    out result,
-                    out failureReason);
+                SType = StructureType.SwapchainPresentFenceInfoExt,
+                PNext = previousNext,
+                SwapchainCount = 1,
+                PFences = &presentFence,
+            };
+            if (presentFence.Handle != 0)
+                presentInfo.PNext = &fenceInfo;
+            try
+            {
+                if (OutputRuntime.Desktop.StreamlineFrameGenerationActive)
+                    dispatched = NvidiaDlssManager.Native.TryQueueProxyPresent(
+                        StreamlineDeviceBinding, queue, ref presentInfo, out result, out failureReason);
+                else
+                {
+                    result = OutputRuntime.Desktop.SwapchainExtension!.QueuePresent(queue, ref presentInfo);
+                    failureReason = string.Empty;
+                    dispatched = true;
+                }
+                completion.Commit(in presentReservation, dispatched, result);
             }
-            else
+            catch
             {
-                result = OutputRuntime.Desktop.SwapchainExtension!.QueuePresent(
-                    queue,
-                    ref presentInfo);
-                failureReason = string.Empty;
-                dispatched = true;
+                completion.Quarantine(in presentReservation);
+                throw;
+            }
+            finally
+            {
+                presentInfo.PNext = previousNext;
             }
             nativePresentElapsed = Stopwatch.GetElapsedTime(
                 nativePresentStarted);

@@ -1,3 +1,5 @@
+using System.Numerics;
+
 namespace XREngine.Components.Animation;
 
 /// <summary>
@@ -13,6 +15,8 @@ internal sealed class CompiledHumanoidAvatarTwistChain
         EHumanoidAvatarBoneRole endRole,
         float proximalDistribution,
         float distalDistribution,
+        Vector3 proximalRemainderAxisInDistalParent,
+        Vector3 distalRemainderAxisInEndParent,
         CompiledHumanoidAvatarAuxiliaryBone[] auxiliaryBones)
     {
         Name = name;
@@ -21,6 +25,8 @@ internal sealed class CompiledHumanoidAvatarTwistChain
         EndRole = endRole;
         ProximalDistribution = proximalDistribution;
         DistalDistribution = distalDistribution;
+        ProximalRemainderAxisInDistalParent = proximalRemainderAxisInDistalParent;
+        DistalRemainderAxisInEndParent = distalRemainderAxisInEndParent;
         AuxiliaryBones = auxiliaryBones;
     }
 
@@ -30,5 +36,9 @@ internal sealed class CompiledHumanoidAvatarTwistChain
     public EHumanoidAvatarBoneRole EndRole { get; }
     public float ProximalDistribution { get; }
     public float DistalDistribution { get; }
+    /// <summary>Proximal segment axis expressed in the distal bone's concrete parent frame.</summary>
+    public Vector3 ProximalRemainderAxisInDistalParent { get; }
+    /// <summary>Distal segment axis expressed in the end bone's concrete parent frame.</summary>
+    public Vector3 DistalRemainderAxisInEndParent { get; }
     public CompiledHumanoidAvatarAuxiliaryBone[] AuxiliaryBones { get; }
 }

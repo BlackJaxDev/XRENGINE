@@ -30,6 +30,55 @@ internal readonly struct CompiledHumanoidBoneSolvePlan
         int mappedAncestorPlanIndex,
         Quaternion zeroMuscleRotation,
         Quaternion inverseRestJoint)
+        : this(
+            role,
+            node,
+            neutralScale,
+            neutralRotation,
+            neutralTranslation,
+            neutralTransformRelativeToMappedAncestor,
+            parentBridgeSegments,
+            canonicalPoseCorrection,
+            preRotation,
+            postRotation,
+            rotationOrder,
+            permitsTranslationDegreesOfFreedom,
+            axisMapping,
+            hasAxisMapping,
+            jointLimit,
+            semanticParentRole,
+            effectiveParentRole,
+            mappedAncestorPlanIndex,
+            zeroMuscleRotation,
+            inverseRestJoint,
+            Quaternion.Identity,
+            false)
+    {
+    }
+
+    public CompiledHumanoidBoneSolvePlan(
+        EHumanoidAvatarBoneRole role,
+        SceneNode? node,
+        Vector3 neutralScale,
+        Quaternion neutralRotation,
+        Vector3 neutralTranslation,
+        Matrix4x4 neutralTransformRelativeToMappedAncestor,
+        CompiledHumanoidParentBridgeSegment[] parentBridgeSegments,
+        Quaternion canonicalPoseCorrection,
+        Quaternion preRotation,
+        Quaternion postRotation,
+        EHumanoidAvatarRotationOrder rotationOrder,
+        bool permitsTranslationDegreesOfFreedom,
+        BoneAxisMapping axisMapping,
+        bool hasAxisMapping,
+        CompiledHumanoidJointLimit jointLimit,
+        EHumanoidAvatarBoneRole? semanticParentRole,
+        EHumanoidAvatarBoneRole? effectiveParentRole,
+        int mappedAncestorPlanIndex,
+        Quaternion zeroMuscleRotation,
+        Quaternion inverseRestJoint,
+        Quaternion jointBasisToZeroLocal,
+        bool hasContinuousJointBasis)
     {
         Role = role;
         Node = node;
@@ -51,6 +100,8 @@ internal readonly struct CompiledHumanoidBoneSolvePlan
         MappedAncestorPlanIndex = mappedAncestorPlanIndex;
         ZeroMuscleRotation = zeroMuscleRotation;
         InverseRestJoint = inverseRestJoint;
+        JointBasisToZeroLocal = jointBasisToZeroLocal;
+        HasContinuousJointBasis = hasContinuousJointBasis;
     }
 
     public EHumanoidAvatarBoneRole Role { get; }
@@ -81,6 +132,17 @@ internal readonly struct CompiledHumanoidBoneSolvePlan
     public Quaternion ZeroMuscleRotation { get; }
     /// <summary>Inverse authored rest joint (<c>Pre * Ordered(Center) * Post</c>).</summary>
     public Quaternion InverseRestJoint { get; }
+    /// <summary>
+    /// Proper rotation from canonical anatomical joint coordinates into this
+    /// bone's zero-muscle local frame. It is compiled once; evaluating a pose
+    /// only conjugates the canonical joint delta by this basis.
+    /// </summary>
+    public Quaternion JointBasisToZeroLocal { get; }
+    /// <summary>
+    /// Whether staged degrees are already expressed in the continuous
+    /// canonical joint frame and must bypass the legacy cardinal-axis mapping.
+    /// </summary>
+    public bool HasContinuousJointBasis { get; }
 }
 
 /// <summary>

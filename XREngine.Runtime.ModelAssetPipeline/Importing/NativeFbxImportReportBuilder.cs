@@ -10,7 +10,8 @@ internal static class NativeFbxImportReportBuilder
 {
     public static ModelImportProducerMetadata Build(
         string sourceFilePath,
-        FbxSemanticDocument semantic)
+        FbxSemanticDocument semantic,
+        float scaleConversion)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(sourceFilePath);
         ArgumentNullException.ThrowIfNull(semantic);
@@ -77,7 +78,18 @@ internal static class NativeFbxImportReportBuilder
             referenceKeys.Add(new ModelImportReferenceKey(ModelImportReferenceKind.Animation, key));
         }
 
-        return new ModelImportProducerMetadata(dependencies, sourceEntities, referenceKeys);
+        float? modelUnitsPerMeter = semantic.GlobalSettings is FbxGlobalSettings globalSettings
+            && FbxModelUnitScale.TryResolveModelUnitsPerMeter(
+                globalSettings.AxisSystem,
+                scaleConversion,
+                out float resolvedModelUnitsPerMeter)
+                    ? resolvedModelUnitsPerMeter
+                    : null;
+        return new ModelImportProducerMetadata(
+            dependencies,
+            sourceEntities,
+            referenceKeys,
+            modelUnitsPerMeter: modelUnitsPerMeter);
     }
 
     private static ModelImportEntityKind MapEntityKind(FbxObjectCategory category)

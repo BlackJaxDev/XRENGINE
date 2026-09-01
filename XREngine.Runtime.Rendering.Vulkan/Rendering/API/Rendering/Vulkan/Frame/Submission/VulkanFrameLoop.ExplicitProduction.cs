@@ -79,6 +79,7 @@ internal sealed partial class VulkanFrameLoop
                 throw CreateDeviceLostException("ExplicitProductionFrame", Result.ErrorDeviceLost);
 
             _telemetry.PublishDescriptorTableGeneration(_resourceRuntime.DescriptorTableGeneration);
+            _resourceRuntime.BeginRetirementMeteringFrame(unchecked((long)frameNumber));
             _resourceRuntime.Descriptors.Heap.BeginFrame(frameNumber);
             VulkanExplicitFrameTargetPreview preview =
                 target.PreviewNextFrameTarget();

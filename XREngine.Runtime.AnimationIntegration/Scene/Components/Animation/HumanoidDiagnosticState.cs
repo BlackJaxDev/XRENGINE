@@ -27,6 +27,8 @@ internal sealed class HumanoidDiagnosticState
     internal HumanoidProjectedRootPose PreFeetProjectedRootPose;
     internal HumanoidProjectedRootPose PreFeetBodyAllocationProjectedRootPose;
     internal HumanoidProjectedRootPose PreviousProjectedRootPose;
+    internal HumanoidBodyFrameDiagnosticState BodyFrameDiagnostic;
+    internal bool LastNativeFrameAccepted;
     internal HumanoidRootMotionDelta CurrentRootMotionDelta;
     internal float ImportedBodySampleWeight;
     internal bool IsImportedBodySampleTransactionActive;

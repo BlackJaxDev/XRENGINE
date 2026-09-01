@@ -66,6 +66,7 @@ namespace XREngine
 
         private static readonly AsyncLocal<ModelImportOptions?> _currentImportOptions = new();
         private static readonly AsyncLocal<string?> _currentImportSourceFilePath = new();
+        private SceneNode? _publishedSceneMetadataRoot;
 
         public readonly record struct ModelAssetImportResult(
             SceneNode? RootNode,
@@ -1812,12 +1813,14 @@ namespace XREngine
             Matrix4x4? rootTransformMatrix = null)
         {
             IDisposable? importedTextureStreamingScope = XRTexture2D.EnterImportedTextureStreamingScope();
+            bool importSucceeded = false;
 
             try
             {
                 LastBackendResolution = null;
                 LastBackendSelection = null;
                 LastProducerReport = null;
+                ClearPublishedSceneImportMetadata();
 
                 ModelImportOptions effectiveImportOptions = ResolveEffectiveImportOptions(
                     options,
@@ -1887,12 +1890,17 @@ namespace XREngine
                             LastProducerReport = new ModelImportProducerReport(
                                 LastBackendSelection,
                                 result.ProducerMetadata);
+                            PublishSceneImportMetadata(result.RootNode, LastProducerReport);
                             CompleteImportedScene(result.RootNode, effectiveImportOptions);
                             _onCompleted?.Invoke();
+                            importSucceeded = true;
                             return result.RootNode;
                         }
                         catch (Exception ex) when (hasFallback && ex is not OperationCanceledException)
                         {
+                            LastBackendSelection = null;
+                            LastProducerReport = null;
+                            ClearPublishedSceneImportMetadata();
                             LogImportWarning(
                                 SourceFilePath,
                                 $"[ModelAssetImporter.Import] Backend '{candidate.StableId}' failed for '{SourceFilePath}'. Trying '{fallbackId}'. {ex.Message}");
@@ -1931,12 +1939,17 @@ namespace XREngine
                             LastProducerReport = new ModelImportProducerReport(
                                 LastBackendSelection,
                                 result.ProducerMetadata);
+                            PublishSceneImportMetadata(result.RootNode, LastProducerReport);
                             CompleteImportedScene(result.RootNode, effectiveImportOptions);
                             _onCompleted?.Invoke();
+                            importSucceeded = true;
                             return result.RootNode;
                         }
                         catch (Exception ex) when (hasFallback && ex is not OperationCanceledException)
                         {
+                            LastBackendSelection = null;
+                            LastProducerReport = null;
+                            ClearPublishedSceneImportMetadata();
                             LogImportWarning(
                                 SourceFilePath,
                                 $"[ModelAssetImporter.Import] Backend '{candidate.StableId}' failed for '{SourceFilePath}'. Trying '{fallbackId}'. {ex.Message}");
@@ -2032,6 +2045,7 @@ namespace XREngine
                     LastProducerReport = new ModelImportProducerReport(
                         LastBackendSelection,
                         producerMetadata);
+                    PublishSceneImportMetadata(rootNode, LastProducerReport);
                     try
                     {
                         void meshProcessAction() => ProcessMeshesOnJobThread(assimpMeshProgress, cancellationToken);
@@ -2042,6 +2056,7 @@ namespace XREngine
                             importedTextureStreamingScope,
                             () => CompleteImportedScene(rootNode, effectiveImportOptions));
                         importedTextureStreamingScope = null;
+                        importSucceeded = true;
                         return rootNode;
                     }
                     catch
@@ -2057,8 +2072,30 @@ namespace XREngine
             }
             finally
             {
+                if (!importSucceeded)
+                {
+                    LastBackendSelection = null;
+                    LastProducerReport = null;
+                    ClearPublishedSceneImportMetadata();
+                }
                 importedTextureStreamingScope?.Dispose();
             }
+        }
+
+        private void PublishSceneImportMetadata(SceneNode rootNode, ModelImportProducerReport report)
+        {
+            ClearPublishedSceneImportMetadata();
+            rootNode.SetProducerReport(report);
+            _publishedSceneMetadataRoot = rootNode;
+        }
+
+        private void ClearPublishedSceneImportMetadata()
+        {
+            if (_publishedSceneMetadataRoot is not SceneNode rootNode)
+                return;
+
+            rootNode.SetProducerReport(null);
+            _publishedSceneMetadataRoot = null;
         }
 
         private ModelImportOptions ResolveEffectiveImportOptions(

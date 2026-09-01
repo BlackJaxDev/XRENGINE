@@ -37,16 +37,29 @@ internal sealed partial class VulkanFrameLoop
             using (VulkanResourcePlannerSessionService.RuntimeStateScope scope =
                    _resourcePlannerSessions.EnterRuntimeStateScope(in previousState))
             {
-                UpdateResourcePlannerFromContextCore(
-                    context,
-                    activePassIndices,
-                    activeFrameBufferNames,
-                    activeResourceSetSignature,
-                    constrainToActivePassSet,
-                    deferReusedImageMetadataCommit: true);
-                pendingState = scope.CaptureCurrent(
-                    CaptureResourcePlannerRuntimeState(),
-                    ActiveFrameOpResourcePlannerSwitchingState);
+                try
+                {
+                    UpdateResourcePlannerFromContextCore(
+                        context,
+                        activePassIndices,
+                        activeFrameBufferNames,
+                        activeResourceSetSignature,
+                        constrainToActivePassSet,
+                        deferReusedImageMetadataCommit: true);
+                    pendingState = scope.CaptureCurrent(
+                        CaptureResourcePlannerRuntimeState(),
+                        ActiveFrameOpResourcePlannerSwitchingState);
+                }
+                catch
+                {
+                    ResourcePlannerRuntimeState failedState = scope.CaptureCurrent(
+                        CaptureResourcePlannerRuntimeState(),
+                        ActiveFrameOpResourcePlannerSwitchingState);
+                    RetireUnpublishedResourceAllocator(
+                        previousState.ResourceAllocator,
+                        failedState.ResourceAllocator);
+                    throw;
+                }
             }
 
             if (ReferenceEquals(pendingState.ResourcePlanner, previousState.ResourcePlanner) &&
@@ -65,18 +78,29 @@ internal sealed partial class VulkanFrameLoop
                 return;
             }
 
-            if (!_framePlanner.TryFreezeResourcePlannerRenderGraphPlan(
-                    ref pendingState,
-                    BackendObjectContext,
-                    AllowSynchronousResourceUploads,
-                    out string freezeFailureReason))
+            bool pendingStateHandedOff = false;
+            try
             {
-                throw new InvalidOperationException(
-                    $"Vulkan resource-plan publication failed: {freezeFailureReason}");
-            }
+                if (!TryFreezeResourcePlannerRenderGraphPlanWithBindingRetries(
+                        ref pendingState,
+                        out string freezeFailureReason))
+                {
+                    throw new InvalidOperationException(
+                        $"Vulkan resource-plan publication failed: {freezeFailureReason}");
+                }
 
-            PublishResourcePlannerRuntimeState(pendingState, commitReusedImageMetadata: true);
-            _framePlanner.PublishPlan(pendingState.RenderGraphPlan);
+                PublishResourcePlannerRuntimeState(pendingState, commitReusedImageMetadata: true);
+                pendingStateHandedOff = true;
+                _framePlanner.PublishPlan(pendingState.RenderGraphPlan);
+            }
+            catch
+            {
+                if (!pendingStateHandedOff)
+                    RetireUnpublishedResourceAllocator(
+                        previousState.ResourceAllocator,
+                        pendingState.ResourceAllocator);
+                throw;
+            }
             return;
         }
 
@@ -168,28 +192,44 @@ internal sealed partial class VulkanFrameLoop
             IsDeviceLost,
             RuntimeRenderingHostServices.Presentation.IsOpenXRActive || RuntimeRenderingHostServices.Presentation.IsInVR,
             deferReusedImageMetadataCommit);
-        VulkanPhysicalPlanningResult result = _framePlanner.ApplyPhysicalResourcePlan(ref state, in request);
-        if (!result.Updated)
-            return;
-
-        state.ResourcePlannerFastPathKey = planningInputs.FastPathKey;
-        state.HasResourcePlannerFastPathKey = true;
-        if (!_framePlanner.TryFreezeResourcePlannerRenderGraphPlan(
-                ref state,
-                BackendObjectContext,
-                AllowSynchronousResourceUploads,
-                out string freezeFailureReason))
+        VulkanResourceAllocator originalAllocator = state.ResourceAllocator;
+        bool stateHandedOff = false;
+        VulkanPhysicalPlanningResult result;
+        try
         {
-            throw new InvalidOperationException(
-                $"Vulkan resource-plan publication failed: {freezeFailureReason}");
+            result = _framePlanner.ApplyPhysicalResourcePlan(ref state, in request);
+            if (!result.Updated)
+                return;
+
+            state.ResourcePlannerFastPathKey = planningInputs.FastPathKey;
+            state.HasResourcePlannerFastPathKey = true;
+            if (!TryFreezeResourcePlannerRenderGraphPlanWithBindingRetries(
+                    ref state,
+                    out string freezeFailureReason))
+            {
+                throw new InvalidOperationException(
+                    $"Vulkan resource-plan publication failed: {freezeFailureReason}");
+            }
+
+            if (HasThreadResourcePlannerRuntimeState)
+            {
+                StoreThreadResourcePlannerRuntimeState(in state);
+                stateHandedOff = true;
+            }
+            else
+            {
+                PublishResourcePlannerRuntimeState(state, commitReusedImageMetadata: false);
+                stateHandedOff = true;
+                _framePlanner.PublishPlan(state.RenderGraphPlan);
+            }
         }
-
-        if (HasThreadResourcePlannerRuntimeState)
-            StoreThreadResourcePlannerRuntimeState(in state);
-        else
+        catch
         {
-            PublishResourcePlannerRuntimeState(state, commitReusedImageMetadata: false);
-            _framePlanner.PublishPlan(state.RenderGraphPlan);
+            if (!stateHandedOff)
+                RetireUnpublishedResourceAllocator(
+                    originalAllocator,
+                    state.ResourceAllocator);
+            throw;
         }
 
         RuntimeRenderingHostServices.Presentation.RecordRenderFrameOutputWork(
@@ -198,6 +238,55 @@ internal sealed partial class VulkanFrameLoop
                 PhysicalPlanAliasReuses: result.AliasReuseCount,
                 PlannerArenaHighWater: ActiveFrameOpResourcePlannerSwitchingState.States.Count,
                 RenderGraphPlanGeneration: ClampGenerationToInt64(planningInputs.CompiledGraph.Plan.Generation)));
+    }
+
+    /// <summary>
+    /// Native-buffer realization can advance while sealing a plan. Retrying that
+    /// transient conflict must retain the allocation chosen by <c>Apply</c>; running
+    /// Apply again would allocate a new generation each attempt.
+    /// </summary>
+    private bool TryFreezeResourcePlannerRenderGraphPlanWithBindingRetries(
+        ref ResourcePlannerRuntimeState state,
+        out string failureReason)
+    {
+        for (int attempt = 0; attempt < 3; attempt++)
+        {
+            if (_framePlanner.TryFreezeResourcePlannerRenderGraphPlan(
+                    ref state,
+                    BackendObjectContext,
+                    AllowSynchronousResourceUploads,
+                    out failureReason,
+                    out bool nativeBindingsSuperseded))
+            {
+                return true;
+            }
+
+            if (!nativeBindingsSuperseded)
+                return false;
+        }
+
+        throw new VulkanNativeBufferBindingSupersededException(
+            "Native buffer bindings were superseded while sealing the Vulkan resource plan.");
+    }
+
+    /// <summary>
+    /// Reclaims an allocator created in an unpublished local planning state while
+    /// preserving physical groups borrowed from the prior generation.
+    /// </summary>
+    private void RetireUnpublishedResourceAllocator(
+        VulkanResourceAllocator originalAllocator,
+        VulkanResourceAllocator candidateAllocator)
+    {
+        if (ReferenceEquals(originalAllocator, candidateAllocator) ||
+            candidateAllocator.IsRetired)
+        {
+            return;
+        }
+
+        _ = candidateAllocator.TryRetirePhysicalResources(
+            BackendObjectContext,
+            exceptImageGroups: candidateAllocator.CapturePendingReusedImageGroups(),
+            immediate: true);
     }
 
     private ResourcePlanningInputs PrepareResourcePlanningInputs(

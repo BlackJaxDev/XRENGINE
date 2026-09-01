@@ -442,7 +442,10 @@ internal sealed partial class VulkanCommandRuntime
             throw new VulkanPlanPreconditionException(
                 "Advanced visibility raster lost its authoritative Vulkan framebuffer wrapper.");
         }
-        targetWrapper.EnsureCurrent();
+        // The resize recorder accepts only a frozen target closure. Refreshing
+        // it here could publish replacement internal images after admission.
+        if (state.Policy.AllowSynchronousResourceUploads)
+            targetWrapper.EnsureCurrent();
         if (!targetWrapper.TryCaptureRecordedRenderTargetSnapshot(
                 out VulkanRecordedRenderTargetSnapshot currentTarget) ||
             currentTarget != payload.TargetClosure.NativeTarget)
@@ -951,7 +954,10 @@ internal sealed partial class VulkanCommandRuntime
     private int RecordComputeDispatchPayload(scoped ref PrimaryCommandBufferRecordingState state, in ComputeDispatchPayload payload, in VulkanPrimaryOperationRecordingInfo info)
     {
         CmdBeginLabel(state.CommandBuffer, "ComputeDispatch");
-        EnsureComputeSampledImageLayoutsForDispatch(state.CommandBuffer, payload.Snapshot);
+        EnsureComputeSampledImageLayoutsForDispatch(
+            state.CommandBuffer,
+            payload.Snapshot,
+            state.Policy.AllowSynchronousResourceUploads);
         ref readonly FrameOperationHeader header = ref state.Ops.GetHeader(info.OperationIndex);
         ref readonly FrameOpContext context = ref state.Ops.GetContext(info.OperationIndex);
         ulong descriptorKey = ComputeReusableComputeDescriptorBindingKey(
@@ -960,7 +966,12 @@ internal sealed partial class VulkanCommandRuntime
             in context,
             state.Ops.Stream.Lane,
             ResolveComputeDispatchOccurrenceOrdinal(state.Ops.Stream, info.OperationIndex));
-        RecordComputeDispatchPayload(state.CommandBuffer, state.FrameDataImageIndex, in payload, descriptorKey);
+        RecordComputeDispatchPayload(
+            state.CommandBuffer,
+            state.FrameDataImageIndex,
+            in payload,
+            descriptorKey,
+            state.Policy.AllowSynchronousResourceUploads);
         CmdEndLabel(state.CommandBuffer);
         return info.OperationIndex;
     }
@@ -968,8 +979,15 @@ internal sealed partial class VulkanCommandRuntime
     private int RecordComputeDispatchIndirectPayload(scoped ref PrimaryCommandBufferRecordingState state, in ComputeDispatchIndirectPayload payload, in VulkanPrimaryOperationRecordingInfo info)
     {
         CmdBeginLabel(state.CommandBuffer, payload.Label);
-        EnsureComputeSampledImageLayoutsForDispatch(state.CommandBuffer, payload.Snapshot);
-        RecordComputeDispatchIndirectPayload(state.CommandBuffer, state.FrameDataImageIndex, in payload);
+        EnsureComputeSampledImageLayoutsForDispatch(
+            state.CommandBuffer,
+            payload.Snapshot,
+            state.Policy.AllowSynchronousResourceUploads);
+        RecordComputeDispatchIndirectPayload(
+            state.CommandBuffer,
+            state.FrameDataImageIndex,
+            in payload,
+            state.Policy.AllowSynchronousResourceUploads);
         CmdEndLabel(state.CommandBuffer);
         return info.OperationIndex;
     }

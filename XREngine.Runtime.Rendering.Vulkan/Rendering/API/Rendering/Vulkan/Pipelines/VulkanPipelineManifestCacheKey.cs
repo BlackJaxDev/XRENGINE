@@ -4,6 +4,6 @@ namespace XREngine.Rendering.Vulkan;
 
 internal readonly record struct VulkanPipelineManifestCacheKey(
     ulong PlanCompatibilityIdentity,
-    ulong RecordingStructuralSignature,
+    ulong PipelineDemandSignature,
     EMeshSubmissionStrategy SubmissionStrategy,
     bool DynamicRendering);

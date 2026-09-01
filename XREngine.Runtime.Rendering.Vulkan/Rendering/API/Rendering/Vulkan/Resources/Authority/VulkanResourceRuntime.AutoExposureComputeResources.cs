@@ -20,7 +20,8 @@ internal sealed partial class VulkanResourceRuntime
                     Name = "VulkanAutoExposure2D.comp"
                 })
             {
-                Name = "VulkanAutoExposure2D"
+                Name = "VulkanAutoExposure2D",
+                AllowAsyncBackendCompile = true
             };
 
             AutoExposureComputeProgram2DArray = new XRRenderProgram(
@@ -31,7 +32,8 @@ internal sealed partial class VulkanResourceRuntime
                     Name = "VulkanAutoExposure2DArray.comp"
                 })
             {
-                Name = "VulkanAutoExposure2DArray"
+                Name = "VulkanAutoExposure2DArray",
+                AllowAsyncBackendCompile = true
             };
 
             // Binding updates are event-driven. Attach the native owners before

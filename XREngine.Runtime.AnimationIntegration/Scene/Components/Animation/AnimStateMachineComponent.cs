@@ -253,9 +253,10 @@ namespace XREngine.Components
 
             StateMachine.SeekActiveMotions(timeSeconds, dispatchEvents);
             _observedMotionContinuityVersion = StateMachine.HumanoidMotionContinuityVersion;
-            BeginRootMotionEpoch(
-                preserveExistingAnchor: true);
             EvaluateAndApply(0L, humanoid);
+            if (humanoid is not null && !humanoid.WasLastNativeFrameAccepted)
+                return;
+            BeginRootMotionEpoch(preserveExistingAnchor: true);
             PublishRootMotion();
             // Match deferred playback: state/blend pose first, projected root
             // second, and a single animation-driven IK/contact pass last.
@@ -364,6 +365,17 @@ namespace XREngine.Components
                     }
                 }
 
+                // Validate avatar-dependent leaf/endpoint inputs before any
+                // muscle, TDoF or IK setter runs. A failed sidecar must not leave
+                // a new muscle pose for the later scene tick to commit.
+                if (!PrepareStateMachineRootMotionFrame(humanoid))
+                {
+                    _playbackCapabilitiesValid = false;
+                    Debug.Animation(
+                        $"[AnimStateMachineComponent] Playback rejected on '{SceneNode.Name}': {PlaybackCapabilityDiagnostic}");
+                    return;
+                }
+
                 StateMachine.ApplyAnimationValues();
                 ikSolver?.CompleteAnimationDrivenGoalFrame();
 
@@ -371,14 +383,6 @@ namespace XREngine.Components
                 {
                     humanoid!.CancelImportedBodySampleTransaction(this);
                     ownsImportedBodySampleTransaction = false;
-                }
-
-                if (!PrepareStateMachineRootMotionFrame(humanoid))
-                {
-                    _playbackCapabilitiesValid = false;
-                    Debug.Animation(
-                        $"[AnimStateMachineComponent] Playback rejected on '{SceneNode.Name}': {PlaybackCapabilityDiagnostic}");
-                    return;
                 }
                 animationGoalFramePrepared = true;
             }
@@ -391,6 +395,8 @@ namespace XREngine.Components
             }
             finally
             {
+                if (ownsImportedBodySampleTransaction)
+                    humanoid!.CancelImportedBodySampleTransaction(this);
                 if (!animationGoalFramePrepared)
                     ikSolver?.RejectAnimationDrivenGoalFrame();
             }
@@ -428,9 +434,13 @@ namespace XREngine.Components
             if (humanoid is null)
                 return;
 
-            HumanoidProjectedRootPose composedPose = humanoid.CurrentProjectedRootPose;
+            if (!humanoid.TryGetAcceptedRootMotionInput(this, out HumanoidProjectedRootPose composedPose, out _))
+                return;
             if (composedPose.Channels == EHumanoidProjectedRootChannels.None)
                 return;
+
+            if (_pendingRootMotionEpochRebase)
+                BeginRootMotionEpoch(rebaseFromNextPose: true);
 
             if (_rebaseRootMotionFromNextPose)
             {
@@ -502,6 +512,7 @@ namespace XREngine.Components
             Quaternion anchorRotation = _rootMotionAnchorRotation;
 
             _rootMotionEpoch = unchecked(_rootMotionEpoch + 1UL);
+            _pendingRootMotionEpochRebase = false;
             _rootMotionSequence = 0UL;
             _appliedRootMotionPose = HumanoidProjectedRootPose.Identity;
             _previousAppliedRootMotionPose = HumanoidProjectedRootPose.Identity;

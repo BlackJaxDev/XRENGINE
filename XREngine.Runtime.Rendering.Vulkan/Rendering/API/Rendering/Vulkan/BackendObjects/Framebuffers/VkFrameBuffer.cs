@@ -88,20 +88,18 @@ internal unsafe class VkFrameBuffer(
                 VulkanRecordedRenderTargetSnapshot.MaxAttachmentCount];
         for (int i = 0; i < _attachmentViews.Length; i++)
         {
-            AttachmentTargetInfo targetInfo = _attachmentTargets[i];
-            if (!TryResolveRecordedAttachmentImage(targetInfo.Target, out Image image))
+            ImageView view = _attachmentViews[i];
+            if (!TryCapturePublishedAttachmentIdentity(
+                    _attachmentTargets[i],
+                    view,
+                    _attachmentSignature[i].ReferenceLayout,
+                    out VulkanNativeAttachmentIdentity attachment))
             {
                 snapshot = default;
                 return false;
             }
 
-            ImageView view = _attachmentViews[i];
-            attachments[i] = new VulkanNativeAttachmentIdentity(
-                image.Handle,
-                BackendContext.GetResourceGeneration(ObjectType.Image, image.Handle),
-                view.Handle,
-                BackendContext.GetResourceGeneration(ObjectType.ImageView, view.Handle),
-                _attachmentSignature[i].ReferenceLayout);
+            attachments[i] = attachment;
         }
 
         if (RecordedRenderTargetSnapshotMatches(
@@ -160,25 +158,74 @@ internal unsafe class VkFrameBuffer(
         return true;
     }
 
-    private bool TryResolveRecordedAttachmentImage(
-        IFrameBufferAttachement target,
-        out Image image)
+    /// <summary>
+    /// Reads the exact already-published image/view pair used by this framebuffer.
+    /// This intentionally never asks an attachment wrapper to refresh itself: a
+    /// modal recording must either use the frozen native tuple or defer.
+    /// </summary>
+    private bool TryCapturePublishedAttachmentIdentity(
+        AttachmentTargetInfo targetInfo,
+        ImageView view,
+        ImageLayout layout,
+        out VulkanNativeAttachmentIdentity identity)
     {
-        image = default;
-        object? apiObject = target switch
+        identity = default;
+        if (view.Handle == 0 ||
+            !BackendContext.Resources.Images.TryGetBackingImage(view, out Image image) ||
+            image.Handle == 0 ||
+            !BackendContext.Resources.Images.TryGetDescriptorHeapCreateInfo(
+                view,
+                out ImageViewCreateInfo viewInfo) ||
+            viewInfo.Image.Handle != image.Handle ||
+            !BackendContext.Resources.Images.IsLiveBackedByLiveImage(view) ||
+            !BackendContext.Resources.Images.IsAvailableForDescriptor(view))
         {
-            XRTexture texture => GetBackendWrapper(texture, generateNow: false),
-            XRRenderBuffer renderBuffer => GetBackendWrapper(renderBuffer, generateNow: false),
-            _ => null,
-        };
-        image = apiObject switch
-        {
-            IVkImageDescriptorSource source => source.DescriptorImage,
-            VkRenderBuffer renderBuffer => renderBuffer.Image,
-            _ => default,
-        };
-        return image.Handle != 0;
+            return false;
+        }
+
+        // A logical framebuffer can be shared by XR and desktop planner contexts.
+        // A live cached view is insufficient: it must still point at the image
+        // published for the current planner generation before modal recording can
+        // inherit this tuple.
+        if (!TryMatchCurrentPublishedAttachmentImage(targetInfo.Target, image))
+            return false;
+
+        identity = new VulkanNativeAttachmentIdentity(
+            image.Handle,
+            BackendContext.GetResourceGeneration(ObjectType.Image, image.Handle),
+            view.Handle,
+            BackendContext.GetResourceGeneration(ObjectType.ImageView, view.Handle),
+            layout);
+        return true;
     }
+
+    private bool TryMatchCurrentPublishedAttachmentImage(
+        IFrameBufferAttachement target,
+        Image cachedImage)
+        => target switch
+        {
+            // Validate through the viewed texture. The view's legacy allocator
+            // metadata accessor may resolve its source wrapper, which is not an
+            // admissible operation after modal recording has been accepted.
+            XRTextureViewBase textureView =>
+                TryMatchPublishedDescriptorImage(textureView.GetViewedTexture(), cachedImage),
+            XRTexture texture => TryMatchPublishedDescriptorImage(texture, cachedImage),
+            XRRenderBuffer renderBuffer =>
+                BackendContext.Resources.BackendObjects.Get(renderBuffer) is VkRenderBuffer vkRenderBuffer &&
+                vkRenderBuffer.TryGetPublishedBackingImage(out Image publishedImage) &&
+                publishedImage.Handle == cachedImage.Handle,
+            _ => false,
+        };
+
+    private bool TryMatchPublishedDescriptorImage(XRTexture texture, Image cachedImage)
+        => BackendContext.Resources.BackendObjects.Get(texture) is IVkImageDescriptorSource source &&
+           source.TryGetDescriptorSnapshot(
+               requestedViewType: null,
+               requestedAspectMask: null,
+               reason: "framebuffer recorded target snapshot",
+               allowSynchronousUpload: false,
+               out VkImageDescriptorSnapshot snapshot) &&
+           snapshot.Image.Handle == cachedImage.Handle;
 
     internal void EnsureCurrent()
     {

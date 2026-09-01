@@ -26,7 +26,7 @@ namespace XREngine.Rendering.Vulkan
                 {
                     hasPendingImGuiOverlay =
                         ImGuiOverlayAdmission.TryConsumeRenderableSnapshot(
-                            DesktopWsiOutput.IsInteractiveResizeInProgress,
+                            attempt.InteractiveResize,
                             out imguiOverlaySnapshot);
                 }
             }
@@ -115,6 +115,47 @@ namespace XREngine.Rendering.Vulkan
                             ResolveRecordedDesktopSwapchainWriteCount(
                                 ref attempt,
                                 attempt.SceneCommandBuffer);
+
+                        if (attempt.ResizeReleaseContinuity)
+                        {
+                            // The sealed successor remains incomplete. Do not submit
+                            // any of its scene work; recovery will replay a complete
+                            // base (or initialize one) before appending this frame's UI.
+                            attempt.ScenePrimaryRecordedThisFrame = false;
+                            attempt.SceneSwapchainWriteCount = 0;
+                            SettleRejectedDesktopCommandArtifacts(
+                                ref attempt,
+                                $"resize-release continuity: {attempt.ResizeReleaseBlocker}");
+                            if (TryRecoverRejectedDesktopImage(
+                                    ref attempt,
+                                    commandBufferDirtyFlagSet: false,
+                                    commandBuffersDirtiedAfterSceneRecord: false,
+                                    recordedSwapchainWriteCount: 0,
+                                    rejectionStage: "ResizeReleaseContinuity",
+                                    rejectedSubmitResult: null,
+                                    recoveryOverlaySnapshot: imguiOverlaySnapshot,
+                                    recoveryDynamicTextSecondaryCommandBuffer:
+                                        dynamicTextSecondaryCommandBuffer,
+                                    recoveryDynamicTextOperationCount:
+                                        dynamicTextOverlayOpCount,
+                                    resizeReleaseContinuity: true))
+                            {
+                                attempt.Reason = EDesktopFrameReason.ResizePending;
+                                return EDesktopFrameFlow.Completed;
+                            }
+
+                            _ = ConsumeDesktopAcquireForRecovery(
+                                ref attempt,
+                                "ResizeReleaseContinuity");
+                            ResolveDesktopAcquireBySwapchainRecreation(
+                                ref attempt,
+                                "Resize-release continuity recovery could not resolve the acquired image");
+                            CompleteDesktopFrameSlot(ref attempt);
+                            attempt.Stop(
+                                EDesktopFrameReason.ResizePending,
+                                EDesktopFrameRecoveryAction.RecreateSwapchain);
+                            return EDesktopFrameFlow.Stop;
+                        }
 
                         if (recordingResult.IsPresentNowFailure)
                         {

@@ -54,6 +54,7 @@ public partial class HumanoidComponent
         value.DefinitionContentSha256 ??= string.Empty;
         value.SourceModelContentSha256 ??= string.Empty;
         value.CoordinateContractId ??= string.Empty;
+        value.CanonicalPoseAuthoringModelId ??= string.Empty;
         value.SolverSettings ??= new HumanoidAvatarSolverSettings();
         value.BodyAxes ??= new HumanoidAvatarBodyAxes();
         value.Bones ??= [];
@@ -123,11 +124,24 @@ public partial class HumanoidComponent
         HumanoidAvatarSolverSettings solverSettings = BuildSolverSettings(previous);
         HumanoidAvatarBodyAxes bodyAxes = BuildBodyAxes(previous);
         float modelUnitsPerMeter = ResolveModelUnitsPerMeter(previous);
-        float humanScale = ResolveHumanScale(previous, modelUnitsPerMeter);
         float muscleInputScale = float.IsFinite(Settings.MuscleInputScale)
             ? Settings.MuscleInputScale
             : 1.0f;
-        HumanoidAvatarBoneBinding[] bindings = BuildBoneBindings(previous, solverSettings, profileResult);
+        HumanoidAvatarBoneBinding[] bindings = BuildBoneBindings(
+            previous,
+            solverSettings,
+            bodyAxes,
+            profileResult);
+        HumanoidAvatarBodyDefinition? bodyDefinition = previous.BodyDefinition is null
+            || HumanoidAvatarBodyDefinitionFactory.IsGeneratedModelId(previous.BodyDefinition.ModelId)
+            ? HumanoidAvatarBodyDefinitionFactory.CreateDefault(bindings)
+            : CopyBodyDefinition(previous.BodyDefinition);
+        float humanScale = ResolveHumanScale(
+            previous,
+            modelUnitsPerMeter,
+            bodyAxes,
+            bodyDefinition,
+            bindings);
         HumanoidAvatarMuscleLimit[] muscleLimits = BuildMuscleLimits(previous);
         HumanoidAvatarTwistChain[] twistChains = BuildTwistChains(previous, solverSettings);
         HumanoidAvatarAuxiliaryBoneBinding[] auxiliaryBones = CopyAuxiliaryBones(previous.AuxiliaryBones);
@@ -137,6 +151,7 @@ public partial class HumanoidComponent
             twistChains,
             auxiliaryBones,
             bodyAxes,
+            bodyDefinition,
             solverSettings,
             humanScale,
             modelUnitsPerMeter,
@@ -160,11 +175,13 @@ public partial class HumanoidComponent
             skeletonSignature,
             sourceProvenance,
             sourceModelSignature,
+            HumanoidCanonicalPoseAuthoring.CurrentModelId,
             humanScale,
             modelUnitsPerMeter,
             muscleInputScale,
             solverSettings,
             bodyAxes,
+            bodyDefinition,
             bindings,
             muscleLimits,
             twistChains,
@@ -198,11 +215,13 @@ public partial class HumanoidComponent
             SourceProvenance = sourceProvenance,
             SourceModelContentSha256 = sourceModelSignature,
             CoordinateContractId = ImportedAnimationCoordinateContract.CurrentContractId,
+            CanonicalPoseAuthoringModelId = HumanoidCanonicalPoseAuthoring.CurrentModelId,
             HumanScale = humanScale,
             ModelUnitsPerMeter = modelUnitsPerMeter,
             MuscleInputScale = muscleInputScale,
             SolverSettings = solverSettings,
             BodyAxes = bodyAxes,
+            BodyDefinition = bodyDefinition,
             Bones = bindings,
             MuscleLimits = muscleLimits,
             TwistChains = twistChains,
@@ -428,6 +447,11 @@ public partial class HumanoidComponent
                 out diagnostic);
         }
 
+        if (definition.BodyDefinition is null)
+            return RejectAvatarDefinition(
+                "Avatar body metadata is missing. Refresh and confirm the avatar definition before playback.",
+                out diagnostic);
+
         var sourceDiagnostics = new List<string>(1);
         AppendSourceIdentityDiagnostics(
             definition.SourceProvenance,
@@ -472,14 +496,27 @@ public partial class HumanoidComponent
                 $"Avatar coordinate contract '{definition.CoordinateContractId}' does not match runtime contract '{ImportedAnimationCoordinateContract.CurrentContractId}'.",
                 out diagnostic);
 
+        if (!string.Equals(
+            definition.CanonicalPoseAuthoringModelId,
+            HumanoidCanonicalPoseAuthoring.CurrentModelId,
+            StringComparison.Ordinal))
+            return RejectAvatarDefinition(
+                "Avatar canonical-pose corrections were authored by a different contract. Refresh and confirm the avatar definition before playback.",
+                out diagnostic);
+
         HumanoidAvatarSolverSettings liveSolverSettings = CopySolverSettings(definition.SolverSettings);
-        HumanoidAvatarBoneBinding[] liveBindings = BuildBoneBindings(definition, liveSolverSettings, profileResult: null);
+        HumanoidAvatarBoneBinding[] liveBindings = BuildBoneBindings(
+            definition,
+            liveSolverSettings,
+            definition.BodyAxes,
+            profileResult: null);
         List<string> liveDiagnostics = ValidateDefinition(
             liveBindings,
             definition.MuscleLimits,
             definition.TwistChains,
             definition.AuxiliaryBones,
             definition.BodyAxes,
+            definition.BodyDefinition,
             liveSolverSettings,
             definition.HumanScale,
             definition.ModelUnitsPerMeter,
@@ -508,11 +545,13 @@ public partial class HumanoidComponent
             skeletonSignature,
             definition.SourceProvenance,
             definition.SourceModelContentSha256,
+            definition.CanonicalPoseAuthoringModelId,
             definition.HumanScale,
             definition.ModelUnitsPerMeter,
             definition.MuscleInputScale,
             liveSolverSettings,
             definition.BodyAxes,
+            definition.BodyDefinition,
             liveBindings,
             definition.MuscleLimits,
             definition.TwistChains,
@@ -566,10 +605,16 @@ public partial class HumanoidComponent
     private HumanoidAvatarBoneBinding[] BuildBoneBindings(
         HumanoidAvatarDefinitionMetadata previous,
         HumanoidAvatarSolverSettings solverSettings,
+        HumanoidAvatarBodyAxes bodyAxes,
         AvatarHumanoidProfileBuilder.ProfileResult? profileResult)
     {
         EHumanoidAvatarBoneRole[] roles = Enum.GetValues<EHumanoidAvatarBoneRole>();
         var bindings = new HumanoidAvatarBoneBinding[roles.Length];
+        var preservesAuthoredCorrections = new bool[roles.Length];
+        bool preservesGeneratedCanonicalCorrections = string.Equals(
+            previous.CanonicalPoseAuthoringModelId,
+            HumanoidCanonicalPoseAuthoring.CurrentModelId,
+            StringComparison.Ordinal);
         for (int i = 0; i < roles.Length; i++)
         {
             EHumanoidAvatarBoneRole role = roles[i];
@@ -585,8 +630,14 @@ public partial class HumanoidComponent
             bool preservesPriorBinding = oldBinding is not null
                 && string.Equals(oldBinding.StructuralSha256, structuralHash, StringComparison.Ordinal);
             bool preservesEditorBinding = preservesPriorBinding && oldBinding!.Locked;
+            bool preservesAuthoredSolverData = preservesPriorBinding
+                && (preservesEditorBinding || !IsAutomaticProfileSource(Settings.ProfileSource));
+            // Solver settings remain authored data. Generated corrections are
+            // retained only when their exact authoring contract still matches.
+            preservesAuthoredCorrections[i] = preservesAuthoredSolverData
+                && preservesGeneratedCanonicalCorrections;
             BoneAxisMapping axisMapping = BoneAxisMapping.Default;
-            bool hasAxisMapping = preservesPriorBinding && oldBinding!.HasAxisMapping;
+            bool hasAxisMapping = preservesAuthoredSolverData && oldBinding!.HasAxisMapping;
             if (hasAxisMapping)
                 axisMapping = oldBinding!.AxisMapping;
             else if (node is not null)
@@ -615,7 +666,7 @@ public partial class HumanoidComponent
                     ? Math.Clamp(evidence!.Confidence, 0.0f, 1.0f)
                     : ResolveBoneConfidence(node, oldBinding, profileResult);
 
-            Quaternion canonicalCorrection = preservesPriorBinding
+            Quaternion canonicalCorrection = preservesAuthoredSolverData
                 ? NormalizeFiniteQuaternion(oldBinding!.CanonicalPoseCorrection)
                 : node is not null && TryGetNeutralPoseStoredRotation(node, out Quaternion storedCorrection)
                     ? NormalizeFiniteQuaternion(storedCorrection)
@@ -633,22 +684,24 @@ public partial class HumanoidComponent
                 NeutralPoseSha256 = node is null ? string.Empty : ComputeNeutralPoseHash(neutralLocal),
                 NeutralLocalTransform = neutralLocal,
                 NeutralWorldTransform = neutralWorld,
+                CanonicalWorldTransform = neutralWorld,
                 NeutralLocalPosition = neutralPosition,
                 NeutralLocalRotation = neutralRotation,
+                CanonicalLocalRotation = neutralRotation,
                 NeutralLocalScale = neutralScale,
                 CanonicalPoseCorrection = canonicalCorrection,
-                PreRotation = preservesPriorBinding
+                PreRotation = preservesAuthoredSolverData
                     ? NormalizeFiniteQuaternion(oldBinding!.PreRotation)
                     : Quaternion.Identity,
-                PostRotation = preservesPriorBinding
+                PostRotation = preservesAuthoredSolverData
                     ? NormalizeFiniteQuaternion(oldBinding!.PostRotation)
                     : Quaternion.Identity,
-                RotationOrder = preservesPriorBinding
+                RotationOrder = preservesAuthoredSolverData
                     ? oldBinding!.RotationOrder
                     : EHumanoidAvatarRotationOrder.ZXY,
                 HasTranslationDoF = solverSettings.HasTranslationDoF
                     && SupportsTranslationDof(role),
-                JointLimit = preservesPriorBinding
+                JointLimit = preservesAuthoredSolverData
                     ? CopyJointLimit(oldBinding!.JointLimit)
                     : CreateDefaultJointLimit(role, node),
                 AxisMapping = hasAxisMapping ? axisMapping : BoneAxisMapping.Default,
@@ -670,8 +723,40 @@ public partial class HumanoidComponent
             };
         }
 
+        var roleNodes = new Dictionary<EHumanoidAvatarBoneRole, SceneNode>();
+        for (int i = 0; i < bindings.Length; i++)
+        {
+            SceneNode? mappedNode = GetBoneDefinition(bindings[i].Role).Node;
+            if (mappedNode is not null)
+                roleNodes[bindings[i].Role] = mappedNode;
+        }
+        if (UsesImportedCanonicalSkeleton(previous.SourceProvenance))
+        {
+            HumanoidCanonicalSkeletonAuthoring.Normalize(
+                bindings,
+                bodyAxes,
+                SceneNode,
+                _humanoidBindLocalPoses,
+                roleNodes);
+        }
+        HumanoidCanonicalPoseAuthoring.ApplyGeneratedCorrections(
+            bindings,
+            bodyAxes,
+            preservesAuthoredCorrections);
         return bindings;
     }
+
+    /// <summary>
+    /// Determines whether the source contract supplies an importer-canonical skeleton.
+    /// </summary>
+    /// <remarks>
+    /// Runtime-authored skeletons are passed directly to Unity's procedural avatar
+    /// builder, whose returned <c>HumanDescription.Skeleton</c> retains those captured
+    /// local rotations. Only a fingerprinted imported-model contract proves that the
+    /// bind hierarchy has already undergone importer canonicalisation.
+    /// </remarks>
+    private static bool UsesImportedCanonicalSkeleton(EHumanoidAvatarSourceProvenance provenance)
+        => provenance == EHumanoidAvatarSourceProvenance.ImportedModel;
 
     private List<string> ValidateDefinition(
         HumanoidAvatarBoneBinding[] bindings,
@@ -679,6 +764,7 @@ public partial class HumanoidComponent
         HumanoidAvatarTwistChain[] twistChains,
         HumanoidAvatarAuxiliaryBoneBinding[] auxiliaryBones,
         HumanoidAvatarBodyAxes bodyAxes,
+        HumanoidAvatarBodyDefinition? bodyDefinition,
         HumanoidAvatarSolverSettings solverSettings,
         float humanScale,
         float modelUnitsPerMeter,
@@ -710,7 +796,10 @@ public partial class HumanoidComponent
                 diagnostics.Add($"Error: role {binding.Role} has a non-finite or non-invertible neutral transform.");
             if (!IsFiniteInvertible(binding.NeutralWorldTransform))
                 diagnostics.Add($"Error: role {binding.Role} has a non-finite or non-invertible neutral world transform.");
+            if (!IsFiniteInvertible(binding.CanonicalWorldTransform))
+                diagnostics.Add($"Error: role {binding.Role} has a non-finite or non-invertible canonical world transform.");
             if (!IsFiniteNonZero(binding.NeutralLocalRotation)
+                || !IsFiniteNonZero(binding.CanonicalLocalRotation)
                 || !IsFiniteNonZero(binding.CanonicalPoseCorrection)
                 || !IsFiniteNonZero(binding.PreRotation)
                 || !IsFiniteNonZero(binding.PostRotation))
@@ -744,6 +833,7 @@ public partial class HumanoidComponent
 
         if (!bodyAxes.IsFiniteOrthonormal())
             diagnostics.Add("Error: avatar body axes are not finite and orthonormal.");
+        ValidateBodyDefinition(bodyDefinition, diagnostics);
         if (!AreFiniteSolverSettings(solverSettings))
             diagnostics.Add("Error: one or more humanoid solver settings are non-finite or outside their valid range.");
         if (!float.IsFinite(humanScale) || humanScale <= 1e-5f)
@@ -780,7 +870,8 @@ public partial class HumanoidComponent
 
     private HumanoidAvatarBodyAxes BuildBodyAxes(HumanoidAvatarDefinitionMetadata previous)
     {
-        if (previous.Status != EHumanoidAvatarDefinitionStatus.Uninitialized
+        if (!IsAutomaticProfileSource(Settings.ProfileSource)
+            && previous.Status != EHumanoidAvatarDefinitionStatus.Uninitialized
             && previous.BodyAxes.IsFiniteOrthonormal())
             return CopyBodyAxes(previous.BodyAxes);
 
@@ -820,16 +911,182 @@ public partial class HumanoidComponent
         };
     }
 
+    private static HumanoidAvatarBodyDefinition CopyBodyDefinition(HumanoidAvatarBodyDefinition source)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        return new HumanoidAvatarBodyDefinition
+        {
+            AlgorithmVersion = source.AlgorithmVersion,
+            ModelId = source.ModelId,
+            Segments = CopyBodySegments(source.Segments),
+            LeftHip = CopyBodyPoint(source.LeftHip),
+            RightHip = CopyBodyPoint(source.RightHip),
+            LeftShoulder = CopyBodyPoint(source.LeftShoulder),
+            RightShoulder = CopyBodyPoint(source.RightShoulder),
+            HipOrientationWeight = source.HipOrientationWeight,
+            ShoulderOrientationWeight = source.ShoulderOrientationWeight,
+        };
+    }
+
+    private static bool IsAutomaticProfileSource(string? profileSource)
+        => string.IsNullOrWhiteSpace(profileSource)
+        || string.Equals(profileSource, "auto-generated", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(profileSource, "Automatic", StringComparison.OrdinalIgnoreCase);
+
+    private static HumanoidAvatarBodyPoint CopyBodyPoint(HumanoidAvatarBodyPoint? source)
+        => source is null
+            ? null!
+            : new HumanoidAvatarBodyPoint
+            {
+                Role = source.Role,
+                LocalPosition = source.LocalPosition,
+            };
+
+    private static HumanoidAvatarBodySegment[] CopyBodySegments(HumanoidAvatarBodySegment[]? source)
+    {
+        if (source is null)
+            return null!;
+
+        var result = new HumanoidAvatarBodySegment[source.Length];
+        for (int i = 0; i < source.Length; i++)
+        {
+            HumanoidAvatarBodySegment? segment = source[i];
+            if (segment is null)
+                continue;
+
+            result[i] = new HumanoidAvatarBodySegment
+            {
+                Start = CopyBodyPoint(segment.Start),
+                End = CopyBodyPoint(segment.End),
+                CenterFraction = segment.CenterFraction,
+                MassFraction = segment.MassFraction,
+            };
+        }
+        return result;
+    }
+
+    private static void ValidateBodyDefinition(
+        HumanoidAvatarBodyDefinition? definition,
+        List<string> diagnostics)
+    {
+        if (definition is null)
+        {
+            diagnostics.Add(
+                "Error: avatar body metadata is missing. Refresh and confirm the avatar definition before playback.");
+            return;
+        }
+
+        if (definition.AlgorithmVersion != HumanoidAvatarBodyDefinition.CurrentAlgorithmVersion)
+        {
+            diagnostics.Add(
+                $"Error: avatar body metadata uses algorithm version {definition.AlgorithmVersion}; " +
+                $"expected {HumanoidAvatarBodyDefinition.CurrentAlgorithmVersion}.");
+        }
+        if (string.IsNullOrWhiteSpace(definition.ModelId))
+            diagnostics.Add("Error: avatar body metadata model ID is missing.");
+
+        ValidateBodyPoint(definition.LeftHip, "left hip", diagnostics);
+        ValidateBodyPoint(definition.RightHip, "right hip", diagnostics);
+        ValidateBodyPoint(definition.LeftShoulder, "left shoulder", diagnostics);
+        ValidateBodyPoint(definition.RightShoulder, "right shoulder", diagnostics);
+
+        HumanoidAvatarBodySegment[]? segments = definition.Segments;
+        if (segments is null)
+        {
+            diagnostics.Add("Error: avatar body metadata has no body-segment array.");
+        }
+        else
+        {
+            float totalMass = 0.0f;
+            bool hasInvalidMass = false;
+            for (int i = 0; i < segments.Length; i++)
+            {
+                HumanoidAvatarBodySegment? segment = segments[i];
+                if (segment is null)
+                {
+                    diagnostics.Add($"Error: avatar body segment {i} is null.");
+                    continue;
+                }
+
+                ValidateBodyPoint(segment.Start, $"segment {i} start", diagnostics);
+                ValidateBodyPoint(segment.End, $"segment {i} end", diagnostics);
+                if (!float.IsFinite(segment.CenterFraction)
+                    || segment.CenterFraction is < 0.0f or > 1.0f)
+                {
+                    diagnostics.Add($"Error: avatar body segment {i} has an invalid center fraction.");
+                }
+
+                if (!float.IsFinite(segment.MassFraction) || segment.MassFraction <= 0.0f)
+                {
+                    hasInvalidMass = true;
+                    diagnostics.Add($"Error: avatar body segment {i} has an invalid mass fraction.");
+                    continue;
+                }
+
+                totalMass += segment.MassFraction;
+            }
+
+            if (hasInvalidMass
+                || !float.IsFinite(totalMass)
+                || MathF.Abs(totalMass - 1.0f) > CompiledHumanoidBodyDefinition.MassSumTolerance)
+            {
+                diagnostics.Add("Error: avatar body segment mass fractions must be positive and sum to one.");
+            }
+        }
+
+        float orientationWeightSum = definition.HipOrientationWeight + definition.ShoulderOrientationWeight;
+        if (!IsNonNegativeFinite(definition.HipOrientationWeight)
+            || !IsNonNegativeFinite(definition.ShoulderOrientationWeight)
+            || !float.IsFinite(orientationWeightSum)
+            || orientationWeightSum <= 0.0f)
+        {
+            diagnostics.Add(
+                "Error: avatar body orientation weights must be finite, non-negative, and have a positive sum.");
+        }
+    }
+
+    private static void ValidateBodyPoint(
+        HumanoidAvatarBodyPoint? point,
+        string name,
+        List<string> diagnostics)
+    {
+        if (point is null)
+        {
+            diagnostics.Add($"Error: avatar body metadata {name} point is null.");
+            return;
+        }
+
+        if (!IsFinite(point.LocalPosition))
+            diagnostics.Add($"Error: avatar body metadata {name} point has a non-finite local position.");
+    }
+
     private float ResolveHumanScale(
         HumanoidAvatarDefinitionMetadata previous,
-        float modelUnitsPerMeter)
+        float modelUnitsPerMeter,
+        HumanoidAvatarBodyAxes bodyAxes,
+        HumanoidAvatarBodyDefinition? bodyDefinition,
+        HumanoidAvatarBoneBinding[] bindings)
     {
-        if (float.IsFinite(previous.HumanScale) && previous.HumanScale > 1e-5f)
+        if (!IsAutomaticProfileSource(Settings.ProfileSource)
+            && float.IsFinite(previous.HumanScale)
+            && previous.HumanScale > 1e-5f)
             return previous.HumanScale;
 
         float units = float.IsFinite(modelUnitsPerMeter) && modelUnitsPerMeter > 1e-5f
             ? modelUnitsPerMeter
             : 1.0f;
+        if (bodyDefinition is not null
+            && bodyAxes.IsFiniteOrthonormal()
+            && HumanoidAvatarBodyDefinitionFactory.TryCalculateNeutralCenter(
+                bodyDefinition,
+                bindings,
+                out Vector3 bodyCenter))
+        {
+            float centerHeight = Vector3.Dot(bodyCenter, bodyAxes.Up);
+            if (float.IsFinite(centerHeight) && MathF.Abs(centerHeight) > 1e-5f)
+                return MathF.Abs(centerHeight) / units;
+        }
+
         Vector3 hipsPosition = Hips.WorldBindPose.Translation;
         float legLength = 0.0f;
         int legCount = 0;
@@ -851,11 +1108,13 @@ public partial class HumanoidComponent
 
     private float ResolveModelUnitsPerMeter(HumanoidAvatarDefinitionMetadata previous)
     {
+        if (float.IsFinite(_sourceModelUnitsPerMeter) && _sourceModelUnitsPerMeter > 0.0f)
+            return _sourceModelUnitsPerMeter;
+        if (float.IsFinite(_sourceProfileUnitsPerMeter) && _sourceProfileUnitsPerMeter > 0.0f)
+            return _sourceProfileUnitsPerMeter;
         return float.IsFinite(previous.ModelUnitsPerMeter) && previous.ModelUnitsPerMeter > 0.0f
             ? previous.ModelUnitsPerMeter
-            : float.IsFinite(_sourceProfileUnitsPerMeter) && _sourceProfileUnitsPerMeter > 0.0f
-                ? _sourceProfileUnitsPerMeter
-                : 1.0f;
+            : 1.0f;
     }
 
     private string ResolveDefinitionSource(HumanoidAvatarDefinitionMetadata previous)
@@ -882,6 +1141,17 @@ public partial class HumanoidComponent
                 continue;
             }
 
+            // Unity's runtime AvatarBuilder default is narrower than the
+            // historical ModelImporter default for the optional Upper Chest.
+            // Persist the resolved range in the avatar definition so playback
+            // remains provenance-independent and never branches per frame.
+            if (previous.SourceProvenance == EHumanoidAvatarSourceProvenance.RuntimeAuthoredSkeleton
+                && !Settings.MuscleRotationDegRanges.ContainsKey(value)
+                && IsUpperChestMuscle(value))
+            {
+                range = new Vector2(-20.0f, 20.0f);
+            }
+
             HumanoidAvatarMuscleLimit? old = FindMuscleLimit(previous.MuscleLimits, value);
             if (old is not null
                 && previous.Status != EHumanoidAvatarDefinitionStatus.Uninitialized
@@ -897,6 +1167,11 @@ public partial class HumanoidComponent
         }
         return [.. limits];
     }
+
+    private static bool IsUpperChestMuscle(EHumanoidValue value)
+        => value is EHumanoidValue.UpperChestFrontBack
+            or EHumanoidValue.UpperChestLeftRight
+            or EHumanoidValue.UpperChestTwistLeftRight;
 
     private static HumanoidAvatarTwistChain[] BuildTwistChains(
         HumanoidAvatarDefinitionMetadata previous,
@@ -1007,11 +1282,13 @@ public partial class HumanoidComponent
             definition.SkeletonContentSha256,
             definition.SourceProvenance,
             definition.SourceModelContentSha256,
+            definition.CanonicalPoseAuthoringModelId,
             definition.HumanScale,
             definition.ModelUnitsPerMeter,
             definition.MuscleInputScale,
             definition.SolverSettings,
             definition.BodyAxes,
+            definition.BodyDefinition,
             definition.Bones,
             definition.MuscleLimits,
             definition.TwistChains,
@@ -1034,11 +1311,13 @@ public partial class HumanoidComponent
         string skeletonSignature,
         EHumanoidAvatarSourceProvenance sourceProvenance,
         string sourceModelSignature,
+        string canonicalPoseAuthoringModelId,
         float humanScale,
         float modelUnitsPerMeter,
         float muscleInputScale,
         HumanoidAvatarSolverSettings solverSettings,
         HumanoidAvatarBodyAxes bodyAxes,
+        HumanoidAvatarBodyDefinition? bodyDefinition,
         HumanoidAvatarBoneBinding[] bindings,
         HumanoidAvatarMuscleLimit[] muscleLimits,
         HumanoidAvatarTwistChain[] twistChains,
@@ -1051,6 +1330,7 @@ public partial class HumanoidComponent
         AppendCanonical(canonical, skeletonSignature);
         AppendCanonical(canonical, (int)sourceProvenance);
         AppendCanonical(canonical, sourceModelSignature);
+        AppendCanonical(canonical, canonicalPoseAuthoringModelId);
         AppendCanonical(canonical, humanScale);
         AppendCanonical(canonical, modelUnitsPerMeter);
         AppendCanonical(canonical, muscleInputScale);
@@ -1058,6 +1338,7 @@ public partial class HumanoidComponent
         AppendVector(canonical, bodyAxes.Right);
         AppendVector(canonical, bodyAxes.Up);
         AppendVector(canonical, bodyAxes.Forward);
+        AppendBodyDefinition(canonical, bodyDefinition);
 
         for (int i = 0; i < bindings.Length; i++)
         {
@@ -1068,6 +1349,8 @@ public partial class HumanoidComponent
             AppendCanonical(canonical, binding.ParentRole.HasValue ? (int)binding.ParentRole.Value : -1);
             AppendMatrix(canonical, binding.NeutralLocalTransform);
             AppendMatrix(canonical, binding.NeutralWorldTransform);
+            AppendQuaternion(canonical, binding.CanonicalLocalRotation);
+            AppendMatrix(canonical, binding.CanonicalWorldTransform);
             AppendQuaternion(canonical, binding.CanonicalPoseCorrection);
             AppendQuaternion(canonical, binding.PreRotation);
             AppendQuaternion(canonical, binding.PostRotation);
@@ -1566,6 +1849,52 @@ public partial class HumanoidComponent
         AppendCanonical(builder, settings.LegStretch);
         AppendCanonical(builder, settings.FeetSpacing);
         AppendCanonical(builder, settings.HasTranslationDoF);
+    }
+
+    private static void AppendBodyDefinition(StringBuilder builder, HumanoidAvatarBodyDefinition? definition)
+    {
+        AppendCanonical(builder, definition is not null);
+        if (definition is null)
+            return;
+
+        AppendCanonical(builder, definition.AlgorithmVersion);
+        AppendCanonical(builder, definition.ModelId);
+        AppendBodyPoint(builder, definition.LeftHip);
+        AppendBodyPoint(builder, definition.RightHip);
+        AppendBodyPoint(builder, definition.LeftShoulder);
+        AppendBodyPoint(builder, definition.RightShoulder);
+
+        HumanoidAvatarBodySegment[]? segments = definition.Segments;
+        AppendCanonical(builder, segments is not null);
+        if (segments is not null)
+        {
+            AppendCanonical(builder, segments.Length);
+            for (int i = 0; i < segments.Length; i++)
+            {
+                HumanoidAvatarBodySegment? segment = segments[i];
+                AppendCanonical(builder, segment is not null);
+                if (segment is null)
+                    continue;
+
+                AppendBodyPoint(builder, segment.Start);
+                AppendBodyPoint(builder, segment.End);
+                AppendCanonical(builder, segment.CenterFraction);
+                AppendCanonical(builder, segment.MassFraction);
+            }
+        }
+
+        AppendCanonical(builder, definition.HipOrientationWeight);
+        AppendCanonical(builder, definition.ShoulderOrientationWeight);
+    }
+
+    private static void AppendBodyPoint(StringBuilder builder, HumanoidAvatarBodyPoint? point)
+    {
+        AppendCanonical(builder, point is not null);
+        if (point is null)
+            return;
+
+        AppendCanonical(builder, (int)point.Role);
+        AppendVector(builder, point.LocalPosition);
     }
 
     private BoneDef GetBoneDefinition(EHumanoidAvatarBoneRole role)

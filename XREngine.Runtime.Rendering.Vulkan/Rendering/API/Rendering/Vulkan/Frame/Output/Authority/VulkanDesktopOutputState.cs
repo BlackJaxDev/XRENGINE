@@ -22,6 +22,7 @@ internal sealed class VulkanDesktopOutputState
     internal ImageView[]? ImageViews;
     internal Framebuffer[]? Framebuffers;
     internal Semaphore[]? PresentBridgeSemaphores;
+    internal VulkanWsiPresentCompletion? PresentCompletion;
     internal ulong[]? ImageTimelineValues;
     internal bool[]? ImageEverPresented;
 

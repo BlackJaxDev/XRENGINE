@@ -147,7 +147,11 @@ internal sealed partial class VulkanFrameLoop
     {
         VulkanDesktopWsiTargetDriver desktopWsiOutput =
             DesktopWsiOutput;
-        if (!_outputRuntime.Desktop.PresentScalingActive || !desktopWsiOutput.IsInteractiveResizeInProgress)
+        bool interactiveResizeDispatchActive =
+            desktopWsiOutput.IsInteractiveResizeInProgress ||
+            RuntimeInteractiveResizeDispatchState.IsActive;
+        if (!_outputRuntime.Desktop.PresentScalingActive ||
+            !interactiveResizeDispatchActive)
             return region;
 
         Vector2D<int> presentationExtent = desktopWsiOutput.ResizeExtents.PresentationExtent;

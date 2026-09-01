@@ -1,6 +1,6 @@
 # Dependency Inventory
 
-Generated: 2026-08-27T22:16:17-07:00
+Generated: 2026-08-31T11:13:27-07:00
 Commit: (not a git repo)
 
 Best-effort inventory of dependencies referenced by the XRENGINE solution: NuGet packages, git submodules, vendored source snapshots, and native/managed binaries that are referenced or shipped.
@@ -27,6 +27,8 @@ Notes:
 |---|---|---|---|---|
 | CDT | CoACD | artem-ogre | [MPL-2.0](licenses/github/CDT-MPL-2.0.txt) | https://github.com/artem-ogre/CDT |
 | fastgltf v0.9.0 | FastGltfBridge | Sean Apeler | [MIT](licenses/nested/fastgltf v0.9.0-MIT.md) | https://github.com/spnda/fastgltf/tree/v0.9.0 |
+| KaTeX v0.18.4 (including fonts and mhchem) | LocalAgentBroker.Tray | Khan Academy and contributors | [MIT AND Apache-2.0](licenses/nested/KaTeX v0.18.4 (including fonts and mhchem)-MIT AND Apache-2.0.txt) | https://github.com/KaTeX/KaTeX/tree/v0.18.4 |
+| markdown-it v15.0.0 (browser bundle) | LocalAgentBroker.Tray | Vitaly Puzrin, Alex Kocharin and contributors | [MIT AND BSD-2-Clause](licenses/nested/markdown-it v15.0.0 (browser bundle)-MIT AND BSD-2-Clause.txt) | https://github.com/markdown-it/markdown-it/tree/15.0.0 |
 | simdjson v3.12.3 | FastGltfBridge | simdjson authors | [Apache-2.0](licenses/nested/simdjson v3.12.3-Apache-2.0.txt) | https://github.com/simdjson/simdjson/tree/v3.12.3 |
 | Vulkan Memory Allocator v3.3.0 | VulkanMemoryAllocatorBridge | Advanced Micro Devices, Inc. (GPUOpen) | [MIT](licenses/nested/Vulkan Memory Allocator v3.3.0-MIT.txt) | https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator/tree/v3.3.0 |
 
@@ -59,6 +61,7 @@ Notes:
 | Microsoft.Build.Framework | 18.8.2 | dotnet | [MIT](licenses/nuget/Microsoft.Build.Framework-18.8.2-MIT.txt) | XREngine.Editor.csproj |
 | Microsoft.Data.Sqlite.Core | 10.0.10 | dotnet | [MIT](licenses/nuget/Microsoft.Data.Sqlite.Core-10.0.10-MIT.txt) | XREngine.Server.csproj |
 | Microsoft.NET.Test.Sdk | 18.8.1 | microsoft | [MIT](licenses/nuget/Microsoft.NET.Test.Sdk-18.8.1-MIT.txt) | XREngine.UnitTests.csproj |
+| Microsoft.Web.WebView2 | 1.0.4129.50 | Microsoft | [LICENSE.txt](licenses/nuget/Microsoft.Web.WebView2-1.0.4129.50-LICENSE.txt.txt) | LocalAgentBroker.Tray.csproj |
 | NAudio | 2.3.0 | naudio | [MIT](licenses/nuget/NAudio-2.3.0-MIT.txt) | XREngine.Audio.csproj, XREngine.Data.csproj |
 | NAudio.Lame | 2.1.0 | Corey-M | [MIT](licenses/nuget/NAudio.Lame-2.1.0-MIT.txt) | XREngine.Audio.csproj, XREngine.Data.csproj |
 | NAudio.Sdl2 | 2.2.6 | alextnull | [MIT](licenses/nuget/NAudio.Sdl2-2.2.6-MIT.txt) | XREngine.Audio.csproj |

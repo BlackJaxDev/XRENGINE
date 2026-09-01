@@ -13,9 +13,13 @@ namespace XREngine.Rendering.Vulkan
             ref VulkanFrameAttempt attempt,
             in RejectedDesktopFramePolicyDecision policy,
             bool imageWasEverPresented,
+            bool hasHeldContinuitySource,
+            in VulkanPresentationSourceTuple heldContinuitySource,
+            VulkanResidentTemplateDependencyLease? heldContinuitySourceLease,
+            bool requireHeldContinuitySource,
             out CommandPool commandPool,
             out CommandBuffer commandBuffer,
-            out bool replayedPresentationSource)
+            out bool definedBaseWritten)
         {
             commandPool = _commandRuntime.GetThreadGraphicsCommandPool(Api!, _deviceContext, ResourceRuntime);
             commandBuffer = _commandRuntime.AllocateTrackedCommandBuffer(
@@ -33,7 +37,12 @@ namespace XREngine.Rendering.Vulkan
                 commandBuffer,
                 in policy,
                 imageWasEverPresented,
-                out replayedPresentationSource);
+                hasHeldContinuitySource,
+                in heldContinuitySource,
+                heldContinuitySourceLease,
+                requireHeldContinuitySource,
+                out _,
+                out definedBaseWritten);
         }
 
         private void BeginRejectedDesktopTransition(
@@ -41,9 +50,15 @@ namespace XREngine.Rendering.Vulkan
             CommandBuffer commandBuffer,
             in RejectedDesktopFramePolicyDecision policy,
             bool imageWasEverPresented,
-            out bool replayedPresentationSource)
+            bool hasHeldContinuitySource,
+            in VulkanPresentationSourceTuple heldContinuitySource,
+            VulkanResidentTemplateDependencyLease? heldContinuitySourceLease,
+            bool requireHeldContinuitySource,
+            out bool replayedPresentationSource,
+            out bool definedBaseWritten)
         {
             replayedPresentationSource = false;
+            definedBaseWritten = false;
             CommandBufferBeginInfo beginInfo = new()
             {
                 SType = StructureType.CommandBufferBeginInfo,
@@ -61,13 +76,18 @@ namespace XREngine.Rendering.Vulkan
             if (policy.Disposition == ERejectedDesktopFrameDisposition.PresentLastCompletedContent)
                 replayedPresentationSource = TryRecordRejectedDesktopPresentationReplay(
                     ref attempt,
-                    commandBuffer);
+                    commandBuffer,
+                    hasHeldContinuitySource,
+                    in heldContinuitySource,
+                    heldContinuitySourceLease,
+                    requireHeldContinuitySource);
 
-            if (!replayedPresentationSource && policy.ShouldClearBeforePresent)
+            if (!replayedPresentationSource)
                 RecordRejectedDesktopInitializationClear(
                     attempt.ImageIndex,
                     commandBuffer,
                     imageWasEverPresented);
+            definedBaseWritten = true;
 
             VulkanTrackedCommandEncoder encoder = CreateRecoveryCommandEncoder();
             if (encoder.End(commandBuffer, cacheVariant: false) != Result.Success)
@@ -77,13 +97,35 @@ namespace XREngine.Rendering.Vulkan
 
         private bool TryRecordRejectedDesktopPresentationReplay(
             ref VulkanFrameAttempt attempt,
-            CommandBuffer commandBuffer)
+            CommandBuffer commandBuffer,
+            bool hasHeldContinuitySource,
+            in VulkanPresentationSourceTuple heldContinuitySource,
+            VulkanResidentTemplateDependencyLease? heldContinuitySourceLease,
+            bool requireHeldContinuitySource)
         {
             VulkanPresentationSourceTuple source =
-                _windowPresentSource.CaptureAnyCompleteBinding();
-                if (!ResourceRuntime.TryValidatePresentationSourceForReplay(
+                hasHeldContinuitySource
+                    ? heldContinuitySource
+                    : requireHeldContinuitySource
+                        ? default
+                        : _windowPresentSource.CaptureAnyCompleteBinding();
+            string unavailableReason;
+            bool sourceValid;
+            if (requireHeldContinuitySource)
+            {
+                sourceValid = ResourceRuntime
+                    .TryValidateRetainedPresentationSourceForReplay(
+                        source,
+                        heldContinuitySourceLease,
+                        out unavailableReason);
+            }
+            else
+            {
+                sourceValid = ResourceRuntime.TryValidatePresentationSourceForReplay(
                     source,
-                    out string unavailableReason))
+                    out unavailableReason);
+            }
+            if (!sourceValid)
             {
                 Debug.VulkanEvery(
                     $"Vulkan.Frame.{GetHashCode()}.RecoveryReplayUnavailable",

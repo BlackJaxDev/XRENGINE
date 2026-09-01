@@ -18,6 +18,7 @@ public partial class HumanoidComponent
     {
         ArgumentNullException.ThrowIfNull(owner);
         ArgumentNullException.ThrowIfNull(frame);
+        _lastNativeFrameAccepted = false;
         _skipNextScenePoseAfterImmediateStateMachineEvaluation = false;
         _pendingStateMachineRootMotionOwner = owner;
         _pendingStateMachineRootMotionFrame = frame;
@@ -63,389 +64,169 @@ public partial class HumanoidComponent
         }
     }
 
-    private bool TryFinalizeStateMachineRootMotionFrame(
-        CompiledHumanoidAvatarDefinition compiled)
+    /// <summary>
+    /// Blends pose-side Body targets, not compensated leaf Hips transforms.
+    /// The final muscle/TDoF blend is solved and recentered exactly once.
+    /// </summary>
+    private bool TryPrepareStateMachineBodyFrame(
+        CompiledHumanoidAvatarDefinition compiled,
+        ReadOnlySpan<float> muscles,
+        out Matrix4x4 requested,
+        out Matrix4x4 beforeProjection)
     {
+        requested = Matrix4x4.Identity;
+        beforeProjection = Matrix4x4.Identity;
         HumanoidStateMachineRootMotionFrame? frame = _pendingStateMachineRootMotionFrame;
         object? owner = _pendingStateMachineRootMotionOwner;
         if (frame is null || owner is null)
             return false;
 
-        _pendingStateMachineRootMotionFrame = null;
-        _pendingStateMachineRootMotionOwner = null;
-        SceneNode? hipsNode = compiled.GetNode(EHumanoidAvatarBoneRole.Hips);
-        if (hipsNode is null)
-        {
-            PublishComposedStateMachineRoot(owner, HumanoidProjectedRootPose.Identity);
-            return true;
-        }
-
-        // Equivalent full-weight override leaves share one Body/root allocation.
-        // Use the already-finalized native workspace rather than evaluating each
-        // leaf's projection-only sidecar. This keeps an identical transition or
-        // blend independent of leaf count while retaining one final TDoF solve.
-        if (TryGetEquivalentFullWeightOverride(frame, out HumanoidStateMachineRootMotionLeafState? directLeaf)
-            && directLeaf is not null)
-        {
-            // A full-weight equivalent state must follow the direct clip path exactly.
-            // In particular, do not first run leaf feet projection: that sidecar is
-            // only for multi-leaf composition and would add a root-Y offset absent
-            // from the corresponding direct exact seek.
-            return ApplyFullWeightSingleOverride(compiled, hipsNode, owner, directLeaf);
-        }
-
-        ResolveStateMachineFeetProjection(compiled, frame);
-
-        TransformBase hipsTransform = hipsNode.Transform;
-        if (hipsTransform.IsLocalMatrixDirty)
-            hipsTransform.RecalcLocal();
-        Matrix4x4 baseLocal = hipsTransform.LocalMatrix;
-        if (!Matrix4x4.Decompose(
-            baseLocal,
-            out Vector3 baseScale,
-            out Quaternion baseRotation,
-            out Vector3 baseTranslation))
-        {
-            PublishComposedStateMachineRoot(owner, HumanoidProjectedRootPose.Identity);
-            return true;
-        }
-        baseRotation = NormalizeOrIdentity(baseRotation);
-
         ReadOnlySpan<HumanoidStateMachineRootMotionLeafState?> leaves = frame.Leaves;
-        float overrideWeight = 0.0f;
         for (int i = 0; i < leaves.Length; i++)
         {
             HumanoidStateMachineRootMotionLeafState? leaf = leaves[i];
-            if (leaf is not null
-                && leaf.ContributionType == EHumanoidMotionContributionType.Override
-                && leaf.Weight > 0.0f)
-                overrideWeight += leaf.Weight;
+            if (leaf is null)
+                continue;
+            if (!float.IsFinite(leaf.Weight) || leaf.Weight < 0.0f
+                || !IsValidImportedBodySample(leaf.CurrentBody)
+                || !IsValidImportedBodySample(leaf.CanonicalBody))
+                return false;
         }
+        if (!TryResolveStateMachineFeetProjection(compiled, frame))
+            return false;
 
-        float baseWeight = Math.Max(0.0f, 1.0f - overrideWeight);
-        Vector3 blendedTranslation = baseTranslation;
-        Vector3 blendedRotationLog = Vector3.Zero;
-        Vector3 convertedBodyTranslationDelta = Vector3.Zero;
-        Vector3 convertedBodyRotationLog = Vector3.Zero;
+        Vector3 basePosition = compiled.BodyDefinition.NeutralBodyFrame.Translation;
+        Vector3 position = basePosition;
+        Vector3 rotationLog = Vector3.Zero;
+        Vector3 convertedPosition = Vector3.Zero;
+        Vector3 convertedRotationLog = Vector3.Zero;
         Vector3 projectedPosition = Vector3.Zero;
         Vector3 projectedRotationLog = Vector3.Zero;
+        Vector3 withinPosition = Vector3.Zero;
+        Vector3 withinRotationLog = Vector3.Zero;
         EHumanoidProjectedRootChannels projectedChannels = EHumanoidProjectedRootChannels.None;
-        Vector3 mappedBodyPosition = Vector3.Zero;
-        Vector4 mappedBodyRotationVector = Vector4.Zero;
-        AccumulateQuaternion(ref mappedBodyRotationVector, Quaternion.Identity, baseWeight);
-
+        EHumanoidProjectedRootChannels withinChannels = EHumanoidProjectedRootChannels.None;
+        Vector3 mappedPosition = Vector3.Zero;
+        Vector4 mappedRotationVector = Vector4.Zero;
+        float overrideWeight = 0.0f;
         for (int i = 0; i < leaves.Length; i++)
-        {
-            HumanoidStateMachineRootMotionLeafState? leaf = leaves[i];
-            if (leaf is null
-                || leaf.ContributionType != EHumanoidMotionContributionType.Override
-                || leaf.Weight <= 0.0f)
-                continue;
+            if (leaves[i] is { ContributionType: EHumanoidMotionContributionType.Override } leaf)
+                overrideWeight += leaf.Weight;
+        AccumulateQuaternion(ref mappedRotationVector, Quaternion.Identity, MathF.Max(0.0f, 1.0f - overrideWeight));
 
-            // Do not renormalize here. Direct blend trees intentionally permit raw
-            // child weights when NormalizeBlendValues is disabled; normalized trees
-            // and transitions already publish weights whose sum is one.
-            float weight = leaf.Weight;
-            if (!TryCalculateLeafHipsLocalPose(
-                compiled,
-                leaf,
-                out Vector3 leafTranslation,
-                out Quaternion leafRotation))
-                continue;
-
-            blendedTranslation += (leafTranslation - baseTranslation) * weight;
-            Quaternion localDelta = NormalizeOrIdentity(
-                Quaternion.Inverse(baseRotation) * leafRotation);
-            blendedRotationLog += QuaternionLog(localDelta) * weight;
-            CalculateLeafConvertedBodyDelta(
-                compiled,
-                leaf,
-                out Vector3 leafConvertedTranslation,
-                out Quaternion leafConvertedRotation);
-            convertedBodyTranslationDelta += leafConvertedTranslation * weight;
-            convertedBodyRotationLog += QuaternionLog(leafConvertedRotation) * weight;
-
-            HumanoidProjectedRootPose projectedRoot = leaf.UnwrappedProjectedRootPose;
-            projectedPosition += SelectProjectedRootPosition(projectedRoot) * weight;
-            if ((projectedRoot.Channels & EHumanoidProjectedRootChannels.RotationYaw) != 0)
-                projectedRotationLog += QuaternionLog(projectedRoot.Rotation) * weight;
-            projectedChannels |= projectedRoot.Channels;
-            mappedBodyPosition += leaf.CurrentBody.Position * weight;
-            AccumulateQuaternion(ref mappedBodyRotationVector, leaf.CurrentBody.Rotation, weight);
-        }
-
-        // Tangent-space composition is order-independent and reduces exactly to
-        // Slerp(base, leaf, weight) for a single contributor, matching the direct
-        // evaluator's partial-weight Body/root rotation semantics.
-        Quaternion blendedRotation = NormalizeOrIdentity(
-            baseRotation * QuaternionExp(blendedRotationLog));
-        Quaternion projectedRotation = QuaternionExp(projectedRotationLog);
-        Quaternion mappedBodyRotation = NormalizeQuaternionVector(
-            mappedBodyRotationVector,
-            Quaternion.Identity);
-        Vector3 additiveTranslation = Vector3.Zero;
-        Vector3 additiveRotationLog = Vector3.Zero;
-        Vector3 additiveConvertedBodyTranslation = Vector3.Zero;
-        Vector3 additiveConvertedBodyRotationLog = Vector3.Zero;
-        Vector3 additiveProjectedPosition = Vector3.Zero;
-        Vector3 additiveProjectedRotationLog = Vector3.Zero;
-
-        for (int i = 0; i < leaves.Length; i++)
-        {
-            HumanoidStateMachineRootMotionLeafState? leaf = leaves[i];
-            if (leaf is null
-                || leaf.ContributionType != EHumanoidMotionContributionType.Additive
-                || leaf.Weight <= 0.0f)
-                continue;
-
-            float weight = leaf.Weight;
-            if (TryCalculateLeafHipsLocalPose(
-                compiled,
-                leaf,
-                out Vector3 leafTranslation,
-                out Quaternion leafRotation))
-            {
-                additiveTranslation += (leafTranslation - baseTranslation) * weight;
-                Quaternion localDelta = NormalizeOrIdentity(
-                    Quaternion.Inverse(baseRotation) * leafRotation);
-                additiveRotationLog += QuaternionLog(localDelta) * weight;
-            }
-
-            CalculateLeafConvertedBodyDelta(
-                compiled,
-                leaf,
-                out Vector3 leafConvertedTranslation,
-                out Quaternion leafConvertedRotation);
-            additiveConvertedBodyTranslation += leafConvertedTranslation * weight;
-            additiveConvertedBodyRotationLog += QuaternionLog(leafConvertedRotation) * weight;
-
-            HumanoidProjectedRootPose additiveRoot = leaf.UnwrappedProjectedRootPose;
-            additiveProjectedPosition += SelectProjectedRootPosition(additiveRoot) * weight;
-            if ((additiveRoot.Channels & EHumanoidProjectedRootChannels.RotationYaw) != 0)
-                additiveProjectedRotationLog += QuaternionLog(additiveRoot.Rotation) * weight;
-            projectedChannels |= additiveRoot.Channels;
-        }
-
-        blendedTranslation += additiveTranslation;
-        blendedRotation = NormalizeOrIdentity(
-            blendedRotation * QuaternionExp(additiveRotationLog));
-        convertedBodyTranslationDelta += additiveConvertedBodyTranslation;
-        convertedBodyRotationLog += additiveConvertedBodyRotationLog;
-        projectedPosition += additiveProjectedPosition;
-        projectedRotation = NormalizeOrIdentity(
-            projectedRotation * QuaternionExp(additiveProjectedRotationLog));
-
-        if (hipsNode.GetTransformAs<Transform>(true) is Transform transform)
-            transform.SetLocalTranslationRotation(blendedTranslation, blendedRotation);
-        else
-            hipsTransform.DeriveLocalMatrix(
-                Matrix4x4.CreateScale(baseScale)
-                * Matrix4x4.CreateFromQuaternion(blendedRotation)
-                * Matrix4x4.CreateTranslation(blendedTranslation));
-
-        _currentImportedMappedBodySample = new HumanoidImportedBodySample
-        {
-            Position = mappedBodyPosition,
-            Rotation = mappedBodyRotation,
-            Channels = leaves.Length > 0
-                ? EHumanoidImportedBodySampleChannels.All
-                : EHumanoidImportedBodySampleChannels.None,
-        };
-        _currentConvertedBodyTranslationDelta = convertedBodyTranslationDelta;
-        _currentConvertedBodyRotationDelta = QuaternionExp(convertedBodyRotationLog);
-        PublishComposedStateMachineRoot(
-            owner,
-            new HumanoidProjectedRootPose(
-                projectedPosition,
-                projectedRotation,
-                projectedChannels));
-        return true;
-    }
-
-    private static bool TryGetEquivalentFullWeightOverride(
-        HumanoidStateMachineRootMotionFrame frame,
-        out HumanoidStateMachineRootMotionLeafState? result)
-    {
-        result = null;
-        float totalWeight = 0.0f;
-        ReadOnlySpan<HumanoidStateMachineRootMotionLeafState?> leaves = frame.Leaves;
         for (int i = 0; i < leaves.Length; i++)
         {
             HumanoidStateMachineRootMotionLeafState? leaf = leaves[i];
             if (leaf is null || leaf.Weight <= 0.0f)
                 continue;
 
-            if (!float.IsFinite(leaf.Weight)
-                || leaf.ContributionType != EHumanoidMotionContributionType.Override)
+            SetLeafBodyEvaluationFields(leaf, useCanonicalSample: false);
+            Matrix4x4 target = ApplyImportedBodyLoopPoseCorrection(
+                CalculateRequestedBodyFrame(compiled, leaf.Policy), leaf.CurrentLoopPoseCorrection);
+            if (!HumanoidBodyFrameMath.IsRigid(target))
                 return false;
+            Quaternion targetRotation = Quaternion.Normalize(Quaternion.CreateFromRotationMatrix(target));
+            Vector3 referencePosition = basePosition;
+            Quaternion referenceRotation = Quaternion.Identity;
+            if (leaf.ContributionType == EHumanoidMotionContributionType.Additive)
+            {
+                SetLeafBodyEvaluationFields(leaf, useCanonicalSample: true);
+                Matrix4x4 reference = CalculateRequestedBodyFrame(compiled, leaf.Policy);
+                if (!HumanoidBodyFrameMath.IsRigid(reference))
+                    return false;
+                referencePosition = reference.Translation;
+                referenceRotation = Quaternion.Normalize(Quaternion.CreateFromRotationMatrix(reference));
+            }
 
-            if (result is not null
-                && (result.Policy != leaf.Policy
-                    || !result.CanonicalBody.Equals(leaf.CanonicalBody)
-                    || !result.CurrentBody.Equals(leaf.CurrentBody)
-                    || result.SourceLoopCycle != leaf.SourceLoopCycle
-                    || result.CurrentLoopPoseCorrection != leaf.CurrentLoopPoseCorrection
-                    || result.BodyAllocationProjectedRootPose != leaf.BodyAllocationProjectedRootPose
-                    || result.UnwrappedProjectedRootPose != leaf.UnwrappedProjectedRootPose
-                    || !result.CanonicalProjectionMuscles.SequenceEqual(leaf.CanonicalProjectionMuscles)
-                    || !result.CurrentProjectionMuscles.SequenceEqual(leaf.CurrentProjectionMuscles)))
-                return false;
+            float weight = leaf.Weight;
+            position += (target.Translation - referencePosition) * weight;
+            rotationLog += QuaternionLog(Quaternion.Inverse(referenceRotation) * targetRotation) * weight;
+            CalculateLeafConvertedBodyDelta(compiled, leaf, out Vector3 convertedDelta, out Quaternion convertedRotation);
+            convertedPosition += convertedDelta * weight;
+            convertedRotationLog += QuaternionLog(convertedRotation) * weight;
 
-            result = leaf;
-            totalWeight += leaf.Weight;
+            HumanoidProjectedRootPose root = leaf.UnwrappedProjectedRootPose;
+            projectedPosition += SelectProjectedRootPosition(root) * weight;
+            if ((root.Channels & EHumanoidProjectedRootChannels.RotationYaw) != 0)
+                projectedRotationLog += QuaternionLog(root.Rotation) * weight;
+            projectedChannels |= root.Channels;
+            HumanoidProjectedRootPose within = leaf.BodyAllocationProjectedRootPose;
+            withinPosition += SelectProjectedRootPosition(within) * weight;
+            if ((within.Channels & EHumanoidProjectedRootChannels.RotationYaw) != 0)
+                withinRotationLog += QuaternionLog(within.Rotation) * weight;
+            withinChannels |= within.Channels;
+            if (leaf.ContributionType == EHumanoidMotionContributionType.Override)
+            {
+                mappedPosition += leaf.CurrentBody.Position * weight;
+                AccumulateQuaternion(ref mappedRotationVector, leaf.CurrentBody.Rotation, weight);
+            }
         }
 
-        return result is not null && MathF.Abs(totalWeight - 1.0f) <= 0.000001f;
-    }
-
-    private bool ApplyFullWeightSingleOverride(
-        CompiledHumanoidAvatarDefinition compiled,
-        SceneNode hipsNode,
-        object owner,
-        HumanoidStateMachineRootMotionLeafState leaf)
-    {
-        SetLeafBodyEvaluationFields(leaf, useCanonicalSample: false);
-        Matrix4x4 localPose = ApplyImportedBodyLoopPoseCorrection(
-            CalculateImportedBodyAllocatedLocalPose(
-                compiled,
-                _nativePoseWorkspace.GetLocalMatrix(EHumanoidAvatarBoneRole.Hips),
-                leaf.Policy),
-            leaf.CurrentLoopPoseCorrection);
-        if (!Matrix4x4.Decompose(localPose, out _, out Quaternion rotation, out Vector3 translation)
-            || !IsFinite(translation)
-            || !IsFiniteNonZero(rotation))
-        {
-            LogRejectedImportedHumanoidFrame("state-machine Body/root allocation was non-finite or unsolvable");
+        if (!IsFinite(position) || !IsFinite(rotationLog) || !IsFinite(projectedPosition)
+            || !IsFinite(projectedRotationLog) || !IsFinite(withinPosition) || !IsFinite(withinRotationLog)
+            || !IsFinite(convertedPosition) || !IsFinite(convertedRotationLog))
             return false;
-        }
+        requested = Matrix4x4.CreateFromQuaternion(QuaternionExp(rotationLog)) * Matrix4x4.CreateTranslation(position);
+        _bodyAllocationProjectedRootPose = new HumanoidProjectedRootPose(
+            withinPosition, QuaternionExp(withinRotationLog), withinChannels);
+        beforeProjection = requested * CreateProjectedRootMatrix(_bodyAllocationProjectedRootPose);
+        if (!HumanoidBodyFrameMath.IsRigid(requested) || !HumanoidBodyFrameMath.IsRigid(beforeProjection)
+            || !TryEvaluateNativeHumanoidPose(compiled, muscles, includeTranslationDof: true))
+            return false;
 
-        TransformBase hipsTransform = hipsNode.Transform;
-        rotation = Quaternion.Normalize(rotation);
-        if (hipsNode.GetTransformAs<Transform>(true) is Transform transform)
-            transform.SetLocalTranslationRotation(translation, rotation);
-        else
+        _currentImportedMappedBodySample = new HumanoidImportedBodySample
         {
-            if (hipsTransform.IsLocalMatrixDirty)
-                hipsTransform.RecalcLocal();
-            if (!Matrix4x4.Decompose(hipsTransform.LocalMatrix, out Vector3 scale, out _, out _))
-                return false;
-            hipsTransform.DeriveLocalMatrix(
-                Matrix4x4.CreateScale(scale)
-                * Matrix4x4.CreateFromQuaternion(rotation)
-                * Matrix4x4.CreateTranslation(translation));
-        }
-
-        _currentImportedMappedBodySample = leaf.CurrentBody;
-        CalculateLeafConvertedBodyDelta(compiled, leaf, out _currentConvertedBodyTranslationDelta, out _currentConvertedBodyRotationDelta);
-        HumanoidProjectedRootPose projectedRoot = leaf.UnwrappedProjectedRootPose;
-        if (leaf.SourceLoopCycle == 0L)
-        {
-            // The first exact state seek may expose an initialized-but-stale
-            // unwrapped cache. Reconstruct the within-cycle projection from the same
-            // sampled Body pair and compiled policy as direct playback. A nonzero
-            // source cycle retains the leaf's temporal unwrapped accumulation.
-            projectedRoot = CalculateProjectedRootPose(
-                leaf.CurrentBody.Position,
-                leaf.CanonicalBody.Position,
-                leaf.CurrentBody.Rotation,
-                leaf.CanonicalBody.Rotation,
-                compiled.HumanScale * compiled.ModelUnitsPerMeter,
-                1.0f,
-                leaf.Policy);
-        }
-        if (!leaf.Policy.BakePositionYIntoPose
-            && leaf.Policy.PositionYBasis is EImportedHumanoidRootPositionYBasis.Feet)
-        {
-            // Direct playback exposes the feet-projection channel even when its
-            // canonical-relative height is zero. The single-state path bypasses
-            // multi-leaf feet sampling, but preserves that channel contract.
-            projectedRoot = new HumanoidProjectedRootPose(
-                projectedRoot.Position,
-                projectedRoot.Rotation,
-                projectedRoot.Channels | EHumanoidProjectedRootChannels.PositionY);
-        }
-        PublishComposedStateMachineRoot(owner, projectedRoot);
+            Position = mappedPosition,
+            Rotation = NormalizeQuaternionVector(mappedRotationVector, Quaternion.Identity),
+            Channels = overrideWeight > 0.0f ? EHumanoidImportedBodySampleChannels.All : EHumanoidImportedBodySampleChannels.None,
+        };
+        _currentConvertedBodyTranslationDelta = convertedPosition;
+        _currentConvertedBodyRotationDelta = QuaternionExp(convertedRotationLog);
+        _currentProjectedRootPose = new HumanoidProjectedRootPose(
+            projectedPosition, QuaternionExp(projectedRotationLog), projectedChannels);
+        _stagedRootMotionInputPose = _currentProjectedRootPose;
+        _stagedRootMotionInputWeight = 1.0f;
+        _preFeetProjectedRootPose = _currentProjectedRootPose;
+        _preFeetBodyAllocationProjectedRootPose = _bodyAllocationProjectedRootPose;
+        _pendingProjectedRootMotionOwner = owner;
+        _hasPendingProjectedRootMotion = true;
+        _activeImportedBodyProjectionPolicy = null;
+        _activeImportedBodyProjectionOwner = owner;
+        _pendingImportedBodyLoopPoseCorrection = null;
+        _pendingStateMachineRootMotionFrame = null;
+        _pendingStateMachineRootMotionOwner = null;
         return true;
     }
 
-    private void ResolveStateMachineFeetProjection(
-        CompiledHumanoidAvatarDefinition compiled,
-        HumanoidStateMachineRootMotionFrame frame)
+    private bool TryResolveStateMachineFeetProjection(
+        CompiledHumanoidAvatarDefinition compiled, HumanoidStateMachineRootMotionFrame frame)
     {
         ReadOnlySpan<HumanoidStateMachineRootMotionLeafState?> leaves = frame.Leaves;
         for (int i = 0; i < leaves.Length; i++)
         {
             HumanoidStateMachineRootMotionLeafState? leaf = leaves[i];
-            if (leaf is null
-                || leaf.Weight <= 0.0f
-                || leaf.Policy.BakePositionYIntoPose
+            if (leaf is null || leaf.Weight <= 0.0f || leaf.Policy.BakePositionYIntoPose
                 || leaf.Policy.PositionYBasis is not EImportedHumanoidRootPositionYBasis.Feet)
                 continue;
 
             if (!leaf.TryGetCanonicalFeetY(out float canonicalFeetY))
             {
-                if (!TryEvaluateNativeHumanoidPose(
-                        compiled,
-                        leaf.CanonicalProjectionMuscles,
-                        includeTranslationDof: false,
-                        commit: false))
-                    continue;
+                if (!TryEvaluateNativeHumanoidPose(compiled, leaf.CanonicalProjectionMuscles, includeTranslationDof: false))
+                    return false;
                 SetLeafBodyEvaluationFields(leaf, useCanonicalSample: true);
                 if (!TryCalculateProjectedFeetHeight(compiled, leaf.Policy, out canonicalFeetY))
-                    continue;
+                    return false;
                 leaf.SetCanonicalFeetY(canonicalFeetY);
             }
-
-            if (!TryEvaluateNativeHumanoidPose(
-                    compiled,
-                    leaf.CurrentProjectionMuscles,
-                    // Translation DoF is staged only after leaf blending. Applying the
-                    // final blended value to every leaf would make root composition
-                    // depend on leaf count and order; the final authored pose still
-                    // consumes the blended DoF through the shared native solver.
-                    includeTranslationDof: false,
-                    commit: false))
-                continue;
+            // The current projection includes the final staged TDoF, just like
+            // direct playback. Canonical projection deliberately excludes it.
+            if (!TryEvaluateNativeHumanoidPose(compiled, leaf.CurrentProjectionMuscles, includeTranslationDof: true))
+                return false;
             SetLeafBodyEvaluationFields(leaf, useCanonicalSample: false);
-            if (TryCalculateProjectedFeetHeight(compiled, leaf.Policy, out float currentFeetY))
-                leaf.AddProjectedFeetDelta(currentFeetY - canonicalFeetY);
+            if (!TryCalculateProjectedFeetHeight(compiled, leaf.Policy, out float currentFeetY))
+                return false;
+            leaf.AddProjectedFeetDelta(currentFeetY - canonicalFeetY);
         }
-    }
-
-    private bool TryCalculateLeafHipsLocalPose(
-        CompiledHumanoidAvatarDefinition compiled,
-        HumanoidStateMachineRootMotionLeafState leaf,
-        out Vector3 translation,
-        out Quaternion rotation)
-    {
-        if (!TryEvaluateNativeHumanoidPose(
-                compiled,
-                leaf.CurrentProjectionMuscles,
-                includeTranslationDof: false,
-                commit: false))
-        {
-            translation = Vector3.Zero;
-            rotation = Quaternion.Identity;
-            return false;
-        }
-
-        SetLeafBodyEvaluationFields(leaf, useCanonicalSample: false);
-        Matrix4x4 localPose = ApplyImportedBodyLoopPoseCorrection(
-            CalculateImportedBodyAllocatedLocalPose(
-                compiled,
-                _nativePoseWorkspace.GetLocalMatrix(EHumanoidAvatarBoneRole.Hips),
-                leaf.Policy),
-            leaf.CurrentLoopPoseCorrection);
-        if (!Matrix4x4.Decompose(localPose, out _, out rotation, out translation)
-            || !IsFinite(translation)
-            || !IsFiniteNonZero(rotation))
-        {
-            translation = Vector3.Zero;
-            rotation = Quaternion.Identity;
-            return false;
-        }
-
-        rotation = Quaternion.Normalize(rotation);
         return true;
     }
 
@@ -466,48 +247,18 @@ public partial class HumanoidComponent
             canonicalRotation = ImportedHumanoidMirrorOperator.MirrorRotation(canonicalRotation);
             currentRotation = ImportedHumanoidMirrorOperator.MirrorRotation(currentRotation);
         }
-
-        Vector3 mappedPositionDelta = currentPosition - canonicalPosition;
-        translation = new Vector3(
-            mappedPositionDelta.X,
-            mappedPositionDelta.Z,
-            mappedPositionDelta.Y)
-            * (compiled.HumanScale * compiled.ModelUnitsPerMeter);
-        rotation = NormalizeOrIdentity(
-            Quaternion.Inverse(canonicalRotation) * currentRotation);
+        Vector3 delta = currentPosition - canonicalPosition;
+        translation = new Vector3(delta.X, delta.Z, delta.Y) * (compiled.HumanScale * compiled.ModelUnitsPerMeter);
+        rotation = NormalizeOrIdentity(Quaternion.Inverse(canonicalRotation) * currentRotation);
     }
 
-    private void SetLeafBodyEvaluationFields(
-        HumanoidStateMachineRootMotionLeafState leaf,
-        bool useCanonicalSample)
+    private void SetLeafBodyEvaluationFields(HumanoidStateMachineRootMotionLeafState leaf, bool useCanonicalSample)
     {
         _canonicalImportedBodySample = leaf.CanonicalBody;
-        _currentImportedMappedBodySample = useCanonicalSample
-            ? leaf.CanonicalBody
-            : leaf.CurrentBody;
+        _currentImportedMappedBodySample = useCanonicalSample ? leaf.CanonicalBody : leaf.CurrentBody;
         _importedBodySampleWeight = 1.0f;
-        _bodyAllocationProjectedRootPose = useCanonicalSample
-            ? new HumanoidProjectedRootPose(
-                Vector3.Zero,
-                Quaternion.Identity,
-                leaf.BodyAllocationProjectedRootPose.Channels)
-            : leaf.BodyAllocationProjectedRootPose;
+        _bodyAllocationProjectedRootPose = useCanonicalSample ? HumanoidProjectedRootPose.Identity : leaf.BodyAllocationProjectedRootPose;
         _activeImportedBodyProjectionPolicy = leaf.Policy;
-    }
-
-    private void PublishComposedStateMachineRoot(
-        object owner,
-        HumanoidProjectedRootPose pose)
-    {
-        _currentProjectedRootPose = pose;
-        _preFeetProjectedRootPose = pose;
-        _bodyAllocationProjectedRootPose = HumanoidProjectedRootPose.Identity;
-        _pendingProjectedRootMotionOwner = owner;
-        _hasPendingProjectedRootMotion = true;
-        _activeImportedBodyProjectionPolicy = null;
-        _activeImportedBodyProjectionOwner = owner;
-        _pendingImportedBodyLoopPoseCorrection = null;
-        CommitPendingProjectedRootMotion(owner);
     }
 
     private static void AccumulateQuaternion(

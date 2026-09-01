@@ -75,6 +75,7 @@ namespace XREngine.Rendering.Vulkan
             ulong dynamicUiBatchTextSignature,
             bool forceRecord = false,
             bool includeDepthAttachment = true,
+            bool releaseInlinePrimaryBeforeSecondaryMutation = false,
             SwapchainRecordingTarget recordingTarget = default,
             VulkanCommandRecordingPolicySnapshot policy = default)
         {
@@ -104,6 +105,46 @@ namespace XREngine.Rendering.Vulkan
                         dynamicUiBatchTextSignature);
                 }
                 return true;
+            }
+
+            // A secondary cannot be reset while a completed immutable primary
+            // still executes it. Delayed UI has its own per-image overlay
+            // primary, so release only that artifact and retain the scene
+            // primary cache. Inline UI is owned by the primary being rebuilt;
+            // the caller explicitly admits releasing that primary before this
+            // secondary is changed.
+            CommandBuffer parentCommandBuffer = default;
+            if (!includeDepthAttachment)
+            {
+                CommandBuffer[]? overlays = CommandBuffers.DynamicUiOverlays;
+                if (overlays is null || imageIndex >= overlays.Length)
+                    return false;
+                parentCommandBuffer = overlays[imageIndex];
+            }
+            else if (releaseInlinePrimaryBeforeSecondaryMutation)
+            {
+                // The tracked reset below happens before the primary recorder
+                // can publish a replacement. Keep this owner ineligible for
+                // reuse if any later secondary or primary recording step fails.
+                variant.Dirty = true;
+                variant.DirtyReason = "DynamicUiSecondaryMutation";
+                parentCommandBuffer = variant.PrimaryCommandBuffer;
+            }
+
+            if (parentCommandBuffer.Handle != 0)
+            {
+                if (!TryResetCommandBufferWithLifetime(
+                        parentCommandBuffer,
+                        "DynamicUiSecondaryParentRelease",
+                        out Result parentResetResult))
+                {
+                    return false;
+                }
+                if (parentResetResult != Result.Success)
+                {
+                    throw new InvalidOperationException(
+                        $"Failed to reset dynamic UI secondary parent command buffer: {parentResetResult}.");
+                }
             }
 
             // An exact immutable-secondary hit consumes only the signature and

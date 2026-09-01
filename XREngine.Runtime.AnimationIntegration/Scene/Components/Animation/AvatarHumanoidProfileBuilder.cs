@@ -79,20 +79,31 @@ namespace XREngine.Components.Animation
         {
             var settings = component.Settings;
             var entries = new Dictionary<SceneNode, BoneProfileEntry>(ReferenceEqualityComparer.Instance);
-            var authoredMappings = new Dictionary<string, BoneAxisMapping>(
-                settings.BoneAxisMappings,
-                StringComparer.OrdinalIgnoreCase);
+            bool preservesAuthoredMappings = string.Equals(
+                settings.ProfileSource,
+                "manual",
+                StringComparison.OrdinalIgnoreCase);
+            var authoredMappings = preservesAuthoredMappings
+                ? new Dictionary<string, BoneAxisMapping>(settings.BoneAxisMappings, StringComparer.OrdinalIgnoreCase)
+                : new Dictionary<string, BoneAxisMapping>(StringComparer.OrdinalIgnoreCase);
+            if (!preservesAuthoredMappings)
+                settings.BoneAxisMappings.Clear();
             GetBindBodyBasis(component, out Vector3 bodyLeft, out Vector3 bodyUp, out Vector3 bodyForward);
 
             // ── Spine chain ─────────────────────────────────────────────
-            ProfileBone(entries, authoredMappings, settings, component.Hips, component.Spine, null);
-            ProfileBone(entries, authoredMappings, settings, component.Spine, component.Chest, component.Hips);
+            // A torso segment's chain direction establishes twist, but not the
+            // sign of flexion. Resolve flexion against the body-right axis so
+            // positive front/back has a stable anatomical meaning on rigs whose
+            // local bind axes differ or are reflected.
+            Vector3 torsoFlexionAxisWorld = -bodyLeft;
+            ProfileBone(entries, authoredMappings, settings, component.Hips, component.Spine, null, preferredFrontBackAxisWorld: torsoFlexionAxisWorld);
+            ProfileBone(entries, authoredMappings, settings, component.Spine, component.Chest, component.Hips, preferredFrontBackAxisWorld: torsoFlexionAxisWorld);
             var chestChild = component.UpperChest.Node is not null ? component.UpperChest : component.Neck;
-            ProfileBone(entries, authoredMappings, settings, component.Chest, chestChild, component.Spine);
+            ProfileBone(entries, authoredMappings, settings, component.Chest, chestChild, component.Spine, preferredFrontBackAxisWorld: torsoFlexionAxisWorld);
             if (component.UpperChest.Node is not null)
-                ProfileBone(entries, authoredMappings, settings, component.UpperChest, component.Neck, component.Chest);
-            ProfileBone(entries, authoredMappings, settings, component.Neck, component.Head, component.Chest);
-            ProfileBone(entries, authoredMappings, settings, component.Head, null, component.Neck.Node is not null ? component.Neck : component.Chest);
+                ProfileBone(entries, authoredMappings, settings, component.UpperChest, component.Neck, component.Chest, preferredFrontBackAxisWorld: torsoFlexionAxisWorld);
+            ProfileBone(entries, authoredMappings, settings, component.Neck, component.Head, component.Chest, preferredFrontBackAxisWorld: torsoFlexionAxisWorld);
+            ProfileBone(entries, authoredMappings, settings, component.Head, null, component.Neck.Node is not null ? component.Neck : component.Chest, preferredFrontBackAxisWorld: torsoFlexionAxisWorld);
 
             // ── Left side ───────────────────────────────────────────────
             ProfileLimbs(entries, authoredMappings, settings, component.Left, component, isLeft: true, bodyLeft, bodyUp, bodyForward);
@@ -186,7 +197,8 @@ namespace XREngine.Components.Animation
             HumanoidComponent.BoneDef? childBone,
             HumanoidComponent.BoneDef? parentBone,
             Vector3? preferredPitchAxisWorld = null,
-            Vector3? preferredRollAxisWorld = null)
+            Vector3? preferredRollAxisWorld = null,
+            Vector3? preferredFrontBackAxisWorld = null)
         {
             if (bone.Node is not SceneNode node || node.Name is not string boneName)
                 return;
@@ -207,7 +219,8 @@ namespace XREngine.Components.Animation
                         childBone,
                         parentBone,
                         preferredPitchAxisWorld,
-                        preferredRollAxisWorld);
+                        preferredRollAxisWorld,
+                        preferredFrontBackAxisWorld);
                     existingMapping = UpgradeMissingSigns(existingMapping, detected);
                     settings.BoneAxisMappings[boneName] = existingMapping;
                 }
@@ -230,7 +243,8 @@ namespace XREngine.Components.Animation
                 childBone,
                 parentBone,
                 preferredPitchAxisWorld,
-                preferredRollAxisWorld);
+                preferredRollAxisWorld,
+                preferredFrontBackAxisWorld);
 
             settings.BoneAxisMappings[boneName] = mapping;
             entries[node] = new BoneProfileEntry
@@ -291,7 +305,8 @@ namespace XREngine.Components.Animation
             HumanoidComponent.BoneDef? childBone,
             HumanoidComponent.BoneDef? parentBone,
             Vector3? preferredPitchAxisWorld,
-            Vector3? preferredRollAxisWorld)
+            Vector3? preferredRollAxisWorld,
+            Vector3? preferredFrontBackAxisWorld)
         {
             Vector3 dirWorld;
             string directionDescription;
@@ -373,7 +388,13 @@ namespace XREngine.Components.Animation
             // The two swing axes are perpendicular to that direction, so inferring their sign from
             // tiny off-axis bind-pose noise produces unstable left/right mirroring bugs. Reuse the
             // parent/avatar basis for swing polarity instead.
-            int frontBackSign = ResolveSwingAxisSign(parentBone, entries, authoredMappings, frontBackAxis);
+            int frontBackSign = ResolveFrontBackAxisSign(
+                preferredFrontBackAxisWorld,
+                invBind,
+                frontBackAxis,
+                parentBone,
+                entries,
+                authoredMappings);
             int leftRightSign = ResolveSwingAxisSign(parentBone, entries, authoredMappings, leftRightAxis);
 
             // Compute confidence based on how clearly one axis dominates
@@ -570,6 +591,25 @@ namespace XREngine.Components.Animation
                 return SignForAxis(parentMapping, axis);
 
             return 1;
+        }
+
+        private static int ResolveFrontBackAxisSign(
+            Vector3? preferredAxisWorld,
+            Matrix4x4 inverseBind,
+            int localAxis,
+            HumanoidComponent.BoneDef? parentBone,
+            IReadOnlyDictionary<SceneNode, BoneProfileEntry> entries,
+            IReadOnlyDictionary<string, BoneAxisMapping> authoredMappings)
+        {
+            if (preferredAxisWorld.HasValue)
+            {
+                Vector3 localAxisDirection = Vector3.TransformNormal(preferredAxisWorld.Value, inverseBind);
+                float component = GetAxisComponent(localAxisDirection, localAxis);
+                if (float.IsFinite(component) && MathF.Abs(component) > 1e-5f)
+                    return SignOrOne(component);
+            }
+
+            return ResolveSwingAxisSign(parentBone, entries, authoredMappings, localAxis);
         }
 
         /// <summary>

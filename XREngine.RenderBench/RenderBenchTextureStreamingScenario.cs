@@ -122,6 +122,7 @@ internal static class RenderBenchTextureStreamingScenario
                 completion.TransferBatchItemBudget <= 0 || completion.TransferBatchByteBudget <= 0)
                 throw new InvalidOperationException("Transfer evidence exceeded staging admission or has no explicit batch budgets.");
             RenderBenchTextureStreamingCancellationEvidence cancellation = ExerciseCancellation(scene, options, large, foreground, frames);
+            VulkanRetirementDiagnostic retirement = scene.Host.Renderer.CaptureRetirementDiagnostics();
             VulkanValidationDiagnosticSnapshot validation = scene.Host.CaptureValidationDiagnostics();
             if (validation.ErrorCount != 0)
                 throw new InvalidOperationException($"Vulkan validation reported {validation.ErrorCount} errors.");
@@ -134,6 +135,7 @@ internal static class RenderBenchTextureStreamingScenario
                     Baseline = baseline, Completion = completion, PayloadBytes = payloadBytes,
                     SubmittedFrames = frames.Count, VerifiedMipCount = actual.Count, VerifiedBytes = verifiedBytes,
                     ExpectedMipSha256 = [.. expected], ActualMipSha256 = [.. actual], Tickets = statuses, Boundaries = [.. boundaries],
+                    Retirement = retirement,
                     Cancellation = cancellation,
                 },
             };

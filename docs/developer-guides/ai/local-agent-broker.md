@@ -21,17 +21,43 @@ Internet-facing editor bridge.
 
 `XREngine.Editor` references the shared orchestration project. The broker
 and tray companion share only provider-neutral contracts and the file-backed
-history project. No NuGet package was added for this feature.
+history project. The tray alone references the Microsoft.Web.WebView2 NuGet
+package for its offline Markdown/math viewer; the broker and orchestration
+library do not acquire a browser dependency.
 
 The broker coalesces high-frequency observer deltas into atomic history-record
-writes. The tray watches those record replacements and incrementally replaces
-only the changing line of its BCL-only Markdown preview; its slower periodic
-refresh remains a fallback for dropped filesystem notifications. Rich-text
-updates run with redraw suspended, then preserve the reader's viewport or ease
-toward the current scroll maximum when tail-following is active. Newly visible
-text fades from the surface color to its themed Markdown color. Theme selection
+writes. The tray watches those record replacements and updates an offline
+WebView2 preview, preserving unchanged Markdown blocks; its slower periodic
+refresh remains a fallback for dropped filesystem notifications. Preview updates
+preserve the reader's viewport and selection or ease toward the current scroll
+maximum when tail-following is active. Newly appended blocks fade in. Theme selection
 is stored in the shared UI settings as system, light, or dark; system mode
 resolves the Windows app theme.
+
+`BrokerConversationView` maps only the bundled `Preview/` directory to a private
+virtual HTTPS host. It sends snapshots with `PostWebMessageAsJson`, never script
+interpolation. The page uses markdown-it with raw HTML disabled and custom math
+tokens before Markdown escape processing. Code fences/spans remain owned by
+Markdown. KaTeX runs with `trust: false`, independent macro state per formula,
+bounded expansion and sizing, and HTML plus accessible MathML output. The mhchem
+and copy-tex extensions support science notation and copying selected equations.
+Unfinished math stays literal; parsing errors show escaped source and a diagnostic.
+
+The page's CSP disallows connections, images, frames, objects, and forms. The
+native host additionally denies resource requests outside the preview host,
+navigation away from its single entry page, permissions, downloads, and popups.
+No host objects are exposed. Only a trusted click on an HTTP(S) Markdown link
+can send the narrowly handled external-link message; the host validates its
+source and scheme again. Raw text, search, and **Copy response** operate on the
+original history record. The WebView2 user-data folder stays under the existing
+checkout-local broker UI root, in `webview2/`, separately from browser profiles.
+Missing runtime/assets or a failed preview produce an explicit raw-text fallback.
+
+Vendored asset versions, checksums, and notices are in
+`Tools/LocalAgentBroker.Tray/Preview/vendor/README.md`. The dependency inventory
+generator includes their consolidated notices. WebView2's unused WPF adapter is
+excluded from assembly resolution in the WinForms project to avoid a WindowsBase
+version conflict. The runtime remains an external Windows prerequisite.
 
 ## Run Contract
 

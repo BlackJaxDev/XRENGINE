@@ -33,7 +33,7 @@ internal unsafe partial class VkRenderProgram
             return LinkAfterAcquiringInterfaceLock(allowAsyncShaderCompile);
     }
 
-    private bool IsLinkConfigurationCurrent()
+    internal bool IsLinkConfigurationCurrent()
     {
         if (!IsLinked)
             return false;

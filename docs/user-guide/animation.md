@@ -23,9 +23,9 @@ For editor clip inspection, use the animation clip editor panel where available.
 Imported Unity humanoid clips expose a projected root pose through
 `HumanoidComponent.CurrentProjectedRootPose` and its consecutive change through
 `CurrentRootMotionDelta`. Check `EHumanoidProjectedRootChannels` before reading
-XZ, Y, or yaw. Each channel is enabled only when the clip import policy and the
-loaded avatar calibration support it; unsupported or mismatched calibration is
-reported as an invalid channel instead of a guessed value.
+XZ, Y, or yaw. Each channel is enabled only when the clip import policy and
+finalized avatar definition support it; unsupported or mismatched avatar data
+is rejected instead of guessed.
 
 `AnimationClipComponent.RootMotionApplicationMode` controls ownership:
 
@@ -40,8 +40,38 @@ cached endpoint transform and signed cycle count, so forward and reverse loops
 accumulate separately from the canonical-relative within-cycle pose. Playback
 starts, exact seeks, and other discontinuities begin a new temporal epoch.
 State-machine Body samples use quaternion-aware RootQ blending and compatible
-clip projection metadata, while explicit target application remains owned by a
-direct `AnimationClipComponent`.
+clip projection metadata. Explicit target application remains an explicit
+`AnimationClipComponent` choice; state-machine output can instead be consumed
+through the same projected-root publication path.
+
+## Humanoid Body Frame and Avatar Data
+
+Humanoid muscles do not treat Hips as the Body pivot. The final muscle pose can
+move the skeleton's weighted center and change its hip/shoulder orientation.
+XRENGINE recenters and reorients Hips in component/model-root space so the
+requested Body frame is retained. This compensation is part of pose solving;
+it is not scene locomotion, physics motion, contact correction, or a new
+RootT/RootQ sample.
+
+Avatar definitions now contain explicit `BodyDefinition` data: a model ID,
+algorithm version, weighted skeletal segments, and orientation landmarks. If
+an older finalized definition lacks this additive data, refresh the avatar
+definition and review/reconfirm it before playback. Runtime playback never
+silently fabricates missing Body data. The supplied
+`XRE.PublicHumanoidMassHierarchy.v1` preset is the ratified public-hierarchy
+model for the focused Unity 2022.3 contract. It does not claim private Mecanim
+constants or bit-exact parity.
+
+The Body solve applies to all 95 muscles, not a named subset of arm or torso
+controls. Some controls can leave the mass center unchanged. The current
+acceptance record includes fresh Unity comparisons and still reports differences
+in the default mass model and native joint poses; a successful native solve is
+not yet proof that a character matches Unity.
+
+`CurrentBodyFrameDiagnostic` describes the last successfully committed pre-IK
+Body solve, including provisional, requested, compensated, and final Hips
+data. It is useful for inspection and troubleshooting; a rejected frame leaves
+this diagnostic and the previously committed pose/root intact.
 
 ## Authored Humanoid IK Goals
 
@@ -51,6 +81,12 @@ all authored goals or apply them without requiring calibration. Runtime
 diagnostics identify goals that were ignored, skipped as uncalibrated, applied
 as authored, or applied with contact correction.
 
+For accepted imported humanoid frames, processing is atomic: final blended
+muscles and translation DoF are solved through FK, the Body is aligned and
+projected, the pose/root result is committed, and then authored IK consumes the
+committed Body frame rather than treating Hips as Body. A rejected input leaves
+the prior pose, root output, and IK frame in place.
+
 Contact correction is an explicit post-pose option. It can be disabled, clamp
 feet to a configured ground plane, or clamp feet and hands. Disabling it
 preserves the authored body-relative goal exactly; it never changes the Body or
@@ -59,5 +95,6 @@ projected-root calculation.
 ## Deeper Docs
 
 - [Animation API](../developer-guides/animation/animation-api.md)
+- [Phase 9A Body-frame investigation](../work/investigations/avatar/humanoid-body-frame-compensation-2026-08-31.md)
 - [VR Development](vr-development.md)
 - [Component System](components.md)

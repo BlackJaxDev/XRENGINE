@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Threading;
 using XREngine.Rendering.Materials;
 
 namespace XREngine.Rendering.Vulkan;
@@ -7,6 +9,8 @@ internal sealed partial class VulkanDescriptorManager
     private readonly object _releasedMaterialClosuresGate = new();
     private VulkanMaterialDescriptorClosureLease? _releasedMaterialClosuresHead;
     private VulkanMaterialDescriptorClosureLease? _releasedMaterialClosuresTail;
+    private VulkanRetirementMeter? _retirementMeter;
+    private int _releasedMaterialClosureCount;
     private long _materialClosureAcquires;
     private long _materialClosureReleases;
 
@@ -68,14 +72,28 @@ internal sealed partial class VulkanDescriptorManager
             else
                 _releasedMaterialClosuresTail.NextReleased = closure;
             _releasedMaterialClosuresTail = closure;
+            _releasedMaterialClosureCount++;
         }
     }
+
+    internal void ConfigureRetirementMeter(VulkanRetirementMeter retirementMeter)
+    {
+        ArgumentNullException.ThrowIfNull(retirementMeter);
+        if (_retirementMeter is not null && !ReferenceEquals(_retirementMeter, retirementMeter))
+            throw new InvalidOperationException("The descriptor manager cannot be rebound to another retirement meter.");
+        _retirementMeter = retirementMeter;
+    }
+
+    internal int GetReleasedMaterialDescriptorClosureCount()
+        => Volatile.Read(ref _releasedMaterialClosureCount);
 
     /// <summary>Drains without taking descriptor locks under the queue or command tracker lock.</summary>
     internal int DrainReleasedMaterialDescriptorClosures(int maxItems = 64)
     {
         int released = 0;
-        while (released < maxItems)
+        long started = Stopwatch.GetTimestamp();
+        long deadline = started + Stopwatch.Frequency / 4_000;
+        while (released < maxItems && Stopwatch.GetTimestamp() <= deadline)
         {
             VulkanMaterialDescriptorClosureLease? closure;
             lock (_releasedMaterialClosuresGate)
@@ -83,15 +101,34 @@ internal sealed partial class VulkanDescriptorManager
                 closure = _releasedMaterialClosuresHead;
                 if (closure is null)
                     break;
+                if (_retirementMeter is not null &&
+                    !_retirementMeter.TryAdmit(
+                        EVulkanRetirementWorkClass.Callback,
+                        1,
+                        _releasedMaterialClosureCount))
+                {
+                    _retirementMeter.ReportBacklog(
+                        EVulkanRetirementWorkClass.Callback,
+                        _releasedMaterialClosureCount,
+                        1);
+                    break;
+                }
                 _releasedMaterialClosuresHead = closure.NextReleased;
                 closure.NextReleased = null;
                 if (_releasedMaterialClosuresHead is null)
                     _releasedMaterialClosuresTail = null;
+                _releasedMaterialClosureCount--;
             }
             closure.ReleaseReceipts();
             Interlocked.Increment(ref _materialClosureReleases);
+            _retirementMeter?.RecordCompleted(EVulkanRetirementWorkClass.Callback);
             released++;
         }
+        if (_retirementMeter is not null)
+            _retirementMeter.ReportBacklog(
+                EVulkanRetirementWorkClass.Callback,
+                Volatile.Read(ref _releasedMaterialClosureCount),
+                0);
         return released;
     }
 }

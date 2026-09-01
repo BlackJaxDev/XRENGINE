@@ -7,5 +7,7 @@ internal readonly record struct VulkanImGuiPlatformWindowCommandResources(
     CommandBuffer[] CommandBuffers,
     Fence[] Fences,
     bool[] FrameFenceSubmitted,
+    Fence[] AcquireFences,
+    bool[] AcquireFenceSubmitted,
     Silk.NET.Vulkan.Semaphore[] ImageAvailableSemaphores,
     Silk.NET.Vulkan.Semaphore[] RenderFinishedSemaphores);

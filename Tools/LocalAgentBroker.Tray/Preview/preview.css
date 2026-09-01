@@ -1,0 +1,26 @@
+:root { color-scheme: light; --surface: #fff; --text: #262b34; --muted: #5f6878; --code: #f2f4f7; --link: #1c5ba6; --border: #dce0e6; --error: #b53636; }
+:root.dark { color-scheme: dark; --surface: #1f2228; --text: #e0e4eb; --muted: #9ea6b5; --code: #2a2e36; --link: #69a9f5; --border: #393e48; --error: #f27070; }
+* { box-sizing: border-box; }
+body { margin: 0; padding: 0 12px 20px 0; background: var(--surface); color: var(--text); font: 14px/1.55 "Segoe UI", sans-serif; overflow-wrap: anywhere; }
+section { margin: 0 0 24px; }
+h2.system-heading, h2.prompt-heading, h2.response-heading, h2.failure-heading { margin: 0 0 8px; font-size: 13px; letter-spacing: .03em; }
+.system-heading { color: #70569b; } .prompt-heading { color: #2665af; } .response-heading { color: #248052; } .failure-heading { color: var(--error); }
+.dark .system-heading { color: #be9ae6; } .dark .prompt-heading { color: #69a9f5; } .dark .response-heading { color: #5bbe7f; }
+.plain { white-space: pre-wrap; font: inherit; margin: 0; }
+p { margin: 0 0 14px; }
+h1, h2, h3, h4, h5, h6 { line-height: 1.3; margin: 22px 0 12px; }
+h1 { font-size: 24px; } h2 { font-size: 20px; } h3 { font-size: 17px; }
+li > p { margin: 4px 0; } ul, ol { padding-left: 26px; }
+blockquote { margin-left: 0; padding-left: 15px; border-left: 3px solid var(--border); color: var(--muted); }
+a { color: var(--link); }
+pre:not(.plain) { background: var(--code); padding: 12px; overflow-x: auto; border-radius: 5px; }
+code { font-family: "Cascadia Mono", Consolas, monospace; font-size: .92em; background: var(--code); padding: 2px 4px; border-radius: 3px; }
+pre code { padding: 0; }
+table { border-collapse: collapse; display: block; overflow-x: auto; margin-bottom: 16px; }
+td, th { border: 1px solid var(--border); padding: 6px 10px; text-align: left; }
+hr { border: 0; border-top: 1px solid var(--border); }
+.math-display { display: block; overflow-x: auto; overflow-y: hidden; padding: 6px 2px; margin: 12px 0; }
+.katex-display { margin: .4em 0; }
+.math-source { white-space: pre-wrap; font-family: "Cascadia Mono", Consolas, monospace; }
+.math-error { color: var(--error); text-decoration: underline dotted; text-underline-offset: 4px; }
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; scroll-behavior: auto !important; } }

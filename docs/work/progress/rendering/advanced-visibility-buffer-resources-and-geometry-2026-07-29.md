@@ -123,3 +123,14 @@ scene captures, and OpenGL/Vulkan attachment/barrier captures remain open in
 the phase-04 TODO. They must be completed when the advanced pipeline can be
 activated end to end; contract-only captures from the legacy renderer would
 not validate these resources.
+
+## Vulkan preparation admission (2026-08-31)
+
+Live Vulkan startup reached advanced-visibility admission but left the scene
+black because the early compute program reported pending indefinitely:
+`async Vulkan compute pipeline compilation is disabled`. The advanced compute
+program factory did not set `XRRenderProgram.AllowAsyncBackendCompile`, while
+the Vulkan compute-pipeline request correctly requires that explicit intent
+unless the caller is foreground-required. The factory now opts the four
+advanced visibility compute programs into asynchronous backend preparation;
+this does not change advanced-pipeline selection or add a CPU fallback.

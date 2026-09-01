@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Diagnostics;
@@ -780,34 +781,40 @@ internal sealed partial class VulkanCommandRuntime
         int frameSlot,
         int maxItems = 128)
     {
+        using var retirementTiming = resourceRuntime.RetirementMeter.MeasureDrain();
         List<RetiredCommandBuffer> list =
             resourceRuntime.Lifetime.Retirement.CommandBuffers[frameSlot];
-        List<RetiredCommandBuffer> ready = [];
+        List<RetiredCommandBuffer> ready = resourceRuntime.RetirementDrainScratch.CommandBuffers;
+        ready.Clear();
+        maxItems = Math.Min(maxItems, ready.Capacity);
         using (VulkanFrameLockScope.Enter(
                    resourceRuntime.Lifetime.Retirement.SyncRoot,
                    EVulkanFrameWaitReason.ResourceLifetimeLock))
         {
-            for (int index = 0;
-                 index < list.Count && ready.Count < maxItems;)
+            int scans = 0;
+            int scanLimit = resourceRuntime.RetirementMeter.ReserveScanLimit(EVulkanRetirementWorkClass.CommandArtifact, list, list.Count);
+            int index = resourceRuntime.RetirementMeter.GetRotatingScanStart(list, list.Count);
+            while (list.Count > 0 && ready.Count < maxItems && scans < scanLimit)
             {
+                index %= list.Count;
                 RetiredCommandBuffer candidate = list[index];
+                scans++;
                 if (!IsCommandBufferRetirementReady(
                         resourceRuntime,
                         candidate.CommandBuffer,
                         candidate.Ticket))
                 {
-                    index++;
+                    index = (index + 1) % list.Count;
                     continue;
                 }
 
+                if (!resourceRuntime.RetirementMeter.TryAdmit(EVulkanRetirementWorkClass.CommandArtifact, 1,
+                        VulkanResourceRetirementQueue.CountPendingNoLock(resourceRuntime.Lifetime.Retirement.CommandBuffers)))
+                    break;
                 ready.Add(candidate);
                 list.RemoveAt(index);
-                VulkanResourceRetirementQueue.ReleaseUniqueNoLock(
-                    frameSlot,
-                    unchecked((ulong)candidate.CommandBuffer.Handle),
-                    resourceRuntime.Lifetime.Retirement.CommandBufferHandles,
-                    resourceRuntime.Lifetime.Retirement.AllCommandBufferHandles);
             }
+            resourceRuntime.RetirementMeter.CompleteScan(EVulkanRetirementWorkClass.CommandArtifact, list, scans, index, list.Count);
         }
 
         for (int index = 0; index < ready.Count; index++)
@@ -826,6 +833,15 @@ internal sealed partial class VulkanCommandRuntime
             RemoveCommandBufferState(entry.CommandBuffer);
             resourceRuntime.CompleteCommandBufferDestruction(
                 entry.CommandBuffer);
+            using (VulkanFrameLockScope.Enter(
+                       resourceRuntime.Lifetime.Retirement.SyncRoot,
+                       EVulkanFrameWaitReason.ResourceLifetimeLock))
+                VulkanResourceRetirementQueue.ReleaseUniqueNoLock(
+                    frameSlot,
+                    unchecked((ulong)entry.CommandBuffer.Handle),
+                    resourceRuntime.Lifetime.Retirement.CommandBufferHandles,
+                    resourceRuntime.Lifetime.Retirement.AllCommandBufferHandles);
+            resourceRuntime.RetirementMeter.RecordCompleted(EVulkanRetirementWorkClass.CommandArtifact);
             if (CommandBuffers.TryReleaseOwnedSecondaryCommandBuffer(
                     entry.CommandPool,
                     entry.CommandBuffer,
@@ -848,35 +864,41 @@ internal sealed partial class VulkanCommandRuntime
         int frameSlot,
         int maxItems = 16)
     {
+        using var retirementTiming = resourceRuntime.RetirementMeter.MeasureDrain();
         List<RetiredCommandPool> list =
             resourceRuntime.Lifetime.Retirement.CommandPools[frameSlot];
-        List<RetiredCommandPool> ready = [];
+        List<RetiredCommandPool> ready = resourceRuntime.RetirementDrainScratch.CommandPools;
+        ready.Clear();
+        maxItems = Math.Min(maxItems, ready.Capacity);
         using (VulkanFrameLockScope.Enter(
                    resourceRuntime.Lifetime.Retirement.SyncRoot,
                    EVulkanFrameWaitReason.ResourceLifetimeLock))
         {
-            for (int index = 0;
-                 index < list.Count && ready.Count < maxItems;)
+            int scans = 0;
+            int scanLimit = resourceRuntime.RetirementMeter.ReserveScanLimit(EVulkanRetirementWorkClass.CommandArtifact, list, list.Count);
+            int index = resourceRuntime.RetirementMeter.GetRotatingScanStart(list, list.Count);
+            while (list.Count > 0 && ready.Count < maxItems && scans < scanLimit)
             {
+                index %= list.Count;
                 RetiredCommandPool candidate = list[index];
+                scans++;
                 if (!resourceRuntime.Lifetime.Tracker.IsRetirementReady(
                         candidate.Ticket) ||
                     !AreCommandPoolChildrenRetirementReady(
                         resourceRuntime,
                         candidate.CommandPool))
                 {
-                    index++;
+                    index = (index + 1) % list.Count;
                     continue;
                 }
 
+                if (!resourceRuntime.RetirementMeter.TryAdmit(EVulkanRetirementWorkClass.CommandArtifact, 1,
+                        VulkanResourceRetirementQueue.CountPendingNoLock(resourceRuntime.Lifetime.Retirement.CommandPools)))
+                    break;
                 ready.Add(candidate);
                 list.RemoveAt(index);
-                VulkanResourceRetirementQueue.ReleaseUniqueNoLock(
-                    frameSlot,
-                    candidate.CommandPool.Handle,
-                    resourceRuntime.Lifetime.Retirement.CommandPoolHandles,
-                    resourceRuntime.Lifetime.Retirement.AllCommandPoolHandles);
             }
+            resourceRuntime.RetirementMeter.CompleteScan(EVulkanRetirementWorkClass.CommandArtifact, list, scans, index, list.Count);
         }
 
         for (int index = 0; index < ready.Count; index++)
@@ -888,6 +910,15 @@ internal sealed partial class VulkanCommandRuntime
                 api.DestroyCommandPool(device, pool, null);
             resourceRuntime.CompleteCommandPoolChildDestructions(pool);
             resourceRuntime.CompleteCommandPoolDestruction(pool);
+            using (VulkanFrameLockScope.Enter(
+                       resourceRuntime.Lifetime.Retirement.SyncRoot,
+                       EVulkanFrameWaitReason.ResourceLifetimeLock))
+                VulkanResourceRetirementQueue.ReleaseUniqueNoLock(
+                    frameSlot,
+                    pool.Handle,
+                    resourceRuntime.Lifetime.Retirement.CommandPoolHandles,
+                    resourceRuntime.Lifetime.Retirement.AllCommandPoolHandles);
+            resourceRuntime.RetirementMeter.RecordCompleted(EVulkanRetirementWorkClass.CommandArtifact);
         }
     }
 
@@ -997,6 +1028,7 @@ internal sealed partial class VulkanCommandRuntime
             ObjectType.CommandPool,
             commandPool.Handle);
         CommandBuffer[] children;
+        int childCount = 0;
         using (VulkanFrameLockScope.Enter(
                    tracker.SyncRoot,
                    EVulkanFrameWaitReason.ResourceLifetimeLock))
@@ -1009,29 +1041,34 @@ internal sealed partial class VulkanCommandRuntime
                 return true;
             }
 
-            children = new CommandBuffer[ownedChildren.Count];
-            int index = 0;
+            children = ArrayPool<CommandBuffer>.Shared.Rent(ownedChildren.Count);
             foreach (ulong childHandle in ownedChildren)
-                children[index++] = new CommandBuffer
+                children[childCount++] = new CommandBuffer
                 {
                     Handle = unchecked((nint)childHandle),
                 };
         }
 
-        for (int index = 0; index < children.Length; index++)
+        try
         {
-            CommandBuffer child = children[index];
-            if (resourceRuntime.IsCommandBufferPendingRetirement(child) ||
-                !IsCommandBufferRetirementReady(
-                    resourceRuntime,
-                    child,
-                    VulkanRetirementTicket.None))
+            for (int index = 0; index < childCount; index++)
             {
-                return false;
+                CommandBuffer child = children[index];
+                if (resourceRuntime.IsCommandBufferPendingRetirement(child) ||
+                    !IsCommandBufferRetirementReady(
+                        resourceRuntime,
+                        child,
+                        VulkanRetirementTicket.None))
+                {
+                    return false;
+                }
             }
+            return true;
         }
-
-        return true;
+        finally
+        {
+            ArrayPool<CommandBuffer>.Shared.Return(children, clearArray: false);
+        }
     }
 
     internal void RemoveCommandBufferState(CommandBuffer commandBuffer)

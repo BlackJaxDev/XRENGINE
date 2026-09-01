@@ -23,4 +23,23 @@ internal sealed class HumanoidStateMachineRootMotionFrame(int capacity)
         _leaves[Count++] = leaf;
         return true;
     }
+
+    /// <summary>
+    /// Starts rollback scopes for each persistent leaf before feet projection
+    /// can mutate its cached root poses.
+    /// </summary>
+    internal void BeginFeetProjectionTransaction()
+    {
+        for (int i = 0; i < Count; i++)
+            _leaves[i]?.BeginFeetProjectionTransaction();
+    }
+
+    /// <summary>
+    /// Commits or restores all leaf feet-projection cache changes as one frame.
+    /// </summary>
+    internal void ResolveFeetProjectionTransaction(bool accepted)
+    {
+        for (int i = 0; i < Count; i++)
+            _leaves[i]?.ResolveFeetProjectionTransaction(accepted);
+    }
 }

@@ -3033,7 +3033,21 @@ namespace XREngine.Rendering
                 using var mainThreadJobsSample = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRWindow.Timer.PostRenderMainThreadJobs");
                 // Draw the frame first, then spend a small budget on queued GPU work.
                 // This keeps texture uploads and property updates from delaying visible rendering.
-                RuntimeEngine.ProcessMainThreadTasks();
+                AbstractRenderer postRenderRenderer = _renderer;
+                if (postRenderRenderer.AcceptsBackendWork && !postRenderRenderer.IsDeviceLost)
+                {
+                    using var currentRendererScope = AbstractRenderer.EnterThreadCurrentScope(postRenderRenderer);
+                    bool wasActive = postRenderRenderer.Active;
+                    postRenderRenderer.Active = true;
+                    try
+                    {
+                        RuntimeEngine.ProcessMainThreadTasks();
+                    }
+                    finally
+                    {
+                        postRenderRenderer.Active = wasActive;
+                    }
+                }
             }
             RecordRenderThreadCpuTiming(renderFrameId, "XRWindow.PostRenderMainThreadJobs", phaseStart);
 
@@ -3234,10 +3248,22 @@ namespace XREngine.Rendering
 
                 // Process any pending async buffer uploads within the frame budget.
                 phaseStart = System.Diagnostics.Stopwatch.GetTimestamp();
-                if (!interactiveResizeFrame)
+                if (!interactiveResizeFrame &&
+                    frameRenderer.AcceptsBackendWork &&
+                    !frameRenderer.IsDeviceLost)
                 {
                     using var uploadSample = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRWindow.ProcessPendingUploads");
-                    frameRenderer.ProcessPendingUploads();
+                    using var currentRendererScope = AbstractRenderer.EnterThreadCurrentScope(frameRenderer);
+                    bool wasActive = frameRenderer.Active;
+                    frameRenderer.Active = true;
+                    try
+                    {
+                        frameRenderer.ProcessPendingUploads();
+                    }
+                    finally
+                    {
+                        frameRenderer.Active = wasActive;
+                    }
                 }
                 RecordRenderThreadCpuTiming(renderFrameId, "XRWindow.ProcessPendingUploads", phaseStart);
 
@@ -3334,7 +3360,9 @@ namespace XREngine.Rendering
                         long viewportsPhaseStart = System.Diagnostics.Stopwatch.GetTimestamp();
                         using (var renderViewportsSample = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRWindow.RenderWindowViewports"))
                         {
-                        if (!interactiveResizeFrame)
+                            // Live resize still needs new projection and screen-space UI
+                            // layout. Backend admission may defer an unready frame while
+                            // the expensive internal resource generation stays frozen.
                             RenderWindowViewports(useScenePanelMode, canRenderWindowViewports, mirrorByComposition);
                         }
                         RecordRenderThreadCpuTiming(renderFrameId, "XRWindow.RenderWindowViewports", viewportsPhaseStart);

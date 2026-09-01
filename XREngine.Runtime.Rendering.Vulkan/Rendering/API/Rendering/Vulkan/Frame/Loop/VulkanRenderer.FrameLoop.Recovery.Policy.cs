@@ -12,7 +12,8 @@ namespace XREngine.Rendering.Vulkan
             out bool imageWasEverPresented,
             out bool imageHasValidPresentedContent,
             out bool acquireAvailable,
-            bool allowPresentNowRetryInitializationClear)
+            bool allowPresentNowRetryInitializationClear,
+            bool resizeReleaseContinuity)
         {
             imageWasEverPresented =
                 OutputRuntime.Desktop.IsImageEverPresented(attempt.ImageIndex);
@@ -33,6 +34,21 @@ namespace XREngine.Rendering.Vulkan
                     imageHasValidPresentedContent,
                     allowStaleReuse:
                         attempt.WorkClass != ERenderOutputWorkClass.PresentNow);
+
+            // An explicitly classified incomplete successor preserves the held
+            // presentation by replaying a complete base before current overlays.
+            // It remains a recovery transaction and cannot complete the handoff.
+            if (resizeReleaseContinuity &&
+                _outputRuntime._desktopSwapchainPolicy.ResizeReleaseHandoffState ==
+                    VulkanResizeReleaseHandoffState.AwaitingSuccessorPresent &&
+                acquireAvailable &&
+                !_deviceLost)
+            {
+                return new RejectedDesktopFramePolicyDecision(
+                    ERejectedDesktopFrameDisposition.PresentLastCompletedContent,
+                    ERejectedDesktopFramePolicyReason
+                        .ReuseCompletedContent);
+            }
 
             // A retryable PresentNow rejection may submit a newly recorded
             // clear/overlay recovery frame. That is fresh output rather than

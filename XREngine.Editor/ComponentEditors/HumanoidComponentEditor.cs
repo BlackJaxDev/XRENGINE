@@ -173,13 +173,10 @@ public sealed class HumanoidComponentEditor : IXRComponentEditor
             ImGui.EndCombo();
         }
 
-        int neutralRotationCount = HumanoidNeutralPosePresets.GetRotationCount(neutralPreset);
         if (neutralPreset == EHumanoidNeutralPosePreset.None)
             ImGui.TextDisabled("Neutral pose preset disabled.");
-        else if (neutralRotationCount == 0)
-            ImGui.TextDisabled("Selected preset has no embedded rotations yet. Author or import canonical-pose corrections into the avatar definition.");
         else
-            ImGui.TextWrapped($"Neutral preset rotations: {neutralRotationCount}");
+            ImGui.TextWrapped("Native neutral joint frames are derived from the mapped avatar. No sampled avatar rotations are embedded.");
 
         bool debugVisibility = humanoid.RenderInfo.IsVisible;
         if (ImGui.Checkbox("Show Debug Skeleton", ref debugVisibility))

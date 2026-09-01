@@ -23,27 +23,9 @@ namespace XREngine.Rendering.Vulkan
                 "Vulkan.FrameLifecycle.DirtyAbortQueuePresent",
                 $"presenting rejected Vulkan frame {attempt.FrameNumber} ({rejectionStage})");
             Result presentResult = dispatch.Result;
-            if (!dispatch.Dispatched &&
-                presentResult != Result.ErrorDeviceLost)
-            {
-                ResolveDesktopAcquireBySwapchainRecreation(
-                    ref attempt,
-                    "Rejected-frame presentation dispatch failed before vkQueuePresent");
-                RecordDesktopPresentBookkeeping(
-                    ref attempt,
-                    presentResult,
-                    presentAccepted: false,
-                    hasValidFrameContent: false);
-                CompleteDesktopFrameSlot(ref attempt);
-                attempt.AdvanceTo(EDesktopFramePhase.Recovered);
-                attempt.Flow = EDesktopFrameFlow.Completed;
-                throw dispatch.AuxiliaryFailure ??
-                    new InvalidOperationException(
-                        "Rejected-frame presentation dispatch failed before vkQueuePresent.");
-            }
-
-            bool accepted =
-                presentResult is Result.Success or Result.SuboptimalKhr;
+            bool presentationReleaseEnqueued =
+                dispatch.Dispatched &&
+                VulkanWsiPresentResult.EnqueuesPresentationRelease(presentResult);
             if (presentResult == Result.ErrorDeviceLost)
             {
                 attempt.TransitionAcquireOwnership(
@@ -54,6 +36,38 @@ namespace XREngine.Rendering.Vulkan
                     presentResult);
             }
 
+            if (!presentationReleaseEnqueued)
+            {
+                if (VulkanWsiPresentResult.RequiresOutputQuarantine(
+                        dispatch.Dispatched,
+                        presentResult))
+                {
+                    QuarantineDesktopFrameAdmission(
+                        ref attempt,
+                        $"Dirty-abort QueuePresent returned an indeterminate WSI result: {presentResult}.");
+                }
+                ResolveDesktopAcquireBySwapchainRecreation(
+                    ref attempt,
+                    "Rejected-frame presentation did not enqueue WSI release work");
+                RecordDesktopPresentBookkeeping(
+                    ref attempt,
+                    presentResult,
+                    presentAccepted: false,
+                    hasValidFrameContent: false);
+                CompleteDesktopFrameSlot(ref attempt);
+                attempt.AdvanceTo(EDesktopFramePhase.Recovered);
+                attempt.Flow = EDesktopFrameFlow.Completed;
+                Exception? nonEnqueuePolicyFailure = ApplyDesktopPresentPolicy(
+                    ref attempt,
+                    presentResult,
+                    "Dirty abort QueuePresent");
+                throw dispatch.AuxiliaryFailure ?? nonEnqueuePolicyFailure ??
+                    new InvalidOperationException(
+                        $"Rejected-frame presentation did not enqueue WSI release work ({presentResult}).");
+            }
+
+            bool accepted =
+                presentResult is Result.Success or Result.SuboptimalKhr;
             attempt.TransitionAcquireOwnership(
                 EVulkanDesktopAcquireOwnership.ResolvedByPresentation);
             RecordDesktopPresentBookkeeping(

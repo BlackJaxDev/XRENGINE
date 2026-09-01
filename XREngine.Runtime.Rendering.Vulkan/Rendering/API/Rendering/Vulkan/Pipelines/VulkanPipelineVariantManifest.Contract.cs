@@ -9,7 +9,7 @@ namespace XREngine.Rendering.Vulkan;
 /// Immutable pipeline-variant demand derived from a compiled graph plan and its
 /// prepared frame operations. External image handles and frame-local matrices are excluded.
 /// </summary>
-internal sealed class VulkanPipelineVariantManifest
+internal sealed partial class VulkanPipelineVariantManifest
 {
     private readonly ReadOnlyCollection<VulkanPipelineVariantRequirement> _requirements;
     private int _warmupCompleted;
@@ -68,30 +68,17 @@ internal sealed class VulkanPipelineVariantManifest
                     ref ops.GetMeshTask(opIndex);
                 int meshTaskPassIndex = header.PassIndex;
                 FrameOpContext meshTaskContext = ops.GetContext(opIndex);
-                VulkanCompiledRenderGraphPlan meshTaskPlan = plan;
-                if (framePlan is not null &&
-                    framePlan.TryResolveRenderGraphPlan(
-                        in meshTaskContext,
-                        out VulkanRenderGraphPlan meshTaskRenderGraphPlan))
-                {
-                    meshTaskPlan = meshTaskRenderGraphPlan.CompiledGraph.Plan;
-                }
+                VulkanCompiledRenderGraphPlan meshTaskPlan =
+                    ResolveOperationPlan(plan, framePlan, in meshTaskContext);
 
                 RenderGraphPlanPass? meshTaskPlanPass = FindPass(
                     meshTaskPlan.Passes,
                     meshTaskPassIndex);
                 string meshTaskPassName = meshTaskPlanPass?.Name ??
                     $"Pass{meshTaskPassIndex}";
-                var meshTaskPreparationHash = new VulkanStableHash64(
-                    schemaVersion: 1);
-                meshTaskPreparationHash.Add(renderGraphPlanSignature);
-                meshTaskPreparationHash.Add(meshTaskPlan.CompatibilityIdentity);
-                meshTaskPreparationHash.Add(meshTask.Program.BindingId);
-                meshTaskPreparationHash.Add(meshTask.ProgramLinkGeneration);
-                meshTaskPreparationHash.Add(meshTask.ProducerSnapshot.Target?.GetHashCode() ?? 0);
-                meshTaskPreparationHash.Add(meshTask.ProducerSnapshot.FixedFunctionState.GetHashCode());
-                meshTaskPreparationHash.Add(meshTask.ProducerSnapshot.IndexedViewportScissors.Count);
-                meshTaskPreparationHash.Add(dynamicRendering);
+                ulong preparationSignature = ComputePreparationSignature(
+                    ops, opIndex, meshTaskPlan, dynamicRendering,
+                    renderGraphPlanSignature);
 
                 requirements[requirementIndex++] = new VulkanPipelineVariantRequirement(
                     opIndex,
@@ -107,13 +94,14 @@ internal sealed class VulkanPipelineVariantManifest
                     Multiview: meshTaskContext.MultiviewEnabled,
                     DynamicRendering: dynamicRendering,
                     LegacyRenderPass: !dynamicRendering,
-                    meshTaskPreparationHash.Value);
+                    preparationSignature);
 
                 hash.Add(opIndex);
                 hash.Add(meshTaskPassIndex);
                 hash.Add(meshTask.Program.BindingId);
                 hash.Add(meshTask.ProgramLinkGeneration);
                 hash.Add(meshTaskPlanPass?.RequiresPipelineReady ?? true);
+                hash.Add(preparationSignature);
                 continue;
             }
 
@@ -125,14 +113,8 @@ internal sealed class VulkanPipelineVariantManifest
             };
             int passIndex = header.PassIndex;
             FrameOpContext operationContext = ops.GetContext(opIndex);
-            VulkanCompiledRenderGraphPlan operationPlan = plan;
-            if (framePlan is not null &&
-                framePlan.TryResolveRenderGraphPlan(
-                    in operationContext,
-                    out VulkanRenderGraphPlan renderGraphPlan))
-            {
-                operationPlan = renderGraphPlan.CompiledGraph.Plan;
-            }
+            VulkanCompiledRenderGraphPlan operationPlan =
+                ResolveOperationPlan(plan, framePlan, in operationContext);
             RenderGraphPlanPass? planPass = FindPass(operationPlan.Passes, passIndex);
             string passName = planPass?.Name ?? $"Pass{passIndex}";
             bool shadow = passName.Contains("Shadow", StringComparison.OrdinalIgnoreCase);
@@ -145,40 +127,9 @@ internal sealed class VulkanPipelineVariantManifest
             bool stereo = draw.IsStereoPass || operationContext.StereoEnabled;
             bool multiview = operationContext.MultiviewEnabled;
 
-            var preparationHash = new VulkanStableHash64(schemaVersion: 1);
-            preparationHash.Add(renderGraphPlanSignature);
-            preparationHash.Add(operationPlan.CompatibilityIdentity);
-            preparationHash.Add(draw.PreparationCompatibilitySignature);
-            preparationHash.Add(draw.Renderer.BindingId);
-            preparationHash.Add(passIndex);
-            preparationHash.Add(header.TargetIdentity);
-            preparationHash.Add(draw.PreparedProgramIdentity);
-            preparationHash.Add(draw.PreparedProgram?.BindingId ?? 0u);
-            preparationHash.Add(draw.PreparedProgramLinkGeneration);
-            preparationHash.Add((int)draw.RasterizationSamples);
-            preparationHash.Add(draw.DepthTestEnabled);
-            preparationHash.Add(draw.DepthWriteEnabled);
-            preparationHash.Add((int)draw.DepthCompareOp);
-            preparationHash.Add(draw.StencilTestEnabled);
-            AddStencilState(ref preparationHash, draw.FrontStencilState);
-            AddStencilState(ref preparationHash, draw.BackStencilState);
-            preparationHash.Add(draw.StencilWriteMask);
-            preparationHash.Add((int)draw.ColorWriteMask);
-            preparationHash.Add((int)draw.CullMode);
-            preparationHash.Add((int)draw.FrontFace);
-            preparationHash.Add(draw.BlendEnabled);
-            preparationHash.Add(draw.AlphaToCoverageEnabled);
-            preparationHash.Add((int)draw.ColorBlendOp);
-            preparationHash.Add((int)draw.AlphaBlendOp);
-            preparationHash.Add((int)draw.SrcColorBlendFactor);
-            preparationHash.Add((int)draw.DstColorBlendFactor);
-            preparationHash.Add((int)draw.SrcAlphaBlendFactor);
-            preparationHash.Add((int)draw.DstAlphaBlendFactor);
-            preparationHash.Add(draw.ViewportScissorCount);
-            preparationHash.Add(materialOverride);
-            preparationHash.Add(stereo);
-            preparationHash.Add(multiview);
-            preparationHash.Add(dynamicRendering);
+            ulong drawPreparationSignature = ComputePreparationSignature(
+                ops, opIndex, operationPlan, dynamicRendering,
+                renderGraphPlanSignature);
 
             requirements[requirementIndex++] = new VulkanPipelineVariantRequirement(
                 opIndex,
@@ -194,7 +145,7 @@ internal sealed class VulkanPipelineVariantManifest
                 multiview,
                 dynamicRendering,
                 LegacyRenderPass: !dynamicRendering,
-                preparationHash.Value);
+                drawPreparationSignature);
 
             hash.Add(opIndex);
             hash.Add(passIndex);
@@ -204,22 +155,11 @@ internal sealed class VulkanPipelineVariantManifest
             hash.Add(materialOverride);
             hash.Add(stereo);
             hash.Add(multiview);
+            hash.Add(drawPreparationSignature);
         }
 
         return new VulkanPipelineVariantManifest(hash.Value, requirements);
 
-        static void AddStencilState(
-            ref VulkanStableHash64 hash,
-            Silk.NET.Vulkan.StencilOpState state)
-        {
-            hash.Add((int)state.FailOp);
-            hash.Add((int)state.PassOp);
-            hash.Add((int)state.DepthFailOp);
-            hash.Add((int)state.CompareOp);
-            hash.Add(state.CompareMask);
-            hash.Add(state.WriteMask);
-            hash.Add(state.Reference);
-        }
     }
 
     private static RenderGraphPlanPass? FindPass(

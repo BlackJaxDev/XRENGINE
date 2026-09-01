@@ -211,8 +211,6 @@ internal sealed partial class VulkanFrameLoop
         => DesktopSwapchainService.DrainStreamlineFrameGenerationDisableBeforePresent();
     internal void DrainRetiredDesktopSwapchainGenerations(bool force = false)
         => DesktopSwapchainService.DrainRetiredGenerations(force);
-    internal bool TryPrepareDesktopSwapchainRetirementMarkers(out Fence graphicsMarkerFence, out Fence presentMarkerFence)
-        => DesktopSwapchainService.TryPrepareRetirementMarkers(out graphicsMarkerFence, out presentMarkerFence);
     internal void QueueRetiredDesktopSwapchainGeneration(RetiredSwapchainGeneration generation)
         => DesktopSwapchainService.QueueRetiredGeneration(generation);
     internal bool TryRecreateDesktopSwapchain()

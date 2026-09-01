@@ -247,16 +247,20 @@ namespace XREngine.Rendering.Vulkan
             FramePlan framePlan = recordingState.FramePlan
                 ?? throw new VulkanPlanPreconditionException(
                     "Primary pipeline preparation requires a sealed frame plan.");
-            ulong frameStructuralSignature =
-                recordingState.RecordingStaticOperationSignature;
+            ulong targetCompatibilitySignature =
+                VulkanPipelineVariantManifest.ComputeTargetCompatibilitySignature(
+                    recordingState.ResourcePlanStamp.ResourceAllocationSignature,
+                    recordingState.SwapchainTarget,
+                    recordingState.Policy.UseDynamicRendering,
+                    ResourceRuntime.SwapchainRenderPass);
             VulkanPipelineVariantManifest pipelineVariantManifest =
                 ResourceRuntime.PipelineManager.GetOrBuildVariantManifest(
                     recordingState.RenderGraphPlan.CompiledGraph.Plan,
                     recordingState.Ops,
                     submissionStrategy,
                     recordingState.Policy.UseDynamicRendering,
-                    frameStructuralSignature,
-                    recordingState.FramePlan);
+                    targetCompatibilitySignature,
+                    framePlan);
             if (!TryPrepareAdvancedVisibilityOperations(ref recordingState))
             {
                 frameDataManifest = default!;
@@ -617,8 +621,11 @@ namespace XREngine.Rendering.Vulkan
                 }
                 if (requiresGraphicsTargetClosure)
                 {
-                targetWrapper!.EnsureCurrent();
-                if (!targetWrapper.TryCaptureRecordedRenderTargetSnapshot(
+                    // A deferrable output consumes only its preflighted native
+                    // target; EnsureCurrent may publish a resize-time backing.
+                    if (recordingState.Policy.AllowSynchronousResourceUploads)
+                        targetWrapper!.EnsureCurrent();
+                if (!targetWrapper!.TryCaptureRecordedRenderTargetSnapshot(
                         out VulkanRecordedRenderTargetSnapshot targetSnapshot))
                 {
                     recordingState.RecordingDeferredReason =
@@ -644,7 +651,7 @@ namespace XREngine.Rendering.Vulkan
                     return false;
                 }
                 targetClosure = new(
-                    request.Target,
+                        request.Target,
                     targetSnapshot,
                     usesDynamicRendering,
                     targetRenderPass,
@@ -1451,7 +1458,11 @@ namespace XREngine.Rendering.Vulkan
             int firstPendingRequirementIndex = -1;
             string firstPendingReason = string.Empty;
             long sliceStart = Stopwatch.GetTimestamp();
-            bool foregroundRequired = recordingState.Policy.FreshSerialRecording;
+            bool foregroundRequired =
+                recordingState.Policy.FreshSerialRecording &&
+                recordingState.Policy.IsPresentNow &&
+                recordingState.Policy.ReadinessPolicy ==
+                    ERenderOutputReadinessPolicy.BlockForExact;
             using (VulkanCpuStageScope cpuStage =
                    new(_frameTelemetry, EVulkanCpuStage.PrimaryPrewarm))
             {
@@ -1729,7 +1740,11 @@ namespace XREngine.Rendering.Vulkan
                     depthStencilReadOnly,
                     operationContext.PipelineInstance?.DebugName ??
                         "<no pipeline>",
-                    foregroundRequired: recordingState.Policy.FreshSerialRecording,
+                    foregroundRequired:
+                        recordingState.Policy.FreshSerialRecording &&
+                        recordingState.Policy.IsPresentNow &&
+                        recordingState.Policy.ReadinessPolicy ==
+                            ERenderOutputReadinessPolicy.BlockForExact,
                     out retryable,
                     out string pipelineReason))
             {

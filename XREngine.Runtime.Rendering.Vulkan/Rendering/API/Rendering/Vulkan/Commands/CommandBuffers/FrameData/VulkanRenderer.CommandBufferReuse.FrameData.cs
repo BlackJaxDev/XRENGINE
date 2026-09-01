@@ -310,6 +310,19 @@ namespace XREngine.Rendering.Vulkan
                 if (!refreshedReusableFrameData)
                     return false;
 
+                // Inline dynamic UI is executed by this cached scene primary.
+                // Its frame data cannot be refreshed in place without first
+                // releasing that primary's immutable reference to the secondary.
+                // The deferred-overlay path owns a separate overlay primary, so
+                // it can keep the scene cache and release only that overlay below.
+                if (dynamicUiFrameDataNeedsRerecord && !delayDynamicUiSecondaryRecording)
+                {
+                    TraceCommandChainPrimaryReuseRejection(
+                        imageIndex,
+                        "DynamicUiFrameData");
+                    return false;
+                }
+
                 if ((HasQueryFrameOps(ops) && !PrepareQueryFrameOpsForCommandBufferReuse(variant.PrimaryCommandBuffer, ops)) ||
                     (HasQueryFrameOps(dynamicUiBatchTextOps) && !PrepareQueryFrameOpsForCommandBufferReuse(variant.PrimaryCommandBuffer, dynamicUiBatchTextOps)))
                 {

@@ -259,6 +259,12 @@ namespace XREngine.Animation
                 OwningStateMachine?.NotifyHumanoidMotionContinuityChanged(EAnimMotionContinuityChange.StateEntry);
             }
 
+            // Sample the same advanced state clock that direct clip playback uses.
+            // Evaluating before this tick left the typed store one frame behind
+            // NormalizedPlaybackTime, so identical direct and graph clips produced
+            // different humanoid inputs despite reporting the same phase.
+            TickActiveStates(variables, delta, deltaTicks);
+
             currState.EvaluateValues(variables);
             if (NextState is AnimState nextToEvaluate
                 && !ReferenceEquals(nextToEvaluate, currState))
@@ -282,8 +288,6 @@ namespace XREngine.Animation
                 NextState = null;
                 CopyAnimationValuesFromState(currState);
             }
-
-            TickActiveStates(variables, delta, deltaTicks);
         }
 
         private void TickActiveStates(

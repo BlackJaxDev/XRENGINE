@@ -114,14 +114,26 @@ internal sealed partial class VulkanFrameLoop
         ResourceRuntime.BeginForcedRetirementDrain();
         try
         {
-            ForceFlushCompletedNonImageRetiredResources();
-            for (int pass = 0; pass < FrameSlotCount; pass++)
-            for (int frameSlot = 0; frameSlot < FrameSlotCount; frameSlot++)
-                ResourceRuntime.DrainRetiredImages(
-                    Api,
-                    _deviceContext.Device,
-                    frameSlot,
-                    int.MaxValue);
+            // Ordinary drains use fixed staging batches even in the forced
+            // budget scope. Continue across batches and dependency cascades;
+            // a fixed number of frame-slot passes can leave native children live.
+            while (true)
+            {
+                int pendingBefore = GetPendingRetirementWork();
+                long completedBefore = GetCompletedRetirementWork();
+                ForceFlushCompletedNonImageRetiredResources();
+                for (int frameSlot = 0; frameSlot < FrameSlotCount; frameSlot++)
+                    ResourceRuntime.DrainRetiredImages(
+                        Api,
+                        _deviceContext.Device,
+                        frameSlot,
+                        int.MaxValue);
+                int pendingAfter = GetPendingRetirementWork();
+                if (pendingAfter == 0)
+                    break;
+                if (pendingAfter >= pendingBefore && GetCompletedRetirementWork() == completedBefore)
+                    throw new InvalidOperationException("Forced Vulkan retirement made no progress; native ownership remains retained.");
+            }
         }
         finally
         {
@@ -158,6 +170,39 @@ internal sealed partial class VulkanFrameLoop
             DrainRetiredFramebuffers(frameSlot, int.MaxValue);
             DrainRetiredBuffers(frameSlot, int.MaxValue);
         }
+    }
+
+    private long GetCompletedRetirementWork()
+    {
+        long completed = 0;
+        VulkanRetirementMeterSnapshot snapshot = ResourceRuntime.RetirementMeter.GetSnapshot();
+        for (int index = 0; index <= (int)EVulkanRetirementWorkClass.Callback; index++)
+            completed += snapshot.GetCompleted((EVulkanRetirementWorkClass)index);
+        return completed;
+    }
+
+    private int GetPendingRetirementWork()
+    {
+        VulkanResourceRetirementQueue queue = ResourceRuntime.Lifetime.Retirement;
+        lock (queue.SyncRoot)
+            return VulkanResourceRetirementQueue.CountPendingNoLock(queue.Buffers) +
+                VulkanResourceRetirementQueue.CountPendingNoLock(queue.Images) +
+                VulkanResourceRetirementQueue.CountPendingNoLock(queue.Framebuffers) +
+                VulkanResourceRetirementQueue.CountPendingNoLock(queue.Pipelines) +
+                VulkanResourceRetirementQueue.CountPendingNoLock(queue.PipelineLayouts) +
+                VulkanResourceRetirementQueue.CountPendingNoLock(queue.DescriptorSetLayouts) +
+                VulkanResourceRetirementQueue.CountPendingNoLock(queue.DescriptorSets) +
+                VulkanResourceRetirementQueue.CountPendingNoLock(queue.DescriptorPools) +
+                VulkanResourceRetirementQueue.CountPendingNoLock(queue.QueryPools) +
+                VulkanResourceRetirementQueue.CountPendingNoLock(queue.BufferViews) +
+                VulkanResourceRetirementQueue.CountPendingNoLock(queue.CommandBuffers) +
+                VulkanResourceRetirementQueue.CountPendingNoLock(queue.CommandPools);
+    }
+
+    private void RequireRetirementOwnershipSettled()
+    {
+        if (GetPendingRetirementWork() != 0 || ResourceRuntime.Lifetime.Retirement.QuarantinedFailures.Count != 0)
+            throw new InvalidOperationException("Vulkan retirement still owns pending or quarantined native handles; device teardown was stopped.");
     }
 
     private static int GetRetiredResourceDrainCount(int queuedCount, int maxItems)

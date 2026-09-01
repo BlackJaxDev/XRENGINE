@@ -45,39 +45,45 @@ internal sealed partial class VulkanFrameLoop
                 $"Desktop image index {imageIndex} has no command artifact slot.");
         }
 
-        FrameOp[] textureUploadOperations;
-        FrameOp[] staticOperations;
-        FrameOp[] dynamicUiOperations;
-        VulkanFramePlanningSnapshot planningSnapshot;
-        bool meshMaterializationComplete;
-        string meshMaterializationDeferredReason;
-        VulkanPreparedMeshIngress preparedMeshIngress;
-        int staticOperationCount;
-        int dynamicUiOperationCount;
-        int textureUploadOperationCount;
+        FrameOp[] textureUploadOperations = [];
+        FrameOp[] drainedOperations = [];
+        FrameOp[] staticOperations = [];
+        FrameOp[] dynamicUiOperations = [];
+        VulkanFramePlanningSnapshot planningSnapshot = default;
+        bool meshMaterializationComplete = false;
+        string meshMaterializationDeferredReason = string.Empty;
+        VulkanPreparedMeshIngress preparedMeshIngress = _preparedMeshIngress;
+        int staticOperationCount = 0;
+        int dynamicUiOperationCount = 0;
+        int textureUploadOperationCount = 0;
+        int drainedOperationCount = 0;
+        bool drainedOperationsTransferred = false;
         VulkanAcceptedFramePlan? acceptedPlan =
             attempt.PresentNowReadinessCompleted
                 ? attempt.AcceptedFramePlan
                 : null;
-        if (acceptedPlan is not null)
+        bool submissionMarkersTransferred = false;
+        try
         {
-            staticOperations = acceptedPlan.StaticOperations;
-            dynamicUiOperations = acceptedPlan.DynamicUiOperations;
-            textureUploadOperations = acceptedPlan.TextureUploadOperations;
-            staticOperationCount = acceptedPlan.StaticOperationCount;
-            dynamicUiOperationCount = acceptedPlan.DynamicUiOperationCount;
-            textureUploadOperationCount =
-                acceptedPlan.TextureUploadOperationCount;
-            planningSnapshot = acceptedPlan.FrozenPlanningSnapshot;
-            preparedMeshIngress = acceptedPlan.PreparedMeshIngress;
-            meshMaterializationComplete = true;
-            meshMaterializationDeferredReason = string.Empty;
-        }
-        else
-        using (VulkanCpuStageScope preparationStage = new(
+            if (acceptedPlan is not null)
+            {
+                staticOperations = acceptedPlan.StaticOperations;
+                dynamicUiOperations = acceptedPlan.DynamicUiOperations;
+                textureUploadOperations = acceptedPlan.TextureUploadOperations;
+                staticOperationCount = acceptedPlan.StaticOperationCount;
+                dynamicUiOperationCount = acceptedPlan.DynamicUiOperationCount;
+                textureUploadOperationCount =
+                    acceptedPlan.TextureUploadOperationCount;
+                planningSnapshot = acceptedPlan.FrozenPlanningSnapshot;
+                preparedMeshIngress = acceptedPlan.PreparedMeshIngress;
+                meshMaterializationComplete = true;
+                meshMaterializationDeferredReason = string.Empty;
+            }
+            else
+            using (VulkanCpuStageScope preparationStage = new(
                    _telemetry,
                    EVulkanCpuStage.FrameOpPreparation))
-        {
+            {
             _preparedMeshIngress.Clear();
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
                        "Vulkan.PrepareFrameOps.MaterializeQueuedMeshes"))
@@ -98,9 +104,8 @@ internal sealed partial class VulkanFrameLoop
                 }
             }
 
-            FrameOp[] drainedOperations;
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
-                       "Vulkan.PrepareFrameOps.Drain"))
+                        "Vulkan.PrepareFrameOps.Drain"))
             {
                 using (VulkanCpuStageScope drainStage = new(
                            _telemetry,
@@ -108,6 +113,8 @@ internal sealed partial class VulkanFrameLoop
                 {
                     drainedOperations = _framePlanner.Operations.DrainForPrimary(
                         out textureUploadOperations);
+                    drainedOperationCount = drainedOperations.Length;
+                    textureUploadOperationCount = textureUploadOperations.Length;
                 }
             }
 
@@ -195,6 +202,12 @@ internal sealed partial class VulkanFrameLoop
                         sortedOperations,
                         out staticOperations,
                         out dynamicUiOperations);
+                    // The split either aliases the drained storage or copies its
+                    // operation references into the two output arrays. From this
+                    // point the outputs own all authoring snapshot cleanup.
+                    drainedOperationsTransferred = true;
+                    staticOperationCount = staticOperations.Length;
+                    dynamicUiOperationCount = dynamicUiOperations.Length;
                 }
                 if (!meshMaterializationComplete)
                 {
@@ -203,7 +216,10 @@ internal sealed partial class VulkanFrameLoop
                     // eligible for the recovery submit while cold resources converge.
                     VulkanCommandSynchronizationState.FailUnsubmittedSubmissionMarkers(
                         staticOperations);
+                    VulkanAdvancedVisibilityInputLease.ReleaseOperations(
+                        staticOperations);
                     staticOperations = [];
+                    staticOperationCount = 0;
                 }
             }
 
@@ -219,10 +235,7 @@ internal sealed partial class VulkanFrameLoop
             dynamicUiOperationCount = dynamicUiOperations.Length;
             textureUploadOperationCount = textureUploadOperations.Length;
             preparedMeshIngress = _preparedMeshIngress;
-        }
-        bool submissionMarkersTransferred = false;
-        try
-        {
+            }
             FrameOp[] plannerOperations = staticOperationCount > 0
                 ? staticOperations
                 : dynamicUiOperations;
@@ -244,15 +257,20 @@ internal sealed partial class VulkanFrameLoop
             _ = attempt.CompletePhase(
                 EVulkanFrameStage.ResourcePrepare,
                 EDesktopFrameFlow.Continue);
+            bool allowSynchronousResourceUploads =
+                !attempt.InteractiveResize &&
+                _resourceRuntime.AllowSynchronousResourceUploads;
             VulkanComputePreparationResult computePreparation =
                 acceptedPlan is not null
                     ? VulkanComputePreparationResult.Success
                     : _commandRuntime.PrepareComputeProgramsForFramePlan(
-                        staticOperations);
+                        staticOperations,
+                        allowSynchronousResourceUploads);
             if (acceptedPlan is null && computePreparation.Succeeded)
             {
                 computePreparation = _commandRuntime.PrepareComputeProgramsForFramePlan(
-                    dynamicUiOperations);
+                    dynamicUiOperations,
+                    allowSynchronousResourceUploads);
             }
             if (!computePreparation.Succeeded)
             {
@@ -264,12 +282,15 @@ internal sealed partial class VulkanFrameLoop
             // Desktop presentation is a PresentNow contract. Reusing a clean
             // command artifact would make a new frame claim old GPU work.
             const bool freshSerialRecording = true;
-            bool allowSynchronousResourceUploads =
-                _resourceRuntime.AllowSynchronousResourceUploads;
+            // A modal resize callback must not create replacement internal
+            // images, compile synchronously, or wait for a cold dependency.
+            // Existing published generations remain eligible for this attempt;
+            // anything else returns the acquired image through normal deferral.
             VulkanPrimaryCommandPlan primaryPlan = primaryPlans[imageIndex];
             string replanReason = string.Empty;
             bool nativeBarrierBindingsSuperseded = false;
-            for (int replanAttempt = 0; replanAttempt < 2; replanAttempt++)
+            int recordingAttemptLimit = attempt.InteractiveResize ? 1 : 2;
+            for (int replanAttempt = 0; replanAttempt < recordingAttemptLimit; replanAttempt++)
             {
                 nativeBarrierBindingsSuperseded = false;
                 ResourcePlannerRuntimeState plannerState = acceptedPlan is null
@@ -321,13 +342,18 @@ internal sealed partial class VulkanFrameLoop
                     planningSnapshot;
                 try
                 {
+                    // Even a fixed image generation can observe a newer buffer
+                    // publication. Refresh only its native binding metadata;
+                    // the false upload policy forbids native creation and a
+                    // modal callback gets one attempt before deferring.
                     if (acceptedPlan is null &&
                         !TryFreezeNativeBarrierBindings(
                             in planningSnapshot,
                             ref plannerState,
                             allowSynchronousResourceUploads,
                             out frozenPlanningSnapshot,
-                            out string resourcePreparationFailure))
+                            out string resourcePreparationFailure,
+                            maximumAttempts: recordingAttemptLimit))
                     {
                         replanReason = resourcePreparationFailure;
                         continue;
@@ -393,7 +419,16 @@ internal sealed partial class VulkanFrameLoop
                                     authoringDynamicOverlayOperationCount:
                                         dynamicUiOperationCount,
                                     authoringTextureUploadOperationCount:
-                                        textureUploadOperationCount);
+                                        textureUploadOperationCount,
+                                    desktopReadinessPolicyOverride:
+                                        attempt.InteractiveResize
+                                            ? ERenderOutputReadinessPolicy
+                                                .AllowDeferral
+                                            : null,
+                                    desktopWorkClassOverride:
+                                        attempt.InteractiveResize
+                                            ? ERenderOutputWorkClass.Background
+                                            : null);
                             }
                             catch (VulkanNativeBufferBindingSupersededException exception)
                             {
@@ -427,7 +462,8 @@ internal sealed partial class VulkanFrameLoop
                     computePreparation = _commandRuntime.PrepareComputeFramePlanForRecording(
                         imageIndex,
                         framePlan,
-                        in plannerState);
+                        in plannerState,
+                        allowSynchronousResourceUploads);
                 }
                 if (!computePreparation.Succeeded)
                 {
@@ -501,7 +537,7 @@ internal sealed partial class VulkanFrameLoop
             if (nativeBarrierBindingsSuperseded)
             {
                 return VulkanPrimaryCommandRecordingResult.Failed(
-                    $"primary command recording exhausted the two-attempt native buffer binding replan limit: {replanReason}",
+                    $"primary command recording exhausted the native buffer binding attempt limit ({recordingAttemptLimit}): {replanReason}",
                     attempt.ReadinessPolicy,
                     attempt.WorkClass,
                     attempt.FrameNumber,
@@ -510,10 +546,21 @@ internal sealed partial class VulkanFrameLoop
 
             return CreateDesktopRecordingReadinessFailure(
                 ref attempt,
-                $"primary command recording exceeded the two-attempt replan limit: {replanReason}");
+                $"primary command recording exceeded the attempt limit ({recordingAttemptLimit}): {replanReason}");
         }
         finally
         {
+            VulkanAdvancedVisibilityInputLease.ReleaseOperations(
+                staticOperations.AsSpan(0, staticOperationCount));
+            VulkanAdvancedVisibilityInputLease.ReleaseOperations(
+                dynamicUiOperations.AsSpan(0, dynamicUiOperationCount));
+            VulkanAdvancedVisibilityInputLease.ReleaseOperations(
+                textureUploadOperations.AsSpan(0, textureUploadOperationCount));
+            if (!drainedOperationsTransferred)
+            {
+                VulkanAdvancedVisibilityInputLease.ReleaseOperations(
+                    drainedOperations.AsSpan(0, drainedOperationCount));
+            }
             if (acceptedPlan is null)
                 _preparedMeshIngress.Clear();
             if (!submissionMarkersTransferred)
@@ -641,10 +688,19 @@ internal sealed partial class VulkanFrameLoop
             return false;
         }
 
-        if (!wrapper.TryPrepareAttachmentBackings(
-                allowSynchronousResourceUploads,
-                out reason))
+        if (allowSynchronousResourceUploads)
         {
+            if (!wrapper.TryPrepareAttachmentBackings(
+                    allowSynchronousResourceUploads,
+                    out reason))
+            {
+                return false;
+            }
+        }
+        else if (!wrapper.TryCaptureRecordedRenderTargetSnapshot(out _))
+        {
+            reason =
+                $"Vulkan framebuffer target '{target.GetDescribingName()}' has no published native attachment snapshot for non-blocking command recording.";
             return false;
         }
 
@@ -654,10 +710,10 @@ internal sealed partial class VulkanFrameLoop
             {
                 // The logical framebuffer is shared by desktop and OpenXR render plans,
                 // while its attachments resolve through the currently active physical
-                // resource generation. Refresh even an already-generated wrapper here so
-                // a preceding eye frame cannot leave the desktop target bound to eye-sized
-                // images. A window resize used to mask this by destroying the wrapper.
-                wrapper.EnsureCurrent();
+                // resource generation. A resize attempt only admits an already-current
+                // snapshot; EnsureCurrent can publish a replacement internal image.
+                if (allowSynchronousResourceUploads)
+                    wrapper.EnsureCurrent();
             }
             else if (allowSynchronousResourceUploads)
             {
@@ -2135,7 +2191,8 @@ internal sealed partial class VulkanFrameLoop
         ref ResourcePlannerRuntimeState plannerState,
         bool allowSynchronousResourceUploads,
         out VulkanFramePlanningSnapshot frozenSnapshot,
-        out string reason)
+        out string reason,
+        int maximumAttempts = 2)
     {
         VulkanRenderGraphPlan sourcePlan = planningSnapshot.RenderGraphPlan;
         VulkanBarrierPlan sourceBarriers = sourcePlan.Barriers;
@@ -2152,7 +2209,7 @@ internal sealed partial class VulkanFrameLoop
         // fallback plan. Refresh every currently required owner at the same
         // native-buffer epoch; otherwise command-plan resolution can select an
         // old cached barrier plan after the fallback has been refrozen.
-        for (int attempt = 0; attempt < 2; attempt++)
+        for (int attempt = 0; attempt < maximumAttempts; attempt++)
         {
             ulong revisionBeforeRefresh = _resourceRuntime.NativeBufferBindingRevision;
             if (!_framePlanner.TryFreezeResourcePlannerRenderGraphPlan(

@@ -37,6 +37,10 @@ internal sealed partial class VulkanFrameLoop
                 AcceptDesktopPresentNowPlan(ref attempt, ref watchdog);
             watchdog.RecordProgress();
 
+            ClassifyIncompleteResizeReleaseSuccessorBeforeAcquire(
+                acceptedPlan,
+                ref attempt);
+
             CompleteAcceptedPresentNowTextureReadiness(
                 acceptedPlan,
                 ref watchdog,
@@ -630,10 +634,7 @@ internal sealed partial class VulkanFrameLoop
     }
 
     private VulkanTextureUploadSchedulingContext CreatePresentNowUploadContext()
-        => new(
-            BackendObjectContext,
-            _resourceRuntime,
-            _commandRuntime);
+        => CreateTextureUploadSchedulingContext();
 
     private void CompleteAcceptedPresentNowTextureReadiness(
         VulkanAcceptedFramePlan acceptedPlan,
@@ -684,6 +685,24 @@ internal sealed partial class VulkanFrameLoop
                     dependencyChain,
                     failureDetail,
                     disposition: disposition);
+            }
+            if ((acceptedPlan.RequiredTextureUploads.UnresolvedCount > 0 ||
+                 _resourceRuntime.Uploads.HasRequiredUploadRegistrationPending(
+                     acceptedPlan.RequiredTextureUploads)) &&
+                !uploadProgress &&
+                !dependencyProgress)
+            {
+                // The streaming generation is known, but its Vulkan upload
+                // ticket is still waiting in an outer render-thread callback.
+                // Reject this snapshot so the inter-frame job pump can publish
+                // that ticket; blocking here would deadlock the callback behind
+                // PresentNow and eventually pause the renderer.
+                throw watchdog.CreateFailure(
+                    EVulkanPresentNowReadinessStage.RequiredUploadCompletion,
+                    "texture-upload-registration",
+                    dependencyChain,
+                    "Required texture upload registration is pending at the outer frame boundary.",
+                    disposition: EVulkanPresentNowFailureDisposition.RetryFrame);
             }
             if (uploadsReady &&
                 acceptedPlan.RequiredTextureUploads.AreAllReady)

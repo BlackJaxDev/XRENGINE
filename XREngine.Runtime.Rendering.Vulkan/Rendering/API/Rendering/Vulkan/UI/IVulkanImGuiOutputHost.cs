@@ -31,7 +31,9 @@ internal unsafe interface IVulkanImGuiOutputHost
         SurfaceKHR surface,
         Vector2D<int> framebufferSize,
         uint viewportId,
+        SwapchainKHR oldSwapchain,
         out VulkanImGuiPlatformSwapchainGeneration generation);
+    VulkanWsiPresentCompletion CreatePlatformPresentCompletion(int imageCount);
     VulkanImGuiPlatformWindowCommandResources CreatePlatformCommandResources(
         int frameCount,
         int imageCount,
@@ -39,13 +41,17 @@ internal unsafe interface IVulkanImGuiOutputHost
     VulkanImGuiDrawBufferResources CreatePlatformDrawBufferResources();
     PresentModeKHR[] GetPlatformPresentModes(SurfaceKHR surface);
     Result WaitForPlatformFence(Fence fence);
+    Result WaitForPlatformFenceAtShutdown(Fence fence);
     Result AcquirePlatformImage(
         SwapchainKHR swapchain,
         Silk.NET.Vulkan.Semaphore imageAvailable,
+        Fence acquireFence,
         out uint imageIndex);
     Result ResetPlatformFence(Fence fence);
     Result SubmitPlatformDraw(ref SubmitInfo submitInfo, Fence fence);
-    Result PresentPlatformViewport(ref PresentInfoKHR presentInfo);
+    Result PresentPlatformViewport(
+        ref PresentInfoKHR presentInfo,
+        in VulkanWsiPresentReservation reservation);
     bool RecordPlatformViewport(
         VulkanImGuiDrawBufferResources drawBuffers,
         CommandBuffer commandBuffer,

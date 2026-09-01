@@ -45,6 +45,7 @@ internal sealed class VulkanResourceRetirementQueue
     }
 
     internal object SyncRoot { get; } = new();
+    internal List<VulkanRetirementQuarantineEntry> QuarantinedFailures { get; } = [];
 
     internal List<RetiredBuffer>[] Buffers { get; }
     internal HashSet<ulong>[] BufferHandles { get; }
@@ -134,6 +135,30 @@ internal sealed class VulkanResourceRetirementQueue
     {
         slotHandles[frameSlot].Remove(handle);
         allHandles.Remove(handle);
+    }
+
+    /// <summary>Counts all slot queues while the caller holds <see cref="SyncRoot"/>.</summary>
+    internal static int CountPendingNoLock<TEntry>(List<TEntry>[] entries)
+    {
+        int pending = 0;
+        for (int index = 0; index < entries.Length; index++)
+            pending += entries[index].Count;
+        return pending;
+    }
+
+    internal static long GetOldestEnqueuedTimestampNoLock<TEntry>(
+        List<TEntry>[] entries,
+        Func<TEntry, VulkanRetirementTicket> ticketSelector)
+    {
+        long oldest = 0;
+        for (int slot = 0; slot < entries.Length; slot++)
+            for (int index = 0; index < entries[slot].Count; index++)
+            {
+                long timestamp = ticketSelector(entries[slot][index]).EnqueuedTimestamp;
+                if (timestamp != 0 && (oldest == 0 || timestamp < oldest))
+                    oldest = timestamp;
+            }
+        return oldest;
     }
 
     private static List<T>[] CreateLists<T>(int count)

@@ -12,6 +12,7 @@ public partial class AnimStateMachineComponent
     private int _rootMotionContributorCount;
     private long _dominantRootMotionLoopCycle;
     private ulong _observedMotionContinuityVersion;
+    private bool _pendingRootMotionEpochRebase;
     private bool _hasStateMachineRootMotion;
 
     public int RootMotionContributorCount => _rootMotionContributorCount;
@@ -32,6 +33,7 @@ public partial class AnimStateMachineComponent
         _rootMotionContributorCount = 0;
         _dominantRootMotionLoopCycle = 0L;
         _hasStateMachineRootMotion = false;
+        _pendingRootMotionEpochRebase = false;
         _observedMotionContinuityVersion = StateMachine.HumanoidMotionContinuityVersion;
     }
 
@@ -96,7 +98,9 @@ public partial class AnimStateMachineComponent
         if (_observedMotionContinuityVersion != StateMachine.HumanoidMotionContinuityVersion)
         {
             _observedMotionContinuityVersion = StateMachine.HumanoidMotionContinuityVersion;
-            BeginRootMotionEpoch(rebaseFromNextPose: true);
+            // A transition/restart is not an accepted pose yet. Publication
+            // commits this epoch change only after the native frame succeeds.
+            _pendingRootMotionEpochRebase = true;
         }
 
         humanoid.StageStateMachineRootMotionFrame(this, frame);
@@ -145,5 +149,6 @@ public partial class AnimStateMachineComponent
         _rootMotionContributorCount = 0;
         _dominantRootMotionLoopCycle = 0L;
         _hasStateMachineRootMotion = false;
+        _pendingRootMotionEpochRebase = false;
     }
 }
