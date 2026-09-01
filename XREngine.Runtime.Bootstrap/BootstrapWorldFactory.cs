@@ -125,6 +125,9 @@ public static class BootstrapWorldFactory
         if (settings.DynamicWaterQuad)
             BootstrapWaterBuilder.AddDynamicWaterPreview(rootNode);
 
+        if (settings.GridFloor)
+            AddDefaultGridFloor(rootNode);
+
         if (settings.AddPhysics)
             BootstrapPhysicsBuilder.AddPhysics(rootNode, settings.PhysicsBallCount);
 
@@ -484,29 +487,6 @@ public static class BootstrapWorldFactory
     private static void AddDefaultGridFloor(SceneNode rootNode)
     {
         var gridNode = rootNode.NewChild("GridFloor");
-        var debug = gridNode.AddComponent<DebugDrawComponent>()!;
-
-        const float extent = 50.0f;
-        const float step = 1.0f;
-        const int majorEvery = 10;
-        const float y = 0.0f;
-
-        for (float x = -extent; x <= extent; x += step)
-        {
-            int xi = (int)MathF.Round(x);
-            bool isAxis = xi == 0;
-            bool isMajor = (xi % majorEvery) == 0;
-            var color = isAxis ? XREngine.Data.Colors.ColorF4.White : isMajor ? XREngine.Data.Colors.ColorF4.Gray : XREngine.Data.Colors.ColorF4.DarkGray;
-            debug.AddLine(new Vector3(x, y, -extent), new Vector3(x, y, extent), color);
-        }
-
-        for (float z = -extent; z <= extent; z += step)
-        {
-            int zi = (int)MathF.Round(z);
-            bool isAxis = zi == 0;
-            bool isMajor = (zi % majorEvery) == 0;
-            var color = isAxis ? XREngine.Data.Colors.ColorF4.White : isMajor ? XREngine.Data.Colors.ColorF4.Gray : XREngine.Data.Colors.ColorF4.DarkGray;
-            debug.AddLine(new Vector3(-extent, y, z), new Vector3(extent, y, z), color);
-        }
+        _ = gridNode.AddComponent<InfiniteGridFloorComponent>()!;
     }
 }

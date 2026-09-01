@@ -425,10 +425,7 @@ public sealed class AdvancedVisibilityBufferContractTests
             AdvancedRenderPipelineCapabilityResolver.Resolve(
                 AdvancedRenderPipelineCapabilityTests.SupportedCapabilities,
                 stereo: true);
-        AdvancedRenderPipeline pipeline = new(
-            stereo: true,
-            capabilities,
-            visibilityFamilyReservation: default);
+        AdvancedRenderPipeline pipeline = new(stereo: true);
         RenderPipelineResourceProfile profile = new(
             DisplayWidth: 1920u,
             DisplayHeight: 1080u,

@@ -49,10 +49,7 @@ public sealed class AdvancedAttributeReconstructionContractTests
             AdvancedRenderPipelineCapabilityResolver.Resolve(
                 AdvancedRenderPipelineCapabilityTests.SupportedCapabilities,
                 stereo: true);
-        AdvancedRenderPipeline pipeline = new(
-            stereo: true,
-            capabilities,
-            visibilityFamilyReservation: default);
+        AdvancedRenderPipeline pipeline = new(stereo: true);
         RenderPipelineResourceLayout baseline =
             pipeline.BuildResourceLayout(CreateProfile(
                 stereo: true,

@@ -99,15 +99,17 @@ public sealed class MaskedSoftwareOcclusionCullingTests
 
         Matrix4x4 projection = MakeReciprocalZProjection();
         MaskedOcclusionRasterizer rasterizer = new();
-        int rasterized = rasterizer.RasterizeMesh(
+        CpuSoftwareOcclusionRasterizationResult result = rasterizer.RasterizeMesh(
             buffer,
             occluder,
             Matrix4x4.Identity,
             projection,
             new RenderingParameters { CullMode = ECullMode.None },
-            triangleBudget: 2);
+            triangleBudget: 2,
+            new CpuSoftwareOcclusionRasterWorkBudget());
 
-        rasterized.ShouldBeGreaterThan(0);
+        result.TrianglesInspected.ShouldBeGreaterThan(0);
+        result.WroteCoverage.ShouldBeTrue();
 
         AABB behind = new(new Vector3(0.25f, -0.75f, 2.0f), new Vector3(0.75f, -0.25f, 2.0f));
         MaskedOcclusionAabbTester tester = new();

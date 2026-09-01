@@ -155,7 +155,7 @@ public static partial class EditorUnitTests
         public string UltralightWebViewUrl { get; set; } = "https://blackjaxvr.com"; //Page URL used by the Ultralight web view test component.
         public bool EnableProfilerLogging = false; //Enables Engine.Profiler frame logging even without Dear ImGui.
         public UnitTestFbxLogVerbosity FbxLogVerbosity { get; set; } = UnitTestFbxLogVerbosity.UseEnvironment; //Controls native FBX importer/exporter trace verbosity. UseEnvironment defers to XRE_FBX_LOG and routes enabled traces to the Assets log category.
-        public UnitTestingRenderSettings Rendering { get; set; } = new(); //Grouped render backend, startup fallback, OpenGL shader-linking, and Vulkan target-mode settings. Legacy flat RenderAPI values are migrated here when settings are regenerated.
+        public UnitTestingRenderSettings Rendering { get; set; } = new(); //Grouped render backend, render-pipeline selection, startup fallback, OpenGL shader-linking, and Vulkan target-mode settings. Legacy flat RenderAPI values are migrated here when settings are regenerated.
         public bool RiveUI = false; //Adds a Rive UI component to the scene for testing Rive animations.
         public bool GPURenderDispatch = false; //Uses GPU render dispatch for rendering instead of CPU culling and issuing draw calls.
         public bool StartInPlayModeWithoutTransitions = false; //Starts in play mode immediately without the edit->play transition.
@@ -176,6 +176,7 @@ public static partial class EditorUnitTests
         public bool DeferredDecal = false; //Adds a deferred decal to the scene.
         public bool AddCameraVRPickup = false; //Adds a camera pickup to the scene for testing VR camera pickup.
         public bool Mirror = true; //Adds a mirror to the scene for testing mirror reflection.
+        public bool GridFloor = false; //Adds an infinite ground plane reference grid to the scene.
         public bool DynamicWaterQuad = false; //Adds a tessellated dynamic-water preview quad with grab-pass refraction, foam, and animated sphere/capsule eddy interactors. Best tested on the OpenGL unit-test path.
         public bool InitializeVolumetricFog = false; //Adds a demo volumetric fog volume to the default unit-testing world and enables volumetric fog on the unit-test camera(s).
         public bool InitializeAtmosphericScattering = false; //Adds a demo atmosphere component and enables atmospheric scattering on the unit-test camera(s).
