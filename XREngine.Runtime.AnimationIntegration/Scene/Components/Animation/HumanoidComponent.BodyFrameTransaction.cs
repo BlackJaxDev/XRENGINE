@@ -42,6 +42,8 @@ public partial class HumanoidComponent
             HasPendingProjectedRootMotion = _hasPendingProjectedRootMotion,
             HasProjectionMuscleValueSnapshot = _hasProjectionMuscleValueSnapshot,
             HasCanonicalProjectionMuscleValueSnapshot = _hasCanonicalProjectionMuscleValueSnapshot,
+            ProjectionFootGoals = _projectionFootGoals,
+            CanonicalProjectionFootGoals = _canonicalProjectionFootGoals,
             PendingStateMachineRootMotionFrame = _pendingStateMachineRootMotionFrame,
             PendingStateMachineRootMotionOwner = _pendingStateMachineRootMotionOwner,
         };
@@ -84,6 +86,8 @@ public partial class HumanoidComponent
         _hasPendingProjectedRootMotion = state.HasPendingProjectedRootMotion;
         _hasProjectionMuscleValueSnapshot = state.HasProjectionMuscleValueSnapshot;
         _hasCanonicalProjectionMuscleValueSnapshot = state.HasCanonicalProjectionMuscleValueSnapshot;
+        _projectionFootGoals = state.ProjectionFootGoals;
+        _canonicalProjectionFootGoals = state.CanonicalProjectionFootGoals;
         _pendingStateMachineRootMotionFrame = state.PendingStateMachineRootMotionFrame;
         _pendingStateMachineRootMotionOwner = state.PendingStateMachineRootMotionOwner;
     }

@@ -48,10 +48,7 @@ public partial class AdvancedRenderPipeline
     }
 
     private void InvalidateVisibilityResourceProfile()
-    {
-        foreach (XRRenderPipelineInstance instance in Instances)
-            instance.InvalidatePhysicalResources();
-    }
+        => InvalidateOwnedInstancePhysicalResources("VisibilityResourceProfileChanged");
 
     private void DeclareVisibilityBufferResources(
         RenderPipelineResourceLayoutBuilder builder)

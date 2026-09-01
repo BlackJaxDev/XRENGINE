@@ -65,9 +65,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Reference Include="OpenVR.NET">
-      <HintPath>..\Build\Submodules\OpenVR.NET\OpenVR.NET\bin\$(Configuration)\net6.0\OpenVR.NET.dll</HintPath>
-    </Reference>
+    <ProjectReference Include="..\Build\Submodules\OpenVR.NET\OpenVR.NET\OpenVR.NET.csproj" />
   </ItemGroup>
 
   <ItemGroup>

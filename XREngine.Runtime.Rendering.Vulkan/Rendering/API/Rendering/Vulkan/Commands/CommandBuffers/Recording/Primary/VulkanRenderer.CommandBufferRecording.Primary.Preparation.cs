@@ -540,6 +540,8 @@ namespace XREngine.Rendering.Vulkan
                 {
                     recordingState.RecordingDeferredReason =
                         "Advanced visibility operation is Unsupported: its sealed preparation publication is stale or incomplete.";
+                    recordingState.FailureKind =
+                        EVulkanCommandRecordingFailureKind.RetryFrame;
                     return false;
                 }
                 if (preparationStageCount + rasterStageCount + lateComputeStageCount + lateRasterStageCount == 0)
@@ -608,6 +610,8 @@ namespace XREngine.Rendering.Vulkan
                 {
                     recordingState.RecordingDeferredReason =
                         "Advanced visibility operation is Unsupported: the authoritative target has no Vulkan framebuffer wrapper.";
+                    recordingState.FailureKind = EVulkanCommandRecordingFailureKind
+                        .RecoverAfterStateChange;
                     return false;
                 }
                 if (requiresGraphicsTargetClosure && !TryValidateAdvancedVisibilityTarget(
@@ -617,6 +621,8 @@ namespace XREngine.Rendering.Vulkan
                 {
                     recordingState.RecordingDeferredReason =
                         $"Advanced visibility operation is Unsupported: target closure is incomplete: {targetShapeReason}";
+                    recordingState.FailureKind = EVulkanCommandRecordingFailureKind
+                        .RecoverAfterStateChange;
                     return false;
                 }
                 if (requiresGraphicsTargetClosure)
@@ -630,6 +636,8 @@ namespace XREngine.Rendering.Vulkan
                 {
                     recordingState.RecordingDeferredReason =
                         "Advanced visibility operation is Unsupported: the native target snapshot is incomplete.";
+                    recordingState.FailureKind = EVulkanCommandRecordingFailureKind
+                        .RecoverAfterStateChange;
                     return false;
                 }
                 if (!TryResolveGraphicsPipelinePrewarmTarget(
@@ -648,6 +656,8 @@ namespace XREngine.Rendering.Vulkan
                 {
                     recordingState.RecordingDeferredReason =
                         $"Advanced visibility operation is Unsupported: target compatibility failed: {targetCompatibilityReason}";
+                    recordingState.FailureKind = EVulkanCommandRecordingFailureKind
+                        .RecoverAfterStateChange;
                     return false;
                 }
                 targetClosure = new(
@@ -672,12 +682,16 @@ namespace XREngine.Rendering.Vulkan
                 {
                     recordingState.RecordingDeferredReason =
                         $"Advanced visibility operation is Unsupported: set-2/set-3 scene publication failed: {sceneReason}";
-                    if (VulkanAdvancedSceneResourceFailurePolicy
-                        .RequiresFrameRetry(sceneFailure))
-                    {
-                        recordingState.FailureKind =
-                            EVulkanCommandRecordingFailureKind.RetryFrame;
-                    }
+                    recordingState.FailureKind =
+                        VulkanAdvancedSceneResourceFailurePolicy
+                            .RequiresFrameRetry(sceneFailure)
+                            ? EVulkanCommandRecordingFailureKind.RetryFrame
+                            : VulkanAdvancedSceneResourceFailurePolicy
+                                .AllowsRecoveryAfterStateChange(sceneFailure)
+                                ? EVulkanCommandRecordingFailureKind
+                                    .RecoverAfterStateChange
+                                : EVulkanCommandRecordingFailureKind
+                                    .RendererTerminal;
                     return false;
                 }
                 if (!familySceneState.IsValid)
@@ -688,6 +702,8 @@ namespace XREngine.Rendering.Vulkan
                 {
                     recordingState.RecordingDeferredReason =
                         "Advanced visibility operation is Unsupported: the family stages resolved different canonical scene publications.";
+                    recordingState.FailureKind =
+                        EVulkanCommandRecordingFailureKind.RendererTerminal;
                     return false;
                 }
                 if (request.Stage == EAdvancedRenderStage.VisibilityRaster &&
@@ -723,6 +739,8 @@ namespace XREngine.Rendering.Vulkan
                 {
                     recordingState.RecordingDeferredReason =
                         $"Advanced visibility operation is Unsupported: raster closure failed: {rasterPipelineReason}";
+                    recordingState.FailureKind = EVulkanCommandRecordingFailureKind
+                        .RecoverAfterStateChange;
                     return false;
                 }
                 if (requiresGraphicsTargetClosure &&
@@ -796,6 +814,11 @@ namespace XREngine.Rendering.Vulkan
                 {
                     recordingState.RecordingDeferredReason =
                         $"Advanced visibility operation is Unsupported: set-1 frame-slot realization failed ({failure}): {resourceReason}";
+                    recordingState.FailureKind = failure ==
+                        EVulkanAdvancedVisibilityResourceFailure.RuntimeUnavailable
+                            ? EVulkanCommandRecordingFailureKind
+                                .RecoverAfterStateChange
+                            : EVulkanCommandRecordingFailureKind.RendererTerminal;
                     return false;
                 }
             }
@@ -808,6 +831,8 @@ namespace XREngine.Rendering.Vulkan
             {
                 recordingState.RecordingDeferredReason =
                     "Advanced visibility operation is Unsupported: the frame plan must seal exactly one preparation, early raster, late compute, and late raster stage before one immutable set-1 family is published.";
+                recordingState.FailureKind =
+                    EVulkanCommandRecordingFailureKind.RendererTerminal;
                 return false;
             }
             // The late stage reuses the raster family's sealed graphics
@@ -824,6 +849,8 @@ namespace XREngine.Rendering.Vulkan
             {
                 recordingState.RecordingDeferredReason =
                     "Advanced visibility operation is Unsupported: raster and late raster must share one exact dynamic-rendering target closure.";
+                recordingState.FailureKind =
+                    EVulkanCommandRecordingFailureKind.RendererTerminal;
                 return false;
             }
             VulkanAdvancedVisibilityPipelineReadiness computePipelineReadiness =
@@ -838,11 +865,12 @@ namespace XREngine.Rendering.Vulkan
                         VulkanAdvancedVisibilityPipelineReadiness.Missing
                         ? $"Advanced visibility operation is waiting for compute pipeline admission: {pipelineReason}"
                         : $"Advanced visibility operation is Unsupported: compute pipeline realization failed: {pipelineReason}";
-                if (computePipelineReadiness is VulkanAdvancedVisibilityPipelineReadiness.Pending or
-                    VulkanAdvancedVisibilityPipelineReadiness.Missing)
-                {
-                    recordingState.FailureKind = EVulkanCommandRecordingFailureKind.RetryFrame;
-                }
+                recordingState.FailureKind = computePipelineReadiness is
+                    VulkanAdvancedVisibilityPipelineReadiness.Pending or
+                    VulkanAdvancedVisibilityPipelineReadiness.Missing
+                        ? EVulkanCommandRecordingFailureKind.RetryFrame
+                        : EVulkanCommandRecordingFailureKind
+                            .RecoverAfterStateChange;
                 return false;
             }
 
@@ -872,11 +900,12 @@ namespace XREngine.Rendering.Vulkan
                             VulkanAdvancedVisibilityPipelineReadiness.Missing
                             ? $"Advanced visibility operation is waiting for immutable set-1 pipeline admission: {stateAssociationReason}"
                             : $"Advanced visibility operation is Unsupported: the immutable set-1 family could not be associated with every stage: {stateAssociationReason}";
-                    if (stateAssociationReadiness is VulkanAdvancedVisibilityPipelineReadiness.Pending or
-                        VulkanAdvancedVisibilityPipelineReadiness.Missing)
-                    {
-                        recordingState.FailureKind = EVulkanCommandRecordingFailureKind.RetryFrame;
-                    }
+                    recordingState.FailureKind = stateAssociationReadiness is
+                        VulkanAdvancedVisibilityPipelineReadiness.Pending or
+                        VulkanAdvancedVisibilityPipelineReadiness.Missing
+                            ? EVulkanCommandRecordingFailureKind.RetryFrame
+                            : EVulkanCommandRecordingFailureKind
+                                .RecoverAfterStateChange;
                     return false;
                 }
 
@@ -909,6 +938,9 @@ namespace XREngine.Rendering.Vulkan
                         {
                             recordingState.RecordingDeferredReason =
                                 $"Advanced visibility operation is Unsupported: sealed late depth-pyramid closure failed: {lateTargetReason}.";
+                            recordingState.FailureKind =
+                                EVulkanCommandRecordingFailureKind
+                                    .RecoverAfterStateChange;
                             return false;
                         }
                         VulkanAdvancedVisibilityPipelineReadiness latePipelineReadiness =
@@ -924,11 +956,12 @@ namespace XREngine.Rendering.Vulkan
                                     VulkanAdvancedVisibilityPipelineReadiness.Missing
                                     ? $"Advanced visibility operation is waiting for sealed late compute pipeline admission: {latePipelineReason}."
                                     : $"Advanced visibility operation is Unsupported: sealed late compute pipeline failed: {latePipelineReason}.";
-                            if (latePipelineReadiness is VulkanAdvancedVisibilityPipelineReadiness.Pending or
-                                VulkanAdvancedVisibilityPipelineReadiness.Missing)
-                            {
-                                recordingState.FailureKind = EVulkanCommandRecordingFailureKind.RetryFrame;
-                            }
+                            recordingState.FailureKind = latePipelineReadiness is
+                                VulkanAdvancedVisibilityPipelineReadiness.Pending or
+                                VulkanAdvancedVisibilityPipelineReadiness.Missing
+                                    ? EVulkanCommandRecordingFailureKind.RetryFrame
+                                    : EVulkanCommandRecordingFailureKind
+                                        .RecoverAfterStateChange;
                             return false;
                         }
 
@@ -948,11 +981,12 @@ namespace XREngine.Rendering.Vulkan
                                     VulkanAdvancedVisibilityPipelineReadiness.Missing
                                     ? $"Advanced visibility operation is waiting for sealed late compute association: {lateAssociationReason}."
                                     : $"Advanced visibility operation is Unsupported: sealed late compute closure failed: {lateAssociationReason}.";
-                            if (lateAssociationReadiness is VulkanAdvancedVisibilityPipelineReadiness.Pending or
-                                VulkanAdvancedVisibilityPipelineReadiness.Missing)
-                            {
-                                recordingState.FailureKind = EVulkanCommandRecordingFailureKind.RetryFrame;
-                            }
+                            recordingState.FailureKind = lateAssociationReadiness is
+                                VulkanAdvancedVisibilityPipelineReadiness.Pending or
+                                VulkanAdvancedVisibilityPipelineReadiness.Missing
+                                    ? EVulkanCommandRecordingFailureKind.RetryFrame
+                                    : EVulkanCommandRecordingFailureKind
+                                        .RecoverAfterStateChange;
                             return false;
                         }
 

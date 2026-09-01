@@ -2545,35 +2545,12 @@ public static partial class EditorImGuiUI
             }
         }
 
-        private static Type[] GetLoadableAssemblyTypesSafe(Assembly assembly)
+        private static IReadOnlyList<Type> GetLoadableAssemblyTypesSafe(Assembly assembly)
         {
             if (assembly.IsDynamic)
                 return [];
 
-            try
-            {
-                return assembly.GetTypes();
-            }
-            catch (ReflectionTypeLoadException ex)
-            {
-                return ex.Types.Where(static t => t is not null).Cast<Type>().ToArray();
-            }
-            catch (FileNotFoundException)
-            {
-                return [];
-            }
-            catch (FileLoadException)
-            {
-                return [];
-            }
-            catch (BadImageFormatException)
-            {
-                return [];
-            }
-            catch (NotSupportedException)
-            {
-                return [];
-            }
+            return XREngine.Core.XRLoadableTypeCatalog.GetTypes(assembly);
         }
 
         /// <summary>
@@ -2602,7 +2579,7 @@ public static partial class EditorImGuiUI
             // Search all loaded assemblies for derived types
             foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
             {
-                Type[] types = GetLoadableAssemblyTypesSafe(assembly);
+                IReadOnlyList<Type> types = GetLoadableAssemblyTypesSafe(assembly);
 
                 foreach (var type in types)
                 {
@@ -3111,20 +3088,8 @@ public static partial class EditorImGuiUI
             var descriptors = new List<CollectionTypeDescriptor>();
             foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
             {
-                Type[] types;
-                try
+                foreach (Type type in XREngine.Core.XRLoadableTypeCatalog.GetTypes(assembly))
                 {
-                    types = assembly.GetTypes();
-                }
-                catch (ReflectionTypeLoadException ex)
-                {
-                    types = ex.Types.Where(t => t is not null).Cast<Type>().ToArray();
-                }
-
-                foreach (var type in types)
-                {
-                    if (type is null)
-                        continue;
                     if (!baseType.IsAssignableFrom(type))
                         continue;
                     if (type.IsAbstract || type.IsInterface)

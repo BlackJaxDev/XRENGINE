@@ -33,6 +33,9 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
     /// Synchronization object for OpenXR pipeline factory registration and creation.
     /// </summary>
     private static readonly object OpenXrFactorySync = new();
+    private readonly object _instancesSync = new();
+    private readonly List<XRRenderPipelineInstance> _instances = [];
+    private XRRenderPipelineInstance[] _instancesSnapshot = [];
     /// <summary>
     /// Mapping of source pipeline types to factory functions that create OpenXR-compatible pipelines.
     /// </summary>
@@ -87,11 +90,41 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
     }
 
     /// <summary>
-    /// Gets the list of active render pipeline instances that are currently using this pipeline.
+    /// Gets a stable snapshot of active render pipeline instances currently using this pipeline.
+    /// Pipeline transitions publish a new snapshot atomically so settings callbacks can enumerate
+    /// instances safely while the render thread changes asset ownership.
     /// </summary>
     [Browsable(false)]
     [YamlIgnore]
-    public List<XRRenderPipelineInstance> Instances { get; } = [];
+    public IReadOnlyList<XRRenderPipelineInstance> Instances
+        => System.Threading.Volatile.Read(ref _instancesSnapshot);
+
+    internal void AddInstance(XRRenderPipelineInstance instance)
+    {
+        ArgumentNullException.ThrowIfNull(instance);
+
+        lock (_instancesSync)
+        {
+            if (_instances.Contains(instance))
+                return;
+
+            _instances.Add(instance);
+            System.Threading.Volatile.Write(ref _instancesSnapshot, [.. _instances]);
+        }
+    }
+
+    internal void RemoveInstance(XRRenderPipelineInstance instance)
+    {
+        ArgumentNullException.ThrowIfNull(instance);
+
+        lock (_instancesSync)
+        {
+            if (!_instances.Remove(instance))
+                return;
+
+            System.Threading.Volatile.Write(ref _instancesSnapshot, [.. _instances]);
+        }
+    }
 
     /// <summary>
     /// When true, output-owned viewport setup must not replace this source pipeline with a
@@ -131,6 +164,19 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
     [Browsable(false)]
     [YamlIgnore]
     public virtual string DebugName => GetType().Name;
+
+    /// <summary>
+    /// Gets whether this pipeline consumes the canonical GPU-resident scene
+    /// publication prepared at the world swap boundary.
+    /// </summary>
+    /// <remarks>
+    /// Lightweight and diagnostic pipelines should leave this disabled. The
+    /// publication performs whole-scene material and resource preflight, so
+    /// producing it without a consumer adds measurable CPU work to every frame.
+    /// </remarks>
+    [Browsable(false)]
+    [YamlIgnore]
+    internal virtual bool RequiresCanonicalGpuScenePublication => false;
 
     private bool _isShadowPass;
     /// <summary>
@@ -265,6 +311,16 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
     /// </summary>
     protected void RebuildCommandChain()
     {
+        if (!RuntimeEngine.IsRenderThread &&
+            RuntimeRenderingHostServices.FrameTiming.IsRendererActive)
+        {
+            RuntimeEngine.EnqueueRenderThreadTask(
+                RebuildCommandChain,
+                $"RenderPipeline.RebuildCommandChain[{DebugName}]",
+                RenderThreadJobKind.RenderPipelineResource);
+            return;
+        }
+
         using (ViewportRenderCommandContainer.SuppressStructureChangeNotifications())
         {
             ViewportRenderCommandContainer previous = CommandChain;
@@ -478,27 +534,93 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
     /// </summary>
     internal void NotifyCommandChainStructureChanged()
     {
+        if (!RuntimeEngine.IsRenderThread &&
+            RuntimeRenderingHostServices.FrameTiming.IsRendererActive)
+        {
+            RuntimeEngine.EnqueueRenderThreadTask(
+                NotifyCommandChainStructureChanged,
+                $"RenderPipeline.NotifyCommandChainStructureChanged[{DebugName}]",
+                RenderThreadJobKind.RenderPipelineResource);
+            return;
+        }
+
         OnCommandChainChanged();
 
-        for (int i = 0; i < Instances.Count; i++)
+        ulong commandGeneration = CommandGeneration;
+        IReadOnlyList<XRRenderPipelineInstance> instances = Instances;
+        for (int i = 0; i < instances.Count; i++)
         {
-            XRRenderPipelineInstance instance = Instances[i];
-            instance.MeshRenderCommands.SetRenderPasses(PassIndicesAndSorters, PassMetadata);
-            XRViewport? viewport = instance.LastWindowViewport;
-            bool presentsDirectlyToWindow =
-                viewport is not null &&
-                viewport.Window?.Viewports.Contains(viewport) == true;
-            bool rendersToExternalSwapchain =
-                viewport?.RendersToExternalSwapchainTarget == true;
+            XRRenderPipelineInstance instance = instances[i];
+            if (!instance.TryCaptureAppliedPipelineRevision(this, out ulong pipelineRevision))
+                continue;
 
-            if (presentsDirectlyToWindow || rendersToExternalSwapchain)
-                instance.InvalidatePhysicalResources();
-            else
-                instance.DestroyCache();
+            instance.TryApplyCommandChainUpdate(
+                this,
+                pipelineRevision,
+                commandGeneration,
+                PassIndicesAndSorters,
+                PassMetadata);
         }
 
         if (!IsDirty)
             MarkDirty();
+    }
+
+    /// <summary>
+    /// Invalidates physical resources only for instances that still fully apply this exact
+    /// pipeline asset when the render-thread request executes.
+    /// </summary>
+    protected void InvalidateOwnedInstancePhysicalResources(string reason)
+    {
+        if (!RuntimeEngine.IsRenderThread &&
+            RuntimeRenderingHostServices.FrameTiming.IsRendererActive)
+        {
+            RuntimeEngine.EnqueueRenderThreadTask(
+                () => InvalidateOwnedInstancePhysicalResources(reason),
+                $"RenderPipeline.InvalidateOwnedPhysicalResources[{DebugName}]",
+                RenderThreadJobKind.RenderPipelineResource);
+            return;
+        }
+
+        IReadOnlyList<XRRenderPipelineInstance> instances = Instances;
+        for (int i = 0; i < instances.Count; i++)
+        {
+            XRRenderPipelineInstance instance = instances[i];
+            if (!instance.TryCaptureAppliedPipelineRevision(this, out ulong pipelineRevision))
+                continue;
+
+            instance.TryInvalidateOwnedPhysicalResources(this, pipelineRevision, reason);
+        }
+    }
+
+    /// <summary>
+    /// Resets temporal anti-aliasing history only for instances that still fully apply this
+    /// exact pipeline asset when the render-thread request executes.
+    /// </summary>
+    protected void InvalidateOwnedInstanceAntiAliasingResources(string reason)
+    {
+        if (!RuntimeEngine.IsRenderThread &&
+            RuntimeRenderingHostServices.FrameTiming.IsRendererActive)
+        {
+            RuntimeEngine.EnqueueRenderThreadTask(
+                () => InvalidateOwnedInstanceAntiAliasingResources(reason),
+                $"RenderPipeline.InvalidateOwnedAntiAliasingResources[{DebugName}]",
+                RenderThreadJobKind.RenderPipelineResource);
+            return;
+        }
+
+        IReadOnlyList<XRRenderPipelineInstance> instances = Instances;
+        for (int i = 0; i < instances.Count; i++)
+        {
+            XRRenderPipelineInstance instance = instances[i];
+            if (!instance.TryCaptureAppliedPipelineRevision(this, out ulong pipelineRevision))
+                continue;
+
+            instance.TryInvalidateOwnedAntiAliasingResources(
+                this,
+                pipelineRevision,
+                reason);
+        }
     }
 
     /// <summary>

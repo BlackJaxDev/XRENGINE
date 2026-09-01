@@ -105,6 +105,20 @@ The ImGui editor includes **Tools > MCP Assistant**. It can use provider keys fr
 
 For scene or material edits, prefer prompts that ask the assistant to inspect the current world, make a bounded change, and verify with read-back or a viewport screenshot.
 
+## Editor Camera Pipeline Assets
+
+`set_editor_camera_render_pipeline_asset` replaces the active editor camera's
+pipeline asset by asset ID, path, or loaded-asset name. It uses the same
+`XRCamera.ReplaceRenderPipelineAsset` path as the ImGui camera inspector, so the
+runtime transition is applied on the render thread and every camera-bound
+viewport follows the new asset. Reassigning the exact same asset reference is a
+no-op and the response reports `changed: false`.
+
+Use `get_render_state` after the call to verify the active pipeline type,
+pipeline revision, resource generation, pending/failure state, and enabled pass
+ownership. For visual acceptance, also capture or inspect the live window; a
+successful tool response alone does not prove that a new pipeline presented.
+
 ## Capture Subsequent Viewport Frames
 
 For animation, physics, flicker, streaming, and temporal-rendering issues, ask the assistant to start a viewport sequence capture. The assistant can capture an exact number of subsequent frames or sample for a bounded number of seconds, poll `get_viewport_sequence_capture`, and inspect the resulting individual PNGs, `contact-sheet.png`, and `manifest.json`.

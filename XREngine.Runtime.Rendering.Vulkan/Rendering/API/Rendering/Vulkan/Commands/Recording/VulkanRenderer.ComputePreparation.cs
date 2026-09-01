@@ -284,13 +284,13 @@ internal sealed partial class VulkanCommandRuntime
                 operationIndex,
                 operationCount,
                 program.Data.Name,
-                new InvalidOperationException(reason)),
+                reason),
             _ => new(
                 EVulkanComputePreparationOutcome.PipelineCreationFailed,
                 operationIndex,
                 operationCount,
                 program.Data.Name,
-                new InvalidOperationException(reason)),
+                reason),
         };
     }
 }

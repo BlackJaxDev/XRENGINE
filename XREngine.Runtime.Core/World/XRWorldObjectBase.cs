@@ -340,21 +340,8 @@ public abstract class XRWorldObjectBase : XRObjectBase
         ReplicatedTypes.Clear();
         const BindingFlags replicableFlags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
         Type baseType = typeof(RuntimeWorldObjectBase);
-        IEnumerable<Type> allTypes = AppDomain.CurrentDomain.GetAssemblies().SelectMany(static assembly =>
-        {
-            try
-            {
-                return assembly.GetTypes();
-            }
-            catch (ReflectionTypeLoadException ex)
-            {
-                return ex.Types.Where(static type => type is not null).Cast<Type>();
-            }
-            catch
-            {
-                return Enumerable.Empty<Type>();
-            }
-        });
+        IEnumerable<Type> allTypes = AppDomain.CurrentDomain.GetAssemblies()
+            .SelectMany(static assembly => XREngine.Core.XRLoadableTypeCatalog.GetTypes(assembly));
 
         void TestType(Type type)
         {

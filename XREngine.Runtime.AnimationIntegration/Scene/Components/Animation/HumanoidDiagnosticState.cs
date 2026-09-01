@@ -13,6 +13,8 @@ internal sealed class HumanoidDiagnosticState
     internal Dictionary<EHumanoidValue, float> SettingsCurrentValues { get; } = [];
     internal float[] ProjectionMuscleValues { get; } = new float[95];
     internal float[] CanonicalProjectionMuscleValues { get; } = new float[95];
+    internal ImportedHumanoidProjectionFootGoals ProjectionFootGoals;
+    internal ImportedHumanoidProjectionFootGoals CanonicalProjectionFootGoals;
     internal float[] AppliedMuscleValues { get; } = new float[95];
     internal Vector3[] ImportedTranslationDofValues { get; } = new Vector3[21];
     internal uint ImportedTranslationDofMask;

@@ -7,7 +7,13 @@ namespace XREngine.Rendering.Resources;
 /// </summary>
 /// <param name="key">The key identifying the resource generation.</param>
 /// <param name="layout">The layout of the render pipeline resources.</param>
-public sealed class RenderResourceGeneration(ResourceGenerationKey key, RenderPipelineResourceLayout layout) : IDisposable
+/// <param name="ownerPipeline">The pipeline asset whose layout and callbacks own this generation.</param>
+/// <param name="pipelineRevision">The viewport-instance-local pipeline revision that created this generation.</param>
+public sealed class RenderResourceGeneration(
+    ResourceGenerationKey key,
+    RenderPipelineResourceLayout layout,
+    RenderPipeline? ownerPipeline = null,
+    ulong pipelineRevision = 0) : IDisposable
 {
     private readonly List<string> _diagnostics = [];
     private readonly Stopwatch _buildTimer = new();
@@ -17,6 +23,15 @@ public sealed class RenderResourceGeneration(ResourceGenerationKey key, RenderPi
     /// The key identifying the resource generation.
     /// </summary>
     public ResourceGenerationKey Key { get; } = key;
+    /// <summary>
+    /// Gets the pipeline asset that created this generation. The owner remains stable after an
+    /// editor camera changes to another asset so destruction callbacks reach the correct asset.
+    /// </summary>
+    public RenderPipeline? OwnerPipeline { get; } = ownerPipeline;
+    /// <summary>
+    /// Gets the viewport-instance-local pipeline revision that created this generation.
+    /// </summary>
+    public ulong PipelineRevision { get; } = pipelineRevision;
     /// <summary>
     /// The layout of the render pipeline resources.
     /// </summary>
@@ -167,10 +182,33 @@ public sealed class RenderResourceGeneration(ResourceGenerationKey key, RenderPi
         if (Status == RenderResourceGenerationStatus.Disposed)
             return;
 
-        _retirementFence?.Dispose();
+        Exception? firstFailure = null;
+        try
+        {
+            _retirementFence?.Dispose();
+        }
+        catch (Exception ex)
+        {
+            firstFailure = ex;
+        }
         _retirementFence = null;
-        Registry.DestroyAllPhysicalResources();
+
+        try
+        {
+            Registry.DestroyAllPhysicalResources();
+        }
+        catch (Exception ex)
+        {
+            firstFailure ??= ex;
+        }
+
         Status = RenderResourceGenerationStatus.Disposed;
+        if (firstFailure is not null)
+        {
+            throw new InvalidOperationException(
+                $"Render resource generation '{Key}' completed disposal with failures.",
+                firstFailure);
+        }
     }
 
     /// <summary>

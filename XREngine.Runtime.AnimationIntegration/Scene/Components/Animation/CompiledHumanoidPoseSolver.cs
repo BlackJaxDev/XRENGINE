@@ -28,15 +28,38 @@ internal static class CompiledHumanoidPoseSolver
         Vector3 centerDegrees = plan.JointLimit.UseDefaultValues
             ? Vector3.Zero
             : plan.JointLimit.CenterDegrees;
-        Vector3 jointDegrees = ClampCanonicalDegrees(
-            centerDegrees + localDegrees,
-            plan.JointLimit);
-        Quaternion centerRotation = plan.HasContinuousJointBasis
-            ? CreateTangentRotation(centerDegrees)
-            : CreateOrderedRotation(centerDegrees, plan.RotationOrder);
-        Quaternion jointRotation = plan.HasContinuousJointBasis
-            ? CreateTangentRotation(jointDegrees)
-            : CreateOrderedRotation(jointDegrees, plan.RotationOrder);
+        Quaternion centerRotation;
+        Quaternion jointRotation;
+        if (plan.HasContinuousJointBasis)
+        {
+            centerRotation = CreateTangentRotation(centerDegrees);
+            if (UsesCoupledFootSwing(plan.Role))
+            {
+                jointRotation = CreateTangentRotation(centerDegrees + localDegrees);
+            }
+            else
+            {
+                Vector3 swingDegrees = MapMusclesToLocalAxes(
+                    plan,
+                    0.0f,
+                    frontBackDegrees,
+                    leftRightDegrees);
+                Vector3 twistAxisDegrees = MapMusclesToLocalAxes(
+                    plan,
+                    twistDegrees,
+                    0.0f,
+                    0.0f);
+                jointRotation = Quaternion.Normalize(
+                    CreateTangentRotation(centerDegrees + swingDegrees)
+                    * CreateTangentRotation(twistAxisDegrees));
+            }
+        }
+        else
+        {
+            Vector3 jointDegrees = centerDegrees + localDegrees;
+            centerRotation = CreateOrderedRotation(centerDegrees, plan.RotationOrder);
+            jointRotation = CreateOrderedRotation(jointDegrees, plan.RotationOrder);
+        }
         Quaternion result = Quaternion.Normalize(
             plan.ZeroMuscleRotation
             * plan.JointBasisToZeroLocal
@@ -47,6 +70,16 @@ internal static class CompiledHumanoidPoseSolver
             ? new Quaternion(-result.X, -result.Y, -result.Z, -result.W)
             : result;
     }
+
+    /// <summary>
+    /// Unity's foot in/out channel is part of the continuous two-axis foot
+    /// swing rather than the axial twist stage used by torso and limb chains.
+    /// Keeping it in the coupled joint vector preserves the public foot muscle
+    /// response while proximal lower-leg roll remains a separate inherited
+    /// rotation.
+    /// </summary>
+    private static bool UsesCoupledFootSwing(EHumanoidAvatarBoneRole role)
+        => role is EHumanoidAvatarBoneRole.LeftFoot or EHumanoidAvatarBoneRole.RightFoot;
 
     /// <summary>
     /// Applies permitted avatar translation to the compiled neutral local position.

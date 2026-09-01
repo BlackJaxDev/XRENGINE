@@ -363,7 +363,7 @@ public partial class HumanoidComponent
     {
         int index = (int)muscle;
         float normalized = (uint)index < (uint)muscles.Length
-            ? Math.Clamp(muscles[index], -1.0f, 1.0f)
+            ? muscles[index]
             : 0.0f;
         Vector2 range = compiled.GetMuscleRange(muscle);
         return normalized >= 0.0f

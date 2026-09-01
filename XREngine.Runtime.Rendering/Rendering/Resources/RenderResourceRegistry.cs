@@ -532,16 +532,54 @@ public sealed class RenderResourceRegistry
     /// </param>
     public void DestroyAllPhysicalResources(bool retainDescriptors = false)
     {
+        Exception? firstFailure = null;
+
         // Framebuffers own attachment bindings, so destroy them before the textures and renderbuffers
         // they may reference.
         foreach (RenderFrameBufferResource record in _frameBuffers.Values)
-            record.DestroyInstance();
+        {
+            try
+            {
+                record.DestroyInstance();
+            }
+            catch (Exception ex)
+            {
+                firstFailure ??= ex;
+            }
+        }
         foreach (RenderTextureResource record in _textures.Values)
-            record.DestroyInstance();
+        {
+            try
+            {
+                record.DestroyInstance();
+            }
+            catch (Exception ex)
+            {
+                firstFailure ??= ex;
+            }
+        }
         foreach (RenderBufferResource record in _buffers.Values)
-            record.DestroyInstance();
+        {
+            try
+            {
+                record.DestroyInstance();
+            }
+            catch (Exception ex)
+            {
+                firstFailure ??= ex;
+            }
+        }
         foreach (RenderRenderBufferResource record in _renderBuffers.Values)
-            record.DestroyInstance();
+        {
+            try
+            {
+                record.DestroyInstance();
+            }
+            catch (Exception ex)
+            {
+                firstFailure ??= ex;
+            }
+        }
 
         MarkInstancesChanged();
 
@@ -560,6 +598,13 @@ public sealed class RenderResourceRegistry
 
             if (hadDescriptors)
                 MarkDescriptorsChanged();
+        }
+
+        if (firstFailure is not null)
+        {
+            throw new InvalidOperationException(
+                "One or more physical render resources failed to destroy.",
+                firstFailure);
         }
     }
 

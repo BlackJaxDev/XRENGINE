@@ -110,10 +110,13 @@ public sealed partial class RuntimeWorldRenderer : IRuntimeRenderWorld, IRuntime
     {
         ApplyRenderMatrixChanges();
         RenderableMesh.ProcessPendingRenderMatrixUpdates();
-        VisualScene.GPUCommands.SetAdvancedGlobalResources(
-            AdvancedGlobalResourceCapture.Capture(
-                RuntimeEngine.Rendering.State.RenderFrameId,
-                this));
+        if (VisualScene.GPUCommands.AdvancedPublicationRequested)
+        {
+            VisualScene.GPUCommands.SetAdvancedGlobalResources(
+                AdvancedGlobalResourceCapture.Capture(
+                    RuntimeEngine.Rendering.State.RenderFrameId,
+                    this));
+        }
         VisualScene.GlobalSwapBuffers();
         RuntimeEngine.Rendering.Stats.SkinnedBounds.SwapSkinnedBoundsStats();
         RuntimeEngine.Rendering.Stats.Octree.SwapOctreeStats();

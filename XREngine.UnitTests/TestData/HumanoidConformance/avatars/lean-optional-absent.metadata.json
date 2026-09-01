@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "fixtureVersion": "2.0.0",
+  "fixture": "lean-optional-absent.fbx",
+  "mappingMode": "automatic-conventional-names",
+  "requiredRoleCoverage": "complete",
+  "intentionallyMissingOptionalRoles": ["UpperChest", "LeftToes", "RightToes", "LeftEye", "RightEye", "Jaw"],
+  "sourceGeneration": "Generated locally by Tools/Unity/Phase10FixtureGenerator.cs with Unity FBX Exporter; no third-party avatar source data."
+}

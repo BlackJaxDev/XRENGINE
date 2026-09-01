@@ -204,9 +204,10 @@ public static partial class EditorImGuiUI
         if (pipeline is null)
             return null;
 
-        for (int i = 0; i < pipeline.Instances.Count; i++)
+        IReadOnlyList<XRRenderPipelineInstance> instances = pipeline.Instances;
+        for (int i = 0; i < instances.Count; i++)
         {
-            XRRenderPipelineInstance instance = pipeline.Instances[i];
+            XRRenderPipelineInstance instance = instances[i];
             if (ReferenceEquals(instance.LastSceneCamera, camera) ||
                 ReferenceEquals(instance.LastRenderingCamera, camera))
             {
@@ -217,15 +218,15 @@ public static partial class EditorImGuiUI
         var vrInfo = RuntimeEngine.VRState.ViewInformation;
         if (ReferenceEquals(camera, vrInfo.RightEyeCamera) && vrInfo.LeftEyeCamera is not null)
         {
-            for (int i = 0; i < pipeline.Instances.Count; i++)
+            for (int i = 0; i < instances.Count; i++)
             {
-                XRRenderPipelineInstance instance = pipeline.Instances[i];
+                XRRenderPipelineInstance instance = instances[i];
                 if (ReferenceEquals(instance.LastSceneCamera, vrInfo.LeftEyeCamera))
                     return instance;
             }
         }
 
-        return pipeline.Instances.Count == 1 ? pipeline.Instances[0] : null;
+        return instances.Count == 1 ? instances[0] : null;
     }
 
     private static void DrawPlayerCameraPanelEntry(PlayerCameraPanelEntry entry)

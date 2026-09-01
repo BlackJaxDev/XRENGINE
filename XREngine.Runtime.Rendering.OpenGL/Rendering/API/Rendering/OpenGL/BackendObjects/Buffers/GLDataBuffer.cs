@@ -453,6 +453,15 @@ namespace XREngine.Rendering.OpenGL
                 if (Data.IsDestroyed)
                     return;
 
+                // Resolve lazy object creation before choosing an update path. PostGenerated()
+                // performs the initial allocation and upload, so continuing here would upload a
+                // second time and can call glNamedBufferData on newly immutable storage.
+                if (!IsGenerated)
+                {
+                    Generate();
+                    return;
+                }
+
                 bool shouldUseImmutableStorage = ShouldUseImmutableStorage();
                 bool remapAfterUpload = Data.ActivelyMapping.Contains(this);
 

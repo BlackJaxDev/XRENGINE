@@ -12,7 +12,12 @@ internal sealed class VulkanFrameDataArena
     private const int LaneCount = (int)EVulkanFrameDataLane.Count;
     private const int MaxFrameSlots = 32;
     private const int MaxChunkGroupsPerLane = 16;
-    private const ulong MaxMappedBytes = 1024UL * 1024UL * 1024UL;
+    /// <summary>
+    /// Aggregate mapped-memory guard shared by every boundary-owned frame-data lane.
+    /// Reservation owners use the same value for startup diagnostics so their
+    /// declarations cannot drift from the allocator's enforced limit.
+    /// </summary>
+    internal const ulong MaximumMappedBytes = 1024UL * 1024UL * 1024UL;
     private static long s_nextIdentity;
 
     private readonly VulkanMappedFrameArenaBackend _backend;
@@ -462,7 +467,8 @@ internal sealed class VulkanFrameDataArena
             return false;
         ulong requestedMappedBytes = capacity * (ulong)_frameSlotCount;
         ulong currentMappedBytes = checked((ulong)Math.Max(AllocatedBytes, 0L));
-        if (requestedMappedBytes > MaxMappedBytes || currentMappedBytes > MaxMappedBytes - requestedMappedBytes)
+        if (requestedMappedBytes > MaximumMappedBytes ||
+            currentMappedBytes > MaximumMappedBytes - requestedMappedBytes)
             return false;
 
         VulkanFrameDataChunk?[] group = existingGroups[existingGroupCount];
@@ -475,9 +481,9 @@ internal sealed class VulkanFrameDataArena
                     capacity,
                     _usages[laneIndex],
                     _labels[laneIndex]);
-                if (chunk.AllocationLength > MaxMappedBytes ||
-                    actualMappedBytes > MaxMappedBytes - chunk.AllocationLength ||
-                    currentMappedBytes > MaxMappedBytes - actualMappedBytes - chunk.AllocationLength)
+                if (chunk.AllocationLength > MaximumMappedBytes ||
+                    actualMappedBytes > MaximumMappedBytes - chunk.AllocationLength ||
+                    currentMappedBytes > MaximumMappedBytes - actualMappedBytes - chunk.AllocationLength)
                 {
                     chunk.Destroy(_backend, nativeDestroyAllowed: true);
                     for (int cleanupSlot = 0; cleanupSlot < slot; cleanupSlot++)

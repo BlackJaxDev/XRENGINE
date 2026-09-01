@@ -2,9 +2,10 @@
 
 Last Updated: 2026-08-31
 Owner: Animation / Avatar
-Status: In progress; Phases 1-9A are implemented and Phase 9A has passed its
-focused Unity `2022.3.22f1` acceptance contract. Phase 10 remains the broader
-versioned multi-avatar known-answer corpus and CI parity matrix.
+Status: In progress. Phases 1-9A are implemented and Phase 9A has passed its
+focused Unity `2022.3.22f1` acceptance contract. Phase 10 is partially
+implemented, but Body/Hips vertical parity, arbitrary-Z-up model-root
+composition, and the complete conformance matrix remain open.
 
 Related evidence:
 
@@ -1123,6 +1124,100 @@ Initial numerical gates to ratify before implementation is declared complete:
 The historical `3.25 cm` maximum endpoint difference does not pass the proposed
 native-path gate. It remains useful baseline evidence, not a general completion
 result or an acceptable fallback quality level.
+
+### Phase 10 implementation handoff (2026-08-31)
+
+Phase 10 is not complete. The broad checklist above and the general completion
+items below intentionally remain unchecked. The following records the exact
+working-tree state at wrap-up so a later pass can continue without repeating
+the completed infrastructure work.
+
+Completed in the current working tree:
+
+- [x] Added three redistributable humanoid FBX fixtures: a conventional rig, an
+  arbitrary-name/Z-up rig with persisted mapping corrections, and a lean rig
+  with optional roles absent. Added all five repository walk `.anim` files and
+  15 Unity `2022.3.22f1` schema-7 known-answer references covering every
+  avatar/walk pairing.
+- [x] Added a versioned, fail-closed conformance manifest with content hashes,
+  provenance, avatar/import identities, coordinate spaces, tolerances, and a
+  frozen exporter signature. The manifest currently declares 21 cases: 15
+  direct cross-avatar walk rows plus six conventional Sexy Walk playback-route
+  rows. These assets are present but still untracked, so the top-level
+  "check in fixtures" item is not closed until they are reviewed and committed.
+- [x] Added the `HumanoidConformanceRunner`, schema-7 audit comparison,
+  production-source fixture identity scan, asset validation, and route probes for
+  direct playback, exact seeks, reverse playback, signed loop epochs, state,
+  transition/interruption, and blend-tree paths. Typed-event, object-reference
+  PPtr, and packed dense/streamed/compressed fixture checks are implemented,
+  but are not yet represented by a passing final coverage report.
+- [x] Corrected generic FBX import details used by the corpus: canonical Y-up
+  conversion, proper-rotation handling, explicit native Z-up override, authored
+  link-bind handling, mapping persistence/content-basis behavior, and the
+  parser matrix-transpose path.
+- [x] Routed imported humanoid foot-projection goals through direct clip
+  sampling and humanoid transactions. Direct evaluation now uses exact sample
+  ticks, preserves goal state, supports mirror/IK policy, samples cyclic clip
+  duration at the wrapped start, and publishes reverse plus signed-loop
+  observations without an explicit seam failure.
+- [x] Made pose audits compose projected root motion virtually into model-root
+  and world observations without mutating the scene. On the conventional Sexy
+  Walk row this reduced the prior world-space rotation discrepancy from about
+  `13.067 deg` to about `0.056 deg`; mapped local rotations remain about
+  `0.04 deg`.
+- [x] Completed live Phase 9A integration checks of Sexy Walk on the Jax avatar
+  prefab and Mitsuki. Both remained visibly intact and animated plausibly; this
+  is useful private integration evidence, not a substitute for the Phase 10
+  redistributable-avatar matrix.
+- [x] Built `Tools/HumanoidConformanceRunner/HumanoidConformanceRunner.csproj`
+  after the runtime/importer changes with zero warnings and zero errors. No new
+  tests were added or run during this still-open feature-validation slice.
+
+Latest focused Sexy Walk evidence is recorded in the disposable report
+`Build/_AgentValidation/20260831-184646-humanoid-phase10/reports/sexy-three-v1/humanoid-conformance-summary.json`:
+
+- Conventional and lean rigs now have projected-root translation errors of
+  approximately `0.0026 mm` and `0.0024 mm`, respectively, with zero
+  projected-root rotation error. Mapped local rotation is about `0.04 deg`, mapped world
+  rotation is about `0.06 deg`, and conventional ten-loop drift is
+  `0.002741 mm / 0 deg`. There are no explicit playback failures.
+- Those two rows still fail because Body/Hips/endpoints retain an approximately
+  `14.76-15.64 mm` vertical displacement; the conventional solved-Body maximum
+  is approximately `16.71 mm`.
+- The arbitrary-name/Z-up row retains good mapped local rotations (about
+  `0.04 deg`) but has a static model/root basis error: projected/world results
+  are approximately `90 deg` out and the projected-root translation error is
+  about `124 mm`. This is a basis-composition defect, not evidence of a failed
+  local humanoid pose solve.
+
+Still required before Phase 10 can be closed:
+
+- [ ] Derive and implement the generic Unity-compatible absolute Body/Hips
+  vertical allocation for Feet/Y projection. The projected root is already
+  accurate; the remaining `~15 mm` error is in absolute Body/Hips placement.
+  The correction must follow public contracts and avatar data, never clip- or
+  avatar-fitted constants.
+- [ ] Correct static model/root basis composition for arbitrary-Z-up avatars,
+  then verify projected root, model-root/world bones, endpoints, and temporal
+  deltas while preserving the already-good mapped local rotations.
+- [ ] Rerun all 21 declared manifest rows after both root causes are fixed, then
+  expand the matrix so every root setting and purpose-built behavior is covered
+  on every compatible avatar and applicable playback route. Only the three
+  direct Sexy Walk rows were rerun after the latest fixes.
+- [ ] Add passing authored IK/contact observations. Current direct Sexy Walk
+  observations report `InverseKinematicsApplied=false` and zero foot contacts;
+  no-IK behavior alone does not close the authored-IK/contact requirement.
+- [ ] Complete externally referenced state, transition, interrupted-transition,
+  1D/2D/direct blend, event, PPtr, and supported packed-encoding coverage rather
+  than relying only on implemented runner routes and asset-presence checks.
+- [ ] Execute rename/move invariance, persisted-correction save/reimport, and a
+  genuinely unseen avatar/clip pair introduced after the solver-design freeze.
+- [ ] Run live editor checks for all three redistributable avatars, capture the
+  numeric/visual evidence, and then run the focused builds/tests once the user
+  clears test work under the repository's live-validation-first policy.
+- [ ] Review and add the untracked corpus/runner files, reconcile the startup
+  warning, developer/user documentation, and investigation status, and publish
+  one final passing coverage report before marking this TODO complete.
 
 ## Tests After Live Feature Validation
 

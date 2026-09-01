@@ -118,11 +118,13 @@ public partial class HumanoidComponent
     public void RefreshAvatarDefinition()
         => RefreshAvatarDefinition(profileResult: null);
 
-    private void RefreshAvatarDefinition(AvatarHumanoidProfileBuilder.ProfileResult? profileResult)
+    private void RefreshAvatarDefinition(
+        AvatarHumanoidProfileBuilder.ProfileResult? profileResult,
+        bool reauthorGeneratedMetadata = false)
     {
         HumanoidAvatarDefinitionMetadata previous = AvatarDefinition;
         HumanoidAvatarSolverSettings solverSettings = BuildSolverSettings(previous);
-        HumanoidAvatarBodyAxes bodyAxes = BuildBodyAxes(previous);
+        HumanoidAvatarBodyAxes bodyAxes = BuildBodyAxes(previous, reauthorGeneratedMetadata);
         float modelUnitsPerMeter = ResolveModelUnitsPerMeter(previous);
         float muscleInputScale = float.IsFinite(Settings.MuscleInputScale)
             ? Settings.MuscleInputScale
@@ -131,7 +133,8 @@ public partial class HumanoidComponent
             previous,
             solverSettings,
             bodyAxes,
-            profileResult);
+            profileResult,
+            reauthorGeneratedMetadata);
         HumanoidAvatarBodyDefinition? bodyDefinition = previous.BodyDefinition is null
             || HumanoidAvatarBodyDefinitionFactory.IsGeneratedModelId(previous.BodyDefinition.ModelId)
             ? HumanoidAvatarBodyDefinitionFactory.CreateDefault(bindings)
@@ -141,7 +144,8 @@ public partial class HumanoidComponent
             modelUnitsPerMeter,
             bodyAxes,
             bodyDefinition,
-            bindings);
+            bindings,
+            reauthorGeneratedMetadata);
         HumanoidAvatarMuscleLimit[] muscleLimits = BuildMuscleLimits(previous);
         HumanoidAvatarTwistChain[] twistChains = BuildTwistChains(previous, solverSettings);
         HumanoidAvatarAuxiliaryBoneBinding[] auxiliaryBones = CopyAuxiliaryBones(previous.AuxiliaryBones);
@@ -276,12 +280,58 @@ public partial class HumanoidComponent
         Settings.ProfileSource = "manual";
         AvatarHumanoidProfileBuilder.ProfileResult profileResult =
             AvatarHumanoidProfileBuilder.BuildProfile(this);
-        RefreshAvatarDefinition(profileResult);
+        RefreshAvatarDefinition(profileResult, reauthorGeneratedMetadata: true);
 
         HumanoidAvatarBoneBinding? binding = FindBinding(AvatarDefinition.Bones, role);
         if (binding is null)
             return;
 
+        MarkEditorCorrection(binding, lockEditorCorrection);
+        RehashDefinitionAfterEditorChange();
+    }
+
+    /// <summary>
+    /// Applies a complete editor mapping atomically, then derives axes, body
+    /// metadata, human scale, and canonical corrections once from the completed
+    /// hierarchy. Intermediate partial mappings never become authored state.
+    /// </summary>
+    public void SetAvatarBoneMappings(
+        IReadOnlyDictionary<EHumanoidAvatarBoneRole, SceneNode?> mappings,
+        bool lockEditorCorrections = true)
+    {
+        ArgumentNullException.ThrowIfNull(mappings);
+
+        ClearSceneNodeBindings();
+        foreach ((EHumanoidAvatarBoneRole role, SceneNode? node) in mappings)
+        {
+            BoneDef bone = GetBoneDefinition(role);
+            bone.Node = node;
+            if (node is not null)
+                RefreshBoneBindPose(bone);
+        }
+
+        // A whole-map replacement invalidates profile-derived axis data. Rebuild
+        // it from the completed semantic hierarchy before marking it authored.
+        Settings.BoneAxisMappings.Clear();
+        Settings.ProfileSource = "manual";
+        AvatarHumanoidProfileBuilder.ProfileResult profileResult =
+            AvatarHumanoidProfileBuilder.BuildProfile(this);
+        RefreshAvatarDefinition(profileResult, reauthorGeneratedMetadata: true);
+        AvatarDefinition.Source = "EditorCorrection";
+
+        foreach (EHumanoidAvatarBoneRole role in mappings.Keys)
+        {
+            HumanoidAvatarBoneBinding? binding = FindBinding(AvatarDefinition.Bones, role);
+            if (binding is not null)
+                MarkEditorCorrection(binding, lockEditorCorrections);
+        }
+        RehashDefinitionAfterEditorChange();
+    }
+
+    private static void MarkEditorCorrection(
+        HumanoidAvatarBoneBinding binding,
+        bool locked)
+    {
         binding.MappingSource = EHumanoidAvatarMappingSource.EditorCorrection;
         binding.Confidence = 1.0f;
         binding.ImportedMetadataScore = 0.0f;
@@ -291,8 +341,7 @@ public partial class HumanoidComponent
         binding.SymmetryScore = 1.0f;
         binding.AliasScore = 0.0f;
         binding.MappingEvidence = "Locked editor correction.";
-        binding.Locked = lockEditorCorrection;
-        RehashDefinitionAfterEditorChange();
+        binding.Locked = locked;
     }
 
     /// <summary>
@@ -521,7 +570,8 @@ public partial class HumanoidComponent
             definition.HumanScale,
             definition.ModelUnitsPerMeter,
             definition.MuscleInputScale,
-            profileResult: null);
+            profileResult: null,
+            includeAuthoringConfidence: false);
         if (HasDiagnosticPrefix(liveDiagnostics, "Error:"))
         {
             definition.Status = EHumanoidAvatarDefinitionStatus.Invalid;
@@ -606,7 +656,8 @@ public partial class HumanoidComponent
         HumanoidAvatarDefinitionMetadata previous,
         HumanoidAvatarSolverSettings solverSettings,
         HumanoidAvatarBodyAxes bodyAxes,
-        AvatarHumanoidProfileBuilder.ProfileResult? profileResult)
+        AvatarHumanoidProfileBuilder.ProfileResult? profileResult,
+        bool reauthorGeneratedMetadata = false)
     {
         EHumanoidAvatarBoneRole[] roles = Enum.GetValues<EHumanoidAvatarBoneRole>();
         var bindings = new HumanoidAvatarBoneBinding[roles.Length];
@@ -630,7 +681,8 @@ public partial class HumanoidComponent
             bool preservesPriorBinding = oldBinding is not null
                 && string.Equals(oldBinding.StructuralSha256, structuralHash, StringComparison.Ordinal);
             bool preservesEditorBinding = preservesPriorBinding && oldBinding!.Locked;
-            bool preservesAuthoredSolverData = preservesPriorBinding
+            bool preservesAuthoredSolverData = !reauthorGeneratedMetadata
+                && preservesPriorBinding
                 && (preservesEditorBinding || !IsAutomaticProfileSource(Settings.ProfileSource));
             // Solver settings remain authored data. Generated corrections are
             // retained only when their exact authoring contract still matches.
@@ -769,7 +821,8 @@ public partial class HumanoidComponent
         float humanScale,
         float modelUnitsPerMeter,
         float muscleInputScale,
-        AvatarHumanoidProfileBuilder.ProfileResult? profileResult)
+        AvatarHumanoidProfileBuilder.ProfileResult? profileResult,
+        bool includeAuthoringConfidence = true)
     {
         List<string> diagnostics = [];
         var assignedNodes = new HashSet<SceneNode>(ReferenceEqualityComparer.Instance);
@@ -845,10 +898,13 @@ public partial class HumanoidComponent
 
         ValidateMuscleLimits(muscleLimits, diagnostics);
 
-        float confidence = profileResult?.OverallConfidence ?? Settings.ProfileConfidence;
-        if (!float.IsFinite(confidence) || confidence < MinimumAcceptedProfileConfidence)
-            diagnostics.Add(
-                $"Review: automatic avatar mapping confidence is {confidence:P0}; inspect the role mapping and confirm it explicitly.");
+        if (includeAuthoringConfidence)
+        {
+            float confidence = profileResult?.OverallConfidence ?? Settings.ProfileConfidence;
+            if (!float.IsFinite(confidence) || confidence < MinimumAcceptedProfileConfidence)
+                diagnostics.Add(
+                    $"Review: automatic avatar mapping confidence is {confidence:P0}; inspect the role mapping and confirm it explicitly.");
+        }
 
         for (int i = 0; i < _avatarMigrationDiagnostics.Count; i++)
             diagnostics.Add(_avatarMigrationDiagnostics[i]);
@@ -868,9 +924,12 @@ public partial class HumanoidComponent
         return settings;
     }
 
-    private HumanoidAvatarBodyAxes BuildBodyAxes(HumanoidAvatarDefinitionMetadata previous)
+    private HumanoidAvatarBodyAxes BuildBodyAxes(
+        HumanoidAvatarDefinitionMetadata previous,
+        bool reauthorGeneratedMetadata)
     {
-        if (!IsAutomaticProfileSource(Settings.ProfileSource)
+        if (!reauthorGeneratedMetadata
+            && !IsAutomaticProfileSource(Settings.ProfileSource)
             && previous.Status != EHumanoidAvatarDefinitionStatus.Uninitialized
             && previous.BodyAxes.IsFiniteOrthonormal())
             return CopyBodyAxes(previous.BodyAxes);
@@ -1065,9 +1124,11 @@ public partial class HumanoidComponent
         float modelUnitsPerMeter,
         HumanoidAvatarBodyAxes bodyAxes,
         HumanoidAvatarBodyDefinition? bodyDefinition,
-        HumanoidAvatarBoneBinding[] bindings)
+        HumanoidAvatarBoneBinding[] bindings,
+        bool reauthorGeneratedMetadata)
     {
-        if (!IsAutomaticProfileSource(Settings.ProfileSource)
+        if (!reauthorGeneratedMetadata
+            && !IsAutomaticProfileSource(Settings.ProfileSource)
             && float.IsFinite(previous.HumanScale)
             && previous.HumanScale > 1e-5f)
             return previous.HumanScale;

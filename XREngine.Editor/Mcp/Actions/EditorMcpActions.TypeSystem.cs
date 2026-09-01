@@ -496,9 +496,7 @@ namespace XREngine.Editor.Mcp
                 {
                     var asmName = asm.GetName();
                     string category = ClassifyAssembly(asm);
-                    int typeCount;
-                    try { typeCount = asm.GetTypes().Length; }
-                    catch { typeCount = -1; }
+                    int typeCount = XREngine.Core.XRLoadableTypeCatalog.GetTypes(asm).Count;
 
                     return new
                     {
@@ -513,10 +511,18 @@ namespace XREngine.Editor.Mcp
                 .OrderBy(a => a.category)
                 .ThenBy(a => a.name)
                 .ToArray();
+            string[] loaderFailures =
+                XREngine.Core.XRLoadableTypeCatalog.GetLoadFailureDiagnostics();
 
             return Task.FromResult(new McpToolResponse(
                 $"Listed {assemblies.Length} loaded assemblies.",
-                new { count = assemblies.Length, assemblies }));
+                new
+                {
+                    count = assemblies.Length,
+                    assemblies,
+                    loaderFailureCount = loaderFailures.Length,
+                    loaderFailures,
+                }));
         }
 
         /// <summary>
@@ -541,15 +547,8 @@ namespace XREngine.Editor.Mcp
             if (assembly is null)
                 return Task.FromResult(new McpToolResponse($"Assembly '{assemblyName}' not found.", isError: true));
 
-            Type[] allTypes;
-            try
-            {
-                allTypes = assembly.GetTypes();
-            }
-            catch (ReflectionTypeLoadException ex)
-            {
-                allTypes = ex.Types.Where(t => t is not null).Cast<Type>().ToArray();
-            }
+            IReadOnlyList<Type> allTypes =
+                XREngine.Core.XRLoadableTypeCatalog.GetTypes(assembly);
 
             var types = allTypes
                 .Where(t =>
@@ -701,12 +700,7 @@ namespace XREngine.Editor.Mcp
             Type? shortNameMatch = null;
             foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
             {
-                Type[]? types;
-                try { types = assembly.GetTypes(); }
-                catch (ReflectionTypeLoadException ex) { types = ex.Types.Where(t => t is not null).Cast<Type>().ToArray(); }
-                catch { continue; }
-
-                foreach (var candidate in types)
+                foreach (Type candidate in XREngine.Core.XRLoadableTypeCatalog.GetTypes(assembly))
                 {
                     // Full name match (highest priority)
                     if (string.Equals(candidate.FullName, name, StringComparison.OrdinalIgnoreCase))
@@ -737,12 +731,7 @@ namespace XREngine.Editor.Mcp
         {
             foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
             {
-                Type[]? types;
-                try { types = assembly.GetTypes(); }
-                catch (ReflectionTypeLoadException ex) { types = ex.Types.Where(t => t is not null).Cast<Type>().ToArray(); }
-                catch { continue; }
-
-                foreach (var type in types)
+                foreach (Type type in XREngine.Core.XRLoadableTypeCatalog.GetTypes(assembly))
                     yield return type;
             }
         }

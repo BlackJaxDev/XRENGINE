@@ -471,3 +471,212 @@ pending upload, and in-flight count) and explain the ownership/progress mismatch
 before making another readiness-policy change. Only after that path stays live
 should held resize, Advanced, and the Advanced-to-Debug-Opaque asset replacement
 be rechecked.
+
+## Resize and editor-camera pipeline transition implementation
+
+Follow-up work on 2026-08-31 separated the viewport/pipeline lifecycle defect
+from the unresolved required-upload watchdog. The implementation now has these
+invariants:
+
+- `XRViewport.Resize` batches display extent, camera Full/Scale/Manual policy,
+  and pipeline AA/upscale policy before publishing one coherent resource profile.
+  Presentation-only interactive extents do not allocate intermediate render
+  graphs; the release/full-internal commit requests the settled generation.
+- `XRRenderPipelineInstance` owns the generic resize generation request for
+  every declared pipeline. Default and Advanced hooks only invalidate their
+  ancillary AA/history state.
+- Camera asset changes are latest-wins render-thread transitions. A real asset
+  reference change increments an instance-local pipeline revision, force-resets
+  command/pass publications, clears pipeline-scoped runtime state, and prevents
+  an old generation from validating the successor command chain.
+- Active, pending, and retired generations retain their creating pipeline asset,
+  so delayed destruction callbacks cannot target a newer replacement asset.
+  Layoutless successors explicitly retire an old managed generation while
+  retaining legacy resources under the new owner.
+- `XRWindow` considers a full-internal resize committed only when controller
+  presentation/output extents agree and each viewport's active generation
+  matches its actual display and actual internal extent. This supports scaled
+  internal resolution and non-full-window viewports.
+
+The first final Default replay found a real Vulkan blocker after a successful
+`1920x1080 -> 1599x1080` generation. A subsequent `2560x1369` request failed in
+`VkDataBuffer.PushSubData`: the buffer's logical length was below 64 KiB, so
+memory policy was recorded as host-visible, while resizable capacity rounded to
+64 KiB and the backing allocation was created device-local. Reuse then tried to
+map the device-local allocation. `VkDataBuffer.PushData` now computes planned
+capacity first and uses that same byte count for memory-policy selection,
+recreate comparison, and allocation. The corrected run committed
+`1920x1080 -> 2560x1369` in 208.87 ms with no pending generation, generation
+failure, or `not host-visible` exception. Evidence is in:
+
+`Build/_AgentValidation/00000000-000000-shared/mcp-sessions/20260831-190734-pipeline-resize-swap/logs/XREngine.Editor_debug/windows_x64/xrengine_2026-08-31_19-41-01_pid49808/`.
+
+The resize/swap acceptance observations were:
+
+- Advanced: actual held width and height border drags changed
+  `1920x1080 -> 1499x1080 -> 1499x819`; each release produced a matching active
+  generation with no pending/failure state. The solid-red surface is the
+  Advanced pipeline's current explicit diagnostic clear, not a resize artifact.
+- Default: the corrected build visibly rendered the scene after resize and its
+  active resource key matched `2560x1369` for both display and internal extent.
+- Cross-type presentation: a fresh Advanced-to-Debug run and a fresh
+  Default-to-Debug run both changed the window surface to Debug's black output.
+  The latter reported `DebugOpaquePipeline pipelineRev=3`, a complete
+  `1920x1080` active generation, no pending/failure state, and only Debug-owned
+  enabled command passes.
+- Any-to-any state: Advanced-to-Debug-to-Default, Default-to-Advanced, and two
+  distinct Advanced assets advanced pipeline revisions and resource generations.
+  Reassigning the exact same Advanced asset left the camera assignment revision
+  and resource generation unchanged.
+
+The camera API and the ImGui picker now share
+`XRCamera.ReplaceRenderPipelineAsset`, and MCP exposes
+`set_editor_camera_render_pipeline_asset` for bounded live diagnostics.
+
+This cohort does not override the deadline handoff above. The unrelated
+`RequiredUploadCompletion` watchdog still reaches `RendererPaused` after about
+30 seconds in some fresh runs, including after otherwise successful resize
+commits. Post-terminal state changes were excluded from presentation evidence.
+Phase 5 therefore remains open for the long-duration upload-progress gate even
+though the resize and asset-transition lifecycle is implemented and passing its
+targeted live checks. No tests were added or changed because repository policy
+still requires explicit user clearance after live integration validation.
+
+## Final lifecycle hardening and exact-build replay
+
+A final ownership review found six transition-edge cases and the implementation
+was hardened before the final replay:
+
+- stale shared-asset instance snapshots can no longer mutate a successor;
+  command rebuild and settings invalidation verify asset owner, pipeline
+  revision, and command generation under the transition lock;
+- a `SetField` veto cannot leave partial ownership or advance the revision;
+- layoutless authority retains its last successful key until cleanup succeeds;
+- notification callbacks and terminal generation/resource teardown are
+  exception-isolated and best effort;
+- resize readiness rejects every outstanding pipeline request; and
+- output binding reads one coherent request/applying/applied target instead of
+  racing the camera-facing request with the render-thread transition.
+
+The exact isolated build is under
+`Build/_AgentValidation/00000000-000000-shared/mcp-sessions/20260831-202840-pipeline-final-vk/`.
+Three Vulkan processes exercised the same artifacts. The state cohort performed
+Advanced -> Default -> Debug Opaque -> Advanced, verified distinct asset
+revisions and generations, and verified that reassigning the exact Advanced
+asset was a strict no-op. Advanced then committed a native maximize to
+`2560x1369` with six textures and one FBO. A fresh Default process committed the
+same native extent with 31 textures and 30 FBOs.
+
+The last Default replay (PID 27264) visibly presented the scene and editor UI
+after the maximize, with the runtime overlay reporting
+`Vulkan | DefaultRenderPipeline | CpuDirect`. Its managed generation committed
+`1920x1080 -> 2560x1369` in 42.42 ms, the swapchain converged to that extent in
+216.423 ms, and the full-internal resize committed only after the generation was
+active. The run continued for more than 75 seconds after the pipeline change and
+advanced beyond frame 2560. Across that run there were zero pipeline-transition,
+cleanup, description, host-visibility, device-loss, `RendererPaused`,
+`RequiredUploadCompletion`, or validation-VUID records. Two transient
+`VulkanPresentNowReadinessException` records were retry-frame waits for
+asynchronous compute compilation; presentation recovered normally. Later asset
+loading also retained the pre-existing vertex-input and auto-uniform warnings,
+which did not stop presentation and are outside this lifecycle slice.
+
+This longer replay strengthens the Default upload-progress evidence, but it did
+not explicitly identify the checklist's Sponza 64-to-1024 promotion event.
+Phase 5 remains open until that named promotion cohort and the remaining held
+Advanced/Debug cross-pipeline acceptance rows are completed. No tests were
+added, modified, or run; repository policy requires explicit user clearance
+after live feature validation.
+
+## Three-piece follow-up: storage, upload progress, and recoverable admission
+
+The 2026-08-31 follow-up implements the three blockers left at the end of the
+Phase 5 handoff.
+
+### Advanced scene storage is a declared generation budget
+
+The Advanced scene lane now reserves 32 MiB per frame slot (64 MiB for the
+two-slot desktop renderer) during resource-runtime initialization. Startup
+validates that reservation against the frame arena's shared 1 GiB aggregate
+mapped-memory guard before native allocation. The frame-preparation hot path
+does not grow native storage. If both retained and compact publication layouts
+exceed the declaration, the failure reports required, consumed, compact, and
+declared byte counts and remains a hard non-retryable capacity failure.
+
+The first exact run reported `storageBytesPerSlot=33554432`,
+`storageReservationBytes=67108864`, and
+`frameArenaAllocatedBytes=167772160`; it lowered the retained canonical
+publication without `FrameStorageCapacity` exhaustion.
+
+### Default upload preparation cannot lose its drain edge
+
+The preparation scheduler bit now has an explicit owner contract. A synchronous
+scheduler rejection releases it, an exceptional coroutine completion releases
+and rearms it, retirement/device-unavailable paths clear it, and completion of
+either worker preparation kind independently rechecks the render-thread drain.
+Normal coroutine completion still uses the queue's atomic clear/recheck path so
+a successor producer cannot have its ownership erased by a second clear.
+
+The final isolated run remained live from startup through repeated pipeline
+replacement and more than 21,000 render frames. Default was active for well
+beyond the old 30-second and 45-second failure windows. Startup produced a few
+bounded `RetryFrame` upload/pipeline deferrals while Sponza became resident, but
+there was no `RendererPaused`, terminal transition, upload watchdog, or delayed
+preparation-drain failure.
+
+### PresentNow distinguishes retry, recoverable state, and hard terminal state
+
+Foreground admission now has three explicit dispositions:
+
+- `RetryFrame` rejects only the current producer epoch.
+- `RecoverAfterStateChange` permits one bounded automatic probe, then requires
+  an explicit window/pipeline state-change request before another bounded probe.
+- `RendererTerminal` retains the permanent diagnostic latch for fixed-capacity,
+  invariant, memory-integrity, and device-correctness failures.
+
+A pipeline transition requests recovery only after its new asset is fully
+applied; an explicit window circuit-breaker reset also publishes a recovery
+edge. A probe is considered successful only when a fresh `PresentNow` primary
+was readiness-complete, recorded this frame, submitted with a nonzero serial,
+and accepted by presentation. Hard terminal telemetry is never cleared by a
+pipeline replacement.
+
+The classification remains typed through the late recording boundary: fixed
+Advanced set-1/set-2/set-3 capacities, publication/transaction invariants,
+native faults, and required-upload ledger terminal failures all reach the hard
+latch unchanged. Only explicitly identified pipeline/target incompatibilities
+are recoverable. A state-change request published while a bounded probe is
+running retains its sequence and can admit the next probe if the active one
+fails; it is not consumed by that failure.
+
+### Exact-build replay
+
+The final editor build exercised Advanced -> Default -> Advanced -> Default.
+Pipeline revisions advanced `1 -> 2 -> 3 -> 4`, active resource generations
+advanced through `2 -> 4 -> 6 -> 8`, and exact same-reference assignments were
+strict no-ops. Before the native resize interaction, Default was exact at
+1920x1080 with no pending generation or generation failure, the latest desktop
+frame was `Completed/Success`, presentation was dispatched and accepted, the
+device was operational, the terminal latch was null, and validation reported
+zero messages/errors.
+
+The same process then recorded two real Win32 modal sizing cycles:
+`1920x1080 -> 1436x699 -> 1243x688`. Each release committed the matching Default
+generation, converged the swapchain, and resumed fresh accepted `PresentNow`
+frames; the log reached frame 21,167 after the second resize. The rebuilt run
+contains zero in-flight descriptor-update failures, desktop-frame failures,
+terminal/recovery transitions, validation errors, or VUIDs. This did not
+reproduce the earlier discarded build's binding-112 descriptor-lifetime fault.
+
+The two recorded held intervals were shorter than the one-second readiness-log
+sampling cadence, so the files prove native modal-loop entry/exit and healthy
+post-release presentation, not every visual frame while the mouse remained
+held. Formal start/held/release screenshots and the remaining Debug Opaque row
+therefore stay open. RenderDoc was not needed for this slice because the
+identified failures and recovery gates were CPU scheduling/admission issues and
+the final run had no unexplained GPU pass or validation fault.
+
+`dotnet build XREngine.Runtime.Rendering.Vulkan/XREngine.Runtime.Rendering.Vulkan.csproj --no-restore`
+completed with zero warnings and zero errors after the final scheduling cleanup.
+No tests were added, modified, or run; repository policy still requires explicit
+user clearance after live feature validation.

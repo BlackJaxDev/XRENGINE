@@ -42,6 +42,8 @@ internal struct HumanoidBodyFrameTransactionState
     internal bool HasPendingProjectedRootMotion;
     internal bool HasProjectionMuscleValueSnapshot;
     internal bool HasCanonicalProjectionMuscleValueSnapshot;
+    internal ImportedHumanoidProjectionFootGoals ProjectionFootGoals;
+    internal ImportedHumanoidProjectionFootGoals CanonicalProjectionFootGoals;
     internal HumanoidStateMachineRootMotionFrame? PendingStateMachineRootMotionFrame;
     internal object? PendingStateMachineRootMotionOwner;
 }

@@ -159,6 +159,18 @@ namespace XREngine.Rendering.Vulkan
 
                         if (recordingResult.IsPresentNowFailure)
                         {
+                            if (recordingResult.RequiresFrameRetry)
+                            {
+                                return HandleDesktopPresentNowRetryAfterAcquire(
+                                    ref attempt,
+                                    EVulkanPresentNowReadinessStage.PipelineCompilation,
+                                    recordingResult.Reason ??
+                                        "PresentNow primary recording requires a fresh frame.",
+                                    imguiOverlaySnapshot,
+                                    dynamicTextSecondaryCommandBuffer,
+                                    dynamicTextOverlayOpCount);
+                            }
+
                             return HandleDesktopPresentNowFailureAfterAcquire(
                                 ref attempt,
                                 EVulkanPresentNowReadinessStage.PipelineCompilation,
@@ -167,9 +179,13 @@ namespace XREngine.Rendering.Vulkan
                                 imguiOverlaySnapshot,
                                 dynamicTextSecondaryCommandBuffer,
                                 dynamicTextOverlayOpCount,
-                                recordingResult.RequiresFrameRetry
-                                    ? EVulkanPresentNowFailureDisposition.RetryFrame
-                                    : EVulkanPresentNowFailureDisposition.RendererTerminal);
+                                recordingResult.FailureKind ==
+                                    EVulkanCommandRecordingFailureKind
+                                        .RecoverAfterStateChange
+                                    ? EVulkanPresentNowFailureDisposition
+                                        .RecoverAfterStateChange
+                                    : EVulkanPresentNowFailureDisposition
+                                        .RendererTerminal);
                         }
 
                         if (attempt.WorkClass == ERenderOutputWorkClass.PresentNow &&
@@ -364,15 +380,13 @@ namespace XREngine.Rendering.Vulkan
                 TimeSpan.Zero,
                 reason,
                 disposition: disposition);
-            if (disposition == EVulkanPresentNowFailureDisposition.RetryFrame)
-                RejectPresentNowFrame(ref attempt, failure);
-            else
-                PausePresentNowRenderer(ref attempt, failure);
+            HandlePresentNowFailureBeforeAcquire(ref attempt, failure);
 
             // PresentNow never replays stale scene content. A retryable
             // failure may submit a newly recorded clear/overlay recovery frame
             // so the UI remains live and any required texture upload can make
-            // forward progress. Permanent failure still refuses presentation.
+            // forward progress. State-change recovery and terminal failures
+            // refuse presentation until their respective admission gates open.
             bool recoveryCompleted = TryRecoverRejectedDesktopImage(
                 ref attempt,
                 commandBufferDirtyFlagSet: false,
@@ -385,9 +399,7 @@ namespace XREngine.Rendering.Vulkan
                     recoveryDynamicTextSecondaryCommandBuffer,
                 recoveryDynamicTextOperationCount:
                     recoveryDynamicTextOperationCount,
-                allowPresentNowRetryInitializationClear:
-                    disposition ==
-                    EVulkanPresentNowFailureDisposition.RetryFrame);
+                allowPresentNowRetryInitializationClear: false);
 
             if (recoveryCompleted)
                 return EDesktopFrameFlow.Completed;
@@ -401,6 +413,55 @@ namespace XREngine.Rendering.Vulkan
             CompleteDesktopFrameSlot(ref attempt);
             attempt.Stop(
                 EDesktopFrameReason.PresentNowReadinessFailed,
+                EDesktopFrameRecoveryAction.RecreateSwapchain);
+            return EDesktopFrameFlow.Stop;
+        }
+
+        private EDesktopFrameFlow HandleDesktopPresentNowRetryAfterAcquire(
+            ref VulkanFrameAttempt attempt,
+            EVulkanPresentNowReadinessStage stage,
+            string reason,
+            VulkanImGuiFrameSnapshot? recoveryOverlaySnapshot,
+            CommandBuffer recoveryDynamicTextSecondaryCommandBuffer,
+            int recoveryDynamicTextOperationCount)
+        {
+            TimeSpan elapsed = Stopwatch.GetElapsedTime(attempt.StartTimestamp);
+            VulkanPresentNowReadinessRetry retry = new(
+                attempt.FrameNumber,
+                stage,
+                "sealed-primary-recording",
+                "DesktopScene -> sealed FramePlan -> required pipeline/descriptor/target",
+                elapsed,
+                TimeSpan.Zero,
+                reason);
+            RejectPresentNowFrame(ref attempt, in retry);
+
+            if (TryRecoverRejectedDesktopImage(
+                    ref attempt,
+                    commandBufferDirtyFlagSet: false,
+                    commandBuffersDirtiedAfterSceneRecord: true,
+                    recordedSwapchainWriteCount: attempt.SceneSwapchainWriteCount,
+                    rejectionStage: "PresentNowRecordingRetry",
+                    rejectedSubmitResult: null,
+                    recoveryOverlaySnapshot: recoveryOverlaySnapshot,
+                    recoveryDynamicTextSecondaryCommandBuffer:
+                        recoveryDynamicTextSecondaryCommandBuffer,
+                    recoveryDynamicTextOperationCount:
+                        recoveryDynamicTextOperationCount,
+                    allowPresentNowRetryInitializationClear: true))
+            {
+                return EDesktopFrameFlow.Completed;
+            }
+
+            _ = ConsumeDesktopAcquireForRecovery(
+                ref attempt,
+                "PresentNowRecordingRetry");
+            ResolveDesktopAcquireBySwapchainRecreation(
+                ref attempt,
+                "PresentNow recording retry could not settle the acquired image");
+            CompleteDesktopFrameSlot(ref attempt);
+            attempt.Stop(
+                EDesktopFrameReason.PresentNowReadinessRetry,
                 EDesktopFrameRecoveryAction.RecreateSwapchain);
             return EDesktopFrameFlow.Stop;
         }

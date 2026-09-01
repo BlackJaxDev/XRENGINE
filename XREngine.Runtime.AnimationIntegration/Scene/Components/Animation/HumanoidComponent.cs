@@ -33,6 +33,8 @@ namespace XREngine.Components.Animation
         private readonly float[] _muscleValueSnapshot = new float[MuscleValueCount];
         private readonly float[] _projectionMuscleValueSnapshot = new float[MuscleValueCount];
         private readonly float[] _canonicalProjectionMuscleValueSnapshot = new float[MuscleValueCount];
+        private ImportedHumanoidProjectionFootGoals _projectionFootGoals;
+        private ImportedHumanoidProjectionFootGoals _canonicalProjectionFootGoals;
         private readonly float[] _appliedMuscleValueSnapshot = new float[MuscleValueCount];
         private readonly object _loopPoseCorrectionProbeOwner = new();
         private readonly object _poseEvaluationSyncRoot = new();
@@ -93,6 +95,7 @@ namespace XREngine.Components.Animation
 
         private void RebuildSceneNodeBindings(bool clearExistingBindings)
         {
+            bool bindPersistedDefinition = HasPersistedAvatarDefinition();
             if (clearExistingBindings)
                 ClearSceneNodeBindings();
             ObserveSourceModelUnitMetadata();
@@ -100,21 +103,42 @@ namespace XREngine.Components.Animation
 
             CaptureMissingHumanoidBindPoses();
             MigratePendingLegacyAvatarProfile();
-            SetFromNodeCore();
-            RefreshBoneBindPosesFromCapturedHierarchy();
-            if (TryApplyImportedAvatarContentBasis())
+            if (bindPersistedDefinition)
             {
-                // The wrapper changes every descendant's bind world pose while preserving
-                // their authored local matrices. Re-capture before any pose solver consumes it.
-                _humanoidBindLocalPoses.Clear();
-                CaptureMissingHumanoidBindPoses();
+                RefreshBoneBindPosesFromCapturedHierarchy();
+                if (TryApplyImportedAvatarContentBasis())
+                {
+                    // The wrapper changes descendant bind-world poses. Re-capture
+                    // live bindings, but do not reauthor the persisted definition.
+                    _humanoidBindLocalPoses.Clear();
+                    CaptureMissingHumanoidBindPoses();
+                    RefreshBoneBindPosesFromCapturedHierarchy();
+                }
+                _ = TryValidateAvatarDefinitionForPlayback(out _);
+            }
+            else
+            {
                 SetFromNodeCore();
                 RefreshBoneBindPosesFromCapturedHierarchy();
+                if (TryApplyImportedAvatarContentBasis())
+                {
+                    // The wrapper changes every descendant's bind world pose while preserving
+                    // their authored local matrices. Re-capture before any pose solver consumes it.
+                    _humanoidBindLocalPoses.Clear();
+                    CaptureMissingHumanoidBindPoses();
+                    SetFromNodeCore();
+                    RefreshBoneBindPosesFromCapturedHierarchy();
+                }
+                ReloadNeutralPosePreset(applyPreview: false);
             }
-            ReloadNeutralPosePreset(applyPreview: false);
             ApplyPosePreviewMode();
             _sceneNodeInitializationComplete = true;
         }
+
+        private bool HasPersistedAvatarDefinition()
+            => AvatarDefinition.SchemaVersion == HumanoidAvatarDefinitionMetadata.CurrentSchemaVersion
+                && AvatarDefinition.Bones is { Length: > 0 }
+                && !string.IsNullOrWhiteSpace(AvatarDefinition.DefinitionContentSha256);
 
         private float _sourceModelUnitsPerMeter;
 
@@ -3115,6 +3139,8 @@ namespace XREngine.Components.Animation
                 HasPendingProjectedRootMotion = _hasPendingProjectedRootMotion,
                 HasProjectionMuscleValueSnapshot = _hasProjectionMuscleValueSnapshot,
                 HasCanonicalProjectionMuscleValueSnapshot = _hasCanonicalProjectionMuscleValueSnapshot,
+                ProjectionFootGoals = _projectionFootGoals,
+                CanonicalProjectionFootGoals = _canonicalProjectionFootGoals,
             };
 
             _projectionMuscleValueSnapshot.CopyTo(state.ProjectionMuscleValues, 0);
@@ -3198,6 +3224,8 @@ namespace XREngine.Components.Animation
             _hasPendingProjectedRootMotion = state.HasPendingProjectedRootMotion;
             _hasProjectionMuscleValueSnapshot = state.HasProjectionMuscleValueSnapshot;
             _hasCanonicalProjectionMuscleValueSnapshot = state.HasCanonicalProjectionMuscleValueSnapshot;
+            _projectionFootGoals = state.ProjectionFootGoals;
+            _canonicalProjectionFootGoals = state.CanonicalProjectionFootGoals;
             state.ProjectionMuscleValues.CopyTo(_projectionMuscleValueSnapshot, 0);
             state.CanonicalProjectionMuscleValues.CopyTo(_canonicalProjectionMuscleValueSnapshot, 0);
             state.AppliedMuscleValues.CopyTo(_appliedMuscleValueSnapshot, 0);
@@ -3244,6 +3272,8 @@ namespace XREngine.Components.Animation
                 || _hasPendingProjectedRootMotion != state.HasPendingProjectedRootMotion
                 || _hasProjectionMuscleValueSnapshot != state.HasProjectionMuscleValueSnapshot
                 || _hasCanonicalProjectionMuscleValueSnapshot != state.HasCanonicalProjectionMuscleValueSnapshot
+                || !_projectionFootGoals.Equals(state.ProjectionFootGoals)
+                || !_canonicalProjectionFootGoals.Equals(state.CanonicalProjectionFootGoals)
                 || !_projectionMuscleValueSnapshot.AsSpan().SequenceEqual(state.ProjectionMuscleValues)
                 || !_canonicalProjectionMuscleValueSnapshot.AsSpan().SequenceEqual(state.CanonicalProjectionMuscleValues)
                 || !_appliedMuscleValueSnapshot.AsSpan().SequenceEqual(state.AppliedMuscleValues))
@@ -3293,7 +3323,8 @@ namespace XREngine.Components.Animation
             ImportedHumanoidClipRootMotionSettings? projectionSettings = null,
             HumanoidProjectedRootPose? projectionPrefix = null,
             HumanoidLoopPoseCorrection? loopPoseCorrection = null,
-            ReadOnlySpan<float> canonicalProjectionMuscles = default)
+            ReadOnlySpan<float> canonicalProjectionMuscles = default,
+            ImportedHumanoidProjectionFootGoals canonicalProjectionFootGoals = default)
         {
             // A rejected new sample must not let a late root publisher reuse
             // the previous accepted pose. The committed diagnostic is retained.
@@ -3330,6 +3361,7 @@ namespace XREngine.Components.Animation
                 canonicalProjectionMuscles[..MuscleValueCount].CopyTo(_canonicalProjectionMuscleValueSnapshot);
             else
                 Array.Clear(_canonicalProjectionMuscleValueSnapshot);
+            _canonicalProjectionFootGoals = canonicalProjectionFootGoals;
             _hasProjectionMuscleValueSnapshot = projectionSettings is not null
                 && ImportedHumanoidRootMotionPolicy.TryCreate(
                     projectionSettings,
@@ -3339,6 +3371,7 @@ namespace XREngine.Components.Animation
                 && projectionPolicy.PositionYBasis is EImportedHumanoidRootPositionYBasis.Feet;
             if (_hasProjectionMuscleValueSnapshot)
             {
+                _projectionFootGoals.Clear();
                 if (!TryCaptureMuscleSnapshot(_projectionMuscleValueSnapshot))
                     Array.Clear(_projectionMuscleValueSnapshot);
             }
@@ -3370,6 +3403,20 @@ namespace XREngine.Components.Animation
                 value,
                 amount,
                 flipImportedMuscleZ);
+        }
+
+        /// <summary>
+        /// Stages one complete authored Body-relative foot goal before Loop
+        /// Pose correction. Partial scalar bindings never reach this boundary.
+        /// </summary>
+        public void SetImportedHumanoidProjectionGoalPosition(
+            ELimbEndEffector goal,
+            Vector3 position)
+        {
+            if (!_isImportedBodySampleTransactionActive || !_hasProjectionMuscleValueSnapshot)
+                return;
+
+            _projectionFootGoals.Set(goal, position);
         }
 
         /// <summary>
@@ -3460,6 +3507,8 @@ namespace XREngine.Components.Animation
                 _importedBodyLoopPoseCorrection = null;
                 _hasProjectionMuscleValueSnapshot = false;
                 _hasCanonicalProjectionMuscleValueSnapshot = false;
+                _projectionFootGoals.Clear();
+                _canonicalProjectionFootGoals.Clear();
                 return false;
             }
 
@@ -3502,6 +3551,8 @@ namespace XREngine.Components.Animation
             _importedBodyLoopPoseCorrection = null;
             _hasProjectionMuscleValueSnapshot = false;
             _hasCanonicalProjectionMuscleValueSnapshot = false;
+            _projectionFootGoals.Clear();
+            _canonicalProjectionFootGoals.Clear();
         }
 
         /// <summary>
@@ -3637,6 +3688,8 @@ namespace XREngine.Components.Animation
             _hasCanonicalProjectionMuscleValueSnapshot = false;
             Array.Clear(_projectionMuscleValueSnapshot);
             Array.Clear(_canonicalProjectionMuscleValueSnapshot);
+            _projectionFootGoals.Clear();
+            _canonicalProjectionFootGoals.Clear();
             ResetProjectedRootMotion();
         }
 
@@ -3652,6 +3705,7 @@ namespace XREngine.Components.Animation
             _canonicalImportedBodySampleOwner = null;
             _hasCanonicalProjectionMuscleValueSnapshot = false;
             Array.Clear(_canonicalProjectionMuscleValueSnapshot);
+            _canonicalProjectionFootGoals.Clear();
             if (ReferenceEquals(_activeImportedBodyProjectionOwner, owner))
             {
                 _activeImportedBodyProjectionPolicy = null;
@@ -3924,6 +3978,8 @@ namespace XREngine.Components.Animation
             HumanoidImportedBodySample sourceEnd,
             ReadOnlySpan<float> sourceStartMuscles,
             ReadOnlySpan<float> sourceEndMuscles,
+            ImportedHumanoidProjectionFootGoals sourceStartFootGoals,
+            ImportedHumanoidProjectionFootGoals sourceEndFootGoals,
             ImportedHumanoidClipRootMotionSettings settings,
             out HumanoidLoopPoseCorrection bodyCorrection,
             out HumanoidProjectedRootPose projectedRootGenerator)
@@ -3952,7 +4008,9 @@ namespace XREngine.Components.Animation
                 && sourceEndMuscles.Length >= MuscleValueCount
                 && TryCalculateLoopEvaluationFromEndpointPoses(
                     compiled, policy, sourceStart, sourceEnd,
-                    sourceStartMuscles, sourceEndMuscles, 1.0f, settings,
+                    sourceStartMuscles, sourceEndMuscles,
+                    sourceStartFootGoals, sourceEndFootGoals,
+                    1.0f, settings,
                     out bodyCorrection, out projectedRootGenerator);
         }
 
@@ -3963,6 +4021,8 @@ namespace XREngine.Components.Animation
             HumanoidImportedBodySample sourceEnd,
             ReadOnlySpan<float> sourceStartMuscles,
             ReadOnlySpan<float> sourceEndMuscles,
+            ImportedHumanoidProjectionFootGoals sourceStartFootGoals,
+            ImportedHumanoidProjectionFootGoals sourceEndFootGoals,
             float weight,
             ImportedHumanoidClipRootMotionSettings settings,
             out HumanoidLoopPoseCorrection bodyCorrection,
@@ -3986,6 +4046,7 @@ namespace XREngine.Components.Animation
                     sourceStartMuscles.Length >= MuscleValueCount;
                 if (_hasCanonicalProjectionMuscleValueSnapshot)
                     sourceStartMuscles[..MuscleValueCount].CopyTo(_canonicalProjectionMuscleValueSnapshot);
+                _canonicalProjectionFootGoals = sourceStartFootGoals;
 
                 if (!TryEvaluateLoopPoseProbeEndpoint(
                         compiled,
@@ -3994,6 +4055,7 @@ namespace XREngine.Components.Animation
                         sourceStart,
                         sourceStartMuscles,
                         sourceStartMuscles,
+                        sourceStartFootGoals,
                         safeWeight,
                         settings,
                         out Matrix4x4 startPose,
@@ -4005,6 +4067,7 @@ namespace XREngine.Components.Animation
                         sourceStart,
                         sourceEndMuscles,
                         policy.LoopPose ? sourceStartMuscles : sourceEndMuscles,
+                        sourceEndFootGoals,
                         safeWeight,
                         settings,
                         out Matrix4x4 endPose,
@@ -4049,6 +4112,7 @@ namespace XREngine.Components.Animation
             HumanoidImportedBodySample canonicalSample,
             ReadOnlySpan<float> feetProjectionMuscles,
             ReadOnlySpan<float> visiblePoseMuscles,
+            ImportedHumanoidProjectionFootGoals feetProjectionFootGoals,
             float weight,
             ImportedHumanoidClipRootMotionSettings settings,
             out Matrix4x4 requestedBodyPose,
@@ -4066,6 +4130,7 @@ namespace XREngine.Components.Animation
                 weight,
                 _loopPoseCorrectionProbeOwner,
                 settings);
+            _projectionFootGoals = feetProjectionFootGoals;
             if (!TryEvaluateNativeHumanoidPose(
                     compiled,
                     feetProjectionMuscles,
@@ -4141,7 +4206,11 @@ namespace XREngine.Components.Animation
                 || policy.PositionYBasis is not EImportedHumanoidRootPositionYBasis.Feet)
                 return false;
 
-            if (!TryCalculateProjectedFeetHeight(compiled, policy, out float currentFeetY))
+            if (!TryCalculateProjectedFeetHeight(
+                compiled,
+                policy,
+                _projectionFootGoals,
+                out float currentFeetY))
                 return false;
 
             object? owner = _pendingProjectedRootMotionOwner;
@@ -4274,8 +4343,16 @@ namespace XREngine.Components.Animation
         private bool TryCalculateProjectedFeetHeight(
             CompiledHumanoidAvatarDefinition compiled,
             ImportedHumanoidRootMotionPolicy policy,
+            in ImportedHumanoidProjectionFootGoals footGoals,
             out float feetY)
         {
+            if (footGoals.HasCompletePair)
+                return TryCalculateProjectedFeetHeightFromAuthoredGoals(
+                    compiled,
+                    policy,
+                    footGoals,
+                    out feetY);
+
             if (compiled.GetNode(EHumanoidAvatarBoneRole.Hips) is null)
             {
                 feetY = 0.0f;
@@ -4331,6 +4408,62 @@ namespace XREngine.Components.Animation
 
             feetY = 0.0f;
             return false;
+        }
+
+        /// <summary>
+        /// Reproduces Unity's Feet/Y projection in canonical humanoid space:
+        /// RootT + RootQ * FootT, followed by a per-sample lower-foot choice.
+        /// FootQ does not participate. The avatar sole offset is derived from
+        /// immutable zero-muscle foot/toe geometry; a common bilateral offset
+        /// cancels exactly when the current value is differenced from time zero.
+        /// </summary>
+        private bool TryCalculateProjectedFeetHeightFromAuthoredGoals(
+            CompiledHumanoidAvatarDefinition compiled,
+            ImportedHumanoidRootMotionPolicy policy,
+            in ImportedHumanoidProjectionFootGoals footGoals,
+            out float feetY)
+        {
+            Vector3 mappedRoot = SanitizeImportedBodyPosition(
+                _currentImportedMappedBodySample.Position,
+                Vector3.Zero);
+            Quaternion mappedRotation = NormalizeImportedBodyRotationPure(
+                _currentImportedMappedBodySample.Rotation,
+                Quaternion.Identity);
+            if (policy.Mirror)
+            {
+                mappedRoot = ImportedHumanoidMirrorOperator.MirrorPosition(mappedRoot);
+                mappedRotation = ImportedHumanoidMirrorOperator.MirrorRotation(mappedRotation);
+            }
+
+            float motionScale = compiled.HumanScale * compiled.ModelUnitsPerMeter;
+            Vector3 semanticRoot = new(mappedRoot.X, mappedRoot.Z, mappedRoot.Y);
+            Vector3 left = semanticRoot + Vector3.Transform(footGoals.LeftPosition, mappedRotation);
+            Vector3 right = semanticRoot + Vector3.Transform(footGoals.RightPosition, mappedRotation);
+            float leftBottom = left.Y * motionScale - CalculateFootBottomOffset(
+                compiled,
+                EHumanoidAvatarBoneRole.LeftFoot,
+                EHumanoidAvatarBoneRole.LeftToes);
+            float rightBottom = right.Y * motionScale - CalculateFootBottomOffset(
+                compiled,
+                EHumanoidAvatarBoneRole.RightFoot,
+                EHumanoidAvatarBoneRole.RightToes);
+            feetY = MathF.Min(leftBottom, rightBottom);
+            return float.IsFinite(feetY);
+        }
+
+        private static float CalculateFootBottomOffset(
+            CompiledHumanoidAvatarDefinition compiled,
+            EHumanoidAvatarBoneRole footRole,
+            EHumanoidAvatarBoneRole toesRole)
+        {
+            float footY = compiled.GetNode(footRole) is null
+                ? float.PositiveInfinity
+                : compiled.NeutralWorldTransforms[(int)footRole].Translation.Y;
+            float toesY = compiled.GetNode(toesRole) is null
+                ? float.PositiveInfinity
+                : compiled.NeutralWorldTransforms[(int)toesRole].Translation.Y;
+            float bottomY = MathF.Min(footY, toesY);
+            return float.IsFinite(bottomY) ? bottomY : 0.0f;
         }
 
         private static bool TryCalculateProjectedFootBottom(
@@ -4456,6 +4589,7 @@ namespace XREngine.Components.Animation
             _activeImportedBodyLoopPoseCorrection = _pendingImportedBodyLoopPoseCorrection;
             _pendingImportedBodyLoopPoseCorrection = null;
             _hasProjectionMuscleValueSnapshot = false;
+            _projectionFootGoals.Clear();
         }
 
         internal static HumanoidRootMotionDelta CalculateProjectedRootDelta(

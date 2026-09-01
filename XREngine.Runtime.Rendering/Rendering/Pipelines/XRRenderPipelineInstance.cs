@@ -34,7 +34,13 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     private readonly Queue<RenderResourceGeneration> _retiredGenerations = new();
     private readonly RenderResourceRegistry _legacyResources = new();
     private ResourceBuildContext? _resourceBuildContext;
-    private bool _requiresManagedResourceGeneration;
+    // null means the current key has not been described successfully yet. Rendering must
+    // fail closed in that state; false is reserved for a successfully described layoutless key.
+    private bool? _requiresManagedResourceGeneration;
+    private ResourceGenerationKey? _classifiedResourceLayoutKey;
+    // Retained independently from the current classification so a transient description or
+    // cleanup failure cannot forget which legacy physical extent was last known-good.
+    private ResourceGenerationKey? _lastSuccessfulLayoutlessResourceKey;
     private readonly object _resourceSettingsSnapshotLock = new();
     private readonly Dictionary<RenderPipelineExternalTargetKind, ResourceGenerationSettingsSnapshot> _lastResourceSettingsSnapshotByOutput = [];
     private ulong _nextResourceSettingsRevision;
@@ -140,7 +146,6 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     internal bool CompletedCommandChainForViewportThisFrame(XRViewport viewport)
         => CompletedCommandChainThisFrame &&
            ReferenceEquals(_lastCompletedCommandChainViewport, viewport);
-    private int _destroyCacheQueued;
     private int _lastDescriptorParityGeneration = -1;
     private long _pendingGenerationReadyAfterTimestamp;
     private long _pendingGenerationFirstResizeRequestTimestamp;
@@ -207,23 +212,16 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     internal RenderPipeline? AssignedPipeline => _pipeline;
     public RenderPipeline? Pipeline
     {
-        get => _pipeline ?? SetFieldReturn(ref _pipeline, CreateDefaultRenderPipeline());
-        set
+        get
         {
-            bool notificationsSuppressed = XRBase.ArePropertyNotificationsSuppressed;
-            RenderPipeline? previous = _pipeline;
-            if (!SetField(ref _pipeline, value))
-                return;
+            if (_pipeline is { } pipeline)
+                return pipeline;
 
-            // Runtime-only pipeline instances are commonly created while cooked-data
-            // snapshot restoration suppresses XRBase notifications. Their pass
-            // collections and ownership still have to be initialized immediately.
-            if (notificationsSuppressed)
-            {
-                previous?.Instances.Remove(this);
-                ApplyPipelineChanged(value);
-            }
+            RenderPipeline created = CreateDefaultRenderPipeline();
+            RequestPipelineChange(created, LastWindowViewport);
+            return _pipeline ?? created;
         }
+        set => RequestPipelineChange(value, LastWindowViewport);
     }
 
     IRuntimeRenderPipelineHost? IRuntimeRenderPipelineFrameContext.PipelineHost => Pipeline;
@@ -439,69 +437,6 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     }
 
     /// <summary>
-    /// Called when a property is about to change. 
-    /// This method can be overridden to perform custom logic before the property value is updated.
-    /// </summary>
-    /// <typeparam name="T">The type of the property.</typeparam>
-    /// <param name="propName">The name of the property that is changing.</param>
-    /// <param name="field">The current value of the property.</param>
-    /// <param name="new">The new value of the property.</param>
-    /// <returns>True if the property value should be changed; otherwise, false.</returns>
-    protected override bool OnPropertyChanging<T>(string? propName, T field, T @new)
-    {
-        bool change = base.OnPropertyChanging(propName, field, @new);
-        if (change)
-        {
-            switch (propName)
-            {
-                case nameof(Pipeline):
-                    if (field is RenderPipeline pipeline)
-                        pipeline.Instances.Remove(this);
-                    break;
-            }
-        }
-        return change;
-    }
-
-    /// <summary>
-    /// Called when a property has changed. 
-    /// This method can be overridden to perform custom logic after the property value has been updated.
-    /// </summary>
-    /// <typeparam name="T">The type of the property.</typeparam>
-    /// <param name="propName">The name of the property that has changed.</param>
-    /// <param name="prev">The previous value of the property.</param>
-    /// <param name="field">The current value of the property.</param>
-    protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
-    {
-        base.OnPropertyChanged(propName, prev, field);
-        switch (propName)
-        {
-            case nameof(Pipeline):
-                ApplyPipelineChanged(field is RenderPipeline pipeline ? pipeline : null);
-                break;
-        }
-    }
-
-    private void ApplyPipelineChanged(RenderPipeline? pipeline)
-    {
-        ClearAdvancedOutputBinding();
-
-        if (pipeline is not null)
-        {
-            MeshRenderCommands.SetRenderPasses(pipeline.PassIndicesAndSorters, pipeline.PassMetadata);
-            InvalidMaterial = pipeline.InvalidMaterial;
-            if (!pipeline.Instances.Contains(this))
-                pipeline.Instances.Add(this);
-        }
-        else
-        {
-            InvalidMaterial = null;
-        }
-
-        DestroyCacheIfResourcesExist();
-    }
-    
-    /// <summary>
     /// Collects the visible state of the scene for rendering. 
     /// This state is used to determine which objects are visible and should be rendered in the current frame.
     /// </summary>
@@ -559,6 +494,8 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         RenderCommandCollection? meshRenderCommandsOverride = null)
     {
         IRuntimeRenderFrameTimingServices frameTiming = RuntimeRenderingHostServices.FrameTiming;
+        if (!ApplyLatestRequestedPipelineIfNeeded())
+            return false;
 
         if (Pipeline is null)
         {
@@ -788,7 +725,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
 
         if (viewport is not null &&
             ShouldDeferResourceGenerationForInteractiveWindowResize(viewport) &&
-            ActiveGeneration is not null)
+            ActiveGeneration?.PipelineRevision == _appliedPipelineRevision)
         {
             DiscardPendingGeneration("InteractiveResize");
             return true;
@@ -844,13 +781,20 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             // declare a managed layout must fail closed here; otherwise a stale
             // or discarded initial generation can render one frame against the
             // partial legacy registry while still carrying full pass metadata.
-            return PendingGeneration is null && !_requiresManagedResourceGeneration;
+            return PendingGeneration is null &&
+                _requiresManagedResourceGeneration == false &&
+                _classifiedResourceLayoutKey == key;
         }
 
         if (ActiveGeneration.Key == key)
             return true;
 
-        return !IsResizeOnlyGenerationDelta(ActiveGeneration.Key, key);
+        // A feature/profile mismatch within the same asset revision can continue to use the
+        // complete prior generation while a successor is prepared. A pipeline asset transition
+        // cannot: its command chain may name entirely different resources despite an equivalent
+        // debug name, pass list, or layout shape.
+        return ActiveGeneration.PipelineRevision == _appliedPipelineRevision &&
+            !IsResizeOnlyGenerationDelta(ActiveGeneration.Key, key);
     }
 
     /// <summary>
@@ -910,6 +854,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     /// <returns>True if the only difference between the keys is a change in viewport dimensions; false otherwise.</returns>
     private static bool IsResizeOnlyGenerationDelta(ResourceGenerationKey oldKey, ResourceGenerationKey newKey)
         => string.Equals(oldKey.PipelineName, newKey.PipelineName, StringComparison.Ordinal) &&
+           oldKey.PipelineRevision == newKey.PipelineRevision &&
            oldKey.OutputHDR == newKey.OutputHDR &&
            oldKey.AntiAliasingMode == newKey.AntiAliasingMode &&
            oldKey.MsaaSampleCount == newKey.MsaaSampleCount &&
@@ -1047,12 +992,23 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
 
         if (!force && ActiveGeneration?.Key == key)
         {
+            _requiresManagedResourceGeneration = true;
+            _classifiedResourceLayoutKey = key;
             DiscardPendingGeneration($"Active generation already matches request: {reason}");
             return true;
         }
 
         if (!force && PendingGeneration?.Key == key)
+        {
+            _requiresManagedResourceGeneration = true;
+            _classifiedResourceLayoutKey = key;
             return true;
+        }
+
+        ResourceGenerationKey? previousSuccessfulLayoutlessKey =
+            _lastSuccessfulLayoutlessResourceKey;
+        _requiresManagedResourceGeneration = null;
+        _classifiedResourceLayoutKey = null;
 
         if (IsGenerationRetryBackoffActive(key, out double retryBackoffRemainingMilliseconds))
         {
@@ -1086,11 +1042,36 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
 
         if (layout.OrderedSpecs.Count == 0)
         {
+            DiscardPendingGeneration($"Layoutless pipeline request: {reason}");
+
+            if (ActiveGeneration is { } oldGeneration)
+            {
+                ActiveGeneration = null;
+                ResourceGeneration++;
+                RetireGeneration(oldGeneration, $"Pipeline revision {_appliedPipelineRevision} uses legacy resources: {reason}");
+            }
+
+            if (force ||
+                (previousSuccessfulLayoutlessKey.HasValue &&
+                 previousSuccessfulLayoutlessKey.Value != key))
+            {
+                InvalidateLegacyPhysicalResources(
+                    _legacyResourceOwnerPipeline ?? pipeline,
+                    $"Layoutless resource profile changed: {reason}");
+            }
+
+            // Publish readiness only after every cleanup step succeeds. If a destruction
+            // callback or physical invalidation fails, the retained last-successful key makes
+            // the next attempt repeat the required legacy resize instead of accepting stale data.
+            _legacyResourceOwnerPipeline = pipeline;
             _requiresManagedResourceGeneration = false;
-            return false;
+            _classifiedResourceLayoutKey = key;
+            _lastSuccessfulLayoutlessResourceKey = key;
+            return true;
         }
 
         _requiresManagedResourceGeneration = true;
+        _classifiedResourceLayoutKey = key;
 
         if (ActiveGeneration?.Key == key && ActiveGeneration.Layout.IsStructurallyEquivalentTo(layout))
         {
@@ -1126,10 +1107,14 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                 key,
                 DescribeResourceGenerationKeyDelta(PendingGeneration.Key, key));
             PendingGeneration.MarkSuperseded(reason);
-            PendingGeneration.Dispose();
+            DisposeGeneration(PendingGeneration, $"Superseded pending generation: {reason}");
         }
 
-        PendingGeneration = new RenderResourceGeneration(key, layout);
+        PendingGeneration = new RenderResourceGeneration(
+            key,
+            layout,
+            pipeline,
+            _appliedPipelineRevision);
         ConfigurePendingGenerationDebounce(key, reason);
         Debug.Rendering(
             "[RenderResources] Pending generation requested. Pipeline={0} Reason={1} Active={2} Target={3} Delta={4} Resources={5} DebounceMs={6:F0}",
@@ -1222,6 +1207,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
 
     private readonly record struct ResourceGenerationDeterminismIdentity(
         string PipelineName,
+        ulong PipelineRevision,
         RenderPipelineExternalTargetKind ExternalTargetKind,
         uint DisplayWidth,
         uint DisplayHeight,
@@ -1232,6 +1218,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         public static ResourceGenerationDeterminismIdentity From(ResourceGenerationKey key)
             => new(
                 key.PipelineName,
+                key.PipelineRevision,
                 key.ExternalTargetKind,
                 key.DisplayWidth,
                 key.DisplayHeight,
@@ -1313,6 +1300,8 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
 
         if (!string.Equals(old.PipelineName, newKey.PipelineName, StringComparison.Ordinal))
             deltas.Add($"pipeline:{old.PipelineName}->{newKey.PipelineName}");
+        if (old.PipelineRevision != newKey.PipelineRevision)
+            deltas.Add($"pipeline-revision:{old.PipelineRevision}->{newKey.PipelineRevision}");
         if (old.DisplayWidth != newKey.DisplayWidth || old.DisplayHeight != newKey.DisplayHeight)
             deltas.Add($"display:{old.DisplayWidth}x{old.DisplayHeight}->{newKey.DisplayWidth}x{newKey.DisplayHeight}");
         if (old.InternalWidth != newKey.InternalWidth || old.InternalHeight != newKey.InternalHeight)
@@ -1398,7 +1387,8 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             settings.ExternalTargetKind,
             settings.Revision,
             settings.OutputColorFormat,
-            settings.OutputDepthFormat);
+            settings.OutputDepthFormat,
+            _appliedPipelineRevision);
     }
 
     private ResourceGenerationSettingsSnapshot CaptureResourceGenerationSettingsSnapshot(
@@ -1543,7 +1533,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             RegisterPendingGenerationFailure(pending.Key, failure);
             PendingGeneration = null;
             ClearPendingGenerationDebounce();
-            pending.Dispose();
+            DisposeGeneration(pending, $"Materialization failed: {reason}");
             return false;
         }
 
@@ -1666,7 +1656,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         PendingGeneration = null;
         ClearPendingGenerationDebounce();
         pending.MarkSuperseded(reason);
-        pending.Dispose();
+        DisposeGeneration(pending, reason);
     }
 
     /// <summary>
@@ -1711,7 +1701,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             PendingGeneration = null;
             ClearPendingGenerationDebounce();
             pending.MarkFailed(failure);
-            pending.Dispose();
+            DisposeGeneration(pending, failure);
             return false;
         }
 
@@ -1735,7 +1725,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                 RegisterPendingGenerationFailure(pending.Key, failure);
                 ClearPendingGenerationDebounce();
                 pending.MarkFailed(failure);
-                pending.Dispose();
+                DisposeGeneration(pending, failure);
                 return false;
             }
 
@@ -1746,7 +1736,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             if (old is not null)
                 RetireGeneration(old, $"Committed replacement generation: {reason}");
             else
-                _legacyResources.DestroyAllPhysicalResources();
+                DestroyLegacyResources(_legacyResourceOwnerPipeline, $"Managed generation committed: {reason}");
 
             NotifyRenderResourcesChanged();
 
@@ -1789,6 +1779,49 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             dimensions.InternalHeight,
             viewport);
         return true;
+    }
+
+    /// <summary>
+    /// Reports whether the fully applied pipeline owns resources for the viewport's complete
+    /// current key. A successfully classified layoutless key is ready without an active managed
+    /// generation; unknown or failed layout descriptions remain fail-closed.
+    /// </summary>
+    internal bool IsCurrentResourceProfileReady(XRViewport viewport)
+    {
+        ArgumentNullException.ThrowIfNull(viewport);
+
+        lock (_pipelineTransitionSync)
+        {
+            if (System.Threading.Volatile.Read(ref _terminalTeardownRequested) != 0 ||
+                _pipelineRequestSerial != _appliedPipelineRequestSerial)
+            {
+                return false;
+            }
+
+            RenderPipeline? pipeline = _pipeline;
+            if (pipeline is null)
+                return ReferenceEquals(_fullyAppliedPipeline, null) && PendingGeneration is null;
+            if (!ReferenceEquals(_fullyAppliedPipeline, pipeline) || PendingGeneration is not null)
+                return false;
+
+            var dimensions = ResolvePipelineResourceDimensions(viewport);
+            ResourceGenerationKey key = BuildResourceGenerationKey(
+                dimensions.DisplayWidth,
+                dimensions.DisplayHeight,
+                dimensions.InternalWidth,
+                dimensions.InternalHeight,
+                viewport);
+
+            if (ActiveGeneration is { } active)
+            {
+                return active.Key == key &&
+                    active.PipelineRevision == _appliedPipelineRevision &&
+                    ReferenceEquals(active.OwnerPipeline, pipeline);
+            }
+
+            return _requiresManagedResourceGeneration == false &&
+                _classifiedResourceLayoutKey == key;
+        }
     }
 
     /// <summary>
@@ -1853,7 +1886,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             }
 
             _retiredGenerations.Dequeue();
-            retired.Dispose();
+            DisposeGeneration(retired, retired.RetirementReason ?? "Retired generation fence completed");
             Debug.Rendering(
                 "[RenderResources] Retired generation disposed. Pipeline={0} Key={1} Fence={2} Force={3} RemainingQueue={4}",
                 ProfilerKey,
@@ -1879,7 +1912,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     {
         if (!RuntimeEngine.IsRenderThread)
         {
-            EnqueueDestroyCache();
+            EnqueueDestroyCache(_pipeline, _appliedPipelineRevision);
             return;
         }
 
@@ -1891,33 +1924,28 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     /// This method checks for the presence of active, pending, or retired resource generations,
     /// and only destroys the cache if such resources exist.
     /// </summary>
-    private void DestroyCacheIfResourcesExist()
-    {
-        if (!HasAnyTrackedResources())
-            return;
-
-        DestroyCache();
-    }
-
     /// <summary>
     /// Enqueues a task to destroy cached GPU resources on the render thread. 
     /// This method ensures that the destruction of resources is performed in a thread-safe manner.
     /// </summary>
-    private void EnqueueDestroyCache()
+    private void EnqueueDestroyCache(RenderPipeline? ownerPipeline, ulong pipelineRevision)
     {
-        if (System.Threading.Interlocked.Exchange(ref _destroyCacheQueued, 1) != 0)
-            return;
-
         RuntimeEngine.EnqueueRenderThreadTask(() =>
         {
-            try
+            if (_appliedPipelineRevision != pipelineRevision ||
+                !ReferenceEquals(_pipeline, ownerPipeline))
             {
-                DestroyCacheOnRenderThread();
+                Debug.Rendering(
+                    "[RenderResources] Ignoring stale deferred cache clear. Pipeline={0} RequestedOwner={1} RequestedRevision={2} AppliedOwner={3} AppliedRevision={4}",
+                    ProfilerKey,
+                    ownerPipeline?.DebugName ?? "<none>",
+                    pipelineRevision,
+                    _pipeline?.DebugName ?? "<none>",
+                    _appliedPipelineRevision);
+                return;
             }
-            finally
-            {
-                System.Threading.Volatile.Write(ref _destroyCacheQueued, 0);
-            }
+
+            DestroyCacheOnRenderThread();
         }, "XRRenderPipelineInstance.DestroyCache", RenderThreadJobKind.RenderPipelineResource);
     }
 
@@ -1926,21 +1954,65 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     /// It also destroys any legacy resources that may still be present. 
     /// This method is called from the render thread to ensure that resource destruction is performed safely and without interfering with ongoing rendering operations.
     /// </summary>
-    private void DestroyCacheOnRenderThread()
+    private void DestroyCacheOnRenderThread(bool suppressFailures = false)
     {
-        CacheClearing?.Invoke();
+        Exception? firstFailure = null;
+        RunResourceCleanupStep(
+            "NotifyCacheClearing",
+            () => NotifyCacheClearingHandlers("DestroyCache"),
+            ref firstFailure);
         if (!HasAnyTrackedResources())
             return;
 
-        NotifyPipelineResourcesDestroyed("DestroyCache");
-        PrepareForPhysicalResourceDestruction("DestroyCache");
-        PendingGeneration?.Dispose();
+        RunResourceCleanupStep(
+            "PrepareForPhysicalResourceDestruction",
+            () => PrepareForPhysicalResourceDestruction("DestroyCache"),
+            ref firstFailure);
+
+        RenderResourceGeneration? pending = PendingGeneration;
         PendingGeneration = null;
-        ActiveGeneration?.Dispose();
+        ClearPendingGenerationDebounce();
+        if (pending is not null)
+        {
+            RunResourceCleanupStep(
+                "DisposePendingGeneration",
+                () => DisposeGeneration(pending, "DestroyCache"),
+                ref firstFailure);
+        }
+
+        RenderResourceGeneration? active = ActiveGeneration;
         ActiveGeneration = null;
+        if (active is not null)
+        {
+            RunResourceCleanupStep(
+                "DisposeActiveGeneration",
+                () => DisposeGeneration(active, "DestroyCache"),
+                ref firstFailure);
+        }
+
         while (_retiredGenerations.Count != 0)
-            _retiredGenerations.Dequeue().Dispose();
-        _legacyResources.DestroyAllPhysicalResources();
+        {
+            RenderResourceGeneration retired = _retiredGenerations.Dequeue();
+            RunResourceCleanupStep(
+                "DisposeRetiredGeneration",
+                () => DisposeGeneration(retired, "DestroyCache"),
+                ref firstFailure);
+        }
+
+        RunResourceCleanupStep(
+            "DestroyLegacyResources",
+            () => DestroyLegacyResources(
+                _legacyResourceOwnerPipeline ?? _pipeline,
+                "DestroyCache",
+                prepareForDestruction: false),
+            ref firstFailure);
+
+        if (firstFailure is null || suppressFailures)
+            return;
+
+        throw new InvalidOperationException(
+            $"One or more render resource cleanup steps failed for {ProfilerKey}.",
+            firstFailure);
     }
 
     /// <summary>
@@ -1949,9 +2021,16 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     /// without losing registry structure.
     /// </summary>
     public void InvalidatePhysicalResources()
+        => InvalidatePhysicalResources("InvalidatePhysicalResources");
+
+    private void InvalidatePhysicalResources(string reason)
     {
-        if (EnqueueResourceMutationIfOffRenderThread(InvalidatePhysicalResources, "XRRenderPipelineInstance.InvalidatePhysicalResources"))
+        if (EnqueueResourceMutationIfOffRenderThread(
+                () => InvalidatePhysicalResources(reason),
+                $"XRRenderPipelineInstance.InvalidatePhysicalResources[{reason}]"))
+        {
             return;
+        }
 
         if (!HasAnyTrackedResources())
             return;
@@ -1965,7 +2044,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                 dimensions.DisplayHeight,
                 dimensions.InternalWidth,
                 dimensions.InternalHeight,
-                "InvalidatePhysicalResources",
+                reason,
                 force: true,
                 viewport: viewport))
             {
@@ -1973,8 +2052,11 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             }
         }
 
-        NotifyPipelineResourcesDestroyed($"InvalidatePhysicalResources (generation {ResourceGeneration} -> {ResourceGeneration + 1})");
-        PrepareForPhysicalResourceDestruction("InvalidatePhysicalResources");
+        NotifyPipelineResourcesDestroyed(
+            _pipeline,
+            Resources,
+            $"{reason} (generation {ResourceGeneration} -> {ResourceGeneration + 1})");
+        PrepareForPhysicalResourceDestruction(reason);
         Resources.DestroyAllPhysicalResources(retainDescriptors: true);
         ResourceGeneration++;
     }
@@ -2082,9 +2164,15 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     /// <param name="height">The new height of the viewport.</param>
     /// <param name="viewport">The viewport that owns the resize request, when known.</param>
     public void ViewportResized(int width, int height, XRViewport? viewport)
-    {
-        _pipeline?.HandleViewportResized(this, width, height, viewport);
-    }
+        => ViewportProfileChanged(
+            width,
+            height,
+            viewport?.InternalWidth ?? width,
+            viewport?.InternalHeight ?? height,
+            viewport,
+            displayChanged: true,
+            internalChanged: false,
+            "ViewportResized");
 
     /// <summary>
     /// Called when the internal resolution is resized.
@@ -2103,15 +2191,63 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     /// <param name="internalHeight">The new internal height.</param>
     /// <param name="viewport">The viewport that owns the resize request, when known.</param>
     public void InternalResolutionResized(int internalWidth, int internalHeight, XRViewport? viewport)
-    {
-        viewport ??= RenderState.WindowViewport ?? LastWindowViewport;
-        var dimensions = ResolveViewportResizeResourceDimensions(
-            viewport,
+        => ViewportProfileChanged(
             viewport?.Width ?? internalWidth,
             viewport?.Height ?? internalHeight,
             internalWidth,
+            internalHeight,
+            viewport,
+            displayChanged: false,
+            internalChanged: true,
+            "InternalResolutionResized");
+
+    /// <summary>
+    /// Publishes one coherent display/internal profile after viewport, camera, and pipeline
+    /// resolution policies have all completed. Managed generation ownership lives here so every
+    /// concrete pipeline, including Advanced and Debug, follows the same resize contract.
+    /// </summary>
+    internal void ViewportProfileChanged(
+        int displayWidth,
+        int displayHeight,
+        int internalWidth,
+        int internalHeight,
+        XRViewport? viewport,
+        bool displayChanged,
+        bool internalChanged,
+        string reason)
+    {
+        if (!RuntimeEngine.IsRenderThread && RuntimeRenderingHostServices.FrameTiming.IsRendererActive)
+        {
+            RuntimeEngine.EnqueueRenderThreadTask(
+                () => ViewportProfileChanged(
+                    displayWidth,
+                    displayHeight,
+                    internalWidth,
+                    internalHeight,
+                    viewport,
+                    displayChanged,
+                    internalChanged,
+                    reason),
+                $"XRRenderPipelineInstance.ViewportProfileChanged[{InstanceId}]",
+                RenderThreadJobKind.RenderPipelineResource);
+            return;
+        }
+
+        RenderPipeline? pipeline = _pipeline;
+        if (pipeline is null || displayWidth <= 0 || displayHeight <= 0)
+            return;
+
+        viewport ??= RenderState.WindowViewport ?? LastWindowViewport;
+        if (viewport is not null && ShouldDeferResourceGenerationForInteractiveWindowResize(viewport))
+            return;
+
+        var dimensions = ResolveViewportResizeResourceDimensions(
+            viewport,
+            displayWidth,
+            displayHeight,
+            internalWidth,
             internalHeight);
-        if (Pipeline?.UsesDisplayResolutionForManagedResources == true)
+        if (pipeline.UsesDisplayResolutionForManagedResources)
         {
             dimensions = (
                 dimensions.DisplayWidth,
@@ -2120,16 +2256,17 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                 dimensions.DisplayHeight);
         }
 
-        if (RequestResourceGeneration(
+        pipeline.HandleViewportResized(this, dimensions.DisplayWidth, dimensions.DisplayHeight, viewport);
+        RequestResourceGeneration(
             dimensions.DisplayWidth,
             dimensions.DisplayHeight,
             dimensions.InternalWidth,
             dimensions.InternalHeight,
-            "InternalResolutionResized",
-            viewport: viewport))
-            return;
+            reason,
+            viewport: viewport);
 
-        InvalidatePhysicalResources();
+        if (viewport?.RendersToExternalSwapchainTarget != true)
+            viewport?.Window?.RequestRenderStateRecheck(resetCircuitBreaker: true);
     }
 
     /// <summary>
@@ -2492,9 +2629,11 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     /// Notifies the active render pipeline before destroying resources, including textures, frame buffers, buffers, and render buffers.
     /// </summary>
     /// <param name="reason">The reason for the destruction of the resources.</param>
-    private void NotifyPipelineResourcesDestroyed(string reason)
+    private void NotifyPipelineResourcesDestroyed(
+        RenderPipeline? pipeline,
+        RenderResourceRegistry registry,
+        string reason)
     {
-        RenderPipeline? pipeline = _pipeline;
         if (pipeline is null)
             return;
 
@@ -2503,29 +2642,53 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         int liveBufferCount = 0;
         int liveRenderBufferCount = 0;
 
-        foreach (var record in Resources.TextureRecords.Values)
+        foreach (var record in registry.TextureRecords.Values)
         {
             if (record.Instance is not XRTexture texture)
                 continue;
 
             liveTextureCount++;
-            pipeline.OnTextureDestroyed(this, texture.Name ?? "<unnamed>", texture, reason);
+            try
+            {
+                pipeline.OnTextureDestroyed(this, texture.Name ?? "<unnamed>", texture, reason);
+            }
+            catch (Exception ex)
+            {
+                Debug.RenderingWarning(
+                    "[RenderResources] Texture-destruction callback failed and was isolated. Pipeline={0} Resource={1} Reason={2} Error={3}",
+                    pipeline.DebugName,
+                    texture.Name ?? "<unnamed>",
+                    reason,
+                    ex.Message);
+            }
         }
 
-        foreach (var record in Resources.FrameBufferRecords.Values)
+        foreach (var record in registry.FrameBufferRecords.Values)
         {
             if (record.Instance is not XRFrameBuffer frameBuffer)
                 continue;
 
             liveFrameBufferCount++;
-            pipeline.OnFrameBufferDestroyed(this, frameBuffer.Name ?? "<unnamed>", frameBuffer, reason);
+            try
+            {
+                pipeline.OnFrameBufferDestroyed(this, frameBuffer.Name ?? "<unnamed>", frameBuffer, reason);
+            }
+            catch (Exception ex)
+            {
+                Debug.RenderingWarning(
+                    "[RenderResources] Framebuffer-destruction callback failed and was isolated. Pipeline={0} Resource={1} Reason={2} Error={3}",
+                    pipeline.DebugName,
+                    frameBuffer.Name ?? "<unnamed>",
+                    reason,
+                    ex.Message);
+            }
         }
 
-        foreach (var record in Resources.BufferRecords.Values)
+        foreach (var record in registry.BufferRecords.Values)
             if (record.Instance is not null)
                 liveBufferCount++;
 
-        foreach (var record in Resources.RenderBufferRecords.Values)
+        foreach (var record in registry.RenderBufferRecords.Values)
             if (record.Instance is not null)
                 liveRenderBufferCount++;
 

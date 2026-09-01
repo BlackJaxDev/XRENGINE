@@ -35,6 +35,22 @@ internal sealed partial class VulkanTextureUploadService
         // This is descriptor payload work, not image allocation size. It
         // corresponds to one VkDescriptorImageInfo per final publication.
         long publicationBytes = (long)publicationItems * Unsafe.SizeOf<DescriptorImageInfo>();
+
+        // A required manifest is owned by an accepted PresentNow transaction.
+        // Its exact foreground barrier cannot defer a signaled batch to a later
+        // render frame: that would invalidate and rebuild the same accepted plan
+        // indefinitely. Batches are atomic, so reserve the entire batch even when
+        // it also contains background siblings. Ordinary streaming completion
+        // remains governed by the limits below.
+        if (requiredManifest is not null)
+        {
+            _transferRetirementItemsThisFrame += batch.Uploads.Length;
+            _transferRetirementBytesThisFrame += batch.BytesInFlight;
+            _transferPublicationItemsThisFrame += publicationItems;
+            _transferPublicationBytesThisFrame += publicationBytes;
+            return true;
+        }
+
         bool fits =
             _transferRetirementItemsThisFrame + batch.Uploads.Length <= MaxTransferCompletionItemsPerFrame &&
             _transferRetirementBytesThisFrame + batch.BytesInFlight <= MaxTransferRetirementBytesPerFrame &&
@@ -47,23 +63,6 @@ internal sealed partial class VulkanTextureUploadService
             if (publicationItems > 0)
                 Interlocked.Increment(ref s_transferPublicationBudgetDeferrals);
 
-            // A PresentNow plan cannot wait for a future RenderFrameId while
-            // it owns a frozen snapshot. Only this manifest view is rejected;
-            // the globally owned batch remains fenced and retryable next frame.
-            if (requiredManifest is not null)
-            {
-                for (int index = 0; index < batch.Uploads.Length; index++)
-                {
-                    VulkanImportedTexturePendingUpload upload = batch.Uploads[index];
-                    if (requiredManifest.Contains(upload.Ticket))
-                    {
-                        requiredManifest.Fail(
-                            upload.Ticket,
-                            "Required texture completion deferred by the per-frame imported upload budget.",
-                            EVulkanPresentNowFailureDisposition.RetryFrame);
-                    }
-                }
-            }
             return false;
         }
 

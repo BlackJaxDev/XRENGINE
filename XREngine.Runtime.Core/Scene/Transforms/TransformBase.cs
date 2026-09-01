@@ -61,7 +61,7 @@ namespace XREngine.Scene.Transforms
             List<Type> transformTypes = [];
             foreach (Assembly assembly in AppDomain.CurrentDomain.GetAssemblies())
             {
-                foreach (Type type in GetLoadableExportedTypes(assembly))
+                foreach (Type type in XREngine.Core.XRLoadableTypeCatalog.GetExportedTypes(assembly))
                 {
                     if (type.IsSubclassOf(typeof(TransformBase)))
                         transformTypes.Add(type);
@@ -69,26 +69,6 @@ namespace XREngine.Scene.Transforms
             }
 
             return [.. transformTypes];
-        }
-
-        private static IEnumerable<Type> GetLoadableExportedTypes(Assembly assembly)
-        {
-            try
-            {
-                return assembly.GetExportedTypes();
-            }
-            catch (ReflectionTypeLoadException ex)
-            {
-                return ex.Types.OfType<Type>().Where(static type => type.IsPublic);
-            }
-            catch (Exception ex) when (ex is FileNotFoundException or FileLoadException or BadImageFormatException)
-            {
-                // Optional editor/plugin assemblies may be loaded even when one
-                // of their own dependencies is unavailable. Those assemblies
-                // cannot contribute usable transform types, but must not make
-                // unrelated prefab transform references impossible to load.
-                return [];
-            }
         }
 
         private static Type[] ResolveTransformTypes()

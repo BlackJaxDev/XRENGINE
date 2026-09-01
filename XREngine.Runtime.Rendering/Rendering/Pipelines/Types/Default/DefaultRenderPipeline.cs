@@ -24,6 +24,8 @@ namespace XREngine.Rendering;
 
 public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelineFeatureProvider
 {
+    internal override bool RequiresCanonicalGpuScenePublication => true;
+
     public enum DeferredDebugViewMode
     {
         Disabled = 0,
@@ -1755,9 +1757,6 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
             ApplyAntiAliasingResolutionHint();
             RebuildCommandChain();
 
-            foreach (var instance in Instances)
-                instance.InvalidatePhysicalResources();
-
             foreach (var window in RuntimeEngine.Windows)
             {
                 window.InvalidateScenePanelResources();
@@ -1777,9 +1776,7 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
                 return;
 
             ApplyAntiAliasingResolutionHint();
-
-            foreach (var instance in Instances)
-                instance.InvalidatePhysicalResources();
+            InvalidateOwnedInstancePhysicalResources("AntiAliasingSettingsChanged");
 
             foreach (var window in RuntimeEngine.Windows)
             {
@@ -1789,36 +1786,12 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
         }, "DefaultRenderPipeline: AA settings changed", true);
     }
 
-    private static void InvalidateAntiAliasingResources(XRRenderPipelineInstance instance)
-        => RenderPipelineAntiAliasingResources.InvalidateAntiAliasingResources(instance);
-
     internal override void HandleViewportResized(XRRenderPipelineInstance instance, int width, int height, XRViewport? viewport = null)
     {
         if (IsDestroyed || width <= 0 || height <= 0)
             return;
 
-        viewport ??= instance.RenderState.WindowViewport ?? instance.LastWindowViewport;
-        var dimensions = XRRenderPipelineInstance.ResolveViewportResizeResourceDimensions(
-            viewport,
-            width,
-            height,
-            viewport?.InternalWidth ?? width,
-            viewport?.InternalHeight ?? height);
-
-        if (!instance.RequestResourceGeneration(
-                dimensions.DisplayWidth,
-                dimensions.DisplayHeight,
-                dimensions.InternalWidth,
-                dimensions.InternalHeight,
-                "ViewportResized",
-                viewport: viewport))
-        {
-            // Compatibility fallback for pipelines without a declared layout.
-            RenderPipelineAntiAliasingResources.InvalidateViewportResizeResources(instance);
-        }
-
-        if (viewport?.RendersToExternalSwapchainTarget != true)
-            viewport?.Window?.RequestRenderStateRecheck(resetCircuitBreaker: true);
+        RenderPipelineAntiAliasingResources.InvalidateViewportResizeResources(instance);
     }
 
     private void ApplyAntiAliasingResolutionHint()

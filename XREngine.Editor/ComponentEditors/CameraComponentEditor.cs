@@ -135,11 +135,7 @@ public sealed class CameraComponentEditor : IXRComponentEditor
             .Where(a => !a.IsDynamic && ReferencesAssembly(a, baseType.Assembly));
 
         var types = assemblies
-            .SelectMany(a =>
-            {
-                try { return a.GetTypes(); }
-                catch { return []; }
-            })
+            .SelectMany(static assembly => XREngine.Core.XRLoadableTypeCatalog.GetTypes(assembly))
             .Where(t => t.IsClass && !t.IsAbstract && baseType.IsAssignableFrom(t))
             .Where(t =>
             {
@@ -440,7 +436,7 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         var pipeline = component.Camera.RenderPipeline;
         ImGuiAssetUtilities.DrawAssetField<RenderPipeline>("CameraRenderPipeline", pipeline, asset =>
         {
-            component.Camera.RenderPipeline = asset ?? RuntimeEngine.Rendering.NewRenderPipeline();
+            component.Camera.ReplaceRenderPipelineAsset(asset ?? RuntimeEngine.Rendering.NewRenderPipeline());
         }, allowClear: false, allowCreateOrReplace: true);
 
         ImGui.TextDisabled("Default Render Target Asset");

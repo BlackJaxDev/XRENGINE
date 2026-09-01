@@ -66,9 +66,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Reference Include="OpenVR.NET">
-      <HintPath>..\..\Build\Submodules\OpenVR.NET\OpenVR.NET\bin\$(EditorBuildConfiguration)\net6.0\OpenVR.NET.dll</HintPath>
-    </Reference>
+    <ProjectReference Include="..\..\Build\Submodules\OpenVR.NET\OpenVR.NET\OpenVR.NET.csproj" />
   </ItemGroup>
 
   <Target Name="ShowResolvedBuildProfile" BeforeTargets="Build;BuildEditorAutomation;CompileGameManagedCode;BuildGameLauncher">

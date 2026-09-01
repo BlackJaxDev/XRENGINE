@@ -501,7 +501,9 @@ internal sealed partial class VulkanFrameLoop
             EDesktopFrameReason.RecordingResourceRetired or
             EDesktopFrameReason.PresentOutOfDate =>
                 EVulkanFrameOutcome.Deferred,
-            EDesktopFrameReason.RecordingDirtied => EVulkanFrameOutcome.Rejected,
+            EDesktopFrameReason.RecordingDirtied or
+            EDesktopFrameReason.PresentNowReadinessRetry =>
+                EVulkanFrameOutcome.Rejected,
             EDesktopFrameReason.None when attempt.Flow == EDesktopFrameFlow.Completed =>
                 EVulkanFrameOutcome.Completed,
             EDesktopFrameReason.None => EVulkanFrameOutcome.Deferred,

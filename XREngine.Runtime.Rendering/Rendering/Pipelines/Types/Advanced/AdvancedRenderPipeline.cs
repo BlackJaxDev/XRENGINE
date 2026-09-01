@@ -24,6 +24,8 @@ namespace XREngine.Rendering;
 
 public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipelineFeatureProvider
 {
+    internal override bool RequiresCanonicalGpuScenePublication => true;
+
     public enum DeferredDebugViewMode
     {
         Disabled = 0,
@@ -1695,9 +1697,6 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
             ApplyAntiAliasingResolutionHint();
             RebuildCommandChain();
 
-            foreach (var instance in Instances)
-                instance.InvalidatePhysicalResources();
-
             foreach (var window in RuntimeEngine.Windows)
             {
                 window.InvalidateScenePanelResources();
@@ -1717,9 +1716,7 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
                 return;
 
             ApplyAntiAliasingResolutionHint();
-
-            foreach (var instance in Instances)
-                InvalidateAntiAliasingResources(instance);
+            InvalidateOwnedInstanceAntiAliasingResources("AntiAliasingSettingsChanged");
 
             foreach (var window in RuntimeEngine.Windows)
             {
@@ -1728,9 +1725,6 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
             }
         }, "AdvancedRenderPipeline: AA settings changed", true);
     }
-
-    private static void InvalidateAntiAliasingResources(XRRenderPipelineInstance instance)
-        => RenderPipelineAntiAliasingResources.InvalidateAntiAliasingResources(instance);
 
     internal override void HandleViewportResized(XRRenderPipelineInstance instance, int width, int height, XRViewport? viewport = null)
     {
@@ -1743,9 +1737,6 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
         // attachments from the pre-resize generation.
         RenderPipelineAntiAliasingResources.InvalidateViewportResizeResources(instance);
 
-        viewport ??= instance.RenderState.WindowViewport ?? instance.LastWindowViewport;
-        if (viewport?.RendersToExternalSwapchainTarget != true)
-            viewport?.Window?.RequestRenderStateRecheck(resetCircuitBreaker: true);
     }
 
     private void ApplyAntiAliasingResolutionHint()

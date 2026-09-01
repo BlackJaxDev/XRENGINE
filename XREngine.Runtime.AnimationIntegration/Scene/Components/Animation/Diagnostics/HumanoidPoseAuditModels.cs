@@ -4,7 +4,12 @@ namespace XREngine.Components.Animation
 {
     public sealed class HumanoidPoseAuditReport
     {
-        public const int CurrentSchemaVersion = 6;
+        /// <summary>
+        /// Schema 7 makes the conformance values explicit.  Values whose names end in
+        /// <c>ModelRootMeters</c> use the same right-handed, Y-up, model-root coordinate
+        /// system in Unity and XRENGINE; raw importer channels remain diagnostic only.
+        /// </summary>
+        public const int CurrentSchemaVersion = 7;
 
         public int SchemaVersion { get; set; } = CurrentSchemaVersion;
         public string Source { get; set; } = string.Empty;
@@ -20,9 +25,14 @@ namespace XREngine.Components.Animation
         /// from the XRENGINE report.
         /// </summary>
         public float EngineUnitsPerSourceMeter { get; set; }
-        public string BodyChannelSpace { get; set; } = "Importer-mapped normalized humanoid body space";
+        public string BodyChannelSpace { get; set; } = "Diagnostic importer-mapped normalized humanoid body space; not a conformance metric";
+        public string CommonPoseSpace { get; set; } = "Right-handed model-root space in meters (+X right, +Y up, +Z forward); rotations are right-handed relative to that root.";
         public string BoneRootSpace { get; set; } = "Humanoid component scene-node local space";
         public string BoneWorldSpace { get; set; } = "XRENGINE world space";
+        /// <summary>Roles which each sample must contain exactly once for schema-7 comparison.</summary>
+        public List<string> RequiredBoneRoles { get; set; } = [];
+        /// <summary>Humanoid channels which each sample must contain exactly once for schema-7 comparison.</summary>
+        public List<string> RequiredMuscleChannels { get; set; } = [];
         public List<HumanoidPoseAuditNamedFloatRange> MuscleDefaultRanges { get; set; } = [];
         public List<HumanoidPoseAuditMuscleProbe> MuscleProbes { get; set; } = [];
         public HumanoidPoseAuditSample? DefaultMusclePose { get; set; }
@@ -35,6 +45,10 @@ namespace XREngine.Components.Animation
         public float TimeSeconds { get; set; }
         public HumanoidPoseAuditVector3 BodyPosition { get; set; } = new();
         public HumanoidPoseAuditQuaternion BodyRotation { get; set; } = HumanoidPoseAuditQuaternion.Identity;
+        /// <summary>Comparable solved Body pose in <see cref="HumanoidPoseAuditReport.CommonPoseSpace"/>.</summary>
+        public bool HasSolvedBodyModelRootPose { get; set; }
+        public HumanoidPoseAuditVector3 SolvedBodyModelRootPositionMeters { get; set; } = new();
+        public HumanoidPoseAuditQuaternion SolvedBodyModelRootRotation { get; set; } = HumanoidPoseAuditQuaternion.Identity;
         /// <summary>
         /// Imported RootT body-center sample after Unity-to-XRENGINE axis conversion but
         /// before avatar-scale or Hips composition. <see cref="BodyPosition"/> is retained
@@ -69,6 +83,12 @@ namespace XREngine.Components.Animation
         public HumanoidPoseAuditVector3? HipsLocalPosition { get; set; }
         /// <summary>Unity exporter compatibility alias for the composed Hips local rotation.</summary>
         public HumanoidPoseAuditQuaternion? HipsLocalRotation { get; set; }
+        /// <summary>Comparable final Hips pose relative to the model root, in meters.</summary>
+        public HumanoidPoseAuditVector3? HipsModelRootPositionMeters { get; set; }
+        public HumanoidPoseAuditQuaternion? HipsModelRootRotation { get; set; }
+        /// <summary>Captured Hips world pose in the canonical coordinate convention, in meters.</summary>
+        public HumanoidPoseAuditVector3? HipsWorldPositionMeters { get; set; }
+        public HumanoidPoseAuditQuaternion? HipsWorldRotation { get; set; }
         public HumanoidPoseAuditVector3 CharacterRootLocalPosition { get; set; } = new();
         public HumanoidPoseAuditQuaternion CharacterRootLocalRotation { get; set; } = HumanoidPoseAuditQuaternion.Identity;
         public HumanoidPoseAuditVector3 CharacterRootWorldPosition { get; set; } = new();
@@ -111,6 +131,10 @@ namespace XREngine.Components.Animation
         public HumanoidPoseAuditQuaternion PoseDeltaFromNeutralRotation { get; set; } = HumanoidPoseAuditQuaternion.Identity;
         public HumanoidPoseAuditVector3 RootSpacePosition { get; set; } = new();
         public HumanoidPoseAuditVector3 WorldPosition { get; set; } = new();
+        public HumanoidPoseAuditQuaternion WorldRotation { get; set; } = HumanoidPoseAuditQuaternion.Identity;
+        /// <summary>Comparable model-root position in meters.</summary>
+        public HumanoidPoseAuditVector3 ModelRootPositionMeters { get; set; } = new();
+        public HumanoidPoseAuditQuaternion ModelRootRotation { get; set; } = HumanoidPoseAuditQuaternion.Identity;
     }
 
     public sealed class HumanoidPoseAuditVector3
@@ -172,6 +196,8 @@ namespace XREngine.Components.Animation
         public string? ActualPath { get; set; }
         public int ComparedSamples { get; set; }
         public List<string> Warnings { get; set; } = [];
+        /// <summary>Structural schema failures. These are deliberately distinct from informational warnings.</summary>
+        public List<HumanoidPoseAuditComparisonFailure> Failures { get; set; } = [];
         public HumanoidPoseAuditMetric BodyPositionError { get; set; } = new();
         public HumanoidPoseAuditMetric BodyRotationErrorDegrees { get; set; } = new();
         public HumanoidPoseAuditMetric ProjectedRootPositionError { get; set; } = new();
@@ -180,10 +206,25 @@ namespace XREngine.Components.Animation
         public HumanoidPoseAuditMetric TemporalRootMotionRotationErrorDegrees { get; set; } = new();
         public HumanoidPoseAuditMetric ComposedHipsLocalPositionError { get; set; } = new();
         public HumanoidPoseAuditMetric ComposedHipsLocalRotationErrorDegrees { get; set; } = new();
+        public HumanoidPoseAuditMetric SolvedBodyModelRootPositionErrorMeters { get; set; } = new();
+        public HumanoidPoseAuditMetric SolvedBodyModelRootRotationErrorDegrees { get; set; } = new();
+        public HumanoidPoseAuditMetric HipsModelRootPositionErrorMeters { get; set; } = new();
+        public HumanoidPoseAuditMetric HipsModelRootRotationErrorDegrees { get; set; } = new();
+        public HumanoidPoseAuditMetric HipsWorldPositionErrorMeters { get; set; } = new();
+        public HumanoidPoseAuditMetric HipsWorldRotationErrorDegrees { get; set; } = new();
         public List<HumanoidPoseAuditMetricEntry> MuscleAbsoluteError { get; set; } = [];
         public List<HumanoidPoseAuditMetricEntry> BoneLocalPositionError { get; set; } = [];
         public List<HumanoidPoseAuditMetricEntry> BoneLocalRotationErrorDegrees { get; set; } = [];
         public List<HumanoidPoseAuditMetricEntry> BoneRootSpacePositionError { get; set; } = [];
+        public List<HumanoidPoseAuditMetricEntry> BoneModelRootPositionErrorMeters { get; set; } = [];
+        public List<HumanoidPoseAuditMetricEntry> BoneWorldRotationErrorDegrees { get; set; } = [];
+    }
+
+    public sealed class HumanoidPoseAuditComparisonFailure
+    {
+        public string Code { get; set; } = string.Empty;
+        public string Message { get; set; } = string.Empty;
+        public int? SampleIndex { get; set; }
     }
 
     public sealed class HumanoidPoseAuditMetricEntry

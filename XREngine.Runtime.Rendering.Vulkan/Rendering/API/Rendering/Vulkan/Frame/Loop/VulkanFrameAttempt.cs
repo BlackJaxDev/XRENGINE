@@ -333,6 +333,8 @@ internal ref struct VulkanFrameAttempt
     /// renderer-terminal failure.
     /// </summary>
     public Exception? RejectedFailure;
+    /// <summary>An expected pre-acquire retry that rejected this frame without an exception.</summary>
+    public VulkanPresentNowReadinessRetry PresentNowReadinessRetry;
     /// <summary>
     /// Indicates the primary failure that occurred during the current frame attempt, if any,
     /// which is important for diagnosing issues and ensuring that the rendering operations are completed correctly.

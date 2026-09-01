@@ -75,17 +75,25 @@ namespace XREngine.Rendering.Commands
                     _commandAabbDirtyRange.HasValue;
                 if (commandSnapshotDirty || stageStreamsDirty)
                     RecordStreamPublication();
-                CopyDrawIndexedSoABuffersToRenderSnapshot();
-                CopyDirtyStableSoABuffersToRenderSnapshot();
+                using (RuntimeEngine.Profiler.Start("GpuIndirect.GPUScene.SwapCommandBuffers.CopyStreams"))
+                {
+                    CopyDrawIndexedSoABuffersToRenderSnapshot();
+                    CopyDirtyStableSoABuffersToRenderSnapshot();
+                }
 
                 // This is the sole publication point for meshlet descriptor-table
                 // generations. VisualScene calls it after collect/update and before
                 // GPU pass submission, so shaders never observe a partly rebuilt set.
-                ApplyPendingMeshletPayloadChangesAtFrameBoundary();
-                PublishMeshletBufferGenerationAtFrameBoundary();
+                using (RuntimeEngine.Profiler.Start("GpuIndirect.GPUScene.SwapCommandBuffers.MeshletPublication"))
+                {
+                    ApplyPendingMeshletPayloadChangesAtFrameBoundary();
+                    PublishMeshletBufferGenerationAtFrameBoundary();
+                }
 
                 if (commandSnapshotDirty && _updatingTransparencyMetadataBuffer is not null && _allLoadedTransparencyMetadataBuffer is not null)
                 {
+                    using var transparencyScope = RuntimeEngine.Profiler.Start(
+                        "GpuIndirect.GPUScene.SwapCommandBuffers.TransparencyPublication");
                     if (_allLoadedTransparencyMetadataBuffer.ElementCount < _updatingTransparencyMetadataBuffer.ElementCount)
                         _allLoadedTransparencyMetadataBuffer.Resize(_updatingTransparencyMetadataBuffer.ElementCount);
 
@@ -114,7 +122,8 @@ namespace XREngine.Rendering.Commands
                 
                 // Update the render count to match the updating count
                 TotalCommandCount = _updatingCommandCount;
-                PublishAdvancedResidentScene();
+                using (RuntimeEngine.Profiler.Start("GpuIndirect.GPUScene.SwapCommandBuffers.AdvancedPublication"))
+                    PublishAdvancedResidentSceneIfRequested();
 
                 if (_useInternalBvh && !_commandAabbBackfillRequired)
                     _commandAabbPublishedContentVersion = _lastSwappedCommandsContentVersion;

@@ -77,6 +77,14 @@ namespace XREngine.Components.Animation
                 AvatarHumanScale = humanoid.AvatarDefinition.HumanScale,
                 EngineUnitsPerSourceMeter = ResolveEngineUnitsPerSourceMeter(humanoid),
             };
+            // Only roles mapped by this avatar are declared mandatory.  The comparer
+            // then treats a disappearing or duplicate mapped role as structural,
+            // while optional humanoid roles remain legitimately absent.
+            report.RequiredBoneRoles.AddRange(BoneDefinitions
+                .Where(definition => definition.ResolveNode(humanoid)?.Transform is not null)
+                .Select(static definition => definition.Name));
+            report.RequiredMuscleChannels.AddRange(
+                ImportedHumanoidMuscleMap.OrderedMuscleEntries.Select(static entry => entry.HumanTraitName));
 
             using TransformDiagnosticEvaluationScope diagnosticScope = TransformBase.BeginDiagnosticEvaluation();
             long previousTimeTicks = clipComponent.CaptureDiagnosticPlaybackTimeTicks();
@@ -373,9 +381,16 @@ namespace XREngine.Components.Animation
 
             HumanoidBodyFrameDiagnosticState bodyFrame = humanoid.CurrentBodyFrameDiagnostic;
             if (bodyFrame.HasValue)
+            {
                 sample.NativeBodyFrame = CaptureBodyFrame(bodyFrame);
+                sample.SolvedBodyModelRootPositionMeters = ToCommonPosition(
+                    bodyFrame.RequestedBodyFrame.Translation, humanoid);
+                sample.SolvedBodyModelRootRotation = ToCommonRotation(
+                    DecomposeRotation(bodyFrame.RequestedBodyFrame, "RequestedBodyFrame"));
+                sample.HasSolvedBodyModelRootPose = true;
+            }
 
-            CaptureComposedTransforms(humanoid, sample);
+            Matrix4x4 rootWorld = CaptureComposedTransforms(humanoid, projectedRoot, sample);
 
             foreach (ImportedHumanoidMuscleMap.MuscleEntry entry in ImportedHumanoidMuscleMap.OrderedMuscleEntries)
             {
@@ -399,7 +414,6 @@ namespace XREngine.Components.Animation
             }
 
             TransformBase humanoidRoot = humanoid.SceneNode.Transform;
-            Matrix4x4 rootWorld = ComposeWorldFromLocals(humanoidRoot);
             foreach (var bone in BoneDefinitions)
             {
                 var node = bone.ResolveNode(humanoid);
@@ -428,6 +442,9 @@ namespace XREngine.Components.Animation
                     PoseDeltaFromNeutralRotation = HumanoidPoseAuditQuaternion.From(poseDeltaFromNeutralRotation),
                     RootSpacePosition = HumanoidPoseAuditVector3.From(rootSpace.Translation),
                     WorldPosition = HumanoidPoseAuditVector3.From(world.Translation),
+                    WorldRotation = ToCommonRotation(DecomposeRotation(world, bone.Name)),
+                    ModelRootPositionMeters = ToCommonPosition(rootSpace.Translation, humanoid),
+                    ModelRootRotation = ToCommonRotation(DecomposeRotation(rootSpace, bone.Name)),
                 });
             }
 
@@ -458,11 +475,16 @@ namespace XREngine.Components.Animation
                 ProjectedRootChannels = (int)value.ProjectedRoot.Channels,
             };
 
-        private static void CaptureComposedTransforms(HumanoidComponent humanoid, HumanoidPoseAuditSample sample)
+        private static Matrix4x4 CaptureComposedTransforms(
+            HumanoidComponent humanoid,
+            HumanoidProjectedRootPose projectedRoot,
+            HumanoidPoseAuditSample sample)
         {
             TransformBase characterRoot = humanoid.SceneNode.Transform;
-            Matrix4x4 characterLocal = ReadCurrentLocalMatrix(characterRoot);
-            Matrix4x4 characterWorld = ComposeWorldFromLocals(characterRoot);
+            Matrix4x4 characterLocal = ComposeProjectedCharacterLocal(characterRoot, projectedRoot);
+            Matrix4x4 characterWorld = characterLocal;
+            for (TransformBase? parent = characterRoot.Parent; parent is not null; parent = parent.Parent)
+                characterWorld *= ReadCurrentLocalMatrix(parent);
             sample.CharacterRootLocalPosition = HumanoidPoseAuditVector3.From(characterLocal.Translation);
             sample.CharacterRootLocalRotation = HumanoidPoseAuditQuaternion.From(DecomposeRotation(characterLocal, humanoid.SceneNode.Name));
             sample.CharacterRootWorldPosition = HumanoidPoseAuditVector3.From(characterWorld.Translation);
@@ -470,12 +492,80 @@ namespace XREngine.Components.Animation
 
             TransformBase? hips = humanoid.Hips.Node?.Transform;
             if (hips is null)
-                return;
+                return characterWorld;
 
             Matrix4x4 hipsLocal = ReadCurrentLocalMatrix(hips);
+            Matrix4x4 hipsModelRoot = ComposeRelativeToAncestor(hips, characterRoot);
+            Matrix4x4 hipsWorld = hipsModelRoot * characterWorld;
             sample.ComposedHipsLocalPosition = HumanoidPoseAuditVector3.From(hipsLocal.Translation);
             sample.ComposedHipsLocalRotation = HumanoidPoseAuditQuaternion.From(DecomposeRotation(hipsLocal, "Hips"));
+            sample.HipsModelRootPositionMeters = ToCommonPosition(hipsModelRoot.Translation, humanoid);
+            sample.HipsModelRootRotation = ToCommonRotation(DecomposeRotation(hipsModelRoot, "Hips"));
+            sample.HipsWorldPositionMeters = ToCommonPosition(hipsWorld.Translation, humanoid);
+            sample.HipsWorldRotation = ToCommonRotation(DecomposeRotation(hipsWorld, "Hips"));
+            return characterWorld;
         }
+
+        /// <summary>
+        /// Diagnostic sampling suppresses live root application so it can restore the
+        /// scene exactly. Unity's reference Animator still exposes the applied root,
+        /// therefore world-space audit fields compose the accepted projection virtually.
+        /// This mirrors AnimationClipComponent's explicit-target anchor semantics.
+        /// </summary>
+        private static Matrix4x4 ComposeProjectedCharacterLocal(
+            TransformBase characterRoot,
+            HumanoidProjectedRootPose projectedRoot)
+        {
+            Matrix4x4 anchor = ReadCurrentLocalMatrix(characterRoot);
+            if (!Matrix4x4.Decompose(
+                    anchor,
+                    out Vector3 scale,
+                    out Quaternion anchorRotation,
+                    out Vector3 anchorTranslation))
+                return anchor;
+
+            Vector3 projectedPosition = Vector3.Zero;
+            if ((projectedRoot.Channels & EHumanoidProjectedRootChannels.PositionXZ) != 0)
+            {
+                projectedPosition.X = float.IsFinite(projectedRoot.Position.X) ? projectedRoot.Position.X : 0.0f;
+                projectedPosition.Z = float.IsFinite(projectedRoot.Position.Z) ? projectedRoot.Position.Z : 0.0f;
+            }
+            if ((projectedRoot.Channels & EHumanoidProjectedRootChannels.PositionY) != 0)
+                projectedPosition.Y = float.IsFinite(projectedRoot.Position.Y) ? projectedRoot.Position.Y : 0.0f;
+
+            anchorRotation = Quaternion.Normalize(anchorRotation);
+            Quaternion projectedRotation = (projectedRoot.Channels & EHumanoidProjectedRootChannels.RotationYaw) != 0
+                && IsFiniteNonZero(projectedRoot.Rotation)
+                    ? Quaternion.Normalize(projectedRoot.Rotation)
+                    : Quaternion.Identity;
+            Vector3 translation = anchorTranslation + Vector3.Transform(projectedPosition, anchorRotation);
+            Quaternion rotation = Quaternion.Normalize(anchorRotation * projectedRotation);
+            return Matrix4x4.CreateScale(scale)
+                * Matrix4x4.CreateFromQuaternion(rotation)
+                * Matrix4x4.CreateTranslation(translation);
+        }
+
+        private static bool IsFiniteNonZero(Quaternion value)
+            => float.IsFinite(value.X)
+            && float.IsFinite(value.Y)
+            && float.IsFinite(value.Z)
+            && float.IsFinite(value.W)
+            && float.IsFinite(value.LengthSquared())
+            && value.LengthSquared() > 1.0e-8f;
+
+        // The FBX importer maps Unity's canonical coordinates to XRENGINE as
+        // (-X, Y, Z) in engine units.  Schema 7 inverts that one documented
+        // import boundary and converts to meters; raw RootT/RootQ fields above
+        // intentionally retain their imported representation for diagnostics.
+        private static HumanoidPoseAuditVector3 ToCommonPosition(Vector3 enginePosition, HumanoidComponent humanoid)
+        {
+            float unitsPerMeter = ResolveEngineUnitsPerSourceMeter(humanoid);
+            return HumanoidPoseAuditVector3.From(new Vector3(-enginePosition.X, enginePosition.Y, enginePosition.Z) / unitsPerMeter);
+        }
+
+        private static HumanoidPoseAuditQuaternion ToCommonRotation(Quaternion engineRotation)
+            => HumanoidPoseAuditQuaternion.From(Quaternion.Normalize(
+                new Quaternion(engineRotation.X, -engineRotation.Y, -engineRotation.Z, engineRotation.W)));
 
         private static Matrix4x4 ComposeRelativeToAncestor(TransformBase transform, TransformBase ancestor)
         {

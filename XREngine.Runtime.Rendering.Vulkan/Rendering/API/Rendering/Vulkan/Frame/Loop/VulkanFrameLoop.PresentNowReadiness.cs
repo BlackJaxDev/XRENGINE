@@ -7,10 +7,31 @@ namespace XREngine.Rendering.Vulkan;
 
 internal sealed partial class VulkanFrameLoop
 {
+    private const int PresentNowRecoveryProbeMaximumAttempts = 3;
     private VulkanPresentNowReadinessException? _presentNowTerminalFailure;
+    private VulkanPresentNowReadinessException? _presentNowRecoverableFailure;
+    private VulkanPresentNowReadinessException? _presentNowRecoverySourceFailure;
     private readonly VulkanTextureUploadManifest _presentNowPumpUploadManifest = new();
     private long _presentNowTerminalTransitionSequence;
     private long _presentNowFailureDiagnosticSequence;
+    private long _presentNowRecoveryRequestSequence;
+    private long _presentNowConsumedRecoveryRequestSequence;
+    private string _presentNowRecoveryRequestReason = "renderer state changed";
+    private int _presentNowRecoveryProbeAttempts;
+    private int _presentNowAutomaticRecoveryPending;
+    private int _presentNowRecoveryProbeActive;
+
+    /// <summary>
+    /// Publishes a cold-path recovery edge for a failure explicitly classified as
+    /// recoverable. Hard capacity, invariant, memory, and device failures retain
+    /// their terminal latch and ignore these requests.
+    /// </summary>
+    internal void RequestPresentNowRecovery(string reason)
+    {
+        if (!string.IsNullOrWhiteSpace(reason))
+            Interlocked.Exchange(ref _presentNowRecoveryRequestReason, reason);
+        Interlocked.Increment(ref _presentNowRecoveryRequestSequence);
+    }
 
     /// <summary>
     /// Freezes and completes format-independent foreground work before the WSI
@@ -20,36 +41,66 @@ internal sealed partial class VulkanFrameLoop
     private EDesktopFrameFlow DriveDesktopPresentNowReadiness(
         ref VulkanFrameAttempt attempt)
     {
-        if (_presentNowTerminalFailure is not null)
+        if (_presentNowTerminalFailure is { } terminalFailure)
         {
-            attempt.RejectedFailure = _presentNowTerminalFailure;
+            attempt.RejectedFailure = terminalFailure;
             attempt.Stop(EDesktopFrameReason.PresentNowReadinessFailed);
             return EDesktopFrameFlow.Stop;
         }
+        VulkanPresentNowReadinessException? recoverableFailure =
+            _presentNowRecoverableFailure;
+        if (recoverableFailure is not null &&
+            !TryBeginPresentNowRecoveryProbe(ref attempt, recoverableFailure))
+        {
+            attempt.RejectedFailure = recoverableFailure;
+            attempt.Stop(EDesktopFrameReason.PresentNowReadinessFailed);
+            return EDesktopFrameFlow.Stop;
+        }
+        if (!TryEnterPresentNowRecoveryProbeAttempt(ref attempt))
+            return EDesktopFrameFlow.Stop;
 
         using RenderForegroundWorkCoordinator.ExactForegroundScope foregroundScope =
             RenderForegroundWorkCoordinator.EnterExactForeground();
+        using VulkanProgramLinkPreparationScope programPreparation =
+            new(_resourceRuntime);
         VulkanPresentNowReadinessWatchdog watchdog = new(attempt.FrameNumber);
         attempt.AcceptedSceneEpoch = RuntimeEngine.Rendering.State.RenderFrameId;
         try
         {
-            VulkanAcceptedFramePlan acceptedPlan =
-                AcceptDesktopPresentNowPlan(ref attempt, ref watchdog);
+            if (!TryAcceptDesktopPresentNowPlan(
+                    ref attempt,
+                    ref watchdog,
+                    out VulkanAcceptedFramePlan acceptedPlan,
+                    out VulkanPresentNowReadinessRetry retry))
+            {
+                RejectPresentNowFrame(ref attempt, in retry);
+                return EDesktopFrameFlow.Stop;
+            }
             watchdog.RecordProgress();
 
             ClassifyIncompleteResizeReleaseSuccessorBeforeAcquire(
                 acceptedPlan,
                 ref attempt);
 
-            CompleteAcceptedPresentNowTextureReadiness(
-                acceptedPlan,
-                ref watchdog,
-                "DesktopScene -> material descriptor -> texture generation");
+            if (!CompleteAcceptedPresentNowTextureReadiness(
+                    acceptedPlan,
+                    ref watchdog,
+                    "DesktopScene -> material descriptor -> texture generation",
+                    out retry))
+            {
+                RejectPresentNowFrame(ref attempt, in retry);
+                return EDesktopFrameFlow.Stop;
+            }
 
             watchdog.RecordProgress();
-            RevalidateAcceptedDesktopTargetCompatibility(
-                acceptedPlan,
-                ref watchdog);
+            if (!TryRevalidateAcceptedDesktopTargetCompatibility(
+                    acceptedPlan,
+                    ref watchdog,
+                    out retry))
+            {
+                RejectPresentNowFrame(ref attempt, in retry);
+                return EDesktopFrameFlow.Stop;
+            }
             attempt.PresentNowReadinessCompleted = true;
             Debug.VulkanEvery(
                 $"Vulkan.PresentNow.Ready.{GetHashCode()}",
@@ -65,10 +116,7 @@ internal sealed partial class VulkanFrameLoop
         }
         catch (VulkanPresentNowReadinessException failure)
         {
-            if (failure.Disposition == EVulkanPresentNowFailureDisposition.RetryFrame)
-                RejectPresentNowFrame(ref attempt, failure);
-            else
-                PausePresentNowRenderer(ref attempt, failure);
+            HandlePresentNowFailureBeforeAcquire(ref attempt, failure);
             return EDesktopFrameFlow.Stop;
         }
         catch
@@ -83,13 +131,16 @@ internal sealed partial class VulkanFrameLoop
     /// CPU frame slot. No WSI image is owned while shadows, meshes, descriptors,
     /// frame operations, resource bindings, and pipeline requirements converge.
     /// </summary>
-    private VulkanAcceptedFramePlan AcceptDesktopPresentNowPlan(
+    private bool TryAcceptDesktopPresentNowPlan(
         ref VulkanFrameAttempt attempt,
-        ref VulkanPresentNowReadinessWatchdog watchdog)
+        ref VulkanPresentNowReadinessWatchdog watchdog,
+        out VulkanAcceptedFramePlan acceptedPlan,
+        out VulkanPresentNowReadinessRetry retry)
     {
+        retry = default;
         VulkanPresentNowTargetCompatibilityKey compatibility =
             CaptureDesktopTargetCompatibility();
-        VulkanAcceptedFramePlan acceptedPlan = _acceptedFramePlans.Begin(
+        acceptedPlan = _acceptedFramePlans.Begin(
             attempt.FrameSlot,
             attempt.FrameNumber,
             attempt.AcceptedSceneEpoch,
@@ -153,7 +204,7 @@ internal sealed partial class VulkanFrameLoop
                     "frame-plan-capacity",
                     "DesktopScene -> visible mesh manifest arena",
                     detail,
-                    disposition: EVulkanPresentNowFailureDisposition.RetryFrame);
+                    disposition: EVulkanPresentNowFailureDisposition.RendererTerminal);
             }
         }
 
@@ -174,10 +225,14 @@ internal sealed partial class VulkanFrameLoop
             acceptedPlan.RequiredTextures,
             acceptedPlan.RequiredTextureGenerations,
             requireExactDescriptorPublication: false);
-        CompleteAcceptedPresentNowTextureReadiness(
-            acceptedPlan,
-            ref watchdog,
-            "DesktopScene -> visible material snapshot -> texture generation");
+        if (!CompleteAcceptedPresentNowTextureReadiness(
+                acceptedPlan,
+                ref watchdog,
+                "DesktopScene -> visible material snapshot -> texture generation",
+                out retry))
+        {
+            return false;
+        }
 
         if (!MaterializeQueuedMeshRenderRequests(
                 requestCount,
@@ -243,14 +298,22 @@ internal sealed partial class VulkanFrameLoop
         }
         if (!computePreparation.Succeeded)
         {
+            if (computePreparation.Pending)
+            {
+                retry = watchdog.CreateRetry(
+                    EVulkanPresentNowReadinessStage.FramePlanSeal,
+                    "compute-program",
+                    "DesktopScene -> compute programs",
+                    computePreparation.FormatFailure());
+                return false;
+            }
+
             throw watchdog.CreateFailure(
                 EVulkanPresentNowReadinessStage.FramePlanSeal,
                 "compute-program",
                 "DesktopScene -> compute programs",
                 computePreparation.FormatFailure(),
-                disposition: computePreparation.Pending
-                    ? EVulkanPresentNowFailureDisposition.RetryFrame
-                    : EVulkanPresentNowFailureDisposition.RendererTerminal);
+                disposition: EVulkanPresentNowFailureDisposition.RecoverAfterStateChange);
         }
 
         ResourcePlannerRuntimeState plannerState =
@@ -258,13 +321,14 @@ internal sealed partial class VulkanFrameLoop
         if (planningSnapshot.RenderGraphPlan.Revision !=
             plannerState.ResourcePlannerRevision)
         {
-            throw watchdog.CreateFailure(
+            retry = watchdog.CreateRetry(
                 EVulkanPresentNowReadinessStage.FramePlanSeal,
                 "planner-revision",
                 "DesktopScene -> resource plan",
                 $"Planner publication changed before logical seal. " +
                 $"planner={plannerState.ResourcePlannerRevision} " +
                 $"graph={planningSnapshot.RenderGraphPlan.Revision}.");
+            return false;
         }
         if (!TryPrepareFrameOperationTargets(
                 staticOperations,
@@ -279,14 +343,22 @@ internal sealed partial class VulkanFrameLoop
                 allowSynchronousResourceUploads: true,
                 out targetFailure))
         {
+            if (VulkanFrameBufferAttachmentNotReadyException.IsTransientReason(targetFailure))
+            {
+                retry = watchdog.CreateRetry(
+                    EVulkanPresentNowReadinessStage.FramePlanSeal,
+                    "frame-operation-target",
+                    "DesktopScene -> framebuffer dependencies",
+                    targetFailure);
+                return false;
+            }
+
             throw watchdog.CreateFailure(
                 EVulkanPresentNowReadinessStage.FramePlanSeal,
                 "frame-operation-target",
                 "DesktopScene -> framebuffer dependencies",
                 targetFailure,
-                disposition: VulkanFrameBufferAttachmentNotReadyException.IsTransientReason(targetFailure)
-                    ? EVulkanPresentNowFailureDisposition.RetryFrame
-                    : EVulkanPresentNowFailureDisposition.RendererTerminal);
+                disposition: EVulkanPresentNowFailureDisposition.RecoverAfterStateChange);
         }
         VulkanFramePlanningSnapshot frozenPlanningSnapshot;
         try
@@ -302,17 +374,18 @@ internal sealed partial class VulkanFrameLoop
                     EVulkanPresentNowReadinessStage.FramePlanSeal,
                     "native-barrier-bindings",
                     "DesktopScene -> resource barrier bindings",
-                    freezeFailure);
+                    freezeFailure,
+                    disposition: EVulkanPresentNowFailureDisposition.RecoverAfterStateChange);
             }
         }
         catch (VulkanNativeBufferBindingSupersededException exception)
         {
-            throw watchdog.CreateFailure(
+            retry = watchdog.CreateRetry(
                 EVulkanPresentNowReadinessStage.FramePlanSeal,
                 "native-barrier-bindings",
                 "DesktopScene -> resource barrier bindings",
-                exception.Message,
-                disposition: EVulkanPresentNowFailureDisposition.RetryFrame);
+                exception.Message);
+            return false;
         }
 
         acceptedPlan.CaptureOperations(
@@ -349,12 +422,12 @@ internal sealed partial class VulkanFrameLoop
         }
         catch (VulkanNativeBufferBindingSupersededException exception)
         {
-            throw watchdog.CreateFailure(
+            retry = watchdog.CreateRetry(
                 EVulkanPresentNowReadinessStage.FramePlanSeal,
                 "native-barrier-bindings",
                 "DesktopScene -> resource barrier bindings",
-                exception.Message,
-                disposition: EVulkanPresentNowFailureDisposition.RetryFrame);
+                exception.Message);
+            return false;
         }
         logicalPlan.PrepareRecordingPlannerGenerations(in plannerState);
         if (!logicalPlan.HasAnyExecutableOutput)
@@ -363,7 +436,8 @@ internal sealed partial class VulkanFrameLoop
                 EVulkanPresentNowReadinessStage.FramePlanSeal,
                 "output-dag",
                 "DesktopScene -> terminal output",
-                "The logical output DAG admitted no executable foreground output.");
+                "The logical output DAG admitted no executable foreground output.",
+                disposition: EVulkanPresentNowFailureDisposition.RecoverAfterStateChange);
         }
 
         if (!logicalPlan.TryGetExecutableOutputContract(
@@ -374,7 +448,8 @@ internal sealed partial class VulkanFrameLoop
                 EVulkanPresentNowReadinessStage.FramePlanSeal,
                 "desktop-output-contract",
                 "DesktopScene -> exact terminal output",
-                "The sealed output DAG did not publish the required desktop PresentNow contract.");
+                "The sealed output DAG did not publish the required desktop PresentNow contract.",
+                disposition: EVulkanPresentNowFailureDisposition.RecoverAfterStateChange);
         }
         if (outputContract.WorkClass != ERenderOutputWorkClass.PresentNow ||
             outputContract.ReadinessPolicy !=
@@ -385,7 +460,8 @@ internal sealed partial class VulkanFrameLoop
                 "output-contract",
                 "DesktopScene -> terminal present policy",
                 $"Foreground contract mismatch workClass={outputContract.WorkClass} " +
-                $"readiness={outputContract.ReadinessPolicy}.");
+                $"readiness={outputContract.ReadinessPolicy}.",
+                disposition: EVulkanPresentNowFailureDisposition.RecoverAfterStateChange);
         }
 
         attempt.ReadinessPolicy = outputContract.ReadinessPolicy;
@@ -400,7 +476,8 @@ internal sealed partial class VulkanFrameLoop
                 EVulkanPresentNowReadinessStage.PipelineCompilation,
                 "swapchain-compatibility",
                 "DesktopScene -> pipeline formats",
-                compatibilityFailure);
+                compatibilityFailure,
+                disposition: EVulkanPresentNowFailureDisposition.RecoverAfterStateChange);
         }
         VulkanPreparedResourcePlanStamp resourcePlanStamp = new(
             frozenPlanningSnapshot,
@@ -417,20 +494,34 @@ internal sealed partial class VulkanFrameLoop
             acceptedPlan.RequiredTextures,
             acceptedPlan.RequiredTextureGenerations,
             requireExactDescriptorPublication: false);
-        CompleteAcceptedPresentNowTextureReadiness(
-            acceptedPlan,
-            ref watchdog,
-            "DesktopScene -> canonical scene texture -> exact descriptor");
+        if (!CompleteAcceptedPresentNowTextureReadiness(
+                acceptedPlan,
+                ref watchdog,
+                "DesktopScene -> canonical scene texture -> exact descriptor",
+                out retry))
+        {
+            return false;
+        }
         if (!TryPrepareReadOnlyStorage(
                 logicalPlan, attempt.FrameSlot,
                 out VulkanReadOnlyStoragePreparedAuthority? storageAuthority,
                 out bool materialPending,
                 out string storageFailure))
         {
+            if (materialPending)
+            {
+                retry = watchdog.CreateRetry(
+                    EVulkanPresentNowReadinessStage.PipelineCompilation,
+                    "immutable-storage",
+                    "DesktopScene -> immutable buffer descriptors",
+                    storageFailure);
+                return false;
+            }
+
             throw watchdog.CreateFailure(
                 EVulkanPresentNowReadinessStage.PipelineCompilation,
                 "immutable-storage", "DesktopScene -> immutable buffer descriptors", storageFailure,
-                disposition: materialPending ? EVulkanPresentNowFailureDisposition.RetryFrame : EVulkanPresentNowFailureDisposition.RendererTerminal);
+                disposition: EVulkanPresentNowFailureDisposition.RendererTerminal);
         }
         using VulkanResourceRuntime.ReadOnlyStorageRecordingScope storageScope =
             ResourceRuntime.EnterReadOnlyStorageRecordingScope(storageAuthority);
@@ -448,14 +539,22 @@ internal sealed partial class VulkanFrameLoop
                 out bool pipelineRetryable,
                 out string pipelineFailure))
         {
+            if (pipelineRetryable)
+            {
+                retry = watchdog.CreateRetry(
+                    EVulkanPresentNowReadinessStage.PipelineCompilation,
+                    "graphics-pipeline",
+                    "DesktopScene -> graphics pipeline manifest",
+                    pipelineFailure);
+                return false;
+            }
+
             throw watchdog.CreateFailure(
                 EVulkanPresentNowReadinessStage.PipelineCompilation,
                 "graphics-pipeline",
                 "DesktopScene -> graphics pipeline manifest",
                 pipelineFailure,
-                disposition: pipelineRetryable
-                    ? EVulkanPresentNowFailureDisposition.RetryFrame
-                    : EVulkanPresentNowFailureDisposition.RendererTerminal);
+                disposition: EVulkanPresentNowFailureDisposition.RecoverAfterStateChange);
         }
 
         Image[]? desktopImages = OutputRuntime.Desktop.Images;
@@ -465,7 +564,8 @@ internal sealed partial class VulkanFrameLoop
                 EVulkanPresentNowReadinessStage.PipelineCompilation,
                 "desktop-frame-data-slots",
                 "DesktopScene -> compute descriptors/uniforms",
-                "The desktop swapchain has no frame-data slots to prepare before acquire.");
+                "The desktop swapchain has no frame-data slots to prepare before acquire.",
+                disposition: EVulkanPresentNowFailureDisposition.RecoverAfterStateChange);
         }
         for (uint frameDataImageIndex = 0;
              frameDataImageIndex < (uint)desktopImages.Length;
@@ -478,14 +578,22 @@ internal sealed partial class VulkanFrameLoop
                     in plannerState);
             if (!computePreparation.Succeeded)
             {
+                if (computePreparation.Pending)
+                {
+                    retry = watchdog.CreateRetry(
+                        EVulkanPresentNowReadinessStage.PipelineCompilation,
+                        $"compute-frame-data:{frameDataImageIndex}",
+                        "DesktopScene -> compute descriptors/uniforms",
+                        computePreparation.FormatFailure());
+                    return false;
+                }
+
                 throw watchdog.CreateFailure(
                     EVulkanPresentNowReadinessStage.PipelineCompilation,
                     $"compute-frame-data:{frameDataImageIndex}",
                     "DesktopScene -> compute descriptors/uniforms",
                     computePreparation.FormatFailure(),
-                    disposition: computePreparation.Pending
-                        ? EVulkanPresentNowFailureDisposition.RetryFrame
-                        : EVulkanPresentNowFailureDisposition.RendererTerminal);
+                    disposition: EVulkanPresentNowFailureDisposition.RecoverAfterStateChange);
             }
         }
 
@@ -497,7 +605,7 @@ internal sealed partial class VulkanFrameLoop
             logicalPlan,
             in plannerState,
             in frozenPlanningSnapshot);
-        return acceptedPlan;
+        return true;
     }
 
     private VulkanPresentNowTargetCompatibilityKey
@@ -568,14 +676,16 @@ internal sealed partial class VulkanFrameLoop
         return true;
     }
 
-    private void RevalidateAcceptedDesktopTargetCompatibility(
+    private bool TryRevalidateAcceptedDesktopTargetCompatibility(
         VulkanAcceptedFramePlan acceptedPlan,
-        ref VulkanPresentNowReadinessWatchdog watchdog)
+        ref VulkanPresentNowReadinessWatchdog watchdog,
+        out VulkanPresentNowReadinessRetry retry)
     {
+        retry = default;
         VulkanPresentNowTargetCompatibilityKey current =
             CaptureDesktopTargetCompatibility();
         if (current == acceptedPlan.TargetCompatibility)
-            return;
+            return true;
 
         acceptedPlan.UpdateTargetCompatibility(in current);
         if (!TryCreateDesktopCompatibilityTarget(
@@ -586,7 +696,8 @@ internal sealed partial class VulkanFrameLoop
                 EVulkanPresentNowReadinessStage.FramePlanSeal,
                 "target-revalidation",
                 "DesktopScene -> swapchain compatibility",
-                targetFailure);
+                targetFailure,
+                disposition: EVulkanPresentNowFailureDisposition.RecoverAfterStateChange);
         }
         VulkanPreparedResourcePlanStamp resourcePlanStamp = new(
             acceptedPlan.FrozenPlanningSnapshot,
@@ -602,10 +713,20 @@ internal sealed partial class VulkanFrameLoop
                 out bool materialPending,
                 out string storageFailure))
         {
+            if (materialPending)
+            {
+                retry = watchdog.CreateRetry(
+                    EVulkanPresentNowReadinessStage.PipelineCompilation,
+                    "immutable-storage-revalidation",
+                    "DesktopScene -> immutable buffer descriptors",
+                    storageFailure);
+                return false;
+            }
+
             throw watchdog.CreateFailure(
                 EVulkanPresentNowReadinessStage.PipelineCompilation,
                 "immutable-storage-revalidation", "DesktopScene -> immutable buffer descriptors", storageFailure,
-                disposition: materialPending ? EVulkanPresentNowFailureDisposition.RetryFrame : EVulkanPresentNowFailureDisposition.RendererTerminal);
+                disposition: EVulkanPresentNowFailureDisposition.RendererTerminal);
         }
         using VulkanResourceRuntime.ReadOnlyStorageRecordingScope storageScope =
             ResourceRuntime.EnterReadOnlyStorageRecordingScope(storageAuthority);
@@ -622,25 +743,36 @@ internal sealed partial class VulkanFrameLoop
                 out bool pipelineRetryable,
                 out string pipelineFailure))
         {
+            if (pipelineRetryable)
+            {
+                retry = watchdog.CreateRetry(
+                    EVulkanPresentNowReadinessStage.PipelineCompilation,
+                    "target-revalidation-pipeline",
+                    "DesktopScene -> swapchain-compatible pipelines",
+                    pipelineFailure);
+                return false;
+            }
+
             throw watchdog.CreateFailure(
                 EVulkanPresentNowReadinessStage.PipelineCompilation,
                 "target-revalidation-pipeline",
                 "DesktopScene -> swapchain-compatible pipelines",
                 pipelineFailure,
-                disposition: pipelineRetryable
-                    ? EVulkanPresentNowFailureDisposition.RetryFrame
-                    : EVulkanPresentNowFailureDisposition.RendererTerminal);
+                disposition: EVulkanPresentNowFailureDisposition.RecoverAfterStateChange);
         }
+        return true;
     }
 
     private VulkanTextureUploadSchedulingContext CreatePresentNowUploadContext()
         => CreateTextureUploadSchedulingContext();
 
-    private void CompleteAcceptedPresentNowTextureReadiness(
+    private bool CompleteAcceptedPresentNowTextureReadiness(
         VulkanAcceptedFramePlan acceptedPlan,
         ref VulkanPresentNowReadinessWatchdog watchdog,
-        string dependencyChain)
+        string dependencyChain,
+        out VulkanPresentNowReadinessRetry retry)
     {
+        retry = default;
         VulkanTextureUploadSchedulingContext uploadContext =
             CreatePresentNowUploadContext();
         while (true)
@@ -667,7 +799,8 @@ internal sealed partial class VulkanFrameLoop
                     "visible-now-texture-upload",
                     dependencyChain,
                     detail,
-                    exception);
+                    exception,
+                    EVulkanPresentNowFailureDisposition.RendererTerminal);
             }
             bool dependencyProgress =
                 acceptedPlan.SynchronizeTextureDependencies();
@@ -678,6 +811,17 @@ internal sealed partial class VulkanFrameLoop
                     out string failureDetail,
                     out EVulkanPresentNowFailureDisposition disposition))
             {
+                if (disposition == EVulkanPresentNowFailureDisposition.RetryFrame)
+                {
+                    retry = watchdog.CreateRetry(
+                        EVulkanPresentNowReadinessStage.RequiredUploadCompletion,
+                        $"texture-upload:{failedTicket.Sequence}:" +
+                        failedTicket.StreamingGeneration,
+                        dependencyChain,
+                        failureDetail);
+                    return false;
+                }
+
                 throw watchdog.CreateFailure(
                     EVulkanPresentNowReadinessStage.RequiredUploadCompletion,
                     $"texture-upload:{failedTicket.Sequence}:" +
@@ -697,36 +841,32 @@ internal sealed partial class VulkanFrameLoop
                 // Reject this snapshot so the inter-frame job pump can publish
                 // that ticket; blocking here would deadlock the callback behind
                 // PresentNow and eventually pause the renderer.
-                throw watchdog.CreateFailure(
+                retry = watchdog.CreateRetry(
                     EVulkanPresentNowReadinessStage.RequiredUploadCompletion,
                     "texture-upload-registration",
                     dependencyChain,
-                    "Required texture upload registration is pending at the outer frame boundary.",
-                    disposition: EVulkanPresentNowFailureDisposition.RetryFrame);
+                    "Required texture upload registration is pending at the outer frame boundary.");
+                return false;
             }
             if (uploadsReady &&
                 acceptedPlan.RequiredTextureUploads.AreAllReady)
             {
-                return;
+                return true;
             }
 
-            if (watchdog.IsExpired)
-            {
-                VulkanTextureUploadService.TryDescribeActiveUploadWork(
-                    out string uploadDetail);
-                throw watchdog.CreateFailure(
-                    EVulkanPresentNowReadinessStage.RequiredUploadCompletion,
-                    "visible-now-texture-upload",
-                    dependencyChain,
-                    string.IsNullOrEmpty(uploadDetail)
-                        ? "Required upload completion did not advance."
-                        : uploadDetail);
-            }
+            if (uploadProgress || dependencyProgress)
+                continue;
 
-            // Worker completions publish their generation state independently.
-            // Do not pump arbitrary engine callbacks here: that would permit
-            // render reentrancy while an accepted snapshot is frozen.
-            Thread.Yield();
+            VulkanTextureUploadService.TryDescribeActiveUploadWork(
+                out string uploadDetail);
+            retry = watchdog.CreateRetry(
+                EVulkanPresentNowReadinessStage.RequiredUploadCompletion,
+                "visible-now-texture-upload",
+                dependencyChain,
+                string.IsNullOrEmpty(uploadDetail)
+                    ? "Required upload completion is pending asynchronous preparation or transfer publication."
+                    : uploadDetail);
+            return false;
         }
     }
 
@@ -747,28 +887,44 @@ internal sealed partial class VulkanFrameLoop
 
     private void RejectPresentNowFrame(
         ref VulkanFrameAttempt attempt,
-        VulkanPresentNowReadinessException failure)
+        in VulkanPresentNowReadinessRetry retry)
     {
-        PublishPresentNowFailureDiagnostic(ref attempt, failure);
+        PublishPresentNowRetryDiagnostic(ref attempt, in retry);
         ResetIncompleteAcceptedPresentNowPlan(ref attempt);
-        attempt.RejectedFailure = failure;
-        Debug.VulkanWarningEvery(
-            $"Vulkan.PresentNow.FrameRejected.{failure.Stage}.{GetHashCode()}",
+        attempt.PresentNowReadinessRetry = retry;
+        Debug.VulkanEvery(
+            $"Vulkan.PresentNow.FrameRetry.{retry.Stage}.{GetHashCode()}",
             TimeSpan.FromSeconds(1),
-            "[Vulkan][PresentNow][FrameRejected] frame={0} stage={1} " +
-            "disposition={2} detail={3}",
-            failure.FrameId,
-            failure.Stage,
-            failure.Disposition,
-            failure.Message);
-        attempt.Stop(EDesktopFrameReason.PresentNowReadinessFailed);
+            "[Vulkan][PresentNow][FrameRetry] frame={0} stage={1} " +
+            "ticket={2} detail={3}",
+            retry.FrameId,
+            retry.Stage,
+            retry.ActiveTicket,
+            retry.Detail);
+        attempt.Stop(EDesktopFrameReason.PresentNowReadinessRetry);
     }
 
     private void PausePresentNowRenderer(
         ref VulkanFrameAttempt attempt,
         VulkanPresentNowReadinessException failure)
     {
+        StorePresentNowTerminalFailure(ref attempt, failure);
+        ResetIncompleteAcceptedPresentNowPlan(ref attempt);
+        attempt.DeferredFailure = _presentNowTerminalFailure;
+        attempt.Stop(EDesktopFrameReason.PresentNowReadinessFailed);
+    }
+
+    private void StorePresentNowTerminalFailure(
+        ref VulkanFrameAttempt attempt,
+        VulkanPresentNowReadinessException failure)
+    {
         PublishPresentNowFailureDiagnostic(ref attempt, failure);
+        Interlocked.Exchange(ref _presentNowRecoveryProbeActive, 0);
+        Volatile.Write(ref _presentNowAutomaticRecoveryPending, 0);
+        _presentNowRecoveryProbeAttempts = 0;
+        _presentNowRecoverySourceFailure = null;
+        _presentNowRecoverableFailure = null;
+
         if (_presentNowTerminalFailure is null)
         {
             VulkanPresentNowTerminalTransitionRecord transition =
@@ -777,10 +933,189 @@ internal sealed partial class VulkanFrameLoop
             _telemetry.PublishPresentNowTerminalTransition(in transition);
             PublishPresentNowTerminalTransitionDiagnostics(in transition);
         }
-        ResetIncompleteAcceptedPresentNowPlan(ref attempt);
-        attempt.DeferredFailure = _presentNowTerminalFailure;
-        attempt.Stop(EDesktopFrameReason.PresentNowReadinessFailed);
     }
+
+    /// <summary>
+    /// Explicit-production callers expose admission pending through their public
+    /// API. Keep their boundary exception separate from the desktop frame loop's
+    /// typed, non-throwing retry path.
+    /// </summary>
+    private void CompleteAcceptedPresentNowTextureReadiness(
+        VulkanAcceptedFramePlan acceptedPlan,
+        ref VulkanPresentNowReadinessWatchdog watchdog,
+        string dependencyChain)
+    {
+        if (CompleteAcceptedPresentNowTextureReadiness(
+                acceptedPlan,
+                ref watchdog,
+                dependencyChain,
+                out VulkanPresentNowReadinessRetry retry))
+        {
+            return;
+        }
+
+        throw new VulkanExplicitProductionAdmissionPendingException(
+            retry.Stage.ToString(),
+            retry.Detail);
+    }
+
+    private void HandlePresentNowFailureBeforeAcquire(
+        ref VulkanFrameAttempt attempt,
+        VulkanPresentNowReadinessException failure)
+    {
+        switch (failure.Disposition)
+        {
+            case EVulkanPresentNowFailureDisposition.RetryFrame:
+                // RetryFrame is not a valid exception disposition on desktop.
+                // Treat an externally constructed violation as a terminal fault
+                // instead of allowing exception-driven retry to return.
+                PausePresentNowRenderer(ref attempt, failure);
+                break;
+            case EVulkanPresentNowFailureDisposition.RecoverAfterStateChange:
+                DeferPresentNowUntilStateChange(ref attempt, failure);
+                break;
+            default:
+                PausePresentNowRenderer(ref attempt, failure);
+                break;
+        }
+    }
+
+    private void DeferPresentNowUntilStateChange(
+        ref VulkanFrameAttempt attempt,
+        VulkanPresentNowReadinessException failure)
+    {
+        PublishPresentNowFailureDiagnostic(ref attempt, failure);
+        bool failedProbe =
+            Interlocked.Exchange(ref _presentNowRecoveryProbeActive, 0) != 0;
+        _presentNowRecoveryProbeAttempts = 0;
+        _presentNowRecoverySourceFailure = null;
+        _presentNowRecoverableFailure = failure;
+        Volatile.Write(
+            ref _presentNowAutomaticRecoveryPending,
+            failedProbe ? 0 : 1);
+        if (!failedProbe)
+        {
+            // Requests that predate the failure are stale. A request published
+            // while a probe was active must remain newer than the sequence that
+            // was consumed when the probe began so it can admit the next probe.
+            Volatile.Write(
+                ref _presentNowConsumedRecoveryRequestSequence,
+                Volatile.Read(ref _presentNowRecoveryRequestSequence));
+        }
+        ResetIncompleteAcceptedPresentNowPlan(ref attempt);
+        attempt.RejectedFailure = failure;
+        attempt.Stop(EDesktopFrameReason.PresentNowReadinessFailed);
+        Debug.VulkanWarning(
+            "[Vulkan][PresentNow][RecoveryPending] frame={0} stage={1} automaticProbe={2} detail={3}",
+            failure.FrameId,
+            failure.Stage,
+            !failedProbe,
+            failure.Message);
+    }
+
+    private bool TryBeginPresentNowRecoveryProbe(
+        ref VulkanFrameAttempt attempt,
+        VulkanPresentNowReadinessException recoverableFailure)
+    {
+        if (!_deviceContext.StateMachine.IsOperational)
+            return false;
+
+        long requestedSequence =
+            Volatile.Read(ref _presentNowRecoveryRequestSequence);
+        long consumedSequence =
+            Volatile.Read(ref _presentNowConsumedRecoveryRequestSequence);
+        bool automaticProbe =
+            Interlocked.Exchange(ref _presentNowAutomaticRecoveryPending, 0) != 0;
+        if (!automaticProbe && requestedSequence <= consumedSequence)
+            return false;
+
+        Volatile.Write(
+            ref _presentNowConsumedRecoveryRequestSequence,
+            requestedSequence);
+        _presentNowRecoverableFailure = null;
+        _presentNowRecoverySourceFailure = recoverableFailure;
+        _presentNowRecoveryProbeAttempts = 0;
+        Volatile.Write(ref _presentNowRecoveryProbeActive, 1);
+        _commandRuntime.CommandBuffers.MarkDirty(
+            "PresentNow state-change recovery probe");
+
+        Debug.VulkanWarning(
+            "[Vulkan][PresentNow][RecoveryProbe] frame={0} sourceFrame={1} stage={2} request={3} automatic={4} reason={5}",
+            attempt.FrameNumber,
+            recoverableFailure.FrameId,
+            recoverableFailure.Stage,
+            requestedSequence,
+            automaticProbe,
+            Volatile.Read(ref _presentNowRecoveryRequestReason));
+        return true;
+    }
+
+    private bool TryEnterPresentNowRecoveryProbeAttempt(
+        ref VulkanFrameAttempt attempt)
+    {
+        if (Volatile.Read(ref _presentNowRecoveryProbeActive) == 0)
+            return true;
+
+        int attemptCount = ++_presentNowRecoveryProbeAttempts;
+        if (attemptCount <= PresentNowRecoveryProbeMaximumAttempts)
+            return true;
+
+        VulkanPresentNowReadinessException? source =
+            _presentNowRecoverySourceFailure;
+        VulkanPresentNowReadinessException failure = new(
+            attempt.FrameNumber,
+            source?.Stage ?? EVulkanPresentNowReadinessStage.PipelineCompilation,
+            "state-change-recovery-probe",
+            source?.DependencyChain ?? "DesktopScene -> PresentNow state-change recovery",
+            TimeSpan.Zero,
+            TimeSpan.Zero,
+            $"PresentNow recovery exhausted its bounded budget of " +
+            $"{PresentNowRecoveryProbeMaximumAttempts} frame attempts. " +
+            $"Original failure: {source?.Message ?? "<unavailable>"}",
+            source,
+            EVulkanPresentNowFailureDisposition.RecoverAfterStateChange);
+        DeferPresentNowUntilStateChange(ref attempt, failure);
+        return false;
+    }
+
+    private void CompletePresentNowRecoveryProbe(ref VulkanFrameAttempt attempt)
+    {
+        Volatile.Write(
+            ref _presentNowConsumedRecoveryRequestSequence,
+            Volatile.Read(ref _presentNowRecoveryRequestSequence));
+        if (Interlocked.Exchange(ref _presentNowRecoveryProbeActive, 0) == 0)
+            return;
+
+        VulkanPresentNowReadinessException? source =
+            _presentNowRecoverySourceFailure;
+        int recoveryAttempts = _presentNowRecoveryProbeAttempts;
+        _presentNowRecoveryProbeAttempts = 0;
+        _presentNowRecoverySourceFailure = null;
+        _presentNowRecoverableFailure = null;
+        Volatile.Write(ref _presentNowAutomaticRecoveryPending, 0);
+        Debug.Vulkan(
+            "[Vulkan][PresentNow][RendererRecovered] frame={0} sourceFrame={1} stage={2} attempts={3}",
+            attempt.FrameNumber,
+            source?.FrameId ?? 0UL,
+            source?.Stage.ToString() ?? "<unknown>",
+            recoveryAttempts);
+    }
+
+    private static bool IsSuccessfulPresentNowRecoveryFrame(
+        ref VulkanFrameAttempt attempt,
+        Result result,
+        bool presentAccepted)
+        => presentAccepted &&
+           result is Result.Success or Result.SuboptimalKhr &&
+           attempt.WorkClass == ERenderOutputWorkClass.PresentNow &&
+           attempt.PresentNowReadinessCompleted &&
+           attempt.ScenePrimaryRecordedThisFrame &&
+           attempt.Submitted &&
+           attempt.GraphicsSignalValue != 0UL &&
+           attempt.PresentDispatched &&
+           attempt.Presented &&
+           attempt.RejectedFailure is null &&
+           attempt.DeferredFailure is null;
 
     private void PublishPresentNowFailureDiagnostic(
         ref VulkanFrameAttempt attempt,
@@ -802,6 +1137,28 @@ internal sealed partial class VulkanFrameLoop
                 attempt.PresentNowMeshRequestCount,
                 failure.GetType().FullName ?? failure.GetType().Name,
                 failure.Message));
+    }
+
+    private void PublishPresentNowRetryDiagnostic(
+        ref VulkanFrameAttempt attempt,
+        in VulkanPresentNowReadinessRetry retry)
+    {
+        _telemetry.PublishPresentNowFailureDiagnostic(
+            new VulkanPresentNowFailureDiagnostic(
+                Interlocked.Increment(ref _presentNowFailureDiagnosticSequence),
+                attempt.FrameNumber,
+                attempt.FrameSlot,
+                attempt.AcceptedSceneEpoch,
+                attempt.OutputGeneration,
+                retry.Stage.ToString(),
+                retry.ActiveTicket,
+                retry.DependencyChain,
+                EVulkanPresentNowFailureDisposition.RetryFrame.ToString(),
+                retry.Elapsed.TotalMilliseconds,
+                retry.SinceLastProgress.TotalMilliseconds,
+                attempt.PresentNowMeshRequestCount,
+                nameof(VulkanPresentNowReadinessRetry),
+                retry.Detail));
     }
 
     private VulkanPresentNowTerminalTransitionRecord

@@ -73,21 +73,7 @@ namespace XREngine.Editor.Mcp
 
             foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
             {
-                Type[]? assemblyTypes = null;
-                try
-                {
-                    assemblyTypes = assembly.GetTypes();
-                }
-                catch (ReflectionTypeLoadException ex)
-                {
-                    assemblyTypes = ex.Types.Where(t => t is not null).Cast<Type>().ToArray();
-                }
-                catch
-                {
-                    continue;
-                }
-
-                foreach (var type in assemblyTypes)
+                foreach (Type type in XREngine.Core.XRLoadableTypeCatalog.GetTypes(assembly))
                 {
                     if (!baseType.IsAssignableFrom(type) || type.IsAbstract)
                         continue;
@@ -249,23 +235,9 @@ namespace XREngine.Editor.Mcp
 
             foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
             {
-                Type[]? types = null;
-                try
+                foreach (Type type in XREngine.Core.XRLoadableTypeCatalog.GetTypes(assembly))
                 {
-                    types = assembly.GetTypes();
-                }
-                catch (ReflectionTypeLoadException ex)
-                {
-                    types = ex.Types.Where(t => t is not null).Cast<Type>().ToArray();
-                }
-                catch
-                {
-                    continue;
-                }
-
-                foreach (var type in types)
-                {
-                    if (type is null || !baseType.IsAssignableFrom(type))
+                    if (!baseType.IsAssignableFrom(type))
                         continue;
 
                     foreach (var method in type.GetMethods(flags))

@@ -10,10 +10,10 @@ namespace XREngine.Components.Animation;
 internal sealed class HumanoidStateMachineRootMotionLeafState
 {
     private readonly ImportedHumanoidClipRootMotionSettings _effectiveSettings = new();
-    private readonly ImportedHumanoidMuscleSampleBuffer _canonicalProjectionMuscles = new();
-    private readonly ImportedHumanoidMuscleSampleBuffer _loopStartMuscles = new();
-    private readonly ImportedHumanoidMuscleSampleBuffer _loopEndMuscles = new();
-    private readonly ImportedHumanoidMuscleSampleBuffer _currentProjectionMuscles = new();
+    private readonly ImportedHumanoidProjectionPoseSampleBuffer _canonicalProjectionPose = new();
+    private readonly ImportedHumanoidProjectionPoseSampleBuffer _loopStartProjectionPose = new();
+    private readonly ImportedHumanoidProjectionPoseSampleBuffer _loopEndProjectionPose = new();
+    private readonly ImportedHumanoidProjectionPoseSampleBuffer _currentProjectionPose = new();
     private readonly float[] _mirrorScratch = new float[(int)EHumanoidValue.RightHandThumb3Stretched + 1];
 
     private AnimationClip? _clip;
@@ -45,8 +45,10 @@ internal sealed class HumanoidStateMachineRootMotionLeafState
     public HumanoidProjectedRootPose BodyAllocationProjectedRootPose { get; private set; } = HumanoidProjectedRootPose.Identity;
     public HumanoidProjectedRootPose UnwrappedProjectedRootPose { get; private set; } = HumanoidProjectedRootPose.Identity;
     public HumanoidLoopPoseCorrection CurrentLoopPoseCorrection { get; private set; } = HumanoidLoopPoseCorrection.Identity;
-    public ReadOnlySpan<float> CanonicalProjectionMuscles => _canonicalProjectionMuscles.Values;
-    public ReadOnlySpan<float> CurrentProjectionMuscles => _currentProjectionMuscles.Values;
+    public ReadOnlySpan<float> CanonicalProjectionMuscles => _canonicalProjectionPose.MuscleValues;
+    public ReadOnlySpan<float> CurrentProjectionMuscles => _currentProjectionPose.MuscleValues;
+    public ImportedHumanoidProjectionFootGoals CanonicalProjectionFootGoals => _canonicalProjectionPose.FootGoals;
+    public ImportedHumanoidProjectionFootGoals CurrentProjectionFootGoals => _currentProjectionPose.FootGoals;
 
     public bool Matches(ulong occurrenceId, ulong lifecycleGeneration)
         => _isAssigned
@@ -95,18 +97,18 @@ internal sealed class HumanoidStateMachineRootMotionLeafState
             return false;
 
         CurrentBody = CreateImportedBodySample(currentPosition, currentRotation);
-        _currentProjectionMuscles.Clear();
+        _currentProjectionPose.Clear();
         _clip.PublishImportedHumanoidProjectionMusclesAtTime(
             contribution.SampleTime,
-            _currentProjectionMuscles);
-        ApplyInheritedMirrorIfNeeded(_currentProjectionMuscles.Values);
+            _currentProjectionPose);
+        ApplyInheritedMirrorIfNeeded(_currentProjectionPose);
 
         HumanoidProjectedRootPose withinCycle = humanoid.CalculateProjectedRootPose(
             CurrentBody,
             _canonicalBody,
             1.0f,
             _effectiveSettings,
-            _currentProjectionMuscles.Values);
+            _currentProjectionPose.MuscleValues);
         BodyAllocationProjectedRootPose = withinCycle;
         UnwrappedProjectedRootPose = contribution.SourceLoopCycle != 0L && _hasLoopGenerator
             ? HumanoidComponent.ComposeProjectedRootPoses(
@@ -186,9 +188,9 @@ internal sealed class HumanoidStateMachineRootMotionLeafState
         _loopGenerator = HumanoidProjectedRootPose.Identity;
         _loopPoseCorrection = HumanoidLoopPoseCorrection.Identity;
         _hasLoopGenerator = false;
-        _canonicalProjectionMuscles.Clear();
-        _loopStartMuscles.Clear();
-        _loopEndMuscles.Clear();
+        _canonicalProjectionPose.Clear();
+        _loopStartProjectionPose.Clear();
+        _loopEndProjectionPose.Clear();
         if (_clip is null
             || !_clip.TrySampleImportedHumanoidBody(0.0f, out Vector3 startPosition, out Quaternion startRotation)
             || !_clip.TrySampleImportedHumanoidBody(_clip.LengthInSeconds, out Vector3 endPosition, out Quaternion endRotation))
@@ -233,18 +235,20 @@ internal sealed class HumanoidStateMachineRootMotionLeafState
             : offsetSample;
         canonicalClip.PublishImportedHumanoidProjectionMusclesAtTime(
             canonicalTimeSeconds,
-            _canonicalProjectionMuscles);
-        _clip.PublishImportedHumanoidProjectionMusclesAtTime(0.0f, _loopStartMuscles);
-        _clip.PublishImportedHumanoidProjectionMusclesAtTime(_clip.LengthInSeconds, _loopEndMuscles);
-        ApplyInheritedMirrorIfNeeded(_canonicalProjectionMuscles.Values, canonicalClip);
-        ApplyInheritedMirrorIfNeeded(_loopStartMuscles.Values, _clip);
-        ApplyInheritedMirrorIfNeeded(_loopEndMuscles.Values, _clip);
+            _canonicalProjectionPose);
+        _clip.PublishImportedHumanoidProjectionMusclesAtTime(0.0f, _loopStartProjectionPose);
+        _clip.PublishImportedHumanoidProjectionMusclesAtTime(_clip.LengthInSeconds, _loopEndProjectionPose);
+        ApplyInheritedMirrorIfNeeded(_canonicalProjectionPose, canonicalClip);
+        ApplyInheritedMirrorIfNeeded(_loopStartProjectionPose, _clip);
+        ApplyInheritedMirrorIfNeeded(_loopEndProjectionPose, _clip);
 
         if (!humanoid.TryCalculateLoopEvaluation(
             sourceStart,
             sourceEnd,
-            _loopStartMuscles.Values,
-            _loopEndMuscles.Values,
+            _loopStartProjectionPose.MuscleValues,
+            _loopEndProjectionPose.MuscleValues,
+            _loopStartProjectionPose.FootGoals,
+            _loopEndProjectionPose.FootGoals,
             _effectiveSettings,
             out _loopPoseCorrection,
             out HumanoidProjectedRootPose sourceGenerator))
@@ -273,16 +277,19 @@ internal sealed class HumanoidStateMachineRootMotionLeafState
         return true;
     }
 
-    private void ApplyInheritedMirrorIfNeeded(float[] values)
-        => ApplyInheritedMirrorIfNeeded(values, _clip);
+    private void ApplyInheritedMirrorIfNeeded(ImportedHumanoidProjectionPoseSampleBuffer pose)
+        => ApplyInheritedMirrorIfNeeded(pose, _clip);
 
-    private void ApplyInheritedMirrorIfNeeded(float[] values, AnimationClip? sourceClip)
+    private void ApplyInheritedMirrorIfNeeded(
+        ImportedHumanoidProjectionPoseSampleBuffer pose,
+        AnimationClip? sourceClip)
     {
         bool sourceMirror = sourceClip?.ImportedHumanoidRootMotionSettings?.Mirror == true;
         if (sourceMirror == _policy.Mirror)
             return;
 
         Array.Clear(_mirrorScratch);
+        float[] values = pose.MuscleValues;
         int count = Math.Min(values.Length, _mirrorScratch.Length);
         for (int sourceIndex = 0; sourceIndex < count; sourceIndex++)
         {
@@ -293,6 +300,7 @@ internal sealed class HumanoidStateMachineRootMotionLeafState
                 _mirrorScratch[mirroredIndex] = values[sourceIndex] * parity;
         }
         _mirrorScratch.AsSpan(0, count).CopyTo(values);
+        pose.FootGoals.Mirror();
     }
 
     private static HumanoidProjectedRootPose AddProjectedY(HumanoidProjectedRootPose pose, float deltaY)

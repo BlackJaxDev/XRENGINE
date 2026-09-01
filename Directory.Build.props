@@ -32,6 +32,13 @@
     <AdditionalCscArguments>$(AdditionalCscArguments) /unsafe</AdditionalCscArguments>
   </PropertyGroup>
 
+  <!-- OpenVR.NET generates a large C# binding surface with XML documentation
+       enabled. Keep the dependency source-built without flooding every engine
+       build with missing-comment warnings owned by the third-party submodule. -->
+  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'OpenVR.NET'">
+    <NoWarn>$(NoWarn);CS1574;CS1591</NoWarn>
+  </PropertyGroup>
+
   <ItemGroup Condition="'$(IsPackable)' != 'false'">
     <None Include="$(MSBuildThisFileDirectory)LICENSE.md" Pack="true" PackagePath="\" Visible="false" Condition="Exists('$(MSBuildThisFileDirectory)LICENSE.md')" />
     <None Include="$(MSBuildThisFileDirectory)LEGAL\README.md" Pack="true" PackagePath="LEGAL\" Visible="false" Condition="Exists('$(MSBuildThisFileDirectory)LEGAL\README.md')" />

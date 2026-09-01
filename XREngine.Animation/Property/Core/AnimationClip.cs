@@ -147,6 +147,12 @@ namespace XREngine.Animation
         private readonly Dictionary<AnimationMember, object?[]> _importedHumanoidMethodArgumentBaselines = [];
 
         [MemoryPackIgnore]
+        private AnimationMember? _importedHumanoidProjectionPoseMemberRoot;
+
+        [MemoryPackIgnore]
+        private AnimationMember[] _importedHumanoidProjectionPoseMembers = [];
+
+        [MemoryPackIgnore]
         private long _importedHumanoidStatePlaybackTicks;
 
         [MemoryPackIgnore]
@@ -486,6 +492,56 @@ namespace XREngine.Animation
             }
         }
 
+        private AnimationMember[] GetImportedHumanoidProjectionPoseMembers()
+        {
+            AnimationMember? root = RootMember;
+            if (ReferenceEquals(_importedHumanoidProjectionPoseMemberRoot, root))
+                return _importedHumanoidProjectionPoseMembers;
+
+            if (root is null)
+            {
+                _importedHumanoidProjectionPoseMemberRoot = null;
+                _importedHumanoidProjectionPoseMembers = [];
+                return _importedHumanoidProjectionPoseMembers;
+            }
+
+            var members = new List<AnimationMember>();
+            CollectImportedHumanoidProjectionPoseMembers(root, members);
+            _importedHumanoidProjectionPoseMemberRoot = root;
+            _importedHumanoidProjectionPoseMembers = [.. members];
+            return _importedHumanoidProjectionPoseMembers;
+        }
+
+        private static void CollectImportedHumanoidProjectionPoseMembers(
+            AnimationMember member,
+            List<AnimationMember> destination)
+        {
+            if (member.Animation is BasePropAnim && IsImportedHumanoidPoseMember(member))
+                destination.Add(member);
+
+            foreach (AnimationMember child in member.Children)
+                CollectImportedHumanoidProjectionPoseMembers(child, destination);
+        }
+
+        private static bool TrySampleVector3(BasePropAnim animation, float sampleTime, out Vector3 value)
+        {
+            switch (animation)
+            {
+                case PropAnimVector3 vectorAnimation:
+                    value = vectorAnimation.GetValue(sampleTime);
+                    return true;
+                case PropAnimMethod<Vector3> methodAnimation when methodAnimation.GetValue is { } getValue:
+                    value = getValue(sampleTime);
+                    return true;
+                case PropAnimMethod<Vector3> methodAnimation when methodAnimation.DefaultValue is Vector3 defaultValue:
+                    value = defaultValue;
+                    return true;
+                default:
+                    value = Vector3.Zero;
+                    return false;
+            }
+        }
+
         private float ApplyImportedHumanoidLoopPose(
             AnimationMember member,
             ImportedHumanoidRootMotionPolicy policy,
@@ -725,31 +781,105 @@ namespace XREngine.Animation
                         || policy.PositionYBasis is not EImportedHumanoidRootPositionYBasis.Feet)))
                 return;
 
-            AnimationMember[] members = AnimatedMembersArray;
+            Vector3 leftFootPosition = Vector3.Zero;
+            Vector3 rightFootPosition = Vector3.Zero;
+            int leftFootPositionMask = 0;
+            int rightFootPositionMask = 0;
+            AnimationMember[] members = GetImportedHumanoidProjectionPoseMembers();
             for (int i = 0; i < members.Length; i++)
             {
                 AnimationMember member = members[i];
                 if (member.MemberType != EAnimationMemberType.Method
-                    || member.MemberName is not ("SetValue" or "SetImportedRawValue")
-                    || member.Animation is not BasePropAnim animation
-                    || !TrySampleFloat(animation, timeSeconds, out float amount))
+                    || member.Animation is not BasePropAnim animation)
                     continue;
 
                 RestoreImportedHumanoidMethodArguments(member);
-                if (!TryGetImportedHumanoidMuscleArgument(member, out EHumanoidValue muscle))
-                    continue;
-
-                if (policy.Mirror)
+                if (member.MemberName is "SetValue" or "SetImportedRawValue"
+                    && TrySampleFloat(animation, timeSeconds, out float amount)
+                    && TryGetImportedHumanoidMuscleArgument(member, out EHumanoidValue muscle))
                 {
-                    muscle = ImportedHumanoidMirrorOperator.MirrorMuscle(muscle, out float parity);
-                    amount *= parity;
+                    if (policy.Mirror)
+                    {
+                        muscle = ImportedHumanoidMirrorOperator.MirrorMuscle(muscle, out float parity);
+                        amount *= parity;
+                    }
+
+                    bool flipImportedMuscleZ = member.MemberName == "SetImportedRawValue"
+                        && member.MethodArguments.Length > 2
+                        && member.MethodArguments[2] is true;
+                    sink.SetImportedHumanoidProjectionMuscle(muscle, amount, flipImportedMuscleZ);
+                    continue;
                 }
 
-                bool flipImportedMuscleZ = member.MemberName == "SetImportedRawValue"
-                    && member.MethodArguments.Length > 2
-                    && member.MethodArguments[2] is true;
-                sink.SetImportedHumanoidProjectionMuscle(muscle, amount, flipImportedMuscleZ);
+                if (!TryGetImportedHumanoidGoalArgument(member, out ELimbEndEffector goal)
+                    || goal is not (ELimbEndEffector.LeftFoot or ELimbEndEffector.RightFoot))
+                    continue;
+
+                ref Vector3 position = ref (goal == ELimbEndEffector.LeftFoot
+                    ? ref leftFootPosition
+                    : ref rightFootPosition);
+                ref int positionMask = ref (goal == ELimbEndEffector.LeftFoot
+                    ? ref leftFootPositionMask
+                    : ref rightFootPositionMask);
+                if (member.MemberName == "SetAnimatedIKPosition"
+                    && TrySampleVector3(animation, timeSeconds, out Vector3 completePosition))
+                {
+                    position = completePosition;
+                    positionMask = 0b111;
+                    continue;
+                }
+
+                if (!TrySampleFloat(animation, timeSeconds, out float component))
+                    continue;
+
+                switch (member.MemberName)
+                {
+                    case "SetAnimatedIKPositionX":
+                        position.X = component;
+                        positionMask |= 0b001;
+                        break;
+                    case "SetAnimatedIKPositionY":
+                        position.Y = component;
+                        positionMask |= 0b010;
+                        break;
+                    case "SetAnimatedIKPositionZ":
+                        position.Z = component;
+                        positionMask |= 0b100;
+                        break;
+                }
             }
+
+            PublishProjectionFootGoal(
+                sink,
+                ELimbEndEffector.LeftFoot,
+                leftFootPosition,
+                leftFootPositionMask,
+                policy.Mirror);
+            PublishProjectionFootGoal(
+                sink,
+                ELimbEndEffector.RightFoot,
+                rightFootPosition,
+                rightFootPositionMask,
+                policy.Mirror);
+        }
+
+        private static void PublishProjectionFootGoal(
+            IImportedHumanoidProjectionPoseSink sink,
+            ELimbEndEffector goal,
+            Vector3 position,
+            int positionMask,
+            bool mirror)
+        {
+            if (positionMask != 0b111)
+                return;
+
+            if (mirror)
+            {
+                goal = ImportedHumanoidMirrorOperator.MirrorGoal(goal);
+                position = ImportedHumanoidMirrorOperator.MirrorPosition(position);
+            }
+
+            sink.SetImportedHumanoidProjectionGoalPosition(goal, position);
         }
 
         /// <summary>

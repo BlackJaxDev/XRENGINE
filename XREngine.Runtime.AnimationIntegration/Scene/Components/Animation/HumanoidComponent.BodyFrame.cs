@@ -153,7 +153,11 @@ public partial class HumanoidComponent
             _currentImportedMappedBodySample = _canonicalImportedBodySample;
             _bodyAllocationProjectedRootPose = HumanoidProjectedRootPose.Identity;
             if (!TryEvaluateNativeHumanoidPose(compiled, _canonicalProjectionMuscleValueSnapshot, includeTranslationDof: false)
-                || !TryCalculateProjectedFeetHeight(compiled, policy, out float canonicalFeet))
+                || !TryCalculateProjectedFeetHeight(
+                    compiled,
+                    policy,
+                    _canonicalProjectionFootGoals,
+                    out float canonicalFeet))
                 return false;
             _canonicalProjectedFeetY = canonicalFeet;
             _canonicalProjectedFeetOwner = _pendingProjectedRootMotionOwner;
@@ -191,8 +195,11 @@ public partial class HumanoidComponent
         }
         Vector3 translation = new Vector3(position.X, position.Z, position.Y)
             * (compiled.HumanScale * compiled.ModelUnitsPerMeter);
+        // Imported RootT is the absolute normalized Body center. The neutral Body
+        // frame is only the interpolation origin; adding it here would count the
+        // avatar's bind-height twice before projection/allocation.
         return Matrix4x4.CreateFromQuaternion(Quaternion.Normalize(rotation))
-            * Matrix4x4.CreateTranslation(neutralCenter + translation)
+            * Matrix4x4.CreateTranslation(translation)
             * CreateImportedBodyAllocationMatrix(compiled, rootPolicy, 1.0f)
             * InvertProjectedRootMatrix(_bodyAllocationProjectedRootPose);
     }

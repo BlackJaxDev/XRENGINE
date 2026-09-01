@@ -520,8 +520,8 @@ public static partial class EditorImGuiUI
 
     private static IReadOnlyList<Type> DiscoverCreatableRenderCommandTypes()
     {
-        return typeof(ViewportRenderCommand).Assembly
-            .GetTypes()
+        return XREngine.Core.XRLoadableTypeCatalog
+            .GetTypes(typeof(ViewportRenderCommand).Assembly)
             .Where(type =>
                 typeof(ViewportRenderCommand).IsAssignableFrom(type)
                 && !type.IsAbstract

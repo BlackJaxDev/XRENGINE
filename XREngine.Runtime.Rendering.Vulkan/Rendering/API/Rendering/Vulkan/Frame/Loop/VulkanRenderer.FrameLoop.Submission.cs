@@ -354,10 +354,9 @@ namespace XREngine.Rendering.Vulkan
                                     elapsed,
                                     TimeSpan.Zero,
                                     "The queue accepted new work without publishing a nonzero submission serial.");
-                                _presentNowTerminalFailure ??= failure;
-                                attempt.DeferredFailure ??= failure;
-                                Debug.VulkanError(
-                                    $"[Vulkan][PresentNow][RendererPaused] {failure.Message}");
+                                StorePresentNowTerminalFailure(ref attempt, failure);
+                                attempt.DeferredFailure ??=
+                                    _presentNowTerminalFailure;
                             }
                         }
                     }
