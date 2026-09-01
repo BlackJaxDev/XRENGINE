@@ -17,6 +17,15 @@ namespace XREngine.Rendering.Vulkan
             attempt.AcquireSemaphore =
                 _commandRuntime.Synchronization.acquireBridgeSemaphores![attempt.FrameSlot];
             bool xrOwnsFrameDeadline = RuntimeRenderingHostServices.Presentation.IsOpenXRActive;
+            VulkanWsiPresentCompletion presentCompletion = OutputRuntime.Desktop.PresentCompletion
+                ?? throw new InvalidOperationException("The desktop generation has no WSI completion authority.");
+            if (!presentCompletion.TryReserve(out attempt.PresentReservation))
+            {
+                attempt.AcquireResult = Result.NotReady;
+                attempt.Timing.AcquireUnavailableCount++;
+                VulkanDesktopAcquireOutcome unavailable = DesktopWsiOutput.ClassifyAcquire(Result.NotReady);
+                return HandleDesktopAcquireUnavailable(ref attempt, in unavailable, xrOwnsFrameDeadline);
+            }
             ulong acquireTimeoutNanoseconds = attempt.InteractiveResize || xrOwnsFrameDeadline
                 ? InteractiveResizeAcquireTimeoutNanoseconds
                 : BlockingAcquireTimeoutNanoseconds;

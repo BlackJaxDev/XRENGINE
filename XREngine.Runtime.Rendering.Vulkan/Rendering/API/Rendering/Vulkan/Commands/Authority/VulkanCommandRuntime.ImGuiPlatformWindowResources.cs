@@ -34,6 +34,7 @@ internal sealed partial class VulkanCommandRuntime
 
         CommandBuffer[] commandBuffers = new CommandBuffer[framesInFlight];
         Fence[] fences = new Fence[framesInFlight];
+        Fence[] acquireFences = new Fence[framesInFlight];
         Semaphore[] imageAvailable = new Semaphore[framesInFlight];
         Semaphore[] renderFinished = new Semaphore[swapchainImageCount];
         try
@@ -65,6 +66,8 @@ internal sealed partial class VulkanCommandRuntime
             for (int index = 0; index < framesInFlight; index++)
             {
                 ThrowIfFailed(device.Api.CreateFence(device.Device, in fenceInfo, null, out fences[index]), "create detached-window frame fence");
+                FenceCreateInfo acquireFenceInfo = new() { SType = StructureType.FenceCreateInfo };
+                ThrowIfFailed(device.Api.CreateFence(device.Device, in acquireFenceInfo, null, out acquireFences[index]), "create detached-window acquire fence");
                 ThrowIfFailed(device.Api.CreateSemaphore(device.Device, in semaphoreInfo, null, out imageAvailable[index]), "create detached-window acquire semaphore");
             }
             for (int index = 0; index < renderFinished.Length; index++)
@@ -74,6 +77,8 @@ internal sealed partial class VulkanCommandRuntime
                 commandPool,
                 commandBuffers,
                 fences,
+                new bool[framesInFlight],
+                acquireFences,
                 new bool[framesInFlight],
                 imageAvailable,
                 renderFinished);
@@ -87,6 +92,8 @@ internal sealed partial class VulkanCommandRuntime
                     commandPool,
                     commandBuffers,
                     fences,
+                    new bool[framesInFlight],
+                    acquireFences,
                     new bool[framesInFlight],
                     imageAvailable,
                     renderFinished),
@@ -112,6 +119,9 @@ internal sealed partial class VulkanCommandRuntime
         for (int index = 0; index < resources.Fences.Length; index++)
             if (resources.Fences[index].Handle != 0)
                 device.Api.DestroyFence(device.Device, resources.Fences[index], null);
+        for (int index = 0; index < resources.AcquireFences.Length; index++)
+            if (resources.AcquireFences[index].Handle != 0)
+                device.Api.DestroyFence(device.Device, resources.AcquireFences[index], null);
         for (int index = 0; index < resources.ImageAvailableSemaphores.Length; index++)
             if (resources.ImageAvailableSemaphores[index].Handle != 0)
                 device.Api.DestroySemaphore(device.Device, resources.ImageAvailableSemaphores[index], null);

@@ -152,6 +152,7 @@ public sealed partial class VulkanRenderer :
     public VulkanRenderer(RendererHostContext hostContext)
         : base(hostContext)
     {
+        VulkanNativeOwnershipQuarantine.ThrowIfOccupied();
         IVulkanRendererTargetDriver targetDriver = VulkanRendererTargetDriverFactory.Create(hostContext);
         int frameSlotCount = targetDriver is IVulkanExplicitFrameTargetDriver explicitTarget
             ? checked((int)explicitTarget.OutputProperties.FrameSlotCount)
@@ -182,6 +183,7 @@ public sealed partial class VulkanRenderer :
             _commandRuntime,
             _frameTelemetry,
             targetDriver,
+            this,
             BackendGeneration,
             hostContext.TryGetDesktopWindowHost(out IRuntimeRenderWindowHost? windowHost) &&
             windowHost is XRWindow desktopWindow
@@ -217,6 +219,12 @@ public sealed partial class VulkanRenderer :
     protected override void RenderFrameCallback(double delta)
         => _frameLoop.Render(delta);
 
+    /// <summary>
+    /// Advances renderer-owned upload work before frame acceptance.
+    /// </summary>
+    public override void ProcessPendingUploads()
+        => _frameLoop.ProcessPendingUploads();
+
     public override void Initialize() => _frameLoop.Initialize();
 
     /// <summary>
@@ -227,15 +235,27 @@ public sealed partial class VulkanRenderer :
         => _frameLoop.BeginBackendRetirement();
 
     public override void CleanUp()
-    {
-        try { _frameLoop.CleanUp(waitForGpu: true, gpuIdleAlreadyEstablished: false); }
-        finally { DisposeNativeApi(); }
-    }
+        => CleanUpNativeOwnership(gpuIdleAlreadyEstablished: false);
 
     public override void CleanUpAfterGpuIdle()
+        => CleanUpNativeOwnership(gpuIdleAlreadyEstablished: true);
+
+    private void CleanUpNativeOwnership(bool gpuIdleAlreadyEstablished)
     {
-        try { _frameLoop.CleanUp(waitForGpu: false, gpuIdleAlreadyEstablished: true); }
-        finally { DisposeNativeApi(); }
+        try
+        {
+            _frameLoop.CleanUp(waitForGpu: !gpuIdleAlreadyEstablished, gpuIdleAlreadyEstablished);
+        }
+        catch
+        {
+            // Retain the entire owner graph: AbstractRenderer's finalizer would
+            // otherwise dispose Vk even though native completion is unresolved.
+            if (_deviceContext.Device.Handle != 0)
+                VulkanNativeOwnershipQuarantine.Retain(this);
+            throw;
+        }
+        VulkanNativeOwnershipQuarantine.Release(this);
+        DisposeNativeApi();
     }
 
     internal Vk VulkanApi => Api!;
@@ -410,6 +430,8 @@ public sealed partial class VulkanRenderer :
     public override void ClearColor(ColorF4 color) => _commandRuntime.SetClearColor(color);
     public override void CropRenderArea(BoundingRectangle region) => _commandRuntime.SetScissor(region);
     public override void SetRenderArea(BoundingRectangle region) => _commandRuntime.SetViewport(region);
+    internal override BoundingRectangle MapWindowPresentationRegionToBackbuffer(BoundingRectangle region)
+        => _frameLoop.MapWindowPresentationRegionToBackbuffer(region);
     public override void ClearRenderArea() => _commandRuntime.ClearViewport();
     public override bool SetIndexedViewportScissors(ReadOnlySpan<BoundingRectangle> viewports, ReadOnlySpan<BoundingRectangle> scissors) => _commandRuntime.TrySetIndexedViewportScissors(viewports, scissors);
     public override void ClearIndexedViewportScissors(int count) => _commandRuntime.ClearIndexedViewportScissorsIfAny(count);

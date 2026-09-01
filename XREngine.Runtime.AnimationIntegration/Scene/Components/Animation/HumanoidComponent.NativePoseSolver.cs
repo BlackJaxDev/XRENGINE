@@ -60,8 +60,7 @@ public partial class HumanoidComponent
     private bool TryEvaluateNativeHumanoidPose(
         CompiledHumanoidAvatarDefinition compiled,
         ReadOnlySpan<float> muscleSnapshot,
-        bool includeTranslationDof,
-        bool commit)
+        bool includeTranslationDof)
     {
         if (muscleSnapshot.Length < MuscleValueCount)
             return false;
@@ -77,8 +76,6 @@ public partial class HumanoidComponent
         if (!_nativePoseWorkspace.TrySolve(compiled))
             return false;
 
-        if (commit)
-            _nativePoseWorkspace.Commit(compiled);
         return true;
     }
 
@@ -90,23 +87,29 @@ public partial class HumanoidComponent
             compiled,
             muscles,
             EHumanoidAvatarBoneRole.LeftEye,
-            EHumanoidValue.LeftEyeInOut,
+            null,
             EHumanoidValue.LeftEyeDownUp,
-            null);
+            EHumanoidValue.LeftEyeInOut,
+            frontBackSign: -1.0f,
+            leftRightSign: 1.0f);
         StageRole(
             compiled,
             muscles,
             EHumanoidAvatarBoneRole.RightEye,
-            EHumanoidValue.RightEyeInOut,
+            null,
             EHumanoidValue.RightEyeDownUp,
-            null);
+            EHumanoidValue.RightEyeInOut,
+            frontBackSign: -1.0f,
+            leftRightSign: -1.0f);
         StageRole(
             compiled,
             muscles,
             EHumanoidAvatarBoneRole.Spine,
             EHumanoidValue.SpineTwistLeftRight,
             EHumanoidValue.SpineFrontBack,
-            EHumanoidValue.SpineLeftRight);
+            EHumanoidValue.SpineLeftRight,
+            frontBackSign: -1.0f,
+            leftRightSign: -1.0f);
 
         float chestTwist = GetMuscleDegrees(compiled, muscles, EHumanoidValue.ChestTwistLeftRight);
         float chestFrontBack = GetMuscleDegrees(compiled, muscles, EHumanoidValue.ChestFrontBack);
@@ -114,15 +117,19 @@ public partial class HumanoidComponent
         bool hasUpperChest = compiled.GetNode(EHumanoidAvatarBoneRole.UpperChest) is not null;
         if (!hasUpperChest)
         {
-            chestTwist += GetMuscleDegrees(compiled, muscles, EHumanoidValue.UpperChestTwistLeftRight);
-            chestFrontBack += GetMuscleDegrees(compiled, muscles, EHumanoidValue.UpperChestFrontBack);
-            chestLeftRight += GetMuscleDegrees(compiled, muscles, EHumanoidValue.UpperChestLeftRight);
+            const float missingUpperChestShare = 0.5f;
+            chestTwist += missingUpperChestShare
+                * GetMuscleDegrees(compiled, muscles, EHumanoidValue.UpperChestTwistLeftRight);
+            chestFrontBack += missingUpperChestShare
+                * GetMuscleDegrees(compiled, muscles, EHumanoidValue.UpperChestFrontBack);
+            chestLeftRight += missingUpperChestShare
+                * GetMuscleDegrees(compiled, muscles, EHumanoidValue.UpperChestLeftRight);
         }
         _nativePoseWorkspace.SetMuscleDegrees(
             EHumanoidAvatarBoneRole.Chest,
             chestTwist,
-            chestFrontBack,
-            chestLeftRight);
+            -chestFrontBack,
+            -chestLeftRight);
         if (hasUpperChest)
             StageRole(
                 compiled,
@@ -130,7 +137,9 @@ public partial class HumanoidComponent
                 EHumanoidAvatarBoneRole.UpperChest,
                 EHumanoidValue.UpperChestTwistLeftRight,
                 EHumanoidValue.UpperChestFrontBack,
-                EHumanoidValue.UpperChestLeftRight);
+                EHumanoidValue.UpperChestLeftRight,
+                frontBackSign: -1.0f,
+                leftRightSign: -1.0f);
 
         StageRole(
             compiled,
@@ -138,21 +147,27 @@ public partial class HumanoidComponent
             EHumanoidAvatarBoneRole.Neck,
             EHumanoidValue.NeckTurnLeftRight,
             EHumanoidValue.NeckNodDownUp,
-            EHumanoidValue.NeckTiltLeftRight);
+            EHumanoidValue.NeckTiltLeftRight,
+            frontBackSign: -1.0f,
+            leftRightSign: -1.0f);
         StageRole(
             compiled,
             muscles,
             EHumanoidAvatarBoneRole.Head,
             EHumanoidValue.HeadTurnLeftRight,
             EHumanoidValue.HeadNodDownUp,
-            EHumanoidValue.HeadTiltLeftRight);
+            EHumanoidValue.HeadTiltLeftRight,
+            frontBackSign: -1.0f,
+            leftRightSign: -1.0f);
         StageRole(
             compiled,
             muscles,
             EHumanoidAvatarBoneRole.Jaw,
-            EHumanoidValue.JawLeftRight,
+            null,
             EHumanoidValue.JawClose,
-            null);
+            EHumanoidValue.JawLeftRight,
+            frontBackSign: -1.0f,
+            leftRightSign: 1.0f);
 
         StageLimb(compiled, muscles, isLeft: true);
         StageLimb(compiled, muscles, isLeft: false);
@@ -165,62 +180,66 @@ public partial class HumanoidComponent
         ReadOnlySpan<float> muscles,
         bool isLeft)
     {
-        StageRole(
-            compiled,
-            muscles,
+        float side = isLeft ? 1.0f : -1.0f;
+        _nativePoseWorkspace.SetMuscleDegrees(
             isLeft ? EHumanoidAvatarBoneRole.LeftShoulder : EHumanoidAvatarBoneRole.RightShoulder,
-            null,
-            isLeft ? EHumanoidValue.LeftShoulderDownUp : EHumanoidValue.RightShoulderDownUp,
-            isLeft ? EHumanoidValue.LeftShoulderFrontBack : EHumanoidValue.RightShoulderFrontBack);
-        StageRole(
-            compiled,
-            muscles,
+            0.0f,
+            side * GetMuscleDegrees(compiled, muscles,
+                isLeft ? EHumanoidValue.LeftShoulderFrontBack : EHumanoidValue.RightShoulderFrontBack),
+            GetMuscleDegrees(compiled, muscles,
+                isLeft ? EHumanoidValue.LeftShoulderDownUp : EHumanoidValue.RightShoulderDownUp));
+        _nativePoseWorkspace.SetMuscleDegrees(
             isLeft ? EHumanoidAvatarBoneRole.LeftUpperArm : EHumanoidAvatarBoneRole.RightUpperArm,
-            isLeft ? EHumanoidValue.LeftArmTwistInOut : EHumanoidValue.RightArmTwistInOut,
-            isLeft ? EHumanoidValue.LeftArmDownUp : EHumanoidValue.RightArmDownUp,
-            isLeft ? EHumanoidValue.LeftArmFrontBack : EHumanoidValue.RightArmFrontBack);
-        StageRole(
-            compiled,
-            muscles,
+            side * GetMuscleDegrees(compiled, muscles,
+                isLeft ? EHumanoidValue.LeftArmTwistInOut : EHumanoidValue.RightArmTwistInOut),
+            side * GetMuscleDegrees(compiled, muscles,
+                isLeft ? EHumanoidValue.LeftArmFrontBack : EHumanoidValue.RightArmFrontBack),
+            GetMuscleDegrees(compiled, muscles,
+                isLeft ? EHumanoidValue.LeftArmDownUp : EHumanoidValue.RightArmDownUp));
+        _nativePoseWorkspace.SetMuscleDegrees(
             isLeft ? EHumanoidAvatarBoneRole.LeftLowerArm : EHumanoidAvatarBoneRole.RightLowerArm,
-            isLeft ? EHumanoidValue.LeftForearmTwistInOut : EHumanoidValue.RightForearmTwistInOut,
-            isLeft ? EHumanoidValue.LeftForearmStretch : EHumanoidValue.RightForearmStretch,
-            null);
-        StageRole(
-            compiled,
-            muscles,
+            side * GetMuscleDegrees(compiled, muscles,
+                isLeft ? EHumanoidValue.LeftForearmTwistInOut : EHumanoidValue.RightForearmTwistInOut),
+            -side * GetMuscleDegrees(compiled, muscles,
+                isLeft ? EHumanoidValue.LeftForearmStretch : EHumanoidValue.RightForearmStretch),
+            0.0f);
+        _nativePoseWorkspace.SetMuscleDegrees(
             isLeft ? EHumanoidAvatarBoneRole.LeftHand : EHumanoidAvatarBoneRole.RightHand,
-            null,
-            isLeft ? EHumanoidValue.LeftHandDownUp : EHumanoidValue.RightHandDownUp,
-            isLeft ? EHumanoidValue.LeftHandInOut : EHumanoidValue.RightHandInOut);
-        StageRole(
-            compiled,
-            muscles,
+            0.0f,
+            side * GetMuscleDegrees(compiled, muscles,
+                isLeft ? EHumanoidValue.LeftHandInOut : EHumanoidValue.RightHandInOut),
+            GetMuscleDegrees(compiled, muscles,
+                isLeft ? EHumanoidValue.LeftHandDownUp : EHumanoidValue.RightHandDownUp));
+        _nativePoseWorkspace.SetMuscleDegrees(
             isLeft ? EHumanoidAvatarBoneRole.LeftUpperLeg : EHumanoidAvatarBoneRole.RightUpperLeg,
-            isLeft ? EHumanoidValue.LeftUpperLegTwistInOut : EHumanoidValue.RightUpperLegTwistInOut,
-            isLeft ? EHumanoidValue.LeftUpperLegFrontBack : EHumanoidValue.RightUpperLegFrontBack,
-            isLeft ? EHumanoidValue.LeftUpperLegInOut : EHumanoidValue.RightUpperLegInOut);
-        StageRole(
-            compiled,
-            muscles,
+            GetMuscleDegrees(compiled, muscles,
+                isLeft ? EHumanoidValue.LeftUpperLegTwistInOut : EHumanoidValue.RightUpperLegTwistInOut),
+            -GetMuscleDegrees(compiled, muscles,
+                isLeft ? EHumanoidValue.LeftUpperLegFrontBack : EHumanoidValue.RightUpperLegFrontBack),
+            -side * GetMuscleDegrees(compiled, muscles,
+                isLeft ? EHumanoidValue.LeftUpperLegInOut : EHumanoidValue.RightUpperLegInOut));
+        _nativePoseWorkspace.SetMuscleDegrees(
             isLeft ? EHumanoidAvatarBoneRole.LeftLowerLeg : EHumanoidAvatarBoneRole.RightLowerLeg,
-            isLeft ? EHumanoidValue.LeftLowerLegTwistInOut : EHumanoidValue.RightLowerLegTwistInOut,
-            isLeft ? EHumanoidValue.LeftLowerLegStretch : EHumanoidValue.RightLowerLegStretch,
-            null);
-        StageRole(
-            compiled,
-            muscles,
+            GetMuscleDegrees(compiled, muscles,
+                isLeft ? EHumanoidValue.LeftLowerLegTwistInOut : EHumanoidValue.RightLowerLegTwistInOut),
+            -GetMuscleDegrees(compiled, muscles,
+                isLeft ? EHumanoidValue.LeftLowerLegStretch : EHumanoidValue.RightLowerLegStretch),
+            0.0f);
+        _nativePoseWorkspace.SetMuscleDegrees(
             isLeft ? EHumanoidAvatarBoneRole.LeftFoot : EHumanoidAvatarBoneRole.RightFoot,
-            isLeft ? EHumanoidValue.LeftFootTwistInOut : EHumanoidValue.RightFootTwistInOut,
-            isLeft ? EHumanoidValue.LeftFootUpDown : EHumanoidValue.RightFootUpDown,
-            null);
+            side * GetMuscleDegrees(compiled, muscles,
+                isLeft ? EHumanoidValue.LeftFootTwistInOut : EHumanoidValue.RightFootTwistInOut),
+            -GetMuscleDegrees(compiled, muscles,
+                isLeft ? EHumanoidValue.LeftFootUpDown : EHumanoidValue.RightFootUpDown),
+            0.0f);
         StageRole(
             compiled,
             muscles,
             isLeft ? EHumanoidAvatarBoneRole.LeftToes : EHumanoidAvatarBoneRole.RightToes,
             null,
             isLeft ? EHumanoidValue.LeftToesUpDown : EHumanoidValue.RightToesUpDown,
-            null);
+            null,
+            frontBackSign: -1.0f);
     }
 
     private void StageFingers(
@@ -238,7 +257,8 @@ public partial class HumanoidComponent
             isLeft ? EHumanoidValue.LeftHandThumbSpread : EHumanoidValue.RightHandThumbSpread,
             isLeft ? EHumanoidValue.LeftHandThumb1Stretched : EHumanoidValue.RightHandThumb1Stretched,
             isLeft ? EHumanoidValue.LeftHandThumb2Stretched : EHumanoidValue.RightHandThumb2Stretched,
-            isLeft ? EHumanoidValue.LeftHandThumb3Stretched : EHumanoidValue.RightHandThumb3Stretched);
+            isLeft ? EHumanoidValue.LeftHandThumb3Stretched : EHumanoidValue.RightHandThumb3Stretched,
+            invertSpread: true);
         StageFinger(
             compiled,
             muscles,
@@ -249,7 +269,8 @@ public partial class HumanoidComponent
             isLeft ? EHumanoidValue.LeftHandIndexSpread : EHumanoidValue.RightHandIndexSpread,
             isLeft ? EHumanoidValue.LeftHandIndex1Stretched : EHumanoidValue.RightHandIndex1Stretched,
             isLeft ? EHumanoidValue.LeftHandIndex2Stretched : EHumanoidValue.RightHandIndex2Stretched,
-            isLeft ? EHumanoidValue.LeftHandIndex3Stretched : EHumanoidValue.RightHandIndex3Stretched);
+            isLeft ? EHumanoidValue.LeftHandIndex3Stretched : EHumanoidValue.RightHandIndex3Stretched,
+            invertSpread: false);
         StageFinger(
             compiled,
             muscles,
@@ -260,7 +281,8 @@ public partial class HumanoidComponent
             isLeft ? EHumanoidValue.LeftHandMiddleSpread : EHumanoidValue.RightHandMiddleSpread,
             isLeft ? EHumanoidValue.LeftHandMiddle1Stretched : EHumanoidValue.RightHandMiddle1Stretched,
             isLeft ? EHumanoidValue.LeftHandMiddle2Stretched : EHumanoidValue.RightHandMiddle2Stretched,
-            isLeft ? EHumanoidValue.LeftHandMiddle3Stretched : EHumanoidValue.RightHandMiddle3Stretched);
+            isLeft ? EHumanoidValue.LeftHandMiddle3Stretched : EHumanoidValue.RightHandMiddle3Stretched,
+            invertSpread: false);
         StageFinger(
             compiled,
             muscles,
@@ -271,7 +293,8 @@ public partial class HumanoidComponent
             isLeft ? EHumanoidValue.LeftHandRingSpread : EHumanoidValue.RightHandRingSpread,
             isLeft ? EHumanoidValue.LeftHandRing1Stretched : EHumanoidValue.RightHandRing1Stretched,
             isLeft ? EHumanoidValue.LeftHandRing2Stretched : EHumanoidValue.RightHandRing2Stretched,
-            isLeft ? EHumanoidValue.LeftHandRing3Stretched : EHumanoidValue.RightHandRing3Stretched);
+            isLeft ? EHumanoidValue.LeftHandRing3Stretched : EHumanoidValue.RightHandRing3Stretched,
+            invertSpread: true);
         StageFinger(
             compiled,
             muscles,
@@ -282,7 +305,8 @@ public partial class HumanoidComponent
             isLeft ? EHumanoidValue.LeftHandLittleSpread : EHumanoidValue.RightHandLittleSpread,
             isLeft ? EHumanoidValue.LeftHandLittle1Stretched : EHumanoidValue.RightHandLittle1Stretched,
             isLeft ? EHumanoidValue.LeftHandLittle2Stretched : EHumanoidValue.RightHandLittle2Stretched,
-            isLeft ? EHumanoidValue.LeftHandLittle3Stretched : EHumanoidValue.RightHandLittle3Stretched);
+            isLeft ? EHumanoidValue.LeftHandLittle3Stretched : EHumanoidValue.RightHandLittle3Stretched,
+            invertSpread: true);
     }
 
     private void StageFinger(
@@ -295,14 +319,15 @@ public partial class HumanoidComponent
         EHumanoidValue spread,
         EHumanoidValue proximal,
         EHumanoidValue intermediate,
-        EHumanoidValue distal)
+        EHumanoidValue distal,
+        bool invertSpread)
     {
-        float sideSign = isLeft ? 1.0f : -1.0f;
+        float sideSign = (isLeft ? 1.0f : -1.0f) * (invertSpread ? -1.0f : 1.0f);
         _nativePoseWorkspace.SetMuscleDegrees(
             proximalRole,
-            GetMuscleDegrees(compiled, muscles, spread) * sideSign,
+            0.0f,
             GetMuscleDegrees(compiled, muscles, proximal),
-            0.0f);
+            GetMuscleDegrees(compiled, muscles, spread) * sideSign);
         _nativePoseWorkspace.SetMuscleDegrees(
             intermediateRole,
             0.0f,
@@ -321,12 +346,15 @@ public partial class HumanoidComponent
         EHumanoidAvatarBoneRole role,
         EHumanoidValue? twist,
         EHumanoidValue? frontBack,
-        EHumanoidValue? leftRight)
+        EHumanoidValue? leftRight,
+        float twistSign = 1.0f,
+        float frontBackSign = 1.0f,
+        float leftRightSign = 1.0f)
         => _nativePoseWorkspace.SetMuscleDegrees(
             role,
-            twist.HasValue ? GetMuscleDegrees(compiled, muscles, twist.Value) : 0.0f,
-            frontBack.HasValue ? GetMuscleDegrees(compiled, muscles, frontBack.Value) : 0.0f,
-            leftRight.HasValue ? GetMuscleDegrees(compiled, muscles, leftRight.Value) : 0.0f);
+            twist.HasValue ? GetMuscleDegrees(compiled, muscles, twist.Value) * twistSign : 0.0f,
+            frontBack.HasValue ? GetMuscleDegrees(compiled, muscles, frontBack.Value) * frontBackSign : 0.0f,
+            leftRight.HasValue ? GetMuscleDegrees(compiled, muscles, leftRight.Value) * leftRightSign : 0.0f);
 
     private static float GetMuscleDegrees(
         CompiledHumanoidAvatarDefinition compiled,

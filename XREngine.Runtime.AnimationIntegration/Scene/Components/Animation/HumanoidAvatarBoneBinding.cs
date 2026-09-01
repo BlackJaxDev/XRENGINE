@@ -18,8 +18,16 @@ public sealed class HumanoidAvatarBoneBinding
     public string NeutralPoseSha256 { get; set; } = string.Empty;
     public Matrix4x4 NeutralLocalTransform { get; set; } = Matrix4x4.Identity;
     public Matrix4x4 NeutralWorldTransform { get; set; } = Matrix4x4.Identity;
+    /// <summary>
+    /// Unity-compatible canonicalized bind transform. This is derived from the
+    /// complete mapped hierarchy, rather than copied from importer pivot data,
+    /// and is used only to author semantic joint frames.
+    /// </summary>
+    public Matrix4x4 CanonicalWorldTransform { get; set; } = Matrix4x4.Identity;
     public Vector3 NeutralLocalPosition { get; set; }
     public Quaternion NeutralLocalRotation { get; set; } = Quaternion.Identity;
+    /// <summary>Canonical local bind rotation authored from the normalized hierarchy.</summary>
+    public Quaternion CanonicalLocalRotation { get; set; } = Quaternion.Identity;
     public Vector3 NeutralLocalScale { get; set; } = Vector3.One;
     public Quaternion CanonicalPoseCorrection { get; set; } = Quaternion.Identity;
     public Quaternion PreRotation { get; set; } = Quaternion.Identity;

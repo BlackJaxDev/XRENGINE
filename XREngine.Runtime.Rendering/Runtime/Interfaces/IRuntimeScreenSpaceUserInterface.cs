@@ -18,6 +18,12 @@ public interface IRuntimeScreenSpaceUserInterface
     bool IsScreenSpace { get; }
 
     /// <summary>
+    /// Gets whether the UI pipeline executed a validated command chain in the
+    /// current render frame.
+    /// </summary>
+    bool CompletedRenderCommandChainThisFrame => false;
+
+    /// <summary>
     /// Resizes the screen-space UI root to match a viewport display size.
     /// </summary>
     void ResizeScreenSpace(Vector2 size);

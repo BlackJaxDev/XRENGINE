@@ -37,6 +37,19 @@ internal sealed unsafe class VulkanImGuiPlatformWindowOutputAuthority
         }
     }
 
+    /// <summary>
+    /// Establishes WSI release proof for every registered detached viewport
+    /// before the global shutdown path tears down the device.
+    /// </summary>
+    internal void WaitForPresentationReleaseAtShutdown(bool deviceLost)
+    {
+        VulkanImGuiPlatformWindowOutputLifetime[] lifetimes;
+        lock (_gate)
+            lifetimes = [.. _active];
+        foreach (VulkanImGuiPlatformWindowOutputLifetime lifetime in lifetimes)
+            lifetime.WaitForPresentationReleaseAtShutdown(deviceLost);
+    }
+
     internal SurfaceKHR CreateSurface(VulkanDeviceContext device, IWindow window)
         => window.VkSurface?.Create<AllocationCallbacks>(device.Instance.ToHandle(), null).ToSurface()
             ?? throw new NotSupportedException(
@@ -70,6 +83,7 @@ internal sealed unsafe class VulkanImGuiPlatformWindowOutputAuthority
         Format requiredFormat,
         ColorSpaceKHR requiredColorSpace,
         uint viewportId,
+        SwapchainKHR oldSwapchain,
         out VulkanImGuiPlatformSwapchainGeneration generation)
     {
         generation = default;
@@ -106,6 +120,7 @@ internal sealed unsafe class VulkanImGuiPlatformWindowOutputAuthority
         {
             SType = StructureType.SwapchainCreateInfoKhr,
             Surface = surface,
+            OldSwapchain = oldSwapchain,
             MinImageCount = imageCount,
             ImageFormat = surfaceFormat.Format,
             ImageColorSpace = surfaceFormat.ColorSpace,

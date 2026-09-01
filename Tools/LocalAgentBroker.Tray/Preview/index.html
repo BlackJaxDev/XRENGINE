@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'none'; connect-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>Broker conversation</title>
+  <link rel="stylesheet" href="vendor/katex/katex.min.css">
+  <link rel="stylesheet" href="preview.css">
+  <script defer src="vendor/markdown-it/markdown-it.umd.min.js"></script>
+  <script defer src="vendor/katex/katex.min.js"></script>
+  <script defer src="vendor/katex/mhchem.min.js"></script>
+  <script defer src="vendor/katex/copy-tex.min.js"></script>
+  <script defer src="math-markdown.js"></script>
+  <script defer src="preview.js"></script>
+</head>
+<body>
+  <main hidden>
+    <section id="system-section"><h2 class="system-heading">SYSTEM</h2><pre id="system" class="plain"></pre></section>
+    <section><h2 class="prompt-heading">PROMPT</h2><pre id="prompt" class="plain"></pre></section>
+    <section><h2 class="response-heading">RESPONSE</h2><article id="response"></article></section>
+    <section id="failure-section"><h2 class="failure-heading">FAILURE</h2><pre id="failure" class="plain"></pre></section>
+  </main>
+</body>
+</html>

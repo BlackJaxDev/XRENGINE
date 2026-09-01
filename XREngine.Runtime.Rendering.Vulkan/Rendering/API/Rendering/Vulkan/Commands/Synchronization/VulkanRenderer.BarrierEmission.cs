@@ -287,7 +287,8 @@ namespace XREngine.Rendering.Vulkan
             CommandBuffer commandBuffer,
             XRFrameBuffer fbo,
             FrameBufferAttachmentSignature[] signatures,
-            bool beginRendering)
+            bool beginRendering,
+            bool allowSynchronousResourceUploads)
         {
             if (signatures.Length == 0)
                 return;
@@ -337,20 +338,8 @@ namespace XREngine.Rendering.Vulkan
                 }
 
                 ImageAspectFlags aspectMask = VulkanCommandRuntime.NormalizeBarrierAspectMask(signature.Format, signature.AspectMask);
-                if (!TryResolveAttachmentImage(target, mipLevel, layerIndex, aspectMask, out BlitImageInfo info) ||
-                    info.Image.Handle == 0)
-                {
-                    Debug.VulkanWarningEvery(
-                        $"Vulkan.DynamicRendering.FboTransition.Unresolved.{fbo.GetHashCode()}.{i}",
-                        TimeSpan.FromSeconds(2),
-                        "[Vulkan] Skipping dynamic-rendering FBO transition for '{0}' attachment {1}: image handle could not be resolved.",
-                        fbo.Name ?? "<unnamed>",
-                        i);
-                    continue;
-                }
-
-                Image transitionImage = info.Image;
-                uint transitionMipLevel = info.MipLevel;
+                Image transitionImage;
+                uint transitionMipLevel;
                 uint imageBaseLayer;
                 uint transitionLayerCount;
                 if (vkFbo.TryGetAttachmentView(i, out ImageView attachmentView) &&
@@ -368,6 +357,21 @@ namespace XREngine.Rendering.Vulkan
                 }
                 else
                 {
+                    if (!allowSynchronousResourceUploads ||
+                        !TryResolveAttachmentImage(target, mipLevel, layerIndex, aspectMask, out BlitImageInfo info) ||
+                        info.Image.Handle == 0)
+                    {
+                        Debug.VulkanWarningEvery(
+                            $"Vulkan.DynamicRendering.FboTransition.Unresolved.{fbo.GetHashCode()}.{i}",
+                            TimeSpan.FromSeconds(2),
+                            "[Vulkan] Skipping dynamic-rendering FBO transition for '{0}' attachment {1}: no published image/view tuple is available.",
+                            fbo.Name ?? "<unnamed>",
+                            i);
+                        continue;
+                    }
+
+                    transitionImage = info.Image;
+                    transitionMipLevel = info.MipLevel;
                     ResolveFboAttachmentImageLayerSpan(
                         vkFbo,
                         layerIndex,
@@ -462,7 +466,7 @@ namespace XREngine.Rendering.Vulkan
                         } ?? "<unnamed>";
 
                         Debug.VulkanEvery(
-                            $"Vulkan.DynamicRendering.FboTransition.{fbo.Name}.{i}.{beginRendering}.{info.MipLevel}.{imageLayer}.{oldLayout}.{newLayout}",
+                            $"Vulkan.DynamicRendering.FboTransition.{fbo.Name}.{i}.{beginRendering}.{transitionMipLevel}.{imageLayer}.{oldLayout}.{newLayout}",
                             TimeSpan.FromSeconds(1),
                             "[Vulkan] Dynamic FBO transition fbo='{0}' begin={1} attachment={2} target='{3}' viewMask=0x{4:X} mip={5} imageLayer={6}/{7} trackedLayer={8}/{9} old={10} new={11} aspect={12} image=0x{13:X}",
                             fbo.Name ?? "<unnamed>",
@@ -714,7 +718,8 @@ namespace XREngine.Rendering.Vulkan
         private ImageLayout[]? QueryCurrentAttachmentLayouts(
             XRFrameBuffer fbo,
             VkFrameBuffer vkFbo,
-            CommandBuffer commandBuffer = default)
+            CommandBuffer commandBuffer,
+            bool allowSynchronousResourceUploads = true)
         {
             if (vkFbo.AttachmentCount == 0)
                 return null;
@@ -743,6 +748,7 @@ namespace XREngine.Rendering.Vulkan
                     attachment,
                     mipLevel,
                     layerIndex,
+                    allowSynchronousResourceUploads,
                     out ImageLayout layout)
                     ? layout
                     : ImageLayout.Undefined;
@@ -776,51 +782,52 @@ namespace XREngine.Rendering.Vulkan
             EFrameBufferAttachment attachment,
             int mipLevel,
             int layerIndex,
+            bool allowSynchronousResourceUploads,
             out ImageLayout layout)
         {
             layout = ImageLayout.Undefined;
 
             ImageAspectFlags requestedAspect = ResolveFrameBufferAttachmentAspectMask(attachment);
-            if (requestedAspect == ImageAspectFlags.None ||
+            if (requestedAspect == ImageAspectFlags.None)
+                return false;
+
+            if (vkFbo.TryGetAttachmentView(attachmentIndex, out ImageView attachmentView) &&
+                TryGetDescriptorHeapImageViewCreateInfo(attachmentView, out ImageViewCreateInfo viewInfo) &&
+                viewInfo.Image.Handle != 0)
+            {
+                ImageSubresourceRange range = viewInfo.SubresourceRange;
+                range.AspectMask = VulkanCommandRuntime.NormalizeBarrierAspectMask(viewInfo.Format, range.AspectMask);
+                range.LevelCount = Math.Max(range.LevelCount, 1u);
+                range.LayerCount = Math.Max(range.LayerCount, 1u);
+                if (commandBuffer.Handle != 0 &&
+                    TryGetRecordedImageLayout(commandBuffer, viewInfo.Image, in range, out layout))
+                {
+                    return true;
+                }
+
+                return TryGetTrackedImageLayout(viewInfo.Image, in range, out layout);
+            }
+
+            if (!allowSynchronousResourceUploads ||
                 !TryResolveAttachmentImage(target, mipLevel, layerIndex, requestedAspect, out BlitImageInfo info) ||
                 info.Image.Handle == 0)
             {
                 return false;
             }
 
-            Image image = info.Image;
-            ImageSubresourceRange range = new()
-            {
-                AspectMask = VulkanCommandRuntime.NormalizeBarrierAspectMask(info.Format, requestedAspect),
-                BaseMipLevel = info.MipLevel,
-                LevelCount = 1,
-                BaseArrayLayer = info.BaseArrayLayer,
-                LayerCount = Math.Max(info.LayerCount, 1u)
-            };
-
-            if (vkFbo.TryGetAttachmentView(attachmentIndex, out ImageView attachmentView) &&
-                TryGetDescriptorHeapImageViewCreateInfo(attachmentView, out ImageViewCreateInfo viewInfo) &&
-                viewInfo.Image.Handle != 0)
-            {
-                image = viewInfo.Image;
-                range = viewInfo.SubresourceRange;
-                range.AspectMask = VulkanCommandRuntime.NormalizeBarrierAspectMask(info.Format, range.AspectMask);
-                range.LevelCount = Math.Max(range.LevelCount, 1u);
-                range.LayerCount = Math.Max(range.LayerCount, 1u);
-            }
-
-            // The primary may already have written or transitioned this image in
-            // the frame currently being recorded.  Consult its local access state
-            // before the last submitted state so aliased attachments (notably the
-            // G-buffer/forward shared depth image) reopen with LOAD instead of
-            // being treated as first-use UNDEFINED.
+            ImageSubresourceRange fallbackRange = new(
+                VulkanCommandRuntime.NormalizeBarrierAspectMask(info.Format, requestedAspect),
+                info.MipLevel,
+                1,
+                info.BaseArrayLayer,
+                Math.Max(info.LayerCount, 1u));
             if (commandBuffer.Handle != 0 &&
-                TryGetRecordedImageLayout(commandBuffer, image, in range, out layout))
+                TryGetRecordedImageLayout(commandBuffer, info.Image, in fallbackRange, out layout))
             {
                 return true;
             }
 
-            return TryGetTrackedImageLayout(image, in range, out layout);
+            return TryGetTrackedImageLayout(info.Image, in fallbackRange, out layout);
         }
 
         private static ImageAspectFlags ResolveFrameBufferAttachmentAspectMask(EFrameBufferAttachment attachment)

@@ -16,7 +16,8 @@ public sealed class ModelImportProducerMetadata
         IEnumerable<ModelImportDependency>? dependencies,
         IEnumerable<ModelImportSourceEntity>? sourceEntities,
         IEnumerable<ModelImportReferenceKey>? referenceKeys,
-        IEnumerable<string>? diagnostics = null)
+        IEnumerable<string>? diagnostics = null,
+        float? modelUnitsPerMeter = null)
     {
         ModelImportDependency[] normalizedDependencies = (dependencies ?? [])
             .OrderBy(static dependency => dependency.NormalizedPath, StringComparer.Ordinal)
@@ -51,12 +52,23 @@ public sealed class ModelImportProducerMetadata
         _sourceEntities = Array.AsReadOnly(normalizedEntities);
         _referenceKeys = Array.AsReadOnly(normalizedReferences);
         _diagnostics = Array.AsReadOnly(normalizedDiagnostics);
+        ModelUnitsPerMeter = modelUnitsPerMeter is float value
+            && float.IsFinite(value)
+            && value > 0.0f
+                ? value
+                : null;
     }
 
     public IReadOnlyList<ModelImportDependency> Dependencies => _dependencies;
     public IReadOnlyList<ModelImportSourceEntity> SourceEntities => _sourceEntities;
     public IReadOnlyList<ModelImportReferenceKey> ReferenceKeys => _referenceKeys;
     public IReadOnlyList<string> Diagnostics => _diagnostics;
+
+    /// <summary>
+    /// Imported model-space units per meter when the producing format declares a
+    /// reliable source-unit convention; otherwise <see langword="null"/>.
+    /// </summary>
+    public float? ModelUnitsPerMeter { get; }
 
     private sealed class DependencyIdentityComparer
         : IEqualityComparer<(string NormalizedPath, ModelImportDependencyKind Kind, string? ProducerKey)>

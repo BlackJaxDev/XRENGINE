@@ -125,7 +125,15 @@ namespace XREngine.Rendering
         internal static IDisposable PushThreadCurrent(AbstractRenderer? renderer)
             => new ThreadCurrentScope(renderer);
 
-        private readonly struct ThreadCurrentScope : IDisposable
+        /// <summary>
+        /// Enters a render-thread owner scope without boxing the scope value.
+        /// Per-frame callers should prefer this form over the compatibility
+        /// <see cref="PushThreadCurrent(AbstractRenderer?)"/> helper.
+        /// </summary>
+        internal static ThreadCurrentScope EnterThreadCurrentScope(AbstractRenderer? renderer)
+            => new(renderer);
+
+        internal readonly struct ThreadCurrentScope : IDisposable
         {
             private readonly AbstractRenderer? _previousThreadCurrent;
             private readonly bool _previousHasThreadCurrentOverride;

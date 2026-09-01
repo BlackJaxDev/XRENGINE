@@ -411,7 +411,8 @@ internal static class NativeFbxSceneImporter
 
                 ModelImportProducerMetadata producerMetadata = NativeFbxImportReportBuilder.Build(
                     sourceFilePath,
-                    semantic);
+                    semantic,
+                    scaleConversion);
                 return new ImportResult(rootNode, createdMaterials, createdMeshes, producerMetadata);
             });
     }

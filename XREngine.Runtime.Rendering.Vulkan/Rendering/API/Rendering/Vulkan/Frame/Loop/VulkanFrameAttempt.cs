@@ -253,6 +253,8 @@ internal ref struct VulkanFrameAttempt
     public Result PresentResult;
     /// <summary>Whether the final vkQueuePresent dispatch was issued.</summary>
     public bool PresentDispatched;
+    /// <summary>Presentation fence capacity reserved before native image acquisition.</summary>
+    public VulkanWsiPresentReservation PresentReservation;
     /// <summary>Whether the present wait semaphore was verified against the acquired target lease.</summary>
     public bool PresentWaitSemaphoreProvenanceValid;
     /// <summary>Expected present wait semaphore captured from the acquired target lease.</summary>
@@ -276,6 +278,13 @@ internal ref struct VulkanFrameAttempt
     public int PresentNowMeshRequestCount;
     /// <summary>Slot-owned logical transaction accepted before WSI acquisition.</summary>
     public VulkanAcceptedFramePlan? AcceptedFramePlan;
+    /// <summary>
+    /// Indicates that this attempt must preserve resize-release continuity instead
+    /// of publishing its incomplete successor scene.
+    /// </summary>
+    public bool ResizeReleaseContinuity;
+    /// <summary>The contributor or successor mismatch that requires continuity.</summary>
+    public VulkanResizeReleaseBlocker ResizeReleaseBlocker;
 
     /// <summary>
     /// Indicates whether the resources associated with the current frame attempt have been released,

@@ -154,7 +154,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     {
         if (_historyForm is null || _historyForm.IsDisposed)
         {
-            _historyForm = new BrokerHistoryForm();
+            _historyForm = new BrokerHistoryForm(Path.Combine(_store.Paths.RootDirectory, "webview2"));
             _historyForm.DeleteRecordRequested += DeleteRecord;
             _historyForm.SettingsRequested += ShowSettings;
             _historyForm.SetTheme(_settings.Theme);

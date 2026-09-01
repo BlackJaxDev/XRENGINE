@@ -79,6 +79,15 @@ namespace XREngine.Rendering.Vulkan
             }
             catch (Exception recoveryFailure)
             {
+                if (attempt.PresentReservation.Owner is { } presentCompletion &&
+                    presentCompletion.IsQuarantined(in attempt.PresentReservation))
+                {
+                    QuarantineDesktopFrameAdmission(
+                        ref attempt,
+                        "Desktop presentation reservation is quarantined after indeterminate native dispatch.");
+                    ExceptionDispatchInfo.Capture(recoveryFailure).Throw();
+                }
+
                 if (!_deviceLost &&
                     attempt.AcquireOwnership is
                         EVulkanDesktopAcquireOwnership
@@ -134,9 +143,16 @@ namespace XREngine.Rendering.Vulkan
                 return;
             }
 
-            _ = ConsumeDesktopAcquireForRecovery(
-                ref attempt,
-                "UnexpectedPhaseFailure");
+            if (!ConsumeDesktopAcquireForRecovery(
+                    ref attempt,
+                    "UnexpectedPhaseFailure"))
+            {
+                QuarantineDesktopFrameAdmission(
+                    ref attempt,
+                    "Could not submit the acquire-semaphore recovery bridge.");
+                throw new InvalidOperationException(
+                    "Desktop acquire recovery bridge was rejected; native image ownership remains unresolved.");
+            }
             ResolveDesktopAcquireBySwapchainRecreation(
                 ref attempt,
                 "Unexpected desktop phase failure requires swapchain ownership recovery");
@@ -149,8 +165,9 @@ namespace XREngine.Rendering.Vulkan
 
         /// <summary>
         /// Releases the scene visibility producer only when this frame actually consumed
-        /// a scene epoch. Interactive resize frames are UI/presentation transactions over
-        /// retained scene content and therefore do not own the collect-visible handoff.
+        /// a scene epoch. The timer owns the collect-visible handoff for interactive
+        /// resize frames and releases it after the complete modal callback, so no
+        /// backend may publish a replacement while another callback still reads it.
         /// </summary>
         private void ReleaseCollectForDesktopFrame(ref VulkanFrameAttempt attempt)
         {
@@ -173,17 +190,9 @@ namespace XREngine.Rendering.Vulkan
                 "Vulkan.FrameLifecycle.RecoveryFailureQueuePresent",
                 "settling a recovered desktop frame after an auxiliary failure");
             Result result = dispatch.Result;
-            if (!dispatch.Dispatched && result != Result.ErrorDeviceLost)
-            {
-                ResolveDesktopAcquireBySwapchainRecreation(
-                    ref attempt,
-                    "Recovery presentation dispatch was rejected before vkQueuePresent");
-                CompleteDesktopFrameSlot(ref attempt);
-                return;
-            }
-
-            bool accepted =
-                result is Result.Success or Result.SuboptimalKhr;
+            bool presentationReleaseEnqueued =
+                dispatch.Dispatched &&
+                VulkanWsiPresentResult.EnqueuesPresentationRelease(result);
             if (result == Result.ErrorDeviceLost)
             {
                 attempt.TransitionAcquireOwnership(
@@ -194,6 +203,33 @@ namespace XREngine.Rendering.Vulkan
                     result);
             }
 
+            if (!presentationReleaseEnqueued)
+            {
+                if (VulkanWsiPresentResult.RequiresOutputQuarantine(
+                        dispatch.Dispatched,
+                        result))
+                {
+                    QuarantineDesktopFrameAdmission(
+                        ref attempt,
+                        $"Recovery QueuePresent returned an indeterminate WSI result: {result}.");
+                }
+                ResolveDesktopAcquireBySwapchainRecreation(
+                    ref attempt,
+                    "Recovery presentation did not enqueue WSI release work");
+                CompleteDesktopFrameSlot(ref attempt);
+                Exception? nonEnqueuePolicyFailure = ApplyDesktopPresentPolicy(
+                    ref attempt,
+                    result,
+                    "Recovery failure QueuePresent");
+                if (dispatch.AuxiliaryFailure is not null)
+                    ExceptionDispatchInfo.Capture(dispatch.AuxiliaryFailure).Throw();
+                if (nonEnqueuePolicyFailure is not null)
+                    ExceptionDispatchInfo.Capture(nonEnqueuePolicyFailure).Throw();
+                return;
+            }
+
+            bool accepted =
+                result is Result.Success or Result.SuboptimalKhr;
             attempt.TransitionAcquireOwnership(
                 EVulkanDesktopAcquireOwnership.ResolvedByPresentation);
             RecordDesktopPresentBookkeeping(
@@ -217,6 +253,27 @@ namespace XREngine.Rendering.Vulkan
             }
             if (policyFailure is not null)
                 ExceptionDispatchInfo.Capture(policyFailure).Throw();
+        }
+
+        /// <summary>
+        /// Stops subsequent desktop frames after native WSI ownership becomes
+        /// indeterminate. This runs inside the active frame, so it never waits for
+        /// frame retirement, which would deadlock on the current frame.
+        /// </summary>
+        private void QuarantineDesktopFrameAdmission(
+            ref VulkanFrameAttempt attempt,
+            string reason)
+        {
+            VulkanWsiPresentCompletion completion = attempt.PresentReservation.Owner
+                ?? throw new InvalidOperationException(
+                    "Cannot quarantine unresolved desktop WSI ownership without its presentation reservation.");
+            completion.Quarantine(in attempt.PresentReservation);
+            completion.Seal();
+            lock (_retirementGate)
+                Volatile.Write(ref _quiescing, 1);
+            Debug.VulkanError(
+                "[Vulkan][FrameFailure][RendererQuiesced] {0}",
+                reason);
         }
 
         private void ReleaseUnsubmittedDesktopUpload(
@@ -342,7 +399,8 @@ namespace XREngine.Rendering.Vulkan
             VulkanImGuiFrameSnapshot? recoveryOverlaySnapshot = null,
             CommandBuffer recoveryDynamicTextSecondaryCommandBuffer = default,
             int recoveryDynamicTextOperationCount = 0,
-            bool allowPresentNowRetryInitializationClear = false)
+            bool allowPresentNowRetryInitializationClear = false,
+            bool resizeReleaseContinuity = false)
         {
             // Recovery submits an abort/replay primary, never the rejected scene
             // primary. Terminalize its deferred submission receipts before any
@@ -357,7 +415,8 @@ namespace XREngine.Rendering.Vulkan
                     out bool imageWasEverPresented,
                     out bool imageHasValidPresentedContent,
                     out bool acquireAvailable,
-                    allowPresentNowRetryInitializationClear);
+                    allowPresentNowRetryInitializationClear,
+                    resizeReleaseContinuity);
 
             if (!policy.ShouldPresent)
             {
@@ -392,15 +451,26 @@ namespace XREngine.Rendering.Vulkan
             CommandBuffer recoveryOverlayCommandBuffer = default;
             CommandBuffer recoveryDynamicTextCommandBuffer = default;
             bool abortSubmitted = false;
+            VulkanPresentationSourceTuple heldContinuitySource = default;
+            VulkanResidentTemplateDependencyLease? heldContinuitySourceLease = null;
+            bool hasHeldContinuitySource =
+                resizeReleaseContinuity &&
+                _outputRuntime._desktopSwapchainPolicy.TryGetHeldPresentationSource(
+                    out heldContinuitySource,
+                    out heldContinuitySourceLease);
             try
             {
                 PrepareRejectedDesktopAbortCommand(
                     ref attempt,
                     in policy,
                     imageWasEverPresented,
+                    hasHeldContinuitySource,
+                    in heldContinuitySource,
+                    heldContinuitySourceLease,
+                    resizeReleaseContinuity,
                     out abortCommandPool,
                     out abortCommandBuffer,
-                    out bool replayedPresentationSource);
+                    out bool definedBaseWritten);
                 bool hasRecoveryOverlay =
                     TryRecordRejectedDesktopRecoveryOverlay(
                         ref attempt,
@@ -430,8 +500,7 @@ namespace XREngine.Rendering.Vulkan
                         ? recoveryDynamicTextCommandBuffer
                         : default;
                 attempt.RecoverySwapchainWriteCount =
-                    replayedPresentationSource ||
-                    policy.ShouldClearBeforePresent ||
+                    definedBaseWritten ||
                     hasRecoveryOverlay ||
                     hasRecoveryDynamicText
                         ? 1

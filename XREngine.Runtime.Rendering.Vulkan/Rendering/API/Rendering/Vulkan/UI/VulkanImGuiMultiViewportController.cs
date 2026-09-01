@@ -15,6 +15,7 @@ namespace XREngine.Rendering.Vulkan;
 internal sealed unsafe class VulkanImGuiMultiViewportController : IRendererImGuiViewportCallbacks, IDisposable
     {
         private const int PlatformWindowDisposalQuietFrames = 2;
+        private const int MaximumRetainedPlatformWindowRetirees = 8;
         private static readonly List<IWindow> AbandonedShutdownWindows = [];
         private static readonly List<IInputContext> AbandonedShutdownInputContexts = [];
 
@@ -33,6 +34,7 @@ internal sealed unsafe class VulkanImGuiMultiViewportController : IRendererImGui
         private bool _installed;
         private bool _disposed;
         private bool _deferGpuLifecycle;
+        private bool _retirementBackpressureReported;
 
         private VulkanImGuiMultiViewportController(IVulkanImGuiOutputHost outputHost, nint context)
         {
@@ -150,12 +152,12 @@ internal sealed unsafe class VulkanImGuiMultiViewportController : IRendererImGui
 
             try
             {
-                // Runtime-close cleanup destroys WSI resources and may wait for
-                // queue completion. Retain those resources until an ordinary
-                // desktop frame owns the optional-output budget.
+                // Retirement only polls per-window proof objects and therefore
+                // must continue even when this frame defers new GPU lifecycle
+                // work. Closing windows otherwise retain their native surfaces
+                // forever while minimized or hidden.
                 _deferGpuLifecycle = deferGpuLifecycle;
-                if (!deferGpuLifecycle)
-                    DisposePendingPlatformWindows();
+                DisposePendingPlatformWindows();
                 UpdatePlatformMonitors();
                 ImGui.UpdatePlatformWindows();
             }
@@ -299,6 +301,14 @@ internal sealed unsafe class VulkanImGuiMultiViewportController : IRendererImGui
                 ImGuiViewportPtr viewport = new(nativeViewport);
                 if (_platformWindows.ContainsKey(viewport.ID))
                     return;
+                if (_pendingPlatformWindowDisposals.Count >= MaximumRetainedPlatformWindowRetirees)
+                {
+                    viewport.PlatformRequestClose = true;
+                    ReportPlatformWindowRetirementBackpressure();
+                    return;
+                }
+
+                _retirementBackpressureReported = false;
 
                 VulkanImGuiPlatformWindow window = new(this, _outputHost, viewport);
                 _platformWindows.Add(viewport.ID, window);
@@ -601,17 +611,40 @@ internal sealed unsafe class VulkanImGuiMultiViewportController : IRendererImGui
 
                 try
                 {
-                    pending.Window.ReleaseAfterRuntimeClose();
+                    if (!pending.Window.TryReleaseAfterRuntimeClose())
+                    {
+                        _pendingPlatformWindowDisposals[writeIndex++] = pending;
+                        continue;
+                    }
                 }
                 catch (Exception ex)
                 {
                     LogCallbackException(nameof(DisposePendingPlatformWindows), ex);
-                    pending.Window.AbandonNativeWindowForShutdown();
+                    // A failed proof must retain the native surface. Retrying
+                    // after a short quiet period avoids a hot exception loop
+                    // without converting an indeterminate WSI release into an
+                    // unsafe destruction.
+                    pending.QuietFramesRemaining = PlatformWindowDisposalQuietFrames;
+                    _pendingPlatformWindowDisposals[writeIndex++] = pending;
                 }
             }
 
             if (writeIndex < _pendingPlatformWindowDisposals.Count)
                 _pendingPlatformWindowDisposals.RemoveRange(writeIndex, _pendingPlatformWindowDisposals.Count - writeIndex);
+
+            if (_pendingPlatformWindowDisposals.Count < MaximumRetainedPlatformWindowRetirees)
+                _retirementBackpressureReported = false;
+        }
+
+        private void ReportPlatformWindowRetirementBackpressure()
+        {
+            if (_retirementBackpressureReported)
+                return;
+
+            _retirementBackpressureReported = true;
+            Debug.RenderingWarning(
+                "[Vulkan.ImGuiMultiViewport] Refusing detached viewport creation because {0} retired windows are still awaiting WSI release proof.",
+                MaximumRetainedPlatformWindowRetirees);
         }
 
         private void AbandonPendingPlatformWindowsForShutdown()

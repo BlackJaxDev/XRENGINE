@@ -408,14 +408,34 @@ internal sealed partial class VulkanResourceRuntime
     internal void BeginForcedRetirementDrain()
     {
         lock (Lifetime.Tracker.SyncRoot)
+        {
+            // Uncapped pressure draining never enters this scope. Only a fully
+            // completed or terminally lost device can waive retained CPU pins
+            // during explicit shutdown; a graphics-only wait is insufficient.
+            if (!Lifetime.Tracker.DeviceLost &&
+                (Lifetime.Tracker.CompletedGraphicsSequence != Lifetime.Tracker.LastGraphicsSequence ||
+                 Lifetime.Tracker.CompletedTransferSequence != Lifetime.Tracker.LastTransferSequence ||
+                 Lifetime.Tracker.CompletedOtherSequence != Lifetime.Tracker.LastOtherSequence))
+                throw new InvalidOperationException("Forced Vulkan retirement requires completion of every queue domain.");
             Lifetime.Tracker.ForcedRetirementDrainDepth++;
+            _forcedRetirementBudgetBypass ??= EnterForcedRetirementBudgetBypass();
+        }
     }
 
     internal void EndForcedRetirementDrain()
     {
+        bool leaveForcedScope;
         lock (Lifetime.Tracker.SyncRoot)
+        {
             Lifetime.Tracker.ForcedRetirementDrainDepth =
                 Math.Max(0, Lifetime.Tracker.ForcedRetirementDrainDepth - 1);
+            leaveForcedScope = Lifetime.Tracker.ForcedRetirementDrainDepth == 0;
+        }
+        if (leaveForcedScope && _forcedRetirementBudgetBypass is { } budgetBypass)
+        {
+            budgetBypass.Dispose();
+            _forcedRetirementBudgetBypass = null;
+        }
     }
 
     internal void CompleteTimeline(Silk.NET.Vulkan.Semaphore semaphore, ulong value)
@@ -474,6 +494,9 @@ internal sealed partial class VulkanResourceRuntime
                 Lifetime.Tracker.LastTransferSequence;
             Lifetime.Tracker.CompletedOtherSequence =
                 Lifetime.Tracker.LastOtherSequence;
+            Lifetime.Tracker.ObservedGraphicsSequence = Lifetime.Tracker.LastGraphicsSequence;
+            Lifetime.Tracker.ObservedTransferSequence = Lifetime.Tracker.LastTransferSequence;
+            Lifetime.Tracker.ObservedOtherSequence = Lifetime.Tracker.LastOtherSequence;
             Lifetime.Tracker.LifetimeSubmissions.Clear();
         }
     }

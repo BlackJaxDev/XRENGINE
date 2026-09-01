@@ -15,5 +15,7 @@ public sealed record RenderBenchTextureStreamingScenarioEvidence
     public string[] ActualMipSha256 { get; init; } = [];
     public VulkanTextureStreamingTicketSnapshot[] Tickets { get; init; } = [];
     public VulkanTextureStreamingDiagnosticSnapshot[] Boundaries { get; init; } = [];
+    /// <summary>Published cumulative retirement drain durations captured before scenario teardown.</summary>
+    public VulkanRetirementDiagnostic? Retirement { get; init; }
     public RenderBenchTextureStreamingCancellationEvidence? Cancellation { get; init; }
 }

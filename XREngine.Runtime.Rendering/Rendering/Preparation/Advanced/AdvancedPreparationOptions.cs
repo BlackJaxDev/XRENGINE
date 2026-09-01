@@ -16,11 +16,17 @@ public readonly record struct AdvancedPreparationOptions(
     AdvancedDeformationBudget DeformationBudget,
     AdvancedFrameSlotUploadArenaOptions FrameUploadArena)
 {
+    private const int DefaultMaximumDrawCapacity = 65_536;
+
     public static AdvancedPreparationOptions Default => new(
-        MaximumDraws: 65_536,
+        MaximumDraws: DefaultMaximumDrawCapacity,
         MaximumDeformationJobs: 4_096,
         MaximumDeformationFamilies: 16,
-        MaximumIndirectRanges: 64,
+        // Every accepted draw can have a distinct range key. Keep the range
+        // storage equal to the payload capacity so the default path remains
+        // allocation-free for any valid frame, rather than a scene-specific
+        // subset of it.
+        MaximumIndirectRanges: DefaultMaximumDrawCapacity,
         // One desktop view plus the maximum OpenXR view set can coexist in
         // the same prepared world frame.
         MaximumViews: RenderFrameViewSet.MaxViewCount + 1,

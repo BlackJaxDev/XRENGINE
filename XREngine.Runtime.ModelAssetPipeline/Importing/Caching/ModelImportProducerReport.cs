@@ -22,4 +22,5 @@ public sealed class ModelImportProducerReport
     public IReadOnlyList<ModelImportSourceEntity> SourceEntities => Metadata.SourceEntities;
     public IReadOnlyList<ModelImportReferenceKey> ReferenceKeys => Metadata.ReferenceKeys;
     public IReadOnlyList<string> Diagnostics => Metadata.Diagnostics;
+    public float? ModelUnitsPerMeter => Metadata.ModelUnitsPerMeter;
 }

@@ -97,11 +97,39 @@ to browse and search all retained prompts and responses.
 
 The viewer renders streamed responses as a Markdown preview. Headings, emphasis,
 links, lists, quotes, rules, inline code, and fenced code blocks are styled as
-they arrive. New text fades in, and the viewer scrolls smoothly only while it is
+they arrive. New blocks fade in, and the viewer scrolls smoothly only while it is
 already following the response tail. Scrolling upward keeps that position stable
 so earlier prompt or response text remains readable. Windows animation settings
 are respected; when animations are disabled, updates and tail movement are
 immediate.
+
+Responses also typeset LaTeX math: `\(...\)` or `$...$` for inline formulas,
+and `\[...\]` or `$$...$$` for display equations. Fractions, sums, integrals,
+Greek symbols, subscripts/superscripts, matrices, and aligned equations are
+supported by the bundled KaTeX renderer. Chemistry and physical units use
+`\ce{...}` and `\pu{...}` inside math delimiters. For example:
+
+```latex
+\[c_P=\frac{\sum_i m_i c_i}{\sum_i m_i}\]
+\(\ce{2H2 + O2 -> 2H2O}\)
+```
+
+Code spans and fenced code blocks remain literal. Bare dollar amounts such as
+`$5.00` remain text; use `\(...\)` where dollar notation would be ambiguous.
+Incomplete streamed formulas keep their original source until closed. Invalid
+or unsupported formulas remain visible as source with a colored diagnostic
+and a hover explanation. This is KaTeX notation support, not a full TeX engine.
+
+**Raw text** switches to the original conversation text. **Copy response** copies
+the exact stored Markdown/LaTeX response, regardless of the current view. Selecting
+and copying rendered equations also preserves their TeX notation. History and
+search always use the unchanged original response, including older records.
+
+The math preview requires Microsoft Edge WebView2 Runtime. Scripts, styles, and
+fonts ship locally; no CDN is contacted. Response HTML is escaped, remote images
+are not loaded, and only clicked HTTP(S) links open in your default browser.
+If WebView2 is missing or the preview fails, the app shows an explicit diagnostic
+and readable raw Markdown. Install the runtime and reopen the companion to retry.
 
 Each newly accepted prompt also shows a Windows notification containing its
 objective. Clicking the notification opens that prompt in the history viewer.

@@ -1,15 +1,15 @@
 # Humanoid Body/Root Parity and Compensation TODO
 
-Last Updated: 2026-08-28
+Last Updated: 2026-08-31
 Owner: Animation / Avatar
-Status: In progress; Phases 1-9 are implemented. Raw `.anim` versions 6/7 and
-the compiled native humanoid solver now execute through one XRE path. Phase 10
-retains the versioned multi-avatar Unity known-answer corpus and CI parity
-matrix.
+Status: In progress; Phases 1-9A are implemented and Phase 9A has passed its
+focused Unity `2022.3.22f1` acceptance contract. Phase 10 remains the broader
+versioned multi-avatar known-answer corpus and CI parity matrix.
 
 Related evidence:
 
 - `docs/work/investigations/avatar/humanoid-body-root-compensation-2026-08-24.md`
+- `docs/work/investigations/avatar/humanoid-body-frame-compensation-2026-08-31.md`
 - `Assets/Walks/Sexy Walk.anim`
 - `XREngine.UnitTests/TestData/SexyWalkHumanoidRawAudit.compact.json`
 - Unity Manual, Root Motion: <https://docs.unity3d.com/Manual/RootMotion.html>
@@ -57,6 +57,9 @@ the one native path.
   Body Orientation as an avatar-relative average body orientation.
 - Body Transform/Orientation are the humanoid clip's world-space curves;
   muscles and humanoid IK goals are relative to the body transform.
+- Holding the requested Body pose fixed while changing muscles can require
+  compensating Hips translation and rotation. This skeleton-to-Body alignment
+  is not new authored Body motion or an instruction to move the scene root.
 - Unity computes the movable Root Transform as a runtime projection of the Body
   Transform, controlled by clip import settings such as Bake Into Pose.
 - `HumanPose.bodyPosition` is normalized by `Avatar.humanScale`. Do not assume
@@ -118,7 +121,7 @@ Acceptance criteria:
 | --- | --- | --- |
 | Raw Unity `.anim` curves | Native versions 6/7 capability contract implemented | Phase 10 adds the versioned behavioral fixture matrix for every claimed encoding. |
 | `HumanoidComponent` avatar definition | Persistent canonical definition with finalized mapping, topology, axes, validation, and content identity | Phase 10 exercises automatic and editor-corrected mappings across the corpus. |
-| Native humanoid pose solve | Immutable compiled definition plus allocation-free per-avatar workspace; no fitted runtime backend | Phase 10 compares the one native evaluator against versioned Unity known answers. |
+| Native humanoid pose solve | Compiled, allocation-free Body-frame/Hips compensation without a fitted backend; focused internal runtime checks pass | Phase 9A still needs external Body-model ratification and focused Unity/Mitsuki acceptance before Phase 10 expands coverage. |
 | Root-motion import settings | Complete native policy evaluation | Phase 10 covers every policy combination across avatars, clips, loops, and seeks. |
 | State-machine transitions/blends | Shared final-pose/root solver for direct, leaves, transitions, and blend trees | Phase 10 supplies graph-wide Unity conformance references. |
 | Production avatar-definition association | Consolidated on the serialized `HumanoidComponent` definition and validated against the active skeleton | Phase 10 expands persistence/rename/move conformance coverage. |
@@ -204,7 +207,9 @@ They are evidence for the architecture, not constants or universal tolerances.
   playback.
 - Do not move the model/scene root merely because a clip contains Body
   Transform curves.
-- Do not make ordinary limb muscles invent body translation.
+- Do not make ordinary limb muscles invent authored Body translation or
+  locomotion. This does not prohibit the pose-dependent Hips translation and
+  rotation needed to preserve the requested Body position and orientation.
 - Do not conflate authored humanoid evaluation with optional post-pose contact
   compensation. Keep their inputs, order, and diagnostics explicit.
 - Do not interpret free-running screenshots as skeletal acceptance evidence;
@@ -858,6 +863,12 @@ Phase 8 completion status (2026-08-28):
 
 ## Phase 9 - Replace Fitted Calibration with the Native Humanoid Solver
 
+Status correction (2026-08-31): the native foundation is implemented, but the
+previous completion claim was premature. Independent joint rotations and
+authored Body-channel allocation do not replace the old model's coupled,
+muscle-dependent Hips solution. Phase 9A below is required implementation work,
+not optional Phase 10 validation polish.
+
 - [x] Remove clip-display-name gating from projected root Y and every other
   calibration lookup.
 - [x] Remove learned/fitted, sampled polynomial, and avatar-and-clip calibration
@@ -868,12 +879,14 @@ Phase 8 completion status (2026-08-28):
   semantic joint bases, body axes, and human scale. Convert each normalized
   muscle through its declared asymmetric limits and joint basis rather than a
   fixture-derived response surface.
-- [x] Implement the complete muscle-to-pose order for Hips, spine/chest/neck,
+- [x] Complete the muscle-to-pose order for Hips, spine/chest/neck,
   head/eyes/jaw, shoulders/arms/hands, fingers, legs/feet/toes, optional roles,
-  twist distribution, stretch, and translation DoF.
+  twist distribution, stretch, and translation DoF. Local joint evaluation is
+  implemented; the coupled Body-frame/Hips solve is implemented in Phase 9A.
 - [x] Derive Body position/orientation, Hips translation, projected root, and
   feet-based height from the canonical avatar definition and clip settings.
-  Ordinary limb muscles must not invent Body translation.
+  Phase 9A adds pose-dependent compensation without inventing authored
+  Body translation or applying skeletal compensation as scene-root motion.
 - [x] Apply authored IK/contact data after the authored humanoid pose and root
   projection in one documented order, with no duplicate custom-rig solve.
 - [x] Normalize quaternion groups, preserve sign continuity, use deterministic
@@ -916,12 +929,159 @@ Phase 9 implementation evidence (2026-08-28):
   validation, placed/scaled model-root and bind-snapshot stability, IK
   settings/order, and direct/state/blend/condition-triggered-transition
   convergence at `2e-4` tolerance.
-- The remaining unchecked acceptance line requires an externally sourced Unity
-  known-answer comparison for the held-out pair. That versioned, redistributable
-  conformance matrix is Phase 10; the Phase 9 runtime implementation does not
-  consume or generate a Unity bake.
+- These probes establish finite output, determinism, and internal evaluator
+  agreement, not Unity pose parity. Phase 9A adds the missing Body-frame
+  coupling and still requires external ratification; Phase 10 then expands the versioned,
+  redistributable conformance matrix. Neither phase may use a Unity bake as a
+  production input.
+
+## Phase 9A - Pose-Dependent Body Frame and Hips Compensation
+
+Implementation status (2026-08-31): complete under the focused approximate
+Unity `2022.3.22f1` gate of `<= 0.25 deg` joint rotation and `<= 0.5 mm`
+endpoint displacement. The ratified public-hierarchy Body model is
+`XRE.PublicHumanoidMassHierarchy.v1`; this is evidence-derived public-contract
+compatibility, not a claim to private Mecanim equations or bit-exact parity.
+
+Prerequisite to Phase 10 and to any renewed full native-pose parity claim.
+Changing arms, spine, chest, or twist values can change a provisional pose's
+center of mass and average orientation. With the requested Body transform held
+fixed, the skeleton must compensate through Hips translation/rotation. This
+must work without root-motion application, physics, or contact IK masking the
+missing authored-pose behavior.
+
+Unity's public contracts describe Body position using an average human
+body-part mass distribution and Body orientation using hips/shoulder geometry.
+Use those contracts plus independent known-answer evidence; do not claim access
+to private Mecanim equations. References: [HumanPose.bodyPosition](https://docs.unity3d.com/ScriptReference/HumanPose-bodyPosition.html)
+and [HumanPose.bodyRotation](https://docs.unity3d.com/ScriptReference/HumanPose-bodyRotation.html).
+
+- [x] Define and document the generic avatar data needed to derive a
+  pose-dependent center of mass and average Body orientation: segment mass
+  fractions, segment center locations, semantic landmarks, neutral reference,
+  units, and coordinate spaces; never substitute
+  a mesh-bounds center, an unweighted bone average, or Rigidbody mass settings.
+- [x] Ratify the explicit Body model and derivation against external versioned
+  known-answer data before treating it as Unity-compatible.
+- [x] Compile that data into the canonical avatar definition, including
+  validation/content identity and deterministic handling of optional roles,
+  helper bones, differing proportions, and degenerate orientation landmarks.
+  Missing required data or an unsolvable frame must fail explicitly.
+- [x] After the final muscle/translation-DoF blend and provisional FK, derive
+  the pose's Body frame in scratch storage. Solve the compensating rigid
+  transform that aligns it with the requested Body position/orientation, and
+  convert the result through the actual Hips-parent hierarchy. Do not use a
+  fixed hips pivot as a substitute for the pose-dependent Body frame.
+- [x] Integrate compensation into the single authored-pose transaction:
+  final blend, provisional FK, Body-frame alignment, Body/root allocation and
+  projection (including Feet and Loop Pose policy), atomic skeleton commit,
+  then one authored IK/contact pass. Keep translation/rotation composition,
+  human scale, and model units explicit and apply each correction once.
+- [x] Preserve authored Body channels and explicit root-motion ownership.
+  Skeleton recentering/reorientation must not be published as additional
+  locomotion or fed back into the next frame's canonical reference. A fixed
+  Body pose may produce changing Hips transforms while the scene root remains
+  fixed; Feet-based projection must still obey the selected policy.
+- [x] Route manual humanoid-pose edits, direct clips, state-machine leaves,
+  transitions, and blend trees through this same solve. Preserve deterministic
+  traversal, quaternion continuity, allocation-free frame evaluation, and
+  atomic rejection without disturbing the prior pose/root/IK frame.
+- [x] Expose diagnostic requested Body pose, provisional and compensated Body
+  frames, compensation transform, final Hips pose, and projected root separately.
+  Do not restore fitted coefficients, sampled response surfaces, clip-specific
+  corrections, or a second evaluation backend.
+
+Focused implementation evidence (2026-08-31):
+
+- Two independently constructed skeleton layouts, differing in proportions,
+  scale and optional roles, pass fixed-Body arm/torso/twist/combined-pose probes.
+  Live weighted-center residuals are below `2.4e-7` model units; Hips translation
+  and rotation change without scene-root drift. Warmed manual evaluation
+  allocates zero current-thread bytes over 32 recorded applications.
+- Both walk clips run through direct and one-state components on both layouts.
+  Twenty paired seek/repeat/reverse samples agree within `7.1e-8` for Hips matrix
+  elements; live Body-center residuals are below `4.8e-7` model units.
+- Changing/fresh weights `0`, `0.5`, and `1` agree with equivalent state layers
+  and an identical-leaf blend tree. Body/root projection and loop caches now
+  use unit-weight inputs, with one final target weight; weighted muscle FK is
+  still evaluated separately before compensation.
+- Mirror plus Feet/Loop Pose has 24 accepted direct/state runtime snapshots;
+  paired Hips matrix differences are below `4.1e-9`. Repeated/reverse seeks do
+  not drift. IK goal conversion follows the committed Body and scene placement,
+  not the compensated Hips pivot.
+- An explicit-target seek rejected for nonuniform-parent shear preserves its
+  target, published motion, epoch and sequence, and recovers after the parent
+  is restored. Required endpoint-solve failures now reject the clip/leaf input
+  instead of supplying a no-pose substitute. Avatar rebuilds invalidate the
+  avatar-dependent loop/Feet caches.
+- Animation-integration and recorder builds pass with zero warnings/errors.
+  No tests were added, modified, or run. The isolated editor started but its
+  synthetic fixture remained unmapped and its viewport black; this is not a
+  visual acceptance pass. The named owned session was stopped.
+
+Acceptance closeout (2026-08-31):
+
+- A fully mapped runtime avatar now covers all 95 controls at both `-0.5` and
+  `+0.5`. All 190 poses change mapped bones, retain the Body target within
+  `2.4e-7` model units, and return to the original pose/root without drift.
+  Compensation is generic; not every muscle necessarily moves the mass center.
+- The historical Mitsuki FBX was found on the Desktop and Unity `2022.3.22f1`
+  generated fresh full-pose references for it and an independent procedural
+  avatar. Missing references are no longer the acceptance blocker.
+- `XRE.PublicHumanoidMassHierarchy.v1` replaces the failed legacy approximation.
+  Six calibration geometries (24 poses) and seven held-out geometries (28 poses)
+  have worst calibrated Body-center residuals of `2.39e-7 m` and `2.46e-7 m`.
+- Live acceptance uncovered and fixed a one-frame state-machine sampling lag.
+  Direct/state forward/reverse and identical-child blend-tree playback now
+  agree within `2.2e-6` local matrix elements over recorded live loops.
+  Mixed-clip condition transitions repeat without scene-root drift.
+- Canonical skeleton authoring now uses full affine hierarchy transforms and a
+  source-provenance gate. Schema 6 records
+  `XRE.MecanimCanonicalPose.2022.3.v2`, regenerates legacy canonical corrections,
+  and rejects stale definitions until refresh/reconfirmation. Mitsuki's scale
+  is `0.8143982` versus Unity's `0.8143983`.
+- The 192-case imported Mitsuki sweep is within `0.213063°` and `0.301777 mm`;
+  the independent runtime-authored procedural rig covers all 95 signed muscle
+  pairs within `0.039565°` and `0.000598 mm`. Both are below the ratified gate,
+  have no playback diagnostic, and restore neutral without drift.
+- Direct/state evaluation agrees within `1.20e-7` local-matrix elements and
+  condition/mixed-clip transitions repeat with zero recorded failures and no
+  scene-root drift. Imported and runtime-authored Upper Chest defaults resolve
+  at definition authoring, never through a per-frame avatar branch.
+
+These focused results close Phase 9A. They do not establish bit-exact parity or
+the Phase 10 three-imported-avatar conformance matrix. Reference provenance,
+limitations, and reproduction evidence are in the
+[Phase 9A investigation](../../investigations/avatar/humanoid-body-frame-compensation-2026-08-31.md).
+
+Acceptance criteria:
+
+- [x] With Body position/orientation fixed and IK/contact disabled, validate
+  positive/negative sweeps of each arm, spine/chest bend, and twist control,
+  plus asymmetric and combined poses. Compare the resulting Hips translation,
+  Hips rotation, Body-frame residual, and selected endpoints against versioned
+  external Unity known answers, not merely finite values or internal agreement.
+- [x] Validate Body/hip rotation around a nonzero Body-to-Hips offset, different
+  human scales/proportions/bind axes, missing optional roles, and translated,
+  rotated, or scaled parent hierarchies. Include both translation and orientation
+  compensation; a symmetric pose need not produce a nonzero correction.
+- [x] Ratify focused numerical tolerances before closure. Fixed-Body and
+  no-projected-motion cases introduce no scene-root drift; extracted motion,
+  Feet projection, mirror, Loop Pose, seeks, reverse, and repeated evaluations
+  neither lose nor double-apply compensation.
+- [x] Direct, state, blend, and transition outputs agree for equal inputs and
+  also match the external reference. Repeat live/runtime validation on the
+  historical Mitsuki/Sexy Walk pair and an independently defined compatible
+  avatar; keep fixture identities out of production behavior.
+- [x] Record the focused evidence and remaining discrepancies before declaring
+  this phase complete. The old fitted-path comparison and Phase 9 finite-pose
+  probe are baselines, not proof for this implementation. Follow the repository's
+  live/runtime-first policy; add or modify tests only after user clearance.
 
 ## Phase 10 - Reproducible Single-Path Unity Parity Matrix
+
+Begin this broad conformance phase only after Phase 9A's implementation and
+focused behavioral acceptance pass; it must not stand in for the missing solve.
 
 - [ ] Check in license-compatible, versioned known-answer conformance fixtures
   for at least three materially different humanoid avatars. XRE import, build,

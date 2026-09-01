@@ -17,6 +17,7 @@ internal sealed class HumanoidStateMachineRootMotionLeafState
     private readonly float[] _mirrorScratch = new float[(int)EHumanoidValue.RightHandThumb3Stretched + 1];
 
     private AnimationClip? _clip;
+    private CompiledHumanoidAvatarDefinition? _compiledAvatar;
     private ImportedHumanoidRootMotionPolicy _policy;
     private HumanoidImportedBodySample _canonicalBody = HumanoidImportedBodySample.Neutral;
     private HumanoidProjectedRootPose _loopGenerator = HumanoidProjectedRootPose.Identity;
@@ -27,6 +28,11 @@ internal sealed class HumanoidStateMachineRootMotionLeafState
     private bool _hasLoopGenerator;
     private bool _hasCanonicalFeetY;
     private float _canonicalFeetY;
+    private bool _isFeetProjectionTransactionActive;
+    private bool _feetProjectionSnapshotHasCanonicalFeetY;
+    private float _feetProjectionSnapshotCanonicalFeetY;
+    private HumanoidProjectedRootPose _feetProjectionSnapshotBodyAllocationProjectedRootPose;
+    private HumanoidProjectedRootPose _feetProjectionSnapshotUnwrappedProjectedRootPose;
 
     public ulong OccurrenceId { get; private set; }
     public bool IsAssigned => _isAssigned;
@@ -51,7 +57,10 @@ internal sealed class HumanoidStateMachineRootMotionLeafState
         in HumanoidMotionContribution contribution,
         HumanoidComponent humanoid)
     {
+        if (!humanoid.TryGetCompiledAvatarDefinition(out CompiledHumanoidAvatarDefinition compiled))
+            return false;
         bool identityChanged = !_isAssigned
+            || !ReferenceEquals(_compiledAvatar, compiled)
             || OccurrenceId != contribution.OccurrenceId
             || !ReferenceEquals(_clip, contribution.Clip)
             || _policy != contribution.Policy
@@ -61,6 +70,7 @@ internal sealed class HumanoidStateMachineRootMotionLeafState
             _isAssigned = true;
             OccurrenceId = contribution.OccurrenceId;
             _clip = contribution.Clip;
+            _compiledAvatar = compiled;
             _policy = contribution.Policy;
             ContributionType = contribution.ContributionType;
             CopyPolicyToSettings(_policy, _effectiveSettings);
@@ -116,6 +126,43 @@ internal sealed class HumanoidStateMachineRootMotionLeafState
 
         BodyAllocationProjectedRootPose = AddProjectedY(BodyAllocationProjectedRootPose, deltaY);
         UnwrappedProjectedRootPose = AddProjectedY(UnwrappedProjectedRootPose, deltaY);
+    }
+
+    /// <summary>
+    /// Starts a value-only rollback scope for cached feet projection results.
+    /// The owning frame resolves this after the enclosing body transaction has
+    /// either committed or rejected.
+    /// </summary>
+    internal void BeginFeetProjectionTransaction()
+    {
+        if (_isFeetProjectionTransactionActive)
+            return;
+
+        _feetProjectionSnapshotHasCanonicalFeetY = _hasCanonicalFeetY;
+        _feetProjectionSnapshotCanonicalFeetY = _canonicalFeetY;
+        _feetProjectionSnapshotBodyAllocationProjectedRootPose = BodyAllocationProjectedRootPose;
+        _feetProjectionSnapshotUnwrappedProjectedRootPose = UnwrappedProjectedRootPose;
+        _isFeetProjectionTransactionActive = true;
+    }
+
+    /// <summary>
+    /// Resolves a feet projection rollback scope without allocating. Rejection
+    /// restores the pre-evaluation cache and projected poses exactly.
+    /// </summary>
+    internal void ResolveFeetProjectionTransaction(bool accepted)
+    {
+        if (!_isFeetProjectionTransactionActive)
+            return;
+
+        if (!accepted)
+        {
+            _hasCanonicalFeetY = _feetProjectionSnapshotHasCanonicalFeetY;
+            _canonicalFeetY = _feetProjectionSnapshotCanonicalFeetY;
+            BodyAllocationProjectedRootPose = _feetProjectionSnapshotBodyAllocationProjectedRootPose;
+            UnwrappedProjectedRootPose = _feetProjectionSnapshotUnwrappedProjectedRootPose;
+        }
+
+        _isFeetProjectionTransactionActive = false;
     }
 
     public bool TryGetCanonicalFeetY(out float value)
@@ -193,15 +240,15 @@ internal sealed class HumanoidStateMachineRootMotionLeafState
         ApplyInheritedMirrorIfNeeded(_loopStartMuscles.Values, _clip);
         ApplyInheritedMirrorIfNeeded(_loopEndMuscles.Values, _clip);
 
-        humanoid.CalculateLoopEvaluation(
+        if (!humanoid.TryCalculateLoopEvaluation(
             sourceStart,
             sourceEnd,
             _loopStartMuscles.Values,
             _loopEndMuscles.Values,
-            1.0f,
             _effectiveSettings,
             out _loopPoseCorrection,
-            out HumanoidProjectedRootPose sourceGenerator);
+            out HumanoidProjectedRootPose sourceGenerator))
+            return false;
         if (!_policy.LoopTime)
             return true;
 

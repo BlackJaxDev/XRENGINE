@@ -715,10 +715,11 @@ namespace XREngine.Timers
         /// <remarks>
         /// The collapsed Windows window/render thread can remain inside the OS size/move
         /// loop while the normal outer render loop is paused. This entry point preserves
-        /// the ordinary render clock and callbacks. The window renderer limits the callback
-        /// to presentation/UI work and retains the last completed scene output; foreground
-        /// scene readiness and queued render-thread maintenance remain owned by the normal
-        /// render loop after the modal interaction ends.
+        /// the ordinary render clock and callbacks. A modal frame consumes only a fully
+        /// published visibility generation and never waits for collection or foreground
+        /// resource readiness. Once the callback finishes reading that generation, the
+        /// existing collect thread may publish the next one. Queued render-thread
+        /// maintenance remains owned by the normal loop after the interaction ends.
         /// </remarks>
         public XREngine.Rendering.InteractiveResizeDispatchResult TryDispatchInteractiveResizeFrame(
             ulong? presentationPackageId = null)
@@ -754,10 +755,11 @@ namespace XREngine.Timers
 
             ulong previousPresentFrameId = PresentFrameId;
             bool dispatched;
+            XREngine.Rendering.EInteractiveResizeDispatchReason dispatchReason;
             XREngine.Rendering.RuntimeInteractiveResizeDispatchState.Enter();
             try
             {
-                dispatched = DispatchRender(processMainThreadTasks: false);
+                dispatched = DispatchRender(processMainThreadTasks: false, out dispatchReason);
             }
             finally
             {
@@ -767,12 +769,12 @@ namespace XREngine.Timers
             if (!dispatched)
             {
                 XREngine.Rendering.EInteractiveResizeDispatchReason deferredReason = IsRunning
-                    ? XREngine.Rendering.EInteractiveResizeDispatchReason.RenderCadenceNotDue
+                    ? dispatchReason
                     : XREngine.Rendering.EInteractiveResizeDispatchReason.RuntimeStopped;
                 return packageId != 0UL && IsRunning
                     ? new XREngine.Rendering.InteractiveResizeDispatchResult(
                         XREngine.Rendering.EInteractiveResizeDispatchOutcome.PresentedScaledStale,
-                        XREngine.Rendering.EInteractiveResizeDispatchReason.None,
+                        deferredReason,
                         packageId,
                         Stopwatch.GetTimestamp() - started)
                     : XREngine.Rendering.InteractiveResizeDispatchResult.Deferred(
@@ -813,10 +815,13 @@ namespace XREngine.Timers
         }
 
         public bool DispatchRender()
-            => DispatchRender(processMainThreadTasks: true);
+            => DispatchRender(processMainThreadTasks: true, out _);
 
-        private bool DispatchRender(bool processMainThreadTasks)
+        private bool DispatchRender(
+            bool processMainThreadTasks,
+            out XREngine.Rendering.EInteractiveResizeDispatchReason deferredReason)
         {
+            deferredReason = XREngine.Rendering.EInteractiveResizeDispatchReason.RenderCadenceNotDue;
             try
             {
                 long timestampTicks = TimeTicks();
@@ -824,6 +829,18 @@ namespace XREngine.Timers
                 bool dispatch = elapsedTicks > 0L && elapsedTicks >= _targetRenderPeriodTicks;
                 if (dispatch)
                 {
+                    bool modalResizeDispatch =
+                        XREngine.Rendering.RuntimeInteractiveResizeDispatchState.IsActive;
+                    // The collapsed native event pump runs before WaitToRender, so a
+                    // modal callback has not acquired that loop's visibility generation.
+                    // Consume the publication here, after the final cadence check. Never
+                    // read a package while the collect thread is still swapping it.
+                    if (modalResizeDispatch && !_visibilityGenerationGate.TryConsumeFresh(out _))
+                    {
+                        deferredReason = XREngine.Rendering.EInteractiveResizeDispatchReason.VisibilityUnavailable;
+                        return false;
+                    }
+
                     //Debug.Out("Dispatching render.");
                     using var sample = Engine.Profiler.Start("EngineTimer.DispatchRender", ProfilerScopeKind.AlwaysOnHotPathLoop);
 
@@ -873,6 +890,12 @@ namespace XREngine.Timers
                     RuntimeEngine.Rendering.CompleteRenderFrame(renderFrameId, renderFrameElapsedTicks);
                     XREngine.Rendering.RenderPipelineGpuProfiler.Instance.RecordRenderThreadFrameMs(renderFrameId, renderFrameMs);
                     PresentFrameId = renderFrameId;
+                    deferredReason = XREngine.Rendering.EInteractiveResizeDispatchReason.None;
+                    // Backend/window early-release hooks remain disabled for modal
+                    // frames. Release this epoch only after every callback has finished
+                    // consuming it, so the next repaint can acquire a fresh publication.
+                    if (modalResizeDispatch)
+                        MarkRenderFrameReadyForCollect();
                 }
                 return dispatch;
             }

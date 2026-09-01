@@ -6,4 +6,5 @@ internal readonly record struct VulkanLifetimeSubmission(
     ulong QueueSequence,
     ulong TimelineSemaphoreHandle,
     ulong TimelineValue,
-    ulong FenceHandle);
+    ulong FenceHandle,
+    bool CompletionObserved = false);

@@ -1,6 +1,6 @@
 # XRENGINE Vulkan Frame Loop Stability and High-Refresh Optimization TODO
 
-**Last updated:** 2026-08-26  
+**Last updated:** 2026-08-31
 **Owner:** Rendering / Vulkan / Frame Scheduling  
 **Status:** Proposed - ready for implementation  
 **Primary target:** Stable desktop rendering above 100 Hz, with a 120 Hz promotion gate and a 144 Hz stretch gate  
@@ -643,43 +643,73 @@ Adopt stable material-row semantics, dirty-range publication, bounded descriptor
 
 # Phase 9 - Bound resource retirement, command-pool reuse, and swapchain lifecycle
 
+Lifecycle implementation completed 2026-08-31 through master Phase 5.4. The diagnostic acceptance cohort
+uses a retirement-stage p99 target below 0.5 ms: cumulative resize/restore p99
+is 0.084 ms across 5,881 frames, and four normal/reversed streaming children
+measure 0.052–0.306 ms. Individual tail durations and histogram overflow are
+retained in the reports. Live desktop and detached ImGui lifecycle validation
+reports zero normal-frame device-idle calls and native validation errors, with
+zero warmed command allocations. This is scoped lifecycle acceptance, not
+portable performance promotion. See the [implementation, limitations, and
+validation evidence](../../../investigations/rendering/vulkan-phase54-retirement-and-swapchain-lifecycle.md).
+
+Follow-up: this cohort used discrete resizes. Actual held-drag relayout exposed
+a regression that is now repaired and validated with real width/height drags
+in `DefaultRenderPipeline`: fresh scene/compute/UI recording, no package
+rejection, zero device-idle calls, and zero native validation errors. The
+final rebuilt cohort has retirement p99 0.087 ms. Evidence is tracked in the
+[live resize investigation](../../../investigations/rendering/vulkan-live-window-resize-relayout.md).
+
+The first mouse-release continuity attempt made the frame attempt latch interactive
+mapping, and an explicit resize-release handoff retains the last complete held
+image across swapchain recreation until an authored scene/ImGui successor is
+presented. Empty, clear-only, overlay-only, stale, and superseded successor
+frames are refused. Two real held drags keep both ImGui and the scene visible
+through release with no full-surface clear, validation error, or device-idle
+call in the sampled acceptance interval. User testing later showed the retained
+image could remain frozen for 17 to 53 seconds while the pre-acquire handoff gate
+also suppressed ImGui and FPS updates. Advanced can accumulate overlays when its
+scene producer fails, and a live Debug Opaque swap can terminal-pause on a
+texture upload prepared before renderer ownership is published. Phase 9 live
+acceptance remains open pending the master Phase 5.4 repair gates.
+
 ## Objective
 
 Ensure destruction, retirement, command-pool reuse, resize, and swapchain recreation cannot create unbounded render-thread spikes.
 
 ## Resource retirement
 
-- [ ] Meter destruction by resource class: images, views, buffers, pipelines, framebuffers, samplers, descriptor objects, command artifacts, and callbacks.
-- [ ] Add ordinary per-frame destruction caps and a high-water policy that can temporarily drop the cap when backlog itself threatens memory stability.
-- [ ] Destroy resources outside global retirement locks.
-- [ ] Retire only after all relevant queue timeline values or fences complete.
-- [ ] Report backlog, oldest retirement age, destroyed count, deferred count, and uncapped-drain activation.
+- [x] Meter destruction by resource class: images, views, buffers, pipelines, framebuffers, samplers, descriptor objects, command artifacts, and callbacks.
+- [x] Add ordinary per-frame destruction caps and a high-water policy that can temporarily drop the cap when backlog itself threatens memory stability.
+- [x] Destroy resources outside global retirement locks.
+- [x] Retire only after all relevant queue timeline values or fences complete.
+- [x] Report backlog, oldest retirement age, destroyed count, deferred count, and uncapped-drain activation.
 
 ## Command pools and command buffers
 
-- [ ] Keep one command pool per recording lane and frame slot.
-- [ ] Reset a pool only after its slot's completion authority proves prior GPU use is complete.
-- [ ] Allocate no command buffers in warmed steady state.
-- [ ] Keep command-buffer retirement tied to exact recorded/submitted generations.
-- [ ] Preserve the separate ImGui overlay command-buffer architecture so dynamic UI does not invalidate reusable scene primaries.
+- [x] Keep one command pool per recording lane and frame slot.
+- [x] Reset a pool only after its slot's completion authority proves prior GPU use is complete.
+- [x] Allocate no command buffers in warmed steady state.
+- [x] Keep command-buffer retirement tied to exact recorded/submitted generations.
+- [x] Preserve the separate ImGui overlay command-buffer architecture so dynamic UI does not invalidate reusable scene primaries.
 
 ## Desktop swapchain lifecycle
 
-- [ ] Preserve asynchronous swapchain-generation retirement; do not replace it with normal-frame `vkDeviceWaitIdle`.
-- [ ] Coalesce resize requests and create one replacement generation from the newest valid extent.
-- [ ] Tombstone old views, framebuffers, semaphores, render passes, depth resources, and command artifacts with exact graphics/present completion markers.
-- [ ] Keep old and new generations alive concurrently only within a bounded retirement limit.
-- [ ] Inherit the strongest old completion authority when a replacement image index can reuse mapped frame-data storage.
-- [ ] Report retirement-queue pressure and recreation deferrals.
-- [ ] Pace and retire secondary ImGui platform-window swapchains independently.
+- [x] Preserve asynchronous swapchain-generation retirement; do not replace it with normal-frame `vkDeviceWaitIdle`.
+- [x] Coalesce resize requests and create one replacement generation from the newest valid extent.
+- [x] Tombstone old views, framebuffers, semaphores, render passes, depth resources, and command artifacts with exact graphics/present completion markers.
+- [x] Keep old and new generations alive concurrently only within a bounded retirement limit.
+- [x] Inherit the strongest old completion authority when a replacement image index can reuse mapped frame-data storage.
+- [x] Report retirement-queue pressure and recreation deferrals.
+- [x] Pace and retire secondary ImGui platform-window swapchains independently.
 
 ## Exit criteria
 
-- [ ] No normal resize path calls `vkDeviceWaitIdle`.
-- [ ] No warmed frame allocates or frees command buffers.
-- [ ] Retirement p99 remains below the stage budget during streaming and resize stress.
-- [ ] Swapchain recreation cannot strand mapped frame-data or command-artifact ownership.
-- [ ] Repeated resize/minimize/restore produces no black frames, stale output, validation errors, or broad unbounded stalls.
+- [x] No normal resize path calls `vkDeviceWaitIdle`.
+- [x] No warmed frame allocates or frees command buffers.
+- [x] Retirement p99 remains below the stage budget during streaming and resize stress.
+- [x] Swapchain recreation cannot strand mapped frame-data or command-artifact ownership.
+- [ ] Repeated resize/minimize/restore produces no black frames, stale output, overlay accumulation, presentation freezes, validation errors, or broad unbounded stalls.
 
 ---
 

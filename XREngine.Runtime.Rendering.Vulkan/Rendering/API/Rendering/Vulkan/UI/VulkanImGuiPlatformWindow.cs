@@ -157,8 +157,9 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
                 if (!_rendererReady)
                     CreateRendererResources();
 
-                if (_resizeRequested || SwapchainExtentChanged())
-                    RecreateSwapchainResources();
+                if ((_resizeRequested || SwapchainExtentChanged()) &&
+                    !RecreateSwapchainResources())
+                    return;
 
                 if (!_rendererReady || Window.WindowState == WindowState.Minimized)
                     return;
@@ -193,16 +194,18 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
             return true;
         }
 
-        public void ReleaseAfterRuntimeClose()
+        public bool TryReleaseAfterRuntimeClose()
         {
-            DestroyRendererResources();
+            if (!TryDestroyRendererResources())
+                return false;
             if (VulkanImGuiMultiViewportController.ShouldDisposeNativeWindow)
             {
                 Dispose();
-                return;
+                return true;
             }
 
             AbandonNativeWindowForShutdown();
+            return true;
         }
 
         public void Dispose()
@@ -210,9 +213,10 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
             BeginDispose();
             if (_disposed)
                 return;
+            if (!TryDestroyRendererResources())
+                return;
 
             _disposed = true;
-            DestroyRendererResources();
             _drawBuffers.RetireAll();
             try
             {
@@ -235,9 +239,10 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
             BeginDispose();
             if (_disposed)
                 return;
+            if (!TryDestroyRendererResources())
+                return;
 
             _disposed = true;
-            DestroyRendererResources();
             _drawBuffers.RetireAll();
             if (_handle.IsAllocated)
                 _handle.Free();
@@ -246,13 +251,58 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
             _outputHost.UnregisterPlatformWindow(this);
         }
 
-        public void DestroyRendererResources()
+        internal override void WaitForPresentationReleaseAtShutdown(bool deviceLost)
+        {
+            if (deviceLost)
+            {
+                DestroyRendererResources(deviceLost: true);
+                return;
+            }
+
+            for (int index = 0; index < _acquireFences.Length; index++)
+            {
+                if (!_acquireFenceSubmitted[index])
+                    continue;
+                Result result = _outputHost.WaitForPlatformFenceAtShutdown(_acquireFences[index]);
+                ThrowIfFailed(result, "wait for detached-window acquire fence at shutdown");
+                _acquireFenceSubmitted[index] = false;
+            }
+            _presentCompletion?.WaitForShutdown();
+        }
+
+        public void DestroyRendererResources(bool deviceLost = false)
         {
             if (_surface.Handle == 0 && !_rendererReady)
                 return;
 
-            WaitForViewportQueuesIdle();
+            if (deviceLost)
+                DestroySwapchainResources(deviceLost: true);
+            else if (!TryDestroyRendererResources())
+                return;
+            if (deviceLost)
+                ReleasePlatformSurface();
+        }
+
+        private bool TryDestroyRendererResources()
+        {
+            if (!TryDestroySwapchainResources())
+                return false;
+
+            ReleasePlatformSurface();
+            return true;
+        }
+
+        private bool TryDestroySwapchainResources()
+        {
+            if (!TryRetireSwapchainResources())
+                return false;
             DestroySwapchainResources();
+            _rendererReady = false;
+            return true;
+        }
+
+        private void ReleasePlatformSurface()
+        {
             _outputHost.DestroyPlatformSurface(ref _surface);
             _rendererReady = false;
             _resizeRequested = false;
@@ -264,7 +314,7 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
             _outputHost.ValidatePlatformPresentSupport(_surface);
         }
 
-        private bool TryCreateSwapchainResources()
+        private bool TryCreateSwapchainResources(SwapchainKHR oldSwapchain = default)
         {
             if (!_outputHost.TryAdmitDeviceOperation("ImGuiViewport.CreateSwapchainResources"))
                 return false;
@@ -273,6 +323,7 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
                     _surface,
                     Window.FramebufferSize,
                     ViewportId,
+                    oldSwapchain,
                     out VulkanImGuiPlatformSwapchainGeneration generation))
             {
                 return false;
@@ -285,6 +336,7 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
             _images = generation.Images;
             _imageViews = generation.ImageViews;
             _imagePresented = new bool[_images.Length];
+            _presentCompletion = _outputHost.CreatePlatformPresentCompletion(_images.Length);
 
             VulkanImGuiPlatformWindowCommandResources commandResources =
                 _outputHost.CreatePlatformCommandResources(
@@ -295,6 +347,8 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
             _commandBuffers = commandResources.CommandBuffers;
             _frameFences = commandResources.Fences;
             _frameFenceSubmitted = commandResources.FrameFenceSubmitted;
+            _acquireFences = commandResources.AcquireFences;
+            _acquireFenceSubmitted = commandResources.AcquireFenceSubmitted;
             _imageAvailableSemaphores = commandResources.ImageAvailableSemaphores;
             _renderFinishedSemaphores = commandResources.RenderFinishedSemaphores;
             _frameSlot = 0;
@@ -351,18 +405,19 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
                 ((uint)framebufferSize.X != _extent.Width || (uint)framebufferSize.Y != _extent.Height);
         }
 
-        private void RecreateSwapchainResources()
+        private bool RecreateSwapchainResources()
         {
             if (!_outputHost.TryAdmitDeviceOperation("ImGuiViewport.RecreateSwapchainResources"))
             {
                 _rendererReady = false;
-                return;
+                return false;
             }
 
-            WaitForViewportQueuesIdle();
-            DestroySwapchainResources();
+            if (!TryDestroySwapchainResources())
+                return false;
             _rendererReady = TryCreateSwapchainResources();
             _resizeRequested = !_rendererReady;
+            return _rendererReady;
         }
 
         private void RenderSnapshot(VulkanImGuiFrameSnapshot snapshot)
@@ -385,17 +440,43 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
             }
 
             uint imageIndex = 0;
+            if (_acquireFenceSubmitted[frameSlot])
+            {
+                Result acquireFenceResult = _outputHost.WaitForPlatformFence(_acquireFences[frameSlot]);
+                if (acquireFenceResult is Result.NotReady or Result.Timeout)
+                    return;
+                ThrowIfFailed(acquireFenceResult, "poll detached-window acquire fence");
+                _acquireFenceSubmitted[frameSlot] = false;
+            }
+            VulkanWsiPresentCompletion? presentCompletion = _presentCompletion;
+            if (presentCompletion is null || !presentCompletion.TryReserve(out VulkanWsiPresentReservation reservation))
+                return;
+            Result resetAcquireFenceResult = _outputHost.ResetPlatformFence(_acquireFences[frameSlot]);
+            if (resetAcquireFenceResult != Result.Success)
+            {
+                presentCompletion.Cancel(in reservation);
+                _resizeRequested = true;
+                ThrowIfFailed(resetAcquireFenceResult, "reset detached-window acquire fence");
+            }
             Result acquireResult = _outputHost.AcquirePlatformImage(
-                _swapchain, _imageAvailableSemaphores[frameSlot], out imageIndex);
+                _swapchain, _imageAvailableSemaphores[frameSlot], _acquireFences[frameSlot], out imageIndex);
             if (acquireResult == Result.ErrorOutOfDateKhr)
             {
+                presentCompletion.Cancel(in reservation);
                 _resizeRequested = true;
                 return;
             }
             if (acquireResult is Result.NotReady or Result.Timeout)
+            {
+                presentCompletion.Cancel(in reservation);
                 return;
+            }
             if (acquireResult != Result.Success && acquireResult != Result.SuboptimalKhr)
+            {
+                presentCompletion.Cancel(in reservation);
                 ThrowIfFailed(acquireResult, "acquire detached-window swapchain image");
+            }
+            _acquireFenceSubmitted[frameSlot] = true;
             if (acquireResult == Result.SuboptimalKhr)
                 _resizeRequested = true;
 
@@ -403,6 +484,7 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
             if (resetFenceResult != Result.Success)
             {
                 _resizeRequested = true;
+                presentCompletion.Cancel(in reservation);
                 ThrowIfFailed(resetFenceResult, "reset detached-window frame fence");
             }
 
@@ -415,6 +497,7 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
                     // Rebuild on the next platform-window tick without submitting
                     // a command buffer whose tracking publication was discarded.
                     _resizeRequested = true;
+                    presentCompletion.Cancel(in reservation);
                     return;
                 }
             }
@@ -423,6 +506,7 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
                 // An image has already been acquired. Recreate the swapchain on the
                 // next attempt so that failed recording cannot strand that image.
                 _resizeRequested = true;
+                presentCompletion.Cancel(in reservation);
                 throw;
             }
 
@@ -440,37 +524,52 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
                 SignalSemaphoreCount = 1,
                 PSignalSemaphores = &renderFinished,
             };
-            Result submitResult = _outputHost.SubmitPlatformDraw(ref submitInfo, frameFence);
-            if (submitResult != Result.Success)
+            bool submitMayHaveDispatched = false;
+            try
             {
-                _resizeRequested = true;
-                ThrowIfFailed(submitResult, "submit detached-window ImGui draw");
-            }
-            _frameFenceSubmitted[frameSlot] = true;
+                submitMayHaveDispatched = true;
+                Result submitResult = _outputHost.SubmitPlatformDraw(ref submitInfo, frameFence);
+                if (submitResult != Result.Success)
+                {
+                    submitMayHaveDispatched = false;
+                    _resizeRequested = true;
+                    presentCompletion.Cancel(in reservation);
+                    ThrowIfFailed(submitResult, "submit detached-window ImGui draw");
+                }
+                _frameFenceSubmitted[frameSlot] = true;
 
-            PresentInfoKHR presentInfo = new()
-            {
-                SType = StructureType.PresentInfoKhr,
-                WaitSemaphoreCount = 1,
-                PWaitSemaphores = &renderFinished,
-                SwapchainCount = 1,
-                PSwapchains = null,
-                PImageIndices = &imageIndex,
-            };
-            SwapchainKHR swapchain = _swapchain;
-            presentInfo.PSwapchains = &swapchain;
-            Result presentResult = _outputHost.PresentPlatformViewport(ref presentInfo);
-            if (presentResult is Result.ErrorOutOfDateKhr or Result.SuboptimalKhr)
-                _resizeRequested = true;
-            else if (presentResult != Result.Success)
-            {
-                _resizeRequested = true;
-                ThrowIfFailed(presentResult, "present detached-window ImGui swapchain image");
-            }
+                PresentInfoKHR presentInfo = new()
+                {
+                    SType = StructureType.PresentInfoKhr,
+                    WaitSemaphoreCount = 1,
+                    PWaitSemaphores = &renderFinished,
+                    SwapchainCount = 1,
+                    PSwapchains = null,
+                    PImageIndices = &imageIndex,
+                };
+                SwapchainKHR swapchain = _swapchain;
+                presentInfo.PSwapchains = &swapchain;
+                Result presentResult = _outputHost.PresentPlatformViewport(ref presentInfo, in reservation);
+                if (presentResult is Result.ErrorOutOfDateKhr or Result.SuboptimalKhr)
+                    _resizeRequested = true;
+                else if (presentResult != Result.Success)
+                {
+                    _resizeRequested = true;
+                    ThrowIfFailed(presentResult, "present detached-window ImGui swapchain image");
+                }
 
-            if (presentResult is Result.Success or Result.SuboptimalKhr)
-                _imagePresented[imageIndex] = true;
-            _frameSlot = (frameSlot + 1) % FramesInFlight;
+                if (presentResult is Result.Success or Result.SuboptimalKhr)
+                    _imagePresented[imageIndex] = true;
+                _frameSlot = (frameSlot + 1) % FramesInFlight;
+            }
+            catch
+            {
+                _resizeRequested = true;
+                if (submitMayHaveDispatched)
+                    _frameFenceSubmitted[frameSlot] = true;
+                presentCompletion.Quarantine(in reservation);
+                throw;
+            }
         }
 
         private bool RecordCommandBuffer(
@@ -489,19 +588,46 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
                 _extent,
                 _imagePresented[imageIndex]);
 
-        private void WaitForViewportQueuesIdle()
+        private bool TryRetireSwapchainResources()
         {
-            _outputHost.WaitForPlatformQueuesIdle();
+            for (int index = 0; index < _frameFences.Length; index++)
+            {
+                if (!_frameFenceSubmitted[index])
+                    continue;
+                Result result = _outputHost.WaitForPlatformFence(_frameFences[index]);
+                if (result is Result.NotReady or Result.Timeout)
+                    return false;
+                ThrowIfFailed(result, "poll detached-window frame fence for retirement");
+                _frameFenceSubmitted[index] = false;
+            }
+
+            for (int index = 0; index < _acquireFences.Length; index++)
+            {
+                if (!_acquireFenceSubmitted[index])
+                    continue;
+                Result result = _outputHost.WaitForPlatformFence(_acquireFences[index]);
+                if (result is Result.NotReady or Result.Timeout)
+                    return false;
+                ThrowIfFailed(result, "poll detached-window acquire fence for retirement");
+                _acquireFenceSubmitted[index] = false;
+            }
+
+            _presentCompletion?.Seal();
+            return _presentCompletion is null || _presentCompletion.PollRetirement();
         }
 
-        private void DestroySwapchainResources()
+        private void DestroySwapchainResources(bool deviceLost = false)
         {
+            _presentCompletion?.Destroy(deviceLost);
+            _presentCompletion = null;
             _outputHost.DestroyPlatformCommandResources(
                 new VulkanImGuiPlatformWindowCommandResources(
                     _commandPool,
                     _commandBuffers,
                     _frameFences,
                     _frameFenceSubmitted,
+                    _acquireFences,
+                    _acquireFenceSubmitted,
                     _imageAvailableSemaphores,
                     _renderFinishedSemaphores),
                 ViewportId);
@@ -523,6 +649,8 @@ internal sealed unsafe class VulkanImGuiPlatformWindow : VulkanImGuiPlatformWind
             _commandBuffers = [];
             _frameFences = [];
             _frameFenceSubmitted = [];
+            _acquireFences = [];
+            _acquireFenceSubmitted = [];
             _imageAvailableSemaphores = [];
             _renderFinishedSemaphores = [];
             _rendererReady = false;

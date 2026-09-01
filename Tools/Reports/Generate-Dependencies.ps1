@@ -1192,6 +1192,22 @@ foreach ($s in $submodules) {
 
 # Nested submodules / vendored-source / fetched-from-upstream dependencies referenced by build scripts or native bridges.
 $nested = New-Object System.Collections.Generic.List[object]
+foreach ($previewDependency in @(
+    @{ Name = 'KaTeX v0.18.4 (including fonts and mhchem)'; Folder = 'katex'; Owner = 'Khan Academy and contributors'; Url = 'https://github.com/KaTeX/KaTeX/tree/v0.18.4'; License = 'MIT AND Apache-2.0' },
+    @{ Name = 'markdown-it v15.0.0 (browser bundle)'; Folder = 'markdown-it'; Owner = 'Vitaly Puzrin, Alex Kocharin and contributors'; Url = 'https://github.com/markdown-it/markdown-it/tree/15.0.0'; License = 'MIT AND BSD-2-Clause' }
+)) {
+    $noticePath = Join-Path $root ("Tools\LocalAgentBroker.Tray\Preview\vendor\{0}\THIRD-PARTY-NOTICES.txt" -f $previewDependency.Folder)
+    if (Test-Path -LiteralPath $noticePath) {
+        $nested.Add([pscustomobject]@{
+            Name = $previewDependency.Name
+            UsedBy = 'LocalAgentBroker.Tray'
+            Owner = $previewDependency.Owner
+            Url = $previewDependency.Url
+            License = $previewDependency.License
+            LicenseSourcePath = $noticePath
+        })
+    }
+}
 try {
     $buildCoacd = Join-Path $root 'Tools\Dependencies\Build-CoACD.ps1'
     if (Test-Path $buildCoacd) {

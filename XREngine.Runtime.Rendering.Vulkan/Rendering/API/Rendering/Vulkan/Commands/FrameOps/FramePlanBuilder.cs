@@ -125,7 +125,9 @@ internal sealed class FramePlanBuilder
         int authoringOperationCount = -1,
         int authoringDynamicOverlayOperationCount = -1,
         int authoringTextureUploadOperationCount = -1,
-        RenderOutputRequest? emptyPresentNowOutputContract = null)
+        RenderOutputRequest? emptyPresentNowOutputContract = null,
+        ERenderOutputReadinessPolicy? desktopReadinessPolicyOverride = null,
+        ERenderOutputWorkClass? desktopWorkClassOverride = null)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(frameSlot);
         ArgumentNullException.ThrowIfNull(operations);
@@ -226,7 +228,9 @@ internal sealed class FramePlanBuilder
             slot,
             outputCount,
             renderFrameId,
-            openXrImagesAcquired);
+            openXrImagesAcquired,
+            desktopReadinessPolicyOverride,
+            desktopWorkClassOverride);
         if (emptyPresentNowOutputContract is { } requiredContract)
         {
             int requiredOutputIndex = FindSchedulingContractOutputIndex(
@@ -916,7 +920,9 @@ internal sealed class FramePlanBuilder
         Slot slot,
         int outputCount,
         ulong renderFrameId,
-        bool openXrImagesAcquired)
+        bool openXrImagesAcquired,
+        ERenderOutputReadinessPolicy? desktopReadinessPolicyOverride,
+        ERenderOutputWorkClass? desktopWorkClassOverride)
     {
         if (outputCount == 0)
             return 0;
@@ -937,8 +943,15 @@ internal sealed class FramePlanBuilder
         for (int index = 0; index < outputCount; index++)
         {
             ref readonly OutputRequest output = ref slot.Outputs[index];
+            bool isInteractiveDesktopOutput =
+                output.OutputKind is EFrameOutputKind.DesktopScene or
+                    EFrameOutputKind.EditorScenePanel;
             RenderOutputRequest request = output.ToGraphRequest(
                 renderFrameId,
+                isInteractiveDesktopOutput
+                    ? desktopReadinessPolicyOverride
+                    : null,
+                isInteractiveDesktopOutput ? desktopWorkClassOverride : null,
                 out RenderOutputSchedulingDecision decision);
             bool reserveXrPath = openXrImagesAcquired &&
                 output.OutputKind == EFrameOutputKind.OpenXREyeSubmit;

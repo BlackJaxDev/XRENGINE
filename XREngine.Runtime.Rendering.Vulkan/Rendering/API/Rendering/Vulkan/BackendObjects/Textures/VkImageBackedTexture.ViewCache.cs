@@ -367,6 +367,41 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         }
     }
 
+    bool IVkImageDescriptorSource.TryGetPublishedStorageDescriptorView(
+        int mipLevel,
+        bool layered,
+        int layerIndex,
+        out ImageView view)
+    {
+        lock (_imageStateLock)
+        {
+            view = default;
+            if (_image.Handle == 0 || !IsDescriptorReadyNoLock())
+                return false;
+
+            AttachmentViewKey key = BuildStorageDescriptorViewKey(
+                mipLevel,
+                layered,
+                layerIndex);
+            AttachmentViewKey primaryKey = NormalizeAttachmentViewKey(
+                new AttachmentViewKey(
+                    0u,
+                    ResolvedMipLevels,
+                    0u,
+                    ResolvedArrayLayers,
+                    DefaultViewType,
+                    AspectFlags));
+            view = key == primaryKey
+                ? _view
+                : _attachmentViews.TryGetValue(key, out ImageView cached)
+                    ? cached
+                    : default;
+            return view.Handle != 0 &&
+                IsImageViewBackedByCurrentImage(view) &&
+                BackendContext.Resources.Images.IsAvailableForDescriptor(view);
+        }
+    }
+
     private AttachmentViewKey BuildStorageDescriptorViewKey(int mipLevel, bool layered, int layerIndex)
     {
         uint baseMip = ClampAttachmentMipLevel(mipLevel);

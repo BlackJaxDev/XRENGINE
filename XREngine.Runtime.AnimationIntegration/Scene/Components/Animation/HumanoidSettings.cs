@@ -53,28 +53,28 @@ namespace XREngine.Components.Animation
             set => SetField(ref _importedAvatarProfile, value);
         }
 
-        private Vector2 _leftEyeDownUpRange = new(-1.0f, 1.0f);
+        private Vector2 _leftEyeDownUpRange = new(-10.0f, 15.0f);
         public Vector2 LeftEyeDownUpRange
         {
             get => _leftEyeDownUpRange;
             set => SetField(ref _leftEyeDownUpRange, value);
         }
 
-        private Vector2 _leftEyeInOutRange = new(-1.0f, 1.0f);
+        private Vector2 _leftEyeInOutRange = new(-20.0f, 20.0f);
         public Vector2 LeftEyeInOutRange
         {
             get => _leftEyeInOutRange;
             set => SetField(ref _leftEyeInOutRange, value);
         }
 
-        private Vector2 _rightEyeDownUpRange = new(-1.0f, 1.0f);
+        private Vector2 _rightEyeDownUpRange = new(-10.0f, 15.0f);
         public Vector2 RightEyeDownUpRange
         {
             get => _rightEyeDownUpRange;
             set => SetField(ref _rightEyeDownUpRange, value);
         }
 
-        private Vector2 _rightEyeInOutRange = new(-1.0f, 1.0f);
+        private Vector2 _rightEyeInOutRange = new(-20.0f, 20.0f);
         public Vector2 RightEyeInOutRange
         {
             get => _rightEyeInOutRange;
@@ -288,7 +288,9 @@ namespace XREngine.Components.Animation
             set => SetField(ref _chestTwistLeftRightDegRange, value);
         }
 
-        // Upper Chest is optional; when present, uses same range as Chest.
+        // Imported humanoid definitions retain the historical ModelImporter range.
+        // Runtime-authored AvatarBuilder skeletons resolve their narrower public
+        // default when the immutable avatar definition is built.
         private Vector2 _upperChestFrontBackDegRange = new(-40.0f, 40.0f);
         public Vector2 UpperChestFrontBackDegRange
         {
@@ -355,7 +357,7 @@ namespace XREngine.Components.Animation
         }
 
         // ── Jaw ─────────────────────────────────────────────────────────
-        private Vector2 _jawLeftRightDegRange = new(-15.0f, 15.0f);
+        private Vector2 _jawLeftRightDegRange = new(-10.0f, 10.0f);
         public Vector2 JawLeftRightDegRange
         {
             get => _jawLeftRightDegRange;

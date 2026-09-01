@@ -265,6 +265,10 @@ internal sealed class VulkanAdvancedVisibilityPipelineRuntime
             })
         {
             Name = name,
+            // Advanced visibility prepares compute pipelines asynchronously before
+            // admission. This explicit program intent lets VkRenderProgram enqueue
+            // that preparation when ordinary background compilation is disabled.
+            AllowAsyncBackendCompile = true,
             ExternallyOwnedDescriptorSetMask =
                 VulkanAdvancedSceneProgramBindingContract.ExternallyOwnedSetMask,
         };

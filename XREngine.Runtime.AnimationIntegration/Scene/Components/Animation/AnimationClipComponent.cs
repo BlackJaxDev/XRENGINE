@@ -60,6 +60,8 @@ namespace XREngine.Components.Animation
         private ulong _rootMotionSequence;
         private bool _hasProjectedRootLoopPose;
         private bool _hasBodyLoopPoseCorrection;
+        private bool _bodyFrameProjectionCacheValid = true;
+        private CompiledHumanoidAvatarDefinition? _bodyFrameProjectionAvatar;
         private bool _cycleOffsetSourceWrapped;
         private bool _hasRootMotionAnchor;
         private bool _hasPreviousAppliedRootMotionPose;
@@ -370,8 +372,8 @@ namespace XREngine.Components.Animation
 
         private void CompletePlaybackStartup()
         {
-            ApplyAnimatedValues();
-            GetSiblingHumanoid()?.ApplyCurrentMusclePose();
+            if (ApplyAnimatedValues())
+                GetSiblingHumanoid()?.ApplyCurrentMusclePose();
             DispatchInitialImportedAnimationEvents();
             RegisterTick(ETickGroup.Normal, ETickOrder.Animation, TickAnimation);
             RegisterTick(ETickGroup.Late, ETickOrder.Input, PublishRootMotion);
@@ -448,12 +450,7 @@ namespace XREngine.Components.Animation
             }
 
             HumanoidIKSolverComponent? ikSolver = EnsureHumanoidAnimationIKSolver();
-            ResetRootMotionBaselineIfNeeded();
             EnsureInitialized();
-            // A fixed-time seek is a temporal discontinuity, but it must not move the
-            // placement origin. Re-anchoring from the already-applied target pose would
-            // accumulate the absolute projected pose on every repeated seek.
-            BeginRootMotionEpoch(preserveExistingAnchor: true);
 
             long previousEventTicks = _sourceEventUnwrappedPlaybackTimeTicks;
             long evaluationTicks = NormalizePlaybackTime(SecondsToStopwatchTicks(timeSeconds), Animation, wrapLooped: false);
@@ -475,11 +472,20 @@ namespace XREngine.Components.Animation
             if (!ShouldDriveSiblingHumanoidPose())
                 return;
 
-            ApplyAnimatedValues();
+            if (!ApplyAnimatedValues())
+                return;
 
             // Root-only humanoid clips still need the native neutral solve: it establishes
             // Body/Hips before the staged RootT/RootQ allocation is finalized.
-            GetSiblingHumanoid()?.ApplyCurrentMusclePose();
+            HumanoidComponent? humanoid = GetSiblingHumanoid();
+            humanoid?.ApplyCurrentMusclePose();
+            if (humanoid is not null && !humanoid.WasLastNativeFrameAccepted)
+                return;
+
+            // Publish a seek discontinuity only after its pose is accepted. A
+            // failed seek leaves prior root history/placement intact. Preserve
+            // the placement anchor so repeated absolute seeks cannot drift.
+            BeginRootMotionEpoch(preserveExistingAnchor: true);
 
             PublishRootMotion();
             // Exact seeks do not run the ordinary Late tick. Preserve the live
@@ -818,7 +824,8 @@ namespace XREngine.Components.Animation
             if (humanoid is null)
                 return;
 
-            HumanoidProjectedRootPose withinCyclePose = humanoid.CurrentProjectedRootPose;
+            if (!humanoid.TryGetAcceptedRootMotionInput(this, out HumanoidProjectedRootPose withinCyclePose, out float poseWeight))
+                return;
             if (withinCyclePose.Channels == EHumanoidProjectedRootChannels.None)
                 return;
 
@@ -827,6 +834,10 @@ namespace XREngine.Components.Animation
                     PowProjectedRootPose(_projectedRootLoopPose, _rootMotionLoopCycle),
                     withinCyclePose)
                 : withinCyclePose;
+
+            unwrappedPose = HumanoidComponent.WeightProjectedRootPose(unwrappedPose, poseWeight);
+            if (unwrappedPose.Channels == EHumanoidProjectedRootChannels.None)
+                return;
 
             _appliedRootMotionDelta = _hasPreviousAppliedRootMotionPose
                 ? HumanoidComponent.CalculateProjectedRootDelta(_previousAppliedRootMotionPose, unwrappedPose)
@@ -884,12 +895,15 @@ namespace XREngine.Components.Animation
             _hasProjectedRootLoopPose = false;
             _bodyLoopPoseCorrection = HumanoidLoopPoseCorrection.Identity;
             _hasBodyLoopPoseCorrection = false;
+            _bodyFrameProjectionCacheValid = true;
             _loopPoseFloatEndpointDeltas.Clear();
             _loopPoseVectorEndpointDeltas.Clear();
             _loopPoseQuaternionEndpointCorrections.Clear();
             Array.Fill(_scalarIKRotationLoopPoseCorrections, Quaternion.Identity);
             AnimationClip? clip = Animation;
             HumanoidComponent? humanoid = GetSiblingHumanoid();
+            _bodyFrameProjectionAvatar = humanoid?.TryGetCompiledAvatarDefinition(out CompiledHumanoidAvatarDefinition compiled) == true
+                ? compiled : null;
             if (clip?.HasRootMotion != true
                 || !_hasCachedImportedBodyRootMembers
                 || humanoid is null
@@ -910,15 +924,19 @@ namespace XREngine.Components.Animation
             {
                 CaptureProjectedLoopMuscles(0.0f, _loopProjectionStartMuscleValues);
                 CaptureProjectedLoopMuscles(clip.LengthInSeconds, _loopProjectionEndMuscleValues);
-                humanoid.CalculateLoopEvaluation(
+                if (!humanoid.TryCalculateLoopEvaluation(
                     sourceStart,
                     sourceEnd,
                     _loopProjectionStartMuscleValues,
                     _loopProjectionEndMuscleValues,
-                    Weight,
                     settings,
                     out _bodyLoopPoseCorrection,
-                    out sourceGenerator);
+                    out sourceGenerator))
+                {
+                    _bodyFrameProjectionCacheValid = false;
+                    PlaybackCapabilityDiagnostic = "The avatar could not solve the required Body/Feet loop endpoints. Correct the avatar/clip inputs and refresh the definition.";
+                    return;
+                }
                 _hasBodyLoopPoseCorrection = policy.LoopPose;
             }
             else
@@ -926,7 +944,7 @@ namespace XREngine.Components.Animation
                 sourceGenerator = humanoid.CalculateProjectedRootPose(
                     sourceEnd,
                     sourceStart,
-                    Weight,
+                    1.0f,
                     settings,
                     ReadOnlySpan<float>.Empty);
             }
@@ -941,7 +959,7 @@ namespace XREngine.Components.Animation
                 HumanoidProjectedRootPose offsetFromStart = humanoid.CalculateProjectedRootPose(
                     offsetSample,
                     sourceStart,
-                    Weight,
+                    1.0f,
                     settings,
                     ReadOnlySpan<float>.Empty);
                 _projectedRootLoopPose = ComposeProjectedRootPoses(
@@ -953,6 +971,23 @@ namespace XREngine.Components.Animation
                 _projectedRootLoopPose = sourceGenerator;
             }
             _hasProjectedRootLoopPose = _projectedRootLoopPose.Channels != EHumanoidProjectedRootChannels.None;
+        }
+
+        /// <summary>Avatar-dependent endpoint caches never survive a definition rebuild.</summary>
+        private bool TryPrepareBodyFrameEvaluationCache(HumanoidComponent? humanoid)
+        {
+            if (!_hasCachedImportedBodyRootMembers || humanoid is null)
+                return true;
+            if (!humanoid.TryGetCompiledAvatarDefinition(out CompiledHumanoidAvatarDefinition compiled))
+            {
+                PlaybackCapabilityDiagnostic = "A finalized compiled avatar is required for Body/root evaluation.";
+                return false;
+            }
+            if (!ReferenceEquals(_bodyFrameProjectionAvatar, compiled))
+                CacheProjectedRootLoopPose();
+            if (!_bodyFrameProjectionCacheValid)
+                PlaybackCapabilityDiagnostic = "The avatar could not solve the required Body/Feet loop endpoints. Correct the avatar/clip inputs and refresh the definition.";
+            return _bodyFrameProjectionCacheValid;
         }
 
         private void CacheHumanoidLoopPoseMemberCorrections(
@@ -1040,19 +1075,12 @@ namespace XREngine.Components.Animation
         private void CaptureProjectedLoopMuscles(float timeSeconds, Span<float> destination)
         {
             destination.Clear();
-            float weight = float.IsFinite(Weight) ? Math.Clamp(Weight, 0.0f, 1.0f) : 1.0f;
             foreach (AnimationMember member in _animatedMembersSnapshot)
             {
                 if (member.MemberName is not ("SetImportedRawValue" or "SetValue")
                     || member.Animation is not BasePropAnim animation
                     || animation.GetValueGeneric(timeSeconds) is not float amount)
                     continue;
-
-                if (weight < 1.0f)
-                {
-                    float defaultAmount = member.DefaultValue is float defaultValue ? defaultValue : 0.0f;
-                    amount = Interp.Lerp(defaultAmount, amount, weight);
-                }
 
                 RestoreBaselineMethodArguments(member);
                 if (ShouldApplyRuntimeClipRemap(member.MemberName))
@@ -1198,6 +1226,8 @@ namespace XREngine.Components.Animation
             _hasProjectedRootLoopPose = false;
             _bodyLoopPoseCorrection = HumanoidLoopPoseCorrection.Identity;
             _hasBodyLoopPoseCorrection = false;
+            _bodyFrameProjectionAvatar = null;
+            _bodyFrameProjectionCacheValid = true;
             Array.Clear(_loopProjectionStartMuscleValues);
             Array.Clear(_loopProjectionEndMuscleValues);
             _loggedMissingHumanoidForRootMotion = false;
@@ -1428,10 +1458,10 @@ namespace XREngine.Components.Animation
                 InitializeMembers(child, currentObject, animatedMembers, animatedQuaternionTargets);
         }
 
-        private void ApplyAnimatedValues()
+        private bool ApplyAnimatedValues()
         {
             if (Animation is null)
-                return;
+                return false;
 
             using var sample = RuntimeAnimationHostServices.Current.StartProfileScope("AnimationClipComponent.ApplyAnimatedValues");
 
@@ -1439,6 +1469,11 @@ namespace XREngine.Components.Animation
             float weight = Weight;
             bool fullWeight = weight >= 1.0f;
             HumanoidComponent? humanoid = _hasCachedImportedBodyRootMembers ? GetSiblingHumanoid() : null;
+            if (!TryPrepareBodyFrameEvaluationCache(humanoid))
+            {
+                humanoid?.RejectNativeFrameInput();
+                return false;
+            }
             HumanoidIKSolverComponent? ikSolver = EnsureHumanoidAnimationIKSolver();
             ikSolver?.BeginAnimationDrivenGoalFrame();
             bool ownsImportedBodySampleTransaction = humanoid?.BeginImportedBodySampleTransaction(
@@ -1455,8 +1490,15 @@ namespace XREngine.Components.Animation
                     : null,
                 _canonicalProjectionMuscleValues) == true;
 
+            if (humanoid is not null && !ownsImportedBodySampleTransaction)
+            {
+                PlaybackCapabilityDiagnostic = "The Body/root input was rejected or another evaluator owns its transaction.";
+                ikSolver?.RejectAnimationDrivenGoalFrame();
+                return false;
+            }
+
             if (ownsImportedBodySampleTransaction)
-                PublishImportedHumanoidProjectionMuscles(humanoid!, fullWeight, weight);
+                PublishImportedHumanoidProjectionMuscles(humanoid!);
 
             try
             {
@@ -1519,14 +1561,12 @@ namespace XREngine.Components.Animation
                 humanoid.CommitImportedBodySampleTransaction(this);
 
             NormalizeAnimatedQuaternionTargets();
+            return true;
         }
 
-        private void PublishImportedHumanoidProjectionMuscles(
-            HumanoidComponent humanoid,
-            bool fullWeight,
-            float weight)
+        private void PublishImportedHumanoidProjectionMuscles(HumanoidComponent humanoid)
         {
-            if (_rootMotionPolicy?.LoopPose != true)
+            if (_rootMotionPolicy is not { BakePositionYIntoPose: false, PositionYBasis: EImportedHumanoidRootPositionYBasis.Feet })
                 return;
 
             foreach (AnimationMember member in _animatedMembersSnapshot)
@@ -1537,14 +1577,6 @@ namespace XREngine.Components.Animation
                     continue;
 
                 RestoreBaselineMethodArguments(member);
-                if (!fullWeight)
-                {
-                    float defaultAmount = member.DefaultValue is float defaultValue
-                        ? defaultValue
-                        : 0.0f;
-                    amount = Interp.Lerp(defaultAmount, amount, weight);
-                }
-
                 if (ShouldApplyRuntimeClipRemap(member.MemberName))
                     RemapHumanoidMuscle(member, ref amount);
 

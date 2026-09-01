@@ -73,6 +73,8 @@ namespace XREngine.Components.Animation
         public HumanoidPoseAuditQuaternion CharacterRootLocalRotation { get; set; } = HumanoidPoseAuditQuaternion.Identity;
         public HumanoidPoseAuditVector3 CharacterRootWorldPosition { get; set; } = new();
         public HumanoidPoseAuditQuaternion CharacterRootWorldRotation { get; set; } = HumanoidPoseAuditQuaternion.Identity;
+        /// <summary>Optional native body-frame derivation trace for this sample.</summary>
+        public HumanoidPoseAuditBodyFrame? NativeBodyFrame { get; set; }
         public List<HumanoidPoseAuditNamedFloat> Muscles { get; set; } = [];
         public List<HumanoidPoseAuditRawCurveSample> RawCurves { get; set; } = [];
         public List<HumanoidPoseAuditBoneSample> Bones { get; set; } = [];

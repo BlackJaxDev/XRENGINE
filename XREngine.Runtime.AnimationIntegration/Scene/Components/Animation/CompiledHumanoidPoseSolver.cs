@@ -24,17 +24,25 @@ internal static class CompiledHumanoidPoseSolver
             twistDegrees,
             frontBackDegrees,
             leftRightDegrees);
-        localDegrees = ClampMuscleOffset(localDegrees, plan.JointLimit);
 
-        Vector3 jointDegrees = plan.JointLimit.UseDefaultValues
-            ? localDegrees
-            : plan.JointLimit.CenterDegrees + localDegrees;
-        Quaternion joint = Quaternion.Normalize(
-            plan.PreRotation
-            * CreateOrderedRotation(jointDegrees, plan.RotationOrder)
-            * plan.PostRotation);
+        Vector3 centerDegrees = plan.JointLimit.UseDefaultValues
+            ? Vector3.Zero
+            : plan.JointLimit.CenterDegrees;
+        Vector3 jointDegrees = ClampCanonicalDegrees(
+            centerDegrees + localDegrees,
+            plan.JointLimit);
+        Quaternion centerRotation = plan.HasContinuousJointBasis
+            ? CreateTangentRotation(centerDegrees)
+            : CreateOrderedRotation(centerDegrees, plan.RotationOrder);
+        Quaternion jointRotation = plan.HasContinuousJointBasis
+            ? CreateTangentRotation(jointDegrees)
+            : CreateOrderedRotation(jointDegrees, plan.RotationOrder);
         Quaternion result = Quaternion.Normalize(
-            plan.ZeroMuscleRotation * joint * plan.InverseRestJoint);
+            plan.ZeroMuscleRotation
+            * plan.JointBasisToZeroLocal
+            * Quaternion.Inverse(centerRotation)
+            * jointRotation
+            * Quaternion.Inverse(plan.JointBasisToZeroLocal));
         return Quaternion.Dot(result, plan.ZeroMuscleRotation) < 0.0f
             ? new Quaternion(-result.X, -result.Y, -result.Z, -result.W)
             : result;
@@ -69,7 +77,7 @@ internal static class CompiledHumanoidPoseSolver
         float frontBackDegrees,
         float leftRightDegrees)
     {
-        if (!plan.HasAxisMapping)
+        if (plan.HasContinuousJointBasis || !plan.HasAxisMapping)
             return new Vector3(frontBackDegrees, twistDegrees, leftRightDegrees);
 
         BoneAxisMapping mapping = plan.AxisMapping;
@@ -86,16 +94,11 @@ internal static class CompiledHumanoidPoseSolver
         return Quaternion.Normalize(preRotation * CreateOrderedRotation(center, order) * postRotation);
     }
 
-    private static Vector3 ClampMuscleOffset(Vector3 degrees, in CompiledHumanoidJointLimit limit)
-    {
-        if (limit.UseDefaultValues)
-            return degrees;
-
-        return new Vector3(
+    private static Vector3 ClampCanonicalDegrees(Vector3 degrees, in CompiledHumanoidJointLimit limit)
+        => new(
             Math.Clamp(degrees.X, limit.MinimumDegrees.X, limit.MaximumDegrees.X),
             Math.Clamp(degrees.Y, limit.MinimumDegrees.Y, limit.MaximumDegrees.Y),
             Math.Clamp(degrees.Z, limit.MinimumDegrees.Z, limit.MaximumDegrees.Z));
-    }
 
     private static Quaternion CreateOrderedRotation(Vector3 degrees, EHumanoidAvatarRotationOrder order)
     {
@@ -111,6 +114,21 @@ internal static class CompiledHumanoidPoseSolver
             EHumanoidAvatarRotationOrder.ZYX => Quaternion.Normalize(x * y * z),
             _ => Quaternion.Normalize(y * x * z), // ZXY
         };
+    }
+
+    /// <summary>
+    /// Creates Unity's continuous humanoid swing/twist parameterization. Each
+    /// component is a half-angle tangent, so simultaneous channels remain one
+    /// normalized 3D rotation vector rather than acquiring Euler cross terms.
+    /// </summary>
+    private static Quaternion CreateTangentRotation(Vector3 degrees)
+    {
+        const float halfDegreesToRadians = DegreesToRadians * 0.5f;
+        var tangent = new Vector3(
+            MathF.Tan(degrees.X * halfDegreesToRadians),
+            MathF.Tan(degrees.Y * halfDegreesToRadians),
+            MathF.Tan(degrees.Z * halfDegreesToRadians));
+        return Quaternion.Normalize(new Quaternion(tangent, 1.0f));
     }
 
     private static void SetAxis(ref Vector3 vector, int axis, float value)

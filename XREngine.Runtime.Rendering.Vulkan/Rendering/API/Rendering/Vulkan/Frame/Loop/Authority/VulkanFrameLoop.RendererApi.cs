@@ -166,6 +166,11 @@ internal sealed partial class VulkanFrameLoop
             ? swapchainValue : (byte)0;
     }
 
+    private long _deviceWaitIdleCalls;
+
+    /// <summary>Counts actual device-wide waits, including explicit shutdown waits.</summary>
+    internal long DeviceWaitIdleCalls => Interlocked.Read(ref _deviceWaitIdleCalls);
+
     internal void WaitForDeviceIdle()
     {
         ReaderWriterLockSlim admissionGate =
@@ -175,6 +180,7 @@ internal sealed partial class VulkanFrameLoop
         {
             if (!_deviceContext.IsOperational)
                 return;
+            Interlocked.Increment(ref _deviceWaitIdleCalls);
             Result result = _deviceContext.Api.DeviceWaitIdle(_deviceContext.Device);
             if (result == Result.Success)
             {

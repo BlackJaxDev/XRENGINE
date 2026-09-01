@@ -163,8 +163,21 @@ internal sealed partial class VulkanFrameLoop
                 stage >= VulkanFrameLoopInitializationStage.LogicalDevice &&
                 _deviceContext.Device.Handle != 0;
             bool gpuIdleEstablished = hasLogicalDevice && gpuIdleAlreadyEstablished;
-            if (hasLogicalDevice && waitForGpu)
+            // Initialization failures can reach cleanup before the public idle
+            // boundary. They still need native proof before reversing ownership.
+            if (hasLogicalDevice && !_resourceRuntime.Lifetime.Tracker.DeviceLost &&
+                (waitForGpu || !gpuIdleAlreadyEstablished))
                 gpuIdleEstablished = RunCleanupStep("GPU completion", WaitForDeviceIdle, failures);
+
+            // This is deliberately outside RunCleanupStep: lack of native proof
+            // must stop teardown, not collect an exception and free live handles.
+            if (hasLogicalDevice && !_resourceRuntime.Lifetime.Tracker.DeviceLost)
+            {
+                if (!gpuIdleEstablished)
+                    throw new InvalidOperationException("Vulkan teardown requires successful GPU completion; native ownership is retained.");
+                _desktopSwapchainService?.WaitForPresentationReleaseAtShutdown();
+                ImGuiPlatformWindows.WaitForPresentationReleaseAtShutdown(deviceLost: false);
+            }
 
             if (hasLogicalDevice &&
                 stage >= VulkanFrameLoopInitializationStage.DesktopSwapchain &&
@@ -187,6 +200,9 @@ internal sealed partial class VulkanFrameLoop
                 (gpuIdleEstablished || !_deviceContext.StateMachine.IsOperational);
             if (forceRetirementDrain)
                 _resourceRuntime.BeginForcedRetirementDrain();
+
+            if (hasLogicalDevice && _resourceRuntime.Lifetime.Tracker.DeviceLost)
+                ImGuiPlatformWindows.WaitForPresentationReleaseAtShutdown(deviceLost: true);
 
             if (stage >= VulkanFrameLoopInitializationStage.StreamingScheduler)
             {
@@ -357,6 +373,11 @@ internal sealed partial class VulkanFrameLoop
         RunCleanupStep("shared graphics pipelines", () => _ = _resourceRuntime.PipelineManager.DestroySharedGraphicsPipelines(), failures);
         RunCleanupStep("final tracked pipeline layouts", () => _resourceRuntime.DestroyRemainingTrackedPipelineLayouts(Api, _deviceContext.Device), failures);
         RunCleanupStep("shared graphics pipeline libraries", () => _ = _resourceRuntime.PipelineManager.DestroySharedGraphicsPipelineLibraries(), failures);
+
+        // Do not let best-effort cleanup turn a blocked/quarantined retirement
+        // into allocator or device destruction with live native children.
+        ForceFlushAllRetiredResources();
+        RequireRetirementOwnershipSettled();
 
         if (stage >= VulkanFrameLoopInitializationStage.MemoryAllocator)
         {

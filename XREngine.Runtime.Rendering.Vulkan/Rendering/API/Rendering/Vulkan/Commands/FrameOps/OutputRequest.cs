@@ -108,8 +108,12 @@ internal readonly record struct OutputRequest(
 
     internal RenderOutputRequest ToGraphRequest(
         ulong frameId,
+        ERenderOutputReadinessPolicy? readinessPolicyOverride,
+        ERenderOutputWorkClass? workClassOverride,
         out RenderOutputSchedulingDecision decision)
     {
+        bool hasSchedulingOverride = readinessPolicyOverride.HasValue ||
+            workClassOverride.HasValue;
         bool hasSchedulingSnapshot =
             RuntimeRenderingHostServices.Presentation.TryGetRenderOutputSchedulingSnapshot(
                 StableOutputId,
@@ -128,7 +132,16 @@ internal readonly record struct OutputRequest(
             ? scheduling.Request
             : SchedulingRequest.IsDefined
                 ? SchedulingRequest
-            : RenderOutputRequest.CreateDefault(ViewKind, OutputKind, frameId);
+                : RenderOutputRequest.CreateDefault(ViewKind, OutputKind, frameId);
+        if (hasSchedulingOverride)
+        {
+            request = request with
+            {
+                ReadinessPolicy = readinessPolicyOverride ??
+                    request.ReadinessPolicy,
+                WorkClass = workClassOverride ?? request.WorkClass,
+            };
+        }
         RenderOutputTargetDescriptor target = request.Target with
         {
             StableTargetId = StableOutputId,
@@ -148,7 +161,7 @@ internal readonly record struct OutputRequest(
             ConsumerDependencySetId = ConsumerDependencySetId,
             FrameId = frameId,
         };
-        decision = hasMandatoryPresentNowContract
+        decision = hasSchedulingOverride || hasMandatoryPresentNowContract
             ? RuntimeRenderingHostServices.Presentation.PlanRenderOutput(
                 resolved,
                 isDue: true,

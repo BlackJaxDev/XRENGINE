@@ -43,6 +43,35 @@ internal sealed partial class VulkanTextureUploadService
         bool foregroundRequired,
         VulkanTextureUploadManifest? requiredManifest = null)
     {
+        if (!context.IsDeviceOperational)
+            return true;
+
+        // Generic render-job pumps do not guarantee an ambient window owner.
+        // Bind this frozen request to its exact live renderer generation for
+        // the duration of the render-thread-affine preparation slice.
+        using var currentRendererScope =
+            AbstractRenderer.EnterThreadCurrentScope(context.Owner);
+        bool wasActive = context.Owner.Active;
+        context.Owner.Active = true;
+        try
+        {
+            return DrainQueuedUploadPreparationForOwner(
+                context,
+                foregroundRequired,
+                requiredManifest);
+        }
+        finally
+        {
+            context.Owner.Active = wasActive;
+        }
+    }
+
+    private bool DrainQueuedUploadPreparationForOwner(
+        VulkanTextureUploadSchedulingContext context,
+        bool foregroundRequired,
+        VulkanTextureUploadManifest? requiredManifest)
+    {
+
         if (Interlocked.Increment(ref _activePreparationDrainCount) == 1)
             _preparationDrainsIdle.Reset();
         try
@@ -279,10 +308,10 @@ internal sealed partial class VulkanTextureUploadService
             return false;
         }
 
-        AbstractRenderer? currentRenderer = AbstractRenderer.Current;
-        if (currentRenderer is null)
+        if (!context.IsOwnerCurrent)
         {
-            failureReason = "No current renderer owns Vulkan wrapper creation for imported texture upload.";
+            failureReason =
+                "The owning Vulkan renderer is not current for imported texture upload preparation.";
             return false;
         }
 
@@ -290,7 +319,7 @@ internal sealed partial class VulkanTextureUploadService
         // This render-owner-only cold boundary creates/publishes the initial
         // identity wrapper before worker preparation begins; workers never call
         // this factory.
-        using var creationOwner = GenericRenderObject.PushApiWrapperCreationOwner(currentRenderer);
+        using var creationOwner = GenericRenderObject.PushApiWrapperCreationOwner(context.Owner);
         if (context.Resources.CreateAPIRenderObject(texture) is not VkTexture2D vkTexture)
         {
             failureReason = "Vulkan texture wrapper could not be resolved for imported texture upload.";
@@ -602,7 +631,7 @@ internal sealed partial class VulkanTextureUploadService
             Interlocked.Increment(ref s_ownedWorkerPreparationJobs);
             try
             {
-                job.WorkerPrepTask = Task.Run(() =>
+                job.WorkerPrepTask = StartPreparationWorker(() =>
                 {
                     Interlocked.Increment(ref s_activePrepPackages);
                     try
@@ -647,7 +676,7 @@ internal sealed partial class VulkanTextureUploadService
             Interlocked.Increment(ref s_ownedWorkerPreparationJobs);
             try
             {
-                job.WorkerPrepTask = Task.Run(() =>
+                job.WorkerPrepTask = StartPreparationWorker(() =>
                 {
                     Interlocked.Increment(ref s_activePrepPackages);
                     try
@@ -672,6 +701,20 @@ internal sealed partial class VulkanTextureUploadService
             }
         }
     }
+
+    /// <summary>
+    /// Preparation workers use a dedicated, already-bounded lane so queued
+    /// background tasks cannot reserve every admission slot while waiting for
+    /// a throttled shared-pool thread. Background jobs promptly yield when
+    /// PresentNow owns the foreground epoch, releasing a slot for visible work.
+    /// </summary>
+    private static Task<VulkanImportedTextureUploadWorkerResult> StartPreparationWorker(
+        Func<VulkanImportedTextureUploadWorkerResult> worker)
+        => Task.Factory.StartNew(
+            worker,
+            CancellationToken.None,
+            TaskCreationOptions.DenyChildAttach | TaskCreationOptions.LongRunning,
+            TaskScheduler.Default);
 
     private void RemoveInFlightPreparationWorker(VulkanImportedTextureUploadJob job)
     {

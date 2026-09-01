@@ -6,7 +6,8 @@ namespace XREngine.Components.Animation;
 /// <summary>
 /// Per-humanoid reusable scratch state for the native avatar solver. The
 /// workspace is bound when an avatar definition is compiled, so pose evaluation
-/// performs no allocation, hierarchy search, or matrix decomposition.
+/// performs no allocation or hierarchy search. Only the final Hips override is
+/// decomposed, with an exact-reconstruction guard before commit.
 /// </summary>
 internal sealed class HumanoidPoseSolveWorkspace
 {
@@ -17,6 +18,7 @@ internal sealed class HumanoidPoseSolveWorkspace
     private readonly Matrix4x4[] _modelRootMatrices = new Matrix4x4[CompiledHumanoidAvatarDefinition.RoleCount];
     private readonly Vector3[] _semanticDegrees = new Vector3[CompiledHumanoidAvatarDefinition.RoleCount];
     private readonly Vector3[] _translationDof = new Vector3[CompiledHumanoidAvatarDefinition.RoleCount];
+    private readonly Quaternion[] _inheritedLocalRotations = new Quaternion[CompiledHumanoidAvatarDefinition.RoleCount];
     private readonly Quaternion[] _previousCommittedRotations = new Quaternion[CompiledHumanoidAvatarDefinition.RoleCount];
     private readonly bool[] _hasPreviousCommittedRotation = new bool[CompiledHumanoidAvatarDefinition.RoleCount];
 
@@ -26,6 +28,16 @@ internal sealed class HumanoidPoseSolveWorkspace
     private Quaternion[] _previousCommittedAuxiliaryRotations = [];
     private bool[] _hasPreviousCommittedAuxiliaryRotation = [];
     private Matrix4x4[] _auxiliaryLocalMatrices = [];
+    private Matrix4x4 _hipsParent = Matrix4x4.Identity;
+    private Matrix4x4 _inverseHipsParent = Matrix4x4.Identity;
+    private bool _hasBodyAlignment;
+
+    public Matrix4x4 ProvisionalBodyFrame { get; private set; } = Matrix4x4.Identity;
+    public Matrix4x4 RequestedBodyFrame { get; private set; } = Matrix4x4.Identity;
+    public Matrix4x4 CompensatedBodyFrame { get; private set; } = Matrix4x4.Identity;
+    public Matrix4x4 BodyCompensation { get; private set; } = Matrix4x4.Identity;
+    public Matrix4x4 HipsParentInModelRoot => _hipsParent;
+    public string FailureReason { get; private set; } = string.Empty;
 
     public void BindDefinition(CompiledHumanoidAvatarDefinition definition)
     {
@@ -59,6 +71,9 @@ internal sealed class HumanoidPoseSolveWorkspace
         Array.Clear(_semanticDegrees);
         Array.Clear(_translationDof);
         Array.Clear(_auxiliaryTwistDegrees);
+        Array.Fill(_inheritedLocalRotations, Quaternion.Identity);
+        _hasBodyAlignment = false;
+        FailureReason = string.Empty;
         for (int i = 0; i < definition.BoneSolvePlans.Length; i++)
         {
             ref readonly CompiledHumanoidBoneSolvePlan plan = ref definition.BoneSolvePlans[i];
@@ -95,6 +110,11 @@ internal sealed class HumanoidPoseSolveWorkspace
 
     public bool TrySolve(CompiledHumanoidAvatarDefinition definition)
     {
+        if (!definition.TryGetCurrentHipsParent(out _hipsParent, out _inverseHipsParent))
+        {
+            FailureReason = "Hips parent is singular, reflected or non-finite, or a compiled hierarchy/fixed helper changed; refresh the avatar definition";
+            return false;
+        }
         DistributeTwist(definition);
 
         // Auxiliary locals are evaluated first because they are dynamic bridge
@@ -126,6 +146,9 @@ internal sealed class HumanoidPoseSolveWorkspace
                 degrees.X,
                 degrees.Y,
                 degrees.Z);
+            Quaternion inherited = _inheritedLocalRotations[i];
+            if (!inherited.IsIdentity)
+                rotation = Quaternion.Normalize(inherited * rotation);
             Vector3 translation = definition.SolverSettings.HasTranslationDoF
                 ? CompiledHumanoidPoseSolver.EvaluateLocalTranslation(
                     plan,
@@ -159,7 +182,9 @@ internal sealed class HumanoidPoseSolveWorkspace
                     : segment.NeutralLocalTransform;
             }
             Matrix4x4 relative = _localMatrices[roleIndex] * bridge;
-            Matrix4x4 modelRoot = plan.MappedAncestorPlanIndex >= 0
+            Matrix4x4 modelRoot = roleIndex == (int)EHumanoidAvatarBoneRole.Hips
+                ? _localMatrices[roleIndex] * _hipsParent
+                : plan.MappedAncestorPlanIndex >= 0
                 ? relative * _modelRootMatrices[plan.MappedAncestorPlanIndex]
                 : relative;
             if (!IsFinite(modelRoot))
@@ -168,11 +193,70 @@ internal sealed class HumanoidPoseSolveWorkspace
             _modelRootMatrices[roleIndex] = modelRoot;
         }
 
+        if (!definition.BodyDefinition.TryEvaluate(_modelRootMatrices, out Matrix4x4 provisionalBody))
+        {
+            FailureReason = "provisional Body mass center or orientation landmarks are non-finite or degenerate";
+            return false;
+        }
+        ProvisionalBodyFrame = provisionalBody;
+        CompensatedBodyFrame = provisionalBody;
+        RequestedBodyFrame = provisionalBody;
+        BodyCompensation = Matrix4x4.Identity;
+        return true;
+    }
+
+    /// <summary>
+    /// Aligns the complete scratch pose once. For row vectors C = inverse(Bp) * Br
+    /// and Hlocal' = Hmodel * C * inverse(P). Only Hips local changes; every
+    /// descendant receives the same rigid C through hierarchy inheritance.
+    /// </summary>
+    public bool TryAlignBody(CompiledHumanoidAvatarDefinition definition, Matrix4x4 requestedBody)
+    {
+        if (_hasBodyAlignment || !HumanoidBodyFrameMath.IsRigid(requestedBody)
+            || !Matrix4x4.Invert(ProvisionalBodyFrame, out Matrix4x4 inverseProvisional))
+        {
+            FailureReason = "requested Body frame is invalid or Body alignment was applied twice";
+            return false;
+        }
+        Matrix4x4 compensation = inverseProvisional * requestedBody;
+        int hipsIndex = (int)EHumanoidAvatarBoneRole.Hips;
+        Matrix4x4 hipsLocal = _modelRootMatrices[hipsIndex] * compensation * _inverseHipsParent;
+        if (!HumanoidBodyFrameMath.IsRigid(compensation)
+            || !HumanoidBodyFrameMath.TryDecomposeExactTrs(hipsLocal, out Vector3 scale, out Quaternion rotation, out Vector3 translation))
+        {
+            FailureReason = "Body compensation is not an exact finite Hips TRS (nonuniform parent scale may induce shear)";
+            return false;
+        }
+        for (int i = 0; i < definition.BoneSolvePlans.Length; i++)
+            if (definition.BoneSolvePlans[i].Node is not null
+                && !HumanoidBodyFrameMath.IsFinite(_modelRootMatrices[i] * compensation))
+                return false;
+
+        _localScales[hipsIndex] = scale;
+        _localRotations[hipsIndex] = rotation;
+        _localTranslations[hipsIndex] = translation;
+        _localMatrices[hipsIndex] = hipsLocal;
+        for (int i = 0; i < definition.BoneSolvePlans.Length; i++)
+            if (definition.BoneSolvePlans[i].Node is not null)
+                _modelRootMatrices[i] *= compensation;
+
+        if (!definition.BodyDefinition.TryEvaluate(_modelRootMatrices, out Matrix4x4 compensated)
+            || !HumanoidBodyFrameMath.ApproximatelyEqual(compensated, requestedBody, 5e-5f))
+        {
+            FailureReason = "compensated Body frame failed its residual check";
+            return false;
+        }
+        RequestedBodyFrame = requestedBody;
+        CompensatedBodyFrame = compensated;
+        BodyCompensation = compensation;
+        _hasBodyAlignment = true;
         return true;
     }
 
     public void Commit(CompiledHumanoidAvatarDefinition definition)
     {
+        if (!_hasBodyAlignment)
+            throw new InvalidOperationException("A humanoid pose must complete Body alignment before commit.");
         ReadOnlySpan<int> order = definition.ConcreteCommitOrder;
         for (int orderIndex = 0; orderIndex < order.Length; orderIndex++)
         {
@@ -196,7 +280,9 @@ internal sealed class HumanoidPoseSolveWorkspace
             _hasPreviousCommittedRotation[roleIndex] = true;
             _localRotations[roleIndex] = rotation;
 
-            if (plan.Node.GetTransformAs<Transform>(true) is Transform transform)
+            // Preserve the compiled concrete transform identity. Converting a
+            // transform here can allocate and invalidate cached hierarchy guards.
+            if (plan.Node.Transform is Transform transform)
             {
                 transform.Scale = _localScales[roleIndex];
                 transform.SetLocalTranslationRotation(_localTranslations[roleIndex], rotation);
@@ -221,7 +307,7 @@ internal sealed class HumanoidPoseSolveWorkspace
         _previousCommittedAuxiliaryRotations[index] = rotation;
         _hasPreviousCommittedAuxiliaryRotation[index] = true;
         _auxiliaryRotations[index] = rotation;
-        if (auxiliary.Node.GetTransformAs<Transform>(true) is Transform transform)
+        if (auxiliary.Node.Transform is Transform transform)
         {
             transform.Scale = auxiliary.NeutralScale;
             transform.SetLocalTranslationRotation(auxiliary.NeutralTranslation, rotation);
@@ -269,13 +355,33 @@ internal sealed class HumanoidPoseSolveWorkspace
                 chain,
                 chain.ProximalRole,
                 proximalTwist * (1.0f - proximalShare));
-            _semanticDegrees[distalIndex].X = distalTwist * distalShare + proximalRemainder;
+            _semanticDegrees[distalIndex].X = distalTwist * distalShare;
+            AccumulateInheritedTwist(
+                distalIndex,
+                chain.ProximalRemainderAxisInDistalParent,
+                proximalRemainder);
             float distalRemainder = DistributeAuxiliaryTwist(
                 chain,
                 chain.DistalRole,
                 distalTwist * (1.0f - distalShare));
-            _semanticDegrees[endIndex].X += distalRemainder;
+            AccumulateInheritedTwist(
+                endIndex,
+                chain.DistalRemainderAxisInEndParent,
+                distalRemainder);
         }
+    }
+
+    private void AccumulateInheritedTwist(int roleIndex, Vector3 localAxis, float degrees)
+    {
+        if ((uint)roleIndex >= (uint)_inheritedLocalRotations.Length
+            || MathF.Abs(degrees) <= 1e-7f)
+            return;
+
+        Quaternion delta = Quaternion.CreateFromAxisAngle(
+            localAxis,
+            degrees * (MathF.PI / 180.0f));
+        _inheritedLocalRotations[roleIndex] = Quaternion.Normalize(
+            delta * _inheritedLocalRotations[roleIndex]);
     }
 
     private float DistributeAuxiliaryTwist(

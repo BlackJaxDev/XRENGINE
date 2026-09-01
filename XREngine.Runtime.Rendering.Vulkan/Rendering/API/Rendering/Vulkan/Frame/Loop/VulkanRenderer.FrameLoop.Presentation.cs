@@ -41,17 +41,31 @@ namespace XREngine.Rendering.Vulkan
             Result result = dispatch.Result;
             attempt.PresentResult = result;
             attempt.PresentDispatched = dispatch.Dispatched;
-            if (dispatch.Dispatched)
+            bool presentationReleaseEnqueued =
+                dispatch.Dispatched &&
+                VulkanWsiPresentResult.EnqueuesPresentationRelease(result);
+            if (result == Result.ErrorDeviceLost)
             {
                 attempt.TransitionAcquireOwnership(
-                    result == Result.ErrorDeviceLost
-                        ? EVulkanDesktopAcquireOwnership.IndeterminateAfterDeviceLoss
-                        : EVulkanDesktopAcquireOwnership.ResolvedByPresentation);
+                    EVulkanDesktopAcquireOwnership.IndeterminateAfterDeviceLoss);
+            }
+            else if (presentationReleaseEnqueued)
+            {
+                attempt.TransitionAcquireOwnership(
+                    EVulkanDesktopAcquireOwnership.ResolvedByPresentation);
             }
 
-            if (!dispatch.Dispatched &&
+            if (!presentationReleaseEnqueued &&
                 result != Result.ErrorDeviceLost)
             {
+                if (VulkanWsiPresentResult.RequiresOutputQuarantine(
+                        dispatch.Dispatched,
+                        result))
+                {
+                    QuarantineDesktopFrameAdmission(
+                        ref attempt,
+                        $"QueuePresent returned an indeterminate WSI result: {result}.");
+                }
                 RecordDesktopPresentBookkeeping(
                     ref attempt,
                     result,
@@ -59,13 +73,17 @@ namespace XREngine.Rendering.Vulkan
                     hasValidFrameContent: false);
                 ResolveDesktopAcquireBySwapchainRecreation(
                     ref attempt,
-                    "Desktop presentation dispatch was rejected before vkQueuePresent");
+                    "Desktop presentation did not enqueue WSI release work");
                 CompleteDesktopFrameSlot(ref attempt);
                 attempt.AdvanceTo(EDesktopFramePhase.Recovered);
                 attempt.Flow = EDesktopFrameFlow.Completed;
-                throw dispatch.AuxiliaryFailure ??
+                Exception? nonEnqueuePolicyFailure = ApplyDesktopPresentPolicy(
+                    ref attempt,
+                    result,
+                    "QueuePresent");
+                throw dispatch.AuxiliaryFailure ?? nonEnqueuePolicyFailure ??
                     new InvalidOperationException(
-                        "Desktop presentation dispatch was rejected before vkQueuePresent.");
+                        $"Desktop presentation did not enqueue WSI release work ({result}).");
             }
 
             VulkanDesktopPresentOutcome presentOutcome =
@@ -138,6 +156,13 @@ namespace XREngine.Rendering.Vulkan
                 result,
                 presentAccepted,
                 hasValidFrameContent: true);
+            if (presentAccepted)
+            {
+                CaptureResizeReleaseHandoffFromSuccessfulHeldPresent(
+                    ref attempt);
+                TryCompleteResizeReleaseHandoffAfterSuccessorPresent(
+                    ref attempt);
+            }
             if (VulkanFrameDiagnosticsTraceEnabled)
             {
                 Debug.VulkanEvery(
@@ -253,6 +278,7 @@ namespace XREngine.Rendering.Vulkan
                 dispatched = TryPresentToQueueTracked(
                         _deviceContext.PresentQueue,
                         ref presentInfo,
+                        in attempt.PresentReservation,
                         out result,
                         out string failureReason,
                         out Exception? postDispatchFailure,

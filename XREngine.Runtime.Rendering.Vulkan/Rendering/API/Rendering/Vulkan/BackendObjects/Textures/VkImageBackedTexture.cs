@@ -480,6 +480,12 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
     {
         lock (_imageStateLock)
         {
+            if (!allowSynchronousUpload)
+                return TryBuildPublishedDescriptorSnapshotNoLock(
+                    requestedViewType,
+                    requestedAspectMask,
+                    out snapshot);
+
             if (!RefreshPhysicalGroupImageIfStaleNoLock())
             {
                 snapshot = default;
@@ -496,6 +502,82 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
 
             return TryBuildDescriptorSnapshotNoLock(requestedViewType, requestedAspectMask, out snapshot);
         }
+    }
+
+    private bool TryBuildPublishedDescriptorSnapshotNoLock(
+        ImageViewType? requestedViewType,
+        ImageAspectFlags? requestedAspectMask,
+        out VkImageDescriptorSnapshot snapshot)
+    {
+        if (TryResolvePhysicalGroup(
+                ensureAllocated: false,
+                out VulkanPhysicalImageGroup? expectedGroup,
+                out _) &&
+            expectedGroup is not null &&
+            (!ReferenceEquals(expectedGroup, _physicalGroup) ||
+             expectedGroup.Image.Handle != _image.Handle))
+        {
+            snapshot = default;
+            return false;
+        }
+
+        ImageView view = requestedAspectMask switch
+        {
+            ImageAspectFlags.DepthBit => TryGetPublishedAspectViewNoLock(
+                ImageAspectFlags.DepthBit),
+            ImageAspectFlags.StencilBit => TryGetPublishedAspectViewNoLock(
+                ImageAspectFlags.StencilBit),
+            _ => requestedViewType is { } viewType && viewType != DefaultViewType
+                ? TryGetPublishedDescriptorViewNoLock(viewType)
+                : _view,
+        };
+        bool ready = IsDescriptorReadyNoLock() &&
+            view.Handle != 0 &&
+            IsImageViewBackedByCurrentImage(view) &&
+            BackendContext.Resources.Images.IsAvailableForDescriptor(view);
+        snapshot = new(
+            _image,
+            _memory,
+            view,
+            requestedViewType ?? NormalizeImageViewTypeForLayerCount(
+                DefaultViewType,
+                ResolvedArrayLayers),
+            _sampler,
+            ResolvedFormat,
+            AspectFlags,
+            Usage,
+            SampleCount,
+            ResolvedMipLevels,
+            ResolvedArrayLayers,
+            DescriptorGeneration,
+            ResolveTrackedImageLayoutNoLock(),
+            _physicalGroup is not null,
+            ready,
+            _publishedStreamingGeneration);
+        return ready;
+    }
+
+    private ImageView TryGetPublishedAspectViewNoLock(ImageAspectFlags aspect)
+    {
+        AttachmentViewKey key = new(
+            0,
+            ResolvedMipLevels,
+            0,
+            ResolvedArrayLayers,
+            DefaultViewType,
+            aspect);
+        return _attachmentViews.TryGetValue(key, out ImageView cached)
+            ? cached
+            : default;
+    }
+
+    private ImageView TryGetPublishedDescriptorViewNoLock(ImageViewType viewType)
+    {
+        if (!TryBuildDescriptorViewKey(viewType, out AttachmentViewKey key))
+            return default;
+        return _attachmentViews.TryGetValue(key, out ImageView cached)
+            ? cached
+            : default;
     }
 
     /// <inheritdoc />

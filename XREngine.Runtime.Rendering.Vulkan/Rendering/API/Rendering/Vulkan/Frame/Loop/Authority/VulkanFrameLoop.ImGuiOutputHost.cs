@@ -71,6 +71,7 @@ internal sealed partial class VulkanFrameLoop : IVulkanImGuiOutputHost
         SurfaceKHR surface,
         Vector2D<int> framebufferSize,
         uint viewportId,
+        SwapchainKHR oldSwapchain,
         out VulkanImGuiPlatformSwapchainGeneration generation)
     {
         KhrSurface? surfaceApi = _outputRuntime.SurfaceApi;
@@ -89,8 +90,16 @@ internal sealed partial class VulkanFrameLoop : IVulkanImGuiOutputHost
             _outputRuntime.Desktop.ImageFormat,
             _outputRuntime.Desktop.ImageColorSpace,
             viewportId,
+            oldSwapchain,
             out generation);
     }
+
+    VulkanWsiPresentCompletion IVulkanImGuiOutputHost.CreatePlatformPresentCompletion(int imageCount)
+        => new(
+            Api,
+            _deviceContext.Device,
+            imageCount,
+            _outputRuntime.Desktop.Maintenance1Enabled);
 
     VulkanImGuiPlatformWindowCommandResources IVulkanImGuiOutputHost.CreatePlatformCommandResources(
         int frameCount,
@@ -131,11 +140,16 @@ internal sealed partial class VulkanFrameLoop : IVulkanImGuiOutputHost
     Result IVulkanImGuiOutputHost.WaitForPlatformFence(Fence fence)
     {
         TargetOutputSession.ThrowIfVulkanDeviceOperationNotAdmitted("vkWaitForFences.ImGuiViewport");
-        ulong timeout = DesktopWsiOutput.IsInteractiveResizeInProgress ||
-            RuntimeRenderingHostServices.Presentation.IsOpenXRActive
-                ? 0UL
-                : ulong.MaxValue;
-        Result result = Api.WaitForFences(_deviceContext.Device, 1, in fence, true, timeout);
+        Result result = Api.WaitForFences(_deviceContext.Device, 1, in fence, true, 0);
+        if (result == Result.Success)
+            TargetOutputSession.NotifyVulkanFenceCompleted(fence);
+        return result;
+    }
+
+    Result IVulkanImGuiOutputHost.WaitForPlatformFenceAtShutdown(Fence fence)
+    {
+        TargetOutputSession.ThrowIfVulkanDeviceOperationNotAdmitted("vkWaitForFences.ImGuiViewportShutdown");
+        Result result = Api.WaitForFences(_deviceContext.Device, 1, in fence, true, 5_000_000_000UL);
         if (result == Result.Success)
             TargetOutputSession.NotifyVulkanFenceCompleted(fence);
         return result;
@@ -144,15 +158,12 @@ internal sealed partial class VulkanFrameLoop : IVulkanImGuiOutputHost
     unsafe Result IVulkanImGuiOutputHost.AcquirePlatformImage(
         SwapchainKHR swapchain,
         Silk.NET.Vulkan.Semaphore imageAvailable,
+        Fence acquireFence,
         out uint imageIndex)
     {
         uint acquiredImageIndex = 0;
-        ulong timeout = DesktopWsiOutput.IsInteractiveResizeInProgress ||
-            RuntimeRenderingHostServices.Presentation.IsOpenXRActive
-                ? 0UL
-                : ulong.MaxValue;
         Result result = _outputRuntime.Desktop.SwapchainExtension!.AcquireNextImage(
-            _deviceContext.Device, swapchain, timeout, imageAvailable, default, &acquiredImageIndex);
+            _deviceContext.Device, swapchain, 0, imageAvailable, acquireFence, &acquiredImageIndex);
         imageIndex = acquiredImageIndex;
         return result;
     }
@@ -163,8 +174,10 @@ internal sealed partial class VulkanFrameLoop : IVulkanImGuiOutputHost
     Result IVulkanImGuiOutputHost.SubmitPlatformDraw(ref SubmitInfo submitInfo, Fence fence)
         => SubmitImGuiPlatformToGraphicsQueue(ref submitInfo, fence);
 
-    Result IVulkanImGuiOutputHost.PresentPlatformViewport(ref PresentInfoKHR presentInfo)
-        => PresentImGuiPlatformViewport(ref presentInfo);
+    Result IVulkanImGuiOutputHost.PresentPlatformViewport(
+        ref PresentInfoKHR presentInfo,
+        in VulkanWsiPresentReservation reservation)
+        => PresentImGuiPlatformViewport(ref presentInfo, in reservation);
 
     bool IVulkanImGuiOutputHost.RecordPlatformViewport(
         VulkanImGuiDrawBufferResources drawBuffers,
@@ -301,11 +314,16 @@ internal sealed partial class VulkanFrameLoop : IVulkanImGuiOutputHost
         }
     }
 
-    private Result PresentImGuiPlatformViewport(ref PresentInfoKHR presentInfo)
+    private unsafe Result PresentImGuiPlatformViewport(
+        ref PresentInfoKHR presentInfo,
+        in VulkanWsiPresentReservation reservation)
     {
         const string operation = "ImGuiViewport.Present";
         if (!TargetOutputSession.TryAdmitVulkanDeviceOperation(operation, out _))
+        {
+            reservation.Owner?.Commit(in reservation, false, Result.ErrorDeviceLost);
             return Result.ErrorDeviceLost;
+        }
         ReaderWriterLockSlim admissionGate =
             _commandRuntime.CommandBuffers.DeviceQueueAdmissionGate;
         admissionGate.EnterReadLock();
@@ -317,9 +335,46 @@ internal sealed partial class VulkanFrameLoop : IVulkanImGuiOutputHost
                 _deviceContext.StateMachine,
                 _telemetry);
             if (!queueOperation.Acquired)
+            {
+                reservation.Owner?.Commit(in reservation, false, Result.ErrorDeviceLost);
                 return Result.ErrorDeviceLost;
-            result = _outputRuntime.Desktop.SwapchainExtension!.QueuePresent(
-                _deviceContext.PresentQueue, ref presentInfo);
+            }
+            if (reservation.Owner is null)
+                result = _outputRuntime.Desktop.SwapchainExtension!.QueuePresent(
+                    _deviceContext.PresentQueue, ref presentInfo);
+            else
+            {
+                VulkanWsiPresentCompletion completion = reservation.Owner
+                    ?? throw new InvalidOperationException(
+                        "Detached ImGui presentation was not reserved before acquisition.");
+                completion.RequireReservedForDispatch(in reservation);
+                void* previousNext = presentInfo.PNext;
+                SwapchainPresentFenceInfoEXT fenceInfo = new()
+                {
+                    SType = StructureType.SwapchainPresentFenceInfoExt,
+                    SwapchainCount = 1,
+                    PNext = previousNext,
+                };
+                Fence fence = reservation.Fence;
+                fenceInfo.PFences = &fence;
+                if (fence.Handle != 0)
+                    presentInfo.PNext = &fenceInfo;
+                try
+                {
+                    result = _outputRuntime.Desktop.SwapchainExtension!.QueuePresent(
+                        _deviceContext.PresentQueue, ref presentInfo);
+                    completion.Commit(in reservation, true, result);
+                }
+                catch
+                {
+                    completion.Quarantine(in reservation);
+                    throw;
+                }
+                finally
+                {
+                    presentInfo.PNext = previousNext;
+                }
+            }
         }
         finally
         {

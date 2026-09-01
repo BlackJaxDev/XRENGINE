@@ -338,6 +338,62 @@ internal sealed partial class VulkanTextureUploadService
              manifest.TryGetTerminalFailure(out _, out _, out _));
     }
 
+    /// <summary>
+    /// Detects a declared exact-generation ticket whose renderer-affine
+    /// registration callback has not yet placed work in the Vulkan prep queue.
+    /// PresentNow must yield the frame boundary so that callback can run.
+    /// </summary>
+    internal bool HasRequiredUploadRegistrationPending(
+        VulkanTextureUploadManifest manifest)
+    {
+        using VulkanFrameLockScope scope = VulkanFrameLockScope.Enter(
+            _prepQueueSync,
+            EVulkanFrameWaitReason.UploadLock);
+        for (int requiredIndex = 0; requiredIndex < manifest.Count; requiredIndex++)
+        {
+            ref readonly VulkanTextureUploadTicket ticket =
+                ref manifest.GetTicket(requiredIndex);
+            if (!manifest.TryGetState(
+                    ticket,
+                    out EVulkanFrameDependencyState state,
+                    out _,
+                    out _) ||
+                state != EVulkanFrameDependencyState.Declared)
+            {
+                continue;
+            }
+
+            bool queued = false;
+            for (int queueIndex = 0; queueIndex < _pendingPrepJobs.Count; queueIndex++)
+            {
+                if (_pendingPrepJobs[queueIndex].Ticket != ticket)
+                    continue;
+                queued = true;
+                break;
+            }
+            if (!queued)
+                return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Advances one bounded slice of renderer-owned upload work before frame
+    /// acceptance. This is the direct consumer used by the renderer frame hook;
+    /// the scheduled coroutines remain as the inter-frame continuation path.
+    /// </summary>
+    internal void ProcessPendingUploads(
+        VulkanTextureUploadSchedulingContext context)
+    {
+        if (!context.IsDeviceOperational)
+            return;
+
+        context.Resources.Allocations.Staging.EnsureForegroundReserve(
+            context.BackendObjects);
+        _ = DrainQueuedUploadPreparation(context);
+        _ = DrainSubmittedTextureTransfers(context);
+    }
+
     internal static bool TryDescribeActiveUploadWork(out string reason)
     {
         int pendingResidentData = Volatile.Read(ref s_pendingResidentDataPackages);

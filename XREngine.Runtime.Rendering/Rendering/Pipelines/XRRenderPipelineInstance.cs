@@ -130,6 +130,16 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     public IReadOnlyCollection<RenderResourceGeneration> RetiredGenerations => _retiredGenerations;
     internal bool SkippedResizeCatchUpThisFrame
         => _resizeCatchUpSkippedFrameId == RuntimeEngine.Rendering.State.RenderFrameId;
+    /// <summary>
+    /// True only after this pipeline has executed its validated command chain in
+    /// the current render frame. Resize release uses this receipt to avoid
+    /// replacing the displayed swapchain before a complete successor exists.
+    /// </summary>
+    internal bool CompletedCommandChainThisFrame
+        => _lastCompletedCommandChainFrameId == RuntimeEngine.Rendering.State.RenderFrameId;
+    internal bool CompletedCommandChainForViewportThisFrame(XRViewport viewport)
+        => CompletedCommandChainThisFrame &&
+           ReferenceEquals(_lastCompletedCommandChainViewport, viewport);
     private int _destroyCacheQueued;
     private int _lastDescriptorParityGeneration = -1;
     private long _pendingGenerationReadyAfterTimestamp;
@@ -138,6 +148,8 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     private long _failedGenerationRetryAfterTimestamp;
     private string? _lastResourceGenerationFailure;
     private ulong _resizeCatchUpSkippedFrameId = ulong.MaxValue;
+    private ulong _lastCompletedCommandChainFrameId = ulong.MaxValue;
+    private XRViewport? _lastCompletedCommandChainViewport;
 
     /// <summary>
     /// Monotonically increasing counter incremented each time physical GPU resources
@@ -658,6 +670,8 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                 ValidateRenderGraphExecutionAgainstMetadata();
             }
         }
+        _lastCompletedCommandChainViewport = viewport;
+        _lastCompletedCommandChainFrameId = RuntimeEngine.Rendering.State.RenderFrameId;
         return true;
     }
 
@@ -681,23 +695,30 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             Pipeline?.PassMetadata is RenderPassMetadataSnapshot snapshot
                 ? snapshot.RevisionStamp
                 : 0;
+        (int DisplayWidth, int DisplayHeight, int InternalWidth, int InternalHeight) dimensions =
+            viewport is not null
+                ? ResolveBackendReadyFramePackageDimensions(viewport)
+                : (identity.ViewportWidth, identity.ViewportHeight, identity.InternalWidth, identity.InternalHeight);
         bool allowViewportResizeLag =
             viewport?.Window?.IsInteractiveResizeInProgress == true &&
             ActiveGeneration is { } activeGeneration &&
-            identity.ViewportWidth == checked((int)activeGeneration.Key.DisplayWidth) &&
-            identity.ViewportHeight == checked((int)activeGeneration.Key.DisplayHeight) &&
             identity.InternalWidth == checked((int)activeGeneration.Key.InternalWidth) &&
-            identity.InternalHeight == checked((int)activeGeneration.Key.InternalHeight);
+            identity.InternalHeight == checked((int)activeGeneration.Key.InternalHeight) &&
+            dimensions.InternalWidth == identity.InternalWidth &&
+            dimensions.InternalHeight == identity.InternalHeight;
+        // A fully published collection may describe the preceding drag extent.
+        // Only presentation size may lag: internal extents and every generation
+        // still have to match. Camera/UI commands use this callback's live extent.
         BackendReadyFramePackageValidationContext context = new(
             RuntimeRenderingHostServices.FrameTiming.ConsumedCollectGeneration,
             Pipeline?.CommandGeneration ?? 0UL,
             ResourceGeneration,
             descriptorGeneration,
             renderGraphGeneration,
-            viewport?.Width ?? identity.ViewportWidth,
-            viewport?.Height ?? identity.ViewportHeight,
-            viewport?.InternalWidth ?? identity.InternalWidth,
-            viewport?.InternalHeight ?? identity.InternalHeight,
+            dimensions.DisplayWidth,
+            dimensions.DisplayHeight,
+            dimensions.InternalWidth,
+            dimensions.InternalHeight,
             allowViewportResizeLag);
         BackendReadyFramePackageValidationResult result =
             BackendReadyFramePackageValidator.Validate(package, in context);
@@ -914,6 +935,28 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             viewport.Height,
             viewport.InternalWidth,
             viewport.InternalHeight);
+
+    /// <summary>
+    /// Captures package dimensions for this pipeline. Screen-space UI shares the
+    /// scene viewport but owns display-sized allocations, so its internal extent
+    /// must not inherit the scene's upscaling ratio. Its active allocation stays
+    /// fixed during a drag while layout continues in live presentation space.
+    /// </summary>
+    internal (int DisplayWidth, int DisplayHeight, int InternalWidth, int InternalHeight)
+        ResolveBackendReadyFramePackageDimensions(IRuntimeViewportHost viewport)
+    {
+        if (Pipeline?.UsesDisplayResolutionForManagedResources != true)
+            return (viewport.Width, viewport.Height, viewport.InternalWidth, viewport.InternalHeight);
+
+        if (ActiveGeneration is not { } active)
+            return (viewport.Width, viewport.Height, viewport.Width, viewport.Height);
+
+        return (
+            viewport.Width,
+            viewport.Height,
+            checked((int)active.Key.InternalWidth),
+            checked((int)active.Key.InternalHeight));
+    }
 
     private (int DisplayWidth, int DisplayHeight, int InternalWidth, int InternalHeight) ResolvePipelineResourceDimensions(XRViewport viewport)
     {

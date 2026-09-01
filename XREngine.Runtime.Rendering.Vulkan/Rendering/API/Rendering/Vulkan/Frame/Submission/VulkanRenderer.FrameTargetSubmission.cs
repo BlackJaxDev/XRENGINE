@@ -109,6 +109,7 @@ internal sealed partial class VulkanFrameLoop
             frameStart,
             new VulkanFrameOutputIdentity(-1, 0));
         VulkanFrameTrace frameTrace = _frameTelemetry.BeginFrame(rootIdentity);
+        _resourceRuntime.BeginRetirementMeteringFrame(unchecked((long)frameNumber));
         EVulkanFrameOutcome frameOutcome = EVulkanFrameOutcome.Failed;
 
         try

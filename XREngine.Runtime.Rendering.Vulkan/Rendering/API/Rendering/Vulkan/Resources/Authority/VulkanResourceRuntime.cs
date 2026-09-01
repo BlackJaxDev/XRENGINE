@@ -24,6 +24,7 @@ internal sealed partial class VulkanResourceRuntime
     {
         BackendObjects = new VulkanBackendObjectRegistry();
         Descriptors = new VulkanDescriptorManager();
+        Descriptors.ConfigureRetirementMeter(RetirementMeter);
         Allocations = new VulkanAllocationAuthority(
             new VulkanBufferResourceManager(),
             new VulkanImageAllocationTracker(),
@@ -34,6 +35,7 @@ internal sealed partial class VulkanResourceRuntime
         Lifetime = new VulkanLifetimeAuthority(
             new VulkanResourceLifetimeTracker(),
             new VulkanResourceRetirementQueue(frameSlotCount));
+        RegisterRetirementScanQueues();
         NativeDependencies = new VulkanNativeDependencyGraph();
         NativeDependencies.Register(EVulkanNativeDependencyOwner.DescriptorTable, 1UL);
         DescriptorLifetime = new VulkanDescriptorLifetimeAuthority(this, Descriptors, Lifetime);
@@ -66,6 +68,31 @@ internal sealed partial class VulkanResourceRuntime
             frameSlotCount);
         ReadOnlyStoragePreparedMap = new VulkanReadOnlyStoragePreparedMap();
         MaterialTablePreparedMap = new VulkanMaterialTablePreparedMap();
+    }
+
+    private void RegisterRetirementScanQueues()
+    {
+        VulkanResourceRetirementQueue retirement = Lifetime.Retirement;
+        RegisterRetirementScanQueues(EVulkanRetirementWorkClass.Buffer, retirement.Buffers);
+        RegisterRetirementScanQueues(EVulkanRetirementWorkClass.Framebuffer, retirement.Framebuffers);
+        RegisterRetirementScanQueues(EVulkanRetirementWorkClass.Descriptor, retirement.DescriptorPools);
+        RegisterRetirementScanQueues(EVulkanRetirementWorkClass.Descriptor, retirement.DescriptorSets);
+        RegisterRetirementScanQueues(EVulkanRetirementWorkClass.Pipeline, retirement.Pipelines);
+        RegisterRetirementScanQueues(EVulkanRetirementWorkClass.PipelineLayout, retirement.PipelineLayouts);
+        RegisterRetirementScanQueues(EVulkanRetirementWorkClass.PipelineLayout, retirement.DescriptorSetLayouts);
+        RegisterRetirementScanQueues(EVulkanRetirementWorkClass.QueryPool, retirement.QueryPools);
+        RegisterRetirementScanQueues(EVulkanRetirementWorkClass.CommandArtifact, retirement.CommandBuffers);
+        RegisterRetirementScanQueues(EVulkanRetirementWorkClass.CommandArtifact, retirement.CommandPools);
+        RegisterRetirementScanQueues(EVulkanRetirementWorkClass.ImageView, retirement.BufferViews);
+        RegisterRetirementScanQueues(EVulkanRetirementWorkClass.Image, retirement.Images);
+    }
+
+    private void RegisterRetirementScanQueues<TEntry>(
+        EVulkanRetirementWorkClass workClass,
+        List<TEntry>[] queues)
+    {
+        foreach (List<TEntry> queue in queues)
+            RetirementMeter.RegisterScanQueue(workClass, queue);
     }
 
     internal VulkanBackendObjectRegistry BackendObjects { get; }
@@ -1284,27 +1311,34 @@ internal sealed partial class VulkanResourceRuntime
         int frameSlot,
         int maxItems = 8)
     {
+        using var retirementTiming = RetirementMeter.MeasureDrain();
         List<RetiredPipeline> list = Lifetime.Retirement.Pipelines[frameSlot];
-        List<RetiredPipeline> ready = [];
+        List<RetiredPipeline> ready = RetirementDrainScratch.Pipelines;
+        ready.Clear();
+        maxItems = Math.Min(maxItems, ready.Capacity);
         lock (Lifetime.Retirement.SyncRoot)
         {
-            for (int index = 0; index < list.Count && ready.Count < maxItems;)
+            int scans = 0;
+            int scanLimit = RetirementMeter.ReserveScanLimit(EVulkanRetirementWorkClass.Pipeline, list, list.Count);
+            int index = RetirementMeter.GetRotatingScanStart(list, list.Count);
+            while (list.Count > 0 && ready.Count < maxItems && scans < scanLimit)
             {
+                index %= list.Count;
                 RetiredPipeline candidate = list[index];
+                scans++;
                 if (!Lifetime.Tracker.IsRetirementReady(candidate.Ticket))
                 {
-                    index++;
+                    index = (index + 1) % list.Count;
                     continue;
                 }
 
+                if (!RetirementMeter.TryAdmit(EVulkanRetirementWorkClass.Pipeline, 1,
+                        VulkanResourceRetirementQueue.CountPendingNoLock(Lifetime.Retirement.Pipelines)))
+                    break;
                 ready.Add(candidate);
                 list.RemoveAt(index);
-                VulkanResourceRetirementQueue.ReleaseUniqueNoLock(
-                    frameSlot,
-                    candidate.Pipeline.Handle,
-                    Lifetime.Retirement.PipelineHandles,
-                    Lifetime.Retirement.AllPipelineHandles);
             }
+            RetirementMeter.CompleteScan(EVulkanRetirementWorkClass.Pipeline, list, scans, index, list.Count);
         }
 
         int destroyed = 0;
@@ -1312,13 +1346,28 @@ internal sealed partial class VulkanResourceRuntime
         {
             Pipeline pipeline = ready[index].Pipeline;
             if (pipeline.Handle == 0)
+            {
+                lock (Lifetime.Retirement.SyncRoot)
+                    VulkanResourceRetirementQueue.ReleaseUniqueNoLock(
+                        frameSlot,
+                        pipeline.Handle,
+                        Lifetime.Retirement.PipelineHandles,
+                        Lifetime.Retirement.AllPipelineHandles);
                 continue;
+            }
 
             api.DestroyPipeline(device, pipeline, null);
             CompleteSimpleResourceDestruction(
                 ObjectType.Pipeline,
                 pipeline.Handle);
+            lock (Lifetime.Retirement.SyncRoot)
+                VulkanResourceRetirementQueue.ReleaseUniqueNoLock(
+                    frameSlot,
+                    pipeline.Handle,
+                    Lifetime.Retirement.PipelineHandles,
+                    Lifetime.Retirement.AllPipelineHandles);
             destroyed++;
+            RetirementMeter.RecordCompleted(EVulkanRetirementWorkClass.Pipeline);
         }
 
         RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanRetiredResourceDrain(
@@ -1494,43 +1543,62 @@ internal sealed partial class VulkanResourceRuntime
         int frameSlot,
         int maxItems = 8)
     {
+        using var retirementTiming = RetirementMeter.MeasureDrain();
         List<VulkanRetiredPipelineLayout> list = Lifetime.Retirement.PipelineLayouts[frameSlot];
-        List<VulkanRetiredPipelineLayout> ready = [];
+        List<VulkanRetiredPipelineLayout> ready = RetirementDrainScratch.PipelineLayouts;
+        ready.Clear();
+        maxItems = Math.Min(maxItems, ready.Capacity);
         lock (Lifetime.Retirement.SyncRoot)
         {
-            for (int index = 0;
-                 index < list.Count && ready.Count < maxItems;)
+            int scans = 0;
+            int scanLimit = RetirementMeter.ReserveScanLimit(EVulkanRetirementWorkClass.PipelineLayout, list, list.Count);
+            int index = RetirementMeter.GetRotatingScanStart(list, list.Count);
+            while (list.Count > 0 && ready.Count < maxItems && scans < scanLimit)
             {
+                index %= list.Count;
                 VulkanRetiredPipelineLayout candidate = list[index];
+                scans++;
                 if (!Lifetime.Tracker.IsRetirementReady(candidate.Ticket))
                 {
-                    index++;
+                    index = (index + 1) % list.Count;
                     continue;
                 }
 
+                if (!RetirementMeter.TryAdmit(EVulkanRetirementWorkClass.PipelineLayout, 1,
+                        VulkanResourceRetirementQueue.CountPendingNoLock(Lifetime.Retirement.PipelineLayouts)))
+                    break;
                 ready.Add(candidate);
                 list.RemoveAt(index);
-                VulkanResourceRetirementQueue.ReleaseUniqueNoLock(
-                    frameSlot,
-                    candidate.PipelineLayout.Handle,
-                    Lifetime.Retirement.PipelineLayoutHandles,
-                    Lifetime.Retirement.AllPipelineLayoutHandles);
-                Lifetime.LivePipelineLayoutHandles.TryRemove(
-                    candidate.PipelineLayout.Handle,
-                    out _);
             }
+            RetirementMeter.CompleteScan(EVulkanRetirementWorkClass.PipelineLayout, list, scans, index, list.Count);
         }
 
         for (int index = 0; index < ready.Count; index++)
         {
             PipelineLayout layout = ready[index].PipelineLayout;
             if (layout.Handle == 0)
+            {
+                lock (Lifetime.Retirement.SyncRoot)
+                    VulkanResourceRetirementQueue.ReleaseUniqueNoLock(
+                        frameSlot,
+                        layout.Handle,
+                        Lifetime.Retirement.PipelineLayoutHandles,
+                        Lifetime.Retirement.AllPipelineLayoutHandles);
                 continue;
+            }
 
             api.DestroyPipelineLayout(device, layout, null);
             CompleteSimpleResourceDestruction(
                 ObjectType.PipelineLayout,
                 layout.Handle);
+            lock (Lifetime.Retirement.SyncRoot)
+                VulkanResourceRetirementQueue.ReleaseUniqueNoLock(
+                    frameSlot,
+                    layout.Handle,
+                    Lifetime.Retirement.PipelineLayoutHandles,
+                    Lifetime.Retirement.AllPipelineLayoutHandles);
+            Lifetime.LivePipelineLayoutHandles.TryRemove(layout.Handle, out _);
+            RetirementMeter.RecordCompleted(EVulkanRetirementWorkClass.PipelineLayout);
         }
     }
 
@@ -1556,33 +1624,36 @@ internal sealed partial class VulkanResourceRuntime
         int frameSlot,
         int maxItems = 8)
     {
+        using var retirementTiming = RetirementMeter.MeasureDrain();
         List<VulkanRetiredDescriptorSetLayout> list =
             Lifetime.Retirement.DescriptorSetLayouts[frameSlot];
-        List<VulkanRetiredDescriptorSetLayout> ready = [];
+        List<VulkanRetiredDescriptorSetLayout> ready = RetirementDrainScratch.DescriptorSetLayouts;
+        ready.Clear();
+        maxItems = Math.Min(maxItems, ready.Capacity);
         lock (Lifetime.Retirement.SyncRoot)
         {
-            for (int index = 0;
-                 index < list.Count && ready.Count < maxItems;)
+            int scans = 0;
+            int scanLimit = RetirementMeter.ReserveScanLimit(EVulkanRetirementWorkClass.PipelineLayout, list, list.Count);
+            int index = RetirementMeter.GetRotatingScanStart(list, list.Count);
+            while (list.Count > 0 && ready.Count < maxItems && scans < scanLimit)
             {
+                index %= list.Count;
                 VulkanRetiredDescriptorSetLayout candidate =
                     list[index];
+                scans++;
                 if (!Lifetime.Tracker.IsRetirementReady(candidate.Ticket))
                 {
-                    index++;
+                    index = (index + 1) % list.Count;
                     continue;
                 }
 
+                if (!RetirementMeter.TryAdmit(EVulkanRetirementWorkClass.PipelineLayout, 1,
+                        VulkanResourceRetirementQueue.CountPendingNoLock(Lifetime.Retirement.DescriptorSetLayouts)))
+                    break;
                 ready.Add(candidate);
                 list.RemoveAt(index);
-                VulkanResourceRetirementQueue.ReleaseUniqueNoLock(
-                    frameSlot,
-                    candidate.DescriptorSetLayout.Handle,
-                    Lifetime.Retirement.DescriptorSetLayoutHandles,
-                    Lifetime.Retirement.AllDescriptorSetLayoutHandles);
-                Descriptors.LiveDescriptorSetLayoutHandles.TryRemove(
-                    candidate.DescriptorSetLayout.Handle,
-                    out _);
             }
+            RetirementMeter.CompleteScan(EVulkanRetirementWorkClass.PipelineLayout, list, scans, index, list.Count);
         }
 
         for (int index = 0; index < ready.Count; index++)
@@ -1595,6 +1666,12 @@ internal sealed partial class VulkanResourceRuntime
             CompleteSimpleResourceDestruction(
                 ObjectType.DescriptorSetLayout,
                 layout.Handle);
+            lock (Lifetime.Retirement.SyncRoot)
+                VulkanResourceRetirementQueue.ReleaseUniqueNoLock(
+                    frameSlot, layout.Handle, Lifetime.Retirement.DescriptorSetLayoutHandles,
+                    Lifetime.Retirement.AllDescriptorSetLayoutHandles);
+            Descriptors.LiveDescriptorSetLayoutHandles.TryRemove(layout.Handle, out _);
+            RetirementMeter.RecordCompleted(EVulkanRetirementWorkClass.PipelineLayout);
         }
     }
 
@@ -1604,37 +1681,53 @@ internal sealed partial class VulkanResourceRuntime
         int frameSlot,
         int maxItems = 32)
     {
+        using var retirementTiming = RetirementMeter.MeasureDrain();
         List<RetiredQueryPool> list = Lifetime.Retirement.QueryPools[frameSlot];
-        List<RetiredQueryPool> ready = [];
+        List<RetiredQueryPool> ready = RetirementDrainScratch.QueryPools;
+        ready.Clear();
+        maxItems = Math.Min(maxItems, ready.Capacity);
         lock (Lifetime.Retirement.SyncRoot)
         {
-            for (int index = 0;
-                 index < list.Count && ready.Count < maxItems;)
+            int scans = 0;
+            int scanLimit = RetirementMeter.ReserveScanLimit(EVulkanRetirementWorkClass.QueryPool, list, list.Count);
+            int index = RetirementMeter.GetRotatingScanStart(list, list.Count);
+            while (list.Count > 0 && ready.Count < maxItems && scans < scanLimit)
             {
+                index %= list.Count;
                 RetiredQueryPool candidate = list[index];
+                scans++;
                 if (!Lifetime.Tracker.IsRetirementReady(candidate.Ticket))
                 {
-                    index++;
+                    index = (index + 1) % list.Count;
                     continue;
                 }
 
+                if (!RetirementMeter.TryAdmit(EVulkanRetirementWorkClass.QueryPool, 1,
+                        VulkanResourceRetirementQueue.CountPendingNoLock(Lifetime.Retirement.QueryPools)))
+                    break;
                 ready.Add(candidate);
                 list.RemoveAt(index);
-                VulkanResourceRetirementQueue.ReleaseUniqueNoLock(
-                    frameSlot,
-                    candidate.QueryPool.Handle,
-                    Lifetime.Retirement.QueryPoolHandles,
-                    Lifetime.Retirement.AllQueryPoolHandles);
             }
+            RetirementMeter.CompleteScan(EVulkanRetirementWorkClass.QueryPool, list, scans, index, list.Count);
         }
 
         for (int index = 0; index < ready.Count; index++)
         {
             QueryPool queryPool = ready[index].QueryPool;
-            api.DestroyQueryPool(device, queryPool, null);
-            CompleteSimpleResourceDestruction(
-                ObjectType.QueryPool,
-                queryPool.Handle);
+            try
+            {
+                api.DestroyQueryPool(device, queryPool, null);
+                CompleteSimpleResourceDestruction(ObjectType.QueryPool, queryPool.Handle);
+                lock (Lifetime.Retirement.SyncRoot)
+                    VulkanResourceRetirementQueue.ReleaseUniqueNoLock(
+                        frameSlot, queryPool.Handle, Lifetime.Retirement.QueryPoolHandles,
+                        Lifetime.Retirement.AllQueryPoolHandles);
+                RetirementMeter.RecordCompleted(EVulkanRetirementWorkClass.QueryPool);
+            }
+            catch (Exception exception)
+            {
+                QuarantineRetirementFailure(EVulkanRetirementWorkClass.QueryPool, queryPool.Handle, exception);
+            }
         }
 
         RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanRetiredResourceDrain(
@@ -1647,37 +1740,53 @@ internal sealed partial class VulkanResourceRuntime
         int frameSlot,
         int maxItems = 64)
     {
+        using var retirementTiming = RetirementMeter.MeasureDrain();
         List<RetiredBufferView> list = Lifetime.Retirement.BufferViews[frameSlot];
-        List<RetiredBufferView> ready = [];
+        List<RetiredBufferView> ready = RetirementDrainScratch.BufferViews;
+        ready.Clear();
+        maxItems = Math.Min(maxItems, ready.Capacity);
         lock (Lifetime.Retirement.SyncRoot)
         {
-            for (int index = 0;
-                 index < list.Count && ready.Count < maxItems;)
+            int scans = 0;
+            int scanLimit = RetirementMeter.ReserveScanLimit(EVulkanRetirementWorkClass.ImageView, list, list.Count);
+            int index = RetirementMeter.GetRotatingScanStart(list, list.Count);
+            while (list.Count > 0 && ready.Count < maxItems && scans < scanLimit)
             {
+                index %= list.Count;
                 RetiredBufferView candidate = list[index];
+                scans++;
                 if (!Lifetime.Tracker.IsRetirementReady(candidate.Ticket))
                 {
-                    index++;
+                    index = (index + 1) % list.Count;
                     continue;
                 }
 
+                if (!RetirementMeter.TryAdmit(EVulkanRetirementWorkClass.ImageView, 1,
+                        VulkanResourceRetirementQueue.CountPendingNoLock(Lifetime.Retirement.BufferViews)))
+                    break;
                 ready.Add(candidate);
                 list.RemoveAt(index);
-                VulkanResourceRetirementQueue.ReleaseUniqueNoLock(
-                    frameSlot,
-                    candidate.BufferView.Handle,
-                    Lifetime.Retirement.BufferViewHandles,
-                    Lifetime.Retirement.AllBufferViewHandles);
             }
+            RetirementMeter.CompleteScan(EVulkanRetirementWorkClass.ImageView, list, scans, index, list.Count);
         }
 
         for (int index = 0; index < ready.Count; index++)
         {
             BufferView bufferView = ready[index].BufferView;
-            api.DestroyBufferView(device, bufferView, null);
-            CompleteSimpleResourceDestruction(
-                ObjectType.BufferView,
-                bufferView.Handle);
+            try
+            {
+                api.DestroyBufferView(device, bufferView, null);
+                CompleteSimpleResourceDestruction(ObjectType.BufferView, bufferView.Handle);
+                lock (Lifetime.Retirement.SyncRoot)
+                    VulkanResourceRetirementQueue.ReleaseUniqueNoLock(
+                        frameSlot, bufferView.Handle, Lifetime.Retirement.BufferViewHandles,
+                        Lifetime.Retirement.AllBufferViewHandles);
+                RetirementMeter.RecordCompleted(EVulkanRetirementWorkClass.ImageView);
+            }
+            catch (Exception exception)
+            {
+                QuarantineRetirementFailure(EVulkanRetirementWorkClass.ImageView, bufferView.Handle, exception);
+            }
         }
 
         RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanRetiredResourceDrain(
@@ -1697,28 +1806,34 @@ internal sealed partial class VulkanResourceRuntime
         int frameSlot,
         int maxItems = 64)
     {
+        using var retirementTiming = RetirementMeter.MeasureDrain();
         List<RetiredFramebuffer> list = Lifetime.Retirement.Framebuffers[frameSlot];
-        List<RetiredFramebuffer> ready = [];
+        List<RetiredFramebuffer> ready = RetirementDrainScratch.Framebuffers;
+        ready.Clear();
+        maxItems = Math.Min(maxItems, ready.Capacity);
         lock (Lifetime.Retirement.SyncRoot)
         {
-            for (int index = 0;
-                 index < list.Count && ready.Count < maxItems;)
+            int scans = 0;
+            int scanLimit = RetirementMeter.ReserveScanLimit(EVulkanRetirementWorkClass.Framebuffer, list, list.Count);
+            int index = RetirementMeter.GetRotatingScanStart(list, list.Count);
+            while (list.Count > 0 && ready.Count < maxItems && scans < scanLimit)
             {
+                index %= list.Count;
                 RetiredFramebuffer candidate = list[index];
+                scans++;
                 if (!Lifetime.Tracker.IsRetirementReady(candidate.Ticket))
                 {
-                    index++;
+                    index = (index + 1) % list.Count;
                     continue;
                 }
 
+                if (!RetirementMeter.TryAdmit(EVulkanRetirementWorkClass.Framebuffer, 1,
+                        VulkanResourceRetirementQueue.CountPendingNoLock(Lifetime.Retirement.Framebuffers)))
+                    break;
                 ready.Add(candidate);
                 list.RemoveAt(index);
-                VulkanResourceRetirementQueue.ReleaseUniqueNoLock(
-                    frameSlot,
-                    candidate.Framebuffer.Handle,
-                    Lifetime.Retirement.FramebufferHandles,
-                    Lifetime.Retirement.AllFramebufferHandles);
             }
+            RetirementMeter.CompleteScan(EVulkanRetirementWorkClass.Framebuffer, list, scans, index, list.Count);
         }
 
         int destroyed = 0;
@@ -1728,11 +1843,21 @@ internal sealed partial class VulkanResourceRuntime
             if (framebuffer.Handle == 0)
                 continue;
 
-            api.DestroyFramebuffer(device, framebuffer, null);
-            CompleteSimpleResourceDestruction(
-                ObjectType.Framebuffer,
-                framebuffer.Handle);
-            destroyed++;
+            try
+            {
+                api.DestroyFramebuffer(device, framebuffer, null);
+                CompleteSimpleResourceDestruction(ObjectType.Framebuffer, framebuffer.Handle);
+                lock (Lifetime.Retirement.SyncRoot)
+                    VulkanResourceRetirementQueue.ReleaseUniqueNoLock(
+                        frameSlot, framebuffer.Handle, Lifetime.Retirement.FramebufferHandles,
+                        Lifetime.Retirement.AllFramebufferHandles);
+                destroyed++;
+                RetirementMeter.RecordCompleted(EVulkanRetirementWorkClass.Framebuffer);
+            }
+            catch (Exception exception)
+            {
+                QuarantineRetirementFailure(EVulkanRetirementWorkClass.Framebuffer, framebuffer.Handle, exception);
+            }
         }
 
         RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanRetiredResourceDrain(
@@ -1754,38 +1879,35 @@ internal sealed partial class VulkanResourceRuntime
         int frameSlot,
         int maxItems = 256)
     {
+        using var retirementTiming = RetirementMeter.MeasureDrain();
         List<RetiredBuffer> list = Lifetime.Retirement.Buffers[frameSlot];
-        List<RetiredBuffer> ready = [];
+        List<RetiredBuffer> ready = RetirementDrainScratch.Buffers;
+        ready.Clear();
+        maxItems = Math.Min(maxItems, ready.Capacity);
         lock (Lifetime.Retirement.SyncRoot)
         {
-            for (int index = 0;
-                 index < list.Count && ready.Count < maxItems;)
+            int scans = 0;
+            int scanLimit = RetirementMeter.ReserveScanLimit(EVulkanRetirementWorkClass.Buffer, list, list.Count);
+            int index = RetirementMeter.GetRotatingScanStart(list, list.Count);
+            while (list.Count > 0 && ready.Count < maxItems && scans < scanLimit)
             {
+                index %= list.Count;
                 RetiredBuffer candidate = list[index];
+                scans++;
                 if (!Lifetime.Tracker.IsRetirementReady(candidate.Ticket) ||
                     HasUndestroyedBufferView(candidate.Buffer))
                 {
-                    index++;
+                    index = (index + 1) % list.Count;
                     continue;
                 }
 
+                if (!RetirementMeter.TryAdmit(EVulkanRetirementWorkClass.Buffer, 1,
+                        VulkanResourceRetirementQueue.CountPendingNoLock(Lifetime.Retirement.Buffers)))
+                    break;
                 ready.Add(candidate);
                 list.RemoveAt(index);
-                if (candidate.Buffer.Handle != 0)
-                {
-                    Lifetime.Retirement.BufferHandles[frameSlot].Remove(
-                        candidate.Buffer.Handle);
-                    Lifetime.Retirement.AllBufferHandles.Remove(
-                        candidate.Buffer.Handle);
-                }
-                if (candidate.Memory.Handle != 0)
-                {
-                    Lifetime.Retirement.MemoryHandles[frameSlot].Remove(
-                        candidate.Memory.Handle);
-                    Lifetime.Retirement.AllMemoryHandles.Remove(
-                        candidate.Memory.Handle);
-                }
             }
+            RetirementMeter.CompleteScan(EVulkanRetirementWorkClass.Buffer, list, scans, index, list.Count);
         }
 
         // Track the number of destroyed buffers, freed memories, and pooled buffers for telemetry.
@@ -1798,6 +1920,8 @@ internal sealed partial class VulkanResourceRuntime
             RetiredBuffer retired = ready[index];
             Silk.NET.Vulkan.Buffer buffer = retired.Buffer;
             DeviceMemory memory = retired.Memory;
+            try
+            {
             if (buffer.Handle != 0)
             {
                 // VMA suballocations may share one VkDeviceMemory block. The
@@ -1827,6 +1951,7 @@ internal sealed partial class VulkanResourceRuntime
                         out _))
                 {
                     pooledBuffers++;
+                    CompleteRetiredBufferDeduplication(frameSlot, in retired);
                     continue;
                 }
 
@@ -1862,8 +1987,10 @@ internal sealed partial class VulkanResourceRuntime
                             ObjectType.Buffer,
                             buffer.Handle);
                         destroyedBuffers++;
+                        RetirementMeter.RecordCompleted(EVulkanRetirementWorkClass.Buffer);
                         freedMemories++;
                     }
+                    CompleteRetiredBufferDeduplication(frameSlot, in retired);
                     continue;
                 }
 
@@ -1884,7 +2011,9 @@ internal sealed partial class VulkanResourceRuntime
                             ObjectType.Buffer,
                             buffer.Handle);
                         destroyedBuffers++;
+                        RetirementMeter.RecordCompleted(EVulkanRetirementWorkClass.Buffer);
                     }
+                    CompleteRetiredBufferDeduplication(frameSlot, in retired);
                     continue;
                 }
 
@@ -1896,6 +2025,7 @@ internal sealed partial class VulkanResourceRuntime
                         ObjectType.Buffer,
                         buffer.Handle);
                     destroyedBuffers++;
+                    RetirementMeter.RecordCompleted(EVulkanRetirementWorkClass.Buffer);
                 }
             }
 
@@ -1904,6 +2034,15 @@ internal sealed partial class VulkanResourceRuntime
             {
                 api.FreeMemory(device, memory, null);
                 freedMemories++;
+            }
+            CompleteRetiredBufferDeduplication(frameSlot, in retired);
+            }
+            catch (Exception exception)
+            {
+                // A native call may have crossed its side-effect boundary before
+                // reporting a host exception. Retain the dedup reservation and
+                // quarantine it rather than risking a second destroy.
+                QuarantineRetirementFailure(EVulkanRetirementWorkClass.Buffer, buffer.Handle, exception);
             }
         }
 
@@ -1950,16 +2089,6 @@ internal sealed partial class VulkanResourceRuntime
                         candidate = current;
                         sourceSlot = frameSlot;
                         list.RemoveAt(index);
-                        if (candidate.Buffer.Handle != 0)
-                        {
-                            Lifetime.Retirement.BufferHandles[frameSlot].Remove(candidate.Buffer.Handle);
-                            Lifetime.Retirement.AllBufferHandles.Remove(candidate.Buffer.Handle);
-                        }
-                        if (candidate.Memory.Handle != 0)
-                        {
-                            Lifetime.Retirement.MemoryHandles[frameSlot].Remove(candidate.Memory.Handle);
-                            Lifetime.Retirement.AllMemoryHandles.Remove(candidate.Memory.Handle);
-                        }
                         break;
                     }
                 }
@@ -1983,6 +2112,7 @@ internal sealed partial class VulkanResourceRuntime
                     out _))
             {
                 recycled++;
+                CompleteRetiredBufferDeduplication(sourceSlot, in candidate);
                 continue;
             }
 
@@ -1992,16 +2122,6 @@ internal sealed partial class VulkanResourceRuntime
             lock (Lifetime.Retirement.SyncRoot)
             {
                 Lifetime.Retirement.Buffers[sourceSlot].Add(candidate);
-                if (candidate.Buffer.Handle != 0)
-                {
-                    Lifetime.Retirement.BufferHandles[sourceSlot].Add(candidate.Buffer.Handle);
-                    Lifetime.Retirement.AllBufferHandles.Add(candidate.Buffer.Handle);
-                }
-                if (candidate.Memory.Handle != 0)
-                {
-                    Lifetime.Retirement.MemoryHandles[sourceSlot].Add(candidate.Memory.Handle);
-                    Lifetime.Retirement.AllMemoryHandles.Add(candidate.Memory.Handle);
-                }
             }
             break;
         }
@@ -2022,25 +2142,41 @@ internal sealed partial class VulkanResourceRuntime
         int frameSlot,
         int maxItems = 64)
     {
+        using var retirementTiming = RetirementMeter.MeasureDrain();
         List<RetiredImageResourceEntry> list =
             Lifetime.Retirement.Images[frameSlot];
-        List<RetiredImageResourceEntry> ready = [];
+        List<RetiredImageResourceEntry> ready = RetirementDrainScratch.Images;
+        ready.Clear();
+        maxItems = Math.Min(maxItems, ready.Capacity);
         lock (Lifetime.Retirement.SyncRoot)
         {
-            for (int index = 0;
-                 index < list.Count && ready.Count < maxItems;)
+            int scans = 0;
+            int scanLimit = RetirementMeter.ReserveScanLimit(EVulkanRetirementWorkClass.Image, list, list.Count);
+            int index = RetirementMeter.GetRotatingScanStart(list, list.Count);
+            while (list.Count > 0 && ready.Count < maxItems && scans < scanLimit)
             {
+                index %= list.Count;
                 RetiredImageResourceEntry candidate = list[index];
+                scans++;
                 if (!Lifetime.Tracker.IsRetirementReady(candidate.Ticket) ||
                     HasUndestroyedImageDependency(candidate.Resources))
                 {
-                    index++;
+                    index = (index + 1) % list.Count;
                     continue;
                 }
 
+                int imageCost = candidate.Resources.Image.Handle == 0 ? 0 : 1;
+                int samplerCost = candidate.Resources.Sampler.Handle == 0 ? 0 : 1;
+                int viewCost = candidate.Resources.PrimaryView.Handle == 0 ? 0 : 1;
+                if (candidate.Resources.AttachmentViews is { } attachmentViews)
+                    viewCost += attachmentViews.Length;
+                if (!RetirementMeter.TryAdmitImageBundle(imageCost, viewCost, samplerCost,
+                        VulkanResourceRetirementQueue.CountPendingNoLock(Lifetime.Retirement.Images)))
+                    break;
                 ready.Add(candidate);
                 list.RemoveAt(index);
             }
+            RetirementMeter.CompleteScan(EVulkanRetirementWorkClass.Image, list, scans, index, list.Count);
         }
 
         int destroyedImages = 0;
@@ -2052,6 +2188,8 @@ internal sealed partial class VulkanResourceRuntime
         {
             RetiredImageResourceEntry entry = ready[index];
             RetiredImageResources resources = entry.Resources;
+            try
+            {
             bool canDestroyImage = resources.Image.Handle != 0 &&
                 CanDestroyResourceGeneration(
                     ObjectType.Image,
@@ -2083,6 +2221,7 @@ internal sealed partial class VulkanResourceRuntime
                     resources.Sampler.Handle);
                 Descriptors.UnregisterLiveSampler(resources.Sampler);
                 destroyedSamplers++;
+                RetirementMeter.RecordCompleted(EVulkanRetirementWorkClass.Sampler);
             }
 
             if (TryTakeImageViewGeneration(
@@ -2094,6 +2233,7 @@ internal sealed partial class VulkanResourceRuntime
                     ObjectType.ImageView,
                     resources.PrimaryView.Handle);
                 destroyedViews++;
+                RetirementMeter.RecordCompleted(EVulkanRetirementWorkClass.ImageView);
             }
 
             if (resources.AttachmentViews is not null)
@@ -2115,6 +2255,7 @@ internal sealed partial class VulkanResourceRuntime
                         ObjectType.ImageView,
                         view.Handle);
                     destroyedViews++;
+                    RetirementMeter.RecordCompleted(EVulkanRetirementWorkClass.ImageView);
                 }
             }
 
@@ -2128,6 +2269,7 @@ internal sealed partial class VulkanResourceRuntime
                     resources.Image.Handle,
                     out _);
                 destroyedImages++;
+                RetirementMeter.RecordCompleted(EVulkanRetirementWorkClass.Image);
                 if (resources.AllocatedVRAMBytes > 0)
                     destroyedImageBytes += resources.AllocatedVRAMBytes;
             }
@@ -2144,6 +2286,13 @@ internal sealed partial class VulkanResourceRuntime
             }
 
             CompleteRetiredImageDeduplication(frameSlot, in entry);
+            }
+            catch (Exception exception)
+            {
+                // Keep the dedup reservation after a native side-effect may
+                // have happened. Retrying could destroy a reused handle.
+                QuarantineRetirementFailure(EVulkanRetirementWorkClass.Image, resources.Image.Handle, exception);
+            }
         }
 
         RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanRetiredResourceDrain(
@@ -2441,28 +2590,34 @@ internal sealed partial class VulkanResourceRuntime
         int frameSlot,
         int maxItems = 64)
     {
+        using var retirementTiming = RetirementMeter.MeasureDrain();
         List<RetiredDescriptorSet> list = Lifetime.Retirement.DescriptorSets[frameSlot];
-        List<RetiredDescriptorSet> ready = [];
+        List<RetiredDescriptorSet> ready = RetirementDrainScratch.DescriptorSets;
+        ready.Clear();
+        maxItems = Math.Min(maxItems, ready.Capacity);
         lock (Lifetime.Retirement.SyncRoot)
         {
-            for (int index = 0;
-                 index < list.Count && ready.Count < maxItems;)
+            int scans = 0;
+            int scanLimit = RetirementMeter.ReserveScanLimit(EVulkanRetirementWorkClass.Descriptor, list, list.Count);
+            int index = RetirementMeter.GetRotatingScanStart(list, list.Count);
+            while (list.Count > 0 && ready.Count < maxItems && scans < scanLimit)
             {
+                index %= list.Count;
                 RetiredDescriptorSet candidate = list[index];
+                scans++;
                 if (!Lifetime.Tracker.IsRetirementReady(candidate.Ticket))
                 {
-                    index++;
+                    index = (index + 1) % list.Count;
                     continue;
                 }
 
+                if (!RetirementMeter.TryAdmit(EVulkanRetirementWorkClass.Descriptor, 1,
+                        VulkanResourceRetirementQueue.CountPendingNoLock(Lifetime.Retirement.DescriptorSets)))
+                    break;
                 ready.Add(candidate);
                 list.RemoveAt(index);
-                VulkanResourceRetirementQueue.ReleaseUniqueNoLock(
-                    frameSlot,
-                    candidate.DescriptorSet.Handle,
-                    Lifetime.Retirement.DescriptorSetHandles,
-                    Lifetime.Retirement.AllDescriptorSetHandles);
             }
+            RetirementMeter.CompleteScan(EVulkanRetirementWorkClass.Descriptor, list, scans, index, list.Count);
         }
 
         int destroyed = 0;
@@ -2477,23 +2632,24 @@ internal sealed partial class VulkanResourceRuntime
                 &descriptorSet);
             if (result != Result.Success)
             {
-                lock (Lifetime.Retirement.SyncRoot)
-                {
-                    VulkanResourceRetirementQueue.TryEnqueueUniqueNoLock(
-                        frameSlot,
-                        entry.DescriptorSet.Handle,
-                        entry,
-                        Lifetime.Retirement.DescriptorSets,
-                        Lifetime.Retirement.DescriptorSetHandles,
-                        Lifetime.Retirement.AllDescriptorSetHandles);
-                }
+                QuarantineRetirementFailure(
+                    EVulkanRetirementWorkClass.Descriptor,
+                    entry.DescriptorSet.Handle,
+                    new InvalidOperationException($"FreeDescriptorSets failed with {result}."));
                 continue;
             }
 
             CompleteSimpleResourceDestruction(
                 ObjectType.DescriptorSet,
                 entry.DescriptorSet.Handle);
+            lock (Lifetime.Retirement.SyncRoot)
+                VulkanResourceRetirementQueue.ReleaseUniqueNoLock(
+                    frameSlot,
+                    entry.DescriptorSet.Handle,
+                    Lifetime.Retirement.DescriptorSetHandles,
+                    Lifetime.Retirement.AllDescriptorSetHandles);
             destroyed++;
+            RetirementMeter.RecordCompleted(EVulkanRetirementWorkClass.Descriptor);
         }
 
         RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanRetiredResourceDrain(
@@ -2506,28 +2662,34 @@ internal sealed partial class VulkanResourceRuntime
         int frameSlot,
         int maxItems = 8)
     {
+        using var retirementTiming = RetirementMeter.MeasureDrain();
         List<RetiredDescriptorPool> list = Lifetime.Retirement.DescriptorPools[frameSlot];
-        List<RetiredDescriptorPool> ready = [];
+        List<RetiredDescriptorPool> ready = RetirementDrainScratch.DescriptorPools;
+        ready.Clear();
+        maxItems = Math.Min(maxItems, ready.Capacity);
         lock (Lifetime.Retirement.SyncRoot)
         {
-            for (int index = 0;
-                 index < list.Count && ready.Count < maxItems;)
+            int scans = 0;
+            int scanLimit = RetirementMeter.ReserveScanLimit(EVulkanRetirementWorkClass.Descriptor, list, list.Count);
+            int index = RetirementMeter.GetRotatingScanStart(list, list.Count);
+            while (list.Count > 0 && ready.Count < maxItems && scans < scanLimit)
             {
+                index %= list.Count;
                 RetiredDescriptorPool candidate = list[index];
+                scans++;
                 if (!Lifetime.Tracker.IsRetirementReady(candidate.Ticket))
                 {
-                    index++;
+                    index = (index + 1) % list.Count;
                     continue;
                 }
 
+                if (!RetirementMeter.TryAdmit(EVulkanRetirementWorkClass.Descriptor, 1,
+                        VulkanResourceRetirementQueue.CountPendingNoLock(Lifetime.Retirement.DescriptorPools)))
+                    break;
                 ready.Add(candidate);
                 list.RemoveAt(index);
-                VulkanResourceRetirementQueue.ReleaseUniqueNoLock(
-                    frameSlot,
-                    candidate.DescriptorPool.Handle,
-                    Lifetime.Retirement.DescriptorPoolHandles,
-                    Lifetime.Retirement.AllDescriptorPoolHandles);
             }
+            RetirementMeter.CompleteScan(EVulkanRetirementWorkClass.Descriptor, list, scans, index, list.Count);
         }
 
         int destroyed = 0;
@@ -2541,8 +2703,15 @@ internal sealed partial class VulkanResourceRuntime
             CompleteSimpleResourceDestruction(
                 ObjectType.DescriptorPool,
                 pool.Handle);
+            lock (Lifetime.Retirement.SyncRoot)
+                VulkanResourceRetirementQueue.ReleaseUniqueNoLock(
+                    frameSlot,
+                    pool.Handle,
+                    Lifetime.Retirement.DescriptorPoolHandles,
+                    Lifetime.Retirement.AllDescriptorPoolHandles);
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorPoolDestroy();
             destroyed++;
+            RetirementMeter.RecordCompleted(EVulkanRetirementWorkClass.Descriptor);
         }
 
         RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanRetiredResourceDrain(

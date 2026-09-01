@@ -1232,6 +1232,7 @@ namespace XREngine.Rendering
             long collectGeneration = _renderPipeline.AssignedPipeline is ShadowRenderPipeline
                 ? BackendReadyFramePackageIdentity.RetainedCollectGeneration
                 : RuntimeRenderingHostServices.FrameTiming.RequestedCollectGeneration;
+            var dimensions = _renderPipeline.ResolveBackendReadyFramePackageDimensions(this);
             BackendReadyFramePackageIdentity identity = new(
                 RuntimeRenderingHostServices.FrameTiming.CollectFrameId,
                 collectGeneration,
@@ -1239,16 +1240,16 @@ namespace XREngine.Rendering
                 _renderPipeline.ResourceGeneration,
                 descriptorGeneration,
                 ResolveRenderGraphGeneration(_renderPipeline.Pipeline?.PassMetadata),
-                Width,
-                Height,
-                InternalWidth,
-                InternalHeight);
+                dimensions.DisplayWidth,
+                dimensions.DisplayHeight,
+                dimensions.InternalWidth,
+                dimensions.InternalHeight);
             commandCollection.PrepareBackendReadyFramePackage(
                 identity,
                 World?.VisualScene?.GPUCommands,
                 Camera,
-                InternalWidth,
-                InternalHeight);
+                dimensions.InternalWidth,
+                dimensions.InternalHeight);
         }
 
         /// <summary>
@@ -2260,6 +2261,24 @@ namespace XREngine.Rendering
             }
 
             return fallback;
+        }
+
+        /// <summary>Whether this viewport authored a complete scene transaction this frame.</summary>
+        internal bool CompletedSceneCommandChainThisFrame
+            => !Suppress3DSceneRendering &&
+               _renderPipeline.CompletedCommandChainForViewportThisFrame(this);
+
+        /// <summary>
+        /// Returns the active screen-space UI already bound to this viewport's camera. This is a
+        /// backend-preflight query, so it deliberately avoids fallback discovery and rebinding.
+        /// </summary>
+        internal bool TryGetActiveScreenSpaceUserInterface(
+            out IRuntimeScreenSpaceUserInterface? userInterface)
+        {
+            userInterface = AllowUIRender
+                ? CameraComponent?.GetUserInterfaceOverlay()
+                : null;
+            return userInterface is { IsActive: true, IsScreenSpace: true };
         }
 
         /// <summary>

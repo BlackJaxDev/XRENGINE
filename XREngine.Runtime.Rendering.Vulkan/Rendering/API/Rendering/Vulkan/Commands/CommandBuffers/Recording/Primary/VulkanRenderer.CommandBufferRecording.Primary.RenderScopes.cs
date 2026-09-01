@@ -75,7 +75,8 @@ namespace XREngine.Rendering.Vulkan
                         recordingState.CommandBuffer,
                         recordingState.RenderScope.Target,
                         recordingState.RenderScope.AttachmentSignature,
-                        beginRendering: false);
+                        beginRendering: false,
+                        recordingState.Policy.AllowSynchronousResourceUploads);
 
                     if (vkFbo is not null)
                     {
@@ -487,7 +488,16 @@ namespace XREngine.Rendering.Vulkan
             }
 
             var vkFrameBuffer = GenericToAPI<VkFrameBuffer>(target) ?? throw new InvalidOperationException("Failed to resolve Vulkan framebuffer for target.");
-            vkFrameBuffer.EnsureCurrent();
+            if (recordingState.Policy.AllowSynchronousResourceUploads)
+            {
+                vkFrameBuffer.EnsureCurrent();
+            }
+            else if (!vkFrameBuffer.TryCaptureRecordedRenderTargetSnapshot(
+                         out _))
+            {
+                throw new VulkanPlanPreconditionException(
+                    "The modal recording target no longer has a complete published native attachment tuple.");
+            }
 
             string fboName = string.IsNullOrWhiteSpace(target.Name)
                 ? $"FBO[{target.GetHashCode()}]"
@@ -513,7 +523,8 @@ namespace XREngine.Rendering.Vulkan
             ImageLayout[]? trackedLayouts = QueryCurrentAttachmentLayouts(
                 target,
                 vkFrameBuffer,
-                recordingState.CommandBuffer);
+                recordingState.CommandBuffer,
+                recordingState.Policy.AllowSynchronousResourceUploads);
             // Update the tracking dict so that subsequent users see the
             // same layouts we resolved here.
             if (trackedLayouts is not null)
@@ -583,7 +594,8 @@ namespace XREngine.Rendering.Vulkan
                     recordingState.CommandBuffer,
                     target,
                     fboSignature,
-                    beginRendering: true);
+                    beginRendering: true,
+                    recordingState.Policy.AllowSynchronousResourceUploads);
                 uint dynamicAttachmentCountFbo = Math.Max((uint)fboSignature.Length, 1u);
                 Span<ClearValue> dynamicClearValuesFbo =
                     stackalloc ClearValue[checked((int)dynamicAttachmentCountFbo)];
@@ -829,7 +841,8 @@ namespace XREngine.Rendering.Vulkan
                 recordingState.CommandBuffer,
                 target,
                 fboSignature,
-                beginRendering: true);
+                beginRendering: true,
+                recordingState.Policy.AllowSynchronousResourceUploads);
             fboSignature = CreateLegacyRenderPassSignature(fboSignature);
             RenderPass passRenderPass = GetOrCreateFrameBufferRenderPass(fboSignature);
 

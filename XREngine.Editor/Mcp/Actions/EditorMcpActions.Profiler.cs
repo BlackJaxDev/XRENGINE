@@ -1187,6 +1187,7 @@ namespace XREngine.Editor.Mcp
                         },
                         retired_resources = new
                         {
+                            metering = activeVulkanRenderer?.CaptureRetirementDiagnostics(),
                             pending_count = VulkanStats.VulkanLifetimePendingRetirementCount,
                             oldest_pending_age_ms = VulkanStats.VulkanLifetimeOldestPendingRetirementAgeMilliseconds,
                             plan_replacements = VulkanStats.VulkanRetiredResourcePlanReplacements,

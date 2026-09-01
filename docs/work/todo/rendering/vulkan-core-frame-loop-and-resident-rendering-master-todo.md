@@ -1,6 +1,6 @@
 # Vulkan Core Frame Loop, Resident Rendering, and High-Refresh Master TODO
 
-Last Updated: 2026-08-29
+Last Updated: 2026-08-31
 Owner: Rendering / Vulkan / Frame Scheduling / Core Architecture  
 Status: Active Master Implementation Tracker (Supersedes Present-Now Readiness, Core Hardening, Frame-Loop Stability, and Resident Draw Streams)  
 Primary Target: Stable desktop rendering above 100 Hz, with a 120 Hz promotion gate and a 144 Hz stretch gate  
@@ -616,13 +616,107 @@ claimed. Details and run guides:
 - [x] Phase 5.2 prerequisite: retain immutable read-only storage publications in captured operations and lower them into exact frame-slot/arena epochs; include slice identity in descriptor reuse and release capture ownership on retirement.
 - [x] Phase 5.2 prerequisite: preserve retained capture ownership across scoped program binding resets, defer indirect descriptor lowering until prepared storage authority exists, and pass the acquired frame-data slot explicitly into indirect recording.
 - [x] Phase 5.2 prerequisite: publish query capabilities to the live resource authority and recycle delayed timestamp pairs only after completion or proven unrecorded/abandoned epochs; expose bounded saturation and rejection diagnostics.
-- [ ] Meter destruction by resource class (images/views, buffers, pipelines, framebuffers, samplers, descriptors, command artifacts, callbacks) with per-frame caps and a reported high-water memory-safety drain policy.
-- [ ] Destroy retired resources outside global retirement locks.
-- [ ] Retire resources only after all relevant queue timeline values or fences complete.
-- [ ] Asynchronous swapchain-generation retirement: coalesce resize events, create replacement generation from newest extent, and tombstone old generations.
-- [ ] Keep one command pool per recording lane/frame slot, reset it only after exact completion, allocate no warmed command buffers, and preserve the separate dynamic ImGui overlay command buffer.
-- [ ] Bound concurrent old/new swapchain generations, inherit the strongest prior completion authority for reused mapped frame-data storage, and retire secondary ImGui swapchains independently.
-- [ ] Zero normal-frame `vkDeviceWaitIdle` during resize, minimize, restore, or swapchain recreation.
+- [x] Meter destruction by resource class (images/views, buffers, pipelines, framebuffers, samplers, descriptors, command artifacts, callbacks) with per-frame caps and a reported high-water memory-safety drain policy.
+- [x] Destroy retired resources outside global retirement locks.
+- [x] Retire resources only after all relevant queue timeline values or fences complete.
+- [x] Asynchronous swapchain-generation retirement: coalesce resize events, create replacement generation from newest extent, and tombstone old generations.
+- [x] Keep one command pool per recording lane/frame slot, reset it only after exact completion, allocate no warmed command buffers, and preserve the separate dynamic ImGui overlay command buffer.
+- [x] Bound concurrent old/new swapchain generations, inherit the strongest prior completion authority for reused mapped frame-data storage, and retire secondary ImGui swapchains independently.
+- [x] Zero normal-frame `vkDeviceWaitIdle` during resize, minimize, restore, or swapchain recreation.
+
+2026-08-31 implementation closeout: shared per-class
+retirement budgets, exact queue/WSI proof, bounded asynchronous generations,
+independent detached ImGui retirement, and warmed command reuse are implemented.
+Live validation reaches 25 desktop generations with no normal-frame device-idle
+calls or native validation errors; a 1,559-frame steady interval allocates no
+command buffers. Cumulative retirement p99 is 0.084 ms through resize/restore
+and 0.052–0.306 ms across four streaming children, below this cohort's 0.5 ms
+stage target. Material, pipeline, native-buffer lifetime, and warmed allocation
+regressions pass. This closes lifecycle acceptance, not Phase 6 XR or Phase 8
+performance promotion; separate imported-scene/Advanced limitations are recorded
+in the [implementation and validation evidence](../../investigations/rendering/vulkan-phase54-retirement-and-swapchain-lifecycle.md).
+
+Follow-up validation correction (2026-08-31): the lifecycle cohort above used
+discrete window resizes, not a held Win32 sizing drag. A user-reported live
+relayout regression was reproduced and repaired. Actual held width/height
+drags now render fresh scene/UI work in `DefaultRenderPipeline` (42 operations,
+one compute dispatch, no package rejection). The final rebuilt cohort reports
+zero native validation errors/device-idle calls and retirement p99 0.087 ms;
+see [live resize investigation](../../investigations/rendering/vulkan-live-window-resize-relayout.md).
+
+Release-continuity attempt (2026-08-31): recording now honors the frame's
+latched interactive state, and a generation-explicit handoff retains the last
+complete held presentation until a complete authored successor is presented.
+Semantic-empty, clear-only, overlay-only, stale, and superseded successors cannot
+replace it. Two actual held drags preserve the full ImGui layout and 3D scene at
+mouse-up; the acceptance interval has no fresh full-surface clear, native VUID,
+validation error, or device-idle call. Subsequent user testing showed that these
+static checkpoints hid a 17- to 53-second pre-acquire presentation freeze, so
+this did not close release continuity. The same user run exposed undefined
+overlay accumulation when Advanced has no authored scene writer and a terminal
+required-upload failure after switching to Debug Opaque.
+
+**Phase 5.4 live acceptance and therefore the Phase 5 closeout are reopened.**
+The lifecycle implementation rows above remain complete; these cross-pipeline
+presentation gates remain:
+
+- [ ] Accept the implemented release-continuity path: keep the last authored
+  scene generation alive, replay it beneath current ImGui/FPS overlays, and
+  complete the handoff only after an authored successor presents. Structural
+  leases now pin the exact image/view/sampler generation, but the final live
+  cross-pipeline cohort has not passed.
+- [ ] Accept the implemented Advanced-path corrections: the indirect draw/range
+  capacity is now 65,536 and every overlay/recovery presentation has either an
+  authored replay or a defined clear base. Confirm that held resize no longer
+  accumulates ImGui or dynamic-text history.
+- [ ] Accept required-texture upload progress without a PresentNow terminal
+  pause. Upload scheduling now carries the exact renderer owner and backend
+  generation, supports a bounded direct pre-frame drain, and no longer relies
+  on an arbitrary ambient renderer. The newest accepted-frame closure captures
+  the last published texture generation instead of waiting on an unpublished
+  full-resolution promotion; this final change builds but remains unproven live.
+- [ ] Pass actual held-drag and release acceptance in Default, Advanced, and
+  Debug Opaque, including an Advanced-to-Debug-Opaque live asset replacement.
+
+Deadline handoff (2026-08-31 17:05 local): the Vulkan project builds with zero
+warnings and zero errors, but Phase 5 is **not complete**. Before the final
+published-generation change, repeated Default runs reached frame 92-103 and
+then spent about 30 seconds in `RequiredUploadCompletion` with
+`prepQueued=1, prepActive=0`. The queued preparation drain ran only after the
+watchdog stored a `RendererPaused` terminal transition. The last post-change
+run was stopped at the requested cutoff after 25 seconds with frame 93 still
+`Completed/Success`; that interval is shorter than the prior failure window and
+is not acceptance evidence.
+
+Next work, in order:
+
+1. Run a fresh isolated Default session for at least 45 seconds after Sponza's
+   64-to-1024 texture promotion. Require advancing frame IDs, no
+   `RendererPaused`, no `RequiredUploadCompletion` watchdog, and no upload-prep
+   drain delayed by roughly 30 seconds.
+2. If the stall recurs, instrument the exact required manifest ticket and its
+   `_pendingPrepJobs` entry: sequence, streaming generation, state,
+   `NotBeforeTimestamp`, worker task, pending upload, and in-flight count.
+   Identify why the matching ticket cannot advance before changing policy again.
+3. Once Default remains healthy, perform a real held bottom-right drag and
+   capture start, held, released, and released-plus-two-seconds states. Require
+   an extent change while `MouseHeld=true`, continuous frame-ID progress, and
+   visible scene, ImGui, and FPS text without a black frame or ghost history.
+4. Repeat that drag with `XRE_ADVANCED_RENDER_PIPELINE_MODE=Required`; require
+   no range exhaustion, no missing authored base, and no overlay accumulation.
+5. Validate `XRE_FORCE_DEBUG_OPAQUE_PIPELINE=1` from cold start, then perform the
+   exact Advanced-to-Debug-Opaque asset replacement. Require no terminal
+   transition, device loss, or Vulkan validation error.
+6. Mark 5.4 and Phase 5 complete only after all three paths pass. Add or run
+   regression tests only after the user clears test work under repository policy.
+
+The repeated failing run is under
+`Build/_AgentValidation/00000000-000000-shared/mcp-sessions/20260831-123719-live-resize-regression/logs/XREngine.Editor_debug/windows_x64/xrengine_2026-08-31_17-01-36_pid10200/`.
+The stopped post-change sample is summarized in
+`Build/_AgentValidation/20260831-123635-vulkan-live-resize/reports/default-published-generation-25s-summary.json`.
+
+Root-cause evidence and the correction to the prior screenshot-based acceptance
+are in the [live resize investigation](../../investigations/rendering/vulkan-live-window-resize-relayout.md).
 
 ---
 

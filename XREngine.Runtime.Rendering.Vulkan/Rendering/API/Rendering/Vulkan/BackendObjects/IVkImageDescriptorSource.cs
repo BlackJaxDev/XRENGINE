@@ -120,4 +120,22 @@ internal interface IVkImageDescriptorSource
 
         return default;
     }
+
+    /// <summary>
+    /// Looks up an already-published storage view without allocating or refreshing
+    /// image backing. Implementations that need a subresource view should return
+    /// <c>false</c> until that exact view has been published.
+    /// </summary>
+    bool TryGetPublishedStorageDescriptorView(
+        int mipLevel,
+        bool layered,
+        int layerIndex,
+        out ImageView view)
+    {
+        view = default;
+        if (mipLevel != 0 || (!layered && layerIndex > 0))
+            return false;
+        view = DescriptorView;
+        return view.Handle != 0 && IsDescriptorReady;
+    }
 }

@@ -33,8 +33,32 @@ internal sealed class VulkanImGuiDrawDataCache
             if (ReferenceEquals(snapshot, _recycledSnapshot))
                 _recycledSnapshot = null;
 
-            snapshot.Capture(drawData);
+            snapshot.Capture(
+                drawData,
+                RuntimeEngine.Rendering.State.RenderFrameId);
             _pendingSnapshot = snapshot;
+        }
+    }
+
+    /// <summary>
+    /// Reads the newest immutable snapshot receipt without consuming it. Resize
+    /// release uses this before WSI acquire so the same snapshot can still be
+    /// recorded into the successor transaction.
+    /// </summary>
+    public bool HasCurrentRenderableSnapshot(
+        uint framebufferWidth,
+        uint framebufferHeight,
+        ulong renderFrameId)
+    {
+        lock (_gate)
+        {
+            VulkanImGuiFrameSnapshot? snapshot =
+                _pendingSnapshot ?? _retainedSnapshot;
+            return snapshot is not null &&
+                VulkanImGuiOverlayAdmission.HasRenderableSnapshot(snapshot) &&
+                snapshot.FramebufferWidth == framebufferWidth &&
+                snapshot.FramebufferHeight == framebufferHeight &&
+                snapshot.SourceRenderFrameId == renderFrameId;
         }
     }
 

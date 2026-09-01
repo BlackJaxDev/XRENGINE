@@ -2,9 +2,11 @@
 
 Date: 2026-08-24
 
-Status: Phases 1-9 implemented; the native humanoid solver, deterministic
-Body/root transaction, and authored IK staging pass the Phase 9 runtime probe.
-The versioned multi-avatar Unity conformance corpus remains Phase 10.
+Status (corrected 2026-08-31): Phases 1-8 and the Phase 9 native solver
+foundation are implemented. The Phase 9 finite-pose probe did not cover
+pose-dependent Body-frame/Hips compensation. See the
+[Phase 9A implementation and evidence](humanoid-body-frame-compensation-2026-08-31.md);
+its external Unity ratification and focused acceptance still gate Phase 10.
 
 Related TODO: `docs/work/todo/avatar/humanoid-body-root-compensation-todo.md`
 

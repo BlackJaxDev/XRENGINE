@@ -371,6 +371,10 @@ namespace XREngine.Components.Animation
                 TemporalRootMotionChannels = (int)rootMotionDelta.Channels,
             };
 
+            HumanoidBodyFrameDiagnosticState bodyFrame = humanoid.CurrentBodyFrameDiagnostic;
+            if (bodyFrame.HasValue)
+                sample.NativeBodyFrame = CaptureBodyFrame(bodyFrame);
+
             CaptureComposedTransforms(humanoid, sample);
 
             foreach (ImportedHumanoidMuscleMap.MuscleEntry entry in ImportedHumanoidMuscleMap.OrderedMuscleEntries)
@@ -429,6 +433,30 @@ namespace XREngine.Components.Animation
 
             return sample;
         }
+
+        private static HumanoidPoseAuditBodyFrame CaptureBodyFrame(HumanoidBodyFrameDiagnosticState value)
+            => new()
+            {
+                ModelId = value.ModelId,
+                AlgorithmVersion = value.AlgorithmVersion,
+                ProvisionalBodyCenter = HumanoidPoseAuditVector3.From(value.ProvisionalBodyFrame.Translation),
+                ProvisionalBodyRotation = HumanoidPoseAuditQuaternion.From(DecomposeRotation(value.ProvisionalBodyFrame, "ProvisionalBodyFrame")),
+                RequestedBodyBeforeProjectionCenter = HumanoidPoseAuditVector3.From(value.RequestedBodyBeforeProjection.Translation),
+                RequestedBodyBeforeProjectionRotation = HumanoidPoseAuditQuaternion.From(DecomposeRotation(value.RequestedBodyBeforeProjection, "RequestedBodyBeforeProjection")),
+                RequestedBodyCenter = HumanoidPoseAuditVector3.From(value.RequestedBodyFrame.Translation),
+                RequestedBodyRotation = HumanoidPoseAuditQuaternion.From(DecomposeRotation(value.RequestedBodyFrame, "RequestedBodyFrame")),
+                CompensatedBodyCenter = HumanoidPoseAuditVector3.From(value.CompensatedBodyFrame.Translation),
+                CompensatedBodyRotation = HumanoidPoseAuditQuaternion.From(DecomposeRotation(value.CompensatedBodyFrame, "CompensatedBodyFrame")),
+                CompensationPosition = HumanoidPoseAuditVector3.From(value.Compensation.Translation),
+                CompensationRotation = HumanoidPoseAuditQuaternion.From(DecomposeRotation(value.Compensation, "BodyCompensation")),
+                FinalHipsLocalPosition = HumanoidPoseAuditVector3.From(value.FinalHipsLocal.Translation),
+                FinalHipsLocalRotation = HumanoidPoseAuditQuaternion.From(DecomposeRotation(value.FinalHipsLocal, "FinalHipsLocal")),
+                FinalHipsModelRootPosition = HumanoidPoseAuditVector3.From(value.FinalHipsModelRoot.Translation),
+                FinalHipsModelRootRotation = HumanoidPoseAuditQuaternion.From(DecomposeRotation(value.FinalHipsModelRoot, "FinalHipsModelRoot")),
+                ProjectedRootPosition = HumanoidPoseAuditVector3.From(value.ProjectedRoot.Position),
+                ProjectedRootRotation = HumanoidPoseAuditQuaternion.From(value.ProjectedRoot.Rotation),
+                ProjectedRootChannels = (int)value.ProjectedRoot.Channels,
+            };
 
         private static void CaptureComposedTransforms(HumanoidComponent humanoid, HumanoidPoseAuditSample sample)
         {

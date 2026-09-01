@@ -272,8 +272,9 @@ internal sealed class VulkanAcceptedFramePlan
     /// <summary>
     /// Freezes texture owners directly from the raw visible mesh cohort before
     /// material-table rows or descriptor snapshots are produced. PresentNow
-    /// can therefore finish the selected streaming generations first, and the
-    /// later materialization observes those exact resident wrappers.
+    /// records the descriptor generation that is already published. Pending
+    /// residency promotions remain inter-frame work and become visible after
+    /// their atomic descriptor publication.
     /// </summary>
     internal void CaptureRequiredTextureReferences(
         ReadOnlySpan<VulkanMeshRenderRequest> requests)
@@ -287,13 +288,13 @@ internal sealed class VulkanAcceptedFramePlan
             ref readonly VulkanMeshRenderRequest request = ref requests[index];
             CaptureMaterialTextureReferences(
                 request.ResolvedMaterial.Material,
-                includePendingUploadGeneration: true);
+                includePendingUploadGeneration: false);
             CaptureMaterialTextureReferences(
                 request.ResolvedMaterial.ShadowUniformSourceMaterial,
-                includePendingUploadGeneration: true);
+                includePendingUploadGeneration: false);
             CaptureMaterialTextureReferences(
                 request.MaterialOverride,
-                includePendingUploadGeneration: true);
+                includePendingUploadGeneration: false);
         }
     }
 
@@ -416,7 +417,7 @@ internal sealed class VulkanAcceptedFramePlan
             {
                 AddRequiredTextureReference(
                     source,
-                    includePendingUploadGeneration: true);
+                    includePendingUploadGeneration: false);
             }
         }
     }

@@ -12,7 +12,8 @@ internal sealed partial class VulkanCommandRuntime
     /// order because that order owns the recording-time binding ordinal.
     /// </summary>
     internal VulkanComputePreparationResult PrepareComputeProgramsForFramePlan(
-        FrameOp[] operations)
+        FrameOp[] operations,
+        bool allowSynchronousResourceUploads = true)
     {
         for (int operationIndex = 0; operationIndex < operations.Length; operationIndex++)
         {
@@ -41,7 +42,8 @@ internal sealed partial class VulkanCommandRuntime
                     passIndex,
                     passMetadata,
                     operationIndex,
-                    operations.Length);
+                    operations.Length,
+                    allowSynchronousResourceUploads);
             if (!preparation.Succeeded)
                 return preparation;
         }
@@ -56,12 +58,14 @@ internal sealed partial class VulkanCommandRuntime
     internal VulkanComputePreparationResult PrepareComputeFrameOpsForRecording(
         uint imageIndex,
         FrameOperationSequence operations,
-        FramePlan? framePlan = null)
+        FramePlan? framePlan = null,
+        bool allowSynchronousResourceUploads = true)
         => PrepareComputeFrameOps(
             imageIndex,
             operations,
             prepareDescriptors: true,
-            framePlan);
+            framePlan,
+            allowSynchronousResourceUploads);
 
     /// <summary>
     /// Publishes all compute resources for one exact sealed frame-data slot.
@@ -71,7 +75,8 @@ internal sealed partial class VulkanCommandRuntime
     internal VulkanComputePreparationResult PrepareComputeFramePlanForRecording(
         uint frameDataImageIndex,
         FramePlan framePlan,
-        in ResourcePlannerRuntimeState plannerState)
+        in ResourcePlannerRuntimeState plannerState,
+        bool allowSynchronousResourceUploads = true)
     {
         ArgumentNullException.ThrowIfNull(framePlan);
         if (!framePlan.HasPreparedRecordingPlannerGenerations)
@@ -80,11 +85,15 @@ internal sealed partial class VulkanCommandRuntime
         VulkanComputePreparationResult preparation =
             PrepareComputeFrameOpsForRecording(
                 frameDataImageIndex,
-                framePlan.GetNativeStaticOperationsForRecording(), framePlan);
+                framePlan.GetNativeStaticOperationsForRecording(),
+                framePlan,
+                allowSynchronousResourceUploads);
         return preparation.Succeeded
             ? PrepareComputeFrameOpsForRecording(
                 frameDataImageIndex,
-                framePlan.GetNativeDynamicOverlayOperationsForRecording(), framePlan)
+                framePlan.GetNativeDynamicOverlayOperationsForRecording(),
+                framePlan,
+                allowSynchronousResourceUploads)
             : preparation;
     }
 
@@ -92,7 +101,8 @@ internal sealed partial class VulkanCommandRuntime
         uint imageIndex,
         FrameOperationSequence operations,
         bool prepareDescriptors,
-        FramePlan? framePlan)
+        FramePlan? framePlan,
+        bool allowSynchronousResourceUploads)
     {
         for (int operationIndex = 0; operationIndex < operations.Length; operationIndex++)
         {
@@ -157,11 +167,13 @@ internal sealed partial class VulkanCommandRuntime
                     passIndex,
                     passMetadata,
                     operationIndex,
-                    operations.Length)
+                    operations.Length,
+                    allowSynchronousResourceUploads)
                 : TryPrepareMeshTaskDescriptorProgram(
                     program,
                     operationIndex,
-                    operations.Length);
+                    operations.Length,
+                    allowSynchronousResourceUploads);
             if (!preparation.Succeeded)
                 return preparation;
 
@@ -199,12 +211,14 @@ internal sealed partial class VulkanCommandRuntime
                     new(ThreadWorkspace.Current, this, generation);
                 resourcesReady = program.TryPrepareComputeDispatchResources(
                     VulkanProgramPlannerRequest.From(frameContext), imageIndex, snapshot,
-                    reusableDescriptorKey, excludeGlobalTextureArray);
+                    reusableDescriptorKey, excludeGlobalTextureArray,
+                    allowSynchronousResourceUploads);
             }
             else
                 resourcesReady = program.TryPrepareComputeDispatchResources(
                     VulkanProgramPlannerRequest.From(frameContext), imageIndex, snapshot,
-                    reusableDescriptorKey, excludeGlobalTextureArray);
+                    reusableDescriptorKey, excludeGlobalTextureArray,
+                    allowSynchronousResourceUploads);
 
             if (resourcesReady)
                 continue;
@@ -222,9 +236,13 @@ internal sealed partial class VulkanCommandRuntime
     private static VulkanComputePreparationResult TryPrepareMeshTaskDescriptorProgram(
         VkRenderProgram program,
         int operationIndex,
-        int operationCount)
+        int operationCount,
+        bool allowSynchronousResourceUploads)
     {
-        if (program.Link() && program.PipelineLayout.Handle != 0)
+        if ((allowSynchronousResourceUploads
+                ? program.Link()
+                : program.IsLinkConfigurationCurrent()) &&
+            program.PipelineLayout.Handle != 0)
             return VulkanComputePreparationResult.Success;
 
         return new(
@@ -239,9 +257,12 @@ internal sealed partial class VulkanCommandRuntime
         int passIndex,
         IReadOnlyCollection<RenderPassMetadata>? passMetadata,
         int operationIndex,
-        int operationCount)
+        int operationCount,
+        bool allowSynchronousResourceUploads)
     {
-        if (!program.Link())
+        if (!(allowSynchronousResourceUploads
+                ? program.Link()
+                : program.IsLinkConfigurationCurrent()))
         {
             return new(
                 EVulkanComputePreparationOutcome.ProgramLinkFailed,

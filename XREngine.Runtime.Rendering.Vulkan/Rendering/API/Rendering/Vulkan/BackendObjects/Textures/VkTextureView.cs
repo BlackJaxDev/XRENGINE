@@ -199,20 +199,58 @@ namespace XREngine.Rendering.Vulkan
         {
             lock (_viewLifetimeLock)
             {
-                if (allowSynchronousUpload && !IsDescriptorReadyNoLock())
-                    EnsureDescriptorReadyForVulkanUse(reason);
-                else
-                    RefreshFromViewedTextureIfStale();
+                if (allowSynchronousUpload)
+                {
+                    if (!IsDescriptorReadyNoLock())
+                        EnsureDescriptorReadyForVulkanUse(reason);
+                    else
+                        RefreshFromViewedTextureIfStale();
+                }
 
                 ImageViewType actualViewType = ResolveViewType(Data.TextureTarget, _arrayLayers);
                 ImageView view = requestedAspectMask switch
                 {
-                    ImageAspectFlags.DepthBit => GetAspectOnlyDescriptorView(ImageAspectFlags.DepthBit, ref _depthOnlyView),
-                    ImageAspectFlags.StencilBit => GetAspectOnlyDescriptorView(ImageAspectFlags.StencilBit, ref _stencilOnlyView),
+                    ImageAspectFlags.DepthBit => allowSynchronousUpload
+                        ? GetAspectOnlyDescriptorView(ImageAspectFlags.DepthBit, ref _depthOnlyView)
+                        : _depthOnlyView,
+                    ImageAspectFlags.StencilBit => allowSynchronousUpload
+                        ? GetAspectOnlyDescriptorView(ImageAspectFlags.StencilBit, ref _stencilOnlyView)
+                        : _stencilOnlyView,
                     _ => requestedViewType is { } viewType && viewType != actualViewType
                         ? default
                         : _view
                 };
+
+                if (!allowSynchronousUpload)
+                {
+                    XRTexture viewedTexture = Data.GetViewedTexture();
+                    if (viewedTexture is null ||
+                        GetBackendWrapper(
+                            viewedTexture,
+                            generateNow: false) is not
+                        IVkImageDescriptorSource viewedSource ||
+                        !viewedSource.TryGetDescriptorSnapshot(
+                            requestedViewType: null,
+                            requestedAspectMask: null,
+                            reason: reason,
+                            allowSynchronousUpload: false,
+                            out VkImageDescriptorSnapshot viewedSnapshot) ||
+                        viewedSnapshot.Image.Handle != _image.Handle)
+                    {
+                        snapshot = default;
+                        return false;
+                    }
+
+                    bool ready = IsDescriptorReadyNoLock() &&
+                        view.Handle != 0 && IsViewBackedByCurrentImage(view);
+                    snapshot = new(
+                        _image, viewedSnapshot.Memory, view, actualViewType, _sampler, _format,
+                        _aspect, _usage, _samples, _mipLevels, _arrayLayers, DescriptorGeneration,
+                        viewedSnapshot.TrackedLayout,
+                        viewedSnapshot.UsesAllocatorImage,
+                        ready);
+                    return ready;
+                }
 
                 snapshot = new(
                     _image,
@@ -232,6 +270,21 @@ namespace XREngine.Rendering.Vulkan
                     IsDescriptorReadyNoLock() && view.Handle != 0 && IsViewBackedByCurrentImage(view));
                 return snapshot.IsReady;
             }
+        }
+        bool IVkImageDescriptorSource.TryGetPublishedStorageDescriptorView(
+            int mipLevel, bool layered, int layerIndex, out ImageView view)
+        {
+            view = default;
+            if (mipLevel != 0 || (!layered && layerIndex > 0))
+                return false;
+
+            lock (_viewLifetimeLock)
+                return _mipLevels == 1 &&
+                    (layered || _arrayLayers == 1) &&
+                    IsDescriptorReadyNoLock() &&
+                    _view.Handle != 0 &&
+                    IsViewBackedByCurrentImage(_view) &&
+                    (view = _view).Handle != 0;
         }
         ImageView IVkImageDescriptorSource.GetDepthOnlyDescriptorView()
         {

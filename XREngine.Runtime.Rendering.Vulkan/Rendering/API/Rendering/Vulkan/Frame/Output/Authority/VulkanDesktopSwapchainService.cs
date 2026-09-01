@@ -46,6 +46,7 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
     private readonly VulkanDesktopWsiTargetDriver? _desktopWsiTarget;
     private readonly IVulkanTargetOutputHost _services;
     private readonly int _frameSlotCount;
+    private long _lastGenerationDrainFrame = long.MinValue;
 
     internal VulkanDesktopSwapchainService(
         VulkanOutputRuntime output,
@@ -129,12 +130,23 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
         DestroySwapchain();
     }
 
-    internal bool TryPrepareRetirementMarkers(out Fence graphicsMarkerFence, out Fence presentMarkerFence)
+    /// <summary>Hard shutdown boundary, before any present semaphores or views are destroyed.</summary>
+    internal void WaitForPresentationReleaseAtShutdown()
+    {
+        if (_resources.Lifetime.Tracker.DeviceLost)
+            return;
+        _output.Desktop.PresentCompletion?.WaitForShutdown();
+        for (int index = 0; index < _output._retiredSwapchainGenerations.Count; index++)
+            _output._retiredSwapchainGenerations[index].PresentCompletion?.WaitForShutdown();
+    }
+
+    internal bool TryPrepareRetirementMarkers(out Fence graphicsMarkerFence)
     {
         graphicsMarkerFence = default;
-        presentMarkerFence = default;
         DrainRetiredGenerations();
-        if (_output._retiredSwapchainGenerations.Count >= 8 || _output._orphanedSwapchainMarkerFences.Count != 0)
+        // A failed replacement can retire both the old and partially created
+        // generations. Reserve both entries before mutating native WSI state.
+        if (_output._retiredSwapchainGenerations.Count > 6 || _output._orphanedSwapchainMarkerFences.Count != 0)
         {
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanSwapchainRetirement(pending: _output._retiredSwapchainGenerations.Count, deferred: 1);
             return false;
@@ -144,30 +156,10 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
         if (_api.CreateFence(_device.Device, ref fenceInfo, null, out graphicsMarkerFence) != Result.Success)
             return false;
 
-        bool distinctPresentQueue = _device.PresentQueue.Handle != _device.GraphicsQueue.Handle;
-        if (distinctPresentQueue && _api.CreateFence(_device.Device, ref fenceInfo, null, out presentMarkerFence) != Result.Success)
-        {
-            _api.DestroyFence(_device.Device, graphicsMarkerFence, null);
-            graphicsMarkerFence = default;
-            return false;
-        }
-
         if (!TrySubmitRetirementMarker(_device.GraphicsQueue, graphicsMarkerFence, "SwapchainRetirement.Graphics"))
         {
             _api.DestroyFence(_device.Device, graphicsMarkerFence, null);
-            if (presentMarkerFence.Handle != 0)
-                _api.DestroyFence(_device.Device, presentMarkerFence, null);
             graphicsMarkerFence = default;
-            presentMarkerFence = default;
-            return false;
-        }
-
-        if (distinctPresentQueue && !TrySubmitRetirementMarker(_device.PresentQueue, presentMarkerFence, "SwapchainRetirement.Present"))
-        {
-            _output._orphanedSwapchainMarkerFences.Add(graphicsMarkerFence);
-            _api.DestroyFence(_device.Device, presentMarkerFence, null);
-            graphicsMarkerFence = default;
-            presentMarkerFence = default;
             return false;
         }
 
@@ -193,7 +185,7 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
             }
 
             DisableStreamlineFrameGenerationBeforeMutation("swapchain recreation");
-            if (!TryPrepareRetirementMarkers(out Fence graphicsMarker, out Fence presentMarker))
+            if (!TryPrepareRetirementMarkers(out Fence graphicsMarker))
                 return false;
 
             SwapchainKHR oldSwapchain = _output.Desktop.Swapchain;
@@ -201,6 +193,9 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
             ImageView[] oldViews = _output.Desktop.ImageViews ?? [];
             Framebuffer[] oldFramebuffers = _output.Desktop.Framebuffers ?? [];
             Semaphore[] oldPresentBridges = _output.Desktop.PresentBridgeSemaphores ?? [];
+            VulkanWsiPresentCompletion? oldPresentCompletion = _output.Desktop.PresentCompletion;
+            oldPresentCompletion?.Seal();
+            _output.Desktop.PresentCompletion = null;
             bool oldStreamlineProxy = _output.Desktop.StreamlineFrameGenerationActive;
             uint oldWidth = _output.Desktop.Extent.Width;
             uint oldHeight = _output.Desktop.Extent.Height;
@@ -239,7 +234,7 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
 
             RetiredSwapchainGeneration retired = new(
                 oldSwapchain, oldImages, oldImageLifetimeSlots, oldViews, oldFramebuffers,
-                oldPresentBridges, oldClear, oldLoad, graphicsMarker, presentMarker,
+                oldPresentBridges, oldClear, oldLoad, graphicsMarker, oldPresentCompletion,
                 oldStreamlineProxy, oldWidth, oldHeight, Stopwatch.GetTimestamp());
             try
             {
@@ -287,6 +282,9 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
                 VulkanResourceSlotHandle[] failedImageLifetimeSlots =
                     _resources.DetachExternalImageLifetimesForHandleReuse(failedImages);
                 Semaphore[] failedPresentBridges = _output.Desktop.PresentBridgeSemaphores ?? [];
+                VulkanWsiPresentCompletion? failedPresentCompletion = _output.Desktop.PresentCompletion;
+                failedPresentCompletion?.Seal();
+                _output.Desktop.PresentCompletion = null;
                 SwapchainKHR failedSwapchain = _output.Desktop.Swapchain;
                 bool failedStreamlineProxy = _output.Desktop.StreamlineFrameGenerationActive;
                 uint failedWidth = _output.Desktop.Extent.Width;
@@ -312,7 +310,7 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
                     failedViews,
                     [],
                     failedPresentBridges,
-                    clear, load, default, default,
+                    clear, load, default, failedPresentCompletion,
                     failedStreamlineProxy,
                     failedWidth, failedHeight,
                     Stopwatch.GetTimestamp()));
@@ -456,6 +454,11 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
         if (result != Result.Success)
             throw new InvalidOperationException($"Failed to fetch swapchain images ({result}).");
 
+        _output.Desktop.PresentCompletion = new VulkanWsiPresentCompletion(
+            _api, _device.Device, checked((int)imageCount), _output.Desktop.Maintenance1Enabled);
+        if (!_output.Desktop.Maintenance1Enabled)
+            Debug.VulkanWarning("[Vulkan] Swapchain maintenance1 unavailable: presented generations retain native ownership; asynchronous recreation is bounded and shutdown requires process-lifetime quarantine.");
+
         _output.Desktop.ImageFormat = surfaceFormat.Format;
         _output.Desktop.ImageColorSpace = surfaceFormat.ColorSpace;
         _output.Desktop.Extent = extent;
@@ -484,6 +487,10 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
     {
         if (_output.Desktop.Swapchain.Handle == 0)
             return;
+
+        _output.Desktop.PresentCompletion?.Seal();
+        _output.Desktop.PresentCompletion?.Destroy(_resources.Lifetime.Tracker.DeviceLost);
+        _output.Desktop.PresentCompletion = null;
 
         VulkanStreamlineDeviceBinding binding = _output.CaptureStreamlineDeviceBinding(_device);
         KhrSwapchain swapchainExtension = RequireSwapchainExtension();
@@ -771,26 +778,36 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
         try
         {
             DrainOrphanedMarkers(force);
+            long frameSerial = _resources.GetRetirementMeterSnapshot().FrameSerial;
+            if (!force && _lastGenerationDrainFrame == frameSerial)
+                return;
+            DrainCompletedDependencies();
             int drained = 0;
             for (int index = _output._retiredSwapchainGenerations.Count - 1; index >= 0; index--)
             {
                 RetiredSwapchainGeneration generation = _output._retiredSwapchainGenerations[index];
                 if (!force &&
-                    (!IsMarkerComplete(generation.GraphicsMarkerFence) ||
-                     !IsMarkerComplete(generation.PresentMarkerFence)))
+                    !IsMarkerComplete(generation.GraphicsMarkerFence))
+                    continue;
+                // Even forced healthy-device teardown needs the independent WSI
+                // proof; a graphics marker never proves presentation release.
+                if (!_resources.Lifetime.Tracker.DeviceLost &&
+                    generation.PresentCompletion is { } completion && !completion.PollRetirement())
                     continue;
 
                 PublishCompletedMarker(generation.GraphicsMarkerFence, force);
-                PublishCompletedMarker(generation.PresentMarkerFence, force);
-                DrainCompletedDependencies();
                 if (!force && HasLiveDependencies(generation))
                     continue;
 
                 DestroyGeneration(generation, force);
                 DestroyMarker(generation.GraphicsMarkerFence);
-                DestroyMarker(generation.PresentMarkerFence);
                 _output._retiredSwapchainGenerations.RemoveAt(index);
                 drained++;
+                if (!force)
+                {
+                    _lastGenerationDrainFrame = frameSerial;
+                    break;
+                }
             }
 
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanSwapchainRetirement(
@@ -829,16 +846,10 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
     }
 
     private void BeginForcedRetirementDrain()
-    {
-        lock (_resources.Lifetime.Tracker.SyncRoot)
-            _resources.Lifetime.Tracker.ForcedRetirementDrainDepth++;
-    }
+        => _resources.BeginForcedRetirementDrain();
 
     private void EndForcedRetirementDrain()
-    {
-        lock (_resources.Lifetime.Tracker.SyncRoot)
-            _resources.Lifetime.Tracker.ForcedRetirementDrainDepth = Math.Max(0, _resources.Lifetime.Tracker.ForcedRetirementDrainDepth - 1);
-    }
+        => _resources.EndForcedRetirementDrain();
 
     private bool IsMarkerComplete(Fence fence)
     {
@@ -876,10 +887,10 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
         for (int slot = 0; slot < _resources.Lifetime.Retirement.CommandBuffers.Length; slot++)
         {
             _services.DrainRetiredDesktopCommandBuffers(slot);
-            _resources.DrainRetiredDescriptorSets(_api, _device.Device, slot, int.MaxValue);
-            _resources.DrainRetiredDescriptorPools(_api, _device.Device, slot, int.MaxValue);
-            _resources.DrainRetiredFramebuffers(_api, _device.Device, slot, int.MaxValue);
-            _resources.DrainRetiredImages(_api, _device.Device, slot, int.MaxValue);
+            _resources.DrainRetiredDescriptorSets(_api, _device.Device, slot);
+            _resources.DrainRetiredDescriptorPools(_api, _device.Device, slot);
+            _resources.DrainRetiredFramebuffers(_api, _device.Device, slot);
+            _resources.DrainRetiredImages(_api, _device.Device, slot);
         }
     }
 
@@ -908,6 +919,7 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
 
     private void DestroyGeneration(RetiredSwapchainGeneration generation, bool force)
     {
+        generation.PresentCompletion?.Destroy(_resources.Lifetime.Tracker.DeviceLost);
         DestroyRenderPass(generation.ClearRenderPass, force);
         DestroyRenderPass(generation.LoadRenderPass, force);
         for (int i = 0; i < generation.PresentBridgeSemaphores.Length; i++)

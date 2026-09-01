@@ -5,6 +5,28 @@ namespace XREngine.Rendering.Vulkan;
 
 internal sealed partial class VulkanFrameLoop : IVulkanTextureUploadScheduler
 {
+    /// <summary>
+    /// Advances the bounded Vulkan upload lane before a new frame snapshot is
+    /// accepted, so PresentNow never depends on a render-thread coroutine that
+    /// can run only after the frame returns.
+    /// </summary>
+    internal void ProcessPendingUploads()
+        => _resourceRuntime.Uploads.ProcessPendingUploads(
+            CreateTextureUploadSchedulingContext());
+
+    /// <summary>
+    /// Freezes the exact renderer and backend generation that own texture work.
+    /// Queued callbacks retain this identity instead of consulting ambient
+    /// renderer state when a later render-thread job pump executes them.
+    /// </summary>
+    private VulkanTextureUploadSchedulingContext CreateTextureUploadSchedulingContext()
+        => new(
+            _ownerRenderer,
+            _backendGeneration,
+            BackendObjectContext,
+            _resourceRuntime,
+            _commandRuntime);
+
     bool IVulkanTextureUploadScheduler.IsSynchronizedUploadAvailable
         => VulkanTextureUploadService.IsSynchronizedImportedTextureStreamingAvailable;
 
@@ -106,10 +128,7 @@ internal sealed partial class VulkanFrameLoop : IVulkanTextureUploadScheduler
         CancellationToken cancellationToken,
         out VulkanTextureUploadTicket ticket)
         => _resourceRuntime.Uploads.TryScheduleImportedTextureUpload(
-            new VulkanTextureUploadSchedulingContext(
-                BackendObjectContext,
-                _resourceRuntime,
-                _commandRuntime),
+            CreateTextureUploadSchedulingContext(),
             texture,
             residentData,
             includeMipChain,
