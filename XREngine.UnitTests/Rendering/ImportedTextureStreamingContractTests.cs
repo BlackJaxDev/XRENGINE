@@ -396,7 +396,8 @@ public sealed class ImportedTextureStreamingContractTests
                 },
                 ImageExtent = new Extent3D(64u, 64u, 1u),
             },
-            64u * 64u * 4u);
+            64u * 64u * 4u,
+            1UL);
 
         VulkanImportedTextureUploadValidation.TryValidateCopyRegions(
             "promotion",
@@ -417,7 +418,8 @@ public sealed class ImportedTextureStreamingContractTests
             default,
             default,
             validCopyRegion,
-            64u * 64u * 4u);
+            64u * 64u * 4u,
+            1UL);
 
         VulkanImportedTextureUploadValidation.TryValidateCopyRegions(
             "promotion",

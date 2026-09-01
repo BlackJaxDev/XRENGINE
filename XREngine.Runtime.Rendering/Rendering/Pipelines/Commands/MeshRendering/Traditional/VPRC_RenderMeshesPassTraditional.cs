@@ -41,10 +41,7 @@ internal static class VPRC_RenderMeshesPassTraditional
         RenderCommandCollection commands = activeInstance.ActiveMeshRenderCommands;
         using (RuntimeEngine.Profiler.Start("VPRC_RenderMeshesPassTraditional.RenderGPU.NonMeshPrefilter", ProfilerScopeKind.AlwaysOnHotPathLoop))
         {
-            if (meshSubmissionStrategy.IsGpuZeroReadbackStrategy())
-                commands.RenderCPUNonMeshOnly(command.RenderPass);
-            else
-                commands.RenderCPUNonMeshAndExcluded(command.RenderPass);
+            commands.RenderCPUNonMeshAndExcluded(command.RenderPass);
         }
 
         using (RuntimeEngine.Profiler.Start("VPRC_RenderMeshesPassTraditional.RenderGPU.Dispatch", ProfilerScopeKind.AlwaysOnHotPathLoop))

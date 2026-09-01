@@ -1898,20 +1898,27 @@ public sealed class VulkanStablePacketAndDescriptorTests
     [Test]
     public void MaterialPublicationGeneration_IncludesMutableCallbackValues()
     {
+        var dummyMaterial = new XRMaterial();
         ulong first = VkMeshRenderer.ComputeMaterialPublicationGeneration(
+            dummyMaterial,
             materialLayoutVersion: 2,
             materialValueVersion: 3,
             runtimeUniformNameSignature: 5,
+            runtimeUniformPublicationLayoutSignature: 6,
             mutableLegacyUniformValueSignature: 7);
         ulong equal = VkMeshRenderer.ComputeMaterialPublicationGeneration(
+            dummyMaterial,
             materialLayoutVersion: 2,
             materialValueVersion: 3,
             runtimeUniformNameSignature: 5,
+            runtimeUniformPublicationLayoutSignature: 6,
             mutableLegacyUniformValueSignature: 7);
         ulong changed = VkMeshRenderer.ComputeMaterialPublicationGeneration(
+            dummyMaterial,
             materialLayoutVersion: 2,
             materialValueVersion: 3,
             runtimeUniformNameSignature: 5,
+            runtimeUniformPublicationLayoutSignature: 6,
             mutableLegacyUniformValueSignature: 11);
 
         equal.ShouldBe(first);

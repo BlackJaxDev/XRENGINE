@@ -1,5 +1,6 @@
 using System.Numerics;
 using XREngine.Data.Core;
+using XREngine.Data.Rendering;
 using XREngine.Rendering;
 
 namespace XREngine.Runtime.Bootstrap;
@@ -36,6 +37,7 @@ public static class BootstrapRenderSettings
         var settings = RuntimeBootstrapState.Settings;
         var renderSettings = RuntimeEngine.Rendering.Settings;
         var debug = Engine.EditorPreferences.Debug;
+        ApplyPipelineSelection(settings);
         ApplyOpenGLShaderLinkSettings(settings);
 
         if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.RenderMeshBounds)))
@@ -136,6 +138,24 @@ public static class BootstrapRenderSettings
         }
 
         EnsureEmulatedVRStereoPreviewRenderingHooked();
+    }
+
+    /// <summary>
+    /// Applies an explicitly configured unit-testing pipeline choice without changing persisted engine settings.
+    /// </summary>
+    public static void ApplyPipelineSelection(UnitTestingWorldSettings settings)
+    {
+        if (!settings.IsJsonPropertyPathSpecified(
+                nameof(UnitTestingWorldSettings.Rendering),
+                nameof(UnitTestingRenderSettings.UseAdvancedRenderPipeline)))
+        {
+            return;
+        }
+
+        RuntimeEngine.Rendering.Settings.AdvancedRenderPipelineMode =
+            settings.Rendering.UseAdvancedRenderPipeline
+                ? EAdvancedRenderPipelineMode.Available
+                : EAdvancedRenderPipelineMode.Disabled;
     }
 
     public static void ReapplyEditorRenderStateAfterBootstrap(string reason)

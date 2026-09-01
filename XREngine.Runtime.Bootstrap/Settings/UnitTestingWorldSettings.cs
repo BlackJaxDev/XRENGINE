@@ -59,6 +59,7 @@ public partial class UnitTestingWorldSettings
     public bool DeferredDecal = false;
     public bool AddCameraVRPickup = false;
     public bool Mirror = true;
+    public bool GridFloor = false;
     public bool DynamicWaterQuad = false;
     public bool InitializeVolumetricFog = false;
     public bool InitializeAtmosphericScattering = false;

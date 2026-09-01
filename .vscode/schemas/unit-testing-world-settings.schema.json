@@ -80,7 +80,7 @@
     },
     "Rendering": {
       "$ref": "#/definitions/UnitTestingRenderSettings",
-      "description": "Grouped render backend, startup fallback, OpenGL shader-linking, and Vulkan target-mode settings. Legacy flat RenderAPI values are migrated here when settings are regenerated."
+      "description": "Grouped render backend, render-pipeline selection, startup fallback, OpenGL shader-linking, and Vulkan target-mode settings. Legacy flat RenderAPI values are migrated here when settings are regenerated."
     },
     "RiveUI": {
       "type": "boolean",
@@ -129,6 +129,10 @@
     "Mirror": {
       "type": "boolean",
       "description": "Adds a mirror to the scene for testing mirror reflection."
+    },
+    "GridFloor": {
+      "type": "boolean",
+      "description": "Adds an infinite ground plane reference grid to the scene."
     },
     "DynamicWaterQuad": {
       "type": "boolean",
@@ -730,6 +734,10 @@
           "markdownDescription": "Supported values: `RequireRequested`, `FallbackWithWarning`, `AutoPreferRequested`.",
           "description": "Selects the BackendFallbackPolicy enum value."
         },
+        "UseAdvancedRenderPipeline": {
+          "type": "boolean",
+          "description": "Enables or disables UseAdvancedRenderPipeline."
+        },
         "OpenGL": {
           "$ref": "#/definitions/UnitTestingOpenGLRenderSettings",
           "description": "Generated from OpenGL on UnitTestingRenderSettings."
@@ -1070,7 +1078,7 @@
           "type": "string",
           "description": "Generated from Path on ModelImportSettings."
         },
-        "UnityProjectRoot": {
+        "SourceProjectRoot": {
           "type": [
             "string",
             "null"
@@ -1079,7 +1087,7 @@
         },
         "ImportFlags": {
           "type": "string",
-          "description": "Comma-separated PostProcessSteps flag names.",
+          "description": "Comma-separated ModelImportSteps flag names.",
           "markdownDescription": "Comma-separated Assimp `PostProcessSteps` flags. Keep the exact symbolic names separated by commas. Common presets:\n\n- Static environment mesh: `CalculateTangentSpace, JoinIdenticalVertices, Triangulate, GenerateNormals, SplitLargeMeshes, ImproveCacheLocality, OptimizeGraph, OptimizeMeshes, SortByPrimitiveType, FlipUVs`\n- Animated character import: `Triangulate, FlipUVs, GenerateNormals, CalculateTangentSpace, JoinIdenticalVertices, SplitLargeMeshes, ImproveCacheLocality, OptimizeGraph, OptimizeMeshes`\n- Preserve authored normals/tangents where possible: `Triangulate, FlipUVs, JoinIdenticalVertices, SplitLargeMeshes, ImproveCacheLocality, OptimizeGraph, OptimizeMeshes`\n\nFrequently used individual flags include `Triangulate`, `FlipUVs`, `GenerateNormals`, `CalculateTangentSpace`, `JoinIdenticalVertices`, `SplitLargeMeshes`, `ImproveCacheLocality`, `OptimizeGraph`, `OptimizeMeshes`, and `SortByPrimitiveType`.",
           "examples": [
             "Triangulate, FlipUVs, GenerateNormals",

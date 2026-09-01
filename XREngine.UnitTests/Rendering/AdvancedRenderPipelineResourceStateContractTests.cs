@@ -70,14 +70,11 @@ public sealed class AdvancedRenderPipelineResourceStateContractTests
             AdvancedRenderPipelineCapabilityResolver.Resolve(
                 AdvancedRenderPipelineCapabilityTests.SupportedCapabilities,
                 stereo: false);
-        AdvancedRenderPipeline pipeline = new(
-            stereo: false,
-            capabilityResult,
-            visibilityFamilyReservation: default);
+        AdvancedRenderPipeline pipeline = new(stereo: false);
         RenderPipelineResourceProfile target = CreateTargetProfile();
 
         AdvancedRenderResourceProfile profile =
-            pipeline.CaptureAdvancedResourceProfile(target);
+            pipeline.CaptureAdvancedResourceProfile(new XRRenderPipelineInstance(pipeline), in target);
 
         profile.ContractVersion.ShouldBe(
             AdvancedRenderResourceProfile.CurrentContractVersion);

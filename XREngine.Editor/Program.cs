@@ -634,10 +634,12 @@ internal partial class Program
         UnitTest_VerifyPlayModeStart();
 
         UnitTestingWorldSettings settings = RuntimeBootstrapState.Settings;
+        BootstrapRenderSettings.ApplyPipelineSelection(settings);
         Engine.EditorPreferences.Debug.UseDebugOpaquePipeline = ResolveDebugOpaquePipelineSetting(settings);
         EngineDebug.Rendering($"[DebugPipeline] Re-applied before window creation: {Engine.EditorPreferences.Debug.UseDebugOpaquePipeline}");
         WriteBootstrapTrace(
-            $"UnitTest_Init: WorldKind={settings.WorldKind}, ForceDebugOpaquePipeline={settings.ForceDebugOpaquePipeline}, " +
+            $"UnitTest_Init: WorldKind={settings.WorldKind}, UseAdvancedRenderPipeline={settings.Rendering.UseAdvancedRenderPipeline}, " +
+            $"ForceDebugOpaquePipeline={settings.ForceDebugOpaquePipeline}, " +
             $"UseDebugOpaquePipeline={Engine.EditorPreferences.Debug.UseDebugOpaquePipeline}.");
 
         GPURenderPassCollection.ConfigureIndirectDebug(opts =>
