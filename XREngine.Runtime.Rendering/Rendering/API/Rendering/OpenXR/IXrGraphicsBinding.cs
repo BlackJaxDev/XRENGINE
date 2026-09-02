@@ -139,6 +139,7 @@ public interface IXrGraphicsBinding
     bool TryCreateSession(OpenXRAPI api, AbstractRenderer renderer);
     void CreateSwapchains(OpenXRAPI api, AbstractRenderer renderer);
     void CleanupSwapchains(OpenXRAPI api);
+    bool TryRetireSwapchainsForDeferredDestruction(OpenXRAPI api, AbstractRenderer renderer) => false;
     void WaitForGpuIdle(OpenXRAPI api, AbstractRenderer renderer);
     void AcquireSwapchainImage(OpenXRAPI api, Swapchain swapchain, out uint imageIndex);
     void WaitSwapchainImage(OpenXRAPI api, Swapchain swapchain, long timeoutNs);

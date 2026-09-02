@@ -55,6 +55,18 @@ namespace XREngine
                     private static long _lastFrameVrXrPacingThreadIdleTimeTicks;
                     private static int _vrXrPacingHandoffStalls;
                     private static int _lastFrameVrXrPacingHandoffStalls;
+                    private static long _vrOpenXrEyeQueueSubmitTimeTicks;
+                    private static long _lastFrameVrOpenXrEyeQueueSubmitTimeTicks;
+                    private static long _vrOpenXrEyeCompletionWaitTimeTicks;
+                    private static long _lastFrameVrOpenXrEyeCompletionWaitTimeTicks;
+                    private static int _vrOpenXrEyeFenceForcedWaitCount;
+                    private static int _lastFrameVrOpenXrEyeFenceForcedWaitCount;
+                    private static int _vrOpenXrEyeInFlightCount;
+                    private static int _lastFrameVrOpenXrEyeInFlightCount;
+                    private static int _vrOpenXrEyeOldestInFlightAgeFrames;
+                    private static int _lastFrameVrOpenXrEyeOldestInFlightAgeFrames;
+                    private static int _vrOpenXrEyeSwapchainImageReuseAgeFrames;
+                    private static int _lastFrameVrOpenXrEyeSwapchainImageReuseAgeFrames;
                     private static int _vrRenderPassDrawCalls;
                     private static int _vrRenderPassMultiDrawCalls;
                     private static int _vrRenderPassTrianglesRendered;
@@ -107,6 +119,12 @@ namespace XREngine
                     public static double VrXrCollectFrustumExpansionDegrees => BitConverter.Int64BitsToDouble(_lastFrameVrXrCollectFrustumExpansionDegreesBits);
                     public static double VrXrPacingThreadIdleTimeMs => TimeSpan.FromTicks(_lastFrameVrXrPacingThreadIdleTimeTicks).TotalMilliseconds;
                     public static int VrXrPacingHandoffStalls => _lastFrameVrXrPacingHandoffStalls;
+                    public static double VrOpenXrEyeQueueSubmitTimeMs => TimeSpan.FromTicks(_lastFrameVrOpenXrEyeQueueSubmitTimeTicks).TotalMilliseconds;
+                    public static double VrOpenXrEyeCompletionWaitTimeMs => TimeSpan.FromTicks(_lastFrameVrOpenXrEyeCompletionWaitTimeTicks).TotalMilliseconds;
+                    public static int VrOpenXrEyeFenceForcedWaitCount => _lastFrameVrOpenXrEyeFenceForcedWaitCount;
+                    public static int VrOpenXrEyeInFlightCount => _lastFrameVrOpenXrEyeInFlightCount;
+                    public static int VrOpenXrEyeOldestInFlightAgeFrames => _lastFrameVrOpenXrEyeOldestInFlightAgeFrames;
+                    public static int VrOpenXrEyeSwapchainImageReuseAgeFrames => _lastFrameVrOpenXrEyeSwapchainImageReuseAgeFrames;
                     public static int VrRenderPassDrawCalls => _lastFrameVrRenderPassDrawCalls;
                     public static int VrRenderPassMultiDrawCalls => _lastFrameVrRenderPassMultiDrawCalls;
                     public static int VrRenderPassTrianglesRendered => _lastFrameVrRenderPassTrianglesRendered;
@@ -179,6 +197,12 @@ namespace XREngine
                         _lastFrameVrXrRelocatePredictedTimeTicks = Interlocked.Exchange(ref _vrXrRelocatePredictedTimeTicks, 0);
                         _lastFrameVrXrCollectFrustumExpansionDegreesBits = Interlocked.Exchange(ref _vrXrCollectFrustumExpansionDegreesBits, 0);
                         _lastFrameVrXrPacingThreadIdleTimeTicks = Interlocked.Exchange(ref _vrXrPacingThreadIdleTimeTicks, 0);
+                        _lastFrameVrOpenXrEyeQueueSubmitTimeTicks = Interlocked.Exchange(ref _vrOpenXrEyeQueueSubmitTimeTicks, 0);
+                        _lastFrameVrOpenXrEyeCompletionWaitTimeTicks = Interlocked.Exchange(ref _vrOpenXrEyeCompletionWaitTimeTicks, 0);
+                        _lastFrameVrOpenXrEyeFenceForcedWaitCount = Interlocked.Exchange(ref _vrOpenXrEyeFenceForcedWaitCount, 0);
+                        _lastFrameVrOpenXrEyeInFlightCount = Interlocked.Exchange(ref _vrOpenXrEyeInFlightCount, 0);
+                        _lastFrameVrOpenXrEyeOldestInFlightAgeFrames = Interlocked.Exchange(ref _vrOpenXrEyeOldestInFlightAgeFrames, 0);
+                        _lastFrameVrOpenXrEyeSwapchainImageReuseAgeFrames = Interlocked.Exchange(ref _vrOpenXrEyeSwapchainImageReuseAgeFrames, 0);
                         _lastFrameVrRenderPassDrawCalls = Interlocked.Exchange(ref _vrRenderPassDrawCalls, 0);
                         _lastFrameVrRenderPassMultiDrawCalls = Interlocked.Exchange(ref _vrRenderPassMultiDrawCalls, 0);
                         _lastFrameVrRenderPassTrianglesRendered = Interlocked.Exchange(ref _vrRenderPassTrianglesRendered, 0);
@@ -206,6 +230,12 @@ namespace XREngine
                         Interlocked.Exchange(ref _vrXrRelocatePredictedTimeTicks, 0);
                         Interlocked.Exchange(ref _vrXrCollectFrustumExpansionDegreesBits, 0);
                         Interlocked.Exchange(ref _vrXrPacingThreadIdleTimeTicks, 0);
+                        Interlocked.Exchange(ref _vrOpenXrEyeQueueSubmitTimeTicks, 0);
+                        Interlocked.Exchange(ref _vrOpenXrEyeCompletionWaitTimeTicks, 0);
+                        Interlocked.Exchange(ref _vrOpenXrEyeFenceForcedWaitCount, 0);
+                        Interlocked.Exchange(ref _vrOpenXrEyeInFlightCount, 0);
+                        Interlocked.Exchange(ref _vrOpenXrEyeOldestInFlightAgeFrames, 0);
+                        Interlocked.Exchange(ref _vrOpenXrEyeSwapchainImageReuseAgeFrames, 0);
                         Interlocked.Exchange(ref _vrRenderPassDrawCalls, 0);
                         Interlocked.Exchange(ref _vrRenderPassMultiDrawCalls, 0);
                         Interlocked.Exchange(ref _vrRenderPassTrianglesRendered, 0);
@@ -231,6 +261,12 @@ namespace XREngine
                         _lastFrameVrXrRelocatePredictedTimeTicks = 0;
                         _lastFrameVrXrCollectFrustumExpansionDegreesBits = 0;
                         _lastFrameVrXrPacingThreadIdleTimeTicks = 0;
+                        _lastFrameVrOpenXrEyeQueueSubmitTimeTicks = 0;
+                        _lastFrameVrOpenXrEyeCompletionWaitTimeTicks = 0;
+                        _lastFrameVrOpenXrEyeFenceForcedWaitCount = 0;
+                        _lastFrameVrOpenXrEyeInFlightCount = 0;
+                        _lastFrameVrOpenXrEyeOldestInFlightAgeFrames = 0;
+                        _lastFrameVrOpenXrEyeSwapchainImageReuseAgeFrames = 0;
                         _lastFrameVrRenderPassDrawCalls = 0;
                         _lastFrameVrRenderPassMultiDrawCalls = 0;
                         _lastFrameVrRenderPassTrianglesRendered = 0;
@@ -436,6 +472,44 @@ namespace XREngine
                             return;
 
                         Interlocked.Increment(ref _vrXrPacingHandoffStalls);
+                    }
+
+                    public static void RecordOpenXrEyeQueueSubmitTime(TimeSpan submitTime)
+                    {
+                        if (!EnableTracking)
+                            return;
+
+                        MarkFrameScopedStatsActive();
+                        Interlocked.Exchange(ref _vrOpenXrEyeQueueSubmitTimeTicks, submitTime.Ticks);
+                    }
+
+                    public static void RecordOpenXrEyeCompletionWaitTime(TimeSpan waitTime)
+                    {
+                        if (!EnableTracking)
+                            return;
+
+                        MarkFrameScopedStatsActive();
+                        Interlocked.Exchange(ref _vrOpenXrEyeCompletionWaitTimeTicks, waitTime.Ticks);
+                    }
+
+                    public static void RecordOpenXrEyeFenceForcedWait()
+                    {
+                        if (!EnableTracking)
+                            return;
+
+                        MarkFrameScopedStatsActive();
+                        Interlocked.Increment(ref _vrOpenXrEyeFenceForcedWaitCount);
+                    }
+
+                    public static void RecordOpenXrEyeInFlightStats(uint inFlightCount, uint oldestInFlightAgeFrames, uint imageReuseAgeFrames)
+                    {
+                        if (!EnableTracking)
+                            return;
+
+                        MarkFrameScopedStatsActive();
+                        Interlocked.Exchange(ref _vrOpenXrEyeInFlightCount, (int)inFlightCount);
+                        Interlocked.Exchange(ref _vrOpenXrEyeOldestInFlightAgeFrames, (int)oldestInFlightAgeFrames);
+                        Interlocked.Exchange(ref _vrOpenXrEyeSwapchainImageReuseAgeFrames, (int)imageReuseAgeFrames);
                     }
                 }
             }

@@ -65,6 +65,23 @@ internal sealed partial class VulkanCommandRuntime
 
     private readonly List<RetiredOpenXrSubmissionTimeline> _retiredOpenXrSubmissions = new(2);
     private readonly object _retiredOpenXrSubmissionsGate = new();
+    private OpenXrVulkanSubmissionTracker? _openXrSubmissionTracker;
+
+    internal OpenXrVulkanSubmissionTracker OpenXrSubmissionTracker =>
+        _openXrSubmissionTracker ??= new OpenXrVulkanSubmissionTracker(this);
+
+    internal ulong CurrentTimelineValue => Synchronization._graphicsTimelineValue;
+
+    internal static bool IsOpenXrAsyncSubmitEnabled
+    {
+        get
+        {
+            string? env = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.OpenXrVulkanAsyncSubmit);
+            if (env is not null)
+                return !string.Equals(env, "0", StringComparison.OrdinalIgnoreCase) && !string.Equals(env, "false", StringComparison.OrdinalIgnoreCase);
+            return true;
+        }
+    }
 
     internal unsafe VulkanOpenXrSubmissionResult SubmitAndWaitOpenXr(
         in VulkanOpenXrSubmissionInput input)
@@ -243,6 +260,32 @@ internal sealed partial class VulkanCommandRuntime
                     submitReceipt);
             }
 
+            TimeSpan submitElapsed = Stopwatch.GetElapsedTime(submitStart, submitEnd);
+            RuntimeEngine.Rendering.Stats.Vr.RecordOpenXrEyeQueueSubmitTime(submitElapsed);
+
+            if (IsOpenXrAsyncSubmitEnabled && !input.ForceSynchronousCompletion)
+            {
+                submissionDisposition = EVulkanQueueSubmissionDisposition.SubmittedIncomplete;
+                commandBuffersCompleted = false;
+                arenaSlotsReopened = true;
+
+                if (IsOpenXrTraceEnabled)
+                {
+                    Debug.Vulkan(
+                        "[OpenXrVulkan] Async submitted commandBuffers={0} queueSubmitMs={1:F3} timelineValue={2}",
+                        input.CommandBufferCount,
+                        submitElapsed.TotalMilliseconds,
+                        timelineValue);
+                }
+
+                return new VulkanOpenXrSubmissionResult(
+                    true,
+                    false,
+                    submissionDisposition,
+                    injectedFailureStage,
+                    submitReceipt);
+            }
+
             long waitStart = Stopwatch.GetTimestamp();
             Result waitResult;
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
@@ -259,6 +302,9 @@ internal sealed partial class VulkanCommandRuntime
                     ulong.MaxValue);
             }
             long waitEnd = Stopwatch.GetTimestamp();
+            TimeSpan completionWaitElapsed = Stopwatch.GetElapsedTime(waitStart, waitEnd);
+            RuntimeEngine.Rendering.Stats.Vr.RecordOpenXrEyeCompletionWaitTime(completionWaitElapsed);
+            RuntimeEngine.Rendering.Stats.Vr.RecordOpenXrEyeFenceForcedWait();
             if (waitResult != Result.Success)
             {
                 Debug.VulkanWarning(

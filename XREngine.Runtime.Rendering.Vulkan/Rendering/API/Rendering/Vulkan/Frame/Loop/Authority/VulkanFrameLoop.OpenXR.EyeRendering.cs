@@ -34,6 +34,8 @@ internal sealed partial class VulkanFrameLoop
             foveation,
             new OpenXrEyeFrameOpDelegateEmitter(emitFrameOps));
 
+        _commandRuntime.OpenXrSubmissionTracker.PollCompletions();
+        _commandRuntime.OpenXrSubmissionTracker.EnsureInFlightBudget();
         List<VulkanImportedTexturePendingUpload> eyeUploads = GetOpenXrEyeRecordedTextureUploads(openXrViewIndex);
         eyeUploads.Clear();
         if (!TryRecordOpenXrEyeSwapchainCommandBuffer(request, out OpenXrRecordedEyeCommandBuffer recorded))
@@ -67,22 +69,54 @@ internal sealed partial class VulkanFrameLoop
             submitted = _commandRuntime.SubmitAndWaitOpenXrCommandBuffer(recorded.CommandBuffer, out commandBufferCompleted, diagnosticContext);
             if (submitted)
             {
-                FlushPendingGpuRenderStatsReadbacks();
-                int publishCount = eyeUploads.Count;
-                CompleteOpenXrGpuProfilerSubmission(in recorded);
-                _commandRuntime.PublishOpenXrRecordedTextureUploads(
-                    eyeUploads,
-                    "OpenXR eye");
-                DrainRetiredResourcesFromCompletedSubmittedFrameSlots();
-                if (_commandRuntime.IsOpenXrTraceEnabled)
+                if (commandBufferCompleted)
                 {
-                    Debug.Vulkan(
-                        "[OpenXrVulkan] eye submit completed eye={0} imageIndex={1} frameSlot={2} publishedUploads={3} retiredFlushSlots={4}",
-                        recorded.OpenXrViewIndex,
+                    FlushPendingGpuRenderStatsReadbacks();
+                    int publishCount = eyeUploads.Count;
+                    CompleteOpenXrGpuProfilerSubmission(in recorded);
+                    _commandRuntime.PublishOpenXrRecordedTextureUploads(
+                        eyeUploads,
+                        "OpenXR eye");
+                    DrainRetiredResourcesFromCompletedSubmittedFrameSlots();
+                    if (_commandRuntime.IsOpenXrTraceEnabled)
+                    {
+                        Debug.Vulkan(
+                            "[OpenXrVulkan] eye submit completed eye={0} imageIndex={1} frameSlot={2} publishedUploads={3} retiredFlushSlots={4}",
+                            recorded.OpenXrViewIndex,
+                            recorded.OpenXrImageIndex,
+                            recorded.FrameDataSlotIndex,
+                            publishCount,
+                            FrameSlotCount);
+                    }
+                }
+                else
+                {
+                    uint[] slots = [recorded.FrameDataSlotIndex];
+                    _commandRuntime.OpenXrSubmissionTracker.RegisterSubmission(
+                        AcceptedAttemptCount,
+                        0L,
+                        1u << (int)recorded.OpenXrViewIndex,
                         recorded.OpenXrImageIndex,
-                        recorded.FrameDataSlotIndex,
-                        publishCount,
-                        FrameSlotCount);
+                        0u,
+                        in recorded,
+                        hasFirst: true,
+                        secondRecorded: default,
+                        hasSecond: false,
+                        firstPrepared: default,
+                        hasFirstPrepared: false,
+                        secondPrepared: default,
+                        hasSecondPrepared: false,
+                        eyeUploads,
+                        _commandRuntime.Synchronization._graphicsTimelineSemaphore,
+                        _commandRuntime.CurrentTimelineValue,
+                        _commandRuntime.MappedFrameArena,
+                        _commandRuntime.MappedFrameArena?.Generation ?? 0UL,
+                        _commandRuntime.ResourceRuntime.FrameDataArena,
+                        _commandRuntime.ResourceRuntime.FrameDataArena?.Generation ?? 0UL,
+                        slots,
+                        Stopwatch.GetTimestamp(),
+                        Stopwatch.GetTimestamp());
+                    eyeUploads.Clear();
                 }
             }
             else if (!commandBufferCompleted && !IsDeviceLost)
@@ -129,8 +163,11 @@ internal sealed partial class VulkanFrameLoop
                 }
             }
 
-            FreeOpenXrRecordedEyeCommandBuffer(recorded);
-            eyeUploads.Clear();
+            if (!submitted || commandBufferCompleted)
+            {
+                FreeOpenXrRecordedEyeCommandBuffer(recorded);
+                eyeUploads.Clear();
+            }
         }
     }
 
@@ -138,6 +175,8 @@ internal sealed partial class VulkanFrameLoop
         in OpenXrEyeSwapchainRenderRequest firstEye,
         in OpenXrEyeSwapchainRenderRequest secondEye)
     {
+        _commandRuntime.OpenXrSubmissionTracker.PollCompletions();
+        _commandRuntime.OpenXrSubmissionTracker.EnsureInFlightBudget();
         ClearOpenXrEyeRecordedTextureUploads();
         OpenXrRecordedEyeCommandBuffer firstRecorded = default;
         OpenXrRecordedEyeCommandBuffer secondRecorded = default;
@@ -247,22 +286,54 @@ internal sealed partial class VulkanFrameLoop
 
             if (submitted)
             {
-                FlushPendingGpuRenderStatsReadbacks();
-                int publishCount = CountOpenXrEyeRecordedTextureUploads();
-                CompleteOpenXrGpuProfilerSubmission(in firstRecorded);
-                CompleteOpenXrGpuProfilerSubmission(in secondRecorded);
-                using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.Batch.PublishUploads"))
-                    PublishOpenXrEyeRecordedTextureUploadsAfterCompletedSubmit("OpenXR eye batch");
-                using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.Batch.FlushRetired"))
-                    DrainRetiredResourcesFromCompletedSubmittedFrameSlots();
-                if (_commandRuntime.IsOpenXrTraceEnabled)
+                if (commandBuffersCompleted)
                 {
-                    Debug.Vulkan(
-                        "[OpenXrVulkan] eye batch submit completed leftFrameSlot={0} rightFrameSlot={1} publishedUploads={2} retiredFlushSlots={3}",
-                        firstRecorded.FrameDataSlotIndex,
-                        secondRecorded.FrameDataSlotIndex,
-                        publishCount,
-                        FrameSlotCount);
+                    FlushPendingGpuRenderStatsReadbacks();
+                    int publishCount = CountOpenXrEyeRecordedTextureUploads();
+                    CompleteOpenXrGpuProfilerSubmission(in firstRecorded);
+                    CompleteOpenXrGpuProfilerSubmission(in secondRecorded);
+                    using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.Batch.PublishUploads"))
+                        PublishOpenXrEyeRecordedTextureUploadsAfterCompletedSubmit("OpenXR eye batch");
+                    using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.Batch.FlushRetired"))
+                        DrainRetiredResourcesFromCompletedSubmittedFrameSlots();
+                    if (_commandRuntime.IsOpenXrTraceEnabled)
+                    {
+                        Debug.Vulkan(
+                            "[OpenXrVulkan] eye batch submit completed leftFrameSlot={0} rightFrameSlot={1} publishedUploads={2} retiredFlushSlots={3}",
+                            firstRecorded.FrameDataSlotIndex,
+                            secondRecorded.FrameDataSlotIndex,
+                            publishCount,
+                            FrameSlotCount);
+                    }
+                }
+                else
+                {
+                    uint[] slots = [firstRecorded.FrameDataSlotIndex, secondRecorded.FrameDataSlotIndex];
+                    _commandRuntime.OpenXrSubmissionTracker.RegisterSubmission(
+                        AcceptedAttemptCount,
+                        0L,
+                        3u,
+                        firstEye.OpenXrImageIndex,
+                        secondEye.OpenXrImageIndex,
+                        in firstRecorded,
+                        hasFirst: true,
+                        in secondRecorded,
+                        hasSecond: true,
+                        in firstPrepared,
+                        hasFirstPrepared: true,
+                        in secondPrepared,
+                        hasSecondPrepared: true,
+                        GetCombinedOpenXrBatchUploads(),
+                        _commandRuntime.Synchronization._graphicsTimelineSemaphore,
+                        _commandRuntime.CurrentTimelineValue,
+                        _commandRuntime.MappedFrameArena,
+                        _commandRuntime.MappedFrameArena?.Generation ?? 0UL,
+                        _commandRuntime.ResourceRuntime.FrameDataArena,
+                        _commandRuntime.ResourceRuntime.FrameDataArena?.Generation ?? 0UL,
+                        slots,
+                        Stopwatch.GetTimestamp(),
+                        Stopwatch.GetTimestamp());
+                    ClearOpenXrEyeRecordedTextureUploads();
                 }
             }
             else if (!commandBuffersCompleted && !IsDeviceLost)
@@ -303,14 +374,16 @@ internal sealed partial class VulkanFrameLoop
                 }
             }
 
-            if (hasSecond)
-                FreeOpenXrRecordedEyeCommandBuffer(secondRecorded);
-            if (hasFirst)
-                FreeOpenXrRecordedEyeCommandBuffer(firstRecorded);
+            if (!submitted || commandBuffersCompleted)
+            {
+                if (hasSecond)
+                    FreeOpenXrRecordedEyeCommandBuffer(secondRecorded);
+                if (hasFirst)
+                    FreeOpenXrRecordedEyeCommandBuffer(firstRecorded);
 
-            ClearOpenXrEyeRecordedTextureUploads();
-            ReleasePreparedOpenXrEyeInput(in secondPrepared);
-            ReleasePreparedOpenXrEyeInput(in firstPrepared);
+                ReleasePreparedOpenXrEyeInput(in secondPrepared);
+                ReleasePreparedOpenXrEyeInput(in firstPrepared);
+            }
         }
     }
 
@@ -1035,6 +1108,14 @@ internal sealed partial class VulkanFrameLoop
         for (int i = 0; i < OutputRuntime.OpenXrBackend.EyeRecordedTextureUploadsForSubmit.Length; i++)
             count += OutputRuntime.OpenXrBackend.EyeRecordedTextureUploadsForSubmit[i].Count;
         return count;
+    }
+
+    private List<VulkanImportedTexturePendingUpload> GetCombinedOpenXrBatchUploads()
+    {
+        List<VulkanImportedTexturePendingUpload> result = new(CountOpenXrEyeRecordedTextureUploads());
+        for (int i = 0; i < OutputRuntime.OpenXrBackend.EyeRecordedTextureUploadsForSubmit.Length; i++)
+            result.AddRange(OutputRuntime.OpenXrBackend.EyeRecordedTextureUploadsForSubmit[i]);
+        return result;
     }
 
     private void DestroyOpenXrEyeCommandPools()

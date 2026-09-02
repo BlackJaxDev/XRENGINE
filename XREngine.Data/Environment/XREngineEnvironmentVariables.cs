@@ -319,6 +319,7 @@ public static class XREngineEnvironmentVariables
     public const string OpenXrVulkanSerialEyeSubmit = "XRE_OPENXR_VULKAN_SERIAL_EYE_SUBMIT";
     public const string OpenXrVulkanPrimaryReuse = "XRE_OPENXR_VULKAN_PRIMARY_REUSE";
     public const string OpenXrVulkanEnable2Bootstrap = "XRE_OPENXR_VULKAN_ENABLE2_BOOTSTRAP";
+    public const string OpenXrVulkanAsyncSubmit = "XRE_OPENXR_VULKAN_ASYNC_SUBMIT";
     public const string VulkanAllowCpuMeshSafetyNet = "XRE_VULKAN_ALLOW_CPU_MESH_SAFETY_NET";
     public const string VulkanParallelRecordingValidate = "XRE_VULKAN_PARALLEL_RECORDING_VALIDATE";
     public const string VulkanCaptureEyeOutputs = "XRE_VULKAN_CAPTURE_EYE_OUTPUTS";

@@ -703,6 +703,21 @@ public unsafe partial class OpenXRAPI
 
     internal void CleanupSwapchains()
     {
+        if (Window?.Renderer is AbstractRenderer renderer &&
+            _graphicsBinding is not null &&
+            _graphicsBinding.TryRetireSwapchainsForDeferredDestruction(this, renderer))
+        {
+            for (int i = 0; i < _viewCount; i++)
+            {
+                _swapchainImageCounts[i] = 0;
+                _swapchainWidths[i] = 0;
+                _swapchainHeights[i] = 0;
+                _swapchains[i] = default;
+            }
+            _viewCount = 0;
+            return;
+        }
+
         _graphicsBinding?.CleanupSwapchains(this);
 
         for (int i = 0; i < _viewCount; i++)

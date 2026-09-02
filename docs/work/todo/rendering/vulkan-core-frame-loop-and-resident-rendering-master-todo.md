@@ -1000,32 +1000,32 @@ errors, VUIDs, or targeted exception records. Details are in the
 **Goal:** Decouple OpenXR submission and swapchain retirement from render-thread fences, eliminating the historical 70–100 ms eye-submit wait while preserving application and runtime safety.
 
 #### 6.1 Current OpenXR Lifetime Contract Map
-- [ ] Identify every resource whose safety currently depends on the synchronous post-submit wait: eye command buffers/pools, frame-data and descriptor arenas, staging ranges, image views/framebuffers, resident/native pins, transient graph resources, and acquire/release state.
-- [ ] Record eye submit/completion wait, forced waits, in-flight count/age, image reuse age, missed deadlines, and the last producer/completion authority.
-- [ ] Verify Monado and at least one hardware runtime; explicitly determine release-before-application-completion legality, timeline-semaphore observability, fence-ring requirements, and the bounded fallback when a runtime requires completion before release.
-- [ ] Do not assume an application timeline semaphore/fence is visible to the OpenXR runtime unless the active graphics binding and runtime contract explicitly establish that visibility.
+- [x] Identify every resource whose safety currently depends on the synchronous post-submit wait: eye command buffers/pools, frame-data and descriptor arenas, staging ranges, image views/framebuffers, resident/native pins, transient graph resources, and acquire/release state. (Completed: see `docs/work/investigations/rendering/vulkan-openxr-asynchronous-decoupling-phase6.md`).
+- [x] Record eye submit/completion wait, forced waits, in-flight count/age, image reuse age, missed deadlines, and the last producer/completion authority. (Completed: added `VrOpenXrEyeQueueSubmitTimeMs`, `VrOpenXrEyeCompletionWaitTimeMs`, `VrOpenXrEyeFenceForcedWaitCount`, `VrOpenXrEyeInFlightCount`, and associated telemetry counters).
+- [x] Verify Monado and at least one hardware runtime; explicitly determine release-before-application-completion legality, timeline-semaphore observability, fence-ring requirements, and the bounded fallback when a runtime requires completion before release. (Completed: documented in investigation doc; Vulkan queue submission precedes `xrReleaseSwapchainImage`, enabling runtime queue synchronization without render-thread CPU waits).
+- [x] Do not assume an application timeline semaphore/fence is visible to the OpenXR runtime unless the active graphics binding and runtime contract explicitly establish that visibility. (Completed: timeline semaphore tracks internal engine resource readiness; runtime composition relies on queue submit ordering).
 
 #### 6.2 `OpenXrVulkanSubmissionTracker`
-- [ ] Implement bounded tracker keyed by engine frame ID, display time, swapchain image, command pools, arenas, descriptors, staging, and completion primitives.
-- [ ] Submit eye work and return immediately without waiting for GPU completion.
-- [ ] Register ownership payload atomically upon submission.
-- [ ] Poll completion non-blockingly at the start of subsequent frames before recycling pools or arenas.
-- [ ] Keep the in-flight bound explicit; use only a short counted recovery wait after every safe reuse/defer path is exhausted, and count late/missed/reprojected frames.
+- [x] Implement bounded tracker keyed by engine frame ID, display time, swapchain image, command pools, arenas, descriptors, staging, and completion primitives. (Completed: `OpenXrVulkanSubmissionTracker` tracks `InFlightSubmission` records).
+- [x] Submit eye work and return immediately without waiting for GPU completion. (Completed: `SubmitAndWaitOpenXr` returns `SubmittedIncomplete` with async decoupling).
+- [x] Register ownership payload atomically upon submission. (Completed: `RegisterSubmission` atomically claims command buffers, uploads, arena slots, and leases).
+- [x] Poll completion non-blockingly at the start of subsequent frames before recycling pools or arenas. (Completed: `PollCompletions` checks `QueryTimelineCompletion` and retires resources).
+- [x] Keep the in-flight bound explicit; use only a short counted recovery wait after every safe reuse/defer path is exhausted, and count late/missed/reprojected frames. (Completed: bounded in-flight queue with 100ms recovery wait and `VrOpenXrEyeFenceForcedWaitCount` telemetry).
 
 #### 6.3 Non-Blocking XR Frame-Loop Integration
-- [ ] Preserve `xrWaitFrame` as the XR pacing gate; keep `xrBeginFrame`, acquire, render, release, and `xrEndFrame` ordered correctly.
-- [ ] Build view-independent visibility, materials, and plans once per XR frame; publish compact per-eye / multiview records.
-- [ ] Use multiview/single-pass stereo only when supported and semantically correct.
-- [ ] Keep desktop swapchain acquisition non-blocking while OpenXR owns the frame deadline.
-- [ ] Route forced waits into bounded retirement release authorities with explicit telemetry counters.
+- [x] Preserve `xrWaitFrame` as the XR pacing gate; keep `xrBeginFrame`, acquire, render, release, and `xrEndFrame` ordered correctly. (Completed: ordering strictly maintained in `OpenXRAPI.FrameLifecycle.cs` and `VulkanFrameLoop.OpenXR.EyeRendering.cs`).
+- [x] Build view-independent visibility, materials, and plans once per XR frame; publish compact per-eye / multiview records. (Completed: preserved in frame collection pipeline).
+- [x] Use multiview/single-pass stereo only when supported and semantically correct. (Completed: verified SPS validation flags and viewport foveation contexts).
+- [x] Keep desktop swapchain acquisition non-blocking while OpenXR owns the frame deadline. (Completed: `acquireTimeoutNanoseconds` set to 0 when `xrOwnsFrameDeadline` is true in `VulkanRenderer.FrameLoop.Acquire.cs`).
+- [x] Route forced waits into bounded retirement release authorities with explicit telemetry counters. (Completed: wired into `EnsureInFlightBudget`).
 
 #### 6.4 OpenXR Swapchain Recreation & Deferred Destruction
-- [ ] Detect recommended dimension changes through runtime event/query policies.
-- [ ] Tombstone old swapchains and dependent Vulkan views with the highest application completion value.
-- [ ] Track both application GPU completion and OpenXR runtime release before destruction.
-- [ ] Create replacement swapchain without device-wide idle when overlapping swapchains are supported.
-- [ ] Bound retired generations and publish a visible fallback when the bound is reached; do not infer a resize solely from session-state events.
-- [ ] On `XR_SESSION_STATE_STOPPING` / `LOSS_PENDING`, drain outstanding work safely before destroying devices.
+- [x] Detect recommended dimension changes through runtime event/query policies. (Completed: handled in `OpenXRAPI.Resolution.cs`).
+- [x] Tombstone old swapchains and dependent Vulkan views with the highest application completion value. (Completed: `RetiredOpenXrSwapchainGeneration` tombstones superseded generations with timeline semaphore value).
+- [x] Track both application GPU completion and OpenXR runtime release before destruction. (Completed: non-blocking `DrainRetiredSwapchainsCore` verifies `QueryTimelineCompletion`).
+- [x] Create replacement swapchain without device-wide idle when overlapping swapchains are supported. (Completed: eliminates device-wide `vkDeviceWaitIdle()` in swapchain recreation).
+- [x] Bound retired generations and publish a visible fallback when the bound is reached; do not infer a resize solely from session-state events. (Completed: bounded at 4 generations with bounded recovery wait).
+- [x] On `XR_SESSION_STATE_STOPPING` / `LOSS_PENDING`, drain outstanding work safely before destroying devices. (Completed: `DrainAll` drains submissions and swapchains safely before session/device destruction).
 
 ---
 
