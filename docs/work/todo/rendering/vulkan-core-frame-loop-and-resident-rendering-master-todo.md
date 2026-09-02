@@ -1,6 +1,6 @@
 # Vulkan Core Frame Loop, Resident Rendering, and High-Refresh Master TODO
 
-Last Updated: 2026-08-31
+Last Updated: 2026-09-01
 Owner: Rendering / Vulkan / Frame Scheduling / Core Architecture  
 Status: Active Master Implementation Tracker (Supersedes Present-Now Readiness, Core Hardening, Frame-Loop Stability, and Resident Draw Streams)  
 Primary Target: Stable desktop rendering above 100 Hz, with a 120 Hz promotion gate and a 144 Hz stretch gate  
@@ -15,7 +15,7 @@ This document is the **single authoritative implementation tracker** consolidati
 
 1. [Vulkan Present-Now Frame Readiness TODO](vulkan-present-now-frame-readiness-todo.md) (foreground truthfulness and cold-entry liveness)
 2. [Vulkan Core Hardening And Recording Code Changes TODO](vulkan-core-hardening-and-device-loss-todo.md) (core hardening, Forward+ simplification, tail latency, observability, and Advanced Render Pipeline phases 06–10)
-3. [XRENGINE Vulkan Frame Loop Stability And High-Refresh Optimization TODO](optimization/xrengine-vulkan-frame-loop-stability-todo.md) (high-refresh pacing, wait attribution, sealed submission, and swapchain/OpenXR lifecycle)
+3. [XRENGINE Vulkan Frame Loop Stability And High-Refresh Optimization TODO](optimization/xrengine-vulkan-frame-loop-stability-todo.md) (high-refresh pacing, wait attribution, sealed submission, local invalidation, lifecycle retirement, OpenXR completion, promotion gates)
 4. [Vulkan Resident Draw Stream And Render Task Pool TODO](optimization/vulkan-resident-draw-stream-and-render-task-pool-todo.md) (canonical `AdvancedSharedGpuSceneDatabase` residency, stable bins, five submission strategies, asynchronous diagnostic sidecar, and centralized `EngineWorkScheduler`)
 
 The source trackers remain provenance for implementation notes and historical evidence until Phase 9 archives them. They no longer own execution status. If a compressed master item appears less strict than a source invariant, rejection rule, or exit gate, the stricter source requirement applies and this master must be corrected before the source is archived.
@@ -41,6 +41,8 @@ The root causes are **tail latency, admission livelocks, draw-centric overhead, 
 - Cold camera cuts previously triggered prepared-cohort misses and admission-driven `RecordingDeferred` loops.
 - Accidental Mailbox burst pacing masquerades as renderer instability and hides true CPU/GPU cost.
 - Submission gateways perform expensive subresource dictionary scans, lifetime-pin acquisitions, and queue-ownership rechecks on unchanged frames.
+- Normal `PrimaryRecording` attribution spans frame-data manifests, resource and binding prewarm, native command encoding, and recording-result publication; one aggregate number cannot identify whether Vulkan emission is actually expensive.
+- Source inspection identifies an open native-encoding hypothesis: primary CPU-direct recording can still enter live renderer/material state, while tracked commands can perform shared bind-state and lifetime bookkeeping per command. These costs must be measured before implementation or promotion claims.
 - Non-draw structural mutations conservatively clear the entire resident template table due to missing reverse-dependency tracking.
 - Multiple scene databases (`GPUScene`, `HybridRenderingManager`, `AdvancedSharedGpuSceneDatabase`) and duplicate worker domains compete for CPU resources.
 - Synchronous OpenXR eye-submit fence waits introduce 70–100 ms stalls into the render thread.
@@ -58,9 +60,10 @@ The renderer will not be rewritten; rather, the resident data-oriented architect
 6. **Stable Bins & 5 Submission Strategy Lanes:** Numeric `VulkanRenderBinKey` and bin-level manifests feeding `CpuDirect`, `GpuIndirectZeroReadback`, `GpuIndirectInstrumented`, `GpuMeshletZeroReadback`, and `GpuMeshletInstrumented`.
 7. **Asynchronous Diagnostic Sidecar:** `GpuDiagnosticReadbackPlan` using a fixed-capacity staging ring with zero current-frame waits, strict zero-readback separation, and general-domain decoding.
 8. **Process-Wide Execution Topology:** `EngineExecutionTopology` and pooled `EngineWorkScheduler` owning non-oversubscribed general and render lanes with lane-local command arenas.
-9. **Bounded Graph, Streaming, & Tail Work:** Forward+ single normal/depth prepass gating; budgeted cascade updates; asynchronous chunked texture streaming; tombstoned swapchain lifecycle (zero normal `vkDeviceWaitIdle`).
-10. **Asynchronous OpenXR Decoupling:** `OpenXrVulkanSubmissionTracker` eliminating the 70–100 ms eye fence-wait with timeline semaphore / fence-ring completion authorities.
-11. **Advanced Render Pipeline (ARP 06–10):** GPU material classification, native opaque shading, clustered lighting, visibility-driven transparency/post, and complete legacy retirement.
+9. **Prepared Native Command Encoding:** One immutable backend-ready packet and sealed native-resource manifest feeds primary, secondary, inline, worker, CPU-direct, indirect, and ordered-exception encoders; command-local state and bulk lifetime publication replace per-command global discovery.
+10. **Bounded Graph, Streaming, & Tail Work:** Forward+ single normal/depth prepass gating; budgeted cascade updates; asynchronous chunked texture streaming; tombstoned swapchain lifecycle (zero normal `vkDeviceWaitIdle`).
+11. **Asynchronous OpenXR Decoupling:** `OpenXrVulkanSubmissionTracker` eliminating the 70–100 ms eye fence-wait with timeline semaphore / fence-ring completion authorities.
+12. **Advanced Render Pipeline (ARP 06–10):** GPU material classification, native opaque shading, clustered lighting, visibility-driven transparency/post, and complete legacy retirement.
 
 ---
 
@@ -82,7 +85,39 @@ The renderer will not be rewritten; rather, the resident data-oriented architect
 - **Forward+ Simplification (Section 6):** Complete-scene normal/depth target from deferred attachment 1 plus depth overlays forward opaque/masked surfaces once; contact-copy pair and merge replays removed.
 - **Heavy-Load Phase 0/1 Revalidation:** The final isolated Sponza/Jax-Mitsuki run crossed a 21.679 s exact-readiness frame and continued beyond frame 1100. All 33 rate-limited correlated-tree records completed, none exceeded the frame root, and the stopped logs contained zero accepted-frame rejection, recording deferral, renderer pause, backpressure, device loss, YAML exception, VUID, or validation error. One command-generation mismatch was rejected before Vulkan acceptance while startup shadow-budget settings were restored; the next package was presented normally.
 
-### 2.2 Frame Deadline Budgets
+### 2.2 Open Incident Evidence — 2026-09-01 Avatar Readiness and Frame-Operation Accumulation
+
+A local editor session with `jax2026.prefab` exposed a separate transaction and
+attribution failure that is not closed by the earlier isolated liveness result:
+
+- The imported avatar produced 52 models, 41 materials, 133 visible mesh
+  requests, and 163 textures. `BlockForExact` rejected 344 attempts while the
+  required dense texture cohort was pending, and no new desktop image was
+  presented for about 343 seconds even though background rendering and
+  streaming work continued.
+- Readiness returned before `DrainForPrimary`, so operations authored during
+  rejected attempts remained queued. When readiness advanced, the accumulated
+  queue contained 8,193 main-scene operations and exceeded the fixed 8,192
+  arena. Increasing that capacity would conceal the ownership defect.
+- Visibility promotion made required ticket `texture-upload:326:3` stale during
+  preparation. The transient generation race was classified as
+  `RendererTerminal` after about 3.5 ms instead of returning a retry or
+  supersession result.
+- A later resize published a 2560×1369 resource generation that the paused scene
+  renderer never submitted. Depth picking then retried an unwritten generation;
+  its one-shot request flag was cleared only after the throwing readback, so the
+  same request remained armed and produced 47 copies of the exact error.
+- When frames briefly resumed, the 133-mesh cohort reported roughly 320–360 ms
+  successful frame intervals. This incident does not attribute that cost to
+  native Vulkan encoding, tracked lifetime bookkeeping, descriptor binding, or
+  frontend preparation; Phase 1 owns that isolation.
+
+This incident directly supports transactional frame-operation ownership, typed
+retry/supersession, planned/published/recorded/submitted generation separation,
+one-shot consumer settlement, and finer recording attribution. It is incident
+evidence, not a native-command-encoding performance result.
+
+### 2.3 Frame Deadline Budgets
 
 | Refresh Target | Hard Frame Deadline | Engineering Target (p99) |
 |---|---:|---:|
@@ -91,16 +126,18 @@ The renderer will not be rewritten; rather, the resident data-oriented architect
 | **144 Hz** (Level C - Stretch Gate) | 6.944 ms | 5.9–6.25 ms |
 | **165 Hz / 200 Hz** | 6.061 ms / 5.000 ms | Characterization / Long-term target |
 
-### 2.3 Explicit Non-Fixes and Anti-Patterns
+### 2.4 Explicit Non-Fixes and Anti-Patterns
 
 The following are strictly forbidden as solutions:
-- Increasing queue capacities to mask admission livelocks.
+- Increasing queue or arena capacities to mask admission livelocks or operations accumulated across rejected attempts.
 - Increasing worker counts beyond the physical execution budget.
 - Polling in tight loops or busy-spinning across the entire frame interval.
 - Re-introducing CPU readbacks, full bucket scans, or synchronous diagnostic waits into zero-readback passes.
 - Enabling `SIMULTANEOUS_USE_BIT` to avoid correct slot-owned command pool management.
 - Creating a second parallel scene database or residency registry.
 - Calling `vkDeviceWaitIdle` during normal resize or swapchain recreation.
+- Declaring native command encoding optimized solely because managed allocation and lock waits above 0.1 ms are zero while repeated uncontended locks, dictionary lookups, hashes, generation checks, or dependency insertions remain per command.
+- Forcing native scene re-encoding solely to claim `PresentNow` freshness when fresh accepted data can legally execute through a compatible completed artifact.
 - Committing or updating automated tests before live/runtime validation passes and explicit user clearance is granted.
 
 ---
@@ -116,7 +153,7 @@ Phase 2: Submission Fast Path & Reverse-Dependency Invalidation
   │
 Phase 3: Canonical GPUScene Residency, Stable Bins, & 5 Strategy Lanes
   │
-Phase 4: Concurrency Closure & Multi-Lane Render Work Pool
+Phase 4: Concurrency Closure, Multi-Lane Work Pool, & Native Encoding
   │
 Phase 5: Render Graph Simplification, Streaming, & Tail Latency Bounds
   │
@@ -138,14 +175,15 @@ The diagram expresses promotion order, not blanket serialization. After the benc
 ### Phase 0 - In-Flight Checkpoint & Present-Now Live Revalidation
 
 **Status:** Desktop implementation and the capacity-one live smoke are complete.
-The remaining rows are cross-condition validation, not missing frame-loop
+The remaining rows are cross-condition validation and the 2026-09-01
+transaction-ownership incident, not a request to replace the frame-loop
 architecture.
 
 **Contract:** A `PresentNow` output either submits and presents the exact accepted
 frame, returns a typed pre-acquire retry while a dependency is making progress,
 or fails with a typed terminal reason. Cold readiness cannot replay stale
-content, poison later work, lose the captured epoch, or use exceptions as an
-ordinary retry protocol.
+content, poison later work, lose the captured epoch, accumulate authoring work
+from rejected attempts, or use exceptions as an ordinary retry protocol.
 
 #### Completed implementation
 
@@ -163,9 +201,9 @@ ordinary retry protocol.
 - [x] Give mandatory pipelines, uploads, shadows, and missing secondary recording
   explicit foreground completion paths with bounded capacities and visible
   failures.
-- [x] Require unresolved-ticket count zero before native recording and define
-  `PresentedNew(frameId)` by a new recording, submit serial, and presentation
-  dependency.
+- [x] Require unresolved-ticket count zero before native recording and require
+  every `PresentedNew(frameId)` result to name the matching submit serial and
+  presentation dependency.
 - [x] Publish allocation-free liveness breadcrumbs and typed terminal failures for
   acquire, readiness, recording, submission, presentation, device, and memory
   failures.
@@ -175,6 +213,23 @@ ordinary retry protocol.
 
 #### Carried validation gates
 
+- [ ] Define presentation freshness from accepted frame-data/resource
+  generations plus a compatible new-or-reused command artifact generation.
+  `PresentNow` alone must not force native scene re-encoding when the artifact
+  remains legal and exact completion protects its frame slot.
+- [ ] Give every authored frame operation one explicit attempt/accepted-plan
+  transaction. Retry, rejection, supersession, and terminal paths must transfer,
+  settle, or discard each operation exactly once.
+- [ ] Reproduce 344 pre-drain readiness retries and the 8,193-of-8,192 overflow
+  shape; prove queued authoring work remains bounded and the eventual accepted
+  plan contains only its owning frame transaction.
+- [ ] Classify a required preparation ticket that becomes stale during work as
+  `RetryFrame` or `Superseded` unless an independently terminal device/resource
+  condition exists; never latch `RendererTerminal` from a normal generation
+  race.
+- [ ] Settle, clear, or explicitly defer one-shot query/callback requests when no
+  submitted planner generation exists, including resize while rendering is
+  paused; ordinary absence must not create an exception loop.
 - [ ] Mutate camera and scene state while preparation is blocked; prove the
   accepted epoch remains immutable and exactly one captured epoch is submitted.
 - [ ] Reproduce the observed 221-request and 836-request shapes, then naturally
@@ -186,9 +241,12 @@ ordinary retry protocol.
 - [ ] Diagnose the RenderDoc 1.44 no-present launch and capture a settled Sponza
   frame with verified bindings and draw order.
 
-**Conclusion:** Desktop cold liveness is no longer a Phase 4 blocker. Epoch
-mutation, declared-capacity overflow, XR deadline behavior, and RenderDoc capture
-remain correctness gates for Phases 8–9. Detailed evidence is retained in
+**Conclusion:** The isolated capacity-one result remains valid, but the
+2026-09-01 avatar incident reopens transactional operation ownership, transient
+generation classification, one-shot consumer settlement, and reusable-artifact
+freshness semantics. Epoch mutation, declared-capacity overflow, XR deadline
+behavior, and RenderDoc capture remain correctness gates for Phases 8–9.
+Detailed earlier evidence is retained in
 `docs/work/investigations/rendering/vulkan-present-now-frame-readiness.md`.
 
 ---
@@ -196,12 +254,14 @@ remain correctness gates for Phases 8–9. Detailed evidence is retained in
 ### Phase 1 - Baseline Characterization, Telemetry Taxonomy, & Deliberate Pacing
 
 **Status:** Benchmark, presentation-policy, and correlated telemetry
-infrastructure are implemented. Matched multi-run promotion baselines remain
-open.
+infrastructure are implemented. Matched multi-run promotion baselines and the
+native recording isolation matrix remain open.
 
 **Contract:** Every reported frame cost has a stable lifecycle owner. Performance
 runs are isolated from validation/capture overhead, use explicit presentation
 policy, and report actual present intervals rather than inferred CPU cadence.
+An aggregate `PrimaryRecording` or frame-root value is never sufficient evidence
+for a native command-encoding conclusion.
 
 #### Completed implementation
 
@@ -241,17 +301,54 @@ policy, and report actual present intervals rather than inferred CPU cadence.
 - [ ] Prove every recurring slot wait has an exact producer/timeline owner and
   that uncapped GPU-headroom slot-wait p95 is approximately zero.
 
+#### Native Command Recording Attribution and Isolation
+
+- [ ] Report `PrimaryFrameDataManifest`, `PrimaryPrewarm`,
+  `PrimaryEncodingSetup`, `PrimaryOperationLoop`, `PrimaryFinalization`, and
+  `PrimaryEndCommandBuffer` separately at p50/p95/p99/max with allocation,
+  operation-count, lane, and frame/output identity.
+- [ ] Separate secondary encoder wall time, summed worker execution, worker wait,
+  merge, and command-buffer-end dependency publication. Do not charge frontend
+  preparation or submission validation to native encoding.
+- [ ] Count live `VkMeshRenderer.RecordDraw` calls, immutable prepared-draw
+  encoder calls, dependency-track attempts, unique native dependencies,
+  command-bind-state lookups/lock acquisitions, tracking-batch lock
+  acquisitions, descriptor-heap bind attempts/native binds/skips, and native
+  Vulkan commands by type.
+- [ ] Publish `DependencyTrackAttempts / UniqueRecordingDependencies`. Zero
+  allocation and no individual lock wait above 0.1 ms do not close repeated
+  per-command bookkeeping.
+- [ ] Execute one matched Release isolation ladder with identical scene, camera,
+  render graph, output, validation state, and warm caches:
+  1. live draw path plus current full tracking;
+  2. immutable prepared draw state plus current full tracking;
+  3. immutable prepared draw state plus sealed/bulk recording dependencies;
+  4. CPU-built indirect ranges over the same resident bins; and
+  5. GPU-built equivalent indirect/count ranges.
+- [ ] Run the ladder on small, medium, dense, material-diverse, and moving-camera
+  cohorts. The A→B delta owns live renderer/material preparation, B→C owns
+  recording bookkeeping, C→D owns per-draw Vulkan emission, and D→E owns the
+  CPU/GPU visibility-producer crossover.
+- [ ] Retain an explicitly diagnostic raw-pinned or sampled-full-validation rung
+  only long enough to quantify the safety layer. It may not become a production
+  lifetime bypass.
+- [ ] Record conclusions as measured findings or source-audit hypotheses. The
+  2026-09-01 incident supports attribution and transaction ownership but does
+  not by itself prove which native-encoding change will win.
+
 **Conclusion:** The final heavy-load revalidation crossed a 21.679 s cold frame
 without losing liveness and achieved 99.9876% sampled attribution after the wait
 taxonomy correction. Those are implementation checks, not a frozen promotion
-baseline; the matched repetitions and A/B matrix remain in Phase 8.
+baseline or native-recording attribution result; the matched repetitions,
+isolation ladder, and A/B matrix remain in Phase 8.
 
 ---
 
 ### Phase 2 - Submission Fast Path & Granular Invalidation
 
-**Status:** Implementation complete. The measured sealed-hit percentile misses
-the promotion target, which remains unchanged in Phase 8.
+**Status:** Submission-side implementation complete. The measured sealed-hit
+percentile misses the promotion target, which remains unchanged in Phase 8.
+Recording-side manifest closure remains in Phase 4.5.
 
 **Contract:** Stable submission is proportional to compact generation/state
 vectors, and local mutation invalidates exact reverse dependents. Full discovery
@@ -296,12 +393,18 @@ Phase 8. Detailed implementation evidence is in
 `docs/work/investigations/rendering/vulkan-frame-loop-phase2-2026-08-27.md` and
 `docs/work/investigations/rendering/vulkan-frame-loop-phase23-finalization-2026-08-28.md`.
 
+Phase 2 closes the submit gateway only. It does not establish that command
+recording consumes a prevalidated bulk native manifest or avoids per-command
+resource-generation discovery, dependency insertion, command-buffer lookup, or
+shared bind-state synchronization. Phase 4.5 owns that distinct closure.
+
 ---
 
 ### Phase 3 - Canonical GPUScene Residency, Stable Bins, & 5 Strategy Lanes
 
-**Status:** Implementation complete. Rendered parity and portable promotion
-remain Phase 8 work.
+**Status:** Canonical residency and five-lane sealing are implemented. Common
+CPU/GPU submission convergence, rendered parity, and portable promotion remain
+open.
 
 **Contract:** `AdvancedSharedGpuSceneDatabase` is the normal-frame Vulkan
 resident authority. One immutable publication and SoA image feeds stable bins
@@ -344,6 +447,27 @@ never production feedback.
   commands, buffer-device-address, and mesh-shader tiers capability-gated and
   outside baseline promotion.
 
+#### Common CPU/GPU Resident Submission Follow-Up
+
+- [ ] Promote CPU-indirect parity from diagnostic scaffolding to a production
+  option for compatible opaque and masked bins only after the Phase 1 isolation
+  ladder proves its crossover against prepared direct draws.
+- [ ] Require `CpuDirect` to consume the canonical resident templates, material
+  tables, geometry ranges, view/pass records, and stable bins used by GPU
+  strategies instead of maintaining a second draw-oriented backend path.
+- [ ] Require primary, secondary, inline, worker, CPU-direct, indirect, and
+  ordered-exception encoders to consume immutable backend-ready records. Small
+  work may stay inline, but it may not return to live renderer/material
+  discovery during native encoding.
+- [ ] Make GPU indirect and meshlet lanes populate the corresponding canonical
+  bin/range streams without rebuilding the original per-draw CPU frontend.
+- [ ] Keep transparent, UI, callbacks, queries, and semantically ordered work in
+  explicit bounded exception streams with independent cost and compatibility
+  telemetry.
+- [ ] Select prepared direct, CPU-built MDI, GPU indirect-count, or mesh-task
+  realization through measured candidate/bin/material/culling crossover policy;
+  no strategy is required to win every scene size.
+
 #### Evidence and conclusion
 
 The final five-lane Release cohort resolved every requested strategy, preserved
@@ -355,18 +479,22 @@ post-coverage smoke repeated 2403 requested/consumed draws with no dependency
 rejection or broad invalidation.
 
 This proves publication, resolution, dispatch, lifetime, and diagnostic
-separation. It does not prove shaded-output parity because the current promoted
-advanced graph deliberately terminates in its empty-output diagnostic clear.
-Rendered five-lane parity, the mutation matrix, diagnostic saturation, cross-
-vendor descriptor tiers, hardware/OpenXR coverage, and performance promotion
-remain in Phase 8. The durable closeout is
+separation. It does not prove shaded-output parity or common CPU/GPU encoder
+convergence because the current promoted advanced graph deliberately terminates
+in its empty-output diagnostic clear and CPU-indirect remains scaffolding.
+Rendered five-lane parity, the common backend, mutation matrix, diagnostic
+saturation, cross-vendor descriptor tiers, hardware/OpenXR coverage, and
+performance promotion remain in Phase 8. The durable closeout is
 `docs/work/investigations/rendering/vulkan-frame-loop-phase23-finalization-2026-08-28.md`.
 
 ---
 
-### Phase 4 - Concurrency Closure & Multi-Lane Render Work Pool
+### Phase 4 - Concurrency Closure, Multi-Lane Render Work Pool, & Native Encoding
 
-**Goal:** Centralize process thread budgets, eliminate worker oversubscription, provide zero-allocation pooled batches, and migrate command recording to lane-affine render workers.
+**Goal:** Centralize process thread budgets, eliminate worker oversubscription,
+provide zero-allocation pooled batches, migrate command recording to lane-affine
+render workers, and finish the production encoder as an immutable command-local
+serializer rather than a live draw-preparation path.
 
 #### 4.1 Execution Topology & Thread Budget
 - [x] Centralize foreground reservations, general/render domains, the retained compiler lane, auxiliary job lanes, and other dedicated lanes in immutable `EngineExecutionTopology` diagnostics.
@@ -498,8 +626,53 @@ source-layout assertions were updated for the canonical draw-ID streams,
 render-domain lane scheduler, profiler authority, and split ImGui recorder.
 Another 66 directly affected advanced-pipeline, geometry, visibility, package,
 and lane-arena contract tests also passed.
-This closes Phase 4 source and live-lifecycle work; the Phase 8 performance,
-shaded-output, cross-vendor, and OpenXR promotion gates remain open.
+
+#### 4.5 Native Command Encoding Fast-Path Closure
+
+- [ ] Require every production mesh encoder—primary, secondary, inline, worker,
+  `CpuDirect`, indirect, and ordered-exception—to consume immutable
+  backend-ready records. Normal native encoding must not call live
+  `VkMeshRenderer.RecordDraw` or traverse renderer/material/reflection state.
+- [ ] Eliminate renderer prewarm, shader reflection, descriptor allocation or
+  update, pipeline creation, render callbacks, and live object locks from the
+  production command-emission interval. Cold work remains an explicit resource
+  preparation stage or returns a typed retry.
+- [ ] Introduce one lane/frame-slot-owned recording context containing the exact
+  command buffer, direct bind state, image-access journal, dependency collector,
+  and immutable prepared-frame/manifest references. A command buffer has one
+  recording owner and does not need a shared bind-state monitor.
+- [ ] Remove global command-buffer dictionary discovery and shared bind-state
+  lock acquisition from steady primary and secondary encoding. Diagnostic and
+  retirement lookup may remain outside the command loop.
+- [ ] Seal and acquire one exact native resource manifest before
+  `vkBeginCommandBuffer`; command emission must not perform one resource
+  generation handshake or lifetime publication for every repeated `vkCmd*`.
+- [ ] Publish dependencies, image-access deltas, queue ownership, and artifact
+  identity once as a sealed recording receipt at command-buffer completion.
+  Keep sampled/instrumented full validation as a separate correctness path.
+- [ ] Replace repeated dependency `HashSet`/dictionary activity with bounded
+  manifest indices, bitsets, sorted unique IDs, or another measured flat
+  representation. Preserve precise retirement safety and fail before native
+  emission on a generation mismatch.
+- [ ] Bind global descriptor tables or descriptor heaps once per command buffer,
+  compatible rendering scope, or required secondary inheritance boundary.
+  Per-draw heap rebinding requires explicit device-specific measurement and may
+  not be the portable baseline.
+- [ ] Keep transient command pools per lane/frame slot separate from retained
+  artifact pools, reset only after exact completion, and allocate no warmed
+  command buffers.
+- [ ] Demonstrate that adding visible draws inside existing compatible bins
+  primarily changes argument/data buffers. Native encoding and recording
+  dependencies must scale with passes, bins, dirty ranges, and ordered
+  exceptions—not raw visible object count.
+- [ ] Do not mark this phase implemented from source shape alone. Complete the
+  Phase 1 isolation ladder, retain before/after profiles, and prove that safety
+  work was removed or bulk-published rather than shifted into begin/end,
+  submission, retirement, or another worker.
+
+This closes Phase 4.1–4.4 scheduler and lifecycle work. Phase 4.5 remains open;
+Phase 8 owns its integrated performance, shaded-output, cross-vendor, and
+OpenXR promotion gates.
 
 **Pipeline-source follow-up (2026-08-29):** the post-window capability pass no
 longer creates a viewport-only pipeline override. New desktop cameras configure
@@ -951,6 +1124,16 @@ errors, VUIDs, or targeted exception records. Details are in the
 - [ ] Normal production captures contain no current-frame readback, mapping, host completion wait, or `vkDeviceWaitIdle`.
 - [ ] Zero managed hot-path heap allocations after warmup.
 - [ ] Zero per-draw material reconstruction, descriptor validation, or command-signature rebuilding.
+- [ ] Warm production native encoding executes zero live `VkMeshRenderer.RecordDraw` calls, zero `_recordDrawSync` acquisitions, and zero shader/material reflection, pipeline creation, descriptor allocation/update, renderer prewarm, or render callback execution.
+- [ ] Primary, secondary, inline, worker, CPU-direct, indirect, and ordered-exception encoders consume immutable backend-ready records and one sealed recording manifest.
+- [ ] Steady command encoding performs zero global command-buffer bind-state discovery and zero shared bind-state lock acquisitions. Recording-local state is owned directly by its lane/frame-slot context.
+- [ ] Recording dependency work scales with unique sealed manifest entries rather than raw pipeline/descriptor/buffer bind attempts or `vkCmd*` count; publish attempts, unique entries, and the ratio.
+- [ ] Descriptor table or heap native binds scale with command buffers or compatible scopes, not draws, unless a separately accepted device-specific tier proves otherwise.
+- [ ] Warm `PrimaryPrewarm` reports no visits or work outside explicitly classified mutation, streaming, cold-recovery, or diagnostic frames.
+- [ ] Warm dense-Sponza `PrimaryCommandEncoding` p95 is at most 1.0 ms on the named desktop and 1.5 ms on the named laptop. Revise only from raw driver-attributed evidence, not by moving frontend preparation outside the counter.
+- [ ] Complete the five-rung recording isolation ladder and retain raw profiles, native command counts, tracking counters, output parity, and before/after critical paths.
+- [ ] Fresh accepted frame data can execute through a compatible completed reusable artifact without forcing native scene re-encoding; a new submit serial and exact generation provenance still define `PresentedNew`.
+- [ ] CPU-direct prepared encoding and any promoted CPU-built indirect path consume the same resident template/bin/material backend as GPU indirect and meshlet strategies.
 - [ ] Stable frame preparation scales with dirty ranges, not visible draw count.
 - [ ] Sealed unchanged submission CPU p95 $<0.25$ ms.
 - [ ] Slot-wait p95 $\approx 0$ ms in uncapped GPU-headroom tests.
@@ -1004,9 +1187,14 @@ errors, VUIDs, or targeted exception records. Details are in the
 - [ ] Before final cutover/deletion, complete the integrated live/runtime and cleared automated validation gates across Phases 0–8.
 
 #### 9.2 Automated Test & Fault-Injection Matrix (Post-Clearance)
-- [ ] Add contract tests proving `PresentNow` results cannot be `Deferred` or report `PresentedNew` without matching submit serials.
+- [ ] Add contract tests proving `PresentNow` results cannot be `Deferred` or report `PresentedNew` without matching submit serials and accepted data/resource generations; compatible artifact reuse must not claim stale output.
 - [ ] Exercise scheduling capacities 1, 8, 32, and production values.
 - [ ] Reproduce the observed 221-request and 836-request visibility shapes and exercise bounded accepted-frame/UI/main-scene/shadow lane overflows.
+- [ ] Reproduce repeated pre-drain readiness retries, including the 344-attempt and 8,193-operation shape; prove operations are transferred or settled exactly once and cannot accumulate into a later accepted frame.
+- [ ] Inject a required upload generation change during preparation; require retry/supersession rather than renderer-terminal state.
+- [ ] Request a one-shot depth/query readback while no submitted planner generation exists and across resize; require explicit defer/clear settlement with no exception loop.
+- [ ] After live validation and explicit clearance, add source/contract tests proving the primary and inline mesh encoders use immutable prepared state rather than live `VkMeshRenderer.RecordDraw`.
+- [ ] Validate sealed/bulk recording manifests against the sampled full tracker, including retirement races, image-access deltas, descriptor expansion, render-pass replacement, and secondary execution.
 - [ ] Inject slow pipeline compiles, chunked large uploads, staging overflow, shader compile failures, descriptor exhaustion, frame arena overflow, host/device OOM, device loss, and timeline stalls.
 - [ ] Prove uploads larger than the staging ring complete by chunking and that foreground reserve publishes the requested number of distinct allocation generations.
 - [ ] Mutate camera, transforms, materials, and lights during blocked preparation; verify exactly one captured epoch is submitted.
@@ -1025,6 +1213,8 @@ errors, VUIDs, or targeted exception records. Details are in the
 - [ ] Delete duplicate `GPUScene` / `HybridRenderingManager` arrays and ID maps.
 - [x] Delete the `RuntimeEngine.Jobs` compatibility facade.
 - [ ] Delete separate command-chain workers and dedicated OpenXR eye threads after their Phase 4 render-domain migration.
+- [ ] Delete the live object-oriented Vulkan CPU-direct encoding path after prepared direct/CPU-indirect parity and ordered-exception coverage pass.
+- [ ] Delete per-command global bind-state/lifetime discovery after sealed recording-manifest parity, sampled validation, and retirement-race gates pass.
 - [ ] Delete classic `DefaultRenderPipeline` (or rename to `LegacyDefaultRenderPipeline` with bounded removal gate if required by a named consumer).
 - [ ] If a named required consumer temporarily blocks deletion, keep the renamed legacy path opt-in, record its owner/exact blocker/dated deletion gate, stop symmetric feature development, and keep this master active until deletion.
 - [ ] Remove obsolete diagnostic aliases, duplicate telemetry, and transitional fallbacks.
@@ -1086,7 +1276,7 @@ errors, VUIDs, or targeted exception records. Details are in the
 Aggregate metrics must be allocation-free and low-contention in performance builds. Detailed capture uses prewarmed bounded per-thread rings and stable cross-thread IDs; strings, export, and aggregation run off measured threads. Measure clean vs. aggregate vs. targeted-detailed observer overhead against the accepted baseline.
 
 * **Frame Identity & Outcome:** engine/render/source/accepted frame IDs, accepted epoch, output/view/pass identity, frame slot, resource/output generations, span/parent/cross-thread link, thread/lane, work class, present policy/deadline/fallback, submit serial, presented-source ID, typed terminal stage/outcome, and first fault.
-* **Foreground Plan & Failure:** `AcceptedFrameId`, `AcceptedEpoch`, `OutputGeneration`, `PresentWorkClass`, `ReadinessPolicy`, `FreshSubmitSerial`, `FramePlanCapacityLane`, `FramePlanCapacityConfigured`, `FramePlanCapacityRequired`, `FramePlanCapacityAccepted`, `FramePlanCapacityRejected`, `ForegroundReserveRequested`, `ForegroundReserveDistinctSlices`, `TerminalStage`, `TerminalFailureKind`.
+* **Foreground Plan & Failure:** `AcceptedFrameId`, `AcceptedEpoch`, `OutputGeneration`, `PresentWorkClass`, `ReadinessPolicy`, `FreshSubmitSerial`, `FrameOperationTransactionId`, authored/transferred/settled/discarded operation counts, queued-across-retry count, retry/supersession disposition, stale-ticket disposition, one-shot-consumer settlement, `FramePlanCapacityLane`, `FramePlanCapacityConfigured`, `FramePlanCapacityRequired`, `FramePlanCapacityAccepted`, `FramePlanCapacityRejected`, `ForegroundReserveRequested`, `ForegroundReserveDistinctSlices`, `TerminalStage`, `TerminalFailureKind`.
 * **Device & Context:** device state/loss count, device-fault payload, TDR risk, memory budget, last successful submission breadcrumbs, context/display/internal extent/registry/resource-generation mismatches, and structured frame-rejection reason.
 * **Presentation & Pacing:** `PresentationProfileRequested`, `PresentationProfileResolved`, `PresentMode`, `TargetRefreshHz`, `TargetFrameIntervalMs`, `ActualPresentIntervalMs`, `FramesAhead`, `LimiterSleepMs`, `LimiterSpinMs`, `AcquireMs`, `AcquireUnavailableCount`, `PresentQueueAdmissionMs`, `NativePresentMs`.
 * **Frame-Slot & Completion:** `FrameSlotWaitMs`, `FrameSlotWaitQueue`, `FrameSlotWaitTargetValue`, `FrameSlotWaitCompletedValue`, `FrameSlotWaitAgeFrames`, `SwapchainImageWaitMs`, `CommandPoolReuseWaitMs`, `DescriptorArenaReuseWaitMs`.
@@ -1094,6 +1284,7 @@ Aggregate metrics must be allocation-free and low-contention in performance buil
 * **Submission Gateway:** `SubmitImageContractMs`, `SubmitQueueOwnershipMs`, `SubmitLifetimePinsMs`, `SubmitStateGateWaitMs`, `SubmitQueueGateWaitMs`, `NativeQueueSubmitMs`, `SubmitLifetimePublishMs`, `SubmitImagePublishMs`, `SubmitDiagnosticPublishMs`, `SealedSubmissionHits`, `SealedSubmissionFallbacks`, `SealedSubmissionFallbackReason`.
 * **Scheduler & Memory:** requested/resolved counts, active lanes/peak concurrency/thread IDs/QoS, built/queued/stolen/inline/lane-executed/cancelled items, `WorkerWakeCount`, empty wakes, queue-full fallback, faults/timeouts/quarantine, `WorkerQueueAgeMs`, `WorkerExecuteMs`, overlap/imbalance, `WorkerLockWaitMs`, merge cost, high-water marks, managed allocation by build/dispatch/execute/merge stage, `RenderThreadManagedAllocationBytes`, `GcPauseMs`, `PinnedObjectCount`, `OversubscriptionRejectedCount`.
 * **Uploads & Streaming:** `UploadQueuedJobs`, `UploadOldestJobAgeMs`, `UploadStagingBytes`, `UploadStagingOverflowBytes`, `UploadCpuPrepMs`, `UploadStagingCopyMs`, `UploadVulkanAllocationMs`, `UploadTransferRecordMs`, `UploadTransferGpuMs`, `DescriptorPublicationMs`, `DescriptorPublicationItems`, `RetirementBacklogByClass`, `RetirementOldestAgeFrames`, deferred count, `RetirementDestroyedByClass`, `RetirementUncappedDrainCount`.
+* **Native Command Encoding:** `PrimaryFrameDataManifestMs`, `PrimaryPrewarmMs`, `PrimaryEncodingSetupMs`, `PrimaryOperationLoopMs`, `PrimaryFinalizationMs`, `PrimaryEndCommandBufferMs`, secondary wall/summed-worker/wait/merge/end-publication time, `LiveMeshRecordDrawCalls`, `PreparedMeshEncodeCalls`, `DependencyTrackAttempts`, `UniqueRecordingDependencies`, dependency-attempt ratio, command-bind-state lookups/locks, tracking-batch locks, descriptor-heap bind attempts/native binds/skips, manifest entries, sampled-full-validation results, and native Vulkan command counts by type.
 * **Bins, Recording, Render Graph, & GPU:** bin/dirty-bin/membership/manifest/resource counts; indirect buffer bytes/counts and MDI calls; primary/secondary records/reuses/resets/allocations; pipeline/descriptor/vertex/index/draw/submit API counts; `RenderGraphCacheHit`, `RenderGraphRecompiledPassCount`, `BarrierCount`, `BroadBarrierCount`, `OwnershipTransferCount`, `FullResolutionCopyBytes`, occlusion candidate/occluder/test/reject/age costs, `GpuPassP50P95P99`, `GpuFrameP50P95P99`.
 * **Strategy & Diagnostics:** requested/resolved `MeshSubmissionStrategy`, capability/downgrade reason, per-strategy pass/draw/task counts, `GpuReadbackBytes`, `GpuReadbackBufferMaps`, query retrievals, `GpuReadbackWaits`, CPU fallback attempts, `DiagnosticRequestsAccepted`, copy bytes, `DiagnosticRingOccupancy`, completion latency/source generation, `DiagnosticDecodedResults`, generation-mismatch discards, `DiagnosticRingFullDrops`, decoder faults, diagnostic-only records/submits, and dormant overhead.
 * **OpenXR Subsystem:** `OpenXrEyeSubmitMs`, eye completion-wait time, `OpenXrEyeInFlightCount`, tracker capacity/high-water, `OpenXrEyeOldestAgeFrames`, swapchain-image reuse age/release state, `OpenXrEyeForcedWaitMs`, `OpenXrEyeForcedWaitCount`, `OpenXrSwapchainReleaseDeferredCount`, `OpenXrRetiredGenerationCount`, `OpenXrMissedFrameCount`, `OpenXrLateFrameCount`, `OpenXrReprojectedFrameCount`.
@@ -1106,11 +1297,13 @@ This master program is complete only when:
 
 1. The desktop Vulkan renderer sustains **120 Hz (p99 $< 8.333$ ms, engineering target $\le 7.5$ ms)** across all required desktop performance-promotion scenarios on the target systems, while the separate correctness/lifetime matrix passes.
 2. Actual presentation cadence matches the reported CPU/GPU timing story without hidden burst pacing.
-3. Stable frames perform zero managed hot-path allocations, zero per-draw material/descriptor reconstruction, and zero command buffer re-recording.
-4. Local mutations invalidate only exact reverse dependencies without whole-table resident clears.
-5. Unchanged submission CPU p95 is below $0.25$ ms via `SealedSubmissionContract`.
-6. All process execution domains are centralized, non-oversubscribed, and pooled.
-7. OpenXR eye submission returns immediately, eliminating the 70–100 ms synchronous wait.
-8. `AdvancedRenderPipeline` is the desktop and applicable-offscreen production default, with GPU material classification, native opaque shading, clustered lighting, and visibility-driven post/transparency. Production OpenXR eye output remains owned by `RvcRenderPipeline`, and that path is promoted only after its matching XR gates pass.
-9. Standard and Synchronization Validation report zero errors/VUIDs, with no unresolved renderer warning or lifetime ambiguity accepted into closeout.
-10. `GPUScene` mirrors, `VulkanPreparedMeshOperationCohort`, obsolete worker arrays, `DefaultRenderPipeline2`, and the original default pipeline are deleted. A temporary opt-in `LegacyDefaultRenderPipeline` may unblock production cutover for one named consumer, but it keeps this master active until its dated deletion gate is complete.
+3. Stable frames perform zero managed hot-path allocations, zero live per-draw material/descriptor reconstruction, and zero unnecessary scene-artifact re-recording; any required native recording is coarse and scales with passes, bins, dirty ranges, and ordered exceptions rather than visible objects.
+4. Every authored frame operation settles inside one explicit frame transaction; retries cannot accumulate work into a later accepted plan, transient generation races do not latch renderer-terminal state, and one-shot consumers settle safely when no submitted generation exists.
+5. Local mutations invalidate only exact reverse dependencies without whole-table resident clears.
+6. Unchanged submission CPU p95 is below $0.25$ ms via `SealedSubmissionContract`.
+7. Native encoding consumes immutable prepared records and prevalidated recording manifests through command-local state, with no per-command global bind-state discovery, shared bind-state lock, or lifetime-publication handshake; its p95 meets the Phase 8 budget.
+8. All process execution domains are centralized, non-oversubscribed, and pooled.
+9. OpenXR eye submission returns immediately, eliminating the 70–100 ms synchronous wait.
+10. `AdvancedRenderPipeline` is the desktop and applicable-offscreen production default, with GPU material classification, native opaque shading, clustered lighting, and visibility-driven post/transparency. Production OpenXR eye output remains owned by `RvcRenderPipeline`, and that path is promoted only after its matching XR gates pass.
+11. Standard and Synchronization Validation report zero errors/VUIDs, with no unresolved renderer warning or lifetime ambiguity accepted into closeout.
+12. `GPUScene` mirrors, `VulkanPreparedMeshOperationCohort`, obsolete worker arrays, live object-oriented Vulkan CPU-direct encoding, per-command global recording discovery, `DefaultRenderPipeline2`, and the original default pipeline are deleted. A temporary opt-in `LegacyDefaultRenderPipeline` may unblock production cutover for one named consumer, but it keeps this master active until its dated deletion gate is complete.
