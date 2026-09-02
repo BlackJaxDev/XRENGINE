@@ -10,7 +10,8 @@ internal readonly record struct VulkanOpenXrSubmissionInput(
     CommandBuffer FirstCommandBuffer,
     CommandBuffer SecondCommandBuffer,
     uint CommandBufferCount,
-    VulkanSubmissionDiagnosticContext DiagnosticContext)
+    VulkanSubmissionDiagnosticContext DiagnosticContext,
+    bool ForceSynchronousCompletion = false)
 {
     internal bool IsValid =>
         CommandBufferCount is 1 or 2 &&

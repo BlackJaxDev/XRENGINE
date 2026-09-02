@@ -17,7 +17,7 @@ internal sealed partial class VulkanCommandRuntime
     private long _recordedPrimaryFrameCounter;
     private long _primaryReuseCohortGeneration;
 
-    private VulkanMappedFrameArena? MappedFrameArena => ResourceRuntime.MappedFrameArena;
+    internal VulkanMappedFrameArena? MappedFrameArena => ResourceRuntime.MappedFrameArena;
     private ulong VulkanFrameCounter => unchecked((ulong)Volatile.Read(ref _recordedPrimaryFrameCounter));
     private ulong SharedGraphicsPipelineGeneration => ResourceRuntime.PipelineManager.SharedGraphicsPipelineGeneration;
     private ulong VulkanPipelineCompileActivityGeneration

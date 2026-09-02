@@ -47,6 +47,7 @@ public sealed partial class VulkanRenderer :
     private readonly VulkanFramePlanner _framePlanner = new();
     private readonly VulkanResourceRuntime _resourceRuntime;
     private readonly VulkanCommandRuntime _commandRuntime = new();
+    internal VulkanCommandRuntime CommandRuntime => _commandRuntime;
     private readonly VulkanFrameTelemetry _frameTelemetry = new();
     private int _explicitProductionPreparationStarted;
 
