@@ -20,7 +20,10 @@ internal sealed class VulkanAcceptedFramePlan
     private const int DependencyIndexCapacity = DependencyCapacity * 2;
     private const int DependencyIndexMask = DependencyIndexCapacity - 1;
     internal const int StaticCapacity = TerminalCapacity + MainSceneCapacity + ShadowCapacity;
+    private const int AuthoredOperationCapacity = StaticCapacity + UiCapacity;
 
+    private readonly FrameOp[] _authoredOperations = new FrameOp[AuthoredOperationCapacity];
+    private readonly FrameOp[] _authoredTextureUploadOperations = new FrameOp[UploadCapacity];
     private readonly FrameOp[] _staticOperations = new FrameOp[StaticCapacity];
     private readonly FrameOp[] _dynamicUiOperations = new FrameOp[UiCapacity];
     private readonly FrameOp[] _textureUploadOperations = new FrameOp[UploadCapacity];
@@ -43,6 +46,8 @@ internal sealed class VulkanAcceptedFramePlan
     private VulkanDescriptorManager? _bindlessReceiptLeaseOwner;
     private int _bindlessReceiptCount;
     private int _bindlessDescriptorReferenceCount;
+    private int _authoredOperationCount;
+    private int _authoredTextureUploadOperationCount;
 
     internal VulkanCanonicalPublicationPinSet CanonicalPublicationPins { get; } =
         new(VulkanMeshOperationRequestQueue.Capacity);
@@ -74,6 +79,8 @@ internal sealed class VulkanAcceptedFramePlan
     internal FrameOp[] StaticOperations => _staticOperations;
     internal FrameOp[] DynamicUiOperations => _dynamicUiOperations;
     internal FrameOp[] TextureUploadOperations => _textureUploadOperations;
+    internal Span<FrameOp> AuthoredOperations
+        => _authoredOperations.AsSpan(0, _authoredOperationCount);
     internal ReadOnlySpan<XRTexture?> RequiredTextures
         => _requiredTextures.AsSpan(0, RequiredTextureCount);
     internal ReadOnlySpan<long> RequiredTextureGenerations
@@ -215,6 +222,65 @@ internal sealed class VulkanAcceptedFramePlan
         TargetCompatibility = targetCompatibility;
     }
 
+    /// <summary>
+    /// Claims operations authored before this attempt reaches its final logical
+    /// seal. A rejected attempt releases this cohort instead of leaving it in the
+    /// shared queue for an unrelated successor.
+    /// </summary>
+    internal void CaptureAuthoredOperations(
+        ReadOnlySpan<FrameOp> operations,
+        ReadOnlySpan<FrameOp> textureUploadOperations)
+    {
+        if (IsSealed)
+            throw new InvalidOperationException("The accepted frame plan is already sealed.");
+        if (_authoredOperationCount + operations.Length > _authoredOperations.Length)
+        {
+            throw new VulkanAcceptedFramePlanCapacityException(
+                EVulkanAcceptedFrameLane.MainScene,
+                _authoredOperations.Length,
+                _authoredOperationCount + operations.Length);
+        }
+        if (_authoredTextureUploadOperationCount + textureUploadOperations.Length >
+            _authoredTextureUploadOperations.Length)
+        {
+            throw new VulkanAcceptedFramePlanCapacityException(
+                EVulkanAcceptedFrameLane.Upload,
+                _authoredTextureUploadOperations.Length,
+                _authoredTextureUploadOperationCount + textureUploadOperations.Length);
+        }
+
+        operations.CopyTo(
+            _authoredOperations.AsSpan(_authoredOperationCount));
+        _authoredOperationCount += operations.Length;
+        textureUploadOperations.CopyTo(
+            _authoredTextureUploadOperations.AsSpan(
+                _authoredTextureUploadOperationCount));
+        _authoredTextureUploadOperationCount += textureUploadOperations.Length;
+
+        ClaimUnsubmittedSubmissionMarkers(operations);
+        ClaimUnsubmittedSubmissionMarkers(textureUploadOperations);
+    }
+
+    /// <summary>Transfers the attempt-owned authored cohort into its final lanes.</summary>
+    internal void TransferAuthoredOperations(
+        ReadOnlySpan<FrameOp> staticOperations,
+        ReadOnlySpan<FrameOp> dynamicUiOperations)
+    {
+        CaptureOperations(
+            staticOperations,
+            dynamicUiOperations,
+            _authoredTextureUploadOperations.AsSpan(
+                0,
+                _authoredTextureUploadOperationCount));
+
+        _authoredOperations.AsSpan(0, _authoredOperationCount).Clear();
+        _authoredTextureUploadOperations.AsSpan(
+            0,
+            _authoredTextureUploadOperationCount).Clear();
+        _authoredOperationCount = 0;
+        _authoredTextureUploadOperationCount = 0;
+    }
+
     internal void CaptureOperations(
         ReadOnlySpan<FrameOp> staticOperations,
         ReadOnlySpan<FrameOp> dynamicUiOperations,
@@ -223,15 +289,19 @@ internal sealed class VulkanAcceptedFramePlan
         if (IsSealed)
             throw new InvalidOperationException("The accepted frame plan is already sealed.");
 
+        int terminalOperationCount = 0;
+        int mainSceneOperationCount = 0;
+        int shadowOperationCount = 0;
+
         for (int index = 0; index < staticOperations.Length; index++)
         {
             FrameOp operation = staticOperations[index];
             EVulkanAcceptedFrameLane lane = ClassifyStaticOperation(operation);
             int laneCount = lane switch
             {
-                EVulkanAcceptedFrameLane.Terminal => ++TerminalOperationCount,
-                EVulkanAcceptedFrameLane.Shadow => ++ShadowOperationCount,
-                _ => ++MainSceneOperationCount,
+                EVulkanAcceptedFrameLane.Terminal => ++terminalOperationCount,
+                EVulkanAcceptedFrameLane.Shadow => ++shadowOperationCount,
+                _ => ++mainSceneOperationCount,
             };
             int laneCapacity = lane switch
             {
@@ -244,14 +314,13 @@ internal sealed class VulkanAcceptedFramePlan
                     lane,
                     laneCapacity,
                     laneCount);
-            if (StaticOperationCount >= _staticOperations.Length)
-                throw new VulkanAcceptedFramePlanCapacityException(
-                    lane,
-                    _staticOperations.Length,
-                    StaticOperationCount + 1);
-            _staticOperations[StaticOperationCount++] = operation;
         }
 
+        if (staticOperations.Length > _staticOperations.Length)
+            throw new VulkanAcceptedFramePlanCapacityException(
+                EVulkanAcceptedFrameLane.MainScene,
+                _staticOperations.Length,
+                staticOperations.Length);
         if (dynamicUiOperations.Length > _dynamicUiOperations.Length)
             throw new VulkanAcceptedFramePlanCapacityException(
                 EVulkanAcceptedFrameLane.Ui,
@@ -265,6 +334,12 @@ internal sealed class VulkanAcceptedFramePlan
                 EVulkanAcceptedFrameLane.Upload,
                 _textureUploadOperations.Length,
                 textureUploadOperations.Length);
+
+            staticOperations.CopyTo(_staticOperations);
+            StaticOperationCount = staticOperations.Length;
+            TerminalOperationCount = terminalOperationCount;
+            MainSceneOperationCount = mainSceneOperationCount;
+            ShadowOperationCount = shadowOperationCount;
         textureUploadOperations.CopyTo(_textureUploadOperations);
         TextureUploadOperationCount = textureUploadOperations.Length;
     }
@@ -902,6 +977,12 @@ internal sealed class VulkanAcceptedFramePlan
         _logicalPlan?.ReleaseLease();
         _logicalPlan = null;
         VulkanAdvancedVisibilityInputLease.ReleaseOperations(
+            _authoredOperations.AsSpan(0, _authoredOperationCount));
+        VulkanAdvancedVisibilityInputLease.ReleaseOperations(
+            _authoredTextureUploadOperations.AsSpan(
+                0,
+                _authoredTextureUploadOperationCount));
+        VulkanAdvancedVisibilityInputLease.ReleaseOperations(
             _staticOperations.AsSpan(0, StaticOperationCount));
         VulkanAdvancedVisibilityInputLease.ReleaseOperations(
             _dynamicUiOperations.AsSpan(0, DynamicUiOperationCount));
@@ -912,6 +993,10 @@ internal sealed class VulkanAcceptedFramePlan
         _staticOperations.AsSpan(0, StaticOperationCount).Clear();
         _dynamicUiOperations.AsSpan(0, DynamicUiOperationCount).Clear();
         _textureUploadOperations.AsSpan(0, TextureUploadOperationCount).Clear();
+        _authoredOperations.AsSpan(0, _authoredOperationCount).Clear();
+        _authoredTextureUploadOperations.AsSpan(
+            0,
+            _authoredTextureUploadOperationCount).Clear();
         _requiredTextures.AsSpan(0, RequiredTextureCount).Clear();
         _requiredTextureGenerations.AsSpan(0, RequiredTextureCount).Clear();
         _bindlessDescriptorReferences.AsSpan(0, _bindlessDescriptorReferenceCount).Clear();
@@ -927,6 +1012,8 @@ internal sealed class VulkanAcceptedFramePlan
         FrameId = 0UL;
         SceneEpoch = 0UL;
         FrameSlot = -1;
+        _authoredOperationCount = 0;
+        _authoredTextureUploadOperationCount = 0;
         StaticOperationCount = 0;
         DynamicUiOperationCount = 0;
         TextureUploadOperationCount = 0;

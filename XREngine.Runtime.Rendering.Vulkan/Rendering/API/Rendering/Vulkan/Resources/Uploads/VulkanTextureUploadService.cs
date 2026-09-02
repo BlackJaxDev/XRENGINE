@@ -255,7 +255,10 @@ internal sealed partial class VulkanTextureUploadService
                 VulkanImportedTextureUploadRequest request = job.Request;
                 if (request.PriorityClass == TextureUploadPriorityClass.VisibleNow &&
                     (!filterByRequiredTexture ||
-                     IsRequiredTexture(in request, requiredTextures)))
+                     IsRequiredTextureGeneration(
+                         in request,
+                         requiredTextures,
+                         requiredGenerations)))
                 {
                     request.TryGetTexture(out XRTexture2D? texture);
                     manifest.Add(job.Ticket, texture);
@@ -279,7 +282,10 @@ internal sealed partial class VulkanTextureUploadService
                 VulkanImportedTextureUploadRequest request = submitted.Request;
                 if (request.PriorityClass == TextureUploadPriorityClass.VisibleNow &&
                     (!filterByRequiredTexture ||
-                     IsRequiredTexture(in request, requiredTextures)))
+                     IsRequiredTextureGeneration(
+                         in request,
+                         requiredTextures,
+                         requiredGenerations)))
                 {
                     request.TryGetTexture(out XRTexture2D? texture);
                     manifest.Add(submitted.Ticket, texture);
@@ -298,7 +304,11 @@ internal sealed partial class VulkanTextureUploadService
                     VulkanImportedTexturePendingUpload submitted = batch.Uploads[child];
                     VulkanImportedTextureUploadRequest request = submitted.Request;
                     if (request.PriorityClass != TextureUploadPriorityClass.VisibleNow ||
-                        (filterByRequiredTexture && !IsRequiredTexture(in request, requiredTextures))) continue;
+                        (filterByRequiredTexture &&
+                         !IsRequiredTextureGeneration(
+                             in request,
+                             requiredTextures,
+                             requiredGenerations))) continue;
                     request.TryGetTexture(out XRTexture2D? texture);
                     manifest.Add(submitted.Ticket, texture);
                     _ = TryPinUploadGeneration(manifest, texture, submitted.Ticket);
@@ -309,14 +319,16 @@ internal sealed partial class VulkanTextureUploadService
         }
     }
 
-    private static bool IsRequiredTexture(
+    private static bool IsRequiredTextureGeneration(
         in VulkanImportedTextureUploadRequest request,
-        ReadOnlySpan<XRTexture?> requiredTextures)
+        ReadOnlySpan<XRTexture?> requiredTextures,
+        ReadOnlySpan<long> requiredGenerations)
     {
         if (!request.TryGetTexture(out XRTexture2D? texture) || texture is null)
             return false;
         for (int index = 0; index < requiredTextures.Length; index++)
-            if (ReferenceEquals(requiredTextures[index], texture))
+            if (ReferenceEquals(requiredTextures[index], texture) &&
+                requiredGenerations[index] == request.StreamingGeneration)
                 return true;
         return false;
     }

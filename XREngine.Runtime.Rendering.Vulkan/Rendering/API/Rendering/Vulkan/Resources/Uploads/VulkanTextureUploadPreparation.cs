@@ -159,7 +159,10 @@ internal sealed partial class VulkanTextureUploadService
                     const string reason =
                         "Request became stale before Vulkan upload preparation.";
                     ReleaseUnsubmittedJobPreparation(job);
-                    requiredManifest?.Fail(job.Ticket, reason);
+                    requiredManifest?.Fail(
+                        job.Ticket,
+                        reason,
+                        EVulkanPresentNowFailureDisposition.RetryFrame);
                     RecordState(
                         job.Request,
                         VulkanTextureUploadGenerationState.Canceled,
