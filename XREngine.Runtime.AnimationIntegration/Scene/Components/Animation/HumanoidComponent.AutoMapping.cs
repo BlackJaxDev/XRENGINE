@@ -1500,7 +1500,8 @@ public partial class HumanoidComponent
         for (int i = 0; i < aliases.Length; i++)
         {
             string alias = NormalizeAlias(aliases[i]);
-            if (normalized.Equals(alias, StringComparison.Ordinal))
+            if (normalized.Equals(alias, StringComparison.Ordinal) ||
+                IsAliasWithTrailingSideMarker(normalized, alias))
                 return 1.0f;
             if (normalized.EndsWith(alias, StringComparison.Ordinal))
                 best = MathF.Max(best, 0.9f);
@@ -1509,6 +1510,11 @@ public partial class HumanoidComponent
         }
         return best;
     }
+
+    private static bool IsAliasWithTrailingSideMarker(string normalized, string alias)
+        => normalized.Length == alias.Length + 1 &&
+           normalized.StartsWith(alias, StringComparison.Ordinal) &&
+           normalized[^1] is 'l' or 'r';
 
     private static string NormalizeAlias(string value)
     {

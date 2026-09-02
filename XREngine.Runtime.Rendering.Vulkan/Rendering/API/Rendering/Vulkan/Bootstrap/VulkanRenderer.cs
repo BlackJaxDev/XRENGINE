@@ -501,6 +501,7 @@ public sealed partial class VulkanRenderer :
     public void ResetDesktopRejectionEvidence(bool injectionRequested) => ResetPhase524bDesktopRejectionEvidence(injectionRequested);
     public OpenXrSmokeDesktopRejectionEvidence CaptureDesktopRejectionEvidence() => CapturePhase524bDesktopRejectionEvidence();
 
+    public bool TryEnterPipelineResourcePlannerReadbackScope(XRRenderPipelineInstance pipeline, XRViewport? viewport, out IDisposable? scope) => _frameLoop.TryEnterPipelineResourcePlannerReadbackScope(pipeline, viewport, out scope);
     public IDisposable EnterPipelineResourcePlannerReadbackScope(XRRenderPipelineInstance pipeline, XRViewport? viewport) => _frameLoop.EnterPipelineResourcePlannerReadbackScope(pipeline, viewport);
     internal override IDisposable? EnterRenderPipelineFrameResourceScope(XRRenderPipelineInstance pipeline, XRViewport? viewport) => _frameLoop.EnterRenderPipelineFrameResourceScope(pipeline, viewport);
     internal override bool TryPrepareRenderResourceGeneration(XRRenderPipelineInstance pipeline, RenderResourceGeneration generation, XRViewport? viewport, out IRenderResourceGenerationTransaction? transaction, out string? failureReason) => _frameLoop.TryPrepareRenderResourceGeneration(pipeline, generation, viewport, out transaction, out failureReason);

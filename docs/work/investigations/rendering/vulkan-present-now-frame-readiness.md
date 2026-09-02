@@ -1,7 +1,7 @@
 # Vulkan Present-Now Frame Readiness Investigation
 
-Last updated: 2026-08-26
-Status: current desktop capacity-one Sponza acceptance passed; explicit fault injection and representative RenderDoc capture remain open
+Last updated: 2026-09-01
+Status: desktop capacity-one Sponza and avatar upload-liveness acceptances passed; explicit fault injection and representative RenderDoc capture remain open
 Tracker: `docs/work/todo/rendering/vulkan-present-now-frame-readiness-todo.md`
 
 ## Problem statement
@@ -101,6 +101,51 @@ fallback explicitly captured by the accepted output contract is legal.
 Durable evidence root:
 
 `Build/_AgentValidation/20260825-160514-present-now-readiness/`
+
+### Avatar exact-generation upload-liveness acceptance
+
+The post-fix avatar run under
+`Build/Logs/Debug_net10.0-windows7.0/windows_x64/xrengine_2026-09-01_23-41-50_pid49744/`
+still froze at `RequiredUploadCompletion`. It emitted 143 frame retries and
+settled at 65 queued preparation jobs with no active preparation, transfer, or
+descriptor publication. The earlier frame-operation overflow, stale-upload
+terminal failure, and repeated depth-readback exception were absent.
+
+The remaining root cause was accepted-manifest expansion by texture identity.
+After capturing each exact generation frozen by the accepted frame, the queue
+scan appended every visible-now preparation or transfer for a matching texture,
+including later full-resolution promotion generations. `BlockForExact` therefore
+waited for all visible promotions instead of only the generations sampled by the
+accepted frame. Queue, ready-transfer, and submitted-transfer scans now require
+both the texture identity and exact streaming generation.
+
+Named acceptance session:
+
+`Build/_AgentValidation/00000000-000000-shared/mcp-sessions/20260901-235328-vulkan-avatar-upload-fix/`
+
+Capture evidence:
+
+- `Build/_AgentValidation/20260901-235111-vulkan-avatar-upload/mcp-captures/avatar-focused/Screenshot_20260901_235547_058_e511e35183d941e0ae05d63c07f88496.png`
+- `Build/_AgentValidation/20260901-235111-vulkan-avatar-upload/mcp-captures/avatar-head/Screenshot_20260901_235557_302_197b54cb83fd4901b61db181d6c0cf5d.png`
+
+Observed results:
+
+- The isolated editor build completed with zero warnings and zero errors.
+- The avatar attached with 874 active scene nodes. Both Vulkan captures were
+  nonblank and showed the avatar from changed camera framing.
+- Frame 1317 presented while 20 higher-resolution promotions remained queued;
+  streaming reported `vulkan_frozen=false`, 441 completed chunks, and 89 final
+  publications. This directly exercises the fixed distinction between the
+  accepted generation and later promotions.
+- Fresh presentation continued through frame 2340 with 112 mesh requests and
+  `readiness=ready`. Streaming then quiesced at 55 tracked textures with zero
+  pending transitions, uploads, missing data, fallback, or failures.
+- Full-log checks found zero PresentNow frame retries, renderer-terminal pauses,
+  operation-capacity overflows, VUIDs, validation errors, or device-loss events.
+  The sole broad device-loss text match was the startup capability field
+  `khrDeviceLostOnMasked=False`.
+- The named session was stopped through the session manager without stopping an
+  unrelated editor process.
 
 Session-specific settings (the user's root settings were not modified):
 

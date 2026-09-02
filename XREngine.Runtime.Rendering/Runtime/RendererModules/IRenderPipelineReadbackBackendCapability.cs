@@ -5,6 +5,11 @@ namespace XREngine.Rendering;
 /// </summary>
 public interface IRenderPipelineReadbackBackendCapability
 {
+    bool TryEnterPipelineResourcePlannerReadbackScope(
+        XRRenderPipelineInstance pipeline,
+        XRViewport viewport,
+        out IDisposable? scope);
+
     IDisposable EnterPipelineResourcePlannerReadbackScope(
         XRRenderPipelineInstance pipeline,
         XRViewport viewport);

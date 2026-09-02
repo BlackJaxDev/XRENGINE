@@ -1834,20 +1834,26 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
     private void GetDepthHit(XRViewport vp, Vector2 p)
     {
-        float? depth = GetDepth(vp, p);
-        p = vp.NormalizeInternalCoordinate(p);
-        bool validDepth = depth is not null && depth.Value >0.0f && depth.Value <1.0f;
-        if (validDepth)
+        try
         {
-            DepthHitNormalizedViewportPoint = new Vector3(p.X, p.Y, depth!.Value);
-            WorldDragPoint = Viewport?.NormalizedViewportToWorldCoordinate(DepthHitNormalizedViewportPoint!.Value);
+            float? depth = GetDepth(vp, p);
+            p = vp.NormalizeInternalCoordinate(p);
+            bool validDepth = depth is not null && depth.Value >0.0f && depth.Value <1.0f;
+            if (validDepth)
+            {
+                DepthHitNormalizedViewportPoint = new Vector3(p.X, p.Y, depth!.Value);
+                WorldDragPoint = Viewport?.NormalizedViewportToWorldCoordinate(DepthHitNormalizedViewportPoint!.Value);
+            }
+            else
+            {
+                DepthHitNormalizedViewportPoint = null;
+                WorldDragPoint = null;
+            }
         }
-        else
+        finally
         {
-            DepthHitNormalizedViewportPoint = null;
-            WorldDragPoint = null;
+            _depthQueryRequested = false;
         }
-        _depthQueryRequested = false;
     }
 
     private static float? GetDepth(XRViewport vp, Vector2 internalSizeCoordinate)
@@ -1857,9 +1863,13 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             return null;
 
         IVector2 readbackCoordinate = GetDepthReadbackCoordinate(fbo, internalSizeCoordinate);
-        using IDisposable? readbackScope = vp.EnterRenderPipelineReadbackScope();
+        if (!vp.TryEnterRenderPipelineReadbackScope(out IDisposable? readbackScope))
+            return null;
+        using (readbackScope)
+        {
         float? depth = XRViewport.GetDepth(fbo, readbackCoordinate);
         return depth;
+        }
     }
 
     private static IVector2 GetDepthReadbackCoordinate(XRFrameBuffer fbo, Vector2 internalSizeCoordinate)

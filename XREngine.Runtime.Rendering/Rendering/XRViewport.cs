@@ -2855,6 +2855,27 @@ namespace XREngine.Rendering
         }
 
         /// <summary>
+        /// Tries to enter renderer-specific readback state without treating an
+        /// unpublished planner generation as an exceptional condition.
+        /// </summary>
+        public bool TryEnterRenderPipelineReadbackScope(out IDisposable? scope)
+        {
+            AbstractRenderer? renderer = Window?.Renderer ?? AbstractRenderer.Current;
+            if (renderer is null ||
+                !((IRuntimeRendererHost)renderer).TryGetBackendCapability<IRenderPipelineReadbackBackendCapability>(out var capability) ||
+                capability is null)
+            {
+                scope = null;
+                return true;
+            }
+
+            return capability.TryEnterPipelineResourcePlannerReadbackScope(
+                RenderPipelineInstance,
+                this,
+                out scope);
+        }
+
+        /// <summary>
         /// Asynchronously reads the depth buffer value at the specified viewport position.
         /// Uses pixel buffer objects (PBOs) to avoid blocking the CPU while waiting for GPU data.
         /// Preferred over GetDepth for performance-critical scenarios.

@@ -149,7 +149,8 @@ public static class FbxDeformerParser
         if (indices.Length == 0 || weights.Length == 0)
             return null;
 
-        Matrix4x4 transformMatrix = reader.TryReadMatrix4x4Child(clusterObject.NodeIndex, "Transform") ?? Matrix4x4.Identity;
+        Matrix4x4? authoredTransform = reader.TryReadMatrix4x4Child(clusterObject.NodeIndex, "Transform");
+        Matrix4x4 transformMatrix = authoredTransform ?? Matrix4x4.Identity;
         Matrix4x4? authoredTransformLink = reader.TryReadMatrix4x4Child(clusterObject.NodeIndex, "TransformLink");
         Matrix4x4 transformLinkMatrix = authoredTransformLink ?? Matrix4x4.Identity;
 
@@ -186,7 +187,8 @@ public static class FbxDeformerParser
             transformLinkMatrix,
             inverseBindMatrix,
             controlPointWeights,
-            authoredTransformLink.HasValue);
+            authoredTransformLink.HasValue,
+            authoredTransform.HasValue);
     }
 
     private static void AddConnectedClusters(FbxSemanticDocument semantic, int skinObjectIndex, HashSet<long> clusterObjectIds, bool inbound)

@@ -18,10 +18,10 @@ internal static class VulkanSwapchainContextCoalescer
     };
 
     public static void Coalesce(FrameOp[] operations)
-        => Coalesce(operations, preparedMeshIngress: null);
+        => Coalesce(operations.AsSpan(), preparedMeshIngress: null);
 
     internal static void Coalesce(
-        FrameOp[] operations,
+        Span<FrameOp> operations,
         VulkanPreparedMeshIngress? preparedMeshIngress)
     {
         FrameOpContext? canonicalContext = null;

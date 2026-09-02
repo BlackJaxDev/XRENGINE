@@ -177,6 +177,8 @@ internal sealed partial class VulkanFrameLoop
             }
         }
 
+        CapturePresentNowAuthoredOperations(acceptedPlan);
+
         _preparedMeshIngress.Clear();
         int requestCount;
         using (VulkanCpuStageScope rawRequestDrainStage = new(
@@ -248,14 +250,11 @@ internal sealed partial class VulkanFrameLoop
                 meshFailure);
         }
 
-        FrameOp[] drainedOperations =
-            _framePlanner.Operations.DrainForPrimary(
-                out FrameOp[] textureUploadOperations);
-        acceptedPlan.ClaimUnsubmittedSubmissionMarkers(drainedOperations);
+        CapturePresentNowAuthoredOperations(acceptedPlan);
         VulkanFramePlanningSnapshot planningSnapshot =
             _framePlanner.CaptureSnapshot();
         VulkanSwapchainContextCoalescer.Coalesce(
-            drainedOperations,
+            acceptedPlan.AuthoredOperations,
             _preparedMeshIngress);
         bool stableBinPrepared = _preparedMeshIngress.TryFinalize(
             ref _preparedMeshIngressResourceUseScratch);
@@ -281,7 +280,7 @@ internal sealed partial class VulkanFrameLoop
             PublishPreparedMeshIngressCohortHit();
 
         SplitPreparedDynamicUiOperations(
-            drainedOperations,
+            acceptedPlan.AuthoredOperations,
             out FrameOp[] staticOperations,
             out FrameOp[] dynamicUiOperations);
         _commandRuntime.NormalizePrimaryPlanPassIndicesForPublication(
@@ -388,10 +387,9 @@ internal sealed partial class VulkanFrameLoop
             return false;
         }
 
-        acceptedPlan.CaptureOperations(
+        acceptedPlan.TransferAuthoredOperations(
             staticOperations,
-            dynamicUiOperations,
-            textureUploadOperations);
+            dynamicUiOperations);
         acceptedPlan.PreparedMeshIngress.CopyFrom(_preparedMeshIngress);
         _preparedMeshIngress.Clear();
 
@@ -606,6 +604,16 @@ internal sealed partial class VulkanFrameLoop
             in plannerState,
             in frozenPlanningSnapshot);
         return true;
+    }
+
+    private void CapturePresentNowAuthoredOperations(
+        VulkanAcceptedFramePlan acceptedPlan)
+    {
+        FrameOp[] operations = _framePlanner.Operations.DrainForPrimary(
+            out FrameOp[] textureUploadOperations);
+        acceptedPlan.CaptureAuthoredOperations(
+            operations,
+            textureUploadOperations);
     }
 
     private VulkanPresentNowTargetCompatibilityKey

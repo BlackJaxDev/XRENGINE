@@ -233,7 +233,7 @@ internal static class NativeFbxSceneImporter
 
                 SceneNode rootNode = new(Path.GetFileNameWithoutExtension(sourceFilePath)) { Layer = importLayer };
                 Matrix4x4 axisConversion = ResolveImportAxisConversion(semantic.GlobalSettings, zUp);
-                Matrix4x4 contentBasis = CreateImportContentBasisMatrix(scaleConversion, axisConversion);
+                Matrix4x4 contentBasis = CreateImportContentBasisMatrix(scaleConversion, semantic.GlobalSettings, axisConversion);
                 Matrix4x4 scenePlacement = rootTransformMatrix ?? Matrix4x4.Identity;
                 Matrix4x4 importWorld = contentBasis * scenePlacement;
                 if (scenePlacement != Matrix4x4.Identity)
@@ -946,18 +946,16 @@ internal static class NativeFbxSceneImporter
 
     private static Dictionary<int, Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>> BuildSkinWeightsByControlPoint(
         FbxSkinBinding skinBinding,
-        Matrix4x4 meshWorldMatrix,
-        IReadOnlyDictionary<long, SceneNode> nodesByObjectId)
-        => BuildSkinWeightsByControlPoint(skinBinding, meshWorldMatrix, Matrix4x4.Identity, nodesByObjectId);
-
-    private static Dictionary<int, Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>> BuildSkinWeightsByControlPoint(
-        FbxSkinBinding skinBinding,
         Matrix4x4 meshBindWorldMatrix,
         Matrix4x4 importRootBindMatrix,
         IReadOnlyDictionary<long, SceneNode> nodesByObjectId)
     {
         using IDisposable? profilerScope = XREngine.Fbx.FbxTrace.StartProfilerScope("NativeImporter");
         Dictionary<int, Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>> weightsByControlPoint = new();
+        FbxClusterBinding? referenceCluster = skinBinding.Clusters.FirstOrDefault(static cluster => cluster.HasTransformMatrix);
+        Matrix4x4 referenceBindEngine = referenceCluster is not null
+            ? referenceCluster.TransformMatrix * importRootBindMatrix
+            : meshBindWorldMatrix;
         foreach (FbxClusterBinding cluster in skinBinding.Clusters)
         {
             if (!nodesByObjectId.TryGetValue(cluster.BoneModelObjectId, out SceneNode? boneNode))
@@ -967,21 +965,21 @@ internal static class NativeFbxSceneImporter
             Matrix4x4 bindInvWorldMatrix;
             if (cluster.HasTransformLinkMatrix)
             {
-                // Both matrices use the engine's row-vector convention. GeometryTransform
-                // is already baked into vertex positions, so it must not participate here.
+                // FBX Transform and TransformLink are the authoritative reference-mesh and
+                // linked-bone bind worlds. GeometryTransform is already baked into vertices.
                 Matrix4x4 authoredLinkEngine = cluster.TransformLinkMatrix * importRootBindMatrix;
                 if (Matrix4x4.Invert(authoredLinkEngine, out Matrix4x4 inverseAuthoredLink))
-                    bindInvWorldMatrix = meshBindWorldMatrix * inverseAuthoredLink;
+                    bindInvWorldMatrix = referenceBindEngine * inverseAuthoredLink;
                 else
                 {
                     XREngine.Fbx.FbxTrace.Warning("NativeImporter", $"Cluster '{cluster.BoneName}' ({cluster.ClusterObjectId}) has a non-invertible authored TransformLink; falling back to the imported bone bind matrix.");
-                    bindInvWorldMatrix = meshBindWorldMatrix * boneTransform.InverseBindMatrix;
+                    bindInvWorldMatrix = referenceBindEngine * boneTransform.InverseBindMatrix;
                 }
             }
             else
             {
                 XREngine.Fbx.FbxTrace.Warning("NativeImporter", $"Cluster '{cluster.BoneName}' ({cluster.ClusterObjectId}) has no authored TransformLink; falling back to the imported bone bind matrix.");
-                bindInvWorldMatrix = meshBindWorldMatrix * boneTransform.InverseBindMatrix;
+                bindInvWorldMatrix = referenceBindEngine * boneTransform.InverseBindMatrix;
             }
             foreach ((int controlPointIndex, float weight) in cluster.ControlPointWeights)
             {
@@ -1518,11 +1516,17 @@ internal static class NativeFbxSceneImporter
 
     private static Matrix4x4 CreateImportContentBasisMatrix(
         float scaleConversion,
+        FbxGlobalSettings? globalSettings,
         Matrix4x4 axisConversion)
     {
         Matrix4x4 importMatrix = Matrix4x4.Identity;
-        if (scaleConversion != 1.0f)
-            importMatrix *= Matrix4x4.CreateScale(scaleConversion);
+        double centimetersPerUnit = globalSettings?.AxisSystem.UnitScaleFactor ?? 100.0d;
+        float fileUnitToMeters = double.IsFinite(centimetersPerUnit) && centimetersPerUnit > 0.0d
+            ? (float)(centimetersPerUnit / 100.0d)
+            : 1.0f;
+        float effectiveScale = scaleConversion * fileUnitToMeters;
+        if (effectiveScale != 1.0f)
+            importMatrix *= Matrix4x4.CreateScale(effectiveScale);
         importMatrix *= axisConversion;
         return importMatrix;
     }

@@ -1938,7 +1938,7 @@ internal sealed partial class VulkanFrameLoop
     }
 
     private void SplitPreparedDynamicUiOperations(
-        FrameOp[] operations,
+        ReadOnlySpan<FrameOp> operations,
         out FrameOp[] staticOperations,
         out FrameOp[] dynamicUiOperations)
     {
@@ -1946,13 +1946,6 @@ internal sealed partial class VulkanFrameLoop
         for (int index = 0; index < operations.Length; index++)
             if (IsPreparedDynamicUiOverlayOperation(operations[index]))
                 dynamicCount++;
-        if (dynamicCount == 0)
-        {
-            staticOperations = operations;
-            dynamicUiOperations = [];
-            return;
-        }
-
         _framePlanner.Operations.Diagnostics.EnsureSplitBuffers(
             operations.Length - dynamicCount,
             dynamicCount,

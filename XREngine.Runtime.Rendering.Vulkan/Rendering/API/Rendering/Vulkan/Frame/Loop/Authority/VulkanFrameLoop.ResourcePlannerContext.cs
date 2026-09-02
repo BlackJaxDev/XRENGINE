@@ -222,12 +222,11 @@ internal sealed partial class VulkanFrameLoop
         XRRenderPipelineInstance pipeline,
         XRViewport? viewport)
     {
-        if (pipeline is null)
-            throw new ArgumentNullException(nameof(pipeline));
-
-        FrameOpContext context = CreateFrameOpContext(pipeline, viewport);
-        if (TryEnterOpenXrPipelineResourcePlannerReadbackScope(context, out IDisposable openXrScope))
-            return openXrScope;
+        if (TryEnterPipelineResourcePlannerReadbackScope(
+                pipeline,
+                viewport,
+                out IDisposable? scope))
+            return scope!;
 
         if (ReferenceEquals(viewport, RuntimeEngine.VRState.LeftEyeViewport) ||
             ReferenceEquals(viewport, RuntimeEngine.VRState.RightEyeViewport))
@@ -236,12 +235,44 @@ internal sealed partial class VulkanFrameLoop
                 "The OpenXR eye viewport has no matching rendered Vulkan resource-planner generation.");
         }
 
-        if (TryEnterDesktopSubmittedReadbackScope(context, out IDisposable desktopScope))
-            return desktopScope;
-
         throw new InvalidOperationException(
             "The desktop viewport has no matching submitted Vulkan resource-planner generation. " +
             "Capture again after its current resource generation has rendered; readback cannot create unwritten images.");
+    }
+
+    internal bool TryEnterPipelineResourcePlannerReadbackScope(
+        XRRenderPipelineInstance pipeline,
+        XRViewport? viewport,
+        out IDisposable? scope)
+    {
+        ArgumentNullException.ThrowIfNull(pipeline);
+
+        FrameOpContext context = CreateFrameOpContext(pipeline, viewport);
+        if (TryEnterOpenXrPipelineResourcePlannerReadbackScope(
+                context,
+                out IDisposable openXrScope))
+        {
+            scope = openXrScope;
+            return true;
+        }
+
+        if (ReferenceEquals(viewport, RuntimeEngine.VRState.LeftEyeViewport) ||
+            ReferenceEquals(viewport, RuntimeEngine.VRState.RightEyeViewport))
+        {
+            scope = null;
+            return false;
+        }
+
+        if (TryEnterDesktopSubmittedReadbackScope(
+                context,
+                out IDisposable desktopScope))
+        {
+            scope = desktopScope;
+            return true;
+        }
+
+        scope = null;
+        return false;
     }
 
     /// <summary>
