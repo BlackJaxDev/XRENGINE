@@ -70,7 +70,7 @@ public sealed class AdvancedRenderPipelineResourceStateContractTests
             AdvancedRenderPipelineCapabilityResolver.Resolve(
                 AdvancedRenderPipelineCapabilityTests.SupportedCapabilities,
                 stereo: false);
-        AdvancedRenderPipeline pipeline = new(stereo: false);
+        AdvancedRenderPipeline pipeline = new(stereo: false, capabilityResult);
         RenderPipelineResourceProfile target = CreateTargetProfile();
 
         AdvancedRenderResourceProfile profile =

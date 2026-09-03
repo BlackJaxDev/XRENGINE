@@ -346,6 +346,11 @@ namespace XREngine.Rendering.Vulkan
             FrameOpContext context = recordingState.HasActiveContext
                 ? recordingState.ActiveContext
                 : recordingState.InitialContext;
+            recordingState.ClearState = new VulkanCommandClearStateSnapshot(
+                RuntimeEngine.StartupPresentationClearColor,
+                recordingState.ClearState.ClearDepth,
+                recordingState.ClearState.ClearStencil,
+                recordingState.ClearState.ForceMagentaSwapchain);
             BeginRenderPassForTarget(
                 ref recordingState,
                 null,

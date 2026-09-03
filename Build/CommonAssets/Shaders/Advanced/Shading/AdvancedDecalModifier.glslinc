@@ -1,0 +1,59 @@
+#ifndef XR_ADVANCED_DECAL_MODIFIER_GLSLINC
+#define XR_ADVANCED_DECAL_MODIFIER_GLSLINC
+
+#include "Advanced/Reconstruction/AdvancedSurface.glslinc"
+
+struct XRAdvancedDecalRecordLight
+{
+    uvec2 identity;
+    uvec2 material;
+    uint flags;
+    uint viewMaskLo;
+    uint viewMaskHi;
+    uint layerMask;
+    mat4 worldToDecal;
+    mat4 previousWorldToDecal;
+    vec4 halfExtentsAndFade;
+    uvec2 maskTexture;
+};
+
+XR_ADV_CLUSTERED_PASS_LAYOUT(15) readonly buffer XRAdvancedDecalsBuffer
+{
+    XRAdvancedDecalRecordLight records[];
+} XR_ADV_GlobalDecals;
+
+void XR_ADV_ApplyDecalToSurface(
+    uint decalIndex,
+    inout XRAdvancedSurface surface,
+    inout vec3 albedo,
+    inout float roughness)
+{
+    XRAdvancedDecalRecordLight decal = XR_ADV_GlobalDecals.records[decalIndex];
+
+    vec4 decalLocalPos = decal.worldToDecal * vec4(surface.worldPosition, 1.0);
+
+    // Box bounds test in decal local space (unit box [-1, 1])
+    vec3 halfExtents = decal.halfExtentsAndFade.xyz;
+    if (abs(decalLocalPos.x) > halfExtents.x ||
+        abs(decalLocalPos.y) > halfExtents.y ||
+        abs(decalLocalPos.z) > halfExtents.z)
+    {
+        return;
+    }
+
+    // Normalized decal UVs in [0, 1]
+    vec2 decalUv = (decalLocalPos.xy / halfExtents.xy) * 0.5 + 0.5;
+
+    // Edge falloff based on fade distance
+    float fade = decal.halfExtentsAndFade.w;
+    float edgeDist = min(
+        min(halfExtents.x - abs(decalLocalPos.x), halfExtents.y - abs(decalLocalPos.y)),
+        halfExtents.z - abs(decalLocalPos.z));
+    float weight = clamp(edgeDist / max(fade, 0.001), 0.0, 1.0);
+
+    // Apply decal surface modification
+    albedo = mix(albedo, albedo * 0.5, weight * 0.5);
+    roughness = mix(roughness, 0.8, weight * 0.5);
+}
+
+#endif // XR_ADVANCED_DECAL_MODIFIER_GLSLINC

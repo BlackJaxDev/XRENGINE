@@ -12,8 +12,10 @@ public static class AdvancedVisibilityProducerResolver
         EMeshSubmissionStrategy strategy,
         in AdvancedVisibilityPayload payload)
     {
-        if (payload.ForceCpuDiagnostic ||
-            strategy == EMeshSubmissionStrategy.CpuDirect)
+        if (payload.ForceCpuDiagnostic)
+            return EAdvancedGeometryProducer.CpuDirectDiagnostic;
+
+        if (strategy == EMeshSubmissionStrategy.CpuDirect)
         {
             return payload.Skinned
                 ? EAdvancedGeometryProducer.CpuDirectPreSkinned

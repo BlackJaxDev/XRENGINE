@@ -59,13 +59,14 @@ public sealed class AdvancedMaterialDatabaseContractTests
         secondRow.ShadingKernelId.ShouldBe(kernel.Index);
         firstRow.ShadingKernelGeneration.ShouldBe(kernel.Generation);
         secondRow.ShadingKernelGeneration.ShouldBe(kernel.Generation);
-        firstRow.ConstantWordOffset.ShouldBe(0u);
-        secondRow.ConstantWordOffset.ShouldBe(4u);
-        firstRow.TextureReferenceOffset.ShouldBe(0u);
-        secondRow.TextureReferenceOffset.ShouldBe(1u);
-        database.ConstantWords.ToArray().ShouldBe(
-            new uint[] { 1u, 2u, 3u, 4u, 1u, 2u, 3u, 4u });
-        database.TextureBindings.Length.ShouldBe(2);
+        firstRow.ConstantWordOffset.ShouldBe(8u);
+        secondRow.ConstantWordOffset.ShouldBe(16u);
+        firstRow.TextureReferenceOffset.ShouldBe(2u);
+        secondRow.TextureReferenceOffset.ShouldBe(4u);
+        database.ConstantWords.Slice(checked((int)firstRow.ConstantWordOffset), 4).ToArray().ShouldBe(
+            new uint[] { 1u, 2u, 3u, 4u });
+        database.ConstantWords.Slice(checked((int)secondRow.ConstantWordOffset), 4).ToArray().ShouldBe(
+            new uint[] { 1u, 2u, 3u, 4u });
 
         database.TryConsumeMaterialDirtyRange(out AdvancedMaterialDirtyRange materialDirty)
             .ShouldBeTrue();
@@ -74,10 +75,10 @@ public sealed class AdvancedMaterialDatabaseContractTests
         materialDirty.Generation.ShouldBe(2ul);
         database.TryConsumeConstantDirtyRange(out AdvancedMaterialDirtyRange constantDirty)
             .ShouldBeTrue();
-        constantDirty.ShouldBe(new AdvancedMaterialDirtyRange(0u, 8u, 2ul));
+        constantDirty.ShouldBe(new AdvancedMaterialDirtyRange(8u, 12u, 2ul));
         database.TryConsumeTextureBindingDirtyRange(out AdvancedMaterialDirtyRange textureDirty)
             .ShouldBeTrue();
-        textureDirty.ShouldBe(new AdvancedMaterialDirtyRange(0u, 2u, 2ul));
+        textureDirty.ShouldBe(new AdvancedMaterialDirtyRange(2u, 3u, 2ul));
     }
 
     [Test]
@@ -135,6 +136,7 @@ public sealed class AdvancedMaterialDatabaseContractTests
             out AdvancedGpuHandle original).ShouldBeTrue();
         database.RemoveMaterial(original).ShouldBeTrue();
         database.Materials.IsCurrent(original).ShouldBeFalse();
+        database.Materials.ReclaimAcknowledged(1ul).ShouldBe(1);
 
         database.TryAddMaterial(
             layout,
@@ -199,15 +201,15 @@ public sealed class AdvancedMaterialDatabaseContractTests
         database.TryConsumeConstantDirtyRange(
                 out AdvancedMaterialDirtyRange constantDirty)
             .ShouldBeTrue();
-        constantDirty.ShouldBe(new AdvancedMaterialDirtyRange(4u, 4u, 2ul));
+        constantDirty.ShouldBe(new AdvancedMaterialDirtyRange(8u, 4u, 2ul));
         database.TryConsumeTextureBindingDirtyRange(
                 out AdvancedMaterialDirtyRange textureDirty)
             .ShouldBeTrue();
-        textureDirty.ShouldBe(new AdvancedMaterialDirtyRange(1u, 1u, 2ul));
+        textureDirty.ShouldBe(new AdvancedMaterialDirtyRange(2u, 1u, 2ul));
         database.Materials.TryGet(material, out AdvancedMaterialRecord row)
             .ShouldBeTrue();
-        row.ConstantWordOffset.ShouldBe(4u);
-        row.TextureReferenceOffset.ShouldBe(1u);
+        row.ConstantWordOffset.ShouldBe(8u);
+        row.TextureReferenceOffset.ShouldBe(2u);
     }
 
     [Test]

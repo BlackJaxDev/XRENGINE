@@ -1,0 +1,130 @@
+#version 450
+
+#include "Advanced/Classification/ClassificationInterface.glslinc"
+#include "Advanced/Lighting/ClusteredLightingInterface.glslinc"
+#include "Advanced/Reconstruction/ReconstructSurface.glslinc"
+#include "AdvancedDecalModifier.glslinc"
+#include "StandardPBR.glslinc"
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+layout(push_constant, std430) uniform XRAdvancedNativeShadingPush
+{
+    uvec2 screenExtent;
+    uvec2 tilesCount;
+    uint depthSlices;
+    uint viewIndex;
+    vec3 cameraWorldPosition;
+    float nearPlane;
+    float farPlane;
+    uint directionalLightCount;
+} u_Push;
+
+struct XRAdvancedLightLight
+{
+    uint stableLightId;
+    uint generation;
+    uint type;
+    uint flags;
+    vec4 positionAndRadius;
+    vec4 directionAndOuterCone;
+    vec4 colorAndIntensity;
+    vec4 shapeAndInnerCone;
+};
+
+XR_ADV_CLUSTERED_PASS_LAYOUT(5) readonly buffer XRAdvancedLightsBuffer
+{
+    XRAdvancedLightLight records[];
+} XR_ADV_GlobalLights;
+
+layout(set = 0, binding = 2) uniform sampler2DArray u_AmbientOcclusion;
+layout(formatName = rgba16f, binding = 0) uniform writeonly image2DArray out_HDRSceneColor;
+layout(formatName = rg16f, binding = 1) uniform writeonly image2DArray out_Velocity;
+
+void main()
+{
+    uint kernelTileIndex = gl_WorkGroupID.x;
+    XRAdvancedKernelTile kt = XR_ADV_KernelTiles.records[kernelTileIndex];
+    XRAdvancedActiveTile activeTile = XR_ADV_ActiveTiles.records[kt.activeTileIndex];
+
+    uvec2 tileCoord = uvec2(activeTile.packedTileCoord & 0xFFFFu, (activeTile.packedTileCoord >> 16) & 0xFFFFu);
+    uvec2 pixelCoord = tileCoord * uvec2(16u, 16u) + gl_LocalInvocationID.xy;
+
+    if (pixelCoord.x >= u_Push.screenExtent.x || pixelCoord.y >= u_Push.screenExtent.y)
+        return;
+
+    XRAdvancedSurface surface;
+    bool valid = XR_ADV_TryReconstructSurface(
+        pixelCoord,
+        u_Push.viewIndex,
+        vec2(u_Push.screenExtent),
+        surface);
+
+    if (!valid || (surface.flags & XR_ADV_SURFACE_VALID) == 0u)
+        return;
+
+    vec3 N = normalize(surface.shadingNormal);
+    vec3 V = normalize(u_Push.cameraWorldPosition - surface.worldPosition);
+
+    vec3 albedo = surface.color0.rgb;
+    float roughness = 0.5;
+    float metallic = 0.0;
+
+    // Apply decal modifications if present in surface
+    if ((surface.flags & XR_ADV_ATTRIBUTE_CUSTOM0) != 0u)
+    {
+        uint decalIndex = surface.custom0;
+        XR_ADV_ApplyDecalToSurface(decalIndex, surface, albedo, roughness);
+        N = normalize(surface.shadingNormal);
+    }
+
+    vec3 directLighting = vec3(0.0);
+
+    // 1. Directional Lights
+    for (uint d = 0u; d < u_Push.directionalLightCount; d++)
+    {
+        vec3 L = -normalize(XR_ADV_GlobalLights.records[d].directionAndOuterCone.xyz);
+        vec3 lightColor = XR_ADV_GlobalLights.records[d].colorAndIntensity.rgb * XR_ADV_GlobalLights.records[d].colorAndIntensity.w;
+
+        directLighting += XR_ADV_EvaluatePBRDirect(N, V, L, lightColor, albedo, roughness, metallic);
+    }
+
+    // 2. Clustered Froxel Local Lights (Point & Spot)
+    uint sliceZ = XR_ADV_CalculateDepthSlice(surface.depth, u_Push.nearPlane, u_Push.farPlane, u_Push.depthSlices);
+    uint froxelIdx = XR_ADV_GetFroxelIndex(tileCoord, sliceZ, u_Push.viewIndex, u_Push.tilesCount, u_Push.depthSlices);
+
+    XRAdvancedFroxelRecord froxel = XR_ADV_FroxelGrid.records[froxelIdx];
+
+    // Local point lights
+    for (uint p = 0u; p < froxel.pointLightCount; p++)
+    {
+        uint lightIdx = XR_ADV_LightIndexList.indices[froxel.pointLightOffset + p];
+        vec4 posRadius = XR_ADV_GlobalLights.records[lightIdx].positionAndRadius;
+        vec3 lightPos = posRadius.xyz;
+        float radius = posRadius.w;
+
+        vec3 toLight = lightPos - surface.worldPosition;
+        float dist = length(toLight);
+        if (dist < radius)
+        {
+            vec3 L = toLight / max(dist, 0.001);
+            float atten = clamp(1.0 - (dist / radius), 0.0, 1.0);
+            atten *= atten;
+
+            vec3 lightColor = XR_ADV_GlobalLights.records[lightIdx].colorAndIntensity.rgb * XR_ADV_GlobalLights.records[lightIdx].colorAndIntensity.w * atten;
+            directLighting += XR_ADV_EvaluatePBRDirect(N, V, L, lightColor, albedo, roughness, metallic);
+        }
+    }
+
+    // 3. Ambient Occlusion modulation
+    vec2 uv = (vec2(pixelCoord) + 0.5) / vec2(u_Push.screenExtent);
+    float ao = texture(u_AmbientOcclusion, vec3(uv, float(u_Push.viewIndex))).r;
+    vec3 ambient = vec3(0.03) * albedo * ao;
+    vec3 finalColor = directLighting + ambient;
+
+    // Output directly to native HDR scene color attachment
+    imageStore(out_HDRSceneColor, ivec3(pixelCoord, u_Push.viewIndex), vec4(finalColor, 1.0));
+
+    // Output dense motion velocity
+    imageStore(out_Velocity, ivec3(pixelCoord, u_Push.viewIndex), vec4(surface.motionNdc, 0.0, 0.0));
+}

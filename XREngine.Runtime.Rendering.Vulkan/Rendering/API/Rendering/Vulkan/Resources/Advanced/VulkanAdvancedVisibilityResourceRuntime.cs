@@ -1188,7 +1188,7 @@ internal sealed class VulkanAdvancedVisibilityResourceRuntime
             expectedPyramidWidth != pyramidGroup.ResolvedExtent.Width ||
             expectedPyramidHeight != pyramidGroup.ResolvedExtent.Height ||
             depthGroup.Template.Layers != pyramidGroup.Template.Layers ||
-            pyramidGroup.MipLevels != 1u ||
+            pyramidGroup.MipLevels < 1u ||
             viewCount == 0u || viewCount > MaxLateVisibilityViews ||
             viewCount > Math.Max(1u, depthGroup.Template.Layers) ||
             viewCount > Math.Max(1u, pyramidGroup.Template.Layers) ||

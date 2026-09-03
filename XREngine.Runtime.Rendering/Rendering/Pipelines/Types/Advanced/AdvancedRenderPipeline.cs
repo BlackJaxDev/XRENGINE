@@ -1384,7 +1384,14 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
         => Stereo;
 
     protected override Dictionary<int, IComparer<RenderCommand>?> GetPassIndicesAndSorters()
-        => [];
+    {
+        Dictionary<int, IComparer<RenderCommand>?> passes = new();
+        IReadOnlyList<AdvancedRenderStageDescriptor> stages =
+            AdvancedRenderPipelineFrameContract.OrderedStages;
+        for (int i = 0; i < stages.Count; i++)
+            passes.Add((int)stages[i].Stage, null);
+        return passes;
+    }
 
     protected override Lazy<XRMaterial> InvalidMaterialFactory => new(MakeInvalidMaterial, LazyThreadSafetyMode.PublicationOnly);
 

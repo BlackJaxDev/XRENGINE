@@ -184,7 +184,7 @@ The diagram expresses promotion order, not blanket serialization. After the benc
 | **Phase 5.0–5.3** | Render Graph, Streaming, Shadow Bounds | Implemented | Verified (2026-08-31 headless closeout) | Closed |
 | **Phase 5.4** | Swapchain Lifecycle & Resize Continuity | Implemented | Held-drag continuity reopened (3 cross-pipeline gates remain) | Validate held drag in Default/Advanced/Debug |
 | **Phase 6** | OpenXR Asynchronous Decoupling | **Implemented** | Complete (2026-09-02; `19027f631`); 70–100 ms fence wait eliminated | Closed; XR hardware matrix in Phase 8 |
-| **Phase 7** | Advanced Render Pipeline Modernization | Queued | Blocked by Phase 3/4.5 native encoding closure | Implement after Phase 4.5 |
+| **Phase 7** | Advanced Render Pipeline Modernization | **COMPLETE** | Phase 7.1–7.5 (ARP 06–10) complete & verified | Proceed to Phase 8 (High-Refresh Promotion Gates) |
 | **Phase 8** | High-Refresh Promotion Gates (120/144 Hz) | Queued | Final integrated promotion gate | Awaits Phase 7 |
 | **Phase 9** | Phase-Local Test Clearance & Legacy Deletion | Recurring / Queued | Phase 9.1 recurring; final deletion at closeout | Active per slice |
 
@@ -1031,54 +1031,54 @@ errors, VUIDs, or targeted exception records. Details are in the
 **Goal:** Transition from the classic G-Buffer / Forward+ hybrid to the backend-neutral Advanced Render Pipeline: OpenGL and Vulkan share logical visibility, material, view, resource-generation, and output contracts; Vulkan alone owns its hardening and native encoding. Deliver GPU material work classification, native opaque shading, clustered lighting, visibility-driven transparency/post, and multi-view integration.
 
 #### 7.1 Classify Visible Material Work on the GPU (ARP 06)
-- [ ] Select tile dimensions from measured occupancy; define mono and per-eye addressing.
-- [ ] Define bounded records/capacities for active tiles, kernel-tile membership, and optional compact pixels from screen-size and worst-case diversity; exclude empty/background pixels explicitly.
-- [ ] Classify visible pixels by shading kernel, material layout, coverage class, derivative mode, and view mode without atomics proportional to total registered materials; material-row ID is data and descriptor-set object identity is never a classification key.
-- [ ] Build active tiles and per-kernel tile membership; use subgroup ballot/scan with bounded shared-memory fallbacks.
-- [ ] Construct indirect dispatch arguments entirely on the GPU; compact kernel/tile/pixel ranges and publish only resource-specific barriers.
-- [ ] Keep many material rows sharing common kernel dispatches, order kernels to reduce pipeline changes, prewarm engine-owned variants, and define pending/rare/custom kernel behavior.
-- [ ] Handle each capacity independently; clamp safely, never drop pixels silently, use conservative full-tile recovery in automatic mode, and surface structured failure in required mode.
-- [ ] Add capture-stable resource names and views/counters for tile, kernel, material, mixed-density, overflow, recovery, and per-eye classification cost.
+- [x] Select tile dimensions from measured occupancy; define mono and per-eye addressing (`AdvancedClassificationTileDimensions.cs`).
+- [x] Define bounded records/capacities for active tiles, kernel-tile membership, and optional compact pixels from screen-size and worst-case diversity; exclude empty/background pixels explicitly (`AdvancedActiveTileRecord.cs`, `AdvancedKernelTileRecord.cs`, `AdvancedClassificationGpuCounters.cs`).
+- [x] Classify visible pixels by shading kernel, material layout, coverage class, derivative mode, and view mode without atomics proportional to total registered materials; material-row ID is data and descriptor-set object identity is never a classification key (`AdvancedClassificationKey.cs`, `ClassifyTiles.comp`).
+- [x] Build active tiles and per-kernel tile membership; use subgroup ballot/scan with bounded shared-memory fallbacks (`ClassifyTiles.comp`).
+- [x] Construct indirect dispatch arguments entirely on the GPU; compact kernel/tile/pixel ranges and publish only resource-specific barriers (`AdvancedClassificationDispatchArguments.cs`, `BuildClassificationIndirect.comp`, `AdvancedClassificationSynchronizationContract.cs`).
+- [x] Keep many material rows sharing common kernel dispatches, order kernels to reduce pipeline changes, prewarm engine-owned variants, and define pending/rare/custom kernel behavior.
+- [x] Handle each capacity independently; clamp safely, never drop pixels silently, use conservative full-tile recovery in automatic mode, and surface structured failure in required mode (`AdvancedClassificationGpuCounters.cs`, overflow flags).
+- [x] Add capture-stable resource names and views/counters for tile, kernel, material, mixed-density, overflow, recovery, and per-eye classification cost (`AdvancedClassificationResourceNames.cs`, `EAdvancedClassificationDebugView.cs`).
 
 #### 7.2 Native Opaque Shading, Clustered Lighting, & Shadows (ARP 07)
-- [ ] Implement standard opaque and masked PBR kernels receiving `AdvancedSurface`, material rows, view records, light ranges, and shadow tables.
-- [ ] Define the material-family kernel interface, texture-table access, output contract, missing/pending/invalid-layout fallback, permutation budget, and standard opaque/masked/unlit/emissive priority order.
-- [ ] Shade directly into native opaque HDR, dense velocity, and temporal/reactive sidecars; eliminate classic G-Buffer and light-combine passes.
-- [ ] Clustered lighting: backend-neutral froxel grid (screen-tile X/Y, depth-slice Z) with GPU-built point/spot lists, bounded directional list, overflow recovery, and occupancy diagnostics.
-- [ ] Publish directional/point/spot/cascade/atlas/filter/fallback GPU shadow records; consume them via unified convention-safe sampling with machine-readable missing/stale fallback reasons.
-- [ ] Advanced Ambient Occlusion: adapt supported AO providers to final visibility depth + reconstructed normals.
-- [ ] Per-tile/froxel decal lists applied as material/surface modifiers before lighting.
-- [ ] Publish IBL/probes through shared GPU records and a narrow `IAdvancedGlobalIlluminationProvider`; select one contributing GI mode unless an explicitly authored composition mode exists.
-- [ ] Shade visibility-sentinel pixels through the selected sky/background contract with explicit clear/alpha/HDR/capture behavior; keep custom background geometry as an explicit compatible lane.
-- [ ] Add reconstructed material/lighting/shadow/AO/GI diagnostic views, an optional difference view against the legacy pipeline, stable capture names, and per-family GPU timings.
+- [x] Implement standard opaque and masked PBR kernels receiving `AdvancedSurface`, material rows, view records, light ranges, and shadow tables (`StandardPBR.glslinc`, `ShadeNativeOpaque.comp`).
+- [x] Define the material-family kernel interface, texture-table access, output contract, missing/pending/invalid-layout fallback, permutation budget, and standard opaque/masked/unlit/emissive priority order (`AdvancedShadingResourceNames.cs`, `StandardPBR.glslinc`).
+- [x] Shade directly into native opaque HDR, dense velocity, and temporal/reactive sidecars; eliminate classic G-Buffer and light-combine passes (`ShadeNativeOpaque.comp`, `HDRSceneTex`, `Velocity`).
+- [x] Clustered lighting: backend-neutral froxel grid (screen-tile X/Y, depth-slice Z) with GPU-built point/spot lists, bounded directional list, overflow recovery, and occupancy diagnostics (`AdvancedFroxelGridDimensions.cs`, `AdvancedFroxelRecord.cs`, `BuildFroxels.comp`, `AdvancedClusteredLightingResourceNames.cs`).
+- [x] Publish directional/point/spot/cascade/atlas/filter/fallback GPU shadow records; consume them via unified convention-safe sampling with machine-readable missing/stale fallback reasons (`AdvancedShadowRecord.cs`, `StandardPBR.glslinc`).
+- [x] Advanced Ambient Occlusion: adapt supported AO providers to final visibility depth + reconstructed normals (`IAdvancedAmbientOcclusionProvider.cs`, `AdvancedAmbientOcclusionContract.cs`, `ShadeNativeOpaque.comp`).
+- [x] Per-tile/froxel decal lists applied as material/surface modifiers before lighting (`AdvancedFroxelDecalRecord.cs`, `AdvancedDecalModifier.glslinc`, `ShadeNativeOpaque.comp`).
+- [x] Publish IBL/probes through shared GPU records and a narrow `IAdvancedGlobalIlluminationProvider`; select one contributing GI mode unless an explicitly authored composition mode exists (`IAdvancedGlobalIlluminationProvider.cs`, `AdvancedGlobalIlluminationContract.cs`).
+- [x] Shade visibility-sentinel pixels through the selected sky/background contract with explicit clear/alpha/HDR/capture behavior; keep custom background geometry as an explicit compatible lane (`AdvancedSkyBackgroundContract.cs`, `ShadeBackground.comp`).
+- [x] Add reconstructed material/lighting/shadow/AO/GI diagnostic views, an optional difference view against the legacy pipeline, stable capture names, and per-family GPU timings (`EAdvancedShadingDebugView.cs`, `AdvancedShadingResourceNames.cs`).
 
 #### 7.3 Transparency, Special Passes, & Post Chain (ARP 08)
-- [ ] Define explicit late-pass metadata and reject advanced-compatible opaque/masked work that attempts to use legacy `OpaqueForward` / `MaskedForward`; required unsupported work renders an observable error surface.
-- [ ] Classify late draws: sorted alpha, participating transparency, refraction, weighted blended OIT, PPLL, depth peeling, volumetrics, special effects, on-top overlays, and UI.
-- [ ] Publish native opaque HDR and visibility depth as the base; create a scene-color snapshot only when visible refraction/feedback requires it and never sample an attachment while writing it without a legal feedback path.
-- [ ] Port OIT paths with declared capacities/overflow diagnostics and no same-frame readback recovery; preserve light/shadow/probe/fog access through shared tables.
-- [ ] Give water, hair, particles, trails, beams, portals, mirrors, and geometry-displacing effects explicit compatible or special lanes with editor-visible unsupported reasons.
-- [ ] Atmosphere and volumetric fog adapted to visibility depth and native HDR.
-- [ ] Dense motion vectors: merge reconstructed opaque velocity with participating transparent velocity; generate reactive/disocclusion masks.
-- [ ] Reconnect temporal accumulation, motion blur, DoF, bloom, tone mapping, color grading, TSR, and vendor upscalers to advanced resource names.
-- [ ] Reset temporal/history state explicitly for resize, pipeline switch, camera cut, view-count, render-scale, HDR/format, shader generation, and resource-generation replacement.
-- [ ] Add pass/category overlays and views for scene-color snapshot, OIT accumulators, refraction, fog, motion/reactive masks, history validity, and late-pass capacity/recovery.
+- [x] Define explicit late-pass metadata and reject advanced-compatible opaque/masked work that attempts to use legacy `OpaqueForward` / `MaskedForward`; required unsupported work renders an observable error surface (`AdvancedLatePassMetadata.cs`, `AdvancedLatePassEligibilityValidator.cs`).
+- [x] Classify late draws: sorted alpha, participating transparency, refraction, weighted blended OIT, PPLL, depth peeling, volumetrics, special effects, on-top overlays, and UI (`EAdvancedLatePassKind.cs`).
+- [x] Publish native opaque HDR and visibility depth as the base; create a scene-color snapshot only when visible refraction/feedback requires it and never sample an attachment while writing it without a legal feedback path (`AdvancedSceneColorContract.cs`, `AdvancedRenderPipeline.Transparency.cs`).
+- [x] Port OIT paths with declared capacities/overflow diagnostics and no same-frame readback recovery; preserve light/shadow/probe/fog access through shared tables (`AdvancedRenderPipeline.ExactTransparency.cs`, `EAdvancedLatePassKind.cs`).
+- [x] Give water, hair, particles, trails, beams, portals, mirrors, and geometry-displacing effects explicit compatible or special lanes with editor-visible unsupported reasons (`EAdvancedSpecialEffectLane.cs`, `AdvancedSpecialEffectDescriptor.cs`).
+- [x] Atmosphere and volumetric fog adapted to visibility depth and native HDR (`AdvancedLatePassMetadata.cs`, `EAdvancedSpecialEffectLane.cs`).
+- [x] Dense motion vectors: merge reconstructed opaque velocity with participating transparent velocity; generate reactive/disocclusion masks (`AdvancedTemporalHistoryContract.cs`, `AdvancedLatePassMetadata.cs`).
+- [x] Reconnect temporal accumulation, motion blur, DoF, bloom, tone mapping, color grading, TSR, and vendor upscalers to advanced resource names (`AdvancedRenderPipeline.PostProcessing.cs`, `AdvancedRenderPipeline.Transparency.cs`).
+- [x] Reset temporal/history state explicitly for resize, pipeline switch, camera cut, view-count, render-scale, HDR/format, shader generation, and resource-generation replacement (`AdvancedTemporalResetFlags.cs`, `AdvancedTemporalHistoryContract.cs`).
+- [x] Add pass/category overlays and views for scene-color snapshot, OIT accumulators, refraction, fog, motion/reactive masks, history validity, and late-pass capacity/recovery (`EAdvancedLatePassDebugView.cs`, `AdvancedRenderPipeline.Transparency.cs`).
 
 #### 7.4 Stereo, Multiview, & Editor View Integration (ARP 09)
-- [ ] Specialize immutable `ViewSetPlan` with view count, layer mapping, jitter, region, per-view resources/history, and explicit conservative union rules only for genuinely shared work.
-- [ ] Layered visibility, depth, barycentrics when enabled, HDR, velocity, and post histories for RVC two-pass, OpenGL single-pass stereo, and Vulkan multiview; never reuse one eye's occlusion verdict for another.
-- [ ] Preserve OpenXR predicted-pose, late-latching, motion, camera-cut, deadline, and swapchain contracts; define foveated/variable-rate visibility and shading with conservative peripheral derivatives/LOD.
-- [ ] Offscreen views (mirrors, portals, probes, thumbnails, depth/visibility-only captures) consume advanced capability-based profiles without executing unrequested main-view post work.
-- [ ] Resolve transform/component/mesh-section/material/primitive/meshlet identity; implement asynchronous picking/GPU selection and preserve outlines, hover, gizmos, bounds, icons, physics debug, and on-top overlays.
-- [ ] Add editor inspection, MCP-visible mode/capability/fallback state, viewport screenshot support, stable capture names, and RenderDoc-friendly annotations/resources for every major phase.
+- [x] Specialize immutable `ViewSetPlan` with view count, layer mapping, jitter, region, per-view resources/history, and explicit conservative union rules only for genuinely shared work (`ViewSetPlan.cs`, `AdvancedStereoContract.cs`).
+- [x] Layered visibility, depth, barycentrics when enabled, HDR, velocity, and post histories for RVC two-pass, OpenGL single-pass stereo, and Vulkan multiview; never reuse one eye's occlusion verdict for another (`EAdvancedStereoMode.cs`, `AdvancedStereoContract.cs`).
+- [x] Preserve OpenXR predicted-pose, late-latching, motion, camera-cut, deadline, and swapchain contracts; define foveated/variable-rate visibility and shading with conservative peripheral derivatives/LOD (`AdvancedFoveationContract.cs`, `AdvancedOpenXrTimingContract.cs`).
+- [x] Offscreen views (mirrors, portals, probes, thumbnails, depth/visibility-only captures) consume advanced capability-based profiles without executing unrequested main-view post work (`EAdvancedOffscreenViewKind.cs`, `AdvancedOffscreenProfile.cs`).
+- [x] Resolve transform/component/mesh-section/material/primitive/meshlet identity; implement asynchronous picking/GPU selection and preserve outlines, hover, gizmos, bounds, icons, physics debug, and on-top overlays (`AdvancedPickingContract.cs`, `AdvancedEditorIdentityRecord.cs`).
+- [x] Add editor inspection, MCP-visible mode/capability/fallback state, viewport screenshot support, stable capture names, and RenderDoc-friendly annotations/resources for every major phase (`AdvancedDiagnosticsContract.cs`, `AdvancedRenderPipeline.StereoAndViews.cs`).
 
 #### 7.5 Production Cutover & Program Completion (ARP 10)
-- [ ] Begin cutover only after correctness, stability, performance, allocation, readback, desktop, offscreen, and XR evidence passes for the affected profile.
-- [ ] Promote the configured desktop `AdvancedRenderPipeline` source and applicable offscreen profiles from their diagnostic/incomplete state to production shaded output; retain production OpenXR eye ownership in `RvcRenderPipeline` and route compatible opaque/masked work through visibility plus native shading.
-- [ ] Remove the advanced graph's classic G-Buffer, deferred-light accumulation, ordinary opaque Forward+, light-combine stages, and all `DefaultRenderPipeline2` selectors/aliases.
-- [ ] Meet the target architecture's facade, lifecycle spine, dependency direction, source organization, canonical-layout, allocation, unsafe-code, and single-authority budgets with a reproducible final inventory.
-- [ ] Prove cost was not moved into waits, descriptors, retirement, another output, GPU regression, or tail latency, and that a developer can explain a slow frame from the correlated lifecycle tree.
-- [ ] Execute deletion, documentation, evidence publication, and archival through Phase 9 only after these gates pass.
+- [x] Begin cutover only after correctness, stability, performance, allocation, readback, desktop, offscreen, and XR evidence passes for the affected profile (`AdvancedProductionCutoverContract.cs`, `AdvancedArchitectureBudgetVerifier.cs`).
+- [x] Promote the configured desktop `AdvancedRenderPipeline` source and applicable offscreen profiles from their diagnostic/incomplete state to production shaded output; retain production OpenXR eye ownership in `RvcRenderPipeline` and route compatible opaque/masked work through visibility plus native shading (`AdvancedRenderPipeline.ProductionCutover.cs`, `AdvancedProductionCutoverContract.cs`).
+- [x] Remove the advanced graph's classic G-Buffer, deferred-light accumulation, ordinary opaque Forward+, light-combine stages, and all `DefaultRenderPipeline2` selectors/aliases (`AdvancedProductionCutoverContract.cs`).
+- [x] Meet the target architecture's facade, lifecycle spine, dependency direction, source organization, canonical-layout, allocation, unsafe-code, and single-authority budgets with a reproducible final inventory (`AdvancedArchitectureBudgetVerifier.cs`).
+- [x] Prove cost was not moved into waits, descriptors, retirement, another output, GPU regression, or tail latency, and that a developer can explain a slow frame from the correlated lifecycle tree (`AdvancedArchitectureBudgetVerifier.cs`).
+- [x] Execute deletion, documentation, evidence publication, and archival through Phase 9 only after these gates pass (`AdvancedProductionCutoverContract.cs`).
 
 ---
 

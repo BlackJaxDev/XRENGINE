@@ -155,7 +155,7 @@ public sealed class AdvancedPreparationIntegrationContractTests
         late.ShouldContain("XR_ADV_VisibilityLateVisibleIndices.records");
         late.ShouldContain("view.depthParams.z != 0.0");
         depthPyramid.ShouldContain(".depthParams.z != 0.0");
-        depthPyramid.ShouldContain("clamp(source + ivec2");
+        depthPyramid.ShouldContain("XR_ADV_DEPTH_TILE_SIZE");
         indirect.ShouldContain("PRODUCER_SKINNED_MESHLET");
         indirect.ShouldContain("PRODUCER_STATIC_MESHLET");
         indirect.ShouldContain("visibleIndex >= visibleCount");

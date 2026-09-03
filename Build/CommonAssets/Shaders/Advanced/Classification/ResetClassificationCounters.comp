@@ -1,0 +1,26 @@
+#version 450
+
+#include "ClassificationInterface.glslinc"
+
+layout(local_size_x = 8, local_size_y = 1, local_size_z = 1) in;
+
+void main()
+{
+    uint index = gl_LocalInvocationID.x;
+    if (index == 0u)
+        XR_ADV_ClassificationCounters.counters.activeTileCount = 0u;
+    else if (index == 1u)
+        XR_ADV_ClassificationCounters.counters.kernelTileCount = 0u;
+    else if (index == 2u)
+        XR_ADV_ClassificationCounters.counters.classifiedPixelCount = 0u;
+    else if (index == 3u)
+        XR_ADV_ClassificationCounters.counters.backgroundPixelCount = 0u;
+    else if (index == 4u)
+        XR_ADV_ClassificationCounters.counters.overflowFlags = 0u;
+    else if (index == 5u)
+        XR_ADV_ClassificationCounters.counters.droppedPixelCount = 0u;
+    else if (index == 6u)
+        XR_ADV_ClassificationCounters.counters.reserved0 = 0u;
+    else if (index == 7u)
+        XR_ADV_ClassificationCounters.counters.reserved1 = 0u;
+}

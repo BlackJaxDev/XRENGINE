@@ -23,7 +23,8 @@ void main()
 {
     bool reversedDepth = (XR_ADV_LoadView(
         XR_ADV_VisibilityPush.viewIndex).flags &
-        XR_ADV_VIEW_FLAG_REVERSED_DEPTH) != 0u;
+        XR_ADV_VIEW_FLAG_REVERSED_DEPTH) != 0u ||
+        XR_ADV_LoadView(XR_ADV_VisibilityPush.viewIndex).depthParams.z != 0.0;
     ivec2 sourceSize = textureSize(XR_ADV_DepthPyramidSampled, 0);
     ivec2 tile = ivec2(gl_WorkGroupID.xy);
     uint localIndex = gl_LocalInvocationIndex;

@@ -63,12 +63,12 @@ public sealed class AdvancedRenderPipelineFrameContractTests
         RenderPassMetadata[] passes =
             [.. pipeline.PassMetadata.OrderBy(static pass => pass.PassIndex)];
 
-        passes.Length.ShouldBe(stages.Length);
+        passes.Length.ShouldBe(stages.Length + 1);
 
         for (int i = 0; i < stages.Length; i++)
         {
-            RenderPassMetadata pass = passes[i];
             AdvancedRenderStageDescriptor stage = stages[i];
+            RenderPassMetadata pass = passes.First(p => p.PassIndex == (int)stage.Stage);
 
             pass.PassIndex.ShouldBe((int)stage.Stage);
             pass.Name.ShouldBe(stage.PassName);
@@ -84,6 +84,8 @@ public sealed class AdvancedRenderPipelineFrameContractTests
 
             if (i == 0)
                 pass.ExplicitDependencies.ShouldBeEmpty();
+            else if (stage.Stage == EAdvancedRenderStage.WorkClassification)
+                pass.ExplicitDependencies.Count.ShouldBe(1);
             else
                 pass.ExplicitDependencies.ShouldBe([(int)stages[i - 1].Stage]);
         }
@@ -115,10 +117,12 @@ public sealed class AdvancedRenderPipelineFrameContractTests
 
         XRRenderPipelineInstance instance = new();
         XRViewport viewport = new(null);
+        ulong expectedClassification = ((ulong)AdvancedClassificationResourceFeature.Standard) << 32;
         pipeline.BuildResourceFeatureMaskForGenerationKey(instance, viewport)
             .ShouldBe(
                 (ulong)AdvancedVisibilityResourceFeature.Core |
-                (ulong)AdvancedReconstructionResourceFeature.Core);
+                (ulong)AdvancedReconstructionResourceFeature.Core |
+                expectedClassification);
         viewport.ApplyCapturePolicy(RenderCapturePolicy.DiagnosticFbo);
         pipeline.BuildResourceFeatureMaskForGenerationKey(instance, viewport)
             .ShouldBe(
@@ -127,7 +131,11 @@ public sealed class AdvancedRenderPipelineFrameContractTests
                 AdvancedVisibilityResourceFeature.DebugOutput) |
                 (ulong)(
                 AdvancedReconstructionResourceFeature.Core |
-                AdvancedReconstructionResourceFeature.DebugOutput));
+                AdvancedReconstructionResourceFeature.DebugOutput) |
+                ((ulong)(
+                AdvancedClassificationResourceFeature.Standard |
+                AdvancedClassificationResourceFeature.DebugOutput) << 32) |
+                (1UL << 40));
     }
 
     [TestCase(
@@ -175,13 +183,12 @@ public sealed class AdvancedRenderPipelineFrameContractTests
         string openGl = SourceContractWorkspace.ReadFile(
             "XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenGL/Features/AdvancedPipeline/OpenGLRenderer.AdvancedPipelineCapabilities.cs");
         string vulkan = SourceContractWorkspace.ReadVulkanSourcesContaining(
-            "ShaderFamily: EAdvancedShaderFamily.None");
+            "EAdvancedShaderFamily.None");
 
-        foreach (string source in new[] { openGl, vulkan })
-        {
-            source.ShouldContain("ShaderFamily: EAdvancedShaderFamily.None");
-            source.ShouldNotContain("ShaderFamily: EAdvancedShaderFamily.VisibilityBuffer");
-        }
+        openGl.ShouldContain("ShaderFamily: EAdvancedShaderFamily.None");
+        vulkan.ShouldContain("EAdvancedShaderFamily.None");
+        openGl.ShouldNotContain("ShaderFamily: EAdvancedShaderFamily.VisibilityBuffer");
+        vulkan.ShouldNotContain("EAdvancedShaderFamily.VisibilityBuffer");
     }
 
     [Test]

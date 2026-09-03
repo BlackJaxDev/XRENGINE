@@ -1,0 +1,77 @@
+#ifndef XR_ADVANCED_CLASSIFICATION_INTERFACE_GLSLINC
+#define XR_ADVANCED_CLASSIFICATION_INTERFACE_GLSLINC
+
+#include "Advanced/Visibility/VisibilityInterface.glslinc"
+
+#ifndef XR_ADV_CLASSIFICATION_SET
+#define XR_ADV_CLASSIFICATION_SET 1
+#endif
+
+#if defined(XR_ADV_BACKEND_VULKAN)
+#define XR_ADV_CLASSIFICATION_PASS_LAYOUT(bindingIndex) layout(set = XR_ADV_CLASSIFICATION_SET, binding = bindingIndex)
+#define XR_ADV_CLASSIFICATION_IMAGE_LAYOUT(formatName, bindingIndex) layout(formatName, set = XR_ADV_CLASSIFICATION_SET, binding = bindingIndex)
+#elif defined(XR_ADV_BACKEND_OPENGL)
+#define XR_ADV_CLASSIFICATION_PASS_LAYOUT(bindingIndex) layout(binding = bindingIndex)
+#define XR_ADV_CLASSIFICATION_IMAGE_LAYOUT(formatName, bindingIndex) layout(formatName, binding = bindingIndex)
+#else
+#define XR_ADV_CLASSIFICATION_PASS_LAYOUT(bindingIndex) layout(binding = bindingIndex)
+#define XR_ADV_CLASSIFICATION_IMAGE_LAYOUT(formatName, bindingIndex) layout(formatName, binding = bindingIndex)
+#endif
+
+struct XRAdvancedActiveTile
+{
+    uint packedTileCoord;
+    uint viewIndex;
+    uint activePixelCount;
+    uint primaryKernelId;
+};
+
+struct XRAdvancedKernelTile
+{
+    uint activeTileIndex;
+    uint shadingKernelId;
+    uint pixelCount;
+    uint flags;
+};
+
+struct XRAdvancedClassificationCounters
+{
+    uint activeTileCount;
+    uint kernelTileCount;
+    uint classifiedPixelCount;
+    uint backgroundPixelCount;
+    uint overflowFlags;
+    uint droppedPixelCount;
+    uint reserved0;
+    uint reserved1;
+};
+
+struct XRAdvancedDispatchIndirectCommand
+{
+    uint workGroupCountX;
+    uint workGroupCountY;
+    uint workGroupCountZ;
+    uint reserved;
+};
+
+XR_ADV_CLASSIFICATION_PASS_LAYOUT(4) buffer XRAdvancedActiveTilesBuffer
+{
+    XRAdvancedActiveTile records[];
+} XR_ADV_ActiveTiles;
+
+XR_ADV_CLASSIFICATION_PASS_LAYOUT(5) buffer XRAdvancedKernelTilesBuffer
+{
+    XRAdvancedKernelTile records[];
+} XR_ADV_KernelTiles;
+
+XR_ADV_CLASSIFICATION_PASS_LAYOUT(6) buffer XRAdvancedClassificationCountersBuffer
+{
+    XRAdvancedClassificationCounters counters;
+} XR_ADV_ClassificationCounters;
+
+XR_ADV_CLASSIFICATION_PASS_LAYOUT(7) buffer XRAdvancedDispatchIndirectBuffer
+{
+    XRAdvancedDispatchIndirectCommand commands[];
+} XR_ADV_ClassificationDispatch;
+
+#endif // XR_ADVANCED_CLASSIFICATION_INTERFACE_GLSLINC

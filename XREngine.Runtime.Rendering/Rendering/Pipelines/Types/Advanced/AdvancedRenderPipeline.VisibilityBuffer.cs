@@ -153,7 +153,7 @@ public partial class AdvancedRenderPipeline
             .Layers(layers)
             .Mips(new RenderResourceMipPolicy(
                 0u,
-                1u,
+                6u,
                 AutoGenerateMipmaps: false,
                 RequireImmutableStorage: true))
             .StereoCompatible(layers > 1u)
@@ -177,7 +177,7 @@ public partial class AdvancedRenderPipeline
             .Layers(layers)
             .Mips(new RenderResourceMipPolicy(
                 0u,
-                1u,
+                6u,
                 AutoGenerateMipmaps: false,
                 RequireImmutableStorage: true))
             .StereoCompatible(layers > 1u)
@@ -523,42 +523,88 @@ public partial class AdvancedRenderPipeline
         XRTexture texture;
         if (layers > 1u)
         {
-            texture = attachment.HasValue
-                ? XRTexture2DArray.CreateFrameBufferTexture(
-                    layers,
-                    width,
-                    height,
-                    internalFormat,
-                    pixelFormat,
-                    pixelType,
-                    attachment.Value)
-                : XRTexture2DArray.CreateFrameBufferTexture(
-                    layers,
-                    width,
-                    height,
-                    internalFormat,
-                    pixelFormat,
-                    pixelType);
+            if (isDepthTileGrid)
+            {
+                XRTexture2D[] layerTextures = new XRTexture2D[layers];
+                for (int i = 0; i < layers; i++)
+                {
+                    layerTextures[i] = new XRTexture2D(width, height, internalFormat, pixelFormat, pixelType, 6)
+                    {
+                        MinFilter = ETexMinFilter.NearestMipmapNearest,
+                        MagFilter = ETexMagFilter.Nearest,
+                        UWrap = ETexWrapMode.ClampToEdge,
+                        VWrap = ETexWrapMode.ClampToEdge,
+                        AutoGenerateMipmaps = false,
+                        SizedInternalFormat = sizedInternalFormat,
+                    };
+                }
+                texture = new XRTexture2DArray(layerTextures)
+                {
+                    MinFilter = ETexMinFilter.NearestMipmapNearest,
+                    MagFilter = ETexMagFilter.Nearest,
+                    UWrap = ETexWrapMode.ClampToEdge,
+                    VWrap = ETexWrapMode.ClampToEdge,
+                    AutoGenerateMipmaps = false,
+                    SizedInternalFormat = sizedInternalFormat,
+                    OVRMultiViewParameters = new(0, layers),
+                };
+            }
+            else
+            {
+                texture = attachment.HasValue
+                    ? XRTexture2DArray.CreateFrameBufferTexture(
+                        layers,
+                        width,
+                        height,
+                        internalFormat,
+                        pixelFormat,
+                        pixelType,
+                        attachment.Value)
+                    : XRTexture2DArray.CreateFrameBufferTexture(
+                        layers,
+                        width,
+                        height,
+                        internalFormat,
+                        pixelFormat,
+                        pixelType);
+                if (texture is XRTexture2DArray arr)
+                    arr.OVRMultiViewParameters = new(0, layers);
+            }
         }
         else
         {
-            texture = attachment.HasValue
-                ? XRTexture2D.CreateFrameBufferTexture(
-                    width,
-                    height,
-                    internalFormat,
-                    pixelFormat,
-                    pixelType,
-                    attachment.Value)
-                : XRTexture2D.CreateFrameBufferTexture(
-                    width,
-                    height,
-                    internalFormat,
-                    pixelFormat,
-                    pixelType);
+            if (isDepthTileGrid)
+            {
+                texture = new XRTexture2D(width, height, internalFormat, pixelFormat, pixelType, 6)
+                {
+                    MinFilter = ETexMinFilter.NearestMipmapNearest,
+                    MagFilter = ETexMagFilter.Nearest,
+                    UWrap = ETexWrapMode.ClampToEdge,
+                    VWrap = ETexWrapMode.ClampToEdge,
+                    AutoGenerateMipmaps = false,
+                    SizedInternalFormat = sizedInternalFormat,
+                };
+            }
+            else
+            {
+                texture = attachment.HasValue
+                    ? XRTexture2D.CreateFrameBufferTexture(
+                        width,
+                        height,
+                        internalFormat,
+                        pixelFormat,
+                        pixelType,
+                        attachment.Value)
+                    : XRTexture2D.CreateFrameBufferTexture(
+                        width,
+                        height,
+                        internalFormat,
+                        pixelFormat,
+                        pixelType);
+            }
         }
 
-        bool usesMipChain = false;
+        bool usesMipChain = isDepthTileGrid;
 
         ConfigureVisibilityTexture(
             texture,

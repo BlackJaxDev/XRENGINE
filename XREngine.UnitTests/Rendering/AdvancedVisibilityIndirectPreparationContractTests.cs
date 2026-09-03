@@ -318,10 +318,11 @@ public sealed class AdvancedVisibilityIndirectPreparationContractTests
         uint draw,
         uint material,
         bool skinned,
-        bool meshlets)
+        bool meshlets,
+        uint geometry = 1u)
         => new(
             new AdvancedGpuHandle(draw, 1u),
-            new AdvancedGpuHandle(draw, 1u),
+            new AdvancedGpuHandle(geometry, 1u),
             new AdvancedGpuHandle(material, 1u),
             new AdvancedSceneGeometryOffsets(
                 VertexOffset: 100u,

@@ -1,0 +1,27 @@
+#version 450
+
+#include "ClassificationInterface.glslinc"
+
+layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
+
+layout(push_constant, std430) uniform XRAdvancedBuildIndirectPush
+{
+    uint maxKernels;
+    uint fallbackTileThreshold;
+} u_Push;
+
+void main()
+{
+    uint kernelId = gl_GlobalInvocationID.x;
+    if (kernelId >= u_Push.maxKernels)
+        return;
+
+    // Set up standard compute dispatch indirect args for each shading kernel
+    uint kernelTileCount = XR_ADV_ClassificationCounters.counters.kernelTileCount;
+
+    // Dispatch (kernelTileCount, 1, 1) workgroups for the kernel shading pass
+    XR_ADV_ClassificationDispatch.commands[kernelId].workGroupCountX = kernelTileCount;
+    XR_ADV_ClassificationDispatch.commands[kernelId].workGroupCountY = 1u;
+    XR_ADV_ClassificationDispatch.commands[kernelId].workGroupCountZ = 1u;
+    XR_ADV_ClassificationDispatch.commands[kernelId].reserved = 0u;
+}

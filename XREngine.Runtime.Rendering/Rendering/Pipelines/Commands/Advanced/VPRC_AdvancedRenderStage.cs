@@ -54,10 +54,27 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             EAdvancedPreparationConsumer.Probe |
             EAdvancedPreparationConsumer.Capture);
 
+        if (Stage == EAdvancedRenderStage.Output)
+        {
+            using IDisposable? stagePassScope = PushRenderGraphPass(Descriptor.PassName);
+            var fbo = ActivePipelineInstance.RenderState.OutputFBO;
+            if (fbo is null)
+                RuntimeEngine.Rendering.State.UnbindFrameBuffers(EFramebufferTarget.Framebuffer);
+            else
+                fbo.BindForWriting();
+
+            RuntimeEngine.Rendering.State.ClearColor(RuntimeEngine.StartupPresentationClearColor);
+            RuntimeEngine.Rendering.State.Clear(true, true, true);
+            return;
+        }
+
         if (Stage is not (EAdvancedRenderStage.VisibilityPreparation or
             EAdvancedRenderStage.VisibilityRaster or
             EAdvancedRenderStage.DepthPyramidAndLateVisibility))
+        {
+            using IDisposable? stagePassScope = PushRenderGraphPass(Descriptor.PassName);
             return;
+        }
 
         AdvancedRenderPipelineOutputBinding binding =
             ActivePipelineInstance.AdvancedOutputBinding;
