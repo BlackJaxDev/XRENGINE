@@ -63,16 +63,41 @@ public partial class AdvancedRenderPipeline
             reconstructionFeatures |=
                 AdvancedReconstructionResourceFeature.ReferenceOutput;
 
-        return (ulong)visibilityFeatures | (ulong)reconstructionFeatures;
+        AdvancedClassificationResourceFeature classificationFeatures =
+            AdvancedClassificationResourceFeature.Standard;
+        if (ClassificationDebugView != EAdvancedClassificationDebugView.Disabled ||
+            viewport?.CapturePolicy.RenderDebugOverlays == true)
+        {
+            classificationFeatures |= AdvancedClassificationResourceFeature.DebugOutput;
+        }
+
+        ulong shadingFeatureMask = 0UL;
+        if (ShadingDebugView != EAdvancedShadingDebugView.Disabled ||
+            viewport?.CapturePolicy.RenderDebugOverlays == true)
+        {
+            shadingFeatureMask = (1UL << 40);
+        }
+
+        ulong latePassFeatureMask = 0UL;
+        if (LatePassDebugView != EAdvancedLatePassDebugView.Disabled ||
+            viewport?.CapturePolicy.RenderDebugOverlays == true)
+        {
+            latePassFeatureMask = (1UL << 48);
+        }
+
+        return (ulong)visibilityFeatures | (ulong)reconstructionFeatures | ((ulong)classificationFeatures << 32) | shadingFeatureMask | latePassFeatureMask;
     }
 
     /// <summary>
-    /// Declares the document-04/05 visibility and reconstruction resource contract.
+    /// Declares the document-04/05/06/07/08 visibility, reconstruction, classification, native shading, and late-pass contracts.
     /// </summary>
     protected override void DescribeResources(RenderPipelineResourceLayoutBuilder builder)
     {
         DeclareVisibilityBufferResources(builder);
         DeclareAttributeReconstructionResources(builder);
+        DeclareClassificationResources(builder);
+        DeclareNativeShadingResources(builder);
+        DeclareTransparencyAndLatePassResources(builder);
 
         RenderPipelineExternalTargetKind kind = builder.Profile.ExternalTargetKind;
         if (kind == RenderPipelineExternalTargetKind.None)

@@ -1,0 +1,46 @@
+#version 450
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+layout(push_constant, std430) uniform XRAdvancedSkyPush
+{
+    uvec2 screenExtent;
+    uint viewIndex;
+    uint enableProceduralSky;
+    vec4 clearColor;
+    vec4 skyHorizonColor;
+    vec4 skyZenithColor;
+} u_Push;
+
+layout(set = 0, binding = 0) uniform usampler2DArray u_VisibilityIdentity;
+layout(formatName = rgba16f, binding = 1) uniform writeonly image2DArray out_HDRSceneColor;
+layout(formatName = rg16f, binding = 2) uniform writeonly image2DArray out_Velocity;
+
+void main()
+{
+    uvec2 pixelCoord = gl_GlobalInvocationID.xy;
+    if (pixelCoord.x >= u_Push.screenExtent.x || pixelCoord.y >= u_Push.screenExtent.y)
+        return;
+
+    uvec4 rawIdentity = texelFetch(u_VisibilityIdentity, ivec3(pixelCoord, u_Push.viewIndex), 0);
+    uint drawId = rawIdentity.r;
+
+    // Only shade visibility-sentinel pixels (DrawId == 0)
+    if (drawId != 0u)
+        return;
+
+    vec3 backgroundColor = u_Push.clearColor.rgb;
+
+    if (u_Push.enableProceduralSky != 0u)
+    {
+        // Simple vertical gradient for procedural sky
+        float t = float(pixelCoord.y) / float(u_Push.screenExtent.y);
+        backgroundColor = mix(u_Push.skyZenithColor.rgb, u_Push.skyHorizonColor.rgb, t);
+    }
+
+    // Write background color with alpha = 0.0 (enabling XR video passthrough and clean capture)
+    imageStore(out_HDRSceneColor, ivec3(pixelCoord, u_Push.viewIndex), vec4(backgroundColor, 0.0));
+
+    // Zero velocity for static background
+    imageStore(out_Velocity, ivec3(pixelCoord, u_Push.viewIndex), vec4(0.0));
+}

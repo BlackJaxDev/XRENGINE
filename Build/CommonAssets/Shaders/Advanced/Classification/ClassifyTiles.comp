@@ -1,0 +1,143 @@
+#version 450
+
+#include "ClassificationInterface.glslinc"
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+layout(push_constant, std430) uniform XRAdvancedClassificationPush
+{
+    uvec2 screenExtent;
+    uint viewIndex;
+    uint maxActiveTiles;
+    uint maxKernelTiles;
+} u_Push;
+
+layout(set = 0, binding = 0) uniform usampler2DArray u_VisibilityIdentity;
+
+struct XRAdvancedMaterialRecordLight
+{
+    uint shadingKernelId;
+    uint shadingKernelGeneration;
+    uint flags;
+    uint reserved;
+};
+
+XR_ADV_CLASSIFICATION_PASS_LAYOUT(2) readonly buffer XRAdvancedMaterialsClassificationBuffer
+{
+    XRAdvancedMaterialRecordLight records[];
+} XR_ADV_ClassificationMaterials;
+
+shared uint s_ActivePixelCount;
+shared uint s_BackgroundPixelCount;
+shared uint s_ActiveTileIndex;
+shared uint s_KernelHistogram[32];
+
+void main()
+{
+    uint localIndex = gl_LocalInvocationIndex;
+
+    if (localIndex == 0u)
+    {
+        s_ActivePixelCount = 0u;
+        s_BackgroundPixelCount = 0u;
+        s_ActiveTileIndex = 0xFFFFFFFFu;
+    }
+    if (localIndex < 32u)
+    {
+        s_KernelHistogram[localIndex] = 0u;
+    }
+
+    barrier();
+
+    uvec2 tileOrigin = gl_WorkGroupID.xy * uvec2(16u, 16u);
+    uvec2 pixelCoord = tileOrigin + gl_LocalInvocationID.xy;
+
+    bool inBounds = (pixelCoord.x < u_Push.screenExtent.x && pixelCoord.y < u_Push.screenExtent.y);
+    uint drawId = 0u;
+    uint kernelId = 0u;
+
+    if (inBounds)
+    {
+        uvec4 rawIdentity = texelFetch(u_VisibilityIdentity, ivec3(pixelCoord, u_Push.viewIndex), 0);
+        drawId = rawIdentity.r;
+
+        if (drawId == 0u)
+        {
+            atomicAdd(s_BackgroundPixelCount, 1u);
+        }
+        else
+        {
+            atomicAdd(s_ActivePixelCount, 1u);
+            kernelId = XR_ADV_ClassificationMaterials.records[drawId].shadingKernelId;
+            if (kernelId < 32u)
+            {
+                atomicAdd(s_KernelHistogram[kernelId], 1u);
+            }
+        }
+    }
+
+    barrier();
+
+    // Thread 0 allocates active tile and records kernel memberships
+    if (localIndex == 0u)
+    {
+        if (s_BackgroundPixelCount > 0u)
+        {
+            atomicAdd(XR_ADV_ClassificationCounters.counters.backgroundPixelCount, s_BackgroundPixelCount);
+        }
+
+        if (s_ActivePixelCount > 0u)
+        {
+            atomicAdd(XR_ADV_ClassificationCounters.counters.classifiedPixelCount, s_ActivePixelCount);
+
+            uint tileIdx = atomicAdd(XR_ADV_ClassificationCounters.counters.activeTileCount, 1u);
+            s_ActiveTileIndex = tileIdx;
+
+            if (tileIdx < u_Push.maxActiveTiles)
+            {
+                uint primaryKernel = 0u;
+                uint maxCount = 0u;
+                for (uint k = 0u; k < 32u; k++)
+                {
+                    if (s_KernelHistogram[k] > maxCount)
+                    {
+                        maxCount = s_KernelHistogram[k];
+                        primaryKernel = k;
+                    }
+                }
+
+                uint packedCoord = (gl_WorkGroupID.x & 0xFFFFu) | ((gl_WorkGroupID.y & 0xFFFFu) << 16);
+                XR_ADV_ActiveTiles.records[tileIdx].packedTileCoord = packedCoord;
+                XR_ADV_ActiveTiles.records[tileIdx].viewIndex = u_Push.viewIndex;
+                XR_ADV_ActiveTiles.records[tileIdx].activePixelCount = s_ActivePixelCount;
+                XR_ADV_ActiveTiles.records[tileIdx].primaryKernelId = primaryKernel;
+
+                // Record kernel memberships for this active tile
+                for (uint k = 0u; k < 32u; k++)
+                {
+                    uint count = s_KernelHistogram[k];
+                    if (count > 0u)
+                    {
+                        uint ktIdx = atomicAdd(XR_ADV_ClassificationCounters.counters.kernelTileCount, 1u);
+                        if (ktIdx < u_Push.maxKernelTiles)
+                        {
+                            uint flags = (count == s_ActivePixelCount) ? 1u : 2u;
+                            XR_ADV_KernelTiles.records[ktIdx].activeTileIndex = tileIdx;
+                            XR_ADV_KernelTiles.records[ktIdx].shadingKernelId = k;
+                            XR_ADV_KernelTiles.records[ktIdx].pixelCount = count;
+                            XR_ADV_KernelTiles.records[ktIdx].flags = flags;
+                        }
+                        else
+                        {
+                            atomicOr(XR_ADV_ClassificationCounters.counters.overflowFlags, 2u);
+                        }
+                    }
+                }
+            }
+            else
+            {
+                atomicOr(XR_ADV_ClassificationCounters.counters.overflowFlags, 1u);
+            }
+        }
+    }
+}

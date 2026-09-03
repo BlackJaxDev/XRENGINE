@@ -1,0 +1,128 @@
+#version 450
+
+#include "ClusteredLightingInterface.glslinc"
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 4) in;
+
+layout(push_constant, std430) uniform XRAdvancedBuildFroxelsPush
+{
+    uvec2 screenExtent;
+    uvec2 tilesCount;
+    uint depthSlices;
+    uint viewIndex;
+    float nearPlane;
+    float farPlane;
+    uint pointLightCount;
+    uint spotLightCount;
+    uint maxLightIndices;
+} u_Push;
+
+struct XRAdvancedLightLight
+{
+    uint stableLightId;
+    uint generation;
+    uint type;
+    uint flags;
+    vec4 positionAndRadius;
+    vec4 directionAndOuterCone;
+    vec4 colorAndIntensity;
+    vec4 shapeAndInnerCone;
+};
+
+XR_ADV_CLUSTERED_PASS_LAYOUT(5) readonly buffer XRAdvancedLightsBuffer
+{
+    XRAdvancedLightLight records[];
+} XR_ADV_GlobalLights;
+
+layout(binding = 12) buffer XRAdvancedLightingCountersBuffer
+{
+    uint nextLightIndex;
+    uint overflowCount;
+} XR_ADV_LightingCounters;
+
+void main()
+{
+    uvec3 froxelCoord = gl_GlobalInvocationID.xyz;
+    if (froxelCoord.x >= u_Push.tilesCount.x ||
+        froxelCoord.y >= u_Push.tilesCount.y ||
+        froxelCoord.z >= u_Push.depthSlices)
+    {
+        return;
+    }
+
+    uint froxelIndex = XR_ADV_GetFroxelIndex(
+        froxelCoord.xy,
+        froxelCoord.z,
+        u_Push.viewIndex,
+        u_Push.tilesCount,
+        u_Push.depthSlices);
+
+    // Compute approximate view-space depth bounds for this slice
+    float sliceZMin = u_Push.nearPlane * pow(u_Push.farPlane / u_Push.nearPlane, float(froxelCoord.z) / float(u_Push.depthSlices));
+    float sliceZMax = u_Push.nearPlane * pow(u_Push.farPlane / u_Push.nearPlane, float(froxelCoord.z + 1u) / float(u_Push.depthSlices));
+
+    uint localPointCount = 0u;
+    uint localPointIndices[16];
+
+    // Bin local point lights (up to 16 per froxel)
+    for (uint i = 0u; i < u_Push.pointLightCount && localPointCount < 16u; i++)
+    {
+        vec4 posRadius = XR_ADV_GlobalLights.records[i].positionAndRadius;
+        float lightZ = posRadius.z;
+        float radius = posRadius.w;
+
+        // Depth interval test
+        if ((lightZ + radius) >= sliceZMin && (lightZ - radius) <= sliceZMax)
+        {
+            localPointIndices[localPointCount++] = i;
+        }
+    }
+
+    uint localSpotCount = 0u;
+    uint localSpotIndices[16];
+
+    // Bin local spot lights (up to 16 per froxel)
+    for (uint i = 0u; i < u_Push.spotLightCount && localSpotCount < 16u; i++)
+    {
+        uint spotIdx = u_Push.pointLightCount + i;
+        vec4 posRadius = XR_ADV_GlobalLights.records[spotIdx].positionAndRadius;
+        float lightZ = posRadius.z;
+        float radius = posRadius.w;
+
+        if ((lightZ + radius) >= sliceZMin && (lightZ - radius) <= sliceZMax)
+        {
+            localSpotIndices[localSpotCount++] = spotIdx;
+        }
+    }
+
+    uint totalLightsToAlloc = localPointCount + localSpotCount;
+    uint baseOffset = 0u;
+
+    if (totalLightsToAlloc > 0u)
+    {
+        baseOffset = atomicAdd(XR_ADV_LightingCounters.nextLightIndex, totalLightsToAlloc);
+
+        if (baseOffset + totalLightsToAlloc <= u_Push.maxLightIndices)
+        {
+            for (uint p = 0u; p < localPointCount; p++)
+            {
+                XR_ADV_LightIndexList.indices[baseOffset + p] = localPointIndices[p];
+            }
+            for (uint s = 0u; s < localSpotCount; s++)
+            {
+                XR_ADV_LightIndexList.indices[baseOffset + localPointCount + s] = localSpotIndices[s];
+            }
+        }
+        else
+        {
+            atomicAdd(XR_ADV_LightingCounters.overflowCount, 1u);
+            localPointCount = 0u;
+            localSpotCount = 0u;
+        }
+    }
+
+    XR_ADV_FroxelGrid.records[froxelIndex].pointLightOffset = baseOffset;
+    XR_ADV_FroxelGrid.records[froxelIndex].pointLightCount = localPointCount;
+    XR_ADV_FroxelGrid.records[froxelIndex].spotLightOffset = baseOffset + localPointCount;
+    XR_ADV_FroxelGrid.records[froxelIndex].spotLightCount = localSpotCount;
+}

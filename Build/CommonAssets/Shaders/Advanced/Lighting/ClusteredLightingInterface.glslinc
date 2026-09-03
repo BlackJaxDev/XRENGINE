@@ -1,0 +1,60 @@
+#ifndef XR_ADVANCED_CLUSTERED_LIGHTING_INTERFACE_GLSLINC
+#define XR_ADVANCED_CLUSTERED_LIGHTING_INTERFACE_GLSLINC
+
+#ifndef XR_ADV_CLUSTERED_SET
+#define XR_ADV_CLUSTERED_SET 1
+#endif
+
+#if defined(XR_ADV_BACKEND_VULKAN)
+#define XR_ADV_CLUSTERED_PASS_LAYOUT(bindingIndex) layout(set = XR_ADV_CLUSTERED_SET, binding = bindingIndex)
+#elif defined(XR_ADV_BACKEND_OPENGL)
+#define XR_ADV_CLUSTERED_PASS_LAYOUT(bindingIndex) layout(binding = bindingIndex)
+#else
+#define XR_ADV_CLUSTERED_PASS_LAYOUT(bindingIndex) layout(binding = bindingIndex)
+#endif
+
+struct XRAdvancedFroxelRecord
+{
+    uint pointLightOffset;
+    uint pointLightCount;
+    uint spotLightOffset;
+    uint spotLightCount;
+};
+
+XR_ADV_CLUSTERED_PASS_LAYOUT(10) buffer XRAdvancedFroxelGridBuffer
+{
+    XRAdvancedFroxelRecord records[];
+} XR_ADV_FroxelGrid;
+
+XR_ADV_CLUSTERED_PASS_LAYOUT(11) buffer XRAdvancedLightIndexListBuffer
+{
+    uint indices[];
+} XR_ADV_LightIndexList;
+
+uint XR_ADV_CalculateDepthSlice(float linearDepth, float nearPlane, float farPlane, uint depthSlices)
+{
+    if (linearDepth <= nearPlane)
+        return 0u;
+    if (linearDepth >= farPlane)
+        return depthSlices - 1u;
+
+    float ratio = log(linearDepth / nearPlane) / log(farPlane / nearPlane);
+    int slice = int(ratio * float(depthSlices));
+    return uint(clamp(slice, 0, int(depthSlices) - 1));
+}
+
+uint XR_ADV_GetFroxelIndex(
+    uvec2 tileCoord,
+    uint sliceZ,
+    uint viewIndex,
+    uvec2 tilesCount,
+    uint depthSlices)
+{
+    uint froxelsPerView = tilesCount.x * tilesCount.y * depthSlices;
+    return (viewIndex * froxelsPerView) +
+           (sliceZ * tilesCount.x * tilesCount.y) +
+           (tileCoord.y * tilesCount.x) +
+           tileCoord.x;
+}
+
+#endif // XR_ADVANCED_CLUSTERED_LIGHTING_INTERFACE_GLSLINC

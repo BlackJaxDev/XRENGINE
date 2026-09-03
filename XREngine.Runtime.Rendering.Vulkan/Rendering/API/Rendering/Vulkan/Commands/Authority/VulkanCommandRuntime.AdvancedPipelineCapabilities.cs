@@ -139,6 +139,8 @@ internal sealed partial class VulkanCommandRuntime
         // Target-specific image/view closure is sealed against the accepted
         // frame plan. Capability synthesis covers only device/runtime support;
         // it must not allocate or intern per-frame image views.
+        using VulkanProgramLinkPreparationScope programPreparation =
+            new(ResourceRuntime);
         VulkanAdvancedVisibilityPipelineRuntime pipelines =
             ResourceRuntime.AdvancedVisibilityPipelines;
         VulkanAdvancedVisibilityPipelineReadiness computeReadiness =

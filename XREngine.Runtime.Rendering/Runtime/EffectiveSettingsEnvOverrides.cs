@@ -39,7 +39,10 @@ public static class EffectiveSettingsEnvOverrides
     }
 
     internal static void ReloadForTests()
-        => Reload();
+    {
+        XREnvironment.RefreshFromProcess();
+        Reload();
+    }
 
     /// <summary>Raw value of <c>XRE_CPU_SCENE_CULLING_STRUCTURE</c> (trimmed) or null if unset.</summary>
     public static string? CpuSceneCullingStructure { get; private set; }

@@ -85,8 +85,12 @@ internal sealed class VulkanAdvancedVisibilityInputLease
     {
         for (int index = 0; index < operations.Length; ++index)
         {
-            operations[index].ReleaseAuthoringSnapshot();
-            if (operations[index] is AdvancedVisibilityOp visibility)
+            FrameOp? operation = operations[index];
+            if (operation is null)
+                continue;
+
+            operation.ReleaseAuthoringSnapshot();
+            if (operation is AdvancedVisibilityOp visibility)
                 visibility.ReleaseInputLease();
         }
     }

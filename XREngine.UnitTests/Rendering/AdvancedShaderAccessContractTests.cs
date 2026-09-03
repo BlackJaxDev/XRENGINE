@@ -77,10 +77,10 @@ public sealed class AdvancedShaderAccessContractTests
         vulkan.ShouldContain("#define XR_ADV_GLOBAL_SET 3");
         foreach (string preamble in new[] { openGl, vulkan })
         {
-            preamble.ShouldContain("#define XR_ADV_CPU_SIZE_GEOMETRY 256");
+            preamble.ShouldContain("#define XR_ADV_CPU_SIZE_GEOMETRY 320");
             preamble.ShouldContain("#define XR_ADV_CPU_SIZE_HANDLE_LOOKUP 8");
             preamble.ShouldContain("#define XR_ADV_BINDING_HANDLE_LOOKUPS 27");
-            preamble.ShouldContain("#define XR_ADV_CPU_OFFSET_GEOMETRY_BOUNDS_SPHERE 176");
+            preamble.ShouldContain("#define XR_ADV_CPU_OFFSET_GEOMETRY_BOUNDS_SPHERE 240");
             preamble.ShouldContain(
                 $"#include \"{AdvancedShaderAccessLibrary.IncludePath}\"");
             preamble.ShouldNotContain("#version");
