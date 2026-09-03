@@ -35,6 +35,13 @@ namespace XREngine.Rendering.Vulkan
                     recordingState.CommandBuffer,
                     "vkBeginCommandBuffer.Primary");
 
+                ulong recGen = _commandRuntime.CommandBuffers.ResolveRecordingGeneration(recordingState.CommandBuffer);
+                recordingState.LaneContext = _commandRuntime.LaneRecordingContexts.BeginContext(
+                    EVulkanAcceptedFrameLane.MainScene,
+                    (int)recordingState.FrameDataImageIndex,
+                    recordingState.CommandBuffer,
+                    recGen);
+
                 BeginFrameTimingQueries(recordingState.CommandBuffer, recordingState.CommandBufferImageSlot);
                 BeginVulkanGpuProfilerQueries(recordingState.CommandBuffer, recordingState.CommandBufferImageSlot);
 

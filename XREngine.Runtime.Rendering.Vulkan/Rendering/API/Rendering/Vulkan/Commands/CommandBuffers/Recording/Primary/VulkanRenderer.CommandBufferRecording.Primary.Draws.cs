@@ -52,6 +52,20 @@ namespace XREngine.Rendering.Vulkan
                 SetViewportScissorTracked(commandBuffer, viewports, scissors, draw.ViewportScissorCount);
             else
                 SetViewportScissorTracked(commandBuffer, draw.Viewport, draw.Scissor);
+            if (VulkanResidentMeshEncoder.TryRecordDraw(
+                    Api!,
+                    _commandRuntime,
+                    recordingState.LaneContext,
+                    commandBuffer,
+                    draw,
+                    passIndex,
+                    context,
+                    uniformSlot,
+                    recordingState.CommandBufferImageSlot))
+            {
+                return true;
+            }
+
             return draw.Renderer.RecordDraw(commandBuffer, draw, recordingState.RenderScope.RenderPass, recordingState.RenderScope.UsesDynamicRendering, recordingState.RenderScope.DynamicRenderingFormats, passIndex, context.PassMetadata, target, context, recordingState.RenderScope.DepthStencilReadOnly, context.PipelineInstance?.DebugName ?? "<no pipeline>", target?.Name ?? "<swapchain>", uniformSlot, recordingState.CommandBufferImageSlot);
         }
 
@@ -155,6 +169,20 @@ namespace XREngine.Rendering.Vulkan
                     draw.ViewProjectionMatrix.M22,
                     draw.ViewProjectionMatrix.M33,
                     draw.ViewProjectionMatrix.M44);
+            }
+
+            if (VulkanResidentMeshEncoder.TryRecordDraw(
+                    Api!,
+                    _commandRuntime,
+                    recordingState.LaneContext,
+                    targetCommandBuffer,
+                    drawOp.Draw,
+                    passIndex,
+                    drawOp.Context,
+                    drawUniformSlot,
+                    recordingState.CommandBufferImageSlot))
+            {
+                return true;
             }
 
             bool recordedDraw = drawOp.Draw.Renderer.RecordDraw(

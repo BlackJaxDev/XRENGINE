@@ -962,9 +962,50 @@ internal sealed class VulkanAcceptedFramePlan
         TargetCompatibility = compatibility;
     }
 
-    internal void Reset()
+    /// <summary>
+    /// Resets captured authored operations and submission markers without clearing the entire accepted plan,
+    /// used when an intermediate readiness phase requires retrying before final seal.
+    /// </summary>
+    internal void ResetAuthoredOperations()
     {
         SettleUnsubmittedSubmissionMarkers();
+        VulkanAdvancedVisibilityInputLease.ReleaseOperations(
+            _authoredOperations.AsSpan(0, _authoredOperationCount));
+        VulkanAdvancedVisibilityInputLease.ReleaseOperations(
+            _authoredTextureUploadOperations.AsSpan(
+                0,
+                _authoredTextureUploadOperationCount));
+        _authoredOperations.AsSpan(0, _authoredOperationCount).Clear();
+        _authoredTextureUploadOperations.AsSpan(
+            0,
+            _authoredTextureUploadOperationCount).Clear();
+        _authoredOperationCount = 0;
+        _authoredTextureUploadOperationCount = 0;
+    }
+
+    internal bool TryGetFailedDependency(
+        out VulkanFrameDependencyTicket failedTicket,
+        out string? failureDetail)
+    {
+        for (int index = 0; index < DependencyCount; index++)
+        {
+            ref readonly VulkanFrameDependencyTicket ticket = ref _dependencies[index];
+            if (ticket.State == EVulkanFrameDependencyState.TerminalFailed)
+            {
+                failedTicket = ticket;
+                failureDetail = ticket.FailureDetail;
+                return true;
+            }
+        }
+
+        failedTicket = default;
+        failureDetail = null;
+        return false;
+    }
+
+    internal void Reset()
+    {
+        ResetAuthoredOperations();
         CanonicalPublicationPins.ReleaseAll();
         if (_bindlessReceiptCount != 0)
         {
@@ -977,12 +1018,6 @@ internal sealed class VulkanAcceptedFramePlan
         _logicalPlan?.ReleaseLease();
         _logicalPlan = null;
         VulkanAdvancedVisibilityInputLease.ReleaseOperations(
-            _authoredOperations.AsSpan(0, _authoredOperationCount));
-        VulkanAdvancedVisibilityInputLease.ReleaseOperations(
-            _authoredTextureUploadOperations.AsSpan(
-                0,
-                _authoredTextureUploadOperationCount));
-        VulkanAdvancedVisibilityInputLease.ReleaseOperations(
             _staticOperations.AsSpan(0, StaticOperationCount));
         VulkanAdvancedVisibilityInputLease.ReleaseOperations(
             _dynamicUiOperations.AsSpan(0, DynamicUiOperationCount));
@@ -993,10 +1028,6 @@ internal sealed class VulkanAcceptedFramePlan
         _staticOperations.AsSpan(0, StaticOperationCount).Clear();
         _dynamicUiOperations.AsSpan(0, DynamicUiOperationCount).Clear();
         _textureUploadOperations.AsSpan(0, TextureUploadOperationCount).Clear();
-        _authoredOperations.AsSpan(0, _authoredOperationCount).Clear();
-        _authoredTextureUploadOperations.AsSpan(
-            0,
-            _authoredTextureUploadOperationCount).Clear();
         _requiredTextures.AsSpan(0, RequiredTextureCount).Clear();
         _requiredTextureGenerations.AsSpan(0, RequiredTextureCount).Clear();
         _bindlessDescriptorReferences.AsSpan(0, _bindlessDescriptorReferenceCount).Clear();

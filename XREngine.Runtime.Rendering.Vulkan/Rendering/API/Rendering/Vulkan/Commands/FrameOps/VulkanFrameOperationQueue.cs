@@ -443,6 +443,26 @@ internal sealed class VulkanFrameOperationQueue : IDisposable
         }
     }
 
+    /// <summary>
+    /// Atomically releases and clears unsubmitted pending and drained operations
+    /// after a rejected, paused, or aborted frame attempt.
+    /// </summary>
+    internal void Reset()
+    {
+        using (SyncRoot.EnterScope())
+        {
+            VulkanAdvancedVisibilityInputLease.ReleaseOperations(
+                CollectionsMarshal.AsSpan(Pending));
+            VulkanAdvancedVisibilityInputLease.ReleaseOperations(
+                DrainedFrameOpsBuffer);
+            VulkanAdvancedVisibilityInputLease.ReleaseOperations(
+                DrainedTextureUploadFrameOpsBuffer);
+            Pending.Clear();
+            Array.Clear(DrainedFrameOpsBuffer);
+            Array.Clear(DrainedTextureUploadFrameOpsBuffer);
+        }
+    }
+
     public void Dispose()
     {
         using (SyncRoot.EnterScope())

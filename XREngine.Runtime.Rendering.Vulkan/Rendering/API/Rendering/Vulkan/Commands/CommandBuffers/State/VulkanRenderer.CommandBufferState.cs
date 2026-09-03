@@ -241,6 +241,12 @@ namespace XREngine.Rendering.Vulkan
 
         private void InvalidateDescriptorHeapBindingState(CommandBuffer commandBuffer)
         {
+            if (_commandRuntime.LaneRecordingContexts.TryGetActiveContext(commandBuffer, out VulkanLaneRecordingContext? laneContext) && laneContext is not null)
+            {
+                laneContext.InvalidateDescriptorHeapBindingState();
+                return;
+            }
+
             ulong key = (ulong)commandBuffer.Handle;
             lock (_commandBindStateLock)
             {
@@ -252,6 +258,12 @@ namespace XREngine.Rendering.Vulkan
 
         private void InvalidateDescriptorSetBindingState(CommandBuffer commandBuffer)
         {
+            if (_commandRuntime.LaneRecordingContexts.TryGetActiveContext(commandBuffer, out VulkanLaneRecordingContext? laneContext) && laneContext is not null)
+            {
+                laneContext.InvalidateDescriptorSetBindingState();
+                return;
+            }
+
             ulong key = (ulong)commandBuffer.Handle;
             lock (_commandBindStateLock)
             {
@@ -269,6 +281,12 @@ namespace XREngine.Rendering.Vulkan
         /// </summary>
         private void InvalidatePrimaryBindStateAfterSecondaryExecution(CommandBuffer primary)
         {
+            if (_commandRuntime.LaneRecordingContexts.TryGetActiveContext(primary, out VulkanLaneRecordingContext? laneContext) && laneContext is not null)
+            {
+                laneContext.InvalidateStateAfterSecondaryExecution();
+                return;
+            }
+
             ulong key = unchecked((ulong)primary.Handle);
             lock (_commandBindStateLock)
             {
@@ -319,10 +337,29 @@ namespace XREngine.Rendering.Vulkan
             RemoveCommandBufferTrackingBatch(commandBuffer);
         }
 
+        internal void BindPipelineTracked(CommandBuffer commandBuffer, Pipeline bindPointPipeline, Pipeline pipeline)
+        {
+            // Legacy signature redirect
+            BindPipelineTracked(commandBuffer, PipelineBindPoint.Graphics, pipeline);
+        }
+
         internal void BindPipelineTracked(CommandBuffer commandBuffer, PipelineBindPoint bindPoint, Pipeline pipeline)
         {
             if (pipeline.Handle == 0)
                 return;
+
+            if (_commandRuntime.LaneRecordingContexts.TryGetActiveContext(commandBuffer, out VulkanLaneRecordingContext? laneContext) && laneContext is not null)
+            {
+                laneContext.RecordDependency(new VulkanResourceLifetimeKey(ObjectType.Pipeline, pipeline.Handle));
+                if (!laneContext.ShouldBindPipeline(bindPoint, pipeline))
+                {
+                    RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanBindChurn(pipelineBindSkips: 1);
+                    return;
+                }
+                Api!.CmdBindPipeline(commandBuffer, bindPoint, pipeline);
+                RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanBindChurn(pipelineBinds: 1);
+                return;
+            }
 
             TrackVulkanCommandBufferResource(
                 commandBuffer,
@@ -401,6 +438,11 @@ namespace XREngine.Rendering.Vulkan
 
         private bool ShouldSetViewportScissor(CommandBuffer commandBuffer, ulong signature)
         {
+            if (_commandRuntime.LaneRecordingContexts.TryGetActiveContext(commandBuffer, out VulkanLaneRecordingContext? laneContext) && laneContext is not null)
+            {
+                return laneContext.ShouldSetViewportScissor(signature);
+            }
+
             bool shouldSet;
             ulong key = (ulong)commandBuffer.Handle;
             lock (_commandBindStateLock)
@@ -496,6 +538,37 @@ namespace XREngine.Rendering.Vulkan
             if (sets.Length == 0)
                 return;
 
+            if (_commandRuntime.LaneRecordingContexts.TryGetActiveContext(commandBuffer, out VulkanLaneRecordingContext? laneContext) && laneContext is not null)
+            {
+                laneContext.RecordDependency(new VulkanResourceLifetimeKey(ObjectType.PipelineLayout, layout.Handle));
+                for (int i = 0; i < sets.Length; i++)
+                    laneContext.RecordDependency(new VulkanResourceLifetimeKey(ObjectType.DescriptorSet, sets[i].Handle));
+
+                HashCode hash = new();
+                hash.Add((int)bindPoint);
+                hash.Add(layout.Handle);
+                hash.Add(firstSet);
+                for (int i = 0; i < sets.Length; i++)
+                    hash.Add(sets[i].Handle);
+                for (int i = 0; i < dynamicOffsets.Length; i++)
+                    hash.Add(dynamicOffsets[i]);
+
+                ulong signature = unchecked((ulong)hash.ToHashCode());
+                if (!laneContext.ShouldBindDescriptorSets(bindPoint, signature))
+                {
+                    RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanBindChurn(descriptorBindSkips: 1);
+                    return;
+                }
+
+                fixed (DescriptorSet* setPtr = sets)
+                fixed (uint* offsetPtr = dynamicOffsets)
+                    Api!.CmdBindDescriptorSets(commandBuffer, bindPoint, layout, firstSet, (uint)sets.Length, setPtr, (uint)dynamicOffsets.Length, offsetPtr);
+
+                laneContext.InvalidateDescriptorHeapBindingState();
+                RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanBindChurn(descriptorBinds: 1);
+                return;
+            }
+
             TrackVulkanCommandBufferResource(
                 commandBuffer,
                 ObjectType.PipelineLayout,
@@ -504,16 +577,16 @@ namespace XREngine.Rendering.Vulkan
             for (int i = 0; i < sets.Length; i++)
                 PrimaryCommandEncoder.Track(commandBuffer, ObjectType.DescriptorSet, sets[i].Handle);
 
-            HashCode hash = new();
-            hash.Add((int)bindPoint);
-            hash.Add(layout.Handle);
-            hash.Add(firstSet);
+            HashCode legacyHash = new();
+            legacyHash.Add((int)bindPoint);
+            legacyHash.Add(layout.Handle);
+            legacyHash.Add(firstSet);
             for (int i = 0; i < sets.Length; i++)
-                hash.Add(sets[i].Handle);
+                legacyHash.Add(sets[i].Handle);
             for (int i = 0; i < dynamicOffsets.Length; i++)
-                hash.Add(dynamicOffsets[i]);
+                legacyHash.Add(dynamicOffsets[i]);
 
-            ulong signature = unchecked((ulong)hash.ToHashCode());
+            ulong legacySignature = unchecked((ulong)legacyHash.ToHashCode());
             bool shouldBind = true;
             ulong key = (ulong)commandBuffer.Handle;
 
@@ -522,15 +595,15 @@ namespace XREngine.Rendering.Vulkan
                 _commandBindStates.TryGetValue(key, out CommandBufferBindState state);
                 if (bindPoint == PipelineBindPoint.Graphics)
                 {
-                    shouldBind = state.GraphicsDescriptorSignature != signature;
+                    shouldBind = state.GraphicsDescriptorSignature != legacySignature;
                     if (shouldBind)
-                        state.GraphicsDescriptorSignature = signature;
+                        state.GraphicsDescriptorSignature = legacySignature;
                 }
                 else
                 {
-                    shouldBind = state.ComputeDescriptorSignature != signature;
+                    shouldBind = state.ComputeDescriptorSignature != legacySignature;
                     if (shouldBind)
-                        state.ComputeDescriptorSignature = signature;
+                        state.ComputeDescriptorSignature = legacySignature;
                 }
 
                 if (shouldBind)
@@ -588,6 +661,35 @@ namespace XREngine.Rendering.Vulkan
             if (buffers.Length == 0)
                 return;
 
+            if (_commandRuntime.LaneRecordingContexts.TryGetActiveContext(commandBuffer, out VulkanLaneRecordingContext? laneContext) && laneContext is not null)
+            {
+                for (int i = 0; i < buffers.Length; i++)
+                    laneContext.RecordDependency(new VulkanResourceLifetimeKey(ObjectType.Buffer, buffers[i].Handle));
+
+                HashCode hash = new();
+                hash.Add(firstBinding);
+                hash.Add(buffers.Length);
+                for (int i = 0; i < buffers.Length; i++)
+                {
+                    hash.Add(buffers[i].Handle);
+                    hash.Add(offsets[i]);
+                }
+
+                ulong signature = unchecked((ulong)hash.ToHashCode());
+                if (!laneContext.ShouldBindVertexBuffer(signature))
+                {
+                    RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanBindChurn(vertexBufferBindSkips: 1);
+                    return;
+                }
+
+                fixed (Silk.NET.Vulkan.Buffer* bufferPtr = buffers)
+                fixed (ulong* offsetPtr = offsets)
+                    Api!.CmdBindVertexBuffers(commandBuffer, firstBinding, (uint)buffers.Length, bufferPtr, offsetPtr);
+
+                RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanBindChurn(vertexBufferBinds: 1);
+                return;
+            }
+
             for (int i = 0; i < buffers.Length; i++)
             {
                 TrackVulkanCommandBufferResource(
@@ -597,25 +699,25 @@ namespace XREngine.Rendering.Vulkan
                     "VertexBuffer.Bind");
             }
 
-            HashCode hash = new();
-            hash.Add(firstBinding);
-            hash.Add(buffers.Length);
+            HashCode legacyHash = new();
+            legacyHash.Add(firstBinding);
+            legacyHash.Add(buffers.Length);
             for (int i = 0; i < buffers.Length; i++)
             {
-                hash.Add(buffers[i].Handle);
-                hash.Add(offsets[i]);
+                legacyHash.Add(buffers[i].Handle);
+                legacyHash.Add(offsets[i]);
             }
 
-            ulong signature = unchecked((ulong)hash.ToHashCode());
+            ulong legacySignature = unchecked((ulong)legacyHash.ToHashCode());
             bool shouldBind;
             ulong key = (ulong)commandBuffer.Handle;
             lock (_commandBindStateLock)
             {
                 _commandBindStates.TryGetValue(key, out CommandBufferBindState state);
-                shouldBind = state.VertexBufferSignature != signature;
+                shouldBind = state.VertexBufferSignature != legacySignature;
                 if (shouldBind)
                 {
-                    state.VertexBufferSignature = signature;
+                    state.VertexBufferSignature = legacySignature;
                     _commandBindStates[key] = state;
                 }
             }
@@ -642,28 +744,52 @@ namespace XREngine.Rendering.Vulkan
             if (buffer.Handle == 0)
                 return;
 
+            if (_commandRuntime.LaneRecordingContexts.TryGetActiveContext(commandBuffer, out VulkanLaneRecordingContext? laneContext) && laneContext is not null)
+            {
+                laneContext.RecordDependency(new VulkanResourceLifetimeKey(ObjectType.Buffer, buffer.Handle));
+
+                HashCode hash = new();
+                hash.Add(binding);
+                hash.Add(1);
+                hash.Add(buffer.Handle);
+                hash.Add(offset);
+
+                ulong signature = unchecked((ulong)hash.ToHashCode());
+                if (!laneContext.ShouldBindVertexBuffer(signature))
+                {
+                    RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanBindChurn(vertexBufferBindSkips: 1);
+                    return;
+                }
+
+                Silk.NET.Vulkan.Buffer localBuffer = buffer;
+                ulong localOffset = offset;
+                Api!.CmdBindVertexBuffers(commandBuffer, binding, 1, &localBuffer, &localOffset);
+                RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanBindChurn(vertexBufferBinds: 1);
+                return;
+            }
+
             TrackVulkanCommandBufferResource(
                 commandBuffer,
                 ObjectType.Buffer,
                 buffer.Handle,
                 "VertexBuffer.Bind");
 
-            HashCode hash = new();
-            hash.Add(binding);
-            hash.Add(1);
-            hash.Add(buffer.Handle);
-            hash.Add(offset);
+            HashCode legacyHash = new();
+            legacyHash.Add(binding);
+            legacyHash.Add(1);
+            legacyHash.Add(buffer.Handle);
+            legacyHash.Add(offset);
 
-            ulong signature = unchecked((ulong)hash.ToHashCode());
+            ulong legacySignature = unchecked((ulong)legacyHash.ToHashCode());
             bool shouldBind;
             ulong key = (ulong)commandBuffer.Handle;
             lock (_commandBindStateLock)
             {
                 _commandBindStates.TryGetValue(key, out CommandBufferBindState state);
-                shouldBind = state.VertexBufferSignature != signature;
+                shouldBind = state.VertexBufferSignature != legacySignature;
                 if (shouldBind)
                 {
-                    state.VertexBufferSignature = signature;
+                    state.VertexBufferSignature = legacySignature;
                     _commandBindStates[key] = state;
                 }
             }
@@ -674,9 +800,9 @@ namespace XREngine.Rendering.Vulkan
                 return;
             }
 
-            Silk.NET.Vulkan.Buffer localBuffer = buffer;
-            ulong localOffset = offset;
-            Api!.CmdBindVertexBuffers(commandBuffer, binding, 1, &localBuffer, &localOffset);
+            Silk.NET.Vulkan.Buffer legacyLocalBuffer = buffer;
+            ulong legacyLocalOffset = offset;
+            Api!.CmdBindVertexBuffers(commandBuffer, binding, 1, &legacyLocalBuffer, &legacyLocalOffset);
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanBindChurn(vertexBufferBinds: 1);
         }
 
@@ -684,6 +810,20 @@ namespace XREngine.Rendering.Vulkan
         {
             if (indexBuffer.Handle == 0)
                 return;
+
+            if (_commandRuntime.LaneRecordingContexts.TryGetActiveContext(commandBuffer, out VulkanLaneRecordingContext? laneContext) && laneContext is not null)
+            {
+                laneContext.RecordDependency(new VulkanResourceLifetimeKey(ObjectType.Buffer, indexBuffer.Handle));
+                if (!laneContext.ShouldBindIndexBuffer(indexBuffer, offset, indexType))
+                {
+                    RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanBindChurn(indexBufferBindSkips: 1);
+                    return;
+                }
+
+                Api!.CmdBindIndexBuffer(commandBuffer, indexBuffer, offset, indexType);
+                RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanBindChurn(indexBufferBinds: 1);
+                return;
+            }
 
             TrackVulkanCommandBufferResource(
                 commandBuffer,

@@ -1905,13 +1905,6 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         IVector2 currentCoordinate = GetDepthReadbackCoordinate(fbo, internalCoordinate);
         bool currentPolicyFlipsY = ShouldFlipDepthReadbackY();
 
-        using IDisposable? readbackScope = vp.EnterRenderPipelineReadbackScope();
-        EditorDepthHitReadbackSample unflipped = ReadDepthSample(vp, fbo, clamped, unflippedCoordinate);
-        EditorDepthHitReadbackSample flipped = CoordinatesEqual(unflippedCoordinate, flippedCoordinate)
-            ? unflipped
-            : ReadDepthSample(vp, fbo, clamped, flippedCoordinate);
-        EditorDepthHitReadbackSample current = CoordinatesEqual(currentCoordinate, flippedCoordinate) ? flipped : unflipped;
-
         RuntimeGraphicsApiKind backend = RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend;
         ERenderClipSpaceYDirection clipY = RuntimeRenderingHostServices.Settings.ClipSpaceYDirection;
         ERenderClipSpaceYDirection framebufferY = backend == RuntimeGraphicsApiKind.Unknown
@@ -1924,21 +1917,55 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             ? Globals.Forward
             : Vector3.Normalize(Vector3.Transform(Globals.Forward, tfm.WorldRotation));
 
-        return new EditorDepthHitProbeResult(
-            normalizedViewportPoint,
-            clamped,
-            internalCoordinate,
-            (int)fbo.Width,
-            (int)fbo.Height,
-            backend,
-            clipY,
-            framebufferY,
-            currentPolicyFlipsY,
-            current,
-            unflipped,
-            flipped,
-            cameraPosition,
-            cameraForward);
+        if (!vp.TryEnterRenderPipelineReadbackScope(out IDisposable? readbackScope))
+        {
+            EditorDepthHitReadbackSample invalidSample = new(
+                unflippedCoordinate.X,
+                unflippedCoordinate.Y,
+                1.0f,
+                false,
+                null);
+            return new EditorDepthHitProbeResult(
+                normalizedViewportPoint,
+                clamped,
+                internalCoordinate,
+                (int)fbo.Width,
+                (int)fbo.Height,
+                backend,
+                clipY,
+                framebufferY,
+                currentPolicyFlipsY,
+                invalidSample,
+                invalidSample,
+                invalidSample,
+                cameraPosition,
+                cameraForward);
+        }
+
+        using (readbackScope)
+        {
+            EditorDepthHitReadbackSample unflipped = ReadDepthSample(vp, fbo, clamped, unflippedCoordinate);
+            EditorDepthHitReadbackSample flipped = CoordinatesEqual(unflippedCoordinate, flippedCoordinate)
+                ? unflipped
+                : ReadDepthSample(vp, fbo, clamped, flippedCoordinate);
+            EditorDepthHitReadbackSample current = CoordinatesEqual(currentCoordinate, flippedCoordinate) ? flipped : unflipped;
+
+            return new EditorDepthHitProbeResult(
+                normalizedViewportPoint,
+                clamped,
+                internalCoordinate,
+                (int)fbo.Width,
+                (int)fbo.Height,
+                backend,
+                clipY,
+                framebufferY,
+                currentPolicyFlipsY,
+                current,
+                unflipped,
+                flipped,
+                cameraPosition,
+                cameraForward);
+        }
     }
 
     public EditorDepthHitZoomResult DebugZoomAtNormalizedViewport(
@@ -1947,51 +1974,57 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         float scrollDelta,
         bool smoothScroll)
     {
-        EditorDepthHitProbeResult probe = ProbeDepthHitAtNormalizedViewport(vp, normalizedViewportPoint);
-        Transform? tfm = TransformAs<Transform>();
-        if (tfm is null)
-            throw new InvalidOperationException("Editor camera pawn has no Transform.");
-
-        Vector3 before = tfm.WorldTranslation;
-        bool previousSmooth = SmoothScrollEnabled;
         try
         {
-            SmoothScrollEnabled = smoothScroll;
-            if (probe.Current.ValidDepth && probe.Current.WorldPoint.HasValue)
-            {
-                DepthHitNormalizedViewportPoint = new Vector3(probe.ClampedNormalizedViewportPoint, probe.Current.Depth);
-                WorldDragPoint = probe.Current.WorldPoint.Value;
-            }
-            else
-            {
-                DepthHitNormalizedViewportPoint = null;
-                WorldDragPoint = null;
-            }
+            EditorDepthHitProbeResult probe = ProbeDepthHitAtNormalizedViewport(vp, normalizedViewportPoint);
+            Transform? tfm = TransformAs<Transform>();
+            if (tfm is null)
+                throw new InvalidOperationException("Editor camera pawn has no Transform.");
 
-            _depthQueryRequested = false;
-            bool changed = ApplyScrollTransformation(vp, tfm, scrollDelta);
-            if (smoothScroll)
-                changed |= UpdateScrollSmooth(tfm);
-
-            if (changed)
+            Vector3 before = tfm.WorldTranslation;
+            bool previousSmooth = SmoothScrollEnabled;
+            try
             {
-                InvalidateView();
-                RecalculateCameraWorldMatrix(tfm, forceRenderMatrixNow: !smoothScroll);
-            }
+                SmoothScrollEnabled = smoothScroll;
+                if (probe.Current.ValidDepth && probe.Current.WorldPoint.HasValue)
+                {
+                    DepthHitNormalizedViewportPoint = new Vector3(probe.ClampedNormalizedViewportPoint, probe.Current.Depth);
+                    WorldDragPoint = probe.Current.WorldPoint.Value;
+                }
+                else
+                {
+                    DepthHitNormalizedViewportPoint = null;
+                    WorldDragPoint = null;
+                }
 
-            return new EditorDepthHitZoomResult(
-                probe,
-                scrollDelta,
-                smoothScroll,
-                probe.Current.ValidDepth,
-                changed,
-                before,
-                tfm.WorldTranslation,
-                _scrollSmoothTarget);
+                bool changed = ApplyScrollTransformation(vp, tfm, scrollDelta);
+                if (smoothScroll)
+                    changed |= UpdateScrollSmooth(tfm);
+
+                if (changed)
+                {
+                    InvalidateView();
+                    RecalculateCameraWorldMatrix(tfm, forceRenderMatrixNow: !smoothScroll);
+                }
+
+                return new EditorDepthHitZoomResult(
+                    probe,
+                    scrollDelta,
+                    smoothScroll,
+                    probe.Current.ValidDepth,
+                    changed,
+                    before,
+                    tfm.WorldTranslation,
+                    _scrollSmoothTarget);
+            }
+            finally
+            {
+                SmoothScrollEnabled = previousSmooth;
+            }
         }
         finally
         {
-            SmoothScrollEnabled = previousSmooth;
+            _depthQueryRequested = false;
         }
     }
 

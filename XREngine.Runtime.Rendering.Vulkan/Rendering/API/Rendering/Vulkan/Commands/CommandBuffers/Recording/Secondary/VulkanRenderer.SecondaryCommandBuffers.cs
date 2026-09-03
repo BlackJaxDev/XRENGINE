@@ -401,6 +401,13 @@ namespace XREngine.Rendering.Vulkan
                         "DynamicUiSecondary") != Result.Success)
                     throw new Exception("Failed to begin dynamic UI text secondary command buffer.");
 
+                ulong recGen = CommandBuffers.ResolveRecordingGeneration(secondaryCommandBuffer);
+                LaneRecordingContexts.BeginContext(
+                    EVulkanAcceptedFrameLane.Ui,
+                    unchecked((int)Math.Min(imageIndex, int.MaxValue)),
+                    secondaryCommandBuffer,
+                    recGen);
+
                 recordingStarted = true;
                 meshDrawSlotsByRendererFamily.Clear();
 

@@ -1757,7 +1757,7 @@ internal unsafe partial class VkMeshRenderer
 	/// renderer-owned descriptor path because it carries per-draw engine and auto
 	/// uniform buffers in addition to material resources.
 	/// </summary>
-	private bool BindDescriptorsIfAvailable(CommandBuffer commandBuffer, XRMaterial material, in PendingMeshDraw draw, int drawUniformSlot, int frameDataImageIndex, int passIndex)
+	internal bool BindDescriptorsIfAvailable(CommandBuffer commandBuffer, XRMaterial material, in PendingMeshDraw draw, int drawUniformSlot, int frameDataImageIndex, int passIndex)
 	{
 		if (_program is null)
 			return true;

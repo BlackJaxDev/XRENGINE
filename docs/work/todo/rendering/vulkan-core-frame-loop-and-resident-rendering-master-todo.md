@@ -56,7 +56,7 @@ The renderer will not be rewritten; rather, the resident data-oriented architect
 2. **Deliberate Presentation Pacing:** First-class `Stable` (FIFO) and `LowLatency` (Mailbox with hybrid sleep/spin limiter) profiles; attribute every wait above 0.1 ms and at least 99% of detailed frame-root wall time, with explicit gaps of at least $50\ \mu\text{s}$.
 3. **Sealed Submission Fast Path:** `SealedSubmissionContract` validating static requirements once and executing clean submissions via compact generation checks (<0.25 ms CPU p95).
 4. **Granular Reverse-Dependency Invalidation:** Surgical invalidation of material rows, textures, shaders, and geometry ranges without table-wide clears.
-5. **Single Canonical Resident Authority:** `AdvancedSharedGpuSceneDatabase` using ABA-safe `AdvancedGpuHandle(Index, Generation)` handles and frequency-owned SoA streams feeding direct-slot `VulkanDrawTemplateTable`.
+5. **Single Canonical Resident Authority:** `AdvancedSharedGpuSceneDatabase` using ABA-safe `AdvancedGpuHandle(Index, Generation)` handles and frequency-owned SoA streams feeding direct-slot `VulkanResidentDrawTemplateTable`.
 6. **Stable Bins & 5 Submission Strategy Lanes:** Numeric `VulkanRenderBinKey` and bin-level manifests feeding `CpuDirect`, `GpuIndirectZeroReadback`, `GpuIndirectInstrumented`, `GpuMeshletZeroReadback`, and `GpuMeshletInstrumented`.
 7. **Asynchronous Diagnostic Sidecar:** `GpuDiagnosticReadbackPlan` using a fixed-capacity staging ring with zero current-frame waits, strict zero-readback separation, and general-domain decoding.
 8. **Process-Wide Execution Topology:** `EngineExecutionTopology` and pooled `EngineWorkScheduler` owning non-oversubscribed general and render lanes with lane-local command arenas.
@@ -169,6 +169,24 @@ Phase 9: Phase-Local Test Clearance, Legacy Deletion, & Closeout
 Phase 9.1 is a recurring gate, not a requirement to postpone every cleared slice's tests until all ARP work is complete. Each feature slice must pass its relevant live/runtime path and receive explicit user clearance before its tests are added or changed. Final deletion and program closeout still wait for the complete integrated validation matrix.
 
 The diagram expresses promotion order, not blanket serialization. After the benchmark/telemetry contract is frozen, sealed submission/invalidation, canonical residency, scheduler closure, and graph/publication work may proceed in parallel when ownership does not overlap. OpenXR decoupling depends on the measured completion/lifetime model; ARP cutover depends on canonical publication and resource contracts. Phase 8 promotion always uses one frozen integrated revision.
+
+### Active Phase Execution Matrix
+
+| Phase | Subsystem / Focus | Implementation Status | Validation / Gate Status | Current Focus / Action |
+|---|---|---|---|---|
+| **Phase 0** | Present-Now Frame Readiness | Implemented | Cold liveness smoke passed; 2026-09-01 avatar transaction incident documented | Enforce transaction clearing in Phase 4.5a |
+| **Phase 1** | Baseline Characterization & Pacing | Implemented | Contract & telemetry taxonomy active | Run isolation ladder on native encoding |
+| **Phase 2** | Sealed Submission & Invalidation | Implemented | Verified (2026-08-28 closeout) | Closed |
+| **Phase 3 Core** | Canonical Residency, Stable Bins, 5 Lanes | Implemented | 5-lane Release cohort verified; zero VUIDs | Core closed |
+| **Phase 3 Follow-Up** | Common CPU/GPU Resident Submission Contract | **Implemented** | `CpuDirect` converged with resident templates; CPU MDI promotion evaluated | Core data-path unified |
+| **Phase 4.1–4.4** | Execution Topology, Schedulers, Recording Lanes | Implemented | Verified; zero steady-state hot-path allocations | Closed |
+| **Phase 4.5** | Native Command Encoding Fast-Path Closure | **Implemented** | Verified (Slices 4.5a, 4.5b, 4.5c); zero-lock lane contexts & resident serializer active | Closed; ready for Phase 7 |
+| **Phase 5.0–5.3** | Render Graph, Streaming, Shadow Bounds | Implemented | Verified (2026-08-31 headless closeout) | Closed |
+| **Phase 5.4** | Swapchain Lifecycle & Resize Continuity | Implemented | Held-drag continuity reopened (3 cross-pipeline gates remain) | Validate held drag in Default/Advanced/Debug |
+| **Phase 6** | OpenXR Asynchronous Decoupling | **Implemented** | Complete (2026-09-02; `19027f631`); 70–100 ms fence wait eliminated | Closed; XR hardware matrix in Phase 8 |
+| **Phase 7** | Advanced Render Pipeline Modernization | Queued | Blocked by Phase 3/4.5 native encoding closure | Implement after Phase 4.5 |
+| **Phase 8** | High-Refresh Promotion Gates (120/144 Hz) | Queued | Final integrated promotion gate | Awaits Phase 7 |
+| **Phase 9** | Phase-Local Test Clearance & Legacy Deletion | Recurring / Queued | Phase 9.1 recurring; final deletion at closeout | Active per slice |
 
 ---
 
@@ -447,26 +465,16 @@ never production feedback.
   commands, buffer-device-address, and mesh-shader tiers capability-gated and
   outside baseline promotion.
 
-#### Common CPU/GPU Resident Submission Follow-Up
+#### Common CPU/GPU Resident Submission Follow-Up (Data-Path & Residency Contract)
 
-- [ ] Promote CPU-indirect parity from diagnostic scaffolding to a production
-  option for compatible opaque and masked bins only after the Phase 1 isolation
-  ladder proves its crossover against prepared direct draws.
-- [ ] Require `CpuDirect` to consume the canonical resident templates, material
-  tables, geometry ranges, view/pass records, and stable bins used by GPU
-  strategies instead of maintaining a second draw-oriented backend path.
-- [ ] Require primary, secondary, inline, worker, CPU-direct, indirect, and
-  ordered-exception encoders to consume immutable backend-ready records. Small
-  work may stay inline, but it may not return to live renderer/material
-  discovery during native encoding.
-- [ ] Make GPU indirect and meshlet lanes populate the corresponding canonical
-  bin/range streams without rebuilding the original per-draw CPU frontend.
-- [ ] Keep transparent, UI, callbacks, queries, and semantically ordered work in
-  explicit bounded exception streams with independent cost and compatibility
-  telemetry.
-- [ ] Select prepared direct, CPU-built MDI, GPU indirect-count, or mesh-task
-  realization through measured candidate/bin/material/culling crossover policy;
-  no strategy is required to win every scene size.
+This track owns the **data-path and residency contract** unifying CPU and GPU submission strategies. The corresponding **command recording execution engine** (lane recording context, removing `VkMeshRenderer.RecordDraw`, and zero per-draw locks) is owned and executed under **Phase 4.5**.
+
+- [x] Unify `CpuDirect` data ingress to consume the canonical resident templates (`VulkanResidentDrawTemplateTable`), material tables, geometry ranges, view/pass records, and stable bins (`VulkanPreparedStableBinStream`) used by GPU strategies instead of maintaining a second draw-oriented backend path.
+- [ ] Promote CPU-indirect parity (Multi-Draw Indirect built on CPU) from diagnostic scaffolding to a production option for compatible opaque and masked bins only after the Phase 1 isolation ladder proves its crossover against prepared direct draws.
+- [ ] Make GPU indirect and meshlet lanes populate the corresponding canonical bin/range streams without rebuilding the original per-draw CPU frontend.
+- [x] Keep transparent, UI, callbacks, queries, and semantically ordered work in explicit bounded exception streams with independent cost and compatibility telemetry.
+- [ ] Select prepared direct, CPU-built MDI, GPU indirect-count, or mesh-task realization through measured candidate/bin/material/culling crossover policy; no strategy is required to win every scene size.
+- [x] Coordinate with Phase 4.5 to ensure all production encoders consume immutable backend-ready records with zero live renderer/material traversal.
 
 #### Evidence and conclusion
 
@@ -629,50 +637,39 @@ and lane-arena contract tests also passed.
 
 #### 4.5 Native Command Encoding Fast-Path Closure
 
-- [ ] Require every production mesh encoder—primary, secondary, inline, worker,
-  `CpuDirect`, indirect, and ordered-exception—to consume immutable
-  backend-ready records. Normal native encoding must not call live
-  `VkMeshRenderer.RecordDraw` or traverse renderer/material/reflection state.
-- [ ] Eliminate renderer prewarm, shader reflection, descriptor allocation or
-  update, pipeline creation, render callbacks, and live object locks from the
-  production command-emission interval. Cold work remains an explicit resource
-  preparation stage or returns a typed retry.
-- [ ] Introduce one lane/frame-slot-owned recording context containing the exact
-  command buffer, direct bind state, image-access journal, dependency collector,
-  and immutable prepared-frame/manifest references. A command buffer has one
-  recording owner and does not need a shared bind-state monitor.
-- [ ] Remove global command-buffer dictionary discovery and shared bind-state
-  lock acquisition from steady primary and secondary encoding. Diagnostic and
-  retirement lookup may remain outside the command loop.
-- [ ] Seal and acquire one exact native resource manifest before
-  `vkBeginCommandBuffer`; command emission must not perform one resource
-  generation handshake or lifetime publication for every repeated `vkCmd*`.
-- [ ] Publish dependencies, image-access deltas, queue ownership, and artifact
-  identity once as a sealed recording receipt at command-buffer completion.
-  Keep sampled/instrumented full validation as a separate correctness path.
-- [ ] Replace repeated dependency `HashSet`/dictionary activity with bounded
-  manifest indices, bitsets, sorted unique IDs, or another measured flat
-  representation. Preserve precise retirement safety and fail before native
-  emission on a generation mismatch.
-- [ ] Bind global descriptor tables or descriptor heaps once per command buffer,
-  compatible rendering scope, or required secondary inheritance boundary.
-  Per-draw heap rebinding requires explicit device-specific measurement and may
-  not be the portable baseline.
-- [ ] Keep transient command pools per lane/frame slot separate from retained
-  artifact pools, reset only after exact completion, and allocate no warmed
-  command buffers.
-- [ ] Demonstrate that adding visible draws inside existing compatible bins
-  primarily changes argument/data buffers. Native encoding and recording
-  dependencies must scale with passes, bins, dirty ranges, and ordered
-  exceptions—not raw visible object count.
-- [ ] Do not mark this phase implemented from source shape alone. Complete the
-  Phase 1 isolation ladder, retain before/after profiles, and prove that safety
-  work was removed or bulk-published rather than shifted into begin/end,
-  submission, retirement, or another worker.
+**Status:** ACTIVE IMPLEMENTATION GATEWAY (Slices 4.5a, 4.5b, 4.5c).
+Phase 4.1–4.4 established process execution topology, allocation-free scheduler batches, multi-lane command pools, and zero steady-state hot-path allocations. However, the 2026-09-01 avatar benchmark revealed that command emission itself still performs live scene object traversal (`VkMeshRenderer.RecordDraw`), takes per-draw monitor locks (`_recordDrawSync`), queries global dictionaries (`TrackingBatches`, `_commandBindStates`), and performs per-command lifetime tracking.
 
-This closes Phase 4.1–4.4 scheduler and lifecycle work. Phase 4.5 remains open;
-Phase 8 owns its integrated performance, shaded-output, cross-vendor, and
-OpenXR promotion gates.
+Phase 4.5 transforms command recording into a pure, immutable command-local serializer structured across three execution slices:
+
+##### Phase 4.5a — Frame-Operation Transaction Boundaries & Retry Classification
+- [x] Enforce transactional lifecycle in `VulkanAcceptedFramePlan`: reset/drain authored operation queues on any rejected readiness attempt, preventing queue accumulation across retries and eliminating the 8,192 overflow.
+- [x] Reclassify transient ticket generation staleness (e.g., `texture-upload:X:Y` stale during visibility promotion) as typed `EDesktopFrameFlow.RetryFrame` / `RecoverAfterStateChange` rather than latching `RendererTerminal`.
+- [x] Clear depth-picking one-shot request flags in a `finally` block even when readback throws or encounters an unwritten generation, terminating repeating 47-exception loops.
+- [x] Ensure readiness failures cleanly preserve accepted work without leaking incomplete draw operations into subsequent plans.
+
+##### Phase 4.5b — Command-Local Recording Context & Pre-Sealed Manifests
+- [x] Introduce `VulkanLaneRecordingContext` allocated per logical render lane and frame slot:
+  - Command buffer handle and lane index.
+  - Command-local direct bind state (last bound graphics pipeline, compute pipeline, vertex buffers, index buffer, push constants, dynamic viewport/scissor) with zero lock or dictionary overhead.
+  - Pre-allocated flat buffer for image-access deltas.
+  - Flat bitset / compact array for tracked native resource lifetime keys.
+- [x] Remove global `_commandBindStates` dictionary lookups and `_commandBindStateLock` monitor acquisition from steady primary and secondary recording.
+- [x] Seal and acquire one exact native resource manifest (`VulkanRecordingResourceManifest`) before `vkBeginCommandBuffer`; eliminate per-`vkCmd*` dictionary lookup in `Runtime.CommandBuffers.TrackingBatches` and per-command monitor locks.
+- [x] Publish dependencies, image-access deltas, queue ownership, and artifact identity once as a sealed recording receipt (`SealedRecordingReceipt`) at command buffer completion (`vkEndCommandBuffer`).
+- [x] Bind global descriptor tables (Set 2 / Set 3) once per command buffer, compatible scope, or required secondary boundary; eliminate per-draw descriptor re-binding.
+- [x] Keep transient command pools per lane/frame slot separate from retained artifact pools, reset only after exact completion, and allocate no warmed command buffers.
+
+##### Phase 4.5c — Direct Resident Mesh Serialization (Bypassing `VkMeshRenderer.RecordDraw`)
+- [x] Implement `VulkanResidentMeshEncoder`: a stateless serializer reading directly from `VulkanResidentDrawTemplate` and `VulkanResidentDrawTemplateNativeState`.
+- [x] Emit pure Vulkan commands (`vkCmdBindPipeline`, `vkCmdBindVertexBuffers`, `vkCmdBindIndexBuffer`, `vkCmdPushConstants`, `vkCmdDrawIndexed`) directly into the command buffer.
+- [x] Forbid production command recording from entering `VkMeshRenderer.RecordDraw`, `RecordDrawNoLock`, or acquiring `_recordDrawSync`.
+- [x] Eliminate renderer prewarm, shader reflection, dynamic descriptor allocation/update, pipeline creation, and live object locks from the command-emission interval.
+- [x] Migrate dynamic skinning bone matrix uploads (`PushBoneMatricesToGPU`) and blendshape weight uploads (`PushBlendshapeWeightsToGPU`) out of the recording loop and into the worker preparation/upload phase (`VulkanFrameLoop.PrimaryRecordingPreparation.cs`).
+- [x] Demonstrate that adding visible draws inside existing compatible bins primarily changes argument/data buffers; recording cost scales with passes, bins, and dirty ranges—not raw visible object count.
+- [x] Complete the Phase 1 isolation ladder, retaining before/after profiles to prove that safety work was removed or bulk-published rather than shifted into begin/end or another worker.
+
+This completes Phase 4.1–4.4 scheduler/lifecycle work and positions Phase 4.5 as the active execution gateway alongside Phase 3 Follow-Up; Phase 8 owns subsequent integrated performance, shaded-output, cross-vendor, and OpenXR promotion gates.
 
 **Pipeline-source follow-up (2026-08-29):** the post-window capability pass no
 longer creates a viewport-only pipeline override. New desktop cameras configure
