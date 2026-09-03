@@ -43,6 +43,7 @@ internal sealed partial class VulkanFrameLoop
     {
         if (_presentNowTerminalFailure is { } terminalFailure)
         {
+            _framePlanner.Operations.Reset();
             attempt.RejectedFailure = terminalFailure;
             attempt.Stop(EDesktopFrameReason.PresentNowReadinessFailed);
             return EDesktopFrameFlow.Stop;
@@ -52,12 +53,16 @@ internal sealed partial class VulkanFrameLoop
         if (recoverableFailure is not null &&
             !TryBeginPresentNowRecoveryProbe(ref attempt, recoverableFailure))
         {
+            _framePlanner.Operations.Reset();
             attempt.RejectedFailure = recoverableFailure;
             attempt.Stop(EDesktopFrameReason.PresentNowReadinessFailed);
             return EDesktopFrameFlow.Stop;
         }
         if (!TryEnterPresentNowRecoveryProbeAttempt(ref attempt))
+        {
+            _framePlanner.Operations.Reset();
             return EDesktopFrameFlow.Stop;
+        }
 
         using RenderForegroundWorkCoordinator.ExactForegroundScope foregroundScope =
             RenderForegroundWorkCoordinator.EnterExactForeground();
@@ -233,6 +238,7 @@ internal sealed partial class VulkanFrameLoop
                 "DesktopScene -> visible material snapshot -> texture generation",
                 out retry))
         {
+            acceptedPlan.ResetAuthoredOperations();
             return false;
         }
 
@@ -819,7 +825,11 @@ internal sealed partial class VulkanFrameLoop
                     out string failureDetail,
                     out EVulkanPresentNowFailureDisposition disposition))
             {
-                if (disposition == EVulkanPresentNowFailureDisposition.RetryFrame)
+                if (disposition == EVulkanPresentNowFailureDisposition.RetryFrame ||
+                    (!string.IsNullOrEmpty(failureDetail) &&
+                     (failureDetail.Contains("stale", StringComparison.OrdinalIgnoreCase) ||
+                      failureDetail.Contains("superseded", StringComparison.OrdinalIgnoreCase) ||
+                      failureDetail.Contains("canceled", StringComparison.OrdinalIgnoreCase))))
                 {
                     retry = watchdog.CreateRetry(
                         EVulkanPresentNowReadinessStage.RequiredUploadCompletion,
@@ -837,6 +847,34 @@ internal sealed partial class VulkanFrameLoop
                     dependencyChain,
                     failureDetail,
                     disposition: disposition);
+            }
+            if (acceptedPlan.TryGetFailedDependency(
+                    out VulkanFrameDependencyTicket failedDependency,
+                    out string? depFailureDetail))
+            {
+                bool isTransient = !string.IsNullOrEmpty(depFailureDetail) &&
+                    (depFailureDetail.Contains("missing from the frozen required-upload manifest", StringComparison.OrdinalIgnoreCase) ||
+                     depFailureDetail.Contains("stale", StringComparison.OrdinalIgnoreCase) ||
+                     depFailureDetail.Contains("superseded", StringComparison.OrdinalIgnoreCase) ||
+                     depFailureDetail.Contains("canceled", StringComparison.OrdinalIgnoreCase) ||
+                     depFailureDetail.Contains("retry", StringComparison.OrdinalIgnoreCase));
+
+                if (isTransient)
+                {
+                    retry = watchdog.CreateRetry(
+                        EVulkanPresentNowReadinessStage.RequiredUploadCompletion,
+                        $"{failedDependency.Kind}:{failedDependency.ResourceKey}:{failedDependency.Generation}",
+                        dependencyChain,
+                        depFailureDetail ?? "Dependency became stale during readiness preparation.");
+                    return false;
+                }
+
+                throw watchdog.CreateFailure(
+                    EVulkanPresentNowReadinessStage.RequiredUploadCompletion,
+                    $"{failedDependency.Kind}:{failedDependency.ResourceKey}:{failedDependency.Generation}",
+                    dependencyChain,
+                    depFailureDetail ?? "Accepted frame dependency failed without a diagnostic.",
+                    disposition: EVulkanPresentNowFailureDisposition.RecoverAfterStateChange);
             }
             if ((acceptedPlan.RequiredTextureUploads.UnresolvedCount > 0 ||
                  _resourceRuntime.Uploads.HasRequiredUploadRegistrationPending(
@@ -1258,9 +1296,10 @@ internal sealed partial class VulkanFrameLoop
             transition.DependencyChain);
     }
 
-    private static void ResetIncompleteAcceptedPresentNowPlan(
+    private void ResetIncompleteAcceptedPresentNowPlan(
         ref VulkanFrameAttempt attempt)
     {
+        _framePlanner.Operations.Reset();
         VulkanAcceptedFramePlan? acceptedPlan = attempt.AcceptedFramePlan;
         if (acceptedPlan is null)
             return;

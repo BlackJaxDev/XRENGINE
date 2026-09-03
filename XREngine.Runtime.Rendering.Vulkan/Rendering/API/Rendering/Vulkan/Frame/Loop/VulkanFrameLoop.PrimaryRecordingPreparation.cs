@@ -254,6 +254,13 @@ internal sealed partial class VulkanFrameLoop
                 dynamicUiOperationCount > 0 ||
                 preparedMeshIngress.HasDynamicUiEntries;
 
+            using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
+                       "Vulkan.PrepareFrameOps.PreUploadDynamicMeshData"))
+            {
+                PreUploadMeshDynamicData(staticOperations.AsSpan(0, staticOperationCount));
+                PreUploadMeshDynamicData(dynamicUiOperations.AsSpan(0, dynamicUiOperationCount));
+            }
+
             _ = attempt.CompletePhase(
                 EVulkanFrameStage.ResourcePrepare,
                 EDesktopFrameFlow.Continue);
@@ -2317,5 +2324,23 @@ internal sealed partial class VulkanFrameLoop
                     target.DepthView.Handle),
                 ImageLayout.DepthStencilAttachmentOptimal));
         return snapshot;
+    }
+
+    private static void PreUploadMeshDynamicData(ReadOnlySpan<FrameOp> operations)
+    {
+        for (int i = 0; i < operations.Length; i++)
+        {
+            if (operations[i] is MeshDrawOp meshDrawOp)
+            {
+                var renderer = meshDrawOp.Draw.Renderer;
+                if (renderer is not null)
+                {
+                    if (renderer.Mesh?.HasSkinning == true)
+                        renderer.MeshRenderer.PushBoneMatricesToGPU();
+                    if (renderer.Mesh?.HasBlendshapes == true)
+                        renderer.MeshRenderer.PushBlendshapeWeightsToGPU();
+                }
+            }
+        }
     }
 }

@@ -380,10 +380,36 @@ internal sealed partial class VulkanCommandRuntime
     {
         Result result = Api!.EndCommandBuffer(commandBuffer);
         trackingFailure = string.Empty;
+
+        ulong handle = unchecked((ulong)commandBuffer.Handle);
+        if (LaneRecordingContexts.TryGetActiveContext(commandBuffer, out VulkanLaneRecordingContext? laneContext) && laneContext is not null)
+        {
+            VulkanSealedRecordingReceipt receipt = laneContext.CreateReceipt(result == Result.Success);
+            LaneRecordingContexts.EndContext(laneContext);
+
+            if (result == Result.Success && handle != 0 &&
+                CommandBufferTrackingBatches.TryGetValue(handle, out VulkanCommandBufferTrackingBatch? batch))
+            {
+                lock (batch)
+                {
+                    ReadOnlySpan<VulkanResourceLifetimeKey> deps = receipt.Dependencies.Span;
+                    for (int i = 0; i < deps.Length; i++)
+                        batch.RecordDependency(deps[i]);
+
+                    ReadOnlySpan<VulkanImageAccessRangeDelta> deltas = receipt.ImageAccessDeltas.Span;
+                    for (int i = 0; i < deltas.Length; i++)
+                        batch.RecordImageAccess(deltas[i]);
+
+                    ReadOnlySpan<VulkanQueueOwnershipTransferRequirement> transfers = receipt.QueueOwnershipTransfers.Span;
+                    for (int i = 0; i < transfers.Length; i++)
+                        batch.QueueOwnershipTransfers.Add(transfers[i]);
+                }
+            }
+        }
+
         bool trackingPublished = result != Result.Success ||
             TryFlushCommandBufferTrackingBatch(commandBuffer, out trackingFailure);
 
-        ulong handle = unchecked((ulong)commandBuffer.Handle);
         if (handle == 0)
             return result;
 

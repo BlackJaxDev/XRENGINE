@@ -6,13 +6,26 @@ namespace XREngine.Rendering.Vulkan;
 /// Frozen native command services consumed by prepared secondary workers.
 /// It deliberately owns no renderer or planner reference.
 /// </summary>
-internal readonly unsafe struct VulkanTrackedCommandEncoder(VulkanCommandRuntime runtime)
+internal readonly unsafe struct VulkanTrackedCommandEncoder
 {
     // The encoder is deliberately an operation-bound view over the command
     // runtime. It must not become another retained path to device, resource, or
     // telemetry authority.
-    internal VulkanCommandRuntime Runtime { get; } = runtime;
+    internal VulkanCommandRuntime Runtime { get; }
+    internal VulkanLaneRecordingContext? LaneContext { get; }
     private Vk Api => Runtime.Api;
+
+    internal VulkanTrackedCommandEncoder(VulkanCommandRuntime runtime)
+    {
+        Runtime = runtime;
+        LaneContext = null;
+    }
+
+    internal VulkanTrackedCommandEncoder(VulkanCommandRuntime runtime, VulkanLaneRecordingContext? laneContext)
+    {
+        Runtime = runtime;
+        LaneContext = laneContext;
+    }
 
     internal Result Reset(CommandBuffer commandBuffer)
         => Runtime.ResetCommandBufferWithLifetime(commandBuffer, "TrackedCommandEncoder.Reset");
@@ -40,7 +53,41 @@ internal readonly unsafe struct VulkanTrackedCommandEncoder(VulkanCommandRuntime
         ulong handle = unchecked((ulong)commandBuffer.Handle);
         bool published = result != Result.Success;
         reason = string.Empty;
-        if (result == Result.Success && handle != 0 &&
+
+        if (LaneContext is not null && LaneContext.CommandBuffer.Handle == commandBuffer.Handle)
+        {
+            VulkanSealedRecordingReceipt receipt = LaneContext.CreateReceipt(result == Result.Success);
+            Runtime.LaneRecordingContexts.EndContext(LaneContext);
+
+            if (result == Result.Success && handle != 0 &&
+                Runtime.CommandBuffers.TrackingBatches.TryGetValue(handle, out VulkanCommandBufferTrackingBatch? batch))
+            {
+                lock (batch)
+                {
+                    ReadOnlySpan<VulkanResourceLifetimeKey> deps = receipt.Dependencies.Span;
+                    for (int i = 0; i < deps.Length; i++)
+                        batch.RecordDependency(deps[i]);
+
+                    ReadOnlySpan<VulkanImageAccessRangeDelta> deltas = receipt.ImageAccessDeltas.Span;
+                    for (int i = 0; i < deltas.Length; i++)
+                        batch.RecordImageAccess(deltas[i]);
+
+                    ReadOnlySpan<VulkanQueueOwnershipTransferRequirement> transfers = receipt.QueueOwnershipTransfers.Span;
+                    for (int i = 0; i < transfers.Length; i++)
+                        batch.QueueOwnershipTransfers.Add(transfers[i]);
+                }
+
+                published = Runtime.TryFlushTrackingBatchForRetirement(
+                    Runtime.ResourceRuntime,
+                    commandBuffer,
+                    batch,
+                    Runtime.FrameTelemetry,
+                    out reason);
+                lock (batch)
+                    batch.IsRecording = false;
+            }
+        }
+        else if (result == Result.Success && handle != 0 &&
             Runtime.CommandBuffers.TrackingBatches.TryGetValue(handle, out VulkanCommandBufferTrackingBatch? batch))
         {
             published = Runtime.TryFlushTrackingBatchForRetirement(
@@ -68,6 +115,9 @@ internal readonly unsafe struct VulkanTrackedCommandEncoder(VulkanCommandRuntime
     internal void Abandon(CommandBuffer commandBuffer)
     {
         ulong handle = unchecked((ulong)commandBuffer.Handle);
+        if (LaneContext is not null && LaneContext.CommandBuffer.Handle == commandBuffer.Handle)
+            Runtime.LaneRecordingContexts.EndContext(LaneContext);
+
         Runtime.ResourceRuntime.AbandonCommandBufferRecording(commandBuffer);
         if (handle != 0)
             Runtime.CommandBuffers.TrackingBatches.TryRemove(handle, out _);
@@ -75,10 +125,18 @@ internal readonly unsafe struct VulkanTrackedCommandEncoder(VulkanCommandRuntime
     }
 
     internal void Track(CommandBuffer commandBuffer, ObjectType type, ulong handle)
-        => Runtime.TrackCommandBufferResource(
+    {
+        if (LaneContext is not null && LaneContext.CommandBuffer.Handle == commandBuffer.Handle)
+        {
+            LaneContext.RecordDependency(new VulkanResourceLifetimeKey(type, handle));
+            return;
+        }
+
+        Runtime.TrackCommandBufferResource(
             commandBuffer,
             new VulkanResourceLifetimeKey(type, handle),
             "TrackedCommandEncoder.Track");
+    }
 
     /// <summary>
     /// Records the secondary command buffers executed by one primary command in
@@ -105,6 +163,15 @@ internal readonly unsafe struct VulkanTrackedCommandEncoder(VulkanCommandRuntime
         in ImageSubresourceRange range,
         in VulkanImageAccessState state)
     {
+        if (LaneContext is not null && LaneContext.CommandBuffer.Handle == commandBuffer.Handle)
+        {
+            LaneContext.RecordImageAccess(new VulkanImageAccessRangeDelta(
+                image.Handle,
+                range,
+                state));
+            return;
+        }
+
         ulong commandBufferHandle = unchecked((ulong)commandBuffer.Handle);
         if (commandBufferHandle == 0 || image.Handle == 0 ||
             !Runtime.CommandBuffers.TrackingBatches.TryGetValue(
@@ -129,6 +196,8 @@ internal readonly unsafe struct VulkanTrackedCommandEncoder(VulkanCommandRuntime
     internal void BindPipeline(CommandBuffer commandBuffer, Pipeline pipeline)
     {
         Track(commandBuffer, ObjectType.Pipeline, pipeline.Handle);
+        if (LaneContext is not null && !LaneContext.ShouldBindPipeline(PipelineBindPoint.Graphics, pipeline))
+            return;
         Api.CmdBindPipeline(commandBuffer, PipelineBindPoint.Graphics, pipeline);
     }
 
@@ -142,6 +211,8 @@ internal readonly unsafe struct VulkanTrackedCommandEncoder(VulkanCommandRuntime
     internal void BindIndexBuffer(CommandBuffer commandBuffer, Silk.NET.Vulkan.Buffer buffer, IndexType indexType)
     {
         Track(commandBuffer, ObjectType.Buffer, buffer.Handle);
+        if (LaneContext is not null && !LaneContext.ShouldBindIndexBuffer(buffer, 0, indexType))
+            return;
         Api.CmdBindIndexBuffer(commandBuffer, buffer, 0, indexType);
     }
 

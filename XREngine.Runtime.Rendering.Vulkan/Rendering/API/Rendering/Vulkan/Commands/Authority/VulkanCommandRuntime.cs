@@ -183,6 +183,7 @@ internal sealed partial class VulkanCommandRuntime
     private Vk VulkanApi => Api;
     private VulkanCommandRuntime _commandRuntime => this;
     private VulkanDeviceContext _deviceContext => DeviceContext;
+    internal VulkanLaneRecordingContextTable LaneRecordingContexts { get; } = new();
     private VulkanResourceRuntime _resourceRuntime => ResourceRuntime;
     private VulkanFrameTelemetry _frameTelemetry => FrameTelemetry;
 

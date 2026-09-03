@@ -310,7 +310,7 @@ internal sealed partial class VulkanTextureUploadService
             priorityClass = selected.PriorityClass;
             dependencyState = MapDependencyState(selected.State);
             detail = selected.Detail;
-            failureDisposition = ResolveUploadFailureDisposition(selected.State);
+            failureDisposition = ResolveUploadFailureDisposition(selected.State, selected.Detail);
             pinOwner?.PinGenerationNoLock(record, selected);
             return true;
         }
@@ -418,10 +418,24 @@ internal sealed partial class VulkanTextureUploadService
         };
 
     private static EVulkanPresentNowFailureDisposition ResolveUploadFailureDisposition(
-        VulkanTextureUploadGenerationState state)
-        => state == VulkanTextureUploadGenerationState.Canceled
-            ? EVulkanPresentNowFailureDisposition.RetryFrame
-            : EVulkanPresentNowFailureDisposition.RendererTerminal;
+        VulkanTextureUploadGenerationState state,
+        string? detail = null)
+    {
+        if (state == VulkanTextureUploadGenerationState.Canceled)
+            return EVulkanPresentNowFailureDisposition.RetryFrame;
+
+        if (!string.IsNullOrWhiteSpace(detail) &&
+            (detail.Contains("stale", StringComparison.OrdinalIgnoreCase) ||
+             detail.Contains("superseded", StringComparison.OrdinalIgnoreCase) ||
+             detail.Contains("canceled", StringComparison.OrdinalIgnoreCase) ||
+             detail.Contains("retry", StringComparison.OrdinalIgnoreCase) ||
+             detail.Contains("generation changed", StringComparison.OrdinalIgnoreCase)))
+        {
+            return EVulkanPresentNowFailureDisposition.RetryFrame;
+        }
+
+        return EVulkanPresentNowFailureDisposition.RendererTerminal;
+    }
 
     private void CaptureRequiredUploadGeneration(
         VulkanTextureUploadManifest manifest,

@@ -25,6 +25,7 @@ namespace XREngine.Rendering.Vulkan
     {
         public uint ImageIndex;
         public CommandBuffer CommandBuffer;
+        public VulkanLaneRecordingContext? LaneContext;
         public CommandBuffer DynamicUiBatchTextSecondaryCommandBuffer;
         public FrameOperationSequence Ops;
         public int DynamicUiBatchTextOpCount;

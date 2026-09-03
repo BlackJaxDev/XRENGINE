@@ -92,7 +92,7 @@ internal unsafe partial class VkMeshRenderer
             new VulkanResidentDrawTemplatePublication(handle, variant));
     }
 
-    private bool TryGetResidentDrawTemplate(
+    internal bool TryGetResidentDrawTemplate(
         in PendingMeshDraw draw,
         int passIndex,
         XRMaterial material,
