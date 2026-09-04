@@ -37,10 +37,18 @@ public sealed class AdvancedSharedPreparationService : IDisposable
                     consumers & ~_publication.Consumers;
                 int viewCount = _extractor.AddVisibilityPlans(viewSet);
                 if (_publication.AggregateDispatchExecuted &&
-                    !_extractor.DeformationJobs.IsEmpty)
+                    !_extractor.DeformationJobs.IsEmpty &&
+                    !_extractor.GpuDeformation.TryApplyConsumerBarriers(
+                        addedConsumers))
                 {
-                    _extractor.GpuDeformation.ApplyConsumerBarriers(
-                        addedConsumers);
+                    return _publication with
+                    {
+                        Consumers = _publication.Consumers | consumers,
+                        VisibilityViewCount = checked((uint)viewCount),
+                        VisibilityContentGeneration =
+                            _extractor.VisibilityContentGeneration,
+                        AggregateDispatchExecuted = false,
+                    };
                 }
                 _publication = _publication with
                 {
@@ -78,7 +86,7 @@ public sealed class AdvancedSharedPreparationService : IDisposable
     /// coherent input image without either blocking later preparation work or
     /// reading mutable extractor columns after authoring has completed.
     /// </summary>
-    internal bool TryCopyVisibilityColumns(
+    internal bool TryCopyVisibilityInputs(
         AdvancedPreparationExtractor extractor,
         in AdvancedPreparationPublication publication,
         Span<AdvancedVisibilityPayload> payloads,
@@ -86,14 +94,30 @@ public sealed class AdvancedSharedPreparationService : IDisposable
         Span<EAdvancedGeometryProducer> producers,
         Span<AdvancedIndirectRange> indirectRanges,
         Span<int> indirectPayloadIndices,
-        out AdvancedIndirectPreparationResult indirect)
+        Span<AdvancedDeformedArenaSlice> deformationSlices,
+        out AdvancedIndirectPreparationResult indirect,
+        out AdvancedGpuDeformationPublication deformationPublication)
     {
         lock (_sync)
         {
             indirect = default;
+            deformationPublication = default;
             if (!ReferenceEquals(extractor, _extractor) ||
                 !_extractor.MatchesPublication(in publication))
             {
+                return false;
+            }
+
+            if (publication.DeformationJobCount != 0u &&
+                !publication.AggregateDispatchExecuted)
+                return false;
+
+            deformationPublication = _extractor.GpuDeformationPublication;
+            if (publication.DeformationJobCount != 0u &&
+                (deformationPublication.FrameId != publication.FrameId ||
+                 deformationPublication.JobCount != publication.DeformationJobCount))
+            {
+                deformationPublication = default;
                 return false;
             }
 
@@ -114,7 +138,8 @@ public sealed class AdvancedSharedPreparationService : IDisposable
                 producers.Length != sourceProducers.Length ||
                 indirectRanges.Length != sourceIndirectRanges.Length ||
                 indirectPayloadIndices.Length !=
-                    sourceIndirectPayloadIndices.Length)
+                    sourceIndirectPayloadIndices.Length ||
+                deformationSlices.Length != sourcePayloads.Length)
             {
                 indirect = default;
                 return false;
@@ -125,6 +150,13 @@ public sealed class AdvancedSharedPreparationService : IDisposable
             sourceProducers.CopyTo(producers);
             sourceIndirectRanges.CopyTo(indirectRanges);
             sourceIndirectPayloadIndices.CopyTo(indirectPayloadIndices);
+            for (uint drawIndex = 0u; drawIndex < (uint)deformationSlices.Length; ++drawIndex)
+                if (!_extractor.TryGetDrawDeformationSlice(drawIndex, out deformationSlices[checked((int)drawIndex)]))
+                {
+                    indirect = default;
+                    deformationPublication = default;
+                    return false;
+                }
             return true;
         }
     }

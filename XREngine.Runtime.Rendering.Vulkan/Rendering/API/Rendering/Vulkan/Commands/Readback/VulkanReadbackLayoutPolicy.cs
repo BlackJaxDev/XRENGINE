@@ -8,7 +8,7 @@ internal static class VulkanReadbackLayoutPolicy
     internal static ImageLayout ResolvePostTransfer(in BlitImageInfo info)
     {
         ImageUsageFlags usage =
-            info.DescriptorSource?.DescriptorUsage ?? ImageUsageFlags.None;
+            info.Usage;
         bool depthOrStencil =
             (info.AspectMask &
              (ImageAspectFlags.DepthBit | ImageAspectFlags.StencilBit)) != 0;
@@ -33,9 +33,14 @@ internal static class VulkanReadbackLayoutPolicy
                 : ImageLayout.ShaderReadOnlyOptimal;
         }
 
-        return depthOrStencil
-            ? ImageLayout.DepthStencilAttachmentOptimal
-            : ImageLayout.ColorAttachmentOptimal;
+        if (depthOrStencil && (usage & ImageUsageFlags.DepthStencilAttachmentBit) != 0)
+            return ImageLayout.DepthStencilAttachmentOptimal;
+        if (!depthOrStencil && (usage & ImageUsageFlags.ColorAttachmentBit) != 0)
+            return ImageLayout.ColorAttachmentOptimal;
+
+        // GENERAL is legal for transfer-only images as well. Do not invent an
+        // attachment layout when a physical image has no attachment usage.
+        return ImageLayout.General;
     }
 
     internal static void PublishRestoredAttachmentLayout(

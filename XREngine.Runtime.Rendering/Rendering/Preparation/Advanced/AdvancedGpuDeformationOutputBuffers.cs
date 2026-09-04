@@ -15,7 +15,8 @@ internal sealed class AdvancedGpuDeformationOutputBuffers
         {
             Buffers[slot] = new XRDataBuffer<AdvancedDeformedVertex>(
                 $"AdvancedDeformation.Output.Slot{slot}",
-                EBufferTarget.ShaderStorageBuffer,
+                // ArrayBuffer requests vertex usage while the Vulkan backend retains storage usage for compute writes.
+                EBufferTarget.ArrayBuffer,
                 vertexCapacity)
             {
                 Usage = EBufferUsage.StaticCopy,

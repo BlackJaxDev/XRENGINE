@@ -42,22 +42,30 @@ uint XR_ADV_ReadVisibilityTriangleIndex(uint byteIndex)
 
 bool XR_ADV_HasVertexRanges(
     bool skinned,
+    bool previousUsesPreviousBuffer,
     uint currentStart,
     uint previousStart,
     uint count)
 {
     if (!skinned)
     {
-        return currentStart <= uint(XR_ADV_VisibilityStaticVertices.records.length()) &&
-            count <= uint(XR_ADV_VisibilityStaticVertices.records.length()) - currentStart;
+        return currentStart <=
+                uint(XR_ADV_VisibilityStaticVertices.records.length()) &&
+            count <=
+                uint(XR_ADV_VisibilityStaticVertices.records.length()) -
+                    currentStart;
     }
 
-    return currentStart <= uint(XR_ADV_VisibilityCurrentVertices.records.length()) &&
-           count <= uint(XR_ADV_VisibilityCurrentVertices.records.length()) - currentStart &&
-           previousStart <= uint(XR_ADV_VisibilityPreviousVertices.records.length()) &&
-           count <= uint(XR_ADV_VisibilityPreviousVertices.records.length()) - previousStart;
+    uint currentCount =
+        uint(XR_ADV_VisibilityCurrentVertices.records.length());
+    uint previousCount = previousUsesPreviousBuffer
+        ? uint(XR_ADV_VisibilityPreviousVertices.records.length())
+        : currentCount;
+    return currentStart <= currentCount &&
+        count <= currentCount - currentStart &&
+        previousStart <= previousCount &&
+        count <= previousCount - previousStart;
 }
-
 void main()
 {
     uint drawArgumentIndex = XR_ADV_VisibilityRasterPush.meshArgumentBase + uint(gl_DrawID);
@@ -78,7 +86,6 @@ void main()
 
     XRAdvancedVisibilityPayload payload = XR_ADV_VisibilityPayloads.records[payloadIndex];
     uint producer = XR_ADV_VisibilityProducers.records[payloadIndex];
-    bool skinned = producer == XR_ADV_VIS_PRODUCER_SKINNED_MESHLET;
     uint meshletIndex = payload.meshletOffset + gl_WorkGroupID.x;
     if (meshletIndex < payload.meshletOffset || gl_WorkGroupID.x >= payload.meshletCount ||
         meshletIndex >= uint(XR_ADV_VisibilityMeshlets.records.length()) || meshletIndex > 0xFFFFFFu)
@@ -99,7 +106,32 @@ void main()
         return;
     }
 
-    XRAdvancedDrawRecord draw = XR_ADV_LoadDraw(drawDense);
+XRAdvancedDrawRecord draw = XR_ADV_LoadDraw(drawDense);
+    XRAdvancedPreparedDrawDeformationRecord preparedDeformation;
+    bool skinned = XR_ADV_TryLoadPreparedDrawDeformation(
+        drawDense,
+        draw,
+        preparedDeformation);
+    if (producer == XR_ADV_VIS_PRODUCER_SKINNED_MESHLET &&
+        !skinned)
+    {
+        atomicAdd(
+            XR_ADV_VisibilityCounters.decodeOutOfBounds,
+            1u);
+        SetMeshOutputsEXT(0u, 0u);
+        return;
+    }
+    bool previousUsesPreviousBuffer = skinned &&
+        XR_ADV_PreparedDeformationPreviousValid(
+            preparedDeformation);
+    uint currentVertexBase = skinned
+        ? preparedDeformation.currentVertexOffset
+        : payload.vertexOffset;
+    uint previousVertexBase = skinned
+        ? (previousUsesPreviousBuffer
+            ? preparedDeformation.previousVertexOffset
+            : preparedDeformation.currentVertexOffset)
+        : payload.previousVertexOffset;
     XRAdvancedGeometryRecord geometry = XR_ADV_LoadGeometry(geometryDense);
     uint transformDense = XR_ADV_ResolveVisibilityHandle(draw.currentTransform, VisibilityTransformLookupSegment, XR_ADV_DIAGNOSTIC_DRAW);
     uint previousTransformDense = XR_ADV_ResolveVisibilityHandle(draw.previousTransform, VisibilityTransformLookupSegment, XR_ADV_DIAGNOSTIC_DRAW);
@@ -128,9 +160,12 @@ void main()
         ((triangleByteEnd + 3u) >> 2u) > uint(XR_ADV_VisibilityMeshletTriangleWords.records.length()) ||
         !XR_ADV_HasVertexRanges(
             skinned,
-            payload.vertexOffset,
-            payload.previousVertexOffset,
-            meshlet.vertexCount))
+            previousUsesPreviousBuffer,
+            currentVertexBase,
+            previousVertexBase,
+            skinned
+                ? preparedDeformation.vertexCount
+                : geometry.vertexCount))
     {
         atomicAdd(XR_ADV_VisibilityCounters.payloadOverflow, 1u);
         SetMeshOutputsEXT(0u, 0u);
@@ -146,15 +181,22 @@ void main()
     for (uint vertex = localInvocation; vertex < meshlet.vertexCount; vertex += XR_ADV_MESH_GROUP_SIZE)
     {
         uint localVertex = XR_ADV_VisibilityMeshletVertexIndices.records[meshletVertexOffset + vertex];
-        uint currentVertex = payload.vertexOffset + localVertex;
-        uint previousVertex = payload.previousVertexOffset + localVertex;
-        if (currentVertex < payload.vertexOffset || previousVertex < payload.previousVertexOffset ||
+        uint sourceVertexCount = skinned
+            ? preparedDeformation.vertexCount
+            : geometry.vertexCount;
+        uint currentVertex = currentVertexBase + localVertex;
+        uint previousVertex = previousVertexBase + localVertex;
+        uint previousBufferCount = previousUsesPreviousBuffer
+            ? uint(XR_ADV_VisibilityPreviousVertices.records.length())
+            : uint(XR_ADV_VisibilityCurrentVertices.records.length());
+        if (localVertex >= sourceVertexCount ||
+            currentVertex < currentVertexBase ||
+            previousVertex < previousVertexBase ||
             (!skinned && currentVertex >=
                 uint(XR_ADV_VisibilityStaticVertices.records.length())) ||
             (skinned && (currentVertex >=
                 uint(XR_ADV_VisibilityCurrentVertices.records.length()) ||
-                previousVertex >=
-                uint(XR_ADV_VisibilityPreviousVertices.records.length()))))
+                previousVertex >= previousBufferCount)))
         {
             atomicAdd(XR_ADV_VisibilityCounters.decodeOutOfBounds, 1u);
             gl_MeshVerticesEXT[vertex].gl_Position = vec4(0.0, 0.0, 0.0, 1.0);
@@ -168,7 +210,9 @@ void main()
             ? XR_ADV_VisibilityCurrentVertices.records[currentVertex]
             : statik;
         XRAdvancedVisibilityPackedVertex previous = skinned
-            ? XR_ADV_VisibilityPreviousVertices.records[previousVertex]
+            ? (previousUsesPreviousBuffer
+                ? XR_ADV_VisibilityPreviousVertices.records[previousVertex]
+                : XR_ADV_VisibilityCurrentVertices.records[previousVertex])
             : statik;
         vec4 worldPosition = vec4(current.position, 1.0) * currentTransform.world;
         vec4 previousWorldPosition = vec4(previous.position, 1.0) * previousTransform.world;
@@ -184,7 +228,11 @@ void main()
         VisibilityProducer[vertex] = XR_ADV_VisibilityRasterPush.producerAndOrigin & XR_ADV_VIS_PRODUCER_MASK;
         VisibilityViewIndex[vertex] = XR_ADV_VisibilityRasterPush.viewIndex;
         VisibilityOrigin[vertex] = (XR_ADV_VisibilityRasterPush.producerAndOrigin >> XR_ADV_VIS_ORIGIN_SHIFT) & 1u;
-        VisibilityVelocityValid[vertex] = (XR_ADV_VisibilityRasterPush.flags & 1u) != 0u && temporalInputsValid ? 1u : 0u;
+        VisibilityVelocityValid[vertex] =
+            (!skinned || previousUsesPreviousBuffer) &&
+            temporalInputsValid
+                ? 1u
+                : 0u;
         VisibilityCoverageUv[vertex] = unpackHalf2x16(statik.texCoord0Half);
         VisibilityPrimitiveBase[vertex] = 0u;
         VisibilityMeshletIndex[vertex] = meshletIndex;

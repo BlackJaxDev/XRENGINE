@@ -1,0 +1,231 @@
+#ifndef XR_ADVANCED_STANDARD_SHADOW_GLSLINC
+#define XR_ADVANCED_STANDARD_SHADOW_GLSLINC
+
+// Values mirror EAdvancedShadowFallbackReason and are also written to the
+// shading diagnostic output. Stale tiles retain their rendered projection.
+#define XR_ADV_SHADOW_OK 0u
+#define XR_ADV_SHADOW_MISSING 1u
+#define XR_ADV_SHADOW_STALE_HANDLE 2u
+#define XR_ADV_SHADOW_NOT_RESIDENT 3u
+#define XR_ADV_SHADOW_UNSUPPORTED 4u
+#define XR_ADV_SHADOW_OUTSIDE 5u
+#define XR_ADV_SHADOW_STALE_TILE 6u
+
+float XR_ADV_ShadowMomentBound(vec2 moments, float receiver, vec4 parameters)
+{
+    if (receiver <= moments.x) return 1.0;
+    float variance = max(moments.y - moments.x * moments.x, max(parameters.x, 0.0000001));
+    float delta = receiver - moments.x;
+    float probability = variance / (variance + delta * delta);
+    float bleed = clamp(parameters.y, 0.0, 0.999);
+    return clamp((probability - bleed) / (1.0 - bleed), 0.0, 1.0);
+}
+
+float XR_ADV_CompareShadow(XRAdvancedShadowRecord record, vec4 texel, float receiver)
+{
+    float depth = clamp(receiver, 0.0, 1.0);
+    if (record.encoding == 1u)
+        return XR_ADV_ShadowMomentBound(texel.xy, depth, record.momentParameters);
+    if (record.encoding == 2u)
+        return XR_ADV_ShadowMomentBound(texel.xy,
+            exp(clamp(record.momentParameters.z, 0.0, 42.0) * depth), record.momentParameters);
+    if (record.encoding == 3u)
+    {
+        float positive = XR_ADV_ShadowMomentBound(texel.xy,
+            exp(clamp(record.momentParameters.z, 0.0, 42.0) * depth), record.momentParameters);
+        float negative = XR_ADV_ShadowMomentBound(texel.zw,
+            -exp(-clamp(record.momentParameters.w, 0.0, 42.0) * depth), record.momentParameters);
+        return min(positive, negative);
+    }
+    // Point color textures encode radial depth in increasing distance even
+    // when their raster depth attachment uses a reversed projection.
+    bool reversed = record.type < 2u && (record.flags & 128u) != 0u;
+    return reversed ? float(depth >= texel.r) : float(depth <= texel.r);
+}
+
+bool XR_ADV_ShadowAffectsView(XRAdvancedShadowRecord record, XRAdvancedViewRecord view, uint viewIndex)
+{
+    if (record.type == 0u && (((record.flags & 16u) != 0u) != ((view.flags & 12u) != 0u)))
+        return false;
+    if ((record.viewMaskLo | record.viewMaskHi) == 0u) return true;
+    return viewIndex < 32u ? (record.viewMaskLo & (1u << viewIndex)) != 0u :
+        viewIndex < 64u && (record.viewMaskHi & (1u << (viewIndex - 32u))) != 0u;
+}
+
+bool XR_ADV_ProjectShadow(XRAdvancedShadowRecord record, vec3 position, out vec3 coordinate)
+{
+    coordinate = vec3(0.0);
+    if (record.type == 3u) return record.renderedLightPositionAndFar.w > 0.0;
+    vec4 clip = XR_ADV_TransformRowVector(vec4(position, 1.0), record.worldToShadow);
+    if (clip.w <= 0.000001 || any(isnan(clip)) || any(isinf(clip))) return false;
+    vec3 ndc = clip.xyz / clip.w;
+    coordinate = vec3(ndc.xy * 0.5 + 0.5,
+        (record.flags & 32u) != 0u ? ndc.z : ndc.z * 0.5 + 0.5);
+    if ((record.flags & 64u) != 0u) coordinate.y = 1.0 - coordinate.y;
+    return all(greaterThanEqual(coordinate, vec3(0.0))) && all(lessThanEqual(coordinate, vec3(1.0)));
+}
+
+vec4 XR_ADV_FetchShadow(XRAdvancedShadowRecord record, XRAdvancedTextureRecord textureRecord,
+    XRAdvancedEncodedTextureReference textureReference, vec2 uv, vec3 direction)
+{
+    if (textureRecord.dimension == 3u)
+        return XR_ADV_SampleTextureCubeLod(textureReference, direction, 0.0);
+    if (textureRecord.dimension == 5u)
+        return XR_ADV_SampleTexture2DArrayLod(textureReference, vec3(uv, float(record.textureLayer)), 0.0);
+    return XR_ADV_SampleTexture2DLod(textureReference, uv, 0.0);
+}
+
+float XR_ADV_SampleShadowRecord(XRAdvancedShadowRecord record, vec3 position, vec3 N, vec3 L,
+    out uint reason)
+{
+    reason = XR_ADV_SHADOW_OK;
+    if ((record.flags & 1u) == 0u || (record.lastRenderedFrameLo | record.lastRenderedFrameHi) == 0u)
+    {
+        reason = XR_ADV_SHADOW_NOT_RESIDENT;
+        return 1.0;
+    }
+    if (record.encoding > 3u || record.type > 3u)
+    {
+        reason = XR_ADV_SHADOW_UNSUPPORTED;
+        return 1.0;
+    }
+    XRAdvancedTextureRecord textureRecord;
+    XRAdvancedEncodedTextureReference textureReference;
+    if (!XR_ADV_TryResolveTextureReference(record.textureReference.handle,
+        VisibilityTextureLookupSegment, VisibilitySamplerLookupSegment, textureRecord, textureReference))
+    {
+        reason = XR_ADV_SHADOW_NOT_RESIDENT;
+        return 1.0;
+    }
+    if ((record.type == 3u && textureRecord.dimension != 3u) ||
+        (record.type != 3u && textureRecord.dimension != 1u && textureRecord.dimension != 5u) ||
+        (textureRecord.dimension == 5u && record.textureLayer >= textureRecord.depthOrLayers) ||
+        textureRecord.width == 0u || textureRecord.height == 0u)
+    {
+        reason = XR_ADV_SHADOW_UNSUPPORTED;
+        return 1.0;
+    }
+    vec3 receiverPosition = position + N * max(record.depthBiasAndFilter.z, 0.0);
+    vec3 coordinate;
+    if (!XR_ADV_ProjectShadow(record, receiverPosition, coordinate))
+    {
+        reason = XR_ADV_SHADOW_OUTSIDE;
+        return 1.0;
+    }
+    vec3 radialDirection = receiverPosition - record.renderedLightPositionAndFar.xyz;
+    float receiver = coordinate.z;
+    if (record.type >= 2u)
+    {
+        if (record.renderedLightPositionAndFar.w <= 0.0)
+        {
+            reason = XR_ADV_SHADOW_NOT_RESIDENT;
+            return 1.0;
+        }
+        receiver = length(radialDirection) / record.renderedLightPositionAndFar.w;
+    }
+    else if (record.encoding != 0u)
+    {
+        if ((record.flags & 128u) != 0u) receiver = 1.0 - receiver;
+        if ((record.flags & 256u) != 0u)
+        {
+            float nearZ = max(record.depthRangeAndCascade.x, 0.0001);
+            float farZ = max(record.depthRangeAndCascade.y, nearZ + 0.0001);
+            float linearZ = nearZ * farZ / max(farZ - receiver * (farZ - nearZ), 0.000001);
+            receiver = (linearZ - nearZ) / (farZ - nearZ);
+        }
+    }
+    float bias = mix(max(record.depthBiasAndFilter.x, 0.0), max(record.depthBiasAndFilter.y, 0.0),
+        1.0 - clamp(dot(N, L), 0.0, 1.0));
+    bool reversed = record.type < 2u && record.encoding == 0u && (record.flags & 128u) != 0u;
+    receiver += reversed ? bias : -bias;
+    vec2 texelSize = 1.0 / vec2(textureRecord.width, textureRecord.height);
+    vec2 uv = coordinate.xy * record.uvScaleBias.xy + record.uvScaleBias.zw;
+    vec2 lower = record.uvScaleBias.zw + texelSize * 0.5;
+    vec2 upper = max(lower, record.uvScaleBias.zw + record.uvScaleBias.xy - texelSize * 0.5);
+    float radius = clamp(record.depthBiasAndFilter.w, 0.0, 8.0);
+    float visibility = 0.0;
+    if (textureRecord.dimension == 3u)
+    {
+        vec3 direction = normalize(radialDirection);
+        vec3 axis = abs(direction.z) < 0.99 ? vec3(0.0, 0.0, 1.0) : vec3(0.0, 1.0, 0.0);
+        vec3 tangent = normalize(cross(axis, direction));
+        vec3 bitangent = cross(direction, tangent);
+        float angularRadius = 2.0 * radius / float(textureRecord.width);
+        for (int y = -1; y <= 1; ++y)
+            for (int x = -1; x <= 1; ++x)
+                visibility += XR_ADV_CompareShadow(record,
+                    XR_ADV_FetchShadow(record, textureRecord, textureReference, vec2(0.0),
+                        normalize(direction + angularRadius * (tangent * float(x) + bitangent * float(y)))), receiver);
+    }
+    else
+    {
+        for (int y = -1; y <= 1; ++y)
+            for (int x = -1; x <= 1; ++x)
+                visibility += XR_ADV_CompareShadow(record,
+                    XR_ADV_FetchShadow(record, textureRecord, textureReference,
+                        clamp(uv + vec2(x, y) * texelSize * radius, lower, upper), radialDirection), receiver);
+    }
+    if ((record.flags & 4u) != 0u) reason = XR_ADV_SHADOW_STALE_TILE;
+    return visibility / 9.0;
+}
+
+float XR_ADV_EvaluateShadow(XRAdvancedLightRecord light, XRAdvancedSurface surface, vec3 N, vec3 L,
+    out uint reason)
+{
+    reason = XR_ADV_SHADOW_OK;
+    if ((light.flags & 2u) == 0u) return 1.0;
+    if (!XR_ADV_IsValidHandle(light.shadowRecord))
+    {
+        reason = XR_ADV_SHADOW_MISSING;
+        return 1.0;
+    }
+    uint rootIndex = XR_ADV_ResolveHandle(light.shadowRecord, VisibilityShadowLookupSegment.x,
+        VisibilityShadowLookupSegment.y, XR_ADV_DIAGNOSTIC_SHADOW);
+    if (rootIndex == XR_ADV_INVALID_DENSE_INDEX || rootIndex >= uint(XR_ADV_Shadows.records.length()))
+    {
+        reason = XR_ADV_SHADOW_STALE_HANDLE;
+        return 1.0;
+    }
+    XRAdvancedShadowRecord root = XR_ADV_Shadows.records[rootIndex];
+    if (!XR_ADV_HandleMatches(light.shadowRecord, root.stableShadowId, root.generation) ||
+        root.cascadeOffset >= uint(XR_ADV_Shadows.records.length()) || root.cascadeCount == 0u ||
+        root.cascadeCount > uint(XR_ADV_Shadows.records.length()) - root.cascadeOffset)
+    {
+        reason = XR_ADV_SHADOW_STALE_HANDLE;
+        return 1.0;
+    }
+    XRAdvancedViewRecord view = XR_ADV_LoadView(surface.viewIndex);
+    float linearDepth = -XR_ADV_TransformRowVector(vec4(surface.worldPosition, 1.0), view.view).z;
+    for (uint i = 0u; i < root.cascadeCount; ++i)
+    {
+        XRAdvancedShadowRecord record = XR_ADV_Shadows.records[root.cascadeOffset + i];
+        if (!XR_ADV_ShadowAffectsView(record, view, surface.viewIndex)) continue;
+        if ((record.flags & 1u) == 0u || (record.lastRenderedFrameLo | record.lastRenderedFrameHi) == 0u)
+        {
+            reason = max(reason, XR_ADV_SHADOW_NOT_RESIDENT);
+            continue;
+        }
+        if (record.type == 0u && linearDepth > record.depthRangeAndCascade.z) continue;
+        vec3 unusedCoordinate;
+        if (!XR_ADV_ProjectShadow(record, surface.worldPosition, unusedCoordinate)) continue;
+        float visibility = XR_ADV_SampleShadowRecord(record, surface.worldPosition, N, L, reason);
+        if (record.type != 0u) return visibility;
+        float blendWidth = max(record.depthRangeAndCascade.w, 0.0);
+        if (blendWidth <= 0.0 || linearDepth < record.depthRangeAndCascade.z - blendWidth) return visibility;
+        for (uint next = i + 1u; next < root.cascadeCount; ++next)
+        {
+            XRAdvancedShadowRecord adjacent = XR_ADV_Shadows.records[root.cascadeOffset + next];
+            if (adjacent.type != 0u || !XR_ADV_ShadowAffectsView(adjacent, view, surface.viewIndex)) continue;
+            if (!XR_ADV_ProjectShadow(adjacent, surface.worldPosition, unusedCoordinate)) continue;
+            uint adjacentReason;
+            float adjacentVisibility = XR_ADV_SampleShadowRecord(adjacent, surface.worldPosition, N, L, adjacentReason);
+            reason = max(reason, adjacentReason);
+            return mix(visibility, adjacentVisibility,
+                clamp((linearDepth - record.depthRangeAndCascade.z + blendWidth) / blendWidth, 0.0, 1.0));
+        }
+        return visibility;
+    }
+    if (reason == XR_ADV_SHADOW_OK) reason = XR_ADV_SHADOW_OUTSIDE;
+    return 1.0;
+}
+#endif

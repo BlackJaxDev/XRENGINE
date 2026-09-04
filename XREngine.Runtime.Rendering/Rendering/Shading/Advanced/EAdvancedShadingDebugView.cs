@@ -14,4 +14,5 @@ public enum EAdvancedShadingDebugView : uint
     ReconstructedNormals = 6u,
     Roughness = 7u,
     Metallic = 8u,
+    ShadowFallbackReason = 9u,
 }

@@ -512,6 +512,9 @@ namespace XREngine.Rendering.Vulkan
             int rasterStageCount = 0;
             int lateComputeStageCount = 0;
             int lateRasterStageCount = 0;
+            int classificationStageCount = 0;
+            int reconstructionStageCount = 0;
+            int nativeOpaqueStageCount = 0;
 
             for (int operationIndex = 0;
                  operationIndex < recordingState.Ops.Length;
@@ -544,7 +547,8 @@ namespace XREngine.Rendering.Vulkan
                         EVulkanCommandRecordingFailureKind.RetryFrame;
                     return false;
                 }
-                if (preparationStageCount + rasterStageCount + lateComputeStageCount + lateRasterStageCount == 0)
+                if (preparationStageCount + rasterStageCount + lateComputeStageCount + lateRasterStageCount +
+                    classificationStageCount + reconstructionStageCount + nativeOpaqueStageCount == 0)
                 {
                     familyRequest = request;
                     familyInput = input;
@@ -570,9 +574,20 @@ namespace XREngine.Rendering.Vulkan
                     case (EAdvancedRenderStage.DepthPyramidAndLateVisibility, EAdvancedVisibilityStageBackendPhase.LateRaster):
                         lateRasterStageCount++;
                         break;
+                    case (EAdvancedRenderStage.WorkClassification, EAdvancedVisibilityStageBackendPhase.Complete):
+                        classificationStageCount++;
+                        break;
+                    case (EAdvancedRenderStage.AttributeReconstruction, EAdvancedVisibilityStageBackendPhase.Complete):
+                        reconstructionStageCount++;
+                        break;
+                    case (EAdvancedRenderStage.NativeOpaqueShading, EAdvancedVisibilityStageBackendPhase.Complete):
+                        nativeOpaqueStageCount++;
+                        break;
                 }
                 if (preparationStageCount > 1 || rasterStageCount > 1 ||
-                    lateComputeStageCount > 1 || lateRasterStageCount > 1)
+                    lateComputeStageCount > 1 || lateRasterStageCount > 1 ||
+                    classificationStageCount > 1 || reconstructionStageCount > 1 ||
+                    nativeOpaqueStageCount > 1)
                 {
                     recordingState.RecordingDeferredReason =
                         "Advanced visibility operation is Unsupported: one frame plan contains duplicate stages for a single set-1 family.";
@@ -779,13 +794,8 @@ namespace XREngine.Rendering.Vulkan
                 }
                 VulkanAdvancedSceneLookupSegments lookupSegments =
                     sceneState.LookupSegments;
-                VulkanAdvancedVisibilityGeometrySlices geometrySlices = new(
-                    sceneState.StaticVertices,
-                    sceneState.PreSkinnedCurrent,
-                    sceneState.PreSkinnedPrevious,
-                    sceneState.MeshletDescriptors,
-                    sceneState.MeshletVertexIndices,
-                    sceneState.MeshletTriangleWords);
+                VulkanAdvancedVisibilityGeometrySlices geometrySlices =
+                    framePlan.StableBins.VisibilityGeometrySources;
                 VulkanAdvancedVisibilityFamilySeal familySeal = new(
                     framePlan,
                     request.Reservation,
@@ -805,6 +815,7 @@ namespace XREngine.Rendering.Vulkan
                         in lookupSegments,
                         input,
                         visibilityPayloads,
+                        framePlan.StableBins.DeformationOverlay,
                         in geometrySlices,
                         checked((uint)request.Views.ViewCount),
                         in familySeal,
@@ -823,14 +834,16 @@ namespace XREngine.Rendering.Vulkan
                 }
             }
 
-            if (preparationStageCount + rasterStageCount + lateComputeStageCount + lateRasterStageCount == 0)
+            if (preparationStageCount + rasterStageCount + lateComputeStageCount + lateRasterStageCount +
+                classificationStageCount + reconstructionStageCount + nativeOpaqueStageCount == 0)
                 return true;
             if (preparationStageCount != 1 || rasterStageCount != 1 ||
                 lateComputeStageCount != 1 || lateRasterStageCount != 1 ||
+                classificationStageCount != 1 || reconstructionStageCount != 1 || nativeOpaqueStageCount != 1 ||
                 !familyState.IsValid)
             {
                 recordingState.RecordingDeferredReason =
-                    "Advanced visibility operation is Unsupported: the frame plan must seal exactly one preparation, early raster, late compute, and late raster stage before one immutable set-1 family is published.";
+                    "Advanced visibility operation is Unsupported: the frame plan must seal exactly one visibility, late, classification, reconstruction, and native-opaque stage before one immutable set-1 family is published.";
                 recordingState.FailureKind =
                     EVulkanCommandRecordingFailureKind.RendererTerminal;
                 return false;
@@ -907,6 +920,88 @@ namespace XREngine.Rendering.Vulkan
                             : EVulkanCommandRecordingFailureKind
                                 .RecoverAfterStateChange;
                     return false;
+                }
+
+                if (request.Stage is EAdvancedRenderStage.WorkClassification or
+                    EAdvancedRenderStage.AttributeReconstruction or
+                    EAdvancedRenderStage.NativeOpaqueShading)
+                {
+                    FrameOpContext operationContext =
+                        recordingState.Ops.GetContext(operationIndex);
+                    VulkanRenderGraphPlan nativeOperationPlan = recordingState.RenderGraphPlan;
+                    if (framePlan.TryResolveRenderGraphPlan(
+                            in operationContext,
+                            out VulkanRenderGraphPlan resolvedNativeOperationPlan))
+                    {
+                        nativeOperationPlan = resolvedNativeOperationPlan;
+                    }
+                    VulkanAdvancedNativeComputeClosureStorage nativeStorage =
+                        recordingState.Ops.Stream
+                            .GetAdvancedVisibilityNativeComputeClosureStorage(operationIndex);
+                    ref readonly VulkanAdvancedVisibilityOperationPayload nativePayload = ref
+                        recordingState.Ops.GetAdvancedVisibility(operationIndex);
+                    VulkanAdvancedNativeComputeClosure nativeClosure;
+                    if (nativePayload.NativeComputeClosure is { } capturedClosure)
+                    {
+                        nativeClosure = capturedClosure;
+                    }
+                    else if (!ResourceRuntime.AdvancedVisibilityResources
+                            .TryCaptureNativeComputeClosure(
+                                nativeOperationPlan,
+                                checked((uint)framePlan.FrameSlot),
+                                viewIndex: 0u,
+                                nativeStorage,
+                                out nativeClosure,
+                                out string nativeClosureReason))
+                    {
+                        recordingState.RecordingDeferredReason =
+                            $"Advanced visibility operation is Unsupported: sealed native-compute closure failed: {nativeClosureReason}.";
+                        recordingState.FailureKind =
+                            EVulkanCommandRecordingFailureKind.RecoverAfterStateChange;
+                        return false;
+                    }
+
+                    if (!ResourceRuntime.AdvancedVisibilityResources
+                            .TryPrepareNativeComputeDescriptors(
+                                in familyState,
+                                in nativeClosure,
+                                out DescriptorSet nativeDescriptorSet,
+                                out string nativeDescriptorReason))
+                    {
+                        recordingState.RecordingDeferredReason =
+                            $"Advanced visibility operation is Unsupported: immutable native-compute descriptor sealing failed: {nativeDescriptorReason}.";
+                        return false;
+                    }
+                    VulkanAdvancedVisibilityPipelineReadiness nativePipelineReadiness =
+                        ResourceRuntime.AdvancedVisibilityPipelines
+                            .TryGetNativeComputePipelines(
+                                out VulkanAdvancedNativeComputePipelines nativePipelines,
+                                out string nativePipelineReason);
+                    if (nativePipelineReadiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
+                    {
+                        recordingState.RecordingDeferredReason = nativePipelineReadiness is
+                            VulkanAdvancedVisibilityPipelineReadiness.Pending or
+                            VulkanAdvancedVisibilityPipelineReadiness.Missing
+                                ? $"Advanced visibility operation is waiting for native compute pipeline admission: {nativePipelineReason}."
+                                : $"Advanced visibility operation is Unsupported: native compute pipeline failed: {nativePipelineReason}.";
+                        recordingState.FailureKind = nativePipelineReadiness is
+                            VulkanAdvancedVisibilityPipelineReadiness.Pending or
+                            VulkanAdvancedVisibilityPipelineReadiness.Missing
+                                ? EVulkanCommandRecordingFailureKind.RetryFrame
+                                : EVulkanCommandRecordingFailureKind.RecoverAfterStateChange;
+                        return false;
+                    }
+                    if (!recordingState.Ops.Stream.TryAssociateAdvancedNativeComputeClosure(
+                            operationIndex,
+                            in request,
+                            in nativeClosure,
+                            nativeDescriptorSet,
+                            in nativePipelines))
+                    {
+                        recordingState.RecordingDeferredReason =
+                            "Advanced visibility operation is Unsupported: immutable native-compute closure publication was rejected.";
+                        return false;
+                    }
                 }
 
                 if (request.Phase == EAdvancedVisibilityStageBackendPhase.LateCompute)
@@ -1176,6 +1271,8 @@ namespace XREngine.Rendering.Vulkan
             if (!bins.TryBuildVisibilityGeometryStream(
                     ResourceRuntime,
                     input.Payloads,
+                    input.DeformationSlices,
+                    input.DeformationPublication,
                     package,
                     in sceneState,
                     passIndex,

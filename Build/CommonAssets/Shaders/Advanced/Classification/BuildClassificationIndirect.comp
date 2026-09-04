@@ -1,27 +1,17 @@
 #version 450
-
 #include "ClassificationInterface.glslinc"
-
-layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
-
-layout(push_constant, std430) uniform XRAdvancedBuildIndirectPush
-{
-    uint maxKernels;
-    uint fallbackTileThreshold;
-} u_Push;
-
+layout(local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
 void main()
 {
-    uint kernelId = gl_GlobalInvocationID.x;
-    if (kernelId >= u_Push.maxKernels)
-        return;
-
-    // Set up standard compute dispatch indirect args for each shading kernel
-    uint kernelTileCount = XR_ADV_ClassificationCounters.counters.kernelTileCount;
-
-    // Dispatch (kernelTileCount, 1, 1) workgroups for the kernel shading pass
-    XR_ADV_ClassificationDispatch.commands[kernelId].workGroupCountX = kernelTileCount;
-    XR_ADV_ClassificationDispatch.commands[kernelId].workGroupCountY = 1u;
-    XR_ADV_ClassificationDispatch.commands[kernelId].workGroupCountZ = 1u;
-    XR_ADV_ClassificationDispatch.commands[kernelId].reserved = 0u;
+    uint kernel = gl_GlobalInvocationID.x;
+    if (kernel >= XR_ADV_MAX_SHADING_KERNELS || kernel >= uint(XR_ADV_ClassificationDispatch.commands.length())) return;
+    uint capacity = XR_ADV_TotalTileCount();
+    uint rangeBase = kernel * capacity;
+    uint available = rangeBase < u_Push.maxKernelTiles ? min(capacity, u_Push.maxKernelTiles - rangeBase) : 0u;
+    uint count = min(XR_ADV_KernelCounts.counts[kernel], available);
+    // Any producer failure selects the separate GPU-only repair pass, avoiding
+    // races between a partial kernel stream and full-screen recovery.
+    if (XR_ADV_ClassificationCounters.counters.overflowFlags != 0u) count = 0u;
+    XR_ADV_ClassificationDispatch.commands[kernel] = XRAdvancedDispatchIndirectCommand(
+        min(count, 65535u), count == 0u ? 1u : (count + 65534u) / 65535u, 1u, rangeBase);
 }

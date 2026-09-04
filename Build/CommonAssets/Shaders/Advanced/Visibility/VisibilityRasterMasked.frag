@@ -1,6 +1,6 @@
 #version 450
 
-#include "VisibilityInterface.glslinc"
+#include "Advanced/Shading/StandardMaterial.glslinc"
 
 layout(location = 0) flat in uint VisibilityDrawIndex;
 layout(location = 1) flat in uint VisibilitySelectionId;
@@ -17,13 +17,6 @@ layout(location = 0) out uvec2 OutVisibilityIdentity;
 layout(location = 1) out uint OutVisibilityMetadata;
 layout(location = 2) out uint OutVisibilitySelection;
 
-const uint COVERAGE_TEXTURE_BINDING = 0u;
-const uint ALPHA_CUTOFF_WORD = 0u;
-const uint UV_SCALE_X_WORD = 1u;
-const uint UV_SCALE_Y_WORD = 2u;
-const uint UV_BIAS_X_WORD = 3u;
-const uint UV_BIAS_Y_WORD = 4u;
-
 void main()
 {
     if (VisibilityMaterialDenseIndex ==
@@ -37,55 +30,18 @@ void main()
 
     XRAdvancedMaterialRecord material =
         XR_ADV_LoadMaterial(VisibilityMaterialDenseIndex);
-    if (material.textureReferenceCount <=
-            COVERAGE_TEXTURE_BINDING)
+    if (!XR_ADV_IsStandardMaterial(material))
     {
         atomicAdd(XR_ADV_VisibilityCounters.decodeOutOfBounds, 1u);
         discard;
     }
-
-    XRAdvancedMaterialTextureBinding coverageBinding =
-        XR_ADV_LoadMaterialTextureBinding(
-            material,
-            COVERAGE_TEXTURE_BINDING);
-    XRAdvancedEncodedTextureReference coverageTexture;
-    XR_ADV_TryResolveTextureReference(
-        coverageBinding,
-        coverageTexture);
-
-    float alphaCutoff = material.constantWordCount > ALPHA_CUTOFF_WORD
-        ? uintBitsToFloat(XR_ADV_LoadMaterialConstant(
-            material,
-            ALPHA_CUTOFF_WORD))
-        : 0.5;
-    vec4 uvScaleBias = vec4(1.0, 1.0, 0.0, 0.0);
-    if (material.constantWordCount > UV_BIAS_Y_WORD)
-    {
-        uvScaleBias = vec4(
-            uintBitsToFloat(XR_ADV_LoadMaterialConstant(
-                material,
-                UV_SCALE_X_WORD)),
-            uintBitsToFloat(XR_ADV_LoadMaterialConstant(
-                material,
-                UV_SCALE_Y_WORD)),
-            uintBitsToFloat(XR_ADV_LoadMaterialConstant(
-                material,
-                UV_BIAS_X_WORD)),
-            uintBitsToFloat(XR_ADV_LoadMaterialConstant(
-                material,
-                UV_BIAS_Y_WORD)));
-    }
-
-    vec2 coverageUv =
-        VisibilityCoverageUv * uvScaleBias.xy +
-        uvScaleBias.zw;
-    if (XR_ADV_SampleTexture2D(
-            coverageTexture,
-            coverageUv).a < alphaCutoff)
-    {
-        discard;
-    }
-
+    uint flags = XR_ADV_LoadMaterialConstant(material, XR_ADV_STANDARD_FLAGS_WORD);
+    float alpha = XR_ADV_StandardVector(material, XR_ADV_STANDARD_BASE_COLOR_WORD).a;
+    if ((flags & 1u) != 0u)
+        alpha *= XR_ADV_StandardTexture(material, 0u, VisibilityCoverageUv,
+            dFdx(VisibilityCoverageUv), dFdy(VisibilityCoverageUv), vec4(1.0)).a;
+    float alphaCutoff = uintBitsToFloat(XR_ADV_LoadMaterialConstant(material, XR_ADV_STANDARD_ALPHA_CUTOFF_WORD));
+    if (alpha < alphaCutoff) discard;
     uint primitive = XR_ADV_EncodeVisibilityPrimitive(
         VisibilityProducer,
         VisibilityPrimitiveBase,

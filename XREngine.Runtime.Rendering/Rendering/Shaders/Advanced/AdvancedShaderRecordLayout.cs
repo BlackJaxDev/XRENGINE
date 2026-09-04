@@ -28,7 +28,7 @@ public static class AdvancedShaderRecordLayout
     public const int MaterialTextureBindingSize = 32;
     public const int ViewSize = 896;
     public const int LightSize = 128;
-    public const int ShadowSize = 224;
+    public const int ShadowSize = 272;
     public const int ProbeSize = 176;
     public const int EnvironmentSize = 128;
     public const int DecalSize = 192;
@@ -88,6 +88,9 @@ public static class AdvancedShaderRecordLayout
         RequireOffset<AdvancedLightRecord>(nameof(AdvancedLightRecord.CookieTexture), 80);
         RequireOffset<AdvancedLightRecord>(nameof(AdvancedLightRecord.ShadowRecord), 96);
         RequireOffset<AdvancedShadowRecord>(nameof(AdvancedShadowRecord.WorldToShadow), 32);
+        RequireOffset<AdvancedShadowRecord>(nameof(AdvancedShadowRecord.MomentParameters), 224);
+        RequireOffset<AdvancedShadowRecord>(nameof(AdvancedShadowRecord.DepthRangeAndCascade), 240);
+        RequireOffset<AdvancedShadowRecord>(nameof(AdvancedShadowRecord.RenderedLightPositionAndFar), 256);
         RequireOffset<AdvancedProbeRecord>(nameof(AdvancedProbeRecord.Irradiance), 128);
         RequireOffset<AdvancedEnvironmentRecord>(nameof(AdvancedEnvironmentRecord.RotationAndExposure), 80);
         RequireOffset<AdvancedDecalRecord>(nameof(AdvancedDecalRecord.WorldToDecal), 32);

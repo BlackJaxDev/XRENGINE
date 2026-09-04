@@ -75,7 +75,29 @@ internal static class VulkanAdvancedSceneProgramBindingContract
     internal const uint VisibilityLateMeshArgumentsBinding = 44u;
     internal const uint VisibilityLateMeshPayloadsBinding = 45u;
     internal const uint VisibilityDepthPyramidSampledBinding = 42u;
-    internal const uint VisibilityDepthPyramidStorageBinding = 43u;
+internal const uint VisibilityDepthPyramidStorageBinding = 43u;
+    internal const uint VisibilityDeformationOverlayBinding = 46u;
+    internal const uint VisibilityCanonicalIndicesBinding = 47u;
+    internal const uint VisibilityReconstructionCountersBinding = 48u;
+    // Native classification and opaque shading use the same immutable set-1
+    // layout as visibility. These bindings are deliberately disjoint from the
+    // frame-data ABI so an admitted compute closure never rewrites a table
+    // referenced by an earlier command buffer.
+    internal const uint NativeIdentityBinding = 0u;
+    internal const uint NativeMetadataBinding = 1u;
+    internal const uint NativeDepthBinding = 2u;
+    internal const uint NativeActiveTilesBinding = 4u;
+    internal const uint NativeKernelTilesBinding = 5u;
+    internal const uint NativeCountersBinding = 6u;
+    internal const uint NativeDispatchArgumentsBinding = 7u;
+    internal const uint NativeKernelCountsBinding = 9u;
+    internal const uint NativeFroxelGridBinding = 10u;
+    internal const uint NativeLightIndicesBinding = 11u;
+    internal const uint NativeLightingCountersBinding = 12u;
+    internal const uint NativeHdrBinding = 15u;
+    internal const uint NativeVelocityBinding = 16u;
+    internal const uint NativeReactiveBinding = 17u;
+    internal const uint NativeShadingDiagnosticsBinding = 18u;
     internal const uint ExternallyOwnedSetMask =
         (1u << (int)GlobalSetIndex) |
         (1u << (int)VisibilitySetIndex) |
@@ -88,6 +110,8 @@ internal static class VulkanAdvancedSceneProgramBindingContract
         IReadOnlyList<DescriptorBindingInfo> bindings)
     {
         bool hasTextureDescriptors = false;
+        bool hasTextureArrayDescriptors = false;
+        bool hasTextureCubeDescriptors = false;
         bool hasSamplerDescriptors = false;
         bool hasGlobalHandleLookups = false;
         for (int index = 0; index < bindings.Count; ++index)
@@ -99,6 +123,8 @@ internal static class VulkanAdvancedSceneProgramBindingContract
             hasSamplerDescriptors |=
                 binding.Set == ResourceSetIndex &&
                 binding.Binding == AdvancedGlobalResourceBindings.SamplerDescriptors;
+            hasTextureArrayDescriptors |= binding.Set == ResourceSetIndex && binding.Binding == AdvancedGlobalResourceBindings.Texture2DArrayDescriptors;
+            hasTextureCubeDescriptors |= binding.Set == ResourceSetIndex && binding.Binding == AdvancedGlobalResourceBindings.TextureCubeDescriptors;
             hasGlobalHandleLookups |=
                 binding.Set == GlobalSetIndex &&
                 binding.Binding == AdvancedGlobalResourceBindings.HandleLookups;
@@ -108,7 +134,7 @@ internal static class VulkanAdvancedSceneProgramBindingContract
         // per-pass bindings at these high binding numbers as advanced ABI use.
         return hasGlobalHandleLookups &&
             hasTextureDescriptors &&
-            hasSamplerDescriptors;
+            hasSamplerDescriptors && hasTextureArrayDescriptors && hasTextureCubeDescriptors;
     }
 
     internal static bool TryValidate(
@@ -161,13 +187,12 @@ internal static class VulkanAdvancedSceneProgramBindingContract
             bool recognized = binding.Binding switch
             {
                 AdvancedGlobalResourceBindings.TextureDescriptors or
+                AdvancedGlobalResourceBindings.Texture2DArrayDescriptors or
+                AdvancedGlobalResourceBindings.TextureCubeDescriptors or
                 AdvancedGlobalResourceBindings.SamplerDescriptors => true,
                 _ => false,
             };
-            DescriptorType expectedType = binding.Binding ==
-                AdvancedGlobalResourceBindings.TextureDescriptors
-                    ? DescriptorType.SampledImage
-                    : DescriptorType.Sampler;
+            DescriptorType expectedType = binding.Binding == AdvancedGlobalResourceBindings.SamplerDescriptors ? DescriptorType.Sampler : DescriptorType.SampledImage;
             if (recognized && binding.DescriptorType == expectedType &&
                 binding.Count == resourceDescriptorCapacity)
             {
@@ -197,6 +222,27 @@ internal static class VulkanAdvancedSceneProgramBindingContract
             binding.Binding == VisibilityDepthPyramidStorageBinding &&
             binding.DescriptorType == DescriptorType.StorageImage &&
             binding.Count == 1u)
+        {
+            reason = "Ready";
+            return true;
+        }
+        if (binding.Set == VisibilitySetIndex &&
+            ContainsNativeStorageBinding(binding.Binding) &&
+            binding.DescriptorType == DescriptorType.StorageBuffer && binding.Count == 1u)
+        {
+            reason = "Ready";
+            return true;
+        }
+        if (binding.Set == VisibilitySetIndex &&
+            ContainsNativeSampledBinding(binding.Binding) &&
+            binding.DescriptorType == DescriptorType.CombinedImageSampler && binding.Count == 1u)
+        {
+            reason = "Ready";
+            return true;
+        }
+        if (binding.Set == VisibilitySetIndex &&
+            ContainsNativeStorageImageBinding(binding.Binding) &&
+            binding.DescriptorType == DescriptorType.StorageImage && binding.Count == 1u)
         {
             reason = "Ready";
             return true;
@@ -262,5 +308,21 @@ internal static class VulkanAdvancedSceneProgramBindingContract
             VisibilityLateRangeCountsBinding or
             VisibilityLateIndexedArgumentsBinding or
             VisibilityLateMeshArgumentsBinding or
-            VisibilityLateMeshPayloadsBinding;
+            VisibilityLateMeshPayloadsBinding or
+            VisibilityDeformationOverlayBinding or
+            VisibilityCanonicalIndicesBinding or
+            VisibilityReconstructionCountersBinding;
+
+    private static bool ContainsNativeStorageBinding(uint binding)
+        => binding is NativeActiveTilesBinding or NativeKernelTilesBinding or
+            NativeCountersBinding or NativeDispatchArgumentsBinding or
+            NativeKernelCountsBinding or NativeFroxelGridBinding or
+            NativeLightIndicesBinding or NativeLightingCountersBinding;
+
+    private static bool ContainsNativeSampledBinding(uint binding)
+        => binding is NativeIdentityBinding or NativeMetadataBinding or NativeDepthBinding;
+
+    private static bool ContainsNativeStorageImageBinding(uint binding)
+        => binding is NativeHdrBinding or NativeVelocityBinding or NativeReactiveBinding or
+            NativeShadingDiagnosticsBinding;
 }

@@ -36,6 +36,8 @@ internal readonly record struct VulkanAdvancedVisibilityOperationPayload(
     VulkanAdvancedScenePublicationState SceneState,
     VulkanAdvancedVisibilityTargetClosure TargetClosure,
     VulkanAdvancedVisibilityLateTargetClosure? LateTargetClosure,
+    VulkanAdvancedNativeComputeClosure? NativeComputeClosure,
+    DescriptorSet NativeComputeDescriptorSet,
     VkRenderProgram? EarlyVisibilityProgram,
     Pipeline EarlyVisibilityPipeline,
     ulong EarlyVisibilityLinkGeneration,
@@ -47,7 +49,8 @@ internal readonly record struct VulkanAdvancedVisibilityOperationPayload(
     ulong BuildDepthPyramidLinkGeneration,
     VkRenderProgram? LateVisibilityProgram,
     Pipeline LateVisibilityPipeline,
-    ulong LateVisibilityLinkGeneration);
+    ulong LateVisibilityLinkGeneration,
+    VulkanAdvancedNativeComputePipelines NativeComputePipelines = default);
 
 /// <summary>
 /// Per-opcode dense storage owned exclusively by a sealed operation stream.
@@ -77,6 +80,7 @@ internal sealed class FrameOperationPayloadStore
     internal DlssFrameGenerationPayload[] DlssFrameGenerations;
     internal VulkanAdvancedVisibilityOperationPayload[] AdvancedVisibilities;
     internal VulkanAdvancedVisibilityLateClosureStorage[] AdvancedVisibilityLateClosures;
+    internal VulkanAdvancedNativeComputeClosureStorage[] AdvancedVisibilityNativeComputeClosures;
     internal readonly VulkanAdvancedVisibilityInputStorage AdvancedVisibilityInput;
 
     internal FrameOperationPayloadStore()
@@ -129,6 +133,8 @@ internal sealed class FrameOperationPayloadStore
         AdvancedVisibilities = new VulkanAdvancedVisibilityOperationPayload[generalCapacity];
         AdvancedVisibilityLateClosures =
             CreateAdvancedVisibilityLateClosureStorage(generalCapacity);
+        AdvancedVisibilityNativeComputeClosures =
+            CreateAdvancedNativeComputeClosureStorage(generalCapacity);
         AdvancedVisibilityInput = new VulkanAdvancedVisibilityInputStorage(
             advancedVisibilityDrawCapacity,
             advancedVisibilityRangeCapacity,
@@ -159,6 +165,7 @@ internal sealed class FrameOperationPayloadStore
             case EVulkanPrimaryPlanNodeKind.AdvancedVisibility:
                 Ensure(ref AdvancedVisibilities, count);
                 EnsureAdvancedVisibilityLateClosureCapacity(count);
+                EnsureAdvancedNativeComputeClosureCapacity(count);
                 break;
         }
     }
@@ -180,6 +187,8 @@ internal sealed class FrameOperationPayloadStore
             ComputeDispatches[index].Snapshot?.ReleaseReadOnlyStorageBindings();
         for (int index = 0; index < ComputeDispatchIndirects.Length; ++index)
             ComputeDispatchIndirects[index].Snapshot?.ReleaseReadOnlyStorageBindings();
+        for (int index = 0; index < AdvancedVisibilityNativeComputeClosures.Length; ++index)
+            AdvancedVisibilityNativeComputeClosures[index].ReleaseAcquiredViews();
         for (int index = 0; index < IndirectDraws.Length; ++index)
         {
             IndirectDrawPayload payload = IndirectDraws[index];
@@ -236,6 +245,35 @@ internal sealed class FrameOperationPayloadStore
     {
         VulkanAdvancedVisibilityLateClosureStorage[] storage =
             new VulkanAdvancedVisibilityLateClosureStorage[capacity];
+        for (int index = 0; index < storage.Length; ++index)
+            storage[index] = new();
+        return storage;
+    }
+
+    private void EnsureAdvancedNativeComputeClosureCapacity(int count)
+    {
+        if (AdvancedVisibilityNativeComputeClosures.Length >= count)
+            return;
+        if (_fixedCapacity)
+            throw new VulkanAcceptedFramePlanCapacityException(
+                _lane, AdvancedVisibilityNativeComputeClosures.Length, count);
+
+        int previousLength = AdvancedVisibilityNativeComputeClosures.Length;
+        Array.Resize(ref AdvancedVisibilityNativeComputeClosures,
+            Math.Max(count, previousLength == 0 ? 4 : previousLength * 2));
+        for (int index = previousLength;
+             index < AdvancedVisibilityNativeComputeClosures.Length;
+             ++index)
+        {
+            AdvancedVisibilityNativeComputeClosures[index] = new();
+        }
+    }
+
+    private static VulkanAdvancedNativeComputeClosureStorage[]
+        CreateAdvancedNativeComputeClosureStorage(int capacity)
+    {
+        VulkanAdvancedNativeComputeClosureStorage[] storage =
+            new VulkanAdvancedNativeComputeClosureStorage[capacity];
         for (int index = 0; index < storage.Length; ++index)
             storage[index] = new();
         return storage;

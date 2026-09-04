@@ -269,12 +269,12 @@ public partial class AdvancedRenderPipeline
             var t = XRTexture2DArray.CreateFrameBufferTexture(
                 2,
                 InternalWidth, InternalHeight,
-                EPixelInternalFormat.Depth24Stencil8,
+                EPixelInternalFormat.Depth32fStencil8,
                 EPixelFormat.DepthStencil,
-                EPixelType.UnsignedInt248,
+                EPixelType.Float32UnsignedInt248Rev,
                 EFrameBufferAttachment.DepthStencilAttachment);
             t.Resizable = false;
-            t.SizedInternalFormat = ESizedInternalFormat.Depth24Stencil8;
+            t.SizedInternalFormat = ESizedInternalFormat.Depth32fStencil8;
             t.OVRMultiViewParameters = new(0, 2u);
             t.MinFilter = ETexMinFilter.Nearest;
             t.MagFilter = ETexMagFilter.Nearest;
@@ -286,12 +286,12 @@ public partial class AdvancedRenderPipeline
         {
             var t = XRTexture2D.CreateFrameBufferTexture(
                 InternalWidth, InternalHeight,
-                EPixelInternalFormat.Depth24Stencil8,
+                EPixelInternalFormat.Depth32fStencil8,
                 EPixelFormat.DepthStencil,
-                EPixelType.UnsignedInt248,
+                EPixelType.Float32UnsignedInt248Rev,
                 EFrameBufferAttachment.DepthStencilAttachment);
             t.Resizable = false;
-            t.SizedInternalFormat = ESizedInternalFormat.Depth24Stencil8;
+            t.SizedInternalFormat = ESizedInternalFormat.Depth32fStencil8;
             t.MinFilter = ETexMinFilter.Nearest;
             t.MagFilter = ETexMagFilter.Nearest;
             t.Name = HistoryDepthStencilTextureName;
@@ -308,7 +308,7 @@ public partial class AdvancedRenderPipeline
                 GetTexture<XRTexture2DArray>(HistoryDepthStencilTextureName)!,
                 0u, 1u,
                 0u, 2u,
-                ESizedInternalFormat.Depth24Stencil8,
+                ESizedInternalFormat.Depth32fStencil8,
                 true, false)
             {
                 DepthStencilViewFormat = EDepthStencilFmt.Depth,
@@ -325,7 +325,7 @@ public partial class AdvancedRenderPipeline
             return new XRTexture2DView(
                 GetTexture<XRTexture2D>(HistoryDepthStencilTextureName)!,
                 0u, 1u,
-                ESizedInternalFormat.Depth24Stencil8,
+                ESizedInternalFormat.Depth32fStencil8,
                 false, false)
             {
                 DepthStencilViewFormat = EDepthStencilFmt.Depth,

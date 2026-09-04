@@ -41,7 +41,7 @@ public partial class AdvancedRenderPipeline
         => InvalidateOwnedInstancePhysicalResources("NativeShadingProfileChanged");
 
     /// <summary>
-    /// Maximum number of froxel records per frame slot (262,144 covers 1440p stereo or 4K mono at 24 depth slices).
+    /// Historical minimum; physical froxel storage is derived from the output extent and view count.
     /// </summary>
     public const uint DefaultFroxelCapacity = 262144u;
 
@@ -90,6 +90,10 @@ public partial class AdvancedRenderPipeline
     {
         RenderResourceSizePolicy internalSize = RenderResourceSizePolicy.Internal();
         uint layers = Math.Max(builder.Profile.ViewCount, builder.Profile.Stereo ? 2u : 1u);
+        uint froxelCapacity = checked(
+            AdvancedFroxelGridDimensions.CalculateTilesX(Math.Max(1u, builder.Profile.InternalWidth)) *
+            AdvancedFroxelGridDimensions.CalculateTilesY(Math.Max(1u, builder.Profile.InternalHeight)) *
+            FroxelDepthSlices * layers);
 
         for (uint slot = 0u; slot < AdvancedFrameSlotContract.DefaultSlotCount; slot++)
         {
@@ -97,7 +101,7 @@ public partial class AdvancedRenderPipeline
             VisibilityBuffer<AdvancedFroxelRecord>(
                     builder,
                     AdvancedClusteredLightingResourceNames.FroxelGrid(slot),
-                    DefaultFroxelCapacity,
+                    froxelCapacity,
                     EBufferTarget.ShaderStorageBuffer,
                     EBufferUsage.DynamicRead)
                 .Lifetime(RenderResourceLifetime.Transient)
@@ -119,7 +123,7 @@ public partial class AdvancedRenderPipeline
             VisibilityBuffer<AdvancedFroxelDecalRecord>(
                     builder,
                     AdvancedClusteredLightingResourceNames.FroxelDecalGrid(slot),
-                    DefaultFroxelCapacity,
+                    froxelCapacity,
                     EBufferTarget.ShaderStorageBuffer,
                     EBufferUsage.DynamicRead)
                 .Lifetime(RenderResourceLifetime.Transient)
@@ -135,6 +139,15 @@ public partial class AdvancedRenderPipeline
                     EBufferUsage.DynamicRead)
                 .Lifetime(RenderResourceLifetime.Transient)
                 .DebugLabel($"Advanced decal index list slot {slot}")
+                .Add();
+
+            VisibilityBuffer<uint>(builder,
+                    AdvancedClusteredLightingResourceNames.LightingCounters(slot),
+                    2u,
+                    EBufferTarget.ShaderStorageBuffer,
+                    EBufferUsage.DynamicRead)
+                .Lifetime(RenderResourceLifetime.Transient)
+                .DebugLabel($"Advanced light-index allocation and overflow counters slot {slot}")
                 .Add();
         }
 
@@ -172,7 +185,24 @@ public partial class AdvancedRenderPipeline
             .DebugLabel("Advanced native motion vectors")
             .Add();
 
-        // 7. Ambient Occlusion Output Texture
+        // 7. Native Shading Diagnostics Image
+        ReconstructionTexture(
+                builder,
+                AdvancedShadingResourceNames.ShadingDiagnostics,
+                internalSize,
+                EPixelInternalFormat.R32ui,
+                EPixelFormat.RedInteger,
+                EPixelType.UnsignedInt,
+                ESizedInternalFormat.R32ui)
+            .Layers(layers)
+            .StereoCompatible(layers > 1u)
+            .DependsOn(
+                AdvancedVisibilityResourceNames.Identity,
+                AdvancedVisibilityResourceNames.Metadata)
+            .DebugLabel("Advanced native shading diagnostics")
+            .Add();
+
+        // 8. Ambient Occlusion Output Texture
         ReconstructionTexture(
                 builder,
                 AdvancedAmbientOcclusionContract.ResourceName,
@@ -189,7 +219,7 @@ public partial class AdvancedRenderPipeline
             .DebugLabel("Advanced ambient occlusion")
             .Add();
 
-        // 8. Optional Shading Debug Visualization Image
+        // 9. Optional Shading Debug Visualization Image
         ReconstructionTexture(
                 builder,
                 AdvancedShadingResourceNames.ShadingDebugOutput,

@@ -385,30 +385,24 @@ internal sealed partial class VulkanFrameLoop
             "[OpenXR] Resetting Vulkan OpenXR render resources before runtime recreate. Reason={0}",
             string.IsNullOrWhiteSpace(reason) ? "<unspecified>" : reason);
 
+        // The admission gate stops new OpenXR submission while cached command
+        // artifacts detach. Every detached native object enters its exact
+        // submission-backed retirement queue, so resolution replacement never
+        // requires a device-wide idle wait. Terminal session initialization and
+        // device-loss paths retain their explicit synchronization elsewhere.
+        _commandRuntime.CommandBuffers.DeviceQueueAdmissionGate.EnterWriteLock();
         try
         {
-            _commandRuntime.CommandBuffers.DeviceQueueAdmissionGate.EnterWriteLock();
-            try
-            {
-                DeviceWaitIdle();
-            }
-            finally
-            {
-                _commandRuntime.CommandBuffers.DeviceQueueAdmissionGate.ExitWriteLock();
-            }
+            if (_deviceLost)
+                return;
+
+            DestroyOpenXrRenderingResources();
+            _commandRuntime.MarkCommandBuffersDirty(nameof(ResetOpenXrRenderingResourcesForRuntimeRecreate));
         }
-        catch (Exception ex)
+        finally
         {
-            Debug.VulkanWarning(
-                "[OpenXR] Device idle wait failed while resetting Vulkan OpenXR resources before runtime recreate. Error={0}",
-                ex.Message);
+            _commandRuntime.CommandBuffers.DeviceQueueAdmissionGate.ExitWriteLock();
         }
-
-        if (_deviceLost)
-            return;
-
-        DestroyOpenXrRenderingResources();
-        _commandRuntime.MarkCommandBuffersDirty(nameof(ResetOpenXrRenderingResourcesForRuntimeRecreate));
     }
 
     internal void ExecuteOpenXrRuntimeGraphicsTransition(string reason, Action transition)

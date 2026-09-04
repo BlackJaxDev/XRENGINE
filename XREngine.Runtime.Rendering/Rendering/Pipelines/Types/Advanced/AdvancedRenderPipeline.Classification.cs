@@ -32,6 +32,8 @@ public partial class AdvancedRenderPipeline
         get => _classificationTileWidth;
         set
         {
+            if (value != AdvancedClassificationTileDimensions.DefaultTileWidth)
+                throw new ArgumentOutOfRangeException(nameof(value), "The admitted classification shader uses 16-pixel tiles.");
             if (!SetField(ref _classificationTileWidth, value))
                 return;
             InvalidateClassificationResourceProfile();
@@ -46,6 +48,8 @@ public partial class AdvancedRenderPipeline
         get => _classificationTileHeight;
         set
         {
+            if (value != AdvancedClassificationTileDimensions.DefaultTileHeight)
+                throw new ArgumentOutOfRangeException(nameof(value), "The admitted classification shader uses 16-pixel tiles.");
             if (!SetField(ref _classificationTileHeight, value))
                 return;
             InvalidateClassificationResourceProfile();
@@ -61,7 +65,7 @@ public partial class AdvancedRenderPipeline
     public const uint DefaultActiveTileCapacity = 65536u;
 
     /// <summary>
-    /// Maximum kernel-tile membership records (64K covers dense multi-material variations).
+    /// Historical minimum membership capacity; physical storage is sized per kernel and output extent.
     /// </summary>
     public const uint DefaultKernelTileCapacity = 65536u;
 
@@ -74,6 +78,10 @@ public partial class AdvancedRenderPipeline
     {
         RenderResourceSizePolicy internalSize = RenderResourceSizePolicy.Internal();
         uint layers = Math.Max(builder.Profile.ViewCount, builder.Profile.Stereo ? 2u : 1u);
+        uint tileCapacity = checked(
+            AdvancedClassificationTileDimensions.CalculateTilesX(Math.Max(1u, builder.Profile.InternalWidth)) *
+            AdvancedClassificationTileDimensions.CalculateTilesY(Math.Max(1u, builder.Profile.InternalHeight)) * layers);
+        uint membershipCapacity = checked(tileCapacity * DefaultMaxShadingKernels);
 
         for (uint slot = 0u; slot < AdvancedFrameSlotContract.DefaultSlotCount; slot++)
         {
@@ -81,7 +89,7 @@ public partial class AdvancedRenderPipeline
             VisibilityBuffer<AdvancedActiveTileRecord>(
                     builder,
                     AdvancedClassificationResourceNames.ActiveTiles(slot),
-                    DefaultActiveTileCapacity,
+                    tileCapacity,
                     EBufferTarget.ShaderStorageBuffer,
                     EBufferUsage.DynamicRead)
                 .Lifetime(RenderResourceLifetime.Transient)
@@ -92,7 +100,7 @@ public partial class AdvancedRenderPipeline
             VisibilityBuffer<AdvancedKernelTileRecord>(
                     builder,
                     AdvancedClassificationResourceNames.KernelTiles(slot),
-                    DefaultKernelTileCapacity,
+                    membershipCapacity,
                     EBufferTarget.ShaderStorageBuffer,
                     EBufferUsage.DynamicRead)
                 .Lifetime(RenderResourceLifetime.Transient)
@@ -104,10 +112,19 @@ public partial class AdvancedRenderPipeline
                     builder,
                     AdvancedClassificationResourceNames.DispatchArgs(slot),
                     DefaultMaxShadingKernels,
-                    EBufferTarget.ShaderStorageBuffer,
+                    EBufferTarget.DispatchIndirectBuffer,
                     EBufferUsage.DynamicRead)
                 .Lifetime(RenderResourceLifetime.Transient)
                 .DebugLabel($"Advanced classification indirect dispatch args slot {slot}")
+                .Add();
+
+            VisibilityBuffer<uint>(builder,
+                    AdvancedClassificationResourceNames.KernelCounts(slot),
+                    DefaultMaxShadingKernels,
+                    EBufferTarget.ShaderStorageBuffer,
+                    EBufferUsage.DynamicRead)
+                .Lifetime(RenderResourceLifetime.Transient)
+                .DebugLabel($"Advanced classification kernel range counts slot {slot}")
                 .Add();
 
             // 4. GPU-Atomic Classification Counters

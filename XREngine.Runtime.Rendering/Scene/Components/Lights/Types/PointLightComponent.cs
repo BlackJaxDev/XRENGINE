@@ -41,6 +41,8 @@ namespace XREngine.Components.Capture.Lights.Types
         private readonly PositionOnlyTransform _shadowCameraParentTransform = new();
         private float _shadowNearPlaneDistance = PointShadowNearPlaneDistanceDefault;
         private readonly PointShadowAtlasFaceSlot[] _atlasFaceSlots = new PointShadowAtlasFaceSlot[ShadowFaceCount];
+        private readonly PointShadowAtlasRenderSnapshot[] _lastRenderedAtlasSnapshots = new PointShadowAtlasRenderSnapshot[ShadowFaceCount];
+        private readonly object _atlasSnapshotSync = new();
         private readonly BoundingRectangle[] _groupedAtlasClearRects = new BoundingRectangle[ShadowFaceCount];
         private EPointShadowRenderMode _shadowRenderMode = EPointShadowRenderMode.InstancedLayered;
         private EPointShadowRenderMode _effectiveShadowRenderMode = EPointShadowRenderMode.InstancedLayered;
@@ -105,6 +107,16 @@ namespace XREngine.Components.Capture.Lights.Types
             BoundingRectangle PixelRect,
             BoundingRectangle InnerPixelRect,
             ulong LastRenderedFrame);
+
+        /// <summary>Immutable point-face projection and allocation identity captured only after a successful atlas render.</summary>
+        public readonly record struct PointShadowAtlasRenderSnapshot(
+            bool IsValid,
+            Matrix4x4 WorldToShadow,
+            Vector4 RenderedLightPositionAndFar,
+            float NearPlane,
+            float FarPlane,
+            bool ReversedDepth,
+            ShadowAtlasAllocation Allocation);
 
         private enum PointShadowRenderFallbackReason
         {
@@ -1083,6 +1095,61 @@ namespace XREngine.Components.Capture.Lights.Types
                 InnerPixelRect: allocation.InnerPixelRect,
                 LastRenderedFrame: allocation.LastRenderedFrame);
         }
+
+        internal void CommitRenderedShadowAtlasFaceSnapshot(
+            int faceIndex,
+            in ShadowAtlasAllocation allocation,
+            float nearPlane,
+            float farPlane)
+        {
+            if ((uint)faceIndex >= ShadowFaceCount ||
+                (uint)faceIndex >= (uint)_shadowCameras.Length)
+                return;
+
+            XRCamera camera = _shadowCameras[faceIndex];
+            Matrix4x4 lightMatrix = LightMeshMatrix;
+            PointShadowAtlasRenderSnapshot snapshot = new(
+                true,
+                camera.ViewProjectionMatrix,
+                new Vector4(lightMatrix.M41, lightMatrix.M42, lightMatrix.M43, farPlane),
+                nearPlane,
+                farPlane,
+                camera.IsReversedDepth,
+                allocation);
+            lock (_atlasSnapshotSync)
+                _lastRenderedAtlasSnapshots[faceIndex] = snapshot;
+        }
+
+        internal bool TryGetRenderedShadowAtlasFaceSnapshot(
+            int faceIndex,
+            in ShadowAtlasAllocation allocation,
+            out PointShadowAtlasRenderSnapshot snapshot)
+        {
+            if ((uint)faceIndex >= ShadowFaceCount)
+            {
+                snapshot = default;
+                return false;
+            }
+
+            lock (_atlasSnapshotSync)
+                snapshot = _lastRenderedAtlasSnapshots[faceIndex];
+            return snapshot.IsValid && ShadowAtlasRenderSnapshotMatches(snapshot.Allocation, allocation);
+        }
+
+        private static bool ShadowAtlasRenderSnapshotMatches(
+            ShadowAtlasAllocation rendered,
+            ShadowAtlasAllocation current)
+            => rendered.Key == current.Key &&
+               rendered.AtlasKind == current.AtlasKind &&
+               rendered.AtlasId == current.AtlasId &&
+               rendered.PageIndex == current.PageIndex &&
+               rendered.PixelRect == current.PixelRect &&
+               rendered.InnerPixelRect == current.InnerPixelRect &&
+               rendered.UvScaleBias == current.UvScaleBias &&
+               rendered.Resolution == current.Resolution &&
+               rendered.ContentVersion == current.ContentVersion &&
+               rendered.LastRenderedFrame == current.LastRenderedFrame &&
+               current.IsResident;
 
         internal bool TryGetShadowAtlasFaceSlot(int faceIndex, out PointShadowAtlasFaceSlot slot)
         {

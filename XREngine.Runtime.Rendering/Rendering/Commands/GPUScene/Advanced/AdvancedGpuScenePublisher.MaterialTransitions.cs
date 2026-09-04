@@ -288,13 +288,8 @@ public sealed partial class AdvancedGpuScenePublisher
             return false;
         if (!TryAppendFinalMaterialResourceReleases(releases, out reason))
             return false;
-        if (!_resourcePublisher.TryPreflightTransition(
-                _resourceAcquireSources.AsSpan(0, _resourceAcquireCount),
-                _resourceReleaseBindings.AsSpan(0, _resourceReleaseCount),
-                out reason))
-        {
-            return false;
-        }
+        // Global shadow rows append their texture sources before the one
+        // whole-scene resource preflight in GlobalResources.
         if (!CanApplyPlannedSceneMutations())
         {
             reason = "The canonical scene tables cannot accept the complete planned publication.";

@@ -18,7 +18,9 @@ public readonly record struct AdvancedVisibilityStageBackendRequest(
     string MetadataTargetName,
     string SelectionTargetName,
     string DepthTargetName,
-    string CurrentDepthPyramidTargetName)
+    string CurrentDepthPyramidTargetName,
+    EAdvancedShadingDebugView ShadingDebugView = EAdvancedShadingDebugView.Disabled,
+    bool RequireNativeOutput = false)
 {
     public bool IsValid
         => IsStagePhaseValid() &&
@@ -48,6 +50,14 @@ public readonly record struct AdvancedVisibilityStageBackendRequest(
             EAdvancedRenderStage.DepthPyramidAndLateVisibility =>
                 Phase is EAdvancedVisibilityStageBackendPhase.LateCompute or
                     EAdvancedVisibilityStageBackendPhase.LateRaster,
+            // These stages are compute-only.  Their Vulkan implementation
+            // seals a per-stage descriptor closure from the frozen graph
+            // generation before recording; they do not participate in the
+            // visibility raster's split late-compute/late-raster phase.
+            EAdvancedRenderStage.WorkClassification or
+            EAdvancedRenderStage.AttributeReconstruction or
+            EAdvancedRenderStage.NativeOpaqueShading =>
+                Phase == EAdvancedVisibilityStageBackendPhase.Complete,
             _ => false,
         };
 }

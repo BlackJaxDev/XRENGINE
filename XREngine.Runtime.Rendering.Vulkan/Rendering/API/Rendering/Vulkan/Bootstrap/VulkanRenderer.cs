@@ -37,9 +37,9 @@ public sealed partial class VulkanRenderer :
     IOpenXrSmokeDiagnosticsBackendCapability,
     ISparseTextureStreamingBackendCapability,
     IStreamlinePresentationBackendCapability,
-    IPhysicsChainComputeBackendFactoryCapability
-    , IAdvancedVisibilityStageBackendCapability
-{
+    IPhysicsChainComputeBackendFactoryCapability,
+    IAdvancedVisibilityStageBackendCapability,
+    IGpuBufferContentReuseCapability{
     private const int DesktopFramesInFlight = 2;
     private readonly VulkanDeviceContext _deviceContext;
     private readonly VulkanOutputRuntime _outputRuntime;
@@ -404,6 +404,8 @@ public sealed partial class VulkanRenderer :
 
     protected override AbstractRenderAPIObject CreateAPIRenderObject(GenericRenderObject renderObject) => _resourceRuntime.CreateAPIRenderObject(renderObject);
     public override AdvancedRenderPipelineCapabilities GetAdvancedRenderPipelineCapabilities() => _commandRuntime.GetAdvancedRenderPipelineCapabilities();
+    public override AdvancedVisibilityFamilyAdmission GetAdvancedVisibilityFamilyAdmission()
+        => _commandRuntime.GetAdvancedVisibilityFamilyAdmission();
     public override bool TryReserveAdvancedVisibilityFamily(ulong outputId, out AdvancedVisibilityFamilyReservation reservation, out string failureReason)
         => _commandRuntime.TryReserveAdvancedVisibilityFamily(outputId, out reservation, out failureReason);
     public override bool IsAdvancedVisibilityFamilyReservationCurrent(in AdvancedVisibilityFamilyReservation reservation)
@@ -526,7 +528,10 @@ public sealed partial class VulkanRenderer :
     public override bool TryEnqueueGpuDiagnosticBufferSnapshot(XRDataBuffer source, nuint sourceByteOffset, XRDataBuffer destination, nuint destinationByteOffset, nuint byteCount, string label)
         => _frameLoop.TryEnqueueGpuDiagnosticBufferSnapshot(source, sourceByteOffset, destination, destinationByteOffset, byteCount, label) == ERendererComputeEnqueueStatus.Enqueued;
     public ERendererComputeEnqueueStatus TryCompleteOrderedComputePass(EMemoryBarrierMask mask, string label) => _frameLoop.TryCompleteOrderedComputePass(mask, label);
-    public override XRGpuFence? InsertGpuFence() => _frameLoop.InsertOrderedComputeFence();
+    public override ERendererComputeEnqueueStatus TryMemoryBarrier(EMemoryBarrierMask mask)
+        => _frameLoop.TryCompleteOrderedComputePass(mask, "AdvancedDeformation.ConsumerBarrier");
+    public EGpuBufferContentReuseStatus QueryBufferContentReuse(XRDataBuffer buffer)
+        => _resourceRuntime.QueryBufferContentReuse(buffer);    public override XRGpuFence? InsertGpuFence() => _frameLoop.InsertOrderedComputeFence();
     public bool TryEnsureComputeBufferReady(XRDataBuffer buffer) => _commandRuntime.TryEnsureComputeBufferReady(_resourceRuntime.WrapperLookup, buffer, _frameLoop.AllowSynchronousResourceUploads);
     public bool TryReadMappedBuffer(XRDataBuffer buffer, Span<byte> destination) => _commandRuntime.TryReadMappedBuffer(_resourceRuntime.WrapperLookup, buffer, destination);
     public override EMeshShaderDialect MeshShaderDialect => _deviceContext.SupportsMeshTaskIndirectCount ? EMeshShaderDialect.VulkanEXT : EMeshShaderDialect.None;

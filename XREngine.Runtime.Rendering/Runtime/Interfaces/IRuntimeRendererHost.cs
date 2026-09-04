@@ -51,6 +51,13 @@ public interface IRuntimeRendererHost
         => AdvancedRenderPipelineCapabilities.UnsupportedBackend;
 
     /// <summary>
+    /// Reports whether the renderer can admit the native Advanced visibility family.
+    /// </summary>
+    AdvancedVisibilityFamilyAdmission GetAdvancedVisibilityFamilyAdmission()
+        => new(EAdvancedProductionExecutionState.Unsupported,
+            "The active renderer does not expose Advanced visibility-family admission.");
+
+    /// <summary>
     /// Reserves the renderer generation's one advanced mono visibility family
     /// for an output. A matching repeat is idempotent; another output is
     /// rejected and must select the legacy path.

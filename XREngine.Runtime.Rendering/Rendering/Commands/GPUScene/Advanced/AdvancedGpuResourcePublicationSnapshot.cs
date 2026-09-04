@@ -10,6 +10,7 @@ public sealed class AdvancedGpuResourcePublicationSnapshot
 {
     private readonly XRTexture?[] _textureSources;
     private readonly AdvancedGpuHandle[] _textureSourceHandles;
+    private readonly ulong[] _textureSourceGenerations;
     private int _textureSourceCount;
 
     internal AdvancedGpuResourcePublicationSnapshot(
@@ -23,6 +24,7 @@ public sealed class AdvancedGpuResourcePublicationSnapshot
         _textureSources = new XRTexture?[checked((int)database.Textures.Capacity + 1)];
         _textureSourceHandles = new AdvancedGpuHandle[
             checked((int)database.Textures.Capacity)];
+        _textureSourceGenerations = new ulong[checked((int)database.Textures.Capacity)];
     }
 
     public ulong Sequence { get; private set; }
@@ -59,6 +61,18 @@ public sealed class AdvancedGpuResourcePublicationSnapshot
             return false;
 
         source = candidate;
+        return true;
+    }
+
+    public bool TryGetTextureSource(
+        AdvancedGpuHandle handle,
+        out XRTexture source,
+        out ulong sourceContentGeneration)
+    {
+        sourceContentGeneration = 0u;
+        if (!TryGetTextureSource(handle, out source))
+            return false;
+        sourceContentGeneration = _textureSourceGenerations[checked((int)handle.Index)];
         return true;
     }
 
@@ -102,7 +116,8 @@ public sealed class AdvancedGpuResourcePublicationSnapshot
 
     internal bool TryAddTextureSource(
         AdvancedGpuHandle handle,
-        XRTexture source)
+        XRTexture source,
+        ulong sourceContentGeneration)
     {
         ArgumentNullException.ThrowIfNull(source);
         if (!handle.IsValid || handle.Index >= (uint)_textureSources.Length ||
@@ -114,6 +129,7 @@ public sealed class AdvancedGpuResourcePublicationSnapshot
         }
 
         _textureSources[checked((int)handle.Index)] = source;
+        _textureSourceGenerations[checked((int)handle.Index)] = sourceContentGeneration;
         _textureSourceHandles[_textureSourceCount++] = handle;
         return true;
     }
@@ -138,6 +154,8 @@ public sealed class AdvancedGpuResourcePublicationSnapshot
             AdvancedGpuHandle handle = _textureSourceHandles[index];
             if (handle.IsValid && handle.Index < (uint)_textureSources.Length)
                 _textureSources[checked((int)handle.Index)] = null;
+            if (handle.IsValid && handle.Index < (uint)_textureSourceGenerations.Length)
+                _textureSourceGenerations[checked((int)handle.Index)] = 0u;
             _textureSourceHandles[index] = AdvancedGpuHandle.Invalid;
         }
 

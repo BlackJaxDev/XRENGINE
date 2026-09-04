@@ -15,7 +15,8 @@ internal readonly struct BlitImageInfo(
     AccessFlags accessMask,
     IVkImageDescriptorSource? descriptorSource = null,
     VkRenderBuffer? renderBufferSource = null,
-    SampleCountFlags samples = default)
+    SampleCountFlags samples = default,
+    ImageUsageFlags usage = default)
 {
     public Image Image { get; } = image;
     public Format Format { get; } = format;
@@ -34,6 +35,12 @@ internal readonly struct BlitImageInfo(
         : descriptorSource?.DescriptorSamples
             ?? renderBufferSource?.Samples
             ?? SampleCountFlags.Count1Bit;
+    /// <summary>Usage of the exact native image, including planner-owned images without a wrapper.</summary>
+    public ImageUsageFlags Usage { get; } = usage != default
+        ? usage
+        : descriptorSource?.DescriptorUsage
+            ?? renderBufferSource?.PhysicalGroup?.Usage
+            ?? ImageUsageFlags.None;
     public bool IsValid => Image.Handle != 0;
 
     public BlitImageInfo WithResolvedState(
@@ -53,7 +60,8 @@ internal readonly struct BlitImageInfo(
             AccessMask,
             DescriptorSource,
             RenderBufferSource,
-            Samples);
+            Samples,
+            Usage);
 
     public BlitImageInfo WithLayerCount(uint resolvedLayerCount)
         => new(
@@ -69,5 +77,6 @@ internal readonly struct BlitImageInfo(
             AccessMask,
             DescriptorSource,
             RenderBufferSource,
-            Samples);
+            Samples,
+            Usage);
 }

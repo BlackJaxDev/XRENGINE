@@ -1,130 +1,208 @@
 #version 450
-
 #include "Advanced/Classification/ClassificationInterface.glslinc"
 #include "Advanced/Lighting/ClusteredLightingInterface.glslinc"
 #include "Advanced/Reconstruction/ReconstructSurface.glslinc"
-#include "AdvancedDecalModifier.glslinc"
+#include "StandardMaterial.glslinc"
 #include "StandardPBR.glslinc"
-
+#include "StandardShadow.glslinc"
 layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+#if defined(XR_ADV_VISIBILITY_ARRAY)
+XR_ADV_SHADING_LAYOUT(0) uniform usampler2DArray VisibilityIdentity;
+XR_ADV_SHADING_LAYOUT(1) uniform usampler2DArray VisibilityMetadata;
+XR_ADV_SHADING_LAYOUT(2) uniform sampler2DArray VisibilityDepth;
+XR_ADV_SHADING_IMAGE(rgba16f, 15) writeonly uniform image2DArray HDRSceneColor;
+XR_ADV_SHADING_IMAGE(rg16f, 16) writeonly uniform image2DArray Velocity;
+XR_ADV_SHADING_IMAGE(r8, 17) writeonly uniform image2DArray ReactiveMask;
+XR_ADV_SHADING_IMAGE(r32ui, 18) writeonly uniform uimage2DArray ShadingDiagnostics;
+#define XR_ADV_PIXEL(pixel, view) ivec3(pixel, view)
+#else
+XR_ADV_SHADING_LAYOUT(0) uniform usampler2D VisibilityIdentity;
+XR_ADV_SHADING_LAYOUT(1) uniform usampler2D VisibilityMetadata;
+XR_ADV_SHADING_LAYOUT(2) uniform sampler2D VisibilityDepth;
+XR_ADV_SHADING_IMAGE(rgba16f, 15) writeonly uniform image2D HDRSceneColor;
+XR_ADV_SHADING_IMAGE(rg16f, 16) writeonly uniform image2D Velocity;
+XR_ADV_SHADING_IMAGE(r8, 17) writeonly uniform image2D ReactiveMask;
+XR_ADV_SHADING_IMAGE(r32ui, 18) writeonly uniform uimage2D ShadingDiagnostics;
+#define XR_ADV_PIXEL(pixel, view) ivec2(pixel)
+#endif
 
-layout(push_constant, std430) uniform XRAdvancedNativeShadingPush
+uint shadowReason = XR_ADV_SHADOW_OK;
+float shadowVisibility = 1.0;
+vec3 directDiffuse = vec3(0.0);
+vec3 directSpecular = vec3(0.0);
+
+vec3 evaluateLight(uint index, XRAdvancedSurface surface, vec3 N, vec3 V,
+    vec3 albedo, float roughness, float metallic)
 {
-    uvec2 screenExtent;
-    uvec2 tilesCount;
-    uint depthSlices;
-    uint viewIndex;
-    vec3 cameraWorldPosition;
-    float nearPlane;
-    float farPlane;
-    uint directionalLightCount;
-} u_Push;
-
-struct XRAdvancedLightLight
-{
-    uint stableLightId;
-    uint generation;
-    uint type;
-    uint flags;
-    vec4 positionAndRadius;
-    vec4 directionAndOuterCone;
-    vec4 colorAndIntensity;
-    vec4 shapeAndInnerCone;
-};
-
-XR_ADV_CLUSTERED_PASS_LAYOUT(5) readonly buffer XRAdvancedLightsBuffer
-{
-    XRAdvancedLightLight records[];
-} XR_ADV_GlobalLights;
-
-layout(set = 0, binding = 2) uniform sampler2DArray u_AmbientOcclusion;
-layout(formatName = rgba16f, binding = 0) uniform writeonly image2DArray out_HDRSceneColor;
-layout(formatName = rg16f, binding = 1) uniform writeonly image2DArray out_Velocity;
+    XRAdvancedLightRecord light = XR_ADV_LoadLight(index);
+    if (!XR_ADV_LightAffectsView(light, surface.viewIndex)) return vec3(0.0);
+    vec3 L;
+    float attenuation = 1.0;
+    if (light.type == 0u) L = normalize(-light.directionAndOuterCone.xyz);
+    else if (light.type == 1u || light.type == 2u)
+    {
+        vec3 delta = light.positionAndRadius.xyz - surface.worldPosition;
+        float distance = length(delta), radius = light.positionAndRadius.w;
+        if (radius <= 0.0 || distance >= radius) return vec3(0.0);
+        L = delta / max(distance, 0.0001);
+        attenuation = pow(clamp(1.0 - distance / radius, 0.0, 1.0), 2.0);
+        if (light.type == 2u)
+        {
+            float outer = light.directionAndOuterCone.w;
+            float inner = max(light.shapeAndInnerCone.w, outer + 0.0001);
+            float cosine = dot(-L, normalize(light.directionAndOuterCone.xyz));
+            attenuation *= smoothstep(outer, inner, cosine);
+        }
+    }
+    else return vec3(0.0);
+    uint reason;
+    float visibility = XR_ADV_EvaluateShadow(light, surface, N, L, reason);
+    shadowReason = max(shadowReason, reason);
+    shadowVisibility = min(shadowVisibility, visibility);
+    vec3 radiance = light.colorAndIntensity.rgb * light.colorAndIntensity.w * attenuation * visibility;
+    vec3 diffuse, specular;
+    vec3 result = XR_ADV_EvaluatePBRDirect(N, V, L, radiance, albedo, roughness, metallic, diffuse, specular);
+    directDiffuse += diffuse;
+    directSpecular += specular;
+    return result;
+}
 
 void main()
 {
-    uint kernelTileIndex = gl_WorkGroupID.x;
-    XRAdvancedKernelTile kt = XR_ADV_KernelTiles.records[kernelTileIndex];
-    XRAdvancedActiveTile activeTile = XR_ADV_ActiveTiles.records[kt.activeTileIndex];
-
-    uvec2 tileCoord = uvec2(activeTile.packedTileCoord & 0xFFFFu, (activeTile.packedTileCoord >> 16) & 0xFFFFu);
-    uvec2 pixelCoord = tileCoord * uvec2(16u, 16u) + gl_LocalInvocationID.xy;
-
-    if (pixelCoord.x >= u_Push.screenExtent.x || pixelCoord.y >= u_Push.screenExtent.y)
-        return;
-
+    bool repair = (u_Push.flags & XR_ADV_SHADING_REPAIR) != 0u;
+    bool overflow = XR_ADV_ClassificationCounters.counters.overflowFlags != 0u;
+    if (repair != overflow) return;
+    uvec2 pixel;
+    uint viewIndex = u_Push.viewIndex;
+    if (repair) pixel = gl_GlobalInvocationID.xy;
+    else
+    {
+        if (u_Push.kernelIndex >= XR_ADV_MAX_SHADING_KERNELS) return;
+        uint localTile = gl_WorkGroupID.x + gl_WorkGroupID.y * 65535u;
+        uint tileCapacity = XR_ADV_TotalTileCount();
+        if (localTile >= min(XR_ADV_KernelCounts.counts[u_Push.kernelIndex], tileCapacity)) return;
+        uint membership = u_Push.kernelIndex * tileCapacity + localTile;
+        if (membership >= min(u_Push.maxKernelTiles, uint(XR_ADV_KernelTiles.records.length()))) return;
+        XRAdvancedKernelTile kernelTile = XR_ADV_KernelTiles.records[membership];
+        if (kernelTile.activeTileIndex >= min(XR_ADV_ClassificationCounters.counters.activeTileCount,
+            uint(XR_ADV_ActiveTiles.records.length()))) return;
+        XRAdvancedActiveTile tile = XR_ADV_ActiveTiles.records[kernelTile.activeTileIndex];
+        viewIndex = tile.viewIndex;
+        pixel = uvec2(tile.packedTileCoord & 0xFFFFu, tile.packedTileCoord >> 16u) * 16u + gl_LocalInvocationID.xy;
+    }
+    if (any(greaterThanEqual(pixel, u_Push.screenExtent)) || viewIndex >= u_Push.viewCount) return;
+    uvec2 identity = texelFetch(VisibilityIdentity, XR_ADV_PIXEL(pixel, viewIndex), 0).rg;
+    if (identity.x == 0u || identity.x == XR_ADV_VIS_INVALID) return;
+    uint metadata = texelFetch(VisibilityMetadata, XR_ADV_PIXEL(pixel, viewIndex), 0).r;
+    uint materialDense, kernelDense;
+    bool resolved = XR_ADV_TryResolvePixelMaterial(identity, metadata, materialDense, kernelDense);
+    if (!repair && resolved && kernelDense != u_Push.kernelIndex) return;
+    float depth = texelFetch(VisibilityDepth, XR_ADV_PIXEL(pixel, viewIndex), 0).r;
     XRAdvancedSurface surface;
-    bool valid = XR_ADV_TryReconstructSurface(
-        pixelCoord,
-        u_Push.viewIndex,
-        vec2(u_Push.screenExtent),
-        surface);
-
-    if (!valid || (surface.flags & XR_ADV_SURFACE_VALID) == 0u)
+    bool valid = resolved && XR_ADV_TryReconstructSurface(identity, metadata, depth, vec2(pixel) + 0.5, surface);
+    if (!valid || surface.viewIndex != viewIndex || (repair && (u_Push.flags & XR_ADV_SHADING_REQUIRED) != 0u))
+    {
+        imageStore(HDRSceneColor, XR_ADV_PIXEL(pixel, viewIndex), vec4(1.0, 0.0, 1.0, 1.0));
+        imageStore(ReactiveMask, XR_ADV_PIXEL(pixel, viewIndex), vec4(1.0));
+        imageStore(ShadingDiagnostics, XR_ADV_PIXEL(pixel, viewIndex), uvec4((repair && (u_Push.flags & XR_ADV_SHADING_REQUIRED) != 0u) ? 1u << 18u : 1u << 16u));
         return;
-
+    }
+    XRAdvancedMaterialRecord material = XR_ADV_LoadMaterial(materialDense);
+    if (!XR_ADV_IsStandardMaterial(material))
+    {
+        imageStore(HDRSceneColor, XR_ADV_PIXEL(pixel, viewIndex), vec4(1.0, 0.0, 1.0, 1.0));
+        imageStore(ReactiveMask, XR_ADV_PIXEL(pixel, viewIndex), vec4(1.0));
+        imageStore(ShadingDiagnostics, XR_ADV_PIXEL(pixel, viewIndex), uvec4(1u << 17u));
+        return;
+    }
+    XRAdvancedViewRecord view = XR_ADV_LoadView(viewIndex);
+    uint materialFlags = XR_ADV_LoadMaterialConstant(material, XR_ADV_STANDARD_FLAGS_WORD);
+    vec4 base = XR_ADV_StandardVector(material, XR_ADV_STANDARD_BASE_COLOR_WORD) * surface.color0;
+    vec4 rmse = XR_ADV_StandardVector(material, XR_ADV_STANDARD_RMSE_WORD);
+    if ((materialFlags & 1u) != 0u)
+        base *= XR_ADV_StandardTexture(material, 0u, surface.texCoord0, surface.texCoord0Dx, surface.texCoord0Dy, vec4(1.0));
+    if ((materialFlags & 4u) != 0u)
+        rmse.xy *= XR_ADV_StandardTexture(material, 2u, surface.texCoord0, surface.texCoord0Dx, surface.texCoord0Dy, vec4(1.0)).rg;
     vec3 N = normalize(surface.shadingNormal);
-    vec3 V = normalize(u_Push.cameraWorldPosition - surface.worldPosition);
-
-    vec3 albedo = surface.color0.rgb;
-    float roughness = 0.5;
-    float metallic = 0.0;
-
-    // Apply decal modifications if present in surface
-    if ((surface.flags & XR_ADV_ATTRIBUTE_CUSTOM0) != 0u)
+    if ((materialFlags & 2u) != 0u && XR_ADV_SurfaceHasAttribute(surface, XR_ADV_ATTRIBUTE_TANGENT))
     {
-        uint decalIndex = surface.custom0;
-        XR_ADV_ApplyDecalToSurface(decalIndex, surface, albedo, roughness);
-        N = normalize(surface.shadingNormal);
+        vec3 normalTex = XR_ADV_StandardTexture(material, 1u, surface.texCoord0, surface.texCoord0Dx, surface.texCoord0Dy,
+            vec4(0.5, 0.5, 1.0, 1.0)).xyz * 2.0 - 1.0;
+        N = normalize(surface.tangent * normalTex.x + surface.bitangent * normalTex.y + N * normalTex.z);
     }
-
-    vec3 directLighting = vec3(0.0);
-
-    // 1. Directional Lights
-    for (uint d = 0u; d < u_Push.directionalLightCount; d++)
+    vec3 V = normalize(view.cameraPositionAndNear.xyz - surface.worldPosition);
+    vec3 color = base.rgb * max(rmse.w, 0.0);
+    if ((material.eligibilityFlags & 16u) != 0u) color += base.rgb;
+    else
     {
-        vec3 L = -normalize(XR_ADV_GlobalLights.records[d].directionAndOuterCone.xyz);
-        vec3 lightColor = XR_ADV_GlobalLights.records[d].colorAndIntensity.rgb * XR_ADV_GlobalLights.records[d].colorAndIntensity.w;
-
-        directLighting += XR_ADV_EvaluatePBRDirect(N, V, L, lightColor, albedo, roughness, metallic);
-    }
-
-    // 2. Clustered Froxel Local Lights (Point & Spot)
-    uint sliceZ = XR_ADV_CalculateDepthSlice(surface.depth, u_Push.nearPlane, u_Push.farPlane, u_Push.depthSlices);
-    uint froxelIdx = XR_ADV_GetFroxelIndex(tileCoord, sliceZ, u_Push.viewIndex, u_Push.tilesCount, u_Push.depthSlices);
-
-    XRAdvancedFroxelRecord froxel = XR_ADV_FroxelGrid.records[froxelIdx];
-
-    // Local point lights
-    for (uint p = 0u; p < froxel.pointLightCount; p++)
-    {
-        uint lightIdx = XR_ADV_LightIndexList.indices[froxel.pointLightOffset + p];
-        vec4 posRadius = XR_ADV_GlobalLights.records[lightIdx].positionAndRadius;
-        vec3 lightPos = posRadius.xyz;
-        float radius = posRadius.w;
-
-        vec3 toLight = lightPos - surface.worldPosition;
-        float dist = length(toLight);
-        if (dist < radius)
+        uint lightCount = min(u_Push.lightCount, uint(XR_ADV_Lights.records.length()));
+        float roughness = clamp(rmse.x, 0.04, 1.0), metallic = clamp(rmse.y, 0.0, 1.0);
+        for (uint i = 0u; i < lightCount; ++i)
+            if (XR_ADV_Lights.records[i].type == 0u)
+                color += evaluateLight(i, surface, N, V, base.rgb, roughness, metallic);
+        float linearDepth = -XR_ADV_TransformRowVector(vec4(surface.worldPosition, 1.0), view.view).z;
+        uint slice = XR_ADV_CalculateDepthSlice(linearDepth, max(view.cameraPositionAndNear.w, 0.0001),
+            max(view.cameraForwardAndFar.w, view.cameraPositionAndNear.w + 0.0001), u_Push.depthSlices);
+        uint froxelIndex = XR_ADV_GetFroxelIndex(pixel / 16u, slice, viewIndex, u_Push.tilesCount, u_Push.depthSlices);
+        bool allLights = froxelIndex >= uint(XR_ADV_FroxelGrid.records.length());
+        XRAdvancedFroxelRecord froxel;
+        if (!allLights)
         {
-            vec3 L = toLight / max(dist, 0.001);
-            float atten = clamp(1.0 - (dist / radius), 0.0, 1.0);
-            atten *= atten;
-
-            vec3 lightColor = XR_ADV_GlobalLights.records[lightIdx].colorAndIntensity.rgb * XR_ADV_GlobalLights.records[lightIdx].colorAndIntensity.w * atten;
-            directLighting += XR_ADV_EvaluatePBRDirect(N, V, L, lightColor, albedo, roughness, metallic);
+            froxel = XR_ADV_FroxelGrid.records[froxelIndex];
+            allLights = froxel.pointLightCount == XR_ADV_FROXEL_OVERFLOW;
+        }
+        if (allLights)
+        {
+            for (uint i = 0u; i < lightCount; ++i)
+                if (XR_ADV_Lights.records[i].type != 0u)
+                    color += evaluateLight(i, surface, N, V, base.rgb, roughness, metallic);
+        }
+        else
+        {
+            uint offsets[2] = uint[2](froxel.pointLightOffset, froxel.spotLightOffset);
+            uint counts[2] = uint[2](froxel.pointLightCount, froxel.spotLightCount);
+            for (uint type = 0u; type < 2u; ++type)
+            {
+                uint available = offsets[type] < uint(XR_ADV_LightIndexList.indices.length()) ?
+                    uint(XR_ADV_LightIndexList.indices.length()) - offsets[type] : 0u;
+                for (uint j = 0u; j < min(counts[type], available); ++j)
+                {
+                    uint i = XR_ADV_LightIndexList.indices[offsets[type] + j];
+                    if (i < lightCount) color += evaluateLight(i, surface, N, V, base.rgb, roughness, metallic);
+                }
+            }
         }
     }
-
-    // 3. Ambient Occlusion modulation
-    vec2 uv = (vec2(pixelCoord) + 0.5) / vec2(u_Push.screenExtent);
-    float ao = texture(u_AmbientOcclusion, vec3(uv, float(u_Push.viewIndex))).r;
-    vec3 ambient = vec3(0.03) * albedo * ao;
-    vec3 finalColor = directLighting + ambient;
-
-    // Output directly to native HDR scene color attachment
-    imageStore(out_HDRSceneColor, ivec3(pixelCoord, u_Push.viewIndex), vec4(finalColor, 1.0));
-
-    // Output dense motion velocity
-    imageStore(out_Velocity, ivec3(pixelCoord, u_Push.viewIndex), vec4(surface.motionNdc, 0.0, 0.0));
+    uint debugView = (u_Push.flags >> 8u) & 255u;
+    if (debugView == 1u) color = directDiffuse;
+    else if (debugView == 2u) color = directSpecular;
+    else if (debugView == 3u) color = base.rgb * max(rmse.w, 0.0);
+    else if (debugView == 4u)
+    {
+        float linearDepth = -XR_ADV_TransformRowVector(vec4(surface.worldPosition, 1.0), view.view).z;
+        uint slice = XR_ADV_CalculateDepthSlice(linearDepth, max(view.cameraPositionAndNear.w, 0.0001),
+            max(view.cameraForwardAndFar.w, view.cameraPositionAndNear.w + 0.0001), u_Push.depthSlices);
+        uint index = XR_ADV_GetFroxelIndex(pixel / 16u, slice, viewIndex, u_Push.tilesCount, u_Push.depthSlices);
+        color = vec3(1.0, 0.0, 1.0);
+        if (index < uint(XR_ADV_FroxelGrid.records.length()))
+        {
+            XRAdvancedFroxelRecord froxel = XR_ADV_FroxelGrid.records[index];
+            if (froxel.pointLightCount != XR_ADV_FROXEL_OVERFLOW)
+                color = vec3(float(froxel.pointLightCount) / 32.0, float(froxel.spotLightCount) / 32.0, 0.0);
+        }
+    }
+    else if (debugView == 5u) color = vec3(shadowVisibility);
+    else if (debugView == 6u) color = N * 0.5 + 0.5;
+    else if (debugView == 7u) color = vec3(clamp(rmse.x, 0.0, 1.0));
+    else if (debugView == 8u) color = vec3(clamp(rmse.y, 0.0, 1.0));
+    else if (debugView == 9u)
+        color = shadowReason == 0u ? vec3(0.0, 0.5, 0.0) :
+            shadowReason == XR_ADV_SHADOW_STALE_TILE ? vec3(1.0, 0.5, 0.0) :
+            shadowReason == XR_ADV_SHADOW_OUTSIDE ? vec3(0.0, 0.0, 0.5) : vec3(1.0, 0.0, float(shadowReason) / 6.0);
+    imageStore(ShadingDiagnostics, XR_ADV_PIXEL(pixel, viewIndex),
+        uvec4(shadowReason | (uint(round(clamp(shadowVisibility, 0.0, 1.0) * 255.0)) << 8u)));
+    imageStore(HDRSceneColor, XR_ADV_PIXEL(pixel, viewIndex), vec4(max(color, vec3(0.0)), base.a));
+    imageStore(Velocity, XR_ADV_PIXEL(pixel, viewIndex), vec4(surface.motionNdc, 0.0, 0.0));
+    imageStore(ReactiveMask, XR_ADV_PIXEL(pixel, viewIndex), vec4((surface.flags &
+        (XR_ADV_SURFACE_REACTIVE | XR_ADV_SURFACE_MASKED_EDGE)) != 0u ? 1.0 : 0.0));
 }

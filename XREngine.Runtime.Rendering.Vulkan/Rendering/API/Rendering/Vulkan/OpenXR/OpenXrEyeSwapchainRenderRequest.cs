@@ -11,4 +11,5 @@ internal readonly record struct OpenXrEyeSwapchainRenderRequest(
     uint OpenXrImageIndex,
     ViewFoveationContext Foveation,
     IOpenXrEyeFrameOpEmitter FrameOpEmitter,
+    OpenXrSubmissionMetadata SubmissionMetadata = default,
     ulong ViewBatchStructuralIdentity = 0UL);

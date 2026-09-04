@@ -41,17 +41,17 @@ public unsafe partial class OpenXRAPI
         MarkRuntimeLoss(OpenXrRuntimeLossReason.ShutdownRequested);
     }
 
-    internal void PrepareRendererDeviceTeardown(AbstractRenderer renderer, string reason)
+    internal bool PrepareRendererDeviceTeardown(AbstractRenderer renderer, string reason)
     {
         if (!TryGetOrCreateGraphicsBinding(renderer, out IXrGraphicsBinding? binding))
-            return;
+            return true;
 
         if (_session.Handle == 0 &&
             _instance.Handle == 0 &&
             _graphicsBinding is null &&
             !_instanceOwnedByRenderer)
         {
-            return;
+            return true;
         }
 
         Debug.LogWarning($"OpenXR tearing down graphics session before renderer device teardown. Renderer={renderer.GetType().Name} Reason={reason}");
@@ -62,12 +62,17 @@ public unsafe partial class OpenXRAPI
         Volatile.Write(ref _frameSkipRender, 0);
 
         bool destroyInstance = binding.DestroysRuntimeInstanceOnRendererTeardown || _instanceOwnedByRenderer;
-        TearDownSessionResourcesOnOwningThread(destroyInstance);
+        if (!TearDownSessionResourcesOnOwningThread(destroyInstance))
+        {
+            ScheduleProbeRetry(TimeSpan.FromMilliseconds(100));
+            SetRuntimeState(OpenXrRuntimeState.RecreatePending);
+            return false;
+        }
 
         ScheduleProbeRetry(GetGraphicsDeviceFailureProbeDelay());
         SetRuntimeState(_runtimeMonitoringEnabled ? OpenXrRuntimeState.RecreatePending : OpenXrRuntimeState.DesktopOnly);
+        return true;
     }
-
     internal void UpdateRuntimeState()
     {
         if (!_runtimeMonitoringEnabled)
@@ -122,6 +127,11 @@ public unsafe partial class OpenXRAPI
                     SetRuntimeState(OpenXrRuntimeState.SessionRunning);
                 break;
             case OpenXrRuntimeState.SessionRunning:
+                OpenXrEyeResolutionSettingsSnapshot currentResolution = CaptureCurrentOpenXrEyeResolutionSettings();
+                OpenXrEyeResolutionSettingsSnapshot appliedResolution = CaptureAppliedOpenXrEyeResolutionSettings();
+                if (!OpenXrEyeResolutionSettingsMatch(currentResolution, appliedResolution))
+                    QueueOpenXrEyeResolutionSessionRecreate(currentResolution, appliedResolution);
+
                 if (_sessionState == SessionState.Stopping
                     || _sessionState == SessionState.Exiting
                     || _sessionState == SessionState.LossPending)
@@ -132,8 +142,8 @@ public unsafe partial class OpenXRAPI
                     SetRuntimeState(OpenXrRuntimeState.SessionStopping);
                 break;
             case OpenXrRuntimeState.SessionStopping:
-                TearDownSessionResourcesOnOwningThread(false);
-                SetRuntimeState(OpenXrRuntimeState.DesktopOnly);
+                if (TearDownSessionResourcesOnOwningThread(false))
+                    SetRuntimeState(OpenXrRuntimeState.DesktopOnly);
                 break;
             case OpenXrRuntimeState.SessionLost:
                 HandleRuntimeLoss();
@@ -333,6 +343,24 @@ public unsafe partial class OpenXRAPI
         if (DateTime.UtcNow < _nextProbeUtc)
             return;
 
+        if (_session.Handle != 0 || HasCreatedOpenXrSwapchains())
+        {
+            Debug.RenderingWarningEvery(
+                "OpenXR.SessionCreationDeferred.PendingTeardown",
+                TimeSpan.FromSeconds(1),
+                "[OpenXR] Deferring new session creation until the previous session and its swapchain retirement complete.");
+            if (TearDownSessionResourcesOnOwningThread(destroyInstance: true))
+            {
+                ScheduleProbeRetry(TimeSpan.FromMilliseconds(100));
+                SetRuntimeState(OpenXrRuntimeState.RecreatePending);
+                return;
+            }
+
+            ScheduleProbeRetry(TimeSpan.FromMilliseconds(100));
+            SetRuntimeState(OpenXrRuntimeState.RecreatePending);
+            return;
+        }
+
         TryEnsureOpenXrRuntimeService("OpenXR session creation");
 
         if (renderer.IsDeviceLost)
@@ -417,6 +445,7 @@ public unsafe partial class OpenXRAPI
                     RecordSmokeSessionCreated(graphicsBinding.BackendName);
                     CreateReferenceSpace();
                     graphicsBinding.CreateSwapchains(this, activeRenderer);
+                    RecordAppliedOpenXrEyeResolutionSettings();
                     EnsureInputCreated();
                     SetRuntimeState(OpenXrRuntimeState.SessionCreated);
                 }
@@ -449,6 +478,7 @@ public unsafe partial class OpenXRAPI
                     RecordSmokeSessionCreated(graphicsBinding.BackendName);
                     CreateReferenceSpace();
                     graphicsBinding.CreateSwapchains(this, renderer);
+                    RecordAppliedOpenXrEyeResolutionSettings();
                     EnsureInputCreated();
                 });
 
@@ -494,9 +524,16 @@ public unsafe partial class OpenXRAPI
             || lossReason == OpenXrRuntimeLossReason.InstanceLostError
             || lossReason == OpenXrRuntimeLossReason.RuntimeUnavailable;
 
-        TearDownSessionResourcesOnOwningThread(destroyInstance);
-        if (!stopMonitoring)
+        bool teardownCompleted = TearDownSessionResourcesOnOwningThread(destroyInstance);
+        if (!stopMonitoring && teardownCompleted)
             TryEnsureOpenXrRuntimeService($"OpenXR runtime loss: {lossReason}");
+
+        if (!teardownCompleted)
+        {
+            ScheduleProbeRetry(TimeSpan.FromMilliseconds(100));
+            SetRuntimeState(OpenXrRuntimeState.RecreatePending);
+            return;
+        }
 
         if (stopMonitoring)
         {
@@ -656,33 +693,29 @@ public unsafe partial class OpenXRAPI
         return result;
     }
 
-    private void TearDownSessionResourcesOnOwningThread(bool destroyInstance)
+    private bool TearDownSessionResourcesOnOwningThread(bool destroyInstance)
     {
         if (Window?.Renderer is AbstractRenderer renderer &&
             !RuntimeEngine.IsRenderThread &&
             TryGetOrCreateGraphicsBinding(renderer, out IXrGraphicsBinding? binding) &&
             binding.RequiresRenderThreadForTeardown)
         {
-            RuntimeRenderingHostServices.Scheduling.InvokeRenderThreadTask(
+            return RuntimeRenderingHostServices.Scheduling.InvokeRenderThreadTask(
                 () =>
                 {
-                    TearDownSessionResourcesWithCurrentContext(destroyInstance);
-                    return true;
+                    return TearDownSessionResourcesWithCurrentContext(destroyInstance);
                 },
                 $"OpenXR.{binding.BackendName}.TeardownSessionResources",
                 RenderThreadJobKind.RequiresGraphicsContext);
-            return;
         }
 
-        TearDownSessionResourcesWithCurrentContext(destroyInstance);
+        return TearDownSessionResourcesWithCurrentContext(destroyInstance);
     }
 
-    private void TearDownSessionResourcesWithCurrentContext(bool destroyInstance)
-    {
-        TearDownSessionResources(destroyInstance);
-    }
+    private bool TearDownSessionResourcesWithCurrentContext(bool destroyInstance)
+        => TearDownSessionResources(destroyInstance);
 
-    private void TearDownSessionResources(bool destroyInstance)
+    private bool TearDownSessionResources(bool destroyInstance)
     {
         if (_deferredOpenGlInit is not null && Window is not null)
         {
@@ -699,27 +732,43 @@ public unsafe partial class OpenXRAPI
         {
             try
             {
-                _graphicsBinding.WaitForGpuIdle(this, renderer);
+                if (!_graphicsBinding.WaitForGpuIdle(this, renderer))
+                {
+                    Debug.LogWarning("[OpenXR] GPU quiescence is incomplete; retaining OpenXR parents for a later teardown retry.");
+                    return false;
+                }
             }
-            catch
+            catch (Exception ex)
             {
-                // Best-effort idle wait.
+                Debug.LogWarning($"[OpenXR] GPU quiescence failed before session teardown: {ex.Message}");
+                return false;
             }
         }
 
-        CleanupSwapchains();
+        if (!CleanupSwapchains() ||
+            _graphicsBinding?.HasPendingDeferredSwapchainRetirement == true)
+        {
+            // Vulkan has retained child swapchain generations whose exact GPU
+            // completion is still pending. Destroying this parent session or
+            // instance would invalidate those children, so leave the runtime
+            // intact and make the deferred teardown decision explicit.
+            Debug.LogWarning("[OpenXR] Deferred runtime teardown because Vulkan swapchain retirement is still pending.");
+            return false;
+        }
 
         DestroyInput();
 
         if (_appSpace.Handle != 0)
         {
-            Api.DestroySpace(_appSpace);
+            if (CheckResult(Api.DestroySpace(_appSpace), "xrDestroySpace") != Result.Success)
+                return false;
             _appSpace = default;
         }
 
         if (_session.Handle != 0)
         {
-            Api.DestroySession(_session);
+            if (CheckResult(Api.DestroySession(_session), "xrDestroySession") != Result.Success)
+                return false;
             _session = default;
         }
 
@@ -734,5 +783,6 @@ public unsafe partial class OpenXRAPI
         }
 
         RecordSmokeTeardownCompleted();
+        return true;
     }
 }

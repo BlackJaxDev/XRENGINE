@@ -12,6 +12,19 @@ internal sealed partial class VulkanCommandRuntime
 
     // Promotion is deliberately coupled to a live reservation. Capability
     // snapshots remain advisory and cannot independently select a family.
+    internal AdvancedVisibilityFamilyAdmission GetAdvancedVisibilityFamilyAdmission()
+    {
+        VulkanAdvancedVisibilityPipelineReadiness readiness =
+            GetAdvancedVisibilityPipelineReadiness(out string reason);
+        EAdvancedProductionExecutionState state = readiness switch
+        {
+            VulkanAdvancedVisibilityPipelineReadiness.Ready => EAdvancedProductionExecutionState.Admitted,
+            VulkanAdvancedVisibilityPipelineReadiness.Pending or VulkanAdvancedVisibilityPipelineReadiness.Missing => EAdvancedProductionExecutionState.PendingResources,
+            _ => EAdvancedProductionExecutionState.Unsupported,
+        };
+        return new(state, reason);
+    }
+
     internal bool IsAdvancedVisibilityProductionPromoted
         => Volatile.Read(ref _advancedVisibilityReservationId) != 0 &&
            CanAdmitAdvancedVisibilityFamily();
@@ -152,6 +165,11 @@ internal sealed partial class VulkanCommandRuntime
             pipelines.TryGetLateVisibilityComputePipelines(out _, out _, out failureReason);
         if (lateComputeReadiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
             return lateComputeReadiness;
+
+        VulkanAdvancedVisibilityPipelineReadiness nativeComputeReadiness =
+            pipelines.TryGetNativeComputePipelines(out _, out failureReason);
+        if (nativeComputeReadiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
+            return nativeComputeReadiness;
 
         if (!pipelines.TryGetRasterProgram(
                 EAdvancedMaterialCoverageMode.Opaque,

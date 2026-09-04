@@ -457,7 +457,7 @@ public partial class AdvancedRenderPipeline
     {
         var accumAttachment = EnsureTextureAttachment(TransparentAccumTextureName, CreateTransparentAccumTexture);
         var revealageAttachment = EnsureTextureAttachment(TransparentRevealageTextureName, CreateTransparentRevealageTexture);
-        var depthAttachment = EnsureTextureAttachment(DepthStencilTextureName, CreateDepthStencilTexture);
+        var depthAttachment = RequireVisibilityAttachment(AdvancedVisibilityResourceNames.DepthStencil);
 
         return new XRFrameBuffer(
             (accumAttachment, EFrameBufferAttachment.ColorAttachment0, 0, -1),
@@ -666,7 +666,7 @@ public partial class AdvancedRenderPipeline
         var fbo = new XRQuadFrameBuffer(sceneCopyMat, useTriangle: false, deriveRenderTargetsFromMaterial: false);
 
         IFrameBufferAttachement hdrAttach = (IFrameBufferAttachement)hdrSceneTex;
-        IFrameBufferAttachement dsAttach = EnsureTextureAttachment(DepthStencilTextureName, CreateDepthStencilTexture);
+        IFrameBufferAttachement dsAttach = RequireVisibilityAttachment(AdvancedVisibilityResourceNames.DepthStencil);
 
         fbo.SetRenderTargets(
             (hdrAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1),

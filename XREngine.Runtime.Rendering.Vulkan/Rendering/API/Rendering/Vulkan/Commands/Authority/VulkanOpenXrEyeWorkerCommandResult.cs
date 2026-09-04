@@ -4,4 +4,5 @@ namespace XREngine.Rendering.Vulkan;
 internal readonly record struct VulkanOpenXrEyeWorkerCommandResult(
     OpenXrEyeRecordWorkerBatchResult Batch,
     bool Submitted,
-    bool CommandBuffersCompleted);
+    bool CommandBuffersCompleted,
+    VulkanOpenXrSubmissionResult Submission);

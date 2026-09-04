@@ -140,9 +140,18 @@ public interface IXrGraphicsBinding
     void CreateSwapchains(OpenXRAPI api, AbstractRenderer renderer);
     void CleanupSwapchains(OpenXRAPI api);
     bool TryRetireSwapchainsForDeferredDestruction(OpenXRAPI api, AbstractRenderer renderer) => false;
-    void WaitForGpuIdle(OpenXRAPI api, AbstractRenderer renderer);
-    void AcquireSwapchainImage(OpenXRAPI api, Swapchain swapchain, out uint imageIndex);
-    void WaitSwapchainImage(OpenXRAPI api, Swapchain swapchain, long timeoutNs);
-    void ReleaseSwapchainImage(OpenXRAPI api, Swapchain swapchain);
+    void PollDeferredSwapchainRetirement(OpenXRAPI api, AbstractRenderer renderer)
+    {
+    }
+    /// <summary>
+    /// Prevents the API layer from falling back to immediate OpenXR swapchain
+    /// destruction when the backend has deferred GPU-owned generations.
+    /// </summary>
+    bool RequiresDeferredSwapchainRetirement => false;
+    bool HasPendingDeferredSwapchainRetirement => false;
+    bool WaitForGpuIdle(OpenXRAPI api, AbstractRenderer renderer);
+    Result AcquireSwapchainImage(OpenXRAPI api, Swapchain swapchain, out uint imageIndex);
+    Result WaitSwapchainImage(OpenXRAPI api, Swapchain swapchain, long timeoutNs);
+    Result ReleaseSwapchainImage(OpenXRAPI api, Swapchain swapchain);
     void RenderViews(OpenXRAPI api, in CompositionLayerProjectionView projectionView, uint viewIndex);
 }

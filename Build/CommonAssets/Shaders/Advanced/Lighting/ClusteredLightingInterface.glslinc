@@ -1,6 +1,8 @@
 #ifndef XR_ADVANCED_CLUSTERED_LIGHTING_INTERFACE_GLSLINC
 #define XR_ADVANCED_CLUSTERED_LIGHTING_INTERFACE_GLSLINC
 
+#include "Advanced/Shading/AdvancedShadingInterface.glslinc"
+
 #ifndef XR_ADV_CLUSTERED_SET
 #define XR_ADV_CLUSTERED_SET 1
 #endif
@@ -30,6 +32,21 @@ XR_ADV_CLUSTERED_PASS_LAYOUT(11) buffer XRAdvancedLightIndexListBuffer
 {
     uint indices[];
 } XR_ADV_LightIndexList;
+
+#define XR_ADV_FROXEL_OVERFLOW 0xFFFFFFFFu
+XR_ADV_CLUSTERED_PASS_LAYOUT(12) buffer XRAdvancedLightingCountersBuffer
+{
+    uint nextLightIndex;
+    uint overflowCount;
+} XR_ADV_LightingCounters;
+
+bool XR_ADV_LightAffectsView(XRAdvancedLightRecord light, uint viewIndex)
+{
+    if ((light.flags & 1u) == 0u) return false;
+    if ((light.viewMaskLo | light.viewMaskHi) == 0u) return true;
+    return viewIndex < 32u ? (light.viewMaskLo & (1u << viewIndex)) != 0u :
+        viewIndex < 64u && (light.viewMaskHi & (1u << (viewIndex - 32u))) != 0u;
+}
 
 uint XR_ADV_CalculateDepthSlice(float linearDepth, float nearPlane, float farPlane, uint depthSlices)
 {

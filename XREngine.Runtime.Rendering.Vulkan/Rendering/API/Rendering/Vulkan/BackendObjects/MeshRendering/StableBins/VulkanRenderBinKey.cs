@@ -118,7 +118,7 @@ internal readonly record struct VulkanRenderBinKey(
         uint viewMask,
         in AdvancedVisibilityPayload payload,
         ulong sceneNativeGeneration,
-        VulkanFrameDataSlice vertexSlice,
+        in VulkanVisibilityPreparedVertexSource vertexSource,
         VulkanFrameDataSlice indexSlice,
         in VulkanResidentDrawTemplateNativeState nativeState,
         in FrameOpContext context)
@@ -129,9 +129,17 @@ internal readonly record struct VulkanRenderBinKey(
             Mix(unchecked((ulong)(uint)(passIndex + 1)), acceptedViewMask),
             Mix(payload.RasterStateClass, checked((ulong)payload.Coverage),
                 payload.CullMode, payload.PrimitiveTopology),
-            Mix(payload.Geometry.Index, payload.Geometry.Generation,
-                sceneNativeGeneration, vertexSlice.Generation,
-                indexSlice.Generation, primitive.IndexBuffer.Handle,
+            Mix(
+                payload.Geometry.Index,
+                payload.Geometry.Generation,
+                sceneNativeGeneration,
+                vertexSource.Buffer.Handle,
+                vertexSource.Generation,
+                vertexSource.Offset,
+                vertexSource.Length,
+                vertexSource.ElementStride,
+                indexSlice.Generation,
+                primitive.IndexBuffer.Handle,
                 nativeState.VertexBindingSignature),
             unchecked(((uint)primitive.Topology << 16) | (uint)primitive.IndexType),
             1u,
@@ -140,7 +148,6 @@ internal readonly record struct VulkanRenderBinKey(
             new VulkanRenderBinNativeCompatibility(in nativeState),
             VulkanRenderBinContextCompatibility.Create(in context));
     }
-
     private static ulong Mix(params ReadOnlySpan<ulong> values)
     {
         ulong hash = 14695981039346656037UL;

@@ -287,7 +287,11 @@ internal sealed partial class VulkanCommandRuntime
             return true;
         }
 
-        return info.Image.Handle != 0;
+        if (info.Image.Handle == 0)
+            return false;
+        if (TryGetExactTrackedBlitLayout(info, info.Image, out ImageLayout exactLayout))
+            resolved = info.WithResolvedState(info.Image, exactLayout, info.Extent);
+        return true;
     }
 
     internal BlitImageInfo ResolveLegacySwapchainBlitImage(
@@ -421,7 +425,8 @@ internal sealed partial class VulkanCommandRuntime
             layout,
             stage,
             access,
-            samples: group.Samples);
+            samples: group.Samples,
+            usage: group.Usage);
         return info.IsValid;
     }
 

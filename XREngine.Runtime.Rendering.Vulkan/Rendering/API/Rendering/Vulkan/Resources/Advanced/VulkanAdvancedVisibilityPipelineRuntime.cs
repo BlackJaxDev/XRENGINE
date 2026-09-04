@@ -9,7 +9,7 @@ namespace XREngine.Rendering.Vulkan;
 /// preparation and visibility-raster lane. Raster pipeline creation remains
 /// gated on an exact render-graph attachment closure.
 /// </summary>
-internal sealed class VulkanAdvancedVisibilityPipelineRuntime
+internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
 {
     private readonly VulkanResourceRuntime _resources;
     private XRRenderProgram? _earlyVisibilityProgram;

@@ -110,7 +110,7 @@ internal sealed partial class VulkanCommandRuntime
         }
 
         CommandBuffer releasing = commandBuffer;
-        FreeCompletedSynchronousCommandBuffer(
+        FreeVulkanCommandBufferTracked(
             pool,
             ref releasing,
             "OpenXR.OwnedPrimaryArtifact");
@@ -244,16 +244,21 @@ internal sealed partial class VulkanCommandRuntime
 
     internal bool ExecuteOpenXrPreviewCopy(in OpenXrEyePreviewCopyPlan plan)
     {
+        OpenXrSubmissionTracker.PollCompletions();
+        if (!OpenXrSubmissionTracker.TryReserveSubmission(out OpenXrVulkanSubmissionTracker.SubmissionAdmissionTicket? admissionTicket))
+            return false;
         if (!TryBeginOpenXrTemporaryCommand(
                 "OpenXR.PreviewCopy",
                 out CommandBuffer commandBuffer,
                 out VulkanTrackedCommandEncoder encoder))
         {
+            OpenXrSubmissionTracker.CancelPreparedSubmission(admissionTicket);
             return false;
         }
 
         EVulkanQueueSubmissionDisposition disposition =
             EVulkanQueueSubmissionDisposition.NotSubmitted;
+        bool trackerOwnsCommand = false;
         try
         {
             RecordOpenXrEyeSwapchainPreviewCopy(
@@ -268,18 +273,22 @@ internal sealed partial class VulkanCommandRuntime
                 return false;
             }
 
-            VulkanOpenXrSubmissionResult result = SubmitAndWaitOpenXr(
-                new VulkanOpenXrSubmissionInput(
-                    commandBuffer,
-                    default,
-                    1,
-                    default));
+            VulkanOpenXrSubmissionResult result = SubmitTrackedOpenXrTemporaryCommand(
+                admissionTicket!.Value, ref trackerOwnsCommand, commandBuffer, default);
             disposition = result.SubmissionDisposition;
             return result.Succeeded;
         }
         finally
         {
-            ReleaseOpenXrTemporaryCommandBuffer(commandBuffer, disposition);
+            try
+            {
+                if (!trackerOwnsCommand)
+                    ReleaseOpenXrTemporaryCommandBuffer(commandBuffer, disposition);
+            }
+            finally
+            {
+                OpenXrSubmissionTracker.CancelPreparedSubmission(admissionTicket);
+            }
         }
     }
 
@@ -291,6 +300,9 @@ internal sealed partial class VulkanCommandRuntime
     {
         firstPreviewCopied = false;
         secondPreviewCopied = false;
+        OpenXrSubmissionTracker.PollCompletions();
+        if (!OpenXrSubmissionTracker.TryReserveSubmission(out OpenXrVulkanSubmissionTracker.SubmissionAdmissionTicket? admissionTicket))
+            return false;
         if (!TryRecordOpenXrEyeMirrorPublishCommandBuffer(
                 in firstPlan,
                 in secondPlan,
@@ -298,25 +310,31 @@ internal sealed partial class VulkanCommandRuntime
                 out firstPreviewCopied,
                 out secondPreviewCopied))
         {
+            OpenXrSubmissionTracker.CancelPreparedSubmission(admissionTicket);
             return false;
         }
 
         EVulkanQueueSubmissionDisposition disposition =
             EVulkanQueueSubmissionDisposition.NotSubmitted;
+        bool trackerOwnsCommand = false;
         try
         {
-            VulkanOpenXrSubmissionResult result = SubmitAndWaitOpenXr(
-                new VulkanOpenXrSubmissionInput(
-                    commandBuffer,
-                    default,
-                    1,
-                    default));
+            VulkanOpenXrSubmissionResult result = SubmitTrackedOpenXrTemporaryCommand(
+                admissionTicket!.Value, ref trackerOwnsCommand, commandBuffer, default);
             disposition = result.SubmissionDisposition;
             return result.Succeeded;
         }
         finally
         {
-            ReleaseOpenXrTemporaryCommandBuffer(commandBuffer, disposition);
+            try
+            {
+                if (!trackerOwnsCommand)
+                    ReleaseOpenXrTemporaryCommandBuffer(commandBuffer, disposition);
+            }
+            finally
+            {
+                OpenXrSubmissionTracker.CancelPreparedSubmission(admissionTicket);
+            }
         }
     }
 
@@ -325,17 +343,22 @@ internal sealed partial class VulkanCommandRuntime
         Extent2D extent,
         ColorF4 color)
     {
+        OpenXrSubmissionTracker.PollCompletions();
+        if (!OpenXrSubmissionTracker.TryReserveSubmission(out OpenXrVulkanSubmissionTracker.SubmissionAdmissionTicket? admissionTicket))
+            return false;
         if (image.Handle == 0 || extent.Width == 0 || extent.Height == 0 ||
             !TryBeginOpenXrTemporaryCommand(
                 "OpenXR.DiagnosticClear",
                 out CommandBuffer commandBuffer,
                 out VulkanTrackedCommandEncoder encoder))
         {
+            OpenXrSubmissionTracker.CancelPreparedSubmission(admissionTicket);
             return false;
         }
 
         EVulkanQueueSubmissionDisposition disposition =
             EVulkanQueueSubmissionDisposition.NotSubmitted;
+        bool trackerOwnsCommand = false;
         try
         {
             ImageSubresourceRange range = new()
@@ -378,18 +401,22 @@ internal sealed partial class VulkanCommandRuntime
                 return false;
             }
 
-            VulkanOpenXrSubmissionResult result = SubmitAndWaitOpenXr(
-                new VulkanOpenXrSubmissionInput(
-                    commandBuffer,
-                    default,
-                    1,
-                    default));
+            VulkanOpenXrSubmissionResult result = SubmitTrackedOpenXrTemporaryCommand(
+                admissionTicket!.Value, ref trackerOwnsCommand, commandBuffer, default);
             disposition = result.SubmissionDisposition;
             return result.Succeeded;
         }
         finally
         {
-            ReleaseOpenXrTemporaryCommandBuffer(commandBuffer, disposition);
+            try
+            {
+                if (!trackerOwnsCommand)
+                    ReleaseOpenXrTemporaryCommandBuffer(commandBuffer, disposition);
+            }
+            finally
+            {
+                OpenXrSubmissionTracker.CancelPreparedSubmission(admissionTicket);
+            }
         }
     }
 
@@ -408,16 +435,21 @@ internal sealed partial class VulkanCommandRuntime
         ImageAspectFlags destinationAspect,
         bool flipY)
     {
+        OpenXrSubmissionTracker.PollCompletions();
+        if (!OpenXrSubmissionTracker.TryReserveSubmission(out OpenXrVulkanSubmissionTracker.SubmissionAdmissionTicket? admissionTicket))
+            return false;
         if (!TryBeginOpenXrTemporaryCommand(
                 "OpenXR.MirrorTextureCopy",
                 out CommandBuffer commandBuffer,
                 out VulkanTrackedCommandEncoder encoder))
         {
+            OpenXrSubmissionTracker.CancelPreparedSubmission(admissionTicket);
             return false;
         }
 
         EVulkanQueueSubmissionDisposition disposition =
             EVulkanQueueSubmissionDisposition.NotSubmitted;
+        bool trackerOwnsCommand = false;
         try
         {
             TransitionOpenXrMirrorImage(
@@ -490,19 +522,47 @@ internal sealed partial class VulkanCommandRuntime
             {
                 return false;
             }
-            VulkanOpenXrSubmissionResult result = SubmitAndWaitOpenXr(
-                new VulkanOpenXrSubmissionInput(
-                    commandBuffer,
-                    default,
-                    1,
-                    default));
+            VulkanOpenXrSubmissionResult result = SubmitTrackedOpenXrTemporaryCommand(
+                admissionTicket!.Value, ref trackerOwnsCommand, commandBuffer, default);
             disposition = result.SubmissionDisposition;
             return result.Succeeded;
         }
         finally
         {
-            ReleaseOpenXrTemporaryCommandBuffer(commandBuffer, disposition);
+            try
+            {
+                if (!trackerOwnsCommand)
+                    ReleaseOpenXrTemporaryCommandBuffer(commandBuffer, disposition);
+            }
+            finally
+            {
+                OpenXrSubmissionTracker.CancelPreparedSubmission(admissionTicket);
+            }
         }
+    }
+
+    private VulkanOpenXrSubmissionResult SubmitTrackedOpenXrTemporaryCommand(
+        OpenXrVulkanSubmissionTracker.SubmissionAdmissionTicket admissionTicket,
+        ref bool trackerOwnsCommand,
+        CommandBuffer commandBuffer,
+        in VulkanSubmissionDiagnosticContext diagnosticContext)
+    {
+        Span<uint> frameSlots = stackalloc uint[0];
+        trackerOwnsCommand = OpenXrSubmissionTracker.RegisterSubmission(
+            admissionTicket, 0UL, 0L, 0U, 0U, 0U,
+            firstRecorded: default, hasFirst: false,
+            secondRecorded: default, hasSecond: false,
+            firstPrepared: default, hasFirstPrepared: false,
+            secondPrepared: default, hasSecondPrepared: false,
+            uploads: null, additionalUploads: null,
+            timelineSemaphore: default, timelineValue: 0UL,
+            MappedFrameArena, MappedFrameArena?.Generation ?? 0UL,
+            ResourceRuntime.FrameDataArena, ResourceRuntime.FrameDataArena?.Generation ?? 0UL,
+            frameSlots, 0L, 0L,
+            temporaryCommandBuffer: commandBuffer);
+        return SubmitAndWaitOpenXr(new VulkanOpenXrSubmissionInput(
+            commandBuffer, default, default, 1, diagnosticContext,
+            AdmissionTicket: admissionTicket));
     }
 
     internal bool TryRecordOpenXrEyeMirrorPublishCommandBuffer(

@@ -589,6 +589,13 @@ internal sealed class FrameOperationStream
                 index,
                 EVulkanPrimaryPlanNodeKind.AdvancedVisibility).PayloadIndex];
 
+    internal VulkanAdvancedNativeComputeClosureStorage
+        GetAdvancedVisibilityNativeComputeClosureStorage(int index)
+        => _payloads.AdvancedVisibilityNativeComputeClosures[
+            RequireKind(
+                index,
+                EVulkanPrimaryPlanNodeKind.AdvancedVisibility).PayloadIndex];
+
     /// <summary>
     /// Publishes the one admissible native set-1 allocation for a sealed
     /// visibility operation. This is deliberately the only mutation allowed
@@ -768,6 +775,32 @@ internal sealed class FrameOperationStream
         return VulkanAdvancedVisibilityPipelineReadiness.Ready;
     }
 
+    internal bool TryAssociateAdvancedNativeComputeClosure(
+        int index,
+        in VulkanAdvancedVisibilityStageRequest request,
+        in VulkanAdvancedNativeComputeClosure closure,
+        DescriptorSet descriptorSet,
+        in VulkanAdvancedNativeComputePipelines pipelines)
+    {
+        if (!closure.IsValid || descriptorSet.Handle == 0 || !pipelines.IsCurrent ||
+            (uint)index >= (uint)_count ||
+            _headers[index].OpCode != EVulkanPrimaryPlanNodeKind.AdvancedVisibility)
+            return false;
+        ref readonly FrameOperationHeader header = ref _headers[index];
+        VulkanAdvancedVisibilityOperationPayload payload = _payloads.AdvancedVisibilities[header.PayloadIndex];
+        if (!payload.Request.Equals(request) ||
+            payload.NativeComputeClosure is { } current && current != closure ||
+            payload.NativeComputePipelines != default && payload.NativeComputePipelines != pipelines)
+            return false;
+        _payloads.AdvancedVisibilities[header.PayloadIndex] = payload with
+        {
+            NativeComputeClosure = closure,
+            NativeComputeDescriptorSet = descriptorSet,
+            NativeComputePipelines = pipelines,
+        };
+        return true;
+    }
+
     internal bool TrySealAdvancedVisibilityLateDescriptors(
         int index,
         in VulkanAdvancedVisibilityStageRequest request,
@@ -908,6 +941,8 @@ internal sealed class FrameOperationStream
                     default,
                     default,
                     null,
+                    null,
+                    default,
                     null,
                     default,
                     0u,

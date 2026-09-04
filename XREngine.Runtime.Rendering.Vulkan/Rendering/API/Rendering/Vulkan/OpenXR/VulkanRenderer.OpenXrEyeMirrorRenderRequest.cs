@@ -10,4 +10,5 @@ internal readonly record struct OpenXrEyeMirrorRenderRequest(
     uint OpenXrImageIndex,
     Action EmitFrameOps,
     bool RendersExternalSwapchainTarget = true,
+    OpenXrSubmissionMetadata SubmissionMetadata = default,
     ulong ViewBatchStructuralIdentity = 0UL);

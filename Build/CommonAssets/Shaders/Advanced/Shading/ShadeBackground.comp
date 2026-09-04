@@ -1,46 +1,31 @@
 #version 450
-
+#include "AdvancedShadingInterface.glslinc"
 layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
-
-layout(push_constant, std430) uniform XRAdvancedSkyPush
-{
-    uvec2 screenExtent;
-    uint viewIndex;
-    uint enableProceduralSky;
-    vec4 clearColor;
-    vec4 skyHorizonColor;
-    vec4 skyZenithColor;
-} u_Push;
-
-layout(set = 0, binding = 0) uniform usampler2DArray u_VisibilityIdentity;
-layout(formatName = rgba16f, binding = 1) uniform writeonly image2DArray out_HDRSceneColor;
-layout(formatName = rg16f, binding = 2) uniform writeonly image2DArray out_Velocity;
-
+#if defined(XR_ADV_VISIBILITY_ARRAY)
+XR_ADV_SHADING_LAYOUT(0) uniform usampler2DArray VisibilityIdentity;
+XR_ADV_SHADING_IMAGE(rgba16f, 15) writeonly uniform image2DArray HDRSceneColor;
+XR_ADV_SHADING_IMAGE(rg16f, 16) writeonly uniform image2DArray Velocity;
+XR_ADV_SHADING_IMAGE(r8, 17) writeonly uniform image2DArray ReactiveMask;
+XR_ADV_SHADING_IMAGE(r32ui, 18) writeonly uniform uimage2DArray ShadingDiagnostics;
+#define XR_ADV_PIXEL(pixel) ivec3(pixel, u_Push.viewIndex)
+#else
+XR_ADV_SHADING_LAYOUT(0) uniform usampler2D VisibilityIdentity;
+XR_ADV_SHADING_IMAGE(rgba16f, 15) writeonly uniform image2D HDRSceneColor;
+XR_ADV_SHADING_IMAGE(rg16f, 16) writeonly uniform image2D Velocity;
+XR_ADV_SHADING_IMAGE(r8, 17) writeonly uniform image2D ReactiveMask;
+XR_ADV_SHADING_IMAGE(r32ui, 18) writeonly uniform uimage2D ShadingDiagnostics;
+#define XR_ADV_PIXEL(pixel) ivec2(pixel)
+#endif
 void main()
 {
-    uvec2 pixelCoord = gl_GlobalInvocationID.xy;
-    if (pixelCoord.x >= u_Push.screenExtent.x || pixelCoord.y >= u_Push.screenExtent.y)
-        return;
-
-    uvec4 rawIdentity = texelFetch(u_VisibilityIdentity, ivec3(pixelCoord, u_Push.viewIndex), 0);
-    uint drawId = rawIdentity.r;
-
-    // Only shade visibility-sentinel pixels (DrawId == 0)
-    if (drawId != 0u)
-        return;
-
-    vec3 backgroundColor = u_Push.clearColor.rgb;
-
-    if (u_Push.enableProceduralSky != 0u)
-    {
-        // Simple vertical gradient for procedural sky
-        float t = float(pixelCoord.y) / float(u_Push.screenExtent.y);
-        backgroundColor = mix(u_Push.skyZenithColor.rgb, u_Push.skyHorizonColor.rgb, t);
-    }
-
-    // Write background color with alpha = 0.0 (enabling XR video passthrough and clean capture)
-    imageStore(out_HDRSceneColor, ivec3(pixelCoord, u_Push.viewIndex), vec4(backgroundColor, 0.0));
-
-    // Zero velocity for static background
-    imageStore(out_Velocity, ivec3(pixelCoord, u_Push.viewIndex), vec4(0.0));
+    uvec2 pixel = gl_GlobalInvocationID.xy;
+    if (any(greaterThanEqual(pixel, u_Push.screenExtent))) return;
+    uint drawId = texelFetch(VisibilityIdentity, XR_ADV_PIXEL(pixel), 0).r;
+    bool background = drawId == 0u || drawId == XR_ADV_VIS_INVALID;
+    // Initialize every pixel/sidecar; an invalid non-background material stays
+    // visibly diagnostic instead of exposing stale contents from a prior frame.
+    imageStore(HDRSceneColor, XR_ADV_PIXEL(pixel), background ? u_Push.backgroundColor : vec4(1.0, 0.0, 1.0, 1.0));
+    imageStore(ShadingDiagnostics, XR_ADV_PIXEL(pixel), uvec4(background ? 255u << 8u : 1u << 16u));
+    imageStore(Velocity, XR_ADV_PIXEL(pixel), vec4(0.0));
+    imageStore(ReactiveMask, XR_ADV_PIXEL(pixel), vec4(background ? 0.0 : 1.0));
 }

@@ -9,7 +9,7 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal sealed class VulkanAdvancedSceneResidentLookups
 {
-    internal const int OwnerCount = 12;
+    internal const int OwnerCount = 13;
 
     private readonly uint[] _capacities = new uint[OwnerCount];
     private readonly uint[] _counts = new uint[OwnerCount];

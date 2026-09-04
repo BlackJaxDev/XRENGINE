@@ -227,23 +227,22 @@ public unsafe partial class OpenXRAPI
     {
         AssertOpenXrRenderThread(nameof(RenderEye));
         uint imageIndex = 0;
-        var acquireInfo = new SwapchainImageAcquireInfo
-        {
-            Type = StructureType.SwapchainImageAcquireInfo
-        };
-
         bool acquired = false;
+        IXrGraphicsBinding? binding = null;
         int frameNo = Volatile.Read(ref _openXrPendingFrameNumber);
         try
         {
             if (Window?.Renderer is AbstractRenderer renderer &&
-                TryGetOrCreateGraphicsBinding(renderer, out IXrGraphicsBinding? binding) &&
+                TryGetOrCreateGraphicsBinding(renderer, out binding) &&
                 binding.ShouldPrewarmEyeResources(this, viewIndex))
             {
                 binding.PrewarmEyeResources(this, viewIndex);
             }
 
-            var acquireResult = CheckResult(Api.AcquireSwapchainImage(_swapchains[viewIndex], in acquireInfo, ref imageIndex), "xrAcquireSwapchainImage");
+            if (binding is null)
+                return false;
+
+            var acquireResult = CheckResult(binding.AcquireSwapchainImage(this, _swapchains[viewIndex], out imageIndex), "xrAcquireSwapchainImage");
             if (acquireResult != Result.Success)
                 return false;
             acquired = true;
@@ -253,15 +252,9 @@ public unsafe partial class OpenXRAPI
                 Debug.Out($"OpenXR[{frameNo}] Eye{viewIndex}: Acquire => {acquireResult} imageIndex={imageIndex}");
 
             // Wait for image ready
-            var waitInfo = new SwapchainImageWaitInfo
-            {
-                Type = StructureType.SwapchainImageWaitInfo,
-                // OpenXR timeouts are in nanoseconds. Use XR_INFINITE_DURATION (int64 max)
-                // to avoid leaking an acquired image on timeout or stalling frame submission.
-                Timeout = long.MaxValue
-            };
-
-            var waitResult = CheckResult(Api.WaitSwapchainImage(_swapchains[viewIndex], in waitInfo), "xrWaitSwapchainImage");
+            // OpenXR timeouts are in nanoseconds. Use XR_INFINITE_DURATION (int64 max)
+            // to avoid leaking an acquired image on timeout or stalling frame submission.
+            var waitResult = CheckResult(binding.WaitSwapchainImage(this, _swapchains[viewIndex], long.MaxValue), "xrWaitSwapchainImage");
             if (waitResult != Result.Success)
                 return false;
             RecordSmokeEyeWait(viewIndex);
@@ -297,8 +290,10 @@ public unsafe partial class OpenXRAPI
             // Always release if we acquired; otherwise the runtime can eventually stall and/or the driver can hang.
             if (acquired)
             {
-                var releaseInfo = new SwapchainImageReleaseInfo { Type = StructureType.SwapchainImageReleaseInfo };
-                var releaseResult = CheckResult(Api.ReleaseSwapchainImage(_swapchains[viewIndex], in releaseInfo), "xrReleaseSwapchainImage");
+                IXrGraphicsBinding? releaseBinding = _graphicsBinding;
+                var releaseResult = releaseBinding is null
+                    ? Result.ErrorHandleInvalid
+                    : CheckResult(releaseBinding.ReleaseSwapchainImage(this, _swapchains[viewIndex]), "xrReleaseSwapchainImage");
                 if (releaseResult == Result.Success)
                     RecordSmokeEyeRelease(viewIndex);
                 if (OpenXrDebugLifecycle && frameNo != 0 && ShouldLogLifecycle(frameNo))

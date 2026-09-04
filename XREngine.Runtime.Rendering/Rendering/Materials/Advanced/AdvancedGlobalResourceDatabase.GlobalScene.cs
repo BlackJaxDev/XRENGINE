@@ -9,6 +9,54 @@ namespace XREngine.Rendering;
 /// </summary>
 public sealed partial class AdvancedGlobalResourceDatabase
 {
+    /// <summary>
+    /// Adds a light-owned contiguous shadow group. The returned first handle is
+    /// the canonical value stored in <see cref="AdvancedLightRecord.ShadowRecord"/>;
+    /// physical rows remain contiguous until the next explicit compaction boundary.
+    /// </summary>
+    public bool TryAddShadowGroup(
+        ReadOnlySpan<AdvancedShadowRecord> source,
+        Span<AdvancedGpuHandle> handles,
+        out AdvancedGpuHandle first)
+    {
+        first = AdvancedGpuHandle.Invalid;
+        if (source.IsEmpty || handles.Length < source.Length ||
+            // Each insertion is followed by an identity-stamping replacement.
+            !Shadows.CanAddContiguous(source.Length, source.Length, 0) ||
+            !Shadows.TryAddContiguous(source, handles))
+        {
+            return false;
+        }
+
+        for (int index = 0; index < source.Length; ++index)
+        {
+            AdvancedShadowRecord record = source[index];
+            AdvancedGpuHandle handle = handles[index];
+            record.StableShadowId = handle.Index;
+            record.Generation = handle.Generation;
+            if (!Shadows.TryReplace(handle, record))
+                throw new InvalidOperationException("Newly inserted shadow group row could not be initialized.");
+        }
+
+        first = handles[0];
+        IncrementGeneration(ref _shadowGeneration);
+        return true;
+    }
+
+    public bool RemoveShadowGroup(ReadOnlySpan<AdvancedGpuHandle> handles)
+    {
+        if (handles.IsEmpty || !Shadows.CanApply(0, 0, handles.Length))
+            return false;
+        for (int index = 0; index < handles.Length; ++index)
+            if (!Shadows.IsCurrent(handles[index]))
+                return false;
+        for (int index = 0; index < handles.Length; ++index)
+            if (!Shadows.TryTombstone(handles[index]))
+                throw new InvalidOperationException("A preflighted shadow-group retirement failed.");
+        IncrementGeneration(ref _shadowGeneration);
+        return true;
+    }
+
     public bool TryAddLight(in AdvancedLightRecord source, out AdvancedGpuHandle handle)
     {
         AdvancedLightRecord record = source;

@@ -36,6 +36,9 @@ public sealed class AdvancedGpuRecordTable<T> where T : unmanaged
     private ulong _contentGeneration = 1u;
     private ulong _lookupGeneration = 1u;
     private bool _isPacked = true;
+    // A group can expose its first physical row to shader records. Individual
+    // relocation would make that physical range point at unrelated records.
+    private bool _hasPhysicalContiguousGroups;
 
     public AdvancedGpuRecordTable(uint capacity)
     {
@@ -239,6 +242,138 @@ public sealed class AdvancedGpuRecordTable<T> where T : unmanaged
     }
 
     /// <summary>
+    /// Adds a physical-contiguous group as one preflighted operation.  Shadow
+    /// groups use this so a light can address its cascades/faces with a single
+    /// first-row handle and a count.  Callers serialize mutations through the
+    /// publication transaction; failure leaves this table unchanged.
+    /// </summary>
+    internal bool TryAddContiguous(
+        ReadOnlySpan<T> values,
+        Span<AdvancedGpuHandle> handles)
+    {
+        if (values.IsEmpty || handles.Length < values.Length ||
+            !CanAddContiguous(values.Length, 0, 0))
+            return false;
+
+        uint start = FindContiguousFreeDenseRange(values.Length);
+        if (start == AdvancedGpuHandleRemap.InvalidDenseIndex)
+            return false;
+
+        uint originalNextSlot = _nextSlotIndex;
+        uint originalFreeSlotCount = _freeSlotCount;
+        uint originalCount = _count;
+        uint originalHighWater = _physicalHighWater;
+        int originalDeltaCount = _publicationDeltaCount;
+        uint originalDirtyMin = _dirtyMin;
+        uint originalDirtyMax = _dirtyMaxExclusive;
+        uint originalLookupDirtyMin = _lookupDirtyMin;
+        uint originalLookupDirtyMax = _lookupDirtyMaxExclusive;
+        ulong originalTopology = _topologyGeneration;
+
+        for (int index = 0; index < values.Length; ++index)
+        {
+            uint denseIndex = start + (uint)index;
+            uint slotIndex;
+            if (_freeSlotCount > 0u)
+                slotIndex = _freeSlots[--_freeSlotCount];
+            else if (_nextSlotIndex <= Capacity)
+                slotIndex = _nextSlotIndex++;
+            else
+            {
+                RollBackContiguousAdd(start, index, originalNextSlot, originalFreeSlotCount,
+                    originalCount, originalHighWater, originalDeltaCount, originalDirtyMin,
+                    originalDirtyMax, originalLookupDirtyMin, originalLookupDirtyMax, originalTopology);
+                return false;
+            }
+
+            uint generation = _slotGenerations[slotIndex];
+            if (generation == 0u)
+                generation = 1u;
+            AdvancedGpuHandle handle = new(slotIndex, generation);
+            _slotGenerations[slotIndex] = generation;
+            _slotToDense[slotIndex] = denseIndex;
+            _slotTombstones[slotIndex] = 0;
+            _records[denseIndex] = values[index];
+            _physicalHandles[denseIndex] = handle;
+            _physicalOccupancy[denseIndex] = 1;
+            handles[index] = handle;
+            ++_count;
+            if (denseIndex >= _physicalHighWater)
+                _physicalHighWater = denseIndex + 1u;
+            MarkDirty(denseIndex);
+            MarkLogicalLookupDirty(slotIndex);
+            AppendPublicationDelta(new AdvancedGpuRecordPublicationDelta(handle,
+                EAdvancedGpuRecordPublicationChange.Added, EAdvancedGpuMutationDomain.LayoutTopology,
+                AdvancedGpuHandleRemap.InvalidDenseIndex, denseIndex, _activePublicationGeneration));
+            AdvanceTopologyMutation();
+        }
+
+        RecalculatePackedState();
+        _hasPhysicalContiguousGroups = true;
+        return true;
+    }
+
+    /// <summary>
+    /// Preflights a group whose consumer addresses a contiguous physical span.
+    /// This is deliberately stronger than row-count preflight: fragmented free
+    /// rows cannot satisfy a cascade/face group atomically.
+    /// </summary>
+    internal bool CanAddContiguous(int addCount, int replaceCount, int tombstoneCount)
+        => addCount > 0 &&
+           CanApply(addCount, replaceCount, tombstoneCount) &&
+           FindContiguousFreeDenseRange(addCount) != AdvancedGpuHandleRemap.InvalidDenseIndex;
+
+    /// <summary>
+    /// Preflights several future contiguous groups by reserving a contiguous
+    /// suffix. It intentionally does not depend on holes which may be pinned
+    /// by an in-flight publication when the transaction is applied.
+    /// </summary>
+    internal bool CanReserveContiguousAppend(int rowCount)
+        => rowCount >= 0 && (uint)rowCount <= Capacity - _physicalHighWater;
+
+    private uint FindContiguousFreeDenseRange(int count)
+    {
+        uint required = checked((uint)count);
+        if (required > Capacity - _count)
+            return AdvancedGpuHandleRemap.InvalidDenseIndex;
+        for (uint start = 0u; start <= Capacity - required; ++start)
+        {
+            uint index = 0u;
+            for (; index < required && _physicalOccupancy[start + index] == 0; ++index) { }
+            if (index == required)
+                return start;
+        }
+        return AdvancedGpuHandleRemap.InvalidDenseIndex;
+    }
+
+    private void RollBackContiguousAdd(uint start, int added, uint nextSlot, uint freeSlots,
+        uint count, uint highWater, int deltaCount, uint dirtyMin, uint dirtyMax,
+        uint lookupDirtyMin, uint lookupDirtyMax, ulong topology)
+    {
+        for (int index = 0; index < added; ++index)
+        {
+            uint denseIndex = start + (uint)index;
+            AdvancedGpuHandle handle = _physicalHandles[denseIndex];
+            _records[denseIndex] = default;
+            _physicalHandles[denseIndex] = AdvancedGpuHandle.Invalid;
+            _physicalOccupancy[denseIndex] = 0;
+            _slotToDense[handle.Index] = AdvancedGpuHandleRemap.InvalidDenseIndex;
+            _slotTombstones[handle.Index] = 0;
+        }
+        _nextSlotIndex = nextSlot;
+        _freeSlotCount = freeSlots;
+        _count = count;
+        _physicalHighWater = highWater;
+        _publicationDeltaCount = deltaCount;
+        _dirtyMin = dirtyMin;
+        _dirtyMaxExclusive = dirtyMax;
+        _lookupDirtyMin = lookupDirtyMin;
+        _lookupDirtyMaxExclusive = lookupDirtyMax;
+        _topologyGeneration = topology;
+        RecalculatePackedState();
+    }
+
+    /// <summary>
     /// Internal rollback escape hatch for records created before a publication is
     /// exposed. Production retirement must use <see cref="TryTombstone"/>.
     /// </summary>
@@ -334,6 +469,10 @@ public sealed class AdvancedGpuRecordTable<T> where T : unmanaged
 
     public bool IsCurrent(AdvancedGpuHandle handle)
         => TryGetDenseIndex(handle, out _);
+
+    /// <summary>Returns the current physical row for one live logical handle.</summary>
+    internal bool TryGetPhysicalIndex(AdvancedGpuHandle handle, out uint physicalIndex)
+        => TryGetDenseIndex(handle, out physicalIndex);
 
     /// <summary>
     /// Invalidates <paramref name="handle"/> for new logical lookups immediately,
@@ -535,6 +674,11 @@ public sealed class AdvancedGpuRecordTable<T> where T : unmanaged
         // is in flight could invalidate the dense index retained by an old frame.
         if (_retiredSlotCount != 0u)
             return -1;
+        // A consumer may retain CascadeOffset (or an equivalent physical range)
+        // rather than resolve every row through its logical handle. Preserve
+        // that layout until the owner explicitly retires/rebuilds the table.
+        if (_hasPhysicalContiguousGroups)
+            return _isPacked ? 0 : -1;
         if (_isPacked)
             return 0;
 

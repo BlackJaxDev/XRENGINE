@@ -56,6 +56,9 @@ bool XR_ADV_IsSupportedVisibilityProducer(uint producer)
 #define XR_ADV_BINDING_VISIBILITY_MESHLET_DESCRIPTORS 36
 #define XR_ADV_BINDING_VISIBILITY_MESHLET_VERTEX_INDICES 37
 #define XR_ADV_BINDING_VISIBILITY_MESHLET_TRIANGLE_WORDS 38
+#ifndef XR_ADV_BINDING_PREPARED_DRAW_DEFORMATIONS
+#define XR_ADV_BINDING_PREPARED_DRAW_DEFORMATIONS 46
+#endif
 // Late visibility never overwrites the early producer's GPU-owned streams.
 // These three frame-slot ranges retain recovered candidates and their indexed
 // indirect expansion until the load-preserving late raster consumes them.
@@ -150,6 +153,7 @@ struct XRAdvancedVisibilityCounterRecord
     uvec2 shadingKernelLookupSegment;
     uvec2 textureLookupSegment;
     uvec2 samplerLookupSegment;
+    uvec2 shadowLookupSegment;
 };
 
 XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_VISIBILITY_COUNTERS)
@@ -240,6 +244,61 @@ readonly buffer XRAdvancedVisibilityMeshletTriangleTable
     uint records[];
 } XR_ADV_VisibilityMeshletTriangleWords;
 
+#define XR_ADV_PREPARED_DEFORMATION_ACTIVE 1u
+#define XR_ADV_PREPARED_DEFORMATION_PREVIOUS_VALID 2u
+
+struct XRAdvancedPreparedDrawDeformationRecord
+{
+    XRAdvancedGpuHandle geometry;
+    XRAdvancedGpuHandle deformation;
+    uint currentVertexOffset;
+    uint previousVertexOffset;
+    uint vertexCount;
+    uint flags;
+};
+
+XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_PREPARED_DRAW_DEFORMATIONS)
+readonly buffer XRAdvancedPreparedDrawDeformationTable
+{
+    XRAdvancedPreparedDrawDeformationRecord records[];
+} XR_ADV_PreparedDrawDeformations;
+
+bool XR_ADV_PreparedDeformationActive(
+    XRAdvancedPreparedDrawDeformationRecord record)
+{
+    return (record.flags & XR_ADV_PREPARED_DEFORMATION_ACTIVE) != 0u;
+}
+
+bool XR_ADV_PreparedDeformationPreviousValid(
+    XRAdvancedPreparedDrawDeformationRecord record)
+{
+    return (record.flags &
+        XR_ADV_PREPARED_DEFORMATION_PREVIOUS_VALID) != 0u;
+}
+
+bool XR_ADV_TryLoadPreparedDrawDeformation(
+    uint drawDense,
+    XRAdvancedDrawRecord draw,
+    out XRAdvancedPreparedDrawDeformationRecord record)
+{
+    record = XRAdvancedPreparedDrawDeformationRecord(
+        XRAdvancedGpuHandle(0u, 0u),
+        XRAdvancedGpuHandle(0u, 0u),
+        0u, 0u, 0u, 0u);
+    if (drawDense >=
+        uint(XR_ADV_PreparedDrawDeformations.records.length()))
+    {
+        return false;
+    }
+
+    record = XR_ADV_PreparedDrawDeformations.records[drawDense];
+    return XR_ADV_PreparedDeformationActive(record) &&
+        record.geometry.index == draw.geometry.index &&
+        record.geometry.generation == draw.geometry.generation &&
+        record.deformation.index == draw.deformation.index &&
+        record.deformation.generation == draw.deformation.generation &&
+        record.vertexCount != 0u;
+}
 #if defined(XR_ADV_ENABLE_LATE_VISIBILITY_OUTPUTS)
 XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_VISIBILITY_LATE_VISIBLE_INDICES)
 buffer XRAdvancedVisibilityLateVisibleIndices { uint records[]; } XR_ADV_VisibilityLateVisibleIndices;
@@ -270,6 +329,7 @@ writeonly uniform image2D XR_ADV_DepthPyramidStorage;
 #define VisibilityShadingKernelLookupSegment XR_ADV_VisibilityCounters.shadingKernelLookupSegment
 #define VisibilityTextureLookupSegment XR_ADV_VisibilityCounters.textureLookupSegment
 #define VisibilitySamplerLookupSegment XR_ADV_VisibilityCounters.samplerLookupSegment
+#define VisibilityShadowLookupSegment XR_ADV_VisibilityCounters.shadowLookupSegment
 
 uint XR_ADV_ResolveVisibilityHandle(
     XRAdvancedGpuHandle handle,

@@ -14,6 +14,7 @@ internal sealed class VulkanAdvancedVisibilityInputStorage
     private EAdvancedGeometryProducer[] _producers;
     private AdvancedIndirectRange[] _indirectRanges;
     private int[] _indirectPayloadIndices;
+    private AdvancedDeformedArenaSlice[] _deformationSlices;
     private VulkanAdvancedVisibilityStageRequest _familyRequest;
     private int _payloadCount;
     private int _candidateCount;
@@ -38,6 +39,7 @@ internal sealed class VulkanAdvancedVisibilityInputStorage
         _producers = new EAdvancedGeometryProducer[drawCapacity];
         _indirectRanges = new AdvancedIndirectRange[indirectRangeCapacity];
         _indirectPayloadIndices = new int[drawCapacity];
+        _deformationSlices = new AdvancedDeformedArenaSlice[drawCapacity];
     }
 
     internal bool IsValid
@@ -48,7 +50,11 @@ internal sealed class VulkanAdvancedVisibilityInputStorage
            Indirect.RangeCount == (uint)_indirectRangeCount &&
            _candidateCount == _payloadCount &&
            _producerCount == _payloadCount &&
-           _indirectPayloadIndexCount == _payloadCount;
+           _indirectPayloadIndexCount == _payloadCount &&
+           DeformationPublication.FrameId == Publication.FrameId &&
+           (Publication.DeformationJobCount == 0u ||
+            (Publication.AggregateDispatchExecuted &&
+             DeformationPublication.JobCount == Publication.DeformationJobCount));
 
     internal AdvancedPreparationPublication Publication { get; private set; }
 
@@ -69,11 +75,17 @@ internal sealed class VulkanAdvancedVisibilityInputStorage
     internal ReadOnlySpan<int> IndirectPayloadIndices
         => _indirectPayloadIndices.AsSpan(0, _indirectPayloadIndexCount);
 
+    internal ReadOnlySpan<AdvancedDeformedArenaSlice> DeformationSlices
+        => _deformationSlices.AsSpan(0, _payloadCount);
+
+    internal AdvancedGpuDeformationPublication DeformationPublication { get; private set; }
+
     internal void Reset()
     {
         _familyRequest = default;
         Publication = default;
         Indirect = default;
+        DeformationPublication = default;
         _payloadCount = 0;
         _candidateCount = 0;
         _producerCount = 0;
@@ -111,8 +123,9 @@ internal sealed class VulkanAdvancedVisibilityInputStorage
             ref _indirectPayloadIndices,
             payloadCount,
             "indirect-payload-index");
+        EnsureCapacity(ref _deformationSlices, payloadCount, "deformation-slice");
 
-        if (!AdvancedSharedPreparationService.Instance.TryCopyVisibilityColumns(
+        if (!AdvancedSharedPreparationService.Instance.TryCopyVisibilityInputs(
                 request.Extractor,
                 in publication,
                 _payloads.AsSpan(0, payloadCount),
@@ -120,7 +133,9 @@ internal sealed class VulkanAdvancedVisibilityInputStorage
                 _producers.AsSpan(0, payloadCount),
                 _indirectRanges.AsSpan(0, indirectRangeCount),
                 _indirectPayloadIndices.AsSpan(0, payloadCount),
-                out AdvancedIndirectPreparationResult indirect))
+                _deformationSlices.AsSpan(0, payloadCount),
+                out AdvancedIndirectPreparationResult indirect,
+                out AdvancedGpuDeformationPublication deformationPublication))
         {
             failureReason =
                 "The advanced visibility publication changed before its authoring columns could be retained.";
@@ -128,7 +143,11 @@ internal sealed class VulkanAdvancedVisibilityInputStorage
         }
 
         if (indirect.PayloadCount != publication.DrawCount ||
-            indirect.RangeCount != publication.IndirectRangeCount)
+            indirect.RangeCount != publication.IndirectRangeCount ||
+            (publication.DeformationJobCount != 0u &&
+             (!publication.AggregateDispatchExecuted ||
+              deformationPublication.FrameId != publication.FrameId ||
+              deformationPublication.JobCount != publication.DeformationJobCount)))
         {
             Reset();
             failureReason =
@@ -139,6 +158,7 @@ internal sealed class VulkanAdvancedVisibilityInputStorage
         _familyRequest = request;
         Publication = publication;
         Indirect = indirect;
+        DeformationPublication = deformationPublication;
         _payloadCount = payloadCount;
         _candidateCount = payloadCount;
         _producerCount = payloadCount;
@@ -185,6 +205,8 @@ internal sealed class VulkanAdvancedVisibilityInputStorage
             authoringInput.IndirectRanges;
         ReadOnlySpan<int> indirectPayloadIndices =
             authoringInput.IndirectPayloadIndices;
+        ReadOnlySpan<AdvancedDeformedArenaSlice> deformationSlices =
+            authoringInput.DeformationSlices;
 
         EnsureCapacity(ref _payloads, payloads.Length, "payload");
         EnsureCapacity(ref _candidates, candidates.Length, "candidate");
@@ -197,16 +219,19 @@ internal sealed class VulkanAdvancedVisibilityInputStorage
             ref _indirectPayloadIndices,
             indirectPayloadIndices.Length,
             "indirect-payload-index");
+        EnsureCapacity(ref _deformationSlices, deformationSlices.Length, "deformation-slice");
 
         payloads.CopyTo(_payloads);
         candidates.CopyTo(_candidates);
         producers.CopyTo(_producers);
         indirectRanges.CopyTo(_indirectRanges);
         indirectPayloadIndices.CopyTo(_indirectPayloadIndices);
+        deformationSlices.CopyTo(_deformationSlices);
 
         _familyRequest = request;
         Publication = authoringInput.Publication;
         Indirect = authoringInput.Indirect;
+        DeformationPublication = authoringInput.DeformationPublication;
         _payloadCount = payloads.Length;
         _candidateCount = candidates.Length;
         _producerCount = producers.Length;

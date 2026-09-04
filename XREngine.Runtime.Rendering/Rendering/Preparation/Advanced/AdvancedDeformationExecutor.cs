@@ -14,19 +14,49 @@ public sealed class AdvancedDeformationExecutor
         EAdvancedDeformationExecutionMode mode,
         uint admissionOverflowCount)
     {
+        if (!TryExecute(
+                planner,
+                backend,
+                jobs,
+                consumers,
+                mode,
+                admissionOverflowCount,
+                out AdvancedDeformationDispatchTelemetry telemetry,
+                out ERendererComputeEnqueueStatus status,
+                out _))
+        {
+            throw new InvalidOperationException(
+                $"Aggregate deformation enqueue failed with {status}.");
+        }
+
+        return telemetry;
+    }
+
+    public bool TryExecute(
+        AdvancedDeformationDispatchPlanner planner,
+        IAdvancedDeformationDispatchBackend backend,
+        ReadOnlySpan<AdvancedDeformationJobRecord> jobs,
+        EAdvancedPreparationConsumer consumers,
+        EAdvancedDeformationExecutionMode mode,
+        uint admissionOverflowCount,
+        out AdvancedDeformationDispatchTelemetry telemetry,
+        out ERendererComputeEnqueueStatus status,
+        out uint enqueuedDispatchCount)
+    {
         ArgumentNullException.ThrowIfNull(planner);
         ArgumentNullException.ThrowIfNull(backend);
+        enqueuedDispatchCount = 0u;
 
         if (mode == EAdvancedDeformationExecutionMode.DirectVertexDiagnostic)
         {
-            return new AdvancedDeformationDispatchTelemetry(
-                JobCount: checked((uint)jobs.Length),
-                VertexCount: CountVertices(jobs),
-                OutputBytes: CountBytes(jobs),
-                DispatchCount: 0u,
-                FamilyOverflowCount: planner.FamilyOverflowCount,
-                AdmissionOverflowCount: admissionOverflowCount,
-                GpuMilliseconds: 0.0);
+            telemetry = CreateTelemetry(
+                planner,
+                backend,
+                jobs,
+                admissionOverflowCount,
+                dispatchCount: 0u);
+            status = ERendererComputeEnqueueStatus.Enqueued;
+            return true;
         }
 
         if (!backend.SupportsAggregateCompute)
@@ -41,11 +71,23 @@ public sealed class AdvancedDeformationExecutor
         for (int batchIndex = 0; batchIndex < batches.Length; batchIndex++)
         {
             AdvancedDeformationDispatchBatch batch = batches[batchIndex];
-            backend.Dispatch(
-                batch,
+            status = backend.TryDispatch(
+                in batch,
                 indices.Slice(
                     checked((int)batch.FirstJobIndex),
                     checked((int)batch.JobCount)));
+            if (status != ERendererComputeEnqueueStatus.Enqueued)
+            {
+                telemetry = CreateTelemetry(
+                    planner,
+                    backend,
+                    jobs,
+                    admissionOverflowCount,
+                    enqueuedDispatchCount);
+                return false;
+            }
+
+            enqueuedDispatchCount++;
         }
 
         Span<AdvancedPreparationBarrier> barriers =
@@ -60,17 +102,44 @@ public sealed class AdvancedDeformationExecutor
         }
 
         for (int barrierIndex = 0; barrierIndex < barrierCount; barrierIndex++)
-            backend.ApplyBarrier(barriers[barrierIndex]);
+        {
+            status = backend.TryApplyBarrier(in barriers[barrierIndex]);
+            if (status != ERendererComputeEnqueueStatus.Enqueued)
+            {
+                telemetry = CreateTelemetry(
+                    planner,
+                    backend,
+                    jobs,
+                    admissionOverflowCount,
+                    enqueuedDispatchCount);
+                return false;
+            }
+        }
 
-        return new AdvancedDeformationDispatchTelemetry(
+        telemetry = CreateTelemetry(
+            planner,
+            backend,
+            jobs,
+            admissionOverflowCount,
+            enqueuedDispatchCount);
+        status = ERendererComputeEnqueueStatus.Enqueued;
+        return true;
+    }
+
+    private static AdvancedDeformationDispatchTelemetry CreateTelemetry(
+        AdvancedDeformationDispatchPlanner planner,
+        IAdvancedDeformationDispatchBackend backend,
+        ReadOnlySpan<AdvancedDeformationJobRecord> jobs,
+        uint admissionOverflowCount,
+        uint dispatchCount)
+        => new(
             JobCount: checked((uint)jobs.Length),
             VertexCount: CountVertices(jobs),
             OutputBytes: CountBytes(jobs),
-            DispatchCount: checked((uint)batches.Length),
+            DispatchCount: dispatchCount,
             FamilyOverflowCount: planner.FamilyOverflowCount,
             AdmissionOverflowCount: admissionOverflowCount,
             GpuMilliseconds: backend.LastGpuMilliseconds);
-    }
 
     private static ulong CountVertices(
         ReadOnlySpan<AdvancedDeformationJobRecord> jobs)

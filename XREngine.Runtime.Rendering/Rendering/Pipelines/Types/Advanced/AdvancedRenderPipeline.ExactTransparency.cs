@@ -35,7 +35,8 @@ public partial class AdvancedRenderPipeline
     internal uint PpllMaxNodeCount => ComputePpllNodeCapacity();
 
     private bool ExactTransparencyEnabled
-        => !Stereo &&
+        => AllowsLateTransparency &&
+           !Stereo &&
            !UseOpenXrVulkanDesktopStartupSafePath &&
            RuntimeEngine.EditorPreferences.Debug.EnableExactTransparencyTechniques;
 
@@ -78,21 +79,15 @@ public partial class AdvancedRenderPipeline
 
     private void AppendExactTransparencyCommands(ViewportRenderCommandContainer c)
     {
-        if (!ExactTransparencyEnabled)
+        if (!HasAdvancedExactTransparencyConsumers())
             return;
 
 
 
 
 
-        for (int layerIndex = 0; layerIndex < ActiveDepthPeelLayerCount; layerIndex++)
+        if (HasRenderPassCommands((int)EDefaultRenderPass.PerPixelLinkedListForward))
         {
-            int capture = layerIndex;
-        }
-
-        c.Add<VPRC_RenderQuadToFBO>()
-            .SetTargets(SceneCopyFBOName, TransparentSceneCopyFBOName)
-            .SetRenderGraphResources(DefaultRenderPipelineQuadDescriptors.SceneCopy());
         var resetPpll = c.Add<VPRC_ResetPpllResources>();
         resetPpll.CounterBufferName = PpllCounterBufferName;
         resetPpll.HeadPointerTextureName = PpllHeadPointerTextureName;
@@ -140,32 +135,38 @@ public partial class AdvancedRenderPipeline
         {
             c.Add<VPRC_RenderQuadToFBO>().SetOptions(PpllResolveFBOName, renderToSourceFrameBuffer: true);
         }
+        }
 
-        c.Add<VPRC_RenderQuadToFBO>()
-            .SetTargets(SceneCopyFBOName, TransparentSceneCopyFBOName)
-            .SetRenderGraphResources(DefaultRenderPipelineQuadDescriptors.SceneCopy());
-        for (int layerIndex = 0; layerIndex < ActiveDepthPeelLayerCount; layerIndex++)
+        if (HasRenderPassCommands((int)EDefaultRenderPass.DepthPeelingForward))
         {
-            int capture = layerIndex;
-            var setLayer = c.Add<VPRC_SetVariable>();
-            setLayer.VariableName = ActiveDepthPeelLayerVariableName;
-            setLayer.IntValue = capture;
-            using (c.AddUsing<VPRC_PushProgramBindings>(x => x.ApplyUniforms = ApplyDepthPeelingForwardProgramBindings))
-            using (c.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(DepthPeelLayerFboName(capture), true, true, false, false)))
+            for (int layerIndex = 0; layerIndex < ActiveDepthPeelLayerCount; layerIndex++)
             {
-                c.Add<VPRC_DepthTest>().Enable = true;
-                c.Add<VPRC_DepthWrite>().Allow = true;
-                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.DepthPeelingForward, MeshSubmissionStrategy);
+                int capture = layerIndex;
+                var setLayer = c.Add<VPRC_SetVariable>();
+                setLayer.VariableName = ActiveDepthPeelLayerVariableName;
+                setLayer.IntValue = capture;
+                using (c.AddUsing<VPRC_PushProgramBindings>(x => x.ApplyUniforms = ApplyDepthPeelingForwardProgramBindings))
+                using (c.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(DepthPeelLayerFboName(capture), true, true, false, false)))
+                {
+                    c.Add<VPRC_DepthTest>().Enable = true;
+                    c.Add<VPRC_DepthWrite>().Allow = true;
+                    c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.DepthPeelingForward, MeshSubmissionStrategy);
+                }
             }
+            using (c.AddUsing<VPRC_PushProgramBindings>(x => x.ApplyUniforms = ApplyDepthPeelingResolveProgramBindings))
+            {
+                c.Add<VPRC_RenderQuadToFBO>().SetOptions(DepthPeelingResolveFBOName, renderToSourceFrameBuffer: true);
+            }
+            var clearLayer = c.Add<VPRC_SetVariable>();
+            clearLayer.VariableName = ActiveDepthPeelLayerVariableName;
+            clearLayer.IntValue = -1;
         }
-        using (c.AddUsing<VPRC_PushProgramBindings>(x => x.ApplyUniforms = ApplyDepthPeelingResolveProgramBindings))
-        {
-            c.Add<VPRC_RenderQuadToFBO>().SetOptions(DepthPeelingResolveFBOName, renderToSourceFrameBuffer: true);
-        }
-        var clearLayer = c.Add<VPRC_SetVariable>();
-        clearLayer.VariableName = ActiveDepthPeelLayerVariableName;
-        clearLayer.IntValue = -1;
     }
+
+    private bool HasAdvancedExactTransparencyConsumers()
+        => ExactTransparencyEnabled &&
+           (HasRenderPassCommands((int)EDefaultRenderPass.PerPixelLinkedListForward)
+            || HasRenderPassCommands((int)EDefaultRenderPass.DepthPeelingForward));
 
     private XRDataBuffer CreatePpllNodeBuffer()
         => new(PpllNodeBufferName, EBufferTarget.ShaderStorageBuffer, ComputePpllNodeCapacity(), EComponentType.Struct, PpllNodeStrideBytes, false, false)

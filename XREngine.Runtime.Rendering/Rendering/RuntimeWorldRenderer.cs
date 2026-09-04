@@ -110,6 +110,9 @@ public sealed partial class RuntimeWorldRenderer : IRuntimeRenderWorld, IRuntime
     {
         ApplyRenderMatrixChanges();
         RenderableMesh.ProcessPendingRenderMatrixUpdates();
+        // The Advanced global capture must observe the same published atlas and
+        // last-rendered shadow snapshots consumed by the frame package.
+        Lights.SwapBuffers();
         if (VisualScene.GPUCommands.AdvancedPublicationRequested)
         {
             VisualScene.GPUCommands.SetAdvancedGlobalResources(
@@ -120,7 +123,6 @@ public sealed partial class RuntimeWorldRenderer : IRuntimeRenderWorld, IRuntime
         VisualScene.GlobalSwapBuffers();
         RuntimeEngine.Rendering.Stats.SkinnedBounds.SwapSkinnedBoundsStats();
         RuntimeEngine.Rendering.Stats.Octree.SwapOctreeStats();
-        Lights.SwapBuffers();
         RuntimeEngine.Rendering.Stats.RenderMatrix.SwapRenderMatrixStats();
     }
 

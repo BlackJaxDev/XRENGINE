@@ -85,7 +85,20 @@ void main()
         return;
     }
 
-    XRAdvancedDrawRecord draw = XR_ADV_LoadDraw(drawDense);
+XRAdvancedDrawRecord draw = XR_ADV_LoadDraw(drawDense);
+    XRAdvancedPreparedDrawDeformationRecord preparedDeformation;
+    bool deformed = XR_ADV_TryLoadPreparedDrawDeformation(
+        drawDense,
+        draw,
+        preparedDeformation);
+    bool producerRequiresDeformation =
+        producer == XR_ADV_VIS_PRODUCER_CPU_PRE_SKINNED;
+    if (producerRequiresDeformation && !deformed)
+    {
+        atomicAdd(XR_ADV_VisibilityCounters.decodeOutOfBounds, 1u);
+        XR_ADV_RejectVisibilityVertex();
+        return;
+    }
     uint instanceDense = XR_ADV_ResolveVisibilityHandle(
         draw.instance,
         VisibilityInstanceLookupSegment,
@@ -134,15 +147,58 @@ void main()
         TexCoord0);
 #endif
 
+    vec3 previousLocalPosition = localPosition;
+    bool previousVertexValid = !deformed;
+    if (deformed)
+    {
+        uint currentVertex = uint(gl_VertexIndex);
+        uint currentEnd =
+            preparedDeformation.currentVertexOffset +
+            preparedDeformation.vertexCount;
+        bool currentInRange =
+            currentEnd >= preparedDeformation.currentVertexOffset &&
+            currentVertex >= preparedDeformation.currentVertexOffset &&
+            currentVertex < currentEnd;
+        bool usePrevious =
+            XR_ADV_PreparedDeformationPreviousValid(
+                preparedDeformation);
+        uint localVertex = currentInRange
+            ? currentVertex -
+                preparedDeformation.currentVertexOffset
+            : 0u;
+        uint previousVertex = usePrevious
+            ? preparedDeformation.previousVertexOffset + localVertex
+            : preparedDeformation.currentVertexOffset + localVertex;
+        bool previousInRange = currentInRange &&
+            (usePrevious
+                ? previousVertex <
+                    uint(XR_ADV_VisibilityPreviousVertices.records.length())
+                : previousVertex <
+                    uint(XR_ADV_VisibilityCurrentVertices.records.length()));
+        if (!currentInRange || !previousInRange)
+        {
+            atomicAdd(
+                XR_ADV_VisibilityCounters.decodeOutOfBounds,
+                1u);
+            XR_ADV_RejectVisibilityVertex();
+            return;
+        }
+        previousLocalPosition = usePrevious
+            ? XR_ADV_VisibilityPreviousVertices.records[
+                previousVertex].position
+            : XR_ADV_VisibilityCurrentVertices.records[
+                previousVertex].position;
+        previousVertexValid = usePrevious;
+    }
+
     vec4 worldPosition =
         vec4(localPosition, 1.0) * transformRecord.world;
     vec4 previousWorldPosition =
-        vec4(localPosition, 1.0) * previousTransformRecord.world;
+        vec4(previousLocalPosition, 1.0) *
+        previousTransformRecord.world;
     gl_Position =
         worldPosition * viewRecord.viewProjectionJittered;
 
-    // The unjittered pair deliberately remains part of this producer ABI.
-    // Document 05 reconstructs the same pair from the stored draw/primitive.
     vec4 currentUnjitteredClip =
         worldPosition * viewRecord.viewProjectionUnjittered;
     vec4 previousUnjitteredClip =

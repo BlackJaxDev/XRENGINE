@@ -26,6 +26,15 @@ internal sealed partial class VulkanXrGraphicsBinding : IXrGraphicsBinding
 
     public bool DestroysRuntimeInstanceOnRendererTeardown => true;
     public bool RequiresRenderThreadForTeardown => true;
+    public bool RequiresDeferredSwapchainRetirement => true;
+    public bool HasPendingDeferredSwapchainRetirement
+    {
+        get
+        {
+            lock (_retiredSwapchainsGate)
+                return _retiredSwapchainGenerations.Count != 0;
+        }
+    }
 
     public bool RequiresRuntimeStateRenderThread(
         OpenXRAPI.OpenXrRuntimeState runtimeState,
@@ -97,6 +106,10 @@ internal sealed partial class VulkanXrGraphicsBinding : IXrGraphicsBinding
 
     private readonly List<RetiredOpenXrSwapchainGeneration> _retiredSwapchainGenerations = new(4);
     private readonly object _retiredSwapchainsGate = new();
+    // OpenXR requires every acquired image to be released before its
+    // swapchain is destroyed. Keep this runtime state separate from GPU
+    // completion: a completed Vulkan submission cannot prove xrRelease.
+    private readonly HashSet<ulong> _runtimeAcquiredSwapchainHandles = [];
 
     public unsafe bool TryRetireSwapchainsForDeferredDestruction(OpenXRAPI api, AbstractRenderer renderer)
     {
@@ -107,9 +120,76 @@ internal sealed partial class VulkanXrGraphicsBinding : IXrGraphicsBinding
 
         DrainRetiredSwapchains(api, vulkanRenderer);
 
+        if (_viewCount == 0)
+            return !HasPendingDeferredSwapchainRetirement;
+
+        // Admission is decided before active handles are detached. A timed-out
+        // retirement recovery must leave the currently usable generation intact.
+        lock (_retiredSwapchainsGate)
+        {
+            for (int i = 0; i < _viewCount; ++i)
+                if (_swapchains[i].Handle != 0 &&
+                    _runtimeAcquiredSwapchainHandles.Contains(_swapchains[i].Handle))
+                {
+                    return false;
+                }
+            if (_retiredSwapchainGenerations.Count >= 4)
+            {
+                RetiredOpenXrSwapchainGeneration oldest = _retiredSwapchainGenerations[0];
+                Silk.NET.Vulkan.Result waitResult = Silk.NET.Vulkan.Result.Success;
+                if (oldest.RequiresGpuCompletion)
+                {
+                    waitResult = vulkanRenderer.CommandRuntime.Synchronization.WaitForTimelineCompletion(
+                        vulkanRenderer.CommandRuntime.Api,
+                        vulkanRenderer.DeviceContext,
+                        vulkanRenderer.CommandRuntime.ResourceRuntime.Lifetime.Tracker,
+                        oldest.TimelineSemaphore,
+                        oldest.TombstoneTimelineValue,
+                        100_000_000UL);
+                    RuntimeEngine.Rendering.Stats.Vr.RecordOpenXrEyeFenceForcedWait();
+                }
+                DrainRetiredSwapchainsCore(api, vulkanRenderer);
+                if (waitResult != Silk.NET.Vulkan.Result.Success ||
+                    _retiredSwapchainGenerations.Count >= 4)
+                    return false;
+            }
+        }
+
         uint viewCount = _viewCount;
-        if (viewCount == 0)
+
+        // Capture the exact latest accepted OpenXR submission receipt before
+        // detaching the active generation. CurrentTimelineValue is only an
+        // allocator cursor and cannot prove completion for this generation.
+        bool requiresGpuCompletion = vulkanRenderer.CommandRuntime.OpenXrSubmissionTracker
+            .TryGetLatestAcceptedCompletion(
+                out Silk.NET.Vulkan.Semaphore timelineSemaphore,
+                out ulong tombstoneValue);
+        if (requiresGpuCompletion &&
+            (timelineSemaphore.Handle == 0 || tombstoneValue == 0u))
+        {
             return false;
+        }
+        if (!TryCaptureActiveSwapchainResourceLifetimeTicket(
+                vulkanRenderer.CommandRuntime.ResourceRuntime.Lifetime.Tracker,
+                viewCount,
+                out VulkanRetirementTicket resourceLifetimeTicket,
+                out Silk.NET.Vulkan.Image[] lifetimeImages))
+        {
+            // A tracker receipt only proves tracked eye submissions. Refuse
+            // in-session replacement until every imported image has a
+            // resource-generation use frontier covering arbitrary consumers.
+            return false;
+        }
+        VulkanResourceSlotHandle[] detachedLifetimeSlots;
+        try
+        {
+            detachedLifetimeSlots = vulkanRenderer.CommandRuntime.ResourceRuntime
+                .DetachExternalImageLifetimesForHandleReuse(lifetimeImages);
+        }
+        catch (Exception)
+        {
+            return false;
+        }
 
         Swapchain[] swapchainsToRetire = new Swapchain[viewCount];
         SwapchainImageVulkan2KHR*[] imagesToRetire = new SwapchainImageVulkan2KHR*[viewCount];
@@ -132,25 +212,8 @@ internal sealed partial class VulkanXrGraphicsBinding : IXrGraphicsBinding
         if (!hasValidSwapchain)
             return false;
 
-        ulong tombstoneValue = vulkanRenderer.CommandRuntime.CurrentTimelineValue;
-        Silk.NET.Vulkan.Semaphore timelineSemaphore = vulkanRenderer.CommandRuntime.Synchronization._graphicsTimelineSemaphore;
-
         lock (_retiredSwapchainsGate)
         {
-            if (_retiredSwapchainGenerations.Count >= 4)
-            {
-                RetiredOpenXrSwapchainGeneration oldest = _retiredSwapchainGenerations[0];
-                _ = vulkanRenderer.CommandRuntime.Synchronization.WaitForTimelineCompletion(
-                    vulkanRenderer.CommandRuntime.Api,
-                    vulkanRenderer.DeviceContext,
-                    vulkanRenderer.CommandRuntime.ResourceRuntime.Lifetime.Tracker,
-                    oldest.TimelineSemaphore,
-                    oldest.TombstoneTimelineValue,
-                    100_000_000UL);
-                RuntimeEngine.Rendering.Stats.Vr.RecordOpenXrEyeFenceForcedWait();
-                DrainRetiredSwapchainsCore(api, vulkanRenderer);
-            }
-
             _retiredSwapchainGenerations.Add(new RetiredOpenXrSwapchainGeneration(
                 swapchainsToRetire,
                 imagesToRetire,
@@ -158,6 +221,12 @@ internal sealed partial class VulkanXrGraphicsBinding : IXrGraphicsBinding
                 viewCount,
                 tombstoneValue,
                 timelineSemaphore,
+                requiresGpuCompletion,
+                resourceLifetimeTicket,
+                HasResourceLifetimeAuthority: true,
+                lifetimeImages,
+                detachedLifetimeSlots,
+                RuntimeImagesReleased: true,
                 System.Diagnostics.Stopwatch.GetTimestamp()));
         }
 
@@ -180,15 +249,26 @@ internal sealed partial class VulkanXrGraphicsBinding : IXrGraphicsBinding
         for (int i = _retiredSwapchainGenerations.Count - 1; i >= 0; i--)
         {
             RetiredOpenXrSwapchainGeneration gen = _retiredSwapchainGenerations[i];
-            Silk.NET.Vulkan.Result queryResult = vulkanRenderer.CommandRuntime.Synchronization.QueryTimelineCompletion(
-                vulkanRenderer.CommandRuntime.Api,
-                vulkanRenderer.DeviceContext,
-                vulkanRenderer.CommandRuntime.ResourceRuntime.Lifetime.Tracker,
-                gen.TimelineSemaphore,
-                gen.TombstoneTimelineValue,
-                out bool completed);
+            bool completed = !gen.RequiresGpuCompletion;
+            Silk.NET.Vulkan.Result queryResult = Silk.NET.Vulkan.Result.Success;
+            if (gen.RequiresGpuCompletion)
+            {
+                queryResult = vulkanRenderer.CommandRuntime.Synchronization.QueryTimelineCompletion(
+                    vulkanRenderer.CommandRuntime.Api,
+                    vulkanRenderer.DeviceContext,
+                    vulkanRenderer.CommandRuntime.ResourceRuntime.Lifetime.Tracker,
+                    gen.TimelineSemaphore,
+                    gen.TombstoneTimelineValue,
+                    out completed);
+            }
 
-            if (queryResult == Silk.NET.Vulkan.Result.Success && completed)
+            VulkanRetirementTicket resourceLifetimeTicket = gen.ResourceLifetimeTicket;
+            bool resourceLifetimeCompleted = gen.HasResourceLifetimeAuthority &&
+                vulkanRenderer.CommandRuntime.ResourceRuntime.Lifetime.Tracker
+                    .IsRetirementReady(in resourceLifetimeTicket);
+            if (queryResult == Silk.NET.Vulkan.Result.Success && completed &&
+                resourceLifetimeCompleted &&
+                gen.RuntimeImagesReleased)
             {
                 for (int v = 0; v < gen.ViewCount; v++)
                 {
@@ -203,8 +283,105 @@ internal sealed partial class VulkanXrGraphicsBinding : IXrGraphicsBinding
                         gen.Swapchains[v] = default;
                     }
                 }
+                for (int imageIndex = 0; imageIndex < gen.LifetimeImages.Length; ++imageIndex)
+                    vulkanRenderer.CommandRuntime.ResourceRuntime
+                        .CompleteDetachedExternalResourceDestruction(
+                            Silk.NET.Vulkan.ObjectType.Image,
+                            gen.LifetimeImages[imageIndex].Handle,
+                            gen.DetachedLifetimeSlots[imageIndex],
+                            forced: false);
                 _retiredSwapchainGenerations.RemoveAt(i);
             }
+        }
+    }
+
+    private unsafe bool TryCaptureActiveSwapchainResourceLifetimeTicket(
+        VulkanResourceLifetimeTracker tracker,
+        uint viewCount,
+        out VulkanRetirementTicket ticket,
+        out Silk.NET.Vulkan.Image[] lifetimeImages)
+    {
+        ulong graphics = 0u;
+        ulong transfer = 0u;
+        ulong other = 0u;
+        ulong generation = 0u;
+        List<Silk.NET.Vulkan.Image> imageList = [];
+        lock (tracker.SyncRoot)
+        {
+            for (uint viewIndex = 0u; viewIndex < viewCount; ++viewIndex)
+            {
+                SwapchainImageVulkan2KHR* swapchainImages = _swapchainImagesVK[viewIndex];
+                uint imageCount = _swapchainImageCounts[viewIndex];
+                if (swapchainImages is null || imageCount == 0u)
+                {
+                    ticket = default;
+                    lifetimeImages = [];
+                    return false;
+                }
+                for (uint imageIndex = 0u; imageIndex < imageCount; ++imageIndex)
+                {
+                    Silk.NET.Vulkan.Image image = new(swapchainImages[imageIndex].Image);
+                    VulkanResourceLifetimeKey key = new(Silk.NET.Vulkan.ObjectType.Image, image.Handle);
+                    if (image.Handle == 0 || !tracker.ResourceLifetimes.TryGetValue(
+                            key, out VulkanResourceLifetimeRecord? resource))
+                    {
+                        ticket = default;
+                        lifetimeImages = [];
+                        return false;
+                    }
+                    imageList.Add(image);
+                    graphics = Math.Max(graphics, resource.Pins.LastGraphicsSequence);
+                    transfer = Math.Max(transfer, resource.Pins.LastTransferSequence);
+                    other = Math.Max(other, resource.Pins.LastOtherSequence);
+                    generation = Math.Max(generation, resource.Generation);
+                }
+            }
+        }
+        ticket = new VulkanRetirementTicket(
+            graphics, transfer, other, System.Diagnostics.Stopwatch.GetTimestamp(),
+            generation, ExternalOwnershipPending: false);
+        lifetimeImages = imageList.ToArray();
+        return true;
+    }
+
+    private static unsafe void RegisterOpenXrSwapchainImageLifetimes(
+        VulkanRenderer renderer,
+        SwapchainImageVulkan2KHR* images,
+        uint imageCount)
+    {
+        if (images is null || imageCount == 0u)
+            throw new ArgumentOutOfRangeException(nameof(imageCount));
+
+        List<Silk.NET.Vulkan.Image> registered = new(checked((int)imageCount));
+        try
+        {
+            for (uint imageIndex = 0u; imageIndex < imageCount; ++imageIndex)
+            {
+                Silk.NET.Vulkan.Image image = new(images[imageIndex].Image);
+                if (image.Handle == 0)
+                    throw new InvalidOperationException("OpenXR returned a null Vulkan swapchain image.");
+                renderer.CommandRuntime.ResourceRuntime.RegisterResource(
+                    Silk.NET.Vulkan.ObjectType.Image,
+                    image.Handle,
+                    "OpenXR.RuntimeSwapchainImage",
+                    externallyOwned: true);
+                registered.Add(image);
+            }
+        }
+        catch
+        {
+            if (registered.Count != 0)
+            {
+                VulkanResourceSlotHandle[] slots = renderer.CommandRuntime.ResourceRuntime
+                    .DetachExternalImageLifetimesForHandleReuse(registered.ToArray());
+                for (int i = 0; i < registered.Count; ++i)
+                    renderer.CommandRuntime.ResourceRuntime.CompleteDetachedExternalResourceDestruction(
+                        Silk.NET.Vulkan.ObjectType.Image,
+                        registered[i].Handle,
+                        slots[i],
+                        forced: true);
+            }
+            throw;
         }
     }
 
@@ -225,43 +402,59 @@ internal sealed partial class VulkanXrGraphicsBinding : IXrGraphicsBinding
             DrainRetiredSwapchains(api, vr);
     }
 
-    public void WaitForGpuIdle(OpenXRAPI api, AbstractRenderer renderer)
+    public bool WaitForGpuIdle(OpenXRAPI api, AbstractRenderer renderer)
     {
         VulkanRenderer vulkanRenderer = (VulkanRenderer)renderer;
-        if (!vulkanRenderer.IsDeviceLost)
-        {
-            vulkanRenderer.CommandRuntime.OpenXrSubmissionTracker.DrainAll(timeoutMs: 1000u);
-            DrainRetiredSwapchains(api, vulkanRenderer);
-        }
+        if (vulkanRenderer.IsDeviceLost)
+            return false;
+
+        bool drained = vulkanRenderer.CommandRuntime.OpenXrSubmissionTracker.DrainAll(timeoutMs: 1000u);
+        if (!drained)
+            return false;
+
+        DrainRetiredSwapchains(api, vulkanRenderer);
+        return !HasPendingDeferredSwapchainRetirement;
     }
 
-    public void AcquireSwapchainImage(OpenXRAPI api, Swapchain swapchain, out uint imageIndex)
+    public Result AcquireSwapchainImage(OpenXRAPI api, Swapchain swapchain, out uint imageIndex)
     {
         SwapchainImageAcquireInfo acquireInfo = new()
         {
             Type = StructureType.SwapchainImageAcquireInfo
         };
         imageIndex = 0;
-        api.Api.AcquireSwapchainImage(swapchain, in acquireInfo, ref imageIndex);
+        Result result = api.Api.AcquireSwapchainImage(swapchain, in acquireInfo, ref imageIndex);
+        if (result == Result.Success)
+        {
+            lock (_retiredSwapchainsGate)
+                _runtimeAcquiredSwapchainHandles.Add(swapchain.Handle);
+        }
+        return result;
     }
 
-    public void WaitSwapchainImage(OpenXRAPI api, Swapchain swapchain, long timeoutNs)
+    public Result WaitSwapchainImage(OpenXRAPI api, Swapchain swapchain, long timeoutNs)
     {
         SwapchainImageWaitInfo waitInfo = new()
         {
             Type = StructureType.SwapchainImageWaitInfo,
             Timeout = timeoutNs
         };
-        api.Api.WaitSwapchainImage(swapchain, in waitInfo);
+        return api.Api.WaitSwapchainImage(swapchain, in waitInfo);
     }
 
-    public void ReleaseSwapchainImage(OpenXRAPI api, Swapchain swapchain)
+    public Result ReleaseSwapchainImage(OpenXRAPI api, Swapchain swapchain)
     {
         SwapchainImageReleaseInfo releaseInfo = new()
         {
             Type = StructureType.SwapchainImageReleaseInfo
         };
-        api.Api.ReleaseSwapchainImage(swapchain, in releaseInfo);
+        Result result = api.Api.ReleaseSwapchainImage(swapchain, in releaseInfo);
+        if (result == Result.Success)
+        {
+            lock (_retiredSwapchainsGate)
+                _runtimeAcquiredSwapchainHandles.Remove(swapchain.Handle);
+        }
+        return result;
     }
 
     public void RenderViews(

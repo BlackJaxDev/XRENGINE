@@ -26,10 +26,34 @@ internal sealed partial class VulkanCommandRuntime
             uploads,
             uploadSource);
 
+    internal void PublishOpenXrRecordedTextureUploads(
+        ReadOnlySpan<VulkanImportedTexturePendingUpload> uploads,
+        string uploadSource)
+    {
+        for (int i = 0; i < uploads.Length; i++)
+            ResourceRuntime.Uploads.PublishCompletedRecordedTextureUpload(
+                ResourceRuntime,
+                uploads[i],
+                uploadSource);
+    }
+
     internal void CancelOpenXrRecordedTextureUploads(
         List<VulkanImportedTexturePendingUpload> uploads,
         string reason)
         => CancelRecordedTextureUploads(uploads, reason);
+
+    internal void CancelOpenXrRecordedTextureUploads(
+        ReadOnlySpan<VulkanImportedTexturePendingUpload> uploads,
+        string reason)
+    {
+        if (uploads.IsEmpty)
+            return;
+
+        _ = InvalidateCommandChainSecondaryCommandBuffersForDescriptorReferenceRelease();
+        MarkCommandBuffersDirty(reason);
+        for (int i = 0; i < uploads.Length; i++)
+            CancelRecordedTextureUpload(uploads[i], reason);
+    }
 
     internal PrimaryCommandArtifactOwner GetOrCreateOpenXrLanePrimaryCommandBufferOwner(
         ulong targetSlotKey,

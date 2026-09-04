@@ -3,9 +3,8 @@ using XREngine.Rendering.RenderGraph;
 namespace XREngine.Rendering.Pipelines.Commands;
 
 /// <summary>
-/// Stable placeholder for one stage in the advanced frame contract.
-/// Backends must not advertise the visibility-buffer shader family until every
-/// production stage has a real implementation behind this command identity.
+/// Dispatches the native visibility and opaque compute stages through the backend's
+/// immutable frame family. Late/post commands follow their contract markers.
 /// </summary>
 public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
 {
@@ -38,7 +37,11 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
         XRRenderPipelineInstance.RenderingState state =
             ActivePipelineInstance.RenderState;
         if (state.WorldSnapshot is not RenderWorldSnapshot world)
+        {
+            string snapshotType = state.WorldSnapshot?.GetType().FullName ?? "null";
+            ReportExecutionPrerequisiteRejection($"Render world snapshot is unavailable (actual: {snapshotType}).");
             return;
+        }
 
         AdvancedPreparationPublication publication =
             AdvancedSharedPreparationService.Instance.Acquire(
@@ -54,23 +57,12 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             EAdvancedPreparationConsumer.Probe |
             EAdvancedPreparationConsumer.Capture);
 
-        if (Stage == EAdvancedRenderStage.Output)
-        {
-            using IDisposable? stagePassScope = PushRenderGraphPass(Descriptor.PassName);
-            var fbo = ActivePipelineInstance.RenderState.OutputFBO;
-            if (fbo is null)
-                RuntimeEngine.Rendering.State.UnbindFrameBuffers(EFramebufferTarget.Framebuffer);
-            else
-                fbo.BindForWriting();
-
-            RuntimeEngine.Rendering.State.ClearColor(RuntimeEngine.StartupPresentationClearColor);
-            RuntimeEngine.Rendering.State.Clear(true, true, true);
-            return;
-        }
-
         if (Stage is not (EAdvancedRenderStage.VisibilityPreparation or
             EAdvancedRenderStage.VisibilityRaster or
-            EAdvancedRenderStage.DepthPyramidAndLateVisibility))
+            EAdvancedRenderStage.DepthPyramidAndLateVisibility or
+            EAdvancedRenderStage.WorkClassification or
+            EAdvancedRenderStage.AttributeReconstruction or
+            EAdvancedRenderStage.NativeOpaqueShading))
         {
             using IDisposable? stagePassScope = PushRenderGraphPass(Descriptor.PassName);
             return;
@@ -79,9 +71,15 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
         AdvancedRenderPipelineOutputBinding binding =
             ActivePipelineInstance.AdvancedOutputBinding;
         AdvancedVisibilityFamilyReservation reservation = binding.Reservation;
-        if (AbstractRenderer.Current is not IRuntimeRendererHost renderer ||
-            ActivePipelineInstance.Pipeline is not AdvancedRenderPipeline)
+        if (AbstractRenderer.Current is not IRuntimeRendererHost renderer)
         {
+            ReportExecutionPrerequisiteRejection("The active renderer does not expose the runtime renderer host contract.");
+            return;
+        }
+        if (ActivePipelineInstance.Pipeline is not AdvancedRenderPipeline pipeline)
+        {
+            string pipelineType = ActivePipelineInstance.Pipeline?.GetType().FullName ?? "null";
+            ReportExecutionPrerequisiteRejection($"The active pipeline is not AdvancedRenderPipeline (actual: {pipelineType}).");
             return;
         }
 
@@ -96,7 +94,10 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             XRViewport? viewport = state.WindowViewport
                 ?? ActivePipelineInstance.LastWindowViewport;
             if (viewport is null)
+            {
+                ReportAdmissionRejection("No viewport is available to refresh the Advanced output binding.");
                 return;
+            }
 
             RuntimeEngine.Rendering.RefreshRenderPipelineOutputBinding(viewport);
             binding = ActivePipelineInstance.AdvancedOutputBinding;
@@ -104,6 +105,9 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             if (!binding.IsBound ||
                 !renderer.IsAdvancedVisibilityFamilyReservationCurrent(in reservation))
             {
+                string reason = binding.FailureReason
+                    ?? "The Advanced output binding remained unbound or stale after refresh.";
+                ReportAdmissionRejection(reason);
                 return;
             }
         }
@@ -113,6 +117,7 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             visibility is null ||
             !visibility.SupportsAdvancedVisibilityStage(Stage))
         {
+            ReportStageCapabilityRejection();
             return;
         }
 
@@ -140,7 +145,9 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             AdvancedVisibilityResourceNames.Metadata,
             AdvancedVisibilityResourceNames.Selection,
             AdvancedVisibilityResourceNames.DepthStencil,
-            AdvancedVisibilityResourceNames.CurrentDepthPyramid);
+            AdvancedVisibilityResourceNames.CurrentDepthPyramid,
+            pipeline.ShadingDebugView,
+            RuntimeEngine.Rendering.Settings.AdvancedRenderPipelineMode == EAdvancedRenderPipelineMode.Required);
 
         if (Stage == EAdvancedRenderStage.DepthPyramidAndLateVisibility)
         {
@@ -185,8 +192,29 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             ? RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(passIndex)
             : null;
 
-    private void ReportRejectedPhase(
-        EAdvancedVisibilityStageBackendPhase phase,
+    private void ReportExecutionPrerequisiteRejection(string reason)
+        => Debug.RenderingWarningEvery(
+            $"AdvancedVisibility.Prerequisite.{Stage}.{reason}",
+            TimeSpan.FromSeconds(30),
+            "[AdvancedPipeline] Stage '{0}' cannot execute: {1}",
+            Stage,
+            reason);
+    private void ReportAdmissionRejection(string reason)
+        => Debug.RenderingWarningEvery(
+            $"AdvancedVisibility.Admission.{Stage}.{reason}",
+            TimeSpan.FromSeconds(30),
+            "[AdvancedPipeline] Stage '{0}' is waiting for a current Advanced output binding: {1}",
+            Stage,
+            reason);
+
+    private void ReportStageCapabilityRejection()
+        => Debug.RenderingWarningEvery(
+            $"AdvancedVisibility.StageCapability.{Stage}",
+            TimeSpan.FromSeconds(30),
+            "[AdvancedPipeline] Stage '{0}' is not supported by the active Advanced visibility backend.",
+            Stage);
+
+    private void ReportRejectedPhase(        EAdvancedVisibilityStageBackendPhase phase,
         string failureReason)
         => Debug.Out(
             $"Advanced visibility stage '{Stage}' phase '{phase}' was rejected by the active backend: {failureReason}");
@@ -194,8 +222,11 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
     internal override void DescribeRenderPass(RenderGraphDescribeContext context)
     {
         AdvancedRenderStageDescriptor descriptor = Descriptor;
-        RenderPassBuilder builder = context.Metadata.ForPass(
-            (int)descriptor.Stage,
+        // Stage ordinals describe the Advanced command chain, while the mesh
+        // passes use the same small integers for their own collection keys.
+        // Give graph nodes their own identities so these unrelated passes
+        // cannot merge their resource accesses or dependencies.
+        RenderPassBuilder builder = context.GetOrCreateSyntheticPass(
             descriptor.PassName,
             descriptor.RenderGraphStage);
 
@@ -205,8 +236,8 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
         int stageIndex = (int)descriptor.Stage;
         if (descriptor.Stage == EAdvancedRenderStage.DepthPyramidAndLateVisibility)
         {
-            builder.DependsOn(stageIndex - 1);
-            DescribeLateRasterPass(context, stageIndex);
+            builder.DependsOn(GetPreviousStagePassIndex(context, stageIndex));
+            DescribeLateRasterPass(context, builder.PassIndex);
         }
         else if (descriptor.Stage == EAdvancedRenderStage.WorkClassification)
         {
@@ -215,7 +246,19 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
                 ERenderGraphPassStage.Graphics).PassIndex);
         }
         else if (stageIndex > 0)
-            builder.DependsOn(stageIndex - 1);
+            builder.DependsOn(GetPreviousStagePassIndex(context, stageIndex));
+    }
+
+    private static int GetPreviousStagePassIndex(
+        RenderGraphDescribeContext context,
+        int stageIndex)
+    {
+        AdvancedRenderStageDescriptor previous =
+            AdvancedRenderPipelineFrameContract.GetDescriptor(
+                (EAdvancedRenderStage)(stageIndex - 1));
+        return context.GetOrCreateSyntheticPass(
+            previous.PassName,
+            previous.RenderGraphStage).PassIndex;
     }
 
     private static void DescribeLateRasterPass(
@@ -357,6 +400,36 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
                     .ReadBuffer(AdvancedVisibilityResourceNames.Payloads)
                     .ReadBuffer(AdvancedVisibilityResourceNames.Producers);
                 DescribeReconstructionSlotResources(builder);
+                break;
+
+            case EAdvancedRenderStage.WorkClassification:
+                builder.SampleTexture(Tex(AdvancedVisibilityResourceNames.Identity))
+                    .SampleTexture(Tex(AdvancedVisibilityResourceNames.Metadata));
+                for (uint slot = 0; slot < AdvancedFrameSlotContract.DefaultSlotCount; ++slot)
+                    builder.WriteBuffer(AdvancedClassificationResourceNames.ActiveTiles(slot))
+                        .WriteBuffer(AdvancedClassificationResourceNames.KernelTiles(slot))
+                        .ReadWriteBuffer(AdvancedClassificationResourceNames.Counters(slot))
+                        .ReadWriteBuffer(AdvancedClassificationResourceNames.KernelCounts(slot))
+                        .WriteBuffer(AdvancedClassificationResourceNames.DispatchArgs(slot), ERenderPassResourceType.IndirectBuffer);
+                break;
+
+            case EAdvancedRenderStage.NativeOpaqueShading:
+                builder.SampleTexture(Tex(AdvancedVisibilityResourceNames.Identity))
+                    .SampleTexture(Tex(AdvancedVisibilityResourceNames.Metadata))
+                    .SampleTexture(Tex(AdvancedVisibilityResourceNames.DepthStencil))
+                    .ReadWriteTexture(Tex(AdvancedRenderPipeline.HDRSceneTextureName))
+                    .ReadWriteTexture(Tex(AdvancedRenderPipeline.VelocityTextureName))
+                    .ReadWriteTexture(Tex(AdvancedTemporalHistoryContract.ReactiveMaskResourceName))
+                    .ReadWriteTexture(Tex(AdvancedShadingResourceNames.ShadingDiagnostics));
+                for (uint slot = 0; slot < AdvancedFrameSlotContract.DefaultSlotCount; ++slot)
+                    builder.ReadBuffer(AdvancedClassificationResourceNames.ActiveTiles(slot))
+                        .ReadBuffer(AdvancedClassificationResourceNames.KernelTiles(slot))
+                        .ReadBuffer(AdvancedClassificationResourceNames.Counters(slot))
+                        .ReadBuffer(AdvancedClassificationResourceNames.KernelCounts(slot))
+                        .ReadBuffer(AdvancedClassificationResourceNames.DispatchArgs(slot), ERenderPassResourceType.IndirectBuffer)
+                        .ReadWriteBuffer(AdvancedClusteredLightingResourceNames.FroxelGrid(slot))
+                        .ReadWriteBuffer(AdvancedClusteredLightingResourceNames.LightIndexList(slot))
+                        .ReadWriteBuffer(AdvancedClusteredLightingResourceNames.LightingCounters(slot));
                 break;
 
         }
