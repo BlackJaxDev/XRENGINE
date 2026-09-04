@@ -22,6 +22,9 @@ struct XRAdvancedShadowRecord
     uint viewMaskHi;
     uint lastRenderedFrameLo;
     uint lastRenderedFrameHi;
+    vec4 momentParameters;
+    vec4 depthRangeAndCascade;
+    vec4 renderedLightPositionAndFar;
 };
 
 XR_ADV_TABLE_LAYOUT(XR_ADV_BINDING_SHADOWS) readonly buffer XRAdvancedShadowTable

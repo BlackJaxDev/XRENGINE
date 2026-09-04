@@ -101,39 +101,40 @@ internal sealed unsafe partial class OpenGlXrGraphicsBinding : IXrGraphicsBindin
         }
     }
 
-    public void WaitForGpuIdle(OpenXRAPI api, AbstractRenderer renderer)
+    public bool WaitForGpuIdle(OpenXRAPI api, AbstractRenderer renderer)
     {
         Attach(api);
         _gl?.Finish();
+        return true;
     }
 
-    public void AcquireSwapchainImage(OpenXRAPI api, Swapchain swapchain, out uint imageIndex)
+    public Result AcquireSwapchainImage(OpenXRAPI api, Swapchain swapchain, out uint imageIndex)
     {
         SwapchainImageAcquireInfo acquireInfo = new()
         {
             Type = StructureType.SwapchainImageAcquireInfo
         };
         imageIndex = 0;
-        api.Api.AcquireSwapchainImage(swapchain, in acquireInfo, ref imageIndex);
+        return api.Api.AcquireSwapchainImage(swapchain, in acquireInfo, ref imageIndex);
     }
 
-    public void WaitSwapchainImage(OpenXRAPI api, Swapchain swapchain, long timeoutNs)
+    public Result WaitSwapchainImage(OpenXRAPI api, Swapchain swapchain, long timeoutNs)
     {
         SwapchainImageWaitInfo waitInfo = new()
         {
             Type = StructureType.SwapchainImageWaitInfo,
             Timeout = timeoutNs
         };
-        api.Api.WaitSwapchainImage(swapchain, in waitInfo);
+        return api.Api.WaitSwapchainImage(swapchain, in waitInfo);
     }
 
-    public void ReleaseSwapchainImage(OpenXRAPI api, Swapchain swapchain)
+    public Result ReleaseSwapchainImage(OpenXRAPI api, Swapchain swapchain)
     {
         SwapchainImageReleaseInfo releaseInfo = new()
         {
             Type = StructureType.SwapchainImageReleaseInfo
         };
-        api.Api.ReleaseSwapchainImage(swapchain, in releaseInfo);
+        return api.Api.ReleaseSwapchainImage(swapchain, in releaseInfo);
     }
 
     public void RenderViews(

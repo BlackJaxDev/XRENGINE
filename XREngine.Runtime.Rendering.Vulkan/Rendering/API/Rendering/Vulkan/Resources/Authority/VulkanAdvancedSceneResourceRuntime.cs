@@ -41,6 +41,8 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
     private AdvancedEncodedTextureReference[] _encodedTextureScratch = [];
     private AdvancedEncodedSamplerReference[] _encodedSamplerScratch = [];
     private DescriptorImageInfo[] _imageDescriptorScratch = [];
+    private DescriptorImageInfo[] _arrayImageDescriptorScratch = [];
+    private DescriptorImageInfo[] _cubeImageDescriptorScratch = [];
     private DescriptorImageInfo[] _samplerDescriptorScratch = [];
     private byte[] _samplerValidationScratch = [];
     private VulkanDeviceContext? _device;
@@ -653,7 +655,9 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
             _resources.FallbackTexture.GetImageInfo(
                 DescriptorType.CombinedImageSampler,
                 ImageViewType.Type2D);
-        if (fallback.ImageView.Handle == 0 || fallback.Sampler.Handle == 0)
+        DescriptorImageInfo arrayFallback = _resources.FallbackTexture.GetImageInfo(DescriptorType.CombinedImageSampler, ImageViewType.Type2DArray);
+        DescriptorImageInfo cubeFallback = _resources.FallbackTexture.GetImageInfo(DescriptorType.CombinedImageSampler, ImageViewType.TypeCube);
+        if (fallback.ImageView.Handle == 0 || arrayFallback.ImageView.Handle == 0 || cubeFallback.ImageView.Handle == 0 || fallback.Sampler.Handle == 0)
         {
             failure = EVulkanAdvancedSceneResourceFailure.RuntimeUnavailable;
             reason = "The Vulkan fallback sampled image and sampler are unavailable.";
@@ -673,6 +677,8 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
                 textureBase,
                 samplerBase,
                 fallback,
+                arrayFallback,
+                cubeFallback,
                 out failure,
                 out reason))
         {
@@ -996,6 +1002,8 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
     {
         AdvancedGpuResourcePublicationSnapshot resources =
             snapshot.ResourcePayloads;
+        int samplerHighWater = snapshot.Samplers.PhysicalRecords.Length;
+        _samplerValidationScratch.AsSpan(0, samplerHighWater).Clear();
         ReadOnlySpan<AdvancedTextureRecord> textureRecords =
             snapshot.Textures.PhysicalRecords;
         ReadOnlySpan<AdvancedGpuHandle> textureHandles =
@@ -1018,7 +1026,7 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
                 reason = $"Canonical texture row {denseIndex} has inconsistent handle metadata for {handle.Index}:{handle.Generation}.";
                 return false;
             }
-            if (!resources.TryGetTextureSource(handle, out XRTexture source))
+            if (!resources.TryGetTextureSource(handle, out XRTexture source, out ulong capturedSourceContentGeneration))
             {
                 failure =
                     EVulkanAdvancedSceneResourceFailure.SourceMismatch;
@@ -1037,17 +1045,25 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
                 reason = $"Canonical texture {handle.Index}:{handle.Generation} source revalidation failed: {encodeReason}";
                 return false;
             }
-            if (!TextureStateEquals(current.TextureRecord, canonical))
+            if (current.SourceContentGeneration != capturedSourceContentGeneration ||
+                !canonical.DefaultSampler.IsValid ||
+                !snapshot.Samplers.TryGet(canonical.DefaultSampler, out AdvancedSamplerRecord canonicalDefaultSampler) ||
+                !snapshot.Samplers.TryGetDenseIndex(canonical.DefaultSampler, out uint defaultSamplerDense) ||
+                !TextureMetadataStateEquals(current.TextureRecord, canonical) ||
+                !SamplerStateEquals(current.SamplerRecord, canonicalDefaultSampler))
             {
                 failure =
                     EVulkanAdvancedSceneResourceFailure.SourceMismatch;
                 reason = $"Canonical texture {handle.Index}:{handle.Generation} source '{source.Name ?? source.GetType().Name}' changed after publication: {DescribeTextureStateMismatch(current.TextureRecord, canonical)}";
                 return false;
             }
+            // Global textures (shadow atlases, environments, and GI resources)
+            // retain their default sampler through the texture publication even
+            // when no material row references it. The exact strong source and
+            // sampler state were validated above, so this is an owning witness.
+            _samplerValidationScratch[checked((int)defaultSamplerDense)] = 1;
         }
 
-        int samplerHighWater = snapshot.Samplers.PhysicalRecords.Length;
-        _samplerValidationScratch.AsSpan(0, samplerHighWater).Clear();
         ReadOnlySpan<AdvancedMaterialTextureBinding> bindings =
             snapshot.MaterialPayloads.TextureBindings;
         for (int bindingIndex = 0; bindingIndex < bindings.Length; ++bindingIndex)
@@ -1078,7 +1094,9 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
                 reason = $"Material texture binding {bindingIndex} source revalidation failed: {encodeReason}";
                 return false;
             }
-            if (!TextureStateEquals(current.TextureRecord, canonicalTexture) ||
+            if (!canonicalTexture.DefaultSampler.IsValid ||
+                !snapshot.Samplers.TryGet(canonicalTexture.DefaultSampler, out _) ||
+                !TextureMetadataStateEquals(current.TextureRecord, canonicalTexture) ||
                 !SamplerStateEquals(current.SamplerRecord, canonicalSampler))
             {
                 failure =
@@ -1108,7 +1126,7 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
                 AdvancedGpuHandle handle =
                     snapshot.Samplers.PhysicalHandles[denseIndex];
                 failure = EVulkanAdvancedSceneResourceFailure.SourceMismatch;
-                reason = $"Canonical sampler {handle.Index}:{handle.Generation} has no retained material binding that can revalidate its source state.";
+                reason = $"Canonical sampler {handle.Index}:{handle.Generation} has no retained texture or material binding that can revalidate its source state.";
                 return false;
             }
 
@@ -1124,6 +1142,8 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
         uint textureBase,
         uint samplerBase,
         in DescriptorImageInfo fallback,
+        in DescriptorImageInfo arrayFallback,
+        in DescriptorImageInfo cubeFallback,
         out EVulkanAdvancedSceneResourceFailure failure,
         out string reason)
     {
@@ -1137,6 +1157,8 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
                 ImageView = fallback.ImageView,
                 ImageLayout = fallback.ImageLayout,
             };
+            _arrayImageDescriptorScratch[denseIndex] = new DescriptorImageInfo { ImageView = arrayFallback.ImageView, ImageLayout = arrayFallback.ImageLayout };
+            _cubeImageDescriptorScratch[denseIndex] = new DescriptorImageInfo { ImageView = cubeFallback.ImageView, ImageLayout = cubeFallback.ImageLayout };
             _encodedTextureScratch[denseIndex + 1] =
                 CreateFallbackTextureReference();
             if (textures.PhysicalOccupancy[denseIndex] == 0)
@@ -1146,12 +1168,11 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
             AdvancedTextureRecord record = records[denseIndex];
             if (!handle.IsValid || record.StableTextureId != handle.Index ||
                 record.Generation != handle.Generation ||
-                record.Dimension != EAdvancedTextureDimension.Texture2D ||
-                record.DepthOrLayers != 1u)
+                !IsSupportedTextureRecord(record))
             {
                 failure =
                     EVulkanAdvancedSceneResourceFailure.UnsupportedTextureShape;
-                reason = $"Canonical texture row {denseIndex} is not a valid single-layer Texture2D record.";
+                reason = $"Canonical texture row {denseIndex} has an unsupported texture dimension or layer count.";
                 return false;
             }
             if (!snapshot.ResourcePayloads.TryGetTextureSource(
@@ -1176,21 +1197,40 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
                 (record.Flags & EAdvancedTextureRecordFlags.Depth) != 0
                     ? ImageAspectFlags.DepthBit
                     : null;
-            if (!descriptorSource.TryGetDescriptorSnapshot(
-                    ImageViewType.Type2D,
+            ImageViewType requiredViewType = record.Dimension switch
+            {
+                EAdvancedTextureDimension.Texture2D => ImageViewType.Type2D,
+                EAdvancedTextureDimension.Texture2DArray => ImageViewType.Type2DArray,
+                EAdvancedTextureDimension.Cube => ImageViewType.TypeCube,
+                _ => default,
+            };
+            bool descriptorReady = descriptorSource.TryGetDescriptorSnapshot(
+                requiredViewType,
+                aspect,
+                "Advanced canonical scene publication",
+                allowSynchronousUpload: false,
+                out VkImageDescriptorSnapshot descriptor);
+            // Publication is the last preparation boundary before command
+            // recording. Cold, already-created wrappers may still need their
+            // initial upload scheduled here; retry once through the wrapper's
+            // render-thread readiness path, then retain the exact result only.
+            if (!descriptorReady)
+                descriptorReady = descriptorSource.TryGetDescriptorSnapshot(
+                    requiredViewType,
                     aspect,
-                    "Advanced canonical scene publication",
-                    allowSynchronousUpload: false,
-                    out VkImageDescriptorSnapshot descriptor) ||
+                    "Advanced canonical scene publication cold readiness",
+                    allowSynchronousUpload: true,
+                    out descriptor);
+            if (!descriptorReady ||
                 !descriptor.IsReady || descriptor.View.Handle == 0 ||
-                descriptor.ViewType != ImageViewType.Type2D ||
+                descriptor.ViewType != requiredViewType ||
                 descriptor.Samples != SampleCountFlags.Count1Bit ||
-                descriptor.ArrayLayers != 1u ||
+                !HasCompatibleLayerCount(record, descriptor.ArrayLayers) ||
                 !_resources.Images.IsAvailableForDescriptor(descriptor.View))
             {
                 failure =
                     EVulkanAdvancedSceneResourceFailure.TextureDescriptorNotReady;
-                reason = $"Canonical texture {handle.Index}:{handle.Generation} is not ready for an exact Vulkan sampled-image descriptor.";
+                reason = $"Canonical texture {handle.Index}:{handle.Generation} ('{source.Name ?? source.GetType().Name}', dimension={record.Dimension}, sourceGeneration={record.Generation}, descriptorGeneration={descriptorSource.DescriptorGeneration}, wrapper={descriptorSource.GetType().Name}, ready={descriptorSource.IsDescriptorReady}) is not ready for an exact Vulkan sampled-image descriptor after bounded cold preparation.";
                 return false;
             }
 
@@ -1213,11 +1253,16 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
                     ? ImageLayout.ShaderReadOnlyOptimal
                     : descriptor.TrackedLayout,
             };
+            DescriptorImageInfo realized = _imageDescriptorScratch[denseIndex];
+            if (record.Dimension == EAdvancedTextureDimension.Texture2DArray)
+                _arrayImageDescriptorScratch[denseIndex] = realized;
+            else if (record.Dimension == EAdvancedTextureDimension.Cube)
+                _cubeImageDescriptorScratch[denseIndex] = realized;
             _encodedTextureScratch[denseIndex + 1] =
                 new AdvancedEncodedTextureReference(
                     checked(textureBase + (uint)denseIndex),
                     defaultSamplerDescriptor,
-                    0u,
+                    (uint)record.Dimension,
                     EAdvancedResourceReferenceFlags.Resident);
         }
 
@@ -1279,6 +1324,26 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
         reason = "Ready";
         return true;
     }
+
+    private static bool IsSupportedTextureRecord(in AdvancedTextureRecord record)
+        => record.Dimension switch
+        {
+            EAdvancedTextureDimension.Texture2D => record.DepthOrLayers == 1u,
+            EAdvancedTextureDimension.Texture2DArray => record.DepthOrLayers != 0u,
+            EAdvancedTextureDimension.Cube => record.DepthOrLayers == 6u,
+            _ => false,
+        };
+
+    private static bool HasCompatibleLayerCount(
+        in AdvancedTextureRecord record,
+        uint arrayLayers)
+        => record.Dimension switch
+        {
+            EAdvancedTextureDimension.Texture2D => arrayLayers == 1u,
+            EAdvancedTextureDimension.Texture2DArray => arrayLayers >= record.DepthOrLayers,
+            EAdvancedTextureDimension.Cube => arrayLayers == 6u,
+            _ => false,
+        };
 
     private bool TryUploadPublicationTables(
         int frameSlot,
@@ -2222,7 +2287,7 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
             "AdvancedScene.GlobalDescriptorSetLayout");
 
         DescriptorSetLayoutBinding* resourceBindings =
-            stackalloc DescriptorSetLayoutBinding[2];
+            stackalloc DescriptorSetLayoutBinding[4];
         resourceBindings[0] = new DescriptorSetLayoutBinding
         {
             Binding = AdvancedGlobalResourceBindings.TextureDescriptors,
@@ -2237,10 +2302,12 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
             DescriptorCount = DescriptorCapacity,
             StageFlags = stages,
         };
+        resourceBindings[2] = new DescriptorSetLayoutBinding { Binding = AdvancedGlobalResourceBindings.Texture2DArrayDescriptors, DescriptorType = DescriptorType.SampledImage, DescriptorCount = DescriptorCapacity, StageFlags = stages };
+        resourceBindings[3] = new DescriptorSetLayoutBinding { Binding = AdvancedGlobalResourceBindings.TextureCubeDescriptors, DescriptorType = DescriptorType.SampledImage, DescriptorCount = DescriptorCapacity, StageFlags = stages };
         DescriptorSetLayoutCreateInfo layoutInfo = new()
         {
             SType = StructureType.DescriptorSetLayoutCreateInfo,
-            BindingCount = 2u,
+            BindingCount = 4u,
             PBindings = resourceBindings,
         };
         result = device.Api.CreateDescriptorSetLayout(
@@ -2258,7 +2325,7 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
             "AdvancedScene.ResourceDescriptorSetLayout");
 
         uint totalResourceDescriptors = checked(
-            DescriptorCapacity * (uint)_slots.Length);
+            DescriptorCapacity * (uint)_slots.Length * 3u);
         uint globalSetCount = checked(
             (uint)_slots.Length * (uint)PublicationCapacityPerFrameSlot);
         uint totalStorageDescriptors = checked(
@@ -2381,7 +2448,9 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
             _resources.FallbackTexture.GetImageInfo(
                 DescriptorType.CombinedImageSampler,
                 ImageViewType.Type2D);
-        if (fallback.ImageView.Handle == 0 || fallback.Sampler.Handle == 0)
+        DescriptorImageInfo arrayFallback = _resources.FallbackTexture.GetImageInfo(DescriptorType.CombinedImageSampler, ImageViewType.Type2DArray);
+        DescriptorImageInfo cubeFallback = _resources.FallbackTexture.GetImageInfo(DescriptorType.CombinedImageSampler, ImageViewType.TypeCube);
+        if (fallback.ImageView.Handle == 0 || arrayFallback.ImageView.Handle == 0 || cubeFallback.ImageView.Handle == 0 || fallback.Sampler.Handle == 0)
         {
             reason = "The fallback texture could not initialize advanced-scene descriptor arrays.";
             return false;
@@ -2393,6 +2462,8 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
                 ImageView = fallback.ImageView,
                 ImageLayout = fallback.ImageLayout,
             };
+            _arrayImageDescriptorScratch[index] = new DescriptorImageInfo { ImageView = arrayFallback.ImageView, ImageLayout = arrayFallback.ImageLayout };
+            _cubeImageDescriptorScratch[index] = new DescriptorImageInfo { ImageView = cubeFallback.ImageView, ImageLayout = cubeFallback.ImageLayout };
             _samplerDescriptorScratch[index] = new DescriptorImageInfo
             {
                 Sampler = fallback.Sampler,
@@ -2529,9 +2600,11 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
         uint samplerCount,
         out string reason)
     {
-        WriteDescriptorSet* writes = stackalloc WriteDescriptorSet[2];
+        WriteDescriptorSet* writes = stackalloc WriteDescriptorSet[4];
         uint writeCount = 0u;
         fixed (DescriptorImageInfo* imagePointer = _imageDescriptorScratch)
+        fixed (DescriptorImageInfo* arrayImagePointer = _arrayImageDescriptorScratch)
+        fixed (DescriptorImageInfo* cubeImagePointer = _cubeImageDescriptorScratch)
         fixed (DescriptorImageInfo* samplerPointer = _samplerDescriptorScratch)
         {
             if (textureCount != 0u)
@@ -2561,6 +2634,11 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
                     DescriptorType = DescriptorType.Sampler,
                     PImageInfo = samplerPointer,
                 };
+            }
+            if (textureCount != 0u)
+            {
+                writes[writeCount++] = new WriteDescriptorSet { SType = StructureType.WriteDescriptorSet, DstSet = descriptorSet, DstBinding = AdvancedGlobalResourceBindings.Texture2DArrayDescriptors, DstArrayElement = textureBase, DescriptorCount = textureCount, DescriptorType = DescriptorType.SampledImage, PImageInfo = arrayImagePointer };
+                writes[writeCount++] = new WriteDescriptorSet { SType = StructureType.WriteDescriptorSet, DstSet = descriptorSet, DstBinding = AdvancedGlobalResourceBindings.TextureCubeDescriptors, DstArrayElement = textureBase, DescriptorCount = textureCount, DescriptorType = DescriptorType.SampledImage, PImageInfo = cubeImagePointer };
             }
 
             if (writeCount != 0u &&
@@ -2662,6 +2740,8 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
             new AdvancedEncodedSamplerReference[descriptorCount];
         _imageDescriptorScratch =
             new DescriptorImageInfo[descriptorCount];
+        _arrayImageDescriptorScratch = new DescriptorImageInfo[descriptorCount];
+        _cubeImageDescriptorScratch = new DescriptorImageInfo[descriptorCount];
         _samplerDescriptorScratch =
             new DescriptorImageInfo[descriptorCount];
         _samplerValidationScratch = new byte[descriptorCount];
@@ -2817,6 +2897,7 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
             9 => material.Layouts.HandleLookups,
             10 => snapshot.Textures.HandleLookups,
             11 => snapshot.Samplers.HandleLookups,
+            12 => snapshot.GlobalResources.Shadows.HandleLookups,
             _ => throw new ArgumentOutOfRangeException(nameof(owner)),
         };
 
@@ -2838,6 +2919,7 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
             9 => material.Layouts.Generations.Lookup,
             10 => snapshot.Textures.Generations.Lookup,
             11 => snapshot.Samplers.Generations.Lookup,
+            12 => snapshot.GlobalResources.Shadows.Generations.Lookup,
             _ => throw new ArgumentOutOfRangeException(nameof(owner)),
         };
 
@@ -2859,6 +2941,7 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
             9 => material.Layouts.Sequence,
             10 => snapshot.Textures.Sequence,
             11 => snapshot.Samplers.Sequence,
+            12 => snapshot.GlobalResources.Shadows.Sequence,
             _ => throw new ArgumentOutOfRangeException(nameof(owner)),
         };
 
@@ -2877,6 +2960,7 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
         ReadOnlySpan<uint> counts)
     {
         Span<uint> offsets = stackalloc uint[VulkanAdvancedSceneResidentLookups.OwnerCount];
+        offsets[0] = 0u;
         for (int owner = 1; owner < offsets.Length; ++owner)
             offsets[owner] = checked(offsets[owner - 1] + capacities[owner - 1]);
         return new VulkanAdvancedSceneLookupSegments(
@@ -2891,7 +2975,8 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
             new AdvancedGpuLookupSegment(offsets[8], counts[8]),
             new AdvancedGpuLookupSegment(offsets[9], counts[9]),
             new AdvancedGpuLookupSegment(offsets[10], counts[10]),
-            new AdvancedGpuLookupSegment(offsets[11], counts[11]));
+            new AdvancedGpuLookupSegment(offsets[11], counts[11]),
+            new AdvancedGpuLookupSegment(offsets[12], counts[12]));
     }
 
     private void SetResidentDecision(
@@ -3022,6 +3107,17 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
            left.MipCount == right.MipCount &&
            left.FormatClass == right.FormatClass &&
            left.UvScaleBias == right.UvScaleBias;
+
+    private static bool TextureMetadataStateEquals(
+        in AdvancedTextureRecord left,
+        in AdvancedTextureRecord right)
+    {
+        AdvancedTextureRecord leftWithoutSampler = left;
+        AdvancedTextureRecord rightWithoutSampler = right;
+        leftWithoutSampler.DefaultSampler = AdvancedGpuHandle.Invalid;
+        rightWithoutSampler.DefaultSampler = AdvancedGpuHandle.Invalid;
+        return TextureStateEquals(leftWithoutSampler, rightWithoutSampler);
+    }
 
     private static string DescribeTextureStateMismatch(
         in AdvancedTextureRecord current,

@@ -39,6 +39,8 @@ public unsafe partial class OpenXRAPI
         internal XRViewport? StereoViewport => owner._openXrStereoViewport;
 
         internal int PendingFrameNumber => owner._openXrPendingFrameNumber;
+        internal ulong PendingFrameId => unchecked((ulong)Math.Max(0, Volatile.Read(ref owner._openXrPendingFrameNumber)));
+        internal long PendingPredictedDisplayTime => owner._frameState.PredictedDisplayTime;
         internal bool PendingFrameUsesTrueSinglePassStereo
             => Volatile.Read(ref owner._pendingXrFrameUsesTrueSinglePassStereo) != 0;
         internal ulong LastRenderedFrameId => owner._openXrLastRenderedFrameId;

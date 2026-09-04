@@ -29,4 +29,13 @@ public struct AdvancedShadowRecord
     public uint ViewMaskHi;
     public uint LastRenderedFrameLo;
     public uint LastRenderedFrameHi;
+
+    /// <summary>Variance floor, light-bleed reduction, positive and negative EVSM exponents.</summary>
+    public Vector4 MomentParameters;
+
+    /// <summary>Rendered near/far planes and directional cascade split/blend distances.</summary>
+    public Vector4 DepthRangeAndCascade;
+
+    /// <summary>Receipt-stamped point/cube light origin and radial depth range.</summary>
+    public Vector4 RenderedLightPositionAndFar;
 }

@@ -37,6 +37,11 @@ internal sealed class VulkanOpenXrEyeWorkerCommandService : IDisposable
     internal VulkanOpenXrEyeWorkerCommandResult Execute(
         in OpenXrPreparedEyeRecordWorkerInput leftEye,
         in OpenXrPreparedEyeRecordWorkerInput rightEye,
+        in OpenXrPreparedEyeCommandBufferInput leftPrepared,
+        in OpenXrPreparedEyeCommandBufferInput rightPrepared,
+        OpenXrVulkanSubmissionTracker.SubmissionAdmissionTicket admissionTicket,
+        ref bool trackerOwnsSubmission,
+        OpenXrSubmissionMetadata submissionMetadata,
         in VulkanSubmissionDiagnosticContext diagnosticContext)
     {
         VulkanCommandRuntime runtime = _runtime ?? throw new InvalidOperationException("OpenXR render-domain eye recording is not configured.");
@@ -75,53 +80,79 @@ internal sealed class VulkanOpenXrEyeWorkerCommandService : IDisposable
                     "A foreground eye lane returned failure without a typed recording exception.");
             }
 
-            return new(batch, false, false);
+            return new(batch, false, false, default);
         }
 
-        VulkanOpenXrSubmissionInput submissionInput = new(
-            leftResult.Recorded.CommandBuffer,
-            rightResult.Recorded.CommandBuffer,
-            2,
-            diagnosticContext);
-        VulkanOpenXrSubmissionResult submission =
-            runtime.SubmitAndWaitOpenXr(in submissionInput);
-        if (submission.Succeeded)
+        try
         {
-            Publish(in leftResult, runtime, "OpenXR eye parallel batch");
-            Publish(in rightResult, runtime, "OpenXR eye parallel batch");
-        }
-        else if (!submission.CommandBuffersCompleted && device.IsOperational)
-        {
-            Cancel(in leftResult, runtime, "OpenXR eye parallel batch command buffers did not complete");
-            Cancel(in rightResult, runtime, "OpenXR eye parallel batch command buffers did not complete");
-        }
-
-        if (!submission.Succeeded &&
-            (leftEye.OutputContract.WorkClass == ERenderOutputWorkClass.PresentNow ||
-             rightEye.OutputContract.WorkClass == ERenderOutputWorkClass.PresentNow))
-        {
-            if (submission.SubmissionReceipt.Result == Silk.NET.Vulkan.Result.ErrorDeviceLost)
+            int leftUploadCount = leftResult.RecordedUploads?.Length ?? 0;
+            int rightUploadCount = rightResult.RecordedUploads?.Length ?? 0;
+            if (leftUploadCount + rightUploadCount > OpenXrVulkanSubmissionTracker.MaxTrackedUploads)
             {
                 throw new InvalidOperationException(
-                    "OpenXR foreground queue submission failed because the Vulkan device was lost.");
+                    "OpenXR parallel-eye submission recorded more uploads than its bounded ownership slot can retain.");
             }
-
-            RenderOutputRequest failedContract =
-                leftEye.OutputContract.WorkClass == ERenderOutputWorkClass.PresentNow
-                    ? leftEye.OutputContract
-                    : rightEye.OutputContract;
-            throw new VulkanPresentNowReadinessException(
-                failedContract.FrameId,
-                EVulkanPresentNowReadinessStage.QueueSubmission,
-                "openxr-eye-parallel-submit",
-                "OpenXREyeSubmit -> graphics queue submission -> timeline completion",
-                TimeSpan.Zero,
-                TimeSpan.Zero,
-                $"The exact foreground eye submission failed with {submission.SubmissionReceipt.Result}; " +
-                $"disposition={submission.SubmissionDisposition} completed={submission.CommandBuffersCompleted}.");
+    
+            OpenXrRecordedEyeCommandBuffer leftRecorded = leftResult.Recorded;
+            OpenXrRecordedEyeCommandBuffer rightRecorded = rightResult.Recorded;
+            Span<uint> frameSlots = stackalloc uint[2];
+            frameSlots[0] = leftRecorded.FrameDataSlotIndex;
+            frameSlots[1] = rightRecorded.FrameDataSlotIndex;
+            trackerOwnsSubmission = runtime.OpenXrSubmissionTracker.RegisterSubmission(
+                admissionTicket,
+                submissionMetadata.FrameId,
+                submissionMetadata.PredictedDisplayTime,
+                3u,
+                leftEye.OpenXrImageIndex,
+                rightEye.OpenXrImageIndex,
+                in leftRecorded,
+                hasFirst: true,
+                in rightRecorded,
+                hasSecond: true,
+                in leftPrepared,
+                hasFirstPrepared: true,
+                in rightPrepared,
+                hasSecondPrepared: true,
+                leftResult.RecordedUploads,
+                rightResult.RecordedUploads,
+                default,
+                0UL,
+                runtime.MappedFrameArena,
+                runtime.MappedFrameArena?.Generation ?? 0UL,
+                runtime.ResourceRuntime.FrameDataArena,
+                runtime.ResourceRuntime.FrameDataArena?.Generation ?? 0UL,
+                frameSlots,
+                0L,
+                0L);
+            VulkanOpenXrSubmissionInput submissionInput = new(
+                leftRecorded.CommandBuffer,
+                rightRecorded.CommandBuffer,
+                default,
+                2,
+                diagnosticContext,
+                AdmissionTicket: admissionTicket);
+            VulkanOpenXrSubmissionResult submission =
+                runtime.SubmitAndWaitOpenXr(in submissionInput);
+    
+            return new(batch, submission.Succeeded, submission.CommandBuffersCompleted, submission);
         }
-
-        return new(batch, submission.Succeeded, submission.CommandBuffersCompleted);
+        finally
+        {
+            try
+            {
+                if (!trackerOwnsSubmission)
+                {
+                    Cancel(in leftResult, runtime, "OpenXR parallel-eye registration failed");
+                    Cancel(in rightResult, runtime, "OpenXR parallel-eye registration failed");
+                }
+            }
+            finally
+            {
+                // A registered payload remains solely tracker-owned even when
+                // native submission or later diagnostics throw.
+                runtime.OpenXrSubmissionTracker.CancelPreparedSubmission(admissionTicket);
+            }
+        }
     }
 
     private static void RethrowWorkerFailure(
@@ -136,22 +167,13 @@ internal sealed class VulkanOpenXrEyeWorkerCommandService : IDisposable
         right.Failure?.Throw();
     }
 
-    private static void Publish(
-        scoped in OpenXrEyeRecordWorkerResult result,
-        VulkanCommandRuntime runtime,
-        string source)
-    {
-        if (result.RecordedUploads is { Length: > 0 } uploads)
-            runtime.PublishOpenXrRecordedTextureUploads([.. uploads], source);
-    }
-
     private static void Cancel(
         scoped in OpenXrEyeRecordWorkerResult result,
         VulkanCommandRuntime runtime,
         string reason)
     {
         if (result.RecordedUploads is { Length: > 0 } uploads)
-            runtime.CancelOpenXrRecordedTextureUploads([.. uploads], reason);
+            runtime.CancelOpenXrRecordedTextureUploads(uploads.AsSpan(), reason);
     }
 
     public void Dispose()

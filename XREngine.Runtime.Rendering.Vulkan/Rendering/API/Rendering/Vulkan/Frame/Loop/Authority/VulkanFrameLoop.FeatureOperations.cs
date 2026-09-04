@@ -16,7 +16,10 @@ internal sealed partial class VulkanFrameLoop
     internal bool SupportsAdvancedVisibilityStage(EAdvancedRenderStage stage)
         => stage is (EAdvancedRenderStage.VisibilityPreparation or
                EAdvancedRenderStage.VisibilityRaster or
-               EAdvancedRenderStage.DepthPyramidAndLateVisibility) &&
+               EAdvancedRenderStage.DepthPyramidAndLateVisibility or
+               EAdvancedRenderStage.WorkClassification or
+               EAdvancedRenderStage.AttributeReconstruction or
+               EAdvancedRenderStage.NativeOpaqueShading) &&
            _commandRuntime.IsAdvancedVisibilityProductionPromoted &&
            _deviceContext.IsOperational &&
            _resourceRuntime.AdvancedVisibilityResources.IsReady &&
@@ -110,7 +113,9 @@ internal sealed partial class VulkanFrameLoop
             request.MetadataTargetName,
             request.SelectionTargetName,
             request.DepthTargetName,
-            request.CurrentDepthPyramidTargetName);
+            request.CurrentDepthPyramidTargetName,
+            request.ShadingDebugView,
+            request.RequireNativeOutput);
         if (!_frameOperationQueue.TryAcquireAdvancedVisibilityInput(
                 in vulkanRequest,
                 out VulkanAdvancedVisibilityInputLease inputLease,

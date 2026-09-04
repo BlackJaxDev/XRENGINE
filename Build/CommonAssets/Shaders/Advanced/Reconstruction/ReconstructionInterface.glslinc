@@ -4,107 +4,27 @@
 #include "Advanced/Visibility/VisibilityInterface.glslinc"
 #include "AdvancedSurface.glslinc"
 
-#ifndef XR_ADV_BINDING_STATIC_VERTICES
-#define XR_ADV_BINDING_STATIC_VERTICES 37
-#endif
-#ifndef XR_ADV_BINDING_PRESKINNED_CURRENT_VERTICES
-#define XR_ADV_BINDING_PRESKINNED_CURRENT_VERTICES 38
-#endif
-#ifndef XR_ADV_BINDING_PRESKINNED_PREVIOUS_VERTICES
-#define XR_ADV_BINDING_PRESKINNED_PREVIOUS_VERTICES 39
-#endif
 #ifndef XR_ADV_BINDING_RECONSTRUCTION_INDICES
-#define XR_ADV_BINDING_RECONSTRUCTION_INDICES 40
+#define XR_ADV_BINDING_RECONSTRUCTION_INDICES 47
 #endif
 #ifndef XR_ADV_BINDING_RECONSTRUCTION_COUNTERS
-#define XR_ADV_BINDING_RECONSTRUCTION_COUNTERS 41
+#define XR_ADV_BINDING_RECONSTRUCTION_COUNTERS 48
 #endif
 
-#if defined(XR_ADV_BACKEND_VULKAN)
-#define XR_ADV_RECONSTRUCTION_PASS_LAYOUT(bindingIndex) layout(set = XR_ADV_VISIBILITY_SET, binding = bindingIndex)
-#define XR_ADV_RECONSTRUCTION_IMAGE_LAYOUT(formatName, bindingIndex) layout(formatName, set = XR_ADV_VISIBILITY_SET, binding = bindingIndex)
-#elif defined(XR_ADV_BACKEND_OPENGL)
-#define XR_ADV_RECONSTRUCTION_PASS_LAYOUT(bindingIndex) layout(binding = bindingIndex)
-#define XR_ADV_RECONSTRUCTION_IMAGE_LAYOUT(formatName, bindingIndex) layout(formatName, binding = bindingIndex)
-#else
-#error "An advanced reconstruction shader backend must be selected."
-#endif
-
-struct XRAdvancedPackedVertex
-{
-    vec3 position;
-    uint normalOct;
-    uint tangentOctAndSign;
-    uint texCoord0Half;
-    uint texCoord1Half;
-    uint color0Rgba8;
-    uint color1Rgba8;
-    uint custom0;
-    uint sourceVertex;
-    uint flags;
-    uint reserved0;
-    uint reserved1;
-    uint reserved2;
-    uint reserved3;
-};
-
-struct XRAdvancedReconstructionMeshlet
-{
-    vec4 boundsSphere;
-    uint vertexOffset;
-    uint triangleByteOffset;
-    uint vertexCount;
-    uint triangleCount;
-    vec4 cone;
-    vec4 coneApex;
-    uint packedCone;
-    uint reserved0;
-    uint reserved1;
-    uint reserved2;
-};
-
-XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_STATIC_VERTICES)
-readonly buffer XRAdvancedStaticVertexTable
-{
-    XRAdvancedPackedVertex records[];
-} XR_ADV_StaticVertices;
-
-XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_PRESKINNED_CURRENT_VERTICES)
-readonly buffer XRAdvancedPreSkinnedCurrentVertexTable
-{
-    XRAdvancedPackedVertex records[];
-} XR_ADV_PreSkinnedCurrentVertices;
-
-XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_PRESKINNED_PREVIOUS_VERTICES)
-readonly buffer XRAdvancedPreSkinnedPreviousVertexTable
-{
-    XRAdvancedPackedVertex records[];
-} XR_ADV_PreSkinnedPreviousVertices;
+#define XRAdvancedPackedVertex XRAdvancedVisibilityPackedVertex
+#define XRAdvancedReconstructionMeshlet XRAdvancedVisibilityMeshletDescriptor
+#define XR_ADV_StaticVertices XR_ADV_VisibilityStaticVertices
+#define XR_ADV_PreSkinnedCurrentVertices XR_ADV_VisibilityCurrentVertices
+#define XR_ADV_PreSkinnedPreviousVertices XR_ADV_VisibilityPreviousVertices
+#define XR_ADV_ReconstructionMeshlets XR_ADV_VisibilityMeshlets
+#define XR_ADV_ReconstructionMeshletVertices XR_ADV_VisibilityMeshletVertexIndices
+#define XR_ADV_ReconstructionMeshletTriangles XR_ADV_VisibilityMeshletTriangleWords
 
 XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_RECONSTRUCTION_INDICES)
 readonly buffer XRAdvancedReconstructionIndexTable
 {
     uint indices[];
 } XR_ADV_ReconstructionIndices;
-
-// Bindings 31-33 are the exact meshlet tables consumed by phase 04.
-XR_ADV_VIS_TABLE_LAYOUT(31)
-readonly buffer XRAdvancedReconstructionMeshletTable
-{
-    XRAdvancedReconstructionMeshlet records[];
-} XR_ADV_ReconstructionMeshlets;
-
-XR_ADV_VIS_TABLE_LAYOUT(32)
-readonly buffer XRAdvancedReconstructionMeshletVertexTable
-{
-    uint vertexIndices[];
-} XR_ADV_ReconstructionMeshletVertices;
-
-XR_ADV_VIS_TABLE_LAYOUT(33)
-readonly buffer XRAdvancedReconstructionMeshletTriangleTable
-{
-    uint triangleWords[];
-} XR_ADV_ReconstructionMeshletTriangles;
 
 XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_RECONSTRUCTION_COUNTERS)
 buffer XRAdvancedReconstructionCounterTable
@@ -126,11 +46,10 @@ buffer XRAdvancedReconstructionCounterTable
     uint deformedSurfaces;
     uint reserved;
 } XR_ADV_ReconstructionCounters;
-
 uint XR_ADV_ReconstructionTriangleByte(uint byteIndex)
 {
     uint word =
-        XR_ADV_ReconstructionMeshletTriangles.triangleWords[
+        XR_ADV_ReconstructionMeshletTriangles.records[
             byteIndex >> 2u];
     return (word >> ((byteIndex & 3u) * 8u)) & 0xFFu;
 }

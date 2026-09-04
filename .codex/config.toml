@@ -1,11 +1,6 @@
-model = "gpt-5.6-sol"
-
 web_search = "live"
 [agents]
 enabled = true
-max_concurrent_threads_per_session = 4
-default_subagent_model = "gpt-5.6-luna"
-default_subagent_reasoning_effort = "low"
 
 [mcp_servers.code-review-graph]
 command = "powershell"

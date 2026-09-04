@@ -88,6 +88,14 @@ internal sealed class VulkanBinResourceManifest
                         failure = VulkanBinResourceManifestFailure.QueueFamilyConflict;
                         return false;
                     }
+                    if (existing.NativeGeneration != candidate.NativeGeneration ||
+                        existing.Offset != candidate.Offset ||
+                        existing.Length != candidate.Length ||
+                        existing.ElementStride != candidate.ElementStride)
+                    {
+                        failure = VulkanBinResourceManifestFailure.NativeRangeConflict;
+                        return false;
+                    }
                     if (existing.RequiredLayout != candidate.RequiredLayout)
                     {
                         failure = VulkanBinResourceManifestFailure.ImageLayoutConflict;
@@ -132,4 +140,5 @@ internal enum VulkanBinResourceManifestFailure : byte
     CapacityExceeded = 2,
     QueueFamilyConflict = 3,
     ImageLayoutConflict = 4,
+    NativeRangeConflict = 5,
 }

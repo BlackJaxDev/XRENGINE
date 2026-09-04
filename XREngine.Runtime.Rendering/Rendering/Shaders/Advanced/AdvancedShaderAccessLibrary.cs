@@ -33,6 +33,7 @@ public static class AdvancedShaderAccessLibrary
         StringBuilder source = new(4096);
         AppendRequiredExtensions(source, backend, textureEncoding);
         source.Append(AdvancedShaderRecordLayout.BuildCpuLayoutDefines());
+        AdvancedStandardMaterialShaderContract.AppendDefines(source);
         AppendDefine(source, "XR_ADV_GLOBAL_SET", descriptorSet);
         AppendDefine(
             source,
@@ -66,14 +67,45 @@ public static class AdvancedShaderAccessLibrary
         AppendDefine(source, "XR_ADV_BINDING_EDITOR_IDENTITIES", AdvancedGlobalResourceBindings.EditorIdentities);
         AppendDefine(source, "XR_ADV_BINDING_TEXTURE_DESCRIPTORS", AdvancedGlobalResourceBindings.TextureDescriptors);
         AppendDefine(source, "XR_ADV_BINDING_SAMPLER_DESCRIPTORS", AdvancedGlobalResourceBindings.SamplerDescriptors);
+        AppendDefine(source, "XR_ADV_BINDING_TEXTURE_2D_ARRAY_DESCRIPTORS", AdvancedGlobalResourceBindings.Texture2DArrayDescriptors);
+        AppendDefine(source, "XR_ADV_BINDING_TEXTURE_CUBE_DESCRIPTORS", AdvancedGlobalResourceBindings.TextureCubeDescriptors);
         AppendDefine(source, "XR_ADV_BINDING_TEXTURE_ARRAY", AdvancedGlobalResourceBindings.TextureArray);
         AppendDefine(source, "XR_ADV_BINDING_HANDLE_LOOKUPS", AdvancedGlobalResourceBindings.HandleLookups);
-        AppendDefine(source, "XR_ADV_BINDING_STATIC_VERTICES", AdvancedReconstructionShaderBindings.StaticVertices);
-        AppendDefine(source, "XR_ADV_BINDING_PRESKINNED_CURRENT_VERTICES", AdvancedReconstructionShaderBindings.PreSkinnedCurrentVertices);
-        AppendDefine(source, "XR_ADV_BINDING_PRESKINNED_PREVIOUS_VERTICES", AdvancedReconstructionShaderBindings.PreSkinnedPreviousVertices);
-        AppendDefine(source, "XR_ADV_BINDING_RECONSTRUCTION_INDICES", AdvancedReconstructionShaderBindings.Indices);
-        AppendDefine(source, "XR_ADV_BINDING_RECONSTRUCTION_COUNTERS", AdvancedReconstructionShaderBindings.Counters);
-
+        bool vulkan = backend == RuntimeGraphicsApiKind.Vulkan;
+        AppendDefine(
+            source,
+            "XR_ADV_BINDING_STATIC_VERTICES",
+            vulkan
+                ? AdvancedReconstructionShaderBindings.VulkanStaticVertices
+                : AdvancedReconstructionShaderBindings.StaticVertices);
+        AppendDefine(
+            source,
+            "XR_ADV_BINDING_PRESKINNED_CURRENT_VERTICES",
+            vulkan
+                ? AdvancedReconstructionShaderBindings.VulkanPreSkinnedCurrentVertices
+                : AdvancedReconstructionShaderBindings.PreSkinnedCurrentVertices);
+        AppendDefine(
+            source,
+            "XR_ADV_BINDING_PRESKINNED_PREVIOUS_VERTICES",
+            vulkan
+                ? AdvancedReconstructionShaderBindings.VulkanPreSkinnedPreviousVertices
+                : AdvancedReconstructionShaderBindings.PreSkinnedPreviousVertices);
+        AppendDefine(
+            source,
+            "XR_ADV_BINDING_PREPARED_DRAW_DEFORMATIONS",
+            AdvancedReconstructionShaderBindings.VulkanPreparedDrawDeformations);
+        AppendDefine(
+            source,
+            "XR_ADV_BINDING_RECONSTRUCTION_INDICES",
+            vulkan
+                ? AdvancedReconstructionShaderBindings.VulkanIndices
+                : AdvancedReconstructionShaderBindings.Indices);
+        AppendDefine(
+            source,
+            "XR_ADV_BINDING_RECONSTRUCTION_COUNTERS",
+            vulkan
+                ? AdvancedReconstructionShaderBindings.VulkanCounters
+                : AdvancedReconstructionShaderBindings.Counters);
         source.AppendLine(backend == RuntimeGraphicsApiKind.OpenGL
             ? "#define XR_ADV_BACKEND_OPENGL 1"
             : "#define XR_ADV_BACKEND_VULKAN 1");

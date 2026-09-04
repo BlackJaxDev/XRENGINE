@@ -14,5 +14,29 @@ public interface IAdvancedDeformationDispatchBackend
         in AdvancedDeformationDispatchBatch batch,
         ReadOnlySpan<int> jobIndices);
 
+    /// <summary>
+    /// Attempts to enqueue one aggregate batch. The default preserves
+    /// diagnostic probes that execute synchronously; production backends must
+    /// override this method and return their renderer's exact enqueue receipt.
+    /// </summary>
+    ERendererComputeEnqueueStatus TryDispatch(
+        in AdvancedDeformationDispatchBatch batch,
+        ReadOnlySpan<int> jobIndices)
+    {
+        Dispatch(in batch, jobIndices);
+        return ERendererComputeEnqueueStatus.Enqueued;
+    }
+
     void ApplyBarrier(in AdvancedPreparationBarrier barrier);
+
+    /// <summary>
+    /// Attempts to enqueue one consumer barrier after every deformation batch
+    /// has been accepted.
+    /// </summary>
+    ERendererComputeEnqueueStatus TryApplyBarrier(
+        in AdvancedPreparationBarrier barrier)
+    {
+        ApplyBarrier(in barrier);
+        return ERendererComputeEnqueueStatus.Enqueued;
+    }
 }

@@ -3,67 +3,87 @@ using XREngine.Rendering.Commands;
 namespace XREngine.Rendering.Vulkan;
 
 /// <summary>
-/// Exact canonical geometry publication consumed by one visibility payload.
-/// Both slices belong to the retained advanced-scene frame slot, so recording
-/// can reject a later slot rotation without consulting the legacy GPU scene.
+/// Exact immutable topology and prepared vertex source consumed by one
+/// visibility payload. Canonical geometry never changes to represent
+/// deformation; the prepared source carries that frame's output separately.
 /// </summary>
 internal readonly record struct VulkanVisibilityGeometryRecordClosure(
     AdvancedGpuHandle Geometry,
-    EAdvancedGeometrySource Source,
-    VulkanFrameDataSlice VertexSlice,
+    AdvancedGeometryRecord CanonicalGeometry,
+    VulkanFrameDataSlice CanonicalVertexSlice,
     VulkanFrameDataSlice IndexSlice,
-    AdvancedBufferReference VertexReference,
-    AdvancedBufferReference IndexReference,
-    uint VertexBase,
-    uint VertexCount,
-    uint IndexBase,
-    uint IndexCount,
-    ulong VertexLayoutId,
+    VulkanVisibilityPreparedVertexSource PreparedVertexSource,
+    uint PreparedVertexBase,
     ulong SceneNativeGeneration)
 {
     internal bool IsValid
         => Geometry.IsValid && SceneNativeGeneration != 0u &&
-           VertexSlice.IsValid && IndexSlice.IsValid &&
-           VertexReference.IsValid && IndexReference.IsValid &&
-           VertexReference.ElementStride == 64u &&
-           IndexReference.ElementStride == sizeof(uint) &&
-           VertexCount != 0u && IndexCount != 0u &&
-           Source is EAdvancedGeometrySource.Static or
-               EAdvancedGeometrySource.MeshletLocal or
-               EAdvancedGeometrySource.PreSkinnedCurrentAndPrevious &&
-           RangeFits(VertexSlice, VertexReference) &&
-           RangeFits(IndexSlice, IndexReference);
+           CanonicalVertexSlice.IsValid && IndexSlice.IsValid &&
+           PreparedVertexSource.IsValid &&
+           CanonicalGeometry.CurrentVertexData.IsValid &&
+           CanonicalGeometry.IndexData.IsValid &&
+           CanonicalGeometry.CurrentVertexData.ElementStride == 64u &&
+           CanonicalGeometry.IndexData.ElementStride == sizeof(uint) &&
+           CanonicalGeometry.VertexCount != 0u &&
+           CanonicalGeometry.IndexCount != 0u &&
+           CanonicalGeometry.Source is EAdvancedGeometrySource.Static or
+               EAdvancedGeometrySource.MeshletLocal &&
+           RangeFits(CanonicalVertexSlice, CanonicalGeometry.CurrentVertexData) &&
+           RangeFits(IndexSlice, CanonicalGeometry.IndexData) &&
+           PreparedRangeFits();
 
     internal bool TryValidate(
+        VulkanResourceRuntime resources,
         in VulkanAdvancedScenePublicationState scene,
         out string reason)
     {
+        ArgumentNullException.ThrowIfNull(resources);
         reason = "Ready";
         if (!IsValid)
         {
             reason = "the canonical visibility geometry closure is incomplete";
             return false;
         }
-        VulkanFrameDataSlice expectedVertices = Source ==
-            EAdvancedGeometrySource.PreSkinnedCurrentAndPrevious
-                ? scene.PreSkinnedCurrent
-                : scene.StaticVertices;
         if (!scene.IsValid || scene.NativeGeneration != SceneNativeGeneration ||
-            expectedVertices != VertexSlice || scene.Indices != IndexSlice)
+            scene.StaticVertices != CanonicalVertexSlice ||
+            scene.Indices != IndexSlice)
         {
             reason = "the canonical geometry publication changed after visibility-plan sealing";
             return false;
         }
-        if (VertexReference.ElementOffset != VertexBase ||
-            VertexReference.ElementCount != VertexCount ||
-            IndexReference.ElementOffset != IndexBase ||
-            IndexReference.ElementCount != IndexCount)
+        if (CanonicalGeometry.CurrentVertexData.ElementOffset !=
+                CanonicalGeometry.VertexBase ||
+            CanonicalGeometry.CurrentVertexData.ElementCount !=
+                CanonicalGeometry.VertexCount ||
+            CanonicalGeometry.IndexData.ElementOffset !=
+                CanonicalGeometry.IndexBase ||
+            CanonicalGeometry.IndexData.ElementCount !=
+                CanonicalGeometry.IndexCount)
         {
             reason = "the canonical geometry record range changed after visibility-plan sealing";
             return false;
         }
+        if (!PreparedVertexSource.TryValidate(resources, out reason))
+            return false;
+        if (!PreparedVertexSource.UsesNativeRange &&
+            (PreparedVertexSource.CanonicalSlice != CanonicalVertexSlice ||
+             PreparedVertexBase != CanonicalGeometry.VertexBase))
+        {
+            reason = "a static visibility draw no longer addresses its canonical vertex range";
+            return false;
+        }
 
         return true;
+    }
+
+    private bool PreparedRangeFits()
+    {
+        ulong byteOffset = (ulong)PreparedVertexBase *
+            PreparedVertexSource.ElementStride;
+        ulong byteLength = (ulong)CanonicalGeometry.VertexCount *
+            PreparedVertexSource.ElementStride;
+        return byteOffset <= PreparedVertexSource.Length &&
+            byteLength <= PreparedVertexSource.Length - byteOffset;
     }
 
     private static bool RangeFits(

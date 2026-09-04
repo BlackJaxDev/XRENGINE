@@ -25,6 +25,59 @@ public static class AdvancedGpuResourceSourceEncoder
             reason = string.Empty;
             return true;
         }
+        if (texture is XRTexture2DArray textureArray)
+        {
+            if (textureArray.Textures.Length == 0)
+            {
+                source = default;
+                compatibilityReason = EAdvancedCanonicalCompatibilityReason.EmptyResourceTexture;
+                reason = "A logical texture array must contain at least one layer.";
+                return false;
+            }
+            if (!TryEncode(textureArray.Textures[0], fallback, out AdvancedGpuResourceBindingSource layer, out compatibilityReason, out reason))
+            {
+                source = default;
+                return false;
+            }
+            AdvancedTextureRecord record = layer.TextureRecord;
+            record.Dimension = EAdvancedTextureDimension.Texture2DArray;
+            record.Width = textureArray.Width;
+            record.Height = textureArray.Height;
+            record.DepthOrLayers = textureArray.Depth;
+            record.MipCount = checked((uint)Math.Max(textureArray.Mipmaps?.Length ?? 0, 1));
+            source = new(textureArray, record, layer.SamplerRecord, fallback, 0u);
+            compatibilityReason = EAdvancedCanonicalCompatibilityReason.None;
+            reason = string.Empty;
+            return true;
+        }
+        if (texture is XRTextureCube cube)
+        {
+            if (cube.Extent == 0u || cube.Mipmaps.Length == 0)
+            {
+                source = default;
+                compatibilityReason = EAdvancedCanonicalCompatibilityReason.EmptyResourceTexture;
+                reason = "A logical cube texture must have a nonempty base mip.";
+                return false;
+            }
+            if (!TryTranslateFormat(cube.SizedInternalFormat, out EAdvancedTextureFormatClass cubeFormatClass, out bool cubeIsDepth, out reason) ||
+                !TryTranslateAddressMode(cube.UWrap, out EAdvancedSamplerAddressMode cubeAddressU) ||
+                !TryTranslateAddressMode(cube.VWrap, out EAdvancedSamplerAddressMode cubeAddressV) ||
+                !TryTranslateAddressMode(cube.WWrap, out EAdvancedSamplerAddressMode cubeAddressW))
+            {
+                source = default;
+                compatibilityReason = EAdvancedCanonicalCompatibilityReason.UnsupportedResourceTextureFormat;
+                return false;
+            }
+            EAdvancedTextureRecordFlags flags = (cube.ImportedColorSpace == ETextureColorSpace.Srgb ? EAdvancedTextureRecordFlags.Srgb : EAdvancedTextureRecordFlags.None) |
+                (cube.RequiresStorageUsage ? EAdvancedTextureRecordFlags.Storage : EAdvancedTextureRecordFlags.None) |
+                (cubeIsDepth ? EAdvancedTextureRecordFlags.Depth : EAdvancedTextureRecordFlags.None);
+            uint cubeMipCount = checked((uint)cube.Mipmaps.Length);
+            AdvancedSamplerRecord sampler = CreateCubeSamplerRecord(cube, cubeAddressU, cubeAddressV, cubeAddressW, cubeMipCount);
+            source = new(cube, new AdvancedTextureRecord { Dimension = EAdvancedTextureDimension.Cube, Flags = flags, Width = cube.Extent, Height = cube.Extent, DepthOrLayers = 6u, MipCount = cubeMipCount, FormatClass = (uint)cubeFormatClass, DefaultSampler = AdvancedGpuHandle.Invalid, UvScaleBias = new Vector4(1f, 1f, 0f, 0f) }, sampler, fallback, 0u);
+            compatibilityReason = EAdvancedCanonicalCompatibilityReason.None;
+            reason = string.Empty;
+            return true;
+        }
         if (texture is not XRTexture2D texture2D)
         {
             source = default;
@@ -195,6 +248,20 @@ public static class AdvancedGpuResourceSourceEncoder
                 CanonicalizeZero(texture.MaxAnisotropy)),
             BorderColor = new Vector4(0.0f, 0.0f, 0.0f, 1.0f),
         };
+    }
+
+    private static AdvancedSamplerRecord CreateCubeSamplerRecord(XRTextureCube texture, EAdvancedSamplerAddressMode addressU, EAdvancedSamplerAddressMode addressV, EAdvancedSamplerAddressMode addressW, uint mipCount)
+    {
+        bool nearestMinification = texture.MinFilter is ETexMinFilter.Nearest or ETexMinFilter.NearestMipmapNearest or ETexMinFilter.NearestMipmapLinear;
+        bool nearestMagnification = texture.MagFilter == ETexMagFilter.Nearest;
+        bool usesMipmaps = texture.MinFilter is not ETexMinFilter.Nearest and not ETexMinFilter.Linear;
+        bool linearMipmapInterpolation = texture.MinFilter is ETexMinFilter.NearestMipmapLinear or ETexMinFilter.LinearMipmapLinear;
+        EAdvancedSamplerRecordFlags flags = (usesMipmaps ? EAdvancedSamplerRecordFlags.UsesMipmaps : EAdvancedSamplerRecordFlags.None) |
+            (linearMipmapInterpolation ? EAdvancedSamplerRecordFlags.LinearMipmapInterpolation : EAdvancedSamplerRecordFlags.None) |
+            (nearestMinification ? EAdvancedSamplerRecordFlags.NearestMinification : EAdvancedSamplerRecordFlags.None) |
+            (nearestMagnification ? EAdvancedSamplerRecordFlags.NearestMagnification : EAdvancedSamplerRecordFlags.None);
+        float maximumMip = mipCount - 1u;
+        return new AdvancedSamplerRecord { Filter = nearestMinification && nearestMagnification ? EAdvancedSamplerFilter.Nearest : EAdvancedSamplerFilter.Linear, Flags = flags, AddressU = addressU, AddressV = addressV, AddressW = addressW, CompareOperation = EAdvancedCompareOperation.Never, LodBiasMinMaxAnisotropy = new Vector4(CanonicalizeZero(texture.LodBias), Math.Clamp(texture.MinLOD, 0, maximumMip), Math.Clamp(texture.MaxLOD, 0, maximumMip), 1f), BorderColor = new Vector4(0f, 0f, 0f, 1f) };
     }
 
     private static uint ResolveLogicalMipCount(XRTexture2D texture)

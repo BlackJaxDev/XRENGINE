@@ -15,4 +15,5 @@ internal readonly record struct VulkanAdvancedSceneLookupSegments(
     AdvancedGpuLookupSegment ShadingKernels,
     AdvancedGpuLookupSegment MaterialLayouts,
     AdvancedGpuLookupSegment Textures,
-    AdvancedGpuLookupSegment Samplers);
+    AdvancedGpuLookupSegment Samplers,
+    AdvancedGpuLookupSegment Shadows);

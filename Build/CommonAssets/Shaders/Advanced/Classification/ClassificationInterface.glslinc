@@ -1,7 +1,7 @@
 #ifndef XR_ADVANCED_CLASSIFICATION_INTERFACE_GLSLINC
 #define XR_ADVANCED_CLASSIFICATION_INTERFACE_GLSLINC
 
-#include "Advanced/Visibility/VisibilityInterface.glslinc"
+#include "Advanced/Shading/AdvancedShadingInterface.glslinc"
 
 #ifndef XR_ADV_CLASSIFICATION_SET
 #define XR_ADV_CLASSIFICATION_SET 1
@@ -73,5 +73,12 @@ XR_ADV_CLASSIFICATION_PASS_LAYOUT(7) buffer XRAdvancedDispatchIndirectBuffer
 {
     XRAdvancedDispatchIndirectCommand commands[];
 } XR_ADV_ClassificationDispatch;
+
+// One initialized compact range per dense kernel. Each range has totalTiles
+// capacity: a tile emits at most one membership for a particular kernel.
+XR_ADV_CLASSIFICATION_PASS_LAYOUT(9) buffer XRAdvancedKernelCountsBuffer
+{
+    uint counts[];
+} XR_ADV_KernelCounts;
 
 #endif // XR_ADVANCED_CLASSIFICATION_INTERFACE_GLSLINC

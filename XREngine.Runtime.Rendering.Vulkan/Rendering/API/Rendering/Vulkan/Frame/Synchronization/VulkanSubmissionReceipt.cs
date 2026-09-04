@@ -1,4 +1,5 @@
 using Silk.NET.Vulkan;
+using VulkanSemaphore = Silk.NET.Vulkan.Semaphore;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -9,7 +10,9 @@ internal readonly record struct VulkanSubmissionReceipt(
     bool LifetimePinsTransferred,
     bool PostSubmissionPublicationSucceeded,
     TimeSpan QueueAdmissionWait,
-    TimeSpan NativeDispatchElapsed)
+    TimeSpan NativeDispatchElapsed,
+    VulkanSemaphore CompletionSemaphore,
+    ulong CompletionValue)
 {
     public static VulkanSubmissionReceipt Rejected(
         Result result,
@@ -21,5 +24,7 @@ internal readonly record struct VulkanSubmissionReceipt(
             false,
             true,
             queueAdmissionWait,
-            nativeDispatchElapsed);
+            nativeDispatchElapsed,
+            default,
+            0UL);
 }

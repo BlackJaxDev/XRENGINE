@@ -11,7 +11,7 @@ namespace XREngine.Rendering;
 /// inputs are appended once, pose inputs are packed once per shared world
 /// frame, and all admitted jobs are submitted through bounded family batches.
 /// </summary>
-public sealed class AdvancedGpuDeformationResources :
+public sealed partial class AdvancedGpuDeformationResources :
     IAdvancedDeformationDispatchBackend,
     IDisposable
 {
@@ -24,13 +24,8 @@ public sealed class AdvancedGpuDeformationResources :
         _meshSlices;
     private readonly Dictionary<XRMeshRenderer, AdvancedGpuDeformationPoseEntry>
         _poseEntries;
-    private readonly AdvancedGpuDeformationStaticBuffers?[]
-        _retiredStaticBuffers;
-    private readonly AdvancedGpuDeformationOutputBuffers?[]
-        _retiredOutputBuffers;
-    private readonly ulong[] _retiredStaticCompletionValues;
-    private readonly ulong[] _retiredOutputCompletionValues;
-    private readonly ulong[] _slotSubmissionValues;
+    private readonly XRGpuFence?[] _slotProducerFences;
+    private readonly bool[] _slotOutputValid;
     private readonly XRDataBuffer<AdvancedDeformationJobRecord>[] _jobBuffers;
     private readonly XRDataBuffer<uint>[] _jobIndexBuffers;
     private readonly XRDataBuffer<uint>[] _jobVertexOffsetBuffers;
@@ -107,17 +102,8 @@ public sealed class AdvancedGpuDeformationResources :
         _outputBuffers = new AdvancedGpuDeformationOutputBuffers(
             _frameSlotCount,
             initialVertices);
-        _retiredStaticBuffers =
-            new AdvancedGpuDeformationStaticBuffers?[
-                options.DeformedArena.RetiredGenerationCapacity];
-        _retiredOutputBuffers =
-            new AdvancedGpuDeformationOutputBuffers?[
-                options.DeformedArena.RetiredGenerationCapacity];
-        _retiredStaticCompletionValues =
-            new ulong[_retiredStaticBuffers.Length];
-        _retiredOutputCompletionValues =
-            new ulong[_retiredOutputBuffers.Length];
-        _slotSubmissionValues = new ulong[_frameSlotCount];
+        _slotProducerFences = new XRGpuFence?[_frameSlotCount];
+        _slotOutputValid = new bool[_frameSlotCount];
         _meshSlices = new Dictionary<
             XRMesh,
             AdvancedGpuDeformationMeshSlice>(
@@ -197,15 +183,18 @@ public sealed class AdvancedGpuDeformationResources :
             throw new ArgumentOutOfRangeException(nameof(currentFrameSlot));
         }
 
-        DrainRetired(completedValue);
-        if (_slotSubmissionValues[currentFrameSlot] > completedValue)
+        _ = completedValue;
+        if (!TryAcquireOutputSlot(currentFrameSlot))
             return false;
 
         bool outputReplaced = false;
         if (requiredOutputVertexCapacity > _outputBuffers.VertexCapacity)
         {
-            if (!TryReplaceOutputBuffers(requiredOutputVertexCapacity))
+            if (!TryAcquireAllOutputSlots() ||
+                !TryReplaceOutputBuffers(requiredOutputVertexCapacity))
+            {
                 return false;
+            }
             outputReplaced = true;
         }
 
@@ -217,7 +206,9 @@ public sealed class AdvancedGpuDeformationResources :
         _previousOutputValid =
             frameId != 0UL &&
             !outputReplaced &&
-            !_staticGenerationReplaced;
+            !_staticGenerationReplaced &&
+            _slotOutputValid[previousFrameSlot];
+        _slotOutputValid[currentFrameSlot] = false;
         _staticGenerationReplaced = false;
         _frameOpen = true;
         return true;
@@ -477,7 +468,9 @@ public sealed class AdvancedGpuDeformationResources :
                 0.0);
             return true;
         }
-        if (AbstractRenderer.Current is null)
+
+        AbstractRenderer? renderer = AbstractRenderer.Current;
+        if (renderer is null)
             return false;
 
         _backend =
@@ -489,26 +482,59 @@ public sealed class AdvancedGpuDeformationResources :
                 : RuntimeGraphicsApiKind.OpenGL;
         }
 
-        LastTelemetry = _executor.Execute(
+        bool executed = _executor.TryExecute(
             planner,
             this,
             jobs,
             consumers,
             EAdvancedDeformationExecutionMode.AggregateCompute,
-            admissionOverflowCount);
-        return true;
+            admissionOverflowCount,
+            out AdvancedDeformationDispatchTelemetry telemetry,
+            out _,
+            out uint enqueuedDispatchCount);
+        LastTelemetry = telemetry;
+        if (enqueuedDispatchCount == 0u)
+            return false;
+
+        XRGpuFence? producerFence = renderer.InsertGpuFence();
+        if (producerFence is null)
+            return false;
+        if (_slotProducerFences[_currentFrameSlot] is not null)
+        {
+            producerFence.Dispose();
+            return false;
+        }
+
+        _slotProducerFences[_currentFrameSlot] = producerFence;
+        _slotOutputValid[_currentFrameSlot] = executed;
+        return executed;
     }
 
     public void Dispatch(
         in AdvancedDeformationDispatchBatch batch,
         ReadOnlySpan<int> jobIndices)
     {
-        if (jobIndices.Length != checked((int)batch.JobCount))
+        ERendererComputeEnqueueStatus status =
+            TryDispatch(in batch, jobIndices);
+        if (status != ERendererComputeEnqueueStatus.Enqueued)
+        {
             throw new InvalidOperationException(
-                "Aggregate deformation received a partial dispatch batch.");
+                $"Aggregate deformation dispatch was rejected with {status}.");
+        }
+    }
+
+    public ERendererComputeEnqueueStatus TryDispatch(
+        in AdvancedDeformationDispatchBatch batch,
+        ReadOnlySpan<int> jobIndices)
+    {
+        if (jobIndices.Length != checked((int)batch.JobCount))
+            return ERendererComputeEnqueueStatus.InvalidResource;
         if (!SupportsAggregateCompute)
-            throw new NotSupportedException(
-                $"{_backend} cannot execute aggregate deformation.");
+            return ERendererComputeEnqueueStatus.Unsupported;
+
+        AbstractRenderer? renderer = AbstractRenderer.Current;
+        if (renderer is null)
+            return ERendererComputeEnqueueStatus.NoPassContext;
 
         XRRenderProgram program = GetAggregateProgram();
         _jobBuffers[_currentFrameSlot].BindTo(program, 0u);
@@ -529,24 +555,42 @@ public sealed class AdvancedGpuDeformationResources :
         program.Uniform(
             "batchVertexCount",
             checked((uint)batch.VertexCount));
-        program.DispatchCompute(batch.WorkGroupCount, 1u, 1u);
+        return renderer.TryDispatchCompute(
+            program,
+            batch.WorkGroupCount,
+            1u,
+            1u);
     }
 
     public void ApplyBarrier(in AdvancedPreparationBarrier barrier)
     {
-        EMemoryBarrierMask mask = ConvertBarrier(barrier.OpenGlMask);
-        AbstractRenderer.Current?.MemoryBarrier(mask);
+        ERendererComputeEnqueueStatus status =
+            TryApplyBarrier(in barrier);
+        if (status != ERendererComputeEnqueueStatus.Enqueued)
+        {
+            throw new InvalidOperationException(
+                $"Aggregate deformation barrier was rejected with {status}.");
+        }
+    }
+
+    public ERendererComputeEnqueueStatus TryApplyBarrier(
+        in AdvancedPreparationBarrier barrier)
+    {
+        AbstractRenderer? renderer = AbstractRenderer.Current;
+        return renderer is null
+            ? ERendererComputeEnqueueStatus.NoPassContext
+            : renderer.TryMemoryBarrier(ConvertBarrier(barrier.OpenGlMask));
     }
 
     /// <summary>
     /// Lowers barriers for consumers that acquire an already-dispatched
     /// shared publication later in the same world frame.
     /// </summary>
-    public void ApplyConsumerBarriers(
+    public bool TryApplyConsumerBarriers(
         EAdvancedPreparationConsumer consumers)
     {
         if (consumers == EAdvancedPreparationConsumer.None)
-            return;
+            return true;
 
         Span<AdvancedPreparationBarrier> barriers =
             stackalloc AdvancedPreparationBarrier[9];
@@ -560,17 +604,25 @@ public sealed class AdvancedGpuDeformationResources :
         }
 
         for (int i = 0; i < barrierCount; i++)
-            ApplyBarrier(barriers[i]);
+            if (TryApplyBarrier(in barriers[i]) !=
+                ERendererComputeEnqueueStatus.Enqueued)
+            {
+                return false;
+            }
+
+        return true;
     }
 
-    public void EndFrame(ulong submissionCompletionValue)
+    /// <summary>
+    /// Closes CPU authoring for the current slot. GPU completion is represented
+    /// only by its producer fence and exact backend resource lifetime.
+    /// </summary>
+    public void EndFrame(ulong authoringFrameId)
     {
         ThrowIfFrameClosed();
-        _slotSubmissionValues[_currentFrameSlot] =
-            submissionCompletionValue;
+        _ = authoringFrameId;
         _frameOpen = false;
     }
-
     public void Dispose()
     {
         _aggregateProgram?.Destroy();
@@ -587,15 +639,10 @@ public sealed class AdvancedGpuDeformationResources :
             _paletteBuffers[slot].Destroy();
             _activeBlendshapeBuffers[slot].Destroy();
         }
-        for (int i = 0; i < _retiredStaticBuffers.Length; i++)
+        for (int slot = 0; slot < _slotProducerFences.Length; slot++)
         {
-            _retiredStaticBuffers[i]?.Destroy();
-            _retiredStaticBuffers[i] = null;
-        }
-        for (int i = 0; i < _retiredOutputBuffers.Length; i++)
-        {
-            _retiredOutputBuffers[i]?.Destroy();
-            _retiredOutputBuffers[i] = null;
+            _slotProducerFences[slot]?.Dispose();
+            _slotProducerFences[slot] = null;
         }
         _meshSlices.Clear();
         _poseEntries.Clear();
@@ -946,11 +993,10 @@ public sealed class AdvancedGpuDeformationResources :
             return true;
         }
 
-        int retiredSlot = FindEmpty(_retiredStaticBuffers);
-        if (retiredSlot < 0)
+        if (!TryAcquireAllOutputSlots())
             return false;
 
-        AdvancedGpuDeformationStaticBuffers replacement =
+AdvancedGpuDeformationStaticBuffers replacement =
             new(
                 Math.Max(
                     _staticBuffers.SourceVertices.ElementCount,
@@ -971,10 +1017,9 @@ public sealed class AdvancedGpuDeformationResources :
                     _staticBuffers.BlendshapeDeltas.ElementCount,
                     NextPowerOfTwo(deltas)));
         UploadAllStatic(replacement);
-        _retiredStaticBuffers[retiredSlot] = _staticBuffers;
-        _retiredStaticCompletionValues[retiredSlot] =
-            MaximumSubmissionValue();
+        AdvancedGpuDeformationStaticBuffers previous = _staticBuffers;
         _staticBuffers = replacement;
+        previous.Destroy();
         _uploadedSourceVertexCount = _sourceVertexCount;
         _uploadedSkinInfluenceCount = _skinInfluenceCount;
         _uploadedSpillInfluenceCount = _spillInfluenceCount;
@@ -990,17 +1035,13 @@ public sealed class AdvancedGpuDeformationResources :
 
     private bool TryReplaceOutputBuffers(uint requiredCapacity)
     {
-        int retiredSlot = FindEmpty(_retiredOutputBuffers);
-        if (retiredSlot < 0)
-            return false;
-
         uint capacity = NextPowerOfTwo(requiredCapacity);
         AdvancedGpuDeformationOutputBuffers replacement =
             new(_frameSlotCount, capacity);
-        _retiredOutputBuffers[retiredSlot] = _outputBuffers;
-        _retiredOutputCompletionValues[retiredSlot] =
-            MaximumSubmissionValue();
+        AdvancedGpuDeformationOutputBuffers previous = _outputBuffers;
         _outputBuffers = replacement;
+        previous.Destroy();
+        Array.Clear(_slotOutputValid);
         _resourceGeneration++;
         _outputCapacityGrowthCount++;
         return true;
@@ -1080,34 +1121,6 @@ public sealed class AdvancedGpuDeformationResources :
                 checked((int)_blendshapeDeltaCount)));
     }
 
-    private void DrainRetired(ulong completedValue)
-    {
-        for (int i = 0; i < _retiredStaticBuffers.Length; i++)
-        {
-            if (_retiredStaticBuffers[i] is null ||
-                _retiredStaticCompletionValues[i] > completedValue)
-            {
-                continue;
-            }
-
-            _retiredStaticBuffers[i]!.Destroy();
-            _retiredStaticBuffers[i] = null;
-            _retiredStaticCompletionValues[i] = 0UL;
-        }
-        for (int i = 0; i < _retiredOutputBuffers.Length; i++)
-        {
-            if (_retiredOutputBuffers[i] is null ||
-                _retiredOutputCompletionValues[i] > completedValue)
-            {
-                continue;
-            }
-
-            _retiredOutputBuffers[i]!.Destroy();
-            _retiredOutputBuffers[i] = null;
-            _retiredOutputCompletionValues[i] = 0UL;
-        }
-    }
-
     private AdvancedGpuDeformationStaticBuffers CreateStaticBuffers()
         => new(
             checked((uint)_sourceVertices.Length),
@@ -1132,14 +1145,6 @@ public sealed class AdvancedGpuDeformationResources :
         };
         program.AllowLink();
         return _aggregateProgram = program;
-    }
-
-    private ulong MaximumSubmissionValue()
-    {
-        ulong maximum = 0UL;
-        for (int i = 0; i < _slotSubmissionValues.Length; i++)
-            maximum = Math.Max(maximum, _slotSubmissionValues[i]);
-        return maximum;
     }
 
     private static bool CanReadCanonicalVertices(XRMesh mesh)
@@ -1294,14 +1299,6 @@ public sealed class AdvancedGpuDeformationResources :
             checked((int)NextPowerOfTwo(required)));
     }
 
-    private static int FindEmpty<T>(T?[] entries) where T : class
-    {
-        for (int i = 0; i < entries.Length; i++)
-            if (entries[i] is null)
-                return i;
-        return -1;
-    }
-
     private static uint NextPowerOfTwo(uint value)
     {
         if (value <= 1u)
@@ -1341,5 +1338,4 @@ public sealed class AdvancedGpuDeformationResources :
         if (!_frameOpen)
             throw new InvalidOperationException(
                 "The aggregate deformation GPU frame is not open.");
-    }
-}
+    }}

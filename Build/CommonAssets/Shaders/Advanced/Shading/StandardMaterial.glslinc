@@ -1,0 +1,35 @@
+#ifndef XR_ADVANCED_STANDARD_MATERIAL_GLSLINC
+#define XR_ADVANCED_STANDARD_MATERIAL_GLSLINC
+#include "Advanced/Visibility/VisibilityInterface.glslinc"
+
+bool XR_ADV_IsStandardMaterial(XRAdvancedMaterialRecord material)
+{
+    uvec2 hash = material.materialLayoutHash;
+    return material.constantWordCount >= XR_ADV_STANDARD_WORD_COUNT &&
+        material.constantWordOffset <= uint(XR_ADV_MaterialConstants.words.length()) &&
+        material.constantWordCount <= uint(XR_ADV_MaterialConstants.words.length()) - material.constantWordOffset &&
+        (all(equal(hash, uvec2(XR_ADV_STANDARD_DEFERRED_LAYOUT_LO, XR_ADV_STANDARD_DEFERRED_LAYOUT_HI))) ||
+         all(equal(hash, uvec2(XR_ADV_STANDARD_FORWARD_LAYOUT_LO, XR_ADV_STANDARD_FORWARD_LAYOUT_HI))) ||
+         all(equal(hash, uvec2(XR_ADV_STANDARD_MASKED_LAYOUT_LO, XR_ADV_STANDARD_MASKED_LAYOUT_HI))));
+}
+
+vec4 XR_ADV_StandardVector(XRAdvancedMaterialRecord material, uint word)
+{
+    return vec4(uintBitsToFloat(XR_ADV_LoadMaterialConstant(material, word)),
+        uintBitsToFloat(XR_ADV_LoadMaterialConstant(material, word + 1u)),
+        uintBitsToFloat(XR_ADV_LoadMaterialConstant(material, word + 2u)),
+        uintBitsToFloat(XR_ADV_LoadMaterialConstant(material, word + 3u)));
+}
+
+vec4 XR_ADV_StandardTexture(XRAdvancedMaterialRecord material, uint slot,
+    vec2 uv, vec2 dx, vec2 dy, vec4 absent)
+{
+    if (slot >= material.textureReferenceCount ||
+        material.textureReferenceOffset >= uint(XR_ADV_MaterialTextureBindings.records.length()) ||
+        slot >= uint(XR_ADV_MaterialTextureBindings.records.length()) - material.textureReferenceOffset)
+        return absent;
+    XRAdvancedEncodedTextureReference textureReference;
+    XR_ADV_TryResolveTextureReference(XR_ADV_LoadMaterialTextureBinding(material, slot), textureReference);
+    return XR_ADV_SampleTexture2DGrad(textureReference, uv, dx, dy);
+}
+#endif

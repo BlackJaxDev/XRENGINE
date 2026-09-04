@@ -14,12 +14,18 @@ public partial class AdvancedRenderPipeline
     }
 
     /// <summary>
-    /// Whether all core subsystems (ARP 01-09) are active and certified for production shading.
+    /// Current structured cutover status for this unbound pipeline profile.
     /// </summary>
-    public bool IsProductionReady => true;
+    public AdvancedProductionCutoverStatus ProductionCutover
+        => AdvancedProductionCutoverContract.EvaluateUnboundProfile(this, CapabilityResult);
+
+    /// <summary>
+    /// Whether explicit production acceptance evidence exists for this profile.
+    /// </summary>
+    public bool IsProductionReady => ProductionCutover.IsProductionAccepted;
 
     /// <summary>
     /// Human-readable production cutover status summary.
     /// </summary>
-    public string ProductionCutoverStatus => "ARP 10 Production Cutover Certified (Visibility Buffer + Clustered Native Shading)";
+    public string ProductionCutoverStatus => ProductionCutover.Diagnostic;
 }

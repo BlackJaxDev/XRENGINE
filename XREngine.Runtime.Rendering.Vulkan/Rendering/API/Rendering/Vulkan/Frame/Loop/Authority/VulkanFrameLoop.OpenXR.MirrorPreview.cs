@@ -37,10 +37,15 @@ internal sealed partial class VulkanFrameLoop
     internal bool TryRenderOpenXrEyeMirrorFrameBuffer(
         in OpenXrEyeMirrorRenderRequest request)
     {
+        _commandRuntime.OpenXrSubmissionTracker.PollCompletions();
+        if (!_commandRuntime.OpenXrSubmissionTracker.TryReserveSubmission(
+                out OpenXrVulkanSubmissionTracker.SubmissionAdmissionTicket? admissionTicket))
+            return false;
         OutputRuntime.OpenXrBackend.RecordedTextureUploadsForSubmit.Clear();
         bool hasRecorded = false;
         bool submitted = false;
         bool commandBufferCompleted = false;
+        bool trackerOwnsSubmission = false;
         OpenXrRecordedEyeCommandBuffer recorded = default;
 
         try
@@ -61,9 +66,9 @@ internal sealed partial class VulkanFrameLoop
                 return false;
             }
 
-            submitted = _commandRuntime.SubmitAndWaitOpenXrCommandBuffer(
-                recorded.CommandBuffer,
-                out commandBufferCompleted,
+            VulkanOpenXrSubmissionResult submission = SubmitTrackedOpenXrMirrorSubmission(
+                admissionTicket!.Value, ref trackerOwnsSubmission, request.SubmissionMetadata, in recorded, hasFirst: true, secondRecorded: default,
+                hasSecond: false, temporaryCommandBuffer: default,
                 _commandRuntime.CreateOpenXrSubmissionDiagnosticContext(
                     AcceptedAttemptCount,
                     ResolveOpenXrExternalSwapchainTargetName(recorded.OpenXrViewIndex),
@@ -77,13 +82,9 @@ internal sealed partial class VulkanFrameLoop
                     recorded.FrameOpContextId,
                     recorded.ResourceGeneration,
                     recorded.DescriptorGeneration));
-            if (submitted)
-            {
-                CompleteOpenXrGpuProfilerSubmission(in recorded);
-                _commandRuntime.PublishOpenXrRecordedTextureUploads(OutputRuntime.OpenXrBackend.RecordedTextureUploadsForSubmit, "OpenXR eye mirror");
-                DrainRetiredResourcesFromCompletedSubmittedFrameSlots();
-            }
-            else if (!commandBufferCompleted && !IsDeviceLost)
+            submitted = submission.Succeeded;
+            commandBufferCompleted = submission.CommandBuffersCompleted;
+            if (!trackerOwnsSubmission && !commandBufferCompleted && !IsDeviceLost)
             {
                 _commandRuntime.CancelOpenXrRecordedTextureUploads(OutputRuntime.OpenXrBackend.RecordedTextureUploadsForSubmit, "OpenXR eye mirror command buffer did not complete");
             }
@@ -97,13 +98,24 @@ internal sealed partial class VulkanFrameLoop
         }
         finally
         {
-            if (!submitted && !commandBufferCompleted && !IsDeviceLost)
-                _commandRuntime.CancelOpenXrRecordedTextureUploads(OutputRuntime.OpenXrBackend.RecordedTextureUploadsForSubmit, "OpenXR eye mirror command buffer submit failed");
-
-            if (hasRecorded)
-                FreeOpenXrRecordedEyeCommandBuffer(recorded);
-
-            OutputRuntime.OpenXrBackend.RecordedTextureUploadsForSubmit.Clear();
+            try
+            {
+                if (!trackerOwnsSubmission && !submitted && !commandBufferCompleted && !IsDeviceLost)
+                    _commandRuntime.CancelOpenXrRecordedTextureUploads(OutputRuntime.OpenXrBackend.RecordedTextureUploadsForSubmit, "OpenXR eye mirror command buffer submit failed");
+    
+                if (!trackerOwnsSubmission && hasRecorded)
+                    FreeOpenXrRecordedEyeCommandBuffer(recorded);
+    
+                if (!trackerOwnsSubmission)
+                {
+                    OutputRuntime.OpenXrBackend.RecordedTextureUploadsForSubmit.Clear();
+                }
+            }
+            finally
+            {
+                // After registration, the tracker is the sole settlement owner.
+                _commandRuntime.OpenXrSubmissionTracker.CancelPreparedSubmission(admissionTicket);
+            }
         }
     }
 
@@ -111,6 +123,10 @@ internal sealed partial class VulkanFrameLoop
         in OpenXrEyeMirrorRenderRequest firstEye,
         in OpenXrEyeMirrorRenderRequest secondEye)
     {
+        _commandRuntime.OpenXrSubmissionTracker.PollCompletions();
+        if (!_commandRuntime.OpenXrSubmissionTracker.TryReserveSubmission(
+                out OpenXrVulkanSubmissionTracker.SubmissionAdmissionTicket? admissionTicket))
+            return false;
         OutputRuntime.OpenXrBackend.RecordedTextureUploadsForSubmit.Clear();
         OpenXrRecordedEyeCommandBuffer firstRecorded = default;
         OpenXrRecordedEyeCommandBuffer secondRecorded = default;
@@ -120,6 +136,7 @@ internal sealed partial class VulkanFrameLoop
         bool submitted = false;
 
         bool commandBuffersCompleted = false;
+        bool trackerOwnsSubmission = false;
 
         try
         {
@@ -155,25 +172,18 @@ internal sealed partial class VulkanFrameLoop
                 return false;
             }
 
-            submitted = _commandRuntime.SubmitAndWaitOpenXrCommandBuffers(
-                firstRecorded.CommandBuffer,
-                secondRecorded.CommandBuffer,
-                out commandBuffersCompleted,
+            VulkanOpenXrSubmissionResult submission = SubmitTrackedOpenXrMirrorSubmission(
+                admissionTicket!.Value, ref trackerOwnsSubmission, firstEye.SubmissionMetadata, in firstRecorded, hasFirst: true, in secondRecorded,
+                hasSecond: true, temporaryCommandBuffer: default,
                 _commandRuntime.CreateOpenXrBatchSubmissionDiagnosticContext(
                     AcceptedAttemptCount,
                     "OpenXrEyeMirrorBatchSubmit",
                     "OpenXrEyeMirrorBatch",
                     in firstRecorded,
                     firstEye.Extent));
-
-            if (submitted)
-            {
-                CompleteOpenXrGpuProfilerSubmission(in firstRecorded);
-                CompleteOpenXrGpuProfilerSubmission(in secondRecorded);
-                _commandRuntime.PublishOpenXrRecordedTextureUploads(OutputRuntime.OpenXrBackend.RecordedTextureUploadsForSubmit, "OpenXR eye mirror batch");
-                DrainRetiredResourcesFromCompletedSubmittedFrameSlots();
-            }
-            else if (!commandBuffersCompleted && !IsDeviceLost)
+            submitted = submission.Succeeded;
+            commandBuffersCompleted = submission.CommandBuffersCompleted;
+            if (!trackerOwnsSubmission && !commandBuffersCompleted && !IsDeviceLost)
             {
                 _commandRuntime.CancelOpenXrRecordedTextureUploads(OutputRuntime.OpenXrBackend.RecordedTextureUploadsForSubmit, "OpenXR eye mirror batch command buffers did not complete");
             }
@@ -187,15 +197,26 @@ internal sealed partial class VulkanFrameLoop
         }
         finally
         {
-            if (!submitted && !commandBuffersCompleted && !IsDeviceLost)
-                _commandRuntime.CancelOpenXrRecordedTextureUploads(OutputRuntime.OpenXrBackend.RecordedTextureUploadsForSubmit, "OpenXR eye mirror batch command buffer submit failed");
-
-            if (hasSecond)
-                FreeOpenXrRecordedEyeCommandBuffer(secondRecorded);
-            if (hasFirst)
-                FreeOpenXrRecordedEyeCommandBuffer(firstRecorded);
-
-            OutputRuntime.OpenXrBackend.RecordedTextureUploadsForSubmit.Clear();
+            try
+            {
+                if (!trackerOwnsSubmission && !submitted && !commandBuffersCompleted && !IsDeviceLost)
+                    _commandRuntime.CancelOpenXrRecordedTextureUploads(OutputRuntime.OpenXrBackend.RecordedTextureUploadsForSubmit, "OpenXR eye mirror batch command buffer submit failed");
+    
+                if (!trackerOwnsSubmission && hasSecond)
+                    FreeOpenXrRecordedEyeCommandBuffer(secondRecorded);
+                if (!trackerOwnsSubmission && hasFirst)
+                    FreeOpenXrRecordedEyeCommandBuffer(firstRecorded);
+    
+                if (!trackerOwnsSubmission)
+                {
+                    OutputRuntime.OpenXrBackend.RecordedTextureUploadsForSubmit.Clear();
+                }
+            }
+            finally
+            {
+                // After registration, the tracker is the sole settlement owner.
+                _commandRuntime.OpenXrSubmissionTracker.CancelPreparedSubmission(admissionTicket);
+            }
         }
     }
 
@@ -210,6 +231,10 @@ internal sealed partial class VulkanFrameLoop
         firstPreviewCopied = false;
         secondPreviewCopied = false;
 
+        _commandRuntime.OpenXrSubmissionTracker.PollCompletions();
+        if (!_commandRuntime.OpenXrSubmissionTracker.TryReserveSubmission(
+                out OpenXrVulkanSubmissionTracker.SubmissionAdmissionTicket? admissionTicket))
+            return false;
         OutputRuntime.OpenXrBackend.RecordedTextureUploadsForSubmit.Clear();
         OpenXrRecordedEyeCommandBuffer firstRecorded = default;
         OpenXrRecordedEyeCommandBuffer secondRecorded = default;
@@ -221,6 +246,7 @@ internal sealed partial class VulkanFrameLoop
         bool commandBuffersCompleted = false;
         EVulkanQueueSubmissionDisposition submissionDisposition =
             EVulkanQueueSubmissionDisposition.NotSubmitted;
+        bool trackerOwnsSubmission = false;
 
         try
         {
@@ -270,33 +296,19 @@ internal sealed partial class VulkanFrameLoop
                 return false;
 
 
-            CommandBuffer* commandBuffers = stackalloc CommandBuffer[3];
-            commandBuffers[0] = firstRecorded.CommandBuffer;
-            commandBuffers[1] = secondRecorded.CommandBuffer;
-
-            commandBuffers[2] = publishCommandBuffer;
-
-            submitted = _commandRuntime.SubmitAndWaitOpenXrCommandBuffers(
-                commandBuffers,
-                3,
-                out commandBuffersCompleted,
-                out submissionDisposition,
-                out _,
+            VulkanOpenXrSubmissionResult submission = SubmitTrackedOpenXrMirrorSubmission(
+                admissionTicket!.Value, ref trackerOwnsSubmission, firstEye.SubmissionMetadata, in firstRecorded, hasFirst: true, in secondRecorded,
+                hasSecond: true, publishCommandBuffer,
                 _commandRuntime.CreateOpenXrBatchSubmissionDiagnosticContext(
                     AcceptedAttemptCount,
                     "OpenXrEyeMirrorRenderPublishSubmit",
                     "OpenXrEyeMirrorRenderPublish",
                     in firstRecorded,
                     firstPublish.Extent));
-
-            if (submitted)
-            {
-                CompleteOpenXrGpuProfilerSubmission(in firstRecorded);
-                CompleteOpenXrGpuProfilerSubmission(in secondRecorded);
-                _commandRuntime.PublishOpenXrRecordedTextureUploads(OutputRuntime.OpenXrBackend.RecordedTextureUploadsForSubmit, "OpenXR eye mirror render+publish batch");
-                DrainRetiredResourcesFromCompletedSubmittedFrameSlots();
-            }
-            else if (!commandBuffersCompleted && !IsDeviceLost)
+            submitted = submission.Succeeded;
+            commandBuffersCompleted = submission.CommandBuffersCompleted;
+            submissionDisposition = submission.SubmissionDisposition;
+            if (!trackerOwnsSubmission && !commandBuffersCompleted && !IsDeviceLost)
             {
                 _commandRuntime.CancelOpenXrRecordedTextureUploads(OutputRuntime.OpenXrBackend.RecordedTextureUploadsForSubmit, "OpenXR eye mirror render+publish batch command buffers did not complete");
             }
@@ -327,17 +339,28 @@ internal sealed partial class VulkanFrameLoop
         }
         finally
         {
-            if (!submitted && !commandBuffersCompleted && !IsDeviceLost)
-                _commandRuntime.CancelOpenXrRecordedTextureUploads(OutputRuntime.OpenXrBackend.RecordedTextureUploadsForSubmit, "OpenXR eye mirror render+publish batch command buffer submit failed");
-
-            if (hasPublish)
-                FreeOpenXrMirrorPublishCommandBuffer(publishCommandBuffer, submissionDisposition);
-            if (hasSecond)
-                FreeOpenXrRecordedEyeCommandBuffer(secondRecorded);
-            if (hasFirst)
-                FreeOpenXrRecordedEyeCommandBuffer(firstRecorded);
-
-            OutputRuntime.OpenXrBackend.RecordedTextureUploadsForSubmit.Clear();
+            try
+            {
+                if (!trackerOwnsSubmission && !submitted && !commandBuffersCompleted && !IsDeviceLost)
+                    _commandRuntime.CancelOpenXrRecordedTextureUploads(OutputRuntime.OpenXrBackend.RecordedTextureUploadsForSubmit, "OpenXR eye mirror render+publish batch command buffer submit failed");
+    
+                if (!trackerOwnsSubmission && hasPublish)
+                    FreeOpenXrMirrorPublishCommandBuffer(publishCommandBuffer, submissionDisposition);
+                if (!trackerOwnsSubmission && hasSecond)
+                    FreeOpenXrRecordedEyeCommandBuffer(secondRecorded);
+                if (!trackerOwnsSubmission && hasFirst)
+                    FreeOpenXrRecordedEyeCommandBuffer(firstRecorded);
+    
+                if (!trackerOwnsSubmission)
+                {
+                    OutputRuntime.OpenXrBackend.RecordedTextureUploadsForSubmit.Clear();
+                }
+            }
+            finally
+            {
+                // After registration, the tracker is the sole settlement owner.
+                _commandRuntime.OpenXrSubmissionTracker.CancelPreparedSubmission(admissionTicket);
+            }
         }
     }
 
@@ -358,6 +381,10 @@ internal sealed partial class VulkanFrameLoop
         out EOpenXrStrictSpsFaultInjectionStage injectedFailureStage)
     {
         injectedFailureStage = EOpenXrStrictSpsFaultInjectionStage.None;
+        _commandRuntime.OpenXrSubmissionTracker.PollCompletions();
+        if (!_commandRuntime.OpenXrSubmissionTracker.TryReserveSubmission(
+                out OpenXrVulkanSubmissionTracker.SubmissionAdmissionTicket? admissionTicket))
+            return false;
         OutputRuntime.OpenXrBackend.RecordedTextureUploadsForSubmit.Clear();
         OpenXrRecordedEyeCommandBuffer recorded = default;
         CommandBuffer publishCommandBuffer = default;
@@ -367,6 +394,7 @@ internal sealed partial class VulkanFrameLoop
         bool commandBuffersCompleted = false;
         EVulkanQueueSubmissionDisposition submissionDisposition =
             EVulkanQueueSubmissionDisposition.NotSubmitted;
+        bool trackerOwnsSubmission = false;
 
         try
         {
@@ -432,16 +460,9 @@ internal sealed partial class VulkanFrameLoop
             if (!hasPublish)
                 return false;
 
-            CommandBuffer* commandBuffers = stackalloc CommandBuffer[2];
-            commandBuffers[0] = recorded.CommandBuffer;
-            commandBuffers[1] = publishCommandBuffer;
-
-            submitted = _commandRuntime.SubmitAndWaitOpenXrCommandBuffers(
-                commandBuffers,
-                2,
-                out commandBuffersCompleted,
-                out submissionDisposition,
-                out injectedFailureStage,
+            VulkanOpenXrSubmissionResult submission = SubmitTrackedOpenXrMirrorSubmission(
+                admissionTicket!.Value, ref trackerOwnsSubmission, renderRequest.SubmissionMetadata, in recorded, hasFirst: true, secondRecorded: default,
+                hasSecond: false, publishCommandBuffer,
                 _commandRuntime.CreateOpenXrPublishBatchSubmissionDiagnosticContext(
                     AcceptedAttemptCount,
                     "OpenXrStereoLayerRenderPublishSubmit",
@@ -452,13 +473,13 @@ internal sealed partial class VulkanFrameLoop
                 {
                     OpenXrStrictSpsFaultInjectionStage = faultInjectionStage,
                 });
-
-            if (submitted)
+            submitted = submission.Succeeded;
+            commandBuffersCompleted = submission.CommandBuffersCompleted;
+            submissionDisposition = submission.SubmissionDisposition;
+            injectedFailureStage = submission.InjectedFailureStage;
+            if (submission.SubmissionReceipt.SubmissionAccepted)
             {
-                CompleteOpenXrGpuProfilerSubmission(in recorded);
                 UpdateStereoLayerBlitTrackedLayouts(in plan);
-                _commandRuntime.PublishOpenXrRecordedTextureUploads(OutputRuntime.OpenXrBackend.RecordedTextureUploadsForSubmit, "OpenXR true stereo render+publish batch");
-                DrainRetiredResourcesFromCompletedSubmittedFrameSlots();
             }
             else if (!commandBuffersCompleted && !IsDeviceLost)
             {
@@ -494,25 +515,78 @@ internal sealed partial class VulkanFrameLoop
         }
         finally
         {
-            if (!submitted &&
-                submissionDisposition == EVulkanQueueSubmissionDisposition.NotSubmitted &&
-                hasRecorded)
+            try
             {
-                _commandRuntime.MarkUnsubmittedOpenXrPrimaryCommandBufferDirty(
-                    in recorded,
-                    "OpenXR true stereo render+publish batch was not submitted");
+                if (!trackerOwnsSubmission && !submitted &&
+                    submissionDisposition == EVulkanQueueSubmissionDisposition.NotSubmitted &&
+                    hasRecorded)
+                {
+                    _commandRuntime.MarkUnsubmittedOpenXrPrimaryCommandBufferDirty(
+                        in recorded,
+                        "OpenXR true stereo render+publish batch was not submitted");
+                }
+    
+                if (!trackerOwnsSubmission && !submitted && !commandBuffersCompleted && !IsDeviceLost)
+                    _commandRuntime.CancelOpenXrRecordedTextureUploads(OutputRuntime.OpenXrBackend.RecordedTextureUploadsForSubmit, "OpenXR true stereo render+publish batch command buffer submit failed");
+    
+                if (!trackerOwnsSubmission && hasPublish)
+                    FreeOpenXrMirrorPublishCommandBuffer(publishCommandBuffer, submissionDisposition);
+                if (!trackerOwnsSubmission && hasRecorded)
+                    FreeOpenXrRecordedEyeCommandBuffer(recorded);
+    
+                if (!trackerOwnsSubmission)
+                {
+                    OutputRuntime.OpenXrBackend.RecordedTextureUploadsForSubmit.Clear();
+                }
             }
-
-            if (!submitted && !commandBuffersCompleted && !IsDeviceLost)
-                _commandRuntime.CancelOpenXrRecordedTextureUploads(OutputRuntime.OpenXrBackend.RecordedTextureUploadsForSubmit, "OpenXR true stereo render+publish batch command buffer submit failed");
-
-            if (hasPublish)
-                FreeOpenXrMirrorPublishCommandBuffer(publishCommandBuffer, submissionDisposition);
-            if (hasRecorded)
-                FreeOpenXrRecordedEyeCommandBuffer(recorded);
-
-            OutputRuntime.OpenXrBackend.RecordedTextureUploadsForSubmit.Clear();
+            finally
+            {
+                // After registration, the tracker is the sole settlement owner.
+                _commandRuntime.OpenXrSubmissionTracker.CancelPreparedSubmission(admissionTicket);
+            }
         }
+    }
+
+    private VulkanOpenXrSubmissionResult SubmitTrackedOpenXrMirrorSubmission(
+        OpenXrVulkanSubmissionTracker.SubmissionAdmissionTicket admissionTicket,
+        ref bool trackerOwnsSubmission,
+        in OpenXrSubmissionMetadata submissionMetadata,
+        in OpenXrRecordedEyeCommandBuffer firstRecorded,
+        bool hasFirst,
+        in OpenXrRecordedEyeCommandBuffer secondRecorded,
+        bool hasSecond,
+        CommandBuffer temporaryCommandBuffer,
+        in VulkanSubmissionDiagnosticContext diagnosticContext)
+    {
+        Span<uint> frameSlots = stackalloc uint[2];
+        int frameSlotCount = 0;
+        if (hasFirst)
+            frameSlots[frameSlotCount++] = firstRecorded.FrameDataSlotIndex;
+        if (hasSecond && secondRecorded.FrameDataSlotIndex != firstRecorded.FrameDataSlotIndex)
+            frameSlots[frameSlotCount++] = secondRecorded.FrameDataSlotIndex;
+        trackerOwnsSubmission = _commandRuntime.OpenXrSubmissionTracker.RegisterSubmission(
+            admissionTicket, submissionMetadata.FrameId, submissionMetadata.PredictedDisplayTime,
+            hasSecond ? 3U : 1U,
+            hasFirst ? firstRecorded.OpenXrImageIndex : 0U,
+            hasSecond ? secondRecorded.OpenXrImageIndex : 0U,
+            in firstRecorded, hasFirst, in secondRecorded, hasSecond,
+            firstPrepared: default, hasFirstPrepared: false,
+            secondPrepared: default, hasSecondPrepared: false,
+            OutputRuntime.OpenXrBackend.RecordedTextureUploadsForSubmit,
+            additionalUploads: null,
+            default, 0UL,
+            _commandRuntime.MappedFrameArena, _commandRuntime.MappedFrameArena?.Generation ?? 0UL,
+            _commandRuntime.ResourceRuntime.FrameDataArena, _commandRuntime.ResourceRuntime.FrameDataArena?.Generation ?? 0UL,
+            frameSlots[..frameSlotCount], 0L, 0L,
+            temporaryCommandBuffer);
+        OutputRuntime.OpenXrBackend.RecordedTextureUploadsForSubmit.Clear();
+        return _commandRuntime.SubmitAndWaitOpenXr(new VulkanOpenXrSubmissionInput(
+            firstRecorded.CommandBuffer,
+            hasSecond ? secondRecorded.CommandBuffer : default,
+            temporaryCommandBuffer,
+            temporaryCommandBuffer.Handle != 0 ? (hasSecond ? 3U : 2U) : (hasSecond ? 2U : 1U),
+            diagnosticContext,
+            AdmissionTicket: admissionTicket));
     }
 
     private bool TryRecordOpenXrEyeMirrorFrameBufferCommandBuffer(

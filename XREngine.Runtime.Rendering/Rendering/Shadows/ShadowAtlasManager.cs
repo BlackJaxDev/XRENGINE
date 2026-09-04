@@ -3475,6 +3475,30 @@ public sealed partial class ShadowAtlasManager
 
     private static void CommitRenderedTileToLightSlot(in ShadowTileCompletion completion)
     {
+        // This method runs only after the tile render returned success and before
+        // reconciliation can expose the rendered allocation to another boundary.
+        // Capture must consume this receipt rather than live light camera state.
+        if (completion.Key.ProjectionType == EShadowProjectionType.PointFace &&
+            completion.Light is PointLightComponent pointLight)
+        {
+            pointLight.CommitRenderedShadowAtlasFaceSnapshot(
+                completion.Key.FaceOrCascadeIndex,
+                completion.Allocation,
+                completion.NearPlane,
+                completion.FarPlane);
+            return;
+        }
+
+        if (completion.Key.ProjectionType == EShadowProjectionType.SpotPrimary &&
+            completion.Light is SpotLightComponent spotLight)
+        {
+            spotLight.CommitRenderedShadowAtlasSnapshot(
+                completion.Allocation,
+                completion.NearPlane,
+                completion.FarPlane);
+            return;
+        }
+
         if (completion.Light is not DirectionalLightComponent directionalLight)
             return;
 

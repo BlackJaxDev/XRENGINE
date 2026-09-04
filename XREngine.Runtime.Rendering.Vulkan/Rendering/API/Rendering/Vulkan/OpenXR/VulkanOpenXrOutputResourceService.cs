@@ -40,7 +40,7 @@ internal sealed unsafe class VulkanOpenXrOutputResourceService
         {
             if (cached.Format == format && cached.View.Handle != 0)
                 return cached.View;
-            DestroySwapchainImageView(cached.View, "OpenXR.SwapchainImageViewFormatChanged");
+            RetireSwapchainImageView(cached.View, "OpenXR.SwapchainImageViewFormatChanged");
             _backend.SwapchainImageViews.Remove(key);
         }
 
@@ -82,7 +82,7 @@ internal sealed unsafe class VulkanOpenXrOutputResourceService
     internal void RetireResources()
     {
         foreach (VulkanOpenXrSwapchainImageViewCacheEntry entry in _backend.SwapchainImageViews.Values)
-            DestroySwapchainImageView(entry.View, "OpenXR.SwapchainImageViewCache");
+            RetireSwapchainImageView(entry.View, "OpenXR.SwapchainImageViewCache");
         _backend.SwapchainImageViews.Clear();
 
         for (int index = 0; index < _backend.CachedDepthTargets.Length; index++)
@@ -157,6 +157,18 @@ internal sealed unsafe class VulkanOpenXrOutputResourceService
         if (target.Image.Handle != 0 || target.View.Handle != 0)
             _resources.Images.RetireOwnedResources(new RetiredImageResources(
                 target.Image, target.Memory, target.View, [], default, 0), "OpenXR.DepthTarget");
+    }
+
+    /// <summary>
+    /// Drops a cache-owned view only after every tracked OpenXR submission that
+    /// referenced its externally owned swapchain image has completed.
+    /// </summary>
+    private void RetireSwapchainImageView(ImageView view, string owner)
+    {
+        if (view.Handle != 0)
+            _resources.Images.RetireOwnedResources(
+                new RetiredImageResources(default, default, view, [], default, 0),
+                owner);
     }
 
     private void DestroySwapchainImageView(ImageView view, string owner)

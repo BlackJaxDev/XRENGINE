@@ -159,7 +159,6 @@ public unsafe partial class OpenXRAPI
         int index = (int)Math.Min(viewIndex, (uint)_swapchainWidths.Length - 1u);
         _swapchainWidths[index] = width;
         _swapchainHeights[index] = height;
-        RecordAppliedOpenXrEyeResolutionSettings();
     }
 
     private void SubscribeOpenXrRenderSettingsChanged()
@@ -210,7 +209,7 @@ public unsafe partial class OpenXRAPI
             return;
 
         string reason = $"OpenXR eye resolution changed from {applied} to {current}.";
-        Debug.LogWarning($"[OpenXR] {reason} Recreating OpenXR instance/session resources so the runtime receives new swapchain and view-configuration dimensions.");
+        Debug.LogWarning($"[OpenXR] {reason} Replacing OpenXR session swapchains with the new dimensions.");
 
         bool scheduled = false;
         try
@@ -250,30 +249,38 @@ public unsafe partial class OpenXRAPI
         Debug.Out($"[OpenXR] Recreating session resources for eye resolution change. Reason={reason}");
         _intentionalOpenXrRecreateBackoffBypassUntilUtc =
             DateTime.UtcNow + _intentionalOpenXrRecreateBackoffBypassDuration;
-        Volatile.Write(ref _pendingXrFrame, 0);
-        Volatile.Write(ref _pendingXrFrameCollected, 0);
-        Volatile.Write(ref _framePrepared, 0);
-        Volatile.Write(ref _frameSkipRender, 0);
-        _sessionBegun = false;
-
-        if (Window?.Renderer is AbstractRenderer renderer &&
-            TryGetOrCreateGraphicsBinding(renderer, out IXrGraphicsBinding? binding))
+        OpenXrEyeResolutionSettingsSnapshot current = CaptureCurrentOpenXrEyeResolutionSettings();
+        if (RequiresOpenXrRuntimeDimensionRefresh(current))
         {
-            binding.ResetRenderingResourcesForRuntimeRecreate(renderer, reason);
+            if (!CanReplaceOpenXrSwapchainsInSession() ||
+                !TearDownSessionResourcesOnOwningThread(destroyInstance: true))
+            {
+                Debug.LogWarning($"[OpenXR] Deferred runtime dimension refresh until the active frame and retired swapchain generations are quiescent. Reason={reason}");
+                return;
+            }
+
+            string serviceReason = $"OpenXR eye resolution dimension refresh: {reason}";
+            if (!RuntimeRenderingHostServices.Presentation.TryEnsureOpenXrRuntimeService(serviceReason))
+                throw new InvalidOperationException($"OpenXR runtime service did not accept the requested eye-resolution dimension refresh. Reason={reason}");
+
+            ResetOpenXrProbeFailureState();
+            _nextProbeUtc = DateTime.UtcNow;
+            SetRuntimeState(OpenXrRuntimeState.DesktopOnly);
+            return;
         }
 
-        TearDownSessionResourcesWithCurrentContext(destroyInstance: true);
-        string serviceReason = $"OpenXR eye resolution change: {reason}";
-        if (!RuntimeRenderingHostServices.Presentation.TryEnsureOpenXrRuntimeService(serviceReason))
+        if (!TryReplaceSwapchainsInSession(reason))
         {
-            throw new InvalidOperationException(
-                $"OpenXR runtime service did not accept the requested eye-resolution change. Reason={reason}");
+            Debug.LogWarning($"[OpenXR] Deferred eye-resolution replacement because the active frame, CPU preparation, or retirement state is not yet safe. Reason={reason}");
+            return;
         }
 
-        Debug.Out($"OpenXR runtime service ensured. Reason={serviceReason}");
+        // A successful replacement keeps the same session, instance, and
+        // runtime state. Re-probing/restarting here would invalidate a live
+        // session after the new swapchains were already created.
+        RecordAppliedOpenXrEyeResolutionSettings();
         ResetOpenXrProbeFailureState();
-        _nextProbeUtc = DateTime.UtcNow;
-        SetRuntimeState(OpenXrRuntimeState.DesktopOnly);
+        Debug.Out($"[OpenXR] Applied in-session eye-resolution replacement. Reason={reason}");
     }
 
     private bool HasCreatedOpenXrSwapchains()
@@ -286,6 +293,13 @@ public unsafe partial class OpenXRAPI
 
         return false;
     }
+
+    // Monado derives its runtime-recommended dimensions from its simulated
+    // display profile. That profile can change only after the service restarts,
+    // so this one setting needs a safe instance/system re-query. Explicit
+    // headset/custom extents are app-owned and can replace swapchains in place.
+    private static bool RequiresOpenXrRuntimeDimensionRefresh(in OpenXrEyeResolutionSettingsSnapshot settings)
+        => settings.Preset == EOpenXrEyeResolutionPreset.RuntimeRecommended;
 
     private void RecordAppliedOpenXrEyeResolutionSettings()
     {

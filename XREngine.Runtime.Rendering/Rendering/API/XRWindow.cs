@@ -1754,7 +1754,11 @@ namespace XREngine.Rendering
                 return false;
             }
 
-            TryPrepareOpenXrForRendererTeardown(renderer, reason);
+            if (!TryPrepareOpenXrForRendererTeardown(renderer, reason))
+            {
+                renderer.AbandonShutdownTeardown();
+                return false;
+            }
 
             if (waitForGpu)
             {
@@ -1888,11 +1892,11 @@ namespace XREngine.Rendering
         internal void CompleteFailedRendererReplacement()
             => _rendererRecreationInProgress = false;
 
-        private void TryPrepareOpenXrForRendererTeardown(AbstractRenderer renderer, string reason)
+        private bool TryPrepareOpenXrForRendererTeardown(AbstractRenderer renderer, string reason)
         {
             try
             {
-                RuntimeEngine.VRState.OpenXRApi?.PrepareRendererDeviceTeardown(renderer, reason);
+                return RuntimeEngine.VRState.OpenXRApi?.PrepareRendererDeviceTeardown(renderer, reason) ?? true;
             }
             catch (Exception ex)
             {
@@ -1902,6 +1906,7 @@ namespace XREngine.Rendering
                     renderer.GetType().Name,
                     reason,
                     ex);
+                return false;
             }
         }
 

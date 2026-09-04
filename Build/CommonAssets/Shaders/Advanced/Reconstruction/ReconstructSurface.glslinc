@@ -213,15 +213,15 @@ bool XR_ADV_TryPrimitiveVertices(
     uvec3 remapIndices =
         uvec3(descriptor.vertexOffset) + localVertices;
     uint remapCount =
-        uint(XR_ADV_ReconstructionMeshletVertices.vertexIndices.length());
+        uint(XR_ADV_ReconstructionMeshletVertices.records.length());
     if (any(greaterThanEqual(remapIndices, uvec3(remapCount))))
         return false;
     vertices = uvec3(
-        XR_ADV_ReconstructionMeshletVertices.vertexIndices[
+        XR_ADV_ReconstructionMeshletVertices.records[
             remapIndices.x],
-        XR_ADV_ReconstructionMeshletVertices.vertexIndices[
+        XR_ADV_ReconstructionMeshletVertices.records[
             remapIndices.y],
-        XR_ADV_ReconstructionMeshletVertices.vertexIndices[
+        XR_ADV_ReconstructionMeshletVertices.records[
             remapIndices.z]);
     return true;
 }
@@ -423,17 +423,48 @@ bool XR_ADV_TryReconstructSurface(
         return false;
     }
 
-    bool deformed =
-        geometry.source == XR_ADV_GEOMETRY_SOURCE_PRESKINNED ||
+    XRAdvancedPreparedDrawDeformationRecord preparedDeformation;
+    bool hasPreparedDeformation =
+        XR_ADV_TryLoadPreparedDrawDeformation(
+            drawDense,
+            draw,
+            preparedDeformation);
+    bool producerRequiresDeformation =
         producer == XR_ADV_VIS_PRODUCER_SKINNED_MESHLET ||
         producer == XR_ADV_VIS_PRODUCER_CPU_PRE_SKINNED;
+    if (producerRequiresDeformation && !hasPreparedDeformation)
+    {
+        surface.invalidReason =
+            XR_ADV_RECONSTRUCTION_CURRENT_GEOMETRY_MISSING;
+        return false;
+    }
+
+    // The overlay is authoritative even for the ordinary indirect-indexed
+    // producer. Canonical geometry remains immutable bind-pose topology.
+    bool deformed = hasPreparedDeformation;
+    if (deformed &&
+        any(greaterThanEqual(
+            sourceVertices,
+            uvec3(preparedDeformation.vertexCount))))
+    {
+        surface.invalidReason =
+            XR_ADV_RECONSTRUCTION_PRIMITIVE_OUT_OF_RANGE;
+        return false;
+    }
+    uint currentVertexBase = deformed
+        ? preparedDeformation.currentVertexOffset
+        : geometry.currentVertexData.elementOffset;
+    bool previousUsesPreviousBuffer = deformed &&
+        XR_ADV_PreparedDeformationPreviousValid(preparedDeformation);
+    uint previousVertexBase = deformed
+        ? (previousUsesPreviousBuffer
+            ? preparedDeformation.previousVertexOffset
+            : preparedDeformation.currentVertexOffset)
+        : geometry.currentVertexData.elementOffset;
     uvec3 currentIndices =
-        uvec3(geometry.currentVertexData.elementOffset) +
-        sourceVertices;
-    uvec3 previousIndices = deformed
-        ? uvec3(geometry.previousVertexData.elementOffset) +
-          sourceVertices
-        : currentIndices;
+        uvec3(currentVertexBase) + sourceVertices;
+    uvec3 previousIndices =
+        uvec3(previousVertexBase) + sourceVertices;
     XRAdvancedPackedVertex current0;
     XRAdvancedPackedVertex current1;
     XRAdvancedPackedVertex current2;
@@ -454,11 +485,20 @@ bool XR_ADV_TryReconstructSurface(
     XRAdvancedPackedVertex previous2;
     bool previousGeometryValid =
         XR_ADV_TryLoadVertex(
-            deformed, deformed, previousIndices.x, previous0) &&
+            deformed,
+            previousUsesPreviousBuffer,
+            previousIndices.x,
+            previous0) &&
         XR_ADV_TryLoadVertex(
-            deformed, deformed, previousIndices.y, previous1) &&
+            deformed,
+            previousUsesPreviousBuffer,
+            previousIndices.y,
+            previous1) &&
         XR_ADV_TryLoadVertex(
-            deformed, deformed, previousIndices.z, previous2);
+            deformed,
+            previousUsesPreviousBuffer,
+            previousIndices.z,
+            previous2);
     XRAdvancedTransformRecord currentTransform =
         XR_ADV_LoadTransform(currentTransformDense);
     XRAdvancedTransformRecord previousTransform =

@@ -1345,6 +1345,19 @@ namespace XREngine.Rendering
         #region Synchronization / Masks
 
         public abstract void MemoryBarrier(EMemoryBarrierMask mask);
+
+        /// <summary>
+        /// Attempts to enqueue a memory barrier in the renderer's ordered
+        /// command stream. Immediate backends complete this operation through
+        /// <see cref="MemoryBarrier"/>; deferred backends override it so callers
+        /// can retain the exact enqueue receipt.
+        /// </summary>
+        public virtual ERendererComputeEnqueueStatus TryMemoryBarrier(
+            EMemoryBarrierMask mask)
+        {
+            MemoryBarrier(mask);
+            return ERendererComputeEnqueueStatus.Enqueued;
+        }
         public virtual void PublishFrameBufferAttachmentsForSampling(XRFrameBuffer frameBuffer) { }
         public virtual XRGpuFence? InsertGpuFence()
             => null;
@@ -1498,6 +1511,11 @@ namespace XREngine.Rendering
         /// <inheritdoc />
         public virtual AdvancedRenderPipelineCapabilities GetAdvancedRenderPipelineCapabilities()
             => AdvancedRenderPipelineCapabilities.UnsupportedBackend;
+
+        /// <inheritdoc />
+        public virtual AdvancedVisibilityFamilyAdmission GetAdvancedVisibilityFamilyAdmission()
+            => new(EAdvancedProductionExecutionState.Unsupported,
+                "The active renderer does not expose Advanced visibility-family admission.");
 
         /// <inheritdoc />
         public virtual bool TryReserveAdvancedVisibilityFamily(

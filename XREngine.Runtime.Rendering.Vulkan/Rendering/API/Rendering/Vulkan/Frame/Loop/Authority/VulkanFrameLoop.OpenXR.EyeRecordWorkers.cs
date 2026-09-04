@@ -9,8 +9,21 @@ internal sealed partial class VulkanFrameLoop
         in OpenXrEyeSwapchainRenderRequest firstEye,
         in OpenXrEyeSwapchainRenderRequest secondEye)
     {
+        _commandRuntime.OpenXrSubmissionTracker.PollCompletions();
+        if (!_commandRuntime.OpenXrSubmissionTracker.TryReserveSubmission(
+                out OpenXrVulkanSubmissionTracker.SubmissionAdmissionTicket? admissionTicket))
+        {
+            throw CreateOpenXrEyePresentNowFailure(
+                firstEye.OpenXrViewIndex,
+                EVulkanPresentNowReadinessStage.QueueSubmission,
+                "parallel-eye-admission",
+                "OpenXREyeSubmit -> bounded parallel submission admission",
+                "OpenXR parallel submission capacity remained full after the bounded recovery wait.");
+        }
+
         OpenXrPreparedEyeCommandBufferInput preparedFirstEye = default;
         OpenXrPreparedEyeCommandBufferInput preparedSecondEye = default;
+        bool trackerOwnsSubmission = false;
         try
         {
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.ParallelCommandBufferRecording.PrepareInputs"))
@@ -73,6 +86,11 @@ internal sealed partial class VulkanFrameLoop
                 result = workers.Execute(
                     in frozenFirstEye,
                     in frozenSecondEye,
+                    in preparedFirstEye,
+                    in preparedSecondEye,
+                    admissionTicket!.Value,
+                    ref trackerOwnsSubmission,
+                    firstEye.SubmissionMetadata,
                     in diagnosticContext);
             }
 
@@ -88,21 +106,31 @@ internal sealed partial class VulkanFrameLoop
                     "Foreground parallel eye recording returned an unsuccessful batch without a propagated exception.");
             }
 
-            if (result.Submitted)
+            if (!result.Submitted)
             {
                 OpenXrRecordedEyeCommandBuffer leftRecorded = batch.Left.Recorded;
-                OpenXrRecordedEyeCommandBuffer rightRecorded = batch.Right.Recorded;
-                CompleteOpenXrGpuProfilerSubmission(in leftRecorded);
-                CompleteOpenXrGpuProfilerSubmission(in rightRecorded);
-                ForceFlushCompletedNonImageRetiredResources();
+                ThrowOpenXrRecordedPresentNowSubmissionFailure(
+                    in leftRecorded,
+                    result.CommandBuffersCompleted,
+                    "parallel-eye-submit");
             }
 
             return result.Submitted;
         }
         finally
         {
-            ReleasePreparedOpenXrEyeInput(in preparedSecondEye);
-            ReleasePreparedOpenXrEyeInput(in preparedFirstEye);
+            try
+            {
+                if (!trackerOwnsSubmission)
+                {
+                    ReleasePreparedOpenXrEyeInput(in preparedSecondEye);
+                    ReleasePreparedOpenXrEyeInput(in preparedFirstEye);
+                }
+            }
+            finally
+            {
+                _commandRuntime.OpenXrSubmissionTracker.CancelPreparedSubmission(admissionTicket);
+            }
         }
     }
 

@@ -23,7 +23,7 @@ internal readonly record struct VulkanAdvancedVisibilityFamilySeal(
            Publication.PublicationGeneration != 0u &&
            VisibilityContentGeneration != 0u &&
            Publication.VisibilityContentGeneration == VisibilityContentGeneration &&
-           SceneNativeGeneration != 0u && ViewCount != 0u && Geometry.IsValid;
+           SceneNativeGeneration != 0u && ViewCount != 0u && Geometry.HasValidSources;
 
     internal bool Matches(in VulkanAdvancedVisibilityFamilySeal other)
         => ReferenceEquals(Owner, other.Owner) &&

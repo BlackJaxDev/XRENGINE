@@ -148,6 +148,11 @@ internal sealed partial class VulkanCommandRuntime
                 RecordAdvancedVisibilityLateComputePayload(ref state, in payload, in info),
             (EAdvancedRenderStage.DepthPyramidAndLateVisibility, EAdvancedVisibilityStageBackendPhase.LateRaster) =>
                 RecordAdvancedVisibilityLateRasterPayload(ref state, in payload, in info),
+            (EAdvancedRenderStage.WorkClassification, EAdvancedVisibilityStageBackendPhase.Complete) or
+            (EAdvancedRenderStage.NativeOpaqueShading, EAdvancedVisibilityStageBackendPhase.Complete) =>
+                RecordAdvancedNativeComputePayload(ref state, in payload, in info),
+            (EAdvancedRenderStage.AttributeReconstruction, EAdvancedVisibilityStageBackendPhase.Complete) =>
+                info.OperationIndex,
             _ => throw new VulkanPlanPreconditionException(
                 $"Advanced visibility stage '{payload.Request.Stage}' phase '{payload.Request.Phase}' is outside the admitted physical family."),
         };
@@ -436,6 +441,25 @@ internal sealed partial class VulkanCommandRuntime
             throw new VulkanPlanPreconditionException(
                 "Advanced visibility raster reached recording without its sealed view-set resource, target, and stable-bin closure.");
         }
+        VulkanNativeBufferRange currentDeformation =
+            payload.State.Geometry.CurrentVertices;
+        VulkanNativeBufferRange previousDeformation =
+            payload.State.Geometry.PreviousVertices;
+        string currentDeformationReason = "Ready";
+        string previousDeformationReason = "Ready";
+        bool currentDeformationValid =
+            ResourceRuntime.TryValidateNativeBufferRange(
+                in currentDeformation,
+                out currentDeformationReason);
+        bool previousDeformationValid =
+            ResourceRuntime.TryValidateNativeBufferRange(
+                in previousDeformation,
+                out previousDeformationReason);
+        if (!currentDeformationValid || !previousDeformationValid)
+        {
+            throw new VulkanPlanPreconditionException(
+                $"Advanced visibility deformation buffers changed after sealing: current={currentDeformationReason}, previous={previousDeformationReason}.");
+        }
         if (ResourceRuntime.BackendObjects.Get(payload.Request.Target) is not
                 VkFrameBuffer targetWrapper)
         {
@@ -614,9 +638,11 @@ internal sealed partial class VulkanCommandRuntime
                     records[recordIndex].VisibilityGeometryClosure;
                 string closureReason =
                     "the geometry range does not share its bin publication";
-                if (recordClosure.VertexSlice != geometryClosure.VertexSlice ||
+                if (recordClosure.PreparedVertexSource !=
+                        geometryClosure.PreparedVertexSource ||
                     recordClosure.IndexSlice != geometryClosure.IndexSlice ||
                     !recordClosure.TryValidate(
+                        ResourceRuntime,
                         in sealedSceneState,
                         out closureReason))
                 {
@@ -633,7 +659,7 @@ internal sealed partial class VulkanCommandRuntime
                         state.CommandBuffer,
                         native.GetVertexBinding(bindingIndex),
                         native.GetVertexBuffer(bindingIndex),
-                        geometryClosure.VertexSlice.Offset);
+                        geometryClosure.PreparedVertexSource.Offset);
                 }
                 BindIndexBufferTracked(
                     state.CommandBuffer,

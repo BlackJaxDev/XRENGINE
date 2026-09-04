@@ -13,14 +13,14 @@ internal sealed partial class VulkanCommandRuntime
 {
     internal bool SubmitAndWaitOpenXrCommandBuffer(CommandBuffer commandBuffer, out bool completed, VulkanSubmissionDiagnosticContext diagnosticContext = default)
     {
-        VulkanOpenXrSubmissionResult result = SubmitAndWaitOpenXr(new(commandBuffer, default, 1, diagnosticContext));
+        VulkanOpenXrSubmissionResult result = SubmitAndWaitOpenXr(new(commandBuffer, default, default, 1, diagnosticContext));
         completed = result.CommandBuffersCompleted;
         return result.Succeeded;
     }
 
     internal bool SubmitAndWaitOpenXrCommandBuffers(CommandBuffer first, CommandBuffer second, out bool completed, VulkanSubmissionDiagnosticContext diagnosticContext = default)
     {
-        VulkanOpenXrSubmissionResult result = SubmitAndWaitOpenXr(new(first, second, 2, diagnosticContext));
+        VulkanOpenXrSubmissionResult result = SubmitAndWaitOpenXr(new(first, second, default, 2, diagnosticContext));
         completed = result.CommandBuffersCompleted;
         return result.Succeeded;
     }
@@ -49,12 +49,13 @@ internal sealed partial class VulkanCommandRuntime
         completed = false;
         submissionDisposition = EVulkanQueueSubmissionDisposition.NotSubmitted;
         injectedFailureStage = EOpenXrStrictSpsFaultInjectionStage.None;
-        if (commandBuffers is null || commandBufferCount is 0 or > 2)
+        if (commandBuffers is null || commandBufferCount is 0 or > 3)
             return false;
 
         VulkanOpenXrSubmissionResult result = SubmitAndWaitOpenXr(new(
             commandBuffers[0],
-            commandBufferCount == 2 ? commandBuffers[1] : default,
+            commandBufferCount >= 2 ? commandBuffers[1] : default,
+            commandBufferCount == 3 ? commandBuffers[2] : default,
             commandBufferCount,
             diagnosticContext));
         completed = result.CommandBuffersCompleted;
@@ -114,9 +115,10 @@ internal sealed partial class VulkanCommandRuntime
                 submitReceipt);
         }
 
-        CommandBuffer* commandBuffers = stackalloc CommandBuffer[2];
+        CommandBuffer* commandBuffers = stackalloc CommandBuffer[3];
         commandBuffers[0] = input.FirstCommandBuffer;
         commandBuffers[1] = input.SecondCommandBuffer;
+        commandBuffers[2] = input.ThirdCommandBuffer;
         VulkanSemaphore timelineSemaphore = Synchronization._graphicsTimelineSemaphore;
         ulong timelineValue = 0UL;
         if (timelineSemaphore.Handle == 0)
@@ -200,7 +202,19 @@ internal sealed partial class VulkanCommandRuntime
                     out timelineValue,
                     out bool queueDispatchAttempted,
                     out injectedFailureStage,
-                    "OpenXR.SubmitAndWait");
+                    "OpenXR.SubmitAndWait",
+                    input.AdmissionTicket is { } admissionTicket
+                        ? new OpenXrVulkanSubmissionTracker.AcceptedSubmissionSink(
+                            OpenXrSubmissionTracker,
+                            admissionTicket,
+                            timelineSemaphore,
+                            submitStart)
+                        : null);
+                submitReceipt = submitReceipt with
+                {
+                    CompletionSemaphore = timelineSemaphore,
+                    CompletionValue = timelineValue,
+                };
                 if (submitReceipt.SubmissionAccepted)
                 {
                     nativeSubmitAccepted = true;
@@ -261,7 +275,6 @@ internal sealed partial class VulkanCommandRuntime
             }
 
             TimeSpan submitElapsed = Stopwatch.GetElapsedTime(submitStart, submitEnd);
-            RuntimeEngine.Rendering.Stats.Vr.RecordOpenXrEyeQueueSubmitTime(submitElapsed);
 
             if (IsOpenXrAsyncSubmitEnabled && !input.ForceSynchronousCompletion)
             {
@@ -322,6 +335,20 @@ internal sealed partial class VulkanCommandRuntime
             CompleteTrackedTimeline(timelineSemaphore, timelineValue);
             submissionDisposition = EVulkanQueueSubmissionDisposition.Completed;
             commandBuffersCompleted = true;
+            if (input.AdmissionTicket is not null)
+            {
+                // The admission tracker owns every accepted submission, including
+                // the synchronous path. Retire through that one owner so arena
+                // slots, uploads, command buffers, and prepared leases settle once.
+                OpenXrSubmissionTracker.PollCompletions();
+                arenaSlotsReopened = true;
+                return new VulkanOpenXrSubmissionResult(
+                    true,
+                    true,
+                    submissionDisposition,
+                    injectedFailureStage,
+                    submitReceipt);
+            }
             if (mappedFrameArena is not null &&
                 !TryCompleteOpenXrMappedFrameSlots(
                     mappedFrameArena,
@@ -369,6 +396,12 @@ internal sealed partial class VulkanCommandRuntime
         }
         finally
         {
+            // The common tracked gateway commits an OpenXR ticket in the same
+            // serialized transaction as successful vkQueueSubmit. An exception
+            // before this method observes its receipt must therefore not cancel
+            // the already-submitted arena slots.
+            nativeSubmitAccepted |= input.AdmissionTicket is { } admissionTicket &&
+                !admissionTicket.Active;
             if (mappedFrameSlotsPrepared &&
                 !nativeSubmitAccepted &&
                 mappedFrameArena is not null)
@@ -391,6 +424,7 @@ internal sealed partial class VulkanCommandRuntime
             }
 
             if (nativeSubmitAccepted &&
+                input.AdmissionTicket is null &&
                 !arenaSlotsReopened &&
                 DeviceContext.IsOperational)
             {

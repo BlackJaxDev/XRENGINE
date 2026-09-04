@@ -64,6 +64,10 @@ XR_ADV_TABLE_LAYOUT(XR_ADV_BINDING_ENCODED_SAMPLERS) readonly buffer XRAdvancedE
 #endif
 XR_ADV_RESOURCE_LAYOUT(XR_ADV_BINDING_TEXTURE_DESCRIPTORS)
 uniform texture2D XR_ADV_TextureDescriptors[XR_ADV_RESOURCE_DESCRIPTOR_CAPACITY];
+XR_ADV_RESOURCE_LAYOUT(XR_ADV_BINDING_TEXTURE_2D_ARRAY_DESCRIPTORS)
+uniform texture2DArray XR_ADV_Texture2DArrayDescriptors[XR_ADV_RESOURCE_DESCRIPTOR_CAPACITY];
+XR_ADV_RESOURCE_LAYOUT(XR_ADV_BINDING_TEXTURE_CUBE_DESCRIPTORS)
+uniform textureCube XR_ADV_TextureCubeDescriptors[XR_ADV_RESOURCE_DESCRIPTOR_CAPACITY];
 XR_ADV_RESOURCE_LAYOUT(XR_ADV_BINDING_SAMPLER_DESCRIPTORS)
 uniform sampler XR_ADV_SamplerDescriptors[XR_ADV_RESOURCE_DESCRIPTOR_CAPACITY];
 #elif defined(XR_ADV_TEXTURE_MODE_ARRAY)
@@ -224,6 +228,97 @@ vec4 XR_ADV_SampleTexture2DLod(
         XR_ADV_TextureArray,
         vec3(uv, float(textureReference.payload1)),
         lod);
+#else
+    return XR_ADV_TextureFallback(textureReference.payload2);
+#endif
+}
+
+// Global resources resolve through the exact publication lookup segments. No
+// per-pixel table scan or unvalidated sampler generation is permitted.
+bool XR_ADV_TryResolveTextureReference(
+    XRAdvancedGpuHandle handle,
+    uvec2 textureSegment,
+    uvec2 samplerSegment,
+    out XRAdvancedTextureRecord textureRecord,
+    out XRAdvancedEncodedTextureReference textureReference)
+{
+    textureRecord = XRAdvancedTextureRecord(0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, XRAdvancedGpuHandle(0u, 0u), vec4(0.0));
+    textureReference = XRAdvancedEncodedTextureReference(0u, 0u, 0u, XR_ADV_RESOURCE_FLAG_FALLBACK);
+    uint textureDense = XR_ADV_ResolveHandle(handle, textureSegment.x, textureSegment.y, XR_ADV_DIAGNOSTIC_TEXTURE);
+    if (textureDense == XR_ADV_INVALID_DENSE_INDEX || textureDense >= uint(XR_ADV_Textures.records.length())) return false;
+    XRAdvancedTextureRecord candidate = XR_ADV_Textures.records[textureDense];
+    if (!XR_ADV_HandleMatches(handle, candidate.stableTextureId, candidate.generation) ||
+        candidate.encodedReferenceIndex == 0u || candidate.encodedReferenceIndex >= uint(XR_ADV_EncodedTextures.records.length())) return false;
+    uint samplerDense = XR_ADV_ResolveHandle(candidate.defaultSampler, samplerSegment.x, samplerSegment.y, XR_ADV_DIAGNOSTIC_TEXTURE);
+    if (samplerDense == XR_ADV_INVALID_DENSE_INDEX || samplerDense >= uint(XR_ADV_Samplers.records.length()) ||
+        samplerDense + 1u >= uint(XR_ADV_EncodedSamplers.records.length())) return false;
+    XRAdvancedSamplerRecord samplerRecord = XR_ADV_Samplers.records[samplerDense];
+    if (!XR_ADV_HandleMatches(candidate.defaultSampler, samplerRecord.stableSamplerId, samplerRecord.generation)) return false;
+    XRAdvancedEncodedSamplerReference samplerReference = XR_ADV_EncodedSamplers.records[samplerDense + 1u];
+    XRAdvancedEncodedTextureReference encoded = XR_ADV_EncodedTextures.records[candidate.encodedReferenceIndex];
+    if ((samplerReference.flags & XR_ADV_RESOURCE_FLAG_RESIDENT) == 0u ||
+        (encoded.flags & XR_ADV_RESOURCE_FLAG_RESIDENT) == 0u) return false;
+    encoded.payload1 = samplerReference.payload0;
+#if defined(XR_ADV_TEXTURE_MODE_VULKAN_INDEXING) || defined(XR_ADV_TEXTURE_MODE_VULKAN_HEAP)
+    if (encoded.payload0 >= XR_ADV_RESOURCE_DESCRIPTOR_CAPACITY || encoded.payload1 >= XR_ADV_RESOURCE_DESCRIPTOR_CAPACITY) return false;
+#endif
+    textureRecord = candidate;
+    textureReference = encoded;
+    return true;
+}
+vec4 XR_ADV_SampleTexture2DArray(
+    XRAdvancedEncodedTextureReference textureReference,
+    vec3 uvLayer)
+{
+    if ((textureReference.flags & XR_ADV_RESOURCE_FLAG_FALLBACK) != 0u)
+        return XR_ADV_TextureFallback(textureReference.payload2);
+#if defined(XR_ADV_TEXTURE_MODE_VULKAN_INDEXING) || defined(XR_ADV_TEXTURE_MODE_VULKAN_HEAP)
+    uint textureIndex = nonuniformEXT(textureReference.payload0);
+    uint samplerIndex = nonuniformEXT(textureReference.payload1);
+    return texture(sampler2DArray(XR_ADV_Texture2DArrayDescriptors[textureIndex], XR_ADV_SamplerDescriptors[samplerIndex]), uvLayer);
+#else
+    return XR_ADV_TextureFallback(textureReference.payload2);
+#endif
+}
+
+vec4 XR_ADV_SampleTexture2DArrayLod(
+    XRAdvancedEncodedTextureReference textureReference,
+    vec3 uvLayer,
+    float lod)
+{
+    if ((textureReference.flags & XR_ADV_RESOURCE_FLAG_FALLBACK) != 0u)
+        return XR_ADV_TextureFallback(textureReference.payload2);
+#if defined(XR_ADV_TEXTURE_MODE_VULKAN_INDEXING) || defined(XR_ADV_TEXTURE_MODE_VULKAN_HEAP)
+    return textureLod(sampler2DArray(XR_ADV_Texture2DArrayDescriptors[nonuniformEXT(textureReference.payload0)], XR_ADV_SamplerDescriptors[nonuniformEXT(textureReference.payload1)]), uvLayer, lod);
+#else
+    return XR_ADV_TextureFallback(textureReference.payload2);
+#endif
+}
+
+vec4 XR_ADV_SampleTextureCube(
+    XRAdvancedEncodedTextureReference textureReference,
+    vec3 direction)
+{
+    if ((textureReference.flags & XR_ADV_RESOURCE_FLAG_FALLBACK) != 0u)
+        return XR_ADV_TextureFallback(textureReference.payload2);
+#if defined(XR_ADV_TEXTURE_MODE_VULKAN_INDEXING) || defined(XR_ADV_TEXTURE_MODE_VULKAN_HEAP)
+    uint textureIndex = nonuniformEXT(textureReference.payload0);
+    uint samplerIndex = nonuniformEXT(textureReference.payload1);
+    return texture(samplerCube(XR_ADV_TextureCubeDescriptors[textureIndex], XR_ADV_SamplerDescriptors[samplerIndex]), direction);
+#else
+    return XR_ADV_TextureFallback(textureReference.payload2);
+#endif
+}
+
+vec4 XR_ADV_SampleTextureCubeLod(
+    XRAdvancedEncodedTextureReference textureReference,
+    vec3 direction,
+    float lod)
+{
+    if ((textureReference.flags & XR_ADV_RESOURCE_FLAG_FALLBACK) != 0u)
+        return XR_ADV_TextureFallback(textureReference.payload2);
+#if defined(XR_ADV_TEXTURE_MODE_VULKAN_INDEXING) || defined(XR_ADV_TEXTURE_MODE_VULKAN_HEAP)
+    return textureLod(samplerCube(XR_ADV_TextureCubeDescriptors[nonuniformEXT(textureReference.payload0)], XR_ADV_SamplerDescriptors[nonuniformEXT(textureReference.payload1)]), direction, lod);
 #else
     return XR_ADV_TextureFallback(textureReference.payload2);
 #endif

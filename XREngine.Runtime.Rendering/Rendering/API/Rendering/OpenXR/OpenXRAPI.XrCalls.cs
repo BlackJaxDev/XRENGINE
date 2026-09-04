@@ -689,7 +689,11 @@ public unsafe partial class OpenXRAPI
         _openXrLeftViewport?.Camera = null;
         _openXrRightViewport?.Camera = null;
 
-        TearDownSessionResourcesOnOwningThread(true);
+        if (!TearDownSessionResourcesOnOwningThread(true))
+        {
+            Debug.LogWarning("[OpenXR] Cleanup retained graphics backend resources because session teardown is incomplete.");
+            return;
+        }
 
         try
         {
@@ -701,7 +705,7 @@ public unsafe partial class OpenXRAPI
         }
     }
 
-    internal void CleanupSwapchains()
+    internal bool CleanupSwapchains()
     {
         if (Window?.Renderer is AbstractRenderer renderer &&
             _graphicsBinding is not null &&
@@ -715,8 +719,11 @@ public unsafe partial class OpenXRAPI
                 _swapchains[i] = default;
             }
             _viewCount = 0;
-            return;
+            return true;
         }
+
+        if (_graphicsBinding?.RequiresDeferredSwapchainRetirement == true)
+            return false;
 
         _graphicsBinding?.CleanupSwapchains(this);
 
@@ -738,5 +745,6 @@ public unsafe partial class OpenXRAPI
         }
 
         _viewCount = 0;
+        return true;
     }
 }

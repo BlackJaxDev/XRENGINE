@@ -35,4 +35,22 @@ public partial class AdvancedRenderPipeline
 
     private void InvalidateStereoResourceProfile()
         => InvalidateOwnedInstancePhysicalResources("StereoProfileChanged");
+
+    // Secondary views deliberately opt in to expensive late work.  Keep this
+    // decision here rather than scattering ViewKind checks through the command
+    // graph: callers can create a custom profile without acquiring a new kind.
+    private bool AllowsLateTransparency
+        => OffscreenProfile?.EnableLateTransparency != false;
+
+    private bool AllowsPostProcessing
+        => OffscreenProfile?.EnablePostProcessing != false;
+
+    private bool AllowsTemporalHistory
+        => AllowsPostProcessing && OffscreenProfile?.EnableTemporalHistory != false;
+
+    private bool AllowsBloomAndDepthOfField
+        => AllowsPostProcessing && OffscreenProfile?.EnableBloomAndDoF != false;
+
+    private bool AllowsScreenSpaceUi
+        => OffscreenProfile is null;
 }

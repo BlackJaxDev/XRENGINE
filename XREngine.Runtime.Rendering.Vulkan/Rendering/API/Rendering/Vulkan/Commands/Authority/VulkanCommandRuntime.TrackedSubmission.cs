@@ -106,7 +106,8 @@ internal sealed partial class VulkanCommandRuntime
         in VulkanSubmissionDiagnosticContext diagnosticContext,
         out bool queueDispatchAttempted,
         out EOpenXrStrictSpsFaultInjectionStage injectedFailureStage,
-        [CallerMemberName] string? caller = null)
+        [CallerMemberName] string? caller = null,
+        OpenXrVulkanSubmissionTracker.AcceptedSubmissionSink? acceptedSubmissionSink = null)
     {
         using TrackedSubmissionGatewayTimingScope gatewayTiming = new();
         queueDispatchAttempted = false;
@@ -339,12 +340,22 @@ internal sealed partial class VulkanCommandRuntime
                         RuntimeEngine.Rendering.Stats.Vulkan.TrackedSubmissionTimingStage.NativeQueueAdmission,
                         Stopwatch.GetTimestamp() - queueAdmissionStarted);
                     result = SubmitNative(queue, ref submitInfo, fence);
+                    // vkQueueSubmit success is the irrevocable ownership boundary. Set this
+                    // before any sink or telemetry publication so later faults cannot cancel
+                    // command or resource pins that the driver now owns.
+                    submissionAccepted = result == Result.Success;
+                    if (submissionAccepted)
+                    {
+                        // The tracked graphics submit reserves and patches this value under
+                        // the submission lock. The receipt must receive that patched value,
+                        // never the caller's pre-reservation default.
+                        acceptedSubmissionSink?.Commit(diagnostics.SignalTimelineValue);
+                    }
                     nativeDispatchElapsed = Stopwatch.GetElapsedTime(
                         nativeDispatchStarted);
                     RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanTrackedSubmissionTiming(
                         RuntimeEngine.Rendering.Stats.Vulkan.TrackedSubmissionTimingStage.NativeSubmit,
                         Stopwatch.GetTimestamp() - nativeDispatchStarted);
-                    submissionAccepted = result == Result.Success;
                 }
                 finally
                 {
@@ -444,7 +455,9 @@ internal sealed partial class VulkanCommandRuntime
             lifetimePinsTransferred,
             publicationSucceeded,
             queueAdmissionWait,
-            nativeDispatchElapsed);
+            nativeDispatchElapsed,
+            default,
+            0UL);
     }
     }
 
@@ -543,7 +556,8 @@ internal sealed partial class VulkanCommandRuntime
         out ulong timelineValue,
         out bool queueDispatchAttempted,
         out EOpenXrStrictSpsFaultInjectionStage injectedFailureStage,
-        [CallerMemberName] string? caller = null)
+        [CallerMemberName] string? caller = null,
+        OpenXrVulkanSubmissionTracker.AcceptedSubmissionSink? acceptedSubmissionSink = null)
     {
         TimelineSemaphoreSubmitInfo* timeline = FindTrackedTimelineInfo(submitInfo.PNext);
         if (timeline is null || timeline->PSignalSemaphoreValues is null ||
@@ -586,7 +600,8 @@ internal sealed partial class VulkanCommandRuntime
                 in submittedDiagnostics,
                 out queueDispatchAttempted,
                 out injectedFailureStage,
-                caller);
+                caller,
+                acceptedSubmissionSink);
         }
     }
 

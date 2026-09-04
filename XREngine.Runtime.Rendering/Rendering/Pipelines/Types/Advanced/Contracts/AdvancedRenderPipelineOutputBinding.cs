@@ -11,7 +11,8 @@ public readonly record struct AdvancedRenderPipelineOutputBinding(
     AdvancedRenderPipelineCapabilityResult CapabilityResult,
     AdvancedVisibilityFamilyReservation Reservation,
     EAdvancedRenderPipelineOutputBindingState State,
-    string? FailureReason)
+    string? FailureReason,
+    AdvancedProductionCutoverStatus CutoverStatus = default)
 {
     public bool IsBound
         => State == EAdvancedRenderPipelineOutputBindingState.Bound &&

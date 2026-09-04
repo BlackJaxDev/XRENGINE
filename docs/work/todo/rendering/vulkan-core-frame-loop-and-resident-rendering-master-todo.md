@@ -1,6 +1,6 @@
 # Vulkan Core Frame Loop, Resident Rendering, and High-Refresh Master TODO
 
-Last Updated: 2026-09-01
+Last Updated: 2026-09-04
 Owner: Rendering / Vulkan / Frame Scheduling / Core Architecture  
 Status: Active Master Implementation Tracker (Supersedes Present-Now Readiness, Core Hardening, Frame-Loop Stability, and Resident Draw Streams)  
 Primary Target: Stable desktop rendering above 100 Hz, with a 120 Hz promotion gate and a 144 Hz stretch gate  
@@ -161,6 +161,8 @@ Phase 6: OpenXR Asynchronous Decoupling & Lifecycle Hardening
   │
 Phase 7: Advanced Render Pipeline Modernization (Phases 06 Through 10)
   │
+Phase 7R: Phase 6/7 Correctness Remediation & Runtime Completion
+  │
 Phase 8: High-Refresh Promotion Gates & Full Validation Matrix
   │
 Phase 9: Phase-Local Test Clearance, Legacy Deletion, & Closeout
@@ -168,7 +170,7 @@ Phase 9: Phase-Local Test Clearance, Legacy Deletion, & Closeout
 
 Phase 9.1 is a recurring gate, not a requirement to postpone every cleared slice's tests until all ARP work is complete. Each feature slice must pass its relevant live/runtime path and receive explicit user clearance before its tests are added or changed. Final deletion and program closeout still wait for the complete integrated validation matrix.
 
-The diagram expresses promotion order, not blanket serialization. After the benchmark/telemetry contract is frozen, sealed submission/invalidation, canonical residency, scheduler closure, and graph/publication work may proceed in parallel when ownership does not overlap. OpenXR decoupling depends on the measured completion/lifetime model; ARP cutover depends on canonical publication and resource contracts. Phase 8 promotion always uses one frozen integrated revision.
+The diagram expresses promotion order, not blanket serialization. After the benchmark/telemetry contract is frozen, sealed submission/invalidation, canonical residency, scheduler closure, and graph/publication work may proceed in parallel when ownership does not overlap. OpenXR decoupling depends on the measured completion/lifetime model; ARP cutover depends on canonical publication and resource contracts. Phase 8 promotion always uses one frozen integrated revision. Phase 7R is the required remediation gate before Phase 8 promotion; it preserves existing phase numbers and is now in progress under the 2026-09-04 implementation authorization.
 
 ### Active Phase Execution Matrix
 
@@ -183,9 +185,10 @@ The diagram expresses promotion order, not blanket serialization. After the benc
 | **Phase 4.5** | Native Command Encoding Fast-Path Closure | **Implemented** | Verified (Slices 4.5a, 4.5b, 4.5c); zero-lock lane contexts & resident serializer active | Closed; ready for Phase 7 |
 | **Phase 5.0–5.3** | Render Graph, Streaming, Shadow Bounds | Implemented | Verified (2026-08-31 headless closeout) | Closed |
 | **Phase 5.4** | Swapchain Lifecycle & Resize Continuity | Implemented | Held-drag continuity reopened (3 cross-pipeline gates remain) | Validate held drag in Default/Advanced/Debug |
-| **Phase 6** | OpenXR Asynchronous Decoupling | **Implemented** | Complete (2026-09-02; `19027f631`); 70–100 ms fence wait eliminated | Closed; XR hardware matrix in Phase 8 |
-| **Phase 7** | Advanced Render Pipeline Modernization | **COMPLETE** | Phase 7.1–7.5 (ARP 06–10) complete & verified | Proceed to Phase 8 (High-Refresh Promotion Gates) |
-| **Phase 8** | High-Refresh Promotion Gates (120/144 Hz) | Queued | Final integrated promotion gate | Awaits Phase 7 |
+| **Phase 6** | OpenXR Asynchronous Decoupling | **Partial / Reopened** | 2026-09-04 review found incomplete async ownership, unenforced bounds, and teardown defects; runtime acceptance remains open | Repair and validate through Phase 7R |
+| **Phase 7** | Advanced Render Pipeline Modernization | **Partial / Reopened** | Production stages remain unexecuted; native shading compilation fails; contract types do not prove runtime completion | Finish and validate through Phase 7R |
+| **Phase 7R** | Phase 6/7 Correctness Remediation & Runtime Completion | **In progress** | Implementation authorized on 2026-09-04; source and runtime acceptance tracked separately | Complete 7R.1–7R.10 and record evidence before closure |
+| **Phase 8** | High-Refresh Promotion Gates (120/144 Hz) | Queued | Final integrated promotion gate | Awaits Phase 7R exit gates |
 | **Phase 9** | Phase-Local Test Clearance & Legacy Deletion | Recurring / Queued | Phase 9.1 recurring; final deletion at closeout | Active per slice |
 
 ---
@@ -996,33 +999,35 @@ errors, VUIDs, or targeted exception records. Details are in the
 
 **Goal:** Decouple OpenXR submission and swapchain retirement from render-thread fences, eliminating the historical 70–100 ms eye-submit wait while preserving application and runtime safety.
 
+**Review status (2026-09-04): Reopened.** The implementation in `19027f631` introduced useful infrastructure, but full caller ownership, enforced limits, and session-safe retirement are not complete. The reopened rows below are executed through Phase 7R. Existing source or contract documentation is not proof of Monado/hardware acceptance or elimination of the historical wait.
+
 #### 6.1 Current OpenXR Lifetime Contract Map
 - [x] Identify every resource whose safety currently depends on the synchronous post-submit wait: eye command buffers/pools, frame-data and descriptor arenas, staging ranges, image views/framebuffers, resident/native pins, transient graph resources, and acquire/release state. (Completed: see `docs/work/investigations/rendering/vulkan-openxr-asynchronous-decoupling-phase6.md`).
-- [x] Record eye submit/completion wait, forced waits, in-flight count/age, image reuse age, missed deadlines, and the last producer/completion authority. (Completed: added `VrOpenXrEyeQueueSubmitTimeMs`, `VrOpenXrEyeCompletionWaitTimeMs`, `VrOpenXrEyeFenceForcedWaitCount`, `VrOpenXrEyeInFlightCount`, and associated telemetry counters).
-- [x] Verify Monado and at least one hardware runtime; explicitly determine release-before-application-completion legality, timeline-semaphore observability, fence-ring requirements, and the bounded fallback when a runtime requires completion before release. (Completed: documented in investigation doc; Vulkan queue submission precedes `xrReleaseSwapchainImage`, enabling runtime queue synchronization without render-thread CPU waits).
+- [ ] Record eye submit/completion wait, forced waits, in-flight count/age, image reuse age, missed deadlines, and the last producer/completion authority. (Partial: telemetry fields exist, but real frame/display/submit provenance and deadline/completion coverage require Phase 7R.3.)
+- [ ] Verify Monado and at least one hardware runtime; explicitly determine release-before-application-completion legality, timeline-semaphore observability, fence-ring requirements, and the bounded fallback when a runtime requires completion before release. (Reopened: the investigation records specification rationale, not the required runtime acceptance evidence; see Phase 7R.10.)
 - [x] Do not assume an application timeline semaphore/fence is visible to the OpenXR runtime unless the active graphics binding and runtime contract explicitly establish that visibility. (Completed: timeline semaphore tracks internal engine resource readiness; runtime composition relies on queue submit ordering).
 
 #### 6.2 `OpenXrVulkanSubmissionTracker`
-- [x] Implement bounded tracker keyed by engine frame ID, display time, swapchain image, command pools, arenas, descriptors, staging, and completion primitives. (Completed: `OpenXrVulkanSubmissionTracker` tracks `InFlightSubmission` records).
+- [ ] Implement bounded tracker keyed by engine frame ID, display time, swapchain image, command pools, arenas, descriptors, staging, and completion primitives. (Partial: submission records exist; complete ownership payloads and enforced bounds require Phases 7R.2–7R.3.)
 - [x] Submit eye work and return immediately without waiting for GPU completion. (Completed: `SubmitAndWaitOpenXr` returns `SubmittedIncomplete` with async decoupling).
-- [x] Register ownership payload atomically upon submission. (Completed: `RegisterSubmission` atomically claims command buffers, uploads, arena slots, and leases).
-- [x] Poll completion non-blockingly at the start of subsequent frames before recycling pools or arenas. (Completed: `PollCompletions` checks `QueryTimelineCompletion` and retires resources).
-- [x] Keep the in-flight bound explicit; use only a short counted recovery wait after every safe reuse/defer path is exhausted, and count late/missed/reprojected frames. (Completed: bounded in-flight queue with 100ms recovery wait and `VrOpenXrEyeFenceForcedWaitCount` telemetry).
+- [ ] Register ownership payload atomically upon submission. (Reopened: parallel-eye and mirror callers bypass registration; preserve the exact accepted receipt and all ownership through Phase 7R.2.)
+- [ ] Poll completion non-blockingly at the start of subsequent frames before recycling pools or arenas. (Partial: ordinary-eye polling exists; all submission paths and retained resources must participate before this row closes.)
+- [ ] Keep the in-flight bound explicit; use only a short counted recovery wait after every safe reuse/defer path is exhausted, and count late/missed/reprojected frames. (Reopened: timeout does not enforce the bound and callers ignore the result; see Phase 7R.3.)
 
 #### 6.3 Non-Blocking XR Frame-Loop Integration
 - [x] Preserve `xrWaitFrame` as the XR pacing gate; keep `xrBeginFrame`, acquire, render, release, and `xrEndFrame` ordered correctly. (Completed: ordering strictly maintained in `OpenXRAPI.FrameLifecycle.cs` and `VulkanFrameLoop.OpenXR.EyeRendering.cs`).
 - [x] Build view-independent visibility, materials, and plans once per XR frame; publish compact per-eye / multiview records. (Completed: preserved in frame collection pipeline).
 - [x] Use multiview/single-pass stereo only when supported and semantically correct. (Completed: verified SPS validation flags and viewport foveation contexts).
 - [x] Keep desktop swapchain acquisition non-blocking while OpenXR owns the frame deadline. (Completed: `acquireTimeoutNanoseconds` set to 0 when `xrOwnsFrameDeadline` is true in `VulkanRenderer.FrameLoop.Acquire.cs`).
-- [x] Route forced waits into bounded retirement release authorities with explicit telemetry counters. (Completed: wired into `EnsureInFlightBudget`).
+- [ ] Route forced waits into bounded retirement release authorities with explicit telemetry counters. (Reopened: recovery results must control admission and carry truthful wait telemetry; see Phase 7R.3.)
 
 #### 6.4 OpenXR Swapchain Recreation & Deferred Destruction
 - [x] Detect recommended dimension changes through runtime event/query policies. (Completed: handled in `OpenXRAPI.Resolution.cs`).
-- [x] Tombstone old swapchains and dependent Vulkan views with the highest application completion value. (Completed: `RetiredOpenXrSwapchainGeneration` tombstones superseded generations with timeline semaphore value).
-- [x] Track both application GPU completion and OpenXR runtime release before destruction. (Completed: non-blocking `DrainRetiredSwapchainsCore` verifies `QueryTimelineCompletion`).
-- [x] Create replacement swapchain without device-wide idle when overlapping swapchains are supported. (Completed: eliminates device-wide `vkDeviceWaitIdle()` in swapchain recreation).
-- [x] Bound retired generations and publish a visible fallback when the bound is reached; do not infer a resize solely from session-state events. (Completed: bounded at 4 generations with bounded recovery wait).
-- [x] On `XR_SESSION_STATE_STOPPING` / `LOSS_PENDING`, drain outstanding work safely before destroying devices. (Completed: `DrainAll` drains submissions and swapchains safely before session/device destruction).
+- [ ] Tombstone old swapchains and dependent Vulkan views with the highest application completion value. (Partial: generation records exist, but their parent session and dependent native resources are not retained coherently; see Phase 7R.4.)
+- [ ] Track both application GPU completion and OpenXR runtime release before destruction. (Reopened: timeline polling alone does not establish release-state and parent-session safety; see Phase 7R.4.)
+- [ ] Create replacement swapchain without device-wide idle when overlapping swapchains are supported. (Reopened: eye-resolution recreation still enters DeviceWaitIdle and full session teardown; see Phase 7R.4.)
+- [ ] Bound retired generations and publish a visible fallback when the bound is reached; do not infer a resize solely from session-state events. (Reopened: a timed-out recovery still appends another generation; see Phases 7R.3–7R.4.)
+- [ ] On `XR_SESSION_STATE_STOPPING` / `LOSS_PENDING`, drain outstanding work safely before destroying devices. (Reopened: drain failures are discarded and teardown proceeds; see Phase 7R.4.)
 
 ---
 
@@ -1030,61 +1035,180 @@ errors, VUIDs, or targeted exception records. Details are in the
 
 **Goal:** Transition from the classic G-Buffer / Forward+ hybrid to the backend-neutral Advanced Render Pipeline: OpenGL and Vulkan share logical visibility, material, view, resource-generation, and output contracts; Vulkan alone owns its hardening and native encoding. Deliver GPU material work classification, native opaque shading, clustered lighting, visibility-driven transparency/post, and multi-view integration.
 
+**Review status (2026-09-04): Reopened.** The files cited below identify partial implementation and intended contracts. They do not establish completion of the full checkbox wording. The active stage command still skips classification, shading, transparency, and post work and clears the output; both new shading shaders fail compilation. Phase 7R owns concrete repair and runtime validation before these rows may be checked again.
+
 #### 7.1 Classify Visible Material Work on the GPU (ARP 06)
-- [x] Select tile dimensions from measured occupancy; define mono and per-eye addressing (`AdvancedClassificationTileDimensions.cs`).
-- [x] Define bounded records/capacities for active tiles, kernel-tile membership, and optional compact pixels from screen-size and worst-case diversity; exclude empty/background pixels explicitly (`AdvancedActiveTileRecord.cs`, `AdvancedKernelTileRecord.cs`, `AdvancedClassificationGpuCounters.cs`).
-- [x] Classify visible pixels by shading kernel, material layout, coverage class, derivative mode, and view mode without atomics proportional to total registered materials; material-row ID is data and descriptor-set object identity is never a classification key (`AdvancedClassificationKey.cs`, `ClassifyTiles.comp`).
-- [x] Build active tiles and per-kernel tile membership; use subgroup ballot/scan with bounded shared-memory fallbacks (`ClassifyTiles.comp`).
-- [x] Construct indirect dispatch arguments entirely on the GPU; compact kernel/tile/pixel ranges and publish only resource-specific barriers (`AdvancedClassificationDispatchArguments.cs`, `BuildClassificationIndirect.comp`, `AdvancedClassificationSynchronizationContract.cs`).
-- [x] Keep many material rows sharing common kernel dispatches, order kernels to reduce pipeline changes, prewarm engine-owned variants, and define pending/rare/custom kernel behavior.
-- [x] Handle each capacity independently; clamp safely, never drop pixels silently, use conservative full-tile recovery in automatic mode, and surface structured failure in required mode (`AdvancedClassificationGpuCounters.cs`, overflow flags).
-- [x] Add capture-stable resource names and views/counters for tile, kernel, material, mixed-density, overflow, recovery, and per-eye classification cost (`AdvancedClassificationResourceNames.cs`, `EAdvancedClassificationDebugView.cs`).
+- [ ] Select tile dimensions from measured occupancy; define mono and per-eye addressing (`AdvancedClassificationTileDimensions.cs`).
+- [ ] Define bounded records/capacities for active tiles, kernel-tile membership, and optional compact pixels from screen-size and worst-case diversity; exclude empty/background pixels explicitly (`AdvancedActiveTileRecord.cs`, `AdvancedKernelTileRecord.cs`, `AdvancedClassificationGpuCounters.cs`).
+- [ ] Classify visible pixels by shading kernel, material layout, coverage class, derivative mode, and view mode without atomics proportional to total registered materials; material-row ID is data and descriptor-set object identity is never a classification key (`AdvancedClassificationKey.cs`, `ClassifyTiles.comp`).
+- [ ] Build active tiles and per-kernel tile membership; use subgroup ballot/scan with bounded shared-memory fallbacks (`ClassifyTiles.comp`).
+- [ ] Construct indirect dispatch arguments entirely on the GPU; compact kernel/tile/pixel ranges and publish only resource-specific barriers (`AdvancedClassificationDispatchArguments.cs`, `BuildClassificationIndirect.comp`, `AdvancedClassificationSynchronizationContract.cs`).
+- [ ] Keep many material rows sharing common kernel dispatches, order kernels to reduce pipeline changes, prewarm engine-owned variants, and define pending/rare/custom kernel behavior.
+- [ ] Handle each capacity independently; clamp safely, never drop pixels silently, use conservative full-tile recovery in automatic mode, and surface structured failure in required mode (`AdvancedClassificationGpuCounters.cs`, overflow flags).
+- [ ] Add capture-stable resource names and views/counters for tile, kernel, material, mixed-density, overflow, recovery, and per-eye classification cost (`AdvancedClassificationResourceNames.cs`, `EAdvancedClassificationDebugView.cs`).
 
 #### 7.2 Native Opaque Shading, Clustered Lighting, & Shadows (ARP 07)
-- [x] Implement standard opaque and masked PBR kernels receiving `AdvancedSurface`, material rows, view records, light ranges, and shadow tables (`StandardPBR.glslinc`, `ShadeNativeOpaque.comp`).
-- [x] Define the material-family kernel interface, texture-table access, output contract, missing/pending/invalid-layout fallback, permutation budget, and standard opaque/masked/unlit/emissive priority order (`AdvancedShadingResourceNames.cs`, `StandardPBR.glslinc`).
-- [x] Shade directly into native opaque HDR, dense velocity, and temporal/reactive sidecars; eliminate classic G-Buffer and light-combine passes (`ShadeNativeOpaque.comp`, `HDRSceneTex`, `Velocity`).
-- [x] Clustered lighting: backend-neutral froxel grid (screen-tile X/Y, depth-slice Z) with GPU-built point/spot lists, bounded directional list, overflow recovery, and occupancy diagnostics (`AdvancedFroxelGridDimensions.cs`, `AdvancedFroxelRecord.cs`, `BuildFroxels.comp`, `AdvancedClusteredLightingResourceNames.cs`).
-- [x] Publish directional/point/spot/cascade/atlas/filter/fallback GPU shadow records; consume them via unified convention-safe sampling with machine-readable missing/stale fallback reasons (`AdvancedShadowRecord.cs`, `StandardPBR.glslinc`).
-- [x] Advanced Ambient Occlusion: adapt supported AO providers to final visibility depth + reconstructed normals (`IAdvancedAmbientOcclusionProvider.cs`, `AdvancedAmbientOcclusionContract.cs`, `ShadeNativeOpaque.comp`).
-- [x] Per-tile/froxel decal lists applied as material/surface modifiers before lighting (`AdvancedFroxelDecalRecord.cs`, `AdvancedDecalModifier.glslinc`, `ShadeNativeOpaque.comp`).
-- [x] Publish IBL/probes through shared GPU records and a narrow `IAdvancedGlobalIlluminationProvider`; select one contributing GI mode unless an explicitly authored composition mode exists (`IAdvancedGlobalIlluminationProvider.cs`, `AdvancedGlobalIlluminationContract.cs`).
-- [x] Shade visibility-sentinel pixels through the selected sky/background contract with explicit clear/alpha/HDR/capture behavior; keep custom background geometry as an explicit compatible lane (`AdvancedSkyBackgroundContract.cs`, `ShadeBackground.comp`).
-- [x] Add reconstructed material/lighting/shadow/AO/GI diagnostic views, an optional difference view against the legacy pipeline, stable capture names, and per-family GPU timings (`EAdvancedShadingDebugView.cs`, `AdvancedShadingResourceNames.cs`).
+- [ ] Implement standard opaque and masked PBR kernels receiving `AdvancedSurface`, material rows, view records, light ranges, and shadow tables (`StandardPBR.glslinc`, `ShadeNativeOpaque.comp`).
+- [ ] Define the material-family kernel interface, texture-table access, output contract, missing/pending/invalid-layout fallback, permutation budget, and standard opaque/masked/unlit/emissive priority order (`AdvancedShadingResourceNames.cs`, `StandardPBR.glslinc`).
+- [ ] Shade directly into native opaque HDR, dense velocity, and temporal/reactive sidecars; eliminate classic G-Buffer and light-combine passes (`ShadeNativeOpaque.comp`, `HDRSceneTex`, `Velocity`).
+- [ ] Clustered lighting: backend-neutral froxel grid (screen-tile X/Y, depth-slice Z) with GPU-built point/spot lists, bounded directional list, overflow recovery, and occupancy diagnostics (`AdvancedFroxelGridDimensions.cs`, `AdvancedFroxelRecord.cs`, `BuildFroxels.comp`, `AdvancedClusteredLightingResourceNames.cs`).
+- [ ] Publish directional/point/spot/cascade/atlas/filter/fallback GPU shadow records; consume them via unified convention-safe sampling with machine-readable missing/stale fallback reasons (`AdvancedShadowRecord.cs`, `StandardPBR.glslinc`).
+- [ ] Advanced Ambient Occlusion: adapt supported AO providers to final visibility depth + reconstructed normals (`IAdvancedAmbientOcclusionProvider.cs`, `AdvancedAmbientOcclusionContract.cs`, `ShadeNativeOpaque.comp`).
+- [ ] Per-tile/froxel decal lists applied as material/surface modifiers before lighting (`AdvancedFroxelDecalRecord.cs`, `AdvancedDecalModifier.glslinc`, `ShadeNativeOpaque.comp`).
+- [ ] Publish IBL/probes through shared GPU records and a narrow `IAdvancedGlobalIlluminationProvider`; select one contributing GI mode unless an explicitly authored composition mode exists (`IAdvancedGlobalIlluminationProvider.cs`, `AdvancedGlobalIlluminationContract.cs`).
+- [ ] Shade visibility-sentinel pixels through the selected sky/background contract with explicit clear/alpha/HDR/capture behavior; keep custom background geometry as an explicit compatible lane (`AdvancedSkyBackgroundContract.cs`, `ShadeBackground.comp`).
+- [ ] Add reconstructed material/lighting/shadow/AO/GI diagnostic views, an optional difference view against the legacy pipeline, stable capture names, and per-family GPU timings (`EAdvancedShadingDebugView.cs`, `AdvancedShadingResourceNames.cs`).
 
 #### 7.3 Transparency, Special Passes, & Post Chain (ARP 08)
-- [x] Define explicit late-pass metadata and reject advanced-compatible opaque/masked work that attempts to use legacy `OpaqueForward` / `MaskedForward`; required unsupported work renders an observable error surface (`AdvancedLatePassMetadata.cs`, `AdvancedLatePassEligibilityValidator.cs`).
-- [x] Classify late draws: sorted alpha, participating transparency, refraction, weighted blended OIT, PPLL, depth peeling, volumetrics, special effects, on-top overlays, and UI (`EAdvancedLatePassKind.cs`).
-- [x] Publish native opaque HDR and visibility depth as the base; create a scene-color snapshot only when visible refraction/feedback requires it and never sample an attachment while writing it without a legal feedback path (`AdvancedSceneColorContract.cs`, `AdvancedRenderPipeline.Transparency.cs`).
-- [x] Port OIT paths with declared capacities/overflow diagnostics and no same-frame readback recovery; preserve light/shadow/probe/fog access through shared tables (`AdvancedRenderPipeline.ExactTransparency.cs`, `EAdvancedLatePassKind.cs`).
-- [x] Give water, hair, particles, trails, beams, portals, mirrors, and geometry-displacing effects explicit compatible or special lanes with editor-visible unsupported reasons (`EAdvancedSpecialEffectLane.cs`, `AdvancedSpecialEffectDescriptor.cs`).
-- [x] Atmosphere and volumetric fog adapted to visibility depth and native HDR (`AdvancedLatePassMetadata.cs`, `EAdvancedSpecialEffectLane.cs`).
-- [x] Dense motion vectors: merge reconstructed opaque velocity with participating transparent velocity; generate reactive/disocclusion masks (`AdvancedTemporalHistoryContract.cs`, `AdvancedLatePassMetadata.cs`).
-- [x] Reconnect temporal accumulation, motion blur, DoF, bloom, tone mapping, color grading, TSR, and vendor upscalers to advanced resource names (`AdvancedRenderPipeline.PostProcessing.cs`, `AdvancedRenderPipeline.Transparency.cs`).
-- [x] Reset temporal/history state explicitly for resize, pipeline switch, camera cut, view-count, render-scale, HDR/format, shader generation, and resource-generation replacement (`AdvancedTemporalResetFlags.cs`, `AdvancedTemporalHistoryContract.cs`).
-- [x] Add pass/category overlays and views for scene-color snapshot, OIT accumulators, refraction, fog, motion/reactive masks, history validity, and late-pass capacity/recovery (`EAdvancedLatePassDebugView.cs`, `AdvancedRenderPipeline.Transparency.cs`).
+- [ ] Define explicit late-pass metadata and reject advanced-compatible opaque/masked work that attempts to use legacy `OpaqueForward` / `MaskedForward`; required unsupported work renders an observable error surface (`AdvancedLatePassMetadata.cs`, `AdvancedLatePassEligibilityValidator.cs`).
+- [ ] Classify late draws: sorted alpha, participating transparency, refraction, weighted blended OIT, PPLL, depth peeling, volumetrics, special effects, on-top overlays, and UI (`EAdvancedLatePassKind.cs`).
+- [ ] Publish native opaque HDR and visibility depth as the base; create a scene-color snapshot only when visible refraction/feedback requires it and never sample an attachment while writing it without a legal feedback path (`AdvancedSceneColorContract.cs`, `AdvancedRenderPipeline.Transparency.cs`).
+- [ ] Port OIT paths with declared capacities/overflow diagnostics and no same-frame readback recovery; preserve light/shadow/probe/fog access through shared tables (`AdvancedRenderPipeline.ExactTransparency.cs`, `EAdvancedLatePassKind.cs`).
+- [ ] Give water, hair, particles, trails, beams, portals, mirrors, and geometry-displacing effects explicit compatible or special lanes with editor-visible unsupported reasons (`EAdvancedSpecialEffectLane.cs`, `AdvancedSpecialEffectDescriptor.cs`).
+- [ ] Atmosphere and volumetric fog adapted to visibility depth and native HDR (`AdvancedLatePassMetadata.cs`, `EAdvancedSpecialEffectLane.cs`).
+- [ ] Dense motion vectors: merge reconstructed opaque velocity with participating transparent velocity; generate reactive/disocclusion masks (`AdvancedTemporalHistoryContract.cs`, `AdvancedLatePassMetadata.cs`).
+- [ ] Reconnect temporal accumulation, motion blur, DoF, bloom, tone mapping, color grading, TSR, and vendor upscalers to advanced resource names (`AdvancedRenderPipeline.PostProcessing.cs`, `AdvancedRenderPipeline.Transparency.cs`).
+- [ ] Reset temporal/history state explicitly for resize, pipeline switch, camera cut, view-count, render-scale, HDR/format, shader generation, and resource-generation replacement (`AdvancedTemporalResetFlags.cs`, `AdvancedTemporalHistoryContract.cs`).
+- [ ] Add pass/category overlays and views for scene-color snapshot, OIT accumulators, refraction, fog, motion/reactive masks, history validity, and late-pass capacity/recovery (`EAdvancedLatePassDebugView.cs`, `AdvancedRenderPipeline.Transparency.cs`).
 
 #### 7.4 Stereo, Multiview, & Editor View Integration (ARP 09)
-- [x] Specialize immutable `ViewSetPlan` with view count, layer mapping, jitter, region, per-view resources/history, and explicit conservative union rules only for genuinely shared work (`ViewSetPlan.cs`, `AdvancedStereoContract.cs`).
-- [x] Layered visibility, depth, barycentrics when enabled, HDR, velocity, and post histories for RVC two-pass, OpenGL single-pass stereo, and Vulkan multiview; never reuse one eye's occlusion verdict for another (`EAdvancedStereoMode.cs`, `AdvancedStereoContract.cs`).
-- [x] Preserve OpenXR predicted-pose, late-latching, motion, camera-cut, deadline, and swapchain contracts; define foveated/variable-rate visibility and shading with conservative peripheral derivatives/LOD (`AdvancedFoveationContract.cs`, `AdvancedOpenXrTimingContract.cs`).
-- [x] Offscreen views (mirrors, portals, probes, thumbnails, depth/visibility-only captures) consume advanced capability-based profiles without executing unrequested main-view post work (`EAdvancedOffscreenViewKind.cs`, `AdvancedOffscreenProfile.cs`).
-- [x] Resolve transform/component/mesh-section/material/primitive/meshlet identity; implement asynchronous picking/GPU selection and preserve outlines, hover, gizmos, bounds, icons, physics debug, and on-top overlays (`AdvancedPickingContract.cs`, `AdvancedEditorIdentityRecord.cs`).
-- [x] Add editor inspection, MCP-visible mode/capability/fallback state, viewport screenshot support, stable capture names, and RenderDoc-friendly annotations/resources for every major phase (`AdvancedDiagnosticsContract.cs`, `AdvancedRenderPipeline.StereoAndViews.cs`).
+- [ ] Specialize immutable `ViewSetPlan` with view count, layer mapping, jitter, region, per-view resources/history, and explicit conservative union rules only for genuinely shared work (`ViewSetPlan.cs`, `AdvancedStereoContract.cs`).
+- [ ] Layered visibility, depth, barycentrics when enabled, HDR, velocity, and post histories for RVC two-pass, OpenGL single-pass stereo, and Vulkan multiview; never reuse one eye's occlusion verdict for another (`EAdvancedStereoMode.cs`, `AdvancedStereoContract.cs`).
+- [ ] Preserve OpenXR predicted-pose, late-latching, motion, camera-cut, deadline, and swapchain contracts; define foveated/variable-rate visibility and shading with conservative peripheral derivatives/LOD (`AdvancedFoveationContract.cs`, `AdvancedOpenXrTimingContract.cs`).
+- [ ] Offscreen views (mirrors, portals, probes, thumbnails, depth/visibility-only captures) consume advanced capability-based profiles without executing unrequested main-view post work (`EAdvancedOffscreenViewKind.cs`, `AdvancedOffscreenProfile.cs`).
+- [ ] Resolve transform/component/mesh-section/material/primitive/meshlet identity; implement asynchronous picking/GPU selection and preserve outlines, hover, gizmos, bounds, icons, physics debug, and on-top overlays (`AdvancedPickingContract.cs`, `AdvancedEditorIdentityRecord.cs`).
+- [ ] Add editor inspection, MCP-visible mode/capability/fallback state, viewport screenshot support, stable capture names, and RenderDoc-friendly annotations/resources for every major phase (`AdvancedDiagnosticsContract.cs`, `AdvancedRenderPipeline.StereoAndViews.cs`).
 
 #### 7.5 Production Cutover & Program Completion (ARP 10)
-- [x] Begin cutover only after correctness, stability, performance, allocation, readback, desktop, offscreen, and XR evidence passes for the affected profile (`AdvancedProductionCutoverContract.cs`, `AdvancedArchitectureBudgetVerifier.cs`).
-- [x] Promote the configured desktop `AdvancedRenderPipeline` source and applicable offscreen profiles from their diagnostic/incomplete state to production shaded output; retain production OpenXR eye ownership in `RvcRenderPipeline` and route compatible opaque/masked work through visibility plus native shading (`AdvancedRenderPipeline.ProductionCutover.cs`, `AdvancedProductionCutoverContract.cs`).
-- [x] Remove the advanced graph's classic G-Buffer, deferred-light accumulation, ordinary opaque Forward+, light-combine stages, and all `DefaultRenderPipeline2` selectors/aliases (`AdvancedProductionCutoverContract.cs`).
-- [x] Meet the target architecture's facade, lifecycle spine, dependency direction, source organization, canonical-layout, allocation, unsafe-code, and single-authority budgets with a reproducible final inventory (`AdvancedArchitectureBudgetVerifier.cs`).
-- [x] Prove cost was not moved into waits, descriptors, retirement, another output, GPU regression, or tail latency, and that a developer can explain a slow frame from the correlated lifecycle tree (`AdvancedArchitectureBudgetVerifier.cs`).
-- [x] Execute deletion, documentation, evidence publication, and archival through Phase 9 only after these gates pass (`AdvancedProductionCutoverContract.cs`).
+- [ ] Begin cutover only after correctness, stability, performance, allocation, readback, desktop, offscreen, and XR evidence passes for the affected profile (`AdvancedProductionCutoverContract.cs`, `AdvancedArchitectureBudgetVerifier.cs`).
+- [ ] Promote the configured desktop `AdvancedRenderPipeline` source and applicable offscreen profiles from their diagnostic/incomplete state to production shaded output; retain production OpenXR eye ownership in `RvcRenderPipeline` and route compatible opaque/masked work through visibility plus native shading (`AdvancedRenderPipeline.ProductionCutover.cs`, `AdvancedProductionCutoverContract.cs`).
+- [ ] Remove the advanced graph's classic G-Buffer, deferred-light accumulation, ordinary opaque Forward+, light-combine stages, and all `DefaultRenderPipeline2` selectors/aliases (`AdvancedProductionCutoverContract.cs`).
+- [ ] Meet the target architecture's facade, lifecycle spine, dependency direction, source organization, canonical-layout, allocation, unsafe-code, and single-authority budgets with a reproducible final inventory (`AdvancedArchitectureBudgetVerifier.cs`).
+- [ ] Prove cost was not moved into waits, descriptors, retirement, another output, GPU regression, or tail latency, and that a developer can explain a slow frame from the correlated lifecycle tree (`AdvancedArchitectureBudgetVerifier.cs`).
+- [ ] Execute deletion, documentation, evidence publication, and archival through Phase 9 only after these gates pass (`AdvancedProductionCutoverContract.cs`).
+
+---
+
+### Phase 7R - Phase 6/7 Correctness Remediation & Runtime Completion
+
+**Status:** In progress. The user authorized full implementation of Phases 6, 7, and 7R on 2026-09-04. Track implementation and runtime evidence in [the implementation investigation](../../investigations/rendering/vulkan-phase67-implementation.md); leave acceptance rows open until their evidence exists. Phase 9.1 still governs new test work.
+
+**Goal:** Close the correctness and missing-integration findings from the phase 6/7 review before any Phase 8 promotion. Preserve the canonical resident architecture and complete the actual rendering paths; declarations, resource names, flags, and passing contract-only tests are not acceptance evidence.
+
+**Review baseline:** Source review at `55f46a4e335a03b923883b600d308313cd3efa81` (phase 6 introduced in `19027f631`). The managed Vulkan build passed with zero warnings/errors using `XREngineUseExistingNativeBridges=true` after native FileTracker access failed. With the engine-generated `AdvancedShaderAccessLibrary.BuildPreamble`, `ShadeNativeOpaque.comp` failed with 10 compiler errors and `ShadeBackground.comp` with 8; reconstruction, classification, indirect-building, and froxel-building controls compiled. NUnit failed before discovery because it attempted to create `C:/Users/DavidEddy/TestResults`; results-directory/work-directory overrides did not resolve it. No test pass, live editor, headset, GPU execution, or performance acceptance was established. These findings are retained here so execution does not depend on disposable `Build/_AgentValidation/` evidence.
+
+**Execution order:** Establish truthful admission in 7R.1 first. Complete XR ownership/bounds before lifecycle replacement (7R.2–7R.4), and compile/align shader contracts before enabling classification, shading, and graph consumers (7R.5–7R.8). Extend only validated paths to stereo/editor/offscreen use in 7R.9. Validate each slice through 7R.10 before claiming its parent requirement complete. Keep changes and evidence scoped to one coherent slice at a time.
+
+#### 7R.1 Truthful Capability and Completion State
+
+Source entry points: `AdvancedRenderPipeline.ProductionCutover.cs`, `AdvancedProductionCutoverContract.cs`, `AdvancedArchitectureBudgetVerifier.cs`, `VPRC_AdvancedRenderStage.cs`, and `VulkanFrameLoop.FeatureOperations.cs`.
+
+- [ ] Replace hard-coded `IsProductionReady => true` and unconditional certification text with status derived from the executable capabilities and validated output profile; identify missing stages and unsupported view modes explicitly.
+- [ ] Connect the readiness evaluator to the actual admission/selection path. Keep required unsupported output visibly failed or diagnostic; do not silently substitute a CPU, legacy, mono, or unshaded path.
+- [ ] Reconcile Phase 6/7 checkboxes and the active matrix against executable call sites and dated evidence as each slice closes. Preserve implemented record/resource declarations without presenting them as full feature delivery.
+- [ ] Replace nominal budget predicates with a reproducible inventory and measured evidence for the existing architecture, allocation, descriptor, lifetime, and timing requirements. Keep production cutover and Phase 9 deletion gated until the affected profile passes.
+
+#### 7R.2 Complete Async XR Submission Ownership
+
+Source entry points: `VulkanCommandRuntime.OpenXrSubmission.cs`, `OpenXrVulkanSubmissionTracker.cs`, `VulkanFrameLoop.OpenXR.EyeRendering.cs`, `VulkanFrameLoop.OpenXR.EyeRecordWorkers.cs`, `VulkanOpenXrEyeWorkerCommandService.cs`, and both frame-loop/command-runtime `OpenXrMirrorPreview` implementations.
+
+- [ ] Audit every `SubmitAndWaitOpenXr` overload/caller: ordinary single/paired eyes, parallel recording workers, SPS, external targets, mirror rendering, preview copies, and render-plus-publish batches. Record each ownership sender and completion receiver.
+- [ ] Return and retain the exact accepted timeline semaphore/value, frame identity, display time, and arena generations from the submit receipt. Do not reconstruct submission ownership from the later global `CurrentTimelineValue` or newly sampled timestamps.
+- [ ] Make accepted-but-incomplete submission transfer complete and exception-safe, including command buffers/pools, frame-data and mapped slots, descriptors, staging uploads, native/resident pins, prepared inputs, and output-specific payloads. An accepted native submit must retain an owner even if publication/registration fails.
+- [ ] Distinguish queue acceptance from GPU completion in parallel-eye and mirror callers. Defer upload publication, profiler completion sampling, prepared-input release, and completion-only cleanup until the receipt completes; settle every payload exactly once.
+- [ ] Route completion polling and shutdown through the same ownership authorities on every path. Integrate with existing deferred native command-buffer retirement rather than assuming that a free-helper call immediately frees a pending buffer.
+- [ ] Resolve the adjacent pre-existing three-command mirror render-plus-publish mismatch: its caller submits three buffers while the shared input/overload accepts at most two. Preserve the complete render/publish batch in the submission representation and retirement payload; do not merely relax the count guard. This blocker predates phase 6 (`ad546b5b89`) but must not remain in the mirror acceptance path.
+
+#### 7R.3 Enforced Bounds, Allocation-Free Tracking, and Accurate Telemetry
+
+Source entry points: `OpenXrVulkanSubmissionTracker.EnsureInFlightBudget/RegisterSubmission/PollCompletions/DrainAll`, `VulkanXrGraphicsBinding.TryRetireSwapchainsForDeferredDestruction`, and `RuntimeEngine.Rendering.Stats.Vr.cs`.
+
+- [ ] Reserve in-flight capacity before recording/submission and honor the admission result at every caller. After timeout or a failed completion query, recheck capacity and defer/fail through an explicit policy; never return unconditional success or append beyond the bound.
+- [ ] Apply the same rule to retired swapchain generations. Establish replacement capacity before detaching active handles; a failed recovery must not lose the active generation or grow the retirement list past its limit.
+- [ ] Keep safe reuse/defer paths ahead of any short counted recovery wait. Size wait policy against XR deadlines, preserve `xrWaitFrame` pacing and nonblocking desktop acquire, and expose missed/late/reprojected frames rather than transferring a repeated 100 ms wait into another scope.
+- [ ] Remove per-frame submission/list/slot-array allocations and duplicate polling. Use bounded reusable storage with explicit ownership; demonstrate zero steady-state managed allocations in tracker registration, polling, and retirement.
+- [ ] Publish real engine/XR frame identity, predicted display time, queue-submit interval, completion/forced wait, in-flight count/age, per-image reuse age, and producer/completion authority. Remove zero display-time placeholders and duplicate/synthetic submit timing; handle independent eye/image histories correctly.
+
+#### 7R.4 Session-Safe Swapchain Replacement and Teardown
+
+Source entry points: `VulkanXrGraphicsBinding.cs`, `RetiredOpenXrSwapchainGeneration.cs`, `OpenXRAPI.XrCalls.cs`, `OpenXRAPI.RuntimeStateMachine.cs`, `OpenXRAPI.Resolution.cs`, and `VulkanFrameLoop.OpenXR.ResourcesPressure.cs`.
+
+- [ ] Separate in-session swapchain replacement from terminal session/instance teardown. Keep the parent session alive for every deferred child generation; never queue child handles for later destruction and immediately destroy their parent.
+- [ ] Retain superseded image views/framebuffers and all associated native resources with the generation's exact highest application completion receipt and acquired/released-image state. Establish the runtime-release contract without assuming the runtime observes the engine's private timeline.
+- [ ] Propagate drain timeout/query/wait failures to a defined teardown decision. Report successful drain only when outstanding ownership is settled; make device-loss abandonment explicit instead of breaking the loop and returning success with entries retained.
+- [ ] Drain or explicitly settle all generations before `DestroySession`/`DestroyInstance`; prevent invalid-handle destruction during restart and clean up tracker callbacks, prepared leases, and unmanaged image arrays exactly once.
+- [ ] Remove the `DeviceWaitIdle` reached by eye-resolution recreation only after the replacement/session lifetime model is safe. Use overlapping in-session generations where supported and a visible bounded policy where unsupported; preserve runtime dimension-query policy and session-stop/loss handling.
+
+#### 7R.5 Compilable Shaders and Canonical CPU/GPU Layouts
+
+Source entry points: `Build/CommonAssets/Shaders/Advanced/{Shading,Classification,Lighting,Reconstruction,Access}/`, `AdvancedShaderAccessLibrary.cs`, `AdvancedShaderRecordLayout.cs`, `AdvancedMaterialRecord.cs`, and `AdvancedLightRecord.cs`.
+
+- [ ] Fix invalid `layout(formatName = rgba16f/rg16f, ...)` declarations in both shading shaders. Call the real five-argument `XR_ADV_TryReconstructSurface(identity, metadata, depth, pixelCenter, out surface)` interface with the appropriate visibility/depth inputs.
+- [ ] Compile the changed shader families with the engine-generated preamble, actual include resolution, canonical sets/bindings, target environment, and admitted backend/view permutations. Retain a known-working reconstruction shader as a control; a managed C# build alone cannot close this item.
+- [ ] Eliminate unproduced alternate material/light layouts. Use the canonical 64-byte material and 128-byte light records/accessors, or an explicitly owned, versioned conversion with proven byte offsets and producer/consumer symmetry.
+- [ ] Verify descriptor/image formats, storage access, binding collisions, matrix convention, record strides, layout versions, and generation-safe lookup at the actual backend binding boundary. Preserve the set 0/1/2/3 ABI and backend-neutral logical contracts.
+
+#### 7R.6 Correct and Bounded GPU Material Classification
+
+Source entry points: `ClassifyTiles.comp`, `BuildClassificationIndirect.comp`, `ClassificationInterface.glslinc`, `ReconstructSurface.glslinc`, `AdvancedClassificationKey.cs`, and `AdvancedRenderPipeline.Classification.cs`.
+
+- [ ] Resolve visibility stable draw identity through the canonical lookup, then the draw's material handle and shading kernel. Remove direct indexing of a material array with a draw ID; reject stale generations and exclude background/invalid sentinels.
+- [ ] Classify by kernel, layout, coverage, derivative, and view requirements while keeping material rows as data. Exercise shared materials, sparse/reused draw IDs, pending/custom kernels, and all admitted kernel IDs; the current 32-entry histogram must not silently drop IDs allowed by the 128-kernel contract.
+- [ ] Build compact bounded per-kernel ranges/indirect arguments entirely on the GPU. Do not dispatch every kernel over the global membership count or allow mixed-kernel workgroups to write the same pixels without defined ownership.
+- [ ] Separate attempted counts from valid emitted ranges; clamp every consumer to initialized records. Recover conservatively without silent pixel loss in automatic mode and publish structured failure in required mode, with no current-frame readback recovery.
+- [ ] Derive independent tile/membership/dispatch capacities from extent, view count, and worst-case diversity. Use actual selected tile dimensions in producer/consumer addressing, choose them from occupancy evidence, and validate per-eye mapping plus resource-specific barriers.
+- [ ] Connect classification diagnostics to real counters/captures, including mixed tiles, kernel/material distribution, capacity pressure, recovery, and per-eye cost.
+
+#### 7R.7 Native Shading, Froxel Capacity, and Lighting Integration
+
+Source entry points: `AdvancedRenderPipeline.NativeShading.cs`, `BuildFroxels.comp`, `ClusteredLightingInterface.glslinc`, `ShadeNativeOpaque.comp`, `StandardPBR.glslinc`, `AdvancedDecalModifier.glslinc`, and `AdvancedGlobalResourceCapture.cs`.
+
+- [ ] Allocate/validate froxel storage from the resolved grid and view count before dispatch. At 16×16 tiles and 24 slices, 1440p mono requires 345,600 records and 4K mono 777,600; the current 262,144 capacity is insufficient. Guard all writes and shade-side indexing, including resize/render-scale/stereo changes.
+- [ ] Build point/spot lists with correct camera/view-space depth and XY coverage, canonical light ordering/stride, bounded directional work, and explicit overflow behavior. Do not silently truncate at 16 local lights or erase lighting when the global index list fills.
+- [ ] Evaluate material constants/textures, normal/tangent data, opaque/masked/unlit/emissive families, and explicit invalid/pending fallbacks. Replace fixed roughness/metallic and vertex-color-only shading with the actual material interface.
+- [ ] Consume directional/point/spot shadows, cascades/atlas/filter data, and missing/stale reasons through convention-safe sampling. Integrate decal lists and real material modifiers rather than a placeholder color adjustment.
+- [ ] Schedule AO and the selected GI/IBL/probe providers against final visibility depth/reconstructed normals and feed their actual outputs into shading. Preserve a single contributing GI mode unless an authored composition explicitly says otherwise.
+- [ ] Produce native HDR, dense velocity, reactive/temporal sidecars, and valid sky/background output, with capture-stable resources and executable debug/timing views.
+
+#### 7R.8 Execute the Advanced Frame Graph, Late Passes, and Post Chain
+
+Source entry points: `VPRC_AdvancedRenderStage.cs`, `VulkanFrameLoop.FeatureOperations.cs`, `AdvancedRenderPipeline.CommandChain.cs`, `AdvancedRenderPipeline.ExactTransparency.cs`, `AdvancedRenderPipeline.Transparency.cs`, and `AdvancedRenderPipeline.PostProcessing.cs`.
+
+- [ ] Replace stage-label-only returns with real preparation/reconstruction/classification/lighting/shading execution and connect native HDR to the output stage. Reserve diagnostic clears for explicit diagnostic/failure states rather than production output.
+- [ ] Bind the required resources and GPU work through the supported backend capability path; declare exact dependencies, barriers, resource generations, frame-slot ownership, and compute-to-raster/post transitions.
+- [ ] Wire the currently unused Advanced exact-transparency command helper and implement declared late-pass eligibility/routing for sorted alpha, refraction, OIT, participating transparency, special effects, fog/atmosphere, UI, and overlays.
+- [ ] Snapshot scene color only for visible consumers that require it, avoid illegal attachment feedback, and enforce OIT capacities/recovery without same-frame readback.
+- [ ] Reconnect temporal accumulation, motion blur, DoF, bloom, tone mapping, grading, TSR/vendor upscalers, and final composition. Merge participating transparent motion and reactive masks with opaque output.
+- [ ] Execute history invalidation for resize, render scale, camera cut, pipeline/view-count changes, HDR/format changes, shader reload, and resource-generation replacement. Validate rendered features and diagnostics, not just schema/property availability.
+
+#### 7R.9 Stereo, Offscreen, and Editor Runtime Integration
+
+Source entry points: `AdvancedRenderPipeline.StereoAndViews.cs`, `ViewSetPlan.cs`, `VulkanFrameLoop.FeatureOperations.cs`, and the advanced stereo/offscreen/picking/diagnostic contracts.
+
+- [ ] Implement admitted multi-view paths before removing the current `ViewCount != 1` rejection. Consume immutable view plans and layer mapping in visibility, classification, shading, depth, velocity, and per-view histories; preserve separate eye occlusion decisions.
+- [ ] Integrate RVC-owned OpenXR output, supported OpenGL SPS/Vulkan multiview, predicted-pose/late-latching/deadline behavior, and conservative foveated derivatives/LOD. Keep unsupported profiles explicit and retain RVC eye ownership.
+- [ ] Execute capability-based offscreen profiles for mirrors, portals, probes, thumbnails, and depth/visibility captures without unrequested main-view post work.
+- [ ] Wire asynchronous picking/selection and canonical transform/component/mesh-section/material/primitive/meshlet identity into actual editor consumers; preserve outlines, hover, gizmos, bounds, icons, physics debug, and on-top overlays.
+- [ ] Expose actual per-profile mode/capability/blocker state through the editor and MCP, with viewport captures and RenderDoc-friendly phase/resource annotations.
+
+#### 7R.10 Runtime Validation, Test Clearance, and Exit Gates
+
+- [ ] Once implementation is requested, maintain a tracked investigation/progress record per coherent slice, using named isolated MCP editor sessions and bounded `Build/_AgentValidation/` evidence as required by `AGENTS.md`. Record the exact revision, configuration, commands, results, and any user-reported outcome.
+- [ ] Pass the narrow managed build and shader compiler checks without new warnings. Resolve native-build/test-runner environment failures transparently; skipped or undiscovered tests and predicate-only checks are not feature acceptance.
+- [ ] Validate ordinary/parallel/SPS eyes, mirror/preview/render-plus-publish paths, desktop coexistence, image pressure, resolution replacement, repeated start/stop/restart, and session loss on Monado and at least one hardware runtime. Prove receipt-based ownership, enforced limits, truthful waits/ages, and no destruction/reuse before the required completion.
+- [ ] Validate the advanced output on real GPU execution with multiple camera positions, mixed/shared materials, sparse/reused IDs, many kernels, capacity pressure, point/spot/directional lights and shadows, AO/GI/decals, late passes/post, 1440p/4K, and each admitted mono/stereo/offscreen/editor profile. Inspect saved images and suspicious RenderDoc resources; a clear or stale image does not pass.
+- [ ] Confirm zero relevant Vulkan validation/VUID errors, resource lifetime failures, silent dropped pixels, unsupported fallback, or current-frame readback in strict zero-readback paths. Measure steady-state allocations and show costs were not moved into waits, descriptors, retirement, another output, or GPU/tail latency.
+- [ ] Follow Phase 9.1 for each slice: complete the relevant live/runtime validation and obtain explicit user clearance before adding/modifying tests. Only then add meaningful lifecycle, boundary/overflow, identity-generation, shader-binding, and integration coverage; preserve any diagnostic existing-test use needed to reproduce an active defect.
+- [ ] Close each review finding with source plus runtime/compiler evidence and update the corresponding Phase 6/7 row. If required hardware, a supported profile, or a correctness gate is unavailable/failing, leave that gate open and report the blocker rather than certifying completion.
+- [ ] Exit Phase 7R only after all of its implementation and acceptance rows close. Then freeze the integrated revision for Phase 8; retain Phase 8's full performance/hardware matrix and Phase 9's deletion/archival gates.
 
 ---
 
 ### Phase 8 - High-Refresh Promotion Gates & Full Validation Matrix
 
 **Goal:** Prove performance, cadence, lifetime, and visual parity across a comprehensive multi-machine and multi-scenario validation matrix on one frozen integrated implementation.
+
+**Entry gate:** Phase 7R must close before performance promotion or production-certification claims. Review remediation does not waive any scenario or threshold below.
 
 #### 8.1 Required Scenario Matrix
 - [ ] **Desktop Performance-Promotion Scenarios:**
@@ -1304,3 +1428,4 @@ This master program is complete only when:
 10. `AdvancedRenderPipeline` is the desktop and applicable-offscreen production default, with GPU material classification, native opaque shading, clustered lighting, and visibility-driven post/transparency. Production OpenXR eye output remains owned by `RvcRenderPipeline`, and that path is promoted only after its matching XR gates pass.
 11. Standard and Synchronization Validation report zero errors/VUIDs, with no unresolved renderer warning or lifetime ambiguity accepted into closeout.
 12. `GPUScene` mirrors, `VulkanPreparedMeshOperationCohort`, obsolete worker arrays, live object-oriented Vulkan CPU-direct encoding, per-command global recording discovery, `DefaultRenderPipeline2`, and the original default pipeline are deleted. A temporary opt-in `LegacyDefaultRenderPipeline` may unblock production cutover for one named consumer, but it keeps this master active until its dated deletion gate is complete.
+13. Phase 7R's review findings are closed with executable capability, ownership, shader, and runtime evidence; production readiness and phase completion status reflect those results.

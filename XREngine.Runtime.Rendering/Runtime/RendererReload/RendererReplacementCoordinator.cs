@@ -102,20 +102,28 @@ public sealed class RendererReplacementCoordinator
                     target,
                     RendererReloadState.Quiescing,
                     "Stopping OpenXR presentation while preserving the editor process and world.");
-                await InvokeOnRenderThreadAsync(
+                bool xrTeardownCompleted = await InvokeOnRenderThreadAsync(
                     () =>
                     {
                         for (int i = 0; i < windows.Length; i++)
                         {
-                            RuntimeEngine.VRState.OpenXRApi?.PrepareRendererDeviceTeardown(
-                                windows[i].Renderer,
-                                "renderer backend hot reload");
+                            if (RuntimeEngine.VRState.OpenXRApi?.PrepareRendererDeviceTeardown(
+                                    windows[i].Renderer,
+                                    "renderer backend hot reload") == false)
+                                return false;
                         }
 
                         RuntimeEngine.VRState.IsInVR = false;
                         return true;
                     },
                     cancellationToken).ConfigureAwait(false);
+                if (!xrTeardownCompleted)
+                {
+                    for (int i = 0; i < windows.Length; i++)
+                        windows[i].Renderer.AbandonShutdownTeardown();
+                    return Fail(previous, RendererReloadFailureKind.Teardown,
+                        "OpenXR child teardown did not complete; renderer replacement was aborted.");
+                }
                 restoreVrPresentation = true;
             }
 

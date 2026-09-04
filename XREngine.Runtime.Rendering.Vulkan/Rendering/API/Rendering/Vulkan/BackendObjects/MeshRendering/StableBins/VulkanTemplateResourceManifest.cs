@@ -110,8 +110,8 @@ internal sealed class VulkanTemplateResourceManifest
     /// </summary>
     internal void ResetVisibilityGeometry(
         in AdvancedVisibilityPayload payload,
-        VkBufferHandle vertexBuffer,
-        VkBufferHandle indexBuffer)
+        in VulkanVisibilityPreparedVertexSource vertexSource,
+        VulkanFrameDataSlice indexSlice)
     {
         if (_resources.Length < 3 || _nativeUses.Length < 2)
             throw new InvalidOperationException(
@@ -124,25 +124,36 @@ internal sealed class VulkanTemplateResourceManifest
             EBackendReadyCanonicalOwner.Material,
             payload.Material);
         _nativeUses[0] = new(
-                ObjectType.Buffer,
-                vertexBuffer.Handle,
-                VulkanTemplateResourceAccess.Read,
-                PipelineStageFlags.VertexInputBit,
-                AccessFlags.VertexAttributeReadBit,
-                ImageLayout.Undefined,
-                uint.MaxValue);
+            ObjectType.Buffer,
+            vertexSource.Buffer.Handle,
+            VulkanTemplateResourceAccess.Read,
+            PipelineStageFlags.VertexInputBit |
+                PipelineStageFlags.VertexShaderBit |
+                PipelineStageFlags.MeshShaderBitExt,
+            AccessFlags.VertexAttributeReadBit |
+                AccessFlags.ShaderReadBit,
+            ImageLayout.Undefined,
+            uint.MaxValue,
+            vertexSource.Offset,
+            vertexSource.Length,
+            vertexSource.Generation,
+            vertexSource.ElementStride);
         _nativeUses[1] = new(
-                ObjectType.Buffer,
-                indexBuffer.Handle,
-                VulkanTemplateResourceAccess.Read,
-                PipelineStageFlags.VertexInputBit,
-                AccessFlags.IndexReadBit,
-                ImageLayout.Undefined,
-                uint.MaxValue);
+            ObjectType.Buffer,
+            indexSlice.Buffer.Handle,
+            VulkanTemplateResourceAccess.Read,
+            PipelineStageFlags.VertexInputBit |
+                PipelineStageFlags.ComputeShaderBit,
+            AccessFlags.IndexReadBit | AccessFlags.ShaderReadBit,
+            ImageLayout.Undefined,
+            uint.MaxValue,
+            indexSlice.Offset,
+            indexSlice.Length,
+            indexSlice.Generation,
+            sizeof(uint));
         _resourceCount = 3;
         _nativeUseCount = 2;
     }
-
     internal void CopyFrom(VulkanTemplateResourceManifest source)
     {
         ArgumentNullException.ThrowIfNull(source);
@@ -167,7 +178,11 @@ internal readonly record struct VulkanTemplateNativeResourceUse(
     PipelineStageFlags Stages,
     AccessFlags AccessMask,
     ImageLayout RequiredLayout,
-    uint QueueFamily);
+    uint QueueFamily,
+    ulong Offset = 0u,
+    ulong Length = 0u,
+    ulong NativeGeneration = 0u,
+    uint ElementStride = 0u);
 
 /// <summary>Native access mode for template/bin resource manifests.</summary>
 [Flags]

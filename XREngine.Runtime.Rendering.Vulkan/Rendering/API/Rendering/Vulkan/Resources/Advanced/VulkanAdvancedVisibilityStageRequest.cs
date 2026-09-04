@@ -20,10 +20,12 @@ internal readonly record struct VulkanAdvancedVisibilityStageRequest(
     string MetadataTargetName,
     string SelectionTargetName,
     string DepthTargetName,
-    string CurrentDepthPyramidTargetName)
+    string CurrentDepthPyramidTargetName,
+    EAdvancedShadingDebugView ShadingDebugView = EAdvancedShadingDebugView.Disabled,
+    bool RequireNativeOutput = false)
 {
     internal bool IsValid
-        => (Stage, Phase) is
+        => ((Stage, Phase) is
             (EAdvancedRenderStage.VisibilityPreparation,
                 EAdvancedVisibilityStageBackendPhase.Complete) or
             (EAdvancedRenderStage.VisibilityRaster,
@@ -31,7 +33,13 @@ internal readonly record struct VulkanAdvancedVisibilityStageRequest(
             (EAdvancedRenderStage.DepthPyramidAndLateVisibility,
                 EAdvancedVisibilityStageBackendPhase.LateCompute) or
             (EAdvancedRenderStage.DepthPyramidAndLateVisibility,
-                EAdvancedVisibilityStageBackendPhase.LateRaster) &&
+                EAdvancedVisibilityStageBackendPhase.LateRaster) or
+            (EAdvancedRenderStage.WorkClassification,
+                EAdvancedVisibilityStageBackendPhase.Complete) or
+            (EAdvancedRenderStage.AttributeReconstruction,
+                EAdvancedVisibilityStageBackendPhase.Complete) or
+            (EAdvancedRenderStage.NativeOpaqueShading,
+                EAdvancedVisibilityStageBackendPhase.Complete)) &&
            Publication.FrameId != 0u &&
            Reservation.IsValid &&
            BackendPackage.IsValid &&
@@ -58,6 +66,8 @@ internal readonly record struct VulkanAdvancedVisibilityStageRequest(
     /// </summary>
     internal bool MatchesFamily(in VulkanAdvancedVisibilityStageRequest other)
         => Reservation.Equals(other.Reservation) &&
+           RequireNativeOutput == other.RequireNativeOutput &&
+           ShadingDebugView == other.ShadingDebugView &&
            BackendPackage.Equals(other.BackendPackage) &&
            Publication.Equals(other.Publication) &&
            VisibilityContentGeneration == other.VisibilityContentGeneration &&

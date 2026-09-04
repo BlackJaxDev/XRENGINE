@@ -35,4 +35,8 @@ public static class AdvancedGlobalResourceBindings
     public const uint SamplerDescriptors = 25u;
     public const uint TextureArray = 26u;
     public const uint HandleLookups = 27u;
+    /// <summary>Descriptor-indexed sampled 2D-array views, aligned with the 2D table.</summary>
+    public const uint Texture2DArrayDescriptors = 28u;
+    /// <summary>Descriptor-indexed sampled cube views, aligned with the 2D table.</summary>
+    public const uint TextureCubeDescriptors = 29u;
 }

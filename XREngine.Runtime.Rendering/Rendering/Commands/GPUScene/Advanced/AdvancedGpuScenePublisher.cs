@@ -11,7 +11,7 @@ namespace XREngine.Rendering.Commands;
 /// shared database at the scene swap boundary. Registrations retain handles
 /// allocated by the canonical tables; this type never manufactures logical IDs.
 /// </summary>
-public sealed partial class AdvancedGpuScenePublisher
+public sealed partial class AdvancedGpuScenePublisher : IDisposable
 {
     private const uint InitialCapacity = 64u;
 

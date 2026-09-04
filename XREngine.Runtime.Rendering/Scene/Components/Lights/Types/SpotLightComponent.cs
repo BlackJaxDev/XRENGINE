@@ -34,6 +34,18 @@ namespace XREngine.Components.Capture.Lights.Types
         private XRMaterial? _shadowAtlasMaterial;
         private bool _shadowFrustumRelevant = true;
         private ulong _lastShadowRelevanceFrame;
+        private readonly object _atlasSnapshotSync = new();
+        private SpotShadowAtlasRenderSnapshot _lastRenderedAtlasSnapshot;
+
+        /// <summary>Immutable spot projection and allocation identity captured only after a successful atlas render.</summary>
+        public readonly record struct SpotShadowAtlasRenderSnapshot(
+            bool IsValid,
+            Matrix4x4 WorldToShadow,
+            Vector4 RenderedLightPositionAndFar,
+            float NearPlane,
+            float FarPlane,
+            bool ReversedDepth,
+            ShadowAtlasAllocation Allocation);
 
         /// <summary>
         /// Creates a spot light with explicit cone, attenuation, and intensity settings.
@@ -400,6 +412,52 @@ namespace XREngine.Components.Capture.Lights.Types
 
             return mat;
         }
+
+        internal void CommitRenderedShadowAtlasSnapshot(
+            in ShadowAtlasAllocation allocation,
+            float nearPlane,
+            float farPlane)
+        {
+            XRCamera? camera = ShadowCamera;
+            if (camera is null)
+                return;
+
+            Matrix4x4 lightMatrix = LightMeshMatrix;
+            SpotShadowAtlasRenderSnapshot snapshot = new(
+                true,
+                camera.ViewProjectionMatrix,
+                new Vector4(lightMatrix.M41, lightMatrix.M42, lightMatrix.M43, farPlane),
+                nearPlane,
+                farPlane,
+                camera.IsReversedDepth,
+                allocation);
+            lock (_atlasSnapshotSync)
+                _lastRenderedAtlasSnapshot = snapshot;
+        }
+
+        internal bool TryGetRenderedShadowAtlasSnapshot(
+            in ShadowAtlasAllocation allocation,
+            out SpotShadowAtlasRenderSnapshot snapshot)
+        {
+            lock (_atlasSnapshotSync)
+                snapshot = _lastRenderedAtlasSnapshot;
+            return snapshot.IsValid && ShadowAtlasRenderSnapshotMatches(snapshot.Allocation, allocation);
+        }
+
+        private static bool ShadowAtlasRenderSnapshotMatches(
+            ShadowAtlasAllocation rendered,
+            ShadowAtlasAllocation current)
+            => rendered.Key == current.Key &&
+               rendered.AtlasKind == current.AtlasKind &&
+               rendered.AtlasId == current.AtlasId &&
+               rendered.PageIndex == current.PageIndex &&
+               rendered.PixelRect == current.PixelRect &&
+               rendered.InnerPixelRect == current.InnerPixelRect &&
+               rendered.UvScaleBias == current.UvScaleBias &&
+               rendered.Resolution == current.Resolution &&
+               rendered.ContentVersion == current.ContentVersion &&
+               rendered.LastRenderedFrame == current.LastRenderedFrame &&
+               current.IsResident;
 
         internal bool RenderShadowAtlasTile(XRFrameBuffer atlasFbo, BoundingRectangle renderRect, bool collectVisibleNow)
         {

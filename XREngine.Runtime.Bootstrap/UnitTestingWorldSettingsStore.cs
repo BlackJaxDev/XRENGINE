@@ -572,6 +572,14 @@ public static class UnitTestingWorldSettingsStore
             }
         }
 
+        if (TryGetBoolEnv(XREngineEnvironmentVariables.UnitTestUseAdvancedRenderPipeline, out bool useAdvancedRenderPipeline))
+        {
+            settings.Rendering.UseAdvancedRenderPipeline = useAdvancedRenderPipeline;
+            MarkJsonPropertySpecified(settings, nameof(UnitTestingWorldSettings.Rendering));
+            MarkJsonPropertySpecified(settings, nameof(UnitTestingWorldSettings.Rendering), nameof(settings.Rendering.UseAdvancedRenderPipeline));
+            applied = true;
+        }
+
         if (applied)
         {
             _vrLaunchEnvironmentOverridesProcessed = true;
@@ -922,7 +930,9 @@ public static class UnitTestingWorldSettingsStore
             || HasEnvironmentValue(XREngineEnvironmentVariables.UnitTestOpenXrEyeResolutionWidth)
             || HasEnvironmentValue(XREngineEnvironmentVariables.UnitTestOpenXrEyeResolutionHeight)
             || HasEnvironmentValue(XREngineEnvironmentVariables.UnitTestRenderWindowsWhileInVr)
-            || HasEnvironmentValue(XREngineEnvironmentVariables.UnitTestOpenXrRuntimeJson));
+            || HasEnvironmentValue(XREngineEnvironmentVariables.UnitTestOpenXrRuntimeJson)
+            || HasEnvironmentValue(XREngineEnvironmentVariables.UnitTestRenderApi)
+            || HasEnvironmentValue(XREngineEnvironmentVariables.UnitTestUseAdvancedRenderPipeline));
 
     private static bool HasEnvironmentValue(string name)
         => !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(name));

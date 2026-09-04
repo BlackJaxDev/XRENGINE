@@ -155,7 +155,8 @@ public sealed class AdvancedGpuResourcePublisher
                     int firstSourceIndex = _preflightTextureSourceIndices[textureIndex];
                     if (!SourceEquals(
                             in sources[firstSourceIndex],
-                            in source))
+                            in source) ||
+                        !SamplerEquals(sources[firstSourceIndex].SamplerRecord, source.SamplerRecord))
                     {
                         reason = "One texture identity produced conflicting canonical metadata in the same batch.";
                         return false;
@@ -342,16 +343,23 @@ public sealed class AdvancedGpuResourcePublisher
             if (samplerIndex < 0)
                 samplerIndex = AddSamplerAfterPreflight(source.SamplerRecord);
 
+            // The texture table is the canonical logical-texture resolver. Stamp
+            // its default before insertion so shadow and IBL users do not need a
+            // material-owned binding to discover the sampler.
+            AdvancedTextureRecord stampedRecord = source.TextureRecord;
+            stampedRecord.DefaultSampler = _samplers[samplerIndex].Handle;
+
             int textureIndex = FindTextureBySource(source.Texture);
             if (textureIndex < 0)
                 textureIndex = AddTextureAfterPreflight(
                     source.Texture,
-                    source.TextureRecord,
+                    stampedRecord,
                     source.SourceContentGeneration);
-            else if (!SourceEquals(in _textures[textureIndex], in source))
+            else if (!SourceMetadataEquals(in _textures[textureIndex], in source) ||
+                     _textures[textureIndex].Record.DefaultSampler != stampedRecord.DefaultSampler)
                 ReplaceTextureAfterPreflight(
                     textureIndex,
-                    source.TextureRecord,
+                    stampedRecord,
                     source.SourceContentGeneration);
 
             ref TextureEntry texture = ref _textures[textureIndex];
@@ -551,7 +559,7 @@ public sealed class AdvancedGpuResourcePublisher
                     entry.Handle,
                     out AdvancedTextureRecord retainedRecord) ||
                 !TextureEquals(retainedRecord, entry.Record) ||
-                !snapshot.TryAddTextureSource(entry.Handle, entry.Source))
+                !snapshot.TryAddTextureSource(entry.Handle, entry.Source, entry.SourceContentGeneration))
             {
                 snapshot.AbortSourceCapture();
                 return false;
@@ -644,15 +652,17 @@ public sealed class AdvancedGpuResourcePublisher
             reason = "Logical texture input must not contain canonical identity, backend encoding, or realized-residency state.";
             return false;
         }
-        if (source.TextureRecord.Dimension != EAdvancedTextureDimension.Texture2D ||
+        if (source.TextureRecord.Dimension is not (EAdvancedTextureDimension.Texture2D or EAdvancedTextureDimension.Texture2DArray or EAdvancedTextureDimension.Cube) ||
             source.TextureRecord.Width == 0u ||
             source.TextureRecord.Height == 0u ||
-            source.TextureRecord.DepthOrLayers != 1u ||
+            source.TextureRecord.DepthOrLayers == 0u ||
+            (source.TextureRecord.Dimension == EAdvancedTextureDimension.Texture2D && source.TextureRecord.DepthOrLayers != 1u) ||
+            (source.TextureRecord.Dimension == EAdvancedTextureDimension.Cube && source.TextureRecord.DepthOrLayers != 6u) ||
             source.TextureRecord.MipCount == 0u ||
             source.TextureRecord.FormatClass == (uint)EAdvancedTextureFormatClass.Unknown ||
             source.TextureRecord.FormatClass > (uint)EAdvancedTextureFormatClass.Stencil8)
         {
-            reason = "Logical material textures must describe one supported, nonempty 2D resource.";
+            reason = "Logical textures must describe one supported, nonempty 2D, 2D-array, or cube resource.";
             return false;
         }
         bool depthFormat = IsDepthFormat(source.TextureRecord.FormatClass);
@@ -754,7 +764,8 @@ public sealed class AdvancedGpuResourcePublisher
             ref readonly AdvancedGpuResourceBindingSource existing = ref sources[existingSourceIndex];
             if (!ReferenceEquals(existing.Texture, texture))
                 continue;
-            if (!SourceEquals(in existing, in sources[sourceIndex]))
+            if (!SourceEquals(in existing, in sources[sourceIndex]) ||
+                !SamplerEquals(existing.SamplerRecord, sources[sourceIndex].SamplerRecord))
             {
                 reason = "One new texture identity produced conflicting canonical metadata in the same batch.";
                 return false;
@@ -996,14 +1007,26 @@ public sealed class AdvancedGpuResourcePublisher
     private static bool SourceEquals(
         in TextureEntry entry,
         in AdvancedGpuResourceBindingSource source)
-        => TextureEquals(entry.Record, source.TextureRecord) &&
+        => SourceMetadataEquals(entry, source) &&
            entry.SourceContentGeneration == source.SourceContentGeneration;
+
+    private static bool SourceMetadataEquals(
+        in TextureEntry entry,
+        in AdvancedGpuResourceBindingSource source)
+        => TextureMetadataEquals(entry.Record, source.TextureRecord);
 
     private static bool SourceEquals(
         in AdvancedGpuResourceBindingSource left,
         in AdvancedGpuResourceBindingSource right)
-        => TextureEquals(left.TextureRecord, right.TextureRecord) &&
+        => TextureMetadataEquals(left.TextureRecord, right.TextureRecord) &&
            left.SourceContentGeneration == right.SourceContentGeneration;
+
+    private static bool TextureMetadataEquals(AdvancedTextureRecord left, AdvancedTextureRecord right)
+    {
+        left.DefaultSampler = AdvancedGpuHandle.Invalid;
+        right.DefaultSampler = AdvancedGpuHandle.Invalid;
+        return TextureEquals(left, right);
+    }
 
     private static bool SamplerEquals(AdvancedSamplerRecord left, AdvancedSamplerRecord right)
         => left.Filter == right.Filter && left.Flags == right.Flags &&

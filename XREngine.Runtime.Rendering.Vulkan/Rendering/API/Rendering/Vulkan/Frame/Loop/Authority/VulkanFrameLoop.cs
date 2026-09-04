@@ -43,6 +43,8 @@ internal sealed partial class VulkanFrameLoop
         new VulkanResidentDrawTemplateHandle[VulkanMeshOperationRequestQueue.Capacity];
     private readonly VulkanPreparedMeshIngress _preparedMeshIngress = new();
     private readonly OpenXrMeshFrameOpCaptureEmitter _openXrMeshFrameOpCaptureEmitter;
+    private readonly Action<OpenXrVulkanSubmissionTracker.InFlightSubmission>
+        _openXrSubmissionRetiredCallback;
     private FrameOpResourceUseList _preparedMeshIngressResourceUseScratch;
     private long _preparedMeshOperationCohortHits;
     private long _preparedMeshOperationCohortBuilds;
@@ -116,6 +118,9 @@ internal sealed partial class VulkanFrameLoop
         _injectResidentTemplateDeviceLoss = XREnvironment.IsEnabled(
             XREngineEnvironmentVariables.VulkanResidentTemplateDeviceLossInject);
         _openXrMeshFrameOpCaptureEmitter = new OpenXrMeshFrameOpCaptureEmitter(this);
+        _openXrSubmissionRetiredCallback = OnOpenXrSubmissionRetired;
+        _commandRuntime.OpenXrSubmissionTracker.SetSubmissionRetiredCallback(
+            _openXrSubmissionRetiredCallback);
         if (targetDriver is IVulkanExplicitFrameTargetDriver explicitTarget)
         {
             _frameSlotCount = checked((int)explicitTarget.OutputProperties.FrameSlotCount);

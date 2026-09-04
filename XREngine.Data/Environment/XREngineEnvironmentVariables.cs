@@ -84,6 +84,7 @@ public static class XREngineEnvironmentVariables
     public const string UnitTestRenderWindowsWhileInVr = "XRE_UNIT_TEST_RENDER_WINDOWS_WHILE_IN_VR";
     public const string UnitTestOpenXrRuntimeJson = "XRE_UNIT_TEST_OPENXR_RUNTIME_JSON";
     public const string UnitTestRenderApi = "XRE_UNIT_TEST_RENDER_API";
+    public const string UnitTestUseAdvancedRenderPipeline = "XRE_UNIT_TEST_USE_ADVANCED_RENDER_PIPELINE";
     public const string HeadlessTest = "XR_HEADLESS_TEST";
     public const string HideTestWindows = "XR_HIDE_TEST_WINDOWS";
     public const string ShowTestWindows = "XR_SHOW_TEST_WINDOWS";

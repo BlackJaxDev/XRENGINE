@@ -15,7 +15,9 @@ namespace XREngine.Rendering.Vulkan;
 internal sealed unsafe partial class VulkanPipelineManager
 {
     private const int MaxCachedPipelineVariantManifests = 64;
-    internal const uint CommonPushConstantByteSize = 16;
+    // All engine layouts share this range for graphics/compute compatibility.
+    // Advanced shading uses 64 bytes; reserve Vulkan's guaranteed minimum.
+    internal const uint CommonPushConstantByteSize = 128;
     internal const ShaderStageFlags CommonPushConstantStages =
         ShaderStageFlags.VertexBit |
         ShaderStageFlags.TessellationControlBit |

@@ -15,4 +15,10 @@ internal sealed unsafe record RetiredOpenXrSwapchainGeneration(
     uint ViewCount,
     ulong TombstoneTimelineValue,
     Semaphore TimelineSemaphore,
+    bool RequiresGpuCompletion,
+    VulkanRetirementTicket ResourceLifetimeTicket,
+    bool HasResourceLifetimeAuthority,
+    Image[] LifetimeImages,
+    VulkanResourceSlotHandle[] DetachedLifetimeSlots,
+    bool RuntimeImagesReleased,
     long EnqueuedTimestamp);

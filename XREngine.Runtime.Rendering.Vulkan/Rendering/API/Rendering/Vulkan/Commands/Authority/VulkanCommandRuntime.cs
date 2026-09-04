@@ -962,19 +962,32 @@ internal sealed partial class VulkanCommandRuntime
                    Pools.Gate,
                    EVulkanFrameWaitReason.CommandPool))
             api.FreeCommandBuffers(device, commandPool, 1, &retiring);
-        RemoveCommandBufferState(retiring);
-        resourceRuntime.CompleteCommandBufferDestruction(retiring);
-        if (CommandBuffers.TryReleaseOwnedSecondaryCommandBuffer(
-                commandPool,
-                retiring,
-                out CommandPool poolReadyForRetirement))
-        {
-            QueueCommandPoolRetirementTracked(
-                poolReadyForRetirement,
-                frameSlot);
-        }
-
+        // Native destruction is irreversible. Clear the caller's ownership
+        // immediately and never let a bookkeeping exception replay vkFree.
         commandBuffer = default;
+        try
+        {
+            RemoveCommandBufferState(retiring);
+            resourceRuntime.CompleteCommandBufferDestruction(retiring);
+            if (CommandBuffers.TryReleaseOwnedSecondaryCommandBuffer(
+                    commandPool,
+                    retiring,
+                    out CommandPool poolReadyForRetirement))
+            {
+                QueueCommandPoolRetirementTracked(
+                    poolReadyForRetirement,
+                    frameSlot);
+            }
+        }
+        catch (Exception ex)
+        {
+            // Retain the remaining device bookkeeping under the device-loss
+            // owner instead of continuing with stale native command identities.
+            try { MarkTrackedDeviceLost(); }
+            catch { /* Native destruction must remain a one-way boundary. */ }
+            try { Debug.VulkanWarning("[Vulkan] Command-buffer destruction bookkeeping failed for {0}: {1}", owner, ex.Message); }
+            catch { /* Diagnostics cannot return native ownership to the caller. */ }
+        }
     }
 
     private bool IsCommandBufferRetirementReady(

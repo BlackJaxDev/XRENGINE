@@ -11,11 +11,13 @@ public static class AdvancedClassificationResourceNames
     public const string BaseKernelTiles = ScopePrefix + ".KernelTiles";
     public const string BaseCounters = ScopePrefix + ".Counters";
     public const string BaseDispatchArgs = ScopePrefix + ".DispatchArgs";
+    public const string BaseKernelCounts = ScopePrefix + ".KernelCounts";
     public const string BaseDebugOutput = ScopePrefix + ".DebugOutput";
 
     public static string ActiveTiles(uint slot) => $"{BaseActiveTiles}.Slot{slot}";
     public static string KernelTiles(uint slot) => $"{BaseKernelTiles}.Slot{slot}";
     public static string Counters(uint slot) => $"{BaseCounters}.Slot{slot}";
     public static string DispatchArgs(uint slot) => $"{BaseDispatchArgs}.Slot{slot}";
+    public static string KernelCounts(uint slot) => $"{BaseKernelCounts}.Slot{slot}";
     public static string DebugOutput => BaseDebugOutput;
 }

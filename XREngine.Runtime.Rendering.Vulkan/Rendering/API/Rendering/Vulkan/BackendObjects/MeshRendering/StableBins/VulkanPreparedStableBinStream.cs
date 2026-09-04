@@ -29,6 +29,8 @@ internal sealed class VulkanPreparedStableBinStream
     private readonly VulkanResidentDrawTemplate?[] _retainedTemplates;
     private readonly AdvancedVisibilityPayload[] _visibilityRasterPayloads;
     private readonly byte[] _visibilityRasterPayloadWrites;
+    private readonly AdvancedPreparedDrawDeformationRecord[] _deformationOverlay;
+    private readonly byte[] _deformationOverlayWrites;
     private readonly FrameOpResourceUse[] _lateResourceUses;
     private readonly VulkanBinOrderedExceptionStream _exceptions;
     private int _recordCount;
@@ -37,7 +39,8 @@ internal sealed class VulkanPreparedStableBinStream
     private bool _frozen;
     private bool _submissionPlansSealed;
     private int _retainedTemplateCount;
-
+    private int _deformationOverlayCount;
+    private VulkanAdvancedVisibilityGeometrySlices _visibilityGeometrySources;
     internal VulkanPreparedStableBinStream(int capacity, int resourceUseCapacity)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(capacity);
@@ -61,6 +64,8 @@ internal sealed class VulkanPreparedStableBinStream
         _retainedTemplates = new VulkanResidentDrawTemplate?[capacity];
         _visibilityRasterPayloads = new AdvancedVisibilityPayload[capacity];
         _visibilityRasterPayloadWrites = new byte[capacity];
+        _deformationOverlay = new AdvancedPreparedDrawDeformationRecord[capacity];
+        _deformationOverlayWrites = new byte[capacity];
         _lateResourceUses = new FrameOpResourceUse[resourceUseCapacity];
         _exceptions = new VulkanBinOrderedExceptionStream(capacity);
     }
@@ -78,6 +83,10 @@ internal sealed class VulkanPreparedStableBinStream
         => _lateResourceUses.AsSpan(0, _lateResourceUseCount);
     internal ReadOnlySpan<VulkanBinOrderedException> OrderedExceptions
         => _exceptions.Entries;
+    internal ReadOnlySpan<AdvancedPreparedDrawDeformationRecord> DeformationOverlay
+        => _deformationOverlay.AsSpan(0, _deformationOverlayCount);
+    internal VulkanAdvancedVisibilityGeometrySlices VisibilityGeometrySources
+        => _visibilityGeometrySources;
     /// <summary>
     /// Current-frame CPU-direct/CPU-indirect evidence. This artifact is never
     /// consulted by strategy resolution or native command recording.
@@ -94,6 +103,8 @@ internal sealed class VulkanPreparedStableBinStream
     internal bool TryBuildVisibilityGeometryStream(
         VulkanResourceRuntime resources,
         ReadOnlySpan<AdvancedVisibilityPayload> payloads,
+        ReadOnlySpan<AdvancedDeformedArenaSlice> deformationSlices,
+        in AdvancedGpuDeformationPublication deformationPublication,
         BackendReadyFramePackage package,
         in VulkanAdvancedScenePublicationState sceneState,
         int passIndex,
@@ -112,122 +123,257 @@ internal sealed class VulkanPreparedStableBinStream
             reason = "the package does not retain the exact canonical geometry publication";
             return false;
         }
-
-        if (payloads.IsEmpty)
+        if (payloads.IsEmpty || deformationSlices.Length != payloads.Length)
         {
-            reason = "the canonical visibility payload column is empty";
+            reason = "the canonical visibility payload or deformation column is incomplete";
+            return false;
+        }
+
+        ReadOnlySpan<AdvancedDrawRecord> canonicalDraws =
+            publication.Draws.PhysicalRecords;
+        if (canonicalDraws.IsEmpty ||
+            canonicalDraws.Length > _deformationOverlay.Length)
+        {
+            reason = "the canonical draw image exceeds the fixed deformation-overlay capacity";
+            return false;
+        }
+        if (deformationPublication.ResourceGeneration == 0u ||
+            deformationPublication.CurrentVertices is null ||
+            deformationPublication.PreviousVertices is null ||
+            deformationPublication.CurrentVertices.Length == 0u ||
+            deformationPublication.PreviousVertices.Length == 0u ||
+            !resources.TryCaptureNativeBufferRange(
+                deformationPublication.CurrentVertices,
+                0u,
+                deformationPublication.CurrentVertices.Length,
+                BufferUsageFlags.StorageBufferBit |
+                    BufferUsageFlags.VertexBufferBit,
+                out VulkanNativeBufferRange currentVertices,
+                out reason) ||
+            !resources.TryCaptureNativeBufferRange(
+                deformationPublication.PreviousVertices,
+                0u,
+                deformationPublication.PreviousVertices.Length,
+                BufferUsageFlags.StorageBufferBit |
+                    BufferUsageFlags.VertexBufferBit,
+                out VulkanNativeBufferRange previousVertices,
+                out reason))
+        {
+            if (reason == "Ready")
+                reason = "the aggregate deformation output publication is incomplete";
             return false;
         }
 
         ThawForReuse();
+        _deformationOverlayCount = canonicalDraws.Length;
+        _deformationOverlay.AsSpan(0, _deformationOverlayCount).Clear();
+        _deformationOverlayWrites.AsSpan(0, _deformationOverlayCount).Clear();
+        _visibilityGeometrySources = new VulkanAdvancedVisibilityGeometrySlices(
+            sceneState.StaticVertices,
+            currentVertices,
+            previousVertices,
+            sceneState.Indices,
+            sceneState.MeshletDescriptors,
+            sceneState.MeshletVertexIndices,
+            sceneState.MeshletTriangleWords,
+            default);
+        if (!_visibilityGeometrySources.HasValidSources)
+        {
+            reason = "the visibility geometry sources are incomplete";
+            ThawForReuse();
+            return false;
+        }
+
         for (int payloadIndex = 0; payloadIndex < payloads.Length; ++payloadIndex)
         {
             AdvancedVisibilityPayload payload = payloads[payloadIndex];
             if (!payload.Draw.IsValid)
-            {
-                // The canonical submission sidecar is compact, but keep this
-                // guard so a malformed row cannot manufacture a raster bin.
                 continue;
+            if (!publication.Draws.TryGetDenseIndex(
+                    payload.Draw,
+                    out uint drawDenseIndex) ||
+                drawDenseIndex >= (uint)canonicalDraws.Length)
+            {
+                reason = $"canonical visibility payload {payloadIndex} has no exact draw row";
+                ThawForReuse();
+                return false;
             }
+
+            AdvancedDrawRecord canonicalDraw =
+                canonicalDraws[checked((int)drawDenseIndex)];
+            if (canonicalDraw.Geometry != payload.Geometry)
+            {
+                reason = $"canonical visibility payload {payloadIndex} changed its draw-to-geometry association";
+                ThawForReuse();
+                return false;
+            }
+
             AdvancedGeometryRecord geometry = default;
             bool geometryResolved =
                 payload.Geometry.IsValid &&
-                publication.Geometry.TryGet(
-                    payload.Geometry,
-                    out geometry);
+                publication.Geometry.TryGet(payload.Geometry, out geometry);
             if (!geometryResolved)
             {
-                bool drawResolved = publication.Draws.TryGet(
-                    payload.Draw,
-                    out AdvancedDrawRecord canonicalDraw);
                 reason =
                     $"canonical visibility payload {payloadIndex} has no immutable geometry association " +
                     $"(submissionSequence={publication.Submission.Sequence}, " +
                     $"draw={payload.Draw.Index}:{payload.Draw.Generation}, " +
-                    $"drawResolved={drawResolved}, " +
-                    $"drawGeometry={canonicalDraw.Geometry.Index}:{canonicalDraw.Geometry.Generation}, " +
                     $"geometry={payload.Geometry.Index}:{payload.Geometry.Generation}, " +
                     $"geometrySnapshotSequence={publication.Geometry.Sequence}, " +
-                    $"geometryRecordImage={publication.Geometry.HasRecordImage}, " +
-                    $"geometryRecordCount={publication.Geometry.RecordCount}, " +
-                    $"geometryPhysicalHighWater={publication.Geometry.PhysicalRecords.Length}, " +
-                    $"geometryLookupCount={publication.Geometry.HandleLookups.Length})";
+                    $"geometryRecordCount={publication.Geometry.RecordCount})";
                 ThawForReuse();
                 return false;
             }
 
-            if ((payload.Skinned && geometry.Source !=
-                    EAdvancedGeometrySource.PreSkinnedCurrentAndPrevious) ||
-                (!payload.Skinned && geometry.Source is not (
-                    EAdvancedGeometrySource.Static or
-                    EAdvancedGeometrySource.MeshletLocal)) ||
-                !geometry.CurrentVertexData.IsValid ||
-                !geometry.IndexData.IsValid ||
-                geometry.CurrentVertexData.ElementStride != 64u ||
-                geometry.IndexData.ElementStride != sizeof(uint) ||
-                payload.GeometryOffsets.VertexOffset != geometry.VertexBase ||
-                payload.FirstIndex != geometry.IndexBase ||
-                payload.IndexCount != geometry.IndexCount ||
-                payload.VertexCount != geometry.VertexCount)
+            bool canonicalRangeMatches =
+                geometry.Source is EAdvancedGeometrySource.Static or
+                    EAdvancedGeometrySource.MeshletLocal &&
+                geometry.CurrentVertexData.IsValid &&
+                geometry.IndexData.IsValid &&
+                geometry.CurrentVertexData.ElementStride == 64u &&
+                geometry.IndexData.ElementStride == sizeof(uint) &&
+                payload.FirstIndex == geometry.IndexBase &&
+                payload.IndexCount == geometry.IndexCount &&
+                payload.VertexCount == geometry.VertexCount &&
+                (payload.Skinned ||
+                 payload.GeometryOffsets.VertexOffset == geometry.VertexBase);
+            if (!canonicalRangeMatches)
             {
-                reason = $"canonical visibility payload {payloadIndex} does not match its immutable packed geometry range";
+                reason = $"canonical visibility payload {payloadIndex} does not match its immutable topology " +
+                    $"(skinned={payload.Skinned}, source={geometry.Source}, " +
+                    $"vertexBase={payload.GeometryOffsets.VertexOffset}/{geometry.VertexBase}, " +
+                    $"indexBase={payload.FirstIndex}/{geometry.IndexBase}, " +
+                    $"indexCount={payload.IndexCount}/{geometry.IndexCount}, " +
+                    $"vertexCount={payload.VertexCount}/{geometry.VertexCount})";
                 ThawForReuse();
                 return false;
             }
 
-            VulkanFrameDataSlice vertexSlice = payload.Skinned
-                ? sceneState.PreSkinnedCurrent
-                : sceneState.StaticVertices;
+            VulkanVisibilityPreparedVertexSource preparedVertices;
+            uint preparedVertexBase;
+            if (payload.Skinned)
+            {
+                AdvancedDeformedArenaSlice slice = deformationSlices[payloadIndex];
+                bool offsetsFit =
+                    slice.VertexStride == 64u &&
+                    slice.VertexCount == payload.VertexCount &&
+                    slice.CurrentFrameSlot ==
+                        deformationPublication.CurrentFrameSlot &&
+                    slice.PreviousFrameSlot ==
+                        deformationPublication.PreviousFrameSlot &&
+                    slice.CurrentVertexOffset ==
+                        payload.GeometryOffsets.VertexOffset &&
+                    slice.PreviousVertexOffset ==
+                        payload.GeometryOffsets.PreviousVertexOffset &&
+                    (ulong)slice.CurrentVertexOffset * slice.VertexStride <=
+                        currentVertices.Length &&
+                    (ulong)slice.VertexCount * slice.VertexStride <=
+                        currentVertices.Length -
+                        (ulong)slice.CurrentVertexOffset * slice.VertexStride &&
+                    (ulong)slice.PreviousVertexOffset * slice.VertexStride <=
+                        previousVertices.Length &&
+                    (ulong)slice.VertexCount * slice.VertexStride <=
+                        previousVertices.Length -
+                        (ulong)slice.PreviousVertexOffset * slice.VertexStride;
+                if (payload.ForceCpuDiagnostic ||
+                    deformationPublication.JobCount == 0u ||
+                    !slice.Owner.IsValid ||
+                    canonicalDraw.Deformation != slice.Owner ||
+                    !offsetsFit)
+                {
+                    reason = $"canonical visibility payload {payloadIndex} has no exact GPU deformation output";
+                    ThawForReuse();
+                    return false;
+                }
+
+                EAdvancedPreparedDrawDeformationFlags flags =
+                    EAdvancedPreparedDrawDeformationFlags.Active;
+                if (deformationPublication.PreviousOutputValid &&
+                    slice.HasValidVelocity)
+                {
+                    flags |=
+                        EAdvancedPreparedDrawDeformationFlags.PreviousValid;
+                }
+                AdvancedPreparedDrawDeformationRecord overlay = new(
+                    payload.Geometry,
+                    slice.Owner,
+                    slice.CurrentVertexOffset,
+                    slice.PreviousVertexOffset,
+                    slice.VertexCount,
+                    flags);
+                int overlayIndex = checked((int)drawDenseIndex);
+                if (_deformationOverlayWrites[overlayIndex] != 0 &&
+                    _deformationOverlay[overlayIndex] != overlay)
+                {
+                    reason = $"canonical draw row {drawDenseIndex} resolves to conflicting deformation slices";
+                    ThawForReuse();
+                    return false;
+                }
+                _deformationOverlay[overlayIndex] = overlay;
+                _deformationOverlayWrites[overlayIndex] = 1;
+                preparedVertices = new VulkanVisibilityPreparedVertexSource(
+                    default,
+                    currentVertices,
+                    64u);
+                preparedVertexBase = slice.CurrentVertexOffset;
+            }
+            else
+            {
+                preparedVertices = new VulkanVisibilityPreparedVertexSource(
+                    sceneState.StaticVertices,
+                    default,
+                    64u);
+                preparedVertexBase = geometry.VertexBase;
+            }
+
             VulkanVisibilityGeometryRecordClosure geometryClosure = new(
                 payload.Geometry,
-                geometry.Source,
-                vertexSlice,
+                geometry,
+                sceneState.StaticVertices,
                 sceneState.Indices,
-                geometry.CurrentVertexData,
-                geometry.IndexData,
-                geometry.VertexBase,
-                geometry.VertexCount,
-                geometry.IndexBase,
-                geometry.IndexCount,
-                geometry.VertexLayoutId,
+                preparedVertices,
+                preparedVertexBase,
                 sceneState.NativeGeneration);
-            if (!geometryClosure.TryValidate(in sceneState, out reason))
+            if (!geometryClosure.TryValidate(
+                    resources,
+                    in sceneState,
+                    out reason))
             {
                 reason = $"canonical visibility payload {payloadIndex}: {reason}";
                 ThawForReuse();
                 return false;
             }
 
-            VkBufferHandle vertices = vertexSlice.Buffer;
+            VkBufferHandle vertices = preparedVertices.Buffer;
             VkBufferHandle indices = sceneState.Indices.Buffer;
-
             ulong vertexSignature = MixVisibilityKey(
                 vertices.Handle,
-                vertexSlice.Generation,
-                vertexSlice.Offset,
-                0u);
+                preparedVertices.Generation,
+                preparedVertices.Offset,
+                preparedVertices.Length,
+                preparedVertices.ElementStride);
             PendingMeshDraw draw = default(PendingMeshDraw) with
             {
                 Renderer = null!,
-                RasterizationSamples = Silk.NET.Vulkan.SampleCountFlags.Count1Bit,
+                RasterizationSamples = SampleCountFlags.Count1Bit,
                 DepthTestEnabled = true,
                 DepthWriteEnabled = true,
-                DepthCompareOp = Silk.NET.Vulkan.CompareOp.LessOrEqual,
+                DepthCompareOp = CompareOp.LessOrEqual,
                 CullMode = payload.CullMode == 0u
-                    ? Silk.NET.Vulkan.CullModeFlags.None
-                    : Silk.NET.Vulkan.CullModeFlags.BackBit,
-                FrontFace = Silk.NET.Vulkan.FrontFace.CounterClockwise,
-                ColorWriteMask = Silk.NET.Vulkan.ColorComponentFlags.RBit |
-                    Silk.NET.Vulkan.ColorComponentFlags.GBit |
-                    Silk.NET.Vulkan.ColorComponentFlags.BBit |
-                    Silk.NET.Vulkan.ColorComponentFlags.ABit,
+                    ? CullModeFlags.None
+                    : CullModeFlags.BackBit,
+                FrontFace = FrontFace.CounterClockwise,
+                ColorWriteMask = ColorComponentFlags.RBit |
+                    ColorComponentFlags.GBit |
+                    ColorComponentFlags.BBit |
+                    ColorComponentFlags.ABit,
                 Instances = Math.Max(1u, payload.InstanceCount),
             };
             VulkanPreparedMeshPrimitive primitive = new(
                 default,
-                Silk.NET.Vulkan.PrimitiveTopology.TriangleList,
+                PrimitiveTopology.TriangleList,
                 indices,
-                Silk.NET.Vulkan.IndexType.Uint32,
+                IndexType.Uint32,
                 payload.IndexCount,
                 Indexed: true);
             VulkanResidentDrawTemplateNativeState native = new(
@@ -242,7 +388,7 @@ internal sealed class VulkanPreparedStableBinStream
                 viewMask,
                 in payload,
                 sceneState.NativeGeneration,
-                vertexSlice,
+                in preparedVertices,
                 sceneState.Indices,
                 in native,
                 in context);
@@ -250,8 +396,8 @@ internal sealed class VulkanPreparedStableBinStream
                 _visibilityAtlasManifests[payloadIndex];
             manifest.ResetVisibilityGeometry(
                 in payload,
-                vertices,
-                indices);
+                in preparedVertices,
+                sceneState.Indices);
             if (!TryAppend(
                     new VulkanPreparedStableBinRecord(
                         key,
@@ -264,8 +410,8 @@ internal sealed class VulkanPreparedStableBinStream
                         new VulkanPreparedVisibilityDirectDraw(
                             payload.IndexCount,
                             Math.Max(1u, payload.InstanceCount),
-                            geometry.IndexBase,
-                            checked((int)geometry.VertexBase),
+                            payload.FirstIndex,
+                            checked((int)preparedVertexBase),
                             checked((uint)payloadIndex)),
                         payload.Material.Index,
                         payload.Draw.Index,
@@ -273,7 +419,7 @@ internal sealed class VulkanPreparedStableBinStream
                         geometryClosure),
                     ReadOnlySpan<FrameOpResourceUse>.Empty))
             {
-                reason = "the canonical visibility atlas stream exceeded its fixed capacity";
+                reason = "the canonical visibility stream exceeded its fixed capacity";
                 ThawForReuse();
                 return false;
             }
@@ -282,7 +428,6 @@ internal sealed class VulkanPreparedStableBinStream
         Freeze();
         return true;
     }
-
     private static ulong MixVisibilityKey(params ReadOnlySpan<ulong> values)
     {
         ulong hash = 14695981039346656037UL;
@@ -299,6 +444,8 @@ internal sealed class VulkanPreparedStableBinStream
         _lateResourceUseCount = 0;
         _headerCount = 0;
         _submissionPlansSealed = false;
+        _deformationOverlayCount = 0;
+        _visibilityGeometrySources = default;
         _cpuIndirectParity.Reset();
         _exceptions.Clear();
     }
@@ -381,6 +528,8 @@ internal sealed class VulkanPreparedStableBinStream
         _lateResourceUseCount = 0;
         _headerCount = 0;
         _submissionPlansSealed = false;
+        _deformationOverlayCount = 0;
+        _visibilityGeometrySources = default;
         _cpuIndirectParity.Reset();
         _exceptions.Clear();
     }
@@ -460,6 +609,7 @@ internal sealed class VulkanPreparedStableBinStream
         ArgumentNullException.ThrowIfNull(source);
         if (source._recordCount > _records.Length ||
             source._lateResourceUseCount > _lateResourceUses.Length ||
+            source._deformationOverlayCount > _deformationOverlay.Length ||
             source._exceptions.Count > _exceptions.Capacity)
         {
             throw new VulkanAcceptedFramePlanCapacityException(
@@ -485,6 +635,12 @@ internal sealed class VulkanPreparedStableBinStream
             _records[recordIndex] = record with { TemplateManifest = manifest };
         }
         source.LateResourceUses.CopyTo(_lateResourceUses);
+        source.DeformationOverlay.CopyTo(_deformationOverlay);
+        source._deformationOverlayWrites.AsSpan(
+            0, source._deformationOverlayCount).CopyTo(
+                _deformationOverlayWrites);
+        _deformationOverlayCount = source._deformationOverlayCount;
+        _visibilityGeometrySources = source._visibilityGeometrySources;
         foreach (VulkanBinOrderedException exception in source.OrderedExceptions)
             _exceptions.TryAppend(exception.Draw, exception.Reason, exception.Sequence);
         _recordCount = source._recordCount;

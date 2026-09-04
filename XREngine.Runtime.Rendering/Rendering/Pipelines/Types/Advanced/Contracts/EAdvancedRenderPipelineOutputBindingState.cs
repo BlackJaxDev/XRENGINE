@@ -10,5 +10,6 @@ public enum EAdvancedRenderPipelineOutputBindingState
     Bound,
     Disabled,
     DiagnosticOnly,
+    PendingResources,
     Rejected,
 }

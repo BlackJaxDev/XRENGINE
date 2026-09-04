@@ -644,6 +644,11 @@ Target:                 new RenderFrameViewTargetDescriptor(
 
         InitializeOpenXrViewsForActiveConfiguration("OpenXR Vulkan");
 
+        // Do not publish a partially initialized generation. A failed image
+        // enumeration must leave no live OpenXR handle or unmanaged image array
+        // that later teardown could mistake for a complete generation.
+        try
+        {
         // Create swapchains for each view
         for (int i = 0; i < _viewCount; i++)
         {
@@ -722,8 +727,12 @@ Target:                 new RenderFrameViewTargetDescriptor(
 
             _vulkanOpenXrSwapchainFormats[i] = createdFormat;
 
-            uint imageCount = InitializeVulkanSwapchainImages(i);
-
+            uint imageCount = InitializeVulkanSwapchainImages(i, out SwapchainImageVulkan2KHR* images);
+            // Keep the native allocation reachable by the rollback path before
+            // lifetime registration can throw. Image count is the publication
+            // marker and stays zero until registration has completed.
+            _swapchainImagesVK[i] = images;
+            RegisterOpenXrSwapchainImageLifetimes(renderer, images, imageCount);
             _swapchainImageCounts[i] = imageCount;
             RecordSmokeSwapchain(
                 "Vulkan",
@@ -737,6 +746,12 @@ Target:                 new RenderFrameViewTargetDescriptor(
             Console.WriteLine($"Created Vulkan swapchain {i} with {imageCount} images ({width}x{height})");
         }
         RecordSmokeSwapchainsCreated();
+        }
+        catch
+        {
+            RollbackPartiallyCreatedVulkanSwapchains(renderer);
+            throw;
+        }
     }
 
     private unsafe Result CreateSwapchain(
@@ -747,8 +762,11 @@ Target:                 new RenderFrameViewTargetDescriptor(
             return Api.CreateSwapchain(_session, in createInfo, swapchainPtr);
     }
 
-    private unsafe uint InitializeVulkanSwapchainImages(int viewIndex)
+    private unsafe uint InitializeVulkanSwapchainImages(
+        int viewIndex,
+        out SwapchainImageVulkan2KHR* swapchainImages)
     {
+        swapchainImages = null;
         uint imageCount = 0;
         Result enumerateResult = Api.EnumerateSwapchainImages(
             _swapchains[viewIndex],
@@ -762,10 +780,10 @@ Target:                 new RenderFrameViewTargetDescriptor(
                 $"Result={enumerateResult}, Count={imageCount}");
         }
 
-        _swapchainImagesVK[viewIndex] = (SwapchainImageVulkan2KHR*)Marshal.AllocHGlobal(
+        swapchainImages = (SwapchainImageVulkan2KHR*)Marshal.AllocHGlobal(
             checked((int)imageCount * sizeof(SwapchainImageVulkan2KHR)));
         Span<SwapchainImageVulkan2KHR> images = new(
-            _swapchainImagesVK[viewIndex],
+            swapchainImages,
             checked((int)imageCount));
         for (int imageIndex = 0; imageIndex < images.Length; imageIndex++)
         {
@@ -782,15 +800,49 @@ Target:                 new RenderFrameViewTargetDescriptor(
             _swapchains[viewIndex],
             imageCount,
             &imageCount,
-            (SwapchainImageBaseHeader*)_swapchainImagesVK[viewIndex]);
+            (SwapchainImageBaseHeader*)swapchainImages);
         if (enumerateResult != Result.Success || imageCount == 0)
         {
+            Marshal.FreeHGlobal((nint)swapchainImages);
+            swapchainImages = null;
             throw new Exception(
                 $"Failed to enumerate Vulkan swapchain images for view {viewIndex}. " +
                 $"Result={enumerateResult}, Count={imageCount}");
         }
 
         return imageCount;
+    }
+
+    private unsafe void RollbackPartiallyCreatedVulkanSwapchains(VulkanRenderer renderer)
+    {
+        for (int i = 0; i < _swapchains.Length; ++i)
+        {
+            if (_swapchainImagesVK[i] is not null && _swapchainImageCounts[i] != 0)
+            {
+                Silk.NET.Vulkan.Image[] images = new Silk.NET.Vulkan.Image[_swapchainImageCounts[i]];
+                for (uint imageIndex = 0; imageIndex < _swapchainImageCounts[i]; ++imageIndex)
+                    images[imageIndex] = new Silk.NET.Vulkan.Image(_swapchainImagesVK[i][imageIndex].Image);
+                VulkanResourceSlotHandle[] slots = renderer.CommandRuntime.ResourceRuntime
+                    .DetachExternalImageLifetimesForHandleReuse(images);
+                for (int imageIndex = 0; imageIndex < images.Length; ++imageIndex)
+                    renderer.CommandRuntime.ResourceRuntime.CompleteDetachedExternalResourceDestruction(
+                        Silk.NET.Vulkan.ObjectType.Image,
+                        images[imageIndex].Handle,
+                        slots[imageIndex],
+                        forced: true);
+            }
+            if (_swapchainImagesVK[i] is not null)
+            {
+                Marshal.FreeHGlobal((nint)_swapchainImagesVK[i]);
+                _swapchainImagesVK[i] = null;
+            }
+            _swapchainImageCounts[i] = 0;
+            if (_swapchains[i].Handle != 0)
+            {
+                Api.DestroySwapchain(_swapchains[i]);
+                _swapchains[i] = default;
+            }
+        }
     }
 
     private bool TryRenderVulkanEye(uint viewIndex, uint imageIndex)
@@ -1539,12 +1591,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
         ref bool acquired,
         int frameNo)
     {
-        var acquireInfo = new SwapchainImageAcquireInfo
-        {
-            Type = StructureType.SwapchainImageAcquireInfo
-        };
-
-        var acquireResult = CheckResult(Api.AcquireSwapchainImage(_swapchains[viewIndex], in acquireInfo, ref imageIndex), "xrAcquireSwapchainImage");
+        var acquireResult = CheckResult(AcquireSwapchainImage(Host, _swapchains[viewIndex], out imageIndex), "xrAcquireSwapchainImage");
         if (acquireResult != Result.Success)
             return false;
 
@@ -1554,13 +1601,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
         if (OpenXrDebugLifecycle && frameNo != 0 && ShouldLogLifecycle(frameNo))
             Debug.Out($"OpenXR[{frameNo}] Eye{viewIndex}: Acquire(batch) => {acquireResult} imageIndex={imageIndex}");
 
-        var waitInfo = new SwapchainImageWaitInfo
-        {
-            Type = StructureType.SwapchainImageWaitInfo,
-            Timeout = long.MaxValue
-        };
-
-        var waitResult = CheckResult(Api.WaitSwapchainImage(_swapchains[viewIndex], in waitInfo), "xrWaitSwapchainImage");
+        var waitResult = CheckResult(WaitSwapchainImage(Host, _swapchains[viewIndex], long.MaxValue), "xrWaitSwapchainImage");
         if (waitResult != Result.Success)
             return false;
 
@@ -1577,8 +1618,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
         if (!acquired)
             return;
 
-        var releaseInfo = new SwapchainImageReleaseInfo { Type = StructureType.SwapchainImageReleaseInfo };
-        var releaseResult = CheckResult(Api.ReleaseSwapchainImage(_swapchains[viewIndex], in releaseInfo), "xrReleaseSwapchainImage");
+        var releaseResult = CheckResult(ReleaseSwapchainImage(Host, _swapchains[viewIndex]), "xrReleaseSwapchainImage");
         if (releaseResult == Result.Success)
             RecordSmokeEyeRelease(viewIndex);
         if (OpenXrDebugLifecycle && frameNo != 0 && ShouldLogLifecycle(frameNo))
@@ -1766,6 +1806,9 @@ Target:                 new RenderFrameViewTargetDescriptor(
                 renderFrameId,
                 checked((int)leftImageIndex),
                 Context.CurrentRenderDeadlineMs);
+            OpenXrSubmissionMetadata submissionMetadata = new(
+                Context.PendingFrameId,
+                Context.PendingPredictedDisplayTime);
 
             var renderRequest = new OpenXrEyeMirrorRenderRequest(
                 target.FrameBuffer,
@@ -1783,6 +1826,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
                         stereoPacing);
                 },
                 RendersExternalSwapchainTarget: false,
+                SubmissionMetadata: submissionMetadata,
                 ViewBatchStructuralIdentity: productionBatch.StructuralIdentity);
 
             bool stereoRenderedAndPublished = renderer.OpenXrFrameLoop.TryRenderAndBlitTextureArrayLayersToOpenXrSwapchainImages(
@@ -2084,6 +2128,10 @@ Target:                 new RenderFrameViewTargetDescriptor(
                 if (leftMirrorFbo is null || rightMirrorFbo is null || leftMirrorColor is null || rightMirrorColor is null)
                     return LogVulkanEyeRenderNotReady(0, leftImageIndex, "no Vulkan per-eye mirror FBOs");
 
+                OpenXrSubmissionMetadata mirrorSubmissionMetadata = new(
+                    Context.PendingFrameId,
+                    Context.PendingPredictedDisplayTime);
+
                 var leftMirrorRequest = new OpenXrEyeMirrorRenderRequest(
                     leftMirrorFbo,
                     extent,
@@ -2094,7 +2142,8 @@ Target:                 new RenderFrameViewTargetDescriptor(
                     {
                         ApplyOpenXrEyePoseForRenderThread(0);
                         RenderOpenXrVulkanMirrorViewport(leftViewport, leftMirrorFbo, leftCamera);
-                    });
+                    },
+                    SubmissionMetadata: mirrorSubmissionMetadata);
 
                 var rightMirrorRequest = new OpenXrEyeMirrorRenderRequest(
                     rightMirrorFbo,
@@ -2106,7 +2155,8 @@ Target:                 new RenderFrameViewTargetDescriptor(
                     {
                         ApplyOpenXrEyePoseForRenderThread(1);
                         RenderOpenXrVulkanMirrorViewport(rightViewport, rightMirrorFbo, rightCamera);
-                    });
+                    },
+                    SubmissionMetadata: mirrorSubmissionMetadata);
 
                 var leftPublishRequest = new OpenXrEyeMirrorPublishRequest(
                     leftMirrorColor,
@@ -2166,6 +2216,9 @@ Target:                 new RenderFrameViewTargetDescriptor(
                 return true;
             }
 
+            OpenXrSubmissionMetadata submissionMetadata = new(
+                Context.PendingFrameId,
+                Context.PendingPredictedDisplayTime);
             var leftRequest = new OpenXrEyeSwapchainRenderRequest(
                 leftImage,
                 (VkFormat)leftFormat,
@@ -2174,6 +2227,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
                 OpenXrViewIndex: 0,
                 OpenXrImageIndex: leftImageIndex,
                 Foveation: CreateOpenXrEyeFoveationContext(0),
+                SubmissionMetadata: submissionMetadata,
                 FrameOpEmitter: new OpenXrEyeFrameOpDelegateEmitter(() =>
                 {
                     ApplyOpenXrEyePoseForRenderThread(0);
@@ -2188,6 +2242,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
                 OpenXrViewIndex: 1,
                 OpenXrImageIndex: rightImageIndex,
                 Foveation: CreateOpenXrEyeFoveationContext(1),
+                SubmissionMetadata: submissionMetadata,
                 FrameOpEmitter: new OpenXrEyeFrameOpDelegateEmitter(() =>
                 {
                     ApplyOpenXrEyePoseForRenderThread(1);

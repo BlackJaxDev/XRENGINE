@@ -1,0 +1,76 @@
+#ifndef XR_ADVANCED_SHADING_INTERFACE_GLSLINC
+#define XR_ADVANCED_SHADING_INTERFACE_GLSLINC
+
+#include "Advanced/Visibility/VisibilityInterface.glslinc"
+
+#if defined(XR_ADV_BACKEND_VULKAN)
+#define XR_ADV_SHADING_LAYOUT(bindingIndex) layout(set = XR_ADV_VISIBILITY_SET, binding = bindingIndex)
+#define XR_ADV_SHADING_IMAGE(formatName, bindingIndex) layout(formatName, set = XR_ADV_VISIBILITY_SET, binding = bindingIndex)
+#else
+#define XR_ADV_SHADING_LAYOUT(bindingIndex) layout(binding = bindingIndex)
+#define XR_ADV_SHADING_IMAGE(formatName, bindingIndex) layout(formatName, binding = bindingIndex)
+#endif
+
+// One 64-byte CPU/GPU contract shared by classification, lighting and shading.
+layout(push_constant, std430) uniform XRAdvancedShadingPush
+{
+    uvec2 screenExtent;
+    uvec2 tilesCount;
+    uint viewIndex;
+    uint viewCount;
+    uint kernelIndex;
+    uint flags;
+    uint depthSlices;
+    uint maxLightIndices;
+    uint lightCount;
+    uint maxKernelTiles;
+    vec4 backgroundColor;
+} u_Push;
+
+#define XR_ADV_MAX_SHADING_KERNELS 128u
+#define XR_ADV_CLASSIFICATION_OVERFLOW_TILES 1u
+#define XR_ADV_CLASSIFICATION_OVERFLOW_MEMBERSHIPS 2u
+#define XR_ADV_CLASSIFICATION_OVERFLOW_KERNELS 4u
+#define XR_ADV_CLASSIFICATION_INVALID_IDENTITY 8u
+#define XR_ADV_SHADING_REPAIR 1u
+#define XR_ADV_SHADING_REQUIRED 2u
+
+uint XR_ADV_TotalTileCount()
+{
+    return u_Push.tilesCount.x * u_Push.tilesCount.y * u_Push.viewCount;
+}
+
+// Stable visibility IDs must pass through the publication's lookup segments.
+// Kernel generations and layout hashes are validated before a dense bucket is used.
+bool XR_ADV_TryResolvePixelMaterial(uvec2 identity, uint metadata,
+    out uint materialDense, out uint kernelDense)
+{
+    materialDense = XR_ADV_INVALID_DENSE_INDEX;
+    kernelDense = XR_ADV_INVALID_DENSE_INDEX;
+    if (identity.x == 0u || identity.x == XR_ADV_VIS_INVALID ||
+        identity.y == XR_ADV_VIS_INVALID || metadata == XR_ADV_VIS_INVALID ||
+        ((metadata >> XR_ADV_VIS_VERSION_SHIFT) & 0xFFu) != XR_ADV_VISIBILITY_PAYLOAD_VERSION ||
+        !XR_ADV_IsSupportedVisibilityProducer(metadata & XR_ADV_VIS_PRODUCER_MASK))
+        return false;
+    uint drawDense = XR_ADV_ResolveVisibilityStableIndex(identity.x,
+        VisibilityDrawLookupSegment, XR_ADV_DIAGNOSTIC_DRAW);
+    if (drawDense == XR_ADV_INVALID_DENSE_INDEX || drawDense >= uint(XR_ADV_Draws.records.length()))
+        return false;
+    XRAdvancedDrawRecord draw = XR_ADV_LoadDraw(drawDense);
+    materialDense = XR_ADV_ResolveVisibilityHandle(draw.material,
+        VisibilityMaterialLookupSegment, XR_ADV_DIAGNOSTIC_MATERIAL);
+    if (materialDense == XR_ADV_INVALID_DENSE_INDEX || materialDense >= uint(XR_ADV_Materials.records.length()))
+        return false;
+    XRAdvancedMaterialRecord material = XR_ADV_LoadMaterial(materialDense);
+    kernelDense = XR_ADV_ResolveVisibilityHandle(
+        XRAdvancedGpuHandle(material.shadingKernelId, material.shadingKernelGeneration),
+        VisibilityShadingKernelLookupSegment, XR_ADV_DIAGNOSTIC_MATERIAL);
+    if (kernelDense == XR_ADV_INVALID_DENSE_INDEX || kernelDense >= uint(XR_ADV_ShadingKernels.records.length()))
+        return false;
+    XRAdvancedShadingKernelRecord kernel = XR_ADV_LoadShadingKernel(kernelDense);
+    return all(equal(kernel.materialLayoutHash, material.materialLayoutHash)) &&
+        material.coverageMode < 32u &&
+        (kernel.supportedCoverageMask & (1u << material.coverageMode)) != 0u;
+}
+
+#endif

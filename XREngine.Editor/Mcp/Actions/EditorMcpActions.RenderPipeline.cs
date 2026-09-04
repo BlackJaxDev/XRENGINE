@@ -300,7 +300,10 @@ namespace XREngine.Editor.Mcp
                             {
                                 state = advancedBinding.State.ToString(),
                                 failureReason = advancedBinding.FailureReason,
-                                outputId = advancedBinding.Request.OutputId,
+                                executionState = advancedBinding.CutoverStatus.ExecutionState.ToString(),
+                                runtimeValidationState = advancedBinding.CutoverStatus.RuntimeValidationState.ToString(),
+                                productionAcceptanceState = advancedBinding.CutoverStatus.ProductionAcceptanceState.ToString(),
+                                cutoverDiagnostic = advancedBinding.CutoverStatus.Diagnostic,                                outputId = advancedBinding.Request.OutputId,
                                 reservationId = advancedBinding.Reservation.ReservationId,
                                 backendGeneration = advancedBinding.Reservation.BackendGeneration,
                             },

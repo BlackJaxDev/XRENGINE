@@ -934,30 +934,60 @@ internal sealed partial class VulkanResourceRuntime
     internal VulkanResourceSlotHandle[] DetachExternalImageLifetimesForHandleReuse(
         Image[] images)
     {
-        VulkanResourceSlotHandle[] slots =
-            new VulkanResourceSlotHandle[images.Length];
+        VulkanResourceSlotHandle[] slots = new VulkanResourceSlotHandle[images.Length];
+        DetachExternalImageLifetimesForHandleReuse(images, slots);
+        return slots;
+    }
+
+    /// <summary>
+    /// Validates and reserves an entire external-image detach before mutating any
+    /// identity. The caller retains the output array throughout the transaction.
+    /// </summary>
+    internal void DetachExternalImageLifetimesForHandleReuse(
+        ReadOnlySpan<Image> images,
+        Span<VulkanResourceSlotHandle> slots)
+    {
+        if (slots.Length != images.Length)
+            throw new ArgumentException("Every external image requires one retained slot.", nameof(slots));
+        slots.Clear();
+        // Swapchain replacement is a structural boundary, outside frame hot paths.
+        HashSet<ulong> uniqueHandles = new(images.Length);
         VulkanResourceLifetimeTracker tracker = Lifetime.Tracker;
         lock (tracker.SyncRoot)
         {
+            int detachCount = 0;
             for (int index = 0; index < images.Length; index++)
             {
                 ulong handle = images[index].Handle;
                 if (handle == 0)
                     continue;
+                if (!uniqueHandles.Add(handle))
+                    throw new InvalidOperationException("An external-image detach contains a duplicate native identity.");
                 VulkanResourceLifetimeKey key = new(ObjectType.Image, handle);
                 if (!tracker.ResourceLifetimes.TryGetValue(key, out VulkanResourceLifetimeRecord? resource))
                     continue;
-
-                if (!tracker.TryDetachExternalResourceIdentityNoLock(
-                        key,
-                        out slots[index]))
+                if ((resource.State & EVulkanResourceLifetimeState.External) == 0 ||
+                    !resource.Slot.IsValid ||
+                    !tracker.TryResolveResourceSlotNoLock(resource.Slot, out VulkanResourceLifetimeRecord indexed) ||
+                    !ReferenceEquals(indexed, resource) ||
+                    tracker.DetachedResourceSlots.ContainsKey(new VulkanPinnedResourceGeneration(key, resource.Generation)))
                 {
-                    throw new InvalidOperationException(
-                        $"Failed to detach external Vulkan image generation {resource.Generation} for {key}.");
+                    throw new InvalidOperationException($"External image {handle} cannot detach its exact generation.");
                 }
+                detachCount++;
+            }
+
+            // No allocation or fallible validation remains after the first
+            // native identity is detached; the tracker lock excludes replacement.
+            tracker.DetachedResourceSlots.EnsureCapacity(checked(tracker.DetachedResourceSlots.Count + detachCount));
+            for (int index = 0; index < images.Length; index++)
+            {
+                VulkanResourceLifetimeKey key = new(ObjectType.Image, images[index].Handle);
+                if (key.Handle == 0 || !tracker.ResourceLifetimes.ContainsKey(key))
+                    continue;
+                tracker.TryDetachExternalResourceIdentityNoLock(key, out slots[index]);
             }
         }
-        return slots;
     }
 
     internal void NotifyResourceUseCompleted(ObjectType type, ulong handle)
