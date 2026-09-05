@@ -129,7 +129,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             0,
             checked((int)scene.TotalCommandCount));
         RebuildRegistrationLookup();
-        if (!TryBuildAndPreflightWholeScenePlan(scene, out _))
+        if (!TryBuildAndPreflightWholeScenePlan(scene, frameId, out _))
         {
             _publicationRejected = true;
             return;
@@ -148,7 +148,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             _publicationRejected = true;
             return;
         }
-        if (TryReuseUnchangedPublication())
+        if (TryReuseUnchangedPublication(frameId))
             return;
         if (!Database.TryBeginPublication(
                 out AdvancedGpuScenePublicationTransaction transaction))
@@ -196,6 +196,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
                 ref AdvancedResidentRegistration registration =
                     ref _registrations[registrationIndex];
                 registration.LastSeenSequence = _sequence;
+                registration.LastSeenFrameId = frameId;
                 registration.LegacyCommandIndex = commandIndex;
                 _commandDrawHandles[commandIndex] = registration.Draw;
                 int submissionIndex = _legacyMappingCount;
@@ -218,6 +219,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
                     Flags = plan.Command.Flags,
                     StateClass = plan.Command.StateClassID,
                     CompatibilityReason = plan.CompatibilityReason,
+                    TemporalEventReason = plan.TemporalEventReason,
                     SourceOrder = ((ulong)commandIndex << 32) | unchecked((uint)plan.PrimitiveIndex),
                     DependencySignature = Mix(plan.StructuralSignature, plan.ContentSignature),
                 };
@@ -567,6 +569,12 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             World = world,
             StructuralSignature = plan.StructuralSignature,
             ContentSignature = plan.ContentSignature,
+            TemporalMesh = plan.Mesh,
+            TemporalGeometryRevision = plan.MeshGeometryRevision,
+            TemporalVertexCount = plan.MeshVertexCount,
+            TemporalIndexCount = plan.MeshIndexCount,
+            TemporalPrimitiveTopology = plan.MeshPrimitiveTopology,
+            TemporalSkinned = plan.MeshIsSkinned,
             Active = true,
         };
         if (!TryInsertRegistrationLookup(index))
@@ -655,6 +663,12 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             AdvanceNonZero(ref _topologyGeneration);
         }
 
+        registration.TemporalMesh = plan.Mesh;
+        registration.TemporalGeometryRevision = plan.MeshGeometryRevision;
+        registration.TemporalVertexCount = plan.MeshVertexCount;
+        registration.TemporalIndexCount = plan.MeshIndexCount;
+        registration.TemporalPrimitiveTopology = plan.MeshPrimitiveTopology;
+        registration.TemporalSkinned = plan.MeshIsSkinned;
         if (content == registration.ContentSignature)
             return;
 
@@ -868,6 +882,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
                 source.WorldMatrix,
                 source.Instances,
                 source.WorldMatrixIsModelMatrix,
+                EAdvancedVelocityValidityReason.HistoryReset,
                 source.ForceCpuRendering,
                 source.MaterialOverride,
                 source.RenderOptionsOverride);
@@ -997,6 +1012,29 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             Animation = AdvancedGpuHandle.Invalid,
             VertexCount = checked((uint)Math.Max(0, vertexCount)),
         };
+
+    private static EAdvancedVelocityValidityReason ResolveTemporalEvent(
+        in AdvancedResidentRegistration registration,
+        in AdvancedGpuSceneCommandTransition plan,
+        ulong frameId)
+    {
+        if (!registration.Active)
+            return EAdvancedVelocityValidityReason.NewlyVisible;
+        if (registration.LastSeenFrameId == 0UL ||
+            unchecked(registration.LastSeenFrameId + 1UL) != frameId)
+            return EAdvancedVelocityValidityReason.FrameGap;
+        if (registration.TemporalVertexCount != plan.MeshVertexCount)
+            return EAdvancedVelocityValidityReason.VertexCountChanged;
+        if (!ReferenceEquals(registration.TemporalMesh, plan.Mesh) ||
+            registration.TemporalGeometryRevision != plan.MeshGeometryRevision ||
+            registration.TemporalIndexCount != plan.MeshIndexCount ||
+            registration.TemporalPrimitiveTopology != plan.MeshPrimitiveTopology ||
+            registration.TemporalSkinned != plan.MeshIsSkinned)
+        {
+            return EAdvancedVelocityValidityReason.TopologyChanged;
+        }
+        return EAdvancedVelocityValidityReason.Valid;
+    }
 
     private static AdvancedGeometryRecord CreateGeometry(
         GPUScene scene,
@@ -1198,7 +1236,14 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         public ulong StructuralSignature;
         public ulong ContentSignature;
         public ulong LastSeenSequence;
+        public ulong LastSeenFrameId;
         public ulong TombstoneSequence;
+        public XRMesh? TemporalMesh;
+        public long TemporalGeometryRevision;
+        public int TemporalVertexCount;
+        public int TemporalIndexCount;
+        public EPrimitiveType TemporalPrimitiveTopology;
+        public bool TemporalSkinned;
         public bool Active;
     }
 }

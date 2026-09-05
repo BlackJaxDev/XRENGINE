@@ -209,9 +209,11 @@ public partial class AdvancedRenderPipeline
         builder.FrameBuffer(FinalPostProcessOutputFBOName).Size(internalSize).Lifetime(RenderResourceLifetime.Persistent)
             .Usage(RenderPipelineResourceUsage.ColorAttachment).Color(0, FinalPostProcessOutputTextureName)
             .Factory(CreateFinalPostProcessOutputFBO).Add();
-        builder.QuadMaterial(PostProcessFBOName).Lifetime(RenderResourceLifetime.Transient)
-            .DependsOn(HDRSceneTextureName, BloomBlurTextureName, DepthViewTextureName, StencilViewTextureName, AutoExposureTextureName)
-            .Factory(CreatePostProcessFBO).Add();
+        var postProcessMaterial = builder.QuadMaterial(PostProcessFBOName).Lifetime(RenderResourceLifetime.Transient)
+            .DependsOn(HDRSceneTextureName, BloomBlurTextureName, DepthViewTextureName, StencilViewTextureName, AutoExposureTextureName);
+        if (!builder.Profile.Stereo)
+            postProcessMaterial.DependsOn(AtmosphereColorTextureName, VolumetricFogColorTextureName);
+        postProcessMaterial.Factory(CreatePostProcessFBO).Add();
         builder.QuadMaterial(FinalPostProcessFBOName).Lifetime(RenderResourceLifetime.Transient)
             .DependsOn(PostProcessOutputTextureName).Factory(CreateFinalPostProcessFBO).Add();
         DeclareAdvancedBloomFrameBuffers(builder, internalSize);

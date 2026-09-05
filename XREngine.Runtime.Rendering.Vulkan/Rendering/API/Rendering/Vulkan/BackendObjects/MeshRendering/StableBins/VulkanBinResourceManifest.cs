@@ -88,10 +88,7 @@ internal sealed class VulkanBinResourceManifest
                         failure = VulkanBinResourceManifestFailure.QueueFamilyConflict;
                         return false;
                     }
-                    if (existing.NativeGeneration != candidate.NativeGeneration ||
-                        existing.Offset != candidate.Offset ||
-                        existing.Length != candidate.Length ||
-                        existing.ElementStride != candidate.ElementStride)
+                    if (existing.NativeGeneration != candidate.NativeGeneration)
                     {
                         failure = VulkanBinResourceManifestFailure.NativeRangeConflict;
                         return false;
@@ -101,6 +98,14 @@ internal sealed class VulkanBinResourceManifest
                         failure = VulkanBinResourceManifestFailure.ImageLayoutConflict;
                         return false;
                     }
+                    // A packed arena deliberately stores vertex and index
+                    // columns in distinct ranges of one VkBuffer. Keep each
+                    // exact range in the manifest instead of treating shared
+                    // allocation identity as conflicting range ownership.
+                    if (existing.Offset != candidate.Offset ||
+                        existing.Length != candidate.Length ||
+                        existing.ElementStride != candidate.ElementStride)
+                        continue;
                     {
                         nativeUses[existingIndex] = existing with
                         {
@@ -130,15 +135,4 @@ internal sealed class VulkanBinResourceManifest
         manifest = new(unique, nativeUses);
         return true;
     }
-}
-
-/// <summary>Exact fail-closed reason for bin-manifest construction failure.</summary>
-internal enum VulkanBinResourceManifestFailure : byte
-{
-    None = 0,
-    InvalidCapacity = 1,
-    CapacityExceeded = 2,
-    QueueFamilyConflict = 3,
-    ImageLayoutConflict = 4,
-    NativeRangeConflict = 5,
 }

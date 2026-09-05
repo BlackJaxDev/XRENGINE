@@ -18,6 +18,11 @@ public struct AdvancedDrawSubmissionRecord
     public uint Flags;
     public uint StateClass;
     public EAdvancedCanonicalCompatibilityReason CompatibilityReason;
+    /// <summary>
+    /// Frame-local temporal discontinuity observed while publishing this
+    /// submission. This control-row field never changes the canonical draw ABI.
+    /// </summary>
+    public EAdvancedVelocityValidityReason TemporalEventReason;
     public ulong SourceOrder;
     public ulong DependencySignature;
 }

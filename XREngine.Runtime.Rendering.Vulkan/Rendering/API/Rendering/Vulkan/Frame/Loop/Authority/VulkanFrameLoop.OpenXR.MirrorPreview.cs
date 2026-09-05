@@ -37,7 +37,6 @@ internal sealed partial class VulkanFrameLoop
     internal bool TryRenderOpenXrEyeMirrorFrameBuffer(
         in OpenXrEyeMirrorRenderRequest request)
     {
-        _commandRuntime.OpenXrSubmissionTracker.PollCompletions();
         if (!_commandRuntime.OpenXrSubmissionTracker.TryReserveSubmission(
                 out OpenXrVulkanSubmissionTracker.SubmissionAdmissionTicket? admissionTicket))
             return false;
@@ -123,7 +122,6 @@ internal sealed partial class VulkanFrameLoop
         in OpenXrEyeMirrorRenderRequest firstEye,
         in OpenXrEyeMirrorRenderRequest secondEye)
     {
-        _commandRuntime.OpenXrSubmissionTracker.PollCompletions();
         if (!_commandRuntime.OpenXrSubmissionTracker.TryReserveSubmission(
                 out OpenXrVulkanSubmissionTracker.SubmissionAdmissionTicket? admissionTicket))
             return false;
@@ -231,7 +229,6 @@ internal sealed partial class VulkanFrameLoop
         firstPreviewCopied = false;
         secondPreviewCopied = false;
 
-        _commandRuntime.OpenXrSubmissionTracker.PollCompletions();
         if (!_commandRuntime.OpenXrSubmissionTracker.TryReserveSubmission(
                 out OpenXrVulkanSubmissionTracker.SubmissionAdmissionTicket? admissionTicket))
             return false;
@@ -381,7 +378,6 @@ internal sealed partial class VulkanFrameLoop
         out EOpenXrStrictSpsFaultInjectionStage injectedFailureStage)
     {
         injectedFailureStage = EOpenXrStrictSpsFaultInjectionStage.None;
-        _commandRuntime.OpenXrSubmissionTracker.PollCompletions();
         if (!_commandRuntime.OpenXrSubmissionTracker.TryReserveSubmission(
                 out OpenXrVulkanSubmissionTracker.SubmissionAdmissionTicket? admissionTicket))
             return false;
@@ -582,8 +578,10 @@ internal sealed partial class VulkanFrameLoop
         OutputRuntime.OpenXrBackend.RecordedTextureUploadsForSubmit.Clear();
         return _commandRuntime.SubmitAndWaitOpenXr(new VulkanOpenXrSubmissionInput(
             firstRecorded.CommandBuffer,
-            hasSecond ? secondRecorded.CommandBuffer : default,
-            temporaryCommandBuffer,
+            // A single layered render followed by its publish command occupies
+            // slots 0 and 1. Leaving slot 1 empty rejects the batch before submit.
+            hasSecond ? secondRecorded.CommandBuffer : temporaryCommandBuffer,
+            hasSecond ? temporaryCommandBuffer : default,
             temporaryCommandBuffer.Handle != 0 ? (hasSecond ? 3U : 2U) : (hasSecond ? 2U : 1U),
             diagnosticContext,
             AdmissionTicket: admissionTicket));
@@ -634,15 +632,7 @@ internal sealed partial class VulkanFrameLoop
             ResourceRuntime.Uploads.DrainCompletedRecordedTextureUploadPublications(
                 Api!, _deviceContext, _commandRuntime, ResourceRuntime, IsDeviceLost);
 
-            if (MappedFrameArena is { } arena &&
-                !arena.TryResetFrameSlot(
-                    recordImageIndex,
-                    arena.Generation,
-                    frameDataSlotCompletionProven))
-            {
-                throw new InvalidOperationException(
-                    $"OpenXR mapped frame-data slot {recordImageIndex} could not be reopened before mirror recording.");
-            }
+            ReopenOpenXrFrameDataSlot(recordImageIndex, frameDataSlotCompletionProven);
 
             using VulkanOpenXrThreadRenderStateScope renderStateScope =
                 _commandRuntime.OpenXrRecording.EnterThreadRenderStateScope(
@@ -789,6 +779,13 @@ internal sealed partial class VulkanFrameLoop
                 frameOpsSignature = framePlan.StaticOperationSignature;
                 FrameOperationSequence recordingOperations =
                     framePlan.GetNativeStaticOperationsForRecording();
+                VulkanReadOnlyStoragePreparedAuthority? readOnlyStorageAuthority =
+                    PrepareOpenXrImmutableStorage(
+                        recordingOperations.Stream,
+                        recordImageIndex,
+                        request.OpenXrViewIndex);
+                using VulkanResourceRuntime.ReadOnlyStorageRecordingScope storageScope =
+                    ResourceRuntime.EnterReadOnlyStorageRecordingScope(readOnlyStorageAuthority);
                 VulkanComputePreparationResult computePreparation =
                     _commandRuntime.PrepareComputeFrameOpsForRecording(
                         recordImageIndex,
@@ -874,6 +871,7 @@ internal sealed partial class VulkanFrameLoop
                         AllowSecondaryDeferral: !hasForegroundContract),
                     TrackedTargetLayout: ImageLayout.Undefined,
                     FrameDataImageIndexOverride: recordImageIndex,
+                    ReadOnlyStorageAuthority: readOnlyStorageAuthority,
                     OpenXrTargetContext: null,
                     CommandChainSchedule: commandChainSchedule,
                     ExcludeDesktopSwapchainBarriers: true);
@@ -941,8 +939,12 @@ internal sealed partial class VulkanFrameLoop
     }
 
     private void EnsureOpenXrFrameDataSlotCapacity(int frameDataSlotCount)
-        => _commandRuntime.EnsureCommandBufferFrameDataSlotCapacity(
-            frameDataSlotCount);
+    {
+        _commandRuntime.EnsureCommandBufferFrameDataSlotCapacity(frameDataSlotCount);
+        ResourceRuntime.EnsureMappedFrameArenaFrameSlotCapacity(frameDataSlotCount);
+        if (FrameDataArena is not { } storage || !storage.TryEnsureFrameSlotCount(frameDataSlotCount))
+            throw new InvalidOperationException($"OpenXR could not reserve {frameDataSlotCount} immutable storage slots within the mapped-memory budget.");
+    }
 
     private CommandChainSchedule? TryBuildOpenXrEyeCommandChainSchedule(
         uint commandChainImageIndex,

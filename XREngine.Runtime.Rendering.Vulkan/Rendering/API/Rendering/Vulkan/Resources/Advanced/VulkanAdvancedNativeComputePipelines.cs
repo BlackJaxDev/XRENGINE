@@ -4,10 +4,11 @@ namespace XREngine.Rendering.Vulkan;
 internal readonly record struct VulkanAdvancedNativeComputePipelines(
     VulkanAdvancedComputePipeline Classify,
     VulkanAdvancedComputePipeline BuildArguments,
+    VulkanAdvancedComputePipeline AmbientOcclusion,
     VulkanAdvancedComputePipeline BuildFroxels,
     VulkanAdvancedComputePipeline Background,
     VulkanAdvancedComputePipeline Shade)
 {
-    internal bool IsCurrent => Classify.IsCurrent && BuildArguments.IsCurrent &&
+    internal bool IsCurrent => Classify.IsCurrent && BuildArguments.IsCurrent && AmbientOcclusion.IsCurrent &&
         BuildFroxels.IsCurrent && Background.IsCurrent && Shade.IsCurrent;
 }

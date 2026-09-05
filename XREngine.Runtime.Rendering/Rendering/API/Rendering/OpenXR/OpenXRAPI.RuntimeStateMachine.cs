@@ -13,9 +13,12 @@ public unsafe partial class OpenXRAPI
 {
     internal void EnableRuntimeMonitoring()
     {
+        InvalidateOpenXrViewHistory();
         SubscribeOpenXrRenderSettingsChanged();
         RecordAppliedOpenXrEyeResolutionSettings();
         _runtimeMonitoringEnabled = true;
+        if (!_pendingShutdownCleanup)
+            _graphicsBackendResourcesDestroyed = false;
         ResetSmokeDiagnostics();
         ResetOpenXrProbeFailureState();
         SetRuntimeState(OpenXrRuntimeState.DesktopOnly);
@@ -75,6 +78,28 @@ public unsafe partial class OpenXRAPI
     }
     internal void UpdateRuntimeState()
     {
+        if (_pendingShutdownCleanup)
+        {
+            if (!RuntimeEngine.IsRenderThread &&
+                Window?.Renderer is AbstractRenderer &&
+                _graphicsBinding is not null &&
+                _graphicsBinding.RequiresRenderThreadForTeardown)
+            {
+                RuntimeRenderingHostServices.Scheduling.InvokeRenderThreadTask(
+                    () =>
+                    {
+                        UpdateRuntimeState();
+                        return true;
+                    },
+                    "OpenXR.PendingShutdownCleanup",
+                    RenderThreadJobKind.RequiresGraphicsContext);
+                return;
+            }
+
+            ServicePendingShutdownCleanup();
+            return;
+        }
+
         if (!_runtimeMonitoringEnabled)
             return;
 
@@ -104,6 +129,9 @@ public unsafe partial class OpenXRAPI
 
         if (_instance.Handle != 0 && _runtimeState != OpenXrRuntimeState.SessionRunning)
             PollEvents();
+
+        if (_graphicsBinding?.HasPendingDeferredSwapchainRetirement == true)
+            _graphicsBinding.PollDeferredSwapchainRetirement(this, renderer);
 
         if (ConsumeRuntimeLoss(out var lossReason))
         {
@@ -153,6 +181,22 @@ public unsafe partial class OpenXRAPI
                     SetRuntimeState(OpenXrRuntimeState.DesktopOnly);
                 break;
         }
+    }
+
+    private void ServicePendingShutdownCleanup()
+    {
+        if (DateTime.UtcNow < _nextProbeUtc)
+            return;
+
+        if (Window?.Renderer is AbstractRenderer renderer && _graphicsBinding is not null)
+            _graphicsBinding.PollDeferredSwapchainRetirement(this, renderer);
+        if (!TearDownSessionResourcesOnOwningThread(true))
+        {
+            ScheduleProbeRetry(TimeSpan.FromMilliseconds(100));
+            return;
+        }
+
+        CompleteGraphicsBackendCleanup();
     }
 
     private void TryProbeRuntime()
@@ -626,6 +670,7 @@ public unsafe partial class OpenXRAPI
 
     private void ResetOpenXrFrameStateForRuntimeLoss()
     {
+        InvalidateOpenXrViewHistory();
         _sessionBegun = false;
         Volatile.Write(ref _pendingXrFrame, 0);
         Volatile.Write(ref _pendingXrFrameCollected, 0);
@@ -695,6 +740,7 @@ public unsafe partial class OpenXRAPI
 
     private bool TearDownSessionResourcesOnOwningThread(bool destroyInstance)
     {
+        _pendingDestroyInstance |= destroyInstance;
         if (Window?.Renderer is AbstractRenderer renderer &&
             !RuntimeEngine.IsRenderThread &&
             TryGetOrCreateGraphicsBinding(renderer, out IXrGraphicsBinding? binding) &&
@@ -717,6 +763,7 @@ public unsafe partial class OpenXRAPI
 
     private bool TearDownSessionResources(bool destroyInstance)
     {
+        destroyInstance |= _pendingDestroyInstance;
         if (_deferredOpenGlInit is not null && Window is not null)
         {
             Window.RenderViewportsCallback -= _deferredOpenGlInit;
@@ -775,12 +822,16 @@ public unsafe partial class OpenXRAPI
         if (destroyInstance && _instance.Handle != 0)
         {
             DestroyValidationLayers();
-            DestroyInstance();
+            if (!DestroyInstance())
+                return false;
             _instance = default;
             _systemId = 0;
             _win32PerformanceCounterTimeExtension = null;
             Volatile.Write(ref _win32PerformanceCounterTimeExtensionChecked, 0);
         }
+
+        if (destroyInstance)
+            _pendingDestroyInstance = false;
 
         RecordSmokeTeardownCompleted();
         return true;

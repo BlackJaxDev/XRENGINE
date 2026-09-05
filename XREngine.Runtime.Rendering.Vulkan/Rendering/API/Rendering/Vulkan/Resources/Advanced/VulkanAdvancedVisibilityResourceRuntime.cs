@@ -14,7 +14,7 @@ namespace XREngine.Rendering.Vulkan;
 /// device-generation persistent visibility-state buffer. The runtime neither
 /// performs a CPU visibility fallback nor observes a same-frame GPU count.
 /// </summary>
-internal sealed class VulkanAdvancedVisibilityResourceRuntime
+internal sealed partial class VulkanAdvancedVisibilityResourceRuntime
 {
     private const ulong StorageCapacityPerFrameSlot = 2UL * 1024UL * 1024UL;
     private const uint StorageAlignment = 16u;
@@ -694,12 +694,14 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
         ReadOnlySpan<uint> nativeSampledBindingNumbers = [
             VulkanAdvancedSceneProgramBindingContract.NativeIdentityBinding,
             VulkanAdvancedSceneProgramBindingContract.NativeMetadataBinding,
-            VulkanAdvancedSceneProgramBindingContract.NativeDepthBinding];
+            VulkanAdvancedSceneProgramBindingContract.NativeDepthBinding,
+            VulkanAdvancedSceneProgramBindingContract.NativeAmbientOcclusionSampledBinding];
         ReadOnlySpan<uint> nativeStorageImageBindingNumbers = [
             VulkanAdvancedSceneProgramBindingContract.NativeHdrBinding,
             VulkanAdvancedSceneProgramBindingContract.NativeVelocityBinding,
             VulkanAdvancedSceneProgramBindingContract.NativeReactiveBinding,
-            VulkanAdvancedSceneProgramBindingContract.NativeShadingDiagnosticsBinding];
+            VulkanAdvancedSceneProgramBindingContract.NativeShadingDiagnosticsBinding,
+            VulkanAdvancedSceneProgramBindingContract.NativeAmbientOcclusionStorageBinding];
         const int imageBindingCount = 2;
         DescriptorSetLayoutBinding* bindings = stackalloc DescriptorSetLayoutBinding[
             storageBindingNumbers.Length + imageBindingCount +
@@ -1010,16 +1012,12 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
             reason = "The frame-slot advanced-visibility descriptor set is unavailable.";
             return false;
         }
-        VulkanNativeBufferRange currentVertices =
+        VulkanVisibilityPreparedVertexSource currentVertices =
             state.Geometry.CurrentVertices;
-        VulkanNativeBufferRange previousVertices =
+        VulkanVisibilityPreparedVertexSource previousVertices =
             state.Geometry.PreviousVertices;
-        if (!_resources.TryValidateNativeBufferRange(
-                in currentVertices,
-                out reason) ||
-            !_resources.TryValidateNativeBufferRange(
-                in previousVertices,
-                out reason))
+        if (!currentVertices.TryValidate(_resources, out reason) ||
+            !previousVertices.TryValidate(_resources, out reason))
         {
             return false;
         }
@@ -1411,12 +1409,13 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
             VulkanAdvancedSceneProgramBindingContract.NativeLightIndicesBinding,
             VulkanAdvancedSceneProgramBindingContract.NativeLightingCountersBinding];
         DescriptorBufferInfo* bufferInfos = stackalloc DescriptorBufferInfo[buffers.Length];
-        const int imageCount = 7;
+        const int imageCount = 9;
         DescriptorImageInfo* imageInfos = stackalloc DescriptorImageInfo[imageCount]
         {
             closure.IdentityDescriptor, closure.MetadataDescriptor, closure.DepthDescriptor,
             closure.HdrDescriptor, closure.VelocityDescriptor, closure.ReactiveDescriptor,
-            closure.ShadingDiagnosticsDescriptor,
+            closure.ShadingDiagnosticsDescriptor, closure.AmbientOcclusionStorageDescriptor,
+            closure.AmbientOcclusionSampledDescriptor,
         };
         WriteDescriptorSet* writes = stackalloc WriteDescriptorSet[buffers.Length + imageCount];
         for (int index = 0; index < buffers.Length; ++index)
@@ -1448,11 +1447,13 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
             VulkanAdvancedSceneProgramBindingContract.NativeHdrBinding,
             VulkanAdvancedSceneProgramBindingContract.NativeVelocityBinding,
             VulkanAdvancedSceneProgramBindingContract.NativeReactiveBinding,
-            VulkanAdvancedSceneProgramBindingContract.NativeShadingDiagnosticsBinding];
+            VulkanAdvancedSceneProgramBindingContract.NativeShadingDiagnosticsBinding,
+            VulkanAdvancedSceneProgramBindingContract.NativeAmbientOcclusionStorageBinding,
+            VulkanAdvancedSceneProgramBindingContract.NativeAmbientOcclusionSampledBinding];
         for (int index = 0; index < imageCount; ++index)
         {
             DescriptorImageInfo image = imageInfos[index];
-            if (image.ImageView.Handle == 0 || (index < 3 && image.Sampler.Handle == 0))
+            if (image.ImageView.Handle == 0 || ((index < 3 || index == 8) && image.Sampler.Handle == 0))
             {
                 reason = "A frozen native-compute image descriptor is unavailable.";
                 return false;
@@ -1461,7 +1462,7 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
             {
                 SType = StructureType.WriteDescriptorSet, DstSet = descriptorSet,
                 DstBinding = imageBindings[index], DescriptorCount = 1u,
-                DescriptorType = index < 3 ? DescriptorType.CombinedImageSampler : DescriptorType.StorageImage,
+                DescriptorType = index < 3 || index == 8 ? DescriptorType.CombinedImageSampler : DescriptorType.StorageImage,
                 PImageInfo = imageInfos + index,
             };
         }
@@ -1646,11 +1647,13 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
         VulkanRenderGraphPlan graphPlan,
         uint frameSlot,
         uint viewIndex,
+        string ambientOcclusionTargetName,
         VulkanAdvancedNativeComputeClosureStorage storage,
         out VulkanAdvancedNativeComputeClosure closure,
         out string reason)
     {
         ArgumentNullException.ThrowIfNull(storage);
+        ArgumentException.ThrowIfNullOrWhiteSpace(ambientOcclusionTargetName);
         closure = default;
         if (_resources.BackendObjectContext is not { IsDeviceOperational: true } context ||
             !_resources.Descriptors.TryGetCanonicalImmutableSampler(
@@ -1662,9 +1665,12 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
 
         ResourcePlannerRuntimeGeneration generation =
             _resources.PlannerPublications.GetPublishedGeneration();
-        if (!ReferenceEquals(generation.State.CompiledRenderGraph, graphPlan.CompiledGraph))
+        if (!ReferenceEquals(generation.State.CompiledRenderGraph, graphPlan.CompiledGraph) ||
+            graphPlan.Revision == 0u ||
+            graphPlan.Revision != generation.State.ResourcePlannerRevision ||
+            graphPlan.Revision != generation.State.RenderGraphPlan.Revision)
         {
-            reason = "The advanced native compute closure does not match the frozen render-graph generation.";
+            reason = "The advanced native compute closure does not match the currently published frozen render-graph revision.";
             return false;
         }
 
@@ -1680,7 +1686,8 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
                 out VulkanPhysicalImageGroup? identity, out VulkanPhysicalImageGroup? metadata,
                 out VulkanPhysicalImageGroup? depth, out VulkanPhysicalImageGroup? hdr,
                 out VulkanPhysicalImageGroup? velocity, out VulkanPhysicalImageGroup? reactive,
-                out VulkanPhysicalImageGroup? shadingDiagnostics) ||
+                out VulkanPhysicalImageGroup? shadingDiagnostics, out VulkanPhysicalImageGroup? ambientOcclusion,
+                ambientOcclusionTargetName) ||
             !TryFindFrozenBuffer(graphPlan.Barriers.BufferBarriers, activeTiles, out VulkanFrozenBufferBarrier active) ||
             !TryFindFrozenBuffer(graphPlan.Barriers.BufferBarriers, kernelTiles, out VulkanFrozenBufferBarrier kernels) ||
             !TryFindFrozenBuffer(graphPlan.Barriers.BufferBarriers, counters, out VulkanFrozenBufferBarrier classificationCounters) ||
@@ -1696,16 +1703,30 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
 
         if (!identity!.IsAllocated || !metadata!.IsAllocated || !depth!.IsAllocated ||
             !hdr!.IsAllocated || !velocity!.IsAllocated || !reactive!.IsAllocated ||
-            !shadingDiagnostics!.IsAllocated ||
+            !shadingDiagnostics!.IsAllocated || !ambientOcclusion!.IsAllocated ||
             viewIndex >= Math.Max(1u, identity.Template.Layers) ||
             viewIndex >= Math.Max(1u, metadata.Template.Layers) ||
             viewIndex >= Math.Max(1u, depth.Template.Layers) ||
             viewIndex >= Math.Max(1u, hdr.Template.Layers) ||
             viewIndex >= Math.Max(1u, velocity.Template.Layers) ||
             viewIndex >= Math.Max(1u, reactive.Template.Layers) ||
-            viewIndex >= Math.Max(1u, shadingDiagnostics.Template.Layers))
+            viewIndex >= Math.Max(1u, shadingDiagnostics.Template.Layers) ||
+            viewIndex >= Math.Max(1u, ambientOcclusion.Template.Layers))
         {
             reason = "The frozen advanced native compute image closure is unallocated or does not contain the requested view layer.";
+            return false;
+        }
+        if (!TryValidateNativeComputeResources(
+                in generation.State,
+                identity, metadata, depth, hdr, velocity, reactive, shadingDiagnostics,
+                ambientOcclusion,
+                frameSlot,
+                activeTiles, kernelTiles, counters, dispatchArgs, kernelCounts, froxels,
+                lightIndices, lightingCounters,
+                ref active, ref kernels, ref classificationCounters, ref dispatch, ref counts, ref froxelGrid,
+                ref indices, ref lighting,
+                out reason))
+        {
             return false;
         }
 
@@ -1718,14 +1739,15 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
                 !TryAcquireNativeComputeView(context, storage, hdr, ImageAspectFlags.ColorBit, viewIndex, out ImageView hdrView) ||
                 !TryAcquireNativeComputeView(context, storage, velocity, ImageAspectFlags.ColorBit, viewIndex, out ImageView velocityView) ||
                 !TryAcquireNativeComputeView(context, storage, reactive, ImageAspectFlags.ColorBit, viewIndex, out ImageView reactiveView) ||
-                !TryAcquireNativeComputeView(context, storage, shadingDiagnostics, ImageAspectFlags.ColorBit, viewIndex, out ImageView shadingDiagnosticsView))
+                !TryAcquireNativeComputeView(context, storage, shadingDiagnostics, ImageAspectFlags.ColorBit, viewIndex, out ImageView shadingDiagnosticsView) ||
+                !TryAcquireNativeComputeView(context, storage, ambientOcclusion, ImageAspectFlags.ColorBit, viewIndex, out ImageView ambientOcclusionView))
             {
                 reason = "The frozen advanced native compute image view closure could not be acquired.";
                 return false;
             }
 
             closure = new VulkanAdvancedNativeComputeClosure(
-                graphPlan.Revision, identity, metadata, depth, hdr, velocity, reactive, shadingDiagnostics,
+                graphPlan.Revision, identity, metadata, depth, hdr, velocity, reactive, shadingDiagnostics, ambientOcclusion,
                 active, kernels, classificationCounters, dispatch, counts, froxelGrid,
                 indices, lighting,
                 new DescriptorImageInfo { Sampler = sampler, ImageView = identityView, ImageLayout = ImageLayout.ShaderReadOnlyOptimal },
@@ -1735,6 +1757,8 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
                 new DescriptorImageInfo { ImageView = velocityView, ImageLayout = ImageLayout.General },
                 new DescriptorImageInfo { ImageView = reactiveView, ImageLayout = ImageLayout.General },
                 new DescriptorImageInfo { ImageView = shadingDiagnosticsView, ImageLayout = ImageLayout.General },
+                new DescriptorImageInfo { ImageView = ambientOcclusionView, ImageLayout = ImageLayout.General },
+                new DescriptorImageInfo { Sampler = sampler, ImageView = ambientOcclusionView, ImageLayout = ImageLayout.ShaderReadOnlyOptimal },
                 viewIndex);
             captured = closure.IsValid;
             reason = captured ? "Ready" : "The advanced native compute closure is incomplete.";
@@ -1755,7 +1779,9 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
         out VulkanPhysicalImageGroup? hdr,
         out VulkanPhysicalImageGroup? velocity,
         out VulkanPhysicalImageGroup? reactive,
-        out VulkanPhysicalImageGroup? shadingDiagnostics)
+        out VulkanPhysicalImageGroup? shadingDiagnostics,
+        out VulkanPhysicalImageGroup? ambientOcclusion,
+        string ambientOcclusionTargetName)
     {
         bool found = allocator.TryGetPhysicalGroupForResource(AdvancedVisibilityResourceNames.Identity, out identity);
         found &= allocator.TryGetPhysicalGroupForResource(AdvancedVisibilityResourceNames.Metadata, out metadata);
@@ -1764,6 +1790,7 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
         found &= allocator.TryGetPhysicalGroupForResource(DefaultRenderPipeline.VelocityTextureName, out velocity);
         found &= allocator.TryGetPhysicalGroupForResource(AdvancedShadingResourceNames.ReactiveMask, out reactive);
         found &= allocator.TryGetPhysicalGroupForResource(AdvancedShadingResourceNames.ShadingDiagnostics, out shadingDiagnostics);
+        found &= allocator.TryGetPhysicalGroupForResource(ambientOcclusionTargetName, out ambientOcclusion);
         return found;
     }
 

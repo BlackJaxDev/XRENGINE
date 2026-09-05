@@ -137,32 +137,19 @@ internal sealed class VulkanPreparedStableBinStream
             reason = "the canonical draw image exceeds the fixed deformation-overlay capacity";
             return false;
         }
-        if (deformationPublication.ResourceGeneration == 0u ||
-            deformationPublication.CurrentVertices is null ||
-            deformationPublication.PreviousVertices is null ||
-            deformationPublication.CurrentVertices.Length == 0u ||
-            deformationPublication.PreviousVertices.Length == 0u ||
-            !resources.TryCaptureNativeBufferRange(
-                deformationPublication.CurrentVertices,
-                0u,
-                deformationPublication.CurrentVertices.Length,
-                BufferUsageFlags.StorageBufferBit |
-                    BufferUsageFlags.VertexBufferBit,
-                out VulkanNativeBufferRange currentVertices,
-                out reason) ||
-            !resources.TryCaptureNativeBufferRange(
-                deformationPublication.PreviousVertices,
-                0u,
-                deformationPublication.PreviousVertices.Length,
-                BufferUsageFlags.StorageBufferBit |
-                    BufferUsageFlags.VertexBufferBit,
-                out VulkanNativeBufferRange previousVertices,
-                out reason))
-        {
-            if (reason == "Ready")
-                reason = "the aggregate deformation output publication is incomplete";
+        bool requiresDeformation = false;
+        for (int index = 0; index < payloads.Length; ++index)
+            requiresDeformation |= payloads[index].Skinned;
+
+        // Static-only publications never dispatch deformation. Their unused
+        // deformation bindings still need a valid, retained storage range.
+        VulkanVisibilityPreparedVertexSource currentVertices = new(
+            sceneState.StaticVertices, default, 64u);
+        VulkanVisibilityPreparedVertexSource previousVertices = currentVertices;
+        if (requiresDeformation && !TryCaptureDeformationSources(
+                resources, in deformationPublication,
+                out currentVertices, out previousVertices, out reason))
             return false;
-        }
 
         ThawForReuse();
         _deformationOverlayCount = canonicalDraws.Length;
@@ -287,13 +274,19 @@ internal sealed class VulkanPreparedStableBinStream
                 }
 
                 EAdvancedPreparedDrawDeformationFlags flags =
-                    EAdvancedPreparedDrawDeformationFlags.Active;
+                    EAdvancedPreparedDrawDeformationFlags.Active |
+                    EAdvancedPreparedDrawDeformationFlags.TemporalStatePresent;
                 if (deformationPublication.PreviousOutputValid &&
-                    slice.HasValidVelocity)
+                    slice.HasValidVelocity &&
+                    payload.TemporalReason == EAdvancedVelocityValidityReason.Valid)
                 {
                     flags |=
                         EAdvancedPreparedDrawDeformationFlags.PreviousValid;
                 }
+                flags = (EAdvancedPreparedDrawDeformationFlags)
+                    AdvancedReconstructionTemporalFlags.PackVelocityReason(
+                        (uint)flags,
+                        payload.TemporalReason);
                 AdvancedPreparedDrawDeformationRecord overlay = new(
                     payload.Geometry,
                     slice.Owner,
@@ -311,14 +304,33 @@ internal sealed class VulkanPreparedStableBinStream
                 }
                 _deformationOverlay[overlayIndex] = overlay;
                 _deformationOverlayWrites[overlayIndex] = 1;
-                preparedVertices = new VulkanVisibilityPreparedVertexSource(
-                    default,
-                    currentVertices,
-                    64u);
+                preparedVertices = currentVertices;
                 preparedVertexBase = slice.CurrentVertexOffset;
             }
             else
             {
+                EAdvancedPreparedDrawDeformationFlags flags =
+                    (EAdvancedPreparedDrawDeformationFlags)
+                    AdvancedReconstructionTemporalFlags.PackVelocityReason(
+                        (uint)EAdvancedPreparedDrawDeformationFlags.TemporalStatePresent,
+                        payload.TemporalReason);
+                AdvancedPreparedDrawDeformationRecord overlay = new(
+                    payload.Geometry,
+                    canonicalDraw.Deformation,
+                    geometry.VertexBase,
+                    geometry.VertexBase,
+                    payload.VertexCount,
+                    flags);
+                int overlayIndex = checked((int)drawDenseIndex);
+                if (_deformationOverlayWrites[overlayIndex] != 0 &&
+                    _deformationOverlay[overlayIndex] != overlay)
+                {
+                    reason = $"canonical draw row {drawDenseIndex} resolves to conflicting temporal states";
+                    ThawForReuse();
+                    return false;
+                }
+                _deformationOverlay[overlayIndex] = overlay;
+                _deformationOverlayWrites[overlayIndex] = 1;
                 preparedVertices = new VulkanVisibilityPreparedVertexSource(
                     sceneState.StaticVertices,
                     default,
@@ -428,6 +440,43 @@ internal sealed class VulkanPreparedStableBinStream
         Freeze();
         return true;
     }
+
+    private static bool TryCaptureDeformationSources(
+        VulkanResourceRuntime resources,
+        in AdvancedGpuDeformationPublication publication,
+        out VulkanVisibilityPreparedVertexSource current,
+        out VulkanVisibilityPreparedVertexSource previous,
+        out string reason)
+    {
+        current = default;
+        previous = default;
+        reason = "the aggregate deformation output publication is incomplete";
+        if (publication.ResourceGeneration == 0u || publication.JobCount == 0u ||
+            publication.CurrentVertices is not { Length: > 0u } currentOwner ||
+            !resources.TryCaptureNativeBufferRange(
+                currentOwner, 0u, currentOwner.Length,
+                BufferUsageFlags.StorageBufferBit | BufferUsageFlags.VertexBufferBit,
+                out VulkanNativeBufferRange currentRange, out reason))
+            return false;
+
+        current = new(default, currentRange, 64u);
+        // The first deformation publication has no previous GPU output. Its
+        // overlay disables history reads; alias the current retained range so
+        // the descriptor remains valid without inventing a prior generation.
+        previous = current;
+        if (!publication.PreviousOutputValid)
+            return true;
+        if (publication.PreviousVertices is not { Length: > 0u } previousOwner ||
+            !resources.TryCaptureNativeBufferRange(
+                previousOwner, 0u, previousOwner.Length,
+                BufferUsageFlags.StorageBufferBit | BufferUsageFlags.VertexBufferBit,
+                out VulkanNativeBufferRange previousRange, out reason))
+            return false;
+
+        previous = new(default, previousRange, 64u);
+        return true;
+    }
+
     private static ulong MixVisibilityKey(params ReadOnlySpan<ulong> values)
     {
         ulong hash = 14695981039346656037UL;
@@ -690,11 +739,18 @@ internal sealed class VulkanPreparedStableBinStream
     internal bool TryResolveManifests(
         VulkanStableBinManifestCache cache,
         ulong topologyGeneration)
+        => TryResolveManifests(cache, topologyGeneration, out _);
+
+    internal bool TryResolveManifests(
+        VulkanStableBinManifestCache cache,
+        ulong topologyGeneration,
+        out VulkanBinResourceManifestFailure failure)
     {
         ArgumentNullException.ThrowIfNull(cache);
         if (!_frozen)
             throw new InvalidOperationException("Stable-bin manifests require a frozen stream.");
 
+        failure = VulkanBinResourceManifestFailure.None;
         _headerCount = 0;
         _submissionPlansSealed = false;
         for (int start = 0; start < _recordCount;)
@@ -722,7 +778,7 @@ internal sealed class VulkanPreparedStableBinStream
                         resourceCapacity,
                         nativeUseCapacity,
                         out manifest,
-                        out _))
+                        out failure))
                 {
                     return false;
                 }
@@ -730,7 +786,10 @@ internal sealed class VulkanPreparedStableBinStream
             }
 
             if (_headerCount == _headers.Length)
+            {
+                failure = VulkanBinResourceManifestFailure.CapacityExceeded;
                 return false;
+            }
             _headers[_headerCount++] = new(key, start, end - start, manifest!);
             start = end;
         }

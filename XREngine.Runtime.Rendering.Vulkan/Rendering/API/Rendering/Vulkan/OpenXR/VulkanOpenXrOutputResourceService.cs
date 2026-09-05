@@ -79,8 +79,87 @@ internal sealed unsafe class VulkanOpenXrOutputResourceService
         return cached;
     }
 
+    internal VulkanOpenXrSwapchainChildRetirementReceipt RetireSwapchainChildren(
+        ReadOnlySpan<Image> retiringImages)
+    {
+        if (retiringImages.IsEmpty)
+            return VulkanOpenXrSwapchainChildRetirementReceipt.Empty;
+
+        HashSet<ulong> imageHandles = new(retiringImages.Length);
+        for (int i = 0; i < retiringImages.Length; i++)
+            if (retiringImages[i].Handle != 0)
+                imageHandles.Add(retiringImages[i].Handle);
+
+        List<ImageView> views = [];
+        List<Framebuffer> framebuffers = [];
+        List<VulkanPinnedResourceGeneration> generations = [];
+        HashSet<ulong> viewHandles = [];
+        VulkanResourceLifetimeTracker tracker = _resources.Lifetime.Tracker;
+        lock (tracker.SyncRoot)
+        {
+            foreach ((ulong viewHandle, ulong backingImage) in tracker.ImageViewBackingImages)
+            {
+                if (!imageHandles.Contains(backingImage))
+                    continue;
+
+                if (!tracker.ResourceLifetimes.TryGetValue(new(ObjectType.ImageView, viewHandle), out VulkanResourceLifetimeRecord? view))
+                    return new([], [], [], false);
+                if ((view.State & EVulkanResourceLifetimeState.Destroyed) != 0)
+                    continue;
+
+                views.Add(new ImageView(viewHandle));
+                viewHandles.Add(viewHandle);
+                generations.Add(new VulkanPinnedResourceGeneration(
+                    new(ObjectType.ImageView, viewHandle), view.Generation));
+            }
+
+            foreach ((ulong framebufferHandle, VulkanResourceLifetimeKey[] attachments) in tracker.FramebufferAttachments)
+            {
+                bool referencesRetiringView = false;
+                for (int i = 0; i < attachments.Length; i++)
+                    if (attachments[i].Type == ObjectType.ImageView && viewHandles.Contains(attachments[i].Handle))
+                    {
+                        referencesRetiringView = true;
+                        break;
+                    }
+                if (!referencesRetiringView)
+                    continue;
+                if (!tracker.ResourceLifetimes.TryGetValue(new(ObjectType.Framebuffer, framebufferHandle), out VulkanResourceLifetimeRecord? framebuffer))
+                    return new([], [], [], false);
+                if ((framebuffer.State & EVulkanResourceLifetimeState.Destroyed) != 0)
+                    continue;
+
+                framebuffers.Add(new Framebuffer(framebufferHandle));
+                generations.Add(new VulkanPinnedResourceGeneration(
+                    new(ObjectType.Framebuffer, framebufferHandle), framebuffer.Generation));
+            }
+
+            foreach ((ulong imageHandle, VulkanOpenXrSwapchainImageViewCacheEntry cached) in _backend.SwapchainImageViews)
+                if (imageHandles.Contains(imageHandle) && cached.View.Handle != 0 &&
+                    !viewHandles.Contains(cached.View.Handle))
+                    return new([], [], [], false);
+        }
+
+        // A partial native-queue failure must not leave an active cache entry
+        // pointing at a PendingRetirement view. Future recording rebuilds it,
+        // while ImageViewBackingImages keeps the old closure discoverable.
+        foreach (ulong imageHandle in imageHandles)
+            _backend.SwapchainImageViews.Remove(imageHandle);
+
+        // Framebuffers retain their views. Queue their destruction first.
+        for (int i = 0; i < framebuffers.Count; i++)
+            _resources.RetireFramebuffer(framebuffers[i], "OpenXR.RetiredSwapchain.Framebuffer");
+        for (int i = 0; i < views.Count; i++)
+            RetireSwapchainImageView(views[i], "OpenXR.RetiredSwapchain.ImageView");
+
+        return new VulkanOpenXrSwapchainChildRetirementReceipt(
+            views.ToArray(), framebuffers.ToArray(), generations.ToArray(), true);
+    }
+
     internal void RetireResources()
     {
+        // Terminal resource cleanup includes unrelated depth targets. Swapchain
+        // replacement uses RetireSwapchainChildren so those targets stay live.
         foreach (VulkanOpenXrSwapchainImageViewCacheEntry entry in _backend.SwapchainImageViews.Values)
             RetireSwapchainImageView(entry.View, "OpenXR.SwapchainImageViewCache");
         _backend.SwapchainImageViews.Clear();

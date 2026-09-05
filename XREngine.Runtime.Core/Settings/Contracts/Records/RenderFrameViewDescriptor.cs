@@ -25,7 +25,9 @@ public readonly record struct RenderFrameViewDescriptor(
     bool ReversedDepth = false,
     Matrix4x4 ProjectionMatrixUnjittered = default,
     Vector2 CurrentJitter = default,
-    Vector2 PreviousJitter = default)
+    Vector2 PreviousJitter = default,
+    ERenderFrameViewHistoryStatus HistoryStatus = ERenderFrameViewHistoryStatus.Unavailable,
+    Matrix4x4 PreviousViewProjectionMatrixUnjittered = default)
 {
     public const uint InvalidViewId = uint.MaxValue;
 
@@ -38,6 +40,7 @@ public readonly record struct RenderFrameViewDescriptor(
     public bool IsRightEyeFamily => Kind is EVrOutputViewKind.RightEye or EVrOutputViewKind.RightWide or EVrOutputViewKind.RightInset;
     public bool IsXrSubmittedView => IsStereoEye || IsQuadView;
     public Matrix4x4 ViewProjectionMatrix => ViewMatrix * ProjectionMatrix;
+    public bool HasValidTemporalHistory => HistoryStatus == ERenderFrameViewHistoryStatus.Valid;
     public ulong EffectiveHistoryKey => HistoryKey != 0 ? HistoryKey : ViewId + 1UL;
 
     public RenderFrameViewDescriptor WithVisibilityGroup(int visibilityGroupIndex)

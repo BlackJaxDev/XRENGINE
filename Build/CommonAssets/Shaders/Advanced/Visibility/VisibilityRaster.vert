@@ -222,7 +222,9 @@ XRAdvancedDrawRecord draw = XR_ADV_LoadDraw(drawDense);
         !any(isnan(previousUnjitteredClip)) &&
         !any(isinf(previousUnjitteredClip));
     VisibilityVelocityValid =
-        false &&
+        previousVertexValid &&
+        (viewRecord.flags & XR_ADV_VIEW_TEMPORAL_HISTORY_VALID) != 0u &&
+        ((payload.flags >> 16u) & 15u) == 0u &&
         geometrySourcesValid &&
         temporalInputsValid
             ? 1u

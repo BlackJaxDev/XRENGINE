@@ -103,6 +103,9 @@ struct XRAdvancedVisibilityPayload
     uint cullMode;
     uint primitiveTopology;
     uint flags;
+    // The managed payload reserves 96 bytes. Handles contain scalar uints,
+    // so std430 would otherwise use a 92-byte array stride.
+    uint reserved;
 };
 
 XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_VISIBILITY_CANDIDATES)
@@ -246,6 +249,9 @@ readonly buffer XRAdvancedVisibilityMeshletTriangleTable
 
 #define XR_ADV_PREPARED_DEFORMATION_ACTIVE 1u
 #define XR_ADV_PREPARED_DEFORMATION_PREVIOUS_VALID 2u
+#define XR_ADV_PREPARED_DEFORMATION_TEMPORAL_STATE_PRESENT 4u
+#define XR_ADV_PREPARED_DEFORMATION_TEMPORAL_REASON_SHIFT 16u
+#define XR_ADV_PREPARED_DEFORMATION_TEMPORAL_REASON_MASK 0x000F0000u
 
 struct XRAdvancedPreparedDrawDeformationRecord
 {
@@ -276,7 +282,22 @@ bool XR_ADV_PreparedDeformationPreviousValid(
         XR_ADV_PREPARED_DEFORMATION_PREVIOUS_VALID) != 0u;
 }
 
-bool XR_ADV_TryLoadPreparedDrawDeformation(
+bool XR_ADV_PreparedDeformationTemporalStatePresent(
+    XRAdvancedPreparedDrawDeformationRecord record)
+{
+    return (record.flags &
+        XR_ADV_PREPARED_DEFORMATION_TEMPORAL_STATE_PRESENT) != 0u;
+}
+
+uint XR_ADV_PreparedDeformationTemporalReason(
+    XRAdvancedPreparedDrawDeformationRecord record)
+{
+    return (record.flags &
+        XR_ADV_PREPARED_DEFORMATION_TEMPORAL_REASON_MASK) >>
+        XR_ADV_PREPARED_DEFORMATION_TEMPORAL_REASON_SHIFT;
+}
+
+bool XR_ADV_TryLoadPreparedDrawTemporalState(
     uint drawDense,
     XRAdvancedDrawRecord draw,
     out XRAdvancedPreparedDrawDeformationRecord record)
@@ -292,12 +313,24 @@ bool XR_ADV_TryLoadPreparedDrawDeformation(
     }
 
     record = XR_ADV_PreparedDrawDeformations.records[drawDense];
-    return XR_ADV_PreparedDeformationActive(record) &&
+    return XR_ADV_PreparedDeformationTemporalStatePresent(record) &&
         record.geometry.index == draw.geometry.index &&
         record.geometry.generation == draw.geometry.generation &&
         record.deformation.index == draw.deformation.index &&
         record.deformation.generation == draw.deformation.generation &&
         record.vertexCount != 0u;
+}
+
+bool XR_ADV_TryLoadPreparedDrawDeformation(
+    uint drawDense,
+    XRAdvancedDrawRecord draw,
+    out XRAdvancedPreparedDrawDeformationRecord record)
+{
+    return XR_ADV_TryLoadPreparedDrawTemporalState(
+            drawDense,
+            draw,
+            record) &&
+        XR_ADV_PreparedDeformationActive(record);
 }
 #if defined(XR_ADV_ENABLE_LATE_VISIBILITY_OUTPUTS)
 XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_VISIBILITY_LATE_VISIBLE_INDICES)

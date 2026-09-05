@@ -149,10 +149,9 @@ internal sealed partial class VulkanCommandRuntime
             (EAdvancedRenderStage.DepthPyramidAndLateVisibility, EAdvancedVisibilityStageBackendPhase.LateRaster) =>
                 RecordAdvancedVisibilityLateRasterPayload(ref state, in payload, in info),
             (EAdvancedRenderStage.WorkClassification, EAdvancedVisibilityStageBackendPhase.Complete) or
+            (EAdvancedRenderStage.AmbientOcclusion, EAdvancedVisibilityStageBackendPhase.Complete) or
             (EAdvancedRenderStage.NativeOpaqueShading, EAdvancedVisibilityStageBackendPhase.Complete) =>
                 RecordAdvancedNativeComputePayload(ref state, in payload, in info),
-            (EAdvancedRenderStage.AttributeReconstruction, EAdvancedVisibilityStageBackendPhase.Complete) =>
-                info.OperationIndex,
             _ => throw new VulkanPlanPreconditionException(
                 $"Advanced visibility stage '{payload.Request.Stage}' phase '{payload.Request.Phase}' is outside the admitted physical family."),
         };
@@ -441,19 +440,19 @@ internal sealed partial class VulkanCommandRuntime
             throw new VulkanPlanPreconditionException(
                 "Advanced visibility raster reached recording without its sealed view-set resource, target, and stable-bin closure.");
         }
-        VulkanNativeBufferRange currentDeformation =
+        VulkanVisibilityPreparedVertexSource currentDeformation =
             payload.State.Geometry.CurrentVertices;
-        VulkanNativeBufferRange previousDeformation =
+        VulkanVisibilityPreparedVertexSource previousDeformation =
             payload.State.Geometry.PreviousVertices;
         string currentDeformationReason = "Ready";
         string previousDeformationReason = "Ready";
         bool currentDeformationValid =
-            ResourceRuntime.TryValidateNativeBufferRange(
-                in currentDeformation,
+            currentDeformation.TryValidate(
+                ResourceRuntime,
                 out currentDeformationReason);
         bool previousDeformationValid =
-            ResourceRuntime.TryValidateNativeBufferRange(
-                in previousDeformation,
+            previousDeformation.TryValidate(
+                ResourceRuntime,
                 out previousDeformationReason);
         if (!currentDeformationValid || !previousDeformationValid)
         {
@@ -492,7 +491,8 @@ internal sealed partial class VulkanCommandRuntime
             ref state,
             payload.Request.Target,
             info.PassIndex,
-            state.ActiveContext);
+            state.ActiveContext,
+            clearPolicy: payload.TargetClosure.ClearPolicy);
         if (!state.RenderScope.IsActive ||
             state.RenderScope.Target != payload.TargetClosure.Target ||
             state.RenderScope.UsesDynamicRendering !=

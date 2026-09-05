@@ -512,8 +512,8 @@ namespace XREngine.Rendering.Vulkan
             int rasterStageCount = 0;
             int lateComputeStageCount = 0;
             int lateRasterStageCount = 0;
+            int ambientOcclusionStageCount = 0;
             int classificationStageCount = 0;
-            int reconstructionStageCount = 0;
             int nativeOpaqueStageCount = 0;
 
             for (int operationIndex = 0;
@@ -547,8 +547,8 @@ namespace XREngine.Rendering.Vulkan
                         EVulkanCommandRecordingFailureKind.RetryFrame;
                     return false;
                 }
-                if (preparationStageCount + rasterStageCount + lateComputeStageCount + lateRasterStageCount +
-                    classificationStageCount + reconstructionStageCount + nativeOpaqueStageCount == 0)
+                if (preparationStageCount + rasterStageCount + lateComputeStageCount + lateRasterStageCount + ambientOcclusionStageCount +
+                    classificationStageCount + nativeOpaqueStageCount == 0)
                 {
                     familyRequest = request;
                     familyInput = input;
@@ -574,11 +574,11 @@ namespace XREngine.Rendering.Vulkan
                     case (EAdvancedRenderStage.DepthPyramidAndLateVisibility, EAdvancedVisibilityStageBackendPhase.LateRaster):
                         lateRasterStageCount++;
                         break;
+                    case (EAdvancedRenderStage.AmbientOcclusion, EAdvancedVisibilityStageBackendPhase.Complete):
+                        ambientOcclusionStageCount++;
+                        break;
                     case (EAdvancedRenderStage.WorkClassification, EAdvancedVisibilityStageBackendPhase.Complete):
                         classificationStageCount++;
-                        break;
-                    case (EAdvancedRenderStage.AttributeReconstruction, EAdvancedVisibilityStageBackendPhase.Complete):
-                        reconstructionStageCount++;
                         break;
                     case (EAdvancedRenderStage.NativeOpaqueShading, EAdvancedVisibilityStageBackendPhase.Complete):
                         nativeOpaqueStageCount++;
@@ -586,7 +586,8 @@ namespace XREngine.Rendering.Vulkan
                 }
                 if (preparationStageCount > 1 || rasterStageCount > 1 ||
                     lateComputeStageCount > 1 || lateRasterStageCount > 1 ||
-                    classificationStageCount > 1 || reconstructionStageCount > 1 ||
+                    ambientOcclusionStageCount > 1 ||
+                    classificationStageCount > 1 ||
                     nativeOpaqueStageCount > 1)
                 {
                     recordingState.RecordingDeferredReason =
@@ -675,6 +676,15 @@ namespace XREngine.Rendering.Vulkan
                         .RecoverAfterStateChange;
                     return false;
                 }
+                RenderFrameViewSet visibilityViews = request.Views;
+                if (!VulkanAdvancedVisibilityClearPolicy.TryCreate(
+                        in visibilityViews, out VulkanAdvancedVisibilityClearPolicy clearPolicy))
+                {
+                    recordingState.RecordingDeferredReason =
+                        "Advanced visibility operation is Unsupported: layered target has mixed depth directions.";
+                    recordingState.FailureKind = EVulkanCommandRecordingFailureKind.RecoverAfterStateChange;
+                    return false;
+                }
                 targetClosure = new(
                         request.Target,
                     targetSnapshot,
@@ -682,7 +692,8 @@ namespace XREngine.Rendering.Vulkan
                     targetRenderPass,
                     targetFormats,
                     rasterizationSamples,
-                    depthStencilReadOnly);
+                    depthStencilReadOnly,
+                    clearPolicy);
                 if (request.Stage == EAdvancedRenderStage.VisibilityRaster)
                     rasterTargetClosure = targetClosure;
                 else if (request.Phase == EAdvancedVisibilityStageBackendPhase.LateRaster)
@@ -834,16 +845,17 @@ namespace XREngine.Rendering.Vulkan
                 }
             }
 
-            if (preparationStageCount + rasterStageCount + lateComputeStageCount + lateRasterStageCount +
-                classificationStageCount + reconstructionStageCount + nativeOpaqueStageCount == 0)
+            if (preparationStageCount + rasterStageCount + lateComputeStageCount + lateRasterStageCount + ambientOcclusionStageCount +
+                classificationStageCount + nativeOpaqueStageCount == 0)
                 return true;
             if (preparationStageCount != 1 || rasterStageCount != 1 ||
                 lateComputeStageCount != 1 || lateRasterStageCount != 1 ||
-                classificationStageCount != 1 || reconstructionStageCount != 1 || nativeOpaqueStageCount != 1 ||
+                ambientOcclusionStageCount != 1 ||
+                classificationStageCount != 1 || nativeOpaqueStageCount != 1 ||
                 !familyState.IsValid)
             {
                 recordingState.RecordingDeferredReason =
-                    "Advanced visibility operation is Unsupported: the frame plan must seal exactly one visibility, late, classification, reconstruction, and native-opaque stage before one immutable set-1 family is published.";
+                    "Advanced visibility operation is Unsupported: the frame plan must seal exactly one visibility, late, ambient-occlusion, classification, and native-opaque stage before one immutable set-1 family is published.";
                 recordingState.FailureKind =
                     EVulkanCommandRecordingFailureKind.RendererTerminal;
                 return false;
@@ -923,7 +935,7 @@ namespace XREngine.Rendering.Vulkan
                 }
 
                 if (request.Stage is EAdvancedRenderStage.WorkClassification or
-                    EAdvancedRenderStage.AttributeReconstruction or
+                    EAdvancedRenderStage.AmbientOcclusion or
                     EAdvancedRenderStage.NativeOpaqueShading)
                 {
                     FrameOpContext operationContext =
@@ -949,7 +961,8 @@ namespace XREngine.Rendering.Vulkan
                             .TryCaptureNativeComputeClosure(
                                 nativeOperationPlan,
                                 checked((uint)framePlan.FrameSlot),
-                                viewIndex: 0u,
+                                0u,
+                                request.AmbientOcclusionTargetName,
                                 nativeStorage,
                                 out nativeClosure,
                                 out string nativeClosureReason))
@@ -1278,14 +1291,15 @@ namespace XREngine.Rendering.Vulkan
                     passIndex,
                     outputViewMask,
                     in context,
-                    out reason) ||
-                !bins.TryResolveManifests(
+                    out reason))
+                return false;
+            if (!bins.TryResolveManifests(
                     ResourceRuntime.ResidentDrawTemplates
                         .StableBinManifestCache,
-                    package.CanonicalScenePublication.TopologyGeneration))
+                    package.CanonicalScenePublication.TopologyGeneration,
+                    out VulkanBinResourceManifestFailure manifestFailure))
             {
-                if (string.IsNullOrWhiteSpace(reason))
-                    reason = "canonical visibility atlas manifests could not be sealed";
+                reason = $"canonical visibility atlas manifests could not be sealed: {manifestFailure}";
                 return false;
             }
             GpuDiagnosticReadbackPlanNode? diagnosticNode = null;
@@ -2375,6 +2389,8 @@ namespace XREngine.Rendering.Vulkan
             recordingState.FboLayoutTracking = recordingState.RecordingScratch.FboLayoutTracking;
             recordingState.FboLayoutTracking.Clear();
             recordingState.FboLayoutTracking.EnsureCapacity(Math.Max(1, recordingState.RecordingScratch.RecordFboLayoutCapacityHint));
+            recordingState.RecordingScratch.BegunFboPasses.Clear();
+            recordingState.RecordingScratch.BegunFboPasses.EnsureCapacity(Math.Max(1, recordingState.RecordingScratch.RecordBegunFboPassCapacityHint));
 
             // Reset every inline query pool before the first render operation. Query-pool
             // resets are illegal inside rendering, and deferring them until QueryOp would

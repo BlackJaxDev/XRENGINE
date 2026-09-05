@@ -17,6 +17,7 @@ public sealed class AdvancedDeformedVertexArena
     private readonly uint[] _topologyGenerations;
     private readonly uint[] _lodGenerations;
     private readonly ulong[] _lastFrames;
+    private readonly byte[] _historyProduced;
     private readonly ulong[] _slotSubmissionValues;
     private readonly byte[][][] _retiredStorage;
     private readonly ulong[] _retiredCompletionValues;
@@ -53,6 +54,7 @@ public sealed class AdvancedDeformedVertexArena
         _topologyGenerations = new uint[ownerTableCapacity];
         _lodGenerations = new uint[ownerTableCapacity];
         _lastFrames = new ulong[ownerTableCapacity];
+        _historyProduced = new byte[ownerTableCapacity];
 
         _retiredStorage = new byte[options.RetiredGenerationCapacity][][];
         _retiredCompletionValues =
@@ -157,6 +159,7 @@ public sealed class AdvancedDeformedVertexArena
                 newlyVisible,
                 _frameId,
                 previousFrame,
+                _historyProduced[ownerSlot] != 0,
                 topologyChanged,
                 vertexCountChanged);
         if (velocityValidity != EAdvancedVelocityValidityReason.Valid)
@@ -183,6 +186,25 @@ public sealed class AdvancedDeformedVertexArena
             lodGeneration,
             velocityValidity);
         return true;
+    }
+
+    /// <summary>
+    /// Marks the acquired owner as having produced current-frame vertices only
+    /// after its deformation job is admitted for execution.
+    /// </summary>
+    public void ConfirmOwnerHistoryProduced(AdvancedGpuHandle owner)
+    {
+        int slot = FindOwner(owner);
+        if (slot >= 0)
+            _historyProduced[slot] = 1;
+    }
+
+    /// <summary>Invalidates history for an acquired owner whose job will not execute.</summary>
+    public void InvalidateOwnerHistory(AdvancedGpuHandle owner)
+    {
+        int slot = FindOwner(owner);
+        if (slot >= 0)
+            _historyProduced[slot] = 0;
     }
 
     public Span<AdvancedDeformedVertex> GetCurrentVertices(
@@ -326,11 +348,30 @@ public sealed class AdvancedDeformedVertexArena
         return -1;
     }
 
+    private int FindOwner(AdvancedGpuHandle owner)
+    {
+        if (!owner.IsValid)
+            return -1;
+        uint mask = checked((uint)_owners.Length - 1u);
+        uint start = Hash(owner) & mask;
+        for (uint probe = 0u; probe < (uint)_owners.Length; probe++)
+        {
+            int slot = checked((int)((start + probe) & mask));
+            AdvancedGpuHandle existing = _owners[slot];
+            if (existing == owner)
+                return slot;
+            if (!existing.IsValid)
+                return -1;
+        }
+        return -1;
+    }
+
     private static EAdvancedVelocityValidityReason ResolveVelocityValidity(
         bool firstUse,
         bool newlyVisible,
         ulong currentFrame,
         ulong previousFrame,
+        bool historyProduced,
         bool topologyChanged,
         bool vertexCountChanged)
     {
@@ -340,7 +381,7 @@ public sealed class AdvancedDeformedVertexArena
             return EAdvancedVelocityValidityReason.TopologyChanged;
         if (vertexCountChanged)
             return EAdvancedVelocityValidityReason.VertexCountChanged;
-        return previousFrame + 1UL == currentFrame
+        return historyProduced && previousFrame + 1UL == currentFrame
             ? EAdvancedVelocityValidityReason.Valid
             : EAdvancedVelocityValidityReason.FrameGap;
     }

@@ -23,6 +23,19 @@ public sealed class AdvancedSharedPreparationService : IDisposable
 
     public AdvancedPreparationExtractor Extractor => _extractor;
 
+    /// <summary>Reads existing preparation diagnostics without initializing an unused renderer.</summary>
+    public static AdvancedPreparationDiagnosticSnapshot? GetCurrentDiagnostics()
+    {
+        if (!Shared.IsValueCreated)
+            return null;
+        AdvancedSharedPreparationService service = Shared.Value;
+        lock (service._sync)
+            return new(service._publication, service._extractor.LastDeferralReason,
+                service._extractor.GpuDeformation.LastOutputReuseStatus.ToString(),
+                service._extractor.GpuDeformation.LastOutputReuseSlot,
+                service._extractor.GpuDeformation.LastOutputReuseAuthority);
+    }
+
     public AdvancedPreparationPublication Acquire(
         in RenderWorldSnapshot world,
         RenderFrameViewSet? viewSet,
@@ -61,11 +74,12 @@ public sealed class AdvancedSharedPreparationService : IDisposable
             }
 
             _publication = _extractor.Build(world, viewSet, consumers);
-            bool executed = _extractor.GpuDeformation.TryExecute(
-                _extractor.DispatchPlanner,
-                _extractor.DeformationJobs,
-                consumers,
-                _extractor.Admission.RejectedJobCount);
+            bool executed = _publication.GpuResourcesPublished &&
+                _extractor.GpuDeformation.TryExecute(
+                    _extractor.DispatchPlanner,
+                    _extractor.DeformationJobs,
+                    consumers,
+                    _extractor.Admission.RejectedJobCount);
             AdvancedDeformationDispatchTelemetry telemetry =
                 _extractor.GpuDeformation.LastTelemetry;
             _publication = _publication with
@@ -150,13 +164,21 @@ public sealed class AdvancedSharedPreparationService : IDisposable
             sourceProducers.CopyTo(producers);
             sourceIndirectRanges.CopyTo(indirectRanges);
             sourceIndirectPayloadIndices.CopyTo(indirectPayloadIndices);
-            for (uint drawIndex = 0u; drawIndex < (uint)deformationSlices.Length; ++drawIndex)
-                if (!_extractor.TryGetDrawDeformationSlice(drawIndex, out deformationSlices[checked((int)drawIndex)]))
+            for (int drawIndex = 0; drawIndex < deformationSlices.Length; ++drawIndex)
+            {
+                // Static draws consume canonical vertices and have no deformation
+                // allocation. Clear reused storage so a prior skinned frame cannot
+                // donate its slice to a static draw at the same dense index.
+                deformationSlices[drawIndex] = default;
+                if (sourcePayloads[drawIndex].Skinned &&
+                    !_extractor.TryGetDrawDeformationSlice(
+                        checked((uint)drawIndex), out deformationSlices[drawIndex]))
                 {
                     indirect = default;
                     deformationPublication = default;
                     return false;
                 }
+            }
             return true;
         }
     }

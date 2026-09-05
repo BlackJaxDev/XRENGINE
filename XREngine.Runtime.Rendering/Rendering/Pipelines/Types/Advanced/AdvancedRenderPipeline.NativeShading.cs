@@ -51,7 +51,23 @@ public partial class AdvancedRenderPipeline
     public const uint DefaultLightIndexListCapacity = 1048576u;
 
     private IAdvancedGlobalIlluminationProvider? _globalIlluminationProvider;
-    private IAdvancedAmbientOcclusionProvider? _ambientOcclusionProvider;
+    private IAdvancedAmbientOcclusionProvider? _ambientOcclusionProvider = AdvancedDepthGtaoProvider.Instance;
+    private bool _enableBuiltInAmbientOcclusion = true;
+
+    /// <summary>
+    /// Enables the built-in depth-derived GTAO dispatch. Disabling it keeps the
+    /// native AO target explicitly neutral rather than leaving it unwritten.
+    /// </summary>
+    public bool EnableBuiltInAmbientOcclusion
+    {
+        get => _enableBuiltInAmbientOcclusion;
+        set
+        {
+            if (!SetField(ref _enableBuiltInAmbientOcclusion, value))
+                return;
+            InvalidateNativeShadingResourceProfile();
+        }
+    }
 
     /// <summary>
     /// Active global illumination provider contract.
@@ -164,7 +180,8 @@ public partial class AdvancedRenderPipeline
             .StereoCompatible(layers > 1u)
             .DependsOn(
                 AdvancedVisibilityResourceNames.Identity,
-                AdvancedVisibilityResourceNames.Metadata)
+                AdvancedVisibilityResourceNames.Metadata,
+                AdvancedVisibilityResourceNames.DepthStencil)
             .DebugLabel("Advanced native HDR scene texture")
             .Add();
 
@@ -181,7 +198,8 @@ public partial class AdvancedRenderPipeline
             .StereoCompatible(layers > 1u)
             .DependsOn(
                 AdvancedVisibilityResourceNames.Identity,
-                AdvancedVisibilityResourceNames.Metadata)
+                AdvancedVisibilityResourceNames.Metadata,
+                AdvancedVisibilityResourceNames.DepthStencil)
             .DebugLabel("Advanced native motion vectors")
             .Add();
 
@@ -198,7 +216,8 @@ public partial class AdvancedRenderPipeline
             .StereoCompatible(layers > 1u)
             .DependsOn(
                 AdvancedVisibilityResourceNames.Identity,
-                AdvancedVisibilityResourceNames.Metadata)
+                AdvancedVisibilityResourceNames.Metadata,
+                AdvancedVisibilityResourceNames.DepthStencil)
             .DebugLabel("Advanced native shading diagnostics")
             .Add();
 
@@ -214,8 +233,7 @@ public partial class AdvancedRenderPipeline
             .Layers(layers)
             .StereoCompatible(layers > 1u)
             .DependsOn(
-                AdvancedVisibilityResourceNames.Identity,
-                AdvancedVisibilityResourceNames.Metadata)
+                AdvancedVisibilityResourceNames.DepthStencil)
             .DebugLabel("Advanced ambient occlusion")
             .Add();
 

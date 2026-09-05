@@ -771,7 +771,6 @@ namespace XREngine.Rendering.Vulkan
             if (scratch.Layouts.Length != attachmentCount)
                 scratch.Layouts = new ImageLayout[attachmentCount];
 
-            recordingScratch.FboLayoutTracking[fbo] = scratch.Layouts;
             return scratch.Layouts;
         }
         private bool TryGetExactTrackedFboAttachmentLayout(

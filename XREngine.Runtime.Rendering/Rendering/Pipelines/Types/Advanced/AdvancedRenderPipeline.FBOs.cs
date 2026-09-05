@@ -56,21 +56,21 @@ public partial class AdvancedRenderPipeline
         XRTexture[] postProcessRefs = Stereo
             ?
             [
-                GetTexture<XRTexture>(HDRSceneTextureName)!,       // binding 0: sampler2DArray HDRSceneTex
-                GetTexture<XRTexture>(BloomBlurTextureName)!,      // binding 1: sampler2DArray BloomBlurTexture
-                GetTexture<XRTexture>(DepthViewTextureName)!,      // binding 2: sampler2DArray DepthView
-                GetTexture<XRTexture>(StencilViewTextureName)!,    // binding 3: usampler2DArray StencilView
-                GetTexture<XRTexture>(AutoExposureTextureName)!,   // binding 4: sampler2D AutoExposureTex
+                RequirePostProcessTexture(HDRSceneTextureName),       // binding 0: sampler2DArray HDRSceneTex
+                RequirePostProcessTexture(BloomBlurTextureName),      // binding 1: sampler2DArray BloomBlurTexture
+                RequirePostProcessTexture(DepthViewTextureName),      // binding 2: sampler2DArray DepthView
+                RequirePostProcessTexture(StencilViewTextureName),    // binding 3: usampler2DArray StencilView
+                RequirePostProcessTexture(AutoExposureTextureName),   // binding 4: sampler2D AutoExposureTex
             ]
             :
             [
-                GetTexture<XRTexture>(HDRSceneTextureName)!,       // binding 0: sampler2D HDRSceneTex
-                GetTexture<XRTexture>(BloomBlurTextureName)!,      // binding 1: sampler2D BloomBlurTexture
-                GetTexture<XRTexture>(DepthViewTextureName)!,      // binding 2: sampler2D DepthView
-                GetTexture<XRTexture>(StencilViewTextureName)!,    // binding 3: usampler2D StencilView
-                GetTexture<XRTexture>(AutoExposureTextureName)!,   // binding 4: sampler2D AutoExposureTex
-                GetTexture<XRTexture>(AtmosphereColorTextureName)!, // binding 5: sampler2D AtmosphereColor
-                GetTexture<XRTexture>(VolumetricFogColorTextureName)!, // binding 6: sampler2D VolumetricFogColor
+                RequirePostProcessTexture(HDRSceneTextureName),       // binding 0: sampler2D HDRSceneTex
+                RequirePostProcessTexture(BloomBlurTextureName),      // binding 1: sampler2D BloomBlurTexture
+                RequirePostProcessTexture(DepthViewTextureName),      // binding 2: sampler2D DepthView
+                RequirePostProcessTexture(StencilViewTextureName),    // binding 3: usampler2D StencilView
+                RequirePostProcessTexture(AutoExposureTextureName),   // binding 4: sampler2D AutoExposureTex
+                RequirePostProcessTexture(AtmosphereColorTextureName), // binding 5: sampler2D AtmosphereColor
+                RequirePostProcessTexture(VolumetricFogColorTextureName), // binding 6: sampler2D VolumetricFogColor
             ];
         XRShader postProcessShader = XRShader.EngineShader(Path.Combine(SceneShaderPath, PostProcessShaderName()), EShaderType.Fragment);
         XRMaterial postProcessMat = new(postProcessRefs, postProcessShader)
@@ -88,9 +88,13 @@ public partial class AdvancedRenderPipeline
             }
         };
         var PostProcessFBO = new XRQuadFrameBuffer(postProcessMat, deriveRenderTargetsFromMaterial: false);
-        PostProcessFBO.SettingUniforms += ApplyPostProcessProgramBindings;
+        PostProcessFBO.SettingUniforms += program => ApplyPostProcessProgramBindings(postProcessMat, program);
         return PostProcessFBO;
     }
+
+    private XRTexture RequirePostProcessTexture(string resourceName)
+        => GetTexture<XRTexture>(resourceName)
+            ?? throw new InvalidOperationException($"Post-process sampler resource '{resourceName}' was not realized.");
 
     private XRFrameBuffer CreatePostProcessOutputFBO()
     {

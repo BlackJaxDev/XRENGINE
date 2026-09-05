@@ -10,6 +10,7 @@ layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 XR_ADV_SHADING_LAYOUT(0) uniform usampler2DArray VisibilityIdentity;
 XR_ADV_SHADING_LAYOUT(1) uniform usampler2DArray VisibilityMetadata;
 XR_ADV_SHADING_LAYOUT(2) uniform sampler2DArray VisibilityDepth;
+XR_ADV_SHADING_LAYOUT(50) uniform sampler2DArray AmbientOcclusion;
 XR_ADV_SHADING_IMAGE(rgba16f, 15) writeonly uniform image2DArray HDRSceneColor;
 XR_ADV_SHADING_IMAGE(rg16f, 16) writeonly uniform image2DArray Velocity;
 XR_ADV_SHADING_IMAGE(r8, 17) writeonly uniform image2DArray ReactiveMask;
@@ -19,6 +20,7 @@ XR_ADV_SHADING_IMAGE(r32ui, 18) writeonly uniform uimage2DArray ShadingDiagnosti
 XR_ADV_SHADING_LAYOUT(0) uniform usampler2D VisibilityIdentity;
 XR_ADV_SHADING_LAYOUT(1) uniform usampler2D VisibilityMetadata;
 XR_ADV_SHADING_LAYOUT(2) uniform sampler2D VisibilityDepth;
+XR_ADV_SHADING_LAYOUT(50) uniform sampler2D AmbientOcclusion;
 XR_ADV_SHADING_IMAGE(rgba16f, 15) writeonly uniform image2D HDRSceneColor;
 XR_ADV_SHADING_IMAGE(rg16f, 16) writeonly uniform image2D Velocity;
 XR_ADV_SHADING_IMAGE(r8, 17) writeonly uniform image2D ReactiveMask;
@@ -98,6 +100,10 @@ void main()
     bool resolved = XR_ADV_TryResolvePixelMaterial(identity, metadata, materialDense, kernelDense);
     if (!repair && resolved && kernelDense != u_Push.kernelIndex) return;
     float depth = texelFetch(VisibilityDepth, XR_ADV_PIXEL(pixel, viewIndex), 0).r;
+    // GTAO is emitted as a first-class capture resource. This direct-only
+    // shader has no ambient/IBL term to attenuate, so do not darken direct
+    // lights or emission merely to make the AO target visibly affect output.
+    float ambientOcclusion = texelFetch(AmbientOcclusion, XR_ADV_PIXEL(pixel, viewIndex), 0).r;
     XRAdvancedSurface surface;
     bool valid = resolved && XR_ADV_TryReconstructSurface(identity, metadata, depth, vec2(pixel) + 0.5, surface);
     if (!valid || surface.viewIndex != viewIndex || (repair && (u_Push.flags & XR_ADV_SHADING_REQUIRED) != 0u))
@@ -199,6 +205,7 @@ void main()
         color = shadowReason == 0u ? vec3(0.0, 0.5, 0.0) :
             shadowReason == XR_ADV_SHADOW_STALE_TILE ? vec3(1.0, 0.5, 0.0) :
             shadowReason == XR_ADV_SHADOW_OUTSIDE ? vec3(0.0, 0.0, 0.5) : vec3(1.0, 0.0, float(shadowReason) / 6.0);
+    else if (debugView == 10u) color = vec3(ambientOcclusion);
     imageStore(ShadingDiagnostics, XR_ADV_PIXEL(pixel, viewIndex),
         uvec4(shadowReason | (uint(round(clamp(shadowVisibility, 0.0, 1.0) * 255.0)) << 8u)));
     imageStore(HDRSceneColor, XR_ADV_PIXEL(pixel, viewIndex), vec4(max(color, vec3(0.0)), base.a));

@@ -36,6 +36,25 @@ public interface IRuntimeRenderCommandExecutionState
     bool StereoPass { get; }
 
     /// <summary>
+    /// Gets whether command execution is producing a shadow pass.
+    /// </summary>
+    bool ShadowPass => false;
+
+    /// <summary>
+    /// Gets the output-local sequence captured for desktop temporal history.
+    /// Zero means this invocation has no desktop history ownership.
+    /// </summary>
+    ulong ViewHistorySequenceId => 0UL;
+
+    /// <summary>
+    /// Gets the pipeline and resource-generation identity captured with desktop view history.
+    /// </summary>
+    ulong ViewHistoryPipelineIdentity => 0UL;
+
+    /// <summary>True when this capture belongs to command-chain authoring rather than visibility collection.</summary>
+    bool ViewHistoryAuthoring => false;
+
+    /// <summary>
     /// Gets the immutable logical views captured before visibility generation for this render invocation.
     /// </summary>
     RenderFrameViewSet? FrameViewSet => null;

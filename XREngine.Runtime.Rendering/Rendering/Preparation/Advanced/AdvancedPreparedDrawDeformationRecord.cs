@@ -18,4 +18,8 @@ public readonly record struct AdvancedPreparedDrawDeformationRecord(
 {
     public bool Active => (Flags & EAdvancedPreparedDrawDeformationFlags.Active) != 0;
     public bool PreviousValid => (Flags & EAdvancedPreparedDrawDeformationFlags.PreviousValid) != 0;
+    public bool TemporalStatePresent
+        => (Flags & EAdvancedPreparedDrawDeformationFlags.TemporalStatePresent) != 0;
+    public EAdvancedVelocityValidityReason TemporalReason
+        => AdvancedReconstructionTemporalFlags.DecodeVelocityReason((uint)Flags);
 }

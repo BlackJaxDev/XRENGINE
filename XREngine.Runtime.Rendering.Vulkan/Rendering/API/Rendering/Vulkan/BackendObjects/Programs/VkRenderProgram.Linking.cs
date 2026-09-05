@@ -29,6 +29,10 @@ internal unsafe partial class VkRenderProgram
             return true;
 
         allowAsyncShaderCompile &= !VulkanProgramLinkPreparationScope.RequiresSynchronousLink(BackendContext.Resources);
+        // Shader invalidation holds this gate while notifying program owners.
+        // Taking the interface lock first would deadlock against that callback.
+        using VulkanPipelineCompilationMutationLease mutationLease =
+            ProgramCreationPort.AcquirePipelineCompilationMutationLease("program link");
         lock (_linkLock)
             return LinkAfterAcquiringInterfaceLock(allowAsyncShaderCompile);
     }

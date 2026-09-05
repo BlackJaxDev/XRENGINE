@@ -93,7 +93,7 @@ namespace XREngine.Rendering
     /// Projection jitter is supported via a stack so multiple systems can apply temporary jitter
     /// (e.g. temporal AA, temporal upscalers) without stomping one another.
     /// </summary>
-    public class XRCamera : XRBase, IRuntimeRenderCamera, IRuntimeCullingCamera
+    public partial class XRCamera : XRBase, IRuntimeRenderCamera, IRuntimeCullingCamera
     {
         #region Fields
 

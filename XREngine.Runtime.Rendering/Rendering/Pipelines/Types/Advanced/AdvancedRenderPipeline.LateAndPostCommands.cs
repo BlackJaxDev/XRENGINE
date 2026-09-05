@@ -335,13 +335,24 @@ public partial class AdvancedRenderPipeline
     private static VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor CreateAdvancedSceneCopyResources()
         => new VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor().SampleTexture(HDRSceneTextureName);
 
-    private static VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor CreateAdvancedPostProcessResources()
-        => new VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor()
+    private VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor CreateAdvancedPostProcessResources()
+    {
+        var resources = new VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor()
             .SampleTexture(HDRSceneTextureName)
             .SampleTexture(BloomBlurTextureName)
             .SampleTexture(DepthViewTextureName)
             .SampleTexture(StencilViewTextureName)
             .SampleTexture(AutoExposureTextureName);
+
+        if (!Stereo)
+        {
+            resources
+                .SampleTexture(AtmosphereColorTextureName)
+                .SampleTexture(VolumetricFogColorTextureName);
+        }
+
+        return resources;
+    }
 
     private static VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor CreateAdvancedFinalPostProcessResources()
         => new VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor().SampleTexture(PostProcessOutputTextureName);

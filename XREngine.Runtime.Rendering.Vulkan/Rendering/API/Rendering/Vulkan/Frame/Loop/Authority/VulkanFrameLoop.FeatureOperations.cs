@@ -17,8 +17,8 @@ internal sealed partial class VulkanFrameLoop
         => stage is (EAdvancedRenderStage.VisibilityPreparation or
                EAdvancedRenderStage.VisibilityRaster or
                EAdvancedRenderStage.DepthPyramidAndLateVisibility or
+               EAdvancedRenderStage.AmbientOcclusion or
                EAdvancedRenderStage.WorkClassification or
-               EAdvancedRenderStage.AttributeReconstruction or
                EAdvancedRenderStage.NativeOpaqueShading) &&
            _commandRuntime.IsAdvancedVisibilityProductionPromoted &&
            _deviceContext.IsOperational &&
@@ -31,9 +31,9 @@ internal sealed partial class VulkanFrameLoop
         in AdvancedVisibilityStageBackendRequest request,
         out string failureReason)
     {
-        if (!request.IsValid)
+        if (request.GetInvalidReason() is { } invalidReason)
         {
-            failureReason = "The advanced visibility request is incomplete.";
+            failureReason = invalidReason;
             return false;
         }
         AdvancedVisibilityFamilyReservation reservation = request.Reservation;
@@ -113,9 +113,11 @@ internal sealed partial class VulkanFrameLoop
             request.MetadataTargetName,
             request.SelectionTargetName,
             request.DepthTargetName,
+            request.AmbientOcclusionTargetName,
             request.CurrentDepthPyramidTargetName,
             request.ShadingDebugView,
-            request.RequireNativeOutput);
+            request.RequireNativeOutput,
+            request.EnableBuiltInAmbientOcclusion);
         if (!_frameOperationQueue.TryAcquireAdvancedVisibilityInput(
                 in vulkanRequest,
                 out VulkanAdvancedVisibilityInputLease inputLease,

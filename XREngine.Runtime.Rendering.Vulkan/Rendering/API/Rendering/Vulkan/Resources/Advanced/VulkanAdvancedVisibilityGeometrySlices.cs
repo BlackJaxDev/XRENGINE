@@ -2,8 +2,8 @@ namespace XREngine.Rendering.Vulkan;
 
 internal readonly record struct VulkanAdvancedVisibilityGeometrySlices(
     VulkanFrameDataSlice StaticVertices,
-    VulkanNativeBufferRange CurrentVertices,
-    VulkanNativeBufferRange PreviousVertices,
+    VulkanVisibilityPreparedVertexSource CurrentVertices,
+    VulkanVisibilityPreparedVertexSource PreviousVertices,
     VulkanFrameDataSlice Indices,
     VulkanFrameDataSlice MeshletDescriptors,
     VulkanFrameDataSlice MeshletVertexIndices,
@@ -16,7 +16,7 @@ internal readonly record struct VulkanAdvancedVisibilityGeometrySlices(
            MeshletDescriptors.IsValid && MeshletVertexIndices.IsValid &&
            MeshletTriangleWords.IsValid;
 
-internal bool IsValid => HasValidSources && DeformationOverlay.IsValid;
+    internal bool IsValid => HasValidSources && DeformationOverlay.IsValid;
 
     internal bool MatchesSources(
         in VulkanAdvancedVisibilityGeometrySlices other)

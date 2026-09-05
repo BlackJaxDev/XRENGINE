@@ -1873,8 +1873,9 @@ public partial class AdvancedRenderPipeline
         program.Uniform("BrownConradyTangential", Vector2.Zero);
     }
 
-    private void ApplyPostProcessProgramBindings(XRRenderProgram materialProgram)
+    private void ApplyPostProcessProgramBindings(XRMaterial material, XRRenderProgram materialProgram)
     {
+        BindCurrentPostProcessTextures(material, materialProgram);
         materialProgram.Uniform("OutputHDR", ResolveOutputHDR());
 
         var prefs = RuntimeEngine.EditorPreferences;
@@ -1892,6 +1893,45 @@ public partial class AdvancedRenderPipeline
 
         var state = RenderingPipelineState?.SceneCamera?.GetActivePostProcessState();
         ApplyPostProcessUniforms(state, materialProgram, applyLensDistortion: false);
+    }
+
+    /// <summary>
+    /// Publishes the current generation's post-process sampler slots before Vulkan
+    /// captures the draw. Native visibility can replace the HDR and view resources
+    /// after the quad material was constructed, so stale material references would
+    /// otherwise produce fallback descriptors.
+    /// </summary>
+    private void BindCurrentPostProcessTextures(XRMaterial material, XRRenderProgram materialProgram)
+    {
+        int expectedTextureCount = Stereo ? 5 : 7;
+        if (material.Textures.Count != expectedTextureCount)
+        {
+            throw new InvalidOperationException(
+                $"Post-process material requires exactly {expectedTextureCount} sampler slots, but has {material.Textures.Count}.");
+        }
+
+        BindCurrentPostProcessTexture(material, materialProgram, HDRSceneTextureName, 0);
+        BindCurrentPostProcessTexture(material, materialProgram, BloomBlurTextureName, 1);
+        BindCurrentPostProcessTexture(material, materialProgram, DepthViewTextureName, 2);
+        BindCurrentPostProcessTexture(material, materialProgram, StencilViewTextureName, 3);
+        BindCurrentPostProcessTexture(material, materialProgram, AutoExposureTextureName, 4);
+        if (!Stereo)
+        {
+            BindCurrentPostProcessTexture(material, materialProgram, AtmosphereColorTextureName, 5);
+            BindCurrentPostProcessTexture(material, materialProgram, VolumetricFogColorTextureName, 6);
+        }
+    }
+
+    private void BindCurrentPostProcessTexture(
+        XRMaterial material,
+        XRRenderProgram materialProgram,
+        string resourceName,
+        int slot)
+    {
+        XRTexture texture = RequirePostProcessTexture(resourceName);
+        if (!ReferenceEquals(material.Textures[slot], texture))
+            material.Textures[slot] = texture;
+        materialProgram.Sampler(resourceName, texture, slot);
     }
 
     private void ApplyFinalPostProcessProgramBindings(XRRenderProgram materialProgram)

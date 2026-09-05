@@ -4,7 +4,7 @@ namespace XREngine.Rendering.Vulkan;
 
 internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
 {
-    private readonly XRRenderProgram?[] _nativeComputePrograms = new XRRenderProgram?[5];
+    private readonly XRRenderProgram?[] _nativeComputePrograms = new XRRenderProgram?[6];
 
     internal VulkanAdvancedVisibilityPipelineReadiness TryGetNativeComputePipelines(
         out VulkanAdvancedNativeComputePipelines pipelines, out string reason)
@@ -16,16 +16,19 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
         readiness = TryGetNativeComputePipeline(1, "Advanced/Classification/BuildClassificationIndirect.comp",
             out VulkanAdvancedComputePipeline arguments, out reason);
         if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready) return readiness;
-        readiness = TryGetNativeComputePipeline(2, "Advanced/Lighting/BuildFroxels.comp",
+        readiness = TryGetNativeComputePipeline(2, "Advanced/AO/Gtao.comp",
+            out VulkanAdvancedComputePipeline ambientOcclusion, out reason);
+        if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready) return readiness;
+        readiness = TryGetNativeComputePipeline(3, "Advanced/Lighting/BuildFroxels.comp",
             out VulkanAdvancedComputePipeline froxels, out reason);
         if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready) return readiness;
-        readiness = TryGetNativeComputePipeline(3, "Advanced/Shading/ShadeBackground.comp",
+        readiness = TryGetNativeComputePipeline(4, "Advanced/Shading/ShadeBackground.comp",
             out VulkanAdvancedComputePipeline background, out reason);
         if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready) return readiness;
-        readiness = TryGetNativeComputePipeline(4, "Advanced/Shading/ShadeNativeOpaque.comp",
+        readiness = TryGetNativeComputePipeline(5, "Advanced/Shading/ShadeNativeOpaque.comp",
             out VulkanAdvancedComputePipeline shade, out reason);
         if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready) return readiness;
-        pipelines = new(classify, arguments, froxels, background, shade);
+        pipelines = new(classify, arguments, ambientOcclusion, froxels, background, shade);
         return VulkanAdvancedVisibilityPipelineReadiness.Ready;
     }
 

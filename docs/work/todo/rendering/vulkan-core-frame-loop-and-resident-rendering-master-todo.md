@@ -22,6 +22,13 @@ The source trackers remain provenance for implementation notes and historical ev
 
 Checkbox convention: an item is checked only when the source tracker records implementation or live evidence for the entire wording of the master item. Partial implementation is split into checked and unchecked rows rather than being represented by one ambiguous checkbox. Test and fault-injection rows remain unchecked until live/runtime validation is complete and the user explicitly clears test work.
 
+**Current Phase 6/7/7R handoff (2026-09-04):** paused at the user's request,
+with implementation retained in the working tree. These phases are not
+complete. The [wrap-up checkpoint](#phase-67-wrap-up-checkpoint-2026-09-04)
+separates completed repairs, limited runtime evidence, and known remaining
+implementation defects. Earlier review-baseline descriptions are historical;
+use that checkpoint and the current row annotations when resuming.
+
 ### Consolidation Coverage Ledger
 
 | Source tracker | Master ownership | Retained unique contracts |
@@ -995,39 +1002,79 @@ errors, VUIDs, or targeted exception records. Details are in the
 
 ---
 
+### Phase 6/7 Wrap-up Checkpoint (2026-09-04)
+
+Resumed from pulled commit `f1318da77c07db362ffdbc71298b6f8082b4cb1a`.
+The [implementation investigation](../../investigations/rendering/vulkan-phase67-implementation.md)
+contains the commands, source findings, and evidence locations. Final isolated
+Debug editor build: **zero warnings/errors**, 41.74 seconds
+(`wrap-up-editor-build.log`). Final shader checks: **26/26 Vulkan 1.3
+mono/array variants passed**, with no compiler diagnostics
+(`reports/shaders/wrap-up-26-variant-manifest.json`). No tests were added, modified, or run in this
+resumed work; new-test clearance has not been given. No Phase 8 promotion or
+Phase 9 deletion is authorized by this checkpoint.
+
+Completed bounded repairs (these do not close the broader acceptance rows):
+
+- [x] Materialize canonical record images and correct the visibility payload's GLSL stride from 92 to 96 bytes; initialize integer visibility sentinels at the first raster scope while preserving late-pass load behavior. RenderDoc observed all three static fixture draws.
+- [x] Feed native HDR through refreshed post-process texture/sampler bindings. Two camera-separated desktop captures showed current geometry and MCP red/green/gray material updates; this establishes the narrow static opaque path, not full material/lighting/post parity.
+- [x] Correct the program-mutation/link lock order, supply immutable storage authority to XR mirror recording, and grow/reset XR frame-data slots without relocating existing slot resources. Monado subsequently reached actual stereo submissions.
+- [x] Represent compact `[render, publish]` and `[left, right, publish]` XR batches without a null command inside the submitted count. The strict SPS two-command path submitted 352 frames; ordinary/parallel/three-command path acceptance remains below.
+- [x] Implement retained child-resource receipts and bounded tracker ownership for ordinary, parallel, and mirror callers in source. The reviewed/buildable implementation retains upload/prepared-input settlement and dependent image-view/framebuffer ownership; pressure, injected failure, recreation, and hardware proof remain open.
+- [x] Add explicit per-draw/view temporal validity, frozen desktop collection history, camera epochs/cut invalidation, and pending-versus-committed OpenXR view history. These are source/compiler-complete changes; the desktop backend-acceptance guarantee and visual motion/reset tests remain open.
+- [x] Add the built-in depth GTAO compute stage, owned full-resolution R8 storage/sampled target, explicit neutral-output toggle, and AO debug sampling. Resolve descriptor collisions with native set-1 bindings 49/50, GLSL/runtime helper-name collisions, finite reconstruction, and reversed-depth component errors. AO output quality and contribution to indirect lighting are not validated or complete.
+
+Current evidence and remaining work:
+
+| Area | Evidence actually obtained | Still required |
+|---|---|---|
+| XR submissions | Monado strict SPS: 352 submitted, eight cold-start no-layer frames, zero EndFrame failures, teardown complete, zero final pending retirements | This cohort contained AO descriptor VUIDs subsequently fixed in source. Repeat a clean cohort; exercise ordinary/parallel/three-command submission, pressure, restart/loss, resolution replacement, allocation/wait bounds, and one hardware runtime. It used the RVC/Default eye path, not Advanced stereo. |
+| Native desktop | Three static meshes, actual visibility/native compute, two camera-dependent views, and live material scalar changes | Original skinned scene and arena reuse, textured/masked/many-kernel cases, classification/froxel pressure, 1440p/4K, point/spot/directional shadow correctness, and broader visual parity. |
+| AO | Shader compiler checks and actual desktop runtime admission after helper renaming; named R8 resource exists; this desktop session logged zero Vulkan error/VUID matches | Named AO texture readback failed. No inspected AO target, on/off comparison, ambient/IBL contribution, or quality acceptance. `AdvancedShading.AmbientOcclusion` is the actual resource name. |
+| Temporal history | Frozen view/draw history and shader validity gates compile | Desktop history still commits on successful authoring, before backend queue acceptance. The attempted receipt bridge was removed after review; dense velocity, camera cuts, frame gaps, and reset scenarios still need GPU captures. |
+| Remaining Phase 7 integration | Classification/froxel/native-shading and late/post command plumbing exists | GI/IBL/probes and decals are incomplete; late/OIT/refraction/fog/temporal/post feature behavior needs implementation audit and runtime acceptance. Advanced stereo remains rejected; offscreen/picking/editor profiles and production budgets remain open. |
+
+Resume in this order; finish each bounded slice before adding another feature:
+
+1. **Desktop temporal receipts (7R.8):** capture candidate output tokens before fallible readiness/recording, discard every rejected candidate, and commit only tokens attested by the accepted submission. Include a separate token for synthetic `RequiresFreshEmptyTerminalWrite` output; scanning only mesh entries or static operation contexts misses that output. Preserve multiple viewports and pending next-frame collection without per-frame allocations.
+2. **XR replacement failure (7R.4):** distinguish pre-detach deferral from failure after `CleanupSwapchains`. A failed/empty replacement currently can leave `SessionRunning` without swapchains and prevent further recreation. Route post-detach failure through safe teardown/recreation, retain requested dimensions, and verify pacing recovery. Gate runtime/service dimension refresh on an explicit runtime quirk; `RuntimeRecommended` alone must not force every hardware runtime through full restart.
+3. **AO and temporal runtime closure (7R.7–7R.8):** obtain and inspect the real AO/velocity/reactive resources; prove AO enabled/neutral output and motion/reset behavior. AO currently affects only its diagnostic view because native shading has no contributing ambient/IBL term; do not attenuate direct light to disguise that missing integration.
+4. **XR acceptance (7R.2–7R.4/7R.10):** clean validation cohorts and the submission/lifetime matrix above. The busy-frame resolution retry already exists in `UpdateRuntimeState`; do not reimplement it.
+5. **Remaining features/profiles (7R.6–7R.10):** complete GI/IBL/decals and audit/test the existing classification, lighting, late/post, stereo/offscreen/editor paths against their original rows. Leave performance, hardware, production, and deletion gates open until their evidence exists.
+
 ### Phase 6 - OpenXR Asynchronous Decoupling & Lifecycle Hardening
 
 **Goal:** Decouple OpenXR submission and swapchain retirement from render-thread fences, eliminating the historical 70–100 ms eye-submit wait while preserving application and runtime safety.
 
-**Review status (2026-09-04): Reopened.** The implementation in `19027f631` introduced useful infrastructure, but full caller ownership, enforced limits, and session-safe retirement are not complete. The reopened rows below are executed through Phase 7R. Existing source or contract documentation is not proof of Monado/hardware acceptance or elimination of the historical wait.
+**Current status (2026-09-04): Partially implemented; acceptance open.** The initial `19027f631` gaps now have caller ownership, bounded admission, and child-retirement repairs in source. Monado has one successful but validation-contaminated strict SPS cohort. Replacement failure recovery and runtime-specific dimension refresh still require fixes. Execute the remaining rows through Phase 7R; do not infer clean Monado/hardware acceptance or elimination of the historical wait.
 
 #### 6.1 Current OpenXR Lifetime Contract Map
 - [x] Identify every resource whose safety currently depends on the synchronous post-submit wait: eye command buffers/pools, frame-data and descriptor arenas, staging ranges, image views/framebuffers, resident/native pins, transient graph resources, and acquire/release state. (Completed: see `docs/work/investigations/rendering/vulkan-openxr-asynchronous-decoupling-phase6.md`).
-- [ ] Record eye submit/completion wait, forced waits, in-flight count/age, image reuse age, missed deadlines, and the last producer/completion authority. (Partial: telemetry fields exist, but real frame/display/submit provenance and deadline/completion coverage require Phase 7R.3.)
+- [ ] Record eye submit/completion wait, forced waits, in-flight count/age, image reuse age, missed deadlines, and the last producer/completion authority. (Partial: exact frame/display/receipt propagation is implemented; verify complete telemetry and deadline/completion coverage through Phase 7R.3.)
 - [ ] Verify Monado and at least one hardware runtime; explicitly determine release-before-application-completion legality, timeline-semaphore observability, fence-ring requirements, and the bounded fallback when a runtime requires completion before release. (Reopened: the investigation records specification rationale, not the required runtime acceptance evidence; see Phase 7R.10.)
 - [x] Do not assume an application timeline semaphore/fence is visible to the OpenXR runtime unless the active graphics binding and runtime contract explicitly establish that visibility. (Completed: timeline semaphore tracks internal engine resource readiness; runtime composition relies on queue submit ordering).
 
 #### 6.2 `OpenXrVulkanSubmissionTracker`
-- [ ] Implement bounded tracker keyed by engine frame ID, display time, swapchain image, command pools, arenas, descriptors, staging, and completion primitives. (Partial: submission records exist; complete ownership payloads and enforced bounds require Phases 7R.2–7R.3.)
+- [ ] Implement bounded tracker keyed by engine frame ID, display time, swapchain image, command pools, arenas, descriptors, staging, and completion primitives. (Source ownership/admission implemented; all-path pressure and completion acceptance remains in Phases 7R.2–7R.3.)
 - [x] Submit eye work and return immediately without waiting for GPU completion. (Completed: `SubmitAndWaitOpenXr` returns `SubmittedIncomplete` with async decoupling).
-- [ ] Register ownership payload atomically upon submission. (Reopened: parallel-eye and mirror callers bypass registration; preserve the exact accepted receipt and all ownership through Phase 7R.2.)
-- [ ] Poll completion non-blockingly at the start of subsequent frames before recycling pools or arenas. (Partial: ordinary-eye polling exists; all submission paths and retained resources must participate before this row closes.)
-- [ ] Keep the in-flight bound explicit; use only a short counted recovery wait after every safe reuse/defer path is exhausted, and count late/missed/reprojected frames. (Reopened: timeout does not enforce the bound and callers ignore the result; see Phase 7R.3.)
+- [ ] Register ownership payload atomically upon submission. (Ordinary, parallel, and mirror preregistration/accepted-receipt paths are repaired; exception, rejection, and accepted-incomplete runtime coverage remains in Phase 7R.2.)
+- [ ] Poll completion non-blockingly at the start of subsequent frames before recycling pools or arenas. (Shared completion ownership is implemented; verify every path and resource under delayed completion.)
+- [ ] Keep the in-flight bound explicit; use only a short counted recovery wait after every safe reuse/defer path is exhausted, and count late/missed/reprojected frames. (Callers now honor bounded admission; verify pressure, wait cost, and timing telemetry through Phase 7R.3.)
 
 #### 6.3 Non-Blocking XR Frame-Loop Integration
 - [x] Preserve `xrWaitFrame` as the XR pacing gate; keep `xrBeginFrame`, acquire, render, release, and `xrEndFrame` ordered correctly. (Completed: ordering strictly maintained in `OpenXRAPI.FrameLifecycle.cs` and `VulkanFrameLoop.OpenXR.EyeRendering.cs`).
 - [x] Build view-independent visibility, materials, and plans once per XR frame; publish compact per-eye / multiview records. (Completed: preserved in frame collection pipeline).
 - [x] Use multiview/single-pass stereo only when supported and semantically correct. (Completed: verified SPS validation flags and viewport foveation contexts).
 - [x] Keep desktop swapchain acquisition non-blocking while OpenXR owns the frame deadline. (Completed: `acquireTimeoutNanoseconds` set to 0 when `xrOwnsFrameDeadline` is true in `VulkanRenderer.FrameLoop.Acquire.cs`).
-- [ ] Route forced waits into bounded retirement release authorities with explicit telemetry counters. (Reopened: recovery results must control admission and carry truthful wait telemetry; see Phase 7R.3.)
+- [ ] Route forced waits into bounded retirement release authorities with explicit telemetry counters. (Bounded recovery/admission is implemented; measured wait and telemetry acceptance remains in Phase 7R.3.)
 
 #### 6.4 OpenXR Swapchain Recreation & Deferred Destruction
-- [x] Detect recommended dimension changes through runtime event/query policies. (Completed: handled in `OpenXRAPI.Resolution.cs`).
-- [ ] Tombstone old swapchains and dependent Vulkan views with the highest application completion value. (Partial: generation records exist, but their parent session and dependent native resources are not retained coherently; see Phase 7R.4.)
-- [ ] Track both application GPU completion and OpenXR runtime release before destruction. (Reopened: timeline polling alone does not establish release-state and parent-session safety; see Phase 7R.4.)
-- [ ] Create replacement swapchain without device-wide idle when overlapping swapchains are supported. (Reopened: eye-resolution recreation still enters DeviceWaitIdle and full session teardown; see Phase 7R.4.)
-- [ ] Bound retired generations and publish a visible fallback when the bound is reached; do not infer a resize solely from session-state events. (Reopened: a timed-out recovery still appends another generation; see Phases 7R.3–7R.4.)
-- [ ] On `XR_SESSION_STATE_STOPPING` / `LOSS_PENDING`, drain outstanding work safely before destroying devices. (Reopened: drain failures are discarded and teardown proceeds; see Phase 7R.4.)
+- [ ] Detect recommended dimension changes through runtime event/query policies. (Reopened at wrap-up: settings/query handling exists, but the full runtime/service refresh is overbroad for hardware runtimes; add an explicit runtime quirk policy.)
+- [ ] Tombstone old swapchains and dependent Vulkan views with the highest application completion value. (Child image-view/framebuffer receipts and parent retention implemented; delayed-completion/recreation validation remains in Phase 7R.4.)
+- [ ] Track both application GPU completion and OpenXR runtime release before destruction. (Both authorities are represented; verify acquired-image failures, deferred child destruction, and parent teardown in Phase 7R.4.)
+- [ ] Create replacement swapchain without device-wide idle when overlapping swapchains are supported. (In-session path exists; fix post-detach creation failure and runtime-specific dimension refresh before closing Phase 7R.4.)
+- [ ] Bound retired generations and publish a visible fallback when the bound is reached; do not infer a resize solely from session-state events. (Capacity-before-detach and bounded recovery implemented; pressure/retry validation remains in Phases 7R.3–7R.4.)
+- [ ] On `XR_SESSION_STATE_STOPPING` / `LOSS_PENDING`, drain outstanding work safely before destroying devices. (Failures now retain pending teardown ownership; restart/loss/device-loss validation remains in Phase 7R.4.)
 
 ---
 
@@ -1035,7 +1082,7 @@ errors, VUIDs, or targeted exception records. Details are in the
 
 **Goal:** Transition from the classic G-Buffer / Forward+ hybrid to the backend-neutral Advanced Render Pipeline: OpenGL and Vulkan share logical visibility, material, view, resource-generation, and output contracts; Vulkan alone owns its hardening and native encoding. Deliver GPU material work classification, native opaque shading, clustered lighting, visibility-driven transparency/post, and multi-view integration.
 
-**Review status (2026-09-04): Reopened.** The files cited below identify partial implementation and intended contracts. They do not establish completion of the full checkbox wording. The active stage command still skips classification, shading, transparency, and post work and clears the output; both new shading shaders fail compilation. Phase 7R owns concrete repair and runtime validation before these rows may be checked again.
+**Review status (2026-09-04): Reopened; checkpoint updated 2026-09-04.** The original review correctly identified missing runtime proof and shader failures. Current source invokes classification/native visibility and late/post helpers; typed publication, corrected payload stride, material/color output, and 20 temporal shader variants have focused evidence. Readiness remains fail-closed: the latest Monado run still submits zero frames and strict SPS mirror submission fails before GPU dispatch. AO execution has only just started. All Phase 6/7 runtime/profile acceptance rows remain open.
 
 #### 7.1 Classify Visible Material Work on the GPU (ARP 06)
 - [ ] Select tile dimensions from measured occupancy; define mono and per-eye addressing (`AdvancedClassificationTileDimensions.cs`).
@@ -1091,7 +1138,7 @@ errors, VUIDs, or targeted exception records. Details are in the
 
 ### Phase 7R - Phase 6/7 Correctness Remediation & Runtime Completion
 
-**Status:** In progress. The user authorized full implementation of Phases 6, 7, and 7R on 2026-09-04. Track implementation and runtime evidence in [the implementation investigation](../../investigations/rendering/vulkan-phase67-implementation.md); leave acceptance rows open until their evidence exists. Phase 9.1 still governs new test work.
+**Status:** Paused at user-requested wrap-up on 2026-09-04; incomplete. Implementation remains in the working tree. Resume from the checkpoint above and [the implementation investigation](../../investigations/rendering/vulkan-phase67-implementation.md); leave acceptance rows open until their evidence exists. Phase 9.1 still governs new test work.
 
 **Goal:** Close the correctness and missing-integration findings from the phase 6/7 review before any Phase 8 promotion. Preserve the canonical resident architecture and complete the actual rendering paths; declarations, resource names, flags, and passing contract-only tests are not acceptance evidence.
 
@@ -1138,13 +1185,14 @@ Source entry points: `VulkanXrGraphicsBinding.cs`, `RetiredOpenXrSwapchainGenera
 - [ ] Propagate drain timeout/query/wait failures to a defined teardown decision. Report successful drain only when outstanding ownership is settled; make device-loss abandonment explicit instead of breaking the loop and returning success with entries retained.
 - [ ] Drain or explicitly settle all generations before `DestroySession`/`DestroyInstance`; prevent invalid-handle destruction during restart and clean up tracker callbacks, prepared leases, and unmanaged image arrays exactly once.
 - [ ] Remove the `DeviceWaitIdle` reached by eye-resolution recreation only after the replacement/session lifetime model is safe. Use overlapping in-session generations where supported and a visible bounded policy where unsupported; preserve runtime dimension-query policy and session-stop/loss handling.
+- [ ] Recover explicitly from replacement failure after old swapchains are detached. Do not leave `SessionRunning` with no swapchains; preserve requested dimensions, retire partial children through safe teardown, and resume creation/pacing. Restrict service/instance dimension refresh to a proven runtime quirk.
 
 #### 7R.5 Compilable Shaders and Canonical CPU/GPU Layouts
 
 Source entry points: `Build/CommonAssets/Shaders/Advanced/{Shading,Classification,Lighting,Reconstruction,Access}/`, `AdvancedShaderAccessLibrary.cs`, `AdvancedShaderRecordLayout.cs`, `AdvancedMaterialRecord.cs`, and `AdvancedLightRecord.cs`.
 
-- [ ] Fix invalid `layout(formatName = rgba16f/rg16f, ...)` declarations in both shading shaders. Call the real five-argument `XR_ADV_TryReconstructSurface(identity, metadata, depth, pixelCenter, out surface)` interface with the appropriate visibility/depth inputs.
-- [ ] Compile the changed shader families with the engine-generated preamble, actual include resolution, canonical sets/bindings, target environment, and admitted backend/view permutations. Retain a known-working reconstruction shader as a control; a managed C# build alone cannot close this item.
+- [x] Fix invalid `layout(formatName = rgba16f/rg16f, ...)` declarations in both shading shaders. Call the real five-argument `XR_ADV_TryReconstructSurface(identity, metadata, depth, pixelCenter, out surface)` interface with the appropriate visibility/depth inputs. (Closed 2026-09-04: `reports/shaders/validation-manifest.txt`; source layout and reconstruction call verified.)
+- [x] Compile the changed shader families with the engine-generated preamble, actual include resolution, canonical sets/bindings, target environment, and admitted backend/view permutations. Retain a known-working reconstruction shader as a control; a managed C# build alone cannot close this item. (Updated at wrap-up: 26/26 Vulkan 1.3 mono/array variants, zero compiler diagnostics, including GTAO, early/late depth preparation, and vertex/mesh visibility. Actual desktop runtime admission also passed after the GTAO helper-prefix fix; array compilation does not establish Advanced stereo support.)
 - [ ] Eliminate unproduced alternate material/light layouts. Use the canonical 64-byte material and 128-byte light records/accessors, or an explicitly owned, versioned conversion with proven byte offsets and producer/consumer symmetry.
 - [ ] Verify descriptor/image formats, storage access, binding collisions, matrix convention, record strides, layout versions, and generation-safe lookup at the actual backend binding boundary. Preserve the set 0/1/2/3 ABI and backend-neutral logical contracts.
 
@@ -1180,6 +1228,7 @@ Source entry points: `VPRC_AdvancedRenderStage.cs`, `VulkanFrameLoop.FeatureOper
 - [ ] Snapshot scene color only for visible consumers that require it, avoid illegal attachment feedback, and enforce OIT capacities/recovery without same-frame readback.
 - [ ] Reconnect temporal accumulation, motion blur, DoF, bloom, tone mapping, grading, TSR/vendor upscalers, and final composition. Merge participating transparent motion and reactive masks with opaque output.
 - [ ] Execute history invalidation for resize, render scale, camera cut, pipeline/view-count changes, HDR/format changes, shader reload, and resource-generation replacement. Validate rendered features and diagnostics, not just schema/property availability.
+- [ ] Commit desktop temporal history from the exact accepted backend submission, including multiple outputs and synthetic empty terminal writes; settle candidates on every pre-record/readiness/rejection path. The unvalidated receipt bridge was removed at wrap-up; current code still commits on authoring success.
 
 #### 7R.9 Stereo, Offscreen, and Editor Runtime Integration
 

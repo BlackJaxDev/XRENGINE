@@ -65,6 +65,7 @@ internal sealed partial class CommandBufferRecordingScratch
                 new(VulkanMeshFrameDataRendererFamilyKeyComparer.Instance);
             public VulkanMeshFrameDataReservationManifest MeshFrameDataManifest { get; } = new();
             public Dictionary<XRFrameBuffer, ImageLayout[]> FboLayoutTracking { get; } = new(ReferenceEqualityComparer.Instance);
+            public HashSet<VulkanBegunFboPassKey> BegunFboPasses { get; } = [];
             public Dictionary<XRFrameBuffer, FboAttachmentLayoutScratch> FboAttachmentLayouts { get; } =
                 new(ReferenceEqualityComparer.Instance);
             public CommandChainKey[] ScheduledCommandChainKeysByOpIndex { get; set; } = [];
@@ -78,6 +79,7 @@ internal sealed partial class CommandBufferRecordingScratch
             public int RecordPipelineNameCapacityHint { get; set; } = 1;
             public int RecordMeshDrawSlotCapacityHint { get; set; } = 1;
             public int RecordFboLayoutCapacityHint { get; set; } = 1;
+            public int RecordBegunFboPassCapacityHint { get; set; } = 1;
             public VulkanPreparedComputePayload? PreparedComputePayload { get; set; }
             private CommandBuffer[] _indirectSecondaryBuffers = [];
             private CommandChain[] _indirectSecondaryChains = [];

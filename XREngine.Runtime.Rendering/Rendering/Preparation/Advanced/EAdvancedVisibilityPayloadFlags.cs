@@ -10,4 +10,5 @@ public enum EAdvancedVisibilityPayloadFlags : uint
     Skinned = 1u << 0,
     MeshletsResident = 1u << 1,
     ForceCpuDiagnostic = 1u << 2,
+    TemporalReasonMask = AdvancedReconstructionTemporalFlags.VelocityReasonMask,
 }

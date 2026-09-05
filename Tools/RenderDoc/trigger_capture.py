@@ -26,19 +26,61 @@ def import_renderdoc(renderdoc_python_path: Optional[str]):
     return rd
 
 
-def wait_for_new_capture(rd, target, timeout_sec: float) -> int:
+def observe_pretrigger_captures(rd, target, timeout_sec: float) -> set[int]:
+    """Collect capture announcements that arrive before the trigger timestamp is recorded."""
+    announced_capture_ids: set[int] = set()
     deadline = time.monotonic() + timeout_sec
 
     while time.monotonic() < deadline:
         msg = target.ReceiveMessage(None)
-        if msg is None:
+        if msg is None or msg.type == rd.TargetControlMessageType.Noop:
             time.sleep(0.05)
             continue
 
         if msg.type == rd.TargetControlMessageType.NewCapture:
             capture = msg.newCapture
-            print(f"capture ready: id={capture.captureId} frame={capture.frameNumber} path={capture.path!r}")
-            return int(capture.captureId)
+            announced_capture_ids.add(int(capture.captureId))
+            print(
+                "discarded pre-trigger capture: "
+                f"id={capture.captureId} frame={capture.frameNumber} path={capture.path!r}"
+            )
+        elif msg.type == rd.TargetControlMessageType.Disconnected:
+            raise SystemExit("RenderDoc target disconnected before capture trigger.")
+
+    return announced_capture_ids
+
+
+def wait_for_new_capture(
+    rd,
+    target,
+    pretrigger_capture_ids: set[int],
+    trigger_timestamp_utc: int,
+    timeout_sec: float,
+) -> int:
+    deadline = time.monotonic() + timeout_sec
+
+    while time.monotonic() < deadline:
+        msg = target.ReceiveMessage(None)
+        if msg is None or msg.type == rd.TargetControlMessageType.Noop:
+            time.sleep(0.05)
+            continue
+
+        if msg.type == rd.TargetControlMessageType.NewCapture:
+            capture = msg.newCapture
+            capture_id = int(capture.captureId)
+            capture_timestamp_utc = int(capture.timestamp)
+            if capture_id in pretrigger_capture_ids or capture_timestamp_utc < trigger_timestamp_utc:
+                print(
+                    "discarded stale capture announcement: "
+                    f"id={capture.captureId} frame={capture.frameNumber} "
+                    f"timestamp={capture_timestamp_utc} path={capture.path!r}"
+                )
+                continue
+            print(
+                f"capture ready: id={capture.captureId} frame={capture.frameNumber} "
+                f"timestamp={capture_timestamp_utc} path={capture.path!r}"
+            )
+            return capture_id
 
         if msg.type == rd.TargetControlMessageType.CaptureProgress:
             print(f"capture progress: {msg.capProgress:.2f}")
@@ -57,7 +99,7 @@ def wait_for_copy(rd, target, capture_id: int, timeout_sec: float) -> None:
 
     while time.monotonic() < deadline:
         msg = target.ReceiveMessage(None)
-        if msg is None:
+        if msg is None or msg.type == rd.TargetControlMessageType.Noop:
             time.sleep(0.05)
             continue
 
@@ -88,6 +130,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--capture-timeout", type=float, default=60.0, help="Seconds to wait for capture completion")
     parser.add_argument("--copy-timeout", type=float, default=120.0, help="Seconds to wait for copy completion")
     parser.add_argument(
+        "--pretrigger-observation-timeout",
+        type=float,
+        default=1.0,
+        help="Seconds to observe delayed pre-existing capture announcements before triggering",
+    )
+    parser.add_argument(
         "--renderdoc-python-path",
         default=os.environ.get("RENDERDOC_PYTHON_PATH"),
         help="Directory containing renderdoc.py; defaults to RENDERDOC_PYTHON_PATH",
@@ -108,10 +156,15 @@ def main() -> None:
 
     try:
         print(f"connected: api={target.GetAPI()!r} pid={target.GetPID()} target={target.GetTarget()!r}")
+        pretrigger_capture_ids = observe_pretrigger_captures(
+            rd, target, args.pretrigger_observation_timeout)
+        print(f"pre-trigger capture baseline: {sorted(pretrigger_capture_ids)}")
+        trigger_timestamp_utc = int(time.time())
         target.TriggerCapture(1)
-        print("capture trigger sent")
+        print(f"capture trigger sent: timestamp>={trigger_timestamp_utc}")
 
-        capture_id = wait_for_new_capture(rd, target, args.capture_timeout)
+        capture_id = wait_for_new_capture(
+            rd, target, pretrigger_capture_ids, trigger_timestamp_utc, args.capture_timeout)
         target.CopyCapture(capture_id, str(output))
         print(f"copy requested: {output}")
 

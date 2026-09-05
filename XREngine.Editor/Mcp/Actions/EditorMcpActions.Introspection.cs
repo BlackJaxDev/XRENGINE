@@ -380,6 +380,7 @@ namespace XREngine.Editor.Mcp
                 activeViewportUpdatingCommandCount = activeViewportCommands?.GetUpdatingCommandCount(),
                 activeViewportCommandsAddedCount = activeViewportCommands?.GetCommandsAddedCount(),
                 activeViewportRenderingCommandPasses = BuildRenderCommandPassSummary(activeViewportCommands),
+                advancedPreparation = AdvancedSharedPreparationService.GetCurrentDiagnostics(),
                 canonicalResidentScene = activeGpuScene is null ? null : new
                 {
                     publication = activeGpuScene.AdvancedScenePublication.Publication,
@@ -405,6 +406,14 @@ namespace XREngine.Editor.Mcp
                     frame = activeFramePackage.CanonicalFrame,
                     submission = activeFramePackage.SubmissionResolution,
                     viewCount = activeFramePackage.CanonicalViews.Length,
+                    viewHistory = activeFramePackage.CanonicalViews.ToArray().Select(view => new
+                    {
+                        viewId = view.ViewId,
+                        historyKey = view.HistoryKey,
+                        valid = (view.Flags & EAdvancedViewRecordFlags.TemporalHistoryValid) != 0,
+                        unjitteredViewChanged = view.ViewProjectionUnjittered != view.PreviousViewProjectionUnjittered,
+                        jitter = view.CurrentAndPreviousJitter,
+                    }).ToArray(),
                     residentPassCount = activeFramePackage.CanonicalPasses.Length,
                     dirtyOwnerRangeCount = activeFramePackage.CanonicalDirtyOwnerRanges.Length,
                     diagnosticRequestCount = activeFramePackage.DiagnosticReadbackRequests.Length,

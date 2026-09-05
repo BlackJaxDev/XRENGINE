@@ -13,6 +13,7 @@ public readonly record struct AdvancedMeshRenderSnapshot(
     Matrix4x4 PreviousWorld,
     uint Instances,
     bool WorldMatrixIsModelMatrix,
+    EAdvancedVelocityValidityReason ModelHistoryReason,
     bool ForceCpuRendering,
     XRMaterial? MaterialOverride,
     RenderingParameters? RenderOptionsOverride);

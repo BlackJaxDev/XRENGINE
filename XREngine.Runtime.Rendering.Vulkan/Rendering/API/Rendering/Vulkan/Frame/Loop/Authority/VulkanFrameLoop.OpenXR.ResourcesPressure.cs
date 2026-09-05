@@ -376,6 +376,46 @@ internal sealed partial class VulkanFrameLoop
 
     }
 
+    /// <summary>
+    /// Detaches command-side OpenXR artifacts and queues only children backed by
+    /// the retiring runtime images. Caller holds DeviceQueueAdmissionGate's
+    /// write lock, so no new recording can retain the old generation.
+    /// </summary>
+    internal VulkanOpenXrSwapchainChildRetirementReceipt RetireOpenXrSwapchainChildren(
+        ReadOnlySpan<Image> retiringImages)
+    {
+        DestroyOpenXrEyeRecordWorkers();
+        DestroyOpenXrPrimaryCommandBufferCache();
+        DestroyOpenXrResourcePlannerState();
+        _commandRuntime.MarkCommandBuffersDirty(nameof(RetireOpenXrSwapchainChildren));
+        return OpenXrOutputResourceService.RetireSwapchainChildren(retiringImages);
+    }
+
+    /// <summary>
+    /// Advances every normal lifetime queue independently of desktop output.
+    /// OpenXR teardown can run after desktop submission has stopped.
+    /// </summary>
+    internal void DrainOpenXrRetiredDependencies()
+    {
+        const int retirementBudgetPerType = 32;
+        ResourceRuntime.Descriptors.DrainReleasedMaterialDescriptorClosures();
+        _commandRuntime.DrainRetiredSynchronousSubmissions();
+        int slots = _commandRuntime.ResourceRuntime.Lifetime.Retirement.CommandBuffers.Length;
+        for (int slot = 0; slot < slots; slot++)
+            DrainRetiredCommandBuffers(slot, retirementBudgetPerType);
+        for (int slot = 0; slot < slots; slot++)
+            DrainRetiredCommandPools(slot, retirementBudgetPerType);
+        for (int slot = 0; slot < slots; slot++)
+            DrainRetiredDescriptorSets(slot, retirementBudgetPerType);
+        for (int slot = 0; slot < slots; slot++)
+            DrainRetiredDescriptorPools(slot, retirementBudgetPerType);
+        for (int slot = 0; slot < slots; slot++)
+            DrainRetiredFramebuffers(slot, retirementBudgetPerType);
+        for (int slot = 0; slot < slots; slot++)
+            _commandRuntime.ResourceRuntime.DrainRetiredImages(
+                Api!, _deviceContext.Device, slot, retirementBudgetPerType);
+    }
+
     internal void ResetOpenXrRenderingResourcesForRuntimeRecreate(string reason)
     {
         if (_deviceLost || Api is null || _deviceContext.Device.Handle == 0)
