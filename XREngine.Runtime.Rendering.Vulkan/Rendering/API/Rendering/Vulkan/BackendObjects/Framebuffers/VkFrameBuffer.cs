@@ -777,7 +777,8 @@ internal unsafe class VkFrameBuffer(
         FrameBufferAttachmentSignature[]? signatures,
         in ColorF4 clearColor,
         float clearDepth,
-        uint clearStencil)
+        uint clearStencil,
+        VulkanAdvancedVisibilityClearPolicy? advancedVisibilityClearPolicy = null)
     {
         if (signatures is null || clearValueCount == 0)
             return;
@@ -786,6 +787,42 @@ internal unsafe class VkFrameBuffer(
         for (uint i = 0; i < count; i++)
         {
             var sig = signatures[i];
+            if (advancedVisibilityClearPolicy is { } policy)
+            {
+                if (AttachmentRoleClassifier.IsColorLike(sig.Role))
+                {
+                    uint value = sig.ColorIndex switch
+                    {
+                        0u => AdvancedVisibilityClearContract.IdentityDraw,
+                        1u => AdvancedVisibilityClearContract.Metadata,
+                        2u => AdvancedVisibilityClearContract.Selection,
+                        _ => uint.MaxValue,
+                    };
+                    destination[i] = new ClearValue
+                    {
+                        Color = new ClearColorValue
+                        {
+                            Uint32_0 = value,
+                            Uint32_1 = value,
+                            Uint32_2 = value,
+                            Uint32_3 = value,
+                        }
+                    };
+                }
+                else
+                {
+                    destination[i] = new ClearValue
+                    {
+                        DepthStencil = new ClearDepthStencilValue
+                        {
+                            Depth = AdvancedVisibilityClearContract.Depth(policy.ReversedDepth),
+                            Stencil = AdvancedVisibilityClearContract.Stencil,
+                        }
+                    };
+                }
+                continue;
+            }
+
             if (AttachmentRoleClassifier.IsColorLike(sig.Role))
             {
                 destination[i] = new ClearValue

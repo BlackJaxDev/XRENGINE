@@ -7,7 +7,7 @@ namespace XREngine.Rendering.Vulkan;
 /// Canonical frame-slot-owned mapped transfer/storage arena. Chunk groups grow by appending
 /// equally shaped buffers for every frame slot, so an issued buffer/offset is never relocated.
 /// </summary>
-internal sealed class VulkanFrameDataArena
+internal sealed partial class VulkanFrameDataArena
 {
     private const int LaneCount = (int)EVulkanFrameDataLane.Count;
     private const int MaxFrameSlots = 32;
@@ -21,11 +21,16 @@ internal sealed class VulkanFrameDataArena
     private static long s_nextIdentity;
 
     private readonly VulkanMappedFrameArenaBackend _backend;
+    private readonly object _structureSync = new();
     private readonly ulong _initialChunkCapacity;
     private readonly VulkanFrameDataChunk?[][][] _chunks = new VulkanFrameDataChunk?[LaneCount][][];
     private readonly ulong[][][] _nextOffsets = new ulong[LaneCount][][];
     private readonly int[] _chunkGroupCounts = new int[LaneCount];
     private readonly ulong[] _nextChunkCapacities = new ulong[LaneCount];
+    // Boundary-owned lanes use one selected group for new publications. A
+    // larger group can be appended only while every slot is reset, leaving
+    // slices issued by an older generation in their original buffers.
+    private readonly int[][] _reservedLaneActiveGroups = new int[LaneCount][];
     private readonly ulong[] _frameSlotResetEpochs = new ulong[MaxFrameSlots];
     private readonly BufferUsageFlags[] _usages = new BufferUsageFlags[LaneCount];
     private readonly string[] _labels = new string[LaneCount];
@@ -75,6 +80,8 @@ internal sealed class VulkanFrameDataArena
             _usages[index] = GetUsage(lane);
             _labels[index] = $"FrameDataArena.{lane}";
             _nextChunkCapacities[index] = _initialChunkCapacity;
+            _reservedLaneActiveGroups[index] = new int[MaxFrameSlots];
+            Array.Fill(_reservedLaneActiveGroups[index], -1);
         }
     }
 
@@ -136,7 +143,9 @@ internal sealed class VulkanFrameDataArena
         int laneIndex = (int)lane;
         ulong[][] offsets = _nextOffsets[laneIndex];
         VulkanFrameDataChunk?[][] groups = _chunks[laneIndex];
-        for (int groupIndex = 0; groupIndex < _chunkGroupCounts[laneIndex]; groupIndex++)
+        int firstGroup = _reservedLaneActiveGroups[laneIndex][frameSlot];
+        int lastGroup = firstGroup >= 0 ? firstGroup + 1 : _chunkGroupCounts[laneIndex];
+        for (int groupIndex = firstGroup >= 0 ? firstGroup : 0; groupIndex < lastGroup; groupIndex++)
         {
             VulkanFrameDataChunk?[] group = groups[groupIndex];
             if (group is null)
@@ -178,11 +187,99 @@ internal sealed class VulkanFrameDataArena
         if (_chunkGroupCounts[laneIndex] != 0)
             return false;
 
-        return TryAppendChunkGroup(
-            laneIndex,
-            capacityPerFrameSlot,
-            alignment,
-            out _);
+        if (!TryAppendChunkGroup(
+                laneIndex,
+                capacityPerFrameSlot,
+                alignment,
+                out int groupIndex))
+        {
+            return false;
+        }
+
+        for (int frameSlot = 0; frameSlot < _frameSlotCount; ++frameSlot)
+            _reservedLaneActiveGroups[laneIndex][frameSlot] = groupIndex;
+        return true;
+    }
+
+    /// <summary>
+    /// Appends a larger group for one completed boundary-owned frame slot.
+    /// Existing groups stay mapped until normal arena teardown, so in-flight
+    /// buffer references in other slots are neither relocated nor destroyed.
+    /// </summary>
+    internal bool TryGrowReservedLaneCapacity(
+        EVulkanFrameDataLane lane,
+        int frameSlot,
+        ulong minimumCapacityPerFrameSlot,
+        ulong maximumCapacityPerFrameSlot,
+        uint alignment,
+        out ulong capacityPerFrameSlot)
+    {
+        capacityPerFrameSlot = 0u;
+        int laneIndex = (int)lane;
+        if (!IsActive || !_backend.IsOperational || !IsValidLane(lane) || !IsValidFrameSlot(frameSlot) ||
+            minimumCapacityPerFrameSlot == 0u ||
+            minimumCapacityPerFrameSlot > maximumCapacityPerFrameSlot ||
+            alignment == 0u || Volatile.Read(ref _hostAccess) != 0 ||
+            _chunkGroupCounts[laneIndex] == 0)
+        {
+            return false;
+        }
+
+        int activeGroup = _reservedLaneActiveGroups[laneIndex][frameSlot];
+        if (activeGroup < 0 || activeGroup >= _chunkGroupCounts[laneIndex] ||
+            _chunks[laneIndex][activeGroup][frameSlot] is not { } chunk ||
+            chunk.GetState(Generation) != VulkanFrameDataArenaSlotState.Writable ||
+            _nextOffsets[laneIndex][activeGroup][frameSlot] != 0u)
+        {
+            return false;
+        }
+
+        // Groups have one independent buffer per frame slot. Reuse a larger
+        // group appended for another completed slot when this slot's matching
+        // buffer is still empty; do not reserve another all-slot group.
+        for (int groupIndex = 0; groupIndex < _chunkGroupCounts[laneIndex]; ++groupIndex)
+        {
+            if (groupIndex == activeGroup ||
+                _chunks[laneIndex][groupIndex][frameSlot] is not { } candidate ||
+                candidate.Capacity < minimumCapacityPerFrameSlot ||
+                candidate.Capacity > maximumCapacityPerFrameSlot ||
+                candidate.GetState(Generation) != VulkanFrameDataArenaSlotState.Writable ||
+                _nextOffsets[laneIndex][groupIndex][frameSlot] != 0u)
+            {
+                continue;
+            }
+
+            _reservedLaneActiveGroups[laneIndex][frameSlot] = groupIndex;
+            capacityPerFrameSlot = candidate.Capacity;
+            return true;
+        }
+
+        ulong requiredCapacity = AlignUp(minimumCapacityPerFrameSlot, alignment);
+        ulong nextCapacity = _initialChunkCapacity;
+        while (nextCapacity < requiredCapacity)
+        {
+            if (nextCapacity > ulong.MaxValue / 2UL)
+                return false;
+            nextCapacity *= 2UL;
+        }
+        if (nextCapacity > maximumCapacityPerFrameSlot)
+            return false;
+
+        // This is a per-slot replacement, so do not let a prior slot's
+        // exponential growth force a needlessly larger group for this one.
+        _nextChunkCapacities[laneIndex] = nextCapacity;
+        if (!TryAppendChunkGroup(
+                laneIndex,
+                minimumCapacityPerFrameSlot,
+                alignment,
+                out int appendedGroupIndex))
+        {
+            return false;
+        }
+
+        _reservedLaneActiveGroups[laneIndex][frameSlot] = appendedGroupIndex;
+        capacityPerFrameSlot = _chunks[laneIndex][appendedGroupIndex][frameSlot]!.Capacity;
+        return true;
     }
 
     internal bool TryAllocateWrite(int frameSlot, EVulkanFrameDataLane lane, ReadOnlySpan<byte> source, uint alignment, out VulkanFrameDataSlice slice)
@@ -218,8 +315,9 @@ internal sealed class VulkanFrameDataArena
 
     /// <summary>
     /// Captures the monotonic cursor of a boundary-reserved lane so a rejected
-    /// publication can discard only its transient tail. Boundary lanes own one
-    /// fixed chunk group and never grow in the frame hot path.
+    /// publication can discard only its transient tail. Each slot selects one
+    /// stable chunk group; a larger group may be selected only at an empty,
+    /// completed publication boundary, before this cursor is captured.
     /// </summary>
     internal bool TryCaptureReservedLaneCursor(
         int frameSlot,
@@ -230,14 +328,15 @@ internal sealed class VulkanFrameDataArena
         int laneIndex = (int)lane;
         if (!IsActive || !IsValidFrameSlot(frameSlot) || !IsValidLane(lane) ||
             Volatile.Read(ref _hostAccess) != 0 ||
-            _chunkGroupCounts[laneIndex] != 1 ||
-            _chunks[laneIndex][0][frameSlot] is not { } chunk ||
+            _reservedLaneActiveGroups[laneIndex][frameSlot] < 0 ||
+            _reservedLaneActiveGroups[laneIndex][frameSlot] >= _chunkGroupCounts[laneIndex] ||
+            _chunks[laneIndex][_reservedLaneActiveGroups[laneIndex][frameSlot]][frameSlot] is not { } chunk ||
             chunk.GetState(Generation) != VulkanFrameDataArenaSlotState.Writable)
         {
             return false;
         }
 
-        cursor = _nextOffsets[laneIndex][0][frameSlot];
+        cursor = _nextOffsets[laneIndex][_reservedLaneActiveGroups[laneIndex][frameSlot]][frameSlot];
         return true;
     }
 
@@ -250,15 +349,16 @@ internal sealed class VulkanFrameDataArena
         int laneIndex = (int)lane;
         if (!IsActive || !IsValidFrameSlot(frameSlot) || !IsValidLane(lane) ||
             Volatile.Read(ref _hostAccess) != 0 ||
-            _chunkGroupCounts[laneIndex] != 1 ||
-            _chunks[laneIndex][0][frameSlot] is not { } chunk ||
+            _reservedLaneActiveGroups[laneIndex][frameSlot] < 0 ||
+            _reservedLaneActiveGroups[laneIndex][frameSlot] >= _chunkGroupCounts[laneIndex] ||
+            _chunks[laneIndex][_reservedLaneActiveGroups[laneIndex][frameSlot]][frameSlot] is not { } chunk ||
             chunk.GetState(Generation) != VulkanFrameDataArenaSlotState.Writable ||
-            cursor > _nextOffsets[laneIndex][0][frameSlot])
+            cursor > _nextOffsets[laneIndex][_reservedLaneActiveGroups[laneIndex][frameSlot]][frameSlot])
         {
             return false;
         }
 
-        _nextOffsets[laneIndex][0][frameSlot] = cursor;
+        _nextOffsets[laneIndex][_reservedLaneActiveGroups[laneIndex][frameSlot]][frameSlot] = cursor;
         return true;
     }
 
@@ -447,6 +547,12 @@ internal sealed class VulkanFrameDataArena
     internal void EndRead() => ExitHostAccess();
 
     private bool TryAppendChunkGroup(int laneIndex, ulong length, uint alignment, out int groupIndex)
+    {
+        lock (_structureSync)
+            return TryAppendChunkGroupLocked(laneIndex, length, alignment, out groupIndex);
+    }
+
+    private bool TryAppendChunkGroupLocked(int laneIndex, ulong length, uint alignment, out int groupIndex)
     {
         groupIndex = -1;
         VulkanFrameDataChunk?[][] existingGroups = _chunks[laneIndex];

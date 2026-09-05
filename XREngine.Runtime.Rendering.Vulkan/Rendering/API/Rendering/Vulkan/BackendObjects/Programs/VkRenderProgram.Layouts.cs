@@ -262,12 +262,10 @@ internal unsafe partial class VkRenderProgram
 
     private void DestroyLayouts()
     {
+        using VulkanPipelineCompilationMutationLease mutationLease =
+            ProgramCreationPort.AcquirePipelineCompilationMutationLease("program layout destruction");
         lock (_linkLock)
-        {
-            ProgramCreationPort.ExecuteWithPipelineCompilationQuiesced(
-                DestroyLayoutsAfterPipelineCompileDrain,
-                $"pipeline layout mutation for '{Data.Name ?? "<unnamed program>"}'");
-        }
+            DestroyLayoutsAfterPipelineCompileDrain();
     }
 
     private void DestroyLayoutsAfterPipelineCompileDrain()

@@ -20,9 +20,11 @@ internal readonly record struct VulkanAdvancedVisibilityStageRequest(
     string MetadataTargetName,
     string SelectionTargetName,
     string DepthTargetName,
+    string AmbientOcclusionTargetName,
     string CurrentDepthPyramidTargetName,
     EAdvancedShadingDebugView ShadingDebugView = EAdvancedShadingDebugView.Disabled,
-    bool RequireNativeOutput = false)
+    bool RequireNativeOutput = false,
+    bool EnableBuiltInAmbientOcclusion = false)
 {
     internal bool IsValid
         => ((Stage, Phase) is
@@ -36,7 +38,7 @@ internal readonly record struct VulkanAdvancedVisibilityStageRequest(
                 EAdvancedVisibilityStageBackendPhase.LateRaster) or
             (EAdvancedRenderStage.WorkClassification,
                 EAdvancedVisibilityStageBackendPhase.Complete) or
-            (EAdvancedRenderStage.AttributeReconstruction,
+            (EAdvancedRenderStage.AmbientOcclusion,
                 EAdvancedVisibilityStageBackendPhase.Complete) or
             (EAdvancedRenderStage.NativeOpaqueShading,
                 EAdvancedVisibilityStageBackendPhase.Complete)) &&
@@ -57,6 +59,7 @@ internal readonly record struct VulkanAdvancedVisibilityStageRequest(
            !string.IsNullOrWhiteSpace(MetadataTargetName) &&
            !string.IsNullOrWhiteSpace(SelectionTargetName) &&
            !string.IsNullOrWhiteSpace(DepthTargetName) &&
+           !string.IsNullOrWhiteSpace(AmbientOcclusionTargetName) &&
            !string.IsNullOrWhiteSpace(CurrentDepthPyramidTargetName);
 
     /// <summary>
@@ -67,6 +70,7 @@ internal readonly record struct VulkanAdvancedVisibilityStageRequest(
     internal bool MatchesFamily(in VulkanAdvancedVisibilityStageRequest other)
         => Reservation.Equals(other.Reservation) &&
            RequireNativeOutput == other.RequireNativeOutput &&
+           EnableBuiltInAmbientOcclusion == other.EnableBuiltInAmbientOcclusion &&
            ShadingDebugView == other.ShadingDebugView &&
            BackendPackage.Equals(other.BackendPackage) &&
            Publication.Equals(other.Publication) &&
@@ -79,5 +83,6 @@ internal readonly record struct VulkanAdvancedVisibilityStageRequest(
            string.Equals(MetadataTargetName, other.MetadataTargetName, StringComparison.Ordinal) &&
            string.Equals(SelectionTargetName, other.SelectionTargetName, StringComparison.Ordinal) &&
            string.Equals(DepthTargetName, other.DepthTargetName, StringComparison.Ordinal) &&
+           string.Equals(AmbientOcclusionTargetName, other.AmbientOcclusionTargetName, StringComparison.Ordinal) &&
            string.Equals(CurrentDepthPyramidTargetName, other.CurrentDepthPyramidTargetName, StringComparison.Ordinal);
 }

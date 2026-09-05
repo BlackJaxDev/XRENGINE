@@ -67,7 +67,7 @@ bool currentDepthOccludes(
 
     vec2 minimumNdc = vec2(3.402823e38);
     vec2 maximumNdc = vec2(-3.402823e38);
-    bool reversedDepth = (view.flags & VIEW_FLAG_REVERSED_DEPTH) != 0u || view.depthParams.z != 0.0;
+    bool reversedDepth = (view.flags & VIEW_FLAG_REVERSED_DEPTH) != 0u || view.depthParams.w != 0.0;
     float nearestDepth = reversedDepth ? 0.0 : 1.0;
     for (uint corner = 0u; corner < 8u; ++corner)
     {

@@ -36,7 +36,8 @@ namespace XREngine.Rendering
         public ulong FrameOutputIdentity => _frameOutputIdentity;
         /// <summary>Canonical output request frozen for the current render dispatch.</summary>
         public RenderOutputRequest CurrentFrameOutputRequest { get; private set; }
-        private ulong _sceneRenderSequenceId;
+        private long _sceneRenderSequenceId;
+        private readonly RenderFrameViewHistoryLedger _frameViewHistoryLedger = new();
 
         /// <summary>
         /// The standalone camera instance used for rendering when no CameraComponent is assigned.
@@ -270,7 +271,30 @@ namespace XREngine.Rendering
         /// this output-local counter for temporal model history so an independently scheduled
         /// desktop, mirror, or XR viewport cannot consume another output's previous transform.
         /// </summary>
-        internal ulong SceneRenderSequenceId => _sceneRenderSequenceId;
+        internal ulong SceneRenderSequenceId => unchecked((ulong)Volatile.Read(ref _sceneRenderSequenceId));
+
+        /// <summary>
+        /// Freezes one desktop view descriptor for the output sequence that visibility and rendering share.
+        /// This is intentionally authoring-side history; deferred backend submission owns a later receipt.
+        /// </summary>
+        internal RenderFrameViewDescriptor CaptureDesktopFrameViewHistory(
+            ulong outputSequence,
+            ulong sourceFrame,
+            IRuntimeRenderCamera camera,
+            ulong pipelineIdentity,
+            bool authoring,
+            in RenderFrameViewDescriptor current,
+            out bool accepted)
+            => _frameViewHistoryLedger.Capture(
+                outputSequence,
+                sourceFrame,
+                camera,
+                pipelineIdentity,
+                ExtentRevision,
+                FrameOutputIdentity,
+                authoring,
+                current,
+                out accepted);
 
         WindowInputSnapshot IRuntimeLocalPlayerViewport.ConsumeInputSnapshot()
             => Window?.ConsumeLatestWindowInputSnapshot() ?? default;
@@ -902,6 +926,7 @@ namespace XREngine.Rendering
             _renderPipeline.MeshRenderCommands.CancelBackendReadyFramePackages();
             RuntimeEngine.Rendering.ReleaseVulkanUpscaleBridge(this, "viewport destroyed");
             _renderPipeline.RequestTerminalTeardown();
+            _frameViewHistoryLedger.Clear();
             AssociatedPlayer = null;
             CameraComponent = null;
             Camera = null;
@@ -1253,7 +1278,10 @@ namespace XREngine.Rendering
                 globalMaterialOverride: null,
                 screenSpaceUI: null,
                 meshRenderCommands: commandCollection,
-                applyRenderArea: false);
+                applyRenderArea: false,
+                viewHistorySequenceId: IsDesktopFacingOutput() ? unchecked((ulong)(Volatile.Read(ref _sceneRenderSequenceId) + 1L)) : 0UL,
+                viewHistoryPipelineIdentity: _renderPipeline.TemporalHistoryPipelineIdentity,
+                viewHistoryAuthoring: false);
 
             if (visualScene is VisualScene3D scene3D)
             {
@@ -1800,18 +1828,38 @@ namespace XREngine.Rendering
                     SkinningPrepassDispatcher.Instance.RunVisible(activeCommands);
 
                 LastRenderedTargetFBO = targetFbo;
-                unchecked { _sceneRenderSequenceId++; }
-                bool recorded = _renderPipeline.TryRender(
-                    world.VisualScene,
-                    camera,
-                    null,
-                    this,
-                    targetFbo,
-                    screenSpaceUI,
-                    shadowPass,
-                    false,
-                    forcedMaterial,
-                    meshRenderCommandsOverride: MeshRenderCommandsOverride);
+                ulong issuedSequence = unchecked((ulong)Interlocked.Increment(ref _sceneRenderSequenceId));
+                bool tracksDesktopHistory = !Suppress3DSceneRendering && !shadowPass && IsDesktopFacingOutput();
+                if (!tracksDesktopHistory && !shadowPass && IsDesktopFacingOutput())
+                    _frameViewHistoryLedger.Discard(issuedSequence);
+                bool recorded;
+                try
+                {
+                    recorded = _renderPipeline.TryRender(
+                        world.VisualScene,
+                        camera,
+                        null,
+                        this,
+                        targetFbo,
+                        screenSpaceUI,
+                        shadowPass,
+                        false,
+                        forcedMaterial,
+                        meshRenderCommandsOverride: MeshRenderCommandsOverride,
+                        viewHistorySequenceId: tracksDesktopHistory ? issuedSequence : 0UL);
+                }
+                catch
+                {
+                    if (tracksDesktopHistory)
+                        _frameViewHistoryLedger.Discard(issuedSequence);
+                    throw;
+                }
+
+                if (tracksDesktopHistory)
+                {
+                    if (!recorded)
+                        _frameViewHistoryLedger.Discard(issuedSequence);
+                }
 
                 if (!uiThroughPipeline)
                     RenderScreenSpaceUIOverlay(targetFbo);
@@ -1907,8 +1955,8 @@ namespace XREngine.Rendering
             long renderStart = System.Diagnostics.Stopwatch.GetTimestamp();
 
             LastRenderedTargetFBO = targetFbo;
-            unchecked { _sceneRenderSequenceId++; }
-            _renderPipeline.Render(
+            _ = Interlocked.Increment(ref _sceneRenderSequenceId);
+            bool recorded = _renderPipeline.TryRender(
                 world.VisualScene,
                 leftCamera,
                 rightCamera,
@@ -1926,8 +1974,8 @@ namespace XREngine.Rendering
             RecordFrameOutput(
                 EFrameOutputPhase.Render,
                 pacing,
-                rendered: true,
-                sceneRendered: !Suppress3DSceneRendering,
+                rendered: recorded,
+                sceneRendered: recorded && !Suppress3DSceneRendering,
                 commandCount: GetRenderingCommandCountForTelemetry(),
                 elapsedTicks: System.Diagnostics.Stopwatch.GetTimestamp() - renderStart);
         }

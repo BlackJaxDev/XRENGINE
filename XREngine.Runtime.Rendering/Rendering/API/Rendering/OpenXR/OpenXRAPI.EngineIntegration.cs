@@ -55,7 +55,8 @@ public unsafe partial class OpenXRAPI
             {
                 case nameof(Window):
                     if (field is not null)
-                        CleanUp();
+                        if (!CleanUp())
+                            return false;
                     break;
             }
         }

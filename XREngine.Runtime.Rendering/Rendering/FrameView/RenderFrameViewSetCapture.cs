@@ -29,7 +29,23 @@ public static class RenderFrameViewSetCapture
         var builder = new RenderFrameViewSetBuilder(storage);
         if (rightCamera is null)
         {
-            builder.Add(CaptureView(camera, EVrOutputViewKind.DesktopEditor, 0u, width, height, MonoHistoryKey));
+            RenderFrameViewDescriptor view = CaptureView(camera, EVrOutputViewKind.DesktopEditor, 0u, width, height, MonoHistoryKey);
+            if (!state.StereoPass && !state.ShadowPass && state.ViewHistorySequenceId != 0UL &&
+                state.WindowViewport is XRViewport viewport)
+            {
+                view = viewport.CaptureDesktopFrameViewHistory(
+                    state.ViewHistorySequenceId,
+                    RuntimeEngine.Rendering.State.RenderFrameId,
+                    camera,
+                    state.ViewHistoryPipelineIdentity,
+                    state.ViewHistoryAuthoring,
+                    view,
+                    out bool accepted);
+                if (state is XRRenderPipelineInstance.RenderingState renderingState)
+                    renderingState.SetViewHistoryCaptureAccepted(accepted);
+            }
+
+            builder.Add(view);
             return builder.Build(EVrViewRenderMode.SequentialViews, EVrVisibilityPolicy.PerView, 1, "Desktop frame views");
         }
 
@@ -62,7 +78,7 @@ public static class RenderFrameViewSetCapture
         Matrix4x4 projection = camera.ProjectionMatrix;
         Matrix4x4 projectionUnjittered = camera.ProjectionMatrixUnjittered;
         Matrix4x4 viewProjection = view * projection;
-        return new RenderFrameViewDescriptor(
+        RenderFrameViewDescriptor current = new(
             0u,
             kind,
             RenderFrameViewDescriptor.InvalidViewId,
@@ -82,5 +98,6 @@ public static class RenderFrameViewSetCapture
             ReversedDepth: camera.IsReversedDepth,
             ProjectionMatrixUnjittered: projectionUnjittered,
             CurrentJitter: camera.ProjectionJitter);
+        return current;
     }
 }

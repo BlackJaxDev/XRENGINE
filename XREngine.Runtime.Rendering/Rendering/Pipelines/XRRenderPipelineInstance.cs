@@ -164,6 +164,11 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     /// </summary>
     public int ResourceGeneration { get; private set; }
     /// <summary>
+    /// Identifies this pipeline instance and its active resource generation for desktop temporal history.
+    /// </summary>
+    internal ulong TemporalHistoryPipelineIdentity
+        => ((ulong)(uint)RuntimeHelpers.GetHashCode(this) << 32) | (uint)ResourceGeneration;
+    /// <summary>
     /// Number of deterministic-generation contract violations observed for this instance.
     /// </summary>
     public long ResourceGenerationDivergenceCount
@@ -473,9 +478,10 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         bool shadowPass = false,
         bool stereoPass = false,
         XRMaterial? shadowMaterial = null,
-        RenderCommandCollection? meshRenderCommandsOverride = null)
+        RenderCommandCollection? meshRenderCommandsOverride = null,
+        ulong viewHistorySequenceId = 0UL)
         => TryRender(scene, camera, stereoRightEyeCamera, viewport, targetFBO,
-            userInterface, shadowPass, stereoPass, shadowMaterial, meshRenderCommandsOverride);
+            userInterface, shadowPass, stereoPass, shadowMaterial, meshRenderCommandsOverride, viewHistorySequenceId);
 
     /// <summary>
     /// Records the pipeline and reports whether its command chain executed.
@@ -491,7 +497,8 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         bool shadowPass = false,
         bool stereoPass = false,
         XRMaterial? shadowMaterial = null,
-        RenderCommandCollection? meshRenderCommandsOverride = null)
+        RenderCommandCollection? meshRenderCommandsOverride = null,
+        ulong viewHistorySequenceId = 0UL)
     {
         IRuntimeRenderFrameTimingServices frameTiming = RuntimeRenderingHostServices.FrameTiming;
         if (!ApplyLatestRequestedPipelineIfNeeded())
@@ -526,8 +533,10 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
 
         using (RuntimeRenderingHostServices.Diagnostics.PushRenderingPipeline(this))
         {
-            using (RenderState.PushMainAttributes(viewport, scene, camera, stereoRightEyeCamera, targetFBO, shadowPass, stereoPass, shadowMaterial, userInterface, meshRenderCommandsOverride ?? MeshRenderCommands))
+            using (RenderState.PushMainAttributes(viewport, scene, camera, stereoRightEyeCamera, targetFBO, shadowPass, stereoPass, shadowMaterial, userInterface, meshRenderCommandsOverride ?? MeshRenderCommands, viewHistorySequenceId: viewHistorySequenceId, viewHistoryPipelineIdentity: TemporalHistoryPipelineIdentity, viewHistoryAuthoring: viewHistorySequenceId != 0UL))
             {
+                if (viewHistorySequenceId != 0UL && !RenderState.ViewHistoryCaptureAccepted)
+                    return false;
                 WarnIfScreenSpaceUiHasNoRenderCommand(userInterface, viewport);
                 DirectionalShadowPipelineDiagnostics.Record(
                     EDirectionalShadowPipelineReceiptStage.BeforeResourceGeneration,

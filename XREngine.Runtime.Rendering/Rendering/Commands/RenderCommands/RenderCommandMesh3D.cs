@@ -41,6 +41,8 @@ namespace XREngine.Rendering.Commands
         private AABB? _renderWorldCullingVolumeOverride;
         private Matrix4x4 _renderPrevWorldMatrix = Matrix4x4.Identity;
         private bool _renderHasPrevWorldMatrix;
+        private EAdvancedVelocityValidityReason _renderModelHistoryReason =
+            EAdvancedVelocityValidityReason.HistoryReset;
         private static int s_MotionVectorLogBudget = 128;
 
         private Matrix4x4 _lastSubmittedModelMatrix = Matrix4x4.Identity;
@@ -222,8 +224,12 @@ namespace XREngine.Rendering.Commands
             _renderCanonicalDrawIdentitySnapshot = _canonicalDrawIdentitySnapshot;
             if (_renderWorldMatrixIsModelMatrix)
             {
-                _renderPrevWorldMatrix = _lastSubmittedModelMatrixValid ? _lastSubmittedModelMatrix : _renderWorldMatrix;
+                bool hadPrevious = _lastSubmittedModelMatrixValid;
+                _renderPrevWorldMatrix = hadPrevious ? _lastSubmittedModelMatrix : _renderWorldMatrix;
                 _renderHasPrevWorldMatrix = true;
+                _renderModelHistoryReason = hadPrevious
+                    ? EAdvancedVelocityValidityReason.Valid
+                    : EAdvancedVelocityValidityReason.HistoryReset;
                 _lastSubmittedModelMatrix = _renderWorldMatrix;
                 _lastSubmittedModelMatrixValid = true;
             }
@@ -232,6 +238,7 @@ namespace XREngine.Rendering.Commands
                 // For non-model matrices, treat as static so motion vectors stay zero.
                 _renderPrevWorldMatrix = _renderWorldMatrix;
                 _renderHasPrevWorldMatrix = true;
+                _renderModelHistoryReason = EAdvancedVelocityValidityReason.Valid;
                 _lastSubmittedModelMatrix = Matrix4x4.Identity;
                 _lastSubmittedModelMatrixValid = false;
             }
@@ -274,6 +281,7 @@ namespace XREngine.Rendering.Commands
                     : _renderWorldMatrix,
                 _renderInstances,
                 _renderWorldMatrixIsModelMatrix,
+                _renderModelHistoryReason,
                 _renderForceCpuRendering,
                 _renderMaterialOverride,
                 _renderRenderOptionsOverride);
@@ -286,6 +294,9 @@ namespace XREngine.Rendering.Commands
             {
                 _renderPrevWorldMatrix = _lastSubmittedModelMatrixValid ? _lastSubmittedModelMatrix : worldMatrix;
                 _renderHasPrevWorldMatrix = true;
+                _renderModelHistoryReason = _lastSubmittedModelMatrixValid
+                    ? EAdvancedVelocityValidityReason.Valid
+                    : EAdvancedVelocityValidityReason.HistoryReset;
             }
         }
 

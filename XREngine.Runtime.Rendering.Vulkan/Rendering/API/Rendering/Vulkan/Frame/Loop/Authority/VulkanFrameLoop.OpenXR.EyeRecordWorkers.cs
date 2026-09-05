@@ -9,7 +9,6 @@ internal sealed partial class VulkanFrameLoop
         in OpenXrEyeSwapchainRenderRequest firstEye,
         in OpenXrEyeSwapchainRenderRequest secondEye)
     {
-        _commandRuntime.OpenXrSubmissionTracker.PollCompletions();
         if (!_commandRuntime.OpenXrSubmissionTracker.TryReserveSubmission(
                 out OpenXrVulkanSubmissionTracker.SubmissionAdmissionTicket? admissionTicket))
         {

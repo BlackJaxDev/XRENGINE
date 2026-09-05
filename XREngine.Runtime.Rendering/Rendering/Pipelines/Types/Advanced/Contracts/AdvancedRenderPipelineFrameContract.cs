@@ -37,14 +37,14 @@ public static class AdvancedRenderPipelineFrameContract
             "Advanced / Depth Pyramid And Late Visibility",
             ERenderGraphPassStage.Compute),
         new(
+            EAdvancedRenderStage.AmbientOcclusion,
+            "Advanced.AmbientOcclusion",
+            "Advanced / Ambient Occlusion",
+            ERenderGraphPassStage.Compute),
+        new(
             EAdvancedRenderStage.WorkClassification,
             "Advanced.WorkClassification",
             "Advanced / Work Classification",
-            ERenderGraphPassStage.Compute),
-        new(
-            EAdvancedRenderStage.AttributeReconstruction,
-            "Advanced.AttributeReconstruction",
-            "Advanced / Attribute Reconstruction",
             ERenderGraphPassStage.Compute),
         new(
             EAdvancedRenderStage.NativeOpaqueShading,

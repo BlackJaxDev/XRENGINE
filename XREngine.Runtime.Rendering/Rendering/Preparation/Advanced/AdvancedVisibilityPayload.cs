@@ -40,7 +40,8 @@ public readonly record struct AdvancedVisibilityPayload(
         uint PrimitiveTopology,
         bool Skinned,
         bool MeshletsResident,
-        bool ForceCpuDiagnostic)
+        bool ForceCpuDiagnostic,
+        EAdvancedVelocityValidityReason TemporalReason)
         : this(
             Draw,
             Geometry,
@@ -58,7 +59,8 @@ public readonly record struct AdvancedVisibilityPayload(
             PackFlags(
                 Skinned,
                 MeshletsResident,
-                ForceCpuDiagnostic))
+                ForceCpuDiagnostic,
+                TemporalReason))
     {
     }
 
@@ -70,11 +72,14 @@ public readonly record struct AdvancedVisibilityPayload(
     public bool ForceCpuDiagnostic
         => (Flags &
             EAdvancedVisibilityPayloadFlags.ForceCpuDiagnostic) != 0;
+    public EAdvancedVelocityValidityReason TemporalReason
+        => AdvancedReconstructionTemporalFlags.DecodeVelocityReason((uint)Flags);
 
     private static EAdvancedVisibilityPayloadFlags PackFlags(
         bool skinned,
         bool meshletsResident,
-        bool forceCpuDiagnostic)
+        bool forceCpuDiagnostic,
+        EAdvancedVelocityValidityReason temporalReason)
     {
         EAdvancedVisibilityPayloadFlags flags =
             EAdvancedVisibilityPayloadFlags.None;
@@ -86,6 +91,9 @@ public readonly record struct AdvancedVisibilityPayload(
         if (forceCpuDiagnostic)
             flags |=
                 EAdvancedVisibilityPayloadFlags.ForceCpuDiagnostic;
-        return flags;
+        return (EAdvancedVisibilityPayloadFlags)
+            AdvancedReconstructionTemporalFlags.PackVelocityReason(
+                (uint)flags,
+                temporalReason);
     }
 }

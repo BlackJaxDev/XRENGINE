@@ -68,10 +68,16 @@ internal sealed class VulkanFrameOperationQueue : IDisposable
             {
                 VulkanAdvancedVisibilityInputLease candidate =
                     _advancedVisibilityInputLeases[index];
-                if (!candidate.IsAvailable ||
-                    !candidate.TryCapture(in request, out failureReason))
-                {
+                if (!candidate.IsAvailable)
                     continue;
+
+                // Every free slot captures the same publication. A source failure
+                // cannot be repaired by trying another slot, and is distinct from
+                // exhausting the bounded arena.
+                if (!candidate.TryCapture(in request, out failureReason))
+                {
+                    lease = null!;
+                    return false;
                 }
 
                 lease = candidate;
@@ -451,6 +457,10 @@ internal sealed class VulkanFrameOperationQueue : IDisposable
     {
         using (SyncRoot.EnterScope())
         {
+            // Only Pending remains queue-owned. Drained buffers are reusable
+            // scratch aliases whose operations may already belong to an accepted
+            // frame plan or asynchronous submission tracker.
+            FailPendingSubmissionMarkers(CollectionsMarshal.AsSpan(Pending));
             VulkanAdvancedVisibilityInputLease.ReleaseOperations(
                 CollectionsMarshal.AsSpan(Pending));
             VulkanAdvancedVisibilityInputLease.ReleaseOperations(
@@ -467,6 +477,7 @@ internal sealed class VulkanFrameOperationQueue : IDisposable
     {
         using (SyncRoot.EnterScope())
         {
+            FailPendingSubmissionMarkers(CollectionsMarshal.AsSpan(Pending));
             VulkanAdvancedVisibilityInputLease.ReleaseOperations(
                 CollectionsMarshal.AsSpan(Pending));
             VulkanAdvancedVisibilityInputLease.ReleaseOperations(
@@ -477,6 +488,13 @@ internal sealed class VulkanFrameOperationQueue : IDisposable
         }
 
         _threadWorkspace.Dispose();
+    }
+
+    private static void FailPendingSubmissionMarkers(ReadOnlySpan<FrameOp> operations)
+    {
+        for (int index = 0; index < operations.Length; index++)
+            if (operations[index] is SubmissionMarkerOp marker)
+                marker.Fence.Fail();
     }
 
     private static VulkanAdvancedVisibilityInputLease[]

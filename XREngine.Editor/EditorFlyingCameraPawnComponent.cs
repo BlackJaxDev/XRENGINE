@@ -2554,6 +2554,8 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         Quaternion normalizedTargetRotation = Quaternion.Normalize(targetRotation);
         if (durationSeconds <= 0.0f)
         {
+            // An instant authored view jump must not blend motion from its old pose.
+            CameraComponent?.Camera.InvalidateTemporalHistory();
             tfm.SetWorldTranslationRotation(targetPosition, normalizedTargetRotation);
             // Discrete one-shot move (e.g. set_editor_camera_view / focus with duration 0). Push the
             // render matrix synchronously: the deferred world->render queue only carries a single

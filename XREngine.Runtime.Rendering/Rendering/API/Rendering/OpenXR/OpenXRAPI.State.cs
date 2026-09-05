@@ -29,6 +29,13 @@ public unsafe partial class OpenXRAPI
     /// The OpenXR session handle.
     /// </summary>
     private Session _session;
+    // Teardown ownership survives disabled monitoring: native parents remain
+    // reachable until the owning render thread has observed child retirement.
+    private bool _pendingDestroyInstance;
+    // Cleanup may outlive runtime monitoring while deferred Vulkan children
+    // drain. The original window remains the renderer authority until done.
+    private bool _pendingShutdownCleanup;
+    private bool _graphicsBackendResourcesDestroyed;
 
     /// <summary>
     /// The associated window for rendering.
@@ -68,6 +75,9 @@ public unsafe partial class OpenXRAPI
     // Cleared by CacheLastValidViews() once tracking recovers.
     private int _trackingLossStreakLogged;
     private int _freezeFallbackStreakLogged;
+    // Kept separate from LocateViews success: freeze/identity fallback may
+    // render, but cannot seed temporal reprojection history.
+    private int _openXrLatestViewTrackingValid;
     private FrameState _frameState;
     private System.Action? _deferredOpenGlInit;
 

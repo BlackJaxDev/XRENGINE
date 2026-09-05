@@ -142,6 +142,8 @@ public static class AdvancedProductionCutoverContract
         IAdvancedAmbientOcclusionProvider? ao = pipeline.AmbientOcclusionProvider;
         if (ao is null)
             return null;
+        if (ao is AdvancedDepthGtaoProvider && ao.IsSupported)
+            return null;
         if (!ao.IsSupported)
             return $"Advanced AO provider '{ao.ProviderName}' is unsupported.";
         return $"Advanced AO provider '{ao.ProviderName}' is configured but is not integrated into native shading.";

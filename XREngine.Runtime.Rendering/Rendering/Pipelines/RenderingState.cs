@@ -84,6 +84,13 @@ public sealed partial class XRRenderPipelineInstance
         /// Stereo passes will inject a geometry shader into each mesh pipeline, or expect the mesh to already have a vertex or geometry shader that supports it.
         /// </summary>
         public bool StereoPass { get; private set; } = false;
+        /// <summary>Output-local desktop temporal-history sequence captured by this invocation.</summary>
+        public ulong ViewHistorySequenceId { get; private set; }
+        /// <summary>Pipeline and resource-generation identity paired with temporal history.</summary>
+        public ulong ViewHistoryPipelineIdentity { get; private set; }
+        public bool ViewHistoryAuthoring { get; private set; }
+        internal bool ViewHistoryCaptureAccepted { get; private set; } = true;
+        internal void SetViewHistoryCaptureAccepted(bool accepted) => ViewHistoryCaptureAccepted = accepted;
         /// <summary>
         /// Immutable logical views captured when this render invocation begins.
         /// </summary>
@@ -192,7 +199,10 @@ public sealed partial class XRRenderPipelineInstance
             XRMaterial? globalMaterialOverride,
             IRuntimeScreenSpaceUserInterface? screenSpaceUI,
             RenderCommandCollection? meshRenderCommands,
-            bool applyRenderArea = true)
+            bool applyRenderArea = true,
+            ulong viewHistorySequenceId = 0UL,
+            ulong viewHistoryPipelineIdentity = 0UL,
+            bool viewHistoryAuthoring = false)
         {
             WindowViewport = viewport;
             Scene = scene;
@@ -201,6 +211,10 @@ public sealed partial class XRRenderPipelineInstance
             OutputFBO = target;
             ShadowPass = shadowPass;
             StereoPass = stereoPass;
+            ViewHistorySequenceId = viewHistorySequenceId;
+            ViewHistoryPipelineIdentity = viewHistoryPipelineIdentity;
+            ViewHistoryAuthoring = viewHistoryAuthoring;
+            ViewHistoryCaptureAccepted = true;
             GlobalMaterialOverride = globalMaterialOverride;
             ScreenSpaceUserInterface = screenSpaceUI?.IsScreenSpace == true ? screenSpaceUI : null;
             MeshRenderCommands = meshRenderCommands;
@@ -266,6 +280,10 @@ public sealed partial class XRRenderPipelineInstance
             OutputFBO = null;
             ShadowPass = false;
             StereoPass = false;
+            ViewHistorySequenceId = 0UL;
+            ViewHistoryPipelineIdentity = 0UL;
+            ViewHistoryAuthoring = false;
+            ViewHistoryCaptureAccepted = true;
             DirectionalCascadeLayeredShadowPass = false;
             DirectionalCascadeInstancedLayeredShadowPass = false;
             DirectionalCascadeAtlasGroupedShadowPass = false;

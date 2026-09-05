@@ -96,7 +96,8 @@ namespace XREngine.Rendering.Vulkan
 
             vkFrameBuffer.EnsureCurrent();
 
-            bool targetReenteredThisCommandBuffer = recordingState.FboLayoutTracking.ContainsKey(target);
+            bool targetReenteredThisCommandBuffer = recordingState.RecordingScratch.BegunFboPasses.Contains(
+                new VulkanBegunFboPassKey(target, passIndex, context.SchedulingIdentity));
             ImageLayout[]? trackedLayouts = QueryCurrentAttachmentLayouts(
                 target,
                 vkFrameBuffer,

@@ -14,7 +14,8 @@ internal readonly record struct VulkanAdvancedVisibilityTargetClosure(
     RenderPass RenderPass,
     DynamicRenderingFormatSignature DynamicRenderingFormats,
     SampleCountFlags RasterizationSamples,
-    bool DepthStencilReadOnly)
+    bool DepthStencilReadOnly,
+    VulkanAdvancedVisibilityClearPolicy ClearPolicy)
 {
     internal bool IsValid
         => Target is not null && NativeTarget.IsComplete &&

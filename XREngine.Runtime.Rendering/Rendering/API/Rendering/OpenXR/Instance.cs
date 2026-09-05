@@ -36,20 +36,31 @@ public unsafe partial class OpenXRAPI
             => new(false, operation, result, failureReason);
     }
 
-    private void DestroyInstance()
+    private bool DestroyInstance()
     {
         if (_instance.Handle == 0)
-            return;
+            return true;
 
         if (!_instanceOwnedByRenderer)
         {
-            Api?.DestroyInstance(_instance);
+            if (Api is null)
+                return false;
+            Result result = Api.DestroyInstance(_instance);
+            if (result != Result.Success)
+            {
+                Debug.VulkanWarning("[OpenXR] xrDestroyInstance deferred after failure: {0}", result);
+                return false;
+            }
         }
         else if (Window?.Renderer is AbstractRenderer renderer &&
             TryGetOrCreateGraphicsBinding(renderer, out IXrGraphicsBinding? binding) &&
             binding.InvalidateRendererOwnedInstance(renderer, "OpenXR runtime instance teardown"))
         {
             Debug.VulkanWarning("[OpenXR] Dropped stale renderer-owned XR instance so runtime recovery can create a fresh session instance.");
+        }
+        else
+        {
+            return false;
         }
 
         _instanceOwnedByRenderer = false;
@@ -60,6 +71,7 @@ public unsafe partial class OpenXRAPI
         }
 
         ClearInstanceExtensionState();
+        return true;
     }
 
     private OpenXrInstanceCreationAttempt TryCreateInstance()

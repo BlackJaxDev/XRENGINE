@@ -8,7 +8,7 @@ public sealed partial class AdvancedGpuScenePublisher
     /// frame state live in the backend-ready package, so sealing another copy of
     /// the same scene image would only consume a bounded publication-ring slot.
     /// </summary>
-    private bool TryReuseUnchangedPublication()
+    private bool TryReuseUnchangedPublication(ulong frameId)
     {
         if (!_currentPublication.IsValid ||
             !Database.TryGetPublicationSnapshot(_currentPublication, out _) ||
@@ -33,6 +33,7 @@ public sealed partial class AdvancedGpuScenePublisher
             ref AdvancedResidentRegistration registration =
                 ref _registrations[plan.RegistrationIndex];
             registration.LastSeenSequence = _sequence;
+            registration.LastSeenFrameId = frameId;
             registration.LegacyCommandIndex = checked((uint)commandIndex);
             _commandDrawHandles[commandIndex] = registration.Draw;
             AppendLegacyMapping(
@@ -94,6 +95,8 @@ public sealed partial class AdvancedGpuScenePublisher
             {
                 return true;
             }
+            if (plan.TemporalEventReason != EAdvancedVelocityValidityReason.Valid)
+                return true;
         }
 
         for (int registrationIndex = 0;

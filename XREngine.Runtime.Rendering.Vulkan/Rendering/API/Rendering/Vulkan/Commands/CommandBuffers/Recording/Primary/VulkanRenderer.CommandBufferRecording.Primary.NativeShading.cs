@@ -29,6 +29,7 @@ internal sealed partial class VulkanCommandRuntime
         VulkanAdvancedNativeShadingPushConstants push = new(width, height, tilesX, tilesY,
             closure.ViewIndex, payload.State.ViewCount, 0,
             (payload.Request.RequireNativeOutput ? 2u : 0u) |
+            (payload.Request.EnableBuiltInAmbientOcclusion ? 4u : 0u) |
             (((uint)payload.Request.ShadingDebugView & 0xFFu) << 8), depthSlices,
             checked((uint)(closure.LightIndices.NativeSize / sizeof(uint))),
             payload.SceneState.Lights.Length / 128u,
@@ -58,6 +59,16 @@ internal sealed partial class VulkanCommandRuntime
         }
 
         TransitionNativeInput(state.CommandBuffer, closure.Depth, closure.ViewIndex);
+        if (payload.Request.Stage == EAdvancedRenderStage.AmbientOcclusion)
+        {
+            TransitionNativeOutput(state.CommandBuffer, closure.AmbientOcclusion, closure.ViewIndex);
+            RecordNativeDispatch(state.CommandBuffer, in payload, payload.NativeComputePipelines.AmbientOcclusion,
+                in push, tilesX, tilesY, 1, "Advanced.GTAO");
+            EmitMemoryBarrierMask(state.CommandBuffer, EMemoryBarrierMask.ShaderImageAccess | EMemoryBarrierMask.TextureFetch);
+            return info.OperationIndex;
+        }
+
+        TransitionNativeInput(state.CommandBuffer, closure.AmbientOcclusion, closure.ViewIndex);
         TransitionNativeOutput(state.CommandBuffer, closure.Hdr, closure.ViewIndex);
         TransitionNativeOutput(state.CommandBuffer, closure.Velocity, closure.ViewIndex);
         TransitionNativeOutput(state.CommandBuffer, closure.Reactive, closure.ViewIndex);

@@ -172,6 +172,8 @@ public sealed class AdvancedPreparationExtractor : IDisposable
         => _frameUploadArena.GetTelemetrySnapshot();
     public AdvancedGpuDeformationResources GpuDeformation
         => _gpuDeformation;
+    /// <summary>Static reason for deferring the last prepared frame; empty after successful admission.</summary>
+    public string LastDeferralReason { get; private set; } = string.Empty;
     public AdvancedGpuDeformationPublication GpuDeformationPublication
         => _gpuDeformation.Publication;
     public ReadOnlySpan<AdvancedAnimationScheduleTelemetry>
@@ -191,6 +193,7 @@ public sealed class AdvancedPreparationExtractor : IDisposable
         // Do not let deferred or failed preparation leave consumers observing
         // arrays tied to the preceding world frame.
         AdvanceVisibilityContentGeneration();
+        LastDeferralReason = string.Empty;
         _preparedSceneIdentity = 0u;
         _preparedScenePublication = default;
         _drawCount = 0;
@@ -202,7 +205,8 @@ public sealed class AdvancedPreparationExtractor : IDisposable
                 world.GpuScene.AdvancedScenePublication,
                 out AdvancedGpuScenePublicationSnapshot publicationSnapshot) ||
             publicationSnapshot.Submission.Sequence != world.GpuScene.AdvancedScenePublication.Sequence)
-            return CreateDeferredPublication(world, consumers, 0u);
+            return CreateDeferredPublication(world, consumers, 0u,
+                "The exact canonical scene publication is unavailable for advanced preparation.");
         uint submissionCount = checked((uint)publicationSnapshot.Submission.Records.Length);
         ulong completedValue = frameId == 0UL ? 0UL : frameId - 1UL;
         if (!_frameUploadArena.TryBeginFrame(frameId, completedValue))
@@ -212,7 +216,8 @@ public sealed class AdvancedPreparationExtractor : IDisposable
                 consumers,
             visibleFallbackCount: checked((uint)Math.Min(
                     submissionCount,
-                    (uint)_options.MaximumDraws)));
+                    (uint)_options.MaximumDraws)),
+                "The advanced frame-upload slot is still owned by an earlier frame.");
         }
         if (!_deformedArena.TryBeginFrame(frameId, completedValue))
         {
@@ -222,7 +227,8 @@ public sealed class AdvancedPreparationExtractor : IDisposable
                 consumers,
             visibleFallbackCount: checked((uint)Math.Min(
                     submissionCount,
-                    (uint)_options.MaximumDraws)));
+                    (uint)_options.MaximumDraws)),
+                "The advanced deformation arena slot is still owned by an earlier frame.");
         }
         if (!_gpuDeformation.TryBeginFrame(
                 frameId,
@@ -238,7 +244,8 @@ public sealed class AdvancedPreparationExtractor : IDisposable
                 consumers,
             visibleFallbackCount: checked((uint)Math.Min(
                     submissionCount,
-                    (uint)_options.MaximumDraws)));
+                    (uint)_options.MaximumDraws)),
+                "The advanced deformation GPU output slot is not reusable.");
         }
 
         try
@@ -259,7 +266,11 @@ public sealed class AdvancedPreparationExtractor : IDisposable
              commandIndex < _drawCount;
              commandIndex++)
         {
-            ExtractCommand(publicationSnapshot, commandIndex, frameId);
+            ExtractCommand(
+                publicationSnapshot,
+                commandIndex,
+                frameId,
+                world.GpuScene.AdvancedScenePublication.Publication.FrameGeneration);
         }
 
         _admission = _deformationJobs.FinalizeJobs(
@@ -557,7 +568,8 @@ public sealed class AdvancedPreparationExtractor : IDisposable
     private void ExtractCommand(
         AdvancedGpuScenePublicationSnapshot publication,
         int commandIndex,
-        ulong frameId)
+        ulong frameId,
+        ulong publicationFrameGeneration)
     {
         _drawDeformationCandidateIndices[commandIndex] = -1;
         _drawDeformationSlices[commandIndex] = default;
@@ -660,6 +672,22 @@ public sealed class AdvancedPreparationExtractor : IDisposable
         _drawDeformationCandidateIndices[commandIndex] =
             deformationCandidateIndex;
 
+        EAdvancedVelocityValidityReason publisherReason =
+            publicationFrameGeneration == frameId
+                ? submission.TemporalEventReason
+                : EAdvancedVelocityValidityReason.Valid;
+        EAdvancedVelocityValidityReason deformationReason = skinned
+            ? aggregateDeformationAvailable
+                ? deformationSlice.VelocityValidity
+                : EAdvancedVelocityValidityReason.HistoryReset
+            : EAdvancedVelocityValidityReason.Valid;
+        EAdvancedVelocityValidityReason temporalReason =
+            ResolveTemporalReason(
+                publisherReason,
+                snapshot.ModelHistoryReason,
+                deformationReason,
+                skinned && !_gpuDeformation.PreviousOutputValid);
+
         _visibilityPayloads[commandIndex] =
             new AdvancedVisibilityPayload(
                 draw,
@@ -688,8 +716,31 @@ public sealed class AdvancedPreparationExtractor : IDisposable
                     snapshot.ForceCpuRendering ||
                     mesh is null ||
                     !hasCanonicalGeometry ||
-                    (skinned && !aggregateDeformationAvailable));
+                    (skinned && !aggregateDeformationAvailable),
+                TemporalReason: temporalReason);
     }
+
+    private static EAdvancedVelocityValidityReason ResolveTemporalReason(
+        EAdvancedVelocityValidityReason publisherReason,
+        EAdvancedVelocityValidityReason modelReason,
+        EAdvancedVelocityValidityReason deformationReason,
+        bool deformationHistoryMissing)
+        => AdvancedVisibilityMotionContract.Resolve(
+            publisherReason == EAdvancedVelocityValidityReason.NewlyVisible,
+            modelReason == EAdvancedVelocityValidityReason.Teleported,
+            publisherReason == EAdvancedVelocityValidityReason.TopologyChanged ||
+                modelReason == EAdvancedVelocityValidityReason.TopologyChanged ||
+                deformationReason == EAdvancedVelocityValidityReason.TopologyChanged,
+            publisherReason == EAdvancedVelocityValidityReason.VertexCountChanged ||
+                modelReason == EAdvancedVelocityValidityReason.VertexCountChanged ||
+                deformationReason == EAdvancedVelocityValidityReason.VertexCountChanged,
+            modelReason == EAdvancedVelocityValidityReason.HistoryReset ||
+                deformationReason == EAdvancedVelocityValidityReason.HistoryReset ||
+                deformationHistoryMissing,
+            deformationReason == EAdvancedVelocityValidityReason.ArenaOverflow,
+            publisherReason == EAdvancedVelocityValidityReason.FrameGap ||
+                modelReason == EAdvancedVelocityValidityReason.FrameGap ||
+                deformationReason == EAdvancedVelocityValidityReason.FrameGap);
 
     private bool TryAddDeformation(
         XRMeshRenderer renderer,
@@ -829,7 +880,7 @@ public sealed class AdvancedPreparationExtractor : IDisposable
             vertexLayoutId,
             features,
             job.Precision);
-        return _deformationJobs.TryAdd(
+        bool added = _deformationJobs.TryAdd(
             new AdvancedDeformationCandidate(
                 job,
                 key,
@@ -837,6 +888,9 @@ public sealed class AdvancedPreparationExtractor : IDisposable
                 Mandatory: true,
                 Visible: true),
             out canonicalCandidateIndex);
+        if (!added)
+            _deformedArena.InvalidateOwnerHistory(slice.Owner);
+        return added;
     }
 
     private void ApplyDeformationAdmissionVerdicts()
@@ -848,20 +902,49 @@ public sealed class AdvancedPreparationExtractor : IDisposable
             if (candidateIndex < 0 ||
                 _deformationJobs.IsCandidateAdmitted(candidateIndex))
             {
+                if (candidateIndex >= 0)
+                    _deformedArena.ConfirmOwnerHistoryProduced(
+                        _drawDeformationSlices[drawIndex].Owner);
                 continue;
             }
 
+            _deformedArena.InvalidateOwnerHistory(
+                _drawDeformationSlices[drawIndex].Owner);
             _drawDeformationSlices[drawIndex] = default;
+            AdvancedVisibilityPayload payload = _visibilityPayloads[drawIndex];
+            EAdvancedVelocityValidityReason reason = MergeTemporalReasons(
+                payload.TemporalReason,
+                EAdvancedVelocityValidityReason.ArenaOverflow);
             _visibilityPayloads[drawIndex] =
-                _visibilityPayloads[drawIndex] with
+                payload with
                 {
-                    Flags =
-                        _visibilityPayloads[drawIndex].Flags |
-                        EAdvancedVisibilityPayloadFlags
-                            .ForceCpuDiagnostic,
+                    Flags = (EAdvancedVisibilityPayloadFlags)
+                        AdvancedReconstructionTemporalFlags.PackVelocityReason(
+                            (uint)(payload.Flags |
+                                EAdvancedVisibilityPayloadFlags.ForceCpuDiagnostic),
+                            reason),
                 };
         }
     }
+
+    private static EAdvancedVelocityValidityReason MergeTemporalReasons(
+        EAdvancedVelocityValidityReason first,
+        EAdvancedVelocityValidityReason second)
+        => AdvancedVisibilityMotionContract.Resolve(
+            first == EAdvancedVelocityValidityReason.NewlyVisible ||
+                second == EAdvancedVelocityValidityReason.NewlyVisible,
+            first == EAdvancedVelocityValidityReason.Teleported ||
+                second == EAdvancedVelocityValidityReason.Teleported,
+            first == EAdvancedVelocityValidityReason.TopologyChanged ||
+                second == EAdvancedVelocityValidityReason.TopologyChanged,
+            first == EAdvancedVelocityValidityReason.VertexCountChanged ||
+                second == EAdvancedVelocityValidityReason.VertexCountChanged,
+            first == EAdvancedVelocityValidityReason.HistoryReset ||
+                second == EAdvancedVelocityValidityReason.HistoryReset,
+            first == EAdvancedVelocityValidityReason.ArenaOverflow ||
+                second == EAdvancedVelocityValidityReason.ArenaOverflow,
+            first == EAdvancedVelocityValidityReason.FrameGap ||
+                second == EAdvancedVelocityValidityReason.FrameGap);
 
     private void BeginAnimationScheduling(
         ulong frameId,
@@ -1104,8 +1187,10 @@ public sealed class AdvancedPreparationExtractor : IDisposable
     private AdvancedPreparationPublication CreateDeferredPublication(
         in RenderWorldSnapshot world,
         EAdvancedPreparationConsumer consumers,
-        uint visibleFallbackCount)
+        uint visibleFallbackCount,
+        string reason)
     {
+        LastDeferralReason = reason;
         _preparedSceneIdentity = 0u;
         _preparedScenePublication = default;
         _drawCount = 0;
@@ -1162,6 +1247,7 @@ public sealed class AdvancedPreparationExtractor : IDisposable
             source.WorldMatrix,
             source.Instances,
             source.WorldMatrixIsModelMatrix,
+            EAdvancedVelocityValidityReason.HistoryReset,
             source.ForceCpuRendering,
             source.MaterialOverride,
             source.RenderOptionsOverride);

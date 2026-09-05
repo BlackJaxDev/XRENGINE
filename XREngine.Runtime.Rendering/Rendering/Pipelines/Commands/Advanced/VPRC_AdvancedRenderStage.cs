@@ -60,8 +60,8 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
         if (Stage is not (EAdvancedRenderStage.VisibilityPreparation or
             EAdvancedRenderStage.VisibilityRaster or
             EAdvancedRenderStage.DepthPyramidAndLateVisibility or
+            EAdvancedRenderStage.AmbientOcclusion or
             EAdvancedRenderStage.WorkClassification or
-            EAdvancedRenderStage.AttributeReconstruction or
             EAdvancedRenderStage.NativeOpaqueShading))
         {
             using IDisposable? stagePassScope = PushRenderGraphPass(Descriptor.PassName);
@@ -80,6 +80,12 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
         {
             string pipelineType = ActivePipelineInstance.Pipeline?.GetType().FullName ?? "null";
             ReportExecutionPrerequisiteRejection($"The active pipeline is not AdvancedRenderPipeline (actual: {pipelineType}).");
+            return;
+        }
+        IAdvancedAmbientOcclusionProvider? ambientOcclusionProvider = pipeline.AmbientOcclusionProvider;
+        if (ambientOcclusionProvider is not null && ambientOcclusionProvider is not AdvancedDepthGtaoProvider)
+        {
+            ReportAdmissionRejection($"Ambient occlusion provider '{ambientOcclusionProvider.ProviderName}' has no native Advanced compute implementation.");
             return;
         }
 
@@ -145,9 +151,12 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             AdvancedVisibilityResourceNames.Metadata,
             AdvancedVisibilityResourceNames.Selection,
             AdvancedVisibilityResourceNames.DepthStencil,
+            AdvancedAmbientOcclusionContract.ResourceName,
             AdvancedVisibilityResourceNames.CurrentDepthPyramid,
             pipeline.ShadingDebugView,
-            RuntimeEngine.Rendering.Settings.AdvancedRenderPipelineMode == EAdvancedRenderPipelineMode.Required);
+            RuntimeEngine.Rendering.Settings.AdvancedRenderPipelineMode == EAdvancedRenderPipelineMode.Required,
+            pipeline.EnableBuiltInAmbientOcclusion &&
+            ambientOcclusionProvider is AdvancedDepthGtaoProvider { IsSupported: true });
 
         if (Stage == EAdvancedRenderStage.DepthPyramidAndLateVisibility)
         {
@@ -239,12 +248,14 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             builder.DependsOn(GetPreviousStagePassIndex(context, stageIndex));
             DescribeLateRasterPass(context, builder.PassIndex);
         }
-        else if (descriptor.Stage == EAdvancedRenderStage.WorkClassification)
+        else if (descriptor.Stage == EAdvancedRenderStage.AmbientOcclusion)
         {
             builder.DependsOn(context.GetOrCreateSyntheticPass(
                 LateVisibilityRasterPassName,
                 ERenderGraphPassStage.Graphics).PassIndex);
         }
+        else if (descriptor.Stage == EAdvancedRenderStage.WorkClassification)
+            builder.DependsOn(GetPreviousStagePassIndex(context, stageIndex));
         else if (stageIndex > 0)
             builder.DependsOn(GetPreviousStagePassIndex(context, stageIndex));
     }
@@ -273,22 +284,22 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             .ReadBuffer(AdvancedVisibilityResourceNames.Payloads)
             .ReadBuffer(AdvancedVisibilityResourceNames.Producers)
             .UseColorAttachment(
-                Tex(AdvancedVisibilityResourceNames.Identity),
+                RenderGraphResourceNames.MakeFboColor(AdvancedVisibilityResourceNames.FrameBuffer, 0),
                 ERenderGraphAccess.ReadWrite,
                 ERenderPassLoadOp.Load,
                 ERenderPassStoreOp.Store)
             .UseColorAttachment(
-                Tex(AdvancedVisibilityResourceNames.Metadata),
+                RenderGraphResourceNames.MakeFboColor(AdvancedVisibilityResourceNames.FrameBuffer, 1),
                 ERenderGraphAccess.ReadWrite,
                 ERenderPassLoadOp.Load,
                 ERenderPassStoreOp.Store)
             .UseColorAttachment(
-                Tex(AdvancedVisibilityResourceNames.Selection),
+                RenderGraphResourceNames.MakeFboColor(AdvancedVisibilityResourceNames.FrameBuffer, 2),
                 ERenderGraphAccess.ReadWrite,
                 ERenderPassLoadOp.Load,
                 ERenderPassStoreOp.Store)
             .UseDepthAttachment(
-                Tex(AdvancedVisibilityResourceNames.DepthStencil),
+                RenderGraphResourceNames.MakeFboDepth(AdvancedVisibilityResourceNames.FrameBuffer),
                 ERenderGraphAccess.ReadWrite,
                 ERenderPassLoadOp.Load,
                 ERenderPassStoreOp.Store);
@@ -343,22 +354,22 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
                     .ReadBuffer(AdvancedVisibilityResourceNames.Payloads)
                     .ReadBuffer(AdvancedVisibilityResourceNames.Producers)
                     .UseColorAttachment(
-                        Tex(AdvancedVisibilityResourceNames.Identity),
+                        RenderGraphResourceNames.MakeFboColor(AdvancedVisibilityResourceNames.FrameBuffer, 0),
                         ERenderGraphAccess.Write,
                         ERenderPassLoadOp.Clear,
                         ERenderPassStoreOp.Store)
                     .UseColorAttachment(
-                        Tex(AdvancedVisibilityResourceNames.Metadata),
+                        RenderGraphResourceNames.MakeFboColor(AdvancedVisibilityResourceNames.FrameBuffer, 1),
                         ERenderGraphAccess.Write,
                         ERenderPassLoadOp.Clear,
                         ERenderPassStoreOp.Store)
                     .UseColorAttachment(
-                        Tex(AdvancedVisibilityResourceNames.Selection),
+                        RenderGraphResourceNames.MakeFboColor(AdvancedVisibilityResourceNames.FrameBuffer, 2),
                         ERenderGraphAccess.Write,
                         ERenderPassLoadOp.Clear,
                         ERenderPassStoreOp.Store)
                     .UseDepthAttachment(
-                        Tex(AdvancedVisibilityResourceNames.DepthStencil),
+                        RenderGraphResourceNames.MakeFboDepth(AdvancedVisibilityResourceNames.FrameBuffer),
                         ERenderGraphAccess.Write,
                         ERenderPassLoadOp.Clear,
                         ERenderPassStoreOp.Store);
@@ -391,17 +402,6 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
                 DescribeLateComputeSlotResources(builder);
                 break;
 
-            case EAdvancedRenderStage.AttributeReconstruction:
-                builder
-                    .SampleTexture(Tex(AdvancedVisibilityResourceNames.Identity))
-                    .SampleTexture(Tex(AdvancedVisibilityResourceNames.Metadata))
-                    .SampleTexture(Tex(AdvancedVisibilityResourceNames.Selection))
-                    .SampleTexture(Tex(AdvancedVisibilityResourceNames.DepthStencil))
-                    .ReadBuffer(AdvancedVisibilityResourceNames.Payloads)
-                    .ReadBuffer(AdvancedVisibilityResourceNames.Producers);
-                DescribeReconstructionSlotResources(builder);
-                break;
-
             case EAdvancedRenderStage.WorkClassification:
                 builder.SampleTexture(Tex(AdvancedVisibilityResourceNames.Identity))
                     .SampleTexture(Tex(AdvancedVisibilityResourceNames.Metadata));
@@ -413,10 +413,18 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
                         .WriteBuffer(AdvancedClassificationResourceNames.DispatchArgs(slot), ERenderPassResourceType.IndirectBuffer);
                 break;
 
+            case EAdvancedRenderStage.AmbientOcclusion:
+                builder.SampleTexture(Tex(AdvancedVisibilityResourceNames.DepthStencil))
+                    .ReadWriteTexture(Tex(AdvancedAmbientOcclusionContract.ResourceName));
+                break;
+
             case EAdvancedRenderStage.NativeOpaqueShading:
+                // ShadeNativeOpaque reconstructs the local surface on demand;
+                // there is no intermediate AttributeReconstruction pass.
                 builder.SampleTexture(Tex(AdvancedVisibilityResourceNames.Identity))
                     .SampleTexture(Tex(AdvancedVisibilityResourceNames.Metadata))
                     .SampleTexture(Tex(AdvancedVisibilityResourceNames.DepthStencil))
+                    .SampleTexture(Tex(AdvancedAmbientOcclusionContract.ResourceName))
                     .ReadWriteTexture(Tex(AdvancedRenderPipeline.HDRSceneTextureName))
                     .ReadWriteTexture(Tex(AdvancedRenderPipeline.VelocityTextureName))
                     .ReadWriteTexture(Tex(AdvancedTemporalHistoryContract.ReactiveMaskResourceName))
@@ -433,16 +441,6 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
                 break;
 
         }
-    }
-
-    private static void DescribeReconstructionSlotResources(
-        RenderPassBuilder builder)
-    {
-        for (uint slot = 0u;
-             slot < AdvancedFrameSlotContract.DefaultSlotCount;
-             slot++)
-            builder.ReadWriteBuffer(
-                AdvancedReconstructionResourceNames.Counters(slot));
     }
 
     private static void DescribeLateComputeSlotResources(

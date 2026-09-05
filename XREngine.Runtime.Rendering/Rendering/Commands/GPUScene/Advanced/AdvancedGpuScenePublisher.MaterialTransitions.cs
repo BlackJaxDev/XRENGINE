@@ -131,7 +131,10 @@ public sealed partial class AdvancedGpuScenePublisher
         generation = 0u;
     }
 
-    private bool TryBuildAndPreflightWholeScenePlan(GPUScene scene, out string reason)
+    private bool TryBuildAndPreflightWholeScenePlan(
+        GPUScene scene,
+        ulong frameId,
+        out string reason)
     {
         _plannedMaterialCount = 0;
         _plannedCommandCount = checked((int)scene.TotalCommandCount);
@@ -204,6 +207,11 @@ public sealed partial class AdvancedGpuScenePublisher
             plan.Geometry = CreateGeometry(scene, mesh, in bounds, in command);
             plan.RenderState = CreateRenderState(mesh, in command);
             plan.MeshVertexCount = Math.Max(0, mesh?.VertexCount ?? 0);
+            plan.MeshIndexCount = Math.Max(0, mesh?.IndexCount ?? 0);
+            plan.MeshGeometryRevision = mesh?.GeometryRevision ?? 0L;
+            plan.MeshPrimitiveTopology = mesh?.Type ?? EPrimitiveType.Triangles;
+            plan.MeshIsSkinned =
+                (command.Flags & (uint)GPUIndirectRenderFlags.Skinned) != 0u;
             plan.StructuralSignature =
                 ComputeStructuralSignature(in command, mesh, material, primitiveIndex);
             plan.ContentSignature =
@@ -241,6 +249,12 @@ public sealed partial class AdvancedGpuScenePublisher
             plan.CompatibilityReason = EAdvancedCanonicalCompatibilityReason.None;
             plan.RegistrationIndex = registrationIndex;
             plan.MaterialPlanIndex = materialPlanIndex;
+            plan.TemporalEventReason = registrationIndex < 0
+                ? EAdvancedVelocityValidityReason.NewlyVisible
+                : ResolveTemporalEvent(
+                    in _registrations[registrationIndex],
+                    in plan,
+                    frameId);
             if (registrationIndex >= 0)
                 _preflightSeenStamps[registrationIndex] = _preflightSeenGeneration;
 
@@ -1053,6 +1067,11 @@ public sealed partial class AdvancedGpuScenePublisher
         public int RegistrationIndex;
         public int MaterialPlanIndex;
         public int MeshVertexCount;
+        public int MeshIndexCount;
+        public long MeshGeometryRevision;
+        public EPrimitiveType MeshPrimitiveTopology;
+        public EAdvancedVelocityValidityReason TemporalEventReason;
+        public bool MeshIsSkinned;
         public EAdvancedCanonicalCompatibilityReason CompatibilityReason;
         public bool Supported;
     }

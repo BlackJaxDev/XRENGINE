@@ -4,6 +4,23 @@
 #include "Advanced/Visibility/VisibilityInterface.glslinc"
 #include "AdvancedSurface.glslinc"
 
+#ifndef XR_ADV_RECONSTRUCTION_SET
+// Reconstruction consumes the visibility publication and its frame-local
+// inputs from the same immutable Vulkan descriptor set.
+#define XR_ADV_RECONSTRUCTION_SET 1
+#endif
+
+#if defined(XR_ADV_BACKEND_VULKAN)
+#define XR_ADV_RECONSTRUCTION_PASS_LAYOUT(bindingIndex) layout(set = XR_ADV_RECONSTRUCTION_SET, binding = bindingIndex)
+#define XR_ADV_RECONSTRUCTION_IMAGE_LAYOUT(formatName, bindingIndex) layout(formatName, set = XR_ADV_RECONSTRUCTION_SET, binding = bindingIndex)
+#elif defined(XR_ADV_BACKEND_OPENGL)
+#define XR_ADV_RECONSTRUCTION_PASS_LAYOUT(bindingIndex) layout(binding = bindingIndex)
+#define XR_ADV_RECONSTRUCTION_IMAGE_LAYOUT(formatName, bindingIndex) layout(formatName, binding = bindingIndex)
+#else
+#define XR_ADV_RECONSTRUCTION_PASS_LAYOUT(bindingIndex) layout(binding = bindingIndex)
+#define XR_ADV_RECONSTRUCTION_IMAGE_LAYOUT(formatName, bindingIndex) layout(formatName, binding = bindingIndex)
+#endif
+
 #ifndef XR_ADV_BINDING_RECONSTRUCTION_INDICES
 #define XR_ADV_BINDING_RECONSTRUCTION_INDICES 47
 #endif

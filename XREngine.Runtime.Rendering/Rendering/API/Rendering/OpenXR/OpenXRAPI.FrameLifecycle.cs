@@ -71,6 +71,7 @@ public unsafe partial class OpenXRAPI
                 Layers = null
             };
             var endResult = EndFrameWithTiming(in frameEndInfoNoLayers);
+            DiscardPendingOpenXrViewHistory(frameNo);
             if (OpenXrDebugLifecycle && frameNo != 0 && ShouldLogLifecycle(frameNo))
                 Debug.Out($"OpenXR[{frameNo}] Render: EndFrame(no layers) => {endResult}");
 
@@ -91,6 +92,7 @@ public unsafe partial class OpenXRAPI
                 Layers = null
             };
             var endResult = EndFrameWithTiming(in frameEndInfoNoLayers);
+            DiscardPendingOpenXrViewHistory(frameNo);
             if (OpenXrDebugLifecycle && frameNo != 0 && ShouldLogLifecycle(frameNo))
                 Debug.Out($"OpenXR[{frameNo}] Render: EndFrame(no layers; unsupported view render mode) => {endResult}");
 
@@ -176,6 +178,7 @@ public unsafe partial class OpenXRAPI
                 Layers = null
             };
             var endResult = EndFrameWithTiming(in frameEndInfoNoLayers);
+            DiscardPendingOpenXrViewHistory(frameNo);
             if (OpenXrDebugLifecycle && frameNo != 0 && ShouldLogLifecycle(frameNo))
                 Debug.Out($"OpenXR[{frameNo}] Render: EndFrame(no layers; eye failure) => {endResult}");
 
@@ -207,6 +210,10 @@ public unsafe partial class OpenXRAPI
         };
 
         var endFrameResult = EndFrameWithTiming(in frameEndInfo);
+        if (endFrameResult == Result.Success && allEyesRendered)
+            CommitOpenXrViewHistory(frameNo, frameEndInfo.DisplayTime);
+        else
+            DiscardPendingOpenXrViewHistory(frameNo);
         if (OpenXrDebugLifecycle && frameNo != 0 && ShouldLogLifecycle(frameNo))
             Debug.Out($"OpenXR[{frameNo}] Render: EndFrame(layer) => {endFrameResult}");
         PublishOpenXrRvcFrameProfile(frameNo, endFrameResult);
@@ -880,7 +887,8 @@ public unsafe partial class OpenXRAPI
             float leftFrustumPadding = UpdateOpenXrEyeCameraFromView(_openXrLeftEyeCamera!, 0);
             float rightFrustumPadding = UpdateOpenXrEyeCameraFromView(_openXrRightEyeCamera!, 1);
             RuntimeEngine.Rendering.Stats.Vr.RecordVrXrCollectFrustumExpansionDegrees(Math.Max(leftFrustumPadding, rightFrustumPadding));
-            PublishLocatedOpenXrFrameViewSet();
+            if (!TryPublishLocatedOpenXrFrameViewSet())
+                return;
 
             // NOTE: Do not call World.Lights.UpdateCameraLightIntersections() for the OpenXR eye cameras.
             // That data is stored on the light components (not scoped per camera), so updating it here can
@@ -1700,6 +1708,7 @@ public unsafe partial class OpenXRAPI
             };
 
             var endResult = EndFrameWithTiming(in frameEndInfoNoLayers);
+            DiscardPendingOpenXrViewHistory(frameNo);
             if (OpenXrDebugLifecycle && frameNo != 0 && ShouldLogLifecycle(frameNo))
                 Debug.Out($"OpenXR[{frameNo}] Prepare: aborted frame ({reason}), EndFrame(no layers) => {endResult}");
         }

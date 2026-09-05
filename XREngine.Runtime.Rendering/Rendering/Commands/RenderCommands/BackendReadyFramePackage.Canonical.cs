@@ -289,11 +289,14 @@ public sealed partial class BackendReadyFramePackage
         Matrix4x4 projectionUnjittered = source.ProjectionMatrixUnjittered == default ? source.ProjectionMatrix : source.ProjectionMatrixUnjittered;
         Matrix4x4 viewProjectionJittered = source.ViewProjectionMatrix;
         Matrix4x4 viewProjectionUnjittered = source.ViewMatrix * projectionUnjittered;
-        Matrix4x4 previousViewProjection = source.PreviousViewProjectionMatrix == default ? viewProjectionJittered : source.PreviousViewProjectionMatrix;
+        Matrix4x4 previousViewProjection = source.HasValidTemporalHistory && source.PreviousViewProjectionMatrix != default
+            ? source.PreviousViewProjectionMatrix : viewProjectionJittered;
+        Matrix4x4 previousViewProjectionUnjittered = source.HasValidTemporalHistory && source.PreviousViewProjectionMatrixUnjittered != default
+            ? source.PreviousViewProjectionMatrixUnjittered : viewProjectionUnjittered;
         GetViewMask(source.ViewId, out uint viewMaskLo, out uint viewMaskHi);
         return CreateCanonicalViewRecord(
             source.ViewId, source.ViewMatrix, source.ProjectionMatrix, projectionUnjittered,
-            viewProjectionJittered, viewProjectionUnjittered, previousViewProjection,
+            viewProjectionJittered, viewProjectionUnjittered, previousViewProjection, previousViewProjectionUnjittered,
             source.ViewRect.Width, source.ViewRect.Height, source.CameraPositionAndNear,
             source.CameraForwardAndFar, new Vector4(
                 source.CurrentJitter.X, source.CurrentJitter.Y,
@@ -319,7 +322,7 @@ public sealed partial class BackendReadyFramePackage
         }
         return CreateCanonicalViewRecord(
             0u, view, projection, projectionUnjittered, view * projection,
-            view * projectionUnjittered, view * projection,
+            view * projectionUnjittered, view * projection, view * projectionUnjittered,
             checked((uint)Math.Max(viewportWidth, 1)), checked((uint)Math.Max(viewportHeight, 1)),
             new Vector4(camera.Transform.RenderTranslation, camera.NearZ),
             new Vector4(camera.Transform.RenderForward, camera.FarZ),
@@ -330,7 +333,8 @@ public sealed partial class BackendReadyFramePackage
     private static BackendReadyCanonicalViewRecord CreateCanonicalViewRecord(
         uint viewId, in Matrix4x4 view, in Matrix4x4 projection, in Matrix4x4 projectionUnjittered,
         in Matrix4x4 viewProjectionJittered, in Matrix4x4 viewProjectionUnjittered,
-        in Matrix4x4 previousViewProjection, uint viewportWidth, uint viewportHeight,
+        in Matrix4x4 previousViewProjection, in Matrix4x4 previousViewProjectionUnjittered,
+        uint viewportWidth, uint viewportHeight,
         in Vector4 cameraPositionAndNear, in Vector4 cameraForwardAndFar,
         in Vector4 currentAndPreviousJitter, uint outputLayer, EAdvancedViewRecordFlags flags,
         ulong historyKey, uint viewMaskLo, uint viewMaskHi, ulong generation)
@@ -346,7 +350,7 @@ public sealed partial class BackendReadyFramePackage
             ViewProjectionJittered = viewProjectionJittered,
             ViewProjectionUnjittered = viewProjectionUnjittered,
             PreviousViewProjectionJittered = previousViewProjection,
-            PreviousViewProjectionUnjittered = previousViewProjection,
+            PreviousViewProjectionUnjittered = previousViewProjectionUnjittered,
             FrustumPlane0 = left,
             FrustumPlane1 = right,
             FrustumPlane2 = bottom,
@@ -369,6 +373,9 @@ public sealed partial class BackendReadyFramePackage
     private static EAdvancedViewRecordFlags CreateAdvancedViewFlags(in RenderFrameViewDescriptor source)
     {
         EAdvancedViewRecordFlags flags = source.DepthZeroToOne ? EAdvancedViewRecordFlags.DepthZeroToOne : EAdvancedViewRecordFlags.None;
+        if (source.HasValidTemporalHistory && source.PreviousViewProjectionMatrix != default &&
+            source.PreviousViewProjectionMatrixUnjittered != default)
+            flags |= EAdvancedViewRecordFlags.TemporalHistoryValid;
         if (source.ReversedDepth)
             flags |= EAdvancedViewRecordFlags.ReversedDepth;
         if (source.IsLeftEyeFamily)

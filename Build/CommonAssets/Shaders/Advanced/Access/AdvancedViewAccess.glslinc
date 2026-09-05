@@ -3,6 +3,8 @@
 
 #include "AdvancedDiagnostics.glslinc"
 
+const uint XR_ADV_VIEW_TEMPORAL_HISTORY_VALID = 1u << 7u;
+
 struct XRAdvancedViewRecord
 {
     mat4 view;

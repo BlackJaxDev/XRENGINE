@@ -34,7 +34,6 @@ internal sealed partial class VulkanFrameLoop
             foveation,
             new OpenXrEyeFrameOpDelegateEmitter(emitFrameOps));
 
-        _commandRuntime.OpenXrSubmissionTracker.PollCompletions();
         if (!_commandRuntime.OpenXrSubmissionTracker.TryReserveSubmission(
                 out OpenXrVulkanSubmissionTracker.SubmissionAdmissionTicket? admissionTicket))
         {
@@ -146,7 +145,6 @@ internal sealed partial class VulkanFrameLoop
         in OpenXrEyeSwapchainRenderRequest firstEye,
         in OpenXrEyeSwapchainRenderRequest secondEye)
     {
-        _commandRuntime.OpenXrSubmissionTracker.PollCompletions();
         if (!_commandRuntime.OpenXrSubmissionTracker.TryReserveSubmission(
                 out OpenXrVulkanSubmissionTracker.SubmissionAdmissionTicket? admissionTicket))
         {
@@ -272,8 +270,8 @@ internal sealed partial class VulkanFrameLoop
                     hasFirstPrepared: true,
                     in secondPrepared,
                     hasSecondPrepared: true,
-                    GetCombinedOpenXrBatchUploads(),
-                    additionalUploads: null,
+                    GetOpenXrEyeRecordedTextureUploads(firstEye.OpenXrViewIndex),
+                    GetOpenXrEyeRecordedTextureUploads(secondEye.OpenXrViewIndex),
                     default,
                     0UL,
                     _commandRuntime.MappedFrameArena,
@@ -441,15 +439,7 @@ internal sealed partial class VulkanFrameLoop
                 ResourceRuntime.Uploads.DrainCompletedRecordedTextureUploadPublications(
                     Api!, _deviceContext, _commandRuntime, ResourceRuntime, IsDeviceLost);
 
-                if (MappedFrameArena is { } arena &&
-                    !arena.TryResetFrameSlot(
-                        recordImageIndex,
-                        arena.Generation,
-                        frameDataSlotCompletionProven))
-                {
-                    throw new InvalidOperationException(
-                        $"OpenXR mapped frame-data slot {recordImageIndex} could not be reopened before eye recording.");
-                }
+                ReopenOpenXrFrameDataSlot(recordImageIndex, frameDataSlotCompletionProven);
             }
 
             if (ShouldDeferOpenXrEyeRenderingWork(out string resourceWorkReason))
@@ -767,40 +757,11 @@ internal sealed partial class VulkanFrameLoop
 
         FrameOperationSequence nativeOperations =
             framePlan.GetNativeStaticOperationsForLogicalView(logicalViewId);
-        VulkanReadOnlyStoragePreparedAuthority? readOnlyStorageAuthority = null;
-        if (FrameDataArena is { } frameDataArena)
-        {
-            VulkanReadOnlyStoragePreparedAuthority authority =
-                ResourceRuntime.ReadOnlyStoragePreparedMap.CreateAuthority(
-                    frameDataArena,
-                    unchecked((int)targetContext.FrameDataSlotIndex));
-            if (!nativeOperations.Stream.TryPrepareReadOnlyStorage(
-                    ResourceRuntime.ReadOnlyStoragePreparedMap,
-                    in authority,
-                    frameDataArena,
-                    out string storageFailure))
-            {
-                throw CreateOpenXrEyePresentNowFailure(
-                    targetContext.OpenXrViewIndex,
-                    EVulkanPresentNowReadinessStage.FramePlanSeal,
-                    "eye-read-only-storage",
-                    "OpenXREyeSubmit -> immutable storage preparation",
-                    storageFailure);
-            }
-            readOnlyStorageAuthority = authority;
-            VulkanMaterialTablePreparedAuthority materialAuthority =
-                ResourceRuntime.MaterialTablePreparedMap.CreateAuthority(frameDataArena,
-                    unchecked((int)targetContext.FrameDataSlotIndex));
-            if (ResourceRuntime.BackendObjectContext is not { } materialContext ||
-                !nativeOperations.Stream.TryPrepareMaterialTables(
-                    ResourceRuntime.MaterialTablePreparedMap, in materialAuthority, materialContext,
-                    ResourceRuntime.Buffers, out _, out storageFailure))
-            {
-                throw CreateOpenXrEyePresentNowFailure(targetContext.OpenXrViewIndex,
-                    EVulkanPresentNowReadinessStage.FramePlanSeal, "eye-material-storage",
-                    "OpenXREyeSubmit -> immutable material preparation", storageFailure);
-            }
-        }
+        VulkanReadOnlyStoragePreparedAuthority? readOnlyStorageAuthority =
+            PrepareOpenXrImmutableStorage(
+                nativeOperations.Stream,
+                targetContext.FrameDataSlotIndex,
+                targetContext.OpenXrViewIndex);
         // Keep the exact eye-slot authority through mesh prewarm and recording,
         // not just compute preparation: both consume immutable material banks.
         using VulkanResourceRuntime.ReadOnlyStorageRecordingScope storageScope =
@@ -1044,22 +1005,6 @@ internal sealed partial class VulkanFrameLoop
     {
         for (int i = 0; i < OutputRuntime.OpenXrBackend.EyeRecordedTextureUploadsForSubmit.Length; i++)
             OutputRuntime.OpenXrBackend.EyeRecordedTextureUploadsForSubmit[i].Clear();
-    }
-
-    private int CountOpenXrEyeRecordedTextureUploads()
-    {
-        int count = 0;
-        for (int i = 0; i < OutputRuntime.OpenXrBackend.EyeRecordedTextureUploadsForSubmit.Length; i++)
-            count += OutputRuntime.OpenXrBackend.EyeRecordedTextureUploadsForSubmit[i].Count;
-        return count;
-    }
-
-    private List<VulkanImportedTexturePendingUpload> GetCombinedOpenXrBatchUploads()
-    {
-        List<VulkanImportedTexturePendingUpload> result = new(CountOpenXrEyeRecordedTextureUploads());
-        for (int i = 0; i < OutputRuntime.OpenXrBackend.EyeRecordedTextureUploadsForSubmit.Length; i++)
-            result.AddRange(OutputRuntime.OpenXrBackend.EyeRecordedTextureUploadsForSubmit[i]);
-        return result;
     }
 
     private void DestroyOpenXrEyeCommandPools()

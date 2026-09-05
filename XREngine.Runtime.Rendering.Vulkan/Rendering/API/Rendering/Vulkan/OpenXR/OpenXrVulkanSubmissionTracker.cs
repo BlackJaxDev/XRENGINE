@@ -40,6 +40,8 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
         public OpenXrPreparedEyeCommandBufferInput SecondPrepared;
         public bool HasFirstPrepared;
         public bool HasSecondPrepared;
+        public bool FirstPreparedReleased;
+        public bool SecondPreparedReleased;
         public CommandBuffer TemporaryCommandBuffer;
         public bool HasTemporaryCommandBuffer;
         public readonly VulkanImportedTexturePendingUpload[] Uploads = new VulkanImportedTexturePendingUpload[MaxTrackedUploads];
@@ -392,6 +394,8 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
             entry.HasFirstPrepared = hasFirstPrepared;
             entry.SecondPrepared = secondPrepared;
             entry.HasSecondPrepared = hasSecondPrepared;
+            entry.FirstPreparedReleased = false;
+            entry.SecondPreparedReleased = false;
             entry.TemporaryCommandBuffer = temporaryCommandBuffer;
             entry.HasTemporaryCommandBuffer = temporaryCommandBuffer.Handle != 0;
             entry.TimelineSemaphore = timelineSemaphore;
@@ -821,14 +825,22 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
     {
         try
         {
-            if (entry.HasFirstPrepared && entry.FirstPrepared.Ops is { } firstOps)
-                VulkanAdvancedVisibilityInputLease.ReleaseOperations(firstOps);
-            entry.FirstPrepared = default;
-            entry.HasFirstPrepared = false;
-            if (entry.HasSecondPrepared && entry.SecondPrepared.Ops is { } secondOps)
-                VulkanAdvancedVisibilityInputLease.ReleaseOperations(secondOps);
-            entry.SecondPrepared = default;
-            entry.HasSecondPrepared = false;
+            if (!entry.FirstPreparedReleased && entry.HasFirstPrepared)
+            {
+                if (entry.FirstPrepared.Ops is { } firstOps)
+                    VulkanAdvancedVisibilityInputLease.ReleaseOperations(firstOps);
+                entry.FirstPrepared = default;
+                entry.HasFirstPrepared = false;
+                entry.FirstPreparedReleased = true;
+            }
+            if (!entry.SecondPreparedReleased && entry.HasSecondPrepared)
+            {
+                if (entry.SecondPrepared.Ops is { } secondOps)
+                    VulkanAdvancedVisibilityInputLease.ReleaseOperations(secondOps);
+                entry.SecondPrepared = default;
+                entry.HasSecondPrepared = false;
+                entry.SecondPreparedReleased = true;
+            }
             return true;
         }
         catch { return false; }

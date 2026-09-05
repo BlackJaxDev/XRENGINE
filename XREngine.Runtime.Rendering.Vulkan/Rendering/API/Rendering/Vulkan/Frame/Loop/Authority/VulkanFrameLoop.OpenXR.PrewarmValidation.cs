@@ -882,10 +882,11 @@ internal sealed partial class VulkanFrameLoop
 
         void PrewarmDraw(VkMeshRenderer renderer, in PendingMeshDraw draw, in FrameOpContext context)
         {
-            // Authoring has no sealed material-bank authority yet. Capacity was
+            // Authoring has no sealed immutable-storage authority yet. Capacity was
             // reserved above; native descriptor preparation runs from the sealed
             // primary prewarm under the exact eye-slot storage scope.
-            if (draw.ProgramBindingSnapshot?.MaterialTablePublication is not null)
+            if (draw.ProgramBindingSnapshot is { } snapshot &&
+                (snapshot.HasReadOnlyStorageBindings || snapshot.MaterialTablePublication is not null))
                 return;
             int drawUniformSlot = VulkanCommandRuntime.GetFrameWideMeshDrawUniformSlot(
                 meshDrawSlotsByRendererFamily,

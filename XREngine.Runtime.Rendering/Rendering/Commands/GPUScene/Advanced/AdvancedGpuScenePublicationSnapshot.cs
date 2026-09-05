@@ -16,11 +16,14 @@ public sealed class AdvancedGpuScenePublicationSnapshot
         AdvancedMaterialDatabase materials = database.Materials;
         AdvancedGlobalResourceDatabase resources = database.Resources;
         Draws = scene.Draws.CreatePublicationSnapshot(includeRecordImage: true);
-        Instances = scene.Instances.CreatePublicationSnapshot();
-        Transforms = scene.Transforms.CreatePublicationSnapshot();
-        Deformations = scene.Deformations.CreatePublicationSnapshot();
-        RenderStates = scene.RenderStates.CreatePublicationSnapshot();
-        EditorIdentities = scene.EditorIdentities.CreatePublicationSnapshot();
+        // Native consumers resolve these tables and their handle lookups from
+        // the retained publication. Structural journals contain no row data
+        // and cannot initialize a new frame slot or recover a missed journal.
+        Instances = scene.Instances.CreatePublicationSnapshot(includeRecordImage: true);
+        Transforms = scene.Transforms.CreatePublicationSnapshot(includeRecordImage: true);
+        Deformations = scene.Deformations.CreatePublicationSnapshot(includeRecordImage: true);
+        RenderStates = scene.RenderStates.CreatePublicationSnapshot(includeRecordImage: true);
+        EditorIdentities = scene.EditorIdentities.CreatePublicationSnapshot(includeRecordImage: true);
         // Stable-bin sealing resolves each compact submission's immutable
         // geometry range from the retained publication. Journals alone cannot
         // satisfy that lookup after the live table advances.

@@ -299,6 +299,7 @@ namespace XREngine.Rendering.Vulkan
                 recordingState.RecordingScratch.RecordPipelineNameCapacityHint = Math.Max(1, recordingState.PipelineNameByIdentity.Count);
                 recordingState.RecordingScratch.RecordMeshDrawSlotCapacityHint = Math.Max(1, recordingState.MeshDrawSlotsByRendererFamily.Count);
                 recordingState.RecordingScratch.RecordFboLayoutCapacityHint = Math.Max(1, recordingState.FboLayoutTracking.Count);
+                recordingState.RecordingScratch.RecordBegunFboPassCapacityHint = Math.Max(1, recordingState.RecordingScratch.BegunFboPasses.Count);
 
                 System.Diagnostics.Debug.Assert(
                     recordingState.PrimaryCommandPlan.HasTerminalAction(

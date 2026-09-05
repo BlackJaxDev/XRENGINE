@@ -19,4 +19,8 @@ public enum EAdvancedViewRecordFlags : uint
     /// convention that rendered the depth attachment.
     /// </summary>
     FramebufferTextureYDown = 1u << 6,
+    /// <summary>
+    /// The view producer proved a compatible preceding output and camera history.
+    /// </summary>
+    TemporalHistoryValid = 1u << 7,
 }

@@ -20,5 +20,12 @@ internal sealed unsafe record RetiredOpenXrSwapchainGeneration(
     bool HasResourceLifetimeAuthority,
     Image[] LifetimeImages,
     VulkanResourceSlotHandle[] DetachedLifetimeSlots,
+    bool ExternalImageLifetimesDetached,
+    VulkanOpenXrSwapchainChildRetirementReceipt ChildRetirementReceipt,
     bool RuntimeImagesReleased,
-    long EnqueuedTimestamp);
+    long EnqueuedTimestamp)
+{
+    // Destruction is independently retryable per view. A failed xrDestroySwapchain
+    // leaves both the native handle and its image-array owner reachable.
+    public bool[] DestroyedSwapchains { get; } = new bool[Swapchains.Length];
+}

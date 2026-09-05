@@ -19,6 +19,7 @@ internal readonly record struct VulkanAdvancedNativeComputeClosure(
     VulkanPhysicalImageGroup Velocity,
     VulkanPhysicalImageGroup Reactive,
     VulkanPhysicalImageGroup ShadingDiagnostics,
+    VulkanPhysicalImageGroup AmbientOcclusion,
     VulkanFrozenBufferBarrier ActiveTiles,
     VulkanFrozenBufferBarrier KernelTiles,
     VulkanFrozenBufferBarrier ClassificationCounters,
@@ -34,6 +35,8 @@ internal readonly record struct VulkanAdvancedNativeComputeClosure(
     DescriptorImageInfo VelocityDescriptor,
     DescriptorImageInfo ReactiveDescriptor,
     DescriptorImageInfo ShadingDiagnosticsDescriptor,
+    DescriptorImageInfo AmbientOcclusionStorageDescriptor,
+    DescriptorImageInfo AmbientOcclusionSampledDescriptor,
     uint ViewIndex)
 {
     internal bool IsValid
@@ -45,19 +48,29 @@ internal readonly record struct VulkanAdvancedNativeComputeClosure(
            Velocity is { IsAllocated: true } &&
            Reactive is { IsAllocated: true } &&
            ShadingDiagnostics is { IsAllocated: true } &&
-           ActiveTiles.NativeBuffer.Handle != 0 &&
-           KernelTiles.NativeBuffer.Handle != 0 &&
-           ClassificationCounters.NativeBuffer.Handle != 0 &&
-           DispatchArguments.NativeBuffer.Handle != 0 &&
-           KernelCounts.NativeBuffer.Handle != 0 &&
-           FroxelGrid.NativeBuffer.Handle != 0 &&
-           LightIndices.NativeBuffer.Handle != 0 &&
-           LightingCounters.NativeBuffer.Handle != 0 &&
+           AmbientOcclusion is { IsAllocated: true } &&
+           HasFrozenRange(ActiveTiles) &&
+           HasFrozenRange(KernelTiles) &&
+           HasFrozenRange(ClassificationCounters) &&
+           HasFrozenRange(DispatchArguments) &&
+           HasFrozenRange(KernelCounts) &&
+           HasFrozenRange(FroxelGrid) &&
+           HasFrozenRange(LightIndices) &&
+           HasFrozenRange(LightingCounters) &&
            IdentityDescriptor.ImageView.Handle != 0 &&
            MetadataDescriptor.ImageView.Handle != 0 &&
            DepthDescriptor.ImageView.Handle != 0 &&
            HdrDescriptor.ImageView.Handle != 0 &&
            VelocityDescriptor.ImageView.Handle != 0 &&
            ReactiveDescriptor.ImageView.Handle != 0 &&
-           ShadingDiagnosticsDescriptor.ImageView.Handle != 0;
+           ShadingDiagnosticsDescriptor.ImageView.Handle != 0 &&
+           AmbientOcclusionStorageDescriptor.ImageView.Handle != 0 &&
+           AmbientOcclusionSampledDescriptor.ImageView.Handle != 0 &&
+           AmbientOcclusionSampledDescriptor.Sampler.Handle != 0;
+
+    private static bool HasFrozenRange(in VulkanFrozenBufferBarrier barrier)
+        => barrier.NativeBuffer.Handle != 0 &&
+           barrier.NativeGeneration != 0u &&
+           barrier.NativeOffset == 0u &&
+           barrier.NativeSize != 0u;
 }

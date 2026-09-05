@@ -381,11 +381,13 @@ public unsafe partial class OpenXRAPI
         const ViewStateFlags need = ViewStateFlags.PositionValidBit | ViewStateFlags.OrientationValidBit;
         if ((viewState.ViewStateFlags & need) == need)
         {
+            Volatile.Write(ref _openXrLatestViewTrackingValid, 1);
             CacheLastValidViews();
             return true;
         }
 
         RuntimeEngine.Rendering.Stats.Vr.RecordVrXrTrackingLossFrame();
+        Volatile.Write(ref _openXrLatestViewTrackingValid, 0);
 
         // Rate-limit allocation: emit a single warning per tracking-loss streak. The flag resets when
         // CacheLastValidViews() runs again (tracking recovered). Cold-frame allocation is acceptable.
@@ -623,6 +625,7 @@ public unsafe partial class OpenXRAPI
                             Debug.Out($"xrBeginSession: {beginResult}");
                             if (beginResult == Result.Success)
                             {
+                                InvalidateOpenXrViewHistory();
                                 _sessionBegun = true;
                                 Debug.Out("Session began successfully");
                             }
@@ -667,7 +670,7 @@ public unsafe partial class OpenXRAPI
     /// <summary>
     /// Cleans up OpenXR resources.
     /// </summary>
-    protected void CleanUp()
+    protected bool CleanUp()
     {
         DisableRuntimeMonitoring();
         StopOpenXrPacingThread();
@@ -691,9 +694,20 @@ public unsafe partial class OpenXRAPI
 
         if (!TearDownSessionResourcesOnOwningThread(true))
         {
+            _pendingShutdownCleanup = true;
+            ScheduleProbeRetry(TimeSpan.FromMilliseconds(100));
             Debug.LogWarning("[OpenXR] Cleanup retained graphics backend resources because session teardown is incomplete.");
-            return;
+            return false;
         }
+
+        CompleteGraphicsBackendCleanup();
+        return true;
+    }
+
+    private void CompleteGraphicsBackendCleanup()
+    {
+        if (_graphicsBackendResourcesDestroyed)
+            return;
 
         try
         {
@@ -701,12 +715,18 @@ public unsafe partial class OpenXRAPI
         }
         catch
         {
-            // Best-effort cleanup.
+            // Best-effort terminal backend cleanup.
+        }
+        finally
+        {
+            _graphicsBackendResourcesDestroyed = true;
+            _pendingShutdownCleanup = false;
         }
     }
 
     internal bool CleanupSwapchains()
     {
+        InvalidateOpenXrViewHistory();
         if (Window?.Renderer is AbstractRenderer renderer &&
             _graphicsBinding is not null &&
             _graphicsBinding.TryRetireSwapchainsForDeferredDestruction(this, renderer))

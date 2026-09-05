@@ -26,6 +26,7 @@ public unsafe partial class OpenXRAPI
 
     private void InitializeOpenXrViewsForActiveConfiguration(string backendLabel)
     {
+        InvalidateOpenXrViewHistory();
         ViewConfigurationType viewConfigType = SelectOpenXrViewConfigurationType();
         CacheOpenXrViewConfigurationSnapshots(backendLabel);
         _viewCount = 0;

@@ -231,10 +231,10 @@ namespace XREngine.Rendering.Vulkan
             return SampleCountFlags.Count1Bit;
         }
 
-        internal void BeginRenderPassForTarget(scoped ref PrimaryCommandBufferRecordingState recordingState, XRFrameBuffer? target, int passIndex, in FrameOpContext context, bool secondaryContents = false)
-            => BeginRenderingForTarget(ref recordingState, target, passIndex, in context, secondaryContents);
+        internal void BeginRenderPassForTarget(scoped ref PrimaryCommandBufferRecordingState recordingState, XRFrameBuffer? target, int passIndex, in FrameOpContext context, bool secondaryContents = false, VulkanAdvancedVisibilityClearPolicy? clearPolicy = null)
+            => BeginRenderingForTarget(ref recordingState, target, passIndex, in context, secondaryContents, clearPolicy);
 
-        private unsafe void BeginRenderingForTarget(scoped ref PrimaryCommandBufferRecordingState recordingState, XRFrameBuffer? target, int passIndex, in FrameOpContext context, bool secondaryContents = false)
+        private unsafe void BeginRenderingForTarget(scoped ref PrimaryCommandBufferRecordingState recordingState, XRFrameBuffer? target, int passIndex, in FrameOpContext context, bool secondaryContents = false, VulkanAdvancedVisibilityClearPolicy? clearPolicy = null)
         {
             // Assumes no active render pass.
             if (target is null)
@@ -519,7 +519,8 @@ namespace XREngine.Rendering.Vulkan
             // forward meshes, gizmo) would fail.  Querying the per-image tracked
             // layout also accounts for barrier-planner transitions or blits that
             // changed the actual image layout since the last render pass ended.
-            bool targetReenteredThisCommandBuffer = recordingState.FboLayoutTracking.ContainsKey(target);
+            VulkanBegunFboPassKey begunPassKey = new(target, passIndex, context.SchedulingIdentity);
+            bool targetReenteredThisCommandBuffer = recordingState.RecordingScratch.BegunFboPasses.Contains(begunPassKey);
             ImageLayout[]? trackedLayouts = QueryCurrentAttachmentLayouts(
                 target,
                 vkFrameBuffer,
@@ -602,7 +603,7 @@ namespace XREngine.Rendering.Vulkan
                 VulkanCommandClearStateSnapshot clearState = recordingState.ClearState;
                 ColorF4 clearColor = clearState.ClearColor;
                 fixed (ClearValue* dynamicClearValuesFboPointer = dynamicClearValuesFbo)
-                    vkFrameBuffer.WriteClearValues(dynamicClearValuesFboPointer, dynamicAttachmentCountFbo, fboSignature, in clearColor, clearState.ClearDepth, clearState.ClearStencil);
+                    vkFrameBuffer.WriteClearValues(dynamicClearValuesFboPointer, dynamicAttachmentCountFbo, fboSignature, in clearColor, clearState.ClearDepth, clearState.ClearStencil, clearPolicy);
 
                 int colorAttachmentCount = 0;
                 for (int i = 0; i < fboSignature.Length; i++)
@@ -811,6 +812,7 @@ namespace XREngine.Rendering.Vulkan
                     passDepthStencilReadOnly,
                     scopePlan.LocalReadSignature,
                     scopePlan.InheritanceRenderingFlags);
+                recordingState.RecordingScratch.BegunFboPasses.Add(begunPassKey);
                 if (TargetTraceEnabled)
                 {
                     Debug.Vulkan(
@@ -875,7 +877,7 @@ namespace XREngine.Rendering.Vulkan
             ColorF4 legacyClearColor = legacyClearState.ClearColor;
             fixed (ClearValue* clearValuesFbo = clearValuesFboScratch)
             {
-                vkFrameBuffer.WriteClearValues(clearValuesFbo, attachmentCountFbo, fboSignature, in legacyClearColor, legacyClearState.ClearDepth, legacyClearState.ClearStencil);
+                vkFrameBuffer.WriteClearValues(clearValuesFbo, attachmentCountFbo, fboSignature, in legacyClearColor, legacyClearState.ClearDepth, legacyClearState.ClearStencil, clearPolicy);
                 fboPassInfo.ClearValueCount = attachmentCountFbo;
                 fboPassInfo.PClearValues = clearValuesFbo;
                 CmdBeginRenderPassTracked(recordingState.CommandBuffer, &fboPassInfo, secondaryContents ? SubpassContents.SecondaryCommandBuffers : SubpassContents.Inline);
@@ -897,6 +899,7 @@ namespace XREngine.Rendering.Vulkan
                 fboSignature,
                 fboPassInfo.RenderArea,
                 passDepthStencilReadOnly);
+            recordingState.RecordingScratch.BegunFboPasses.Add(begunPassKey);
             if (TargetTraceEnabled)
             {
                 Debug.Vulkan(

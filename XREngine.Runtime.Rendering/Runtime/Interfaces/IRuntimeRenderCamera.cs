@@ -30,6 +30,12 @@ public interface IRuntimeRenderCamera
     Vector2 ProjectionJitter => Vector2.Zero;
 
     /// <summary>
+    /// Nonzero generation advanced by an explicit cut or temporal reset. Zero
+    /// means the camera cannot prove continuity and disables temporal motion.
+    /// </summary>
+    ulong TemporalHistoryEpoch => 0UL;
+
+    /// <summary>
     /// Gets the near clipping plane distance.
     /// </summary>
     float NearZ { get; }

@@ -326,9 +326,17 @@ bool XR_ADV_TryReconstructSurface(
     }
 
     XRAdvancedDrawRecord draw = XR_ADV_LoadDraw(drawDense);
-    uint velocityValidityReason =
-        (draw.flags & XR_ADV_TEMPORAL_VELOCITY_REASON_MASK) >>
-        XR_ADV_TEMPORAL_VELOCITY_REASON_SHIFT;
+    XRAdvancedPreparedDrawDeformationRecord preparedTemporalState;
+    bool hasPreparedTemporalState =
+        XR_ADV_TryLoadPreparedDrawTemporalState(
+            drawDense,
+            draw,
+            preparedTemporalState);
+    // The sidecar is the only current-frame temporal authority. A stale or
+    // absent relation fails closed without making static surface shading fail.
+    uint velocityValidityReason = hasPreparedTemporalState
+        ? XR_ADV_PreparedDeformationTemporalReason(preparedTemporalState)
+        : 7u; // EAdvancedVelocityValidityReason.HistoryReset
     uint geometryDense = XR_ADV_ResolveVisibilityHandle(
         draw.geometry,
         VisibilityGeometryLookupSegment,
@@ -709,8 +717,13 @@ bool XR_ADV_TryReconstructSurface(
         vec4(interpolatedCurrentWorld, 1.0) *
         viewRecord.viewProjectionUnjittered;
     vec4 previousUnjitteredClip = vec4(0.0);
+    bool viewHistoryValid =
+        (viewRecord.flags & XR_ADV_VIEW_TEMPORAL_HISTORY_VALID) != 0u;
+    if (!viewHistoryValid && velocityValidityReason == 0u)
+        velocityValidityReason = 7u; // EAdvancedVelocityValidityReason.HistoryReset
     bool velocityValid =
         ((metadata >> XR_ADV_VIS_VELOCITY_VALID_SHIFT) & 1u) != 0u &&
+        viewHistoryValid &&
         previousGeometryValid &&
         velocityValidityReason == 0u;
     if (previousGeometryValid)
@@ -750,8 +763,10 @@ bool XR_ADV_TryReconstructSurface(
         ((metadata >> XR_ADV_VIS_MASKED_SHIFT) & 1u) != 0u;
     bool frontFacing =
         ((metadata >> XR_ADV_VIS_FRONT_FACE_SHIFT) & 1u) != 0u;
-    bool reactive = masked || velocityValidityReason != 0u;
-    uint flags = XR_ADV_SURFACE_VALID;
+    bool reactive = masked || !velocityValid;
+    uint flags = XR_ADV_SURFACE_VALID |
+        ((velocityValidityReason << XR_ADV_TEMPORAL_VELOCITY_REASON_SHIFT) &
+            XR_ADV_TEMPORAL_VELOCITY_REASON_MASK);
     if (derivativesRequested)
         flags |= XR_ADV_SURFACE_DERIVATIVES_VALID;
     if (!frontFacing)
