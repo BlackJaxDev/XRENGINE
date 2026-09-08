@@ -212,9 +212,10 @@ internal sealed partial class VulkanCommandRuntime
         }
 
         uint groups = DivideRoundUp(payload.State.PayloadCapacity, 256u);
+        // Empty families still run raster clears and full-screen native initialization.
+        // Their zeroed per-frame buffers have no payload work to dispatch here.
         if (groups == 0u)
-            throw new VulkanPlanPreconditionException(
-                "Advanced visibility preparation reached recording with an empty payload capacity.");
+            return info.OperationIndex;
 
         for (uint viewIndex = 0u; viewIndex < payload.State.ViewCount; ++viewIndex)
         {
@@ -325,25 +326,29 @@ internal sealed partial class VulkanCommandRuntime
                 PipelineStageFlags.ComputeShaderBit,
                 allowUndefined: false);
 
-            BindPipelineTracked(state.CommandBuffer, PipelineBindPoint.Compute,
-                payload.LateVisibilityPipeline);
-            BindAdvancedVisibilityDescriptorSets(state.CommandBuffer,
-                PipelineBindPoint.Compute, late.PipelineLayout, in payload,
-                closure.DescriptorSets![closure.DescriptorIndex(viewIndex, 1)]);
-            PushConstantsTracked(state.CommandBuffer, late.PipelineLayout,
-                VulkanMeshRenderingConventions.GetCommonPushConstantStageFlags(
-                    DeviceContext), 0u,
-                new AdvancedVisibilityPreparationPushConstants(
-                    viewIndex, payloadBase, payload.State.PayloadCapacity, rangeBase));
-            long testRecordStart = Stopwatch.GetTimestamp();
-            using (VulkanGpuProfilerScope gpuScope = TryBeginVulkanGpuProfilerScope(
-                       state.CommandBuffer, NativeHiZTestGpuProfilerPath))
+            // Build the depth pyramid even when the scene has no opaque draws.
+            if (payload.State.PayloadCapacity != 0u)
             {
-                Api.CmdDispatch(state.CommandBuffer, DivideRoundUp(payload.State.PayloadCapacity, 256u), 1u, 1u);
+                BindPipelineTracked(state.CommandBuffer, PipelineBindPoint.Compute,
+                    payload.LateVisibilityPipeline);
+                BindAdvancedVisibilityDescriptorSets(state.CommandBuffer,
+                    PipelineBindPoint.Compute, late.PipelineLayout, in payload,
+                    closure.DescriptorSets![closure.DescriptorIndex(viewIndex, 1)]);
+                PushConstantsTracked(state.CommandBuffer, late.PipelineLayout,
+                    VulkanMeshRenderingConventions.GetCommonPushConstantStageFlags(
+                        DeviceContext), 0u,
+                    new AdvancedVisibilityPreparationPushConstants(
+                        viewIndex, payloadBase, payload.State.PayloadCapacity, rangeBase));
+                long testRecordStart = Stopwatch.GetTimestamp();
+                using (VulkanGpuProfilerScope gpuScope = TryBeginVulkanGpuProfilerScope(
+                           state.CommandBuffer, NativeHiZTestGpuProfilerPath))
+                {
+                    Api.CmdDispatch(state.CommandBuffer, DivideRoundUp(payload.State.PayloadCapacity, 256u), 1u, 1u);
+                }
+                OcclusionTelemetry.RecordHiZTest(
+                    payload.State.PayloadCapacity,
+                    Stopwatch.GetElapsedTime(testRecordStart).TotalMilliseconds);
             }
-            OcclusionTelemetry.RecordHiZTest(
-                payload.State.PayloadCapacity,
-                Stopwatch.GetElapsedTime(testRecordStart).TotalMilliseconds);
             EmitMemoryBarrierMask(state.CommandBuffer, EMemoryBarrierMask.ShaderStorage);
             const uint counterByteLength = 152u;
             GpuDiagnosticReadbackPlanNode counterNode = new(
@@ -485,24 +490,28 @@ internal sealed partial class VulkanCommandRuntime
             throw new VulkanPlanPreconditionException(
                 "Advanced visibility raster reached recording without its sealed view-set resource, target, and stable-bin closure.");
         }
-        VulkanVisibilityPreparedVertexSource currentDeformation =
-            payload.State.Geometry.CurrentVertices;
-        VulkanVisibilityPreparedVertexSource previousDeformation =
-            payload.State.Geometry.PreviousVertices;
-        string currentDeformationReason = "Ready";
-        string previousDeformationReason = "Ready";
-        bool currentDeformationValid =
-            currentDeformation.TryValidate(
-                ResourceRuntime,
-                out currentDeformationReason);
-        bool previousDeformationValid =
-            previousDeformation.TryValidate(
-                ResourceRuntime,
-                out previousDeformationReason);
-        if (!currentDeformationValid || !previousDeformationValid)
+        // A clear-only family owns a target but has no deformation sources.
+        if (payload.State.PayloadCapacity != 0u)
         {
-            throw new VulkanPlanPreconditionException(
-                $"Advanced visibility deformation buffers changed after sealing: current={currentDeformationReason}, previous={previousDeformationReason}.");
+            VulkanVisibilityPreparedVertexSource currentDeformation =
+                payload.State.Geometry.CurrentVertices;
+            VulkanVisibilityPreparedVertexSource previousDeformation =
+                payload.State.Geometry.PreviousVertices;
+            string currentDeformationReason = "Ready";
+            string previousDeformationReason = "Ready";
+            bool currentDeformationValid =
+                currentDeformation.TryValidate(
+                    ResourceRuntime,
+                    out currentDeformationReason);
+            bool previousDeformationValid =
+                previousDeformation.TryValidate(
+                    ResourceRuntime,
+                    out previousDeformationReason);
+            if (!currentDeformationValid || !previousDeformationValid)
+            {
+                throw new VulkanPlanPreconditionException(
+                    $"Advanced visibility deformation buffers changed after sealing: current={currentDeformationReason}, previous={previousDeformationReason}.");
+            }
         }
         if (ResourceRuntime.BackendObjects.Get(payload.Request.Target) is not
                 VkFrameBuffer targetWrapper)

@@ -636,12 +636,10 @@ internal partial class Program
         UnitTest_VerifyPlayModeStart();
 
         UnitTestingWorldSettings settings = RuntimeBootstrapState.Settings;
-        BootstrapRenderSettings.ApplyPipelineSelection(settings);
         Engine.EditorPreferences.Debug.UseDebugOpaquePipeline = ResolveDebugOpaquePipelineSetting(settings);
         EngineDebug.Rendering($"[DebugPipeline] Re-applied before window creation: {Engine.EditorPreferences.Debug.UseDebugOpaquePipeline}");
         WriteBootstrapTrace(
-            $"UnitTest_Init: WorldKind={settings.WorldKind}, UseAdvancedRenderPipeline={settings.Rendering.UseAdvancedRenderPipeline}, " +
-            $"ForceDebugOpaquePipeline={settings.ForceDebugOpaquePipeline}, " +
+            $"UnitTest_Init: WorldKind={settings.WorldKind}, RenderPipeline={settings.Rendering.RenderPipeline}, " +
             $"UseDebugOpaquePipeline={Engine.EditorPreferences.Debug.UseDebugOpaquePipeline}.");
 
         GPURenderPassCollection.ConfigureIndirectDebug(opts =>
@@ -692,25 +690,18 @@ internal partial class Program
             return;
         }
 
-        if (!Engine.EditorPreferences.Debug.EnableProfilerFrameLogging)
-        {
-            Engine.EditorPreferences.Debug.EnableProfilerFrameLogging = true;
-            WriteBootstrapTrace("Enabled profiler frame logging for profile capture.");
-        }
-
-        if (!Engine.EditorPreferences.Debug.EnableRenderStatisticsTracking)
-        {
-            Engine.EditorPreferences.Debug.EnableRenderStatisticsTracking = true;
-            WriteBootstrapTrace("Enabled render statistics tracking for profile capture.");
-        }
+        Engine.SetSessionSetting<EditorPreferences, bool>(
+            preferences => preferences.Debug.EnableProfilerFrameLogging,
+            true);
+        Engine.SetSessionSetting<EditorPreferences, bool>(
+            preferences => preferences.Debug.EnableRenderStatisticsTracking,
+            true);
+        Engine.SetSessionSetting<EditorPreferences, bool>(
+            preferences => preferences.Debug.EnableGpuRenderPipelineProfiling,
+            true);
 
         RuntimeEngine.Rendering.Stats.EnableTracking = true;
-
-        if (!Engine.EditorPreferences.Debug.EnableGpuRenderPipelineProfiling)
-        {
-            Engine.EditorPreferences.Debug.EnableGpuRenderPipelineProfiling = true;
-            WriteBootstrapTrace("Enabled GPU render-pipeline profiling for profile capture.");
-        }
+        WriteBootstrapTrace("Enabled profiler capture session overrides.");
     }
 
     private static bool IsEnabledEnvironmentFlag(string name)
@@ -1229,7 +1220,7 @@ internal partial class Program
         }
 
         bool worldPrefersDebugPipeline = settings.WorldKind == UnitTestWorldKind.MathIntersections;
-        bool useDebug = settings.ForceDebugOpaquePipeline || worldPrefersDebugPipeline;
+        bool useDebug = worldPrefersDebugPipeline;
         bool activeWorldImportsConfiguredModels =
             settings.WorldKind == UnitTestWorldKind.Default;
         bool hasModelsRequiringDefaultPipeline = activeWorldImportsConfiguredModels &&
@@ -1240,7 +1231,6 @@ internal partial class Program
                  model.MaterialMode == ModelImportMaterialMode.Forward ||
                  model.MaterialMode == ModelImportMaterialMode.Uber)) ?? false);
         EngineDebug.Rendering(
-            $"[DebugPipeline] ConfiguredForceDebugOpaquePipeline={settings.ForceDebugOpaquePipeline}, " +
             $"UseDebugOpaquePipeline={useDebug}, WorldKind={settings.WorldKind}, " +
             $"WorldPrefersDebugPipeline={worldPrefersDebugPipeline}, " +
             $"ActiveWorldImportsConfiguredModels={activeWorldImportsConfiguredModels}, " +
@@ -1253,7 +1243,7 @@ internal partial class Program
         if (hasModelsRequiringDefaultPipeline)
         {
             if (useDebug)
-                EngineDebug.Out("[UnitTestingWorld] ForceDebugOpaquePipeline disabled because the active world imports one or more models that require DefaultRenderPipeline.");
+                EngineDebug.Out("[UnitTestingWorld] Automatic debug opaque pipeline disabled because the active world imports one or more models that require DefaultRenderPipeline.");
             useDebug = false;
         }
 

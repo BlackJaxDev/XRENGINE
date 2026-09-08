@@ -45,9 +45,12 @@ vec3 XR_ADV_OrthogonalTangent(vec3 normal, vec3 sourceTangent)
 
 vec2 XR_ADV_ClipToPixel(
     vec4 clip,
-    vec2 viewportSize)
+    XRAdvancedViewRecord viewRecord)
 {
-    return (clip.xy / clip.w * 0.5 + 0.5) * viewportSize;
+    return XR_ADV_ClipNdcToFramebufferUv(
+        viewRecord,
+        clip.xy / clip.w) *
+        viewRecord.renderSizeAndInverse.xy;
 }
 
 bool XR_ADV_TryPerspectiveBarycentrics(
@@ -55,7 +58,7 @@ bool XR_ADV_TryPerspectiveBarycentrics(
     vec4 clip0,
     vec4 clip1,
     vec4 clip2,
-    vec2 viewportSize,
+    XRAdvancedViewRecord viewRecord,
     out vec3 weights,
     out vec3 weightDx,
     out vec3 weightDy)
@@ -73,9 +76,9 @@ bool XR_ADV_TryPerspectiveBarycentrics(
         return false;
     }
 
-    vec2 p0 = XR_ADV_ClipToPixel(clip0, viewportSize);
-    vec2 p1 = XR_ADV_ClipToPixel(clip1, viewportSize);
-    vec2 p2 = XR_ADV_ClipToPixel(clip2, viewportSize);
+    vec2 p0 = XR_ADV_ClipToPixel(clip0, viewRecord);
+    vec2 p1 = XR_ADV_ClipToPixel(clip1, viewRecord);
+    vec2 p2 = XR_ADV_ClipToPixel(clip2, viewRecord);
     float denominator =
         (p1.y - p2.y) * (p0.x - p2.x) +
         (p2.x - p1.x) * (p0.y - p2.y);
@@ -310,9 +313,11 @@ vec3 XR_ADV_ReconstructWorldPositionFromDepth(
     float depth,
     XRAdvancedViewRecord viewRecord)
 {
-    vec2 ndc =
-        pixelCenter * viewRecord.renderSizeAndInverse.zw *
-        2.0 - 1.0;
+    vec2 framebufferUv =
+        pixelCenter * viewRecord.renderSizeAndInverse.zw;
+    vec2 ndc = XR_ADV_FramebufferUvToClipNdc(
+        viewRecord,
+        framebufferUv);
 #if defined(XR_ADV_BACKEND_OPENGL)
     float clipDepth = depth * 2.0 - 1.0;
 #else
@@ -593,7 +598,7 @@ bool XR_ADV_TryReconstructSurface(
             currentClip0,
             currentClip1,
             currentClip2,
-            viewRecord.renderSizeAndInverse.xy,
+            viewRecord,
             weights,
             weightDx,
             weightDy))

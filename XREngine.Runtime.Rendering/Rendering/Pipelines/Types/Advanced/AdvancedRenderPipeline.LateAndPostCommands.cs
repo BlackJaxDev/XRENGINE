@@ -356,7 +356,7 @@ public partial class AdvancedRenderPipeline
 
         if (!AllowsPostAntiAliasing)
         {
-            commands.Add<VPRC_RenderToWindow>().SourceFBOName = FinalPostProcessOutputFBOName;
+            AppendAdvancedWindowPresent(commands, FinalPostProcessOutputFBOName);
             return;
         }
 
@@ -389,10 +389,23 @@ public partial class AdvancedRenderPipeline
         }
     }
 
+    /// <summary>
+    /// Converts the framebuffer row convention to the window's presentation UVs.
+    /// All desktop output branches must apply the same clip-space policy.
+    /// </summary>
+    private static void AppendAdvancedWindowPresent(
+        ViewportRenderCommandContainer commands,
+        string sourceFboName)
+    {
+        var present = commands.Add<VPRC_RenderToWindow>();
+        present.SourceFBOName = sourceFboName;
+        present.FlipSourceYOnVulkan = RenderClipSpacePolicy.RequiresVulkanFramebufferTexturePresentationYFlip();
+    }
+
     private ViewportRenderCommandContainer CreateAdvancedPresentCommands(string sourceFboName)
     {
         var commands = new ViewportRenderCommandContainer(this);
-        commands.Add<VPRC_RenderToWindow>().SourceFBOName = sourceFboName;
+        AppendAdvancedWindowPresent(commands, sourceFboName);
         return commands;
     }
 

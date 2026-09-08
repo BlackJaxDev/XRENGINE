@@ -47,10 +47,13 @@ public readonly record struct AdvancedVisibilityStageBackendRequest(
             return "The advanced visibility output has no valid family reservation.";
         if (!Publication.ScenePublication.IsValid)
             return "The advanced preparation publication has no resident scene publication.";
-        if (Publication.DrawCount == 0u)
-            return Extractor is { LastDeferralReason.Length: > 0 } && Extractor.LastDeferralReason != "Ready"
-                ? Extractor.LastDeferralReason
-                : "The advanced preparation publication contains no draws.";
+
+        if (Publication.DrawCount == 0u &&
+            Extractor is { LastDeferralReason.Length: > 0 } &&
+            Extractor.LastDeferralReason != "Ready")
+        {
+            return Extractor.LastDeferralReason;
+        }
         if (Extractor is null || RenderFrameId == 0u || Views.ViewCount == 0)
             return "The advanced visibility request has no extractor, render frame, or views.";
         if (NativeViewIndex >= (uint)Views.ViewCount)

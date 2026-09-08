@@ -218,7 +218,7 @@ void main()
     uint froxelIndex = XR_ADV_GetFroxelIndex(pixel / 16u, slice, viewIndex, u_Push.tilesCount, u_Push.depthSlices);
     if (froxelIndex < uint(XR_ADV_FroxelDecalGrid.records.length()))
     {
-        XRAdvancedFroxelDecalRecord decals = XR_ADV_FroxelDecalGrid.records[froxelIndex];
+        XRAdvancedFroxelDecalRecord decals = XR_ADV_LoadFroxelDecals(froxelIndex);
         bool decalOverflow = (decals.flags & XR_ADV_DECAL_FROXEL_OVERFLOW) != 0u;
         uint count = decalOverflow ? uint(XR_ADV_Decals.records.length()) : XR_ADV_DECAL_FROXEL_COUNT(decals);
         for (uint j = 0u; j < count; ++j)
@@ -241,7 +241,7 @@ void main()
         XRAdvancedFroxelRecord froxel;
         if (!allLights)
         {
-            froxel = XR_ADV_FroxelGrid.records[froxelIndex];
+            froxel = XR_ADV_LoadFroxel(froxelIndex);
             allLights = froxel.pointLightCount == XR_ADV_FROXEL_OVERFLOW;
         }
         if (allLights)
@@ -287,7 +287,7 @@ void main()
         color = vec3(1.0, 0.0, 1.0);
         if (index < uint(XR_ADV_FroxelGrid.records.length()))
         {
-            XRAdvancedFroxelRecord froxel = XR_ADV_FroxelGrid.records[index];
+            XRAdvancedFroxelRecord froxel = XR_ADV_LoadFroxel(index);
             if (froxel.pointLightCount != XR_ADV_FROXEL_OVERFLOW)
                 color = vec3(float(froxel.pointLightCount) / 32.0, float(froxel.spotLightCount) / 32.0, 0.0);
         }

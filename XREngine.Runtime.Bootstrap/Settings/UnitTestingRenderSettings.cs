@@ -6,9 +6,15 @@ public class UnitTestingRenderSettings
     public RenderBackendFallbackPolicy BackendFallbackPolicy { get; set; } = RenderBackendFallbackPolicy.RequireRequested;
 
     /// <summary>
-    /// Uses <see cref="AdvancedRenderPipeline"/> when enabled and <see cref="DefaultRenderPipeline"/> when disabled.
+    /// Scene pipeline created by bootstrap cameras. Explicit selections take precedence over automatic pipeline policy.
     /// </summary>
-    public bool UseAdvancedRenderPipeline { get; set; } = true;
+    public UnitTestingRenderPipeline RenderPipeline { get; set; } = UnitTestingRenderPipeline.AdvancedRenderPipeline;
+
+    /// <summary>
+    /// Path to a <c>.xrs</c> render-pipeline script when <see cref="RenderPipeline"/> is <see cref="UnitTestingRenderPipeline.CustomRenderPipeline"/>.
+    /// Relative paths are resolved from the process working directory.
+    /// </summary>
+    public string? CustomRenderPipelineScriptPath { get; set; }
     public UnitTestingOpenGLRenderSettings OpenGL { get; set; } = new();
     public UnitTestingVulkanRenderSettings Vulkan { get; set; } = new();
 }

@@ -572,11 +572,11 @@ public static class UnitTestingWorldSettingsStore
             }
         }
 
-        if (TryGetBoolEnv(XREngineEnvironmentVariables.UnitTestUseAdvancedRenderPipeline, out bool useAdvancedRenderPipeline))
+        if (TryGetEnumEnv(XREngineEnvironmentVariables.UnitTestRenderPipeline, out UnitTestingRenderPipeline renderPipeline))
         {
-            settings.Rendering.UseAdvancedRenderPipeline = useAdvancedRenderPipeline;
+            settings.Rendering.RenderPipeline = renderPipeline;
             MarkJsonPropertySpecified(settings, nameof(UnitTestingWorldSettings.Rendering));
-            MarkJsonPropertySpecified(settings, nameof(UnitTestingWorldSettings.Rendering), nameof(settings.Rendering.UseAdvancedRenderPipeline));
+            MarkJsonPropertySpecified(settings, nameof(UnitTestingWorldSettings.Rendering), nameof(settings.Rendering.RenderPipeline));
             applied = true;
         }
 
@@ -932,7 +932,7 @@ public static class UnitTestingWorldSettingsStore
             || HasEnvironmentValue(XREngineEnvironmentVariables.UnitTestRenderWindowsWhileInVr)
             || HasEnvironmentValue(XREngineEnvironmentVariables.UnitTestOpenXrRuntimeJson)
             || HasEnvironmentValue(XREngineEnvironmentVariables.UnitTestRenderApi)
-            || HasEnvironmentValue(XREngineEnvironmentVariables.UnitTestUseAdvancedRenderPipeline));
+            || HasEnvironmentValue(XREngineEnvironmentVariables.UnitTestRenderPipeline));
 
     private static bool HasEnvironmentValue(string name)
         => !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(name));

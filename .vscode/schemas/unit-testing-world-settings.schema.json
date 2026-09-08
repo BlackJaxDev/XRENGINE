@@ -146,10 +146,6 @@
       "type": "boolean",
       "description": "Adds a demo atmosphere component and enables atmospheric scattering on the unit-test camera(s)."
     },
-    "ForceDebugOpaquePipeline": {
-      "type": "boolean",
-      "description": "Forces the debug opaque render pipeline instead of the default pipeline."
-    },
     "DirLight": {
       "type": "boolean",
       "description": "Enables or disables DirLight."
@@ -734,9 +730,17 @@
           "markdownDescription": "Supported values: `RequireRequested`, `FallbackWithWarning`, `AutoPreferRequested`.",
           "description": "Selects the BackendFallbackPolicy enum value."
         },
-        "UseAdvancedRenderPipeline": {
-          "type": "boolean",
-          "description": "Enables or disables UseAdvancedRenderPipeline."
+        "RenderPipeline": {
+          "$ref": "#/definitions/UnitTestingRenderPipeline",
+          "markdownDescription": "Supported values: `DefaultRenderPipeline`, `AdvancedRenderPipeline`, `DebugOpaqueRenderPipeline`, `CustomRenderPipeline`.",
+          "description": "Selects the RenderPipeline enum value."
+        },
+        "CustomRenderPipelineScriptPath": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Generated from CustomRenderPipelineScriptPath on UnitTestingRenderSettings."
         },
         "OpenGL": {
           "$ref": "#/definitions/UnitTestingOpenGLRenderSettings",
@@ -764,6 +768,16 @@
         "AutoPreferRequested"
       ],
       "markdownDescription": "Supported values: `RequireRequested`, `FallbackWithWarning`, `AutoPreferRequested`."
+    },
+    "UnitTestingRenderPipeline": {
+      "type": "string",
+      "enum": [
+        "DefaultRenderPipeline",
+        "AdvancedRenderPipeline",
+        "DebugOpaqueRenderPipeline",
+        "CustomRenderPipeline"
+      ],
+      "markdownDescription": "Supported values: `DefaultRenderPipeline`, `AdvancedRenderPipeline`, `DebugOpaqueRenderPipeline`, `CustomRenderPipeline`."
     },
     "UnitTestingOpenGLRenderSettings": {
       "type": "object",

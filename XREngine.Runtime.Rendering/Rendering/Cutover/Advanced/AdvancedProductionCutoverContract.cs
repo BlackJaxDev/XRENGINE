@@ -74,6 +74,18 @@ public static class AdvancedProductionCutoverContract
         ArgumentNullException.ThrowIfNull(host);
         AdvancedRenderPipeline pipeline = host.AdvancedStageFamilyDefinition;
 
+        if (bindingState == EAdvancedRenderPipelineOutputBindingState.Disabled)
+            return new(EAdvancedProductionExecutionState.Unsupported,
+                EAdvancedRuntimeValidationState.NotApplicable,
+                EAdvancedProductionAcceptanceState.NotApplicable,
+                "Advanced output binding is disabled by policy.");
+
+        if (bindingState == EAdvancedRenderPipelineOutputBindingState.DiagnosticOnly)
+            return new(EAdvancedProductionExecutionState.Unsupported,
+                EAdvancedRuntimeValidationState.NotApplicable,
+                EAdvancedProductionAcceptanceState.NotApplicable,
+                "Advanced output binding is diagnostic-only by policy.");
+
         string? providerBlocker = GetProviderBlocker(pipeline);
         if (providerBlocker is not null)
             return new(EAdvancedProductionExecutionState.Unsupported,

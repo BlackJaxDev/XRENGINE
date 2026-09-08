@@ -132,7 +132,7 @@ public sealed class InfiniteGridFloorComponent : XRComponent, IRenderable
     }
 
     private static RenderCommandMesh3D CreateRenderCommand(string planeName)
-        => new(EDefaultRenderPass.OpaqueForward)
+        => new(EDefaultRenderPass.TransparentForward)
         {
             GpuProfilingLabel = $"{nameof(InfiniteGridFloorComponent)}.{planeName}",
             ForceCpuRendering = true,
@@ -491,8 +491,12 @@ public sealed class InfiniteGridFloorComponent : XRComponent, IRenderable
             XRMaterial material = new([vertexShader, stereoVertexShader, fragmentShader])
             {
                 Name = $"InfiniteGrid.{planeName}.Material",
-                RenderPass = (int)EDefaultRenderPass.OpaqueForward,
+                RenderPass = (int)EDefaultRenderPass.TransparentForward,
                 RenderOptions = renderParams,
+                // The grid blends over native scene depth and is never an opaque surface.
+                // Author its late lane explicitly so Advanced can submit it as well.
+                TransparencyMode = ETransparencyMode.AlphaBlend,
+                AdvancedLatePassMetadata = new(EAdvancedLatePassKind.SortedAlpha, isOrderDependent: true),
             };
             material.BindingPublishers.Add(new InfiniteGridBindingPublisher(this, plane));
             _materials[plane] = material;
@@ -539,7 +543,7 @@ public sealed class InfiniteGridFloorComponent : XRComponent, IRenderable
 
             _renderCommands[plane].Mesh = _meshRenderers[plane];
             _renderCommands[plane].WorldMatrix = Matrix4x4.Identity;
-            _renderCommands[plane].RenderPass = _materials[plane]?.RenderPass ?? (int)EDefaultRenderPass.OpaqueForward;
+            _renderCommands[plane].RenderPass = _materials[plane]?.RenderPass ?? (int)EDefaultRenderPass.TransparentForward;
             _renderCommands[plane].ForceCpuRendering = true;
         }
     }

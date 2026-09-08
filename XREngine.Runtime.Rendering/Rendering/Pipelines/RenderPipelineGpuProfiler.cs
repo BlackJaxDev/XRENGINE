@@ -1446,7 +1446,7 @@ internal sealed class RenderPipelineGpuProfiler
     private static string BuildTimingDumpFileName(string pipelineName, DateTimeOffset timestamp)
     {
         string pipelineSegment = NormalizeDumpNameSegment(pipelineName);
-        string timestampSegment = timestamp.ToString("yyyy-MM-dd_HH-mm-ss-fff", CultureInfo.InvariantCulture);
+        string timestampSegment = timestamp.ToString("yyyy-MM-dd-HH-mm-ss-fff", CultureInfo.InvariantCulture);
         string nonce = Guid.NewGuid().ToString("N").Substring(0, 8);
         return $"profiler-gpu-pipeline-{pipelineSegment}-{timestampSegment}-{nonce}.log";
     }

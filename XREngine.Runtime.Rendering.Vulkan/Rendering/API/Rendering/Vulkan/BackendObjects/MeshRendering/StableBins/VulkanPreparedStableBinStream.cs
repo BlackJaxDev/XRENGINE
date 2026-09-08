@@ -71,8 +71,13 @@ internal sealed class VulkanPreparedStableBinStream
     }
 
     internal int RecordCount => _recordCount;
+    internal int RecordCapacity => _records.Length;
     internal int LateResourceUseCount => _lateResourceUseCount;
+    internal int LateResourceUseCapacity => _lateResourceUses.Length;
     internal int HeaderCount => _headerCount;
+    internal int HeaderCapacity => _headers.Length;
+    internal int OrderedExceptionCount => _exceptions.Count;
+    internal int OrderedExceptionCapacity => _exceptions.Capacity;
     internal bool IsFrozen => _frozen;
     internal bool HasSealedSubmissionPlans => _submissionPlansSealed;
     internal ReadOnlySpan<VulkanPreparedStableBinRecord> Records
@@ -123,10 +128,35 @@ internal sealed class VulkanPreparedStableBinStream
             reason = "the package does not retain the exact canonical geometry publication";
             return false;
         }
-        if (payloads.IsEmpty || deformationSlices.Length != payloads.Length)
+        if (deformationSlices.Length != payloads.Length)
         {
             reason = "the canonical visibility payload or deformation column is incomplete";
             return false;
+        }
+        if (payloads.IsEmpty)
+        {
+            ThawForReuse();
+            _visibilityGeometrySources = new VulkanAdvancedVisibilityGeometrySlices(
+                sceneState.StaticVertices,
+                new VulkanVisibilityPreparedVertexSource(sceneState.StaticVertices, default, 64u),
+                new VulkanVisibilityPreparedVertexSource(sceneState.StaticVertices, default, 64u),
+                sceneState.Indices,
+                sceneState.MeshletDescriptors,
+                sceneState.MeshletVertexIndices,
+                sceneState.MeshletTriangleWords,
+                default);
+            if (!_visibilityGeometrySources.HasValidSources)
+            {
+                reason = "the empty visibility family has no retained descriptor geometry backing";
+                ThawForReuse();
+                return false;
+            }
+
+            // A zero-draw publication is a complete logical family. Freeze and seal
+            // it so later ownership and submission-plan checks retain that identity.
+            Freeze();
+            _submissionPlansSealed = true;
+            return true;
         }
 
         ReadOnlySpan<AdvancedDrawRecord> canonicalDraws =
@@ -1211,6 +1241,13 @@ internal sealed class VulkanPreparedStableBinStream
         out string reason)
     {
         rasterPayloads = default;
+        if (_submissionPlansSealed && _retainedTemplateCount == 0 &&
+            _recordCount == 0 && sourcePayloads.IsEmpty)
+        {
+            rasterPayloads = ReadOnlySpan<AdvancedVisibilityPayload>.Empty;
+            reason = "Ready";
+            return true;
+        }
         if (!_submissionPlansSealed ||
             _retainedTemplateCount != _recordCount ||
             sourcePayloads.IsEmpty ||

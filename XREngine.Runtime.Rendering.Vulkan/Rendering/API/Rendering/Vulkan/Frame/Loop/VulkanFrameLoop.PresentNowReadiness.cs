@@ -259,25 +259,70 @@ internal sealed partial class VulkanFrameLoop
         VulkanSwapchainContextCoalescer.Coalesce(
             acceptedPlan.AuthoredOperations,
             _preparedMeshIngress);
-        bool stableBinPrepared = _preparedMeshIngress.TryFinalize(
-            ref _preparedMeshIngressResourceUseScratch);
-        if (stableBinPrepared)
-        {
-            VulkanResidentDrawTemplateTable residentTemplates =
-                _resourceRuntime.ResidentDrawTemplates;
-            stableBinPrepared = _preparedMeshIngress.TryBuildStableBinStream(
-                residentTemplates) && _preparedMeshIngress.StableBinStream
-                    .TryResolveManifests(
-                        residentTemplates.StableBinManifestCache,
-                        residentTemplates.StableBinMembership.TopologyGeneration);
-        }
-        if (!stableBinPrepared)
+        if (!_preparedMeshIngress.TryFinalize(
+                ref _preparedMeshIngressResourceUseScratch))
         {
             throw watchdog.CreateFailure(
                 EVulkanPresentNowReadinessStage.FramePlanSeal,
                 "prepared-mesh-ingress",
                 "DesktopScene -> prepared mesh dependency lowering",
-                "Prepared mesh ingress exceeded its fixed resource-use capacity.");
+                "Prepared mesh ingress finalization failed before stable-bin creation.");
+        }
+
+        VulkanResidentDrawTemplateTable residentTemplates =
+            _resourceRuntime.ResidentDrawTemplates;
+        if (!_preparedMeshIngress.TryBuildStableBinStream(
+                residentTemplates,
+                out VulkanPreparedMeshIngressFailure stableBinFailure))
+        {
+            VulkanPreparedStableBinStream failedStableBinStream =
+                _preparedMeshIngress.StableBinStream;
+            string detail =
+                $"Prepared mesh ingress stable-bin stream creation failed: " +
+                $"kind={stableBinFailure.Kind} entryIndex={stableBinFailure.EntryIndex} " +
+                $"entryPassIndex={stableBinFailure.EntryPassIndex} " +
+                $"entryTarget={stableBinFailure.EntryTarget?.Name ?? "<null>"} " +
+                $"ingressEntries={_preparedMeshIngress.Count} " +
+                $"packageExceptionIndex={stableBinFailure.PackageExceptionIndex} " +
+                $"packageExceptions={stableBinFailure.PackageExceptionCount} " +
+                $"packageExceptionHandle={stableBinFailure.PackageExceptionRecord.DrawHandle} " +
+                $"packageExceptionViewId={stableBinFailure.PackageExceptionRecord.ViewId} " +
+                $"packageExceptionPassIndex={stableBinFailure.PackageExceptionRecord.PassIndex} " +
+                $"packageExceptionOrderKey={stableBinFailure.PackageExceptionRecord.OrderKey} " +
+                $"packageExceptionReasonFlags={stableBinFailure.PackageExceptionRecord.ReasonFlags} " +
+                $"packageExceptionCompatibilityReason={stableBinFailure.PackageExceptionRecord.CompatibilityReason} " +
+                $"packageIdentity={stableBinFailure.PackageIdentity} " +
+                $"packageGeneration={stableBinFailure.PackageGeneration} " +
+                $"packageSourceRevision={stableBinFailure.PackageSourceRevision} " +
+                $"selectedPipeline={stableBinFailure.SelectedPipeline?.Pipeline?.DebugName ?? "<null>"} " +
+                $"stableExceptions={failedStableBinStream.OrderedExceptionCount}/{failedStableBinStream.OrderedExceptionCapacity} " +
+                $"stableRecords={failedStableBinStream.RecordCount}/{failedStableBinStream.RecordCapacity} " +
+                $"stableLateResourceUses={failedStableBinStream.LateResourceUseCount}/{failedStableBinStream.LateResourceUseCapacity} " +
+                $"stableHeaders={failedStableBinStream.HeaderCount}/{failedStableBinStream.HeaderCapacity}.";
+            throw watchdog.CreateFailure(
+                EVulkanPresentNowReadinessStage.FramePlanSeal,
+                "prepared-mesh-ingress",
+                "DesktopScene -> prepared mesh dependency lowering",
+                detail);
+        }
+
+        VulkanPreparedStableBinStream stableBinStream = _preparedMeshIngress.StableBinStream;
+        if (!stableBinStream.TryResolveManifests(
+                residentTemplates.StableBinManifestCache,
+                residentTemplates.StableBinMembership.TopologyGeneration,
+                out VulkanBinResourceManifestFailure manifestFailure))
+        {
+            string detail =
+                $"Prepared mesh ingress stable-bin manifest resolution failed: " +
+                $"failure={manifestFailure} ingressEntries={_preparedMeshIngress.Count} " +
+                $"stableRecords={stableBinStream.RecordCount} " +
+                $"stableLateResourceUses={stableBinStream.LateResourceUseCount} " +
+                $"stableHeaders={stableBinStream.HeaderCount}.";
+            throw watchdog.CreateFailure(
+                EVulkanPresentNowReadinessStage.FramePlanSeal,
+                "prepared-mesh-ingress",
+                "DesktopScene -> prepared mesh dependency lowering",
+                detail);
         }
         if (_preparedMeshIngress.IsCohortHit)
             PublishPreparedMeshIngressCohortHit();

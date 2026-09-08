@@ -12,7 +12,6 @@ XR_ADV_SHADING_IMAGE(r8, 49) writeonly uniform image2D AmbientOcclusionOutput;
 #define XR_ADV_AO_PIXEL(p, v) ivec2(p)
 #endif
 const uint XR_ADV_REVERSED_DEPTH = 1u << 1u;
-const uint XR_ADV_FRAMEBUFFER_Y_DOWN = 1u << 6u;
 const uint XR_ADV_AO_ENABLED = 1u << 2u;
 const float XR_ADV_AO_PI = 3.14159265359;
 const float XR_ADV_AO_HALF_PI = 1.57079632679;
@@ -34,8 +33,6 @@ bool XR_ADV_AO_TryGetViewPosition(ivec2 p, uint viewIndex, XRAdvancedViewRecord 
     position = vec3(0.0);
     if (XR_ADV_AO_IsFarDepth(z, v)) return false;
     vec2 pixelCenter = vec2(p) + 0.5;
-    if ((v.flags & XR_ADV_FRAMEBUFFER_Y_DOWN) != 0u)
-        pixelCenter.y = v.renderSizeAndInverse.y - pixelCenter.y;
     vec3 world = XR_ADV_ReconstructWorldPositionFromDepth(pixelCenter, z, v);
     position = XR_ADV_TransformRowVector(vec4(world, 1.0), v.view).xyz;
     return XR_ADV_AO_IsFinite(world) && XR_ADV_AO_IsFinite(position);
@@ -146,7 +143,7 @@ void main()
     float radiusPixels = clamp(XR_ADV_AO_RADIUS * projectionY * 0.5 * float(extent.y) / centerDepth, 1.0, 192.0);
     float invProjX = 1.0 / projectionX;
     float invProjY = 1.0 / projectionY;
-    float textureYSign = (view.flags & XR_ADV_FRAMEBUFFER_Y_DOWN) != 0u ? -1.0 : 1.0;
+    float textureYSign = (view.flags & XR_ADV_VIEW_FRAMEBUFFER_TEXTURE_Y_DOWN) != 0u ? -1.0 : 1.0;
     float visibility = 0.0;
     float baseAngle = (XR_ADV_AO_Noise(pixel) - 0.5) * XR_ADV_AO_PI / float(XR_ADV_AO_SLICE_COUNT);
     float jitter = XR_ADV_AO_Noise(pixel + ivec2(17, 43));

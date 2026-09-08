@@ -88,10 +88,13 @@ public static partial class EditorImGuiUI
             IsHierarchyWindowKeyboardFocused = false;
             return;
         }
-        if (!ImGui.Begin("Hierarchy", ref _showHierarchy))
+        ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new Vector2(6.0f, 3.0f));
+        ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, new Vector2(4.0f, 4.0f));
+        if (!ImGui.Begin("Hierarchy", ref _showHierarchy, ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse))
         {
             IsHierarchyWindowKeyboardFocused = false;
             ImGui.End();
+            ImGui.PopStyleVar(2);
             return;
         }
 
@@ -106,7 +109,7 @@ public static partial class EditorImGuiUI
         if (world is not null)
         {
             // Check if we're dragging over this window
-            if (ImGui.IsWindowHovered(ImGuiHoveredFlags.AllowWhenBlockedByActiveItem))
+            if (ImGui.IsWindowHovered(ImGuiHoveredFlags.ChildWindows | ImGuiHoveredFlags.AllowWhenBlockedByActiveItem))
             {
                 var data = ImGui.GetDragDropPayload();
                 unsafe
@@ -118,6 +121,7 @@ public static partial class EditorImGuiUI
         }
 
         ImGui.End();
+        ImGui.PopStyleVar(2);
     }
 
     private static void HandleHierarchyModelAssetDrop(RuntimeWorld world)
@@ -170,41 +174,20 @@ public static partial class EditorImGuiUI
         RefreshHierarchySelectionCache();
         DrawWorldHeader(world);
 
-        if (ImGui.SmallButton("Expand All##HierarchyExpandAll"))
-            SetHierarchyExpansion(world, true);
-
-        ImGui.SameLine();
-        if (ImGui.SmallButton("Collapse All##HierarchyCollapseAll"))
-            SetHierarchyExpansion(world, false);
-
-        ImGui.SameLine();
-        if (Selection.SceneNodes.Length > 0)
-        {
-            if (ImGui.SmallButton("Focus Selected##HierarchyFocusSelected"))
-                _pendingHierarchyScrollNode = Selection.LastSceneNode;
-        }
-
+        DrawHierarchyToolbar(world);
         ImGui.Separator();
 
         IsHierarchyWindowKeyboardFocused = ImGui.IsWindowFocused(ImGuiFocusedFlags.RootAndChildWindows);
         HandleHierarchyKeyboardNavigation(world);
 
-        // Editor-only content lives in a hidden scene (gizmos, tools, UI, etc.)
-        // Keep it hidden by default, but allow toggling for debugging.
-        ImGui.Spacing();
-        if (ImGui.Checkbox("Show Editor Scene##HierarchyShowEditorScene", ref _showEditorSceneHierarchy))
-        {
-            // no-op; state is stored in the static flag
-        }
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Show the hidden editor scene hierarchy (editor-only gizmos/tools/UI).");
-        ImGui.Separator();
+        // Keep navigation controls visible while the scene tree scrolls independently.
+        if (ImGui.BeginChild("HierarchyContents", Vector2.Zero))
+            DrawHierarchySceneList(world);
+        ImGui.EndChild();
+    }
 
-        ImGui.TextUnformatted("GameMode:");
-        ImGui.SameLine();
-        ImGui.TextUnformatted(world.GameMode?.GetType().Name ?? "<none>");
-        ImGui.Separator();
-
+    private static void DrawHierarchySceneList(RuntimeWorld world)
+    {
         var targetWorld = world.TargetWorld;
         bool drewAnySection = false;
 
@@ -262,22 +245,6 @@ public static partial class EditorImGuiUI
         _lastSelectedHierarchyNode = Selection.LastSceneNode;
     }
 
-    private static void DrawEditorSceneHierarchy(RuntimeWorld world)
-    {
-        var editorScene = EditorWorldIntegrationRegistry.GetOrAttach(world).EditorScene;
-        if (editorScene is null)
-            return;
-
-        ImGui.PushID("__EditorSceneHierarchy__");
-        bool open = ImGui.CollapsingHeader("Editor Scene (Hidden)##EditorScene", ImGuiTreeNodeFlags.DefaultOpen);
-        if (open)
-        {
-            ImGui.TextDisabled("Editor-only content (not saved with the world).");
-            DrawSceneHierarchyNodes(editorScene.RootNodes, world, editorScene);
-        }
-        ImGui.PopID();
-    }
-
     private static void DrawSceneNodeTree(SceneNode node, RuntimeWorld world, XRScene? owningScene, int depth = 0)
     {
         int childCount = GetSceneNodeChildCount(node);
@@ -297,7 +264,7 @@ public static partial class EditorImGuiUI
 
         ImGuiTreeNodeFlags flags = childCount > 0
             ? ImGuiTreeNodeFlags.None
-            : ImGuiTreeNodeFlags.Leaf | ImGuiTreeNodeFlags.Bullet | ImGuiTreeNodeFlags.NoTreePushOnOpen;
+            : ImGuiTreeNodeFlags.Leaf | ImGuiTreeNodeFlags.NoTreePushOnOpen;
 
         // Off-screen fast-skip: if this row has no descendants rendering this frame
         // (leaf, collapsed by user, or auto-collapsed) we can replace the entire ImGui
@@ -440,11 +407,19 @@ public static partial class EditorImGuiUI
         else
         {
             ImGui.AlignTextToFramePadding();
+            float labelWidth = ImGui.GetContentRegionAvail().X;
+            if (!node.IsActiveSelf)
+                ImGui.PushStyleColor(ImGuiCol.Text, ImGui.GetStyle().Colors[(int)ImGuiCol.TextDisabled]);
             ImGui.TextUnformatted(displayLabel);
+            if (!node.IsActiveSelf)
+                ImGui.PopStyleColor();
+            if (treeItemHovered && ImGui.CalcTextSize(displayLabel).X > labelWidth)
+                ImGui.SetTooltip(displayLabel);
             ImGui.OpenPopupOnItemClick("Context", ImGuiPopupFlags.MouseButtonRight);
         }
 
         ImGui.TableSetColumnIndex(1);
+        CenterHierarchyActiveCheckbox();
 
         bool activeSelf = node.IsActiveSelf;
         bool canToggleActiveSelf = node.CanDeactivate || !node.IsActiveSelf;
@@ -453,7 +428,7 @@ public static partial class EditorImGuiUI
         bool checkboxToggled = ImGui.Checkbox("##ActiveSelf", ref activeSelf);
         if (!canToggleActiveSelf)
             ImGui.EndDisabled();
-        if (ImGui.IsItemHovered())
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
             ImGui.SetTooltip(canToggleActiveSelf ? "Toggle node active state" : "This editor node must stay active.");
         if (checkboxToggled)
             QueueHierarchyActiveStateChange(node, activeSelf, owningScene, world);
@@ -1639,121 +1614,6 @@ public static partial class EditorImGuiUI
             pawn.FocusOnNode(node, HierarchyFocusCameraDurationSeconds);
     }
 
-    private static void DrawSceneHierarchySection(XRScene scene, RuntimeWorld world)
-    {
-        if (scene is null)
-            return;
-
-        ImGui.PushID(scene.ID.GetHashCode());
-        string sceneName = string.IsNullOrWhiteSpace(scene.Name) ? "Untitled Scene" : scene.Name!;
-        bool open;
-        // Use a two-column layout so the collapsing header can't steal clicks
-        // from the controls rendered to its right.
-        if (ImGui.BeginTable("SceneHeaderRow", 2, ImGuiTableFlags.SizingFixedFit | ImGuiTableFlags.NoSavedSettings))
-        {
-            ImGui.TableSetupColumn("Header", ImGuiTableColumnFlags.WidthStretch);
-            ImGui.TableSetupColumn("Controls", ImGuiTableColumnFlags.WidthFixed);
-            ImGui.TableNextRow();
-
-            ImGui.TableSetColumnIndex(0);
-            open = ImGui.CollapsingHeader(sceneName, ImGuiTreeNodeFlags.DefaultOpen);
-            if (ImGui.IsItemHovered() && !string.IsNullOrWhiteSpace(scene.FilePath))
-                ImGui.SetTooltip(scene.FilePath);
-
-            ImGui.TableSetColumnIndex(1);
-            if (scene.IsDirty)
-            {
-                ImGui.TextColored(new Vector4(0.95f, 0.7f, 0.2f, 1.0f), "*");
-                ImGui.SameLine();
-            }
-
-            bool visible = scene.IsVisible;
-            if (ImGui.Checkbox("Visible##SceneVisible", ref visible))
-                ToggleSceneVisibility(scene, world, visible);
-
-            ImGui.SameLine();
-            if (ImGui.SmallButton("Unload"))
-                UnloadSceneFromWorld(scene, world);
-            if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("Unload this scene from the active world");
-
-            ImGui.EndTable();
-        }
-        else
-        {
-            open = ImGui.CollapsingHeader(sceneName, ImGuiTreeNodeFlags.DefaultOpen);
-        }
-
-        if (open)
-        {
-            if (!scene.IsVisible)
-                ImGui.TextColored(new Vector4(0.9f, 0.7f, 0.2f, 1.0f), "Scene is hidden");
-
-            DrawSceneHierarchyNodes(scene.RootNodes, world, scene);
-        }
-
-        ImGui.PopID();
-    }
-
-    private static void DrawSceneHierarchyNodes(IReadOnlyList<SceneNode> roots, RuntimeWorld world, XRScene? owningScene)
-    {
-        if (roots.Count == 0)
-        {
-            ImGui.TextDisabled("No nodes in this scene.");
-            return;
-        }
-
-        ImGuiTableFlags tableFlags = ImGuiTableFlags.RowBg
-                                    | ImGuiTableFlags.Resizable
-                                    | ImGuiTableFlags.SizingStretchProp
-                                    | ImGuiTableFlags.BordersInnerV;
-
-        ImGui.PushStyleVar(ImGuiStyleVar.IndentSpacing, 14.0f);
-        ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new Vector2(4.0f, 2.0f));
-        ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, new Vector2(4.0f, 2.0f));
-        ImGui.PushStyleVar(ImGuiStyleVar.CellPadding, new Vector2(4.0f, 2.0f));
-        ImGui.SetWindowFontScale(0.95f);
-        if (ImGui.BeginTable("HierarchyTree", 2, tableFlags))
-        {
-            ImGui.TableSetupColumn("Node", ImGuiTableColumnFlags.WidthStretch, 1.0f);
-            ImGui.TableSetupColumn("Active", ImGuiTableColumnFlags.WidthFixed, 72.0f);
-            ImGui.TableHeadersRow();
-
-            for (int i = 0; i < roots.Count; i++)
-            {
-                var root = roots[i];
-                if (root is not null)
-                    DrawSceneNodeTree(root, world, owningScene, depth: 0);
-            }
-
-            ImGui.EndTable();
-        }
-        ImGui.SetWindowFontScale(1.0f);
-        ImGui.PopStyleVar(4);
-    }
-
-    private static void DrawUnassignedHierarchy(IReadOnlyList<SceneNode> roots, RuntimeWorld world)
-    {
-        ImGui.PushID("WorldRootNodes");
-        bool open = ImGui.CollapsingHeader("World Root Nodes##WorldRoot", ImGuiTreeNodeFlags.DefaultOpen);
-        if (open)
-            DrawSceneHierarchyNodes(roots, world, null);
-        ImGui.PopID();
-    }
-
-    private static bool DrawRuntimeHierarchy(RuntimeWorld world)
-    {
-        if (world.RootNodes.Count == 0)
-            return false;
-
-        ImGui.PushID("RuntimeWorldNodes");
-        bool open = ImGui.CollapsingHeader("World Nodes##RuntimeWorld", ImGuiTreeNodeFlags.DefaultOpen);
-        if (open)
-            DrawSceneHierarchyNodes(world.RootNodes, world, null);
-        ImGui.PopID();
-        return true;
-    }
-
     private static List<SceneNode> CollectUnassignedRoots(RuntimeWorld world, IReadOnlyList<XRScene> scenes)
     {
         var assigned = _assignedRootsScratch;
@@ -1985,26 +1845,5 @@ public static partial class EditorImGuiUI
             current = current.Parent;
         }
         return false;
-    }
-
-    private static void DrawWorldHeader(RuntimeWorld world)
-    {
-        var targetWorld = world.TargetWorld;
-        string worldName = targetWorld?.Name ?? "World";
-        string? filePath = targetWorld?.FilePath;
-        string displayPath = string.IsNullOrEmpty(filePath) ? "(unsaved)" : filePath;
-
-        // World name/file path header
-        ImGui.TextUnformatted($"World: {worldName}");
-        ImGui.TextDisabled(displayPath);
-
-        // Settings button
-        if (targetWorld is not null && ImGui.SmallButton("Settings##WorldSettings"))
-        {
-            _showInspector = true;
-            SetInspectorStandaloneTarget(targetWorld.Settings, $"World Settings: {worldName}");
-        }
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Show world settings in the inspector panel");
     }
 }
