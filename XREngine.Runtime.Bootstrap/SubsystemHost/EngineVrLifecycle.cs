@@ -211,33 +211,7 @@ namespace XREngine
             /// The distance between the eyes in meters.
             /// </summary>
             public static float RealWorldIPD
-            {
-                get
-                {
-                    switch (_activeRuntime)
-                    {
-                        case VRRuntime.OpenVR:
-                            var vr = OpenVRApiIfActive;
-                            if (vr?.Headset is not null)
-                            {
-                                ETrackedPropertyError error = ETrackedPropertyError.TrackedProp_Success;
-                                return (float)vr.CVR.GetFloatTrackedDeviceProperty(vr.Headset!.DeviceIndex, ETrackedDeviceProperty.Prop_UserIpdMeters_Float, ref error);
-                            }
-                            return 0f;
-                        case VRRuntime.OpenXR:
-                            // OpenXR does not expose a single "user IPD" property in core.
-                            // Derive it from the per-eye poses returned by xrLocateViews.
-                            // This is available before engine-eye transforms are applied.
-                            var oxr = OpenXRApi;
-                            if (oxr is null)
-                                return 0f;
-
-                            return oxr.TryGetLatestIPD(out float ipd) ? ipd : 0f;
-                        default:
-                            return 0f;
-                    }
-                }
-            }
+                => RuntimeEngine.VRState.RealWorldIPD;
 
             public static event Action<float>? IPDScalarChanged
             {
@@ -774,7 +748,11 @@ namespace XREngine
 
             private static void InitSinglePass(XRWindow window, uint rW, uint rH, XRTexture2D left, XRTexture2D right)
             {
-                SetViewportParameters(rW, rH, StereoViewport = new XRViewport(window));
+                SetViewportParameters(rW, rH, StereoViewport = new XRViewport(window)
+                {
+                    SetRenderPipelineFromCamera = false,
+                    PipelineRequest = RenderPipelineRequest.DesktopScene(stereo: true),
+                });
                 StereoViewport.RenderPipeline = RuntimeEngine.Rendering.NewRenderPipeline(stereo: true);
                 StereoViewport.AutomaticallyCollectVisible = false;
                 StereoViewport.AutomaticallySwapBuffers = false;
@@ -783,11 +761,22 @@ namespace XREngine
 
                 var outputTextures = new XRTexture2DArray(left, right)
                 {
+                    Name = "VrStereoOutput",
                     Resizable = false,
                     SizedInternalFormat = ESizedInternalFormat.Rgb8,
+                    // This is rendered output, not an upload from the empty eye
+                    // placeholders. Keep its format identical to the two views.
+                    FrameBufferAttachment = EFrameBufferAttachment.ColorAttachment0,
+                    AutoGenerateMipmaps = false,
+                    SmallestAllowedMipmapLevel = 0,
+                    MinFilter = ETexMinFilter.Linear,
+                    MagFilter = ETexMagFilter.Linear,
                     OVRMultiViewParameters = new(0, 2u),
                 };
-                VRStereoRenderTarget = new XRFrameBuffer((outputTextures, EFrameBufferAttachment.ColorAttachment0, 0, -1));
+                VRStereoRenderTarget = new XRFrameBuffer((outputTextures, EFrameBufferAttachment.ColorAttachment0, 0, -1))
+                {
+                    ForceOvrMultiview = StereoViewport.RenderPipeline is IAdvancedRenderStageFamilyHost,
+                };
                 StereoLeftViewTexture = new XRTexture2DArrayView(outputTextures, 0u, 1u, 0u, 1u, ESizedInternalFormat.Rgb8, false, false);
                 StereoRightViewTexture = new XRTexture2DArrayView(outputTextures, 0u, 1u, 1u, 1u, ESizedInternalFormat.Rgb8, false, false);
 
@@ -885,11 +874,13 @@ namespace XREngine
                 if (scene is null || node is null || frustum is null)
                     return;
 
-                scene.CollectRenderedItems(
-                    StereoViewport!.RenderPipelineInstance.MeshRenderCommands,
-                    frustum.Value.TransformedBy(node.Transform.RenderMatrix),
-                    ViewInformation.LeftEyeCamera,
-                    true);
+                // Use the viewport collection boundary so this family publishes
+                // its canonical scene package as well as visible membership.
+                StereoViewport!.CollectVisible(
+                    worldOverride: ViewInformation.World,
+                    cameraOverride: ViewInformation.LeftEyeCamera,
+                    allowScreenSpaceUICollectVisible: false,
+                    collectionVolumeOverride: frustum.Value.TransformedBy(node.Transform.RenderMatrix));
             }
 
             private static void SwapBuffersTwoPass()
@@ -1131,11 +1122,16 @@ namespace XREngine
             }
 
             private static XRTexture2D MakeFBOTexture(uint rW, uint rH)
-                => XRTexture2D.CreateFrameBufferTexture(
+            {
+                XRTexture2D texture = XRTexture2D.CreateFrameBufferTexture(
                     rW, rH,
-                    EPixelInternalFormat.Rgb,
+                    EPixelInternalFormat.Rgb8,
                     EPixelFormat.Bgr,
                     EPixelType.UnsignedByte);
+                texture.SizedInternalFormat = ESizedInternalFormat.Rgb8;
+                texture.SmallestAllowedMipmapLevel = 0;
+                return texture;
+            }
 
             /// <summary>
             /// This method initializes the VR system in client mode.
@@ -1380,21 +1376,11 @@ namespace XREngine
                     
                     _viewInformation = value;
 
-                    var leftEye = LeftEyeViewport;
-                    if (leftEye is not null)
-                    {
-                        leftEye.Camera = _viewInformation.left;
-                        leftEye.WorldInstanceOverride = _viewInformation.world;
-                        _viewInformation.left?.Transform.LocalMatrixChanged += EyeLocalMatrixChanged;
-                    }
-
-                    var rightEye = RightEyeViewport;
-                    if (rightEye is not null)
-                    {
-                        rightEye.Camera = _viewInformation.right;
-                        rightEye.WorldInstanceOverride = _viewInformation.world;
-                        _viewInformation.right?.Transform.LocalMatrixChanged += EyeLocalMatrixChanged;
-                    }
+                    // RuntimeVrState applies cameras/world to both viewport
+                    // topologies. Track eye changes even when only the shared
+                    // stereo viewport exists.
+                    _viewInformation.left?.Transform.LocalMatrixChanged += EyeLocalMatrixChanged;
+                    _viewInformation.right?.Transform.LocalMatrixChanged += EyeLocalMatrixChanged;
 
                     // ViewInformation can be set before VR rendering has been initialized (e.g., during component activation).
                     // Only compute the stereo culling frustum once the VR viewports exist; otherwise we can end up querying

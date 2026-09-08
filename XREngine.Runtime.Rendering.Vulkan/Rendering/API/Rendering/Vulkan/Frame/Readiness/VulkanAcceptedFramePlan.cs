@@ -1,5 +1,6 @@
 using XREngine.Rendering.Shadows;
 using XREngine.Rendering.Materials;
+using XREngine.Rendering.Commands;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -39,6 +40,20 @@ internal sealed class VulkanAcceptedFramePlan
         new VulkanTimelineGpuFence?[StaticCapacity + UiCapacity + UploadCapacity];
     private readonly int[] _dependencyIndex = new int[DependencyIndexCapacity];
     private readonly int[] _dependencyIndexSlots = new int[DependencyCapacity];
+    private readonly RenderFrameViewHistoryBackendReservation[] _frameViewHistory =
+        new RenderFrameViewHistoryBackendReservation[TerminalCapacity];
+    private readonly int[] _frameViewHistoryOutputIndices = new int[TerminalCapacity];
+    private readonly bool[] _frameViewHistoryAttested = new bool[TerminalCapacity];
+    private readonly RenderOutputCompletionBackendReservation[] _outputCompletions =
+        new RenderOutputCompletionBackendReservation[TerminalCapacity];
+    private readonly int[] _outputCompletionOutputIndices = new int[TerminalCapacity];
+    private readonly bool[] _outputCompletionTerminalAttested = new bool[TerminalCapacity];
+    private readonly XRRenderPipelineInstance?[] _recordedAdvancedPickingPipelines =
+        new XRRenderPipelineInstance?[TerminalCapacity];
+    private readonly AdvancedGpuScenePublication[] _recordedAdvancedPickingPublications =
+        new AdvancedGpuScenePublication[TerminalCapacity];
+    private readonly ulong[] _recordedAdvancedPickingResourceGenerations =
+        new ulong[TerminalCapacity];
     private FramePlan? _logicalPlan;
     private int _dependencyIndexSlotCount;
     private int _submissionMarkerCount;
@@ -48,6 +63,11 @@ internal sealed class VulkanAcceptedFramePlan
     private int _bindlessDescriptorReferenceCount;
     private int _authoredOperationCount;
     private int _authoredTextureUploadOperationCount;
+    private int _frameViewHistoryCount;
+    private bool _frameViewHistoryClaimed;
+    private int _outputCompletionCount;
+    private bool _outputCompletionsClaimed;
+    private int _recordedAdvancedPickingSourceCount;
 
     internal VulkanCanonicalPublicationPinSet CanonicalPublicationPins { get; } =
         new(VulkanMeshOperationRequestQueue.Capacity);
@@ -85,6 +105,558 @@ internal sealed class VulkanAcceptedFramePlan
         => _requiredTextures.AsSpan(0, RequiredTextureCount);
     internal ReadOnlySpan<long> RequiredTextureGenerations
         => _requiredTextureGenerations.AsSpan(0, RequiredTextureCount);
+    internal ReadOnlySpan<RenderFrameViewHistoryBackendReservation> FrameViewHistory
+        => _frameViewHistory.AsSpan(0, _frameViewHistoryCount);
+    internal bool HasClaimedFrameViewHistory => _frameViewHistoryClaimed;
+    internal bool HasClaimedOutputCompletions => _outputCompletionsClaimed;
+    internal int OutputCompletionCount => _outputCompletionCount;
+    internal ReadOnlySpan<RenderOutputCompletionBackendReservation> OutputCompletions
+        => _outputCompletions.AsSpan(0, _outputCompletionCount);
+
+    internal void CaptureOutputCompletions(
+        ReadOnlySpan<RenderOutputCompletionBackendReservation> reservations)
+    {
+        if (_outputCompletionsClaimed)
+            throw new InvalidOperationException(
+                "The accepted frame already claimed its output-completion cohort.");
+        if (reservations.Length > _outputCompletions.Length)
+            throw new VulkanAcceptedFramePlanCapacityException(
+                EVulkanAcceptedFrameLane.Terminal,
+                _outputCompletions.Length,
+                reservations.Length);
+
+        for (int index = 0; index < reservations.Length; index++)
+        {
+            ref readonly RenderOutputCompletionBackendReservation reservation =
+                ref reservations[index];
+            if (!reservation.IsValid || reservation.Fence is not VulkanTimelineGpuFence)
+                throw new ArgumentException(
+                    "An output-completion cohort contains an invalid Vulkan receipt.",
+                    nameof(reservations));
+            for (int prior = 0; prior < index; prior++)
+                if (_outputCompletions[prior].ReceiptId == reservation.ReceiptId)
+                    throw new ArgumentException(
+                        "An output-completion receipt was published more than once.",
+                        nameof(reservations));
+
+            _outputCompletions[index] = reservation;
+            _outputCompletionOutputIndices[index] = -1;
+            _outputCompletionTerminalAttested[index] = false;
+        }
+        _outputCompletionCount = reservations.Length;
+        _outputCompletionsClaimed = true;
+    }
+
+    private void BindOutputCompletions(FramePlan logicalPlan)
+    {
+        FrameOperationSequence staticOperations =
+            logicalPlan.GetNativeStaticOperationsForRecording();
+        FrameOperationSequence dynamicOperations =
+            logicalPlan.GetNativeDynamicOverlayOperationsForRecording();
+        FrameOperationSequence uploadOperations =
+            logicalPlan.GetNativeTextureUploadOperationsForRecording();
+        for (int receiptIndex = 0; receiptIndex < _outputCompletionCount; receiptIndex++)
+        {
+            ref readonly RenderOutputCompletionBackendReservation receipt =
+                ref _outputCompletions[receiptIndex];
+            int terminalOutputIndex = -1;
+            int matchedOperationCount = 0;
+            bool cohortInvalid = false;
+            bool hasExactTerminalOperation = false;
+            int authoredOperationCount = 0;
+            string bindingFailure = "none";
+            ulong expectedGeneration = 0UL;
+            ulong actualGeneration = 0UL;
+            uint expectedDisplayWidth = 0U;
+            uint expectedDisplayHeight = 0U;
+            uint actualDisplayWidth = 0U;
+            uint actualDisplayHeight = 0U;
+            uint expectedInternalWidth = 0U;
+            uint expectedInternalHeight = 0U;
+            uint actualInternalWidth = 0U;
+            uint actualInternalHeight = 0U;
+            for (int authoredIndex = 0;
+                 authoredIndex < StaticOperationCount;
+                 authoredIndex++)
+                if (_staticOperations[authoredIndex].ContextReference
+                        .OutputCompletionReceiptId == receipt.ReceiptId)
+                    authoredOperationCount++;
+            for (int authoredIndex = 0;
+                 authoredIndex < DynamicUiOperationCount;
+                 authoredIndex++)
+                if (_dynamicUiOperations[authoredIndex].ContextReference
+                        .OutputCompletionReceiptId == receipt.ReceiptId)
+                    cohortInvalid = true;
+            for (int authoredIndex = 0;
+                 authoredIndex < TextureUploadOperationCount;
+                 authoredIndex++)
+                if (_textureUploadOperations[authoredIndex].ContextReference
+                        .OutputCompletionReceiptId == receipt.ReceiptId)
+                    cohortInvalid = true;
+            for (int operationIndex = 0; operationIndex < staticOperations.Length; operationIndex++)
+            {
+                ref readonly FrameOpContext context =
+                    ref staticOperations.GetContext(operationIndex);
+                if (context.OutputCompletionReceiptId != receipt.ReceiptId)
+                    continue;
+                if (context.OutputCompletionSourceFrame != receipt.Output.FrameId ||
+                    !logicalPlan.TryResolveExecutableOutputIndex(in context, out int outputIndex))
+                {
+                    bindingFailure = "source frame or executable output resolution";
+                    cohortInvalid = true;
+                    break;
+                }
+                ref readonly OutputRequest output = ref logicalPlan.GetOutput(outputIndex);
+                RenderOutputRequest schedulingRequest = output.SchedulingRequest;
+                RenderOutputRequest receiptRequest = receipt.Output;
+                RenderOutputRequest graphRequest = logicalPlan.GetOutputRequest(outputIndex);
+                if (!HasValidLoweredOutput(in schedulingRequest, in output, in graphRequest))
+                {
+                    bindingFailure = DescribeLoweredOutputMismatch(
+                        in schedulingRequest,
+                        in output,
+                        in graphRequest);
+                    expectedGeneration = schedulingRequest.Target.TargetGeneration;
+                    actualGeneration = output.ResourceGeneration;
+                    expectedDisplayWidth = schedulingRequest.Target.DisplayWidth;
+                    expectedDisplayHeight = schedulingRequest.Target.DisplayHeight;
+                    actualDisplayWidth = output.DisplayWidth;
+                    actualDisplayHeight = output.DisplayHeight;
+                    expectedInternalWidth = schedulingRequest.Target.InternalWidth;
+                    expectedInternalHeight = schedulingRequest.Target.InternalHeight;
+                    actualInternalWidth = output.InternalWidth;
+                    actualInternalHeight = output.InternalHeight;
+                    cohortInvalid = true;
+                    break;
+                }
+
+                matchedOperationCount++;
+                if (!ReferenceEquals(
+                        staticOperations.GetTarget(operationIndex),
+                        receipt.TargetFrameBuffer) ||
+                    !MatchesRawSchedulingContract(in receiptRequest, in schedulingRequest) ||
+                    !HasValidLoweredOutput(in receiptRequest, in output, in graphRequest))
+                    continue;
+
+                if (terminalOutputIndex >= 0 && terminalOutputIndex != outputIndex)
+                {
+                    bindingFailure = "multiple exact terminal output indices";
+                    terminalOutputIndex = -1;
+                    hasExactTerminalOperation = false;
+                    cohortInvalid = true;
+                    break;
+                }
+                terminalOutputIndex = outputIndex;
+                hasExactTerminalOperation = true;
+            }
+
+            if (ContainsOutputCompletionReceipt(dynamicOperations, receipt.ReceiptId) ||
+                ContainsOutputCompletionReceipt(uploadOperations, receipt.ReceiptId) ||
+                 cohortInvalid || matchedOperationCount == 0 ||
+                 matchedOperationCount != authoredOperationCount ||
+                 !hasExactTerminalOperation)
+            {
+                Debug.VulkanWarningEvery("Vulkan.OutputCompletion.BindingFailure", TimeSpan.FromSeconds(1),
+                    "[Vulkan.OutputCompletion] Receipt {0} binding rejected: reason={1}, invalid={2}, matched={3}, authored={4}, exactTerminal={5}, generation={6}/{7}, display={8}x{9}/{10}x{11}, internal={12}x{13}/{14}x{15} (expected/actual).",
+                    receipt.ReceiptId, bindingFailure, cohortInvalid, matchedOperationCount, authoredOperationCount, hasExactTerminalOperation,
+                    expectedGeneration, actualGeneration,
+                    expectedDisplayWidth, expectedDisplayHeight,
+                    actualDisplayWidth, actualDisplayHeight,
+                    expectedInternalWidth, expectedInternalHeight,
+                    actualInternalWidth, actualInternalHeight);
+                FailOutputCompletionFence(receipt.Fence);
+                continue;
+            }
+            _outputCompletionOutputIndices[receiptIndex] = terminalOutputIndex;
+        }
+    }
+
+    private static bool ContainsOutputCompletionReceipt(
+        FrameOperationSequence operations,
+        ulong receiptId)
+    {
+        for (int index = 0; index < operations.Length; index++)
+            if (operations.GetContext(index).OutputCompletionReceiptId == receiptId)
+                return true;
+        return false;
+    }
+
+    internal void MarkOutputCompletionTerminalRecorded(
+        int outputIndex,
+        ulong receiptId,
+        ulong sourceFrame,
+        XRFrameBuffer? actualTarget,
+        ERenderOutputWriteAspect actualWriteAspect)
+    {
+        for (int index = 0; index < _outputCompletionCount; index++)
+        {
+            ref readonly RenderOutputCompletionBackendReservation receipt =
+                ref _outputCompletions[index];
+            if (_outputCompletionOutputIndices[index] == outputIndex &&
+                receipt.ReceiptId == receiptId &&
+                receipt.Output.FrameId == sourceFrame &&
+                receipt.Output.ExpectedWriteAspect == actualWriteAspect &&
+                ReferenceEquals(receipt.TargetFrameBuffer, actualTarget))
+                _outputCompletionTerminalAttested[index] = true;
+        }
+    }
+
+    internal bool IsOutputCompletionBound(ulong receiptId)
+    {
+        for (int index = 0; index < _outputCompletionCount; index++)
+            if (_outputCompletions[index].ReceiptId == receiptId)
+                return _outputCompletionOutputIndices[index] >= 0;
+        return false;
+    }
+
+    internal bool TryGetOutputCompletionRecordingState(
+        int index,
+        out RenderOutputCompletionBackendReservation reservation,
+        out bool bound,
+        out bool terminalAttested)
+    {
+        if ((uint)index >= (uint)_outputCompletionCount)
+        {
+            reservation = default;
+            bound = false;
+            terminalAttested = false;
+            return false;
+        }
+        reservation = _outputCompletions[index];
+        bound = _outputCompletionOutputIndices[index] >= 0;
+        terminalAttested = _outputCompletionTerminalAttested[index];
+        return true;
+    }
+
+    /// <summary>Claims drained queue-owned history receipts for this accepted frame.</summary>
+    internal void CaptureFrameViewHistory(
+        ReadOnlySpan<RenderFrameViewHistoryBackendReservation> reservations)
+    {
+        if (_frameViewHistoryClaimed)
+            throw new InvalidOperationException("The accepted frame already claimed its history cohort.");
+        int uniqueCount = 0;
+        for (int index = 0; index < reservations.Length; index++)
+        {
+            if (!reservations[index].IsValid ||
+                !reservations[index].Output.IsDefined)
+            {
+                throw new ArgumentException(
+                    "A history cohort contains an invalid backend reservation.",
+                    nameof(reservations));
+            }
+
+            bool duplicate = false;
+            RenderFrameViewHistoryCandidateToken candidateToken =
+                reservations[index].Candidate;
+            for (int priorIndex = 0; priorIndex < index; priorIndex++)
+            {
+                RenderFrameViewHistoryCandidateToken priorToken =
+                    reservations[priorIndex].Candidate;
+                if (!priorToken.MatchesIdentity(in candidateToken))
+                {
+                    continue;
+                }
+
+                if (!reservations[priorIndex].Output.Equals(
+                        reservations[index].Output) ||
+                    !ReferenceEquals(
+                        reservations[priorIndex].TargetFrameBuffer,
+                        reservations[index].TargetFrameBuffer))
+                {
+                    throw new ArgumentException(
+                        "One history token was reserved for conflicting outputs.",
+                        nameof(reservations));
+                }
+                duplicate = true;
+                break;
+            }
+
+            if (!duplicate)
+                uniqueCount++;
+        }
+        if (_frameViewHistoryCount + uniqueCount > _frameViewHistory.Length)
+            throw new VulkanAcceptedFramePlanCapacityException(
+                EVulkanAcceptedFrameLane.Terminal,
+                _frameViewHistory.Length,
+                _frameViewHistoryCount + uniqueCount);
+        for (int index = 0; index < reservations.Length; index++)
+        {
+            bool duplicate = false;
+            RenderFrameViewHistoryCandidateToken candidateToken =
+                reservations[index].Candidate;
+            for (int priorIndex = 0; priorIndex < index; priorIndex++)
+            {
+                RenderFrameViewHistoryCandidateToken priorToken =
+                    reservations[priorIndex].Candidate;
+                if (!priorToken.MatchesIdentity(in candidateToken))
+                {
+                    continue;
+                }
+                duplicate = true;
+                break;
+            }
+            if (duplicate)
+                continue;
+
+            _frameViewHistory[_frameViewHistoryCount] = reservations[index];
+            _frameViewHistoryOutputIndices[_frameViewHistoryCount] = -1;
+            _frameViewHistoryCount++;
+        }
+        _frameViewHistoryClaimed = true;
+    }
+
+    /// <summary>Associates candidates with an executable exact output identity.</summary>
+    internal void BindFrameViewHistory(FramePlan logicalPlan)
+    {
+        for (int candidateIndex = 0; candidateIndex < _frameViewHistoryCount; candidateIndex++)
+        {
+            ref readonly RenderFrameViewHistoryBackendReservation candidate =
+                ref _frameViewHistory[candidateIndex];
+            int matchedOutput = -1;
+            bool schedulingContractFound = false;
+            bool loweredOutputFound = false;
+            bool producerCohortFound = false;
+            for (int outputIndex = 0; outputIndex < logicalPlan.OutputCount; outputIndex++)
+            {
+                if (!logicalPlan.GetOutputDecision(outputIndex).Execute)
+                    continue;
+                ref readonly OutputRequest output =
+                    ref logicalPlan.GetOutput(outputIndex);
+                ref readonly RenderOutputRequest graphOutput =
+                    ref logicalPlan.GetOutputRequest(outputIndex);
+                RenderOutputRequest candidateOutput = candidate.Output;
+                RenderOutputRequest schedulingOutput =
+                    output.SchedulingRequest;
+                if (!MatchesRawSchedulingContract(
+                        in candidateOutput,
+                        in schedulingOutput))
+                    continue;
+                schedulingContractFound = true;
+                if (!HasValidLoweredOutput(
+                        in candidateOutput,
+                        in output,
+                        in graphOutput))
+                    continue;
+                loweredOutputFound = true;
+                if (!HasExactProducerCohort(
+                        logicalPlan,
+                        outputIndex,
+                        in candidate))
+                    continue;
+                producerCohortFound = true;
+                matchedOutput = outputIndex;
+                break;
+            }
+            _frameViewHistoryOutputIndices[candidateIndex] = matchedOutput;
+            if (matchedOutput < 0)
+            {
+                if (Debug.ShouldLogEvery(
+                        "Vulkan.FrameViewHistory.BindRejected",
+                        TimeSpan.FromSeconds(1)))
+                {
+                    Debug.VulkanWarning(
+                        "[Vulkan][FrameViewHistory] Candidate binding rejected. Sequence={0} SourceFrame={1} OutputId={2} Outputs={3} SchedulingMatch={4} LoweredMatch={5} ProducerCohortMatch={6} TargetIsDefault={7}.",
+                        candidate.Candidate.Sequence,
+                        candidate.Candidate.SourceFrame,
+                        candidate.Output.OutputId,
+                        logicalPlan.OutputCount,
+                        schedulingContractFound,
+                        loweredOutputFound,
+                        producerCohortFound,
+                        candidate.TargetFrameBuffer is null);
+                }
+                candidate.Candidate.Discard();
+            }
+            else
+            {
+                RenderFrameViewHistoryCandidateToken candidateToken = candidate.Candidate;
+                for (int priorIndex = 0; priorIndex < candidateIndex; priorIndex++)
+                {
+                    if (_frameViewHistoryOutputIndices[priorIndex] != matchedOutput)
+                        continue;
+                    RenderFrameViewHistoryCandidateToken prior =
+                        _frameViewHistory[priorIndex].Candidate;
+                    if (!prior.SharesLedger(in candidateToken))
+                        continue;
+                    if (prior.Sequence >= candidateToken.Sequence)
+                    {
+                        candidateToken.Discard();
+                        _frameViewHistoryOutputIndices[candidateIndex] = -1;
+                        break;
+                    }
+                    prior.Discard();
+                    _frameViewHistoryOutputIndices[priorIndex] = -1;
+                }
+            }
+        }
+    }
+
+    /// <summary>Marks one exact output terminal write as observed during primary recording.</summary>
+    internal void MarkFrameViewHistoryOutputRecorded(
+        int outputIndex,
+        ulong historySequence,
+        ulong sourceFrame,
+        XRFrameBuffer? actualTarget)
+    {
+        for (int index = 0; index < _frameViewHistoryCount; index++)
+        {
+            ref readonly RenderFrameViewHistoryBackendReservation reservation =
+                ref _frameViewHistory[index];
+            if (_frameViewHistoryOutputIndices[index] == outputIndex &&
+                reservation.Candidate.Sequence == historySequence &&
+                reservation.Candidate.SourceFrame == sourceFrame &&
+                ReferenceEquals(reservation.TargetFrameBuffer, actualTarget))
+            {
+                _frameViewHistoryAttested[index] = true;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Attests all exact candidate aliases explicitly declared for the one
+    /// synthetic default-target clear. No active operation context is inferred.
+    /// </summary>
+    internal void MarkFreshEmptyFrameViewHistoryOutputsRecorded(
+        FramePlan logicalPlan)
+    {
+        for (int freshIndex = 0;
+             freshIndex < logicalPlan.FreshEmptyTerminalOutputCount;
+             freshIndex++)
+        {
+            int outputIndex =
+                logicalPlan.GetFreshEmptyTerminalOutputIndex(freshIndex);
+            for (int candidateIndex = 0;
+                 candidateIndex < _frameViewHistoryCount;
+                 candidateIndex++)
+            {
+                if (_frameViewHistoryOutputIndices[candidateIndex] == outputIndex &&
+                    _frameViewHistory[candidateIndex].TargetFrameBuffer is null)
+                {
+                    _frameViewHistoryAttested[candidateIndex] = true;
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Replays one structurally proven output write from a reusable primary.
+    /// Candidate sequence/source proof comes from binding against the current
+    /// accepted logical plan, never from the older artifact's source frame.
+    /// </summary>
+    internal void MarkReusableFrameViewHistoryOutputRecorded(
+        FramePlan logicalPlan,
+        int outputIndex,
+        in OutputRequest recordedOutput,
+        XRFrameBuffer? recordedTarget)
+    {
+        int resolvedOutputIndex = -1;
+        if ((uint)outputIndex < (uint)logicalPlan.OutputCount &&
+            logicalPlan.GetOutputDecision(outputIndex).Execute)
+        {
+            ref readonly OutputRequest indexed =
+                ref logicalPlan.GetOutput(outputIndex);
+            if (MatchesStructuralOutput(in recordedOutput, in indexed))
+                resolvedOutputIndex = outputIndex;
+        }
+
+        for (int index = 0; index < logicalPlan.OutputCount; index++)
+        {
+            if (index == outputIndex ||
+                !logicalPlan.GetOutputDecision(index).Execute)
+            {
+                continue;
+            }
+
+            ref readonly OutputRequest candidate =
+                ref logicalPlan.GetOutput(index);
+            if (!MatchesStructuralOutput(in recordedOutput, in candidate))
+                continue;
+            if (resolvedOutputIndex >= 0)
+                return;
+            resolvedOutputIndex = index;
+        }
+        if (resolvedOutputIndex < 0)
+            return;
+
+        for (int index = 0; index < _frameViewHistoryCount; index++)
+            if (_frameViewHistoryOutputIndices[index] == resolvedOutputIndex &&
+                ReferenceEquals(
+                    _frameViewHistory[index].TargetFrameBuffer,
+                    recordedTarget))
+                _frameViewHistoryAttested[index] = true;
+    }
+
+    /// <summary>Publishes only bound, attested candidates after native submission acceptance.</summary>
+    internal void CommitAttestedFrameViewHistory()
+    {
+        for (int index = 0; index < _frameViewHistoryCount; index++)
+        {
+            if (_frameViewHistoryOutputIndices[index] >= 0 && _frameViewHistoryAttested[index])
+                _frameViewHistory[index].Candidate.Commit();
+            else
+                _frameViewHistory[index].Candidate.Discard();
+            _frameViewHistory[index] = default;
+            _frameViewHistoryOutputIndices[index] = -1;
+            _frameViewHistoryAttested[index] = false;
+        }
+        _frameViewHistoryCount = 0;
+    }
+
+    internal void MarkAdvancedPickingVisibilityRecorded(
+        XRRenderPipelineInstance pipeline,
+        in AdvancedGpuScenePublication publication,
+        ulong resourceGeneration)
+    {
+        ArgumentNullException.ThrowIfNull(pipeline);
+        if (!publication.IsValid || resourceGeneration == 0UL)
+            throw new VulkanPlanPreconditionException(
+                "A recorded Advanced visibility raster exposed an invalid canonical picking source.");
+
+        for (int index = 0; index < _recordedAdvancedPickingSourceCount; index++)
+        {
+            if (!ReferenceEquals(_recordedAdvancedPickingPipelines[index], pipeline))
+                continue;
+            if (_recordedAdvancedPickingPublications[index] != publication ||
+                _recordedAdvancedPickingResourceGenerations[index] != resourceGeneration)
+            {
+                throw new VulkanPlanPreconditionException(
+                    "One accepted pipeline recorded multiple canonical Advanced picking publications in the same primary.");
+            }
+            return;
+        }
+
+        if (_recordedAdvancedPickingSourceCount >=
+            _recordedAdvancedPickingPipelines.Length)
+        {
+            throw new VulkanAcceptedFramePlanCapacityException(
+                EVulkanAcceptedFrameLane.MainScene,
+                _recordedAdvancedPickingPipelines.Length,
+                _recordedAdvancedPickingSourceCount + 1);
+        }
+
+        int destination = _recordedAdvancedPickingSourceCount++;
+        _recordedAdvancedPickingPipelines[destination] = pipeline;
+        _recordedAdvancedPickingPublications[destination] = publication;
+        _recordedAdvancedPickingResourceGenerations[destination] = resourceGeneration;
+    }
+
+    /// <summary>
+    /// Makes a canonical publication eligible for picking only after the primary
+    /// containing its actual visibility raster was accepted by the native queue.
+    /// </summary>
+    internal void CommitRecordedAdvancedPickingSources()
+    {
+        for (int index = 0; index < _recordedAdvancedPickingSourceCount; index++)
+        {
+            _recordedAdvancedPickingPipelines[index]?.CommitAdvancedPickingSource(
+                in _recordedAdvancedPickingPublications[index],
+                _recordedAdvancedPickingResourceGenerations[index]);
+            _recordedAdvancedPickingPipelines[index] = null;
+            _recordedAdvancedPickingPublications[index] = default;
+            _recordedAdvancedPickingResourceGenerations[index] = 0UL;
+        }
+        _recordedAdvancedPickingSourceCount = 0;
+    }
 
     /// <summary>
     /// Claims producer fences as soon as their authoring operations leave the
@@ -195,18 +767,28 @@ internal sealed class VulkanAcceptedFramePlan
         _submissionMarkers.AsSpan(0, _submissionMarkerCount).Clear();
         _submissionMarkerCount = 0;
         _submissionMarkerOwnershipTransferred = true;
+        for (int index = 0; index < _outputCompletionCount; index++)
+            _outputCompletions[index] = default;
+        _outputCompletionCount = 0;
     }
 
     /// <summary>Fails every marker still owned by this unsubmitted plan once.</summary>
     internal void SettleUnsubmittedSubmissionMarkers()
     {
-        if (_submissionMarkerOwnershipTransferred || _submissionMarkerCount == 0)
+        if (_submissionMarkerOwnershipTransferred)
             return;
 
         for (int index = 0; index < _submissionMarkerCount; index++)
             _submissionMarkers[index]?.Fail();
         _submissionMarkers.AsSpan(0, _submissionMarkerCount).Clear();
         _submissionMarkerCount = 0;
+        for (int index = 0; index < _outputCompletionCount; index++)
+            FailOutputCompletionFence(_outputCompletions[index].Fence);
+        _outputCompletions.AsSpan(0, _outputCompletionCount).Clear();
+        _outputCompletionOutputIndices.AsSpan(0, _outputCompletionCount).Fill(-1);
+        _outputCompletionTerminalAttested.AsSpan(0, _outputCompletionCount).Clear();
+        _outputCompletionCount = 0;
+        _outputCompletionsClaimed = false;
     }
 
     internal void Begin(
@@ -946,6 +1528,8 @@ internal sealed class VulkanAcceptedFramePlan
         PlannerState = plannerState;
         FrozenPlanningSnapshot = frozenPlanningSnapshot;
         IsSealed = true;
+        BindFrameViewHistory(logicalPlan);
+        BindOutputCompletions(logicalPlan);
     }
 
     /// <summary>
@@ -1005,6 +1589,31 @@ internal sealed class VulkanAcceptedFramePlan
 
     internal void Reset()
     {
+        _recordedAdvancedPickingPipelines.AsSpan(
+            0,
+            _recordedAdvancedPickingSourceCount).Clear();
+        _recordedAdvancedPickingPublications.AsSpan(
+            0,
+            _recordedAdvancedPickingSourceCount).Clear();
+        _recordedAdvancedPickingResourceGenerations.AsSpan(
+            0,
+            _recordedAdvancedPickingSourceCount).Clear();
+        _recordedAdvancedPickingSourceCount = 0;
+        for (int index = 0; index < _frameViewHistoryCount; index++)
+            _frameViewHistory[index].Candidate.Discard();
+        _frameViewHistory.AsSpan(0, _frameViewHistoryCount).Clear();
+        _frameViewHistoryOutputIndices.AsSpan(0, _frameViewHistoryCount).Fill(-1);
+        _frameViewHistoryAttested.AsSpan(0, _frameViewHistoryCount).Clear();
+        _frameViewHistoryCount = 0;
+        _frameViewHistoryClaimed = false;
+        if (!_submissionMarkerOwnershipTransferred)
+            for (int index = 0; index < _outputCompletionCount; index++)
+                FailOutputCompletionFence(_outputCompletions[index].Fence);
+        _outputCompletions.AsSpan(0, _outputCompletionCount).Clear();
+        _outputCompletionOutputIndices.AsSpan(0, _outputCompletionCount).Fill(-1);
+        _outputCompletionTerminalAttested.AsSpan(0, _outputCompletionCount).Clear();
+        _outputCompletionCount = 0;
+        _outputCompletionsClaimed = false;
         ResetAuthoredOperations();
         CanonicalPublicationPins.ReleaseAll();
         if (_bindlessReceiptCount != 0)
@@ -1063,6 +1672,211 @@ internal sealed class VulkanAcceptedFramePlan
         FrozenPlanningSnapshot = default;
         IsSealed = false;
     }
+
+    private bool HasExactProducerCohort(
+        FramePlan logicalPlan,
+        int outputIndex,
+        in RenderFrameViewHistoryBackendReservation reservation)
+    {
+        RenderFrameViewHistoryCandidateToken token = reservation.Candidate;
+        if (reservation.Output.FrameId != token.SourceFrame ||
+            reservation.Output.OutputId == 0UL ||
+            token.OutputIdentity == 0UL)
+        {
+            return false;
+        }
+
+        if (logicalPlan.IsFreshEmptyTerminalOutput(outputIndex))
+            return reservation.TargetFrameBuffer is null;
+
+        return HasExactProducerCohort(
+                logicalPlan,
+                logicalPlan.GetNativeStaticOperationsForRecording(),
+                outputIndex,
+                in reservation) ||
+            HasExactProducerCohort(
+                logicalPlan,
+                logicalPlan.GetNativeDynamicOverlayOperationsForRecording(),
+                outputIndex,
+                in reservation);
+    }
+
+    private static bool HasExactProducerCohort(
+        FramePlan logicalPlan,
+        FrameOperationSequence operations,
+        int outputIndex,
+        in RenderFrameViewHistoryBackendReservation reservation)
+    {
+        RenderFrameViewHistoryCandidateToken token = reservation.Candidate;
+        for (int operationIndex = 0;
+             operationIndex < operations.Length;
+             operationIndex++)
+        {
+            ref readonly FrameOpContext context =
+                ref operations.GetContext(operationIndex);
+            if (context.OutputHistorySequenceId != token.Sequence ||
+                context.OutputHistorySourceFrame != token.SourceFrame ||
+                context.OutputSchedulingInstanceIdentity != token.OutputIdentity ||
+                context.PipelineInstance?.TemporalHistoryPipelineIdentity !=
+                    token.PipelineIdentity ||
+                !ReferenceEquals(
+                    reservation.TargetFrameBuffer,
+                    context.OutputFrameBuffer) ||
+                !logicalPlan.TryResolveExecutableOutputIndex(
+                    in context,
+                    out int operationOutputIndex) ||
+                operationOutputIndex != outputIndex)
+            {
+                continue;
+            }
+
+            return true;
+        }
+
+        return false;
+    }
+
+    private static void FailOutputCompletionFence(XRGpuFence? fence)
+    {
+        if (fence is VulkanTimelineGpuFence timelineFence)
+            timelineFence.Fail();
+        else
+            fence?.Dispose();
+    }
+
+    private static bool MatchesRawSchedulingContract(
+        in RenderOutputRequest candidate,
+        in RenderOutputRequest scheduling)
+        => candidate.Equals(scheduling) ||
+            candidate.OutputId == scheduling.OutputId &&
+            candidate.ViewFamilyId == scheduling.ViewFamilyId &&
+            candidate.OutputKind == scheduling.OutputKind &&
+            candidate.ViewKind == scheduling.ViewKind &&
+            candidate.OutputClass == scheduling.OutputClass &&
+            candidate.Target.Equals(scheduling.Target) &&
+            candidate.Schedule.Equals(scheduling.Schedule) &&
+            candidate.QualityRequirements == scheduling.QualityRequirements &&
+            candidate.FallbackPolicy == scheduling.FallbackPolicy &&
+            candidate.CompletionRequirement == scheduling.CompletionRequirement &&
+            candidate.ExpectedWriteAspect == scheduling.ExpectedWriteAspect &&
+            candidate.ProducerDependencySetId == scheduling.ProducerDependencySetId &&
+            candidate.ConsumerDependencySetId == scheduling.ConsumerDependencySetId &&
+            candidate.FrameId == scheduling.FrameId;
+
+    private static bool HasValidLoweredOutput(
+        in RenderOutputRequest candidate,
+        in OutputRequest output,
+        in RenderOutputRequest graph)
+        => output.StableOutputId == candidate.OutputId &&
+            output.StableViewFamilyId == candidate.ViewFamilyId &&
+            output.OutputKind == candidate.OutputKind &&
+            output.ViewKind == candidate.ViewKind &&
+            output.ResourceGeneration == candidate.Target.TargetGeneration &&
+            output.DisplayWidth == candidate.Target.DisplayWidth &&
+            output.DisplayHeight == candidate.Target.DisplayHeight &&
+            output.InternalWidth == candidate.Target.InternalWidth &&
+            output.InternalHeight == candidate.Target.InternalHeight &&
+            graph.OutputId == output.StableOutputId &&
+            graph.ViewFamilyId == output.StableViewFamilyId &&
+            graph.OutputKind == output.OutputKind &&
+            graph.ViewKind == output.ViewKind &&
+            graph.OutputClass == candidate.OutputClass &&
+            graph.Target.TargetClass == candidate.Target.TargetClass &&
+            graph.Target.StableTargetId == output.StableOutputId &&
+            graph.Target.TargetGeneration == output.ResourceGeneration &&
+            graph.Target.DisplayWidth == output.DisplayWidth &&
+            graph.Target.DisplayHeight == output.DisplayHeight &&
+            graph.Target.InternalWidth == output.InternalWidth &&
+            graph.Target.InternalHeight == output.InternalHeight &&
+            graph.Target.FormatCompatibilityKey == output.ContextFingerprint &&
+            graph.Target.SampleCount == candidate.Target.SampleCount &&
+            graph.Target.ViewMask == candidate.Target.ViewMask &&
+            graph.Target.ExternalImageSlot == candidate.Target.ExternalImageSlot &&
+            graph.ProducerDependencySetId == output.ProducerDependencySetId &&
+            graph.ConsumerDependencySetId == output.ConsumerDependencySetId &&
+            graph.ExpectedWriteAspect == candidate.ExpectedWriteAspect;
+
+    private static string DescribeLoweredOutputMismatch(
+        in RenderOutputRequest candidate,
+        in OutputRequest output,
+        in RenderOutputRequest graph)
+    {
+        if (output.StableOutputId != candidate.OutputId)
+            return "producer output id";
+        if (output.StableViewFamilyId != candidate.ViewFamilyId)
+            return "producer view-family id";
+        if (output.OutputKind != candidate.OutputKind)
+            return "producer output kind";
+        if (output.ViewKind != candidate.ViewKind)
+            return "producer view kind";
+        if (output.ResourceGeneration != candidate.Target.TargetGeneration)
+            return "producer target generation";
+        if (output.DisplayWidth != candidate.Target.DisplayWidth ||
+            output.DisplayHeight != candidate.Target.DisplayHeight)
+            return "producer display extent";
+        if (output.InternalWidth != candidate.Target.InternalWidth ||
+            output.InternalHeight != candidate.Target.InternalHeight)
+            return "producer internal extent";
+        if (graph.OutputId != output.StableOutputId)
+            return "graph output id";
+        if (graph.ViewFamilyId != output.StableViewFamilyId)
+            return "graph view-family id";
+        if (graph.OutputKind != output.OutputKind)
+            return "graph output kind";
+        if (graph.ViewKind != output.ViewKind)
+            return "graph view kind";
+        if (graph.OutputClass != candidate.OutputClass)
+            return "graph output class";
+        if (graph.Target.TargetClass != candidate.Target.TargetClass)
+            return "graph target class";
+        if (graph.Target.StableTargetId != output.StableOutputId)
+            return "graph target id";
+        if (graph.Target.TargetGeneration != output.ResourceGeneration)
+            return "graph target generation";
+        if (graph.Target.DisplayWidth != output.DisplayWidth ||
+            graph.Target.DisplayHeight != output.DisplayHeight)
+            return "graph display extent";
+        if (graph.Target.InternalWidth != output.InternalWidth ||
+            graph.Target.InternalHeight != output.InternalHeight)
+            return "graph internal extent";
+        if (graph.Target.FormatCompatibilityKey != output.ContextFingerprint)
+            return "graph format compatibility";
+        if (graph.Target.SampleCount != candidate.Target.SampleCount)
+            return "graph sample count";
+        if (graph.Target.ViewMask != candidate.Target.ViewMask)
+            return "graph view mask";
+        if (graph.Target.ExternalImageSlot != candidate.Target.ExternalImageSlot)
+            return "graph external image slot";
+        if (graph.ProducerDependencySetId != output.ProducerDependencySetId)
+            return "graph producer dependency set";
+        if (graph.ConsumerDependencySetId != output.ConsumerDependencySetId)
+            return "graph consumer dependency set";
+        if (graph.ExpectedWriteAspect != candidate.ExpectedWriteAspect)
+            return "graph expected write aspect";
+        return "unknown lowered output field";
+    }
+
+    private static bool MatchesStructuralOutput(
+        in OutputRequest candidate,
+        in OutputRequest output)
+        => candidate.MatchesOutput(output) &&
+            candidate.DisplayWidth == output.DisplayWidth &&
+            candidate.DisplayHeight == output.DisplayHeight &&
+            candidate.InternalWidth == output.InternalWidth &&
+            candidate.InternalHeight == output.InternalHeight &&
+            candidate.ResourceGeneration == output.ResourceGeneration &&
+            candidate.DescriptorGeneration == output.DescriptorGeneration &&
+            candidate.ContextFingerprint == output.ContextFingerprint &&
+            candidate.ProducerDependencySetId == output.ProducerDependencySetId &&
+            candidate.ConsumerDependencySetId == output.ConsumerDependencySetId &&
+            candidate.SchedulingRequest.Target.TargetClass ==
+                output.SchedulingRequest.Target.TargetClass &&
+            candidate.SchedulingRequest.Target.SampleCount ==
+                output.SchedulingRequest.Target.SampleCount &&
+            candidate.SchedulingRequest.Target.ViewMask ==
+                output.SchedulingRequest.Target.ViewMask &&
+            candidate.SchedulingRequest.Target.ExternalImageSlot ==
+                output.SchedulingRequest.Target.ExternalImageSlot;
 
     private static EVulkanAcceptedFrameLane ClassifyStaticOperation(FrameOp operation)
     {

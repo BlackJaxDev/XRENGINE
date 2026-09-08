@@ -42,4 +42,9 @@ public struct AdvancedViewRecord
     public uint ViewGeneration;
     public uint ViewMaskLo;
     public uint ViewMaskHi;
+
+    /// <summary>Frozen target-UV center, maximum conservative mip bias, and enabled flag.</summary>
+    public Vector4 FoveationCenterAndBias;
+    /// <summary>Ordered inner, guard, middle, and outer eccentricity radii.</summary>
+    public Vector4 FoveationRadii;
 }

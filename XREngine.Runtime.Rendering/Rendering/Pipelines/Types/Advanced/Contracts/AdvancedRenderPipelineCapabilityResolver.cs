@@ -50,6 +50,8 @@ public static class AdvancedRenderPipelineCapabilityResolver
             return EAdvancedRenderPipelineRejectionReason.MissingFrameSlotStorage;
         if (stereo && !capabilities.SupportsStereoArrayResources)
             return EAdvancedRenderPipelineRejectionReason.MissingStereoArrayResources;
+        if (stereo && capabilities.Backend == RuntimeGraphicsApiKind.OpenGL && !capabilities.SupportsOpenGlMultiviewRaster)
+            return EAdvancedRenderPipelineRejectionReason.MissingOpenGlMultiviewRaster;
         if (capabilities.ShaderFamily != EAdvancedShaderFamily.VisibilityBuffer)
             return EAdvancedRenderPipelineRejectionReason.MissingShaderFamily;
 

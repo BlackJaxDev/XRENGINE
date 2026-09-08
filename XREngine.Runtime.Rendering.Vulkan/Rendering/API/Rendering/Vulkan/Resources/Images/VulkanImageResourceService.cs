@@ -334,7 +334,7 @@ internal unsafe sealed class VulkanImageResourceService(
         lifetime.Tracker.RegisterResource(
             new VulkanResourceLifetimeKey(ObjectType.ImageView, imageView.Handle),
             owner,
-            IsExternalOwner(owner));
+            externallyOwned: false);
         lock (lifetime.Tracker.SyncRoot)
             lifetime.Tracker.ImageViewBackingImages[imageView.Handle] = createInfo.Image.Handle;
     }

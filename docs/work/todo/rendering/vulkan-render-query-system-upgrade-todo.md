@@ -1,11 +1,15 @@
 # Vulkan Render Query System Upgrade TODO
 
-Last Updated: 2026-07-22
+Last Updated: 2026-09-06
 Owner: Rendering
-Status: Implementation complete; focused validation passed; live Vulkan validation blocked before device creation
+Status: Implementation recorded complete; query-specific live acceptance remains open
 Working Branch: `rendering-vulkan-core-hardening` (retained by explicit user request)
 
 Closeout evidence: [Vulkan render query system upgrade investigation](../../investigations/rendering/archive/vulkan-render-query-system-upgrade-2026-07-22.md). Phases 1-9 are implemented. Unchecked items below are external live-validation gates or broader repository-health gates that could not be truthfully closed on this machine; they are not deferred query implementation work.
+
+## 2026-09-06 ownership audit
+
+This remains a specialized child of the [master](vulkan-core-frame-loop-and-resident-rendering-master-todo.md). The July 22 pre-device-creation loader failure is historical, not a confirmed current environment blocker: later Vulkan desktop/XR runs reached submission. No query-family-specific acceptance is inferred from those later runs. Recheck the actual startup condition when resuming; keep query, timestamp, exact-count, stereo, and specialized-provider gates open until their own evidence exists.
 
 ## Related Work And Ownership
 

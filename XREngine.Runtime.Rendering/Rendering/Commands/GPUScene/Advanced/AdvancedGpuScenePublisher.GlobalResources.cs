@@ -34,6 +34,24 @@ public sealed partial class AdvancedGpuScenePublisher
     private AdvancedMaterialTextureBinding[] _publishedShadowBindings = new AdvancedMaterialTextureBinding[InitialCapacity];
     private AdvancedGpuHandle[] _publishedShadowHandles = new AdvancedGpuHandle[InitialCapacity];
     private int _plannedShadowCount;
+    private AdvancedProbeRecord[] _plannedProbeRecords = new AdvancedProbeRecord[InitialCapacity];
+    private AdvancedProbeRecord[] _plannedProbeSourceRecords = new AdvancedProbeRecord[InitialCapacity];
+    private AdvancedProbeRecord[] _publishedProbeSourceRecords = new AdvancedProbeRecord[InitialCapacity];
+    private AdvancedGpuHandle[] _plannedProbeHandles = new AdvancedGpuHandle[InitialCapacity];
+    private AdvancedGpuHandle[] _publishedProbeHandles = new AdvancedGpuHandle[InitialCapacity];
+    private AdvancedMaterialTextureBinding[] _plannedProbeBindings = new AdvancedMaterialTextureBinding[InitialCapacity * 2];
+    private AdvancedMaterialTextureBinding[] _publishedProbeBindings = new AdvancedMaterialTextureBinding[InitialCapacity * 2];
+    private AdvancedGpuResourceBindingSource[] _plannedProbeSources = new AdvancedGpuResourceBindingSource[InitialCapacity * 2];
+    private int[] _plannedProbeAcquireOffsets = new int[InitialCapacity * 2];
+    private object?[] _plannedProbeSourceIdentities = new object?[InitialCapacity];
+    private object?[] _publishedProbeSourceIdentities = new object?[InitialCapacity];
+    private int[] _plannedProbeExistingIndices = new int[InitialCapacity];
+    private bool[] _plannedProbeRequiresReplace = new bool[InitialCapacity];
+    private uint[] _publishedProbeSeenStamps = new uint[InitialCapacity];
+    private uint _publishedProbeSeenGeneration;
+    private int _plannedProbeCount;
+    private int _publishedProbeCount;
+    private bool _plannedProbeChanged;
 
     private bool TryPreflightGlobalResources(
         in AdvancedGlobalResourceCapture capture,
@@ -77,6 +95,57 @@ public sealed partial class AdvancedGpuScenePublisher
             _plannedShadowLightIndices[_plannedShadowCount++] = row.LightIndex;
             ++_plannedLightShadowCounts[row.LightIndex];
         }
+        ReadOnlySpan<AdvancedProbeCaptureRow> probeRows = capture.ProbeRows.Span;
+        if (probeRows.Length != capture.Probes.Length)
+        {
+            reason = "The global-probe row and record captures have different lengths.";
+            return false;
+        }
+        EnsureProbePlanCapacity(Math.Max(probeRows.Length, _publishedProbeCount));
+        BeginStampedPlan(ref _publishedProbeSeenGeneration, _publishedProbeSeenStamps);
+        _plannedProbeCount = probeRows.Length;
+        int probeAdditions = 0, probeReplacements = 0;
+        for (int probeIndex = 0; probeIndex < probeRows.Length; ++probeIndex)
+        {
+            ref readonly AdvancedProbeCaptureRow row = ref probeRows[probeIndex];
+            if (FindPlannedProbeSource(row.Source, probeIndex) >= 0)
+            {
+                reason = "The global-probe capture contains the same source identity more than once.";
+                return false;
+            }
+            if (!AdvancedGpuResourceSourceEncoder.TryEncode(row.Irradiance, EAdvancedResourceFallback.Zero,
+                    out _plannedProbeSources[probeIndex * 2], out _, out reason) ||
+                !AdvancedGpuResourceSourceEncoder.TryEncode(row.PrefilteredRadiance, EAdvancedResourceFallback.Zero,
+                    out _plannedProbeSources[probeIndex * 2 + 1], out _, out reason))
+                return false;
+            _plannedProbeSources[probeIndex * 2] = _plannedProbeSources[probeIndex * 2] with { Lifetime = row.Generation };
+            _plannedProbeSources[probeIndex * 2 + 1] = _plannedProbeSources[probeIndex * 2 + 1] with { Lifetime = row.Generation };
+            _plannedProbeRecords[probeIndex] = row.Record;
+            _plannedProbeSourceRecords[probeIndex] = row.Record;
+            _plannedProbeSourceIdentities[probeIndex] = row.Source;
+            int existingIndex = FindPublishedProbeSource(row.Source);
+            _plannedProbeExistingIndices[probeIndex] = existingIndex;
+            if (existingIndex < 0)
+            {
+                _plannedProbeRequiresReplace[probeIndex] = true;
+                ++probeAdditions;
+                continue;
+            }
+            _publishedProbeSeenStamps[existingIndex] = _publishedProbeSeenGeneration;
+            int bindingIndex = probeIndex * 2;
+            int publishedBindingIndex = existingIndex * 2;
+            bool changed = !ProbeRecordsEqual(in _plannedProbeSourceRecords[probeIndex], in _publishedProbeSourceRecords[existingIndex]) ||
+                !_resourcePublisher.BindingMatches(in _publishedProbeBindings[publishedBindingIndex], in _plannedProbeSources[bindingIndex]) ||
+                !_resourcePublisher.BindingMatches(in _publishedProbeBindings[publishedBindingIndex + 1], in _plannedProbeSources[bindingIndex + 1]);
+            _plannedProbeRequiresReplace[probeIndex] = changed;
+            if (changed)
+                ++probeReplacements;
+        }
+        int probeTombstones = 0;
+        for (int probeIndex = 0; probeIndex < _publishedProbeCount; ++probeIndex)
+            if (_publishedProbeSeenStamps[probeIndex] != _publishedProbeSeenGeneration)
+                ++probeTombstones;
+        _plannedProbeChanged = probeAdditions != 0 || probeReplacements != 0 || probeTombstones != 0;
         BeginStampedPlan(ref _publishedLightSeenGeneration, _publishedLightSeenStamps);
         _plannedLightCount = sources.Length;
         int additions = 0;
@@ -171,10 +240,22 @@ public sealed partial class AdvancedGpuScenePublisher
 
         // Material and shadow texture sources must share this one preflight;
         // the resource publisher keeps one scratch transaction at a time.
+        int probeAcquireCount = 0;
+        int probeReleaseCount = 0;
+        for (int probeIndex = 0; probeIndex < _plannedProbeCount; ++probeIndex)
+            if (_plannedProbeRequiresReplace[probeIndex])
+            {
+                probeAcquireCount += 2;
+                if (_plannedProbeExistingIndices[probeIndex] >= 0)
+                    probeReleaseCount += 2;
+            }
+        for (int probeIndex = 0; probeIndex < _publishedProbeCount; ++probeIndex)
+            if (_publishedProbeSeenStamps[probeIndex] != _publishedProbeSeenGeneration)
+                probeReleaseCount += 2;
         int materialAcquireCount = _resourceAcquireCount;
         EnsureGlobalResourceTransitionCapacity(
-            checked(materialAcquireCount + shadowAcquireCount),
-            checked(_resourceReleaseCount + shadowTombstones));
+            checked(materialAcquireCount + shadowAcquireCount + probeAcquireCount),
+            checked(_resourceReleaseCount + shadowTombstones + probeReleaseCount));
         int acquireCursor = materialAcquireCount;
         int releaseCursor = _resourceReleaseCount;
         for (int lightIndex = 0; lightIndex < _plannedLightCount; ++lightIndex)
@@ -209,6 +290,30 @@ public sealed partial class AdvancedGpuScenePublisher
                     _publishedShadowBindings.AsSpan(oldStart, oldCount).CopyTo(_resourceReleaseBindings.AsSpan(releaseCursor, oldCount));
                 releaseCursor += oldCount;
             }
+        for (int probeIndex = 0; probeIndex < _plannedProbeCount; ++probeIndex)
+        {
+            if (!_plannedProbeRequiresReplace[probeIndex])
+                continue;
+            int bindingIndex = probeIndex * 2;
+            _plannedProbeAcquireOffsets[bindingIndex] = acquireCursor;
+            _resourceAcquireSources[acquireCursor++] = _plannedProbeSources[bindingIndex];
+            _plannedProbeAcquireOffsets[bindingIndex + 1] = acquireCursor;
+            _resourceAcquireSources[acquireCursor++] = _plannedProbeSources[bindingIndex + 1];
+        }
+        for (int probeIndex = 0; probeIndex < _plannedProbeCount; ++probeIndex)
+        {
+            int existingIndex = _plannedProbeExistingIndices[probeIndex];
+            if (!_plannedProbeRequiresReplace[probeIndex] || existingIndex < 0)
+                continue;
+            _publishedProbeBindings.AsSpan(existingIndex * 2, 2).CopyTo(_resourceReleaseBindings.AsSpan(releaseCursor, 2));
+            releaseCursor += 2;
+        }
+        for (int probeIndex = 0; probeIndex < _publishedProbeCount; ++probeIndex)
+            if (_publishedProbeSeenStamps[probeIndex] != _publishedProbeSeenGeneration)
+            {
+                _publishedProbeBindings.AsSpan(probeIndex * 2, 2).CopyTo(_resourceReleaseBindings.AsSpan(releaseCursor, 2));
+                releaseCursor += 2;
+            }
         _resourceAcquireCount = acquireCursor;
         _resourceReleaseCount = releaseCursor;
         if (!_resourcePublisher.TryPreflightTransition(
@@ -217,6 +322,10 @@ public sealed partial class AdvancedGpuScenePublisher
             // Group insertion stamps identity and the publisher then stamps the
             // shared first-row offset, so each row has two replacements.
             !Database.Resources.Shadows.CanApply(shadowAdditions, checked(shadowAdditions * 2), shadowTombstones) ||
+            !Database.Resources.Probes.CanApply(
+                probeAdditions,
+                checked(probeAdditions + probeReplacements + probeTombstones),
+                probeTombstones) ||
             // Group additions happen before old groups are tombstoned. Reserve
             // an actual physical suffix so apply cannot discover fragmentation
             // after texture leases have already been acquired.
@@ -311,6 +420,45 @@ public sealed partial class AdvancedGpuScenePublisher
                 throw new InvalidOperationException("A preflighted canonical shadow-group retirement failed.");
         }
 
+        for (int probeIndex = 0; probeIndex < _plannedProbeCount; ++probeIndex)
+        {
+            int bindingIndex = probeIndex * 2;
+            int existingIndex = _plannedProbeExistingIndices[probeIndex];
+            if (!_plannedProbeRequiresReplace[probeIndex])
+            {
+                _plannedProbeHandles[probeIndex] = _publishedProbeHandles[existingIndex];
+                _publishedProbeBindings.AsSpan(existingIndex * 2, 2).CopyTo(_plannedProbeBindings.AsSpan(bindingIndex, 2));
+                continue;
+            }
+            AdvancedProbeRecord record = _plannedProbeRecords[probeIndex];
+            record.Irradiance = _resourceAcquireBindings[_plannedProbeAcquireOffsets[bindingIndex]].Texture;
+            record.PrefilteredRadiance = _resourceAcquireBindings[_plannedProbeAcquireOffsets[bindingIndex + 1]].Texture;
+            _plannedProbeBindings[bindingIndex] = _resourceAcquireBindings[_plannedProbeAcquireOffsets[bindingIndex]];
+            _plannedProbeBindings[bindingIndex + 1] = _resourceAcquireBindings[_plannedProbeAcquireOffsets[bindingIndex + 1]];
+            if (existingIndex < 0)
+            {
+                if (!resources.TryAddProbe(record, out _plannedProbeHandles[probeIndex]))
+                    throw new InvalidOperationException("A preflighted canonical probe add failed.");
+            }
+            else
+            {
+                _plannedProbeHandles[probeIndex] = _publishedProbeHandles[existingIndex];
+                if (!resources.TryReplaceProbe(_plannedProbeHandles[probeIndex], record))
+                    throw new InvalidOperationException("A preflighted canonical probe replacement failed.");
+            }
+            _plannedProbeRecords[probeIndex] = record;
+        }
+        for (int probeIndex = 0; probeIndex < _publishedProbeCount; ++probeIndex)
+            if (_publishedProbeSeenStamps[probeIndex] != _publishedProbeSeenGeneration)
+        {
+            AdvancedGpuHandle handle = _publishedProbeHandles[probeIndex];
+            if (!resources.Probes.TryGet(handle, out AdvancedProbeRecord retired))
+                throw new InvalidOperationException("A preflighted canonical probe retirement lost its row.");
+            retired.Flags &= ~(uint)EAdvancedProbeRecordFlags.Valid;
+            if (!resources.TryReplaceProbe(handle, retired) || !resources.RemoveProbe(handle))
+                throw new InvalidOperationException("A preflighted canonical probe retirement failed.");
+        }
+
         Array.Copy(_plannedLightSources, _publishedLightSources, _plannedLightCount);
         Array.Copy(_plannedLightRecords, _publishedLightRecords, _plannedLightCount);
         Array.Copy(_plannedLightHandles, _publishedLightHandles, _plannedLightCount);
@@ -326,6 +474,16 @@ public sealed partial class AdvancedGpuScenePublisher
                 _publishedLightCount - _plannedLightCount);
         }
         _publishedLightCount = _plannedLightCount;
+        if (_plannedProbeChanged)
+        {
+            _plannedProbeSourceRecords.AsSpan(0, _plannedProbeCount).CopyTo(_publishedProbeSourceRecords);
+            _plannedProbeHandles.AsSpan(0, _plannedProbeCount).CopyTo(_publishedProbeHandles);
+            _plannedProbeBindings.AsSpan(0, _plannedProbeCount * 2).CopyTo(_publishedProbeBindings);
+            Array.Copy(_plannedProbeSourceIdentities, _publishedProbeSourceIdentities, _plannedProbeCount);
+            if (_publishedProbeCount > _plannedProbeCount)
+                Array.Clear(_publishedProbeSourceIdentities, _plannedProbeCount, _publishedProbeCount - _plannedProbeCount);
+            _publishedProbeCount = _plannedProbeCount;
+        }
         EnsurePublishedShadowCapacity(_plannedShadowCount);
         _plannedShadowSourceRecords.AsSpan(0, _plannedShadowCount).CopyTo(_publishedShadowSourceRecords);
         _plannedShadowBindings.AsSpan(0, _plannedShadowCount).CopyTo(_publishedShadowBindings);
@@ -370,6 +528,28 @@ public sealed partial class AdvancedGpuScenePublisher
         Array.Resize(ref _plannedShadowAcquireOffsets, capacity);
     }
 
+    private void EnsureProbePlanCapacity(int required)
+    {
+        if (_plannedProbeRecords.Length >= required)
+            return;
+        int capacity = checked((int)NextPowerOfTwo(checked((uint)required + 1u)));
+        Array.Resize(ref _plannedProbeRecords, capacity);
+        Array.Resize(ref _plannedProbeSourceRecords, capacity);
+        Array.Resize(ref _publishedProbeSourceRecords, capacity);
+        Array.Resize(ref _plannedProbeHandles, capacity);
+        Array.Resize(ref _publishedProbeHandles, capacity);
+        Array.Resize(ref _plannedProbeBindings, checked(capacity * 2));
+        Array.Resize(ref _publishedProbeBindings, checked(capacity * 2));
+        Array.Resize(ref _plannedProbeSources, checked(capacity * 2));
+        Array.Resize(ref _plannedProbeAcquireOffsets, checked(capacity * 2));
+        Array.Resize(ref _plannedProbeSourceIdentities, capacity);
+        Array.Resize(ref _publishedProbeSourceIdentities, capacity);
+        Array.Resize(ref _plannedProbeExistingIndices, capacity);
+        Array.Resize(ref _plannedProbeRequiresReplace, capacity);
+        Array.Resize(ref _publishedProbeSeenStamps, capacity);
+        _publishedProbeSeenGeneration = 0u;
+    }
+
     private void EnsurePublishedShadowCapacity(int required)
     {
         if (_publishedShadowHandles.Length >= required)
@@ -408,6 +588,22 @@ public sealed partial class AdvancedGpuScenePublisher
         return -1;
     }
 
+    private int FindPublishedProbeSource(object source)
+    {
+        for (int index = 0; index < _publishedProbeCount; ++index)
+            if (ReferenceEquals(_publishedProbeSourceIdentities[index], source))
+                return index;
+        return -1;
+    }
+
+    private int FindPlannedProbeSource(object source, int exclusiveEnd)
+    {
+        for (int index = 0; index < exclusiveEnd; ++index)
+            if (ReferenceEquals(_plannedProbeSourceIdentities[index], source))
+                return index;
+        return -1;
+    }
+
     private static bool RecordsEqual(
         in AdvancedLightRecord left,
         in AdvancedLightRecord right)
@@ -430,5 +626,12 @@ public sealed partial class AdvancedGpuScenePublisher
             MemoryMarshal.CreateReadOnlySpan(ref Unsafe.AsRef(in right), 1);
         return MemoryMarshal.AsBytes(leftRecord).SequenceEqual(
             MemoryMarshal.AsBytes(rightRecord));
+    }
+
+    private static bool ProbeRecordsEqual(in AdvancedProbeRecord left, in AdvancedProbeRecord right)
+    {
+        ReadOnlySpan<AdvancedProbeRecord> leftRecord = MemoryMarshal.CreateReadOnlySpan(ref Unsafe.AsRef(in left), 1);
+        ReadOnlySpan<AdvancedProbeRecord> rightRecord = MemoryMarshal.CreateReadOnlySpan(ref Unsafe.AsRef(in right), 1);
+        return MemoryMarshal.AsBytes(leftRecord).SequenceEqual(MemoryMarshal.AsBytes(rightRecord));
     }
 }

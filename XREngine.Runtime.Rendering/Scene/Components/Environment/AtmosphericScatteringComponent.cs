@@ -458,6 +458,8 @@ public sealed class AtmosphericScatteringComponent : XRComponent, IRenderable
             },
             RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.RenderTime | EUniformRequirements.ClipSpacePolicy,
             ExcludeFromGpuIndirect = true,
+            WriteAlpha = false,
+            StencilTest = new() { Enabled = ERenderParamUsage.Disabled },
             BlendModeAllDrawBuffers = BlendMode.Disabled(),
         };
 
@@ -467,6 +469,7 @@ public sealed class AtmosphericScatteringComponent : XRComponent, IRenderable
             RenderPass = (int)EDefaultRenderPass.Background,
             RenderOptions = renderParams,
         };
+        _material.AdvancedBackgroundProfile = new(_material.ShaderStateRevision, SupportsStereo: false);
         _material.SettingUniforms += SetSkyUniforms;
         _renderCommand.RenderPass = _material.RenderPass;
 

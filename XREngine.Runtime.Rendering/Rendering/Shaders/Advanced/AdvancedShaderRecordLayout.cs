@@ -26,7 +26,7 @@ public static class AdvancedShaderRecordLayout
     public const int MaterialLayoutSize = 48;
     public const int MaterialLayoutMemberSize = 32;
     public const int MaterialTextureBindingSize = 32;
-    public const int ViewSize = 896;
+    public const int ViewSize = 928;
     public const int LightSize = 128;
     public const int ShadowSize = 272;
     public const int ProbeSize = 176;
@@ -85,6 +85,8 @@ public static class AdvancedShaderRecordLayout
         RequireOffset<AdvancedViewRecord>(nameof(AdvancedViewRecord.InverseViewProjectionJittered), 640);
         RequireOffset<AdvancedViewRecord>(nameof(AdvancedViewRecord.CameraPositionAndNear), 768);
         RequireOffset<AdvancedViewRecord>(nameof(AdvancedViewRecord.ViewId), 864);
+        RequireOffset<AdvancedViewRecord>(nameof(AdvancedViewRecord.FoveationCenterAndBias), 896);
+        RequireOffset<AdvancedViewRecord>(nameof(AdvancedViewRecord.FoveationRadii), 912);
         RequireOffset<AdvancedLightRecord>(nameof(AdvancedLightRecord.CookieTexture), 80);
         RequireOffset<AdvancedLightRecord>(nameof(AdvancedLightRecord.ShadowRecord), 96);
         RequireOffset<AdvancedShadowRecord>(nameof(AdvancedShadowRecord.WorldToShadow), 32);

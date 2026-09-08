@@ -26,7 +26,7 @@ Evidence source:
 Related local docs:
 
 - [Engine Rendering Optimization Roadmap](engine-rendering-optimization-roadmap.md)
-- [Rendering Profiler Counter Audit](rendering-profiler-counter-audit.md)
+- [Rendering Profiler Counter Audit](../../../progress/rendering/vulkan-todo-coverage-audit-2026-09-06.md#retained-profiler-audit-inputs)
 - [VR Rendering Performance Contract TODO](vr-rendering-performance-contract-todo.md)
 - [Frame Lifecycle And Dispatch Paths](../../../../architecture/rendering/frame-lifecycle-and-dispatch-paths.md)
 

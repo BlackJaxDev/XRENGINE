@@ -148,16 +148,25 @@ namespace XREngine
                 // command chains and only copies compatible visual features.
                 if (request.Purpose == ERenderPipelinePurpose.OpenXrEye)
                 {
-                    viewport.RenderPipelineInstance.ClearAdvancedOutputBinding();
                     if (pipeline is RvcRenderPipeline rvcPipeline &&
                         rvcPipeline.Stereo == request.Stereo)
                     {
                         ApplyRvcSettings(rvcPipeline);
+                        rvcPipeline.SynchronizeAdvancedStageFamilyFeatures();
+                        ApplyOpenXrEyeAdvancedOutputBinding(
+                            viewport,
+                            rvcPipeline,
+                            request);
                     }
                     else if (!pipeline.OverrideProtected &&
                              !viewport.SetRenderPipelineFromCamera)
                     {
+                        viewport.RenderPipelineInstance.ClearAdvancedOutputBinding();
                         viewport.RenderPipeline = NewRenderPipeline(request);
+                    }
+                    else
+                    {
+                        viewport.RenderPipelineInstance.ClearAdvancedOutputBinding();
                     }
                     return;
                 }
@@ -175,7 +184,9 @@ namespace XREngine
                 AdvancedRenderPipelineCapabilities capabilities =
                     renderer?.GetAdvancedRenderPipelineCapabilities()
                     ?? AdvancedRenderPipelineCapabilities.NoRenderer;
-                EAdvancedRenderPipelineMode mode = AdvancedRenderPipelineMode;
+                EAdvancedRenderPipelineMode mode = request.OffscreenIntent.HasValue
+                    ? EAdvancedRenderPipelineMode.Required
+                    : AdvancedRenderPipelineMode;
                 AdvancedVisibilityFamilyAdmission admission = renderer?.GetAdvancedVisibilityFamilyAdmission() ??
                     new(EAdvancedProductionExecutionState.Unsupported, "No active renderer is available for Advanced output admission.");
                 AdvancedRenderPipelineSelectionResult selection =
@@ -247,7 +258,126 @@ namespace XREngine
                         ? null
                         : cutover.Diagnostic,
                 };
-                viewport.RenderPipelineInstance.ApplyAdvancedOutputBinding(in binding);
+                viewport.RenderPipelineInstance.ApplyAdvancedOutputBinding(in binding, renderer);
+            }
+
+            /// <summary>
+            /// Binds a full Advanced family to one RVC-owned OpenXR eye only
+            /// after the renderer has reserved that exact mono output. An
+            /// unavailable Available-mode eye retains the complete Default
+            /// oracle chain; it never combines Default scene work with
+            /// Advanced late or terminal commands.
+            /// </summary>
+            private static void ApplyOpenXrEyeAdvancedOutputBinding(
+                XRViewport viewport,
+                RvcRenderPipeline pipeline,
+                in RenderPipelineRequest request)
+            {
+                IRuntimeRendererHost? renderer = viewport.Window?.Renderer
+                    ?? RuntimeRenderingHostServices.FrameTiming.CurrentRenderer;
+                AdvancedRenderPipelineCapabilities capabilities =
+                    renderer?.GetAdvancedRenderPipelineCapabilities()
+                    ?? AdvancedRenderPipelineCapabilities.NoRenderer;
+                EAdvancedRenderPipelineMode mode = AdvancedRenderPipelineMode;
+                AdvancedVisibilityFamilyAdmission admission =
+                    renderer?.GetAdvancedVisibilityFamilyAdmission() ??
+                    new(
+                        EAdvancedProductionExecutionState.Unsupported,
+                        "No active renderer is available for Advanced OpenXR eye admission.");
+
+                AdvancedRenderPipelineSelectionResult selection;
+                AdvancedVisibilityFamilyReservation reservation;
+                string reservationFailureReason;
+                try
+                {
+                    selection = ResolveAdvancedRenderPipelineSelection(
+                        request,
+                        mode,
+                        capabilities,
+                        admission,
+                        renderer,
+                        retainConfiguredSource: false,
+                        out reservation,
+                        out reservationFailureReason);
+                }
+                catch
+                {
+                    pipeline.ConfigureAdvancedTwoPassEyeFamily(false);
+                    viewport.RenderPipelineInstance.ClearAdvancedOutputBinding();
+                    throw;
+                }
+
+                EAdvancedRenderPipelineOutputBindingState state = mode switch
+                {
+                    EAdvancedRenderPipelineMode.Disabled =>
+                        EAdvancedRenderPipelineOutputBindingState.Disabled,
+                    EAdvancedRenderPipelineMode.Diagnostic =>
+                        EAdvancedRenderPipelineOutputBindingState.DiagnosticOnly,
+                    _ when admission.State == EAdvancedProductionExecutionState.PendingResources =>
+                        EAdvancedRenderPipelineOutputBindingState.PendingResources,
+                    _ when selection.SelectsAdvanced =>
+                        EAdvancedRenderPipelineOutputBindingState.Bound,
+                    _ => EAdvancedRenderPipelineOutputBindingState.Rejected,
+                };
+                string? failureReason = state switch
+                {
+                    EAdvancedRenderPipelineOutputBindingState.Bound => null,
+                    EAdvancedRenderPipelineOutputBindingState.Disabled =>
+                        "Advanced OpenXR eye binding is disabled by policy.",
+                    EAdvancedRenderPipelineOutputBindingState.DiagnosticOnly =>
+                        "Advanced OpenXR eye binding is diagnostic-only by policy.",
+                    EAdvancedRenderPipelineOutputBindingState.PendingResources => admission.Reason,
+                    _ => reservationFailureReason,
+                };
+                AdvancedRenderPipelineOutputBinding binding = new(
+                    request,
+                    selection.CapabilityResult,
+                    reservation,
+                    state,
+                    failureReason);
+                bool reservationCurrent = binding.IsBound &&
+                    renderer?.IsAdvancedVisibilityFamilyReservationCurrent(in reservation) == true;
+                AdvancedProductionCutoverStatus cutover =
+                    AdvancedProductionCutoverContract.EvaluateStatus(
+                        pipeline,
+                        in admission,
+                        binding.State,
+                        reservationCurrent);
+                if (cutover.ExecutionState == EAdvancedProductionExecutionState.Unsupported &&
+                    binding.State == EAdvancedRenderPipelineOutputBindingState.Bound)
+                {
+                    binding = binding with
+                    {
+                        State = EAdvancedRenderPipelineOutputBindingState.Rejected,
+                    };
+                }
+                if (cutover.ExecutionState == EAdvancedProductionExecutionState.Unsupported &&
+                    mode == EAdvancedRenderPipelineMode.Required)
+                {
+                    pipeline.ConfigureAdvancedTwoPassEyeFamily(false);
+                    viewport.RenderPipelineInstance.ClearAdvancedOutputBinding();
+                    Debug.RenderingError(
+                        "[AdvancedPipeline] Required OpenXR eye output unsupported. Output={0} Reason={1}",
+                        request.OutputId,
+                        cutover.Diagnostic);
+                    throw new AdvancedRenderPipelineNotSupportedException(selection, cutover.Diagnostic);
+                }
+
+                binding = binding with
+                {
+                    CutoverStatus = cutover,
+                    FailureReason = binding.State == EAdvancedRenderPipelineOutputBindingState.Bound
+                        ? null
+                        : cutover.Diagnostic,
+                };
+                bool useAdvancedFamily = binding.State ==
+                    EAdvancedRenderPipelineOutputBindingState.Bound &&
+                    cutover.ExecutionState == EAdvancedProductionExecutionState.Admitted;
+                pipeline.ConfigureAdvancedTwoPassEyeFamily(useAdvancedFamily);
+                if (useAdvancedFamily)
+                    viewport.RenderPipelineInstance.ApplyAdvancedOutputBinding(in binding, renderer);
+                else
+                    viewport.RenderPipelineInstance.ClearAdvancedOutputBinding();
             }
 
             private static EAdvancedRenderPipelineMode ResolveAdvancedRenderPipelineMode()
@@ -293,8 +423,10 @@ namespace XREngine
                 if ((mode == EAdvancedRenderPipelineMode.Available ||
                      mode == EAdvancedRenderPipelineMode.Required) &&
                     admission.IsAdmitted &&
-                    request.Purpose == ERenderPipelinePurpose.DesktopScene &&
-                    !request.Stereo && request.OutputId != 0 &&
+                    (request.Purpose == ERenderPipelinePurpose.DesktopScene ||
+                     request.Purpose == ERenderPipelinePurpose.OpenXrEye ||
+                     request.Purpose == ERenderPipelinePurpose.OffscreenCapture && request.OffscreenIntent.HasValue) &&
+                    (!request.Stereo || capabilities.SupportsStereoArrayResources) && request.OutputId != 0 &&
                     reservationRenderer is not null &&
                     reservationRenderer.TryReserveAdvancedVisibilityFamily(
                         request.OutputId,
@@ -309,7 +441,10 @@ namespace XREngine
                 if ((mode == EAdvancedRenderPipelineMode.Available ||
                      mode == EAdvancedRenderPipelineMode.Required) &&
                     admission.State == EAdvancedProductionExecutionState.PendingResources &&
-                    request.Purpose == ERenderPipelinePurpose.DesktopScene && !request.Stereo)
+                    (request.Purpose == ERenderPipelinePurpose.DesktopScene ||
+                     request.Purpose == ERenderPipelinePurpose.OpenXrEye ||
+                     request.Purpose == ERenderPipelinePurpose.OffscreenCapture && request.OffscreenIntent.HasValue) &&
+                    (!request.Stereo || capabilities.SupportsStereoArrayResources))
                 {
                     // Keep the configured Advanced source selected while native resources warm.
                     // This is admission policy only; status remains PendingResources.

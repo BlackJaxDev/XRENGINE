@@ -184,6 +184,11 @@ public sealed unsafe partial class VulkanExplicitTargetRendererHost :
 
     public bool IsAdvancedVisibilityFamilyReservationCurrent(in AdvancedVisibilityFamilyReservation reservation)
         => _renderer.IsAdvancedVisibilityFamilyReservationCurrent(in reservation);
+    public void ReleaseAdvancedVisibilityFamilyOwner(in AdvancedVisibilityFamilyReservation reservation)
+        => _renderer.ReleaseAdvancedVisibilityFamilyOwner(in reservation);
+
+    public AdvancedOutputReservationDiagnosticsSnapshot CaptureAdvancedOutputReservationDiagnostics()
+        => _renderer.CaptureAdvancedOutputReservationDiagnostics();
 
     public bool TryDrawMeshTasksIndirectCount(
         XRRenderProgram program,

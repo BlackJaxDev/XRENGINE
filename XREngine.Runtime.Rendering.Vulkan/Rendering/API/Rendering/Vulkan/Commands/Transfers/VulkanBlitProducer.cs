@@ -19,6 +19,7 @@ internal static class VulkanBlitProducer
         bool copyDepth,
         bool copyStencil,
         bool linearFilter,
+        bool requireExactCompatibility,
         int passIndex,
         in FrameOpContext context)
     {
@@ -47,6 +48,7 @@ internal static class VulkanBlitProducer
             copyDepth,
             copyStencil,
             linearFilter,
+            requireExactCompatibility,
             context);
     }
 }

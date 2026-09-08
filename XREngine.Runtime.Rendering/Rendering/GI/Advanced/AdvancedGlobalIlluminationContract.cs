@@ -15,4 +15,8 @@ public static class AdvancedGlobalIlluminationContract
 
         return provider.ActiveMode;
     }
+
+    /// <summary>Only the native probe/IBL provider is presently executable by Advanced shading.</summary>
+    public static bool IsNativeProvider(IAdvancedGlobalIlluminationProvider? provider)
+        => provider is AdvancedLightProbesAndIblProvider { IsSupported: true };
 }

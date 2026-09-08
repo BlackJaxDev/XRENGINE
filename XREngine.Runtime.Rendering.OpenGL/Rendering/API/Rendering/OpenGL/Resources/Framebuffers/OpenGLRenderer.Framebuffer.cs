@@ -51,6 +51,7 @@ public partial class OpenGLRenderer
             return ERendererComputeEnqueueStatus.ProgramPending;
 
         Api.DispatchCompute(Math.Max(groupsX, 1u), Math.Max(groupsY, 1u), Math.Max(groupsZ, 1u));
+        MarkImmediateHistoryGpuWriteUnproven();
         return ERendererComputeEnqueueStatus.Enqueued;
     }
 
@@ -61,6 +62,8 @@ public partial class OpenGLRenderer
     public override void BindFrameBuffer(EFramebufferTarget fboTarget, XRFrameBuffer? fbo)
     {
         Api.BindFramebuffer(GLObjectBase.ToGLEnum(fboTarget), GenericToAPI<GLFrameBuffer>(fbo)?.BindingId ?? 0u);
+        if (GLObjectBase.ToGLEnum(fboTarget) != GLEnum.ReadFramebuffer)
+            TrackHistoryDrawTarget(fbo);
     }
     public override void Clear(bool color, bool depth, bool stencil)
     {
@@ -82,6 +85,8 @@ public partial class OpenGLRenderer
             Api.Disable(EnableCap.Blend);
 
         Api.Clear(mask);
+        if (color)
+            MarkImmediateHistoryBoundWrite();
 
         if (blendWasEnabled)
             Api.Enable(EnableCap.Blend);

@@ -54,7 +54,9 @@ namespace XREngine.Rendering
         public virtual RendererBackendId BackendId => default;
         public long BackendGeneration { get; }
         public virtual bool IsBackendReplacementFrameReady => true;
+        internal virtual bool AdvancedPickingSourceRequiresSubmissionAcceptance => false;
         private int _acceptsBackendWork = 1;
+        private long _nextOutputCompletionReceiptId;
 
         /// <summary>
         /// False after quiescing starts. Retired generations may destroy their existing
@@ -328,6 +330,75 @@ namespace XREngine.Rendering
             XRRenderPipelineInstance pipeline,
             XRViewport? viewport)
             => null;
+
+        /// <summary>
+        /// Transfers one resolved desktop history candidate to the backend before
+        /// resource readiness or command authoring can fail. A successful call
+        /// makes the backend solely responsible for settling the receipt.
+        /// </summary>
+        internal virtual bool TryReserveFrameViewHistoryCandidate(
+            in RenderFrameViewHistoryCandidateToken candidate,
+            in RenderOutputRequest output,
+            XRFrameBuffer? targetFrameBuffer,
+            out RenderFrameViewHistoryBackendReservation reservation)
+        {
+            // Keep generic/unsupported renderers renderable while explicitly
+            // declining history publication at completion. Native backends
+            // override this with a receipt-owning bounded slot.
+            reservation = new(candidate, output, targetFrameBuffer, 0, 1U);
+            return candidate.IsValid && output.IsDefined;
+        }
+
+        /// <summary>
+        /// Completes backend authoring ownership. The base fallback only
+        /// discards because it has no evidence of a terminal native write.
+        /// </summary>
+        internal virtual void CompleteFrameViewHistoryCandidateAuthoring(
+            in RenderFrameViewHistoryBackendReservation reservation,
+            bool succeeded)
+            => reservation.Candidate.Discard();
+
+        internal virtual bool TryReserveOutputCompletion(
+            in RenderOutputRequest output,
+            XRFrameBuffer targetFrameBuffer,
+            out RenderOutputCompletionBackendReservation reservation)
+        {
+            ulong receiptId = unchecked((ulong)Interlocked.Increment(
+                ref _nextOutputCompletionReceiptId));
+            if (receiptId == 0UL)
+                receiptId = unchecked((ulong)Interlocked.Increment(
+                    ref _nextOutputCompletionReceiptId));
+            reservation = new(
+                receiptId,
+                output,
+                targetFrameBuffer,
+                fence: null,
+                backendSlot: 0,
+                backendGeneration: 1U);
+            return output.IsDefined;
+        }
+
+        internal virtual void CompleteOutputCompletionAuthoring(
+            in RenderOutputCompletionBackendReservation reservation,
+            bool succeeded,
+            out XRGpuFence? completionFence)
+        {
+            completionFence = reservation.Fence;
+            if (completionFence is not null)
+            {
+                if (!succeeded)
+                    completionFence.Dispose();
+                return;
+            }
+
+            // Immediate backends cannot undo partial authoring. Fence any writes
+            // that escaped before failure so the caller can retain the target.
+            MemoryBarrier(
+                EMemoryBarrierMask.Framebuffer |
+                EMemoryBarrierMask.TextureFetch |
+                EMemoryBarrierMask.TextureUpdate);
+            completionFence = InsertGpuFence();
+        }
 
         internal virtual bool TryPrepareRenderResourceGeneration(
             XRRenderPipelineInstance pipeline,
@@ -1063,6 +1134,23 @@ namespace XREngine.Rendering
         public virtual void PollScreenshotReadbacks() { }
 
         /// <summary>
+        /// Queues an exact integer readback of one Advanced visibility pixel. Implementations
+        /// must stage through backend-owned memory and invoke the callback only after GPU
+        /// completion; synchronous production texture reads do not satisfy this contract.
+        /// </summary>
+        public virtual bool TryQueueAdvancedPickingReadback(
+            XRTexture identity,
+            XRTexture metadata,
+            XRTexture selection,
+            in AdvancedPickingQuery query,
+            Action<AdvancedVisibilityEncodedSurface> callback,
+            out string? failure)
+        {
+            failure = "The active renderer does not implement asynchronous Advanced integer-attachment picking readback.";
+            return false;
+        }
+
+        /// <summary>
         /// Returns current screenshot readback queue diagnostics.
         /// </summary>
         public virtual ScreenshotReadbackStatus GetScreenshotReadbackStatus()
@@ -1151,6 +1239,54 @@ namespace XREngine.Rendering
                 depthBit,
                 stencilBit,
                 linearFilter);
+        }
+
+        /// <summary>
+        /// Attempts a framebuffer blit and reports submission acceptance. A successful
+        /// deferred submission does not mean the GPU operation has completed.
+        /// </summary>
+        public virtual FrameBufferBlitSubmission TryBlitFBOToFBO(
+            XRFrameBuffer inFBO,
+            XRFrameBuffer outFBO,
+            EReadBufferMode readBufferMode,
+            bool colorBit,
+            bool depthBit,
+            bool stencilBit,
+            bool linearFilter)
+        {
+            if (!colorBit && !depthBit && !stencilBit)
+                return FrameBufferBlitSubmission.Rejected("A framebuffer blit must copy at least one aspect.");
+            if (inFBO.Width == 0 || inFBO.Height == 0 || outFBO.Width == 0 || outFBO.Height == 0)
+                return FrameBufferBlitSubmission.Rejected("A framebuffer blit cannot use an empty extent.");
+
+            BlitFBOToFBO(inFBO, outFBO, readBufferMode, colorBit, depthBit, stencilBit, linearFilter);
+            return FrameBufferBlitSubmission.CompletedImmediately();
+        }
+
+        /// <summary>
+        /// Attempts a color-attachment blit with explicit source and destination
+        /// attachment selection. Deferred renderers report acceptance, not completion.
+        /// </summary>
+        public virtual FrameBufferBlitSubmission TryBlitFBOToFBOSingleAttachment(
+            XRFrameBuffer inFBO,
+            XRFrameBuffer outFBO,
+            EReadBufferMode readBufferMode,
+            EReadBufferMode drawBufferMode,
+            bool linearFilter)
+        {
+            if (inFBO.Width == 0 || inFBO.Height == 0 || outFBO.Width == 0 || outFBO.Height == 0)
+                return FrameBufferBlitSubmission.Rejected("A framebuffer blit cannot use an empty extent.");
+
+            BlitFBOToFBOSingleAttachment(
+                inFBO,
+                outFBO,
+                readBufferMode,
+                drawBufferMode,
+                colorBit: true,
+                depthBit: false,
+                stencilBit: false,
+                linearFilter);
+            return FrameBufferBlitSubmission.CompletedImmediately();
         }
 
         /// <summary>
@@ -1361,6 +1497,64 @@ namespace XREngine.Rendering
         public virtual void PublishFrameBufferAttachmentsForSampling(XRFrameBuffer frameBuffer) { }
         public virtual XRGpuFence? InsertGpuFence()
             => null;
+
+        /// <summary>
+        /// Executes a producer whose complete GPU write cohort is required before
+        /// its completion fence can certify the output. Immediate backends cannot
+        /// roll back partial writes, so they always insert a retention fence after
+        /// invoking the producer, including when it returns false or throws.
+        /// </summary>
+        internal virtual bool TryExecuteRequiredGpuProducerBatch(
+            Func<bool> producer,
+            out XRGpuFence? retentionFence,
+            out Exception? failure)
+        {
+            ArgumentNullException.ThrowIfNull(producer);
+
+            bool producerComplete = false;
+            failure = null;
+            try
+            {
+                producerComplete = producer();
+            }
+            catch (Exception ex)
+            {
+                failure = ex;
+            }
+
+            try
+            {
+                MemoryBarrier(
+                    EMemoryBarrierMask.Framebuffer |
+                    EMemoryBarrierMask.TextureFetch |
+                    EMemoryBarrierMask.TextureUpdate);
+            }
+            catch (Exception ex)
+            {
+                failure = failure is null
+                    ? ex
+                    : new AggregateException(failure, ex);
+            }
+
+            try
+            {
+                retentionFence = InsertGpuFence();
+                if (retentionFence is null && failure is null)
+                {
+                    failure = new InvalidOperationException(
+                        "The active renderer could not fence the required GPU producer batch.");
+                }
+            }
+            catch (Exception ex)
+            {
+                retentionFence = null;
+                failure = failure is null
+                    ? ex
+                    : new AggregateException(failure, ex);
+            }
+
+            return producerComplete && failure is null && retentionFence is not null;
+        }
         public abstract void ColorMask(bool red, bool green, bool blue, bool alpha);
 
         #endregion
@@ -1532,6 +1726,16 @@ namespace XREngine.Rendering
         public virtual bool IsAdvancedVisibilityFamilyReservationCurrent(
             in AdvancedVisibilityFamilyReservation reservation)
             => false;
+
+        /// <inheritdoc />
+        public virtual void ReleaseAdvancedVisibilityFamilyOwner(
+            in AdvancedVisibilityFamilyReservation reservation)
+        {
+        }
+
+        /// <inheritdoc />
+        public virtual AdvancedOutputReservationDiagnosticsSnapshot? CaptureAdvancedOutputReservationDiagnostics()
+            => null;
 
         /// <summary>
         /// Returns whether the current API supports task/mesh shader dispatch for meshlet rendering.

@@ -647,6 +647,7 @@ internal sealed unsafe partial class VulkanDeviceContext
             out bool multiviewFeatureSupported,
             out bool multiviewPromotedToCore);
         bool enableMultiviewFeature = multiviewFeatureSupported;
+        _deviceContext.AdvancedMultiviewEnabled = enableMultiviewFeature;
 
         bool indexTypeUint8ExtensionEnabled =
             extensionsArray.Contains("VK_EXT_index_type_uint8") ||
@@ -800,12 +801,15 @@ internal sealed unsafe partial class VulkanDeviceContext
             out bool taskShaderFeatureSupported,
             out bool meshShaderFeatureSupported,
             out bool meshShaderQueriesSupported,
+            out bool multiviewMeshShaderSupported,
             out PhysicalDeviceMeshShaderPropertiesEXT meshShaderProperties);
         bool enableMeshShaderFeature =
             meshShaderExtensionEnabled &&
             taskShaderFeatureSupported &&
             meshShaderFeatureSupported;
         bool enableMeshShaderQueries = enableMeshShaderFeature && meshShaderQueriesSupported;
+        _deviceContext.AdvancedMultiviewMeshEnabled =
+            enableMeshShaderFeature && enableMultiviewFeature && multiviewMeshShaderSupported;
 
         bool graphicsPipelineLibraryDependencyEnabled = extensionsArray.Contains("VK_KHR_pipeline_library");
         bool graphicsPipelineLibraryExtensionEnabled =
@@ -1069,6 +1073,7 @@ internal sealed unsafe partial class VulkanDeviceContext
             PNext = null,
             TaskShader = enableMeshShaderFeature,
             MeshShader = enableMeshShaderFeature,
+            MultiviewMeshShader = _deviceContext.AdvancedMultiviewMeshEnabled,
             MeshShaderQueries = enableMeshShaderQueries,
         };
 

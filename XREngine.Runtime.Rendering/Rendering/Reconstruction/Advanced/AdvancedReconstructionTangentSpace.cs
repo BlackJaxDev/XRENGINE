@@ -36,10 +36,7 @@ public static class AdvancedReconstructionTangentSpace
         if (!TryNormalize(shading, out shading))
             shading = geometric;
 
-        Vector3 tangent = Vector3.TransformNormal(localTangent, world);
-        tangent -= shading * Vector3.Dot(shading, tangent);
-        if (!TryNormalize(tangent, out tangent))
-            tangent = BuildFallbackTangent(shading);
+        Vector3 tangent = BuildOrthogonalTangent(shading, Vector3.TransformNormal(localTangent, world));
 
         bool mirrored = world.GetDeterminant() < 0.0f;
         float handedness =
@@ -58,6 +55,21 @@ public static class AdvancedReconstructionTangentSpace
             handedness,
             mirrored);
         return true;
+    }
+
+    private static Vector3 BuildOrthogonalTangent(Vector3 normal, Vector3 sourceTangent)
+    {
+        // Match the GPU frame reconstruction. Gram-Schmidt subtraction can
+        // leave a parallel rounding residual whose normalized cross is zero.
+        Vector3 perpendicular = Vector3.Cross(normal, sourceTangent);
+        float perpendicularLengthSquared = perpendicular.LengthSquared();
+        float tangentLengthSquared = sourceTangent.LengthSquared();
+        if (!float.IsFinite(tangentLengthSquared) || !float.IsFinite(perpendicularLengthSquared) ||
+            perpendicularLengthSquared <= MathF.Max(1.0e-20f, tangentLengthSquared * 1.0e-12f))
+            return BuildFallbackTangent(normal);
+        perpendicular /= MathF.Sqrt(perpendicularLengthSquared);
+        return TryNormalize(Vector3.Cross(perpendicular, normal), out Vector3 tangent)
+            ? tangent : BuildFallbackTangent(normal);
     }
 
     private static Vector3 BuildFallbackTangent(Vector3 normal)

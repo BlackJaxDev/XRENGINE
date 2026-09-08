@@ -30,6 +30,7 @@ public sealed class RuntimeVrState
     private VR? _openVrApi;
     private XRViewport? _leftEyeViewport;
     private XRViewport? _rightEyeViewport;
+    private XRViewport? _stereoViewport;
     private (XRCamera? LeftEyeCamera, XRCamera? RightEyeCamera, IRuntimeRenderWorld? World, SceneNode? HMDNode) _viewInformation;
 
     public IRuntimeVrLifecycleServices LifecycleServices { get; set; } = NullRuntimeVrLifecycleServices.Instance;
@@ -85,14 +86,34 @@ public sealed class RuntimeVrState
     public XRMaterialFrameBuffer? VRRightEyeRenderTarget { get; set; }
     public XRTexture2D? VRRightEyeViewTexture { get; set; }
     public AbstractRenderer? Renderer { get; set; }
-    public XRViewport? StereoViewport { get; set; }
+    public XRViewport? StereoViewport
+    {
+        get => _stereoViewport;
+        set
+        {
+            _stereoViewport = value;
+            ApplyViewInformation(value, _viewInformation.LeftEyeCamera);
+        }
+    }
     public XRRenderPipelineInstance? TwoPassLeftPipeline { get; set; }
     public XRRenderPipelineInstance? TwoPassRightPipeline { get; set; }
     public RenderCommandCollection? SharedMeshRenderCommands { get; set; }
     public uint LastRenderWidth { get; set; }
     public uint LastRenderHeight { get; set; }
     public bool OpenVrRuntimeActiveForRender { get; set; }
-    public bool EmulatedRenderActive { get; set; }
+    private bool _emulatedRenderActive;
+    /// <summary>Enables the explicit desktop stereo simulation, including its 64 mm eye baseline.</summary>
+    public bool EmulatedRenderActive
+    {
+        get => _emulatedRenderActive;
+        set
+        {
+            if (_emulatedRenderActive == value)
+                return;
+            _emulatedRenderActive = value;
+            IPDScalarChanged?.Invoke(IPDScalar);
+        }
+    }
     public XRWindow? RenderWindow { get; set; }
     public VRTextureBounds_t SingleTextureBounds { get; set; } = new()
     {
@@ -115,6 +136,7 @@ public sealed class RuntimeVrState
             _viewInformation = value;
             ApplyViewInformation(_leftEyeViewport, value.LeftEyeCamera);
             ApplyViewInformation(_rightEyeViewport, value.RightEyeCamera);
+            ApplyViewInformation(_stereoViewport, value.LeftEyeCamera);
         }
     }
 
@@ -122,6 +144,8 @@ public sealed class RuntimeVrState
     {
         get
         {
+            if (EmulatedRenderActive)
+                return 0.064f;
             switch (ActiveRuntime)
             {
                 case VRRuntime.OpenVR:

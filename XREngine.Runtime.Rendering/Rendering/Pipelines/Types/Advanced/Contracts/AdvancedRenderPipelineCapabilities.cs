@@ -24,7 +24,8 @@ public readonly record struct AdvancedRenderPipelineCapabilities(
     bool SupportsSubgroupOperations,
     bool SupportsMeshShaders,
     bool SupportsAsyncCompute,
-    bool SupportsTimelineSemaphores)
+    bool SupportsTimelineSemaphores,
+    bool SupportsOpenGlMultiviewRaster = false)
 {
     /// <summary>
     /// Snapshot used when pipeline selection happens before a renderer is available.

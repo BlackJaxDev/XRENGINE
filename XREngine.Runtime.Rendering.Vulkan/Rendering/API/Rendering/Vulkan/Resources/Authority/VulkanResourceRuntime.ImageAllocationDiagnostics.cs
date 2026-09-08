@@ -130,7 +130,36 @@ internal sealed partial class VulkanResourceRuntime
             knownImageAllocationBytes = knownBytes,
             knownImageAllocationMiB = knownBytes / (1024.0 * 1024.0),
             largest,
+            bufferOwners = CaptureBufferAllocationOwners(clampedLimit),
         };
+    }
+
+    /// <summary>Cold diagnostic grouping that distinguishes image growth from retained buffer owners.</summary>
+    private object[] CaptureBufferAllocationOwners(int limit)
+    {
+        var entries = new List<(string Owner, string State, long Bytes)>();
+        VulkanResourceLifetimeTracker tracker = Lifetime.Tracker;
+        lock (tracker.SyncRoot)
+        {
+            foreach (var pair in Allocations.Buffers.Allocations)
+            {
+                tracker.ResourceLifetimes.TryGetValue(new VulkanResourceLifetimeKey(ObjectType.Buffer, pair.Key), out var lifetime);
+                entries.Add((lifetime?.Owner ?? "<unregistered>", lifetime?.State.ToString() ?? "Unknown",
+                    pair.Value.Size > long.MaxValue ? long.MaxValue : (long)pair.Value.Size));
+            }
+            foreach (var pair in Allocations.Buffers.LegacyAllocations)
+            {
+                tracker.ResourceLifetimes.TryGetValue(new VulkanResourceLifetimeKey(ObjectType.Buffer, pair.Key), out var lifetime);
+                entries.Add((lifetime?.Owner ?? "<unregistered>", lifetime?.State.ToString() ?? "Unknown",
+                    pair.Value.Size > long.MaxValue ? long.MaxValue : (long)pair.Value.Size));
+            }
+        }
+        return entries.GroupBy(static entry => (entry.Owner, entry.State))
+            .Select(static group => new { group.Key.Owner, group.Key.State, Count = group.Count(), SizeBytes = group.Sum(static entry => entry.Bytes) })
+            .OrderByDescending(static group => group.SizeBytes)
+            .Take(limit)
+            .Cast<object>()
+            .ToArray();
     }
 
     private static void ResolveImageAllocationDiagnosticFields(

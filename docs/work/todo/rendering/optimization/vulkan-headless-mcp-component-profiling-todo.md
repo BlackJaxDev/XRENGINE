@@ -22,7 +22,7 @@ Related architecture and implementation:
 - [Vulkan Renderer](../../../../architecture/rendering/vulkan-renderer.md)
 - [Vulkan Primary And Secondary Command Recording](../../../../architecture/rendering/vulkan-command-recording.md)
 - [Vulkan Primary Command-Buffer Reuse](../../../../architecture/rendering/vulkan-primary-command-buffer-reuse.md)
-- [Vulkan Command Recording Architecture Optimization TODO](vulkan-command-recording-architecture-optimization-todo.md)
+- [Vulkan Command Recording Architecture Optimization TODO](../vulkan-core-frame-loop-and-resident-rendering-master-todo.md#recovered-acceptance-contracts-and-specialized-child-ownership)
 - [Completed Vulkan Presentation-Independent Renderer Refactor](../../COMPLETED/vulkan-presentation-independent-renderer-refactor-todo.md)
 - [Vulkan Presentation-Independent Renderer Validation](../../../testing/rendering/vulkan-presentation-independent-renderer-validation.md)
 - [Remote Profiler](../../../../developer-guides/diagnostics/profiler.md)

@@ -24,7 +24,7 @@ using XREngine.Components.Scene.Transforms;
 namespace XREngine.Scene.Components.Editing
 {
     [RequiresTransform(typeof(DrivenWorldTransform))]
-    public class TransformTool3D : XRComponent, IRenderable
+    public partial class TransformTool3D : XRComponent, IRenderable
     {
         public TransformTool3D() : base()
         {
@@ -226,6 +226,9 @@ namespace XREngine.Scene.Components.Editing
                 {
                     lod.Renderer.GenerationPriority = EMeshGenerationPriority.Interactive;
                     lod.Renderer.GenerateAsync = true;
+                    // Screen-space expansion consumes material parameters in the vertex
+                    // stage. Keep one uniform interface for mono and stereo variants.
+                    lod.Renderer.SetShaderPipelinesAllowedForAllVersions(false);
                 }
             }
         }
@@ -311,7 +314,7 @@ namespace XREngine.Scene.Components.Editing
             }
 
             //Screen-aligned rotation: view-aligned circle around the center
-            var screenRotPrim = XRMesh.Shapes.WireframeCircle(_circRadius, Vector3.UnitZ, Vector3.Zero, _circlePrecision);
+            var screenRotPrim = CreateGizmoLineMesh(false, XRMesh.Shapes.CircleLineStrip(_circRadius, Vector3.UnitZ, Vector3.Zero, _circlePrecision));
 
             //Screen-aligned translation: small view-aligned square at the center
             Vertex v1 = new Vector3(-_screenTransExtent, -_screenTransExtent, 0.0f);
@@ -319,7 +322,7 @@ namespace XREngine.Scene.Components.Editing
             Vertex v3 = new Vector3(_screenTransExtent, _screenTransExtent, 0.0f);
             Vertex v4 = new Vector3(-_screenTransExtent, _screenTransExtent, 0.0f);
             VertexLineStrip strip = new(true, v1, v2, v3, v4);
-            var screenTransPrim = XRMesh.Create(strip);
+            var screenTransPrim = CreateGizmoLineMesh(false, strip);
 
             //isRotate = true
             screenRotationMeshes.Add(new SubMesh(screenRotPrim, _screenMat));
@@ -343,12 +346,12 @@ namespace XREngine.Scene.Components.Editing
         {
             //string axis = ((char)('X' + normalAxis)).ToString();
 
-            axisPrim = XRMesh.Create(axisLine)!;
-            arrowPrim = XRMesh.Create(new VertexLine(axisLine.Vertex0.Position, axisLine.Vertex1.Position));
-            transPrim1 = XRMesh.Create(transLine1);
-            transPrim2 = XRMesh.Create(transLine2);
-            scalePrim = XRMesh.Create(scaleLine1, scaleLine2);
-            rotPrim = XRMesh.Shapes.WireframeCircle(_orbRadius, unit, Vector3.Zero, _circlePrecision);
+            axisPrim = CreateGizmoLineMesh(false, axisLine);
+            arrowPrim = CreateGizmoLineMesh(true, axisLine);
+            transPrim1 = CreateGizmoLineMesh(false, transLine1);
+            transPrim2 = CreateGizmoLineMesh(false, transLine2);
+            scalePrim = CreateGizmoLineMesh(false, scaleLine1, scaleLine2);
+            rotPrim = CreateGizmoLineMesh(false, XRMesh.Shapes.CircleLineStrip(_orbRadius, unit, Vector3.Zero, _circlePrecision));
         }
 
         private static void GetLines(Vector3 unit, Vector3 unit1, Vector3 unit2, out VertexLine axisLine, out VertexLine transLine1, out VertexLine transLine2, out VertexLine scaleLine1, out VertexLine scaleLine2)
@@ -429,9 +432,7 @@ namespace XREngine.Scene.Components.Editing
                 new ShaderFloat(_gizmoLineWidthPixels, "LineWidth"),
             ];
 
-            XRShader geometryShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "GizmoLine.gs"), EShaderType.Geometry);
-            XRShader fragmentShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "GizmoLine.fs"), EShaderType.Fragment);
-            XRMaterial material = new(parameters, [geometryShader, fragmentShader]);
+            XRMaterial material = new(parameters, LoadGizmoShaders("GizmoLine", "GizmoLine"));
             material.RenderOptions.RequiredEngineUniforms =
                 EUniformRequirements.Camera |
                 EUniformRequirements.ViewportDimensions |
@@ -452,9 +453,7 @@ namespace XREngine.Scene.Components.Editing
                 new ShaderFloat(_arrowHeadHalfWidthPixels, "ArrowHeadHalfWidthPixels"),
             ];
 
-            XRShader geometryShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "GizmoArrowHead.gs"), EShaderType.Geometry);
-            XRShader fragmentShader = ShaderHelper.LoadEngineShader(Path.Combine("Common", "GizmoTriangle.fs"), EShaderType.Fragment);
-            XRMaterial material = new(parameters, [geometryShader, fragmentShader]);
+            XRMaterial material = new(parameters, LoadGizmoShaders("GizmoArrowHead", "GizmoTriangle"));
             material.RenderOptions.RequiredEngineUniforms =
                 EUniformRequirements.Camera |
                 EUniformRequirements.ViewportDimensions |

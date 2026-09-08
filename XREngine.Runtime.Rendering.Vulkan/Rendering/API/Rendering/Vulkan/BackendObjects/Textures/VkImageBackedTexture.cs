@@ -25,7 +25,7 @@ namespace XREngine.Rendering.Vulkan;
 internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTexture<TTexture>, IVkFrameBufferAttachmentSource where TTexture : XRTexture
 {
     private VulkanResourceCommandWrapperPort? _resourceCommandPort;
-    private VulkanResourceCommandWrapperPort ResourceCommandPort => _resourceCommandPort ?? throw new InvalidOperationException("Texture command port has not been bound.");
+    protected VulkanResourceCommandWrapperPort ResourceCommandPort => _resourceCommandPort ?? throw new InvalidOperationException("Texture command port has not been bound.");
 
     protected override void BindOperationPorts(VulkanWrapperPortBinding binding)
     {

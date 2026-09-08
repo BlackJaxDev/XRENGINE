@@ -1,0 +1,31 @@
+#version 460
+
+layout(local_size_x = 16, local_size_y = 16) in;
+layout(binding = 0, r32ui) uniform writeonly uimage2D PpllHeadPointers;
+
+layout(std430, binding = 25) buffer PpllCounterBuffer
+{
+    uint PpllEmittedNodeCount;
+    uint PpllOverflowFragmentCount;
+    uint PpllRejectedPixelCount;
+    uint PpllStatusFlags;
+};
+
+void main()
+{
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 dims = imageSize(PpllHeadPointers);
+
+    if (pixel.x == 0 && pixel.y == 0)
+    {
+        PpllEmittedNodeCount = 0u;
+        PpllOverflowFragmentCount = 0u;
+        PpllRejectedPixelCount = 0u;
+        PpllStatusFlags = 0u;
+    }
+
+    if (pixel.x >= dims.x || pixel.y >= dims.y)
+        return;
+
+    imageStore(PpllHeadPointers, pixel, uvec4(0xFFFFFFFFu, 0u, 0u, 0u));
+}

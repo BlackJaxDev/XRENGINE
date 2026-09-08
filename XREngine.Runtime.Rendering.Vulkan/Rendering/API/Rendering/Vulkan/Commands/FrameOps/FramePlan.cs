@@ -7,7 +7,7 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal sealed partial class FramePlan
 {
-    private FrameOperationStream _operations = new();
+    private FrameOperationStream _operations;
     private FrameOperationStream _dynamicOverlayOperations = new();
     private FrameOperationStream _textureUploadOperations = new();
     private readonly VulkanPreparedStableBinStream _stableBins = new(
@@ -37,6 +37,9 @@ internal sealed partial class FramePlan
     private int _outputExecutionNodeCount;
     private int _operationKeyCount;
     private int _staticPlannerContextKeyCount;
+    private readonly int[] _freshEmptyTerminalOutputIndices =
+        new int[VulkanAcceptedFramePlan.TerminalCapacity];
+    private int _freshEmptyTerminalOutputCount;
     private int _leaseCount;
     private readonly object _leaseGate = new();
 
@@ -55,6 +58,8 @@ internal sealed partial class FramePlan
     /// of replaying or preserving an older presentation source.
     /// </summary>
     internal bool RequiresFreshEmptyTerminalWrite { get; private set; }
+    internal int FreshEmptyTerminalOutputCount =>
+        _freshEmptyTerminalOutputCount;
     internal ViewSetPlan ViewSet { get; }
     internal bool IsSealed { get; private set; }
     internal int OperationCount => _operationCount;
@@ -160,6 +165,10 @@ internal sealed partial class FramePlan
     {
         ArgumentNullException.ThrowIfNull(staticOperationStorage);
         ViewSet = viewSet;
+        // Output banks can activate before the slot's first Publish. Provision
+        // the actual lowering stream from construction, not a placeholder whose
+        // workspaces would be discarded when publication attaches this storage.
+        _operations = staticOperationStorage;
         _logicalViewOperations =
         [
             staticOperationStorage.CreateLogicalViewStorage(
@@ -199,6 +208,8 @@ internal sealed partial class FramePlan
         int staticPlannerContextKeyCount,
         ulong renderGraphPlanSignature,
         bool requiresFreshEmptyTerminalWrite,
+        int[] freshEmptyTerminalOutputIndices,
+        int freshEmptyTerminalOutputCount,
         VulkanPreparedStableBinStream? stableBins)
     {
         lock (_leaseGate)
@@ -217,6 +228,20 @@ internal sealed partial class FramePlan
             RenderGraphPlanSignature = renderGraphPlanSignature;
             RequiresFreshEmptyTerminalWrite =
                 requiresFreshEmptyTerminalWrite;
+            if ((uint)freshEmptyTerminalOutputCount >
+                (uint)_freshEmptyTerminalOutputIndices.Length)
+            {
+                throw new VulkanAcceptedFramePlanCapacityException(
+                    EVulkanAcceptedFrameLane.Output,
+                    _freshEmptyTerminalOutputIndices.Length,
+                    freshEmptyTerminalOutputCount);
+            }
+            freshEmptyTerminalOutputIndices.AsSpan(
+                0,
+                freshEmptyTerminalOutputCount).CopyTo(
+                    _freshEmptyTerminalOutputIndices);
+            _freshEmptyTerminalOutputCount =
+                freshEmptyTerminalOutputCount;
             _operations = operations;
             _dynamicOverlayOperations = dynamicOverlayOperations;
             _textureUploadOperations = textureUploadOperations;
@@ -236,6 +261,7 @@ internal sealed partial class FramePlan
             _staticPlannerContexts = staticPlannerContexts;
             _staticPlannerContextPlans = staticPlannerContextPlans;
             _staticPlannerContextKeyCount = staticPlannerContextKeyCount;
+            ResetAdvancedVisibilityFamilyBins();
             if (stableBins is not null)
                 _stableBins.CopyFrom(stableBins);
             else
@@ -248,6 +274,10 @@ internal sealed partial class FramePlan
 
     internal void Reset()
     {
+        Span<AdvancedVisibilityFamilyReservation> detachedAdvancedPlanLeases =
+            stackalloc AdvancedVisibilityFamilyReservation[VulkanAdvancedVisibilityOutputCapacity.Maximum];
+        Action<AdvancedVisibilityFamilyReservation>? releaseAdvancedPlanLease;
+        int advancedPlanLeaseCount;
         lock (_leaseGate)
         {
             if (_leaseCount != 0)
@@ -264,6 +294,10 @@ internal sealed partial class FramePlan
             DynamicOverlaySignature = 0;
             RenderGraphPlanSignature = 0;
             RequiresFreshEmptyTerminalWrite = false;
+            _freshEmptyTerminalOutputIndices.AsSpan(
+                0,
+                _freshEmptyTerminalOutputCount).Fill(-1);
+            _freshEmptyTerminalOutputCount = 0;
             _operationCount = 0;
             _dynamicOverlayOperationCount = 0;
             _textureUploadOperationCount = 0;
@@ -274,6 +308,7 @@ internal sealed partial class FramePlan
             Array.Clear(_staticPlannerContextPlans, 0, _staticPlannerContextKeyCount);
             _staticPlannerContextKeyCount = 0;
             _stableBins.ThawForReuse();
+            ResetAdvancedVisibilityFamilyBins();
             for (int index = 0; index < _logicalViewOperations.Length; index++)
             {
                 _logicalViewOperations[index].Reset();
@@ -281,7 +316,14 @@ internal sealed partial class FramePlan
             }
             IsSealed = false;
             ViewSet.Reset();
+            DetachAdvancedVisibilityPlanLeases(
+                detachedAdvancedPlanLeases,
+                out releaseAdvancedPlanLease,
+                out advancedPlanLeaseCount);
         }
+        if (releaseAdvancedPlanLease is not null)
+            for (int index = 0; index < advancedPlanLeaseCount; index++)
+                releaseAdvancedPlanLease(detachedAdvancedPlanLeases[index]);
     }
 
     /// <summary>
@@ -478,6 +520,56 @@ internal sealed partial class FramePlan
             throw new ArgumentOutOfRangeException(nameof(index));
 
         return ref _outputRequests[index];
+    }
+
+    internal int GetFreshEmptyTerminalOutputIndex(int index)
+    {
+        EnsureSealed();
+        if ((uint)index >= (uint)_freshEmptyTerminalOutputCount)
+            throw new ArgumentOutOfRangeException(nameof(index));
+
+        return _freshEmptyTerminalOutputIndices[index];
+    }
+
+    internal bool IsFreshEmptyTerminalOutput(int outputIndex)
+    {
+        EnsureSealed();
+        for (int index = 0;
+             index < _freshEmptyTerminalOutputCount;
+             index++)
+        {
+            if (_freshEmptyTerminalOutputIndices[index] == outputIndex)
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Resolves an operation's exact sealed output terminal. Admission and
+    /// structural identity must both agree; callers cannot infer an output
+    /// from the active recording context alone.
+    /// </summary>
+    internal bool TryResolveExecutableOutputIndex(
+        in FrameOpContext context,
+        out int outputIndex)
+    {
+        EnsureSealed();
+        OutputRequest operationOutput = OutputRequest.FromContext(context);
+        for (int index = 0; index < _outputCount; index++)
+        {
+            if (!_outputDecisions[index].Execute ||
+                !_outputs[index].MatchesOutput(operationOutput))
+            {
+                continue;
+            }
+
+            outputIndex = index;
+            return true;
+        }
+
+        outputIndex = -1;
+        return false;
     }
 
     /// <summary>

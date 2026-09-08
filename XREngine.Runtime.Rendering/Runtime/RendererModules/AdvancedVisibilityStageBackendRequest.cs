@@ -22,7 +22,17 @@ public readonly record struct AdvancedVisibilityStageBackendRequest(
     string CurrentDepthPyramidTargetName,
     EAdvancedShadingDebugView ShadingDebugView = EAdvancedShadingDebugView.Disabled,
     bool RequireNativeOutput = false,
-    bool EnableBuiltInAmbientOcclusion = false)
+    bool EnableBuiltInAmbientOcclusion = false,
+    bool EnableLightProbesAndIbl = false,
+    bool IsMinimalVisibilityOutput = false,
+    uint NativeViewIndex = 0u,
+    Commands.AdvancedSharedGpuSceneDatabase? SceneDatabase = null,
+    /// <summary>
+    /// Published immutable backend package that owns the canonical view records
+    /// and geometry templates consumed by native backend stages.
+    /// </summary>
+    Commands.BackendReadyFramePackage? BackendReadyPackage = null,
+    uint FroxelDepthSlices = 24u)
 {
     public bool IsValid => GetInvalidReason() is null;
 
@@ -38,19 +48,25 @@ public readonly record struct AdvancedVisibilityStageBackendRequest(
         if (!Publication.ScenePublication.IsValid)
             return "The advanced preparation publication has no resident scene publication.";
         if (Publication.DrawCount == 0u)
-            return Extractor is { LastDeferralReason.Length: > 0 }
+            return Extractor is { LastDeferralReason.Length: > 0 } && Extractor.LastDeferralReason != "Ready"
                 ? Extractor.LastDeferralReason
                 : "The advanced preparation publication contains no draws.";
         if (Extractor is null || RenderFrameId == 0u || Views.ViewCount == 0)
             return "The advanced visibility request has no extractor, render frame, or views.";
+        if (NativeViewIndex >= (uint)Views.ViewCount)
+            return "The advanced native stage selects a view outside its frozen family.";
+        if (BackendReadyPackage?.State != Commands.EBackendReadyFramePackageState.Published ||
+            BackendReadyPackage.CanonicalViews.IsEmpty)
+            return "The advanced native stage has no published canonical backend view package.";
         if (Target is null || Target.Width == 0u || Target.Height == 0u)
             return "The advanced visibility target has no renderable extent.";
         if (string.IsNullOrWhiteSpace(IdentityTargetName) ||
             string.IsNullOrWhiteSpace(MetadataTargetName) ||
             string.IsNullOrWhiteSpace(SelectionTargetName) ||
             string.IsNullOrWhiteSpace(DepthTargetName) ||
-            string.IsNullOrWhiteSpace(AmbientOcclusionTargetName) ||
-            string.IsNullOrWhiteSpace(CurrentDepthPyramidTargetName))
+            string.IsNullOrWhiteSpace(CurrentDepthPyramidTargetName) ||
+            (!IsMinimalVisibilityOutput &&
+             string.IsNullOrWhiteSpace(AmbientOcclusionTargetName)))
             return "The advanced visibility request is missing required resource names.";
         return null;
     }

@@ -16,6 +16,8 @@ internal sealed partial class VulkanCommandRuntime
             VulkanPrimaryCommandRecordingResult result = RecordPrimaryCore(in input);
             if (!result.Succeeded)
                 SettleFailedPrimaryRecordingMarkers(in input);
+            else if (result.Disposition == EVulkanPrimaryCommandRecordingDisposition.Recorded)
+                RegisterRecordedAdvancedVisibilityBanks(result.CommandBuffer, input.FramePlan);
             return result;
         }
         catch
@@ -28,6 +30,15 @@ internal sealed partial class VulkanCommandRuntime
     private void SettleFailedPrimaryRecordingMarkers(
         in VulkanPreparedPrimaryCommandInput input)
     {
+        if (input.FramePlan.IsSealed)
+        {
+            FailRequiredProducerSubmissionMarkers(
+                input.FramePlan.GetNativeStaticOperationsForRecording());
+            FailRequiredProducerSubmissionMarkers(
+                input.FramePlan.GetNativeDynamicOverlayOperationsForRecording());
+            FailRequiredProducerSubmissionMarkers(
+                input.FramePlan.GetNativeTextureUploadOperationsForRecording());
+        }
         if (input.CallerOwnsSubmissionMarkersUntilRecordingSucceeds)
         {
             DiscardSubmissionMarkersForCommandBuffer(input.PrimaryCommandBuffer);
@@ -35,6 +46,24 @@ internal sealed partial class VulkanCommandRuntime
         }
 
         FailSubmissionMarkersForCommandBuffer(input.PrimaryCommandBuffer);
+    }
+
+    private static void FailRequiredProducerSubmissionMarkers(
+        FrameOperationSequence operations)
+    {
+        for (int operationIndex = 0;
+             operationIndex < operations.Length;
+             operationIndex++)
+        {
+            ref readonly FrameOperationHeader header =
+                ref operations.GetHeader(operationIndex);
+            if (header.OpCode != EVulkanPrimaryPlanNodeKind.SubmissionMarker)
+                continue;
+            ref readonly SubmissionMarkerPayload marker =
+                ref operations.GetSubmissionMarker(operationIndex);
+            if (marker.RequiredOperationCount > 0)
+                marker.Fence.Fail();
+        }
     }
 
     private VulkanPrimaryCommandRecordingResult RecordPrimaryCore(
@@ -86,6 +115,7 @@ internal sealed partial class VulkanCommandRuntime
         FrameOperationSequence sealedDynamicUiOperations =
             input.FramePlan.GetNativeDynamicOverlayOperationsForRecording();
         if (owner is not null &&
+            (input.AcceptedFramePlan?.OutputCompletionCount > 0) != true &&
             VulkanPrimaryCommandBufferReuseEnabled &&
             CommandChainsEnabledForCurrentRecording &&
             !CommandChainBenchmarkForceRerecord &&
@@ -144,6 +174,10 @@ internal sealed partial class VulkanCommandRuntime
                     out _,
                     out ImageLayout reusedFinalLayout))
             {
+                if (input.AcceptedFramePlan is { } acceptedPlan)
+                    owner.AttestReusableTerminalOutputs(
+                        acceptedPlan,
+                        input.FramePlan);
                 return new VulkanPrimaryCommandRecordingResult(
                     EVulkanPrimaryCommandRecordingDisposition.Reused,
                     reusedPrimary,
@@ -186,6 +220,7 @@ internal sealed partial class VulkanCommandRuntime
             owner is null || owner.DynamicUiSecondaryRecorded
                 ? input.FramePlan.DynamicOverlayOperationCount
                 : 0;
+        owner?.ClearRecordedTerminalOutputManifest();
         VulkanCommandRecordingContext context = new(
             input.ImageIndex,
             input.PrimaryCommandBuffer,
@@ -209,7 +244,9 @@ internal sealed partial class VulkanCommandRuntime
             input.PresentationSource,
             input.Policy,
             input.ResourcePlanStamp,
-            input.ClearState);
+            input.ClearState,
+            input.AcceptedFramePlan,
+            owner);
 
         if (!Recorder.Prepare(ref context))
             return AttachDeferredRecordingArtifacts(

@@ -8,6 +8,7 @@ using Silk.NET.Vulkan;
 using XREngine.Data.Rendering;
 using XREngine.Execution;
 using XREngine.Rendering.Diagnostics;
+using XREngine.Rendering.Vulkan.RenderGraph;
 using Buffer = Silk.NET.Vulkan.Buffer;
 
 namespace XREngine.Rendering.Vulkan;
@@ -323,6 +324,7 @@ internal sealed partial class VulkanFrameLoop
             EGpuDiagnosticReadbackDecoder.IndirectDrawCount => visibilityState.RangeCounts,
             EGpuDiagnosticReadbackDecoder.MeshletVisibility => visibilityState.MeshArguments,
             EGpuDiagnosticReadbackDecoder.SubmissionValidation => visibilityState.Counters,
+            EGpuDiagnosticReadbackDecoder.AdvancedVisibilityCounters => visibilityState.Counters,
             _ => default,
         };
         if (!source.IsValid ||
@@ -388,6 +390,80 @@ internal sealed partial class VulkanFrameLoop
         }
     }
 
+    /// <summary>Attaches a sealed native counter range to its producer primary.</summary>
+    internal unsafe bool TryRecordAdvancedCounterDiagnosticCopy(
+        CommandBuffer commandBuffer,
+        in VulkanFrozenBufferBarrier source,
+        in VulkanAdvancedVisibilityStageRequest request,
+        int resourceGeneration,
+        uint viewId,
+        EGpuDiagnosticReadbackDecoder decoder)
+    {
+        EMeshSubmissionStrategy strategy = request.BackendPackage.Package.SubmissionResolution.Resolved;
+        if (_deviceLost || commandBuffer.Handle == 0 || source.NativeBuffer.Handle == 0 ||
+            source.NativeSize == 0u || !GpuDiagnosticReadbackPlan.IsInstrumented(strategy))
+            return false;
+
+        uint byteCount = decoder switch
+        {
+            EGpuDiagnosticReadbackDecoder.AdvancedClassificationCounters => 32u,
+            EGpuDiagnosticReadbackDecoder.AdvancedLightingCounters => 16u,
+            _ => 0u,
+        };
+        if (byteCount == 0u || source.NativeSize < byteCount)
+            return false;
+
+        GpuDiagnosticReadbackPlanNode node = new(
+            (ulong)source.NativeBuffer.Handle, viewId, 0u, byteCount, strategy, decoder,
+            request.Reservation.OutputId, resourceGeneration);
+        VulkanGpuDiagnosticReadbackSidecar? sidecar = GetOrCreateGpuDiagnosticReadbackSidecar();
+        VulkanGpuDiagnosticReadbackReservation reservation = default;
+        if (sidecar is null || !sidecar.TryReserveNext(
+                in node, request.RenderFrameId,
+                EVulkanGpuDiagnosticReadbackPurpose.Instrumented, out reservation) ||
+            !sidecar.TryAcquireStagingSlice(reservation.SlotIndex, byteCount, out VulkanFrameDataSlice destination))
+        {
+            if (reservation != default)
+                sidecar?.Cancel(in reservation);
+            return false;
+        }
+
+        bool attached = false;
+        try
+        {
+            BufferMemoryBarrier barrier = new()
+            {
+                SType = StructureType.BufferMemoryBarrier,
+                SrcAccessMask = AccessFlags.ShaderWriteBit | AccessFlags.TransferWriteBit | AccessFlags.MemoryWriteBit,
+                DstAccessMask = AccessFlags.TransferReadBit,
+                SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
+                Buffer = source.NativeBuffer,
+                Offset = source.NativeOffset,
+                Size = byteCount,
+            };
+            _commandRuntime.CmdPipelineBarrierTracked(commandBuffer, PipelineStageFlags.AllCommandsBit,
+                PipelineStageFlags.TransferBit, 0, 0, null, 1, &barrier, 0, null);
+            BufferCopy copy = new()
+            {
+                SrcOffset = source.NativeOffset,
+                DstOffset = destination.Offset,
+                Size = byteCount,
+            };
+            _commandRuntime.CmdCopyBufferTracked(commandBuffer, source.NativeBuffer, destination.Buffer, 1, ref copy);
+            attached = sidecar.TryAttachPrimaryCopy(in reservation, commandBuffer, in destination);
+            return attached;
+        }
+        finally
+        {
+            if (!attached)
+            {
+                sidecar.CancelStagingSliceSubmission(destination);
+                sidecar.Cancel(in reservation);
+            }
+        }
+    }
+
     private void ConsumePrimaryGpuDiagnosticReadback(
         in VulkanGpuDiagnosticReadbackReservation reservation,
         in VulkanFrameDataSlice slice,
@@ -417,6 +493,19 @@ internal sealed partial class VulkanFrameLoop
                     (uint)node.Decoder,
                     DecodeAdvancedVisibilityDiagnostic);
                 RuntimeRenderingHostServices.Work.ScheduleCompletedDiagnosticDecode(payload);
+                if (node.Decoder is EGpuDiagnosticReadbackDecoder.AdvancedVisibilityCounters or
+                    EGpuDiagnosticReadbackDecoder.AdvancedClassificationCounters or
+                    EGpuDiagnosticReadbackDecoder.AdvancedLightingCounters)
+                {
+                    PublishCompletedAdvancedCounterReadback(
+                        node.DecoderKey,
+                        new AdvancedGpuCounterReadbackIdentity(
+                            frameIdentity,
+                            node.OutputId,
+                            node.ResourceGeneration,
+                            node.ViewId),
+                        words);
+                }
             }
             RuntimeEngine.Rendering.Stats.GpuDriven.RecordDelayedDiagnosticReadback(node.ByteCount);
         }
@@ -494,6 +583,23 @@ internal sealed partial class VulkanFrameLoop
                 break;
         }
     }
+
+    /// <summary>
+    /// Publishes a counter receipt after the staging sidecar has established
+    /// completion. Callers must pass the identity captured beside the primary
+    /// producer; this helper deliberately accepts no live viewport state.
+    /// </summary>
+    private static void PublishCompletedAdvancedCounterReadback(
+        string source,
+        in AdvancedGpuCounterReadbackIdentity identity,
+        ReadOnlySpan<uint> words)
+        => AdvancedGpuCounterReadbacks.Publish(new AdvancedGpuCounterReadback(
+            source,
+            identity.FrameId,
+            identity.OutputId,
+            identity.ResourceGeneration,
+            identity.ViewId,
+            words.ToArray()));
 
     private unsafe bool SubmitGpuRenderStatsReadback(
         XRDataBuffer sourceBuffer,

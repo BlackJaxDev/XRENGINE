@@ -94,6 +94,8 @@ internal const uint VisibilityDepthPyramidStorageBinding = 43u;
     internal const uint NativeFroxelGridBinding = 10u;
     internal const uint NativeLightIndicesBinding = 11u;
     internal const uint NativeLightingCountersBinding = 12u;
+    internal const uint NativeFroxelDecalGridBinding = 13u;
+    internal const uint NativeDecalIndicesBinding = 14u;
     internal const uint NativeHdrBinding = 15u;
     internal const uint NativeVelocityBinding = 16u;
     internal const uint NativeReactiveBinding = 17u;
@@ -320,7 +322,8 @@ internal const uint VisibilityDepthPyramidStorageBinding = 43u;
         => binding is NativeActiveTilesBinding or NativeKernelTilesBinding or
             NativeCountersBinding or NativeDispatchArgumentsBinding or
             NativeKernelCountsBinding or NativeFroxelGridBinding or
-            NativeLightIndicesBinding or NativeLightingCountersBinding;
+            NativeLightIndicesBinding or NativeLightingCountersBinding or
+            NativeFroxelDecalGridBinding or NativeDecalIndicesBinding;
 
     private static bool ContainsNativeSampledBinding(uint binding)
         => binding is NativeIdentityBinding or NativeMetadataBinding or NativeDepthBinding or

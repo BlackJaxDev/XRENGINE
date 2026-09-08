@@ -354,13 +354,15 @@ public sealed class AdvancedGpuResourcePublisher
                 textureIndex = AddTextureAfterPreflight(
                     source.Texture,
                     stampedRecord,
-                    source.SourceContentGeneration);
-            else if (!SourceMetadataEquals(in _textures[textureIndex], in source) ||
+                    source.SourceContentGeneration,
+                    source.Lifetime);
+            else if (!SourceEquals(in _textures[textureIndex], in source) ||
                      _textures[textureIndex].Record.DefaultSampler != stampedRecord.DefaultSampler)
                 ReplaceTextureAfterPreflight(
                     textureIndex,
                     stampedRecord,
-                    source.SourceContentGeneration);
+                    source.SourceContentGeneration,
+                    source.Lifetime);
 
             ref TextureEntry texture = ref _textures[textureIndex];
             ref SamplerEntry sampler = ref _samplers[samplerIndex];
@@ -559,7 +561,7 @@ public sealed class AdvancedGpuResourcePublisher
                     entry.Handle,
                     out AdvancedTextureRecord retainedRecord) ||
                 !TextureEquals(retainedRecord, entry.Record) ||
-                !snapshot.TryAddTextureSource(entry.Handle, entry.Source, entry.SourceContentGeneration))
+                !snapshot.TryAddTextureSource(entry.Handle, entry.Source, entry.SourceContentGeneration, entry.Lifetime))
             {
                 snapshot.AbortSourceCapture();
                 return false;
@@ -813,12 +815,13 @@ public sealed class AdvancedGpuResourcePublisher
     private int AddTextureAfterPreflight(
         XRTexture source,
         AdvancedTextureRecord record,
-        ulong sourceContentGeneration)
+        ulong sourceContentGeneration,
+        IAdvancedGpuPublicationSourceLifetime? lifetime)
     {
         if (!_database.TryAddTexture(record, out AdvancedGpuHandle handle))
             throw new InvalidOperationException("Preflighted logical texture insertion failed.");
         int index = _textureCount++;
-        _textures[index] = new(source, record, handle, 0u, sourceContentGeneration);
+        _textures[index] = new(source, record, handle, 0u, sourceContentGeneration, lifetime);
         InsertTextureSourceSlot(index);
         InsertTextureHandleSlot(index);
         return index;
@@ -838,12 +841,14 @@ public sealed class AdvancedGpuResourcePublisher
     private void ReplaceTextureAfterPreflight(
         int index,
         AdvancedTextureRecord record,
-        ulong sourceContentGeneration)
+        ulong sourceContentGeneration,
+        IAdvancedGpuPublicationSourceLifetime? lifetime)
     {
         if (!_database.TryReplaceTexture(_textures[index].Handle, record))
             throw new InvalidOperationException("Preflighted logical texture replacement failed.");
         _textures[index].Record = record;
         _textures[index].SourceContentGeneration = sourceContentGeneration;
+        _textures[index].Lifetime = lifetime;
     }
 
     private int FindTextureBySource(XRTexture source)
@@ -1008,7 +1013,8 @@ public sealed class AdvancedGpuResourcePublisher
         in TextureEntry entry,
         in AdvancedGpuResourceBindingSource source)
         => SourceMetadataEquals(entry, source) &&
-           entry.SourceContentGeneration == source.SourceContentGeneration;
+           entry.SourceContentGeneration == source.SourceContentGeneration &&
+           ReferenceEquals(entry.Lifetime, source.Lifetime);
 
     private static bool SourceMetadataEquals(
         in TextureEntry entry,
@@ -1019,7 +1025,8 @@ public sealed class AdvancedGpuResourcePublisher
         in AdvancedGpuResourceBindingSource left,
         in AdvancedGpuResourceBindingSource right)
         => TextureMetadataEquals(left.TextureRecord, right.TextureRecord) &&
-           left.SourceContentGeneration == right.SourceContentGeneration;
+           left.SourceContentGeneration == right.SourceContentGeneration &&
+           ReferenceEquals(left.Lifetime, right.Lifetime);
 
     private static bool TextureMetadataEquals(AdvancedTextureRecord left, AdvancedTextureRecord right)
     {
@@ -1095,13 +1102,15 @@ public sealed class AdvancedGpuResourcePublisher
         AdvancedTextureRecord record,
         AdvancedGpuHandle handle,
         uint referenceCount,
-        ulong sourceContentGeneration)
+        ulong sourceContentGeneration,
+        IAdvancedGpuPublicationSourceLifetime? lifetime)
     {
         public XRTexture Source = source;
         public AdvancedTextureRecord Record = record;
         public AdvancedGpuHandle Handle = handle;
         public uint ReferenceCount = referenceCount;
         public ulong SourceContentGeneration = sourceContentGeneration;
+        public IAdvancedGpuPublicationSourceLifetime? Lifetime = lifetime;
     }
 
     private struct SamplerEntry(

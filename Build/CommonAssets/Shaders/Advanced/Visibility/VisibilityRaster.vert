@@ -1,8 +1,9 @@
 #version 450
 
 #extension GL_ARB_shader_draw_parameters : require
-
-#include "VisibilityInterface.glslinc"
+#if defined(XR_ADV_MULTIVIEW_RASTER)
+#extension GL_EXT_multiview : require
+#endif
 
 // Matches the mesh-shader visibility ABI. Indexed and meshlet submission must
 // select the same immutable canonical view for a given raster invocation.
@@ -13,6 +14,24 @@ layout(push_constant, std430) uniform XRAdvancedVisibilityRasterPushConstants
     uint viewIndex;
     uint flags;
 } XR_ADV_VisibilityRasterPush;
+
+#if defined(XR_ADV_OPENGL_MULTIVIEW_RASTER)
+layout(num_views = 2) in;
+layout(std430, binding = 77) readonly buffer XRAdvancedStereoViewMasks { uint masks[]; } XR_ADV_StereoViewMasks;
+#define XR_ADV_RASTER_VIEW_INDEX uint(gl_ViewID_OVR)
+#else
+#define XR_ADV_RASTER_VIEW_INDEX XR_ADV_VisibilityRasterPush.viewIndex
+#endif
+#define XR_ADV_VISIBILITY_COUNTER_INDEX XR_ADV_RASTER_VIEW_INDEX
+#include "VisibilityInterface.glslinc"
+
+// Vulkan exposes gl_VertexIndex while desktop OpenGL names the identical
+// indexed draw input gl_VertexID.
+#if defined(XR_ADV_BACKEND_OPENGL)
+#define XR_ADV_VERTEX_INDEX gl_VertexID
+#else
+#define XR_ADV_VERTEX_INDEX gl_VertexIndex
+#endif
 
 layout(location = 0) in vec3 Position;
 layout(location = 1) in vec2 TexCoord0;
@@ -50,7 +69,24 @@ void XR_ADV_RejectVisibilityVertex()
 
 void main()
 {
+#if defined(XR_ADV_MULTIVIEW_RASTER)
+    // Each indirect stream belongs to one eye. Multiview broadcasts a draw;
+    // suppress other hardware views before fetching payloads or writing counters.
+    if (uint(gl_ViewIndex) != XR_ADV_VisibilityRasterPush.viewIndex)
+    {
+        XR_ADV_RejectVisibilityVertex();
+        return;
+    }
+#endif
     uint payloadIndex = XR_ADV_VisibilityPayloadIndex();
+#if defined(XR_ADV_OPENGL_MULTIVIEW_RASTER)
+    if (payloadIndex >= uint(XR_ADV_StereoViewMasks.masks.length()) ||
+        (XR_ADV_StereoViewMasks.masks[payloadIndex] & (1u << XR_ADV_RASTER_VIEW_INDEX)) == 0u)
+    {
+        XR_ADV_RejectVisibilityVertex();
+        return;
+    }
+#endif
     if (payloadIndex >= uint(XR_ADV_VisibilityPayloads.records.length()))
     {
         atomicAdd(XR_ADV_VisibilityCounters.decodeOutOfBounds, 1u);
@@ -85,7 +121,7 @@ void main()
         return;
     }
 
-XRAdvancedDrawRecord draw = XR_ADV_LoadDraw(drawDense);
+    XRAdvancedDrawRecord draw = XR_ADV_LoadDraw(drawDense);
     XRAdvancedPreparedDrawDeformationRecord preparedDeformation;
     bool deformed = XR_ADV_TryLoadPreparedDrawDeformation(
         drawDense,
@@ -128,7 +164,7 @@ XRAdvancedDrawRecord draw = XR_ADV_LoadDraw(drawDense);
         XR_ADV_LoadTransform(transformDense);
     XRAdvancedTransformRecord previousTransformRecord =
         XR_ADV_LoadTransform(previousTransformDense);
-    if (XR_ADV_VisibilityRasterPush.viewIndex >=
+    if (XR_ADV_RASTER_VIEW_INDEX >=
         uint(XR_ADV_Views.records.length()))
     {
         atomicAdd(XR_ADV_VisibilityCounters.decodeOutOfBounds, 1u);
@@ -136,22 +172,40 @@ XRAdvancedDrawRecord draw = XR_ADV_LoadDraw(drawDense);
         return;
     }
     XRAdvancedViewRecord viewRecord = XR_ADV_LoadView(
-        XR_ADV_VisibilityRasterPush.viewIndex);
+        XR_ADV_RASTER_VIEW_INDEX);
 
     vec3 localPosition = Position;
+    vec2 localTexCoord0 = TexCoord0;
+#if defined(XR_ADV_BACKEND_OPENGL)
+    // The GL family uses one index atlas for static and aggregate-deformed
+    // draws. Fetch from the selected SSBO so a deformation arena offset is
+    // never interpreted as an offset into the static vertex attribute buffer.
+    uint selectedVertex = uint(XR_ADV_VERTEX_INDEX);
+    if (selectedVertex >= (deformed ? uint(XR_ADV_VisibilityCurrentVertices.records.length()) : uint(XR_ADV_VisibilityStaticVertices.records.length())))
+    {
+        atomicAdd(XR_ADV_VisibilityCounters.decodeOutOfBounds, 1u);
+        XR_ADV_RejectVisibilityVertex();
+        return;
+    }
+    XRAdvancedVisibilityPackedVertex vertex = deformed
+        ? XR_ADV_VisibilityCurrentVertices.records[selectedVertex]
+        : XR_ADV_VisibilityStaticVertices.records[selectedVertex];
+    localPosition = vertex.position;
+    localTexCoord0 = unpackHalf2x16(vertex.texCoord0Half);
+#endif
 #if defined(XR_ADV_VIS_VERTEX_DISPLACEMENT)
     localPosition += XR_ADV_ApplyVisibilityVertexDisplacement(
         payload,
         materialDense,
-        Position,
-        TexCoord0);
+        localPosition,
+        localTexCoord0);
 #endif
 
     vec3 previousLocalPosition = localPosition;
     bool previousVertexValid = !deformed;
     if (deformed)
     {
-        uint currentVertex = uint(gl_VertexIndex);
+        uint currentVertex = uint(XR_ADV_VERTEX_INDEX);
         uint currentEnd =
             preparedDeformation.currentVertexOffset +
             preparedDeformation.vertexCount;
@@ -206,9 +260,9 @@ XRAdvancedDrawRecord draw = XR_ADV_LoadDraw(drawDense);
             viewRecord.previousViewProjectionUnjittered;
     VisibilityDrawIndex = payload.draw.index;
     VisibilityProducer = producer;
-    VisibilityViewIndex = XR_ADV_VisibilityRasterPush.viewIndex;
-    VisibilityOrigin = 0u;
-    VisibilityCoverageUv = TexCoord0;
+    VisibilityViewIndex = XR_ADV_RASTER_VIEW_INDEX;
+    VisibilityOrigin = (XR_ADV_VisibilityRasterPush.producerAndOrigin >> XR_ADV_VIS_ORIGIN_SHIFT) & 1u;
+    VisibilityCoverageUv = localTexCoord0;
     VisibilityPrimitiveBase = payload.firstIndex / 3u;
     VisibilityMeshletIndex = XR_ADV_VIS_INVALID;
     VisibilityMaterialDenseIndex = materialDense;
@@ -239,12 +293,7 @@ XRAdvancedDrawRecord draw = XR_ADV_LoadDraw(drawDense);
             ? XR_ADV_LoadEditorIdentity(editorDense).selectionId
             : XR_ADV_VIS_INVALID;
 
-    uvec2 activeMask = uvec2(1u, 0u);
-    if (all(equal(
-            uvec2(instanceRecord.viewMaskLow, instanceRecord.viewMaskHigh) &
-                activeMask,
-            uvec2(0u))))
-    {
-        XR_ADV_RejectVisibilityVertex();
-    }
+    // Eye membership comes from the independently culled submission stream
+    // (and the GL multiview payload mask). Object layer/pass masks are not eye
+    // indices: treating scene layer zero as view bit zero drops the right eye.
 }

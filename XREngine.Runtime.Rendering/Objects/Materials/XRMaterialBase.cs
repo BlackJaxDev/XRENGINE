@@ -27,7 +27,7 @@ namespace XREngine.Rendering
         }
 
         public event Action<XRMaterialBase, XRRenderProgram>? SettingUniforms;
-        public void OnSettingUniforms(XRRenderProgram program)
+        public virtual void OnSettingUniforms(XRRenderProgram program)
             => SettingUniforms?.Invoke(this, program);
 
         /// <summary>

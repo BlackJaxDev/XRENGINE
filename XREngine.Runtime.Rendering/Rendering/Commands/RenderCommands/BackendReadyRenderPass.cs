@@ -8,6 +8,7 @@ public readonly record struct BackendReadyRenderPass(
     int PassIndex,
     int CommandCount,
     int MeshCommandCount,
+    uint SceneColorSnapshotConsumerCount,
     ulong CommandSetSignature,
     ulong DependencySignature,
     IReadOnlyCollection<RenderCommand> Commands);

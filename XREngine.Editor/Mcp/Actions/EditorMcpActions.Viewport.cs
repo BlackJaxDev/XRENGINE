@@ -288,6 +288,7 @@ namespace XREngine.Editor.Mcp
             [McpName("normalized_x"), Description("Normalized viewport X in bottom-left origin coordinates.")] float normalizedX = 0.5f,
             [McpName("normalized_y"), Description("Normalized viewport Y in bottom-left origin coordinates.")] float normalizedY = 0.5f,
             [McpName("include_raw"), Description("When true on Vulkan, include raw copied depth bytes and alternate decodes.")] bool includeRaw = false,
+            [McpName("include_stencil"), Description("Also read the stencil aspect at the sampled coordinate.")] bool includeStencil = false,
             [McpName("camera_node_id"), Description("Optional camera node ID to target.")] string? cameraNodeId = null,
             [McpName("window_index"), Description("Optional window index to target.")] int windowIndex = 0,
             [McpName("viewport_index"), Description("Optional viewport index to target.")] int viewportIndex = 0,
@@ -312,7 +313,7 @@ namespace XREngine.Editor.Mcp
                     targetViewport,
                     targetWindow,
                     "MCP: Probe render pipeline depth",
-                    _ => ProbeDepthFbo(targetViewport, fboName, new Vector2(normalizedX, normalizedY), includeRaw),
+                    _ => ProbeDepthFbo(targetViewport, fboName, new Vector2(normalizedX, normalizedY), includeRaw, includeStencil),
                     token);
 
                 return new McpToolResponse("Probed render-pipeline depth.", new { probe });
@@ -427,7 +428,7 @@ namespace XREngine.Editor.Mcp
             return true;
         }
 
-        private static object ProbeDepthFbo(XRViewport viewport, string fboName, Vector2 normalizedViewportPoint, bool includeRaw)
+        private static object ProbeDepthFbo(XRViewport viewport, string fboName, Vector2 normalizedViewportPoint, bool includeRaw, bool includeStencil = false)
         {
             if (string.IsNullOrWhiteSpace(fboName))
                 throw new ArgumentException("FBO name is required.", nameof(fboName));
@@ -448,10 +449,10 @@ namespace XREngine.Editor.Mcp
             IVector2 currentCoordinate = policyFlipsY ? flippedCoordinate : unflippedCoordinate;
 
             using IDisposable? readbackScope = viewport.EnterRenderPipelineReadbackScope();
-            object unflipped = ReadDepthProbeSample(viewport, clamped, fbo, unflippedCoordinate, includeRaw);
+            object unflipped = ReadDepthProbeSample(viewport, clamped, fbo, unflippedCoordinate, includeRaw, includeStencil);
             object flipped = CoordinatesEqual(unflippedCoordinate, flippedCoordinate)
                 ? unflipped
-                : ReadDepthProbeSample(viewport, clamped, fbo, flippedCoordinate, includeRaw);
+                : ReadDepthProbeSample(viewport, clamped, fbo, flippedCoordinate, includeRaw, includeStencil);
             object current = CoordinatesEqual(currentCoordinate, flippedCoordinate) ? flipped : unflipped;
 
             RuntimeGraphicsApiKind backend = RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend;
@@ -530,7 +531,8 @@ namespace XREngine.Editor.Mcp
             Vector2 normalizedViewportPoint,
             XRFrameBuffer fbo,
             IVector2 readbackCoordinate,
-            bool includeRaw)
+            bool includeRaw,
+            bool includeStencil)
         {
             float depth = XRViewport.GetDepth(fbo, readbackCoordinate);
             bool validDepth = depth > 0.0f && depth < 1.0f;
@@ -555,6 +557,7 @@ namespace XREngine.Editor.Mcp
                 x = readbackCoordinate.X,
                 y = readbackCoordinate.Y,
                 depth,
+                stencil = includeStencil ? (byte?)XRViewport.GetStencil(fbo, new Vector2(readbackCoordinate.X, readbackCoordinate.Y)) : null,
                 valid_depth = validDepth,
                 world_x = worldPoint?.X,
                 world_y = worldPoint?.Y,
@@ -695,6 +698,14 @@ namespace XREngine.Editor.Mcp
             if (string.IsNullOrWhiteSpace(vrEye))
                 return ResolveViewport(world, cameraNodeId, windowIndex, viewportIndex);
 
+            if (string.Equals(vrEye, "stereo", StringComparison.OrdinalIgnoreCase))
+            {
+                XRViewport? stereo = RuntimeEngine.VRState.StereoViewport;
+                if (stereo is null)
+                    error = "The runtime shared stereo viewport is not available.";
+                return stereo;
+            }
+
             bool leftEye;
             if (string.Equals(vrEye, "left", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(vrEye, "l", StringComparison.OrdinalIgnoreCase) ||
@@ -710,7 +721,7 @@ namespace XREngine.Editor.Mcp
             }
             else
             {
-                error = "vr_eye must be 'left' or 'right'.";
+                error = "vr_eye must be 'left', 'right', or 'stereo' (use layer_index for its individual layers).";
                 return null;
             }
 

@@ -21,7 +21,15 @@ namespace XREngine.Editor.Mcp
             // Accept "6" for numeric targets and enum names (e.g. "Fxaa") for enum targets
             // so loosely-typed MCP clients can set values without exact JSON types.
             NumberHandling = JsonNumberHandling.AllowReadingFromString,
-            Converters = { new JsonStringEnumConverter() }
+            Converters =
+            {
+                new JsonStringEnumConverter(), new McpColorF4JsonConverter(),
+                new McpNumericsJsonConverter<System.Numerics.Vector2>(),
+                new McpNumericsJsonConverter<System.Numerics.Vector3>(),
+                new McpNumericsJsonConverter<System.Numerics.Vector4>(),
+                new McpNumericsJsonConverter<System.Numerics.Quaternion>(),
+                new McpNumericsJsonConverter<System.Numerics.Matrix4x4>()
+            }
         };
 
         private static readonly Lazy<IReadOnlyDictionary<string, Type>> s_componentTypeCache

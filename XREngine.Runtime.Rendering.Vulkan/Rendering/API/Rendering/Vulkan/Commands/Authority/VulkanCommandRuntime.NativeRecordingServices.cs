@@ -395,7 +395,18 @@ internal sealed partial class VulkanCommandRuntime
                     commandBuffer.Handle,
                     markers);
             }
-            markers.Add(frameOps.Stream.GetSubmissionMarker(operationIndex).Fence);
+            ref readonly SubmissionMarkerPayload marker =
+                ref frameOps.Stream.GetSubmissionMarker(operationIndex);
+            if (marker.RequiredOperationCount > 0)
+            {
+                // Required producer markers are recording receipts, not merely
+                // structural submission markers. Their original artifact is
+                // deliberately one-shot; reject any attempted reuse rather than
+                // transferring evidence from a prior recording generation.
+                marker.Fence.Fail();
+                continue;
+            }
+            markers.Add(marker.Fence);
         }
     }
 

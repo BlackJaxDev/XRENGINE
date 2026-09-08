@@ -36,7 +36,7 @@ internal static partial class UberShaderVariantBuilder
         Endif,
     }
 
-    private static string PruneKnownConditionalBlocks(
+    internal static string PruneKnownConditionalBlocks(
         string source,
         IReadOnlySet<string> knownMacros,
         IReadOnlySet<string> definedMacros)

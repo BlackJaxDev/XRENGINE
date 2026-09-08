@@ -39,7 +39,10 @@ namespace XREngine.Rendering.Vulkan.RenderGraph;
 /// <param name="OutputProducerDependencySetId">Optional semantic output-resource set produced by this context.</param>
 /// <param name="OutputConsumerDependencySetId">Optional semantic output-resource set required before this context may execute.</param>
 /// <param name="OutputSchedulingInstanceIdentity">Stable engine output instance used to correlate backend work with pacing admission.</param>
+/// <param name="AdvancedVisibilityOutputIdentity">Frozen Advanced output-binding identity; an explicitly owned capture can differ from its viewport's history identity.</param>
 /// <param name="OutputSchedulingRequest">Canonical engine output request frozen for this backend context.</param>
+/// <param name="OutputHistorySequenceId">Output-local temporal-history sequence authored by this pipeline invocation.</param>
+/// <param name="OutputHistorySourceFrame">Render-frame identity paired with the temporal-history sequence.</param>
 internal readonly record struct FrameOpContext(
     int PipelineIdentity,
     int ViewportIdentity,
@@ -70,7 +73,12 @@ internal readonly record struct FrameOpContext(
     ulong OutputConsumerDependencySetId = 0,
     ulong OutputSchedulingInstanceIdentity = 0,
     RenderOutputRequest OutputSchedulingRequest = default,
-    VulkanFrameOpWorkspace? OperationWorkspace = null)
+    ulong OutputHistorySequenceId = 0,
+    ulong OutputHistorySourceFrame = 0,
+    ulong OutputCompletionReceiptId = 0,
+    ulong OutputCompletionSourceFrame = 0,
+    VulkanFrameOpWorkspace? OperationWorkspace = null,
+    ulong AdvancedVisibilityOutputIdentity = 0)
 {
     public int SchedulingIdentity => OutputTargetIdentity == 0
         ? HashCode.Combine(PipelineIdentity, ViewportIdentity)

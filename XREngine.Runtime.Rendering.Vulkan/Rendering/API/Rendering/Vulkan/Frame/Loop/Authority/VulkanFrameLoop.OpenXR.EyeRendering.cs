@@ -1104,12 +1104,24 @@ internal sealed partial class VulkanFrameLoop
         plan = null!;
         if (firstEye.Ops.Length == 0 || secondEye.Ops.Length == 0 ||
             firstEye.PlannerRevision != secondEye.PlannerRevision)
+        {
+            Debug.VulkanWarningEvery(
+                "OpenXR.Vulkan.PairedLogicalPlanInputs", TimeSpan.FromSeconds(1),
+                "[OpenXR] Paired-plan inputs rejected: operations={0}/{1} plannerRevision={2}/{3}.",
+                firstEye.Ops.Length, secondEye.Ops.Length, firstEye.PlannerRevision, secondEye.PlannerRevision);
             return false;
+        }
 
         ulong firstViewId = GetSingleOpenXrLogicalViewId(firstEye.Ops);
         ulong secondViewId = GetSingleOpenXrLogicalViewId(secondEye.Ops);
         if (firstViewId == 0UL || secondViewId == 0UL || firstViewId == secondViewId)
+        {
+            Debug.VulkanWarningEvery(
+                "OpenXR.Vulkan.PairedLogicalPlanViews", TimeSpan.FromSeconds(1),
+                "[OpenXR] Paired-plan view ownership rejected: views={0}/{1} firstOperationViews={2}/{3}.",
+                firstViewId, secondViewId, firstEye.Ops[0].Context.LogicalViewId, secondEye.Ops[0].Context.LogicalViewId);
             return false;
+        }
 
         FrameOp[] combined = new FrameOp[firstEye.Ops.Length + secondEye.Ops.Length];
         CopyLogicalOperationsWithoutNativeTargets(firstEye.Ops, combined, 0);

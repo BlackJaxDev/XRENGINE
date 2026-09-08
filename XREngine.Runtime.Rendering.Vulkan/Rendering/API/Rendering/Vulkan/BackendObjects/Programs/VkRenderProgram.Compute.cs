@@ -1453,7 +1453,8 @@ internal unsafe partial class VkRenderProgram
                 : BufferUsageFlags.UniformBufferBit,
             MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
             null,
-            BackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap);
+            BackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap,
+            "VkRenderProgram.ComputeUniformBuffer");
 
         if (buffer.Handle == 0 || memory.Handle == 0)
         {

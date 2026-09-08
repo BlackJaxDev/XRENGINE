@@ -2,7 +2,8 @@ namespace XREngine.Rendering.Commands;
 
 public partial class GPUScene
 {
-    private readonly AdvancedGpuScenePublisher _advancedScenePublisher = new();
+    private AdvancedGpuScenePublisher _advancedScenePublisher = new();
+    private bool _advancedScenePublisherDisposed;
     private AdvancedGlobalResourceCapture _advancedGlobalResources;
     private int _advancedPublicationRequested;
 

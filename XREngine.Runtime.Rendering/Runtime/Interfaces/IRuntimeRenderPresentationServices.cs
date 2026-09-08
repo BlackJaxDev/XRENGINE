@@ -224,6 +224,10 @@ public interface IRuntimeRenderPresentationServices : IRuntimeRenderFrameTimingS
     bool TryEnsureOpenXrRuntimeService(string reason)
         => RuntimeRenderingHostServices.TryEnsureOpenXrRuntimeService(reason);
 
+    /// <summary>Whether this host's simulated runtime needs a service restart to refresh recommended eye dimensions.</summary>
+    bool OpenXrRecommendedDimensionsRequireServiceRestart
+        => RuntimeRenderingHostServices.OpenXrRecommendedDimensionsRequireServiceRestart;
+
     /// <summary>
     /// Attempts to render the host desktop mirror composition into the current target size.
     /// </summary>

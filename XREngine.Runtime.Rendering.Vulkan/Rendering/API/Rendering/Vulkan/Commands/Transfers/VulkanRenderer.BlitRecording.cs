@@ -30,7 +30,7 @@ namespace XREngine.Rendering.Vulkan
             => RecordBlitPayload(
                 commandBuffer,
                 imageIndex,
-                new BlitPayload(op.InFbo, op.OutFbo, op.InX, op.InY, op.InW, op.InH, op.OutX, op.OutY, op.OutW, op.OutH, op.ReadBufferMode, op.ColorBit, op.DepthBit, op.StencilBit, op.LinearFilter),
+                new BlitPayload(op.InFbo, op.OutFbo, op.InX, op.InY, op.InW, op.InH, op.OutX, op.OutY, op.OutW, op.OutH, op.ReadBufferMode, op.ColorBit, op.DepthBit, op.StencilBit, op.LinearFilter, op.RequireExactCompatibility),
                 in swapchainTarget,
                 exactColorSource: null);
 
@@ -62,7 +62,7 @@ namespace XREngine.Rendering.Vulkan
             return RecordBlitPayload(
                 commandBuffer,
                 imageIndex,
-                new BlitPayload(null, null, 0, 0, source.Width, source.Height, 0, 0, swapchainTarget.Extent.Width, swapchainTarget.Extent.Height, EReadBufferMode.ColorAttachment0, true, false, false, true),
+                new BlitPayload(null, null, 0, 0, source.Width, source.Height, 0, 0, swapchainTarget.Extent.Width, swapchainTarget.Extent.Height, EReadBufferMode.ColorAttachment0, true, false, false, true, false),
                 in swapchainTarget,
                 exactSource);
         }
@@ -78,6 +78,29 @@ namespace XREngine.Rendering.Vulkan
             {
                 BlitImageInfo resolvedSource = RequirePreparedBlitImage(source, "source");
                 BlitImageInfo resolvedDestination = RequirePreparedBlitImage(destination, "destination");
+
+                if (op.RequireExactCompatibility)
+                {
+                    Api.GetPhysicalDeviceFormatProperties(DeviceContext.PhysicalDevice, resolvedSource.Format, out FormatProperties sourceProperties);
+                    Api.GetPhysicalDeviceFormatProperties(DeviceContext.PhysicalDevice, resolvedDestination.Format, out FormatProperties destinationProperties);
+                    if (resolvedSource.Format != resolvedDestination.Format ||
+                        resolvedSource.Samples != SampleCountFlags.Count1Bit ||
+                        resolvedDestination.Samples != SampleCountFlags.Count1Bit ||
+                        resolvedSource.LayerCount != resolvedDestination.LayerCount ||
+                        resolvedSource.LayerCount == 0 ||
+                        resolvedSource.Extent.Width != resolvedDestination.Extent.Width ||
+                        resolvedSource.Extent.Height != resolvedDestination.Extent.Height ||
+                        (resolvedSource.Usage & ImageUsageFlags.TransferSrcBit) == 0 ||
+                        (resolvedDestination.Usage & ImageUsageFlags.TransferDstBit) == 0 ||
+                        (sourceProperties.OptimalTilingFeatures & FormatFeatureFlags.BlitSrcBit) == 0 ||
+                        (destinationProperties.OptimalTilingFeatures & FormatFeatureFlags.BlitDstBit) == 0)
+                    {
+                        throw new VulkanPlanPreconditionException(
+                            $"Strict Vulkan blit requires matching single-sample format, extent, and layer count with TransferSrc/TransferDst usage; " +
+                            $"source=format={resolvedSource.Format}, samples={resolvedSource.Samples}, extent={resolvedSource.Extent.Width}x{resolvedSource.Extent.Height}, layers={resolvedSource.LayerCount}, usage={resolvedSource.Usage}; " +
+                            $"destination=format={resolvedDestination.Format}, samples={resolvedDestination.Samples}, extent={resolvedDestination.Extent.Width}x{resolvedDestination.Extent.Height}, layers={resolvedDestination.LayerCount}, usage={resolvedDestination.Usage}.");
+                    }
+                }
 
                 uint commonLayerCount = Math.Min(resolvedSource.LayerCount, resolvedDestination.LayerCount);
                 if (commonLayerCount == 0)

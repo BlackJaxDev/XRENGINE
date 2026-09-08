@@ -1,6 +1,7 @@
 using System.Numerics;
 using Silk.NET.Vulkan;
 using XREngine.Rendering.Vulkan.RenderGraph;
+using XREngine.Rendering.Diagnostics;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -30,6 +31,7 @@ internal sealed partial class VulkanCommandRuntime
             closure.ViewIndex, payload.State.ViewCount, 0,
             (payload.Request.RequireNativeOutput ? 2u : 0u) |
             (payload.Request.EnableBuiltInAmbientOcclusion ? 4u : 0u) |
+            (payload.Request.EnableLightProbesAndIbl ? 8u : 0u) |
             (((uint)payload.Request.ShadingDebugView & 0xFFu) << 8), depthSlices,
             checked((uint)(closure.LightIndices.NativeSize / sizeof(uint))),
             payload.SceneState.Lights.Length / 128u,
@@ -40,8 +42,14 @@ internal sealed partial class VulkanCommandRuntime
         TransitionNativeInput(state.CommandBuffer, closure.Metadata, closure.ViewIndex);
         if (payload.Request.Stage == EAdvancedRenderStage.WorkClassification)
         {
-            FillNativeCounters(state.CommandBuffer, closure.ClassificationCounters);
-            FillNativeCounters(state.CommandBuffer, closure.KernelCounts);
+            // The shared compact tile list accumulates every eye. Only the
+            // first immutable view initializes it; later views append disjoint
+            // records carrying their own view ordinal.
+            if (closure.ViewIndex == 0u)
+            {
+                FillNativeCounters(state.CommandBuffer, closure.ClassificationCounters);
+                FillNativeCounters(state.CommandBuffer, closure.KernelCounts);
+            }
             RecordNativeDispatch(state.CommandBuffer, in payload, payload.NativeComputePipelines.Classify,
                 in push, tilesX, tilesY, 1, "Advanced.ClassifyTiles");
             EmitNativeBufferDependency(state.CommandBuffer, closure.KernelCounts,
@@ -55,6 +63,15 @@ internal sealed partial class VulkanCommandRuntime
             EmitNativeBufferDependency(state.CommandBuffer, closure.DispatchArguments,
                 AccessFlags.ShaderWriteBit, AccessFlags.IndirectCommandReadBit,
                 PipelineStageFlags.ComputeShaderBit, PipelineStageFlags.DrawIndirectBit);
+            if (closure.ViewIndex + 1u == payload.State.ViewCount)
+            {
+                VulkanFrozenBufferBarrier classificationCounters = closure.ClassificationCounters;
+                VulkanAdvancedVisibilityStageRequest request = payload.Request;
+                _ = AdvancedCounterDiagnosticCopy?.Invoke(
+                    state.CommandBuffer, in classificationCounters, in request,
+                    checked((int)request.BackendPackage.CanonicalFrame.FrameGeneration),
+                    uint.MaxValue, EGpuDiagnosticReadbackDecoder.AdvancedClassificationCounters);
+            }
             return info.OperationIndex;
         }
 
@@ -82,6 +99,12 @@ internal sealed partial class VulkanCommandRuntime
         EmitNativeBufferDependency(state.CommandBuffer, closure.LightIndices,
             AccessFlags.ShaderWriteBit, AccessFlags.ShaderReadBit,
             PipelineStageFlags.ComputeShaderBit, PipelineStageFlags.ComputeShaderBit);
+        EmitNativeBufferDependency(state.CommandBuffer, closure.FroxelDecalGrid,
+            AccessFlags.ShaderWriteBit, AccessFlags.ShaderReadBit,
+            PipelineStageFlags.ComputeShaderBit, PipelineStageFlags.ComputeShaderBit);
+        EmitNativeBufferDependency(state.CommandBuffer, closure.DecalIndices,
+            AccessFlags.ShaderWriteBit, AccessFlags.ShaderReadBit,
+            PipelineStageFlags.ComputeShaderBit, PipelineStageFlags.ComputeShaderBit);
         RecordNativeDispatch(state.CommandBuffer, in payload, payload.NativeComputePipelines.Background,
             in push, tilesX, tilesY, 1, "Advanced.Background");
         EmitMemoryBarrierMask(state.CommandBuffer, EMemoryBarrierMask.ShaderImageAccess);
@@ -104,6 +127,12 @@ internal sealed partial class VulkanCommandRuntime
         RecordNativeDispatch(state.CommandBuffer, in payload, shade,
             in push, tilesX, tilesY, 1, "Advanced.NativeOpaque.GpuOverflowRepair");
         EmitMemoryBarrierMask(state.CommandBuffer, EMemoryBarrierMask.ShaderImageAccess | EMemoryBarrierMask.TextureFetch);
+        VulkanFrozenBufferBarrier lightingCounters = closure.LightingCounters;
+        VulkanAdvancedVisibilityStageRequest lightingRequest = payload.Request;
+        _ = AdvancedCounterDiagnosticCopy?.Invoke(
+            state.CommandBuffer, in lightingCounters, in lightingRequest,
+            checked((int)lightingRequest.BackendPackage.CanonicalFrame.FrameGeneration),
+            closure.ViewIndex, EGpuDiagnosticReadbackDecoder.AdvancedLightingCounters);
         return info.OperationIndex;
     }
 

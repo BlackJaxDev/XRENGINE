@@ -20,6 +20,14 @@ VR can run in local, client, or server-oriented modes depending on whether track
 
 ## Testing
 
+The Unit Testing World supports `VR.Mode = "Emulated"` for desktop stereo
+rendering without a headset runtime. Its simulated eyes use a 64 mm baseline,
+adjusted by the existing avatar scale and IPD scalar. This mode is explicitly
+selected; it is not a fallback for a failed headset connection. With single-pass
+stereo, MCP texture captures select the shared viewport with `vr_eye="stereo"`
+and the left/right layer with `layer_index=0/1`. `get_render_state` accepts the
+same viewport selector.
+
 Always test on real hardware before trusting comfort, performance, tracking, or input behavior. Desktop preview can verify scene setup but cannot validate motion-to-photon latency or headset runtime behavior.
 
 ## Deeper Docs

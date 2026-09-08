@@ -1,7 +1,7 @@
 # Advanced Render Pipeline Resource/State Contract Slice - 2026-07-29
 
 Status: Complete
-TODO: [01 - Pipeline Identity And Frame Contract](../../todo/rendering/architectural-refactor/01-pipeline-identity-and-frame-contract-todo.md)
+TODO: [01 - Pipeline Identity And Frame Contract](../../todo/COMPLETED/01-pipeline-identity-and-frame-contract-todo.md)
 
 ## Outcome
 

@@ -14,6 +14,7 @@ namespace XREngine.Rendering
         private bool _multiSample;
         private XRTexture2D[] _textures = [];
         private bool _resizable = false;
+        private bool _copyGpuLayerSources;
         private ESizedInternalFormat _sizedInternalFormat = ESizedInternalFormat.Rgba8;
 
         public override Vector3 WidthHeightDepth => new(Width, Height, Depth);
@@ -58,6 +59,18 @@ namespace XREngine.Rendering
         {
             get => _textures;
             set => SetField(ref _textures, value);
+        }
+
+        /// <summary>
+        /// Assemble every layer and authored mip from completed live GPU textures
+        /// when pushing data. The caller must keep the source contents immutable
+        /// until the push completes. Missing GPU sources fail instead of uploading
+        /// stale CPU mip data. Leave false for CPU uploads and empty render targets.
+        /// </summary>
+        public bool CopyGpuLayerSources
+        {
+            get => _copyGpuLayerSources;
+            set => SetField(ref _copyGpuLayerSources, value);
         }
         public ESizedInternalFormat SizedInternalFormat
         {

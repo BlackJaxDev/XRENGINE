@@ -35,6 +35,13 @@ namespace XREngine.Rendering.Commands
         /// </summary>
         public void Initialize()
         {
+            if (_advancedScenePublisherDisposed)
+            {
+                _advancedScenePublisher = new AdvancedGpuScenePublisher();
+                _advancedScenePublisherDisposed = false;
+                _advancedGlobalResources = default;
+                Interlocked.Exchange(ref _advancedPublicationRequested, 0);
+            }
             GPUSceneLayoutContract.ValidateRuntimeLayout();
             UnsubscribeAllMeshletPayloadChanges();
 
@@ -117,6 +124,11 @@ namespace XREngine.Rendering.Commands
         /// </summary>
         public void Destroy()
         {
+            if (!_advancedScenePublisherDisposed)
+            {
+                _advancedScenePublisher.Dispose();
+                _advancedScenePublisherDisposed = true;
+            }
             UnsubscribeAllMeshletPayloadChanges();
 
             static void DestroyTierBuffers(AtlasTierState state)

@@ -14,8 +14,8 @@ struct XRAdvancedInstanceRecord
     XRAdvancedGpuHandle deformation;
     uint visibilityFlags;
     uint lodLevel;
-    uint viewMaskLow;
-    uint viewMaskHigh;
+    uint layerMask;
+    uint renderPassMask;
     uint currentFrameSlot;
     uint previousFrameSlot;
     uint reserved0;

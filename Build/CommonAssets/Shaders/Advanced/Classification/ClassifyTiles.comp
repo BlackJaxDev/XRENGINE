@@ -2,31 +2,40 @@
 #include "ClassificationInterface.glslinc"
 layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 #if defined(XR_ADV_VISIBILITY_ARRAY)
-XR_ADV_CLASSIFICATION_PASS_LAYOUT(0) uniform usampler2DArray VisibilityIdentity;
-XR_ADV_CLASSIFICATION_PASS_LAYOUT(1) uniform usampler2DArray VisibilityMetadata;
+XR_ADV_SHADING_LAYOUT(0) uniform usampler2DArray VisibilityIdentity;
+XR_ADV_SHADING_LAYOUT(1) uniform usampler2DArray VisibilityMetadata;
 #define XR_ADV_CLASSIFY_COORD(pixel) ivec3(pixel, u_Push.viewIndex)
 #else
-XR_ADV_CLASSIFICATION_PASS_LAYOUT(0) uniform usampler2D VisibilityIdentity;
-XR_ADV_CLASSIFICATION_PASS_LAYOUT(1) uniform usampler2D VisibilityMetadata;
+XR_ADV_SHADING_LAYOUT(0) uniform usampler2D VisibilityIdentity;
+XR_ADV_SHADING_LAYOUT(1) uniform usampler2D VisibilityMetadata;
 #define XR_ADV_CLASSIFY_COORD(pixel) ivec2(pixel)
 #endif
 shared uint activePixels;
 shared uint backgroundPixels;
 shared uint kernelHistogram[128];
+shared uint kernelFlags[128];
 
 void main()
 {
     uint localIndex = gl_LocalInvocationIndex;
     if (localIndex == 0u) { activePixels = 0u; backgroundPixels = 0u; }
-    if (localIndex < XR_ADV_MAX_SHADING_KERNELS) kernelHistogram[localIndex] = 0u;
+    if (localIndex < XR_ADV_MAX_SHADING_KERNELS)
+    {
+        kernelHistogram[localIndex] = 0u;
+        kernelFlags[localIndex] = 0u;
+    }
     barrier();
     uvec2 pixel = gl_WorkGroupID.xy * 16u + gl_LocalInvocationID.xy;
+    bool isBackground = false;
+    bool isActive = false;
+    uint pixelKernel = 0u;
+    uint pixelKernelFlags = 0u;
     if (all(lessThan(pixel, u_Push.screenExtent)))
     {
         uvec2 identity = texelFetch(VisibilityIdentity, XR_ADV_CLASSIFY_COORD(pixel), 0).rg;
         uint metadata = texelFetch(VisibilityMetadata, XR_ADV_CLASSIFY_COORD(pixel), 0).r;
         if (identity.x == 0u || identity.x == XR_ADV_VIS_INVALID)
-            atomicAdd(backgroundPixels, 1u);
+            isBackground = true;
         else
         {
             uint materialDense, kernelDense;
@@ -40,11 +49,49 @@ void main()
                 atomicOr(XR_ADV_ClassificationCounters.counters.overflowFlags, XR_ADV_CLASSIFICATION_OVERFLOW_KERNELS);
             else
             {
-                atomicAdd(activePixels, 1u);
-                atomicAdd(kernelHistogram[kernelDense], 1u);
+                isActive = true;
+                pixelKernel = kernelDense;
+                if ((XR_ADV_LoadShadingKernel(kernelDense).requiredAttributeMask &
+                    XR_ADV_KERNEL_REQUIRED_ANALYTICAL_DERIVATIVES) != 0u)
+                    pixelKernelFlags = XR_ADV_KERNEL_TILE_ANALYTICAL_DERIVATIVES;
             }
         }
     }
+#if defined(XR_ADV_CLASSIFICATION_SUBGROUP_BALLOT)
+    // All lanes, including out-of-extent lanes, reach every ballot. Exclusive
+    // scans elect one contributing lane without assuming a subgroup width or
+    // full subgroup occupancy. The shared histogram combines subgroup totals.
+    uvec4 backgroundMask = subgroupBallot(isBackground);
+    uint backgroundCount = subgroupBallotBitCount(backgroundMask);
+    uint backgroundRank = subgroupBallotExclusiveBitCount(backgroundMask);
+    if (isBackground && backgroundRank == 0u)
+        atomicAdd(backgroundPixels, backgroundCount);
+    uvec4 activeMask = subgroupBallot(isActive);
+    uint activeCount = subgroupBallotBitCount(activeMask);
+    uint activeRank = subgroupBallotExclusiveBitCount(activeMask);
+    if (isActive && activeRank == 0u)
+        atomicAdd(activePixels, activeCount);
+    for (uint k = 0u; k < XR_ADV_MAX_SHADING_KERNELS; ++k)
+    {
+        bool matches = isActive && pixelKernel == k;
+        uvec4 members = subgroupBallot(matches);
+        uint count = subgroupBallotBitCount(members);
+        uint rank = subgroupBallotExclusiveBitCount(members);
+        if (matches && rank == 0u)
+        {
+            atomicAdd(kernelHistogram[k], count);
+            atomicOr(kernelFlags[k], pixelKernelFlags);
+        }
+    }
+#else
+    if (isBackground) atomicAdd(backgroundPixels, 1u);
+    if (isActive)
+    {
+        atomicAdd(activePixels, 1u);
+        atomicAdd(kernelHistogram[pixelKernel], 1u);
+        atomicOr(kernelFlags[pixelKernel], pixelKernelFlags);
+    }
+#endif
     barrier();
     if (localIndex != 0u) return;
     atomicAdd(XR_ADV_ClassificationCounters.counters.backgroundPixelCount, backgroundPixels);
@@ -67,16 +114,27 @@ void main()
     {
         if (kernelHistogram[k] == 0u) continue;
         uint rangeIndex = atomicAdd(XR_ADV_KernelCounts.counts[k], 1u);
-        uint destination = k * tileCapacity + rangeIndex;
         atomicAdd(XR_ADV_ClassificationCounters.counters.kernelTileCount, 1u);
-        if (rangeIndex >= tileCapacity || destination >= min(u_Push.maxKernelTiles, uint(XR_ADV_KernelTiles.records.length())))
+        uint capacity = min(u_Push.maxKernelTiles, uint(XR_ADV_KernelTiles.records.length()));
+        // Bound multiplication before evaluating it, including tiny pressure
+        // buffers. Later bounds checks cannot detect wrapped uint arithmetic.
+        if (tileCapacity == 0u || k > capacity / tileCapacity)
         {
             atomicOr(XR_ADV_ClassificationCounters.counters.overflowFlags, XR_ADV_CLASSIFICATION_OVERFLOW_MEMBERSHIPS);
             continue;
         }
+        uint rangeBase = k * tileCapacity;
+        if (rangeIndex >= tileCapacity || rangeIndex >= capacity - rangeBase)
+        {
+            atomicOr(XR_ADV_ClassificationCounters.counters.overflowFlags, XR_ADV_CLASSIFICATION_OVERFLOW_MEMBERSHIPS);
+            continue;
+        }
+        uint destination = rangeBase + rangeIndex;
         // The dense kernel owns its layout, coverage and derivative contract;
         // material rows remain data and the tile retains its exact view index.
+        uint flags = kernelHistogram[k] == activePixels ? XR_ADV_KERNEL_TILE_FULL : XR_ADV_KERNEL_TILE_MIXED;
+        flags |= kernelFlags[k];
         XR_ADV_KernelTiles.records[destination] = XRAdvancedKernelTile(
-            tileIndex, k, kernelHistogram[k], kernelHistogram[k] == activePixels ? 1u : 2u);
+            tileIndex, k, kernelHistogram[k], flags);
     }
 }

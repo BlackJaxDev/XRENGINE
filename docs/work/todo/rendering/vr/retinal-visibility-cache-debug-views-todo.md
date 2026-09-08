@@ -11,7 +11,7 @@ Related docs:
 - [OpenXR VR Rendering](../../../../architecture/rendering/openxr-vr-rendering.md)
 - [OpenXR Future Work TODO](openxr-future-work-todo.md)
 - [VR Rendering Performance Contract TODO](../optimization/vr-rendering-performance-contract-todo.md)
-- [Visibility Buffer Rendering TODO](../optimization/visibility-buffer-rendering-todo.md)
+- [Visibility Buffer Rendering TODO](../vulkan-xr-and-advanced-rendering-todo.md#phase-7)
 - [Vulkan Manual Validation Guide](../../vulkan.md)
 
 ## Goal

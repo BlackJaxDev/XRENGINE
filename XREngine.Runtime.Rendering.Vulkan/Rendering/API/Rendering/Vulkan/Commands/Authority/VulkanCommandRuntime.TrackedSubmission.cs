@@ -657,6 +657,7 @@ internal sealed partial class VulkanCommandRuntime
                 timelineValue,
                 unchecked((ulong)fence.Handle));
             tracker.LifetimeSubmissions.Add(submission);
+            RecordAdvancedVisibilitySubmissionWatermarksNoLock(submitInfo, domain, sequence);
 
             for (int commandIndex = 0; commandIndex < receipt.Count; ++commandIndex)
             {
@@ -1556,6 +1557,7 @@ internal sealed partial class VulkanCommandRuntime
                 timelineValue,
                 unchecked((ulong)fence.Handle));
             tracker.LifetimeSubmissions.Add(submission);
+            RecordAdvancedVisibilitySubmissionWatermarksNoLock(submitInfo, domain, sequence);
 
             for (int commandIndex = 0; commandIndex < submitInfo.CommandBufferCount; commandIndex++)
             {

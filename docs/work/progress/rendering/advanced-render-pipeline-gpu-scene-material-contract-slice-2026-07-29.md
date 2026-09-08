@@ -1,7 +1,7 @@
 # Advanced Render Pipeline GPU Scene/Material Contract Slice - 2026-07-29
 
 Status: Complete
-TODO: [02 - GPU Scene And Material Data Contract](../../todo/rendering/architectural-refactor/02-gpu-scene-and-material-data-contract-todo.md)
+TODO: [02 - GPU Scene And Material Data Contract](../../todo/COMPLETED/02-gpu-scene-and-material-data-contract-todo.md)
 
 ## Outcome
 

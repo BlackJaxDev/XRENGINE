@@ -392,8 +392,14 @@ namespace XREngine.Rendering.Pipelines.Commands
         {
             using var sample = RuntimeRenderingHostServices.Profiling.StartProfileScope("ViewportRenderCommandContainer.Execute");
             var instance = ViewportRenderCommand.ActivePipelineInstance;
-            if (instance is null || AbstractRenderer.Current?.IsDeviceLost == true)
+            if (instance is null)
                 return;
+            if (AbstractRenderer.Current?.IsDeviceLost == true)
+            {
+                instance.RenderState.RejectRequiredOffscreenAuthoring(
+                    "The renderer device was lost before the command container executed.");
+                return;
+            }
 
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope("ViewportRenderCommandContainer.EnsureResourcesAllocated"))
                 EnsureResourcesAllocated(instance);
@@ -401,7 +407,11 @@ namespace XREngine.Rendering.Pipelines.Commands
             for (int i = 0; i < _commands.Count; i++)
             {
                 if (AbstractRenderer.Current?.IsDeviceLost == true)
+                {
+                    instance.RenderState.RejectRequiredOffscreenAuthoring(
+                        "The renderer device was lost before the required command cohort completed.");
                     break;
+                }
 
                 try
                 {
@@ -409,6 +419,8 @@ namespace XREngine.Rendering.Pipelines.Commands
                 }
                 catch (Exception ex)
                 {
+                    instance.RenderState.RejectRequiredOffscreenAuthoring(
+                        $"Command [{i}] {_commands[i].GetType().Name} threw {ex.GetType().Name}: {ex.Message}");
                     // Device loss is already diagnosed by the backend. Continuing the
                     // pipeline only turns the remaining commands into redundant
                     // descriptor/resource exceptions and delays renderer recovery.

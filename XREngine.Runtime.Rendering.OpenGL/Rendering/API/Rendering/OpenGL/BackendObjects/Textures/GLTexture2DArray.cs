@@ -340,6 +340,8 @@ namespace XREngine.Rendering.OpenGL
 
         public override void PushData()
         {
+            if (Data.CopyGpuLayerSources && (Data.MultiSample || Data.AutoGenerateMipmaps || Data.Textures.Length == 0))
+                throw new InvalidOperationException("GPU array copies require non-empty, single-sample sources and authored mips.");
             if (IsPushing)
                 return;
             try
@@ -402,6 +404,8 @@ namespace XREngine.Rendering.OpenGL
                 var desiredInternalFormat = Data.SizedInternalFormat;
                 if (firstSource is not null && desiredInternalFormat != firstSource.SizedInternalFormat)
                 {
+                    if (Data.CopyGpuLayerSources)
+                        throw new InvalidOperationException("GPU texture array source and destination formats must match.");
                     Debug.OpenGL($"Adjusting texture array '{Data.Name}' internal format from {desiredInternalFormat} to {firstSource.SizedInternalFormat} to match source textures.");
                     desiredInternalFormat = firstSource.SizedInternalFormat;
                     Data.SizedInternalFormat = desiredInternalFormat;
@@ -477,12 +481,20 @@ namespace XREngine.Rendering.OpenGL
                 {
                     var tex = Data.Textures[layer];
                     if (tex is null)
+                    {
+                        if (Data.CopyGpuLayerSources)
+                            throw new InvalidOperationException($"GPU texture array layer {layer} has no source.");
                         continue;
+                    }
 
                     // Get the GL object for the source texture so we can copy from GPU to GPU
                     var glSourceTex = Renderer.GetOrCreateAPIRenderObject(tex) as GLTexture2D;
                     if (glSourceTex is null)
+                    {
+                        if (Data.CopyGpuLayerSources)
+                            throw new InvalidOperationException($"GPU texture array layer {layer} has no OpenGL source.");
                         continue;
+                    }
 
                     // Make sure source texture is valid on the GPU
                     glSourceTex.Bind();
@@ -492,24 +504,32 @@ namespace XREngine.Rendering.OpenGL
 
                     if (!Api.IsTexture(srcId))
                     {
+                        if (Data.CopyGpuLayerSources)
+                            throw new InvalidOperationException($"GPU texture array layer {layer} has no live image.");
                         Debug.OpenGLWarning($"Skipping copy into texture array layer {layer} because source texture id {srcId} is not valid.");
                         continue;
                     }
 
                     if (!Api.IsTexture(BindingId))
                     {
+                        if (Data.CopyGpuLayerSources)
+                            throw new InvalidOperationException("GPU texture array destination has no live image.");
                         Debug.OpenGLWarning($"Skipping copy into texture array because destination texture id {BindingId} is not valid.");
                         break;
                     }
 
                     if (tex.SizedInternalFormat != Data.SizedInternalFormat)
                     {
+                        if (Data.CopyGpuLayerSources)
+                            throw new InvalidOperationException($"GPU texture array layer {layer} has an incompatible format.");
                         Debug.OpenGLWarning($"Skipping copy into texture array layer {layer} because source internal format {tex.SizedInternalFormat} != target {Data.SizedInternalFormat}.");
                         continue;
                     }
 
                     if (tex.Width != targetWidth || tex.Height != targetHeight)
                     {
+                        if (Data.CopyGpuLayerSources)
+                            throw new InvalidOperationException($"GPU texture array layer {layer} has an incompatible extent.");
                         Debug.OpenGLWarning($"Skipping copy into texture array layer {layer} because source size {tex.Width}x{tex.Height} != target {targetWidth}x{targetHeight}.");
                         continue;
                     }
@@ -521,7 +541,7 @@ namespace XREngine.Rendering.OpenGL
                     int numMips = Math.Max(1, tex.SmallestMipmapLevel + 1);
                     numMips = Math.Min(numMips, (int)targetLevels);
                     int copiedMipCount = 0;
-                    if (tex.Mipmaps is null || tex.Mipmaps.Length < (int)targetLevels)
+                    if (!Data.CopyGpuLayerSources && (tex.Mipmaps is null || tex.Mipmaps.Length < (int)targetLevels))
                         copiedEveryAllocatedMip = false;
 
                     for (int mip = 0; mip < numMips; ++mip)
@@ -546,7 +566,11 @@ namespace XREngine.Rendering.OpenGL
                     }
 
                     if (copiedMipCount < (int)targetLevels)
+                    {
+                        if (Data.CopyGpuLayerSources)
+                            throw new InvalidOperationException($"GPU texture array layer {layer} has an incomplete authored mip chain.");
                         copiedEveryAllocatedMip = false;
+                    }
                 }
 
                 int minLOD = -1000;

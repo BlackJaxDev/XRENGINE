@@ -1,8 +1,12 @@
 # Engine Rendering Optimization Roadmap
 
-Last Updated: 2026-08-01
+Last Updated: 2026-09-06
 Owner: Rendering
-Status: Active; Workstreams 03-05 Pre-06 Gate Open, Workstream 06 Blocked
+Status: Broader optimization index; Vulkan execution follows the current master
+
+## 2026-09-06 ownership audit
+
+The [master](../vulkan-core-frame-loop-and-resident-rendering-master-todo.md) now owns the integrated Vulkan sequence, with feature-local work in the [XR/Advanced checklist](../vulkan-xr-and-advanced-rendering-todo.md). Workstream 06 Forward+ implementation and later resident/recording/lifecycle repairs are recorded in the [completed foundation record](../../../progress/rendering/vulkan-phases-0-5-completed.md); the older “06 blocked/not implemented” sequence below is historical. The combined 03–05 validation document remains a detailed acceptance matrix, not a reason to repeat completed implementation. Backend-neutral children and the 5.00 ms desktop / 8.33 ms RVC local contracts remain active.
 
 ## Purpose
 
@@ -44,7 +48,7 @@ smokes remain mandatory during each workstream.
 
 ## Active Vulkan Command-Execution Architecture Work
 
-The [Vulkan Command Recording Architecture Optimization TODO](vulkan-command-recording-architecture-optimization-todo.md)
+The [Vulkan Command Recording Architecture Optimization TODO](../vulkan-core-frame-loop-and-resident-rendering-master-todo.md#recovered-acceptance-contracts-and-specialized-child-ownership)
 is the active implementation tracker for the reopened workstream-04 binding
 and data handoff and the follow-on stable command-execution architecture. It
 extends workstream 05's completed worker mechanics; it does not replace or

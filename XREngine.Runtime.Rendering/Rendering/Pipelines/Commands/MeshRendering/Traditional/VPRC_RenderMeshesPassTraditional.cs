@@ -104,7 +104,12 @@ internal static class VPRC_RenderMeshesPassTraditional
             ?? activeInstance.RenderState.RenderingCamera
             ?? activeInstance.LastSceneCamera
             ?? activeInstance.LastRenderingCamera;
-        activeInstance.ActiveMeshRenderCommands.RenderCPU(command.RenderPass, false, camera);
+        activeInstance.ActiveMeshRenderCommands.RenderCPU(
+            command.RenderPass,
+            false,
+            camera,
+            enforceAdvancedLatePassEligibility:
+                command.EnforceAdvancedLatePassEligibility);
     }
 
     private static void WarnMissingPipeline(string path, int renderPass)

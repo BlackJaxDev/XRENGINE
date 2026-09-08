@@ -359,6 +359,20 @@ namespace XREngine.Rendering.Vulkan
                 context);
             recordingState.SwapchainWriteCount++;
             recordingState.ActualSwapchainWriteCount++;
+            if (recordingState.FramePlan is { } framePlan)
+            {
+                recordingState.AcceptedFramePlan?
+                    .MarkFreshEmptyFrameViewHistoryOutputsRecorded(framePlan);
+                for (int index = 0;
+                     index < framePlan.FreshEmptyTerminalOutputCount;
+                     index++)
+                {
+                    recordingState.ArtifactOwner?.RecordTerminalOutput(
+                        framePlan,
+                        framePlan.GetFreshEmptyTerminalOutputIndex(index),
+                        actualTarget: null);
+                }
+            }
             recordingState.Metrics.SwapchainClearWrites++;
             recordingState.Metrics.ForcedDiagnosticSwapchainWriters++;
             MarkSwapchainStaticWriter(
@@ -374,6 +388,135 @@ namespace XREngine.Rendering.Vulkan
                 "[Vulkan] Published a fresh full-surface clear for empty PresentNow frame {0} on image {1}.",
                 recordingState.Policy.SourceFrameId,
                 recordingState.ImageIndex);
+        }
+
+        private static void MarkActualTerminalOutput(
+            scoped ref PrimaryCommandBufferRecordingState recordingState,
+            in FrameOpContext context,
+            XRFrameBuffer? actualTarget)
+        {
+            FramePlan? framePlan = recordingState.FramePlan;
+            if (framePlan is null ||
+                !framePlan.TryResolveExecutableOutputIndex(
+                    in context,
+                    out int outputIndex) ||
+                !ReferenceEquals(actualTarget, context.OutputFrameBuffer))
+            {
+                return;
+            }
+
+            recordingState.AcceptedFramePlan?.MarkFrameViewHistoryOutputRecorded(
+                outputIndex,
+                context.OutputHistorySequenceId,
+                context.OutputHistorySourceFrame,
+                actualTarget);
+            recordingState.AcceptedFramePlan?.MarkOutputCompletionTerminalRecorded(
+                outputIndex,
+                context.OutputCompletionReceiptId,
+                context.OutputCompletionSourceFrame,
+                actualTarget,
+                ERenderOutputWriteAspect.Color);
+            recordingState.ArtifactOwner?.RecordTerminalOutput(
+                framePlan,
+                outputIndex,
+                actualTarget);
+        }
+
+        private static void MarkOutputCompletionTerminalOutput(
+            scoped ref PrimaryCommandBufferRecordingState recordingState,
+            in FrameOpContext context,
+            XRFrameBuffer? actualTarget,
+            ERenderOutputWriteAspect actualWriteAspect)
+        {
+            FramePlan? framePlan = recordingState.FramePlan;
+            if (framePlan is null ||
+                !framePlan.TryResolveExecutableOutputIndex(
+                    in context,
+                    out int outputIndex) ||
+                !ReferenceEquals(actualTarget, context.OutputFrameBuffer))
+                return;
+
+            recordingState.AcceptedFramePlan?.MarkOutputCompletionTerminalRecorded(
+                outputIndex,
+                context.OutputCompletionReceiptId,
+                context.OutputCompletionSourceFrame,
+                actualTarget,
+                actualWriteAspect);
+        }
+
+        private void FinalizeOutputCompletionReceipts(
+            scoped ref PrimaryCommandBufferRecordingState recordingState)
+        {
+            VulkanAcceptedFramePlan? acceptedPlan =
+                recordingState.AcceptedFramePlan;
+            if (acceptedPlan is null || acceptedPlan.OutputCompletionCount == 0)
+                return;
+
+            for (int receiptIndex = 0;
+                 receiptIndex < acceptedPlan.OutputCompletionCount;
+                 receiptIndex++)
+            {
+                if (!acceptedPlan.TryGetOutputCompletionRecordingState(
+                        receiptIndex,
+                        out RenderOutputCompletionBackendReservation receipt,
+                        out bool bound,
+                        out bool terminalAttested) ||
+                    receipt.Fence is not VulkanTimelineGpuFence fence)
+                    throw new VulkanPlanPreconditionException(
+                        "An accepted output-completion receipt lost its frozen fence ownership.");
+
+                bool hasRequiredOperation = false;
+                bool complete = bound && terminalAttested;
+                int firstMissingOperation = -1;
+                for (int operationIndex = 0;
+                     operationIndex < recordingState.Ops.Length;
+                     operationIndex++)
+                {
+                    ref readonly FrameOpContext context =
+                        ref recordingState.Ops.GetContext(operationIndex);
+                    if (context.OutputCompletionReceiptId != receipt.ReceiptId)
+                        continue;
+                    hasRequiredOperation = true;
+                    int sourceIndex =
+                        recordingState.Ops.GetHeader(operationIndex).OriginalIndex;
+                    if ((uint)sourceIndex >=
+                            (uint)recordingState.RequiredProducerRecordingOutcomesBySourceIndex.Length ||
+                        recordingState.RequiredProducerRecordingOutcomesBySourceIndex[sourceIndex] !=
+                            (RequiredProducerOperationBit | RequiredProducerRecordedBit))
+                    {
+                        complete = false;
+                        if (firstMissingOperation < 0)
+                            firstMissingOperation = operationIndex;
+                    }
+                }
+
+                if (!hasRequiredOperation || !complete)
+                {
+                    fence.Fail();
+                    throw new VulkanPlanPreconditionException(
+                        $"Output-completion receipt {receipt.ReceiptId} did not record its complete exact producer cohort and terminal output. Bound={bound}, terminal={terminalAttested}, hasOperations={hasRequiredOperation}, firstMissingOperation={firstMissingOperation}.");
+                }
+
+                RegisterSubmissionMarker(recordingState.CommandBuffer, fence);
+                recordingState.FrameOpsRequireRerecordLocal = true;
+            }
+        }
+
+        private static void MarkActualTerminalOutputRange(
+            scoped ref PrimaryCommandBufferRecordingState recordingState,
+            int firstOperationIndex,
+            int operationCount)
+        {
+            for (int index = 0; index < operationCount; index++)
+            {
+                int operationIndex = firstOperationIndex + index;
+                ref readonly FrameOpContext context =
+                    ref recordingState.Ops.GetContext(operationIndex);
+                MarkActualTerminalOutput(
+                    ref recordingState,
+                    in context,
+                    recordingState.Ops.GetTarget(operationIndex));
+            }
         }
 
         private bool EndPrimaryCommandBuffer(

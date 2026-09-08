@@ -93,7 +93,8 @@ public sealed class VPRC_FXAA : ViewportRenderCommand
             }
         };
 
-        _quad = new XRQuadFrameBuffer(_material);
+        _quad = new XRQuadFrameBuffer(_material, useMultiview: Stereo &&
+            instance.Pipeline is IAdvancedRenderStageFamilyHost);
         _quad.FullScreenMesh.BindingPublishers.Add(
             new FxaaBindingPublisher(this));
     }

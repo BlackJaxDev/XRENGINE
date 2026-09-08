@@ -1,0 +1,50 @@
+#version 450
+
+layout(push_constant, std430) uniform XRAdvancedStereoPreparationPush
+{
+    uint viewCount;
+    uint payloadCapacity;
+    uint late;
+    uint reserved;
+} XR_ADV_StereoPush;
+#define XR_ADV_VISIBILITY_COUNTER_INDEX 0u
+#include "../Visibility/VisibilityInterface.glslinc"
+
+layout(std430, binding = 75) writeonly buffer StereoArguments { uint words[]; } XR_ADV_StereoArguments;
+layout(std430, binding = 76) buffer StereoRangeCounts { uint counts[]; } XR_ADV_StereoRangeCounts;
+layout(std430, binding = 77) writeonly buffer StereoViewMasks { uint masks[]; } XR_ADV_StereoViewMasks;
+layout(local_size_x = 256) in;
+
+void main()
+{
+    uint payloadIndex = gl_GlobalInvocationID.x;
+    if (payloadIndex >= XR_ADV_StereoPush.payloadCapacity) return;
+    uint viewMask = 0u;
+    uint requiredFlag = XR_ADV_StereoPush.late != 0u ? 1u << 7u : 1u << 5u;
+    // The union is used only for submission. The mask retains each eye's own
+    // culling result so broadcasting a draw cannot invent visibility in an eye.
+    for (uint view = 0u; view < XR_ADV_StereoPush.viewCount; view++)
+    {
+        uint stateWord = (view * XR_ADV_StereoPush.payloadCapacity + payloadIndex) * 8u;
+        if ((XR_ADV_VisibilityPersistentState.records[stateWord + 7u] & requiredFlag) != 0u)
+            viewMask |= 1u << view;
+    }
+    XR_ADV_StereoViewMasks.masks[payloadIndex] = viewMask;
+    if (viewMask == 0u || XR_ADV_VisibilityProducers.records[payloadIndex] != XR_ADV_VIS_PRODUCER_INDIRECT_INDEXED)
+        return;
+    uint range = XR_ADV_VisibilityRangeIndices.records[payloadIndex];
+    uint rangeCount = uint(XR_ADV_VisibilityRangeOffsets.records.length());
+    if (range >= rangeCount) return;
+    uint begin = XR_ADV_VisibilityRangeOffsets.records[range];
+    uint end = range + 1u < rangeCount ? XR_ADV_VisibilityRangeOffsets.records[range + 1u] : XR_ADV_StereoPush.payloadCapacity;
+    uint local = atomicAdd(XR_ADV_StereoRangeCounts.counts[range], 1u);
+    // CPU admission proves that each payload belongs to exactly one range.
+    if (begin + local >= end) return;
+    XRAdvancedVisibilityPayload payload = XR_ADV_VisibilityPayloads.records[payloadIndex];
+    uint argument = (begin + local) * 5u;
+    XR_ADV_StereoArguments.words[argument] = payload.indexCount;
+    XR_ADV_StereoArguments.words[argument + 1u] = max(payload.instanceCount, 1u);
+    XR_ADV_StereoArguments.words[argument + 2u] = payload.firstIndex;
+    XR_ADV_StereoArguments.words[argument + 3u] = payload.vertexOffset;
+    XR_ADV_StereoArguments.words[argument + 4u] = payloadIndex;
+}

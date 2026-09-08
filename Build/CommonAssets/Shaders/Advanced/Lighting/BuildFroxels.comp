@@ -36,6 +36,51 @@ uint allocateIndices(uint count, uint capacity)
     }
 }
 
+bool intersectsDecalTile(XRAdvancedDecalRecord decal, XRAdvancedViewRecord view, uvec3 tile,
+    float sliceMin, float sliceMax)
+{
+    if ((decal.flags & 1u) == 0u) return false;
+    bool affectsView = (decal.viewMaskLo | decal.viewMaskHi) == 0u ||
+        (u_Push.viewIndex < 32u ? (decal.viewMaskLo & (1u << u_Push.viewIndex)) != 0u :
+            (u_Push.viewIndex < 64u && (decal.viewMaskHi & (1u << (u_Push.viewIndex - 32u))) != 0u));
+    if (!affectsView) return false;
+
+    mat4 decalToWorld = inverse(decal.worldToDecal);
+    vec4 center = XR_ADV_TransformRowVector(vec4(0.0, 0.0, 0.0, 1.0), decalToWorld);
+    if (abs(center.w) < 0.00001) return false;
+    center /= center.w;
+    vec3 extents = max(decal.halfExtentsAndFade.xyz, vec3(0.0));
+    // A transformed OBB is conservatively culled as the sphere enclosing its
+    // transformed axis extents. The material pass still performs the exact OBB test.
+    float radius = length(XR_ADV_TransformRowVector(vec4(extents.x, 0.0, 0.0, 0.0), decalToWorld).xyz) +
+        length(XR_ADV_TransformRowVector(vec4(0.0, extents.y, 0.0, 0.0), decalToWorld).xyz) +
+        length(XR_ADV_TransformRowVector(vec4(0.0, 0.0, extents.z, 0.0), decalToWorld).xyz);
+    if (isinf(radius) || isnan(radius)) return false;
+    vec3 viewPosition = XR_ADV_TransformRowVector(center, view.view).xyz;
+    float depth = -viewPosition.z;
+    if (depth + radius < sliceMin || depth - radius > sliceMax) return false;
+    vec2 ndcMin = (vec2(tile.xy * 16u) / vec2(u_Push.screenExtent)) * 2.0 - 1.0;
+    vec2 ndcMax = (vec2(min((tile.xy + 1u) * 16u, u_Push.screenExtent)) / vec2(u_Push.screenExtent)) * 2.0 - 1.0;
+    mat4 m = view.viewProjectionJittered;
+    vec4 planes[4] = vec4[4](m[0] - ndcMin.x * m[3], ndcMax.x * m[3] - m[0],
+        m[1] - ndcMin.y * m[3], ndcMax.y * m[3] - m[1]);
+    for (uint p = 0u; p < 4u; ++p)
+        if (dot(center, planes[p]) < -radius * length(planes[p].xyz)) return false;
+    return true;
+}
+
+uint allocateDecalIndices(uint count, uint capacity)
+{
+    uint observed = atomicAdd(XR_ADV_LightingCounters.nextDecalIndex, 0u);
+    for (;;)
+    {
+        if (observed > capacity || count > capacity - observed) return XR_ADV_FROXEL_OVERFLOW;
+        uint prior = atomicCompSwap(XR_ADV_LightingCounters.nextDecalIndex, observed, observed + count);
+        if (prior == observed) return observed;
+        observed = prior;
+    }
+}
+
 void main()
 {
     uvec3 tile = gl_GlobalInvocationID;
@@ -68,15 +113,38 @@ void main()
         // froxel. It neither drops lighting nor requests a current-frame readback.
         XR_ADV_FroxelGrid.records[index] = XRAdvancedFroxelRecord(0u, XR_ADV_FROXEL_OVERFLOW, 0u, 0u);
         atomicAdd(XR_ADV_LightingCounters.overflowCount, 1u);
+    }
+    else
+    {
+        uint pointWrite = base, spotWrite = base + points;
+        for (uint i = 0u; i < lightCount; ++i)
+        {
+            XRAdvancedLightRecord light = XR_ADV_LoadLight(i);
+            if (!intersectsTile(light, view, tile, sliceMin, sliceMax)) continue;
+            if (light.type == 1u) XR_ADV_LightIndexList.indices[pointWrite++] = i;
+            else XR_ADV_LightIndexList.indices[spotWrite++] = i;
+        }
+        XR_ADV_FroxelGrid.records[index] = XRAdvancedFroxelRecord(base, points, base + points, spots);
+    }
+    uint decalCount = 0u;
+    for (uint i = 0u; i < uint(XR_ADV_Decals.records.length()); ++i)
+    {
+        XRAdvancedDecalRecord decal = XR_ADV_Decals.records[i];
+        if (intersectsDecalTile(decal, view, tile, sliceMin, sliceMax)) ++decalCount;
+    }
+    uint decalCapacity = min(uint(XR_ADV_DecalIndexList.indices.length()), 65536u);
+    uint decalBase = decalCount > 65535u ? XR_ADV_FROXEL_OVERFLOW : allocateDecalIndices(decalCount, decalCapacity);
+    if (decalBase == XR_ADV_FROXEL_OVERFLOW || decalBase > 65535u)
+    {
+        XR_ADV_FroxelDecalGrid.records[index] = XRAdvancedFroxelDecalRecord(0u, XR_ADV_DECAL_FROXEL_OVERFLOW);
+        atomicAdd(XR_ADV_LightingCounters.decalOverflowCount, 1u);
         return;
     }
-    uint pointWrite = base, spotWrite = base + points;
-    for (uint i = 0u; i < lightCount; ++i)
+    uint decalWrite = decalBase;
+    for (uint i = 0u; i < uint(XR_ADV_Decals.records.length()); ++i)
     {
-        XRAdvancedLightRecord light = XR_ADV_LoadLight(i);
-        if (!intersectsTile(light, view, tile, sliceMin, sliceMax)) continue;
-        if (light.type == 1u) XR_ADV_LightIndexList.indices[pointWrite++] = i;
-        else XR_ADV_LightIndexList.indices[spotWrite++] = i;
+        XRAdvancedDecalRecord decal = XR_ADV_Decals.records[i];
+        if (intersectsDecalTile(decal, view, tile, sliceMin, sliceMax)) XR_ADV_DecalIndexList.indices[decalWrite++] = i;
     }
-    XR_ADV_FroxelGrid.records[index] = XRAdvancedFroxelRecord(base, points, base + points, spots);
+    XR_ADV_FroxelDecalGrid.records[index] = XRAdvancedFroxelDecalRecord(decalBase | (decalCount << 16u), 0u);
 }

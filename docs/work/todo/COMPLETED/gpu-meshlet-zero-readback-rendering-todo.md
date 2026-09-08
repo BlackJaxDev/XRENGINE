@@ -2,7 +2,7 @@
 
 Last Updated: 2026-08-22
 Owner: Rendering
-Status: Historical Phase 0-9 source-contract tracker complete; the later meshlet import/runtime production gaps are also closed by the completed [Meshlet Import Cooking And Production Readiness TODO](../rendering/gpu/meshlet-import-cooking-and-production-readiness-todo.md). Broader cross-mode stress and promotion remain under [Production GPU-Driven Rendering Roadmap](../rendering/gpu/production-rendering-pipeline-roadmap.md) Phase H.
+Status: Historical Phase 0-9 source-contract tracker complete; the later meshlet import/runtime production gaps are also closed by the completed [Meshlet Import Cooking And Production Readiness TODO](meshlet-import-cooking-and-production-readiness-todo.md). Broader cross-mode stress and promotion remain under [Production GPU-Driven Rendering Roadmap](../rendering/gpu/production-rendering-pipeline-roadmap.md) Phase H.
 Target Branch: `rendering-gpu-meshlet-zero-readback`
 
 Source design:
@@ -11,7 +11,7 @@ Source design:
 
 Related docs:
 
-- [Meshlet import cooking and production readiness TODO](../rendering/gpu/meshlet-import-cooking-and-production-readiness-todo.md)
+- [Meshlet import cooking and production readiness TODO](meshlet-import-cooking-and-production-readiness-todo.md)
 - [Production GPU-driven rendering roadmap](../rendering/gpu/production-rendering-pipeline-roadmap.md)
 - [Zero-readback GPU-driven rendering plan](../../design/rendering/zero-readback-gpu-driven-rendering-plan.md)
 - [Mesh submission strategies](../../../architecture/rendering/mesh-submission-strategies.md)
@@ -46,7 +46,7 @@ material-table path also remains limited to opaque deferred and rejects current
 skinned and override/depth-normal cases.
 
 The focused
-[Meshlet Import Cooking And Production Readiness TODO](../rendering/gpu/meshlet-import-cooking-and-production-readiness-todo.md)
+[Meshlet Import Cooking And Production Readiness TODO](meshlet-import-cooking-and-production-readiness-todo.md)
 is the implementation authority for those reopened gaps. Checked items below
 remain a historical record of the branch's source-contract work and must not be
 used as evidence that first-import persistence, zero render-path cooking, pass

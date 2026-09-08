@@ -209,6 +209,9 @@ public sealed partial class AdvancedGlobalResourceDatabase
     {
         AdvancedDecalRecord record = source;
         record.Identity = AdvancedGpuHandle.Invalid;
+        // Decals historically had no published enable bit. New records remain
+        // visible by default; callers can disable a resident row through replacement.
+        record.Flags |= AdvancedDecalRecord.EnabledFlag;
         if (!Decals.TryAdd(record, out handle))
             return false;
 

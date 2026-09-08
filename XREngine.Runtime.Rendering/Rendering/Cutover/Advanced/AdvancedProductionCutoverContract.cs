@@ -2,7 +2,8 @@ namespace XREngine.Rendering;
 
 /// <summary>
 /// Status and readiness criteria for the Advanced Render Pipeline production cutover.
-/// Certifies that ARP 01 through ARP 09 are complete and classic G-Buffer stages are eliminated.
+/// Separates executable admission from runtime validation and production acceptance;
+/// declaration of the architecture alone does not certify completion.
 /// </summary>
 public static class AdvancedProductionCutoverContract
 {
@@ -65,12 +66,13 @@ public static class AdvancedProductionCutoverContract
     /// the executable stage family; it never supplies image, runtime, or production evidence.
     /// </summary>
     public static AdvancedProductionCutoverStatus EvaluateStatus(
-        AdvancedRenderPipeline pipeline,
+        IAdvancedRenderStageFamilyHost host,
         in AdvancedVisibilityFamilyAdmission admission,
         EAdvancedRenderPipelineOutputBindingState bindingState,
         bool reservationCurrent)
     {
-        ArgumentNullException.ThrowIfNull(pipeline);
+        ArgumentNullException.ThrowIfNull(host);
+        AdvancedRenderPipeline pipeline = host.AdvancedStageFamilyDefinition;
 
         string? providerBlocker = GetProviderBlocker(pipeline);
         if (providerBlocker is not null)
@@ -127,8 +129,14 @@ public static class AdvancedProductionCutoverContract
 
     private static string? GetProviderBlocker(AdvancedRenderPipeline pipeline)
     {
+        // Depth/visibility-only profiles never enqueue AO, classification, or
+        // native shading. Their producer/export contract must not be rejected
+        // by providers required solely by the omitted stages.
+        if (pipeline.IsMinimalVisibilityOutput)
+            return null;
+
         IAdvancedGlobalIlluminationProvider? gi = pipeline.GlobalIlluminationProvider;
-        if (pipeline.GlobalIlluminationMode != EGlobalIlluminationMode.LightProbesAndIbl)
+        if (pipeline.GlobalIlluminationMode is not EGlobalIlluminationMode.None and not EGlobalIlluminationMode.LightProbesAndIbl)
         {
             if (gi is null)
                 return $"Global illumination mode '{pipeline.GlobalIlluminationMode}' is requested but no Advanced GI provider is configured.";
@@ -137,6 +145,13 @@ public static class AdvancedProductionCutoverContract
             if (gi.ActiveMode != pipeline.GlobalIlluminationMode)
                 return $"Advanced GI provider '{gi.ProviderName}' does not implement requested mode '{pipeline.GlobalIlluminationMode}'.";
             return $"Advanced GI provider '{gi.ProviderName}' is configured but is not integrated into native shading.";
+        }
+
+        if (pipeline.GlobalIlluminationMode == EGlobalIlluminationMode.LightProbesAndIbl &&
+            gi is not null && !AdvancedGlobalIlluminationContract.IsNativeProvider(gi))
+        {
+            string providerName = gi?.ProviderName ?? "none";
+            return $"Light probe/IBL native shading requires provider '{AdvancedLightProbesAndIblProvider.Instance.ProviderName}' (actual: '{providerName}').";
         }
 
         IAdvancedAmbientOcclusionProvider? ao = pipeline.AmbientOcclusionProvider;

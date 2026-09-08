@@ -14,6 +14,11 @@ uniform sampler2DArray DepthView;
 uniform sampler2DArray HistoryDepth;
 uniform sampler2DArray HistoryExposureVariance;
 
+#ifdef XR_ADVANCED_REACTIVE_MASK
+// Canonical opaque/late reactivity is independent of final output alpha.
+uniform sampler2DArray AdvancedReactiveMask;
+#endif
+
 uniform bool HistoryReady;
 uniform vec2 TexelSize;
 uniform vec2 CurrentJitterUv;
@@ -210,13 +215,24 @@ void main()
     float transparencyMask = smoothstep(ReactiveTransparencyRange.x, ReactiveTransparencyRange.y, 1.0 - clamp(currentSample.a, 0.0, 1.0)) * max(0.15, motionMask);
     float luminanceMask = smoothstep(0.25 * ReactiveLumaThreshold, ReactiveLumaThreshold, abs(currentLuma - historyLuma)) * motionMask;
     float reactiveMask = clamp(max(transparencyMask, max(motionMask, luminanceMask)), 0.0, 1.0);
+#ifdef XR_ADVANCED_REACTIVE_MASK
+    reactiveMask = max(reactiveMask, clamp(texture(AdvancedReactiveMask, EyeUv(uv)).r, 0.0, 1.0));
+#endif
     float confidence = pow(clamp((1.0 - geometryInstability) * (1.0 - reactiveMask), 0.0, 1.0), ConfidencePower);
     float stability = max(exp(-updatedVariance * VarianceGamma), 0.85 * (1.0 - motionMask));
     float historyWeight = canUseHistory ? mix(FeedbackMin, FeedbackMax, clamp(stability * confidence, 0.0, 1.0)) : 0.0;
 
     if (DebugMode != 0)
     {
-        vec3 debugColor = DebugMode == 2 ? EncodeVelocityDebug(velocity) : vec3(historyWeight);
+        vec3 debugColor = vec3(historyWeight);
+        if (DebugMode == 2)
+            debugColor = EncodeVelocityDebug(velocity);
+        else if (DebugMode == 3)
+            debugColor = vec3(geometryInstability);
+        else if (DebugMode == 4)
+            debugColor = vec3(reactiveMask, motionMask, confidence);
+        else if (DebugMode == 5)
+            debugColor = canUseHistory ? vec3(0.0, 1.0, historyWeight) : vec3(1.0, 0.0, 0.0);
         OutColor = vec4(debugColor, 1.0);
         OutExposureVariance = vec2(updatedExposure, updatedVariance);
         return;

@@ -76,6 +76,8 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
 
     private int _resolvedRenderGraphPassIndex = int.MinValue;
     private IReadOnlyList<string> _sampledTextureNames = [];
+    private IReadOnlyList<string> _readWriteBufferNames = [];
+    private IReadOnlyList<string> _readWriteTextureNames = [];
 
     /// <summary>
     /// Returns the pass index that backend operations emitted by this command should use.
@@ -91,11 +93,35 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
     public void SetSampledTextures(params string[] textureNames)
         => _sampledTextureNames = textureNames;
 
+    /// <summary>
+    /// Declares storage buffers read and written by material shaders in this pass.
+    /// </summary>
+    public void SetReadWriteBuffers(params string[] bufferNames)
+        => _readWriteBufferNames = bufferNames;
+
+    /// <summary>
+    /// Declares storage images read and written by material shaders in this pass.
+    /// </summary>
+    public void SetReadWriteTextures(params string[] textureNames)
+        => _readWriteTextureNames = textureNames;
+
     private EMeshRenderingPathIntent _pathIntent = EMeshRenderingPathIntent.Traditional;
     public EMeshRenderingPathIntent PathIntent
     {
         get => _pathIntent;
         set => SetField(ref _pathIntent, value);
+    }
+
+    private bool _enforceAdvancedLatePassEligibility;
+    /// <summary>
+    /// Requires every submitted mesh to satisfy its authored Advanced late-lane
+    /// contract. These filtered lanes currently execute CPU-direct so no GPU
+    /// indirect command can bypass the material-level decision.
+    /// </summary>
+    public bool EnforceAdvancedLatePassEligibility
+    {
+        get => _enforceAdvancedLatePassEligibility;
+        set => SetField(ref _enforceAdvancedLatePassEligibility, value);
     }
 
     public void SetOptions(int renderPass, bool gpuDispatch)
@@ -148,7 +174,22 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
         if (activeInstance is null)
             return false;
 
+        if (EnforceAdvancedLatePassEligibility &&
+            activeInstance.Pipeline is AdvancedRenderPipeline advanced &&
+            !advanced.TryValidateLatePassProfile(RenderPass, out string? reason))
+        {
+            ReportAdvancedLatePassRejection(reason);
+            return false;
+        }
+
         EMeshSubmissionStrategy meshSubmissionStrategy = ResolveEffectiveMeshSubmissionStrategy();
+        if (EnforceAdvancedLatePassEligibility &&
+            meshSubmissionStrategy != EMeshSubmissionStrategy.CpuDirect)
+        {
+            ReportAdvancedLatePassRejection(
+                "Advanced late-pass eligibility requires CPU-direct filtered submission; GPU indirect replay has no per-draw late-lane receipt.");
+            return false;
+        }
         if (meshSubmissionStrategy.IsGpuZeroReadbackStrategy() &&
             activeInstance.Pipeline is ShadowRenderPipeline)
         {
@@ -321,6 +362,12 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
         for (int i = 0; i < _sampledTextureNames.Count; i++)
             builder.SampleTexture(MakeTextureResource(_sampledTextureNames[i]));
 
+        for (int i = 0; i < _readWriteBufferNames.Count; i++)
+            builder.ReadWriteBuffer(_readWriteBufferNames[i]);
+
+        for (int i = 0; i < _readWriteTextureNames.Count; i++)
+            builder.ReadWriteTexture(MakeTextureResource(_readWriteTextureNames[i]));
+
         if (context.CurrentRenderTarget is { } target)
         {
             if (!usesSyntheticSchedulingPass)
@@ -343,4 +390,14 @@ public class VPRC_RenderMeshesPassShared : ViewportPopStateRenderCommand
         => Enum.IsDefined(typeof(EDefaultRenderPass), renderPass)
             ? ((EDefaultRenderPass)renderPass).ToString()
             : renderPass.ToString();
+
+    private void ReportAdvancedLatePassRejection(string? reason)
+    {
+        if (!XREngine.Debug.ShouldLogEvery("AdvancedLatePass.Unsupported", TimeSpan.FromSeconds(2)))
+            return;
+        XREngine.Debug.RenderingWarning(
+            "[AdvancedLatePass] Rejected pass {0}. Reason={1}",
+            FormatRenderPassName(RenderPass),
+            reason ?? "Unknown late-pass eligibility failure.");
+    }
 }

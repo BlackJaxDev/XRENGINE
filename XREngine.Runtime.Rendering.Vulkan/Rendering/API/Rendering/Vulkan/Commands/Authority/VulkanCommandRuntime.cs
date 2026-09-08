@@ -22,6 +22,13 @@ internal sealed partial class VulkanCommandRuntime
         in VulkanAdvancedVisibilityResourceState visibilityState,
         in GpuDiagnosticReadbackPlanNode node,
         ulong frameIdentity);
+    internal delegate bool AdvancedCounterDiagnosticCopyRecorder(
+        CommandBuffer commandBuffer,
+        in VulkanFrozenBufferBarrier source,
+        in VulkanAdvancedVisibilityStageRequest request,
+        int resourceGeneration,
+        uint viewId,
+        EGpuDiagnosticReadbackDecoder decoder);
 
     private VulkanDeviceContext? _configuredDeviceContext;
     private VulkanResourceRuntime? _configuredResourceRuntime;
@@ -39,6 +46,7 @@ internal sealed partial class VulkanCommandRuntime
     // narrow recording port prevents primary workers from owning queue/fence
     // state or creating their own auxiliary submission.
     internal AdvancedVisibilityDiagnosticCopyRecorder? AdvancedVisibilityDiagnosticCopy { get; set; }
+    internal AdvancedCounterDiagnosticCopyRecorder? AdvancedCounterDiagnosticCopy { get; set; }
     internal bool ThreadLocalScratchDisposed { get; set; }
 
     public VulkanCommandRecorder Recorder { get; } = new();
@@ -1098,6 +1106,7 @@ internal sealed partial class VulkanCommandRuntime
         }
         CommandBuffers.RemoveBindState(commandBuffer);
         Synchronization.RemoveRecordedImageLayouts(commandBuffer);
+        ReleaseRecordedAdvancedVisibilityBanks(commandBuffer);
     }
 
     private void ClearCommandBufferStateAfterSuccessfulReset(CommandBuffer commandBuffer)
@@ -1114,6 +1123,7 @@ internal sealed partial class VulkanCommandRuntime
 
         CommandBuffers.ClearBindStateAfterSuccessfulReset(commandBuffer);
         Synchronization.ClearRecordedImageLayoutsAfterSuccessfulReset(commandBuffer);
+        ReleaseRecordedAdvancedVisibilityBanks(commandBuffer);
     }
 
     internal void DeferSecondaryCommandBufferFree(

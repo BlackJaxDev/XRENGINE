@@ -406,4 +406,4 @@ not silently substitute a CPU path or a different GPU architecture.
 - [Vulkan Dynamic Rendering Promotion](../../investigations/rendering/archive/vulkan-dynamic-rendering-promotion-2026-07-10.md)
 - [Vulkan CPU Framerate Regression](../../investigations/rendering/archive/vulkan-cpu-framerate-regression-2026-07-09.md)
 - [Vulkan Pipeline Cache And Prewarm](../../investigations/rendering/archive/vulkan-pipeline-cache-prewarm-2026-07-16.md)
-- [Vulkan Core Hardening Completed Work](vulkan-core-hardening-and-device-loss-completed.md)
+- [Vulkan Core Hardening Completed Work](../COMPLETED/vulkan-core-hardening-and-device-loss-completed.md)

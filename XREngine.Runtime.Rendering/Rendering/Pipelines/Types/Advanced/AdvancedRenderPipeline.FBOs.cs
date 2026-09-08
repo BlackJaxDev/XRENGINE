@@ -37,7 +37,7 @@ public partial class AdvancedRenderPipeline
     //            },
     //        }
     //    };
-    //    var uiFBO = new XRQuadFrameBuffer(hudMat);
+    //    var uiFBO = new XRQuadFrameBuffer(hudMat, useMultiview: Stereo);
 
     //    if (hudTexture is not IFrameBufferAttachement hudAttach)
     //        throw new InvalidOperationException("HUD texture must be an FBO-attachable texture.");
@@ -87,7 +87,7 @@ public partial class AdvancedRenderPipeline
                 RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.Lights | EUniformRequirements.RenderTime | EUniformRequirements.ViewportDimensions | EUniformRequirements.ClipSpacePolicy,
             }
         };
-        var PostProcessFBO = new XRQuadFrameBuffer(postProcessMat, deriveRenderTargetsFromMaterial: false);
+        var PostProcessFBO = new XRQuadFrameBuffer(postProcessMat, deriveRenderTargetsFromMaterial: false, useMultiview: Stereo);
         PostProcessFBO.SettingUniforms += program => ApplyPostProcessProgramBindings(postProcessMat, program);
         return PostProcessFBO;
     }
@@ -102,6 +102,7 @@ public partial class AdvancedRenderPipeline
 
         return new XRFrameBuffer((attach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
         {
+            ForceOvrMultiview = Stereo,
             Name = PostProcessOutputFBOName
         };
     }
@@ -125,7 +126,7 @@ public partial class AdvancedRenderPipeline
             }
         };
 
-        XRQuadFrameBuffer fbo = new(material, deriveRenderTargetsFromMaterial: false)
+        XRQuadFrameBuffer fbo = new(material, deriveRenderTargetsFromMaterial: false, useMultiview: Stereo)
         {
             Name = FinalPostProcessFBOName
         };
@@ -139,6 +140,7 @@ public partial class AdvancedRenderPipeline
 
         return new XRFrameBuffer((attach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
         {
+            ForceOvrMultiview = Stereo,
             Name = FinalPostProcessOutputFBOName
         };
     }
@@ -165,7 +167,7 @@ public partial class AdvancedRenderPipeline
                 RequiredEngineUniforms = EUniformRequirements.ClipSpacePolicy,
             }
         };
-        return new XRQuadFrameBuffer(mat, deriveRenderTargetsFromMaterial: false)
+        return new XRQuadFrameBuffer(mat, deriveRenderTargetsFromMaterial: false, useMultiview: Stereo)
         {
             Name = AtmosphereHalfDepthQuadFBOName
         };
@@ -176,6 +178,7 @@ public partial class AdvancedRenderPipeline
         IFrameBufferAttachement attach = EnsureTextureAttachment(AtmosphereHalfDepthTextureName, CreateAtmosphereHalfDepthTexture);
         return new XRFrameBuffer((attach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
         {
+            ForceOvrMultiview = Stereo,
             Name = AtmosphereHalfDepthFBOName
         };
     }
@@ -202,10 +205,12 @@ public partial class AdvancedRenderPipeline
                 RequiredEngineUniforms = EUniformRequirements.RenderTime | EUniformRequirements.ClipSpacePolicy,
             }
         };
-        return new XRQuadFrameBuffer(scatterMat, deriveRenderTargetsFromMaterial: false)
+        var fbo = new XRQuadFrameBuffer(scatterMat, deriveRenderTargetsFromMaterial: false, useMultiview: Stereo)
         {
             Name = AtmosphereHalfScatterQuadFBOName
         };
+        fbo.SettingUniforms += ApplyAtmosphereHalfScatterProgramBindings;
+        return fbo;
     }
 
     private XRFrameBuffer CreateAtmosphereHalfScatterFBO()
@@ -213,6 +218,7 @@ public partial class AdvancedRenderPipeline
         IFrameBufferAttachement attach = EnsureTextureAttachment(AtmosphereHalfScatterTextureName, CreateAtmosphereHalfScatterTexture);
         return new XRFrameBuffer((attach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
         {
+            ForceOvrMultiview = Stereo,
             Name = AtmosphereHalfScatterFBOName
         };
     }
@@ -241,10 +247,12 @@ public partial class AdvancedRenderPipeline
                 RequiredEngineUniforms = EUniformRequirements.ClipSpacePolicy,
             }
         };
-        return new XRQuadFrameBuffer(reprojectMat, deriveRenderTargetsFromMaterial: false)
+        var fbo = new XRQuadFrameBuffer(reprojectMat, deriveRenderTargetsFromMaterial: false, useMultiview: Stereo)
         {
             Name = AtmosphereReprojectQuadFBOName
         };
+        fbo.SettingUniforms += ApplyAtmosphereReprojectProgramBindings;
+        return fbo;
     }
 
     private XRFrameBuffer CreateAtmosphereReprojectFBO()
@@ -252,6 +260,7 @@ public partial class AdvancedRenderPipeline
         IFrameBufferAttachement attach = EnsureTextureAttachment(AtmosphereHalfTemporalTextureName, CreateAtmosphereHalfTemporalTexture);
         return new XRFrameBuffer((attach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
         {
+            ForceOvrMultiview = Stereo,
             Name = AtmosphereReprojectFBOName
         };
     }
@@ -261,6 +270,7 @@ public partial class AdvancedRenderPipeline
         IFrameBufferAttachement attach = EnsureTextureAttachment(AtmosphereHalfHistoryTextureName, CreateAtmosphereHalfHistoryTexture);
         return new XRFrameBuffer((attach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
         {
+            ForceOvrMultiview = Stereo,
             Name = AtmosphereHistoryFBOName
         };
     }
@@ -289,10 +299,12 @@ public partial class AdvancedRenderPipeline
                 RequiredEngineUniforms = EUniformRequirements.ClipSpacePolicy,
             }
         };
-        return new XRQuadFrameBuffer(upscaleMat, deriveRenderTargetsFromMaterial: false)
+        var fbo = new XRQuadFrameBuffer(upscaleMat, deriveRenderTargetsFromMaterial: false, useMultiview: Stereo)
         {
             Name = AtmosphereUpscaleQuadFBOName
         };
+        fbo.SettingUniforms += ApplyAtmosphereUpscaleProgramBindings;
+        return fbo;
     }
 
     private XRFrameBuffer CreateAtmosphereUpscaleFBO()
@@ -300,6 +312,7 @@ public partial class AdvancedRenderPipeline
         IFrameBufferAttachement attach = EnsureTextureAttachment(AtmosphereColorTextureName, CreateAtmosphereColorTexture);
         return new XRFrameBuffer((attach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
         {
+            ForceOvrMultiview = Stereo,
             Name = AtmosphereUpscaleFBOName
         };
     }
@@ -312,6 +325,7 @@ public partial class AdvancedRenderPipeline
 
         return new XRFrameBuffer((attach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
         {
+            ForceOvrMultiview = Stereo,
             Name = TransformIdDebugOutputFBOName
         };
     }
@@ -332,7 +346,7 @@ public partial class AdvancedRenderPipeline
             }
         };
 
-        var fbo = new XRQuadFrameBuffer(mat)
+        var fbo = new XRQuadFrameBuffer(mat, useMultiview: Stereo)
         {
             Name = TransformIdDebugQuadFBOName
         };
@@ -344,6 +358,7 @@ public partial class AdvancedRenderPipeline
         IFrameBufferAttachement fxaaAttach = EnsureTextureAttachment(FxaaOutputTextureName, CreateFxaaOutputTexture);
         return new XRFrameBuffer((fxaaAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
         {
+            ForceOvrMultiview = Stereo,
             Name = FxaaFBOName
         };
     }
@@ -362,10 +377,9 @@ public partial class AdvancedRenderPipeline
         XRTexture historyColorTexture = GetTexture<XRTexture>(TsrHistoryColorTextureName)!;
         XRTexture stencilTexture = GetTexture<XRTexture>(StencilViewTextureName)!;
         XRTexture outputTexture = GetTexture<XRTexture>(TsrOutputTextureName)!;
-        XRShader upscaleShader = XRShader.EngineShader(
-            Path.Combine(SceneShaderPath, Stereo ? "TemporalSuperResolutionStereo.fs" : "TemporalSuperResolution.fs"),
-            EShaderType.Fragment);
-        XRMaterial upscaleMaterial = new([sourceTexture, velocityTexture, depthTexture, historyDepthTexture, historyColorTexture, stencilTexture], upscaleShader)
+        XRTexture reactiveTexture = GetTexture<XRTexture>(AdvancedTemporalHistoryContract.ReactiveMaskResourceName)!;
+        XRShader upscaleShader = CreateAdvancedTemporalShader(Stereo ? "TemporalSuperResolutionStereo.fs" : "TemporalSuperResolution.fs");
+        XRMaterial upscaleMaterial = new([sourceTexture, velocityTexture, depthTexture, historyDepthTexture, historyColorTexture, stencilTexture, reactiveTexture], upscaleShader)
         {
             RenderOptions = new RenderingParameters()
             {
@@ -384,7 +398,7 @@ public partial class AdvancedRenderPipeline
                     | EUniformRequirements.ViewportDimensions,
             }
         };
-        var fbo = new XRQuadFrameBuffer(upscaleMaterial, deriveRenderTargetsFromMaterial: false)
+        var fbo = new XRQuadFrameBuffer(upscaleMaterial, deriveRenderTargetsFromMaterial: false, useMultiview: Stereo)
         {
             Name = TsrUpscaleFBOName
         };
@@ -392,6 +406,7 @@ public partial class AdvancedRenderPipeline
             throw new InvalidOperationException("TSR upscale output texture is not an FBO-attachable texture.");
 
         fbo.SetRenderTargets((outputAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1));
+        fbo.SettingUniforms += ApplyTsrUpscaleProgramBindings;
         return fbo;
     }
 
@@ -403,6 +418,7 @@ public partial class AdvancedRenderPipeline
 
         return new XRFrameBuffer((historyAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
         {
+            ForceOvrMultiview = Stereo,
             Name = TsrHistoryColorFBOName
         };
     }
@@ -412,6 +428,7 @@ public partial class AdvancedRenderPipeline
         var colorAttachment = EnsureTextureAttachment(TransparentSceneCopyTextureName, CreateTransparentSceneCopyTexture);
         return new XRFrameBuffer((colorAttachment, EFrameBufferAttachment.ColorAttachment0, 0, -1))
         {
+            ForceOvrMultiview = Stereo,
             Name = TransparentSceneCopyFBOName
         };
     }
@@ -451,7 +468,7 @@ public partial class AdvancedRenderPipeline
             }
         };
 
-        var fbo = new XRQuadFrameBuffer(material, deriveRenderTargetsFromMaterial: false) { Name = DeferredTransparencyBlurFBOName };
+        var fbo = new XRQuadFrameBuffer(material, deriveRenderTargetsFromMaterial: false, useMultiview: Stereo) { Name = DeferredTransparencyBlurFBOName };
         var hdrAttachment = EnsureTextureAttachment(HDRSceneTextureName, CreateHDRSceneTexture);
         fbo.SetRenderTargets((hdrAttachment, EFrameBufferAttachment.ColorAttachment0, 0, -1));
         return fbo;
@@ -468,6 +485,7 @@ public partial class AdvancedRenderPipeline
             (revealageAttachment, EFrameBufferAttachment.ColorAttachment1, 0, -1),
             (depthAttachment, EFrameBufferAttachment.DepthStencilAttachment, 0, -1))
         {
+            ForceOvrMultiview = Stereo,
             Name = TransparentAccumulationFBOName
         };
     }
@@ -501,10 +519,11 @@ public partial class AdvancedRenderPipeline
             }
         };
 
-        var fbo = new XRQuadFrameBuffer(material, deriveRenderTargetsFromMaterial: false) { Name = TransparentResolveFBOName };
+        var fbo = new XRQuadFrameBuffer(material, deriveRenderTargetsFromMaterial: false, useMultiview: Stereo) { Name = TransparentResolveFBOName };
 
         var hdrAttachment = EnsureTextureAttachment(HDRSceneTextureName, CreateHDRSceneTexture);
         fbo.SetRenderTargets((hdrAttachment, EFrameBufferAttachment.ColorAttachment0, 0, -1));
+        fbo.SettingUniforms += ApplyTransparentResolveProgramBindings;
         return fbo;
     }
 
@@ -532,6 +551,7 @@ public partial class AdvancedRenderPipeline
         IFrameBufferAttachement attach = EnsureTextureAttachment(FullOverdrawCountTextureName, CreateFullOverdrawCountTexture);
         return new XRFrameBuffer((attach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
         {
+            ForceOvrMultiview = Stereo,
             Name = FullOverdrawCountFBOName
         };
     }
@@ -560,7 +580,7 @@ public partial class AdvancedRenderPipeline
             }
         };
 
-        var fbo = new XRQuadFrameBuffer(material) { Name = FullOverdrawDebugFBOName };
+        var fbo = new XRQuadFrameBuffer(material, useMultiview: Stereo) { Name = FullOverdrawDebugFBOName };
         fbo.SettingUniforms += FullOverdrawDebugFBO_SettingUniforms;
         return fbo;
     }
@@ -592,7 +612,7 @@ public partial class AdvancedRenderPipeline
             }
         };
 
-        return new XRQuadFrameBuffer(material) { Name = SceneCopyFBOName };
+        return new XRQuadFrameBuffer(material, useMultiview: Stereo) { Name = SceneCopyFBOName };
     }
 
     private XRFrameBuffer CreateTransparencyDebugFBO(
@@ -615,7 +635,7 @@ public partial class AdvancedRenderPipeline
             }
         };
 
-        var fbo = new XRQuadFrameBuffer(material) { Name = name };
+        var fbo = new XRQuadFrameBuffer(material, useMultiview: Stereo) { Name = name };
         return fbo;
     }
 
@@ -667,7 +687,7 @@ public partial class AdvancedRenderPipeline
             }
         };
 
-        var fbo = new XRQuadFrameBuffer(sceneCopyMat, useTriangle: false, deriveRenderTargetsFromMaterial: false);
+        var fbo = new XRQuadFrameBuffer(sceneCopyMat, useTriangle: false, deriveRenderTargetsFromMaterial: false, useMultiview: Stereo);
 
         IFrameBufferAttachement hdrAttach = (IFrameBufferAttachement)hdrSceneTex;
         IFrameBufferAttachement dsAttach = RequireVisibilityAttachment(AdvancedVisibilityResourceNames.DepthStencil);
@@ -703,6 +723,7 @@ public partial class AdvancedRenderPipeline
 
         return new XRFrameBuffer((aoAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
         {
+            ForceOvrMultiview = Stereo,
             Name = GBufferFBOName
         };
     }
@@ -722,6 +743,7 @@ public partial class AdvancedRenderPipeline
             (transformIdAttach, EFrameBufferAttachment.ColorAttachment3, 0, -1),
             (depthStencilAttach, EFrameBufferAttachment.DepthStencilAttachment, 0, -1))
         {
+            ForceOvrMultiview = Stereo,
             Name = DeferredGBufferFBOName
         };
     }
@@ -817,12 +839,13 @@ public partial class AdvancedRenderPipeline
     private XRFrameBuffer CreateVelocityFBO()
     {
         var velocityAttachment = EnsureTextureAttachment(VelocityTextureName, CreateVelocityTexture);
-        var depthAttachment = EnsureTextureAttachment(DepthStencilTextureName, CreateDepthStencilTexture);
+        var depthAttachment = EnsureTextureAttachment(AdvancedVisibilityResourceNames.DepthStencil, CreateDepthStencilTexture);
 
         return new XRFrameBuffer(
             (velocityAttachment, EFrameBufferAttachment.ColorAttachment0, 0, -1),
             (depthAttachment, EFrameBufferAttachment.DepthStencilAttachment, 0, -1))
         {
+            ForceOvrMultiview = Stereo,
             Name = VelocityFBOName
         };
     }
@@ -836,6 +859,7 @@ public partial class AdvancedRenderPipeline
             (colorAttachment, EFrameBufferAttachment.ColorAttachment0, 0, -1),
             (depthAttachment, EFrameBufferAttachment.DepthStencilAttachment, 0, -1))
         {
+            ForceOvrMultiview = Stereo,
             Name = HistoryCaptureFBOName
         };
     }
@@ -846,6 +870,7 @@ public partial class AdvancedRenderPipeline
 
         return new XRFrameBuffer((colorAttachment, EFrameBufferAttachment.ColorAttachment0, 0, -1))
         {
+            ForceOvrMultiview = Stereo,
             Name = TemporalInputFBOName
         };
     }
@@ -860,12 +885,11 @@ public partial class AdvancedRenderPipeline
             GetTexture<XRTexture>(DepthViewTextureName)!,
             GetTexture<XRTexture>(HistoryDepthViewTextureName)!,
             GetTexture<XRTexture>(HistoryExposureVarianceTextureName)!,
+            GetTexture<XRTexture>(AdvancedTemporalHistoryContract.ReactiveMaskResourceName)!,
         ];
 
         XRMaterial material = new(references,
-            XRShader.EngineShader(
-                Path.Combine(SceneShaderPath, Stereo ? "TemporalAccumulationStereo.fs" : "TemporalAccumulation.fs"),
-                EShaderType.Fragment))
+            CreateAdvancedTemporalShader(Stereo ? "TemporalAccumulationStereo.fs" : "TemporalAccumulation.fs"))
         {
             RenderOptions = new RenderingParameters()
             {
@@ -884,7 +908,7 @@ public partial class AdvancedRenderPipeline
             }
         };
 
-        var fbo = new XRQuadFrameBuffer(material) { Name = TemporalAccumulationFBOName };
+        var fbo = new XRQuadFrameBuffer(material, useMultiview: Stereo) { Name = TemporalAccumulationFBOName };
 
         var filteredAttachment = EnsureTextureAttachment(HDRSceneTextureName, CreateHDRSceneTexture);
         var exposureAttachment = EnsureTextureAttachment(TemporalExposureVarianceTextureName, CreateTemporalExposureVarianceTexture);
@@ -893,6 +917,7 @@ public partial class AdvancedRenderPipeline
             (filteredAttachment, EFrameBufferAttachment.ColorAttachment0, 0, -1),
             (exposureAttachment, EFrameBufferAttachment.ColorAttachment1, 0, -1));
 
+        fbo.SettingUniforms += ApplyTemporalAccumulationProgramBindings;
         return fbo;
     }
 
@@ -902,6 +927,7 @@ public partial class AdvancedRenderPipeline
 
         return new XRFrameBuffer((attachment, EFrameBufferAttachment.ColorAttachment0, 0, -1))
         {
+            ForceOvrMultiview = Stereo,
             Name = MotionBlurCopyFBOName
         };
     }
@@ -914,7 +940,7 @@ public partial class AdvancedRenderPipeline
 
         XRMaterial material = new(
             [motionBlurCopy, velocityTex, depthTex],
-            XRShader.EngineShader(Path.Combine(SceneShaderPath, "MotionBlur.fs"), EShaderType.Fragment))
+            XRShader.EngineShader(Path.Combine(SceneShaderPath, Stereo ? "MotionBlurStereo.fs" : "MotionBlur.fs"), EShaderType.Fragment))
         {
             RenderOptions = new RenderingParameters()
             {
@@ -928,7 +954,8 @@ public partial class AdvancedRenderPipeline
             }
         };
 
-        var fbo = new XRQuadFrameBuffer(material, deriveRenderTargetsFromMaterial: false) { Name = MotionBlurFBOName };
+        var fbo = new XRQuadFrameBuffer(material, deriveRenderTargetsFromMaterial: false, useMultiview: Stereo) { Name = MotionBlurFBOName };
+        fbo.SettingUniforms += ApplyMotionBlurProgramBindings;
         return fbo;
     }
 
@@ -938,6 +965,7 @@ public partial class AdvancedRenderPipeline
 
         return new XRFrameBuffer((attachment, EFrameBufferAttachment.ColorAttachment0, 0, -1))
         {
+            ForceOvrMultiview = Stereo,
             Name = DepthOfFieldCopyFBOName
         };
     }
@@ -949,7 +977,7 @@ public partial class AdvancedRenderPipeline
 
         XRMaterial material = new(
             [dofSource, depthTex],
-            XRShader.EngineShader(Path.Combine(SceneShaderPath, "DepthOfField.fs"), EShaderType.Fragment))
+            XRShader.EngineShader(Path.Combine(SceneShaderPath, Stereo ? "DepthOfFieldStereo.fs" : "DepthOfField.fs"), EShaderType.Fragment))
         {
             RenderOptions = new RenderingParameters()
             {
@@ -963,7 +991,8 @@ public partial class AdvancedRenderPipeline
             }
         };
 
-        var fbo = new XRQuadFrameBuffer(material, deriveRenderTargetsFromMaterial: false) { Name = DepthOfFieldFBOName };
+        var fbo = new XRQuadFrameBuffer(material, deriveRenderTargetsFromMaterial: false, useMultiview: Stereo) { Name = DepthOfFieldFBOName };
+        fbo.SettingUniforms += ApplyDepthOfFieldProgramBindings;
         return fbo;
     }
 
@@ -973,6 +1002,7 @@ public partial class AdvancedRenderPipeline
 
         return new XRFrameBuffer((attachment, EFrameBufferAttachment.ColorAttachment0, 0, -1))
         {
+            ForceOvrMultiview = Stereo,
             Name = HistoryExposureFBOName
         };
     }
@@ -1007,7 +1037,7 @@ public partial class AdvancedRenderPipeline
             }
         };
 
-        return new XRQuadFrameBuffer(material, false) { Name = DepthPreloadFBOName };
+        return new XRQuadFrameBuffer(material, false, useMultiview: Stereo) { Name = DepthPreloadFBOName };
     }
 
     /// <summary>
@@ -1024,6 +1054,7 @@ public partial class AdvancedRenderPipeline
             (normalAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1),
             (dsAttach, EFrameBufferAttachment.DepthStencilAttachment, 0, -1))
         {
+            ForceOvrMultiview = Stereo,
             Name = ForwardDepthPrePassFBOName
         };
     }
@@ -1042,6 +1073,7 @@ public partial class AdvancedRenderPipeline
             (normalAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1),
             (dsAttach, EFrameBufferAttachment.DepthStencilAttachment, 0, -1))
         {
+            ForceOvrMultiview = Stereo,
             Name = ForwardDepthPrePassMergeFBOName
         };
     }
@@ -1059,6 +1091,7 @@ public partial class AdvancedRenderPipeline
             (normalAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1),
             (dsAttach, EFrameBufferAttachment.DepthStencilAttachment, 0, -1))
         {
+            ForceOvrMultiview = Stereo,
             Name = DeferredGBufferPreForwardCopyFBOName
         };
     }
@@ -1072,6 +1105,7 @@ public partial class AdvancedRenderPipeline
             (normalAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1),
             (dsAttach, EFrameBufferAttachment.DepthStencilAttachment, 0, -1))
         {
+            ForceOvrMultiview = Stereo,
             Name = ForwardContactPrePassCopyFBOName
         };
     }
@@ -1107,7 +1141,7 @@ public partial class AdvancedRenderPipeline
         };
         lightCombineMat.SettingUniforms += (_, program) => ApplyLightCombineProgramBindings(program);
 
-        var lightCombineFBO = new XRQuadFrameBuffer(lightCombineMat, useTriangle: true, deriveRenderTargetsFromMaterial: false) { Name = LightCombineFBOName };
+        var lightCombineFBO = new XRQuadFrameBuffer(lightCombineMat, useTriangle: true, deriveRenderTargetsFromMaterial: false, useMultiview: Stereo) { Name = LightCombineFBOName };
 
         if (diffuseTexture is not IFrameBufferAttachement attach)
             throw new InvalidOperationException($"Declared texture '{DiffuseTextureName}' is not FBO-attachable.");
@@ -1122,6 +1156,7 @@ public partial class AdvancedRenderPipeline
 
         return new XRFrameBuffer((lightingAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
         {
+            ForceOvrMultiview = Stereo,
             Name = LightingAccumFBOName
         };
     }
@@ -1153,7 +1188,7 @@ public partial class AdvancedRenderPipeline
                 BlendModeAllDrawBuffers = additiveBlend
             }
         };
-        return new XRQuadFrameBuffer(restirCompositeMaterial) { Name = RestirCompositeFBOName };
+        return new XRQuadFrameBuffer(restirCompositeMaterial, useMultiview: Stereo) { Name = RestirCompositeFBOName };
     }
 
     private XRFrameBuffer CreateSurfelGICompositeFBO()
@@ -1185,7 +1220,7 @@ public partial class AdvancedRenderPipeline
             }
         };
 
-        return new XRQuadFrameBuffer(material) { Name = SurfelGICompositeFBOName };
+        return new XRQuadFrameBuffer(material, useMultiview: Stereo) { Name = SurfelGICompositeFBOName };
     }
 
     private XRFrameBuffer CreateLightVolumeCompositeFBO()
@@ -1217,7 +1252,7 @@ public partial class AdvancedRenderPipeline
             }
         };
 
-        return new XRQuadFrameBuffer(material) { Name = LightVolumeCompositeFBOName };
+        return new XRQuadFrameBuffer(material, useMultiview: Stereo) { Name = LightVolumeCompositeFBOName };
     }
 
     private XRFrameBuffer CreateRadianceCascadeCompositeFBO()
@@ -1252,7 +1287,7 @@ public partial class AdvancedRenderPipeline
             }
         };
 
-        return new XRQuadFrameBuffer(material) { Name = RadianceCascadeCompositeFBOName };
+        return new XRQuadFrameBuffer(material, useMultiview: Stereo) { Name = RadianceCascadeCompositeFBOName };
     }
 
     private void ApplyRadianceCascadeCompositeProgramBindings(XRRenderProgram program)
@@ -1289,6 +1324,7 @@ public partial class AdvancedRenderPipeline
             (transformIdAttach, EFrameBufferAttachment.ColorAttachment3, 0, -1),
             (depthStencilAttach, EFrameBufferAttachment.DepthStencilAttachment, 0, -1))
         {
+            ForceOvrMultiview = Stereo,
             Name = MsaaGBufferFBOName
         };
     }
@@ -1306,6 +1342,7 @@ public partial class AdvancedRenderPipeline
             (lightingAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1),
             (depthStencilAttach, EFrameBufferAttachment.DepthStencilAttachment, 0, -1))
         {
+            ForceOvrMultiview = Stereo,
             Name = MsaaLightingFBOName
         };
     }
@@ -1353,7 +1390,7 @@ public partial class AdvancedRenderPipeline
         };
         mat.SettingUniforms += (_, program) => ApplyLightCombineProgramBindings(program);
 
-        var fbo = new XRQuadFrameBuffer(mat, true, false) { Name = MsaaLightCombineFBOName };
+        var fbo = new XRQuadFrameBuffer(mat, true, false, useMultiview: Stereo) { Name = MsaaLightCombineFBOName };
         return fbo;
     }
 
@@ -1386,7 +1423,7 @@ public partial class AdvancedRenderPipeline
                 RequiredEngineUniforms = EUniformRequirements.ClipSpacePolicy,
             }
         };
-        return new XRQuadFrameBuffer(mat, deriveRenderTargetsFromMaterial: false)
+        return new XRQuadFrameBuffer(mat, deriveRenderTargetsFromMaterial: false, useMultiview: Stereo)
         {
             Name = VolumetricFogHalfDepthQuadFBOName
         };
@@ -1401,6 +1438,7 @@ public partial class AdvancedRenderPipeline
         IFrameBufferAttachement attach = EnsureTextureAttachment(VolumetricFogHalfDepthTextureName, CreateVolumetricFogHalfDepthTexture);
         return new XRFrameBuffer((attach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
         {
+            ForceOvrMultiview = Stereo,
             Name = VolumetricFogHalfDepthFBOName
         };
     }
@@ -1434,10 +1472,11 @@ public partial class AdvancedRenderPipeline
                 RequiredEngineUniforms = EUniformRequirements.Lights | EUniformRequirements.RenderTime | EUniformRequirements.ClipSpacePolicy,
             }
         };
-        var fbo = new XRQuadFrameBuffer(scatterMat, deriveRenderTargetsFromMaterial: false)
+        var fbo = new XRQuadFrameBuffer(scatterMat, deriveRenderTargetsFromMaterial: false, useMultiview: Stereo)
         {
             Name = VolumetricFogHalfScatterQuadFBOName
         };
+        fbo.SettingUniforms += ApplyVolumetricFogHalfScatterProgramBindings;
         return fbo;
     }
 
@@ -1450,6 +1489,7 @@ public partial class AdvancedRenderPipeline
         IFrameBufferAttachement attach = EnsureTextureAttachment(VolumetricFogHalfScatterTextureName, CreateVolumetricFogHalfScatterTexture);
         return new XRFrameBuffer((attach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
         {
+            ForceOvrMultiview = Stereo,
             Name = VolumetricFogHalfScatterFBOName
         };
     }
@@ -1482,10 +1522,11 @@ public partial class AdvancedRenderPipeline
                 RequiredEngineUniforms = EUniformRequirements.ClipSpacePolicy,
             }
         };
-        var fbo = new XRQuadFrameBuffer(reprojectMat, deriveRenderTargetsFromMaterial: false)
+        var fbo = new XRQuadFrameBuffer(reprojectMat, deriveRenderTargetsFromMaterial: false, useMultiview: Stereo)
         {
             Name = VolumetricFogReprojectQuadFBOName
         };
+        fbo.SettingUniforms += ApplyVolumetricFogReprojectProgramBindings;
         return fbo;
     }
 
@@ -1497,6 +1538,7 @@ public partial class AdvancedRenderPipeline
         IFrameBufferAttachement attach = EnsureTextureAttachment(VolumetricFogHalfTemporalTextureName, CreateVolumetricFogHalfTemporalTexture);
         return new XRFrameBuffer((attach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
         {
+            ForceOvrMultiview = Stereo,
             Name = VolumetricFogReprojectFBOName
         };
     }
@@ -1509,6 +1551,7 @@ public partial class AdvancedRenderPipeline
         IFrameBufferAttachement attach = EnsureTextureAttachment(VolumetricFogHalfHistoryTextureName, CreateVolumetricFogHalfHistoryTexture);
         return new XRFrameBuffer((attach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
         {
+            ForceOvrMultiview = Stereo,
             Name = VolumetricFogHistoryFBOName
         };
     }
@@ -1542,10 +1585,11 @@ public partial class AdvancedRenderPipeline
                 RequiredEngineUniforms = EUniformRequirements.ClipSpacePolicy,
             }
         };
-        var fbo = new XRQuadFrameBuffer(upscaleMat, deriveRenderTargetsFromMaterial: false)
+        var fbo = new XRQuadFrameBuffer(upscaleMat, deriveRenderTargetsFromMaterial: false, useMultiview: Stereo)
         {
             Name = VolumetricFogUpscaleQuadFBOName
         };
+        fbo.SettingUniforms += ApplyVolumetricFogUpscaleProgramBindings;
         return fbo;
     }
 
@@ -1559,6 +1603,7 @@ public partial class AdvancedRenderPipeline
         IFrameBufferAttachement attach = EnsureTextureAttachment(VolumetricFogColorTextureName, CreateVolumetricFogColorTexture);
         return new XRFrameBuffer((attach, EFrameBufferAttachment.ColorAttachment0, 0, -1))
         {
+            ForceOvrMultiview = Stereo,
             Name = VolumetricFogUpscaleFBOName
         };
     }
@@ -1588,6 +1633,7 @@ public partial class AdvancedRenderPipeline
             ?? throw new InvalidOperationException($"Missing declared attachable texture '{textureName}'.");
         return new XRFrameBuffer((attachment, EFrameBufferAttachment.ColorAttachment0, 0, -1))
         {
+            ForceOvrMultiview = Stereo,
             Name = frameBufferName
         };
     }

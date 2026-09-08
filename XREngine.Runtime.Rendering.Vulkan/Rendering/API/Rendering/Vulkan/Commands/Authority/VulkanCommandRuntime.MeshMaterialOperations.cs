@@ -311,9 +311,11 @@ internal sealed partial class VulkanCommandRuntime
     internal VulkanMeshProducerSnapshot CaptureIndirectProducerSnapshot(XRFrameBuffer? target)
     {
         VulkanStateTracker state = ActiveState;
+        // Viewport Y conversion must use the attached mip, not the texture's
+        // base height; otherwise reduced-mip draws rasterize outside the target.
         Extent2D extent = target is null
             ? state.GetCurrentTargetExtent()
-            : new Extent2D(Math.Max(target.Width, 1u), Math.Max(target.Height, 1u));
+            : ResolveFrameBufferDrawExtent(target);
         return new VulkanMeshProducerSnapshot(
             default,
             target,

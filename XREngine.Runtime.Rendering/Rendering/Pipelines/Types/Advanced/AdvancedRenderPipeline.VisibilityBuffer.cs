@@ -153,7 +153,7 @@ public partial class AdvancedRenderPipeline
             .Layers(layers)
             .Mips(new RenderResourceMipPolicy(
                 0u,
-                6u,
+                1u,
                 AutoGenerateMipmaps: false,
                 RequireImmutableStorage: true))
             .StereoCompatible(layers > 1u)
@@ -177,7 +177,7 @@ public partial class AdvancedRenderPipeline
             .Layers(layers)
             .Mips(new RenderResourceMipPolicy(
                 0u,
-                6u,
+                1u,
                 AutoGenerateMipmaps: false,
                 RequireImmutableStorage: true))
             .StereoCompatible(layers > 1u)
@@ -528,7 +528,7 @@ public partial class AdvancedRenderPipeline
                 XRTexture2D[] layerTextures = new XRTexture2D[layers];
                 for (int i = 0; i < layers; i++)
                 {
-                    layerTextures[i] = new XRTexture2D(width, height, internalFormat, pixelFormat, pixelType, 6)
+                    layerTextures[i] = new XRTexture2D(width, height, internalFormat, pixelFormat, pixelType, 1)
                     {
                         MinFilter = ETexMinFilter.NearestMipmapNearest,
                         MagFilter = ETexMagFilter.Nearest,
@@ -575,7 +575,7 @@ public partial class AdvancedRenderPipeline
         {
             if (isDepthTileGrid)
             {
-                texture = new XRTexture2D(width, height, internalFormat, pixelFormat, pixelType, 6)
+                texture = new XRTexture2D(width, height, internalFormat, pixelFormat, pixelType, 1)
                 {
                     MinFilter = ETexMinFilter.NearestMipmapNearest,
                     MagFilter = ETexMagFilter.Nearest,
@@ -604,7 +604,9 @@ public partial class AdvancedRenderPipeline
             }
         }
 
-        bool usesMipChain = isDepthTileGrid;
+        // The current conservative reducer writes one texel per 64x64 tile.
+        // No higher mip is produced or sampled.
+        bool usesMipChain = false;
 
         ConfigureVisibilityTexture(
             texture,

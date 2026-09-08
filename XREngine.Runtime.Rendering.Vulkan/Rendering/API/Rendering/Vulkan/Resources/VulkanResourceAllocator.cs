@@ -89,6 +89,14 @@ internal sealed class VulkanResourceAllocator
 
         foreach (VulkanAllocationRequest request in plan.AllTextures())
         {
+            // Imported textures already have a producer-owned image. Creating a
+            // same-name planner allocation shadows that image (and its mip chain)
+            // during descriptor/readback resolution, yielding an unwritten copy.
+            // Keep external descriptors in the plan for graph dependencies, but
+            // resolve their native storage through the bound texture wrapper.
+            if (request.Descriptor.Lifetime == RenderResourceLifetime.External)
+                continue;
+
             // Candidate analysis is not native lifetime authority. Preserve
             // dedicated images even for explicitly opted-in descriptors.
             VulkanAllocationRequest dedicatedRequest = request with
@@ -547,7 +555,7 @@ internal sealed class VulkanResourceAllocator
     private static string ResolveOutputFrameBufferSlot(ERenderPassResourceType resourceType)
         => resourceType switch
         {
-            ERenderPassResourceType.DepthAttachment => "depth",
+            ERenderPassResourceType.DepthAttachment or ERenderPassResourceType.DepthTransferDestination => "depth",
             ERenderPassResourceType.StencilAttachment => "stencil",
             _ => "color",
         };
@@ -560,7 +568,8 @@ internal sealed class VulkanResourceAllocator
             or ERenderPassResourceType.SampledTexture
             or ERenderPassResourceType.StorageTexture
             or ERenderPassResourceType.TransferSource
-            or ERenderPassResourceType.TransferDestination;
+            or ERenderPassResourceType.TransferDestination
+            or ERenderPassResourceType.DepthTransferDestination;
 
     private static bool IsBufferResourceType(ERenderPassResourceType type)
         => type is ERenderPassResourceType.UniformBuffer

@@ -37,7 +37,7 @@ internal static class ExactTransparencyShaderBindings
         float height = Math.Max(1, pipelineInstance.RenderState.WindowViewport?.InternalHeight ?? pipelineInstance.LastWindowViewport?.InternalHeight ?? 1);
         program.Uniform("ScreenWidth", width);
         program.Uniform("ScreenHeight", height);
-        program.Uniform("PpllMaxNodes", (int)pipeline.PpllMaxNodeCount);
+        program.Uniform("PpllMaxNodes", pipeline.PpllMaxNodeCount);
     }
 
     private static void ConfigureDepthPeeling(XRRenderProgram program, XRRenderPipelineInstance pipelineInstance, DefaultRenderPipeline pipeline)

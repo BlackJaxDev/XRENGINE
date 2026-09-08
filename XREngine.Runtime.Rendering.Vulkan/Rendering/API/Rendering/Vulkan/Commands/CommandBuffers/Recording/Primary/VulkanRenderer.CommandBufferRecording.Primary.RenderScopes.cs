@@ -579,16 +579,21 @@ namespace XREngine.Rendering.Vulkan
             {
                 if (CommandRecordingDiagnosticsEnabled)
                 {
+                    vkFrameBuffer.TryGetAttachmentView(0, out ImageView firstAttachmentView);
+                    vkFrameBuffer.TryGetAttachmentView(1, out ImageView secondAttachmentView);
                     Debug.VulkanEvery(
-                        $"Vulkan.BeginRendering.FBO.{fboName}.{fboSignature.Length}",
+                        $"Vulkan.BeginRendering.FBO.{fboName}.{target.GetHashCode()}.{fboSignature.Length}",
                         TimeSpan.FromSeconds(2),
-                        "[Vulkan] BeginRendering FBO='{0}' pass={1} attachments={2} fbDims={3}x{4} trackedLayouts={5}",
+                        "[Vulkan] BeginRendering FBO='{0}' pass={1} attachments={2} fbDims={3}x{4} trackedLayouts={5} views={6}/{7} signature={8}",
                         fboName,
                         passIndex,
                         fboSignature.Length,
                         vkFrameBuffer.FramebufferWidth,
                         vkFrameBuffer.FramebufferHeight,
-                        trackedLayouts is not null ? string.Join(",", trackedLayouts) : "null");
+                        trackedLayouts is not null ? string.Join(",", trackedLayouts) : "null",
+                        firstAttachmentView.Handle,
+                        secondAttachmentView.Handle,
+                        FormatFboAttachmentSignature(fboSignature));
                 }
 
                 TransitionFboAttachmentsForDynamicRendering(

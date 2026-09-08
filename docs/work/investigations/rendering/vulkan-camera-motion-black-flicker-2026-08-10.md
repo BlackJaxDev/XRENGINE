@@ -42,7 +42,7 @@ recipe and 59 conservative holes were materialized normally. Frame-op
 preparation fell from the earlier dense-view 19--25 ms range to a warmed median
 of 13.111 ms, but this remains well above the final CPU budget. The remaining
 architectural work belongs to the
-[command-recording optimization TODO](../../todo/rendering/optimization/vulkan-command-recording-architecture-optimization-todo.md),
+[command-recording optimization TODO](../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md#recovered-acceptance-contracts-and-specialized-child-ownership),
 not to another input or presentation workaround.
 
 The previously observed approximately 140 FPS view is not a dense-scene result:
@@ -280,7 +280,7 @@ repository policy.
 | --- | --- |
 | Primary/secondary state, cache identity, and current-data reuse | [Vulkan Primary Command-Buffer Reuse](../../../architecture/rendering/vulkan-primary-command-buffer-reuse.md) |
 | Final render-loop ownership and CPU contract | [Vulkan Render Loop Target Architecture](../../design/rendering/vulkan-render-loop-target-architecture.md) |
-| Remaining prepared-data/producer optimization | [Vulkan Command Recording Architecture Optimization TODO](../../todo/rendering/optimization/vulkan-command-recording-architecture-optimization-todo.md) |
+| Remaining prepared-data/producer optimization | [Vulkan Command Recording Architecture Optimization TODO](../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md#recovered-acceptance-contracts-and-specialized-child-ownership) |
 | Post-change correctness, performance, and soak validation | [Vulkan Core Hardening And Recording Testing TODO](../../testing/rendering/vulkan-core-hardening-and-recording-testing-todo.md) |
 | Directional cascades, atlas stability, and light-on acceptance | [Directional Light Vulkan Stability Investigation](directional-light-inspector-shadow-2026-08-03.md) |
 

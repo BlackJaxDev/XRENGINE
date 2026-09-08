@@ -791,10 +791,13 @@ internal static partial class GlslSnippetDeadCodeEliminator
         {
             chunk.DeclaredNames.Add(blockMatch.Groups["name"].Value);
             ExtractTrailingInstances(text, chunk.DeclaredNames);
-            // Also add member names so they remain referenceable when no instance is present.
+            // Named block instances scope their members. Treating every `records`
+            // member as a global declaration makes one table access retain all
+            // unrelated SSBOs and can exceed OpenGL's per-stage block limit.
+            bool hasInstance = chunk.DeclaredNames.Count > 1;
             int braceOpen = text.IndexOf('{', blockMatch.Index);
             int braceClose = text.LastIndexOf('}');
-            if (braceOpen >= 0 && braceClose > braceOpen)
+            if (!hasInstance && braceOpen >= 0 && braceClose > braceOpen)
             {
                 string members = text.Substring(braceOpen + 1, braceClose - braceOpen - 1);
                 foreach (string memberName in ExtractMemberNames(members))

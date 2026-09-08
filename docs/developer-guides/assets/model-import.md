@@ -36,6 +36,13 @@ Current limitations:
 - `.unity`, `.prefab`, and `.mat` files route through the Unity YAML scene, prefab, and material importers.
 - Other third-party model formats still import through Assimp.
 
+The default Assimp material factory preserves the authored diffuse RGB factor
+(`$clr.diffuse`, including OBJ/MTL `Kd`) in a standard material's `BaseColor`.
+This applies to untextured materials as well as texture tint factors. Missing
+diffuse data retains the material factory's default; nonfinite factors reject
+the import with a material-specific diagnostic. Other Assimp scalar and
+transparency properties require their own mappings.
+
 For Unity-specific conversion behavior, including `.anim` caveats and Poiyomi/lilToon material mapping, see [Unity Conversion Integrations](unity-conversion-integrations.md).
 
 ## Model cache identity and legacy transition

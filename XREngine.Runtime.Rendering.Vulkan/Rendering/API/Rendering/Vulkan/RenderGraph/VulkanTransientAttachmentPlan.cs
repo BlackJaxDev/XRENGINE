@@ -243,7 +243,7 @@ internal sealed class VulkanTransientAttachmentPlan
     private static string ResolveOutputSlot(ERenderPassResourceType resourceType)
         => resourceType switch
         {
-            ERenderPassResourceType.DepthAttachment => "depth",
+            ERenderPassResourceType.DepthAttachment or ERenderPassResourceType.DepthTransferDestination => "depth",
             ERenderPassResourceType.StencilAttachment => "stencil",
             _ => "color",
         };

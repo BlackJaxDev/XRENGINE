@@ -41,6 +41,8 @@ public sealed partial class XRRenderPipelineInstance
             static state => ((RenderingState)state!).PopUseDepthNormalMaterialVariants();
         private static readonly Action<object?> PopUseMotionVectorMaterialVariantAction =
             static state => ((RenderingState)state!).PopUseMotionVectorMaterialVariant();
+        private static readonly Action<object?> PopAdvancedLateTemporalOutputAction =
+            static state => ((RenderingState)state!).PopAdvancedLateTemporalOutput();
         private static readonly Action<object?> PopUnjitteredProjectionAction =
             static state => ((RenderingState)state!).PopUnjitteredProjection();
         private static readonly Action<object?> PopForceShaderPipelinesAction =
@@ -86,11 +88,53 @@ public sealed partial class XRRenderPipelineInstance
         public bool StereoPass { get; private set; } = false;
         /// <summary>Output-local desktop temporal-history sequence captured by this invocation.</summary>
         public ulong ViewHistorySequenceId { get; private set; }
+        /// <summary>Output-scheduling frame paired with desktop temporal history.</summary>
+        public ulong ViewHistorySourceFrame { get; private set; }
+        /// <summary>Canonical output request frozen with desktop temporal history.</summary>
+        public RenderOutputRequest ViewHistoryOutputRequest { get; private set; }
         /// <summary>Pipeline and resource-generation identity paired with temporal history.</summary>
         public ulong ViewHistoryPipelineIdentity { get; private set; }
         public bool ViewHistoryAuthoring { get; private set; }
         internal bool ViewHistoryCaptureAccepted { get; private set; } = true;
-        internal void SetViewHistoryCaptureAccepted(bool accepted) => ViewHistoryCaptureAccepted = accepted;
+        internal RenderFrameViewHistoryCandidateToken ViewHistoryCandidate { get; private set; }
+        public ulong OutputCompletionReceiptId { get; private set; }
+        public RenderOutputRequest OutputCompletionRequest { get; private set; }
+        /// <summary>
+        /// True when the current exact offscreen invocation failed to author any
+        /// command required by its declared output.
+        /// </summary>
+        public bool HasRequiredOffscreenAuthoringFailure { get; private set; }
+        public string? RequiredOffscreenAuthoringFailureReason { get; private set; }
+        public int RequiredOffscreenAuthoringFailureCount { get; private set; }
+        internal void SetOutputCompletionReservation(
+            ulong receiptId,
+            in RenderOutputRequest output)
+        {
+            OutputCompletionReceiptId = receiptId;
+            OutputCompletionRequest = output;
+        }
+        internal void RejectRequiredOffscreenAuthoring(string reason)
+        {
+            if (OutputFBO is null || OutputCompletionReceiptId == 0UL ||
+                OutputCompletionRequest.OutputClass != ERenderOutputClass.RequiredDependency ||
+                OutputCompletionRequest.ReadinessPolicy != ERenderOutputReadinessPolicy.BlockForExact ||
+                OutputCompletionRequest.WorkClass != ERenderOutputWorkClass.PresentNow ||
+                OutputCompletionRequest.FallbackPolicy != ERenderOutputFallbackPolicy.None ||
+                OutputCompletionRequest.CompletionRequirement != ERenderOutputCompletionRequirement.BeforeConsumer)
+                return;
+
+            HasRequiredOffscreenAuthoringFailure = true;
+            RequiredOffscreenAuthoringFailureReason ??= reason;
+            RequiredOffscreenAuthoringFailureCount =
+                checked(RequiredOffscreenAuthoringFailureCount + 1);
+        }
+        internal void SetViewHistoryCaptureResult(
+            bool accepted,
+            in RenderFrameViewHistoryCandidateToken candidate)
+        {
+            ViewHistoryCaptureAccepted = accepted;
+            ViewHistoryCandidate = candidate;
+        }
         /// <summary>
         /// Immutable logical views captured when this render invocation begins.
         /// </summary>
@@ -202,7 +246,48 @@ public sealed partial class XRRenderPipelineInstance
             bool applyRenderArea = true,
             ulong viewHistorySequenceId = 0UL,
             ulong viewHistoryPipelineIdentity = 0UL,
-            bool viewHistoryAuthoring = false)
+            bool viewHistoryAuthoring = false,
+            ulong viewHistorySourceFrame = 0UL,
+            RenderOutputRequest viewHistoryOutputRequest = default)
+            => PushMainAttributesWithFrozenDesktopHistory(
+                viewport,
+                scene,
+                camera,
+                stereoRightEyeCamera,
+                target,
+                shadowPass,
+                stereoPass,
+                globalMaterialOverride,
+                screenSpaceUI,
+                meshRenderCommands,
+                applyRenderArea,
+                viewHistorySequenceId,
+                viewHistoryPipelineIdentity,
+                viewHistoryAuthoring,
+                viewHistorySourceFrame,
+                viewHistoryOutputRequest,
+                frozenDesktopView: null,
+                frozenHistoryCandidate: default);
+
+        internal StateObject PushMainAttributesWithFrozenDesktopHistory(
+            XRViewport? viewport,
+            VisualScene? scene,
+            XRCamera? camera,
+            XRCamera? stereoRightEyeCamera,
+            XRFrameBuffer? target,
+            bool shadowPass,
+            bool stereoPass,
+            XRMaterial? globalMaterialOverride,
+            IRuntimeScreenSpaceUserInterface? screenSpaceUI,
+            RenderCommandCollection? meshRenderCommands,
+            bool applyRenderArea = true,
+            ulong viewHistorySequenceId = 0UL,
+            ulong viewHistoryPipelineIdentity = 0UL,
+            bool viewHistoryAuthoring = false,
+            ulong viewHistorySourceFrame = 0UL,
+            RenderOutputRequest viewHistoryOutputRequest = default,
+            RenderFrameViewDescriptor? frozenDesktopView = null,
+            RenderFrameViewHistoryCandidateToken frozenHistoryCandidate = default)
         {
             WindowViewport = viewport;
             Scene = scene;
@@ -212,51 +297,92 @@ public sealed partial class XRRenderPipelineInstance
             ShadowPass = shadowPass;
             StereoPass = stereoPass;
             ViewHistorySequenceId = viewHistorySequenceId;
+            ViewHistorySourceFrame = viewHistorySourceFrame;
+            ViewHistoryOutputRequest = viewHistoryOutputRequest;
             ViewHistoryPipelineIdentity = viewHistoryPipelineIdentity;
             ViewHistoryAuthoring = viewHistoryAuthoring;
             ViewHistoryCaptureAccepted = true;
+            ViewHistoryCandidate = default;
+            OutputCompletionReceiptId = 0UL;
+            OutputCompletionRequest = default;
+            HasRequiredOffscreenAuthoringFailure = false;
+            RequiredOffscreenAuthoringFailureReason = null;
+            RequiredOffscreenAuthoringFailureCount = 0;
             GlobalMaterialOverride = globalMaterialOverride;
             ScreenSpaceUserInterface = screenSpaceUI?.IsScreenSpace == true ? screenSpaceUI : null;
             MeshRenderCommands = meshRenderCommands;
             CapturePolicy = viewport?.CapturePolicy ?? RenderCapturePolicy.None;
-            RenderFrameViewSet? capturedViews = camera is null
-                ? null
-                : stereoPass && RenderFrameViewSetPublication.TryGetLatest(
-                    out RenderFrameViewSet openXrViews)
-                    ? openXrViews
-                    : RenderFrameViewSetCapture.Capture(this);
-            if (Scene is not null && capturedViews is RenderFrameViewSet views)
+            int viewportDepth = _renderingViewports.Count;
+            int sceneDepth = _renderingScenes.Count;
+            int cameraDepth = _renderingCameras.Count;
+            int renderAreaDepth = _renderRegionStack.Count;
+            int mainAreaDepth = _mainAttributeRenderAreaPushed.Count;
+            try
             {
-                RenderWorldSnapshot snapshot = RenderWorldSnapshotPublication.Acquire(
-                    RuntimeEngine.Rendering.State.RenderFrameId,
-                    Scene,
-                    Scene.GPUCommands,
-                    Scene.GPUCommands.AdvancedGlobalResources);
-                WorldSnapshot = snapshot;
-                FrameViewSet = views;
+                RenderFrameViewSet? capturedViews = camera is null
+                    ? null
+                    : stereoPass && RenderFrameViewSetPublication.TryGetLatest(
+                        out RenderFrameViewSet openXrViews)
+                        ? openXrViews
+                        : RenderFrameViewSetCapture.Capture(
+                            this,
+                            frozenDesktopView,
+                            frozenHistoryCandidate);
+                if (Scene is not null && capturedViews is RenderFrameViewSet views)
+                {
+                    if (stereoPass && views.ViewCount == 2 && camera is not null && stereoRightEyeCamera is not null &&
+                        !RuntimeRenderingHostServices.Presentation.IsOpenXRActive &&
+                        RuntimeEngine.Rendering.State.CurrentRenderingPipeline is { Pipeline: AdvancedRenderPipeline } pipeline &&
+                        AbstractRenderer.Current?.GetAdvancedRenderPipelineCapabilities().Backend == RuntimeGraphicsApiKind.OpenGL)
+                        views = pipeline.CaptureOpenGlStereoHistory(in views, camera, stereoRightEyeCamera);
+                    RenderWorldSnapshot snapshot = RenderWorldSnapshotPublication.Acquire(
+                        RuntimeEngine.Rendering.State.RenderFrameId,
+                        Scene,
+                        Scene.GPUCommands,
+                        Scene.GPUCommands.AdvancedGlobalResources);
+                    WorldSnapshot = snapshot;
+                    FrameViewSet = views;
+                }
+                else
+                {
+                    WorldSnapshot = null;
+                    FrameViewSet = null;
+                }
+
+                if (WindowViewport is not null)
+                    _renderingViewports.Push(WindowViewport);
+
+                if (Scene is not null)
+                    _renderingScenes.Push(Scene);
+
+                if (SceneCamera is not null)
+                    _renderingCameras.Push(SceneCamera);
+
+                // Visibility collection must capture logical view state without touching the
+                // renderer's global viewport/scissor tracker. Deferred Vulkan recording can
+                // run while collection is building the next frame, so mutating that tracker
+                // here would let a collection viewport leak into an unrelated mesh draw.
+                _mainAttributeRenderAreaPushed.Push(applyRenderArea && PushInitialMainRenderArea(viewport, target));
+
+                return StateObject.New(PopMainAttributesAction, this);
             }
-            else
+            catch
             {
+                // Capture can mint a resolved candidate before snapshot acquisition
+                // or native viewport setup fails. It has not transferred to a
+                // backend reservation yet, so this scope still owns settlement.
+                ViewHistoryCandidate.Discard();
+                ViewHistoryCandidate = default;
+                ViewHistoryCaptureAccepted = false;
                 WorldSnapshot = null;
                 FrameViewSet = null;
+                while (_renderingViewports.Count > viewportDepth) _renderingViewports.Pop();
+                while (_renderingScenes.Count > sceneDepth) _renderingScenes.Pop();
+                while (_renderingCameras.Count > cameraDepth) _renderingCameras.Pop();
+                while (_mainAttributeRenderAreaPushed.Count > mainAreaDepth) _mainAttributeRenderAreaPushed.Pop();
+                while (_renderRegionStack.Count > renderAreaDepth) PopRenderArea();
+                throw;
             }
-
-            if (WindowViewport is not null)
-                _renderingViewports.Push(WindowViewport);
-
-            if (Scene is not null)
-                _renderingScenes.Push(Scene);
-
-            if (SceneCamera is not null)
-                _renderingCameras.Push(SceneCamera);
-
-            // Visibility collection must capture logical view state without touching the
-            // renderer's global viewport/scissor tracker. Deferred Vulkan recording can
-            // run while collection is building the next frame, so mutating that tracker
-            // here would let a collection viewport leak into an unrelated mesh draw.
-            _mainAttributeRenderAreaPushed.Push(applyRenderArea && PushInitialMainRenderArea(viewport, target));
-
-            return StateObject.New(PopMainAttributesAction, this);
         }
 
         public void PopMainAttributes()
@@ -281,9 +407,17 @@ public sealed partial class XRRenderPipelineInstance
             ShadowPass = false;
             StereoPass = false;
             ViewHistorySequenceId = 0UL;
+            ViewHistorySourceFrame = 0UL;
+            ViewHistoryOutputRequest = default;
             ViewHistoryPipelineIdentity = 0UL;
             ViewHistoryAuthoring = false;
             ViewHistoryCaptureAccepted = true;
+            ViewHistoryCandidate = default;
+            OutputCompletionReceiptId = 0UL;
+            OutputCompletionRequest = default;
+            HasRequiredOffscreenAuthoringFailure = false;
+            RequiredOffscreenAuthoringFailureReason = null;
+            RequiredOffscreenAuthoringFailureCount = 0;
             DirectionalCascadeLayeredShadowPass = false;
             DirectionalCascadeInstancedLayeredShadowPass = false;
             DirectionalCascadeAtlasGroupedShadowPass = false;
@@ -976,6 +1110,21 @@ public sealed partial class XRRenderPipelineInstance
                 _useMotionVectorMaterialVariantDepth = 0;
                 UseMotionVectorMaterialVariant = false;
             }
+        }
+
+        public EAdvancedLateTemporalOutput AdvancedLateTemporalOutput { get; private set; }
+        private readonly Stack<EAdvancedLateTemporalOutput> _advancedLateTemporalOutputs = new();
+        public StateObject PushAdvancedLateTemporalOutput(EAdvancedLateTemporalOutput output)
+        {
+            _advancedLateTemporalOutputs.Push(output);
+            AdvancedLateTemporalOutput = output;
+            return StateObject.New(PopAdvancedLateTemporalOutputAction, this);
+        }
+        private void PopAdvancedLateTemporalOutput()
+        {
+            if (_advancedLateTemporalOutputs.Count > 0)
+                _advancedLateTemporalOutputs.Pop();
+            AdvancedLateTemporalOutput = _advancedLateTemporalOutputs.TryPeek(out EAdvancedLateTemporalOutput output) ? output : EAdvancedLateTemporalOutput.None;
         }
 
         /// <summary>

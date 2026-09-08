@@ -78,6 +78,7 @@ internal sealed partial class VulkanCommandRuntime
             return;
 
         for (int index = 0; index < commandBufferCount; index++)
+        {
             FreeTrackedCommandBuffer(
                 Api,
                 DeviceContext.Device,
@@ -86,6 +87,7 @@ internal sealed partial class VulkanCommandRuntime
                 commandPool,
                 ref commandBuffers[index],
                 owner);
+        }
     }
 
     /// <summary>

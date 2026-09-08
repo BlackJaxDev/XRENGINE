@@ -1669,7 +1669,7 @@ public partial class DefaultRenderPipeline
         builder.Buffer(PpllNodeBufferName)
             .Lifetime(RenderResourceLifetime.Persistent)
             .Usage(RenderPipelineResourceUsage.StorageBuffer)
-            .BufferFormat((ulong)nodeCount * PpllNodeStrideBytes, EBufferTarget.ShaderStorageBuffer, EBufferUsage.DynamicCopy)
+            .BufferFormat(PpllCapacityContract.ComputeNodeBufferBytes(nodeCount), EBufferTarget.ShaderStorageBuffer, EBufferUsage.DynamicCopy)
             .Elements(PpllNodeStrideBytes, nodeCount)
             .Access(EBufferAccessPattern.ReadWrite)
             .Factory(CreatePpllNodeBuffer)
@@ -1678,8 +1678,8 @@ public partial class DefaultRenderPipeline
         builder.Buffer(PpllCounterBufferName)
             .Lifetime(RenderResourceLifetime.Persistent)
             .Usage(RenderPipelineResourceUsage.StorageBuffer)
-            .BufferFormat(2u * sizeof(uint), EBufferTarget.ShaderStorageBuffer, EBufferUsage.DynamicCopy)
-            .Elements(sizeof(uint), 2u)
+            .BufferFormat(PpllCapacityContract.CounterWordCount * sizeof(uint), EBufferTarget.ShaderStorageBuffer, EBufferUsage.DynamicCopy)
+            .Elements(sizeof(uint), PpllCapacityContract.CounterWordCount)
             .Access(EBufferAccessPattern.ReadWrite)
             .Factory(CreatePpllCounterBuffer)
             .When(predicate)
@@ -2202,7 +2202,8 @@ public partial class DefaultRenderPipeline
                 height,
                 internalFormat,
                 EPixelFormat.Rgba,
-                pixelType);
+                pixelType,
+                EFrameBufferAttachment.ColorAttachment0);
             texture.OVRMultiViewParameters = new(0, 2u);
             ConfigureBloomBlurTexture(texture, sized, maxMipLevel);
             return texture;

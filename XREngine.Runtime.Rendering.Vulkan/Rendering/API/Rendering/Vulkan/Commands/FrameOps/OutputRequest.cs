@@ -249,7 +249,7 @@ internal readonly record struct OutputRequest(
             EFrameOutputKind.DesktopMirror or EFrameOutputKind.VrPickupMirror or
                 EFrameOutputKind.InWorldMirror =>
                 EVulkanFrameOpContextKind.OpenXrMirror,
-            EFrameOutputKind.SceneCapture =>
+            EFrameOutputKind.SceneCapture or EFrameOutputKind.Thumbnail =>
                 EVulkanFrameOpContextKind.SceneCapture,
             EFrameOutputKind.LightProbeCapture or
                 EFrameOutputKind.ReflectionProbeCapture or
@@ -324,7 +324,10 @@ internal readonly record struct OutputRequest(
             EVulkanFrameOpContextKind.OpenXrMirror =>
                 canonical.OutputKind == EFrameOutputKind.DesktopMirror,
             EVulkanFrameOpContextKind.SceneCapture =>
-                canonical.OutputKind == EFrameOutputKind.SceneCapture,
+                // A thumbnail is a scene-capture producer with its own exact
+                // output contract, not an inferred viewport terminal.
+                canonical.OutputKind is EFrameOutputKind.SceneCapture or
+                    EFrameOutputKind.Thumbnail,
             EVulkanFrameOpContextKind.LightProbeCapture =>
                 canonical.OutputKind is EFrameOutputKind.LightProbeCapture or
                     EFrameOutputKind.ReflectionProbeCapture or

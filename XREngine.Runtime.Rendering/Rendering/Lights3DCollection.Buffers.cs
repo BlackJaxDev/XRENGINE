@@ -72,5 +72,15 @@ namespace XREngine.Scene
             }
 
         }
+
+        /// <summary>Settles probe writers while this world's renderer context is current.</summary>
+        public void PublishCompletedLightProbeOutputs()
+        {
+            // Buffer swapping has no current OpenGL context. Polling GLsync
+            // there can leave a submitted writer pending forever. Publication
+            // here is captured by the next immutable global-resource snapshot.
+            for (int i = 0; i < LightProbes.Count; i++)
+                LightProbes[i].PublishCompletedIblOutput();
+        }
     }
 }

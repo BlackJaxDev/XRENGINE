@@ -18,7 +18,7 @@ Evidence source:
 Related local docs:
 
 - [Engine Rendering Optimization Roadmap](engine-rendering-optimization-roadmap.md)
-- [Deferred Plus Render Path TODO](deferred-plus-render-path-todo.md)
+- [Deferred Plus Render Path TODO](../vulkan-xr-and-advanced-rendering-todo.md#phase-7)
 - [VR Rendering Performance Contract TODO](vr-rendering-performance-contract-todo.md)
 - [Default Render Pipeline Notes](../../../../architecture/rendering/default-render-pipeline-notes.md)
 

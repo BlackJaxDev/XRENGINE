@@ -34,6 +34,8 @@ public sealed class AdvancedSharedGpuSceneDatabase
     private EAdvancedGpuScenePublicationFault _publicationFault;
     private bool _publicationPrepared;
     private bool _publicationFaulted;
+    private bool _terminalDisposalRequested;
+    private bool _terminalSnapshotsReleased;
 
     public AdvancedSharedGpuSceneDatabase(
         in AdvancedSharedGpuSceneCapacityProfile capacities,
@@ -169,7 +171,7 @@ public sealed class AdvancedSharedGpuSceneDatabase
     {
         lock (_publicationSync)
         {
-            if (_publicationFaulted)
+            if (_terminalDisposalRequested || _publicationFaulted)
             {
                 token = AdvancedGpuScenePublicationConsumerToken.Invalid;
                 return false;
@@ -220,7 +222,7 @@ public sealed class AdvancedSharedGpuSceneDatabase
         lock (_publicationSync)
         {
             transaction = default;
-            if (_publicationFaulted || _activePublicationSequence != 0u ||
+            if (_terminalDisposalRequested || _publicationFaulted || _activePublicationSequence != 0u ||
                 !EnsurePublicationCapacity())
                 return false;
 
@@ -232,6 +234,7 @@ public sealed class AdvancedSharedGpuSceneDatabase
                 // grew. The selected ring entry is free, so refresh only that
                 // snapshot at this legal boundary and leave retained snapshots
                 // untouched for their current consumers.
+                _publicationSnapshots[ringIndex].ResourcePayloads.ReleaseRetainedSources();
                 _publicationSnapshots[ringIndex] =
                     new AdvancedGpuScenePublicationSnapshot(this, _capacities);
                 if (!CanPreparePublicationCore(ringIndex))
@@ -465,7 +468,7 @@ public sealed class AdvancedSharedGpuSceneDatabase
         lock (_publicationSync)
         {
             reference = default;
-            if (_publicationFaulted || !IsConsumerTokenCurrent(token))
+            if (_terminalDisposalRequested || _publicationFaulted || !IsConsumerTokenCurrent(token))
                 return false;
 
             ulong nextSequence = _consumerAcknowledgements[token.Index] + 1u;
@@ -527,7 +530,7 @@ public sealed class AdvancedSharedGpuSceneDatabase
         lock (_publicationSync)
         {
             lease = default;
-            if (_publicationFaulted ||
+            if (_terminalDisposalRequested || _publicationFaulted ||
                 !TryFindPublication(reference, out int ringIndex))
                 return false;
 
@@ -588,7 +591,51 @@ public sealed class AdvancedSharedGpuSceneDatabase
             _leaseActive[leaseSlot] = 0;
             _leaseReferences[leaseSlot] = default;
             DrainAcknowledgedPublicationsAndReclaimTombstones();
+            TryReleaseTerminalSnapshotsCore();
         }
+    }
+
+    /// <summary>
+    /// Terminal publisher teardown releases source-lifetime retains only after
+    /// every package/GPU lease has settled. Normal acknowledged ring reclamation
+    /// releases its source retains at the same ownership boundary.
+    /// </summary>
+    internal void ReleasePublicationSnapshotsForDisposal()
+    {
+        lock (_publicationSync)
+        {
+            _terminalDisposalRequested = true;
+            if (_activePublicationSequence != 0u)
+            {
+                AdvancedGpuScenePublicationTransaction transaction = new(
+                    _databaseEpoch, _activePublicationSequence, _activePublicationRingIndex);
+                FaultActivePublicationCore(in transaction, EAdvancedGpuScenePublicationFault.InvariantFailure);
+                _activePublicationSequence = 0u;
+                _activePublicationRingIndex = -1;
+            }
+            TryReleaseTerminalSnapshotsCore();
+        }
+    }
+
+    private void TryReleaseTerminalSnapshotsCore()
+    {
+        if (!_terminalDisposalRequested || _terminalSnapshotsReleased || _activePublicationSequence != 0u)
+            return;
+        for (int index = 1; index < _leaseActive.Length; ++index)
+            if (_leaseActive[index] != 0)
+                return;
+        for (int index = 0; index < _publicationSnapshots.Length; ++index)
+            if (_packagePinCounts[index] != 0u || _gpuPinCounts[index] != 0u)
+                return;
+        for (int index = 0; index < _publicationSnapshots.Length; ++index)
+        {
+            _publicationSnapshots[index].ResourcePayloads.ReleaseRetainedSources();
+            _publicationRing[index] = default;
+        }
+        _publicationCount = 0;
+        _publicationHead = 0;
+        _lastSealedPublicationSequence = 0u;
+        _terminalSnapshotsReleased = true;
     }
 
     public bool TryResolveDraw(
@@ -743,6 +790,7 @@ public sealed class AdvancedSharedGpuSceneDatabase
                 if (_publicationRing[index].Sequence != 0u)
                     continue;
 
+                _publicationSnapshots[index].ResourcePayloads.ReleaseRetainedSources();
                 _publicationSnapshots[index] =
                     new AdvancedGpuScenePublicationSnapshot(this, _capacities);
             }
@@ -908,6 +956,10 @@ public sealed class AdvancedSharedGpuSceneDatabase
                _packagePinCounts[_publicationHead] == 0u &&
                _gpuPinCounts[_publicationHead] == 0u)
         {
+            // No acknowledged package/GPU consumer can acquire this entry again
+            // after it leaves the ring. Retaining its source until eventual reuse
+            // can otherwise deadlock a bounded capture producer waiting to refresh.
+            _publicationSnapshots[_publicationHead].ResourcePayloads.ReleaseRetainedSources();
             _publicationRing[_publicationHead] = default;
             _publicationHead = (_publicationHead + 1) % _publicationRing.Length;
             --_publicationCount;

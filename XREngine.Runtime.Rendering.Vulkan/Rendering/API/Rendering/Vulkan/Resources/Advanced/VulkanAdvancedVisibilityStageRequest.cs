@@ -24,8 +24,21 @@ internal readonly record struct VulkanAdvancedVisibilityStageRequest(
     string CurrentDepthPyramidTargetName,
     EAdvancedShadingDebugView ShadingDebugView = EAdvancedShadingDebugView.Disabled,
     bool RequireNativeOutput = false,
-    bool EnableBuiltInAmbientOcclusion = false)
+    bool EnableBuiltInAmbientOcclusion = false,
+    bool EnableLightProbesAndIbl = false,
+    bool IsMinimalVisibilityOutput = false,
+    uint NativeViewIndex = 0u)
 {
+    /// <summary>
+    /// Native-compute closure capture is required only by stages that consume
+    /// reconstruction, classification, or shading resources. Visibility-only
+    /// exports deliberately omit those graph resources.
+    /// </summary>
+    internal bool RequiresNativeComputeClosure
+        => Stage is EAdvancedRenderStage.WorkClassification or
+            EAdvancedRenderStage.AmbientOcclusion or
+            EAdvancedRenderStage.NativeOpaqueShading;
+
     internal bool IsValid
         => ((Stage, Phase) is
             (EAdvancedRenderStage.VisibilityPreparation,
@@ -52,6 +65,7 @@ internal readonly record struct VulkanAdvancedVisibilityStageRequest(
            Publication.DrawCount != 0u &&
            Extractor is not null && RenderFrameId != 0u &&
            Views.ViewCount > 0 &&
+           NativeViewIndex < (uint)Views.ViewCount &&
            Target is not null &&
            Target.Width != 0u &&
            Target.Height != 0u &&
@@ -59,18 +73,21 @@ internal readonly record struct VulkanAdvancedVisibilityStageRequest(
            !string.IsNullOrWhiteSpace(MetadataTargetName) &&
            !string.IsNullOrWhiteSpace(SelectionTargetName) &&
            !string.IsNullOrWhiteSpace(DepthTargetName) &&
-           !string.IsNullOrWhiteSpace(AmbientOcclusionTargetName) &&
-           !string.IsNullOrWhiteSpace(CurrentDepthPyramidTargetName);
+           !string.IsNullOrWhiteSpace(CurrentDepthPyramidTargetName) &&
+           (!RequiresNativeComputeClosure ||
+            !string.IsNullOrWhiteSpace(AmbientOcclusionTargetName));
 
     /// <summary>
     /// Verifies that two authored stages are members of one visibility family.
-    /// The stage discriminator is intentionally excluded; every other logical
+    /// The stage and native-view ordinal are intentionally excluded; every other logical
     /// publication, view, target, and extractor identity must be exact.
     /// </summary>
     internal bool MatchesFamily(in VulkanAdvancedVisibilityStageRequest other)
         => Reservation.Equals(other.Reservation) &&
            RequireNativeOutput == other.RequireNativeOutput &&
            EnableBuiltInAmbientOcclusion == other.EnableBuiltInAmbientOcclusion &&
+           EnableLightProbesAndIbl == other.EnableLightProbesAndIbl &&
+           IsMinimalVisibilityOutput == other.IsMinimalVisibilityOutput &&
            ShadingDebugView == other.ShadingDebugView &&
            BackendPackage.Equals(other.BackendPackage) &&
            Publication.Equals(other.Publication) &&

@@ -13,6 +13,11 @@ uniform sampler2D DepthView;
 uniform sampler2D HistoryDepth;
 uniform sampler2D HistoryExposureVariance;
 
+#ifdef XR_ADVANCED_REACTIVE_MASK
+// Canonical opaque/late reactivity is independent of final output alpha.
+uniform sampler2D AdvancedReactiveMask;
+#endif
+
 uniform bool HistoryReady;
 uniform vec2 TexelSize;
 uniform vec2 CurrentJitterUv;
@@ -263,6 +268,9 @@ void main()
     float luminanceMask = smoothstep(0.25f * ReactiveLumaThreshold, ReactiveLumaThreshold, luminanceDelta) * motionMask;
     float reactiveMask = clamp(max(transparencyMask, max(motionMask, luminanceMask)), 0.0f, 1.0f);
 
+#ifdef XR_ADVANCED_REACTIVE_MASK
+    reactiveMask = max(reactiveMask, clamp(texture(AdvancedReactiveMask, uv).r, 0.0, 1.0));
+#endif
     float confidence = pow(clamp((1.0f - geometryInstability) * (1.0f - reactiveMask), 0.0f, 1.0f), ConfidencePower);
     float staticConfidenceFloor = (1.0f - motionMask) * (1.0f - reactiveMask) * mix(0.65f, 0.35f, geometryInstability);
     confidence = max(confidence, staticConfidenceFloor);

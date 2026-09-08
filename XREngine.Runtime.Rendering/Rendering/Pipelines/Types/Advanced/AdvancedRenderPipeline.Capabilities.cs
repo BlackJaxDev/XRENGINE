@@ -14,9 +14,22 @@ public partial class AdvancedRenderPipeline : IAdvancedRenderPipelineCapabilityS
     internal AdvancedRenderPipeline(
         bool stereo,
         AdvancedRenderPipelineCapabilityResult capabilityResult)
-        : this(stereo)
+        : this(
+            stereo,
+            (AdvancedRenderPipelineCapabilityResult?)capabilityResult,
+            offscreenProfile: null)
     {
-        CapabilityResult = capabilityResult;
+    }
+
+    internal AdvancedRenderPipeline(
+        bool stereo,
+        AdvancedRenderPipelineCapabilityResult capabilityResult,
+        AdvancedOffscreenProfile offscreenProfile)
+        : this(
+            stereo,
+            (AdvancedRenderPipelineCapabilityResult?)capabilityResult,
+            offscreenProfile)
+    {
     }
 
     internal void RefreshCapabilityResult()

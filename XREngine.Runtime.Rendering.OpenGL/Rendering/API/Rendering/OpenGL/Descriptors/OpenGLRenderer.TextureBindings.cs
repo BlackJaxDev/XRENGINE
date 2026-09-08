@@ -179,6 +179,22 @@ public partial class OpenGLRenderer
         }
 
         int currentProgramId = Api.GetInteger(GetPName.CurrentProgram);
+        int drawFramebuffer = Api.GetInteger(GetPName.DrawFramebufferBinding);
+        sb.Append("[GL Error Context] DrawFramebuffer=").Append(drawFramebuffer)
+            .Append(" name='").Append(XRFrameBuffer.BoundForWriting?.Name ?? "<default>")
+            .Append("' forceOvr=").Append(XRFrameBuffer.BoundForWriting?.ForceOvrMultiview ?? false);
+        if (drawFramebuffer != 0 && OVRMultiView is not null)
+        {
+            Api.GetNamedFramebufferAttachmentParameter((uint)drawFramebuffer, GLEnum.ColorAttachment0,
+                GLEnum.FramebufferAttachmentObjectType, out int attachmentType);
+            if (attachmentType == (int)GLEnum.Texture)
+            {
+                Api.GetNamedFramebufferAttachmentParameter((uint)drawFramebuffer, GLEnum.ColorAttachment0,
+                    (GLEnum)0x9630, out int views); // GL_FRAMEBUFFER_ATTACHMENT_TEXTURE_NUM_VIEWS_OVR
+                sb.Append(" color0NumViews=").Append(views);
+            }
+        }
+        sb.AppendLine();
         sb.Append("[GL Error Context] CurrentProgramId=")
             .Append(currentProgramId)
             .Append(", ActiveTextureUnit=")

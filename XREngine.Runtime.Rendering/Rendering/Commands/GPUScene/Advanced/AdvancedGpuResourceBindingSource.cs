@@ -11,7 +11,8 @@ public readonly record struct AdvancedGpuResourceBindingSource(
     AdvancedTextureRecord TextureRecord,
     AdvancedSamplerRecord SamplerRecord,
     EAdvancedResourceFallback Fallback,
-    ulong SourceContentGeneration = 0u)
+    ulong SourceContentGeneration = 0u,
+    IAdvancedGpuPublicationSourceLifetime? Lifetime = null)
 {
     /// <summary>Creates an unbound slot with an explicit shader fallback.</summary>
     public static AdvancedGpuResourceBindingSource Missing(EAdvancedResourceFallback fallback)

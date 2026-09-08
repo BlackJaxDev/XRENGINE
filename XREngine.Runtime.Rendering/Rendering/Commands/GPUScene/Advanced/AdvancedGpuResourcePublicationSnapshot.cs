@@ -11,6 +11,7 @@ public sealed class AdvancedGpuResourcePublicationSnapshot
     private readonly XRTexture?[] _textureSources;
     private readonly AdvancedGpuHandle[] _textureSourceHandles;
     private readonly ulong[] _textureSourceGenerations;
+    private readonly IAdvancedGpuPublicationSourceLifetime?[] _textureSourceLifetimes;
     private int _textureSourceCount;
 
     internal AdvancedGpuResourcePublicationSnapshot(
@@ -24,7 +25,8 @@ public sealed class AdvancedGpuResourcePublicationSnapshot
         _textureSources = new XRTexture?[checked((int)database.Textures.Capacity + 1)];
         _textureSourceHandles = new AdvancedGpuHandle[
             checked((int)database.Textures.Capacity)];
-        _textureSourceGenerations = new ulong[checked((int)database.Textures.Capacity)];
+        _textureSourceGenerations = new ulong[checked((int)database.Textures.Capacity + 1)];
+        _textureSourceLifetimes = new IAdvancedGpuPublicationSourceLifetime?[checked((int)database.Textures.Capacity + 1)];
     }
 
     public ulong Sequence { get; private set; }
@@ -117,7 +119,8 @@ public sealed class AdvancedGpuResourcePublicationSnapshot
     internal bool TryAddTextureSource(
         AdvancedGpuHandle handle,
         XRTexture source,
-        ulong sourceContentGeneration)
+        ulong sourceContentGeneration,
+        IAdvancedGpuPublicationSourceLifetime? lifetime)
     {
         ArgumentNullException.ThrowIfNull(source);
         if (!handle.IsValid || handle.Index >= (uint)_textureSources.Length ||
@@ -128,8 +131,12 @@ public sealed class AdvancedGpuResourcePublicationSnapshot
             return false;
         }
 
+        if (lifetime is not null && !lifetime.TryRetainPublication(sourceContentGeneration))
+            return false;
+
         _textureSources[checked((int)handle.Index)] = source;
         _textureSourceGenerations[checked((int)handle.Index)] = sourceContentGeneration;
+        _textureSourceLifetimes[checked((int)handle.Index)] = lifetime;
         _textureSourceHandles[_textureSourceCount++] = handle;
         return true;
     }
@@ -147,6 +154,10 @@ public sealed class AdvancedGpuResourcePublicationSnapshot
     internal void AbortSourceCapture()
         => ClearTextureSources();
 
+    /// <summary>Releases source-lifetime retains before a free ring entry is replaced.</summary>
+    internal void ReleaseRetainedSources()
+        => ClearTextureSources();
+
     private void ClearTextureSources()
     {
         for (int index = 0; index < _textureSourceCount; ++index)
@@ -156,6 +167,12 @@ public sealed class AdvancedGpuResourcePublicationSnapshot
                 _textureSources[checked((int)handle.Index)] = null;
             if (handle.IsValid && handle.Index < (uint)_textureSourceGenerations.Length)
                 _textureSourceGenerations[checked((int)handle.Index)] = 0u;
+            if (handle.IsValid && handle.Index < (uint)_textureSourceLifetimes.Length)
+            {
+                IAdvancedGpuPublicationSourceLifetime? lifetime = _textureSourceLifetimes[checked((int)handle.Index)];
+                _textureSourceLifetimes[checked((int)handle.Index)] = null;
+                lifetime?.ReleasePublication();
+            }
             _textureSourceHandles[index] = AdvancedGpuHandle.Invalid;
         }
 

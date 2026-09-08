@@ -114,12 +114,12 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             return;
         }
 
-        int capturedLightCount = globalResources.FrameId == frameId
-            ? globalResources.Lights.Length
+        int capturedGlobalResourceCount = globalResources.FrameId == frameId
+            ? Math.Max(globalResources.Lights.Length, globalResources.Probes.Length)
             : 0;
         if (!EnsureBoundaryCapacity(
                 scene.TotalCommandCount,
-                checked((uint)capturedLightCount)))
+                checked((uint)capturedGlobalResourceCount)))
         {
             _publicationRejected = true;
             return;
@@ -157,6 +157,8 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             return;
         }
         _sequence = transaction.Sequence;
+        AdvancedGpuScenePublicationReference provisional = default;
+        bool publicationCommitted = false;
 
         try
         {
@@ -224,7 +226,12 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
                     DependencySignature = Mix(plan.StructuralSignature, plan.ContentSignature),
                 };
                 _plannedDeformationSources[submissionIndex] = new AdvancedManagedDeformationSourceRow(
-                    plan.Source, plan.Source.Mesh, checked((uint)Math.Max(0, plan.MeshVertexCount)),
+                    plan.Source,
+                    plan.Source is RenderCommand renderCommand
+                        ? renderCommand.OwnerRenderInfo
+                        : null,
+                    plan.Source.Mesh,
+                    checked((uint)Math.Max(0, plan.MeshVertexCount)),
                     plan.ContentSignature, plan.StructuralSignature);
             }
 
@@ -240,7 +247,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
                     _topologyGeneration,
                     _contentGeneration,
                     _lookupGeneration,
-                    out AdvancedGpuScenePublicationReference provisional))
+                    out provisional))
             {
                 Database.FaultActivePublication(
                     in transaction,
@@ -253,6 +260,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
                     provisional.Sequence,
                     provisional.Snapshot!.ResourcePayloads))
             {
+                provisional.Snapshot.ResourcePayloads.AbortSourceCapture();
                 Database.FaultActivePublication(
                     in transaction,
                     EAdvancedGpuScenePublicationFault.SnapshotCaptureFailed);
@@ -265,6 +273,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
                     _plannedSubmissionRecords.AsSpan(0, _legacyMappingCount),
                     _plannedDeformationSources.AsSpan(0, _legacyMappingCount)))
             {
+                provisional.Snapshot!.ResourcePayloads.AbortSourceCapture();
                 Database.FaultActivePublication(in transaction, EAdvancedGpuScenePublicationFault.SnapshotCaptureFailed);
                 throw new InvalidOperationException("Canonical submission sidecar capture failed after table sealing.");
             }
@@ -275,6 +284,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
                     in transaction,
                     out AdvancedGpuScenePublicationReference committed))
             {
+                provisional.Snapshot!.ResourcePayloads.AbortSourceCapture();
                 Database.FaultActivePublication(
                     in transaction,
                     EAdvancedGpuScenePublicationFault.InvariantFailure);
@@ -283,9 +293,12 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             }
 
             _currentPublication = committed;
+            publicationCommitted = true;
         }
         catch
         {
+            if (!publicationCommitted)
+                provisional.Snapshot?.ResourcePayloads.AbortSourceCapture();
             _publicationRejected = true;
             Database.FaultActivePublication(
                 in transaction,
@@ -511,7 +524,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             !(geometry = residentGeometry).IsValid ||
             !tables.Deformations.TryAdd(CreateDeformation(geometry, plan.MeshVertexCount), out deformation) ||
             !tables.RenderStates.TryAdd(plan.RenderState, out renderState) ||
-            !tables.EditorIdentities.TryAdd(CreateEditorIdentity(in command), out editorIdentity))
+            !tables.EditorIdentities.TryAdd(CreateEditorIdentity(source, in command), out editorIdentity))
         {
             RollBackPartialRegistration(
                 currentTransform,
@@ -684,7 +697,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             CreateInstance(world, previousWorld, in bounds, in command)) ||
             !Database.Scene.EditorIdentities.TryReplace(
             registration.EditorIdentity,
-            CreateEditorIdentity(in command)))
+            CreateEditorIdentity(plan.Source, in command)))
         {
             throw new InvalidOperationException("Canonical content update failed after successful preflight.");
         }
@@ -997,8 +1010,8 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             BoundsMin = bounds.AabbMin,
             BoundsMax = bounds.AabbMax,
             VisibilityFlags = EAdvancedInstanceVisibilityFlags.Enabled,
-            ViewMaskLow = command.LayerMask,
-            ViewMaskHigh = command.RenderPassMask,
+            LayerMask = command.LayerMask,
+            RenderPassMask = command.RenderPassMask,
         };
 
     private static AdvancedDeformationRecord CreateDeformation(
@@ -1075,14 +1088,22 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             Flags = command.Flags,
         };
 
-    private static AdvancedEditorIdentityRecord CreateEditorIdentity(in DrawMetadata command)
-        => new()
+    private static AdvancedEditorIdentityRecord CreateEditorIdentity(
+        IRenderCommandMesh? source,
+        in DrawMetadata command)
+    {
+        ulong stableComponentIdentity = source is RenderCommand renderCommand &&
+            renderCommand.OwnerRenderInfo is { } renderInfo
+                ? renderInfo.StableInstanceId
+                : command.RenderIdentityID;
+        return new AdvancedEditorIdentityRecord
         {
-            StableInstanceId = command.RenderIdentityID,
-            IdentityLow = command.DrawID,
+            StableInstanceId = stableComponentIdentity,
+            IdentityLow = stableComponentIdentity,
             IdentityHigh = command.LogicalMeshID,
             SelectionId = command.RenderIdentityID,
         };
+    }
 
     private static ulong ComputeStructuralSignature(
         in DrawMetadata command,

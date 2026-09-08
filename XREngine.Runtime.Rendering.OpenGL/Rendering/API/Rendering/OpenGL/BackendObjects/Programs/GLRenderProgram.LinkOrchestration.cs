@@ -283,6 +283,8 @@ namespace XREngine.Rendering.OpenGL
                 {
                     Api.DispatchCompute(x, y, z);
                 }
+                if (x != 0 && y != 0 && z != 0)
+                    Renderer.MarkImmediateHistoryGpuWriteUnproven();
             }
 
             private string ResolveDispatchLabel()

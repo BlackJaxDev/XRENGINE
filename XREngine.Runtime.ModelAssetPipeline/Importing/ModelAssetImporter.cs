@@ -286,7 +286,29 @@ namespace XREngine
             Dictionary<string, List<MaterialProperty>> properties)
         {
             XRTexture[] textureList = textures.Count > 0 ? LoadTextures(modelFilePath, textures) : [];
-            return MakeMaterialInternal(textureList, textures, name);
+            XRMaterial material = MakeMaterialInternal(textureList, textures, name);
+            ApplyImportedDiffuseColor(material, properties);
+            return material;
+        }
+
+        /// <summary>
+        /// Preserves the authored diffuse factor for the standard material factory.
+        /// Texture loading alone cannot represent untextured OBJ/Assimp materials.
+        /// </summary>
+        private static void ApplyImportedDiffuseColor(
+            XRMaterial material,
+            Dictionary<string, List<MaterialProperty>> properties)
+        {
+            if (material.Parameter<ShaderVector3>("BaseColor") is not { } baseColor ||
+                !properties.TryGetValue(AI_MATKEY_COLOR_DIFFUSE, out var diffuseProperties) ||
+                diffuseProperties.Count == 0)
+                return;
+
+            Vector3 diffuse = diffuseProperties[0].GetVector3Value();
+            if (!float.IsFinite(diffuse.X) || !float.IsFinite(diffuse.Y) || !float.IsFinite(diffuse.Z))
+                throw new InvalidDataException($"Material '{material.Name}' has a nonfinite diffuse color.");
+
+            baseColor.Value = diffuse;
         }
 
         public XRTexture[] LoadTextures(string modelFilePath, List<TextureSlot> textures)

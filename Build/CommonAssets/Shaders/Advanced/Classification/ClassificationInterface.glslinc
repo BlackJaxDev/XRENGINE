@@ -11,8 +11,8 @@
 #define XR_ADV_CLASSIFICATION_PASS_LAYOUT(bindingIndex) layout(set = XR_ADV_CLASSIFICATION_SET, binding = bindingIndex)
 #define XR_ADV_CLASSIFICATION_IMAGE_LAYOUT(formatName, bindingIndex) layout(formatName, set = XR_ADV_CLASSIFICATION_SET, binding = bindingIndex)
 #elif defined(XR_ADV_BACKEND_OPENGL)
-#define XR_ADV_CLASSIFICATION_PASS_LAYOUT(bindingIndex) layout(binding = bindingIndex)
-#define XR_ADV_CLASSIFICATION_IMAGE_LAYOUT(formatName, bindingIndex) layout(formatName, binding = bindingIndex)
+#define XR_ADV_CLASSIFICATION_PASS_LAYOUT(bindingIndex) layout(binding = 75 + bindingIndex)
+#define XR_ADV_CLASSIFICATION_IMAGE_LAYOUT(formatName, bindingIndex) layout(formatName, binding = 5)
 #else
 #define XR_ADV_CLASSIFICATION_PASS_LAYOUT(bindingIndex) layout(binding = bindingIndex)
 #define XR_ADV_CLASSIFICATION_IMAGE_LAYOUT(formatName, bindingIndex) layout(formatName, binding = bindingIndex)
@@ -33,6 +33,13 @@ struct XRAdvancedKernelTile
     uint pixelCount;
     uint flags;
 };
+
+// Keep these values aligned with AdvancedKernelTileRecord. The derivative bit
+// carries the immutable dense-kernel requirement through indirect dispatch.
+#define XR_ADV_KERNEL_TILE_FULL 1u
+#define XR_ADV_KERNEL_TILE_MIXED 2u
+#define XR_ADV_KERNEL_TILE_ANALYTICAL_DERIVATIVES 4u
+#define XR_ADV_KERNEL_REQUIRED_ANALYTICAL_DERIVATIVES (1u << 11u)
 
 struct XRAdvancedClassificationCounters
 {

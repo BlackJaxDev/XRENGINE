@@ -322,6 +322,19 @@ internal readonly unsafe struct VulkanTrackedCommandEncoder
         Api.CmdCopyBuffer(commandBuffer, source, destination, regionCount, ref region);
     }
 
+    /// <summary>Copies matching image subresources and records both lifetime dependencies.</summary>
+    internal void CopyImage(
+        CommandBuffer commandBuffer,
+        Image source,
+        Image destination,
+        ref ImageCopy region)
+    {
+        Track(commandBuffer, ObjectType.Image, source.Handle);
+        Track(commandBuffer, ObjectType.Image, destination.Handle);
+        Api.CmdCopyImage(commandBuffer, source, ImageLayout.TransferSrcOptimal,
+            destination, ImageLayout.TransferDstOptimal, 1, ref region);
+    }
+
     /// <summary>Blits between images and records both lifetime dependencies.</summary>
     internal void BlitImage(
         CommandBuffer commandBuffer,

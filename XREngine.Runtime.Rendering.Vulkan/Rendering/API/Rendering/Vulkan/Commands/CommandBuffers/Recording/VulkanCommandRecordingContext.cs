@@ -29,7 +29,9 @@ internal ref struct VulkanCommandRecordingContext(
     VulkanPresentationSourceTuple presentationSource = default,
     VulkanCommandRecordingPolicySnapshot policy = default,
     VulkanPreparedResourcePlanStamp resourcePlanStamp = default,
-    VulkanCommandClearStateSnapshot clearState = default)
+    VulkanCommandClearStateSnapshot clearState = default,
+    VulkanAcceptedFramePlan? acceptedFramePlan = null,
+    PrimaryCommandArtifactOwner? artifactOwner = null)
 {
     public readonly uint ImageIndex = imageIndex;
     public readonly CommandBuffer CommandBuffer = commandBuffer;
@@ -53,6 +55,8 @@ internal ref struct VulkanCommandRecordingContext(
     public readonly VulkanCommandRecordingPolicySnapshot Policy = policy;
     public readonly VulkanPreparedResourcePlanStamp ResourcePlanStamp = resourcePlanStamp;
     public readonly VulkanCommandClearStateSnapshot ClearState = clearState;
+    public readonly VulkanAcceptedFramePlan? AcceptedFramePlan = acceptedFramePlan;
+    public readonly PrimaryCommandArtifactOwner? ArtifactOwner = artifactOwner;
 
     public int RecordedSwapchainWriteCount = 0;
     public ImageLayout RecordedSwapchainFinalLayout = ImageLayout.Undefined;

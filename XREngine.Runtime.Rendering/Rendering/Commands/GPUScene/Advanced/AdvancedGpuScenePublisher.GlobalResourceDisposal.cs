@@ -9,14 +9,18 @@ public sealed partial class AdvancedGpuScenePublisher
     /// </summary>
     public void Dispose()
     {
-        if (_publishedLightCount == 0)
+        if (_publishedLightCount == 0 && _publishedProbeCount == 0)
+        {
+            Database.ReleasePublicationSnapshotsForDisposal();
             return;
+        }
 
         int shadowCount = 0;
         for (int index = 0; index < _publishedLightCount; ++index)
             shadowCount += _publishedLightShadowCounts[index];
 
-        EnsureGlobalResourceTransitionCapacity(0, shadowCount);
+        int probeBindingCount = checked(_publishedProbeCount * 2);
+        EnsureGlobalResourceTransitionCapacity(0, checked(shadowCount + probeBindingCount));
         int releaseCursor = 0;
         for (int index = 0; index < _publishedLightCount; ++index)
         {
@@ -27,11 +31,18 @@ public sealed partial class AdvancedGpuScenePublisher
                     _resourceReleaseBindings.AsSpan(releaseCursor, count));
             releaseCursor += count;
         }
+        if (probeBindingCount != 0)
+        {
+            _publishedProbeBindings.AsSpan(0, probeBindingCount).CopyTo(
+                _resourceReleaseBindings.AsSpan(releaseCursor, probeBindingCount));
+            releaseCursor += probeBindingCount;
+        }
 
         AdvancedGlobalResourceDatabase resources = Database.Resources;
         string reason = string.Empty;
         if (!resources.Lights.CanApply(0, 0, _publishedLightCount) ||
             !resources.Shadows.CanApply(0, 0, shadowCount) ||
+            !resources.Probes.CanApply(0, 0, _publishedProbeCount) ||
             !_resourcePublisher.TryPreflightTransition(
                 ReadOnlySpan<AdvancedGpuResourceBindingSource>.Empty,
                 _resourceReleaseBindings.AsSpan(0, releaseCursor), out reason))
@@ -52,6 +63,9 @@ public sealed partial class AdvancedGpuScenePublisher
             if (count != 0 && !resources.RemoveShadowGroup(_publishedShadowHandles.AsSpan(start, count)))
                 throw new InvalidOperationException("A retained shadow group could not be retired during disposal.");
         }
+        for (int index = 0; index < _publishedProbeCount; ++index)
+            if (!resources.RemoveProbe(_publishedProbeHandles[index]))
+                throw new InvalidOperationException("A retained global probe could not be retired during disposal.");
 
         _resourcePublisher.ApplyPreflightedAcquisitions(
             ReadOnlySpan<AdvancedGpuResourceBindingSource>.Empty,
@@ -61,5 +75,9 @@ public sealed partial class AdvancedGpuScenePublisher
         Array.Clear(_publishedLightHandles);
         Array.Clear(_publishedLightShadowCounts);
         _publishedLightCount = 0;
+        Array.Clear(_publishedProbeHandles);
+        Array.Clear(_publishedProbeBindings);
+        _publishedProbeCount = 0;
+        Database.ReleasePublicationSnapshotsForDisposal();
     }
 }

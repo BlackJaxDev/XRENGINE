@@ -8,6 +8,7 @@ internal struct VulkanAdvancedScenePublicationEntry
     internal AdvancedSharedGpuSceneDatabase? Database;
     internal AdvancedGpuScenePublicationReference Publication;
     internal VulkanAdvancedScenePublicationState State;
+    internal VulkanAdvancedSceneGlobalInputs? Globals;
     internal int ActiveUseCount;
 
     internal void Clear()

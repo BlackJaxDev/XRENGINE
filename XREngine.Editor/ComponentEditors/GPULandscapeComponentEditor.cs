@@ -64,6 +64,9 @@ public sealed class GPULandscapeComponentEditor : IXRComponentEditor
             return;
         }
 
+        ImGui.TextWrapped(landscape.AdvancedRenderingUnsupportedReason);
+        ImGui.Separator();
+
         if (!ComponentEditorLayout.DrawInspectorModeToggle(landscape, visited, "Landscape Editor"))
         {
             ComponentEditorLayout.DrawActivePreviewDialog();

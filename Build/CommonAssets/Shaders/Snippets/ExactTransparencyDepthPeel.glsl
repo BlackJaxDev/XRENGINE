@@ -6,6 +6,7 @@ uniform float ScreenHeight;
 #endif
 uniform int DepthPeelLayerIndex;
 uniform float DepthPeelEpsilon;
+uniform bool DepthPeelReversedDepth;
 
 bool XRE_ShouldDiscardDepthPeelFragment()
 {
@@ -14,5 +15,7 @@ bool XRE_ShouldDiscardDepthPeelFragment()
 
     vec2 uv = gl_FragCoord.xy / vec2(ScreenWidth, ScreenHeight);
     float previousDepth = texture(PrevPeelDepth, uv).r;
-    return gl_FragCoord.z <= previousDepth + DepthPeelEpsilon;
+    return DepthPeelReversedDepth
+        ? gl_FragCoord.z >= previousDepth - DepthPeelEpsilon
+        : gl_FragCoord.z <= previousDepth + DepthPeelEpsilon;
 }

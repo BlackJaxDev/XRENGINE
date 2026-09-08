@@ -108,6 +108,8 @@ namespace XREngine.Rendering.OpenGL
                     Api.DrawTransformFeedbackStreamInstanced(mode, BindingId, stream, instanceCount);
             }
 
+            Renderer.MarkImmediateHistoryGpuWriteUnproven();
+
             return XRTransformFeedbackOperationResult.Success(EXRTransformFeedbackOperation.DrawCaptured, "OpenGL");
         }
 

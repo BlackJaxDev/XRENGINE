@@ -218,6 +218,31 @@ namespace XREngine.Rendering.Vulkan
                 recordingState.ActualSwapchainWriteCount++;
                 recordingState.SwapchainDrawWrites++;
                 recordingState.OverlaySwapchainWriters++;
+                if (recordingState.FramePlan is { } framePlan)
+                {
+                    FrameOperationSequence dynamicOperations =
+                        framePlan.GetNativeDynamicOverlayOperationsForRecording();
+                    int recordedOutputCount = recordingState.ArtifactOwner?
+                        .RecordedDynamicUiTerminalOperationCount ?? 0;
+                    for (int index = 0;
+                         index < recordedOutputCount;
+                         index++)
+                    {
+                        int operationIndex = recordingState.ArtifactOwner!
+                            .GetRecordedDynamicUiTerminalOperationIndex(index);
+                        if ((uint)operationIndex >=
+                            (uint)dynamicOperations.Length)
+                        {
+                            continue;
+                        }
+                        ref readonly FrameOpContext context =
+                            ref dynamicOperations.GetContext(operationIndex);
+                        MarkActualTerminalOutput(
+                            ref recordingState,
+                            in context,
+                            actualTarget: null);
+                    }
+                }
                 MarkSwapchainDynamicUiWriter(ref recordingState,
                     "DynamicUIBatchText",
                     recordingState.DynamicUiBatchTextOpCount,

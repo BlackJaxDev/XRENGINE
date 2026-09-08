@@ -16,8 +16,10 @@ layout(std430, binding = 24) buffer PpllNodeBuffer
 
 layout(std430, binding = 25) buffer PpllCounterBuffer
 {
-    uint PpllAllocatedNodeCount;
-    uint PpllOverflowCount;
+    uint PpllEmittedNodeCount;
+    uint PpllOverflowFragmentCount;
+    uint PpllRejectedPixelCount;
+    uint PpllStatusFlags;
 };
 
 #ifndef XRENGINE_SCREEN_SIZE_UNIFORMS
@@ -25,7 +27,50 @@ layout(std430, binding = 25) buffer PpllCounterBuffer
 uniform float ScreenWidth;
 uniform float ScreenHeight;
 #endif
-uniform int PpllMaxNodes;
+uniform uint PpllMaxNodes;
+
+const uint XRE_PPLL_STATUS_OVERFLOW = 1u << 0;
+const uint XRE_PPLL_STATUS_COUNTER_SATURATED = 1u << 1;
+
+void XRE_RecordPpllOverflow()
+{
+    atomicOr(PpllStatusFlags, XRE_PPLL_STATUS_OVERFLOW);
+    uint observed = PpllOverflowFragmentCount;
+    while (observed != 0xFFFFFFFFu)
+    {
+        uint previous = atomicCompSwap(
+            PpllOverflowFragmentCount,
+            observed,
+            observed + 1u);
+        if (previous == observed)
+            return;
+        observed = previous;
+    }
+
+    atomicOr(PpllStatusFlags, XRE_PPLL_STATUS_COUNTER_SATURATED);
+}
+
+bool XRE_TryReservePpllNode(out uint nodeIndex)
+{
+    uint safeCapacity = min(PpllMaxNodes, uint(PpllNodes.length()));
+    uint observed = PpllEmittedNodeCount;
+    while (observed < safeCapacity)
+    {
+        uint previous = atomicCompSwap(
+            PpllEmittedNodeCount,
+            observed,
+            observed + 1u);
+        if (previous == observed)
+        {
+            nodeIndex = observed;
+            return true;
+        }
+        observed = previous;
+    }
+
+    nodeIndex = 0u;
+    return false;
+}
 
 void XRE_StorePerPixelLinkedListFragment(vec4 shadedColor)
 {
@@ -33,19 +78,26 @@ void XRE_StorePerPixelLinkedListFragment(vec4 shadedColor)
     if (alpha <= 0.0001)
         discard;
 
-    uint nodeIndex = atomicAdd(PpllAllocatedNodeCount, 1u);
-    if (nodeIndex >= uint(PpllMaxNodes))
+    ivec2 dimensions = imageSize(PpllHeadPointers);
+    if (any(lessThanEqual(dimensions, ivec2(0))))
+        discard;
+
+    uint nodeIndex;
+    if (!XRE_TryReservePpllNode(nodeIndex))
     {
-        atomicAdd(PpllOverflowCount, 1u);
+        XRE_RecordPpllOverflow();
         discard;
     }
 
-    ivec2 pixel = ivec2(clamp(gl_FragCoord.xy, vec2(0.0), vec2(ScreenWidth - 1.0, ScreenHeight - 1.0)));
-    uint previousHead = imageAtomicExchange(PpllHeadPointers, pixel, nodeIndex);
-
     PpllNodes[nodeIndex].Color = shadedColor;
     PpllNodes[nodeIndex].Depth = gl_FragCoord.z;
-    PpllNodes[nodeIndex].Next = previousHead;
     PpllNodes[nodeIndex]._Pad0 = 0u;
     PpllNodes[nodeIndex]._Pad1 = 0u;
+
+    ivec2 pixel = ivec2(clamp(
+        gl_FragCoord.xy,
+        vec2(0.0),
+        vec2(max(dimensions - ivec2(1), ivec2(0)))));
+    uint previousHead = imageAtomicExchange(PpllHeadPointers, pixel, nodeIndex);
+    PpllNodes[nodeIndex].Next = previousHead;
 }

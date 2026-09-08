@@ -71,6 +71,8 @@ public static class AdvancedShaderAccessLibrary
         AppendDefine(source, "XR_ADV_BINDING_TEXTURE_CUBE_DESCRIPTORS", AdvancedGlobalResourceBindings.TextureCubeDescriptors);
         AppendDefine(source, "XR_ADV_BINDING_TEXTURE_ARRAY", AdvancedGlobalResourceBindings.TextureArray);
         AppendDefine(source, "XR_ADV_BINDING_HANDLE_LOOKUPS", AdvancedGlobalResourceBindings.HandleLookups);
+        if (backend == RuntimeGraphicsApiKind.OpenGL)
+            AppendOpenGlVisibilityBindingDefines(source);
         bool vulkan = backend == RuntimeGraphicsApiKind.Vulkan;
         AppendDefine(
             source,
@@ -90,10 +92,11 @@ public static class AdvancedShaderAccessLibrary
             vulkan
                 ? AdvancedReconstructionShaderBindings.VulkanPreSkinnedPreviousVertices
                 : AdvancedReconstructionShaderBindings.PreSkinnedPreviousVertices);
-        AppendDefine(
-            source,
-            "XR_ADV_BINDING_PREPARED_DRAW_DEFORMATIONS",
-            AdvancedReconstructionShaderBindings.VulkanPreparedDrawDeformations);
+        if (vulkan)
+            AppendDefine(
+                source,
+                "XR_ADV_BINDING_PREPARED_DRAW_DEFORMATIONS",
+                AdvancedReconstructionShaderBindings.VulkanPreparedDrawDeformations);
         AppendDefine(
             source,
             "XR_ADV_BINDING_RECONSTRUCTION_INDICES",
@@ -191,4 +194,40 @@ public static class AdvancedShaderAccessLibrary
             .Append(' ')
             .Append(value.ToString(CultureInfo.InvariantCulture))
             .AppendLine();
+
+    // Vulkan places these tables in set 1, where their numeric bindings may
+    // overlap the global set. OpenGL has one SSBO binding namespace, so reserve
+    // a disjoint range above the global tables and reconstruction inputs.
+    private static void AppendOpenGlVisibilityBindingDefines(StringBuilder source)
+    {
+        const uint first = 48u;
+        AppendDefine(source, "XR_ADV_BINDING_VISIBILITY_CANDIDATES", first + 0u);
+        AppendDefine(source, "XR_ADV_BINDING_VISIBILITY_PERSISTENT_STATE", first + 1u);
+        AppendDefine(source, "XR_ADV_BINDING_VISIBILITY_DEFERRED_INDICES", first + 2u);
+        AppendDefine(source, "XR_ADV_BINDING_VISIBILITY_VISIBLE_INDICES", first + 3u);
+        AppendDefine(source, "XR_ADV_BINDING_VISIBILITY_PAYLOADS", first + 4u);
+        AppendDefine(source, "XR_ADV_BINDING_VISIBILITY_PRODUCERS", first + 5u);
+        AppendDefine(source, "XR_ADV_BINDING_VISIBILITY_RANGE_INDICES", first + 6u);
+        AppendDefine(source, "XR_ADV_BINDING_VISIBILITY_RANGE_OFFSETS", first + 7u);
+        AppendDefine(source, "XR_ADV_BINDING_VISIBILITY_RANGE_COUNTS", first + 8u);
+        AppendDefine(source, "XR_ADV_BINDING_VISIBILITY_COUNTERS", first + 9u);
+        AppendDefine(source, "XR_ADV_BINDING_VISIBILITY_INDEXED_ARGUMENTS", first + 10u);
+        AppendDefine(source, "XR_ADV_BINDING_VISIBILITY_MESH_ARGUMENTS", first + 11u);
+        AppendDefine(source, "XR_ADV_BINDING_VISIBILITY_MESH_PAYLOADS", first + 12u);
+        AppendDefine(source, "XR_ADV_BINDING_VISIBILITY_STATIC_VERTICES", first + 13u);
+        AppendDefine(source, "XR_ADV_BINDING_VISIBILITY_CURRENT_VERTICES", first + 14u);
+        AppendDefine(source, "XR_ADV_BINDING_VISIBILITY_PREVIOUS_VERTICES", first + 15u);
+        AppendDefine(source, "XR_ADV_BINDING_VISIBILITY_MESHLET_DESCRIPTORS", first + 16u);
+        AppendDefine(source, "XR_ADV_BINDING_VISIBILITY_MESHLET_VERTEX_INDICES", first + 17u);
+        AppendDefine(source, "XR_ADV_BINDING_VISIBILITY_MESHLET_TRIANGLE_WORDS", first + 18u);
+        AppendDefine(source, "XR_ADV_BINDING_PREPARED_DRAW_DEFORMATIONS", first + 19u);
+        AppendDefine(source, "XR_ADV_BINDING_VISIBILITY_LATE_VISIBLE_INDICES", first + 20u);
+        AppendDefine(source, "XR_ADV_BINDING_VISIBILITY_LATE_RANGE_COUNTS", first + 21u);
+        AppendDefine(source, "XR_ADV_BINDING_VISIBILITY_LATE_INDEXED_ARGUMENTS", first + 22u);
+        // Sampler and image units are separate from shader-storage bindings.
+        AppendDefine(source, "XR_ADV_BINDING_VISIBILITY_DEPTH_PYRAMID_SAMPLED", 4u);
+        AppendDefine(source, "XR_ADV_BINDING_VISIBILITY_DEPTH_PYRAMID_STORAGE", 5u);
+        AppendDefine(source, "XR_ADV_BINDING_VISIBILITY_LATE_MESH_ARGUMENTS", first + 25u);
+        AppendDefine(source, "XR_ADV_BINDING_VISIBILITY_LATE_MESH_PAYLOADS", first + 26u);
+    }
 }

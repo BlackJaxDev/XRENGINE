@@ -13,6 +13,7 @@ using XREngine;
 using XREngine.Components;
 using XREngine.Core;
 using XREngine.Data.Core;
+using XREngine.Data.Core.Files;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Resources;
@@ -35,7 +36,7 @@ namespace XREngine.Editor.Mcp
             McpToolContext context,
             [McpName("enabled"), Description("True enables meshlet colors, false disables them, and null clears the runtime override.")] bool? enabled = null,
             [McpName("camera_node_id"), Description("Optional camera node ID to target.")] string? cameraNodeId = null,
-            [McpName("vr_eye"), Description("Optional runtime VR eye viewport to target: left or right.")] string? vrEye = null,
+            [McpName("vr_eye"), Description("Optional runtime VR viewport: left, right, or stereo. For stereo texture captures, select the eye with layer_index.")] string? vrEye = null,
             [McpName("window_index"), Description("Optional window index to target.")] int windowIndex = 0,
             [McpName("viewport_index"), Description("Optional viewport index to target.")] int viewportIndex = 0)
         {
@@ -71,9 +72,10 @@ namespace XREngine.Editor.Mcp
         public static Task<McpToolResponse> ListRenderPipelineResourcesAsync(
             McpToolContext context,
             [McpName("camera_node_id"), Description("Optional camera node ID to target.")] string? cameraNodeId = null,
-            [McpName("vr_eye"), Description("Optional runtime VR eye viewport to target: left or right.")] string? vrEye = null,
+            [McpName("vr_eye"), Description("Optional runtime VR viewport: left, right, or stereo. For stereo texture captures, select the eye with layer_index.")] string? vrEye = null,
             [McpName("window_index"), Description("Optional window index to target.")] int windowIndex = 0,
-            [McpName("viewport_index"), Description("Optional viewport index to target.")] int viewportIndex = 0)
+            [McpName("viewport_index"), Description("Optional viewport index to target.")] int viewportIndex = 0,
+            [McpName("capture_owner_id"), Description("Optional scene/probe/standalone capture component GUID to inspect its offscreen resources.")] string? captureOwnerId = null)
         {
             XRViewport? viewport = ResolveViewport(
                 context.World,
@@ -82,6 +84,24 @@ namespace XREngine.Editor.Mcp
                 windowIndex,
                 viewportIndex,
                 out string? viewportError);
+            if (!string.IsNullOrWhiteSpace(captureOwnerId))
+            {
+                if (!string.IsNullOrWhiteSpace(cameraNodeId) || !string.IsNullOrWhiteSpace(vrEye) ||
+                    windowIndex != 0 || viewportIndex != 0)
+                    return Task.FromResult(new McpToolResponse("capture_owner_id cannot be combined with other viewport selectors.", isError: true));
+                if (!Guid.TryParse(captureOwnerId, out Guid ownerId) ||
+                    !XRObjectBase.ObjectsCache.TryGetValue(ownerId, out var owner))
+                    return Task.FromResult(new McpToolResponse("capture_owner_id must identify a live capture component.", isError: true));
+                viewport = owner switch
+                {
+                    XREngine.Components.Lights.SceneCaptureComponent capture => capture.CaptureViewport,
+                    XREngine.Components.Lights.AdvancedOffscreenTextureCaptureComponent capture => capture.CaptureViewport,
+                    XREngine.Components.Lights.MirrorCaptureComponent capture => capture.Viewport,
+                    _ => null,
+                };
+                if (viewport is null)
+                    return Task.FromResult(new McpToolResponse("The capture owner has no assigned offscreen viewport.", isError: true));
+            }
             if (viewport is null)
                 return Task.FromResult(new McpToolResponse(viewportError ?? "No viewport found.", isError: true));
 
@@ -113,6 +133,7 @@ namespace XREngine.Editor.Mcp
                     pipeline = new
                     {
                         instance_id = instance.InstanceId,
+                        asset_id = instance.Pipeline?.ID,
                         debug_name = instance.DebugName,
                         type = instance.Pipeline?.GetType().FullName,
                         resource_generation = instance.ResourceGeneration,
@@ -124,6 +145,346 @@ namespace XREngine.Editor.Mcp
                     textures,
                     framebuffers = frameBuffers,
                 }));
+        }
+
+        [XRMcp(Name = "get_advanced_profile_diagnostics", Permission = McpPermissionLevel.ReadOnly)]
+        [McpThreadAffinity(McpThreadAffinity.Main)]
+        [Description("Get the selected viewport's Advanced capability, blocker, executable-stage, realized-resource, per-view, and captured GPU-counter evidence.")]
+        public static Task<McpToolResponse> GetAdvancedProfileDiagnosticsAsync(
+            McpToolContext context,
+            [McpName("camera_node_id"), Description("Optional camera node ID to target.")] string? cameraNodeId = null,
+            [McpName("vr_eye"), Description("Optional runtime VR viewport: left, right, or stereo. For stereo texture captures, select the eye with layer_index.")] string? vrEye = null,
+            [McpName("window_index"), Description("Optional window index to target.")] int windowIndex = 0,
+            [McpName("viewport_index"), Description("Optional viewport index to target.")] int viewportIndex = 0,
+            [McpName("capture_owner_id"), Description("Optional scene/probe/standalone capture component GUID to inspect its offscreen resources.")] string? captureOwnerId = null)
+        {
+            XRViewport? viewport = ResolveViewport(
+                context.World,
+                cameraNodeId,
+                vrEye,
+                windowIndex,
+                viewportIndex,
+                out string? viewportError);
+            if (!string.IsNullOrWhiteSpace(captureOwnerId))
+            {
+                if (!string.IsNullOrWhiteSpace(cameraNodeId) || !string.IsNullOrWhiteSpace(vrEye) ||
+                    windowIndex != 0 || viewportIndex != 0)
+                    return Task.FromResult(new McpToolResponse("capture_owner_id cannot be combined with other viewport selectors.", isError: true));
+                if (!Guid.TryParse(captureOwnerId, out Guid ownerId) ||
+                    !XRObjectBase.ObjectsCache.TryGetValue(ownerId, out var owner))
+                    return Task.FromResult(new McpToolResponse("capture_owner_id must identify a live capture component.", isError: true));
+                viewport = owner switch
+                {
+                    XREngine.Components.Lights.SceneCaptureComponent capture => capture.CaptureViewport,
+                    XREngine.Components.Lights.AdvancedOffscreenTextureCaptureComponent capture => capture.CaptureViewport,
+                    XREngine.Components.Lights.MirrorCaptureComponent capture => capture.Viewport,
+                    _ => null,
+                };
+                viewportError = "The capture owner has no assigned offscreen viewport.";
+            }
+            if (viewport is null)
+                return Task.FromResult(new McpToolResponse(
+                    viewportError ?? "No viewport found.", isError: true));
+
+            return Task.FromResult(new McpToolResponse(
+                "Retrieved Advanced profile diagnostics. Enqueue observations are authoring evidence; only captured counter rows contain GPU observations.",
+                BuildAdvancedProfileDiagnostics(viewport)));
+        }
+
+        private static object BuildAdvancedProfileDiagnostics(XRViewport viewport)
+        {
+            XRRenderPipelineInstance instance = viewport.RenderPipelineInstance;
+            AdvancedRenderPipelineOutputBinding binding = instance.AdvancedOutputBinding;
+            AdvancedRenderPipeline? pipeline = instance.Pipeline as AdvancedRenderPipeline
+                ?? (binding.IsBound && instance.Pipeline is IAdvancedRenderStageFamilyHost host
+                    ? host.AdvancedStageFamilyDefinition : null);
+            IRuntimeRendererHost? renderer = viewport.Window?.Renderer ??
+                RuntimeRenderingHostServices.FrameTiming.CurrentRenderer as IRuntimeRendererHost;
+            AdvancedRenderPipelineCapabilities capabilities = renderer?
+                .GetAdvancedRenderPipelineCapabilities() ??
+                AdvancedRenderPipelineCapabilities.NoRenderer;
+            AdvancedRenderPipelineCapabilityResult capabilityResult =
+                AdvancedRenderPipelineCapabilityResolver.Resolve(
+                    capabilities,
+                    pipeline?.Stereo == true);
+            AdvancedVisibilityFamilyAdmission admission = renderer?
+                .GetAdvancedVisibilityFamilyAdmission() ??
+                new AdvancedVisibilityFamilyAdmission(
+                    EAdvancedProductionExecutionState.Unsupported,
+                    "No renderer is associated with the selected viewport.");
+            var reservation = binding.Reservation;
+            bool reservationCurrent = renderer is not null &&
+                renderer.IsAdvancedVisibilityFamilyReservationCurrent(
+                    in reservation);
+            bool executionAdmitted = pipeline is not null &&
+                admission.IsAdmitted &&
+                binding.IsBound &&
+                reservationCurrent;
+            string? executionBlocker = pipeline is null
+                ? "The selected viewport has no selected Advanced execution family."
+                : !admission.IsAdmitted
+                    ? admission.Reason
+                    : !binding.IsBound
+                        ? binding.FailureReason ?? binding.CutoverStatus.BlockerReason
+                        : !reservationCurrent
+                            ? "The Advanced output reservation is stale for the active backend generation."
+                            : null;
+
+            RenderResourceRegistry registry = instance.Resources;
+            AdvancedProfileResourceDiagnostic[] resources = registry.TextureRecords
+                .Where(static pair => IsAdvancedDiagnosticResource(pair.Key))
+                .Select(static pair => DescribeAdvancedDiagnosticResource(
+                    pair.Key, "Texture", pair.Value.Instance is not null))
+                .Concat(registry.BufferRecords
+                    .Where(static pair => IsAdvancedDiagnosticResource(pair.Key))
+                    .Select(static pair => DescribeAdvancedDiagnosticResource(
+                        pair.Key, "Buffer", pair.Value.Instance is not null)))
+                .Concat(registry.FrameBufferRecords
+                    .Where(static pair => IsAdvancedDiagnosticResource(pair.Key))
+                    .Select(static pair => DescribeAdvancedDiagnosticResource(
+                        pair.Key, "FrameBuffer", pair.Value.Instance is not null)))
+                .OrderBy(static resource => resource.Category, StringComparer.Ordinal)
+                .ThenBy(static resource => resource.Name, StringComparer.Ordinal)
+                .ToArray();
+
+            AdvancedProfileDiagnosticsSnapshot diagnosticSnapshot = instance
+                .CaptureAdvancedProfileDiagnostics();
+            AdvancedProfileStageDiagnostic[] stages = diagnosticSnapshot.Stages;
+            BackendReadyFramePackage? package = instance.MeshRenderCommands
+                .RenderingBackendReadyPackage;
+            var views = package is null
+                ? []
+                : package.CanonicalViews.ToArray().Select(static view => new
+                {
+                    viewId = view.ViewId,
+                    historyKey = view.HistoryKey,
+                    temporalHistoryValid =
+                        (view.Flags & EAdvancedViewRecordFlags.TemporalHistoryValid) != 0,
+                    flags = view.Flags,
+                }).ToArray();
+            var diagnosticRequests = package is null
+                ? []
+                : package.DiagnosticReadbackRequests.ToArray().Select(static request => new
+                {
+                    kind = request.Kind.ToString(),
+                    request.ViewId,
+                    request.PassIndex,
+                    request.MaximumByteCount,
+                }).ToArray();
+            VulkanGpuCounterPassDiagnostic[] counterReadbacks =
+                HybridRenderingManager.GetVulkanGpuCounterDiagnosticsSnapshot();
+            AdvancedGpuCounterReadback[] advancedCounterReadbacks =
+                AdvancedGpuCounterReadbacks.CaptureSnapshot();
+
+            return new
+            {
+                viewport = new
+                {
+                    viewport.Index,
+                    viewport.Width,
+                    viewport.Height,
+                    internalWidth = viewport.InternalWidth,
+                    internalHeight = viewport.InternalHeight,
+                },
+                profile = new
+                {
+                    pipeline = instance.Pipeline?.DebugName,
+                    advancedFamily = pipeline?.DebugName,
+                    stereoMode = pipeline?.StereoMode.ToString(),
+                    offscreenProfile = pipeline?.OffscreenProfile,
+                    instanceId = instance.InstanceId,
+                    resourceGeneration = instance.ResourceGeneration,
+                    executionAdmitted,
+                    executionBlocker,
+                    capabilities,
+                    genericCapabilityResolver = new
+                    {
+                        supported = capabilityResult.IsSupported,
+                        rejection = capabilityResult.RejectionReason.ToString(),
+                        diagnostic = capabilityResult.Diagnostic,
+                        interpretation = "Generic feature discovery is reported separately from the backend's actual admission and bound execution state.",
+                    },
+                    admissionState = admission.State.ToString(),
+                    admissionReason = admission.Reason,
+                    bindingState = binding.State.ToString(),
+                    binding.FailureReason,
+                    reservationCurrent,
+                    cutover = binding.CutoverStatus,
+                },
+                outputReservationDiagnostics = renderer?.CaptureAdvancedOutputReservationDiagnostics(),
+                temporalHistory = BuildTemporalHistoryDiagnostics(instance),
+                resources = new
+                {
+                    descriptorRevision = registry.DescriptorRevision,
+                    descriptorSignature = registry.DescriptorSignature,
+                    entries = resources,
+                },
+                stages = stages.Where(static stage => stage.Observed).Select(stage => new
+                {
+                    stage = stage.Stage.ToString(),
+                    phase = stage.Phase.ToString(),
+                    state = stage.State.ToString(),
+                    stage.FrameId,
+                    stage.ResourceGeneration,
+                    stage.OutputId,
+                    stage.Reason,
+                    matchesCurrentOutputGeneration =
+                        stage.ResourceGeneration == instance.ResourceGeneration &&
+                        stage.OutputId == binding.Request.OutputId,
+                    gpuCompletionCertified = false,
+                }).ToArray(),
+                perEye = diagnosticSnapshot.Eyes.Select(eye => new
+                {
+                    frameId = eye.FrameId,
+                    eye.ResourceGeneration,
+                    eye.OutputId,
+                    eye.ViewId,
+                    eye.OutputLayer,
+                    eye.HistoryKey,
+                    flags = eye.Flags.ToString(),
+                    eye.ViewMaskLo,
+                    eye.ViewMaskHi,
+                    eye.Width,
+                    eye.Height,
+                    matchesCurrentOutputGeneration =
+                        eye.ResourceGeneration == instance.ResourceGeneration &&
+                        eye.OutputId == binding.Request.OutputId,
+                    attribution = "Copied from the selected instance's frozen views admitted for native preparation; GPU counters are not eye-attributed unless a counter row independently carries this frame and view identity.",
+                }).ToArray(),
+                executableInventory = BuildAdvancedExecutableInventory(
+                    resources,
+                    stages,
+                    instance.ResourceGeneration,
+                    binding.Request.OutputId),
+                framePackage = package is null ? null : new
+                {
+                    state = package.State.ToString(),
+                    frame = package.CanonicalFrame,
+                    submission = package.SubmissionResolution,
+                    views,
+                    diagnosticRequests,
+                },
+                gpuCounterEvidence = new
+                {
+                    source = nameof(HybridRenderingManager) + ".GetVulkanGpuCounterDiagnosticsSnapshot",
+                    attribution = "Each row retains its actual render-pass and source-frame identity. The current counter source has no output or view identity, so these rows are not attributed to the selected Advanced stage or eye.",
+                    observations = counterReadbacks,
+                },
+                advancedCounterEvidence = new
+                {
+                    source = nameof(AdvancedGpuCounterReadbacks),
+                    attribution = "Receipts are published only after their producer submission completes. Consumers must require the exact current frame, output, generation, and view identity before comparing values to a capture.",
+                    observations = advancedCounterReadbacks,
+                },
+            };
+        }
+
+        private static object[] BuildAdvancedExecutableInventory(
+            AdvancedProfileResourceDiagnostic[] resources,
+            AdvancedProfileStageDiagnostic[] stages,
+            int resourceGeneration,
+            ulong outputId)
+        {
+            string[] categories =
+            [
+                "classification-mixed-density-overflow",
+                "lighting",
+                "shadow",
+                "ambient-occlusion",
+                "global-illumination",
+                "motion",
+                "late-pass",
+            ];
+            var inventory = new object[categories.Length];
+            for (int index = 0; index < categories.Length; index++)
+            {
+                string category = categories[index];
+                AdvancedProfileResourceDiagnostic[] categoryResources = resources
+                    .Where(resource => string.Equals(resource.Category, category, StringComparison.Ordinal))
+                    .ToArray();
+                bool stageObserved = stages.Any(stage => stage.Observed &&
+                    stage.ResourceGeneration == resourceGeneration &&
+                    stage.OutputId == outputId &&
+                    IsStageRelevantToDiagnosticCategory(stage.Stage, category));
+                inventory[index] = new
+                {
+                    category,
+                    declaredOrRealizedResources = categoryResources,
+                    stageObserved,
+                    counterReadback = "No category-specific counter value is published unless an executable backend readback supplies one.",
+                };
+            }
+
+            return inventory;
+        }
+
+        private static bool IsStageRelevantToDiagnosticCategory(
+            EAdvancedRenderStage stage,
+            string category)
+            => category switch
+            {
+                "classification-mixed-density-overflow" =>
+                    stage == EAdvancedRenderStage.WorkClassification,
+                "lighting" => stage == EAdvancedRenderStage.NativeOpaqueShading,
+                "shadow" => stage is EAdvancedRenderStage.VisibilityPreparation or
+                    EAdvancedRenderStage.NativeOpaqueShading,
+                "ambient-occlusion" => stage == EAdvancedRenderStage.AmbientOcclusion,
+                "global-illumination" => stage == EAdvancedRenderStage.NativeOpaqueShading,
+                "motion" => stage == EAdvancedRenderStage.NativeOpaqueShading,
+                "late-pass" => stage == EAdvancedRenderStage.LatePasses,
+                _ => false,
+            };
+
+        private static bool IsAdvancedDiagnosticResource(string name)
+            => name.StartsWith("Advanced", StringComparison.Ordinal) ||
+               name.Contains("Velocity", StringComparison.OrdinalIgnoreCase) ||
+               name.Contains("Motion", StringComparison.OrdinalIgnoreCase) ||
+               name.Contains("Reactive", StringComparison.OrdinalIgnoreCase) ||
+               name.Contains("AmbientOcclusion", StringComparison.OrdinalIgnoreCase) ||
+               name.Contains("LightProbe", StringComparison.OrdinalIgnoreCase) ||
+               name.Contains("Irradiance", StringComparison.OrdinalIgnoreCase) ||
+               name.Contains("Prefilter", StringComparison.OrdinalIgnoreCase) ||
+               name.Contains("Ppll", StringComparison.OrdinalIgnoreCase) ||
+               name.Contains("DepthPeel", StringComparison.OrdinalIgnoreCase);
+
+        private static AdvancedProfileResourceDiagnostic DescribeAdvancedDiagnosticResource(
+            string name,
+            string resourceKind,
+            bool realized)
+            => new(
+                name,
+                resourceKind,
+                ClassifyAdvancedDiagnosticResource(name),
+                realized,
+                name.Contains("Counter", StringComparison.OrdinalIgnoreCase));
+
+        private static string ClassifyAdvancedDiagnosticResource(string name)
+        {
+            if (name.Contains("Classification", StringComparison.OrdinalIgnoreCase))
+                return "classification-mixed-density-overflow";
+            if (name.Contains("AmbientOcclusion", StringComparison.OrdinalIgnoreCase))
+                return "ambient-occlusion";
+            if (name.Contains("LightProbe", StringComparison.OrdinalIgnoreCase) ||
+                name.Contains("Irradiance", StringComparison.OrdinalIgnoreCase) ||
+                name.Contains("Prefilter", StringComparison.OrdinalIgnoreCase))
+                return "global-illumination";
+            if (name.Contains("Shadow", StringComparison.OrdinalIgnoreCase))
+                return "shadow";
+            if (name.Contains("Velocity", StringComparison.OrdinalIgnoreCase) ||
+                name.Contains("Motion", StringComparison.OrdinalIgnoreCase) ||
+                name.Contains("Reactive", StringComparison.OrdinalIgnoreCase))
+                return "motion";
+            if (name.Contains("Ppll", StringComparison.OrdinalIgnoreCase) ||
+                name.Contains("DepthPeel", StringComparison.OrdinalIgnoreCase) ||
+                name.Contains("Transparent", StringComparison.OrdinalIgnoreCase) ||
+                name.Contains("Oit", StringComparison.OrdinalIgnoreCase))
+                return "late-pass";
+            if (name.Contains("Lighting", StringComparison.OrdinalIgnoreCase) ||
+                name.Contains("Shading", StringComparison.OrdinalIgnoreCase))
+                return "lighting";
+            if (name.Contains("Visibility", StringComparison.OrdinalIgnoreCase))
+                return "visibility";
+            return "advanced-other";
         }
 
         [XRMcp(Name = "list_ui_viewport_diagnostics", Permission = McpPermissionLevel.ReadOnly)]
@@ -415,13 +776,33 @@ namespace XREngine.Editor.Mcp
             return Task.FromResult(new McpToolResponse("Configured Vulkan final-presentation ledger.", snapshot));
         }
 
+        private static object? BuildTemporalHistoryDiagnostics(XRRenderPipelineInstance instance)
+            => XREngine.Rendering.Pipelines.Commands.VPRC_TemporalAccumulationPass.TryGetHistoryDiagnostics(instance, out var history)
+                ? new
+                {
+                    history.PipelineInstanceId,
+                    history.Width,
+                    history.Height,
+                    isolationPolicy = history.IsolationPolicy.ToString(),
+                    history.HistoryReady,
+                    history.LeftEyeHistoryReady,
+                    history.RightEyeHistoryReady,
+                    history.ProfileGeneration,
+                    history.LeftEyeResetGeneration,
+                    history.RightEyeResetGeneration,
+                    history.LeftEyeSeededGeneration,
+                    history.RightEyeSeededGeneration,
+                    history.HistoryExposureReady,
+                }
+                : null;
+
         [XRMcp(Name = "capture_render_pipeline_texture", Permission = McpPermissionLevel.ReadOnly)]
-        [Description("Capture a named live render-pipeline texture to PNG, EXR, or Radiance HDR and report pixel statistics.")]
+        [Description("Capture a named render-pipeline texture or a live texture object ID to PNG, EXR, or Radiance HDR and report pixel statistics.")]
         public static async Task<McpToolResponse> CaptureRenderPipelineTextureAsync(
             McpToolContext context,
-            [McpName("texture_name"), Description("Render pipeline texture resource name to capture.")] string textureName,
+            [McpName("texture_name"), Description("Render pipeline texture resource name to capture. Omit when texture_id is supplied.")] string textureName = "",
             [McpName("camera_node_id"), Description("Optional camera node ID to target.")] string? cameraNodeId = null,
-            [McpName("vr_eye"), Description("Optional runtime VR eye viewport to target: left or right.")] string? vrEye = null,
+            [McpName("vr_eye"), Description("Optional runtime VR viewport: left, right, or stereo. For stereo texture captures, select the eye with layer_index.")] string? vrEye = null,
             [McpName("window_index"), Description("Optional window index to target.")] int windowIndex = 0,
             [McpName("viewport_index"), Description("Optional viewport index to target.")] int viewportIndex = 0,
             [McpName("output_dir"), Description("Optional directory to write the texture capture into.")] string? outputDir = null,
@@ -436,10 +817,24 @@ namespace XREngine.Editor.Mcp
             [McpName("gamma"), Description("Gamma used by Gamma tonemapping and optional sRGB encoding.")] float gamma = 2.2f,
             [McpName("mobius_transition"), Description("Mobius transition value used by Mobius tonemapping.")] float mobiusTransition = 0.6f,
             [McpName("encode_srgb"), Description("For tonemapped PNG output, encode display-linear values to sRGB/gamma. Defaults on.")] bool encodeSrgb = true,
+            [McpName("companion_texture_names"), Description("Up to seven additional resource names to capture at the same post-render boundary, with the same layer, mip and export settings.")] string[]? companionTextureNames = null,
+            [McpName("texture_id"), Description("Optional live XRTexture object GUID, for example a probe's source cubemap or irradiance texture. Supply exactly one of texture_name and texture_id.")] string? textureId = null,
+            [McpName("capture_owner_id"), Description("Optional scene/probe/thumbnail capture component GUID. Captures resources from its assigned offscreen viewport instead of the desktop viewport; finish the capture writer before inspecting.")] string? captureOwnerId = null,
             CancellationToken token = default)
         {
-            if (string.IsNullOrWhiteSpace(textureName))
-                return new McpToolResponse("texture_name is required.", isError: true);
+            bool useTextureId = !string.IsNullOrWhiteSpace(textureId);
+            if (string.IsNullOrWhiteSpace(textureName) == !useTextureId)
+                return new McpToolResponse("Supply exactly one of texture_name and texture_id.", isError: true);
+
+            Guid requestedTextureId = default;
+            if (useTextureId && !Guid.TryParse(textureId, out requestedTextureId))
+                return new McpToolResponse("texture_id must be a valid live texture GUID.", isError: true);
+
+            string[] companions = companionTextureNames ?? [];
+            if (companions.Length > 7 || companions.Any(string.IsNullOrWhiteSpace) ||
+                companions.Contains(textureName, StringComparer.OrdinalIgnoreCase) ||
+                companions.Distinct(StringComparer.OrdinalIgnoreCase).Count() != companions.Length)
+                return new McpToolResponse("companion_texture_names must contain at most seven distinct, non-empty names, excluding texture_name.", isError: true);
 
             if (!TryParsePipelineCaptureFormat(outputFormat, out PipelineTextureOutputFormat format, out string formatFailure))
                 return new McpToolResponse(formatFailure, isError: true);
@@ -456,24 +851,39 @@ namespace XREngine.Editor.Mcp
                 tonemapType = parsedTonemap;
             }
 
-            XRViewport? viewport = ResolveViewport(
-                context.World,
-                cameraNodeId,
-                vrEye,
-                windowIndex,
-                viewportIndex,
-                out string? viewportError);
+            string? viewportError = null;
+            XRViewport? viewport;
+            if (!string.IsNullOrWhiteSpace(captureOwnerId))
+            {
+                if (!string.IsNullOrWhiteSpace(cameraNodeId) || !string.IsNullOrWhiteSpace(vrEye) ||
+                    windowIndex != 0 || viewportIndex != 0)
+                    return new McpToolResponse("capture_owner_id cannot be combined with camera, VR, or non-default window/viewport selectors.", isError: true);
+                if (!Guid.TryParse(captureOwnerId, out Guid ownerId) ||
+                    !XRObjectBase.ObjectsCache.TryGetValue(ownerId, out var owner))
+                    return new McpToolResponse("capture_owner_id must identify a live capture component.", isError: true);
+                viewport = owner switch
+                {
+                    XREngine.Components.Lights.SceneCaptureComponent capture => capture.CaptureViewport,
+                    XREngine.Components.Lights.AdvancedOffscreenTextureCaptureComponent capture => capture.CaptureViewport,
+                    XREngine.Components.Lights.MirrorCaptureComponent capture => capture.Viewport,
+                    _ => null,
+                };
+                viewportError = "The capture owner has no assigned offscreen viewport.";
+            }
+            else
+                viewport = ResolveViewport(context.World, cameraNodeId, vrEye, windowIndex, viewportIndex, out viewportError);
             if (viewport is null)
                 return new McpToolResponse(viewportError ?? "No viewport found.", isError: true);
 
             string folder = outputDir ?? Path.Combine(Environment.CurrentDirectory, "McpCaptures", "RenderPipeline");
-            string safeTextureName = SanitizeFileName(textureName);
+            string safeTextureName = SanitizeFileName(useTextureId ? textureId! : textureName);
             string fileName = $"RenderPipeline_{safeTextureName}_{DateTime.Now:yyyyMMdd_HHmmss}.{GetPipelineCaptureExtension(format)}";
             string path = Path.Combine(folder, fileName);
 
             Utility.EnsureDirPathExists(path);
 
             var tcs = new TaskCompletionSource<PipelineTextureCaptureResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var companionResults = new PipelineTextureCaptureResult[companions.Length];
             Action? deferredHandler = null;
 
             XRWindow? window = viewport.Window
@@ -503,7 +913,20 @@ namespace XREngine.Editor.Mcp
                         exposure,
                         gamma,
                         mobiusTransition,
-                        encodeSrgb);
+                        encodeSrgb,
+                        useTextureId ? requestedTextureId : null);
+
+                    // Read all resources in this callback, before the renderer can advance
+                    // their contents. Separate MCP requests cannot establish this invariant.
+                    for (int i = 0; i < companions.Length; i++)
+                    {
+                        string companionPath = Path.Combine(folder,
+                            $"{Path.GetFileNameWithoutExtension(path)}_companion{i}_{SanitizeFileName(companions[i])}.{GetPipelineCaptureExtension(format)}");
+                        companionResults[i] = CapturePipelineTexture(
+                            renderer, viewport, viewport.RenderPipelineInstance, companions[i], companionPath,
+                            mipLevel, layerIndex, normalize, orientation, preserveAlpha, format,
+                            tonemapType, exposure, gamma, mobiusTransition, encodeSrgb);
+                    }
 
                     tcs.TrySetResult(result);
                 }
@@ -574,6 +997,17 @@ namespace XREngine.Editor.Mcp
                         encode_srgb = encodeSrgb,
                         rgba_float_sha256 = result.RgbaFloatSha256,
                         stats = result.Stats,
+                        companions = companionResults.Select((capture, index) => new
+                        {
+                            texture_name = companions[index],
+                            path = capture.Path,
+                            width = capture.Width,
+                            height = capture.Height,
+                            mip_level = mipLevel,
+                            layer_index = layerIndex,
+                            rgba_float_sha256 = capture.RgbaFloatSha256,
+                            stats = capture.Stats,
+                        }).ToArray(),
                     });
             }
             catch (Exception ex)
@@ -1017,13 +1451,26 @@ namespace XREngine.Editor.Mcp
             float exposure,
             float gamma,
             float mobiusTransition,
-            bool encodeSrgb)
+            bool encodeSrgb,
+            Guid? textureId = null)
         {
-            if (!instance.Resources.TextureRecords.TryGetValue(textureName, out RenderTextureResource? record))
-                throw new InvalidOperationException($"Texture resource '{textureName}' was not found.");
-
-            if (record.Instance is not XRTexture texture)
-                throw new InvalidOperationException($"Texture resource '{textureName}' has no live texture instance.");
+            XRTexture texture;
+            if (textureId is { } id)
+            {
+                // Resolve at the capture boundary so a retired/replaced source is never
+                // silently substituted by another probe generation with the same name.
+                if (!XRObjectBase.ObjectsCache.TryGetValue(id, out var obj) || obj is not XRTexture liveTexture)
+                    throw new InvalidOperationException($"Live texture '{id}' was not found.");
+                texture = liveTexture;
+            }
+            else
+            {
+                if (!instance.Resources.TextureRecords.TryGetValue(textureName, out RenderTextureResource? record))
+                    throw new InvalidOperationException($"Texture resource '{textureName}' was not found.");
+                if (record.Instance is not XRTexture liveTexture)
+                    throw new InvalidOperationException($"Texture resource '{textureName}' has no live texture instance.");
+                texture = liveTexture;
+            }
 
             using IDisposable? plannerScope = viewport.EnterRenderPipelineReadbackScope();
             if (plannerScope is null &&
@@ -1267,17 +1714,7 @@ namespace XREngine.Editor.Mcp
         }
 
         private static void WriteExr(string path, float[] rgbaFloats, int width, int height, bool flipVertically)
-        {
-            float[] source = flipVertically
-                ? CreateVerticallyFlippedCopy(rgbaFloats, width, height)
-                : SanitizeHdrCopy(rgbaFloats);
-
-            using MagickImage image = new(MagickColors.Transparent, (uint)width, (uint)height);
-            image.ImportPixels(source, new PixelImportSettings((uint)width, (uint)height, StorageType.Quantum, PixelMapping.RGBA));
-            image.Depth = 32;
-            image.ColorSpace = ColorSpace.RGB;
-            image.Write(path, MagickFormat.Exr);
-        }
+            => OpenExrWriter.WriteRgbaFloat(path, rgbaFloats, width, height, flipVertically);
 
         private static void WriteRadianceHdr(string path, float[] rgbaFloats, int width, int height, bool flipVertically)
         {
@@ -1326,29 +1763,6 @@ namespace XREngine.Editor.Mcp
 
         private static byte ToHdrByte(float value)
             => (byte)Math.Clamp((int)value, 0, 255);
-
-        private static float[] CreateVerticallyFlippedCopy(float[] source, int width, int height)
-        {
-            int rowLength = width * 4;
-            float[] copy = new float[source.Length];
-            for (int y = 0; y < height; ++y)
-            {
-                int sourceOffset = y * rowLength;
-                int destinationOffset = (height - 1 - y) * rowLength;
-                for (int i = 0; i < rowLength; ++i)
-                    copy[destinationOffset + i] = SanitizeFinite(source[sourceOffset + i]);
-            }
-
-            return copy;
-        }
-
-        private static float[] SanitizeHdrCopy(float[] source)
-        {
-            float[] copy = new float[source.Length];
-            for (int i = 0; i < source.Length; ++i)
-                copy[i] = SanitizeFinite(source[i]);
-            return copy;
-        }
 
         private static float SanitizeFinite(float value)
             => float.IsFinite(value) ? value : 0.0f;

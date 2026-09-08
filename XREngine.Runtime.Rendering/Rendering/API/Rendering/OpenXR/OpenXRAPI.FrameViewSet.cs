@@ -18,6 +18,8 @@ public unsafe partial class OpenXRAPI
     private readonly uint[] _openXrCommittedHistoryWidths = new uint[RenderFrameViewSet.MaxViewCount];
     private readonly uint[] _openXrCommittedHistoryHeights = new uint[RenderFrameViewSet.MaxViewCount];
     private readonly Matrix4x4[] _openXrCommittedHistoryProjections = new Matrix4x4[RenderFrameViewSet.MaxViewCount];
+    private readonly Vector3[] _openXrCommittedHistoryPositions = new Vector3[RenderFrameViewSet.MaxViewCount];
+    private readonly Vector3[] _openXrCommittedHistoryForwards = new Vector3[RenderFrameViewSet.MaxViewCount];
     private ulong _openXrViewHistoryEpoch = 1UL;
     private ulong _openXrCommittedViewHistoryEpoch;
     private ulong _openXrPendingViewHistoryEpoch;
@@ -74,6 +76,11 @@ public unsafe partial class OpenXRAPI
 
             Matrix4x4 projection = CreateLocatedOpenXrProjection(fov.Left, fov.Right, fov.Down, fov.Up, nearZ, farZ);
             Matrix4x4 viewProjection = viewMatrix * projection;
+            Vector3 position = worldMatrix.Translation;
+            Vector3 forward = new(-worldMatrix.M31, -worldMatrix.M32, -worldMatrix.M33);
+            if (!RenderFrameViewHistoryPolicy.IsPoseValid(position, forward))
+                return FailOpenXrViewPublication(frameNo);
+            forward = Vector3.Normalize(forward);
             ulong cameraEpoch = eyeCamera?.TemporalHistoryEpoch ?? 0UL;
             EVrOutputViewKind kind = ResolveOpenXrRvcViewKind(viewIndex);
             uint width = Math.Max(1u, _swapchainWidths[i]);
@@ -87,7 +94,9 @@ public unsafe partial class OpenXRAPI
                 eyeCamera,
                 _openXrCommittedHistoryCameras[i]);
             bool cameraCut = !cameraChanged && cameraEpoch != 0UL &&
-                cameraEpoch != _openXrCommittedCameraHistoryEpochs[i];
+                (cameraEpoch != _openXrCommittedCameraHistoryEpochs[i] ||
+                RenderFrameViewHistoryPolicy.IsDiscontinuity(position, forward,
+                    _openXrCommittedHistoryPositions[i], _openXrCommittedHistoryForwards[i]));
             bool historyValid = trackingValid && committedCompatible &&
                 cameraEpoch != 0UL &&
                 !outputChanged && !cameraChanged && !cameraCut &&
@@ -111,8 +120,6 @@ public unsafe partial class OpenXRAPI
                 ValidateLocatedOpenXrParentContainment((int)parentId, i, localPose);
             if (parentId != RenderFrameViewDescriptor.InvalidViewId && !parentContains)
                 return FailOpenXrViewPublication(frameNo);
-            Vector3 position = worldMatrix.Translation;
-            Vector3 forward = Vector3.Normalize(new Vector3(-worldMatrix.M31, -worldMatrix.M32, -worldMatrix.M33));
             builder.Add(new RenderFrameViewDescriptor(
                 0u,
                 kind,
@@ -205,6 +212,8 @@ public unsafe partial class OpenXRAPI
             _openXrCommittedHistoryWidths[i] = view.ViewRect.Width;
             _openXrCommittedHistoryHeights[i] = view.ViewRect.Height;
             _openXrCommittedHistoryProjections[i] = view.ProjectionMatrixUnjittered;
+            _openXrCommittedHistoryPositions[i] = RenderFrameViewHistoryPolicy.GetPoseVector(view.CameraPositionAndNear);
+            _openXrCommittedHistoryForwards[i] = RenderFrameViewHistoryPolicy.GetPoseVector(view.CameraForwardAndFar);
         }
         _openXrCommittedFrameNumber = frameNo;
         _openXrCommittedDisplayTime = displayTime;
@@ -243,6 +252,8 @@ public unsafe partial class OpenXRAPI
         Array.Clear(_openXrCommittedHistoryWidths);
         Array.Clear(_openXrCommittedHistoryHeights);
         Array.Clear(_openXrCommittedHistoryProjections);
+        Array.Clear(_openXrCommittedHistoryPositions);
+        Array.Clear(_openXrCommittedHistoryForwards);
         Volatile.Write(ref _openXrHasPendingViewHistory, 0);
         Volatile.Write(ref _openXrPendingViewHistoryTrackingValid, 0);
         if (clearPublication)

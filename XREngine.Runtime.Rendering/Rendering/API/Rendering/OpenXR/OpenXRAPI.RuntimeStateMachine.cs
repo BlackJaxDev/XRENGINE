@@ -155,6 +155,13 @@ public unsafe partial class OpenXRAPI
                     SetRuntimeState(OpenXrRuntimeState.SessionRunning);
                 break;
             case OpenXrRuntimeState.SessionRunning:
+                if (!HasCompleteOpenXrSwapchainSet())
+                {
+                    RecoverFromDetachedSwapchainReplacementFailure(
+                        "OpenXR session entered the running state without a complete swapchain set.");
+                    break;
+                }
+
                 OpenXrEyeResolutionSettingsSnapshot currentResolution = CaptureCurrentOpenXrEyeResolutionSettings();
                 OpenXrEyeResolutionSettingsSnapshot appliedResolution = CaptureAppliedOpenXrEyeResolutionSettings();
                 if (!OpenXrEyeResolutionSettingsMatch(currentResolution, appliedResolution))
@@ -171,7 +178,25 @@ public unsafe partial class OpenXRAPI
                 break;
             case OpenXrRuntimeState.SessionStopping:
                 if (TearDownSessionResourcesOnOwningThread(false))
+                {
+                    bool completingDimensionRefresh =
+                        _pendingOpenXrRuntimeDimensionRefreshRequirement != OpenXrRuntimeDimensionRefreshRequirement.None;
+                    if (!TryCompletePendingOpenXrRuntimeDimensionRefresh(
+                            $"OpenXR eye resolution dimension refresh: {_pendingOpenXrRuntimeDimensionRefreshReason}"))
+                    {
+                        ScheduleProbeRetry(_intentionalOpenXrRecreateProbeInterval);
+                        SetRuntimeState(OpenXrRuntimeState.RecreatePending);
+                        break;
+                    }
+
+                    if (completingDimensionRefresh)
+                    {
+                        ResetOpenXrProbeFailureState();
+                        _nextProbeUtc = DateTime.UtcNow;
+                    }
+
                     SetRuntimeState(OpenXrRuntimeState.DesktopOnly);
+                }
                 break;
             case OpenXrRuntimeState.SessionLost:
                 HandleRuntimeLoss();
@@ -203,6 +228,14 @@ public unsafe partial class OpenXRAPI
     {
         if (DateTime.UtcNow < _nextProbeUtc)
             return;
+
+        if (!TryCompletePendingOpenXrRuntimeDimensionRefresh(
+                $"OpenXR eye resolution dimension refresh: {_pendingOpenXrRuntimeDimensionRefreshReason}"))
+        {
+            ScheduleProbeRetry(_intentionalOpenXrRecreateProbeInterval);
+            SetRuntimeState(OpenXrRuntimeState.RecreatePending);
+            return;
+        }
 
         TryEnsureOpenXrRuntimeService("OpenXR runtime probe");
 
@@ -489,6 +522,7 @@ public unsafe partial class OpenXRAPI
                     RecordSmokeSessionCreated(graphicsBinding.BackendName);
                     CreateReferenceSpace();
                     graphicsBinding.CreateSwapchains(this, activeRenderer);
+                    RequireCompleteOpenXrSwapchainSet();
                     RecordAppliedOpenXrEyeResolutionSettings();
                     EnsureInputCreated();
                     SetRuntimeState(OpenXrRuntimeState.SessionCreated);
@@ -522,6 +556,7 @@ public unsafe partial class OpenXRAPI
                     RecordSmokeSessionCreated(graphicsBinding.BackendName);
                     CreateReferenceSpace();
                     graphicsBinding.CreateSwapchains(this, renderer);
+                    RequireCompleteOpenXrSwapchainSet();
                     RecordAppliedOpenXrEyeResolutionSettings();
                     EnsureInputCreated();
                 });
@@ -618,6 +653,9 @@ public unsafe partial class OpenXRAPI
         _consecutiveSystemProbeFailures = 0;
         _runtimeFailureReason = null;
     }
+
+    private OpenXrRuntimeDimensionRefreshRequirement _pendingOpenXrRuntimeDimensionRefreshRequirement;
+    private string? _pendingOpenXrRuntimeDimensionRefreshReason;
 
     private void SetRuntimeState(OpenXrRuntimeState next)
     {

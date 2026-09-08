@@ -124,6 +124,12 @@ namespace XREngine.Rendering
             public EProgramPriority ProgramPriority { get; internal set; } = EProgramPriority.Main;
 
             /// <summary>
+            /// True for generated OVR/EXT multiview versions. Their non-vertex
+            /// stages must be selected with the same topology as the vertex stage.
+            /// </summary>
+            public bool UsesMultiview { get; internal set; }
+
+            /// <summary>
             /// Short, human-readable label that identifies which vertex-shader variant this version
             /// represents (e.g. "Default", "OVRMultiView", "NVStereo", "DirectionalCascadeInstanced").
             /// Surfaced by the shader-program-links panel so each program tells the engineer what pass
@@ -218,6 +224,19 @@ namespace XREngine.Rendering
         /// </summary>
         /// <param name="forceNoStereo"></param>
         /// <returns></returns>
+        private bool _forceOvrMultiview;
+
+        /// <summary>
+        /// Selects the supplied OVR vertex variant for explicit multiview output,
+        /// including emulated stereo without a running headset runtime.
+        /// </summary>
+        [YamlIgnore]
+        public bool ForceOvrMultiview
+        {
+            get => _forceOvrMultiview;
+            set => SetField(ref _forceOvrMultiview, value);
+        }
+
         private BaseVersion GetVersion(bool forceNoStereo = false)
         {
             bool useMeshDeform = DeformMeshRenderer is not null && _meshDeformInfluences is not null;
@@ -232,10 +251,14 @@ namespace XREngine.Rendering
                     ? GetPointLightAtlasInstancedVersion()
                     : GetPointLightInstancedVersion();
 
+            // Emulated VR can render an Advanced OVR target while IsInVR is false.
+            // Every late/editor mesh in that target must use its declared view topology.
+            bool requiresOvrMultiview = ForceOvrMultiview ||
+                (!RuntimeEngine.Rendering.State.IsVulkan && XRFrameBuffer.BoundForWriting?.ForceOvrMultiview == true);
             bool stereoPass =
                 !forceNoStereo &&
                 RuntimeEngine.Rendering.State.IsStereoPass &&
-                CanUseVrSpecificVersions();
+                (requiresOvrMultiview || CanUseVrSpecificVersions());
             if (!stereoPass)
                 return useMeshDeform
                     ? GetMeshDeformDefaultVersion()
@@ -246,6 +269,12 @@ namespace XREngine.Rendering
             bool hasNvMaterialVertexShader = MaterialHasMatchingVertexShader(HasNVStereoViewRendering);
             bool hasMultiViewMaterialVertexShader = MaterialHasMatchingVertexShader(HasMultiViewExtension);
             bool canUseGeneratedStereoVertexShader = !MaterialHasAnyVertexShader();
+            if (requiresOvrMultiview)
+            {
+                if (!hasMultiViewMaterialVertexShader && !canUseGeneratedStereoVertexShader)
+                    throw new InvalidOperationException("The OVR multiview target requires a matching material vertex shader or a generated stereo vertex shader.");
+                return useMeshDeform ? GetMeshDeformOVRMultiViewVersion() : GetOVRMultiViewVersion();
+            }
             
             if (useMeshDeform)
             {
@@ -394,6 +423,7 @@ namespace XREngine.Rendering
             // Assign a priority bucket so the shared-context shader-link worker queue can serve
             // user-visible main-pass programs before shadow / VR variants.
             created.ProgramPriority = ResolveProgramPriority(versionKey);
+            created.UsesMultiview = versionKey is 1 or 4;
 
             GeneratedVertexShaderVersions.Add(versionKey, created);
             return created;

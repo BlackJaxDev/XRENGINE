@@ -4,7 +4,9 @@
 #include "Advanced/Reconstruction/ReconstructSurface.glslinc"
 #include "StandardMaterial.glslinc"
 #include "StandardPBR.glslinc"
+#include "Advanced/Shading/StandardIbl.glslinc"
 #include "StandardShadow.glslinc"
+#include "AdvancedDecalModifier.glslinc"
 layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 #if defined(XR_ADV_VISIBILITY_ARRAY)
 XR_ADV_SHADING_LAYOUT(0) uniform usampler2DArray VisibilityIdentity;
@@ -32,6 +34,49 @@ uint shadowReason = XR_ADV_SHADOW_OK;
 float shadowVisibility = 1.0;
 vec3 directDiffuse = vec3(0.0);
 vec3 directSpecular = vec3(0.0);
+
+void XR_ADV_EvaluateProbeIbl(uint viewIndex, vec3 worldPosition, vec3 N, vec3 V, vec3 albedo, float roughness, float metallic,
+    out vec3 diffuseIndirect, out vec3 specularIndirect)
+{
+    diffuseIndirect = vec3(0.0); specularIndirect = vec3(0.0);
+    float weights[4] = float[4](0.0, 0.0, 0.0, 0.0);
+    uint indices[4] = uint[4](0u, 0u, 0u, 0u);
+    for (uint index = 0u; index < uint(XR_ADV_Probes.records.length()); ++index)
+    {
+        XRAdvancedProbeRecord probe = XR_ADV_LoadProbe(index);
+        if ((probe.flags & (XR_ADV_PROBE_VALID | XR_ADV_PROBE_OCTAHEDRAL)) !=
+            (XR_ADV_PROBE_VALID | XR_ADV_PROBE_OCTAHEDRAL)) continue;
+        if ((probe.viewMaskLo != 0u || probe.viewMaskHi != 0u) &&
+            (viewIndex < 32u ? (probe.viewMaskLo & (1u << viewIndex)) == 0u :
+                (viewIndex >= 64u || (probe.viewMaskHi & (1u << (viewIndex - 32u))) == 0u))) continue;
+        float weight = XR_ADV_ProbeWeight(probe, worldPosition);
+        if (weight <= 0.0) continue;
+        for (uint slot = 0u; slot < 4u; ++slot)
+        {
+            if (weight <= weights[slot]) continue;
+            for (uint shift = 3u; shift > slot; --shift)
+            { weights[shift] = weights[shift - 1u]; indices[shift] = indices[shift - 1u]; }
+            weights[slot] = weight; indices[slot] = index; break;
+        }
+    }
+    float sum = 0.0;
+    vec3 irradiance = vec3(0.0), prefiltered = vec3(0.0);
+    for (uint slot = 0u; slot < 4u; ++slot)
+    {
+        if (weights[slot] <= 0.0) continue;
+        vec3 probeDiffuse, probeSpecular;
+        if (!XR_ADV_TrySampleProbe(XR_ADV_LoadProbe(indices[slot]), worldPosition, N, V, roughness, probeDiffuse, probeSpecular)) continue;
+        irradiance += probeDiffuse * weights[slot]; prefiltered += probeSpecular * weights[slot]; sum += weights[slot];
+    }
+    if (sum <= 0.0) return;
+    irradiance /= sum; prefiltered /= sum;
+    float NoV = max(dot(N, V), 0.0);
+    vec3 F0 = mix(vec3(0.04), albedo, metallic);
+    vec3 F = XR_ADV_FresnelSchlick(NoV, F0);
+    diffuseIndirect = irradiance * albedo / PI * (vec3(1.0) - F) * (1.0 - metallic);
+    vec2 brdf = XR_ADV_IntegrateSpecularBrdf(NoV, roughness);
+    specularIndirect = prefiltered * (F * brdf.x + brdf.y);
+}
 
 vec3 evaluateLight(uint index, XRAdvancedSurface surface, vec3 N, vec3 V,
     vec3 albedo, float roughness, float metallic)
@@ -76,41 +121,70 @@ void main()
     if (repair != overflow) return;
     uvec2 pixel;
     uint viewIndex = u_Push.viewIndex;
+    uint kernelTileFlags = 0u;
     if (repair) pixel = gl_GlobalInvocationID.xy;
     else
     {
         if (u_Push.kernelIndex >= XR_ADV_MAX_SHADING_KERNELS) return;
         uint localTile = gl_WorkGroupID.x + gl_WorkGroupID.y * 65535u;
         uint tileCapacity = XR_ADV_TotalTileCount();
-        if (localTile >= min(XR_ADV_KernelCounts.counts[u_Push.kernelIndex], tileCapacity)) return;
-        uint membership = u_Push.kernelIndex * tileCapacity + localTile;
-        if (membership >= min(u_Push.maxKernelTiles, uint(XR_ADV_KernelTiles.records.length()))) return;
+        uint membershipCapacity = min(u_Push.maxKernelTiles, uint(XR_ADV_KernelTiles.records.length()));
+        if (tileCapacity == 0u || u_Push.kernelIndex > membershipCapacity / tileCapacity) return;
+        uint rangeBase = u_Push.kernelIndex * tileCapacity;
+        uint rangeCapacity = min(tileCapacity, membershipCapacity - rangeBase);
+        if (localTile >= min(XR_ADV_KernelCounts.counts[u_Push.kernelIndex], rangeCapacity)) return;
+        uint membership = rangeBase + localTile;
         XRAdvancedKernelTile kernelTile = XR_ADV_KernelTiles.records[membership];
+        if (kernelTile.shadingKernelId != u_Push.kernelIndex) return;
+        kernelTileFlags = kernelTile.flags;
         if (kernelTile.activeTileIndex >= min(XR_ADV_ClassificationCounters.counters.activeTileCount,
             uint(XR_ADV_ActiveTiles.records.length()))) return;
         XRAdvancedActiveTile tile = XR_ADV_ActiveTiles.records[kernelTile.activeTileIndex];
         viewIndex = tile.viewIndex;
+        // Vulkan binds one frozen 2D image view at a time. A shared compact
+        // work list may contain other eyes, which must never touch this layer.
+        if (viewIndex != u_Push.viewIndex) return;
         pixel = uvec2(tile.packedTileCoord & 0xFFFFu, tile.packedTileCoord >> 16u) * 16u + gl_LocalInvocationID.xy;
     }
     if (any(greaterThanEqual(pixel, u_Push.screenExtent)) || viewIndex >= u_Push.viewCount) return;
     uvec2 identity = texelFetch(VisibilityIdentity, XR_ADV_PIXEL(pixel, viewIndex), 0).rg;
     if (identity.x == 0u || identity.x == XR_ADV_VIS_INVALID) return;
     uint metadata = texelFetch(VisibilityMetadata, XR_ADV_PIXEL(pixel, viewIndex), 0).r;
+    bool metadataMatchesView = ((metadata >> XR_ADV_VIS_VIEW_SHIFT) & 0xFFu) == viewIndex;
     uint materialDense, kernelDense;
     bool resolved = XR_ADV_TryResolvePixelMaterial(identity, metadata, materialDense, kernelDense);
     if (!repair && resolved && kernelDense != u_Push.kernelIndex) return;
+    if (!repair && resolved)
+    {
+        bool requiresAnalyticalDerivatives =
+            (XR_ADV_LoadShadingKernel(kernelDense).requiredAttributeMask & XR_ADV_KERNEL_REQUIRED_ANALYTICAL_DERIVATIVES) != 0u;
+        bool hasAnalyticalDerivatives =
+            (kernelTileFlags & XR_ADV_KERNEL_TILE_ANALYTICAL_DERIVATIVES) != 0u;
+        if (requiresAnalyticalDerivatives != hasAnalyticalDerivatives) return;
+    }
     float depth = texelFetch(VisibilityDepth, XR_ADV_PIXEL(pixel, viewIndex), 0).r;
-    // GTAO is emitted as a first-class capture resource. This direct-only
-    // shader has no ambient/IBL term to attenuate, so do not darken direct
-    // lights or emission merely to make the AO target visibly affect output.
     float ambientOcclusion = texelFetch(AmbientOcclusion, XR_ADV_PIXEL(pixel, viewIndex), 0).r;
-    XRAdvancedSurface surface;
-    bool valid = resolved && XR_ADV_TryReconstructSurface(identity, metadata, depth, vec2(pixel) + 0.5, surface);
+    ambientOcclusion = (!isnan(ambientOcclusion) && !isinf(ambientOcclusion)) ? clamp(ambientOcclusion, 0.0, 1.0) : 1.0;
+    XRAdvancedSurface surface = XR_ADV_InvalidSurface(identity, XR_ADV_RECONSTRUCTION_MATERIAL_NOT_RESIDENT);
+    bool valid = resolved && metadataMatchesView &&
+        XR_ADV_TryReconstructSurface(identity, metadata, depth, vec2(pixel) + 0.5, surface);
     if (!valid || surface.viewIndex != viewIndex || (repair && (u_Push.flags & XR_ADV_SHADING_REQUIRED) != 0u))
     {
         imageStore(HDRSceneColor, XR_ADV_PIXEL(pixel, viewIndex), vec4(1.0, 0.0, 1.0, 1.0));
         imageStore(ReactiveMask, XR_ADV_PIXEL(pixel, viewIndex), vec4(1.0));
-        imageStore(ShadingDiagnostics, XR_ADV_PIXEL(pixel, viewIndex), uvec4((repair && (u_Push.flags & XR_ADV_SHADING_REQUIRED) != 0u) ? 1u << 18u : 1u << 16u));
+        // Keep the rejection bit stable while preserving the reconstruction
+        // decoder's precise reason in bits 20..27 for grouped readback.
+        uint rejection = (repair && (u_Push.flags & XR_ADV_SHADING_REQUIRED) != 0u) ? 1u << 18u : 1u << 16u;
+        uint nonFiniteAttribute = surface.invalidReason != XR_ADV_RECONSTRUCTION_NON_FINITE ? 0u :
+            !XR_ADV_IsFinite(surface.worldPosition) ? 1u :
+            !XR_ADV_IsFinite(surface.shadingNormal) ? 2u :
+            !XR_ADV_IsFinite(surface.tangent) ? 3u :
+            !XR_ADV_IsFinite(surface.bitangent) ? 4u :
+            !XR_ADV_IsFinite(surface.texCoord0) ? 5u :
+            !XR_ADV_IsFinite(surface.texCoord0Dx) ? 6u :
+            !XR_ADV_IsFinite(surface.texCoord0Dy) ? 7u : 0u;
+        imageStore(ShadingDiagnostics, XR_ADV_PIXEL(pixel, viewIndex),
+            uvec4(rejection | ((surface.invalidReason & 255u) << 20u) | (nonFiniteAttribute << 28u)));
         return;
     }
     XRAdvancedMaterialRecord material = XR_ADV_LoadMaterial(materialDense);
@@ -137,19 +211,32 @@ void main()
         N = normalize(surface.tangent * normalTex.x + surface.bitangent * normalTex.y + N * normalTex.z);
     }
     vec3 V = normalize(view.cameraPositionAndNear.xyz - surface.worldPosition);
+    float roughness = clamp(rmse.x, 0.04, 1.0), metallic = clamp(rmse.y, 0.0, 1.0);
+    float linearDepth = -XR_ADV_TransformRowVector(vec4(surface.worldPosition, 1.0), view.view).z;
+    uint slice = XR_ADV_CalculateDepthSlice(linearDepth, max(view.cameraPositionAndNear.w, 0.0001),
+        max(view.cameraForwardAndFar.w, view.cameraPositionAndNear.w + 0.0001), u_Push.depthSlices);
+    uint froxelIndex = XR_ADV_GetFroxelIndex(pixel / 16u, slice, viewIndex, u_Push.tilesCount, u_Push.depthSlices);
+    if (froxelIndex < uint(XR_ADV_FroxelDecalGrid.records.length()))
+    {
+        XRAdvancedFroxelDecalRecord decals = XR_ADV_FroxelDecalGrid.records[froxelIndex];
+        bool decalOverflow = (decals.flags & XR_ADV_DECAL_FROXEL_OVERFLOW) != 0u;
+        uint count = decalOverflow ? uint(XR_ADV_Decals.records.length()) : XR_ADV_DECAL_FROXEL_COUNT(decals);
+        for (uint j = 0u; j < count; ++j)
+        {
+            uint decalOffset = XR_ADV_DECAL_FROXEL_OFFSET(decals);
+            uint decalIndex = decalOverflow ? j :
+                (decalOffset + j < uint(XR_ADV_DecalIndexList.indices.length()) ? XR_ADV_DecalIndexList.indices[decalOffset + j] : XR_ADV_FROXEL_OVERFLOW);
+            if (decalIndex != XR_ADV_FROXEL_OVERFLOW) XR_ADV_ApplyDecalToSurface(decalIndex, surface, base.rgb, N, roughness, metallic);
+        }
+    }
     vec3 color = base.rgb * max(rmse.w, 0.0);
     if ((material.eligibilityFlags & 16u) != 0u) color += base.rgb;
     else
     {
         uint lightCount = min(u_Push.lightCount, uint(XR_ADV_Lights.records.length()));
-        float roughness = clamp(rmse.x, 0.04, 1.0), metallic = clamp(rmse.y, 0.0, 1.0);
         for (uint i = 0u; i < lightCount; ++i)
             if (XR_ADV_Lights.records[i].type == 0u)
                 color += evaluateLight(i, surface, N, V, base.rgb, roughness, metallic);
-        float linearDepth = -XR_ADV_TransformRowVector(vec4(surface.worldPosition, 1.0), view.view).z;
-        uint slice = XR_ADV_CalculateDepthSlice(linearDepth, max(view.cameraPositionAndNear.w, 0.0001),
-            max(view.cameraForwardAndFar.w, view.cameraPositionAndNear.w + 0.0001), u_Push.depthSlices);
-        uint froxelIndex = XR_ADV_GetFroxelIndex(pixel / 16u, slice, viewIndex, u_Push.tilesCount, u_Push.depthSlices);
         bool allLights = froxelIndex >= uint(XR_ADV_FroxelGrid.records.length());
         XRAdvancedFroxelRecord froxel;
         if (!allLights)
@@ -177,6 +264,14 @@ void main()
                     if (i < lightCount) color += evaluateLight(i, surface, N, V, base.rgb, roughness, metallic);
                 }
             }
+        }
+        if ((u_Push.flags & 8u) != 0u)
+        {
+            vec3 diffuseIndirect, specularIndirect;
+            XR_ADV_EvaluateProbeIbl(viewIndex, surface.worldPosition, N, V, base.rgb, roughness, metallic,
+                diffuseIndirect, specularIndirect);
+            color += diffuseIndirect * ambientOcclusion +
+                specularIndirect * XR_ADV_SpecularOcclusion(max(dot(N, V), 0.0), ambientOcclusion, roughness);
         }
     }
     uint debugView = (u_Push.flags >> 8u) & 255u;

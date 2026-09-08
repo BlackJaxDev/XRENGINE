@@ -73,6 +73,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     {
         _occlusionViewOwnership = OcclusionViewOwnership.Independent(InstanceId);
         MeshRenderCommands.SetOwnerPipeline(this);
+        CacheClearing += CancelPendingAdvancedPicking;
     }
 
     /// <summary>
@@ -479,9 +480,10 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         bool stereoPass = false,
         XRMaterial? shadowMaterial = null,
         RenderCommandCollection? meshRenderCommandsOverride = null,
-        ulong viewHistorySequenceId = 0UL)
+        ulong viewHistorySequenceId = 0UL,
+        RenderOutputRequest viewHistoryOutputRequest = default)
         => TryRender(scene, camera, stereoRightEyeCamera, viewport, targetFBO,
-            userInterface, shadowPass, stereoPass, shadowMaterial, meshRenderCommandsOverride, viewHistorySequenceId);
+            userInterface, shadowPass, stereoPass, shadowMaterial, meshRenderCommandsOverride, viewHistorySequenceId, viewHistoryOutputRequest);
 
     /// <summary>
     /// Records the pipeline and reports whether its command chain executed.
@@ -498,11 +500,108 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         bool stereoPass = false,
         XRMaterial? shadowMaterial = null,
         RenderCommandCollection? meshRenderCommandsOverride = null,
-        ulong viewHistorySequenceId = 0UL)
+        ulong viewHistorySequenceId = 0UL,
+        RenderOutputRequest viewHistoryOutputRequest = default)
+        => TryRenderWithFrozenDesktopHistory(
+            scene,
+            camera,
+            stereoRightEyeCamera,
+            viewport,
+            targetFBO,
+            userInterface,
+            shadowPass,
+            stereoPass,
+            shadowMaterial,
+            meshRenderCommandsOverride,
+            viewHistorySequenceId,
+            viewHistoryOutputRequest,
+            frozenDesktopView: null,
+            frozenHistoryCandidate: default,
+            outputCompletionRequest: default,
+            outputCompletionCollectGeneration: -1L,
+            out _,
+            out _);
+
+    internal bool TryRenderWithFrozenDesktopHistory(
+        VisualScene scene,
+        XRCamera? camera,
+        XRCamera? stereoRightEyeCamera,
+        XRViewport? viewport,
+        XRFrameBuffer? targetFBO,
+        IRuntimeScreenSpaceUserInterface? userInterface,
+        bool shadowPass,
+        bool stereoPass,
+        XRMaterial? shadowMaterial,
+        RenderCommandCollection? meshRenderCommandsOverride,
+        ulong viewHistorySequenceId,
+        RenderOutputRequest viewHistoryOutputRequest,
+        RenderFrameViewDescriptor? frozenDesktopView,
+        RenderFrameViewHistoryCandidateToken frozenHistoryCandidate,
+        RenderOutputRequest outputCompletionRequest,
+        long outputCompletionCollectGeneration,
+        out XRGpuFence? completionFence,
+        out bool outputCompletionAuthoringStarted)
     {
+        completionFence = null;
+        outputCompletionAuthoringStarted = false;
+        bool historyOwnershipTransferred = false;
+        try
+        {
+            return TryRenderCore(
+                scene,
+                camera,
+                stereoRightEyeCamera,
+                viewport,
+                targetFBO,
+                userInterface,
+                shadowPass,
+                stereoPass,
+                shadowMaterial,
+                meshRenderCommandsOverride,
+                viewHistorySequenceId,
+                viewHistoryOutputRequest,
+                frozenDesktopView,
+                frozenHistoryCandidate,
+                outputCompletionRequest,
+                outputCompletionCollectGeneration,
+                out historyOwnershipTransferred,
+                out completionFence,
+                out outputCompletionAuthoringStarted);
+        }
+        finally
+        {
+            if (!historyOwnershipTransferred)
+                frozenHistoryCandidate.Discard();
+        }
+    }
+
+    private bool TryRenderCore(
+        VisualScene scene,
+        XRCamera? camera,
+        XRCamera? stereoRightEyeCamera,
+        XRViewport? viewport,
+        XRFrameBuffer? targetFBO,
+        IRuntimeScreenSpaceUserInterface? userInterface,
+        bool shadowPass,
+        bool stereoPass,
+        XRMaterial? shadowMaterial,
+        RenderCommandCollection? meshRenderCommandsOverride,
+        ulong viewHistorySequenceId,
+        RenderOutputRequest viewHistoryOutputRequest,
+        RenderFrameViewDescriptor? frozenDesktopView,
+        RenderFrameViewHistoryCandidateToken frozenHistoryCandidate,
+        RenderOutputRequest outputCompletionRequest,
+        long outputCompletionCollectGeneration,
+        out bool historyOwnershipTransferred,
+        out XRGpuFence? completionFence,
+        out bool outputCompletionAuthoringStarted)
+    {
+        historyOwnershipTransferred = false;
+        completionFence = null;
+        outputCompletionAuthoringStarted = false;
         IRuntimeRenderFrameTimingServices frameTiming = RuntimeRenderingHostServices.FrameTiming;
         if (!ApplyLatestRequestedPipelineIfNeeded())
-            return false;
+            return ReportExactOutputPreconditionFailure(in outputCompletionRequest, "The requested pipeline transition has not completed.");
 
         if (Pipeline is null)
         {
@@ -533,10 +632,106 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
 
         using (RuntimeRenderingHostServices.Diagnostics.PushRenderingPipeline(this))
         {
-            using (RenderState.PushMainAttributes(viewport, scene, camera, stereoRightEyeCamera, targetFBO, shadowPass, stereoPass, shadowMaterial, userInterface, meshRenderCommandsOverride ?? MeshRenderCommands, viewHistorySequenceId: viewHistorySequenceId, viewHistoryPipelineIdentity: TemporalHistoryPipelineIdentity, viewHistoryAuthoring: viewHistorySequenceId != 0UL))
+            using (RenderState.PushMainAttributesWithFrozenDesktopHistory(viewport, scene, camera, stereoRightEyeCamera, targetFBO, shadowPass, stereoPass, shadowMaterial, userInterface, meshRenderCommandsOverride ?? MeshRenderCommands, viewHistorySequenceId: viewHistorySequenceId, viewHistoryPipelineIdentity: TemporalHistoryPipelineIdentity, viewHistoryAuthoring: viewHistorySequenceId != 0UL, viewHistorySourceFrame: frozenHistoryCandidate.SourceFrame, viewHistoryOutputRequest: viewHistoryOutputRequest, frozenDesktopView: frozenDesktopView, frozenHistoryCandidate: frozenHistoryCandidate))
             {
                 if (viewHistorySequenceId != 0UL && !RenderState.ViewHistoryCaptureAccepted)
-                    return false;
+                    return ReportExactOutputPreconditionFailure(in outputCompletionRequest, "The frozen view-history capture was rejected.");
+                RenderFrameViewHistoryBackendReservation historyReservation = default;
+                bool historyReservationOwned = false;
+                AbstractRenderer? historyReservationOwner = null;
+                RenderOutputCompletionBackendReservation completionReservation = default;
+                bool completionReservationOwned = false;
+                AbstractRenderer? completionReservationOwner = null;
+                try
+                {
+                if (outputCompletionRequest.IsDefined)
+                {
+                    bool validCompletionContract =
+                        targetFBO is not null &&
+                        outputCompletionRequest.OutputClass ==
+                            ERenderOutputClass.RequiredDependency &&
+                        outputCompletionRequest.ReadinessPolicy ==
+                            ERenderOutputReadinessPolicy.BlockForExact &&
+                        outputCompletionRequest.WorkClass ==
+                            ERenderOutputWorkClass.PresentNow &&
+                        outputCompletionRequest.FallbackPolicy ==
+                            ERenderOutputFallbackPolicy.None &&
+                        outputCompletionRequest.CompletionRequirement ==
+                            ERenderOutputCompletionRequirement.BeforeConsumer &&
+                        (outputCompletionRequest.ExpectedWriteAspect is
+                            ERenderOutputWriteAspect.Color or
+                            ERenderOutputWriteAspect.Depth or
+                            ERenderOutputWriteAspect.Stencil) &&
+                        outputCompletionCollectGeneration >= 0L &&
+                        outputCompletionRequest.Target.TargetGeneration ==
+                            unchecked((ulong)ResourceGeneration);
+                    if (!validCompletionContract ||
+                        AbstractRenderer.Current is not { } renderer ||
+                        !renderer.TryReserveOutputCompletion(
+                            in outputCompletionRequest,
+                            targetFBO!,
+                            out completionReservation))
+                    {
+                        return ReportExactOutputPreconditionFailure(in outputCompletionRequest,
+                            validCompletionContract ? "The backend could not reserve an output-completion receipt." : "The exact output-completion contract is invalid.");
+                    }
+                    completionReservationOwner = renderer;
+                    completionReservationOwned = true;
+                    outputCompletionAuthoringStarted = true;
+                    RenderState.SetOutputCompletionReservation(
+                        completionReservation.ReceiptId,
+                        in outputCompletionRequest);
+                }
+                if (viewHistorySequenceId != 0UL)
+                {
+                    RenderFrameViewHistoryCandidateToken candidate = RenderState.ViewHistoryCandidate;
+                    bool invocationMatchesCandidate =
+                        viewHistoryOutputRequest.IsDefined && candidate.IsValid &&
+                        viewport is not null &&
+                        candidate.Sequence == viewHistorySequenceId &&
+                        candidate.OutputIdentity == viewport.FrameOutputIdentity &&
+                        candidate.PipelineIdentity == TemporalHistoryPipelineIdentity &&
+                        candidate.ExtentRevision == viewport.ExtentRevision &&
+                        viewHistoryOutputRequest.FrameId == candidate.SourceFrame;
+                    if (!invocationMatchesCandidate)
+                    {
+                        if (Debug.ShouldLogEvery(
+                                "XRRenderPipelineInstance.FrameViewHistoryCandidateMismatch",
+                                TimeSpan.FromSeconds(1)))
+                        {
+                            Debug.RenderingWarning(
+                                "[FrameViewHistory] Rejecting a pre-reservation candidate. Sequence={0}/{1} SourceFrame={2} RequestFrame={3} OutputIdentity={4}/{5} PipelineIdentity={6}/{7} ExtentRevision={8}/{9} RequestDefined={10} CandidateValid={11} ViewportPresent={12}.",
+                                candidate.Sequence,
+                                viewHistorySequenceId,
+                                candidate.SourceFrame,
+                                viewHistoryOutputRequest.FrameId,
+                                candidate.OutputIdentity,
+                                viewport?.FrameOutputIdentity ?? 0UL,
+                                candidate.PipelineIdentity,
+                                TemporalHistoryPipelineIdentity,
+                                candidate.ExtentRevision,
+                                viewport?.ExtentRevision ?? 0UL,
+                                viewHistoryOutputRequest.IsDefined,
+                                candidate.IsValid,
+                                viewport is not null);
+                        }
+                        candidate.Discard();
+                        return ReportExactOutputPreconditionFailure(in outputCompletionRequest, "The frozen history candidate does not match the capture output.");
+                    }
+                    if (AbstractRenderer.Current is not { } renderer ||
+                        !renderer.TryReserveFrameViewHistoryCandidate(
+                            in candidate,
+                            in viewHistoryOutputRequest,
+                            targetFBO,
+                            out historyReservation))
+                    {
+                        candidate.Discard();
+                        return ReportExactOutputPreconditionFailure(in outputCompletionRequest, "The backend could not reserve the capture's view-history candidate.");
+                    }
+                    historyReservationOwner = renderer;
+                    historyReservationOwned = true;
+                    historyOwnershipTransferred = true;
+                }
                 WarnIfScreenSpaceUiHasNoRenderCommand(userInterface, viewport);
                 DirectionalShadowPipelineDiagnostics.Record(
                     EDirectionalShadowPipelineReceiptStage.BeforeResourceGeneration,
@@ -562,6 +757,18 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                     return false;
                 }
                 _resizeCatchUpSkippedFrameId = ulong.MaxValue;
+                // Physical generation creation may have replaced the resources
+                // after the immutable view was captured. Retry with a new
+                // candidate; never label old history as valid for new images.
+                if (historyReservationOwned &&
+                    (historyReservation.Candidate.PipelineIdentity != TemporalHistoryPipelineIdentity ||
+                     historyReservation.Output.Target.TargetGeneration != unchecked((ulong)ResourceGeneration) ||
+                     viewport is not null && historyReservation.Candidate.ExtentRevision != viewport.ExtentRevision))
+                    return ReportExactOutputPreconditionFailure(in outputCompletionRequest, "The history generation changed during resource realization.");
+                if (completionReservationOwned &&
+                    completionReservation.Output.Target.TargetGeneration !=
+                        unchecked((ulong)ResourceGeneration))
+                    return ReportExactOutputPreconditionFailure(in outputCompletionRequest, "The output generation changed during resource realization.");
                 RenderCommandCollection activeCommands =
                     meshRenderCommandsOverride ?? MeshRenderCommands;
                 DirectionalShadowPipelineDiagnostics.Record(
@@ -569,7 +776,13 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                     this,
                     Pipeline,
                     targetFBO);
-                if (!TryValidateBackendReadyFramePackage(activeCommands, viewport, out string? packageFailure))
+                if (!TryValidateBackendReadyFramePackage(
+                        activeCommands,
+                        viewport,
+                        outputCompletionRequest.IsDefined
+                            ? outputCompletionCollectGeneration
+                            : null,
+                        out string? packageFailure))
                 {
                     DirectionalShadowPipelineDiagnostics.Record(
                         EDirectionalShadowPipelineReceiptStage.PackageValidationFailed,
@@ -577,13 +790,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                         Pipeline,
                         targetFBO,
                         packageFailure);
-                    Debug.RenderingWarningEvery(
-                        $"RenderFramePackage.Invalid.{ProfilerKey}",
-                        TimeSpan.FromMilliseconds(250),
-                        "[RenderFramePackage] Skipping command chain because the published package is invalid. Pipeline={0} Reason={1}",
-                        ProfilerKey,
-                        packageFailure ?? "Unknown");
-                    return false;
+                    return ReportExactOutputPreconditionFailure(in outputCompletionRequest, packageFailure ?? "The backend-ready frame package is invalid.");
                 }
 
                 BeginRenderGraphValidationFrame();
@@ -612,13 +819,70 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                         System.Diagnostics.Stopwatch.GetTimestamp() - consumptionStarted);
                 }
 
+                if (RenderState.HasRequiredOffscreenAuthoringFailure)
+                {
+                    Debug.RenderingWarningEvery(
+                        $"XRRenderPipelineInstance.RequiredOffscreenAuthoringFailure.{ProfilerKey}",
+                        TimeSpan.FromSeconds(1),
+                        "[RenderDiag] Exact offscreen output authoring failed. Pipeline={0} Failures={1} FirstReason={2}",
+                        ProfilerKey,
+                        RenderState.RequiredOffscreenAuthoringFailureCount,
+                        RenderState.RequiredOffscreenAuthoringFailureReason ?? "unspecified");
+                    return false;
+                }
+
                 ValidateActiveGenerationDescriptorParity();
                 ValidateRenderGraphExecutionAgainstMetadata();
+                if (historyReservationOwned)
+                {
+                    (historyReservationOwner ?? throw new InvalidOperationException(
+                        "A reserved frame-history candidate has no backend owner."))
+                        .CompleteFrameViewHistoryCandidateAuthoring(
+                        in historyReservation,
+                        succeeded: true);
+                    historyReservationOwned = false;
+                }
+                if (completionReservationOwned)
+                {
+                    (completionReservationOwner ?? throw new InvalidOperationException(
+                        "A reserved output-completion receipt has no backend owner."))
+                        .CompleteOutputCompletionAuthoring(
+                            in completionReservation,
+                            succeeded: true,
+                            out completionFence);
+                    completionReservationOwned = false;
+                }
+                }
+                finally
+                {
+                    if (historyReservationOwned)
+                        historyReservationOwner?.CompleteFrameViewHistoryCandidateAuthoring(
+                            in historyReservation,
+                            succeeded: false);
+                    if (completionReservationOwned)
+                        completionReservationOwner?.CompleteOutputCompletionAuthoring(
+                            in completionReservation,
+                            succeeded: false,
+                            out completionFence);
+                }
             }
         }
+        PublishAdvancedPickingSource(
+            ActiveMeshRenderCommands.RenderingBackendReadyPackage,
+            AbstractRenderer.Current?.AdvancedPickingSourceRequiresSubmissionAcceptance == true);
         _lastCompletedCommandChainViewport = viewport;
         _lastCompletedCommandChainFrameId = RuntimeEngine.Rendering.State.RenderFrameId;
         return true;
+    }
+
+    private bool ReportExactOutputPreconditionFailure(in RenderOutputRequest output, string reason)
+    {
+        if (output.IsDefined)
+            Debug.RenderingWarningEvery($"RenderPipeline.ExactOutputPrecondition.{ProfilerKey}",
+                TimeSpan.FromSeconds(1),
+                "[RenderDiag] Exact output deferred before command execution. Pipeline={0} Output={1} Frame={2} Reason={3}",
+                ProfilerKey, output.OutputId, output.FrameId, reason);
+        return false;
     }
 
     internal void MarkForwardContactPrePassAvailable()
@@ -627,6 +891,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     private bool TryValidateBackendReadyFramePackage(
         RenderCommandCollection commands,
         XRViewport? viewport,
+        long? consumedCollectGenerationOverride,
         out string? failureReason)
     {
         long started = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -636,7 +901,9 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         int generationAge = identity.CollectGeneration < 0L || requiredGeneration < identity.CollectGeneration
             ? 0
             : (int)Math.Min(int.MaxValue, requiredGeneration - identity.CollectGeneration);
-        int descriptorGeneration = ActiveGeneration?.Registry.DescriptorRevision ?? 0;
+        RenderResourceGeneration? activeGeneration = ActiveGeneration;
+        RenderResourceRegistry? activeRegistry = activeGeneration?.Registry;
+        int descriptorGeneration = activeRegistry?.DescriptorRevision ?? 0;
         int renderGraphGeneration =
             Pipeline?.PassMetadata is RenderPassMetadataSnapshot snapshot
                 ? snapshot.RevisionStamp
@@ -647,16 +914,17 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                 : (identity.ViewportWidth, identity.ViewportHeight, identity.InternalWidth, identity.InternalHeight);
         bool allowViewportResizeLag =
             viewport?.Window?.IsInteractiveResizeInProgress == true &&
-            ActiveGeneration is { } activeGeneration &&
-            identity.InternalWidth == checked((int)activeGeneration.Key.InternalWidth) &&
-            identity.InternalHeight == checked((int)activeGeneration.Key.InternalHeight) &&
+            ActiveGeneration is { } activeResourceGeneration &&
+            identity.InternalWidth == checked((int)activeResourceGeneration.Key.InternalWidth) &&
+            identity.InternalHeight == checked((int)activeResourceGeneration.Key.InternalHeight) &&
             dimensions.InternalWidth == identity.InternalWidth &&
             dimensions.InternalHeight == identity.InternalHeight;
         // A fully published collection may describe the preceding drag extent.
         // Only presentation size may lag: internal extents and every generation
         // still have to match. Camera/UI commands use this callback's live extent.
         BackendReadyFramePackageValidationContext context = new(
-            RuntimeRenderingHostServices.FrameTiming.ConsumedCollectGeneration,
+            consumedCollectGenerationOverride ??
+                RuntimeRenderingHostServices.FrameTiming.ConsumedCollectGeneration,
             Pipeline?.CommandGeneration ?? 0UL,
             ResourceGeneration,
             descriptorGeneration,
@@ -669,6 +937,27 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         BackendReadyFramePackageValidationResult result =
             BackendReadyFramePackageValidator.Validate(package, in context);
         bool accepted = result.Accepted;
+        if (!accepted && Debug.ShouldLogEvery(
+                "RenderFramePackage.ValidationMismatch",
+                TimeSpan.FromMilliseconds(250)))
+        {
+            Debug.RenderingWarning(
+                "[RenderFramePackage] Validation mismatch. Instance={0} Pipeline={1} Package=(Resource={2}, Descriptor={3}, Collect={4}) Live=(Resource={5}, Descriptor={6}, Registry={7}, ConsumedCollect={8}, RequiredCollect={9}) RegistryMutation=(Revision={10}, Operation={11}, Resource={12}) Failure={13}",
+                InstanceId,
+                ProfilerKey,
+                identity.ResourceGeneration,
+                identity.DescriptorGeneration,
+                identity.CollectGeneration,
+                ResourceGeneration,
+                descriptorGeneration,
+                activeRegistry is null ? 0 : RuntimeHelpers.GetHashCode(activeRegistry),
+                context.ConsumedCollectGeneration,
+                requiredGeneration,
+                activeRegistry?.LastDescriptorMutationRevision ?? 0,
+                activeRegistry?.LastDescriptorMutationOperation ?? "<none>",
+                activeRegistry?.LastDescriptorMutationResourceName ?? "<none>",
+                result.Failure);
+        }
         failureReason = accepted ? null : result.Failure.ToString();
         RuntimeEngine.Rendering.Stats.FrameLifecycle.RecordFramePackageValidation(
             System.Diagnostics.Stopwatch.GetTimestamp() - started,
@@ -2225,7 +2514,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         bool internalChanged,
         string reason)
     {
-        if (!RuntimeEngine.IsRenderThread && RuntimeRenderingHostServices.FrameTiming.IsRendererActive)
+        if (!RuntimeEngine.IsRenderThread && RuntimeEngine.RenderThreadId != 0)
         {
             RuntimeEngine.EnqueueRenderThreadTask(
                 () => ViewportProfileChanged(

@@ -306,8 +306,11 @@ namespace XREngine.Editor.Mcp
         /// Gets the current render state snapshot.
         /// </summary>
         [XRMcp(Name = "get_render_state")]
+        [McpThreadAffinity(McpThreadAffinity.Main)]
         [Description("Get current rendering pipeline and camera state.")]
-        public static Task<McpToolResponse> GetRenderStateAsync(McpToolContext context)
+        public static Task<McpToolResponse> GetRenderStateAsync(
+            McpToolContext context,
+            [McpName("vr_eye"), Description("Optional VR output to inspect: left, right, or the shared stereo viewport.")] string? vrEye = null)
         {
             var pipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
             var renderState = RuntimeEngine.Rendering.State.RenderingPipelineState;
@@ -320,6 +323,12 @@ namespace XREngine.Editor.Mcp
                 ?? stateViewport
                 ?? pipeline?.LastWindowViewport
                 ?? RuntimeEngine.EnumerateActiveViewports().FirstOrDefault();
+            if (!string.IsNullOrWhiteSpace(vrEye))
+            {
+                activeViewport = ResolveViewport(context.World, null, vrEye, 0, 0, out string? error);
+                if (activeViewport is null)
+                    return Task.FromResult(new McpToolResponse(error ?? "No VR viewport found.", isError: true));
+            }
             var activeCamera = camera
                 ?? renderState?.SceneCamera
                 ?? activeViewport?.ActiveCamera;
@@ -380,6 +389,9 @@ namespace XREngine.Editor.Mcp
                 activeViewportUpdatingCommandCount = activeViewportCommands?.GetUpdatingCommandCount(),
                 activeViewportCommandsAddedCount = activeViewportCommands?.GetCommandsAddedCount(),
                 activeViewportRenderingCommandPasses = BuildRenderCommandPassSummary(activeViewportCommands),
+                advancedProfile = activeViewport is null
+                    ? null
+                    : BuildAdvancedProfileDiagnostics(activeViewport),
                 advancedPreparation = AdvancedSharedPreparationService.GetCurrentDiagnostics(),
                 canonicalResidentScene = activeGpuScene is null ? null : new
                 {
@@ -524,6 +536,7 @@ namespace XREngine.Editor.Mcp
                 cameraWorldPosition = activeCameraTransform is null ? null : ToMcpVector3(activeCameraTransform.WorldTranslation),
                 cameraWorldForward = activeCameraTransform is null ? null : ToMcpVector3(activeCameraTransform.WorldForward),
                 pipelineInstanceId = viewport.RenderPipelineInstance.InstanceId,
+                viewHistoryLedger = viewport.FrameViewHistorySnapshot,
                 pipelineDebugName = viewport.RenderPipelineInstance.DebugName,
                 pipelineType = viewport.RenderPipeline?.GetType().FullName,
                 resourceGeneration = viewport.RenderPipelineInstance.ResourceGeneration,

@@ -297,7 +297,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (Stereo)
             {
                 var t = XRTexture2DArray.CreateFrameBufferTexture(
-                    2, width, height, internalFormat, pixelFormat, pixelType);
+                    2, width, height, internalFormat, pixelFormat, pixelType, EFrameBufferAttachment.ColorAttachment0);
                 t.Resizable = false;
                 t.SizedInternalFormat = sizedInternalFormat;
                 t.LargestMipmapLevel = 0;
@@ -507,7 +507,8 @@ namespace XREngine.Rendering.Pipelines.Commands
                 throw new ArgumentOutOfRangeException(nameof(name), name, "Unknown declared bloom framebuffer.");
             }
 
-            var frameBuffer = new XRQuadFrameBuffer(material) { Name = name };
+            var frameBuffer = new XRQuadFrameBuffer(material, useMultiview: Stereo &&
+                instance.Pipeline is IAdvancedRenderStageFamilyHost) { Name = name };
             frameBuffer.SetRenderTargets((outputAttach, EFrameBufferAttachment.ColorAttachment0, targetMip, -1));
             frameBuffer.FullScreenMesh.BindingPublishers.Add(
                 new BloomBindingPublisher(this, bindingPublication));

@@ -7,4 +7,7 @@ public enum EGpuDiagnosticReadbackDecoder : byte
     IndirectDrawCount,
     MeshletVisibility,
     SubmissionValidation,
+    AdvancedVisibilityCounters,
+    AdvancedClassificationCounters,
+    AdvancedLightingCounters,
 }

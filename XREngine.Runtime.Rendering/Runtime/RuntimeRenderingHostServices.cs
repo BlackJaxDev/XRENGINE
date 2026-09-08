@@ -176,6 +176,13 @@ public static class RuntimeRenderingHostServices
     /// </summary>
     public static Func<string, bool>? OpenXrRuntimeServiceEnsurer { get; set; }
 
+    /// <summary>
+    /// Explicit host-managed runtime quirk: recommended eye dimensions require
+    /// restarting the simulated display service and querying a new instance.
+    /// Hardware runtime selection or a manifest filename does not imply this.
+    /// </summary>
+    public static bool OpenXrRecommendedDimensionsRequireServiceRestart { get; set; }
+
     public static bool TryEnsureOpenXrRuntimeService(string reason)
     {
         Func<string, bool>? ensurer = OpenXrRuntimeServiceEnsurer;

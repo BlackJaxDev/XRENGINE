@@ -1,5 +1,7 @@
 namespace XREngine.Rendering.Commands;
 
+using XREngine.Rendering.Info;
+
 /// <summary>Ring-owned submission sidecar captured alongside the canonical table images.</summary>
 public sealed class AdvancedSceneSubmissionPublicationSnapshot
 {
@@ -30,6 +32,7 @@ public sealed class AdvancedSceneSubmissionPublicationSnapshot
 /// <summary>Managed-only deformation closure; source references are never used for normal draw submission.</summary>
 public readonly record struct AdvancedManagedDeformationSourceRow(
     IRenderCommandMesh? Source,
+    RenderInfo? AuthoringRenderInfo,
     XRMeshRenderer? Renderer,
     uint MeshVertexCount,
     ulong SourceVersion,

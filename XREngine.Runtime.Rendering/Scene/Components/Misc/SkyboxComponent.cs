@@ -1188,6 +1188,8 @@ namespace XREngine.Components.Scene.Mesh
                 // Skybox uses a specialized vertex shader that outputs clip-space positions directly.
                 // GPU indirect dispatch would replace it with a model-matrix-based shader, breaking rendering.
                 ExcludeFromGpuIndirect = true,
+                WriteAlpha = false,
+                StencilTest = new() { Enabled = ERenderParamUsage.Disabled },
                 BlendModeAllDrawBuffers = BlendMode.Disabled(),
                 MissingTextureFallback = EMissingTextureFallback.Black,
             };
@@ -1200,6 +1202,11 @@ namespace XREngine.Components.Scene.Mesh
                 RenderPass = (int)EDefaultRenderPass.Background,
                 RenderOptions = renderParams,
             };
+
+            _material.AdvancedBackgroundProfile = new(_material.ShaderStateRevision, SupportsStereo: true,
+                UnsupportedReason: _mode == ESkyboxMode.Texture && tex is null
+                    ? "Texture skybox rendering requires an authored environment texture."
+                    : null);
 
             // RenderCommand.RenderPass is what the pipeline uses to bucket this draw.
             // Some pipelines may not execute the Background pass; debug mode forces a widely-used pass.

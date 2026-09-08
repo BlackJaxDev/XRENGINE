@@ -9,7 +9,7 @@ Design source:
 
 - [Avatar Optimization And Virtualized Avatar Rendering Design](../../design/rendering/avatar-optimization-and-virtualized-rendering-design.md)
 - [Avatar Optimization Roadmap](avatar-optimization-roadmap.md)
-- [Visibility Buffer Rendering TODO](../rendering/optimization/visibility-buffer-rendering-todo.md)
+- [Visibility Buffer Rendering TODO](../rendering/vulkan-xr-and-advanced-rendering-todo.md#phase-7)
 - [Compact Zero-Readback Rendering TODO](../rendering/optimization/compact-zero-readback-rendering-todo.md)
 
 ## Goal

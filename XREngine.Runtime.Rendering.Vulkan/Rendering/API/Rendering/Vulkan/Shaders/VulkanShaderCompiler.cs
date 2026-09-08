@@ -154,7 +154,7 @@ internal static class VulkanShaderCompiler
         ShadercApi.CompileOptionsSetSourceLanguage(options, SourceLanguage.Glsl);
         ShadercApi.CompileOptionsSetOptimizationLevel(options, OptimizationLevel.Performance);
         ShadercApi.CompileOptionsSetWarningsAsErrors(options);
-        ConfigureTargetEnvironment(options, shader.Type);
+        ConfigureTargetEnvironment(options, shader.Type, prepared.RewrittenSource);
 
         byte[] sourceBytes = Encoding.UTF8.GetBytes(prepared.RewrittenSource);
         byte[] nameBytes = GetNullTerminatedUtf8(shader.Name ?? $"Shader_{shader.GetHashCode():X8}");
@@ -232,7 +232,7 @@ internal static class VulkanShaderCompiler
         builder.AppendLine("Backend=Vulkan");
         builder.AppendLine("XRENGINE_VULKAN=1");
         builder.Append("ShaderType=").Append(shader.Type).Append('\n');
-        builder.Append("CompileTarget=").Append(GetCompileTargetLabel(shader.Type)).Append('\n');
+        builder.Append("CompileTarget=").Append(GetCompileTargetLabel(shader.Type, rewrittenSource ?? shader.Source?.Text ?? string.Empty)).Append('\n');
         builder.Append("ShaderName=").Append(shader.Name ?? "UnnamedShader").Append('\n');
         builder.Append("SourcePath=").Append(shader.Source?.FilePath ?? shader.FilePath ?? string.Empty).Append('\n');
         builder.Append("IsGeneratedUberVariant=").Append(shader.IsGeneratedUberVariant).Append('\n');
@@ -269,14 +269,20 @@ internal static class VulkanShaderCompiler
     }
 
     /// <summary>
-    /// Selects the minimum target required by the shipped EXT task/mesh shader
-    /// sources. EXT mesh shaders require a newer SPIR-V target than the legacy
-    /// default; no other shader stage opts into this target.
+    /// Selects the target required by EXT mesh stages or an explicitly authored
+    /// subgroup extension. Subgroup operations require at least SPIR-V 1.3.
     /// </summary>
-    private static unsafe void ConfigureTargetEnvironment(CompileOptions* options, EShaderType shaderType)
+    private static unsafe void ConfigureTargetEnvironment(CompileOptions* options, EShaderType shaderType, string source)
     {
         if (shaderType is not (EShaderType.Task or EShaderType.Mesh))
+        {
+            if (RequiresSubgroupTarget(source))
+            {
+                ShadercApi.CompileOptionsSetTargetEnv(options, TargetEnv.Vulkan, 0x00401000u);
+                ShadercApi.CompileOptionsSetTargetSpirv(options, SpirvVersion.Shaderc13);
+            }
             return;
+        }
 
         ShadercApi.CompileOptionsSetTargetEnv(
             options,
@@ -285,10 +291,13 @@ internal static class VulkanShaderCompiler
         ShadercApi.CompileOptionsSetTargetSpirv(options, SpirvVersion.Shaderc16);
     }
 
-    private static string GetCompileTargetLabel(EShaderType shaderType)
+    private static bool RequiresSubgroupTarget(string source)
+        => source.Contains("#extension GL_KHR_shader_subgroup_", StringComparison.Ordinal);
+
+    private static string GetCompileTargetLabel(EShaderType shaderType, string source)
         => shaderType is EShaderType.Task or EShaderType.Mesh
             ? "Vulkan1.3-SPIRV1.6"
-            : "ShadercDefault";
+            : RequiresSubgroupTarget(source) ? "Vulkan1.1-SPIRV1.3" : "ShadercDefault";
 
     private static byte[] GetNullTerminatedUtf8(string value)
     {

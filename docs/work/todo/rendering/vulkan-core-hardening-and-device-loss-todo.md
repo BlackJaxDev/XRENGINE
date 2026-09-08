@@ -1,15 +1,16 @@
 # Vulkan Core Hardening And Recording Code Changes TODO
 
-Last Updated: 2026-08-13
+Last Updated: 2026-09-06
 Owner: Rendering
-Status: Active
+Status: Supporting contract ledger; master/XR checklist own consolidated execution
 
-This is the single implementation tracker for Vulkan core hardening, frame-plan
+This was the consolidated implementation tracker for Vulkan core hardening, frame-plan
 recording, primary recording fast paths, Forward+ render-graph cost, render tail
 latency, and advanced-render-pipeline architectural phases 06 through 10. Its
 companion, [Vulkan Core Hardening And Recording Testing
-TODO](../../testing/rendering/vulkan-core-hardening-and-recording-testing-todo.md), owns every build,
-test, capture, stress, visual, and performance validation task.
+TODO](../../testing/rendering/vulkan-core-hardening-and-recording-testing-todo.md), retains detailed build,
+test, capture, stress, visual, and performance matrices under the current master
+and feature-local ownership rules.
 
 The required end state is defined by the
 [Vulkan Render Loop Target Architecture](../../design/rendering/vulkan-render-loop-target-architecture.md).
@@ -20,7 +21,11 @@ speed, observability, and source simplification are joint completion gates; none
 may be traded away to claim progress on another.
 
 Completed implementation history remains in the
-[completed-work record](vulkan-core-hardening-and-device-loss-completed.md).
+[completed-work record](../COMPLETED/vulkan-core-hardening-and-device-loss-completed.md).
+
+## 2026-09-06 ownership audit
+
+The [master](vulkan-core-frame-loop-and-resident-rendering-master-todo.md) owns foundation carryovers, RC audit/validation IDs, integrated promotion, and test clearance. The [XR/Advanced checklist](vulkan-xr-and-advanced-rendering-todo.md) owns feature-local work formerly in sections 10–14. Section 9 remains the detailed occlusion-policy child, with CPU/software/GPU correctness children; sections 7/8/14.4 retain the source contracts mapped by RC IDs. Historical unchecked implementation rows are not evidence that current source lacks the implementation.
 
 ## Code Changes
 
@@ -184,7 +189,7 @@ remain light/request driven. Live evidence is recorded in
 
 These phases continue the ordered
 [Advanced Render Pipeline Architectural Refactor](architectural-refactor/00-advanced-render-pipeline-refactor-todo.md)
-after [05 - Attribute Reconstruction](architectural-refactor/05-attribute-reconstruction-todo.md).
+after [05 - Attribute Reconstruction](vulkan-xr-and-advanced-rendering-todo.md#visibility-and-reconstruction-acceptance-carried-from-architecture-documents-0305).
 They consume the immutable frame, resource, descriptor, scheduling, and
 diagnostic contracts in sections 1 through 9 above rather than creating a
 parallel renderer architecture.
@@ -634,7 +639,7 @@ and XR evidence for the affected profile.
 - [ ] Create a progress closeout under `docs/work/progress/rendering/` with the
   architecture summary, feature matrix, validation commands, images/captures,
   performance tables, remaining risks, and legacy-deletion status.
-- [ ] Keep `Build/_AgentValidation/` within its ten-run-root limit and remove
+- [ ] Keep `Build/_AgentValidation/` within the current AGENTS.md five-immediate-directory limit and remove
   unneeded disposable evidence.
 - [ ] Ensure tracked documentation does not depend on ignored evidence for
   required behavior.

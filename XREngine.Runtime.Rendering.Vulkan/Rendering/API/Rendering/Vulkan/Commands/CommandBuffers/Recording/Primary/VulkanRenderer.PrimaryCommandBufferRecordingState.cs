@@ -43,6 +43,8 @@ namespace XREngine.Rendering.Vulkan
         public CommandBufferRecordingScratch RecordingScratch;
         public VulkanPrimaryCommandPlan PrimaryCommandPlan;
         public FramePlan? FramePlan;
+        public VulkanAcceptedFramePlan? AcceptedFramePlan;
+        public PrimaryCommandArtifactOwner? ArtifactOwner;
         public ulong RecordingStaticOperationSignature;
         public VulkanPresentationSourceTuple PresentationSource;
         public VulkanCommandRecordingPolicySnapshot Policy;
@@ -53,6 +55,8 @@ namespace XREngine.Rendering.Vulkan
         public bool[]
             ScheduledCommandChainFrameDataRefreshedByOpIndex;
         public bool[] CommandChainRecordingAdmittedByOpIndex;
+        public byte[] RequiredProducerRecordingOutcomesBySourceIndex;
+        public bool CurrentPrimaryOperationRecorded;
         public bool ProgressiveCommandChainPublicationPending;
         public bool CanProgressivelyDeferCommandChainPublication;
         public bool CommandChainPublicationDeferred;

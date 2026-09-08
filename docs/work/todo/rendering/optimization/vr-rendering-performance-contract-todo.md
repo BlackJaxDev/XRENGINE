@@ -14,7 +14,7 @@ Cross-cutting relationship:
   owns current Default-pipeline prepass/copy/replay topology; this tracker owns
   whether that resulting graph satisfies whole-frame XR budgets and per-eye
   correctness.
-- [Deferred+ Render Path](deferred-plus-render-path-todo.md) owns Deferred+
+- [Deferred+ Render Path](../vulkan-xr-and-advanced-rendering-todo.md#phase-7) owns Deferred+
   implementation; its stereo and headset claims must satisfy this contract.
 
 Design source:

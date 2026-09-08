@@ -13,7 +13,9 @@ public readonly record struct GpuDiagnosticReadbackPlanNode(
     uint SourceByteOffset,
     uint ByteCount,
     EMeshSubmissionStrategy Strategy,
-    EGpuDiagnosticReadbackDecoder Decoder)
+    EGpuDiagnosticReadbackDecoder Decoder,
+    ulong OutputId = 0u,
+    int ResourceGeneration = 0)
 {
     /// <summary>Whether this node is eligible for a diagnostic sidecar.</summary>
     public bool IsInstrumentedPass => GpuDiagnosticReadbackPlan.IsInstrumented(Strategy);
@@ -27,6 +29,12 @@ public readonly record struct GpuDiagnosticReadbackPlanNode(
         EGpuDiagnosticReadbackDecoder.IndirectDrawCount => "IndirectDrawCount",
         EGpuDiagnosticReadbackDecoder.MeshletVisibility => "MeshletVisibility",
         EGpuDiagnosticReadbackDecoder.SubmissionValidation => "SubmissionValidation",
+        // Vulkan's 152-byte per-view allocation contains the sixteen visibility
+        // counter words followed by packed lookup segments. Keep the receipt
+        // explicitly raw so consumers do not interpret all 38 words as counters.
+        EGpuDiagnosticReadbackDecoder.AdvancedVisibilityCounters => "AdvancedVisibilityCounters.Raw38WordsPerView",
+        EGpuDiagnosticReadbackDecoder.AdvancedClassificationCounters => "AdvancedClassificationCounters.AggregateViews",
+        EGpuDiagnosticReadbackDecoder.AdvancedLightingCounters => "AdvancedLightingCounters.PerView",
         _ => "None",
     };
 

@@ -9,13 +9,19 @@ internal sealed class RenderFrameViewHistoryLedger
     private readonly Pending[] _pending = new Pending[3];
     private Committed _committed;
     private ulong _rejectedSequenceHighWater;
+    private ulong _generation = 1UL;
+    private ulong _nextCandidateId;
+    private ulong _effectiveCommitCount;
+    private ulong _effectiveDiscardCount;
 
     public RenderFrameViewDescriptor Capture(ulong sequence, ulong sourceFrame, IRuntimeRenderCamera camera,
         ulong pipelineIdentity, ulong extentRevision, ulong outputIdentity, bool authoring,
-        in RenderFrameViewDescriptor current, out bool accepted)
+        in RenderFrameViewDescriptor current, out bool accepted,
+        out RenderFrameViewHistoryCandidateToken candidate)
     {
         lock (_sync)
         {
+            candidate = default;
             int index = Find(sequence);
             if (index >= 0)
             {
@@ -25,7 +31,7 @@ internal sealed class RenderFrameViewHistoryLedger
                     if (pending.SourceFrame != sourceFrame ||
                         !Matches(pending, camera, pipelineIdentity, extentRevision, outputIdentity, current))
                     {
-                        pending = default;
+                        ReleasePending(index, countDiscard: true);
                         _rejectedSequenceHighWater = Math.Max(_rejectedSequenceHighWater, sequence);
                         accepted = false;
                         return Unavailable(current);
@@ -34,9 +40,10 @@ internal sealed class RenderFrameViewHistoryLedger
                     accepted = true;
                     return Provisional(pending.Descriptor);
                 }
-                if (!Matches(pending, camera, pipelineIdentity, extentRevision, outputIdentity, current))
+                if (pending.SourceFrame != sourceFrame ||
+                    !Matches(pending, camera, pipelineIdentity, extentRevision, outputIdentity, current))
                 {
-                    pending = default;
+                    ReleasePending(index, countDiscard: true);
                     _rejectedSequenceHighWater = Math.Max(_rejectedSequenceHighWater, sequence);
                     accepted = false;
                     return Unavailable(current);
@@ -46,7 +53,10 @@ internal sealed class RenderFrameViewHistoryLedger
                     pending.Descriptor = Resolve(pending);
                     pending.AuthoringResolved = true;
                 }
+                if (pending.CandidateId == 0UL)
+                    pending.CandidateId = AllocateCandidateId();
                 accepted = true;
+                candidate = CreateCandidate(in pending);
                 return pending.Descriptor;
             }
             if ((_committed.Occupied && sequence <= _committed.Sequence) ||
@@ -68,44 +78,95 @@ internal sealed class RenderFrameViewHistoryLedger
             {
                 created.Descriptor = Resolve(created);
                 created.AuthoringResolved = true;
+                created.CandidateId = AllocateCandidateId();
             }
             _pending[index] = created;
             accepted = true;
+            if (authoring)
+                candidate = CreateCandidate(in created);
             return authoring ? created.Descriptor : Provisional(current);
         }
     }
 
-    public void Commit(ulong sequence)
+    internal void Commit(in RenderFrameViewHistoryCandidateToken candidate)
     {
         lock (_sync)
         {
-            int index = Find(sequence);
-            if (index < 0 || !_pending[index].AuthoringResolved)
+            if (!Owns(in candidate, out int index) || !_pending[index].AuthoringResolved)
                 return;
+            ulong sequence = candidate.Sequence;
             if (_committed.Occupied && sequence <= _committed.Sequence)
             {
-                _pending[index] = default;
+                ReleasePending(index, countDiscard: true);
                 return;
             }
             Pending pending = _pending[index];
             RenderFrameViewDescriptor d = pending.Descriptor;
-            _committed = new(true, sequence, pending.Camera, pending.CameraEpoch, pending.PipelineIdentity,
+            _committed = new(true, sequence, pending.SourceFrame, pending.Camera, pending.CameraEpoch, pending.PipelineIdentity,
                 pending.ExtentRevision, pending.OutputIdentity, d.EffectiveHistoryKey, d.ViewRect, d.DepthZeroToOne,
-                d.ReversedDepth, d.ProjectionMatrixUnjittered, d.ViewProjectionMatrix, UnjitteredVp(d), d.CurrentJitter);
+                d.ReversedDepth, d.ProjectionMatrixUnjittered, d.ViewProjectionMatrix, UnjitteredVp(d), d.CurrentJitter,
+                RenderFrameViewHistoryPolicy.GetPoseVector(d.CameraPositionAndNear),
+                RenderFrameViewHistoryPolicy.GetPoseVector(d.CameraForwardAndFar));
             _pending[index] = default;
+            IncrementSaturating(ref _effectiveCommitCount);
             for (int i = 0; i < _pending.Length; i++)
                 if (_pending[i].Occupied && _pending[i].Sequence <= sequence)
-                    _pending[i] = default;
+                    ReleasePending(i, countDiscard: true);
         }
     }
 
-    public void Discard(ulong sequence)
+    internal void Discard(in RenderFrameViewHistoryCandidateToken candidate)
+    {
+        lock (_sync)
+        {
+            if (Owns(in candidate, out int index))
+            {
+                ReleasePending(index, countDiscard: true);
+                _rejectedSequenceHighWater = Math.Max(_rejectedSequenceHighWater, candidate.Sequence);
+            }
+        }
+    }
+
+    internal void DiscardUnresolved(ulong sequence)
     {
         lock (_sync)
         {
             int index = Find(sequence);
-            if (index >= 0)
-                _pending[index] = default;
+            if (index < 0 || _pending[index].CandidateId != 0UL)
+                return;
+            ReleasePending(index, countDiscard: false);
+            _rejectedSequenceHighWater = Math.Max(_rejectedSequenceHighWater, sequence);
+        }
+    }
+
+    internal RenderFrameViewHistorySnapshot CaptureSnapshot()
+    {
+        lock (_sync)
+        {
+            int pendingCount = 0;
+            ulong minimumSequence = ulong.MaxValue;
+            ulong maximumSequence = 0UL;
+            for (int i = 0; i < _pending.Length; i++)
+            {
+                ref readonly Pending pending = ref _pending[i];
+                if (!pending.Occupied)
+                    continue;
+
+                pendingCount++;
+                minimumSequence = Math.Min(minimumSequence, pending.Sequence);
+                maximumSequence = Math.Max(maximumSequence, pending.Sequence);
+            }
+
+            return new RenderFrameViewHistorySnapshot(
+                _generation,
+                _committed.Occupied,
+                _committed.Sequence,
+                _committed.SourceFrame,
+                pendingCount,
+                pendingCount == 0 ? 0UL : minimumSequence,
+                maximumSequence,
+                _effectiveCommitCount,
+                _effectiveDiscardCount);
         }
     }
 
@@ -113,22 +174,69 @@ internal sealed class RenderFrameViewHistoryLedger
     {
         lock (_sync)
         {
-            Array.Clear(_pending);
+            for (int i = 0; i < _pending.Length; i++)
+                ReleasePending(i, countDiscard: true);
             _committed = default;
             _rejectedSequenceHighWater = 0UL;
+            _generation = NextNonZero(_generation);
         }
     }
+
+    private RenderFrameViewHistoryCandidateToken CreateCandidate(in Pending pending)
+        => new(this, _generation, pending.CandidateId, pending.Sequence, pending.SourceFrame,
+            pending.PipelineIdentity, pending.ExtentRevision, pending.OutputIdentity);
+
+    private ulong AllocateCandidateId()
+    {
+        _nextCandidateId = NextNonZero(_nextCandidateId);
+        return _nextCandidateId;
+    }
+
+    private void ReleasePending(int index, bool countDiscard)
+    {
+        if (countDiscard && _pending[index].Occupied && _pending[index].CandidateId != 0UL)
+            IncrementSaturating(ref _effectiveDiscardCount);
+        _pending[index] = default;
+    }
+
+    private static void IncrementSaturating(ref ulong counter)
+    {
+        if (counter != ulong.MaxValue)
+            counter++;
+    }
+
+    private bool Owns(in RenderFrameViewHistoryCandidateToken candidate, out int index)
+    {
+        index = -1;
+        if (!candidate.IsValid || !candidate.IsOwnedBy(this) ||
+            candidate.LedgerGeneration != _generation)
+            return false;
+        index = Find(candidate.Sequence);
+        if (index < 0)
+            return false;
+        ref readonly Pending pending = ref _pending[index];
+        return pending.CandidateId == candidate.CandidateId &&
+            pending.SourceFrame == candidate.SourceFrame &&
+            pending.PipelineIdentity == candidate.PipelineIdentity &&
+            pending.ExtentRevision == candidate.ExtentRevision &&
+            pending.OutputIdentity == candidate.OutputIdentity;
+    }
+
+    private static ulong NextNonZero(ulong value) => value == ulong.MaxValue ? 1UL : value + 1UL;
 
     private RenderFrameViewDescriptor Resolve(in Pending pending)
     {
         ERenderFrameViewHistoryStatus status;
-        if (pending.CameraEpoch == 0UL)
+        Vector3 position = RenderFrameViewHistoryPolicy.GetPoseVector(pending.Descriptor.CameraPositionAndNear);
+        Vector3 forward = RenderFrameViewHistoryPolicy.GetPoseVector(pending.Descriptor.CameraForwardAndFar);
+        if (pending.CameraEpoch == 0UL || !RenderFrameViewHistoryPolicy.IsPoseValid(position, forward))
             status = ERenderFrameViewHistoryStatus.TrackingInvalid;
         else if (!_committed.Occupied)
             status = ERenderFrameViewHistoryStatus.FirstObservation;
         else if (!ReferenceEquals(pending.Camera, _committed.Camera) || pending.Descriptor.ProjectionMatrixUnjittered != _committed.Projection)
             status = ERenderFrameViewHistoryStatus.CameraChanged;
-        else if (pending.Camera.TemporalHistoryEpoch != pending.CameraEpoch || pending.CameraEpoch != _committed.CameraEpoch)
+        else if (pending.Camera.TemporalHistoryEpoch != pending.CameraEpoch || pending.CameraEpoch != _committed.CameraEpoch ||
+            RenderFrameViewHistoryPolicy.IsDiscontinuity(position, forward, _committed.Position, _committed.Forward))
             status = ERenderFrameViewHistoryStatus.CameraCut;
         else if (pending.Descriptor.EffectiveHistoryKey != _committed.HistoryKey || pending.Descriptor.ViewRect != _committed.Rect ||
             pending.Descriptor.DepthZeroToOne != _committed.DepthZeroToOne || pending.Descriptor.ReversedDepth != _committed.ReversedDepth ||
@@ -175,9 +283,12 @@ internal sealed class RenderFrameViewHistoryLedger
     };
 
     private record struct Pending(bool Occupied, ulong Sequence, ulong SourceFrame, IRuntimeRenderCamera Camera, ulong CameraEpoch,
-        ulong PipelineIdentity, ulong ExtentRevision, ulong OutputIdentity, RenderFrameViewDescriptor Descriptor, bool AuthoringResolved);
-    private readonly record struct Committed(bool Occupied, ulong Sequence, IRuntimeRenderCamera Camera, ulong CameraEpoch,
+        ulong PipelineIdentity, ulong ExtentRevision, ulong OutputIdentity, RenderFrameViewDescriptor Descriptor, bool AuthoringResolved)
+    {
+        internal ulong CandidateId;
+    }
+    private readonly record struct Committed(bool Occupied, ulong Sequence, ulong SourceFrame, IRuntimeRenderCamera Camera, ulong CameraEpoch,
         ulong PipelineIdentity, ulong ExtentRevision, ulong OutputIdentity, ulong HistoryKey, RenderFrameViewRect Rect,
         bool DepthZeroToOne, bool ReversedDepth, Matrix4x4 Projection, Matrix4x4 ViewProjection,
-        Matrix4x4 UnjitteredViewProjection, Vector2 Jitter);
+        Matrix4x4 UnjitteredViewProjection, Vector2 Jitter, Vector3 Position, Vector3 Forward);
 }

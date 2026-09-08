@@ -20,6 +20,10 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
     private XRRenderProgram? _maskedRasterProgram;
     private XRRenderProgram? _opaqueMeshRasterProgram;
     private XRRenderProgram? _maskedMeshRasterProgram;
+    private XRRenderProgram? _opaqueMultiviewRasterProgram;
+    private XRRenderProgram? _maskedMultiviewRasterProgram;
+    private XRRenderProgram? _opaqueMultiviewMeshRasterProgram;
+    private XRRenderProgram? _maskedMultiviewMeshRasterProgram;
 
     internal VulkanAdvancedVisibilityPipelineRuntime(VulkanResourceRuntime resources)
         => _resources = resources;
@@ -170,10 +174,17 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
         EAdvancedMaterialCoverageMode coverage,
         bool meshlet,
         out VkRenderProgram program,
-        out string reason)
+        out string reason,
+        bool multiview = false)
     {
         program = null!;
         reason = "Ready";
+        if (multiview && meshlet &&
+            !_resources.AdvancedVisibilityResources.SupportsMultiviewMeshRaster)
+        {
+            reason = "The Vulkan device did not enable multiview mesh shaders for this stereo mesh submission.";
+            return false;
+        }
         if (!_resources.AdvancedSceneResources.IsReady ||
             !_resources.AdvancedVisibilityResources.IsReady)
         {
@@ -194,7 +205,8 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
         {
             ref XRRenderProgram? retainedProgram = ref GetRasterProgramSlot(
                 coverage,
-                meshlet);
+                meshlet,
+                multiview);
             retainedProgram ??= meshlet
                 ? CreateMeshRasterProgram(
                     coverage == EAdvancedMaterialCoverageMode.Opaque
@@ -202,14 +214,16 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
                         : AdvancedVisibilityShaderLibrary.MaskedFragment,
                     coverage == EAdvancedMaterialCoverageMode.Opaque
                         ? "VulkanAdvancedVisibilityMeshOpaque"
-                        : "VulkanAdvancedVisibilityMeshMasked")
+                        : "VulkanAdvancedVisibilityMeshMasked",
+                    multiview)
                 : CreateRasterProgram(
                 coverage == EAdvancedMaterialCoverageMode.Opaque
                     ? AdvancedVisibilityShaderLibrary.OpaqueFragment
                     : AdvancedVisibilityShaderLibrary.MaskedFragment,
                 coverage == EAdvancedMaterialCoverageMode.Opaque
                     ? "VulkanAdvancedVisibilityOpaque"
-                    : "VulkanAdvancedVisibilityMasked");
+                    : "VulkanAdvancedVisibilityMasked",
+                multiview);
             if (_resources.WrapperLookup.GetOrCreate(
                     retainedProgram,
                     generateNow: true) is not VkRenderProgram raster ||
@@ -232,8 +246,17 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
 
     private ref XRRenderProgram? GetRasterProgramSlot(
         EAdvancedMaterialCoverageMode coverage,
-        bool meshlet)
+        bool meshlet,
+        bool multiview)
     {
+        if (multiview)
+        {
+            if (meshlet)
+                return ref coverage == EAdvancedMaterialCoverageMode.Opaque
+                    ? ref _opaqueMultiviewMeshRasterProgram : ref _maskedMultiviewMeshRasterProgram;
+            return ref coverage == EAdvancedMaterialCoverageMode.Opaque
+                ? ref _opaqueMultiviewRasterProgram : ref _maskedMultiviewRasterProgram;
+        }
         if (meshlet)
             return ref coverage == EAdvancedMaterialCoverageMode.Opaque
                 ? ref _opaqueMeshRasterProgram
@@ -243,12 +266,12 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
             : ref _maskedRasterProgram;
     }
 
-    private XRRenderProgram CreateComputeProgram(string assetPath, string name)
+    private XRRenderProgram CreateComputeProgram(string assetPath, string name, string additionalPreamble = "")
     {
         XRShader asset = XRShader.EngineShader(assetPath, EShaderType.Compute);
         string source = asset.Source.Text ?? throw new InvalidOperationException(
             $"Advanced visibility shader asset '{assetPath}' did not provide source text.");
-        string preamble = VulkanAdvancedSceneProgramBindingContract.BuildShaderPreamble(
+        string preamble = additionalPreamble + VulkanAdvancedSceneProgramBindingContract.BuildShaderPreamble(
             _resources.AdvancedSceneResources);
         TextFile sourceWithPreamble = new(asset.Source.FilePath ?? assetPath)
         {
@@ -276,7 +299,7 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
         return program;
     }
 
-    private XRRenderProgram CreateRasterProgram(string fragmentPath, string name)
+    private XRRenderProgram CreateRasterProgram(string fragmentPath, string name, bool multiview)
     {
         XRShader vertexAsset = XRShader.EngineShader(
             AdvancedVisibilityShaderLibrary.Vertex,
@@ -286,6 +309,8 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
             EShaderType.Fragment);
         string preamble = VulkanAdvancedSceneProgramBindingContract.BuildShaderPreamble(
             _resources.AdvancedSceneResources);
+        if (multiview)
+            preamble = "#define XR_ADV_MULTIVIEW_RASTER 1\n" + preamble;
         XRRenderProgram program = new(
             linkNow: false,
             separable: false,
@@ -300,7 +325,7 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
         return program;
     }
 
-    private XRRenderProgram CreateMeshRasterProgram(string fragmentPath, string name)
+    private XRRenderProgram CreateMeshRasterProgram(string fragmentPath, string name, bool multiview)
     {
         XRShader meshAsset = XRShader.EngineShader(
             AdvancedVisibilityShaderLibrary.Mesh,
@@ -310,6 +335,8 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
             EShaderType.Fragment);
         string preamble = VulkanAdvancedSceneProgramBindingContract.BuildShaderPreamble(
             _resources.AdvancedSceneResources);
+        if (multiview)
+            preamble = "#define XR_ADV_MULTIVIEW_RASTER 1\n" + preamble;
         XRRenderProgram program = new(
             linkNow: false,
             separable: false,

@@ -24,7 +24,7 @@ void main()
     bool background = drawId == 0u || drawId == XR_ADV_VIS_INVALID;
     // Initialize every pixel/sidecar; an invalid non-background material stays
     // visibly diagnostic instead of exposing stale contents from a prior frame.
-    imageStore(HDRSceneColor, XR_ADV_PIXEL(pixel), background ? u_Push.backgroundColor : vec4(1.0, 0.0, 1.0, 1.0));
+    imageStore(HDRSceneColor, XR_ADV_PIXEL(pixel), background ? vec4(u_Push.backgroundColor.rgb, 0.0) : vec4(1.0, 0.0, 1.0, 1.0));
     imageStore(ShadingDiagnostics, XR_ADV_PIXEL(pixel), uvec4(background ? 255u << 8u : 1u << 16u));
     imageStore(Velocity, XR_ADV_PIXEL(pixel), vec4(0.0));
     imageStore(ReactiveMask, XR_ADV_PIXEL(pixel), vec4(background ? 0.0 : 1.0));

@@ -14,7 +14,11 @@ internal sealed class VkTextureCube(VulkanBackendObjectContext backendContext, I
     protected override TextureLayout DescribeTexture()
     {
         uint extent = Math.Max(Data.Extent, 1u);
-        uint mipLevels = (uint)Math.Max(Data.Mipmaps?.Length ?? 1, 1);
+        // GPU-rendered cubemaps declare their chain before any face is rendered.
+        // CPU mip data alone does not describe storage needed by explicit generation.
+        uint mipLevels = Data.AutoGenerateMipmaps || Data.SmallestAllowedMipmapLevel < 1000
+            ? (uint)Math.Max(Data.SmallestMipmapLevel + 1, 1)
+            : (uint)Math.Max(Data.Mipmaps?.Length ?? 1, 1);
         return new TextureLayout(new Extent3D(extent, extent, 1), 6, mipLevels);
     }
 

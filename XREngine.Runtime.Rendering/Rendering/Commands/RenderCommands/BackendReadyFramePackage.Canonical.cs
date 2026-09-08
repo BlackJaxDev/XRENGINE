@@ -216,12 +216,12 @@ public sealed partial class BackendReadyFramePackage
     {
         // A late package preparation only has command membership. It must not
         // discard the already captured canonical publication and its lease.
-        if (scene is null || scene.AdvancedPublicationRejected ||
-            scene.AdvancedPublicationFaulted ||
+        // Backpressure on the next publication does not invalidate the last
+        // successful immutable scene. Refreshing to that scene also lets old
+        // package pins retire and publication resume.
+        if (scene is null || scene.AdvancedPublicationFaulted ||
             !scene.AdvancedScenePublication.IsValid)
             return;
-
-        ResetCanonical();
 
         AdvancedGpuScenePublicationReference publication = scene.AdvancedScenePublication;
         if (!scene.AdvancedSharedDatabase.TryAcquirePublicationLease(
@@ -231,15 +231,16 @@ public sealed partial class BackendReadyFramePackage
         {
             return;
         }
-        _canonicalPublicationLease = lease;
-
         if (!scene.AdvancedSharedDatabase.TryGetPublicationSnapshot(
                 publication,
                 out AdvancedGpuScenePublicationSnapshot snapshot))
         {
-            ResetCanonical();
+            lease.Dispose();
             return;
         }
+
+        ResetCanonical();
+        _canonicalPublicationLease = lease;
 
         AdvancedGpuScenePublication identity = publication.Publication;
         CanonicalScenePublication = new BackendReadyCanonicalScenePublication(
@@ -284,7 +285,14 @@ public sealed partial class BackendReadyFramePackage
         // GPUScene state between package production and primary recording.
     }
 
-    private static BackendReadyCanonicalViewRecord CreateCanonicalViewRecord(in RenderFrameViewDescriptor source, ulong generation)
+    /// <summary>
+    /// Projects one already-frozen logical view into the canonical backend ABI.
+    /// Deferred backends use this at their authoring boundary when collection
+    /// completed before accepted temporal history could be resolved.
+    /// </summary>
+    internal static BackendReadyCanonicalViewRecord CreateCanonicalViewRecord(
+        in RenderFrameViewDescriptor source,
+        ulong generation)
     {
         Matrix4x4 projectionUnjittered = source.ProjectionMatrixUnjittered == default ? source.ProjectionMatrix : source.ProjectionMatrixUnjittered;
         Matrix4x4 viewProjectionJittered = source.ViewProjectionMatrix;
@@ -302,7 +310,11 @@ public sealed partial class BackendReadyFramePackage
                 source.CurrentJitter.X, source.CurrentJitter.Y,
                 source.PreviousJitter.X, source.PreviousJitter.Y),
             source.OutputLayer, CreateAdvancedViewFlags(source), source.EffectiveHistoryKey,
-            viewMaskLo, viewMaskHi, generation);
+            viewMaskLo, viewMaskHi, generation) with
+        {
+            FoveationCenterAndBias = AdvancedFoveationContract.CaptureCenterAndBias(source.Foveation),
+            FoveationRadii = AdvancedFoveationContract.CaptureRadii(source.Foveation),
+        };
     }
 
     private static BackendReadyCanonicalViewRecord CreateCanonicalViewRecord(

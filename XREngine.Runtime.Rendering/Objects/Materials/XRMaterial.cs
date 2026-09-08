@@ -896,8 +896,11 @@ namespace XREngine.Rendering
 
             RecreateShaderPipelineProgramForCurrentSettings();
 
-            SyncParametersToShaderUniforms();
-            SyncRequiredEngineUniforms();
+            if (TryResolveMaterialShaderSources(out string[] sources))
+            {
+                SyncParametersToShaderUniforms(sources);
+                SyncRequiredEngineUniforms(sources);
+            }
             SyncAlphaCutoffParameter();
             EnsureUberStateInitialized();
         }
@@ -1363,6 +1366,27 @@ namespace XREngine.Rendering
             return names;
         }
 
+        /// <summary>Resolves every configured stage before reconciling material state.</summary>
+        private bool TryResolveMaterialShaderSources(out string[] sources)
+        {
+            sources = [];
+            if (Shaders.Count == 0)
+                return false;
+
+            // Reconcile against one complete snapshot. A loading/reloading stage
+            // must not erase authored values declared only by that stage or its includes.
+            string[] resolved = new string[Shaders.Count];
+            for (int i = 0; i < resolved.Length; i++)
+            {
+                XRShader? shader = Shaders[i];
+                if (shader?.Source?.Text is not { Length: > 0 } ||
+                    !shader.TryGetResolvedSource(out resolved[i], logFailures: false))
+                    return false;
+            }
+            sources = resolved;
+            return true;
+        }
+
         /// <summary>
         /// Parses all shader sources for uniform declarations and synchronizes
         /// <see cref="XRMaterialBase.Parameters"/> to match.
@@ -1374,35 +1398,21 @@ namespace XREngine.Rendering
         /// </list>
         /// Called automatically from <see cref="ShadersChanged"/>.
         /// </summary>
-        private void SyncParametersToShaderUniforms()
+        private void SyncParametersToShaderUniforms(string[] sources)
         {
-            // Nothing to parse → leave Parameters untouched (empty material, deserialization in progress, etc.)
-            if (Shaders.Count == 0)
-                return;
-
             Regex uniformRegex = UniformDeclRegex;
-
-            // Track whether ANY shader actually had parseable source text.
-            // If no source text is available yet (async load, deserialization in progress),
-            // we must leave Parameters untouched to avoid wiping out explicitly provided values.
-            bool anySourceParsed = false;
 
             // Discover uniforms from all shader sources
             var discoveredUniforms = new Dictionary<string, EShaderVarType>(StringComparer.Ordinal);
-            foreach (var shader in Shaders)
+            foreach (string source in sources)
             {
-                if (shader?.Source?.Text is not { Length: > 0 } source)
-                    continue;
-
-                anySourceParsed = true;
-
                 foreach (Match match in uniformRegex.Matches(source))
                 {
                     string glslType = match.Groups[1].Value;
                     string uniformName = match.Groups[2].Value;
 
                     // Skip engine-managed uniforms
-                    if (EngineUniformNames.Contains(uniformName))
+                    if (EngineUniformNames.Contains(uniformName) || EngineVertexUniformNames.Contains(uniformName))
                         continue;
 
                     // Skip types we can't represent as ShaderVars (samplers, images, etc.)
@@ -1413,12 +1423,6 @@ namespace XREngine.Rendering
                     discoveredUniforms.TryAdd(uniformName, varType);
                 }
             }
-
-            // If no shader source text was available, don't touch Parameters.
-            // The sync will run again when the shader source is loaded/reloaded
-            // (via ShaderReloaded → ShadersChanged).
-            if (!anySourceParsed)
-                return;
 
             bool isUberMaterial = IsUberShaderMaterial();
             Dictionary<string, ShaderUiProperty>? uberProperties = null;
@@ -1512,25 +1516,11 @@ namespace XREngine.Rendering
         /// sets <see cref="XRMaterialBase.RenderOptions"/>.<see cref="RenderingParameters.RequiredEngineUniforms"/>
         /// to match. Called from <see cref="ShadersChanged"/> after <see cref="SyncParametersToShaderUniforms"/>.
         /// </summary>
-        private void SyncRequiredEngineUniforms()
+        private void SyncRequiredEngineUniforms(string[] sources)
         {
-            if (Shaders.Count == 0)
-                return;
-
             var flags = EUniformRequirements.None;
-            bool anySourceParsed = false;
-
-            foreach (var shader in Shaders)
-            {
-                if (shader?.Source?.Text is not { Length: > 0 } source)
-                    continue;
-
-                anySourceParsed = true;
+            foreach (string source in sources)
                 flags |= UniformRequirementsDetection.DetectFromSource(source);
-            }
-
-            if (!anySourceParsed)
-                return;
 
             // Merge: auto-detection adds flags but never removes ones set explicitly
             // (e.g., by the model importer or the user). This prevents #include-hidden
@@ -1707,14 +1697,16 @@ namespace XREngine.Rendering
             => CreateLitColorMaterial(Color.DarkTurquoise, deferred);
 
         /// <summary>
-        /// Creates a material for lit color rendering.
-        /// Parameters are:
-        /// ShaderVector3("BaseColor", color),
-        /// ShaderFloat("Opacity", color.A),
-        /// ShaderFloat("Specular", 1.0f),
-        /// ShaderFloat("Roughness", 1.0f),
-        /// ShaderFloat("Metallic", 0.0f),
-        /// ShaderFloat("IndexOfRefraction", 1.0f)
+        /// Creates the built-in forward colored-alpha material with coverage-preserving
+        /// velocity and reactive-mask variants for the Advanced pipeline.
+        /// </summary>
+        public static XRMaterial CreateAdvancedTransparentLitColorMaterial(ColorF4 color)
+            => AdvancedColoredAlphaTemporalVariantFactory.Create(color);
+
+        /// <summary>
+        /// Creates a lit color material with parameters matching the selected shader.
+        /// Deferred shading uses BaseColor, Opacity, Specular, Roughness, Metallic and
+        /// IndexOfRefraction; forward shading uses MatColor, MatSpecularIntensity and MatShininess.
         /// </summary>
         /// <param name="color"></param>
         /// <param name="deferred"></param>
@@ -1722,7 +1714,7 @@ namespace XREngine.Rendering
         public static XRMaterial CreateLitColorMaterial(ColorF4 color, bool deferred = true)
         {
             XRShader? frag = deferred ? ShaderHelper.LitColorFragDeferred() : ShaderHelper.LitColorFragForward();
-            ShaderVar[] parameters =
+            ShaderVar[] parameters = deferred ?
             [
                 new ShaderVector3((ColorF3)color, "BaseColor"),
                 new ShaderFloat(color.A, "Opacity"),
@@ -1730,6 +1722,11 @@ namespace XREngine.Rendering
                 new ShaderFloat(1.0f, "Roughness"),
                 new ShaderFloat(0.0f, "Metallic"),
                 new ShaderFloat(1.0f, "IndexOfRefraction"),
+            ] :
+            [
+                new ShaderVector4(color, "MatColor"),
+                new ShaderFloat(1.0f, "MatSpecularIntensity"),
+                new ShaderFloat(32.0f, "MatShininess"),
             ];
 
             XRMaterial material = new(parameters, frag!);
@@ -1834,6 +1831,18 @@ namespace XREngine.Rendering
                 ShaderHelper.DynamicWaterTessCtrlForward(),
                 ShaderHelper.DynamicWaterTessEvalForward(),
                 ShaderHelper.DynamicWaterFragForward());
+            material.AdvancedLatePassMetadata = new(
+                EAdvancedLatePassKind.Refraction,
+                requiresSceneColorSnapshot: true,
+                sceneColorSamplerName: "Texture0",
+                sceneColorTextureUnit: 0,
+                participatesInMotionVectors: true,
+                writesDepth: false,
+                isOrderDependent: true)
+            {
+                TemporalUnsupportedReason =
+                    "Dynamic water has no coverage- and displacement-preserving temporal motion variant.",
+            };
             material.EnableTransparency((int)EDefaultRenderPass.TransparentForward);
             return material;
         }

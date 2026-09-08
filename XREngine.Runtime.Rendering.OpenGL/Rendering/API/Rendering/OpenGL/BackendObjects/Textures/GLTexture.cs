@@ -84,6 +84,7 @@ namespace XREngine.Rendering.OpenGL
         private ulong _bindlessHandle;
         private int _bindlessParametersFrozen;
         private int _bindlessParametersDirty;
+        private int _activeAdvancedBindlessPairHandleCount;
 
         private void QueuePropertyUpdate(string? propertyName)
         {
@@ -99,17 +100,20 @@ namespace XREngine.Rendering.OpenGL
                 _ => TexturePropertyUpdateMask.None
             };
 
-            if (mask == TexturePropertyUpdateMask.None)
-                return;
-
             // ARB_bindless_texture freezes a texture's sampler state as soon as a
-            // handle is obtained. Defer the change until material-table preparation,
-            // where a new texture identity and handle can be published atomically.
-            if (Volatile.Read(ref _bindlessParametersFrozen) != 0)
+            // handle is obtained. Treat every XR texture mutation as potentially
+            // native-state-affecting here: derived wrappers own extra filter, wrap,
+            // comparison, storage, and mip-range parameters that this base class
+            // cannot enumerate safely.
+            if (Volatile.Read(ref _bindlessParametersFrozen) != 0 ||
+                Volatile.Read(ref _activeAdvancedBindlessPairHandleCount) != 0)
             {
                 Volatile.Write(ref _bindlessParametersDirty, 1);
                 return;
             }
+
+            if (mask == TexturePropertyUpdateMask.None)
+                return;
 
             Interlocked.Or(ref _pendingPropertyUpdates, (int)mask);
 
@@ -389,6 +393,28 @@ namespace XREngine.Rendering.OpenGL
         void IGLBindlessTexture.MarkBindlessHandleAcquired(ulong handle)
             => MarkBindlessHandleAcquired(handle);
 
+        void IGLBindlessTexture.AcquireAdvancedBindlessPairLease()
+        {
+            // Texture/sampler pair handles freeze the texture identity too, but do
+            // not own the legacy texture-only handle field. A texture can retain a
+            // legacy handle while several Advanced sampler pairs are in flight.
+            Interlocked.Increment(ref _activeAdvancedBindlessPairHandleCount);
+            Volatile.Write(ref _bindlessParametersFrozen, 1);
+        }
+
+        void IGLBindlessTexture.ReleaseAdvancedBindlessPairLease()
+        {
+            int remaining = Interlocked.Decrement(ref _activeAdvancedBindlessPairHandleCount);
+            if (remaining < 0)
+            {
+                Interlocked.Exchange(ref _activeAdvancedBindlessPairHandleCount, 0);
+                throw new InvalidOperationException("An OpenGL advanced bindless texture/sampler lease was released more than once.");
+            }
+
+            if (remaining == 0 && Volatile.Read(ref _bindlessParametersDirty) != 0)
+                PrepareForBindlessHandle();
+        }
+
         /// <summary>
         /// Base textures have no progressive sampling-range transition. Derived texture types
         /// override this when native parameter writes remain pending.
@@ -399,6 +425,12 @@ namespace XREngine.Rendering.OpenGL
         internal void PrepareForBindlessHandle()
         {
             if (Volatile.Read(ref _bindlessParametersDirty) == 0)
+                return;
+
+            // A sampler-pair handle retains this native texture identity until the
+            // owning submission fence signals. Recreating it before then would make
+            // the still-referenced bindless handle point at deleted storage.
+            if (Volatile.Read(ref _activeAdvancedBindlessPairHandleCount) != 0)
                 return;
 
             if (!RuntimeEngine.IsRenderThread)
@@ -428,6 +460,9 @@ namespace XREngine.Rendering.OpenGL
 
         protected internal override void PreDeleted()
         {
+            if (Volatile.Read(ref _activeAdvancedBindlessPairHandleCount) != 0)
+                throw new InvalidOperationException("Cannot delete an OpenGL texture while advanced bindless sampler-pair leases are active.");
+
             ulong handle = _bindlessHandle;
             _bindlessHandle = 0ul;
             Volatile.Write(ref _bindlessParametersDirty, 0);

@@ -14,6 +14,11 @@ uniform sampler2DArray HistoryDepth;
 uniform sampler2DArray TsrHistoryColor;
 uniform usampler2DArray StencilView;
 
+#ifdef XR_ADVANCED_REACTIVE_MASK
+// Canonical opaque/late reactivity is independent of final output alpha.
+uniform sampler2DArray AdvancedReactiveMask;
+#endif
+
 uniform bool HistoryReady;
 uniform vec2 SourceTexelSize;
 uniform vec2 HistoryTexelSize;
@@ -253,6 +258,9 @@ void main()
         motionMask,
         ReactiveTransparencyRange,
         ReactiveLumaThreshold);
+#ifdef XR_ADVANCED_REACTIVE_MASK
+    reactiveMask = max(reactiveMask, clamp(texture(AdvancedReactiveMask, EyeUv(uv)).r, 0.0, 1.0));
+#endif
     float confidence = TsrComputeConfidence(
         geometryInstability,
         reactiveMask,
@@ -268,7 +276,15 @@ void main()
 
     if (DebugMode != 0)
     {
-        vec3 debugColor = DebugMode == 2 ? EncodeVelocityDebug(velocity) : vec3(historyWeight);
+        vec3 debugColor = vec3(historyWeight);
+        if (DebugMode == 2)
+            debugColor = EncodeVelocityDebug(velocity);
+        else if (DebugMode == 3)
+            debugColor = vec3(geometryInstability);
+        else if (DebugMode == 4)
+            debugColor = vec3(reactiveMask, motionMask, confidence);
+        else if (DebugMode == 5)
+            debugColor = canUseHistory ? vec3(0.0, 1.0, historyWeight) : vec3(1.0, 0.0, 0.0);
         OutColor = vec4(debugColor, 1.0);
         return;
     }

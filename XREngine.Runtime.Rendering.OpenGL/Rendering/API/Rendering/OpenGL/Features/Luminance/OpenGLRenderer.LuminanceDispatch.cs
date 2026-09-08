@@ -205,6 +205,7 @@ public partial class OpenGLRenderer
         Api.BindImageTexture(0, exposureBindingId, 0, false, 0, BufferAccessARB.ReadWrite, InternalFormat.R32f);
 
         Api.DispatchCompute(1, 1, 1);
+        MarkImmediateHistoryGpuWriteUnproven();
         Api.MemoryBarrier((uint)(MemoryBarrierMask.ShaderImageAccessBarrierBit | MemoryBarrierMask.TextureFetchBarrierBit));
 
         // Ensure that the compute shader write is visible to subsequent reads (by the fragment shader or the next compute dispatch)
@@ -275,6 +276,7 @@ public partial class OpenGLRenderer
 
             _luminanceFrontFbo = Api.GenFramebuffer();
             Api.BindFramebuffer(FramebufferTarget.DrawFramebuffer, _luminanceFrontFbo);
+            TrackHistoryDrawTarget(null, known: false);
             Api.FramebufferTexture2D(FramebufferTarget.DrawFramebuffer, FramebufferAttachment.ColorAttachment0, TextureTarget.Texture2D, _luminanceFrontTex, 0);
 
             _luminanceFrontTexWidth = w;
@@ -285,6 +287,7 @@ public partial class OpenGLRenderer
         {
             Api.BindTexture(TextureTarget.Texture2D, _luminanceFrontTex);
             Api.BindFramebuffer(FramebufferTarget.DrawFramebuffer, _luminanceFrontFbo);
+            TrackHistoryDrawTarget(null, known: false);
             Api.FramebufferTexture2D(FramebufferTarget.DrawFramebuffer, FramebufferAttachment.ColorAttachment0, TextureTarget.Texture2D, _luminanceFrontTex, 0);
         }
 
@@ -321,6 +324,7 @@ public partial class OpenGLRenderer
             uint groupsX = (w + 15) / 16;
             uint groupsY = (h + 15) / 16;
             Api.DispatchCompute(groupsX, groupsY, 1);
+            MarkImmediateHistoryGpuWriteUnproven();
 
             Api.MemoryBarrier((uint)MemoryBarrierMask.ShaderStorageBarrierBit);
         }

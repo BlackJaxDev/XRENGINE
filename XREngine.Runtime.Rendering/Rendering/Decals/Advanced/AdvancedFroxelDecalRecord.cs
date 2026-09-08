@@ -9,6 +9,7 @@ namespace XREngine.Rendering;
 [StructLayout(LayoutKind.Sequential, Pack = 4, Size = 8)]
 public struct AdvancedFroxelDecalRecord
 {
+    public const uint OverflowFlag = 1u << 0;
     public ushort DecalOffset;
     public ushort DecalCount;
     public uint Flags;

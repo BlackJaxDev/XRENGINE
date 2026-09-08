@@ -2,7 +2,7 @@
 
 Status: Complete
 Parent TODO:
-[01 - Pipeline Identity And Frame Contract](../../todo/rendering/architectural-refactor/01-pipeline-identity-and-frame-contract-todo.md)
+[01 - Pipeline Identity And Frame Contract](../../todo/COMPLETED/01-pipeline-identity-and-frame-contract-todo.md)
 
 Subsequent routing contract:
 [Output-Purpose And Feature-Contract Slice](advanced-render-pipeline-output-purpose-and-feature-contract-slice-2026-07-28.md)

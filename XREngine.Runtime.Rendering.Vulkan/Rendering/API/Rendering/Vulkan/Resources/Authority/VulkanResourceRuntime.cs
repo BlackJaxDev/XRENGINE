@@ -2189,7 +2189,8 @@ internal sealed partial class VulkanResourceRuntime
                 RetiredImageResourceEntry candidate = list[index];
                 scans++;
                 if (!Lifetime.Tracker.IsRetirementReady(candidate.Ticket) ||
-                    HasUndestroyedImageDependency(candidate.Resources))
+                    HasUndestroyedImageDependency(candidate.Resources) ||
+                    !AreRetiredImageViewsRegistered(in candidate))
                 {
                     index = (index + 1) % list.Count;
                     continue;
@@ -2315,6 +2316,8 @@ internal sealed partial class VulkanResourceRuntime
                 freedMemories++;
             }
 
+            if (!AreRetiredImageViewsDestroyed(in entry))
+                throw new InvalidOperationException("Image retirement retained an undestroyed view generation after native destruction admission.");
             CompleteRetiredImageDeduplication(frameSlot, in entry);
             }
             catch (Exception exception)
@@ -2331,6 +2334,67 @@ internal sealed partial class VulkanResourceRuntime
             samplers: destroyedSamplers,
             imageMemories: freedMemories,
             imageBytes: destroyedImageBytes);
+    }
+
+    /// <summary>
+    /// A missing native ownership record must retain the queued obligation.
+    /// Otherwise a ready view could be dequeued without a native destroy.
+    /// </summary>
+    private bool AreRetiredImageViewsRegistered(in RetiredImageResourceEntry entry)
+    {
+        if (!IsRetiredImageViewRegistered(entry.Resources.PrimaryView, entry.PrimaryViewGeneration))
+            return false;
+        ImageView[]? attachments = entry.Resources.AttachmentViews;
+        if (attachments is null)
+            return true;
+        for (int i = 0; i < attachments.Length; i++)
+            if (i >= entry.AttachmentViewGenerations.Length ||
+                !IsRetiredImageViewRegistered(attachments[i], entry.AttachmentViewGenerations[i]))
+                return false;
+        return true;
+    }
+
+    private bool IsRetiredImageViewRegistered(ImageView view, ulong generation)
+    {
+        if (view.Handle == 0)
+            return true;
+        lock (Lifetime.Tracker.SyncRoot)
+        {
+            if (!Lifetime.Tracker.TryResolveResourceGenerationNoLock(
+                    new(ObjectType.ImageView, view.Handle), generation, out VulkanResourceLifetimeRecord resource) ||
+                (resource.State & EVulkanResourceLifetimeState.Destroyed) != 0)
+                return true;
+            if (Lifetime.ImageViews.LiveHandles.ContainsKey(view.Handle))
+                return true;
+        }
+        Debug.VulkanWarningEvery("Vulkan.Retirement.MissingImageViewOwner", TimeSpan.FromSeconds(1),
+            "[Vulkan.ResourceLifetime] Retaining undestroyed image view 0x{0:X} generation={1}: native ownership registration is missing.",
+            view.Handle, generation);
+        return false;
+    }
+
+    private bool AreRetiredImageViewsDestroyed(in RetiredImageResourceEntry entry)
+    {
+        if (!IsRetiredImageViewDestroyed(entry.Resources.PrimaryView, entry.PrimaryViewGeneration))
+            return false;
+        ImageView[]? attachments = entry.Resources.AttachmentViews;
+        if (attachments is null)
+            return true;
+        for (int i = 0; i < attachments.Length; i++)
+            if (i >= entry.AttachmentViewGenerations.Length ||
+                !IsRetiredImageViewDestroyed(attachments[i], entry.AttachmentViewGenerations[i]))
+                return false;
+        return true;
+    }
+
+    private bool IsRetiredImageViewDestroyed(ImageView view, ulong generation)
+    {
+        if (view.Handle == 0)
+            return true;
+        lock (Lifetime.Tracker.SyncRoot)
+            return !Lifetime.Tracker.TryResolveResourceGenerationNoLock(
+                    new(ObjectType.ImageView, view.Handle), generation, out VulkanResourceLifetimeRecord resource) ||
+                (resource.State & EVulkanResourceLifetimeState.Destroyed) != 0;
     }
 
     private bool CanDestroyResourceGeneration(

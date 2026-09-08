@@ -80,11 +80,17 @@ public readonly struct ActiveViewportEnumerable : IEnumerable<XRViewport>
             if (_mode != RuntimeEngine.EViewportEnumerationMode.IncludeVrEyeViewports)
                 return false;
 
-            while (_eyeIndex < 2)
+            while (_eyeIndex < 3)
             {
-                XRViewport? candidate = _eyeIndex++ == 0
-                    ? RuntimeEngine.VRState.LeftEyeViewport
-                    : RuntimeEngine.VRState.RightEyeViewport;
+                XRViewport? candidate = _eyeIndex++ switch
+                {
+                    0 => RuntimeEngine.VRState.LeftEyeViewport,
+                    1 => RuntimeEngine.VRState.RightEyeViewport,
+                    _ => RuntimeEngine.VRState.StereoViewport,
+                };
+                if (_eyeIndex == 3 && (ReferenceEquals(candidate, RuntimeEngine.VRState.LeftEyeViewport) ||
+                                      ReferenceEquals(candidate, RuntimeEngine.VRState.RightEyeViewport)))
+                    continue;
                 if (candidate is not null && ShouldIncludeEyeViewport(candidate))
                 {
                     _current = candidate;

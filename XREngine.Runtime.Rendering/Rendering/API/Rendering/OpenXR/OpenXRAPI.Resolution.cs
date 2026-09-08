@@ -244,34 +244,62 @@ public unsafe partial class OpenXRAPI
             return;
 
         if (!HasCreatedOpenXrSwapchains())
+        {
+            if (_runtimeState == OpenXrRuntimeState.SessionRunning)
+                RecoverFromDetachedSwapchainReplacementFailure(reason);
             return;
+        }
 
         Debug.Out($"[OpenXR] Recreating session resources for eye resolution change. Reason={reason}");
         _intentionalOpenXrRecreateBackoffBypassUntilUtc =
             DateTime.UtcNow + _intentionalOpenXrRecreateBackoffBypassDuration;
         OpenXrEyeResolutionSettingsSnapshot current = CaptureCurrentOpenXrEyeResolutionSettings();
-        if (RequiresOpenXrRuntimeDimensionRefresh(current))
+        OpenXrRuntimeDimensionRefreshRequirement refreshRequirement =
+            GetOpenXrRuntimeDimensionRefreshRequirement(current);
+        if (refreshRequirement != OpenXrRuntimeDimensionRefreshRequirement.None)
         {
-            if (!CanReplaceOpenXrSwapchainsInSession() ||
-                !TearDownSessionResourcesOnOwningThread(destroyInstance: true))
+            BeginOpenXrRuntimeDimensionRefresh(refreshRequirement, reason);
+            if (!CanReplaceOpenXrSwapchainsInSession())
             {
-                Debug.LogWarning($"[OpenXR] Deferred runtime dimension refresh until the active frame and retired swapchain generations are quiescent. Reason={reason}");
+                Debug.LogWarning($"[OpenXR] Deferred runtime dimension refresh until the active frame and retired swapchain generations are quiescent. Requirement={refreshRequirement}; Reason={reason}");
+                return;
+            }
+
+            if (!TearDownSessionResourcesOnOwningThread(destroyInstance: true))
+            {
+                // Teardown can stop pacing and clear the begun state before a
+                // deferred child blocks parent destruction. Never retain the
+                // SessionRunning label after that boundary.
+                SetRuntimeState(OpenXrRuntimeState.SessionStopping);
+                Debug.LogWarning($"[OpenXR] Runtime dimension refresh teardown is waiting for child retirement. Requirement={refreshRequirement}; Reason={reason}");
                 return;
             }
 
             string serviceReason = $"OpenXR eye resolution dimension refresh: {reason}";
-            if (!RuntimeRenderingHostServices.Presentation.TryEnsureOpenXrRuntimeService(serviceReason))
-                throw new InvalidOperationException($"OpenXR runtime service did not accept the requested eye-resolution dimension refresh. Reason={reason}");
+            SetRuntimeState(OpenXrRuntimeState.DesktopOnly);
+            if (!TryCompletePendingOpenXrRuntimeDimensionRefresh(serviceReason))
+            {
+                ScheduleProbeRetry(_intentionalOpenXrRecreateProbeInterval);
+                SetRuntimeState(OpenXrRuntimeState.RecreatePending);
+                Debug.LogWarning($"[OpenXR] Runtime service rejected the required dimension refresh; retrying from a non-running state. Requirement={refreshRequirement}; Reason={reason}");
+                return;
+            }
 
             ResetOpenXrProbeFailureState();
             _nextProbeUtc = DateTime.UtcNow;
-            SetRuntimeState(OpenXrRuntimeState.DesktopOnly);
             return;
         }
 
-        if (!TryReplaceSwapchainsInSession(reason))
+        OpenXrSwapchainReplacementOutcome replacement = TryReplaceSwapchainsInSession(reason);
+        if (replacement == OpenXrSwapchainReplacementOutcome.DeferredBeforeDetachment)
         {
             Debug.LogWarning($"[OpenXR] Deferred eye-resolution replacement because the active frame, CPU preparation, or retirement state is not yet safe. Reason={reason}");
+            return;
+        }
+
+        if (replacement == OpenXrSwapchainReplacementOutcome.FailedAfterDetachment)
+        {
+            RecoverFromDetachedSwapchainReplacementFailure(reason);
             return;
         }
 
@@ -294,12 +322,50 @@ public unsafe partial class OpenXRAPI
         return false;
     }
 
-    // Monado derives its runtime-recommended dimensions from its simulated
-    // display profile. That profile can change only after the service restarts,
-    // so this one setting needs a safe instance/system re-query. Explicit
-    // headset/custom extents are app-owned and can replace swapchains in place.
-    private static bool RequiresOpenXrRuntimeDimensionRefresh(in OpenXrEyeResolutionSettingsSnapshot settings)
-        => settings.Preset == EOpenXrEyeResolutionPreset.RuntimeRecommended;
+    /// <summary>
+    /// Returns the explicit runtime quirk that prevents in-session dimension
+    /// replacement. RuntimeRecommended is otherwise an ordinary swapchain
+    /// extent source and must not restart hardware runtimes.
+    /// </summary>
+    private static OpenXrRuntimeDimensionRefreshRequirement GetOpenXrRuntimeDimensionRefreshRequirement(
+        in OpenXrEyeResolutionSettingsSnapshot settings)
+    {
+        if (settings.Preset != EOpenXrEyeResolutionPreset.RuntimeRecommended)
+            return OpenXrRuntimeDimensionRefreshRequirement.None;
+
+        return RuntimeRenderingHostServices.Presentation.OpenXrRecommendedDimensionsRequireServiceRestart
+            ? OpenXrRuntimeDimensionRefreshRequirement.MonadoSimulatedDisplayProfile
+            : OpenXrRuntimeDimensionRefreshRequirement.None;
+    }
+
+    private void BeginOpenXrRuntimeDimensionRefresh(
+        OpenXrRuntimeDimensionRefreshRequirement requirement,
+        string reason)
+    {
+        _pendingOpenXrRuntimeDimensionRefreshRequirement = requirement;
+        _pendingOpenXrRuntimeDimensionRefreshReason = reason;
+    }
+
+    private bool TryCompletePendingOpenXrRuntimeDimensionRefresh(string serviceReason)
+    {
+        if (_pendingOpenXrRuntimeDimensionRefreshRequirement == OpenXrRuntimeDimensionRefreshRequirement.None)
+            return true;
+
+        try
+        {
+            if (!RuntimeRenderingHostServices.Presentation.TryEnsureOpenXrRuntimeService(serviceReason))
+                return false;
+        }
+        catch (Exception ex)
+        {
+            Debug.LogWarning($"[OpenXR] Runtime service threw while applying pending dimension refresh: {ex.Message}");
+            return false;
+        }
+
+        _pendingOpenXrRuntimeDimensionRefreshRequirement = OpenXrRuntimeDimensionRefreshRequirement.None;
+        _pendingOpenXrRuntimeDimensionRefreshReason = null;
+        return true;
+    }
 
     private void RecordAppliedOpenXrEyeResolutionSettings()
     {

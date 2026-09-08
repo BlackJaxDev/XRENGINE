@@ -321,7 +321,7 @@ internal sealed partial class VulkanFrameLoop : IVulkanTargetOutputHost
     }
 
     public bool TryBeginDestroyImageView(ImageView imageView, string owner)
-        => imageView.Handle != 0 && TryCompleteResource(ObjectType.ImageView, imageView.Handle, owner);
+        => _resourceRuntime.Images.TryBeginDestroy(imageView, owner);
 
     public bool TryBeginReleaseExternalImage(Image image, string owner)
         => image.Handle != 0 && TryCompleteResource(
@@ -335,6 +335,9 @@ internal sealed partial class VulkanFrameLoop : IVulkanTargetOutputHost
         if (imageView.Handle == 0)
             return;
 
+        // Target views use the same native ownership registry as texture views.
+        // The lifetime ledger alone cannot authorize the eventual native destroy.
+        _resourceRuntime.Images.RegisterView(imageView, in createInfo, owner);
         _resourceRuntime.RegisterImageViewResource(
             imageView,
             createInfo.Image,

@@ -509,6 +509,9 @@ public sealed class AdvancedMaterialDatabase
 
         _materialLayoutHandles[checked((int)materialHandle.Index)] =
             AdvancedGpuHandle.Invalid;
+        // Old publications own copied payloads. This publication must not retain
+        // bindings from a tombstoned row after its texture/sampler owners retire.
+        WriteMaterialPayload(materialHandle.Index, [], []);
         MarkMaterialDirty(denseIndex);
         IncrementGeneration(ref _materialGeneration);
         return true;
@@ -828,20 +831,24 @@ public sealed class AdvancedMaterialDatabase
         ReadOnlySpan<uint> constantWords,
         ReadOnlySpan<AdvancedMaterialTextureBinding> textureBindings)
     {
-        if (!constantWords.IsEmpty)
+        if (_maximumConstantWordsPerMaterial != 0)
         {
             uint start = GetConstantOffset(materialIndex);
-            constantWords.CopyTo(_constantWords.AsSpan(checked((int)start)));
+            Span<uint> destination = _constantWords.AsSpan(checked((int)start), checked((int)_maximumConstantWordsPerMaterial));
+            constantWords.CopyTo(destination);
+            destination[constantWords.Length..].Clear();
             _constantWordCount = Math.Max(_constantWordCount, checked(start + _maximumConstantWordsPerMaterial));
-            MarkArenaDirty(ref _constantDirtyFirst, ref _constantDirtyEnd, start, checked((uint)constantWords.Length));
+            MarkArenaDirty(ref _constantDirtyFirst, ref _constantDirtyEnd, start, _maximumConstantWordsPerMaterial);
         }
 
-        if (!textureBindings.IsEmpty)
+        if (_maximumTextureBindingsPerMaterial != 0)
         {
             uint start = GetTextureOffset(materialIndex);
-            textureBindings.CopyTo(_textureBindings.AsSpan(checked((int)start)));
+            Span<AdvancedMaterialTextureBinding> destination = _textureBindings.AsSpan(checked((int)start), checked((int)_maximumTextureBindingsPerMaterial));
+            textureBindings.CopyTo(destination);
+            destination[textureBindings.Length..].Clear();
             _textureBindingCount = Math.Max(_textureBindingCount, checked(start + _maximumTextureBindingsPerMaterial));
-            MarkArenaDirty(ref _textureDirtyFirst, ref _textureDirtyEnd, start, checked((uint)textureBindings.Length));
+            MarkArenaDirty(ref _textureDirtyFirst, ref _textureDirtyEnd, start, _maximumTextureBindingsPerMaterial);
         }
     }
 

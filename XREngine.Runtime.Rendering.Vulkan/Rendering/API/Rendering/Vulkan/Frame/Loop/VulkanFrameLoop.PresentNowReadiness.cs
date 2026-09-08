@@ -43,7 +43,6 @@ internal sealed partial class VulkanFrameLoop
     {
         if (_presentNowTerminalFailure is { } terminalFailure)
         {
-            _framePlanner.Operations.Reset();
             attempt.RejectedFailure = terminalFailure;
             attempt.Stop(EDesktopFrameReason.PresentNowReadinessFailed);
             return EDesktopFrameFlow.Stop;
@@ -53,14 +52,12 @@ internal sealed partial class VulkanFrameLoop
         if (recoverableFailure is not null &&
             !TryBeginPresentNowRecoveryProbe(ref attempt, recoverableFailure))
         {
-            _framePlanner.Operations.Reset();
             attempt.RejectedFailure = recoverableFailure;
             attempt.Stop(EDesktopFrameReason.PresentNowReadinessFailed);
             return EDesktopFrameFlow.Stop;
         }
         if (!TryEnterPresentNowRecoveryProbeAttempt(ref attempt))
         {
-            _framePlanner.Operations.Reset();
             return EDesktopFrameFlow.Stop;
         }
 
@@ -422,7 +419,8 @@ internal sealed partial class VulkanFrameLoop
                 acceptedPlan.DynamicUiOperationCount,
             authoringTextureUploadOperationCount:
                 acceptedPlan.TextureUploadOperationCount,
-                emptyPresentNowOutputContract: provisionalContract);
+                emptyPresentNowOutputContract: provisionalContract,
+                historyReservations: acceptedPlan.FrameViewHistory);
         }
         catch (VulkanNativeBufferBindingSupersededException exception)
         {
@@ -615,11 +613,42 @@ internal sealed partial class VulkanFrameLoop
     private void CapturePresentNowAuthoredOperations(
         VulkanAcceptedFramePlan acceptedPlan)
     {
+        bool claimFrameViewHistory = !acceptedPlan.HasClaimedFrameViewHistory;
+        bool claimOutputCompletions = !acceptedPlan.HasClaimedOutputCompletions;
         FrameOp[] operations = _framePlanner.Operations.DrainForPrimary(
-            out FrameOp[] textureUploadOperations);
-        acceptedPlan.CaptureAuthoredOperations(
-            operations,
-            textureUploadOperations);
+            out FrameOp[] textureUploadOperations,
+            drainFrameViewHistory: claimFrameViewHistory || claimOutputCompletions,
+            acceptedOutputCompletions: claimOutputCompletions
+                ? default
+                : acceptedPlan.OutputCompletions);
+        try
+        {
+            acceptedPlan.CaptureAuthoredOperations(
+                operations,
+                textureUploadOperations);
+            _framePlanner.Operations.ReleaseDrainedOperationAliases();
+
+            if (claimOutputCompletions)
+            {
+                acceptedPlan.CaptureOutputCompletions(
+                    _framePlanner.Operations.DrainedOutputCompletions);
+                _framePlanner.Operations.ReleaseDrainedOutputCompletionOwnership();
+            }
+
+            if (claimFrameViewHistory)
+            {
+                acceptedPlan.CaptureFrameViewHistory(
+                    _framePlanner.Operations.DrainedFrameViewHistory);
+                _framePlanner.Operations.ReleaseDrainedFrameViewHistoryOwnership();
+            }
+        }
+        catch
+        {
+            _framePlanner.Operations.DiscardDrainedOperationOwnership();
+            _framePlanner.Operations.DiscardDrainedOutputCompletionOwnership();
+            _framePlanner.Operations.DiscardDrainedFrameViewHistoryOwnership();
+            throw;
+        }
     }
 
     private VulkanPresentNowTargetCompatibilityKey
@@ -1299,7 +1328,7 @@ internal sealed partial class VulkanFrameLoop
     private void ResetIncompleteAcceptedPresentNowPlan(
         ref VulkanFrameAttempt attempt)
     {
-        _framePlanner.Operations.Reset();
+        _framePlanner.Operations.DiscardDrainedFrameViewHistoryOwnership();
         VulkanAcceptedFramePlan? acceptedPlan = attempt.AcceptedFramePlan;
         if (acceptedPlan is null)
             return;

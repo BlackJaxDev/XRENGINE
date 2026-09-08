@@ -8,7 +8,7 @@ namespace XREngine.Rendering.Vulkan;
 /// renderer, output, or frame-planner reference; wrappers record directly through
 /// its tracked encoder and wait before retiring transient staging resources.
 /// </summary>
-internal unsafe sealed class VulkanResourceCommandWrapperPort(
+internal unsafe sealed partial class VulkanResourceCommandWrapperPort(
     VulkanBackendObjectContext context,
     VulkanCommandRuntime commandRuntime,
     VulkanResourceRuntime resourceRuntime,

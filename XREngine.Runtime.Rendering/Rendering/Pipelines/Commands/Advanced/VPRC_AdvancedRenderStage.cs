@@ -43,20 +43,6 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             return;
         }
 
-        AdvancedPreparationPublication publication =
-            AdvancedSharedPreparationService.Instance.Acquire(
-            world,
-            state.FrameViewSet,
-            EAdvancedPreparationConsumer.Visibility |
-            EAdvancedPreparationConsumer.Depth |
-            EAdvancedPreparationConsumer.Velocity |
-            EAdvancedPreparationConsumer.MaterialReconstruction |
-            EAdvancedPreparationConsumer.DirectionalShadow |
-            EAdvancedPreparationConsumer.PointShadow |
-            EAdvancedPreparationConsumer.SpotShadow |
-            EAdvancedPreparationConsumer.Probe |
-            EAdvancedPreparationConsumer.Capture);
-
         if (Stage is not (EAdvancedRenderStage.VisibilityPreparation or
             EAdvancedRenderStage.VisibilityRaster or
             EAdvancedRenderStage.DepthPyramidAndLateVisibility or
@@ -65,6 +51,10 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             EAdvancedRenderStage.NativeOpaqueShading))
         {
             using IDisposable? stagePassScope = PushRenderGraphPass(Descriptor.PassName);
+            PublishStageDiagnostic(
+                EAdvancedVisibilityStageBackendPhase.Complete,
+                EAdvancedProfileStageDiagnosticState.CommandScopeReached,
+                "The logical stage command scope was reached; no native-stage enqueue belongs to this marker.");
             return;
         }
 
@@ -76,16 +66,47 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             ReportExecutionPrerequisiteRejection("The active renderer does not expose the runtime renderer host contract.");
             return;
         }
-        if (ActivePipelineInstance.Pipeline is not AdvancedRenderPipeline pipeline)
+        if (ActivePipelineInstance.Pipeline is not IAdvancedRenderStageFamilyHost familyHost)
         {
             string pipelineType = ActivePipelineInstance.Pipeline?.GetType().FullName ?? "null";
-            ReportExecutionPrerequisiteRejection($"The active pipeline is not AdvancedRenderPipeline (actual: {pipelineType}).");
+            ReportExecutionPrerequisiteRejection($"The active pipeline does not host the Advanced stage family (actual: {pipelineType}).");
             return;
         }
+        AdvancedRenderPipeline pipeline = familyHost.AdvancedStageFamilyDefinition;
+        AdvancedPreparationPublication publication =
+            AdvancedSharedPreparationService.Instance.Acquire(
+                world,
+                state.FrameViewSet,
+                pipeline.RequiredPreparationConsumers);
+        bool requiresAmbientOcclusion =
+            Stage == EAdvancedRenderStage.AmbientOcclusion;
+        bool requiresNativeOpaqueShading =
+            Stage == EAdvancedRenderStage.NativeOpaqueShading;
+        bool isMinimalVisibilityOutput =
+            pipeline.IsMinimalVisibilityOutput;
         IAdvancedAmbientOcclusionProvider? ambientOcclusionProvider = pipeline.AmbientOcclusionProvider;
-        if (ambientOcclusionProvider is not null && ambientOcclusionProvider is not AdvancedDepthGtaoProvider)
+        bool enableBuiltInAmbientOcclusion =
+            !isMinimalVisibilityOutput &&
+            pipeline.EnableBuiltInAmbientOcclusion &&
+            ambientOcclusionProvider is AdvancedDepthGtaoProvider { IsSupported: true };
+        if (requiresAmbientOcclusion && !isMinimalVisibilityOutput &&
+            ambientOcclusionProvider is not null &&
+            ambientOcclusionProvider is not AdvancedDepthGtaoProvider)
         {
             ReportAdmissionRejection($"Ambient occlusion provider '{ambientOcclusionProvider.ProviderName}' has no native Advanced compute implementation.");
+            return;
+        }
+        IAdvancedGlobalIlluminationProvider? globalIlluminationProvider = pipeline.GlobalIlluminationProvider;
+        bool enableLightProbesAndIbl = !isMinimalVisibilityOutput &&
+            pipeline.GlobalIlluminationMode == EGlobalIlluminationMode.LightProbesAndIbl &&
+            AdvancedGlobalIlluminationContract.IsNativeProvider(globalIlluminationProvider);
+        if (requiresNativeOpaqueShading && !isMinimalVisibilityOutput &&
+            pipeline.GlobalIlluminationMode != EGlobalIlluminationMode.None &&
+            (pipeline.GlobalIlluminationMode != EGlobalIlluminationMode.LightProbesAndIbl ||
+             (globalIlluminationProvider is not null && !enableLightProbesAndIbl)))
+        {
+            string name = globalIlluminationProvider?.ProviderName ?? "none";
+            ReportAdmissionRejection($"Global illumination mode '{pipeline.GlobalIlluminationMode}' and provider '{name}' have no native Advanced implementation.");
             return;
         }
 
@@ -132,6 +153,8 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
                 out XRFrameBuffer? target) ||
             target is null)
         {
+            ReportExecutionPrerequisiteRejection(
+                $"The active resource generation has no realized '{AdvancedVisibilityResourceNames.FrameBuffer}' target.");
             Debug.Out(
                 $"Advanced visibility stage '{Stage}' has no realized '{AdvancedVisibilityResourceNames.FrameBuffer}' target in the active resource generation.");
             return;
@@ -154,9 +177,22 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             AdvancedAmbientOcclusionContract.ResourceName,
             AdvancedVisibilityResourceNames.CurrentDepthPyramid,
             pipeline.ShadingDebugView,
-            RuntimeEngine.Rendering.Settings.AdvancedRenderPipelineMode == EAdvancedRenderPipelineMode.Required,
-            pipeline.EnableBuiltInAmbientOcclusion &&
-            ambientOcclusionProvider is AdvancedDepthGtaoProvider { IsSupported: true });
+            RuntimeEngine.Rendering.Settings.AdvancedRenderPipelineMode == EAdvancedRenderPipelineMode.Required ||
+            binding.Request.OffscreenIntent.HasValue,
+            enableBuiltInAmbientOcclusion,
+            enableLightProbesAndIbl,
+            isMinimalVisibilityOutput,
+            SceneDatabase: world.GpuScene.AdvancedSharedDatabase);
+
+        // The rendering command collection swaps this only at the frame
+        // boundary. Retain the published package identity in the native
+        // request so a backend never reconstructs view state from mutable
+        // cameras while authoring GPU work.
+        request = request with
+        {
+            BackendReadyPackage = ActivePipelineInstance.ActiveMeshRenderCommands.RenderingBackendReadyPackage,
+            FroxelDepthSlices = pipeline.FroxelDepthSlices,
+        };
 
         if (Stage == EAdvancedRenderStage.DepthPyramidAndLateVisibility)
         {
@@ -178,10 +214,35 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
         }
 
         using IDisposable? passScope = PushRenderGraphPass(Descriptor.PassName);
+        if (Stage is EAdvancedRenderStage.AmbientOcclusion or
+            EAdvancedRenderStage.WorkClassification or EAdvancedRenderStage.NativeOpaqueShading)
+        {
+            for (uint view = 0; view < (uint)request.Views.ViewCount; view++)
+            {
+                AdvancedVisibilityStageBackendRequest viewRequest = request with { NativeViewIndex = view };
+                if (!visibility.TryEnqueueAdvancedVisibilityStage(in viewRequest, out string viewFailure))
+                {
+                    ReportRejectedPhase(request.Phase, viewFailure);
+                    return;
+                }
+            }
+            PublishStageDiagnostic(request.Phase,
+                EAdvancedProfileStageDiagnosticState.BackendEnqueueAccepted,
+                "The backend accepted one native operation per frozen view; GPU completion is a separate receipt.");
+            if (Stage == EAdvancedRenderStage.NativeOpaqueShading &&
+                renderer.GetAdvancedRenderPipelineCapabilities().Backend == RuntimeGraphicsApiKind.OpenGL)
+                ActivePipelineInstance.CompleteOpenGlStereoHistory(succeeded: true);
+            return;
+        }
         if (!visibility.TryEnqueueAdvancedVisibilityStage(
                 in request,
                 out string failureReason))
             ReportRejectedPhase(request.Phase, failureReason);
+        else
+            PublishStageDiagnostic(
+                request.Phase,
+                EAdvancedProfileStageDiagnosticState.BackendEnqueueAccepted,
+                "The backend accepted this stage phase for authoring; submission and GPU completion remain separate receipts.");
     }
 
     private void EnqueueLatePhase(
@@ -194,6 +255,11 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
                 in request,
                 out string failureReason))
             ReportRejectedPhase(request.Phase, failureReason);
+        else
+            PublishStageDiagnostic(
+                request.Phase,
+                EAdvancedProfileStageDiagnosticState.BackendEnqueueAccepted,
+                "The backend accepted this stage phase for authoring; submission and GPU completion remain separate receipts.");
     }
 
     private IDisposable? PushRenderGraphPass(string passName)
@@ -202,31 +268,71 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             : null;
 
     private void ReportExecutionPrerequisiteRejection(string reason)
-        => Debug.RenderingWarningEvery(
+    {
+        ActivePipelineInstance.RenderState.RejectRequiredOffscreenAuthoring(reason);
+        PublishStageDiagnostic(
+            EAdvancedVisibilityStageBackendPhase.Complete,
+            EAdvancedProfileStageDiagnosticState.RejectedPrerequisite,
+            reason);
+        Debug.RenderingWarningEvery(
             $"AdvancedVisibility.Prerequisite.{Stage}.{reason}",
             TimeSpan.FromSeconds(30),
             "[AdvancedPipeline] Stage '{0}' cannot execute: {1}",
             Stage,
             reason);
+    }
     private void ReportAdmissionRejection(string reason)
-        => Debug.RenderingWarningEvery(
+    {
+        ActivePipelineInstance.RenderState.RejectRequiredOffscreenAuthoring(reason);
+        PublishStageDiagnostic(
+            EAdvancedVisibilityStageBackendPhase.Complete,
+            EAdvancedProfileStageDiagnosticState.RejectedAdmission,
+            reason);
+        Debug.RenderingWarningEvery(
             $"AdvancedVisibility.Admission.{Stage}.{reason}",
             TimeSpan.FromSeconds(30),
             "[AdvancedPipeline] Stage '{0}' is waiting for a current Advanced output binding: {1}",
             Stage,
             reason);
+    }
 
     private void ReportStageCapabilityRejection()
-        => Debug.RenderingWarningEvery(
+    {
+        const string reason = "The active Advanced visibility backend does not support this stage.";
+        ActivePipelineInstance.RenderState.RejectRequiredOffscreenAuthoring(reason);
+        PublishStageDiagnostic(
+            EAdvancedVisibilityStageBackendPhase.Complete,
+            EAdvancedProfileStageDiagnosticState.RejectedCapability,
+            reason);
+        Debug.RenderingWarningEvery(
             $"AdvancedVisibility.StageCapability.{Stage}",
             TimeSpan.FromSeconds(30),
             "[AdvancedPipeline] Stage '{0}' is not supported by the active Advanced visibility backend.",
             Stage);
+    }
 
-    private void ReportRejectedPhase(        EAdvancedVisibilityStageBackendPhase phase,
+    private void ReportRejectedPhase(
+        EAdvancedVisibilityStageBackendPhase phase,
         string failureReason)
-        => Debug.Out(
+    {
+        ActivePipelineInstance.RenderState.RejectRequiredOffscreenAuthoring(failureReason);
+        PublishStageDiagnostic(
+            phase,
+            EAdvancedProfileStageDiagnosticState.BackendEnqueueRejected,
+            failureReason);
+        Debug.Out(
             $"Advanced visibility stage '{Stage}' phase '{phase}' was rejected by the active backend: {failureReason}");
+    }
+
+    private void PublishStageDiagnostic(
+        EAdvancedVisibilityStageBackendPhase phase,
+        EAdvancedProfileStageDiagnosticState state,
+        string? reason)
+        => ActivePipelineInstance.RecordAdvancedProfileStageDiagnostic(
+            Stage,
+            phase,
+            state,
+            reason);
 
     internal override void DescribeRenderPass(RenderGraphDescribeContext context)
     {
@@ -437,6 +543,8 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
                         .ReadBuffer(AdvancedClassificationResourceNames.DispatchArgs(slot), ERenderPassResourceType.IndirectBuffer)
                         .ReadWriteBuffer(AdvancedClusteredLightingResourceNames.FroxelGrid(slot))
                         .ReadWriteBuffer(AdvancedClusteredLightingResourceNames.LightIndexList(slot))
+                        .ReadWriteBuffer(AdvancedClusteredLightingResourceNames.FroxelDecalGrid(slot))
+                        .ReadWriteBuffer(AdvancedClusteredLightingResourceNames.DecalIndexList(slot))
                         .ReadWriteBuffer(AdvancedClusteredLightingResourceNames.LightingCounters(slot));
                 break;
 

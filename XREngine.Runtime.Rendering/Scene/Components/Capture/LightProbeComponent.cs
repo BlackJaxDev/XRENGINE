@@ -16,6 +16,9 @@ namespace XREngine.Components.Capture.Lights
     [XRComponentEditor("XREngine.Editor.ComponentEditors.LightProbeComponentEditor")]
     public partial class LightProbeComponent : SceneCaptureComponent, IRenderable, IVertex
     {
+        protected override EFrameOutputKind CaptureOutputKind =>
+            EFrameOutputKind.LightProbeCapture;
+
         #region Nested Types
 
         public enum ERenderPreview
@@ -320,6 +323,16 @@ namespace XREngine.Components.Capture.Lights
         private XRTexture? _prefilterSourceTexture;
         private XRTexture2D? _irradianceTexture;
         private XRTexture2D? _prefilterTexture;
+        // One exact pair is active for capture/publication while a fresh pair is
+        // rendered behind a submission fence. Generations carry publication refs.
+        private LightProbeIblOutputGeneration? _activeIblOutput;
+        private LightProbeIblOutputGeneration? _pendingIblOutput;
+        private uint _nextIblOutputGeneration;
+        private uint _pendingIrradianceExtent;
+        private uint _pendingPrefilterExtent;
+        private bool _pendingReleaseTransientEnvironmentTextures;
+        private bool _iblRegenerationRequested;
+        private bool _deferredReleaseTransientEnvironmentTextures;
         private XRTextureCube? _irradianceTextureCubemap;
         private XRTextureCube? _prefilterTextureCubemap;
         private XRMeshRenderer? _previewSphere;

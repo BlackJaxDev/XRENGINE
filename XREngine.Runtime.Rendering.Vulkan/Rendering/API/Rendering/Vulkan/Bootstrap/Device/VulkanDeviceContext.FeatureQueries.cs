@@ -345,11 +345,13 @@ internal sealed partial class VulkanDeviceContext
         out bool taskShaderSupported,
         out bool meshShaderSupported,
         out bool meshShaderQueriesSupported,
+        out bool multiviewMeshShaderSupported,
         out PhysicalDeviceMeshShaderPropertiesEXT properties)
     {
         taskShaderSupported = false;
         meshShaderSupported = false;
         meshShaderQueriesSupported = false;
+        multiviewMeshShaderSupported = false;
         properties = default;
         if (!extensionEnabled)
             return;
@@ -363,6 +365,7 @@ internal sealed partial class VulkanDeviceContext
         taskShaderSupported = features.TaskShader;
         meshShaderSupported = features.MeshShader;
         meshShaderQueriesSupported = features.MeshShaderQueries;
+        multiviewMeshShaderSupported = features.MultiviewMeshShader;
 
         PhysicalDeviceMeshShaderPropertiesEXT queriedProperties = new()
         {

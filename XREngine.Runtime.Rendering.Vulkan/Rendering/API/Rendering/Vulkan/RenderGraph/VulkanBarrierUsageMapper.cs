@@ -16,7 +16,7 @@ internal static class VulkanBarrierUsageMapper
             ERenderPassResourceType.SampledTexture => ResolveSampledTextureLayout(group),
             ERenderPassResourceType.StorageTexture => ImageLayout.General,
             ERenderPassResourceType.TransferSource => ImageLayout.TransferSrcOptimal,
-            ERenderPassResourceType.TransferDestination => ImageLayout.TransferDstOptimal,
+            ERenderPassResourceType.TransferDestination or ERenderPassResourceType.DepthTransferDestination => ImageLayout.TransferDstOptimal,
             _ => ImageLayout.General
         };
 
@@ -26,7 +26,7 @@ internal static class VulkanBarrierUsageMapper
         {
             ERenderPassResourceType.ColorAttachment or ERenderPassResourceType.ResolveAttachment => PipelineStageFlags.ColorAttachmentOutputBit,
             ERenderPassResourceType.DepthAttachment or ERenderPassResourceType.StencilAttachment => PipelineStageFlags.EarlyFragmentTestsBit | PipelineStageFlags.LateFragmentTestsBit,
-            ERenderPassResourceType.TransferSource or ERenderPassResourceType.TransferDestination => PipelineStageFlags.TransferBit,
+            ERenderPassResourceType.TransferSource or ERenderPassResourceType.TransferDestination or ERenderPassResourceType.DepthTransferDestination => PipelineStageFlags.TransferBit,
             ERenderPassResourceType.VertexBuffer or ERenderPassResourceType.IndexBuffer => PipelineStageFlags.VertexInputBit,
             ERenderPassResourceType.IndirectBuffer => PipelineStageFlags.DrawIndirectBit,
             ERenderPassResourceType.UniformBuffer => SampleStage(passStage),
@@ -110,6 +110,7 @@ internal static class VulkanBarrierUsageMapper
                 flags |= AccessFlags.TransferReadBit;
                 break;
             case ERenderPassResourceType.TransferDestination:
+            case ERenderPassResourceType.DepthTransferDestination:
                 flags |= AccessFlags.TransferWriteBit;
                 break;
             default:

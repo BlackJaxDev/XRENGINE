@@ -1501,6 +1501,25 @@ Target:                 new RenderFrameViewTargetDescriptor(
                 RecordStrictSpsSuccessfulSubmission();
             return true;
         }
+        catch (VulkanPresentNowReadinessException ex)
+        {
+            // A foreground-readiness failure invalidates this OpenXR frame, but
+            // it must still reach the lifecycle's no-layer xrEndFrame path.
+            // Do not request the sequential fallback: it would consume the same
+            // failed PresentNow dependency and leave the lifecycle unpaced.
+            handled = true;
+            Debug.VulkanWarningEvery(
+                $"OpenXR.Vulkan.Batch.PresentNowReadiness.{GetHashCode()}",
+                TimeSpan.FromSeconds(1),
+                "[OpenXR] Vulkan batched eye render deferred because PresentNow output is not ready. Submitting this frame without projection layers. Frame={0} Stage={1} Ticket='{2}' Dependency='{3}' Disposition={4} Detail={5}",
+                ex.FrameId,
+                ex.Stage,
+                ex.ActiveTicket,
+                ex.DependencyChain,
+                ex.Disposition,
+                ex.Message);
+            return false;
+        }
         catch (InvalidOperationException)
         {
             throw;

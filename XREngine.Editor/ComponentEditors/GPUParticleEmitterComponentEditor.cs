@@ -53,6 +53,9 @@ public sealed class GPUParticleEmitterComponentEditor : IXRComponentEditor
             return;
         }
 
+        ImGui.TextWrapped(emitter.AdvancedRenderingUnsupportedReason);
+        ImGui.Separator();
+
         if (!ComponentEditorLayout.DrawInspectorModeToggle(emitter, visited, "Particle Editor"))
         {
             ComponentEditorLayout.DrawActivePreviewDialog();

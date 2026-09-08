@@ -33,7 +33,23 @@ struct XRAdvancedViewRecord
     uint viewGeneration;
     uint viewMaskLo;
     uint viewMaskHi;
+    vec4 foveationCenterAndBias;
+    vec4 foveationRadii;
 };
+
+// Analytic reconstruction keeps full-rate visibility. Peripheral sampling only
+// widens the texture footprint; it never removes geometry or borrows another eye.
+float XR_ADV_FoveationDerivativeScale(XRAdvancedViewRecord viewRecord, vec2 targetUv)
+{
+    if (viewRecord.foveationCenterAndBias.w == 0.0)
+        return 1.0;
+    vec2 delta = (targetUv - viewRecord.foveationCenterAndBias.xy) * 2.0;
+    float eccentricity = length(delta);
+    float guardRadius = viewRecord.foveationRadii.y;
+    float outerRadius = viewRecord.foveationRadii.w;
+    float peripheral = smoothstep(guardRadius, outerRadius, eccentricity);
+    return exp2(peripheral * viewRecord.foveationCenterAndBias.z);
+}
 
 XR_ADV_TABLE_LAYOUT(XR_ADV_BINDING_VIEWS) readonly buffer XRAdvancedViewTable
 {

@@ -185,6 +185,7 @@ public partial class OpenGLRenderer : AbstractRenderer<GL>, ISparseTextureStream
 
     public override void CleanUp()
     {
+        DiscardImmediateHistory();
         bool orphanGLHandles = ShouldOrphanGLHandlesForShutdown;
         TearDownDebugOutput();
 
@@ -239,6 +240,8 @@ public partial class OpenGLRenderer : AbstractRenderer<GL>, ISparseTextureStream
         _luminanceComputeProgram?.Destroy();
         _luminanceComputeProgram = null;
         _luminanceComputeInitialized = false;
+        DisposeAdvancedRuntimeForShutdown(orphanGLHandles);
+        DisposeLayeredBlitFramebuffers(orphanGLHandles);
         DisposeNativeApi();
     }
 
@@ -451,6 +454,7 @@ public partial class OpenGLRenderer : AbstractRenderer<GL>, ISparseTextureStream
 
     protected override void RenderFrameCallback(double delta)
     {
+        _advancedOutputRegistry?.PollCompletedPublications();
         SealReadOnlyStorageEpoch();
     }
 }

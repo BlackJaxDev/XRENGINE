@@ -8,7 +8,7 @@ Owner: Rendering
 
 - [Vulkan Dynamic Rendering Migration TODO](../../todo/rendering/vulkan-dynamic-rendering-migration-todo.md)
 - [Deferred+ Render Path Design](deferred-plus-render-path-design.md)
-- [Deferred+ Render Path TODO](../../todo/rendering/optimization/deferred-plus-render-path-todo.md)
+- [Deferred+ Render Path TODO](../../todo/rendering/vulkan-xr-and-advanced-rendering-todo.md#phase-7)
 - [Retinal Visibility Cache Rendering Design](retinal-visibility-cache-rendering-design.md)
 - [Retinal Visibility Cache Rendering Validation Plan](../../testing/rendering/retinal-visibility-cache-rendering-todo.md)
 - [Dynamic Indirect Material Bindings](dynamic-indirect-material-bindings.md)

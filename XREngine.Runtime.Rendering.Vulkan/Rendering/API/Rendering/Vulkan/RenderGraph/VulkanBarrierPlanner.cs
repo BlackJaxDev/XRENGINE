@@ -95,7 +95,7 @@ internal sealed class VulkanBarrierPlanner
 
         public uint ResolveOwner(ERenderGraphPassStage passStage, ERenderPassResourceType resourceType)
         {
-            if (resourceType is ERenderPassResourceType.TransferSource or ERenderPassResourceType.TransferDestination)
+            if (resourceType is ERenderPassResourceType.TransferSource or ERenderPassResourceType.TransferDestination or ERenderPassResourceType.DepthTransferDestination)
                 return TransferQueueFamilyIndex ?? GraphicsQueueFamilyIndex;
 
             if (passStage == ERenderGraphPassStage.Compute)
@@ -425,7 +425,8 @@ internal sealed class VulkanBarrierPlanner
             or ERenderPassResourceType.SampledTexture
             or ERenderPassResourceType.StorageTexture
             or ERenderPassResourceType.TransferSource
-            or ERenderPassResourceType.TransferDestination;
+            or ERenderPassResourceType.TransferDestination
+            or ERenderPassResourceType.DepthTransferDestination;
 
     private static bool ShouldTrackBuffer(ERenderPassResourceType type)
         => type is ERenderPassResourceType.UniformBuffer
@@ -504,7 +505,7 @@ internal sealed class VulkanBarrierPlanner
     private static string ResolveOutputFrameBufferSlot(ERenderPassResourceType resourceType)
         => resourceType switch
         {
-            ERenderPassResourceType.DepthAttachment => "depth",
+            ERenderPassResourceType.DepthAttachment or ERenderPassResourceType.DepthTransferDestination => "depth",
             ERenderPassResourceType.StencilAttachment => "stencil",
             _ => "color",
         };

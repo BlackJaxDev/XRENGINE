@@ -17,7 +17,14 @@ public static class RenderFrameViewSetCapture
     public const ulong LeftEyeHistoryKey = 0x5845525F4C454654UL;
     public const ulong RightEyeHistoryKey = 0x5845525F52474854UL;
 
-    public static RenderFrameViewSet Capture(IRuntimeRenderCommandExecutionState state)
+    public static RenderFrameViewSet Capture(
+        IRuntimeRenderCommandExecutionState state)
+        => Capture(state, frozenDesktopView: null, frozenHistoryCandidate: default);
+
+    internal static RenderFrameViewSet Capture(
+        IRuntimeRenderCommandExecutionState state,
+        RenderFrameViewDescriptor? frozenDesktopView,
+        RenderFrameViewHistoryCandidateToken frozenHistoryCandidate)
     {
         IRuntimeRenderCamera camera = state.RenderingCamera ?? state.SceneCamera
             ?? throw new InvalidOperationException("A frame view set requires an active rendering camera.");
@@ -29,20 +36,35 @@ public static class RenderFrameViewSetCapture
         var builder = new RenderFrameViewSetBuilder(storage);
         if (rightCamera is null)
         {
-            RenderFrameViewDescriptor view = CaptureView(camera, EVrOutputViewKind.DesktopEditor, 0u, width, height, MonoHistoryKey);
-            if (!state.StereoPass && !state.ShadowPass && state.ViewHistorySequenceId != 0UL &&
+            RenderFrameViewDescriptor view = frozenDesktopView ??
+                CaptureView(
+                    camera,
+                    EVrOutputViewKind.DesktopEditor,
+                    0u,
+                    width,
+                    height,
+                    MonoHistoryKey);
+            if (frozenDesktopView.HasValue &&
+                state is XRRenderPipelineInstance.RenderingState frozenState)
+            {
+                frozenState.SetViewHistoryCaptureResult(
+                    frozenHistoryCandidate.IsValid,
+                    in frozenHistoryCandidate);
+            }
+            else if (!state.StereoPass && !state.ShadowPass && state.ViewHistorySequenceId != 0UL &&
                 state.WindowViewport is XRViewport viewport)
             {
                 view = viewport.CaptureDesktopFrameViewHistory(
                     state.ViewHistorySequenceId,
-                    RuntimeEngine.Rendering.State.RenderFrameId,
+                    state.ViewHistorySourceFrame,
                     camera,
                     state.ViewHistoryPipelineIdentity,
                     state.ViewHistoryAuthoring,
                     view,
-                    out bool accepted);
+                    out bool accepted,
+                    out RenderFrameViewHistoryCandidateToken candidate);
                 if (state is XRRenderPipelineInstance.RenderingState renderingState)
-                    renderingState.SetViewHistoryCaptureAccepted(accepted);
+                    renderingState.SetViewHistoryCaptureResult(accepted, in candidate);
             }
 
             builder.Add(view);
@@ -66,7 +88,7 @@ public static class RenderFrameViewSetCapture
             EVrOutputViewKind.DesktopEditor => "Desktop editor",
             _ => "Frame view",
         };
-    private static RenderFrameViewDescriptor CaptureView(
+    internal static RenderFrameViewDescriptor CaptureView(
         IRuntimeRenderCamera camera,
         EVrOutputViewKind kind,
         uint outputLayer,

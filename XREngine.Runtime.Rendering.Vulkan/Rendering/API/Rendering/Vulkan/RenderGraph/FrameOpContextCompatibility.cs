@@ -85,5 +85,9 @@ internal static class FrameOpContextCompatibility
             OutputConsumerDependencySetId = 0UL,
             OutputSchedulingInstanceIdentity = 0UL,
             OutputSchedulingRequest = default,
+            OutputHistorySequenceId = 0UL,
+            OutputHistorySourceFrame = 0UL,
+            OutputCompletionReceiptId = 0UL,
+            OutputCompletionSourceFrame = 0UL,
         };
 }

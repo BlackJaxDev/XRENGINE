@@ -12,14 +12,16 @@ internal sealed partial class VulkanCommandRuntime
     {
         // Mesh-task payloads receive their exact target-compatible graphics
         // pipeline only during primary admission and carry frame-sealed program
-        // descriptor snapshots. Primary reuse would bypass that association and
-        // execute stale native state. Keep these cohorts fresh until mesh-task
-        // program, descriptors, producer state, and admitted-pipeline identity
-        // participate in reusable artifact refresh and compatibility checks.
+        // descriptor snapshots. Advanced visibility also lowers the authoring-
+        // owned view set and its accepted temporal history into frame-slot set 3
+        // during primary admission. Primary reuse currently refreshes ordinary
+        // mesh data only; it cannot carry either mutable cohort safely.
         for (int opIndex = 0; opIndex < operations.Count; opIndex++)
         {
-            if (operations.GetHeader(opIndex).OpCode ==
-                EVulkanPrimaryPlanNodeKind.MeshTaskDispatchIndirectCount)
+            EVulkanPrimaryPlanNodeKind kind =
+                operations.GetHeader(opIndex).OpCode;
+            if (kind is EVulkanPrimaryPlanNodeKind.MeshTaskDispatchIndirectCount or
+                EVulkanPrimaryPlanNodeKind.AdvancedVisibility)
             {
                 return true;
             }

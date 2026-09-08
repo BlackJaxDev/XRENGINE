@@ -7,7 +7,7 @@ desktop and privileged trace evidence remain open
 
 Owner: Rendering / Frame Scheduling / Vulkan
 
-Implementation plan: [Vulkan Resident Draw Stream And Render Task Pool TODO](../../todo/rendering/optimization/vulkan-resident-draw-stream-and-render-task-pool-todo.md)
+Implementation plan: [Vulkan Resident Draw Stream And Render Task Pool TODO](../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md#recovered-acceptance-contracts-and-specialized-child-ownership)
 
 ## Outcome
 

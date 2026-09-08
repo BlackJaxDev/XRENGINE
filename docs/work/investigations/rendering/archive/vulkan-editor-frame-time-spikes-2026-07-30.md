@@ -14,7 +14,7 @@ Related plans:
 
 - [Workstream 04 completion and validation](../../../testing/rendering/03-05-optimization-validation-todo.md#workstream-04-completion-and-validation)
 - [Workstream 05 validation](../../../testing/rendering/03-05-optimization-validation-todo.md#workstream-05-validation)
-- [Vulkan Command Recording Architecture Optimization](../../../todo/rendering/optimization/vulkan-command-recording-architecture-optimization-todo.md)
+- [Vulkan Command Recording Architecture Optimization](../../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md#recovered-acceptance-contracts-and-specialized-child-ownership)
 - [CPU Direct Fast Path](../../../todo/rendering/optimization/cpu-direct-fast-path-todo.md)
 - [01-08 Optimization Acceptance Closeout](../../../testing/rendering/01-08-optimization-acceptance-closeout.md)
 

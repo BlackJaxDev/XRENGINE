@@ -112,6 +112,15 @@ namespace XREngine.Rendering.OpenGL
                         return (Renderer.GetOrCreateAPIRenderObject(pipelineOverrideMaterial) as GLMaterial)!;
                 }
 
+                if (renderState?.AdvancedLateTemporalOutput is EAdvancedLateTemporalOutput output and not EAdvancedLateTemporalOutput.None)
+                {
+                    XRMaterial? source = localMaterialOverride ?? MeshRenderer.Material;
+                    if (source?.TryGetAdvancedLateTemporalMaterial(output, out XRMaterial? temporalMaterial) != true)
+                        throw new InvalidOperationException("Advanced late temporal replay requires an admitted material variant.");
+
+                    return Renderer.GenericToAPI<GLMaterial>(temporalMaterial!)!;
+                }
+
                 var mat =
                     (globalMaterialOverride is null ? null : Renderer.GetOrCreateAPIRenderObject(globalMaterialOverride) as GLMaterial) ??
                     (pipelineOverrideMaterial is null ? null : Renderer.GetOrCreateAPIRenderObject(pipelineOverrideMaterial) as GLMaterial) ??
@@ -889,6 +898,14 @@ namespace XREngine.Rendering.OpenGL
                 {
                     PassCameraUniforms(vertexProgram, cam, EEngineUniform.ViewMatrix, EEngineUniform.InverseViewMatrix, EEngineUniform.InverseProjMatrix, EEngineUniform.ProjMatrix, EEngineUniform.ViewProjectionMatrix);
                 }
+
+                // Separable material programs do not share uniforms with the vertex
+                // stage. Sky and other clip-space vertex shaders need the same depth
+                // convention as their camera matrices and the mapped raster comparison.
+                vertexProgram.Uniform(EEngineUniform.DepthMode, (int)(cam?.DepthMode ?? XRCamera.EDepthMode.Normal));
+                vertexProgram.Uniform(EEngineUniform.ClipDepthRange, (int)RuntimeEngine.Rendering.EffectiveClipDepthRange);
+                vertexProgram.Uniform(EEngineUniform.ClipSpaceYDirection, (int)RuntimeEngine.Rendering.Settings.ClipSpaceYDirection);
+                vertexProgram.Uniform(EEngineUniform.FramebufferTextureYDirection, (int)RenderClipSpacePolicy.FramebufferTextureYDirection(RuntimeGraphicsApiKind.OpenGL));
 
                 void SetUniformBoth(EEngineUniform uniform, Matrix4x4 value)
                 {
