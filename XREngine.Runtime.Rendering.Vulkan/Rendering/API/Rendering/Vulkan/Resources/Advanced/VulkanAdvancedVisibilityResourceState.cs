@@ -41,21 +41,33 @@ internal readonly record struct VulkanAdvancedVisibilityResourceState(
     AdvancedVisibilityFamilyReservation Reservation = default)
 {
     internal bool IsValid
-        => Reservation.IsValid && FrameSlot >= 0 && FrameGeneration != 0u &&
-           DescriptorSet.Handle != 0 && Payloads.IsValid && Candidates.IsValid &&
-           PersistentStateBuffer.Handle != 0 && PersistentStateByteLength != 0u &&
-           PersistentStateTopologyGeneration != 0u &&
-           PersistentStateContentGeneration != 0u &&
-           DeferredIndices.IsValid && VisibleIndices.IsValid &&
-           Producers.IsValid && RangeIndices.IsValid && RangeOffsets.IsValid &&
-           RangeCounts.IsValid && Counters.IsValid && IndirectArguments.IsValid &&
-           MeshArguments.IsValid && MeshPayloads.IsValid &&
-           Geometry.IsValid &&
-           LateVisibleIndices.IsValid && LateRangeCounts.IsValid &&
-           LateIndirectArguments.IsValid && LateMeshArguments.IsValid &&
-           LateMeshPayloads.IsValid &&
-           ViewCount != 0u && PayloadCapacity != 0u && RangeCapacity != 0u &&
-           IndirectArgumentCapacity == (ulong)ViewCount * PayloadCapacity;
+    {
+        get
+        {
+            bool descriptorBackingValid = Reservation.IsValid && FrameSlot >= 0 &&
+                FrameGeneration != 0u && DescriptorSet.Handle != 0 &&
+                Payloads.IsValid && Candidates.IsValid &&
+                PersistentStateBuffer.Handle != 0 && PersistentStateByteLength != 0u &&
+                PersistentStateTopologyGeneration != 0u &&
+                PersistentStateContentGeneration != 0u &&
+                DeferredIndices.IsValid && VisibleIndices.IsValid && Producers.IsValid &&
+                RangeIndices.IsValid && RangeOffsets.IsValid && RangeCounts.IsValid &&
+                Counters.IsValid && IndirectArguments.IsValid && MeshArguments.IsValid &&
+                MeshPayloads.IsValid && Geometry.IsValid && LateVisibleIndices.IsValid &&
+                LateRangeCounts.IsValid && LateIndirectArguments.IsValid &&
+                LateMeshArguments.IsValid && LateMeshPayloads.IsValid && ViewCount != 0u &&
+                RangeCapacity != 0u;
+            if (!descriptorBackingValid)
+                return false;
+
+            // Empty families bind one-element backing ranges but retain zero as
+            // their logical payload and indirect-argument capacities.
+            if (PayloadCapacity == 0u)
+                return IndirectArgumentCapacity == 0u;
+
+            return IndirectArgumentCapacity == (ulong)ViewCount * PayloadCapacity;
+        }
+    }
 
     /// <summary>
     /// Returns the exact contiguous set-1 segment assigned to one canonical

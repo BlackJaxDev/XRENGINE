@@ -164,16 +164,37 @@ internal sealed class VulkanPreparedMeshIngress
     /// </summary>
     internal bool TryBuildStableBinStream(
         VulkanResidentDrawTemplateTable residentTemplates)
+        => TryBuildStableBinStream(residentTemplates, out _);
+
+    /// <summary>
+    /// Builds the stable-bin stream while retaining the exact failed lowering stage for
+    /// terminal PresentNow diagnostics. The success path remains allocation-free.
+    /// </summary>
+    internal bool TryBuildStableBinStream(
+        VulkanResidentDrawTemplateTable residentTemplates,
+        out VulkanPreparedMeshIngressFailure failure)
     {
         ArgumentNullException.ThrowIfNull(residentTemplates);
+        failure = default;
         _stableBinStream.ThawForReuse();
         BackendReadyFramePackage? package = null;
+        XRRenderPipelineInstance? selectedPipeline = null;
         for (int index = 0; index < _count && package is null; ++index)
-            package = _entries[index].Context.PipelineInstance?
-                .ActiveMeshRenderCommands.RenderingBackendReadyPackage;
+        {
+            XRRenderPipelineInstance? pipeline = _entries[index].Context.PipelineInstance;
+            package = pipeline?.ActiveMeshRenderCommands.RenderingBackendReadyPackage;
+            if (package is not null)
+                selectedPipeline = pipeline;
+        }
         if (package is not null &&
-            !TryImportPackageOrderedExceptions(package.OrderedExceptions))
+            !TryImportPackageOrderedExceptions(
+                package,
+                selectedPipeline,
+                out failure))
+        {
             return false;
+        }
+
         for (int index = 0; index < _count; ++index)
         {
             ref readonly VulkanPreparedMeshIngressEntry entry = ref _entries[index];
@@ -205,6 +226,13 @@ internal sealed class VulkanPreparedMeshIngress
                         exceptionReason,
                         unchecked((ulong)index)))
                 {
+                    failure = CreateStableBinFailure(
+                        EVulkanPreparedMeshIngressFailureKind.StreamExceptionAppendFailed,
+                        index,
+                        in entry,
+                        package,
+                        selectedPipeline,
+                        packageExceptionIndex: -1);
                     return false;
                 }
                 continue;
@@ -220,11 +248,28 @@ internal sealed class VulkanPreparedMeshIngress
                 entry.Context,
                 entry.IsDynamicUi,
                 entry.PreserveSubmissionOrder);
-            if (key.OrderingClass != VulkanRenderBinOrderingClass.Opaque ||
-                !_stableBinStream.TryAppend(
+            if (key.OrderingClass != VulkanRenderBinOrderingClass.Opaque)
+            {
+                failure = CreateStableBinFailure(
+                    EVulkanPreparedMeshIngressFailureKind.NonOpaqueComputedOrdering,
+                    index,
+                    in entry,
+                    package,
+                    selectedPipeline,
+                    packageExceptionIndex: -1);
+                return false;
+            }
+            if (!_stableBinStream.TryAppend(
                     new(key, handle, index, 0, 0, stableTemplate.ResourceManifest),
                     GetResourceUses(in entry)))
             {
+                failure = CreateStableBinFailure(
+                    EVulkanPreparedMeshIngressFailureKind.StableRecordAppendFailed,
+                    index,
+                    in entry,
+                    package,
+                    selectedPipeline,
+                    packageExceptionIndex: -1);
                 return false;
             }
         }
@@ -234,16 +279,19 @@ internal sealed class VulkanPreparedMeshIngress
     }
 
     private bool TryImportPackageOrderedExceptions(
-        ReadOnlySpan<BackendReadyOrderedExceptionRecord> exceptions)
+        BackendReadyFramePackage package,
+        XRRenderPipelineInstance? selectedPipeline,
+        out VulkanPreparedMeshIngressFailure failure)
     {
+        ReadOnlySpan<BackendReadyOrderedExceptionRecord> exceptions = package.OrderedExceptions;
         for (int exceptionIndex = 0; exceptionIndex < exceptions.Length; ++exceptionIndex)
         {
             BackendReadyOrderedExceptionRecord exception = exceptions[exceptionIndex];
             bool found = false;
             for (int entryIndex = 0; entryIndex < _count; ++entryIndex)
             {
-                AdvancedGpuSceneDrawIdentitySnapshot draw =
-                    _entries[entryIndex].Draw.CanonicalDrawIdentitySnapshot;
+                ref readonly VulkanPreparedMeshIngressEntry entry = ref _entries[entryIndex];
+                AdvancedGpuSceneDrawIdentitySnapshot draw = entry.Draw.CanonicalDrawIdentitySnapshot;
                 if (!draw.IsValid || draw.Primary.Handle != exception.DrawHandle)
                     continue;
 
@@ -254,11 +302,15 @@ internal sealed class VulkanPreparedMeshIngress
                     _ => VulkanBinOrderedExceptionReason.TopologyRejected,
                 };
                 if (!_stableBinStream.TryAppendException(
-                        new VulkanBinOrderedException(
-                            draw,
-                            reason,
-                            exception.OrderKey)))
+                        new VulkanBinOrderedException(draw, reason, exception.OrderKey)))
                 {
+                    failure = CreateStableBinFailure(
+                        EVulkanPreparedMeshIngressFailureKind.PackageExceptionAppendFailed,
+                        entryIndex,
+                        in entry,
+                        package,
+                        selectedPipeline,
+                        exceptionIndex);
                     return false;
                 }
                 found = true;
@@ -268,11 +320,48 @@ internal sealed class VulkanPreparedMeshIngress
             // An accepted package exception must have an exact current-frame
             // canonical identity. Do not silently drop it into a broad path.
             if (!found)
+            {
+                failure = CreateStableBinFailure(
+                    EVulkanPreparedMeshIngressFailureKind.PackageExceptionUnmatchedHandle,
+                    -1,
+                    default,
+                    package,
+                    selectedPipeline,
+                    exceptionIndex);
                 return false;
+            }
         }
+
+        failure = default;
         return true;
     }
 
+    private static VulkanPreparedMeshIngressFailure CreateStableBinFailure(
+        EVulkanPreparedMeshIngressFailureKind kind,
+        int entryIndex,
+        in VulkanPreparedMeshIngressEntry entry,
+        BackendReadyFramePackage? package,
+        XRRenderPipelineInstance? selectedPipeline,
+        int packageExceptionIndex)
+    {
+        BackendReadyOrderedExceptionRecord packageException =
+            package is not null &&
+            (uint)packageExceptionIndex < (uint)package.OrderedExceptions.Length
+                ? package.OrderedExceptions[packageExceptionIndex]
+                : default;
+        return new(
+            kind,
+            entryIndex,
+            entry.PassIndex,
+            entry.Target,
+            packageExceptionIndex,
+            package?.OrderedExceptions.Length ?? 0,
+            package?.Identity ?? default,
+            package?.PackageGeneration ?? 0L,
+            package?.SourceRevision ?? 0L,
+            packageException,
+            selectedPipeline);
+    }
     internal void PublishDrawStats()
     {
         for (int index = 0; index < _count; index++)

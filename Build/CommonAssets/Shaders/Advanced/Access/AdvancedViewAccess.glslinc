@@ -3,6 +3,7 @@
 
 #include "AdvancedDiagnostics.glslinc"
 
+const uint XR_ADV_VIEW_FRAMEBUFFER_TEXTURE_Y_DOWN = 1u << 6u;
 const uint XR_ADV_VIEW_TEMPORAL_HISTORY_VALID = 1u << 7u;
 
 struct XRAdvancedViewRecord
@@ -68,6 +69,27 @@ XRAdvancedViewRecord XR_ADV_LoadView(uint denseIndex)
     return XR_ADV_Views.records[denseIndex];
 }
 
+// Fragment locations and storage images use physical framebuffer coordinates.
+// The sealed view flag bridges those coordinates to the clip convention used by
+// the matrices without making the shader backend-specific.
+vec2 XR_ADV_ClipNdcToFramebufferUv(
+    XRAdvancedViewRecord viewRecord,
+    vec2 clipNdc)
+{
+    vec2 framebufferUv = clipNdc * 0.5 + 0.5;
+    if ((viewRecord.flags & XR_ADV_VIEW_FRAMEBUFFER_TEXTURE_Y_DOWN) != 0u)
+        framebufferUv.y = 1.0 - framebufferUv.y;
+    return framebufferUv;
+}
+
+vec2 XR_ADV_FramebufferUvToClipNdc(
+    XRAdvancedViewRecord viewRecord,
+    vec2 framebufferUv)
+{
+    if ((viewRecord.flags & XR_ADV_VIEW_FRAMEBUFFER_TEXTURE_Y_DOWN) != 0u)
+        framebufferUv.y = 1.0 - framebufferUv.y;
+    return framebufferUv * 2.0 - 1.0;
+}
 vec4 XR_ADV_CurrentJitteredClip(
     XRAdvancedViewRecord viewRecord,
     vec3 worldPosition)

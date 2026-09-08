@@ -63,7 +63,6 @@ public partial class UnitTestingWorldSettings
     public bool DynamicWaterQuad = false;
     public bool InitializeVolumetricFog = false;
     public bool InitializeAtmosphericScattering = false;
-    public bool ForceDebugOpaquePipeline = false;
 
     public bool DirLight = true;
     public bool DirLightCastsShadows { get; set; } = true;

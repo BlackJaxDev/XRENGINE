@@ -1,4 +1,4 @@
-﻿# Unit Testing World
+# Unit Testing World
 
 The Unit Testing World is the main sandbox for validating engine changes inside the editor. It is driven by a JSONC settings file so you can switch test scenes, turn systems on and off, and adjust startup behavior without recompiling.
 
@@ -86,6 +86,23 @@ You do not need to understand every property up front. These are the ones that u
 The file itself includes comments for each property, and the schema provides enum suggestions and hover descriptions.
 
 ## Common scenarios
+
+### Select a render pipeline
+
+`Rendering.RenderPipeline` is the authoritative pipeline source for normal Default World and Unit Testing World desktop scene cameras. It accepts the supported scene-pipeline class names: `DefaultRenderPipeline`, `AdvancedRenderPipeline`, `DebugOpaqueRenderPipeline`, and `CustomRenderPipeline`. An explicit selection is never replaced by automatic Advanced or diagnostic pipeline policy. `DebugOpaqueRenderPipeline` and `CustomRenderPipeline` are desktop-only: requesting either for a stereo bootstrap camera throws a clear startup error.
+
+For a custom pipeline, set `Rendering.RenderPipeline` to `CustomRenderPipeline` and provide `Rendering.CustomRenderPipelineScriptPath`. The path must name a readable `.xrs` RenderPipelineScript file. Relative paths resolve from the editor process working directory, normally the repository root when launched through the provided VS Code tasks or `dotnet run` commands. Bootstrap fails with the resolved path and parser/compiler error if the file is missing or invalid; it does not substitute a different pipeline.
+
+```jsonc
+{
+  "Rendering": {
+    "RenderPipeline": "CustomRenderPipeline",
+    "CustomRenderPipelineScriptPath": "Assets/Rendering/MyPipeline.xrs"
+  }
+}
+```
+
+Use `XRE_UNIT_TEST_RENDER_PIPELINE` to override the enum value for one launch, for example `$env:XRE_UNIT_TEST_RENDER_PIPELINE = "AdvancedRenderPipeline"`. The global `XRE_FORCE_DEBUG_OPAQUE_PIPELINE` editor diagnostic remains an automatic-selection control and does not replace an explicit `Rendering.RenderPipeline` value.
 
 ### Change the test world
 
@@ -272,7 +289,7 @@ For script-driven launches, these process-scoped overrides select the lane witho
 - `XRE_UNIT_TEST_RENDER_WINDOWS_WHILE_IN_VR=0`
 - `XRE_UNIT_TEST_OPENXR_RUNTIME_JSON=C:\path\to\openxr_monado.json`
 - `XRE_UNIT_TEST_RENDER_API=OpenGL|Vulkan` maps into `Rendering.RenderBackend`
-- `XRE_UNIT_TEST_USE_ADVANCED_RENDER_PIPELINE=1|0` selects the Advanced pipeline for this process without changing the saved world settings. Pair `1` with `XRE_ADVANCED_RENDER_PIPELINE_MODE=Required` for validation that must fail visibly when an Advanced capability is unavailable.
+- `XRE_UNIT_TEST_RENDER_PIPELINE=AdvancedRenderPipeline` selects the Advanced pipeline for this process without changing the saved world settings. Pair it with `XRE_ADVANCED_RENDER_PIPELINE_MODE=Required` for validation that must fail visibly when an Advanced capability is unavailable.
 
 For highest-framerate Monado Vulkan validation, set `XRE_UNIT_TEST_PREVIEW_VR_STEREO_VIEWS=0`, `XRE_UNIT_TEST_ALLOW_DESKTOP_EDITING_IN_VR=0`, and `XRE_UNIT_TEST_RENDER_WINDOWS_WHILE_IN_VR=0` so the editor does not also render the smoothed HMD desktop camera while submitting OpenXR eye frames.
 

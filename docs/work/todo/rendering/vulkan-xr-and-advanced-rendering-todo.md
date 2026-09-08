@@ -1,510 +1,722 @@
-# Vulkan OpenXR and Advanced Rendering — Active TODO
+# Vulkan OpenXR and Advanced Rendering — Status and TODO
 
 Updated: 2026-09-08
-Source baseline: `8b104bf7a` (`More work`, 2026-09-04)
-Status: paused at the user's request; implementation and runtime acceptance remain incomplete.
+Status source: [September 8 implementation wrap-up][wrapup].
 
-This is the execution checklist for legacy Phases **6, 7, and 7R**. The review
-findings from 7R are merged into the owning tasks below; there is no second
-remediation checklist to keep in sync. The [master tracker](vulkan-core-frame-loop-and-resident-rendering-master-todo.md)
-owns unfinished foundation work and the later performance/deletion gates.
+This tracker owns legacy Phases **6, 7 and 7R**. Review findings are merged into
+their owning tasks. The [master tracker](vulkan-core-frame-loop-and-resident-rendering-master-todo.md)
+owns unfinished foundations and the later performance, promotion and deletion gates.
 
-## How to update these boxes
+[Remaining implementation](#remaining-implementation) ·
+[Remaining validation](#remaining-validation) ·
+[Completed work](#completed-work) ·
+[Evidence and maintenance](#evidence-and-maintenance)
 
-- **I = implementation.** Close when the named behavior exists in source and
-  its narrow build/compiler check passes. This does not certify runtime parity.
-- **A = audit of existing code.** Close with a recorded path/contract inventory.
-  If a gap is found, add a specific implementation task before closing its
-  dependent validation task. Do not rewrite already implemented plumbing.
-- **V = validation.** Close only with the specified observed result on the
-  named revision, backend, and output profile. A declaration, successful build,
-  or supported flag is insufficient.
-- At completion, change `[ ]` to `[x]` **in the same change** and append
-  `Done YYYY-MM-DD; revision; evidence link; observed result`. Update the
-  investigation's current status and the next task. Do not defer checkbox
-  updates until the entire phase is complete.
-- If a task has two independently completable outcomes, split it before work
-  starts. Preserve its ID as a reference; give the new tasks new IDs. Do not
-  renumber existing IDs or create a second checkbox for the same obligation.
-- An unchecked validation box beside a checked implementation box means
-  **implemented, awaiting proof**, not “implement this again.” An unavailable
-  runtime/hardware requirement stays unchecked with its exact blocker.
-- Each validation result names its cohort duration/retained-frame count,
-  configuration, observed failures, and capture/trace evidence. “Works” without
-  those details is not a closure record. A runtime failure discovered during
-  validation gets a specific implementation task; the failed V box stays open.
-- Record durable results in [the investigation][E1]. Ignored captures/logs are
-  supporting artifacts, not the sole explanation. No new tests are authorized
-  by this documentation change: follow the master Phase 9.1 clearance policy.
+<a id="current-stopping-point--2026-09-06"></a>
 
-Checked implementation rows below cite either the recorded build/review [E1]
-or the bounded source audit [S1]. They are not newly claimed live passes.
-There is no meaningful overall percentage: these boxes have different costs.
+## Current status
 
-## Evidence already available
+**Implementation is paused with five code changes and 67 validation tasks still open.**
+The completed work and evidence below retain the latest recorded task states;
+this documentation rewrite does not claim new implementation or runtime results.
 
-| Evidence | Scope and limit |
-|---|---|
-| [E1 — September 4 wrap-up][E1] | Final isolated Debug editor build: zero warnings/errors. 26/26 Vulkan 1.3 mono/array shader variants compile. The changes are now committed in `8b104bf7a`; the older “uncommitted” handoff is historical. |
-| [E2 — native desktop capture checkpoint][E2] | Three static meshes, camera-separated output, and MCP red/green/gray material changes. This does not prove masked/textured/skinned/lighting/post parity. |
-| [E3 — Monado submission checkpoint][E3] | 352 strict SPS submissions, eight cold no-layer frames, zero EndFrame failures, final pending retirement zero. AO descriptor VUIDs occurred in this cohort; fixes exist, but clean XR acceptance remains open. RVC/Default eyes were used, not Advanced stereo. |
-| [S1 — September 6 source audit][S1] | Current source implements 128 kernel slots, extent/view-derived froxel capacity, canonical 64/128-byte material/light records, material/shadow access, and wired exact/late/post commands. No runtime was launched for this documentation audit. |
+| Task kind | Completed | Remaining | Meaning |
+|---|---:|---:|---|
+| Implementation (`I`) | 101 | 5 | The named behavior exists and has its recorded build/compiler evidence. |
+| Source/contract audit (`A`) | 9 | 0 | The named inventory is complete; any discovered implementation gap has its own task. |
+| Validation (`V`) | 22 | 67 | 21 checked rows record bounded runtime results; `ARP-V01` is shader compilation only. |
 
-The September 6 desktop run produced inspected, finite AO from two camera
-positions after fixing R8 readback and the subgroup compiler target. Disabled
-and null-provider AO also passed exact neutral-output checks (`ARP-V23`).
-GPU capture traced the magenta ground to imported magenta material constants;
-the importer now preserves authored diffuse factors, and a fresh import with a
-light facing the panels produces red/green/gray output (`ARP-I38`). Desktop
-submission history ownership and resolved canonical GPU views are implemented
-(`ARP-I10`–`ARP-I13`, `ARP-I37`); camera-motion captures now contain finite,
-nonzero native velocity. The full motion/reset matrix remains open.
+All 12 XR implementation tasks and all nine audits are complete. The five code
+tasks belong to Advanced mirrors and Vulkan editor placement. Remaining validation
+is split between **20 XR tasks** and **47 Advanced rendering tasks**. Counts are
+not an effort estimate.
 
-## Current wrap-up — 2026-09-08
+Completed implementation includes XR submission/lifecycle ownership, canonical
+GPU records, visibility/reconstruction and classification, native shading/AO/GI,
+temporal/late/post commands, stereo execution, independent capture banks and
+editor/diagnostic plumbing. Recorded runtime acceptance covers specific Monado,
+OpenGL mono/OVR, Vulkan mono, probe and standalone-capture cohorts. Each completed
+validation row names its scope; emulated stereo, a source audit or a successful
+build does not certify hardware XR or another backend.
 
-**The whole document is not complete.** The current checklist has **101 checked
-implementation tasks and 5 open**, **9 checked audits and none open**, and
-**22 checked runtime tasks and 67 open**. These counts are checklist state,
-not an estimate of effort. Historical snapshots below do not supersede this one.
+The latest recorded build, **Build145**, passed with zero warnings/errors in
+19.46 seconds and was **not launched**. The last run, **Start120**, failed before
+mirror authoring. The unsuccessful Build144 clipping experiment was removed;
+the original clipping defect remains open. [Full pause boundary][wrapup].
 
-| State | Completed work or exact remaining obligation |
-|---|---|
-| Newly completed and validated | Canonical capture publication/reader retirement (`I86`), erased material binding cleanup (`I87`), finite tangent reconstruction (`I88`), and mono/OVR/NV gizmo source separation (`I89`) have bounded OpenGL/Vulkan evidence. These close their named defects, not broader material/editor acceptance. |
-| Other completed runtime cohorts | Standalone depth/visibility writers and FLOAT32 exports (`I82`–`I85`, `V50`), GI provider switching (`V16`), probe refresh/retirement (`V48`, `V68`), and the earlier mono/OVR post/temporal cohorts retain their recorded acceptance. |
-| Existing mirror plumbing completed | Render-thread writer polling/package release, bounded consumer-fence storage, serialized retirement requests and serial resize/deactivation cleanup are recorded under `I92`. Default OpenGL Start119 completed 12,147 captures and retired to zero ownership. Its source image was black, so this is not reflected-output acceptance. |
-| Code still required | Advanced mirror scheduling/publication/projective display (`I81`); Vulkan selected-primitive placement (`I90`); correct oblique clipping and transactional camera initialization (`I91`); collected-but-unsubmitted mirror reader protection (`I93`); preventing display of an unwritten mirror texture (`I94`). Each has its own unchecked box below. |
-| Runtime proof still required | All 67 unchecked V rows: XR submission/pressure/lifecycle/timing, visibility/deformation/reconstruction, material/light/shadow/capacity, remaining motion/reset and late effects, vendor features, Vulkan layered/RVC/foveation, mirror/editor/diagnostic and final-composition profiles. Partial backend/profile evidence does not close a whole matrix. |
-| External prerequisites | XR fault injection requires an owned Monado service; existing PID13580 was not stopped or adopted. Hardware XR and vendor SDK/device-positive cases still require their named prerequisites. OpenGL RenderDoc capture is limited by its lack of bindless-texture support. |
-| Validation limits | The unchanged existing tangent test passed 1/1 through an isolated linked-source runner. The normal UnitTests project still fails to compile against stale rendering/XR APIs. No test methods were added or changed. |
+## Remaining implementation
 
-The task-owned editor `xr-advanced-0906` is stopped. No commit was created.
-Final isolated editor Build145 passes with **zero warnings/errors** in 19.46 seconds;
-this final build was not launched.
-The failed Build144 oblique experiment was removed before the final build;
-the pre-existing clipping defect remains explicitly open in `I91`. The latest
-runtime run, Start120, is failed evidence, not a mirror pass. See the
-[current wrap-up evidence](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-08-validation-wrap-up).
+Resume the mirror work in dependency order: **ARP-I91 → ARP-I93/ARP-I94 → ARP-I81 → ARP-V36**.
+Resolve **ARP-I90** before closing Vulkan editor placement or related rigid-motion
+acceptance. Completed capture-publication and legacy mirror plumbing are
+`ARP-I86` and `ARP-I92`; their evidence does not close these five tasks.
 
-## Validation progress before this pause
+<a id="arp-i91"></a>
 
-Builds141–144 passed with zero warnings/errors; their runtime limits are recorded below. Runtime
-validation has fixed standard textured reconstruction, stereo final output,
-scene-filter layers/samplers/copies and missing post-stage uniform callbacks.
-OpenGL emulated stereo now has measured passes for final output, selected
-tone operators, grading, bloom, DoF and motion blur. See the
-[scene-filter checkpoint](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-07-stereo-scene-filters-and-executable-post-bindings)
-and [motion checkpoint](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-07-grouped-motion-captures-and-temporal-copy-failure).
+- [ ] **ARP-I91** — Correct oblique clipping and make reflected-camera initialization transactional.
 
-The whole document is **not accepted**. Stereo history copies and guarded
-picking transfers are now verified (ARP-I55/I56), and the admission inventory
-is complete (ARP-A01). Selected-object gizmos now render in mono and both OVR
-eyes, and selected-object TAA completes under the forced native GPU strategy
-(ARP-I57/I58). Include-hidden material uniforms are preserved and gizmos use
-a combined program with GPU vertex expansion. TAA accumulation/reset acceptance
-is recorded in ARP-V31. TSR history copy/coverage and positive TAA/TSR reactive-mask
-consumption now have two-eye evidence (ARP-I59/I60). The missing velocity framebuffer
-declaration is fixed: moving rigid colored-alpha geometry now writes nonzero
-velocity in both eyes, and TSR's velocity debug output matches those inputs.
-Unsupported billboarding, stale source shaders and replaced coverage parameters
-are rejected visibly. First-reset-frame transparent motion suppression and TSR
-history reset/recovery are now captured (ARP-I61/V33). Native opaque cut velocity
-is fixed and verified for separate translation/rotation cuts (ARP-I63). Sorted
-alpha now matches the blend equation in both depth orders, and moving opaque
-and transparent regions coexist correctly in the canonical velocity image
-(ARP-I64/V26). V18 retains the broader reset matrix. A capture during resource
-replacement exposed a missing GL texture-liveness guard, now validated (ARP-I65).
-MCP numeric-structure conversion and read-back are corrected (ARP-I66), and
-mono fog/aerial-perspective output, history copies and cut resets have runtime
-evidence (ARP-V30). Authored sky execution is implemented (ARP-I67): native GL
-mono/OVR sky and custom far-depth geometry preserve opaque color, alpha, depth
-and temporal sidecars, including reversed mono depth. Vulkan mono and cube sky
-preservation now pass too; V25 retains compatible Vulkan custom geometry and the
-other output profiles. See the [background checkpoint](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-08-authored-background-admission-and-depth-preservation).
-An HTTP-thread GL fence crash
-found during settings changes is fixed and validated under ARP-I62. See the
-[September 8 checkpoint](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-08-transparent-motion-and-render-thread-ownership)
-and the
-[layer-copy/editor checkpoint](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-07-layered-temporal-copies-picking-and-editor-gizmos).
-XR fault injection still needs an owned
-Monado service; the existing PID13580 has not been stopped or adopted.
-Hardware/headset, vendor features, Vulkan multi-output and the remaining
-material/deformation/late-pass/reset matrices still require their own proof.
-The historical checkpoints below must not be read as current all-code or
-all-validation completion claims.
+  Default OpenGL Start119 completed 12,147 captures but exported black RGB.
+  The current `2/dot` and `c.Z+1` construction uses the wrong near-depth boundary
+  for zero-to-one projections. Build144's mathematical experiment was removed
+  after Start120 applied clipping before the camera was configured and left
+  invalid plane state after an exception.
 
-## Historical Build 32 implementation closeout — 2026-09-07
+  Implement the corrected projection column together with camera-before-plane
+  ordering, finite/nondegenerate and scale-robust plane validation, and
+  candidate-before-commit setters. Validate reflected geometry, retained/clipped
+  halfspaces, off-center/orthographic lenses and both depth modes/ranges before
+  `ARP-V36`. The convention defect is established; it is not proven to be the
+  only cause of the black image. [Evidence][wrapup].
 
-Work resumed at the user's request. D: now has sufficient free space; the
-earlier launcher refusal is historical and no longer blocks builds or runtime
-work. Build 9 completed with zero warnings/errors in 48.42 seconds. The
-desktop-plus-probe run admitted independent output banks and no longer repeats
-the earlier sealed late-closure planner mismatch. It ended during swapchain
-recreation with `ErrorNativeWindowInUseKhr`; therefore it is bounded runtime
-diagnostic evidence, not completion of any Vulkan validation row. Source is
-complete for I21/I22/I23/I25/I27/I45. I26 now also has the native OpenGL
-executor, fenced scene/sampler residency, hardware multiview submission and
-independent accepted native histories for both eyes. Build 32 passes with zero
-warnings/errors. The explicit GPU-indirect emulated stereo run produced
-distinct, finite red/green/gray eye layers and valid per-eye history; moving
-the camera changed the scene. The shared visibility-candidate ABI defect found
-during that run is fixed under ARP-I48. Exact evidence and limits are in
-[the current investigation checkpoint][E1]. All listed code implementation
-boxes are now checked; this does not close the remaining audits or runtime
-acceptance matrix. In particular, the fixture is not a clean all-pass OpenGL
-validation run: initialization/compatibility texture errors still require
-triage, and full post-processing/headset/complex-material proof remains open.
+<a id="arp-i93"></a>
 
-The [September 7 special-effects/upscaler audit](../../progress/rendering/advanced-special-effects-and-upscaler-audit-2026-09-07.md)
-records particle shader/metadata gaps and distinguishes native Vulkan vendor
-dispatch from the OpenGL interop bridge. It is source evidence, not a runtime
-pass or automatic closure of ARP-A03/A04.
+- [ ] **ARP-I93** — Protect mirror readers from collection through rejection or GPU completion.
 
-ARP-A07 is now closed by the [visibility execution inventory](../../progress/rendering/advanced-visibility-execution-audit-2026-09-07.md):
-the full mono Vulkan family reaches actual early/late indirect-count draws and
-depth-pyramid/retest dispatches. This is source tracing; ARP-V55 remains open.
-The current source/build checkpoint supersedes the stale Build 5/6 blocking
-claims. All unchecked runtime rows remain independent acceptance obligations.
+  A legacy PostRender fence accounts only for readers that have executed.
+  Resource replacement and retirement must also retain output for collected or
+  accepted display commands that have not yet been fenced. Add a bounded
+  reservation, or establish and enforce the scheduler/native-resource ownership
+  contract. Release on rejection/reset as well as completion. Validate delayed
+  submission, resize, deactivation and rapid reactivation without early destruction
+  or orphaned reservations. [Evidence][wrapup].
 
-Historical checkbox snapshot after the Build 32 implementation closeout:
+<a id="arp-i94"></a>
 
-| Kind | Checked | Still open |
-|---|---:|---:|
-| Implementation | 60 | 0 |
-| Audit | 5 | 4 |
-| Runtime validation | 6 | 75 |
+- [ ] **ARP-I94** — Prevent display of an unwritten mirror target.
 
-## Historical stopping point — 2026-09-06
+  Start118 exposed uninitialized source pixels before a successful writer
+  completed. Gate display on a completed generation while keeping capture
+  scheduling active; reset the gate on replacement or failed initialization.
+  Validate cold activation, replacement and clean writer rejection without
+  sampling undefined contents. [Evidence][wrapup].
 
-**Historical pause snapshot; superseded by the active resumption above.** At
-this stopping point, editor source built with **zero warnings/errors** (31.97 seconds,
-`build-wrap-up-final.log`, `8b104bf7a` plus uncommitted working changes).
-The task-owned editor `xr-advanced-0906` and RenderDoc session are stopped.
-No new automated tests were added or run. The final build is newer than the
-last runtime evidence; it has not been launched.
+<a id="arp-i81"></a>
 
-Checkbox snapshot at this stopping point (counts are not an effort estimate):
+- [ ] **ARP-I81** — Integrate the actual Advanced mirror owner and native projective display.
 
-| Kind | Checked | Still open |
-|---|---:|---:|
-| Implementation | 52 | 7 |
-| Audit | 4 | 5 |
-| Runtime validation | 6 | 75 |
+  Reuse the standalone owner/camera hook with bounded persistent capture slots.
+  Keep the published texture immutable while writing another eligible slot, then
+  publish the matching reflected projection and content generation together.
+  Implement native opaque projective material/shader sampling and resolve pending-plan
+  publication retention before admission.
 
-| State | Completed work and exact remaining boundary |
-|---|---|
-| Runtime evidence recorded | Mono AO images and neutral disabled/null output (`ARP-V22/V23`); AO affects selected probe indirect light while preserving direct/emissive output (`ARP-V24`); corrected HDR EXR export (`ARP-I44`). These are bounded Vulkan mono results. |
-| Implemented and built; broader validation open | Native decal/material metadata, late-pass participation/motion/refraction, bounded PPLL and depth peeling, canonical history publication, actual probe/convolution writer completion, GI None/null behavior, and XR replacement/teardown fixes. Keep their separate V rows open; do not reimplement checked I rows. |
-| Latest source complete; not run | Independent Advanced output banks and activation-time CPU workspaces (`ARP-I47`), exact capture-family submission policy, asynchronous canonical picking plus editor/MCP consumers (`ARP-I24`), and render-state MCP thread-affinity correction. |
-| Source complete; runtime proof open | Per-view Vulkan execution (`ARP-I21`), RVC exact per-eye history policy (`ARP-I22`), owned capture profiles and consumer completion (`ARP-I23`), executable diagnostics (`ARP-I25`), foveation ABI/GPU consumption (`ARP-I27`), and output-bank retirement/reuse diagnostics (`ARP-I45`). Their V rows remain open. |
-| Implementation still required at that pause | OpenGL SPS executor/pair-residency integration (`ARP-I26`), subsequently completed in the September 7 closeout above. |
-| Audits still required | Admission (`ARP-A01`), early/late visibility execution (`ARP-A07`), reconstruction/material kernels (`ARP-A08`), special effects (`ARP-A03`), and supported vendor-upscaler profiles (`ARP-A04`). |
-| Runtime acceptance still required | Open XR submission/pressure/lifecycle/timing rows; visibility/material/light/shadow/capacity cases; full motion/reset matrix; late/post effects; stereo/offscreen/editor/diagnostic profiles. Every unchecked V row below remains an independent obligation. Hardware-runtime acceptance (`XR-V17`) remains unavailable/unproven. |
+  Make per-camera/eye capacity explicit: two total slots do not continuously
+  double-buffer two independent cameras. Preserve reflection/clipping, defer under
+  reader pressure, retire after all writers/readers, and omit unrequested main-view
+  post work. Legacy PreRender/PostRender callbacks do not implement this path.
+  Close actual output/lifetime acceptance separately under `ARP-V36`.
+  [Publication prerequisite][publication]; [remaining integration][wrapup].
 
-**Historical Vulkan probe failure:** PID41680 paused Advanced desktop-plus-probe rendering
-at frame212: `stable-bin sealing failed: capture outputs require an independent
-capture family`. The subsequent exact-reservation policy fix compiles but has
-not been run. Earlier failures exposed single-output admission and repeated
-arena reservation; those now have source fixes. Retained usable Default probe
-IBL from before the failure is **not** Advanced capture acceptance. The failing
-run also reached approximately 6.26GB working set / 9.40GB private bytes before
-shutdown. The final build provisions CPU workspaces only for activated outputs;
-its actual memory usage and allocation-failure behavior remain unmeasured.
+<a id="arp-i90"></a>
 
-## Resume order
+- [ ] **ARP-I90** — Resolve Vulkan selected-primitive placement and the extra gizmo image.
 
-1. Fix and validate reflected-camera clipping (`ARP-I91`), then close the pending-reader and unwritten-output gaps (`ARP-I93/I94`). Integrate Advanced mirror ownership/display (`ARP-I81`) and validate the actual profile (`ARP-V36`); completed legacy plumbing is `ARP-I92`. Then continue capture/background validation (`ARP-V25`) and editor/reset
-   matrices. Sorted alpha, TSR, TAA,
-   layered history copies, guarded picking and
-   mono/OVR selected-object gizmos now have bounded acceptance evidence.
-2. Resolve Vulkan primitive placement (`ARP-I90`), then finish editor consumers (`ARP-V37`) and remaining late/material/deformation,
-   capacity, shadow and motion/reset matrices. Preserve exact backend/profile
-   scope; emulated OVR acceptance does not certify Vulkan or hardware XR.
-3. Extend the bounded probe/standalone results to remaining Vulkan multi-output
-   and mirror pressure. V16 and V50 now pass their named cohorts. Check real
-   writer completion, owner churn, delayed completion and memory for the remaining
-   output combinations. Retained Default output is not acceptance.
-4. Run the warmed XR fault-injection matrix only with an owned Monado service.
-   The existing PID13580 remains unowned and has not been stopped. Headset and
-   vendor-SDK/device-positive profiles remain unverified when prerequisites
-   are unavailable; keep their individual boxes open.
-The [current wrap-up checkpoint](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-08-validation-wrap-up)
-records implementation boundaries, failed runtime evidence, and the final build.
+  Vulkan Start116 shows an extra gizmo image and a cube below its requested pose;
+  OpenGL Start117 mono/OVR shows one gizmo centered on the moved cube. Isolate
+  stale transforms versus duplicate native/editor submission. Validate creation
+  and repeated transforms before closing `ARP-V37` or related rigid-motion
+  coverage. [Evidence][wrapup].
+
+## Remaining validation
+
+These **67 unchecked rows** are the complete remaining validation checklist.
+Most validate existing implementation. A failed validation gets a specific new
+implementation task; keep the failed validation open. Reuse evidence across
+related fixtures without duplicating the obligation or extending its accepted scope.
+
+Prerequisites and current evidence limits:
+
+- XR fault injection requires an owned Monado service. At the recorded pause,
+  PID13580 was unowned and was neither stopped nor adopted.
+- Hardware XR and positive vendor-feature cases require the named runtime,
+  SDK, driver and device. An unavailable prerequisite remains a blocker.
+- OpenGL RenderDoc inspection is limited by its lack of bindless-texture support;
+  `ARP-V60` still needs suitable capture evidence.
 
 <a id="phase-6"></a>
-## Phase 6 — OpenXR submission and lifecycle
 
-Entry points: `OpenXrVulkanSubmissionTracker`,
-`VulkanCommandRuntime.OpenXrSubmission`, the frame-loop eye/mirror callers,
-`VulkanXrGraphicsBinding`, `OpenXRAPI.SwapchainLifecycle`,
-`OpenXRAPI.Resolution`, and `OpenXRAPI.RuntimeStateMachine`.
+### Phase 6 — OpenXR submission and lifecycle
 
-### Submission ownership and bounded admission
+Entry points: `OpenXrVulkanSubmissionTracker`, `VulkanCommandRuntime.OpenXrSubmission`,
+the eye/mirror frame-loop callers, `VulkanXrGraphicsBinding`, and
+`OpenXRAPI.SwapchainLifecycle`, `Resolution` and `RuntimeStateMachine`.
 
-- [x] **XR-I01** — Carry the exact accepted timeline semaphore/value and frozen XR frame/display identity in the submission receipt. Done 2026-09-04; `8b104bf7a`; [E1].
-- [x] **XR-I02** — Reserve bounded tracker capacity before ordinary, parallel, or mirror submission; honor rejected admission. Done 2026-09-04; `8b104bf7a`; [E1].
-- [x] **XR-I03** — Retain command, arena, upload, prepared-input, and native-resource ownership until the accepted receipt completes; settle completion payloads through the tracker. Done 2026-09-04; `8b104bf7a`; [E1].
-- [x] **XR-I04** — Encode two-/three-command render-plus-publish batches without a null command inside the submitted count. Done 2026-09-04; `8b104bf7a`; [E3]. Three-command runtime proof is `XR-V04`.
-- [x] **XR-I05** — Supply immutable storage authority to XR mirror preparation and grow/reset XR arena slots without relocating live slot resources. Done 2026-09-04; `8b104bf7a`; [E1].
-- [x] **XR-I06** — Acquire the program mutation gate before the link lock on the affected cold program/layout paths. Done 2026-09-04; `8b104bf7a`; [E1].
-- [x] **XR-A01** — Publish a complete submit-callsite ownership table: ordinary single/paired, parallel, SPS, external target, preview-only, and render-plus-publish. Done 2026-09-06; `8b104bf7a`; [source ownership inventory](../../progress/rendering/openxr-submit-ownership-audit-2026-09-06.md). Production routes use the central acceptance sink and tracker retirement; legacy wrapper overloads have no production callers. Runtime route coverage remains in XR-V tasks.
-- [x] **XR-V01** — Repeat Monado strict SPS after the descriptor fixes. Done 2026-09-06; working tree on `8b104bf7a`, `build-probe-pipeline-owner.log`; [clean SPS rerun](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-06-clean-monado-sps-rerun). PID8256 retained 360 frames: 351 strict SPS submissions, nine cold no-layer frames, zero validation/EndFrame failures, zero sequential fallback attempts, and zero final pending retirement. Default/RVC eyes; Advanced stereo and hardware acceptance remain open.
+#### Submission ownership and bounded admission
+
 - [ ] **XR-V02** — Run ordinary single-eye submission. Close with exact eye receipt ownership and successful output.
+
 - [ ] **XR-V18** — Run ordinary paired-eye submission. Close with both eyes' exact receipt ownership and successful output.
+
 - [ ] **XR-V03** — Run parallel eye recording. Close with accepted-incomplete ownership retained until completion and no early prepared-input/upload release.
-- [x] **XR-I11** — Resolve parallel-eye foreground preparation failure and preserve paced recovery after readiness rejection. Done 2026-09-06; working tree on `8b104bf7a`; [paced parallel rerun](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-06-paced-parallel-eye-recovery). Typed Vulkan readiness failures now return handled/no-layer through normal image release, `xrEndFrame`, and pacing. After one initial resource-generation rejection, normal recollection recovers: PID30284 submitted 357 frames with three cold no-layer frames and zero EndFrame failures. Build zero warnings/errors. Teardown failure remains XR-I12; full ownership/pressure proof remains XR-V03.
-- [x] **XR-I12** — Resolve parallel-eye teardown's persistent GPU-quiescence deferral. Done 2026-09-06; working tree on `8b104bf7a`; [native view ownership fix](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-06-parallel-eye-teardown-native-view-ownership-fixed). Target-created image views now enter the native ownership registry as well as the lifetime ledger; immediate destruction updates both, and deferred drain retains missing-owner obligations. PID6948 retained 360 frames, submitted 356 with four cold no-layer frames and zero EndFrame failures, and completed teardown. Build zero warnings/errors; no retirement budget or lifetime predicate relaxed. Broader XR-V03 pressure/ownership proof remains open.
+
 - [ ] **XR-V04** — Run the three-command `[left, right, publish]` path. Close with both eye renders and the publish command present in the accepted receipt and retired once.
+
 - [ ] **XR-V05** — Exercise external-target submission. Close with output captures and exact ownership/settlement for its path from `XR-A01`.
+
 - [ ] **XR-V19** — Exercise preview-only copy submission. Close with a fresh preview capture and completion-driven ownership/settlement.
+
 - [ ] **XR-V06** — Delay completion until tracker capacity is reached. Close with occupancy never exceeding capacity, visible deferral/recovery, and no pending slot/pool/descriptor reuse.
+
 - [ ] **XR-V07** — Exercise rejection and accepted-submit publication/cleanup failure boundaries. Close with every payload settled once and no orphaned accepted work. New automated fault tests require explicit clearance.
 
-### Swapchain/session lifetime
+#### Swapchain and session lifetime
 
-- [x] **XR-I07** — Retain dependent Vulkan image views/framebuffers behind a child-retirement receipt and keep the runtime parent alive while children remain. Done 2026-09-04; `8b104bf7a`; [E1].
-- [x] **XR-I08** — Represent application completion, acquired/released-image state, and pending teardown separately; reserve retired-generation capacity before detachment. Done 2026-09-04; `8b104bf7a`; [E1]. Pressure/failure proof remains below.
-- [x] **XR-I09** — Distinguish pre-detach deferral from failed/empty creation after `CleanupSwapchains`; route post-detach failure through safe partial-child cleanup and creation-eligible lifecycle state while retaining requested dimensions. Done 2026-09-06; working tree on `8b104bf7a`; [implementation resume](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-06-implementation-resume). Typed outcomes, conservative partial-child recovery, complete-set guard, retained refresh intent; isolated editor build passed with zero warnings/errors. Runtime fault/replacement proof remains XR-V09/V10.
-- [x] **XR-I10** — Gate full instance/service dimension refresh on an explicit runtime capability/quirk. Done 2026-09-06; working tree on `8b104bf7a`; same isolated build. The host explicitly enables the simulated-service restart capability for MonadoOpenXR; ordinary runtime-recommended extents use in-session replacement.
 - [ ] **XR-V08** — Fill the retired-generation budget with delayed GPU completion/runtime release. Close with a bounded count, no lost active generation on deferral, and no child or parent destroyed early.
+
 - [ ] **XR-V09** — Change eye resolution during active rendering. Close with safe in-session replacement, dimension read-back, pacing resumed, and no normal device-wide idle; exercise the configured runtime-refresh exception separately.
+
 - [ ] **XR-V10** — Force replacement failure after detachment. Close with eventual rendering/recreation or an explicit safe terminal outcome, no permanent swapchain-less running state, and no leaked partial children.
+
 - [ ] **XR-V11** — Repeat session start/stop/restart. Close with successful new output, zero invalid-handle destruction, and final ownership/retirement counts zero on each cycle.
+
 - [ ] **XR-V12** — Exercise STOPPING with pending work. Close with truthful drain results and no successful-drain report while ownership remains.
+
 - [ ] **XR-V20** — Exercise LOSS_PENDING with pending work. Close with safe session/child retirement and a documented recovery outcome.
+
 - [ ] **XR-V21** — Exercise device-loss teardown. Close with explicit abandonment where required and no stale ownership reported as normal completion.
 
-### Timing, allocations, and runtime acceptance
+#### Timing, allocations and hardware acceptance
 
 - [ ] **XR-V13** — Correlate real frame ID/display time, queue-submit interval, completion/forced wait, in-flight age, and independent per-eye image reuse age. Close with a trace matching receipt values and no zero/synthetic provenance.
+
 - [ ] **XR-V14** — Measure warmed tracker registration, polling, and retirement allocations. Close with zero managed-byte deltas and no duplicate polling work; retained storage bounds must be reported.
+
 - [ ] **XR-V15** — Measure pressure recovery waits against the XR deadline. Close with short counted waits only after safe reuse/defer paths, truthful missed/late/reprojected counters, and preserved `xrWaitFrame` pacing.
+
 - [ ] **XR-V16** — Run desktop and XR together. Close with nonblocking desktop acquire and no transferred compositor/completion stall; publish per-output timing and captures.
+
 - [ ] **XR-V17** — Validate at least one hardware runtime. Close with the named runtime/device, eye output, lifecycle evidence, and documented release-before-application-completion legality/completion fallback. Do not assume the runtime sees the engine's private timeline; record whether a fence-ring fallback is required.
 
 <a id="phase-7"></a>
-## Phase 7 — Advanced rendering
 
-### Admission and canonical GPU contracts
+### Phase 7 — Advanced rendering
 
-Entry points: `AdvancedProductionCutoverContract`,
-`AdvancedRenderPipeline.ProductionCutover`, `AdvancedShaderAccessLibrary`,
-`AdvancedMaterialRecord`, `AdvancedLightRecord`, and the Vulkan visibility
-resource/binding runtime.
+Entry points: the `AdvancedRenderPipeline` production, classification, native
+shading, late/post and stereo/view partials; `AdvancedProductionCutoverContract`;
+canonical material/light accessors; Vulkan visibility resources; `ViewSetPlan`;
+and the picking, diagnostics and OpenXR timing/foveation contracts.
 
-- [x] **ARP-I01** — Publish canonical record images and consume the 64-byte material/128-byte light record layouts through generated/accessor contracts. Done 2026-09-04; confirmed 2026-09-06 at `8b104bf7a`; [E1], [S1].
-- [x] **ARP-I02** — Match the visibility payload's 96-byte CPU/GLSL stride and clear integer sentinels only at the first visibility scope. Done 2026-09-04; `8b104bf7a`; [E2].
-- [x] **ARP-I48** — Align the visibility candidate's individual fields with the GPU's 80-byte std430 record. Done 2026-09-07; `8b104bf7a` + working changes; [OpenGL implementation checkpoint](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-07-opengl-implementation-checkpoint). Explicit offsets are 0/16/32/48/64/72/76; the previous size-only declaration placed bounds and eye masks eight bytes early. Reflection verifies the offsets, Build 29 passes without warnings/errors, and GPU-indirect stereo geometry appears after the fix. Vulkan shares this ABI; its runtime recheck remains ARP-V03/V53.
-- [x] **ARP-V01** — Compile the September 4 shader cohort. Done 2026-09-04; `8b104bf7a`; [E1]: 26/26 Vulkan 1.3 mono/array variants, zero diagnostics. Recheck affected variants after shader changes; this is not stereo admission.
-- [x] **ARP-A01** — Trace per-profile readiness from executable capability state to selection/admission and editor/MCP output. Done 2026-09-07; `8b104bf7a` plus working changes; [admission/profile inventory](../../progress/rendering/advanced-admission-and-profile-audit-2026-09-07.md). Capability, requested-mode selection, executable reservation admission, per-view/profile limits and editor/MCP consumers are traced. The cutover summary now describes its actual pending production gates. Unsupported-profile runtime acceptance remains V02.
+#### Admission and canonical GPU contracts
+
 - [ ] **ARP-V02** — Request an unsupported required profile. Close with an observable failure/diagnostic and no silent CPU, legacy, mono, or unshaded substitution.
+
 - [ ] **ARP-V03** — Validate actual descriptor/image format/access/set/binding, matrix convention, record stride/version, and generation lookup at the backend boundary. Close with a compiler/layout inventory plus a clean GPU capture; preserve the set 0/1/2/3 contract.
+
+<a id="visibility-and-reconstruction-acceptance-carried-from-architecture-documents-0305"></a>
+
+#### Visibility, deformation and reconstruction
+
+`ARP-A07` and `ARP-A08` have completed the source tracing. The following rows
+retain acceptance from architecture documents 03–05; the
+[coverage audit](../../progress/rendering/vulkan-todo-coverage-audit-2026-09-06.md)
+records the migration. Relevant shaders include the visibility producers, shared
+reconstruction contract and `ShadeNativeOpaque.comp`.
+
 - [ ] **ARP-V04** — Run the original skinned fixture through arena growth/reuse. Close with current/previous deformation ranges valid, no bind-pose fallback, and bounded arena storage across completed slots.
 
-### Visibility and reconstruction acceptance carried from architecture documents 03–05
-
-The [September 6 coverage audit](../../progress/rendering/vulkan-todo-coverage-audit-2026-09-06.md)
-maps the older phase records. Their checked contracts remain implementation
-evidence; the following missing acceptance details now have explicit owners.
-
-- [x] **ARP-A07** — Trace early-visible indirect submission, current-view depth-pyramid construction, deferred-candidate retest, and late indirect submission into actual backend commands. Done 2026-09-07; `8b104bf7a` + working changes; [execution inventory](../../progress/rendering/advanced-visibility-execution-audit-2026-09-07.md). Full mono Vulkan path has real early/build-indirect and pyramid/retest dispatches, explicit compute-to-indirect barriers, and shared Advanced indexed/mesh indirect-count consumers for early and late raster. No declaration-only phase was found. This closes source tracing only; ARP-V55 and layered/multi-output acceptance remain open.
 - [ ] **ARP-V51** — Capture Vulkan deformation-to-visibility/depth/velocity dependencies. Close with correct current/previous deformed ranges, resource-specific barriers, completion-owned lifetimes, and no same-frame readback.
+
 - [ ] **ARP-V52** — Capture the corresponding OpenGL deformation path. Close with the same logical output and correct barrier/lifetime behavior; Vulkan evidence cannot close this backend.
+
 - [ ] **ARP-V53** — Compare Vulkan traditional, indirect, meshlet, static, and skinned visibility producers. Close with identical logical surface/editor identity and inspectable final payload/depth in overlapping, masked, mixed-producer, and camera-cut fixtures from two views. Reuse `ARP-V13` masked-coverage evidence where applicable.
+
 - [ ] **ARP-V54** — Run the same visibility-producer comparison on OpenGL. Close with attachment/barrier captures and the same logical payload contract.
+
 - [ ] **ARP-V55** — Demonstrate current-frame late visibility recovery after disocclusion. Close with newly visible candidates drawn after the current-view pyramid, no duplicate early-pixel shading, and conservative behavior after cuts, resize, or missing history.
-- [x] **ARP-A08** — Trace every material kernel to the shared reconstruction contract and required-attribute mask, including tangent handedness/MikkTSpace compatibility. Done 2026-09-07; `8b104bf7a` plus working changes; [kernel/attribute inventory](../../progress/rendering/advanced-reconstruction-contract-audit-2026-09-07.md). All admitted standard kernels share one decoder; reference outputs remain diagnostic-only. The zero published attribute-mask defect is assigned to ARP-I51; dependent runtime comparisons remain open.
-- [x] **ARP-I51** — Publish real standard material/kernel reconstruction requirements and finite tangent fallbacks. Done 2026-09-07; `8b104bf7a` + working changes; [reconstruction audit](../../progress/rendering/advanced-reconstruction-contract-audit-2026-09-07.md). Build 44 has zero warnings/errors; affected OpenGL and Vulkan mono/array compute shaders compile. PID38032 renders the UV-varying checker in both stereo eyes with zero nonfinite samples and alpha 1. Broader V56–V60 comparisons remain open.
+
 - [ ] **ARP-V56** — Compare reconstructed attributes to the raster reference for static, skinned, normal-mapped, mirrored, masked, and UV-stress meshes. Close with documented numeric/image tolerances and retained comparison images.
+
 - [ ] **ARP-V57** — Validate texture gradients and selected mip across primitive/material boundaries, UV seams, tiny triangles, oblique surfaces, minification, and LOD changes. Close with stable LOD and conservative identity-safe fallback, using derivative/selected-mip captures.
+
 - [ ] **ARP-V58** — Measure reconstruction separately from classification and lighting/shading. Close with isolated GPU stage timings, the enabled attribute mask, fixture/extent, and backend recorded.
+
 - [ ] **ARP-V59** — Inspect reconstructed attributes and derivatives in a Vulkan GPU capture. Close with named resources and values consistent with `ARP-V56`/`ARP-V57`.
+
 - [ ] **ARP-V60** — Inspect reconstructed attributes and derivatives in an OpenGL GPU capture. Close with the same logical contract and documented backend differences.
 
-### Classification and clustered lighting capacity
+#### Classification and clustered lighting capacity
 
 Entry points: `ClassifyTiles.comp`, `BuildClassificationIndirect.comp`,
-`BuildFroxels.comp`, `AdvancedRenderPipeline.Classification`, and
-`AdvancedRenderPipeline.NativeShading`.
+`BuildFroxels.comp`, classification and native shading.
 
-- [x] **ARP-I03** — Resolve draw/material/kernel handles and provide bounded classification storage for all 128 allowed kernel slots. Done 2026-09-04; confirmed 2026-09-06 at `8b104bf7a`; [S1]. The old 32-slot histogram defect is fixed; this does not certify the complete classifier key or subgroup path.
-- [x] **ARP-I04** — Generate bounded per-kernel membership ranges and indirect dispatch arguments on the GPU, clamping consumers to initialized capacity. Done 2026-09-04; `8b104bf7a`; [S1]. Overflow/runtime correctness remains below.
-- [x] **ARP-I05** — Derive froxel storage from extent, tile dimensions, depth slices, and view count. Done 2026-09-04; confirmed 2026-09-06 at `8b104bf7a`; [S1]. `262144` is a historical minimum, not the current allocation cap.
-- [x] **ARP-A05** — Audit the classifier key across kernel, material layout, coverage class, derivative mode, and view mode. Done 2026-09-06 by [classification audit](../../progress/rendering/advanced-classification-audit-2026-09-06.md): resolved dense kernel is the executable grouping identity; layout/coverage are guarded at resolve and derivative/view identity are carried and checked at the indirect consumer. `ARP-I30` records the implementation; live diversity/pressure acceptance remains open.
-- [x] **ARP-I28** — Implement subgroup ballot/scan classification with a bounded shared-memory fallback for devices lacking the required subgroup capabilities. Done 2026-09-06; working tree on `8b104bf7a`; [implementation resume](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-06-implementation-resume). Compute BASIC+BALLOT capability selection, uniform ballot/exclusive scans, unchanged bounded output contract; shared and subgroup mono/array variants plus indirect variants compile (6/6), and isolated editor build passes with zero warnings/errors. Runtime/performance evidence remains open.
-- [x] **ARP-A06** — Audit independent tile, membership, and dispatch capacity derivation against extent, view count, and worst-case material diversity. Done 2026-09-06 by [classification audit](../../progress/rendering/advanced-classification-audit-2026-09-06.md): host and shader producer/consumer products and ranges are independently bounded; overflow selects the GPU repair path. `ARP-I30` compiler checks passed; `ARP-V07` runtime capacity evidence remains open.
-- [x] **ARP-I30** — Enforce derivative flags, membership kernel identity, metadata view identity, and overflow-safe producer/consumer range arithmetic at the executable classification/shading boundary. Done 2026-09-06; working tree on `8b104bf7a`; [classification audit](../../progress/rendering/advanced-classification-audit-2026-09-06.md). Eight affected shared/subgroup mono/array classification, indirect-argument, and native-shading variants compile with Vulkan 1.3 glslc; `reports/shaders/classification-manifest.json` in the current investigation run records all results. Runtime diversity and pressure acceptance remains open.
 - [ ] **ARP-V05** — Render shared materials and sparse/reused draw IDs. Close with generation-correct material/kernel resolution, empty/background exclusion, and no material-row or descriptor-object identity used as a dispatch key.
+
 - [ ] **ARP-V06** — Exercise every admitted kernel ID, including pending/rare/custom behavior. Close with initialized disjoint pixel ownership, no dropped high kernel IDs, and the documented permutation/prewarm policy.
+
 - [ ] **ARP-V07** — Force tile, membership, and dispatch capacity pressure independently. Close with truthful attempted/emitted counters, conservative automatic recovery, structured required-mode failure, and no same-frame readback recovery.
+
 - [ ] **ARP-V08** — Compare selectable tile dimensions using occupancy and mixed-material captures. Close with the chosen dimensions used consistently by all consumers and measured occupancy evidence.
+
 - [ ] **ARP-V09** — Run 1440p and 4K mono through resize/render-scale changes. Close with correctly derived froxel sizes, initialized ranges, and no shader bounds or descriptor errors. Layered validation belongs to `ARP-V34`.
+
 - [ ] **ARP-V10** — Exercise point/spot coverage and directional ordering with more than 16 local lights. Close with correct view-space depth/XY lists, bounded directional work, and no silently truncated contribution.
+
 - [ ] **ARP-V11** — Exhaust froxel light-index storage. Close with overflow diagnostics and conservative GPU recovery preserving lighting; no current-frame CPU readback/rebuild.
 
-### Native surfaces, shadows, AO, and indirect lighting
+#### Materials, shadows and decals
 
 Entry points: `StandardMaterial.glslinc`, `StandardPBR.glslinc`,
-`StandardShadow.glslinc`, `ShadeNativeOpaque.comp`,
-`AdvancedGlobalResourceCapture`, and the Advanced AO/GI provider contracts.
+`StandardShadow.glslinc`, `ShadeNativeOpaque.comp` and `AdvancedGlobalResourceCapture`.
+The accepted built-in AO/GI cohorts are in completed validation; broader material
+and shadow acceptance remains below.
 
-- [x] **ARP-I06** — Wire canonical material constants/texture access and convention-aware shadow sampling into native opaque shading. Done 2026-09-04; source confirmed 2026-09-06 at `8b104bf7a`; [S1]. Visual parity is not yet accepted.
-- [x] **ARP-I07** — Connect visibility/native HDR to refreshed post-process texture/sampler bindings. Done 2026-09-04; `8b104bf7a`; [E2].
-- [x] **ARP-V12** — Demonstrate the narrow static opaque path with three meshes, two camera views, and material scalar/color changes. Done 2026-09-04; `8b104bf7a`; [E2].
-- [x] **ARP-I38** — Preserve authored Assimp diffuse RGB factors in the standard material factory so the native path receives actual imported colors. Done 2026-09-06; working tree on `8b104bf7a`; [native color diagnosis](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-06-native-color-input-diagnosis). Factory applies finite `$clr.diffuse`/MTL `Kd`; isolated build passes. Fresh-import PID14656 preserves all three source colors and an inspected native output shows red/green panels and gray ground without material overrides. This does not certify other Assimp scalar/transparency mappings.
 - [ ] **ARP-V13** — Validate textured opaque, masked, unlit, and emissive material families against their constants, normal/tangent inputs, coverage, and invalid/pending-layout output. Close with per-family captures, including masked alpha-cutoff edges.
+
 - [ ] **ARP-V14** — Validate directional cascades and point/spot shadows. Close with atlas/filter/depth-convention captures and machine-readable missing/stale reasons; sample each supported filter family separately.
-- [x] **ARP-I08** — Produce per-tile/froxel decal lists and apply real surface/material modifiers before lighting. Close with an implemented bounded list/consumer path and compiler/build checks; remove placeholder color-only behavior. Done 2026-09-06; working tree on `8b104bf7a`; [compiled implementation evidence](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-06-compiled-decal-and-executable-late-pass-integration). Isolated editor build zero warnings/errors; runtime acceptance remains in the owning V rows.
+
 - [ ] **ARP-V15** — Validate overlapping decals and list overflow. Close with correct modified normals/material values before lighting, bounded recovery, and stable diagnostics.
-- [x] **ARP-I09** — Publish and consume real IBL/probe/selected-GI resources through the provider contract. Done 2026-09-06; working tree on `8b104bf7a`; [canonical history/probe checkpoint](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-06-canonical-history-and-probe-checkpoint). The built-in LightProbesAndIbl provider publishes generation-owned octahedral irradiance/prefilter pairs after writer-fence acceptance; publication snapshots retain them through backend retirement. Native shading consumes up to four weighted eligible probes with parallax/falloff and explicit mode gating. Shader compiler checks and isolated editor build pass; provider contribution and switching remain ARP-V16; probe refresh/export acceptance now passes under V48/V68.
-- [x] **ARP-V16** — Validate selected GI/probe/IBL contribution and switching. Done 2026-09-08; `8b104bf7a` plus working changes; Build132, Vulkan Start108/PID58608 and OpenGL Start109/PID57480, six grouped HDR/depth captures per backend. Provider on/off changes opaque lighting; restoring the provider reproduces exact pixels. Changing the sky leaves opaque lighting identical until the probe refresh completes (Vulkan version2→3; OpenGL4→5). After refresh, disabling GI reproduces the original disabled opaque output exactly; depth/alpha stay identical and all samples are finite. Repeated enabling adds no extra contribution. Each backend uses its own generated probe cohort; this is switching/generation proof, not pixel parity between differently refreshed probes. [Evidence](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-08-gi-provider-switching-and-probe-updates).
-- [x] **ARP-I39** — Preserve exact recorded native depth-image layout and producer scopes when reopening an FBO after compute sampling. Done 2026-09-06; working tree on `8b104bf7a`; canonical history/probe checkpoint in [E1]. Recorded layout is preserved, including SHADER_READ_ONLY_OPTIMAL on depth; synchronization2 high bits widen safely for legacy barriers. Build zero warnings/errors. PID18400 rerun eliminates the two startup oldLayout-01197 errors; subsequent PID30632 probe updates have no Vulkan ERROR/VUID entries in the inspected interval.
-- [x] **ARP-I40** — Consume pending probe writer receipts at the registered light-probe world boundary, including one-shot captures. Done 2026-09-06; working tree on `8b104bf7a`; canonical history/probe checkpoint in [E1]. Probes do not register in CaptureComponents, so the original SwapBuffers override never promoted them. Lights3DCollection now promotes its registered probes before canonical global capture. Build zero warnings/errors; PID38616 reaches CaptureVersion=1 with both published textures usable. Subsequent forward-import failure remains ARP-I41; GI acceptance stays open.
-- [x] **ARP-I41** — Declare the forward probe-array/buffer imports used by Advanced late/debug consumers. Done 2026-09-06; working tree on `8b104bf7a`; canonical history/probe checkpoint in [E1]. Explicit forward imports eliminate LightProbeIrradianceArray undeclared-resource failures. Build zero warnings/errors; PID30632 advances through generation26 with usable textures and no Vulkan ERROR/VUID entries. Native canonical probe resources remain separately owned; black captured IBL RGB is ARP-I42.
-- [x] **ARP-I42** — Resolve black probe-capture/convolution RGB and require completion evidence for the actual output writers before accepting usable IBL. Done 2026-09-06; working tree on `8b104bf7a`; [exact-writer RGB proof](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-06-probe-writer-rgb-and-disabled-provider-proof). Capture now uses immutable face targets, complete multipass submission receipts, correct LightProbeCapture identity, and explicit 64x64 internal extent. Convolution publishes only after actual required writers signal. PID31764 RenderDoc frame1026 shows nonzero irradiance/prefilter RGB, inspected images, and increased scene HDR with GI enabled. Build zero warnings/errors. Full provider/probe-update and AO-combination validation remains ARP-V16/V24.
-- [x] **ARP-I43** — Keep native stages executing with zero indirect contribution when GI mode is None or the selected native provider is null. Done 2026-09-06; working tree on `8b104bf7a`; [disabled-provider proof](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-06-probe-writer-rgb-and-disabled-provider-proof). PID31764 None/null captures have identical raw RGBA hashes and finite 1920x1080 HDR output, with native shading enqueue accepted at both observed frames. GI-enabled output differs and is brighter; unsupported nonempty providers retain explicit blockers.
 
-### Temporal history and motion
+#### Motion, history and reset matrix
 
-- [x] **ARP-I14** — Add frozen desktop current-view history, per-draw temporal events, camera epochs, and explicit shader validity gates. Done 2026-09-04; `8b104bf7a`; [E1]. September 6 source tracing found no remaining desktop ledger commit caller; advancement still needs ARP-I10–ARP-I13.
-- [x] **ARP-I15** — Keep OpenXR view history pending until a successful layered EndFrame and clear it across tracking/lifecycle invalidation. Done 2026-09-04; `8b104bf7a`; [E1]. Runtime proof is `ARP-V21`.
-- [x] **ARP-I10** — Capture a bounded immutable desktop history candidate before every fallible plan/readiness/recording step. Done 2026-09-06; working tree on `8b104bf7a`; [history sequence checkpoint][H1]. Collection owns a monotonic sequence and frozen scheduling request; fixed ledger/token/reservation storage captures exact output, pipeline, extent, and generation before fallible authoring. Latest isolated build `build-gi-lifetime-corrected.log` passes with zero warnings/errors.
-- [x] **ARP-I11** — Attest history for the actual recorded outputs, including synthetic `RequiresFreshEmptyTerminalWrite` with no static operation context. Done 2026-09-06; working tree on `8b104bf7a`; [H1]. Sealed output bindings and exact target aliases track color writers independently; bounded synthetic-empty indices and full-identity reuse manifests preserve output ownership. Depth-only blits cannot suppress a required fresh color clear. Isolated build zero warnings/errors; multi-output/empty runtime checks remain ARP-V20.
-- [x] **ARP-I12** — Commit attested history only on the exact backend acceptance receipt. Done 2026-09-06; working tree on `8b104bf7a`; [H1]. Vulkan commits under native submission acceptance using exact reserved candidates. OpenGL commits on a successful synchronous command chain with an observed matching color writer; GPU-count/transform-feedback/raw-compute writes alone remain explicitly unproven and discard. Isolated build zero warnings/errors; desktop live cohort adds 1,089 commits across 1,089 frames.
-- [x] **ARP-I13** — Discard every rejected/superseded candidate on readiness, recording, submit failure, and teardown. Done 2026-09-06; working tree on `8b104bf7a`; [H1]. Generation-protected queue slots and exact token settlement release rejected/drained ownership while preserving reservations arriving after first drain. Direct interactive-resize cohorts explicitly invalidate their histories. Isolated build zero warnings/errors; fault/reset/delayed-submit acceptance remains ARP-V18–V20.
-- [x] **ARP-I37** — Publish the exact resolved desktop history descriptor into the canonical GPU view record. Done 2026-09-06; working tree on `8b104bf7a`; [canonical history checkpoint](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-06-canonical-history-and-probe-checkpoint). Vulkan preparation projects the exact frozen authoring views into package-owned GPU bindings and forces fresh Advanced primary recording. Isolated build zero warnings/errors; two camera-tween readbacks have finite nonzero velocity and an inspected spatial field. Full ARP-V17/V18 fixture/reset acceptance remains open.
 - [ ] **ARP-V17** — Capture stationary, camera-only, object-only, and combined motion for rigid, skinned, and blendshape fixtures. Close with dense correct velocity/reactive/disocclusion output where history is valid and explicit neutral/reactive output where it is invalid; record each fixture's result separately.
+
 - [ ] **ARP-V18** — Exercise cuts, frame gaps, newly visible objects, topology replacement, and rejected submissions. Close with history invalidation matching those events and no stale previous-frame contribution.
+
 - [ ] **ARP-V19** — Exercise resize, render-scale, view-count, pipeline switch, HDR/format, shader reload, and resource-generation resets. Close with a recorded result for each reset cause and no cross-output history leakage.
+
 - [ ] **ARP-V20** — Exercise multiple desktop viewports, empty output, and next-frame collection during delayed submission. Close with exactly the accepted output histories committed and every rejected candidate released.
+
 - [ ] **ARP-V21** — Exercise OpenXR tracking loss/recovery, failed/no-layer EndFrame, and successful layered frames. Close with history advancing only for the exact successful frame/display identity.
 
-### AO completion
-
-- [x] **ARP-I16** — Add depth-derived GTAO dispatch and owned full-resolution R8 target after final visibility depth. Done 2026-09-04; `8b104bf7a`; [E1].
-- [x] **ARP-I17** — Bind AO storage/sample at 49/50, namespace GLSL helpers, guard reconstruction math, and read the correct reversed-depth component. Done 2026-09-04; `8b104bf7a`; [E1].
-- [x] **ARP-I18** — Provide `EnableBuiltInAmbientOcclusion` and a neutral-write path; keep custom providers explicitly rejected. Done 2026-09-04; `8b104bf7a`; [E1].
-- [x] **ARP-I29** — Support R8Unorm AO texture diagnostic readback conversion and byte sizing. Done 2026-09-06; working tree on `8b104bf7a`; isolated editor build zero warnings/errors. Live image validation remains ARP-V22/V23.
-- [x] **ARP-V22** — Obtain and inspect `AdvancedShading.AmbientOcclusion` via working MCP readback or RenderDoc. Done 2026-09-06; working tree on `8b104bf7a`; [AO capture checkpoint](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-06-ao-capture-checkpoint). Two retained 1920×1080 mono images, separated by 4m32s and a camera change: finite occlusion, neutral white background/borders, contact occlusion follows the geometry. AO on/off and final shading remain separate open tasks.
-- [x] **ARP-V23** — Capture enabled versus disabled/null-provider AO. Done 2026-09-06; working tree on `8b104bf7a`; [AO neutral-output checkpoint](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-06-ao-neutral-output-checkpoint). Three retained 1920×1080 mono/layer-0 images over 2m49s: enabled R8 range 0–1 with visible scene occlusion; disabled and null-provider each exactly 1 for all 2,073,600 pixels, zero nonfinite samples. Layered profiles remain ARP-V34.
-- [x] **ARP-I19** — Feed AO into the actual indirect-light contribution from `ARP-I09`. Done 2026-09-06; working tree on `8b104bf7a`; canonical history/probe checkpoint in [E1]. Native shading applies AO to probe diffuse/specular indirect terms once, separately from direct and emissive contributions. Mono/array shader compilation and isolated build pass. Live combined-provider acceptance remains ARP-V24.
-- [x] **ARP-V24** — Validate AO plus the selected GI/IBL provider. Done 2026-09-06; `8b104bf7a` + working changes; [E1], “EXR export and AO/IBL contribution acceptance”: Vulkan PID17396, 1920×1080, frozen completed LightProbesAndIbl generation. AO darkens 215,849 pixels with zero brightened samples; direct + nonzero emission produces identical raw hashes with AO on/off. Native shader applies diffuse AO and specular occlusion once at the indirect terms. This closes the selected built-in AO/IBL combination, not other GI providers or stereo.
-
-### Background, late passes, and post-processing
+#### Background, transparency and final composition
 
 Entry points: `ShadeBackground.comp`, `AdvancedRenderPipeline.LateAndPostCommands`,
-`ExactTransparency`, `Transparency`, `PostProcessing`, and the eligibility contracts.
+`ExactTransparency`, `Transparency`, `PostProcessing` and eligibility contracts.
 
-- [x] **ARP-I20** — Invoke the exact-transparency helper and late/temporal/post/output stages from the Advanced command chain. Done 2026-09-04; source confirmed 2026-09-06 at `8b104bf7a`; [S1]. The helper is not unused.
-- [x] **ARP-A02** — Inventory admitted late lanes and their resource/capacity contracts: sorted alpha, participating transparency, refraction, weighted OIT, PPLL, depth peeling, volumetrics, overlays, and UI. Done 2026-09-06; working tree on `8b104bf7a`; [executable late-lane audit](../../progress/rendering/advanced-late-lanes-audit-2026-09-06.md). Runtime gates and capacity limits recorded; missing executable metadata, motion, feedback, and recovery paths are ARP-I31–I36. This does not certify lane parity.
-- [x] **ARP-I31** — Evaluate exact-transparency consumer admission and selected peel-layer count at command execution, including objects becoming visible after pipeline construction. Done 2026-09-06; working tree on `8b104bf7a`; [late-lane audit](../../progress/rendering/advanced-late-lanes-audit-2026-09-06.md). Runtime predicates replace construction-time visibility gates; four reusable layer commands honor the current count. Isolated editor build `build-history-sequence.log` passes with zero warnings/errors. Visual checks remain ARP-V29/V39.
-- [x] **ARP-I32** — Produce and merge participating transparent velocity/reactive output with native opaque motion. Close with executable material/draw participation and the correct shared output ownership; validate in ARP-V26. Done 2026-09-06; working tree on `8b104bf7a`; [compiled implementation evidence](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-06-compiled-decal-and-executable-late-pass-integration). Isolated editor build zero warnings/errors; runtime acceptance remains in the owning V rows.
-- [x] **ARP-I33** — Wire visible refractive/feedback consumers to the scene-snapshot predicate and binding contract. Done 2026-09-06; working tree on `8b104bf7a`; late-lane audit. XRMaterial exposes authored metadata, published passes freeze visible consumer counts, and Advanced binds the canonical view of its real scene copy. Built-in water opts in without changing Default water bindings. Isolated editor build zero warnings/errors; actual descriptor binding and no-consumer copy elision remain ARP-V27.
-- [x] **ARP-I34** — Implement bounded PPLL overflow recovery and safe producer/resolve limits. Done 2026-09-06; working tree on `8b104bf7a`; [late safety checkpoint](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-06-late-transparency-safety-checkpoint). Checked 128 MiB capacity, actual-buffer limits, capped allocation, four GPU status counters, ordered reset, bounded/link-validated resolve, and transparent rejection preserving preceding HDR. Isolated editor build zero warnings/errors; reset, resolve, and both shared producer shaders compile. Runtime pressure/output proof remains ARP-V29.
-- [x] **ARP-I35** — Complete depth-peeling initialization/opaque-depth rejection and mixed transparency composition without overwriting preceding lanes from an obsolete scene copy. Done 2026-09-06; working tree on `8b104bf7a`; late-lane audit. Each layer clears transparent color and seeds native opaque depth; shader rejection handles both depth conventions. An isolated Advanced resolve shader blends premultiplied layers over current HDR with explicit sampled inputs. Default shared-snippet bindings preserved. Three fragment shader checks and isolated editor build pass; ARP-V39 remains open, including mixed-technique ordering.
-- [x] **ARP-I36** — Connect late-pass eligibility metadata to executable submission and expose unsupported lane/profile reasons. Close with no declaration-only admission claims or opaque bypass; validate alongside the owning lane. Done 2026-09-06; working tree on `8b104bf7a`; [compiled implementation evidence](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-06-compiled-decal-and-executable-late-pass-integration). Isolated editor build zero warnings/errors; runtime acceptance remains in the owning V rows.
-- [x] **ARP-A03** — Inventory water, hair, particles, trails, beams, portals, mirrors, and geometry-displacing effects. Done 2026-09-08; `8b104bf7a` plus working changes; [family dispositions and diagnostic closure](../../progress/rendering/advanced-special-effects-and-upscaler-audit-2026-09-07.md#september-8-closure). Water/capture families retain their explicit lanes and V rows; particles/landscape expose unsupported reasons in their inspectors and MCP. Dedicated hair/trail/beam renderers are absent; ordinary imported mesh effects follow material admission. No runtime feature support is inferred from this audit.
 - [ ] **ARP-V25** — Validate sentinel sky/background output and compatible custom background geometry. Close with correct clear/alpha/HDR/capture behavior and no shading of invalid identity pixels. OpenGL mono/OVR and reversed-mono preservation now pass on Build88/PID50596, including HDR/custom mesh and explicit rejection checks; Vulkan mono and cube sky preservation also pass on Build126/Start100; compatible Vulkan custom geometry and the remaining owned profiles still require proof. [Background evidence](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-08-authored-background-admission-and-depth-preservation).
-- [x] **ARP-V26** — Validate sorted alpha and participating rigid transparent motion. Done 2026-09-08; `8b104bf7a` plus working changes; Build 82/PID58000, native OpenGL OVR. Both depth orders match the expected alpha-blend equation within 0.00006104 over 63,931 overlap pixels per eye. Combined camera/object motion produces nonzero velocity on all 128,694/124,365 transparent pixels and all 653,975/652,326 uncovered opaque pixels, with zero motion outside geometry. Reactive coverage remains in the same canonical mask consumed by TSR. This covers the admitted rigid colored-alpha lane with a common two-eye ordering; other effect/deformation families and rejected per-view ordering profiles retain their own admission/validation boundaries. [September 8 checkpoint](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-08-native-cut-and-sorted-alpha-acceptance).
+
 - [ ] **ARP-V27** — Validate refraction/feedback scene-color snapshots. Close with a copy only for visible consumers and no illegal sampling of the attachment being written.
+
 - [ ] **ARP-V28** — Validate weighted blended OIT capacity and overflow behavior. Close with visible parity, truthful diagnostics, and no same-frame readback recovery.
-- [ ] **ARP-V29** — Validate PPLL after `ARP-A02` resolves admission. Close with bounded capacity/recovery evidence and shared lighting/shadow/probe/fog access preserved.
-- [ ] **ARP-V39** — Validate depth peeling after `ARP-A02` resolves admission. Close with correct layer composition, bounded work, and shared lighting/shadow/probe/fog access preserved.
-- [x] **ARP-I53** — Connect existing Advanced post-stage uniform binding methods to the actual atmosphere, volumetric fog, temporal accumulation, TSR and weighted-transparent resolve quads. Done 2026-09-07; `8b104bf7a` plus working changes, Build 50 zero warnings/errors; [scene-filter validation](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-07-stereo-scene-filters-and-executable-post-bindings). Runtime V28/V30/V31/V33 remain open.
-- [x] **ARP-V30** — Validate atmospheric aerial perspective and volumetric fog against visibility depth/native HDR. Done 2026-09-08; `8b104bf7a` plus working changes; Build 84/PID47908, native OpenGL mono. Both affect post output while native HDR remains exactly unchanged. Fog transmittance spans 0.1918–0.8267; history/temporal images match exactly, accumulation differs from current scatter, and a 2.2m cut makes them exactly equal. Atmospheric history likewise matches its copy, differs from current scatter during smooth camera movement, and resets exactly on a cut. Images from two camera positions were viewed. Sky rendering remains V25/I67; stereo is excluded by current effect admission, and Vulkan is not certified by this cohort. [Scene-filter checkpoint](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-08-capture-liveness-and-mono-scene-filters).
-- [x] **ARP-I55** — Make OpenGL temporal history copies cover all multiview layers without invalid framebuffer blits. Done 2026-09-07; `8b104bf7a` plus working changes, Build 55 zero warnings/errors; [layer-copy checkpoint](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-07-layered-temporal-copies-picking-and-editor-gizmos). Per-layer framebuffer copies validate attachment/routing state and publish history only after success. Build 55 PID16264: both eye history color/depth match their same-callback sources exactly; zero OpenGL errors through the approximately four-minute cohort and shutdown. Broader TAA/TSR acceptance remains V31/V33.
-- [x] **ARP-V31** — Validate temporal accumulation. Done 2026-09-07; `8b104bf7a` plus working changes, Build 67, OpenGL emulated OVR stereo. [Temporal/editor acceptance](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-07-material-includes-and-mono-stereo-gizmo-acceptance): same-callback HDR/history and depth/history hashes match in both eyes; stationary velocity is zero. Settled history weights are approximately 0.905–0.960, reset captures are exactly zero, and both eye generations reseed and recover. Native moving-velocity evidence is retained under V40. This closes the exercised OpenGL TAA profile; the broader motion/reset matrix and other backends remain in their own rows.
-- [x] **ARP-V40** — Validate motion blur with Advanced velocity/depth inputs under camera/object motion. Done 2026-09-07; `8b104bf7a` plus working changes, Build 51, OpenGL emulated OVR stereo; [grouped motion captures](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-07-grouped-motion-captures-and-temporal-copy-failure). Same-frame input/output comparisons show finite filtering in both eyes only where velocity is nonzero; zero shutter restores input exactly. Enabled/disabled camera and object output captured in the six-minute cohort.
-- [x] **ARP-I52** — Fix Advanced scene-filter copies, layer counts, sampler ABI and executable DoF/motion-blur settings bindings. Done 2026-09-07; `8b104bf7a` plus working changes, Build 50 zero warnings/errors, eight GL/Vulkan shader checks passed; [scene-filter validation](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-07-stereo-scene-filters-and-executable-post-bindings). Clean two-eye DoF output verified; motion-blur acceptance remains V40.
-- [x] **ARP-V41** — Validate DoF against Advanced depth/HDR. Done 2026-09-07; `8b104bf7a` plus working changes, Builds 49/50, OpenGL emulated OVR stereo; [scene-filter validation](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-07-stereo-scene-filters-and-executable-post-bindings). Two-eye focal-plane versus defocused captures are finite, show reduced checker edge contrast, and disabling restores HDR exactly. Final wrappers reproduce the blurred output exactly in the eight-minute Build 50 cohort.
-- [x] **ARP-V32** — Validate bloom threshold, spread and mip outputs. Done 2026-09-07; `8b104bf7a` + working changes; [textured stereo acceptance](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-07-textured-stereo-and-post-process-acceptance). OpenGL stereo mip 1/4 are exact zero at threshold 5 and finite/nonzero at 0.1. Combine brightens 818,824/818,431 pixels with no darkened samples; 17,910/17,584 are background spill. Native HDR is unchanged and final alpha remains 1.
-- [x] **ARP-V42** — Validate selected tone mapping. Done 2026-09-07; `8b104bf7a` + working changes; [textured stereo acceptance](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-07-textured-stereo-and-post-process-acceptance). OpenGL two-eye Linear/Reinhard/ACES raw EXR comparison at exposure 10: 786,336/786,274 interior pixels; maximum errors 0.003907/0.002449 match dither and half precision. Linear preserves values above 1. Other operators/backends are not certified.
-- [x] **ARP-V43** — Validate authored color grading. Done 2026-09-07; `8b104bf7a` + working changes; [textured stereo acceptance](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-07-textured-stereo-and-post-process-acceptance). OpenGL stereo tint (1,0.5,0.25) changes 800,962/800,901 pixels after ACES; maximum scaling error 0.001587. Neutral restoration reproduces both raw baseline images exactly.
+
+- [ ] **ARP-V29** — Validate PPLL against the completed `ARP-A02` admission inventory. Close with bounded capacity/recovery evidence and shared lighting/shadow/probe/fog access preserved.
+
+- [ ] **ARP-V39** — Validate depth peeling against the completed `ARP-A02` admission inventory. Close with correct layer composition, bounded work, and shared lighting/shadow/probe/fog access preserved.
+
 - [ ] **ARP-V44** — Validate final composition. Close with current native/post output and UI/alpha correctly composed for the selected output format.
-- [x] **ARP-V33** — Validate TSR resource bindings, motion/reactive inputs, render scale and reset behavior. Done 2026-09-08; `8b104bf7a` plus working changes; native OpenGL OVR, Builds 77/80. Both-eye reactive debug matches coverage exactly; velocity debug agrees within half-precision tolerance. Accepted scale 0.5/0.75/1 extents and paired generations converge; output remains 1920×1080. Start 60 captures exact-zero history weight on a 2.2m camera cut, followed by recovered weights up to 0.95996094 and finite viewed output. This is bounded OpenGL TSR acceptance; full reset causes stay in V18/V19, and the exposed native opaque cut-velocity defect is I63. [September 8 checkpoint](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-08-transparent-motion-and-render-thread-ownership).
-- [x] **ARP-I59** — Populate and record TSR history coverage in the Advanced command chain. Done 2026-09-07, `8b104bf7a` plus working changes. Build 69 combines copy and coverage in one temporal command, shared with Default. Build 70, PID51484, OpenGL OVR: scales 0.5/1.0/0.75 publish 960×540/1920×1080/1440×810 inputs, fixed 1920×1080 output, generations 2/3/4 and ready/reseeded histories in both eyes. Same-callback TSR output/history hashes match; three-minute logs and shutdown have no API/link/command/history-invalidated errors. [Temporal producer checkpoint](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-07-tsr-history-and-transparent-temporal-producers). V33 retains complete end-to-end acceptance.
-- [x] **ARP-I60** — Bind the published Advanced reactive mask into TAA and TSR, with declared resource dependencies and matching mono/stereo debug views. Done 2026-09-07, `8b104bf7a` plus working changes, Build 73/PID38872, OpenGL OVR. Sixteen GL/Vulkan temporal shader checks pass. Both resolves reproduce mask=1 exactly on all 71,536–72,423 marked pixels per eye; alpha zero restores an exact-zero canonical mask, and the stationary opaque control is zero. OpenGL late replay now selects the declared temporal material; reactive writes combine with MAX. [Temporal producer checkpoint](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-07-tsr-history-and-transparent-temporal-producers). V26 retains motion/order acceptance.
-- [x] **ARP-I61** — Correct and validate the built-in colored-alpha temporal producer. Done 2026-09-08; `8b104bf7a` plus working changes; Build 80 zero warnings/errors. Forward ABI, color parsing, per-eye bindings, GL variant selection, missing velocity framebuffer and attachment usage are fixed. Warmed rigid motion covers all 65,848/64,507 marked pixels in the two OVR eyes; TSR reads it within half-precision tolerance. Billboard/source-shader/parameter rejection and rigid restoration are observed. Start 60's moving-object cut has exact-zero velocity on all 15,892/16,316 transparent pixels, then nonzero motion on all 13,676/13,805 recovered pixels. Skin/morph/procedural deformation and NV stereo remain outside the accepted rigid OVR scope. [September 8 checkpoint](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-08-transparent-motion-and-render-thread-ownership).
-- [x] **ARP-I63** — Align native opaque view-history invalidation with camera-cut policy. Done 2026-09-08; `8b104bf7a` plus working changes; Build 81 zero warnings/errors. Shared pose policy compares against accepted descriptor poses in desktop/GL stereo and OpenXR history; rejected candidates do not advance it. Start 61/PID48200 has exact-zero whole-image velocity and TSR history weight after separate 2.2m translation and 60° yaw cuts in both OVR eyes, then nonzero moving-object velocity and recovered history. OpenXR/mono runtime and other reset causes remain separately unverified. [Acceptance checkpoint](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-08-native-cut-and-sorted-alpha-acceptance).
-- [x] **ARP-I64** — Sort Advanced alpha-blended draws back to front. Done 2026-09-08; `8b104bf7a` plus working changes; Build 82 zero warnings/errors. The transparent material bucket now uses the existing distance-snapshot far-to-near sorter. Start 62/PID58000 validates both red-near and green-near depth orders in both OVR eyes; maximum HDR blend error is 0.00006104 versus 0.02002 for reversed ordering. [Acceptance checkpoint](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-08-native-cut-and-sorted-alpha-acceptance).
-- [x] **ARP-I65** — Reject GL texture capture before mip queries when the API wrapper has no live texture storage. Done 2026-09-08; `8b104bf7a` plus working changes; Build 83 zero warnings/errors. Start 63/PID62164 completes eight live HDR/history captures across four TSR/FXAA transitions and explicitly rejects four unallocated atmosphere-texture captures. Copied GL/rendering logs including shutdown contain no API/link/caught-command errors. [Capture checkpoint](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-08-capture-liveness-and-mono-scene-filters).
-- [x] **ARP-I66** — Preserve explicit numeric structures in MCP component settings and read-back. Done 2026-09-08; `8b104bf7a` plus working changes; Build 84 zero warnings/errors. Dedicated numeric converters replace silent zero construction/property-only output. Start 64 reads fog half-extents back as exactly (5,3,5); missing Z is rejected and leaves those values unchanged. The correctly sized volume then renders finite nonzero fog. Input/output converters cover Vector2/3/4, Quaternion and Matrix4x4; this live fixture directly exercises Vector3. [Scene-filter checkpoint](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-08-capture-liveness-and-mono-scene-filters).
-- [x] **ARP-I67** — Execute compatible authored sky/background draws after native opaque shading and before transparency/post. Done 2026-09-08; `8b104bf7a` plus working changes; Build88 zero warnings/errors. The explicit far-depth lane validates each submesh/material/state, preserves native HDR alpha and depth, rejects conflicting overrides and unsupported profiles, and follows the final compute/framebuffer barrier. Separate GL vertex programs receive matching depth/clip policy. Mono/OVR and reversed-mono runtime preservation pass; V25 retains Vulkan/output acceptance. [Background checkpoint](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-08-authored-background-admission-and-depth-preservation).
-- [x] **ARP-I68** — Expose particle and landscape Advanced unsupported-profile reasons in their actual inspectors and MCP, and reject their callback draws before they bypass native/late admission. Done 2026-09-08; `8b104bf7a` plus working changes; Build90 zero warnings/errors. Both ImGui inspectors display the profile boundary, callback guards cover every Advanced stage-family host, and default particle materials carry explicit unsupported metadata. Live MCP read-back from inactive components confirms both reasons; no GPU-effect rendering is claimed. [A03 closure](../../progress/rendering/advanced-special-effects-and-upscaler-audit-2026-09-07.md#september-8-closure).
-- [x] **ARP-I69** — Fix Vulkan multi-output Advanced input-family provisioning/lowering. Done 2026-09-08; `8b104bf7a` plus working changes; Build92 zero warnings/errors. `FramePlan` now assigns its supplied static operation stream in the constructor, so activation provisions the same stream that lowering uses. Build91 diagnostics identified all eight MainScene banks as unprovisioned; Build92/PID43424 runs beyond 1,000 frames and completes an Advanced probe writer with two active banks, without the capacity exception. This fixes admission, not black probe output or bounded-memory acceptance. [Evidence](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-08-vulkan-capture-provisioning-and-readback).
-- [x] **ARP-I70** — Correct Vulkan depth/stencil readback aspect layout. Done 2026-09-08; `8b104bf7a` plus working changes; Build93 and Build95 zero warnings/errors. D32+stencil depth copies now decode four-byte floats and stencil copies decode one byte. PID47784 full-image depth exports are finite and unchanged by sky; PID31572 raw depth is `00-00-80-3F` / 1.0 with pixelSize4 and the cleared stencil reads 0. This fixes diagnostic decoding; it does not close V56's reconstruction/reset matrix. [Evidence](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-08-vulkan-capture-provisioning-and-readback).
-- [x] **ARP-I71** — Assemble GPU-produced Vulkan probe texture-array layers from their actual GPU images, preserving every authored prefilter mip, source/destination lifetime and copy ordering. Done 2026-09-08; `8b104bf7a` plus working changes; Build97 zero warnings/errors. PID57872 exports all seven irradiance and eight prefilter source/array mip pairs with identical float hashes. External images resolve their producer-owned wrappers; staged publication retains source generations through completed GPU copies and retires owned arrays after unbinding. Higher source mips were themselves black, now tracked separately by I72/I73. Bounded refresh/mip/memory acceptance subsequently passes under V48; that cohort does not exercise every failure/retry boundary. [Evidence](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-08-probe-gpu-array-ownership-and-mip-production).
-- [x] **ARP-I72** — Use attached mip extents when snapshotting Vulkan mesh viewport/scissor state. Done 2026-09-08; `8b104bf7a` plus working changes; Build99 zero warnings/errors. `CaptureIndirectProducerSnapshot` now uses `ResolveFrameBufferDrawExtent`; base-height Y conversion previously placed higher-mip fullscreen draws outside their attachments. The view-uniform fallback also consumes the captured extent. Live nonzero higher-mip evidence subsequently passes under V48. [Evidence](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-08-probe-gpu-array-ownership-and-mip-production).
-- [x] **ARP-I73** — Allocate the explicit captured-environment cubemap mip chain before face rendering. Done 2026-09-08; `8b104bf7a` plus working changes; Build100 zero warnings/errors. Both scene capture and the light-probe override declare the full range; `VkTextureCube` honors declared/generated ranges instead of only CPU mip records. Generation occurs after six completed face writers. Start75 face0 mip6 is finite and nonzero (maximum 0.11566162), confirming allocated storage and generated contents. [Evidence](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-08-probe-gpu-array-ownership-and-mip-production).
-- [x] **ARP-I74** — Record Advanced offscreen exports in their declared transfer pass after all source writers. Done 2026-09-08; `8b104bf7a` plus working changes; Build101 zero warnings/errors. `VPRC_ExportAdvancedOffscreenOutput` pushes its described pass index and rejects missing metadata. Start76 records native passes100002–100008, background100009, then export100033; Start78 source HDR and the exported final cubemap face have identical hashes. Thumbnail and data-only profile acceptance remain V49/V50. [Evidence](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-08-probe-gpu-array-ownership-and-mip-production).
-- [x] **ARP-I75** — Distinguish frozen view/frame/pass globals when caching a Vulkan canonical scene publication. Done 2026-09-08; `8b104bf7a` plus working changes; Build105 zero warnings/errors. The cache now compares exact copied views, frame, passes, coverage and diagnostic count; differing globals receive separate immutable native states. Start79 versions40/41 show per-face opaque coverage of711/323/0/3584/0/1504 pixels, replacing the erroneous200 in every face. Every face preserves opaque RGB and alpha exactly when sky toggles; final-face depth/velocity/reactive also match exactly. The side-face image was viewed. V48 subsequently closes bounded allocation/refresh acceptance. [Evidence](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-08-probe-gpu-array-ownership-and-mip-production).
-- [x] **ARP-I76** — Resolve native allocation growth during repeated probe refreshes. Done 2026-09-08; `8b104bf7a` plus working changes; Build108 zero warnings/errors. Activation now precedes `VkDataBuffer` upload, allowing normal deferred destruction. Start82/PID13684 completes20 refreshes (versions57–77, frames1127–2504): the final ten-refresh checkpoints return to1,560 allocations /2,275,043,248 bytes; transient peaks retire. Only one buffer per probe-data role remains, versus seven leaked buffers /525,568 bytes per refresh before the fix. Images remain211 /734,941,184 bytes; banks remain2 active/0 retiring/6 free with zero activation failures. [Evidence](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-08-probe-gpu-array-ownership-and-mip-production).
-- [x] **ARP-I77** — Complete standalone thumbnail/portal capture ownership and submission. Done 2026-09-08; `8b104bf7a` plus working changes; Build123 zero warnings/errors. Start92 validates eight outputs per profile with exact HDR/export hashes; Start94/PID57764 retains a real lease across deactivation and20 rapid reactivation/resize cycles, then completes a fresh320x256 output after release. Destroyed portal ownership likewise retains its leased texture until release, returning banks to2 active/0 retiring/6 free. Retirement, cancellation, creation, allocated extents and completion publication now use synchronized ownership; the final Sol review's stale-cancellation finding is corrected in Build123. [Investigation](../../investigations/rendering/vulkan-phase67-implementation.md#standalone-capture-scheduling-follow-up).
-- [x] **ARP-I78** — Complete OpenGL probe writer settlement and convolution retry. Done 2026-09-08; `8b104bf7a` plus working changes; Builds123/125/126 zero warnings/errors. Normal polling runs at current-renderer pre-render; required-pass preparation has precise retry diagnostics. Start98/PID3224 publishes20 GL refreshes and all15 source/array mip pairs match (V68). Vulkan regression Start100/PID51648 publishes20 refreshes, versions2–22/frames515–2079, with all15 mip pairs finite/nonzero/hash-identical; allocations plateau at761/2,933,732,336 bytes and banks stay2 active/0 retiring/6 free. No VUID/SYNC-HAZARD/validation-error/recovery-pending/exact-output-rejection matches through subsequent six-face background captures. [Investigation](../../investigations/rendering/vulkan-phase67-implementation.md#standalone-capture-scheduling-follow-up).
-- [x] **ARP-I79** — Distinguish retained physical texture tombstones from live references during OpenGL bindless lowering. Done 2026-09-08; `8b104bf7a` plus working changes; Build125 zero warnings/errors. Only an occupied, valid physical handle with the exact invalid logical lookup is skipped; inconsistent live rows and stale material references fail explicitly. Start98/PID3224 completes20 refreshes instead of rejecting every Advanced capture stage at row0. Per-publication residency remains fenced; shutdown disposal follows `glFinish`. [Investigation](../../investigations/rendering/vulkan-phase67-implementation.md#standalone-capture-scheduling-follow-up).
-- [x] **ARP-I80** — Support OpenGL cube-face and mip readback for capture validation. Done 2026-09-08; `8b104bf7a` plus working changes; Build126 zero warnings/errors. Cube textures/arrays/views use subimage z slices; a cube has six faces. Start99/PID36780 captures all six64x64 faces and all six1x1 mip6 faces with finite/nonzero RGB, and rejects face6 explicitly. Clear/sky comparison preserves opaque RGB/alpha exactly in every face and final-face depth/velocity/reactive unchanged. Side-face PNG inspected. Cube arrays/views are implemented but are not separate live validation claims. [Investigation](../../investigations/rendering/vulkan-phase67-implementation.md#standalone-capture-scheduling-follow-up).
-- [x] **ARP-I62** — Dispatch viewport/output rebinding and pipeline resource transitions by render-thread ownership, not context-local renderer activity. Done 2026-09-08; `8b104bf7a` plus working changes; Build 80 zero warnings/errors. Build 74's HTTP-thread `GL.ClientWaitSync` access violation is resolved. Six Caller-thread settings refreshes, AA/scale transitions, continued rendering and owned-session shutdown complete without GL API/link/command errors in Builds 77/80. Settings and material mutation tools also declare main-thread affinity. This bounded result does not close the delayed-submission/shutdown matrices. [September 8 checkpoint](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-08-transparent-motion-and-render-thread-ownership).
-- [x] **ARP-A04** — Enumerate admitted vendor-upscaler/backend/device profiles and create one validation ID per supported combination. Done 2026-09-07; `8b104bf7a` plus working changes; [profile inventory](../../progress/rendering/advanced-special-effects-and-upscaler-audit-2026-09-07.md). Native Vulkan and the OpenGL/Vulkan bridge have separate V61–V67 children. Device/runtime gates and explicit exclusions are recorded; no device is certified by this audit.
+
+#### Vendor upscalers and frame generation
+
+`ARP-A04` inventories the admitted combinations. Native Vulkan dispatch and the
+OpenGL-to-Vulkan bridge require separate results.
+
 - [ ] **ARP-V61** — Validate native Vulkan DLSS super-resolution on a device admitted by the installed Streamline runtime. Record SDK/driver/device, color/depth/motion inputs, render/output extents, reset behavior, output captures and explicit dispatch failures.
+
 - [ ] **ARP-V62** — Validate native Vulkan DLAA on a device admitted by Streamline. Record native-resolution extents, motion/depth inputs, history resets and enabled/disabled output captures.
+
 - [ ] **ARP-V63** — Validate native Vulkan XeSS super-resolution on a device admitted by the installed XeSS Vulkan runtime. Record required extensions/features, SDK/driver/device, input/output extents, resets and captures.
+
 - [ ] **ARP-V64** — Validate native Vulkan DLSS frame generation on a device/runtime that admits the feature. Record actual generated-frame dispatch and presentation, swapchain/resource ownership, pacing and failure diagnostics; super-resolution evidence is insufficient.
+
 - [ ] **ARP-V65** — Validate OpenGL-to-Vulkan bridge DLSS super-resolution. Record the same physical GPU identity on both APIs, external-memory/semaphore ownership, SDK admission, extents/resets and output captures.
+
 - [ ] **ARP-V66** — Validate OpenGL-to-Vulkan bridge DLAA. Record same-GPU interop, native-resolution evaluation, semaphore/resource lifetime, resets and output captures.
+
 - [ ] **ARP-V67** — Validate OpenGL-to-Vulkan bridge XeSS super-resolution. Record same-GPU interop, runtime-required features, ownership, extents/resets and output captures. This does not validate XeSS frame generation.
 
-### Stereo, offscreen, editor, and diagnostics
+<a id="stereo-offscreen-editor-and-diagnostics"></a>
 
-Entry points: `AdvancedRenderPipeline.StereoAndViews`, `ViewSetPlan`,
-the OpenXR timing/foveation contracts, picking, and diagnostics contracts.
+#### Stereo, mirrors, editor and diagnostics
 
-- [x] **ARP-I21** — Implement immutable per-view/layer addressing across visibility, classification, shading, depth, velocity, and histories. Done 2026-09-07; native per-view dispatch/target closures, counter addressing, 928-byte foveation ABI, true Vulkan multiview variants, and source review of per-eye history/occlusion are complete. Runtime layered acceptance remains ARP-V34.
+Portal, thumbnail, single-probe and data-only capture cohorts are recorded as
+complete below. Their bounded results do not establish arbitrary XR/multi-owner
+pressure or mirror output acceptance.
+
 - [ ] **ARP-V34** — Validate the admitted Vulkan layered/multiview path at multiple extents and view counts. Close with separate eye images/history and bounded per-eye classification/froxel resources; array shader compilation alone cannot close this.
-- [x] **ARP-I22** — Integrate Advanced-compatible work into RVC-owned OpenXR eyes. Done 2026-09-07; the admitted RVC two-pass family retains its outer instance/reservation and uses the exact per-eye temporal policy with full eye-local resource/command family. Separate-eye execution, pose/late-latch and deadline proof remain ARP-V35.
-- [x] **ARP-I26** — Integrate the supported OpenGL SPS path. Done 2026-09-07; `8b104bf7a` + working changes; [OpenGL implementation checkpoint](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-07-opengl-implementation-checkpoint). Explicit bindless/indirect-count/storage-limit/OVR multiview admission; fenced publication and texture/sampler residency; one GPU union stream with per-eye masks; layered raster and per-eye compute; independent native-authoring histories with cut/gap/extent/output reset. Build 32: zero warnings/errors. Emulated GPU-indirect captures contain distinct finite eye images and accepted temporal history. ARP-V45/V52/V54 and headset, failure/reset, post-processing and clean-validation acceptance remain open.
-- [x] **ARP-I27** — Implement the conservative foveated derivative/LOD policy for admitted Advanced XR profiles. Done 2026-09-07; the 928-byte immutable per-view ABI and GPU visibility/shading consumption are implemented. ARP-V46 remains the runtime proof.
+
 - [ ] **ARP-V35** — Validate the admitted RVC two-pass profile. Close with separate eye motion/occlusion evidence and preserved OpenXR timing ownership.
-- [x] **ARP-V45** — Validate the admitted OpenGL SPS profile. Done 2026-09-07; `8b104bf7a` + working changes; [clean final stereo cohort](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-07-validation-resumption-opengl-final-stereo-output). RTX 3090, 1920x1080 per eye, GPU-indirect emulated SPS, approximately two minutes. Six captures are finite with alpha 1; frame 21608 has separate layer/history keys and matching generations. Clean 288-line OpenGL log. Hardware, complex materials, resets and other backends retain their own open rows.
-- [x] **ARP-I49** — Fix OpenGL stereo output storage/view formats and invalid copy/bindless-sampler operations. Done 2026-09-07; `8b104bf7a` + working changes; [clean final stereo cohort](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-07-validation-resumption-opengl-final-stereo-output). Build 42 has zero warnings/errors; PID33532 has zero OpenGL errors and two inspected finite final eye layers.
-- [x] **ARP-I50** — Fix fullscreen stereo vertex/FBO agreement on OpenGL, including bloom and FXAA. Done 2026-09-07; `8b104bf7a` + working changes; [clean final stereo cohort](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-07-validation-resumption-opengl-final-stereo-output). Explicit Advanced OVR selection works in emulation and preserves legacy selection. Both final and FXAA layers render with parallax; camera motion updates both.
+
 - [ ] **ARP-V46** — Validate foveated derivatives/LOD. Close with peripheral material/coverage captures and per-eye occlusion preserved under head motion.
-- [x] **ARP-I23** — Implement capability-based offscreen intent/export/completion contracts and owner registration. Done 2026-09-07; profile declarations distinguish mirrors, portals, probes, thumbnails and depth/visibility output; ownerless mirror/portal requests fail explicitly. Standalone owner completion/lease-gated retirement is validated under I77/I82. The mirror's incomplete Advanced scheduling, display and lifetime integration is reopened as I81; the existence of its legacy post-render callback is not Advanced consumer proof. Validate each output under its own V row.
-- [x] **ARP-I47** — Implement the independent-bank portion extracted from ARP-I45. Done 2026-09-06; `8b104bf7a` + working changes; [final wrap-up checkpoint](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-06-final-wrap-up-checkpoint). Eight logical reservations have separate persistent occlusion, frame-slot descriptors, immutable inputs and stable bins. Both preparation loops filter exact reservations; state/recording policy validates the full family. Shared arena transactions use one lock order, and new CPU workspaces are provisioned at output activation before reservation publication. Final editor build: zero warnings/errors. Desktop plus bounded probe/portal/thumbnail output now has live evidence under V48/V47/V49. OpenXR two-pass ownership remains V35.
-- [x] **ARP-I45** — Finish independent output ownership after the source work split into ARP-I47: retire/recycle a bank only after all plan leases and GPU uses complete, use generation-safe identities on reassignment, and expose bounded capacity/allocation-failure diagnostics. Done 2026-09-07; Active/Retiring/Free states, incarnations, sealed-plan/recorded-command leases, submission-completion watermarks, reassignment reset, and diagnostics are implemented. The bounded single-probe memory cohort passes under V48; standalone retained-reader churn passes under I77. These results do not certify arbitrary XR/multi-owner pressure.
-- [x] **ARP-I46** — Honor accepted view-history validity in depth-pyramid planning. Done 2026-09-06; `8b104bf7a` + working changes; `AdvancedPreparationExtractor.AddVisibilityPlansCore` now requires `view.HasValidTemporalHistory` as well as a previous local generation. Progressive capture faces with unavailable history cannot reuse another face's depth/occlusion history. Combined editor build `build-multi-output-banks-4.log`: zero warnings/errors. The bounded Vulkan probe fixture subsequently passes ARP-V48.
+
 - [ ] **ARP-V36** — Validate the admitted mirror profile. Close with correct reflected output, resource lifetime, and no unrequested main-view post work.
-- [x] **ARP-I87** — Clear retired material payload bindings before native source validation. Done 2026-09-08; working tree on `8b104bf7a`; [publication checkpoint](../../investigations/rendering/vulkan-phase67-implementation.md#canonical-capture-publication-ownership). Full erased rows/tails are marked dirty while sealed snapshots retain their copied payloads. OpenGL Start114/Build139 and Vulkan Start116/Build140 both remove the textured consumer, drain its readers, resize and complete the next capture without stale binding15 rejection.
-- [x] **ARP-I88** — Resolve native reconstruction rejection on the live textured capture consumer. Done 2026-09-08; working tree on `8b104bf7a`; [publication checkpoint](../../investigations/rendering/vulkan-phase67-implementation.md#canonical-capture-publication-ownership). Cross-product tangent orthogonalization with finite/relative-degeneracy guards replaces the unstable subtraction; matching C# reference and handedness are preserved. Grouped 1920×1080 diagnostic captures have zero invalid pixels on OpenGL Start114 and Vulkan Start116, versus 4,742 before. The unchanged existing tangent test passes in an isolated runner; the normal test project still has unrelated stale API references. This does not close the full reconstruction matrix V56–V60.
-- [x] **ARP-I86** — Retain mutable standalone capture generations through canonical scene publications for mirror consumers. Done 2026-09-08; working tree on `8b104bf7a`; [publication checkpoint](../../investigations/rendering/vulkan-phase67-implementation.md#canonical-capture-publication-ownership). Per-allocation atomic lifetime, exact-generation admission, publish/withdraw and logical snapshot retirement now pass real native consumers on GL Start114/Build139 and Vulkan Start116/Build140: published version1 remains unwritable at256×256; withdrawal plus reader removal permits version2 at320×192; a second publication then drains and retires with zero references/packages and null viewport/profile/texture. This establishes the prerequisite, not mirror display completion.
-- [ ] **ARP-I91** — Correct oblique clipping for zero-to-one camera projections and make plane updates transactional. Default GL Start119 completes 12,147 mirror captures but exports black RGB. The existing GL-style `2/dot` and `c.Z+1` construction uses the wrong near-depth boundary. The Build144 inverse-projection/zero-to-one experiment passed mathematical review but Start120 failed before authoring: clipping was applied before the reflected camera was configured, leaving invalid plane state after an exception. That experiment was removed at wrap-up. Implement the corrected column construction together with camera-before-plane ordering, finite/nondegenerate and scale-robust plane validation, and candidate-before-commit setters. Validate reflected geometry, retained/clipped halfspaces, off-center/orthographic lenses and both depth modes/ranges before V36.
-- [x] **ARP-I92** — Correct the existing mirror writer and serial resource-retirement plumbing. Done 2026-09-08; working tree on `8b104bf7a`; Builds141–143, zero warnings/errors; [wrap-up evidence](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-08-validation-wrap-up). Poll writers on the render thread, release their render/picking packages, bound consumer fences to16, serialize retirement request/queue transitions, track the actually registered intent, replace and retire viewport/FBO/color/depth resources, and use the RequiredDependency writer contract. Advanced targets use RGBA16F and omit unrequested post work. Default GL Start119 proves serial256×256→320×192 replacement and deactivation with zero writer/package/readers, null viewport/texture and no quarantine. Pending collected readers remain I93; unwritten output remains I94; Advanced integration and reflected image acceptance remain I81/I91/V36.
-- [ ] **ARP-I93** — Retain mirror output for collected-but-unsubmitted display commands. The legacy PostRender fence only accounts for readers after execution; resource replacement/retirement must also cover commands already collected or accepted but not yet fenced. Add a bounded reservation or establish and enforce the scheduler/native-resource ownership contract; release on rejection/reset as well as completion. Validate delayed submission, resize, deactivation and rapid reactivation without early destruction or orphaned reservations.
-- [ ] **ARP-I94** — Prevent display of an unwritten mirror target. Start118 exposed uninitialized source pixels before any successful writer completion. Gate the display on a completed generation while keeping capture scheduling active, and reset that gate on replacement or failed initialization. Validate cold activation, replacement and clean writer rejection without sampling undefined contents.
-- [ ] **ARP-I81** — Integrate the actual Advanced mirror owner and native display path. Reuse the standalone owner/camera hook with bounded persistent capture slots; keep the published texture immutable while writing another eligible slot, then publish the matching reflected projection and content generation together. Implement native opaque projective material/shader sampling and resolve pending-plan publication retention before admission. Make camera/eye resource capacity explicit; two total slots are not continuous double buffering for two independent cameras. Preserve reflection/clipping, defer under reader pressure, retire after all writer/readers, and avoid unrequested main-view post work. The legacy PreRender/PostRender callbacks and completed I86/I92 prerequisites do not implement this path. Close its actual output/lifetime proof separately under V36.
-- [x] **ARP-V47** — Validate the admitted portal profile. Done 2026-09-08; `8b104bf7a` plus working changes, Build119/Start92/PID47800. Eight completed outputs include independent camera change and256x256→320x192 resize; every inspected export exactly matches its HDR producer and is finite/nonzero. Updating the thumbnail leaves the portal's original hash intact; matching portal poses reproduce matching pixels. Temporal history is disabled by this admitted profile. Retained-reader retirement and rapid deactivate/reactivate/resize behavior subsequently pass I77. [Evidence](../../investigations/rendering/vulkan-phase67-implementation.md#standalone-capture-scheduling-follow-up).
-- [x] **ARP-V48** — Validate the admitted Vulkan probe profile. Done 2026-09-08; `8b104bf7a` plus working changes; Builds105/108, Starts79/82. All six faces have distinct geometry coverage and preserve opaque RGB/alpha when background changes; final-face depth/velocity/reactive data also match. After20 completed Advanced refreshes, all7 irradiance and8 prefilter mips are finite, nonzero, and hash-identical to their array layers at version77. Native allocations plateau and output banks stay bounded (I76); Start82 Vulkan log has zero VUID/synchronization-validation matches before the separate thumbnail experiment. The irradiance image was inspected. This closes the single-probe Vulkan fixture; OpenGL array-copy regression is V68. [Evidence](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-08-probe-gpu-array-ownership-and-mip-production).
-- [x] **ARP-V68** — Validate the OpenGL probe-array copy after I71. Done 2026-09-08; `8b104bf7a` plus working changes; Build125/Start98/PID3224. Twenty completed refreshes advance versions4–24 over13.375 seconds/4,157 frames. All7 irradiance and8 prefilter source/array mip pairs are finite, nonzero and exactly hash-equal at version24; irradiance PNG inspected. Tracked VRAM plateaus at731,702,920 bytes at iterations10/15/20; buffer bytes stay1,385,285. Transient descriptor-generation mismatches defer stale packages safely; no refresh stalls. This is the single-probe OpenGL fixture; cube/background inspection is separately tracked by I80/V25. [Investigation](../../investigations/rendering/vulkan-phase67-implementation.md#standalone-capture-scheduling-follow-up).
-- [x] **ARP-V49** — Validate the admitted thumbnail profile. Done 2026-09-08; `8b104bf7a` plus working changes, Build119/Start92/PID47800. Eight completed outputs include camera change,256x256→320x192 resize and five subsequent refreshes. Every inspected export exactly matches HDR; nonfinite samples zero. The actual pipeline15 log contains seven native stages, authored background and offscreen blit, with no main temporal/post chain; all profile toggles are false. PNG inspected. Retained-reader retirement and rapid deactivate/reactivate/resize behavior subsequently pass I77. [Evidence](../../investigations/rendering/vulkan-phase67-implementation.md#standalone-capture-scheduling-follow-up).
-- [x] **ARP-V50** — Validate depth/visibility-only capture. Done 2026-09-08; `8b104bf7a` plus working changes; Build132, OpenGL Start107 and Vulkan Start108/PID58608. Each backend completes eight writers per owner across camera movement and 256x256→320x192 resize. Inventories contain only visibility/depth resources and their stages, with no shading/post/UI work. All 32 independently decoded source/export EXRs are finite and exactly reproduce their runtime readback hashes. Cross-backend identity is bit-equal in all four states; depth differs by at most 1.1921e-7. PNGs inspected; all owners retire with zero references/package generation and no pending writer/quarantine. Vulkan logs have zero VUID/synchronization/recovery/output-rejection matches. [Evidence](../../investigations/rendering/vulkan-phase67-implementation.md#standalone-data-capture-validation).
-- [x] **ARP-I82** — Add usable standalone owners for depth/visibility products. Done 2026-09-08; `8b104bf7a` plus working changes; Builds127–132 pass. `DepthCaptureComponent` and `VisibilityCaptureComponent` allocate exact D32F/S8 depth or RG32_UINT identity, request the matching write aspect, and use completion/lease-gated ownership. Vulkan Start102 and OpenGL Starts105–107 validate source/export hashes, movement, resize and retirement. Data-only resource/stage inventories exclude color shading and post work. Saved-file acceptance is separately covered by I85/V50. [Evidence](../../investigations/rendering/vulkan-phase67-implementation.md#standalone-data-capture-validation).
-- [x] **ARP-I84** — Resolve stale OpenGL visibility identity after camera movement. Done 2026-09-08; `8b104bf7a` plus working changes; Build131 zero warnings/errors. Mono-array aliases retain logical source identity and are replaced only after fenced slot reacquisition; a resource role already used within the family cannot be replaced. The cache is bounded to 16 roles per slot. Start106/PID54100 completes 32 writers across four owners, with moved/resized output matching native source and repeatable hashes; all owners retire. Sol review `08a3f31d708d4dda909dd80ef5549ae2` accepts the lifetime boundary. Color-write-mask ownership also remains explicit. [Evidence](../../investigations/rendering/vulkan-phase67-implementation.md#standalone-data-capture-validation).
-- [x] **ARP-I85** — Preserve full float precision in saved EXR diagnostics. Done 2026-09-08; `8b104bf7a` plus working changes; Build132 zero warnings/errors. `OpenExrWriter` emits uncompressed FLOAT32 RGBA scanlines without quantum scaling, half conversion or nonfinite substitution. Independent OpenCV decoding of 16 Start107 OpenGL depth/identity source/export files is finite and exactly matches each original readback hash, including the numeric background sentinel 4,294,967,296. Terra review `c4c332bb67df4b7c8ceaef506f4cc432` accepts the format implementation. Historical HALF visibility EXRs containing infinity are excluded from saved-file proof. [Evidence](../../investigations/rendering/vulkan-phase67-implementation.md#standalone-data-capture-validation).
-- [x] **ARP-I83** — Decode Vulkan RG32_UINT diagnostic readback. Done 2026-09-08; `8b104bf7a` plus working changes; Build128 zero warnings/errors. The eight-byte two-channel numeric decoder fixes Start101's failed inspection. Start102 captures native/exported identity with identical float hashes at initial, moved, resized and repeated states; eight writers complete and the owner retires. The identity image was inspected. Float images are diagnostic, not a lossless serialization of arbitrary 32-bit handles; raw integer picking stays authoritative. [Investigation](../../investigations/rendering/vulkan-phase67-implementation.md#standalone-data-capture-validation).
-- [x] **ARP-I24** — Connect asynchronous picking/selection to canonical transform/component/mesh-section/material/primitive/meshlet identity. Done 2026-09-06; `8b104bf7a` + working changes; [final wrap-up checkpoint](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-06-final-wrap-up-checkpoint). GL PBO/fence and Vulkan bounded staging/fence paths resolve retained canonical identities, reject stale generations, and use the recorded/accepted source publication. Frozen managed-owner sidecars feed Advanced editor hover/click and MCP `query_advanced_pick`. Final editor build: zero warnings/errors. Runtime selection/readback acceptance remains ARP-V37; OpenXR picking is explicitly unavailable pending an accepted XR source path.
-- [x] **ARP-I89** — Keep mono gizmo shader admission free of inactive stereo built-ins. Done 2026-09-08; working tree on `8b104bf7a`; [entry-point checkpoint](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-08-gizmo-entry-point-admission). Build140 has zero warnings/errors. Vulkan Start116 renders selected line/arrow gizmos without the prior NV semantic rejection; OpenGL Start117 mono and both OVR eyes compile and render the same expansion with finite output and no GL-invalid/compiler/link failures. Vulkan placement remains I90; broader editor acceptance remains V37.
-- [ ] **ARP-I90** — Resolve the Vulkan selected-primitive placement discrepancy. Start116 shows an extra gizmo image and a cube lower than its requested pose, while GL Start117 mono/OVR captures show one gizmo centered on the moved cube. Isolate stale transforms versus duplicate native/editor submission, and validate creation plus repeated transforms before closing V37 or rigid-motion coverage.
+
 - [ ] **ARP-V37** — Validate picking plus outlines, hover, gizmos, bounds, icons, physics debug, UI, and on-top overlays. Close with correct identity and visible editor behavior for each consumer.
-- [x] **ARP-I25** — Expose real profile capability/blocker state and capture-stable per-stage resources/counters through editor/MCP. Done 2026-09-07; executable profile state, output/generation attribution, bank diagnostics, and completion-gated Vulkan sidecar receipts are wired to real sources. ARP-V38 remains the capture/timing correlation proof.
-- [x] **ARP-I44** — Preserve linear HDR radiance and alpha in MCP EXR exports. Done 2026-09-06; `8b104bf7a` + working changes; [E1], “EXR export and AO/IBL contribution acceptance”. Correct Q16 quantum scaling and establish linear RGB before import. Editor build passes with zero warnings/errors; round-trip preserves 0.02/0.2/2 radiance within EXR half precision and alpha 1. Recaptured Vulkan files match raw extrema/mean and preserve AO differences plus emissive values above 1. Earlier broken EXR files are excluded from pixel evidence.
+
 - [ ] **ARP-V38** — Validate diagnostic views and per-family GPU timing attribution. Close with counters matching captures, stable RenderDoc labels, and a useful legacy difference view where supported.
-- [x] **ARP-I54** — Capture related live resources at one post-render boundary and support OpenGL 2D/array view depth/stencil readback. Done 2026-09-07; `8b104bf7a` plus working changes, Builds 51/52 zero warnings/errors; [grouped readback evidence](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-07-grouped-motion-captures-and-temporal-copy-failure). Same-frame HDR/copy/velocity captures and finite distinct two-eye depth views are verified; stencil is exactly zero in the fixture.
-- [x] **ARP-I56** — Reject unavailable OpenGL picking storage before dispatch, preserve pack-buffer state and check GPU transfer errors. Done 2026-09-07; `8b104bf7a` plus working changes, Build 56 zero warnings/errors; [picking checkpoint](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-07-layered-temporal-copies-picking-and-editor-gizmos). Existing native storage/context/extent checks precede transfer; failures are explicit and pack binding is preserved. Eight live requests returned the expected Ground/RedPanel/GreenPanel identities or background miss across both eyes; view 7 was rejected before transfer. The transient off-render-thread active-renderer guard was also corrected. This does not close V37; selecting objects subsequently exposed I57.
-- [x] **ARP-I57** — Select a complete compatible shader-stage combination for editor/late meshes targeting OpenGL OVR multiview. Done 2026-09-07; Build 67 and PID48308. [Temporal/editor acceptance](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-07-material-includes-and-mono-stereo-gizmo-acceptance): generated OVR admission, immutable segment triangles expanded in explicit mono/OVR/NV vertex shaders, include-aware material parameters and combined gizmo programs. Mono and both OVR eyes visibly render selected-object axes/arrows; final runtime logs have no shader-link, API or render-command errors. Ten shader compiler checks pass. NV and Vulkan shader compilation is not native runtime acceptance. V37 remains open for its other consumers.
-- [x] **ARP-I58** — Preserve the explicitly declared filtered direct submission of participating Advanced late motion/reactive passes under a global opaque GPU strategy override. Done 2026-09-07; Build 67 and PID48308, [temporal/editor acceptance](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-07-material-includes-and-mono-stereo-gizmo-acceptance). The filtered late pass uses its explicit direct strategy while the opaque path remains `GpuIndirectZeroReadback`; an actual incompatible late GPU-dispatch request still throws. Selected-object TAA reaches valid history in both eyes with clean runtime logs.
+
+## Completed work
+
+Each task appears once. Checked implementation/audit entries summarize the
+completed change and link to its detailed record. Checked validation entries
+retain their observed backend/profile limits. Historical build-by-build narratives
+and superseded checkbox snapshots remain in [the investigation][investigation].
+
+### Completed validation
+
+There are **21 runtime records and one shader-compiler record**. These are
+accepted cohorts, not certification of every material, output profile or backend.
+
+#### OpenXR runtime
+
+- [x] **XR-V01** — Repeat Monado strict SPS after the descriptor fixes. Done 2026-09-06; [clean SPS rerun](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-06-clean-monado-sps-rerun). PID8256 retained 360 frames: 351 strict SPS submissions, nine cold no-layer frames, zero validation/EndFrame failures, zero sequential fallback attempts, and zero final pending retirement. Default/RVC eyes; Advanced stereo and hardware acceptance remain open.
+
+#### Shader compilation only
+
+- [x] **ARP-V01** — Compile the September 4 shader cohort. Done 2026-09-04; [E1]: 26/26 Vulkan 1.3 mono/array variants, zero diagnostics. Recheck affected variants after shader changes; this is not stereo admission.
+
+#### Static surfaces, AO and GI
+
+- [x] **ARP-V12** — Demonstrate the narrow static opaque path with three meshes, two camera views, and material scalar/color changes. Done 2026-09-04; [E2].
+
+- [x] **ARP-V22** — Obtain and inspect `AdvancedShading.AmbientOcclusion` via working MCP readback or RenderDoc. Done 2026-09-06; [AO capture checkpoint](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-06-ao-capture-checkpoint). Two retained 1920×1080 mono images, separated by 4m32s and a camera change: finite occlusion, neutral white background/borders, contact occlusion follows the geometry. AO neutral output and the selected AO/GI combination are accepted under ARP-V23/V24.
+
+- [x] **ARP-V23** — Capture enabled versus disabled/null-provider AO. Done 2026-09-06; [AO neutral-output checkpoint](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-06-ao-neutral-output-checkpoint). Three retained 1920×1080 mono/layer-0 images over 2m49s: enabled R8 range 0–1 with visible scene occlusion; disabled and null-provider each exactly 1 for all 2,073,600 pixels, zero nonfinite samples. Layered profiles remain ARP-V34.
+
+- [x] **ARP-V24** — Validate AO plus the selected GI/IBL provider. Done 2026-09-06; [AO/IBL contribution evidence][ao-ibl]: Vulkan PID17396, 1920×1080, frozen completed LightProbesAndIbl generation. AO darkens 215,849 pixels with zero brightened samples; direct + nonzero emission produces identical raw hashes with AO on/off. Native shader applies diffuse AO and specular occlusion once at the indirect terms. This closes the selected built-in AO/IBL combination, not other GI providers or stereo.
+
+- [x] **ARP-V16** — Validate selected GI/probe/IBL contribution and switching. Done 2026-09-08; Build132, Vulkan Start108/PID58608 and OpenGL Start109/PID57480, six grouped HDR/depth captures per backend. Provider on/off changes opaque lighting; restoring the provider reproduces exact pixels. Changing the sky leaves opaque lighting identical until the probe refresh completes (Vulkan version2→3; OpenGL4→5). After refresh, disabling GI reproduces the original disabled opaque output exactly; depth/alpha stay identical and all samples are finite. Repeated enabling adds no extra contribution. Each backend uses its own generated probe cohort; this is switching/generation proof, not pixel parity between differently refreshed probes. [Evidence](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-08-gi-provider-switching-and-probe-updates).
+
+#### Transparency, temporal and post-processing
+
+- [x] **ARP-V26** — Validate sorted alpha and participating rigid transparent motion. Done 2026-09-08; Build 82/PID58000, native OpenGL OVR. Both depth orders match the expected alpha-blend equation within 0.00006104 over 63,931 overlap pixels per eye. Combined camera/object motion produces nonzero velocity on all 128,694/124,365 transparent pixels and all 653,975/652,326 uncovered opaque pixels, with zero motion outside geometry. Reactive coverage remains in the same canonical mask consumed by TSR. This covers the admitted rigid colored-alpha lane with a common two-eye ordering; other effect/deformation families and rejected per-view ordering profiles retain their own admission/validation boundaries. [September 8 checkpoint](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-08-native-cut-and-sorted-alpha-acceptance).
+
+- [x] **ARP-V30** — Validate atmospheric aerial perspective and volumetric fog against visibility depth/native HDR. Done 2026-09-08; Build 84/PID47908, native OpenGL mono. Both affect post output while native HDR remains exactly unchanged. Fog transmittance spans 0.1918–0.8267; history/temporal images match exactly, accumulation differs from current scatter, and a 2.2m cut makes them exactly equal. Atmospheric history likewise matches its copy, differs from current scatter during smooth camera movement, and resets exactly on a cut. Images from two camera positions were viewed. Sky rendering remains V25/I67; stereo is excluded by current effect admission, and Vulkan is not certified by this cohort. [Scene-filter checkpoint](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-08-capture-liveness-and-mono-scene-filters).
+
+- [x] **ARP-V31** — Validate temporal accumulation. Done 2026-09-07; Build 67, OpenGL emulated OVR stereo. [Temporal/editor acceptance](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-07-material-includes-and-mono-stereo-gizmo-acceptance): same-callback HDR/history and depth/history hashes match in both eyes; stationary velocity is zero. Settled history weights are approximately 0.905–0.960, reset captures are exactly zero, and both eye generations reseed and recover. Native moving-velocity evidence is retained under V40. This closes the exercised OpenGL TAA profile; the broader motion/reset matrix and other backends remain in their own rows.
+
+- [x] **ARP-V33** — Validate TSR resource bindings, motion/reactive inputs, render scale and reset behavior. Done 2026-09-08; native OpenGL OVR, Builds 77/80. Both-eye reactive debug matches coverage exactly; velocity debug agrees within half-precision tolerance. Accepted scale 0.5/0.75/1 extents and paired generations converge; output remains 1920×1080. Start 60 captures exact-zero history weight on a 2.2m camera cut, followed by recovered weights up to 0.95996094 and finite viewed output. This is bounded OpenGL TSR acceptance; full reset causes stay in V18/V19, and the exposed native opaque cut-velocity defect was subsequently fixed under ARP-I63. [September 8 checkpoint](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-08-transparent-motion-and-render-thread-ownership).
+
+- [x] **ARP-V40** — Validate motion blur with Advanced velocity/depth inputs under camera/object motion. Done 2026-09-07; Build 51, OpenGL emulated OVR stereo; [grouped motion captures](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-07-grouped-motion-captures-and-temporal-copy-failure). Same-frame input/output comparisons show finite filtering in both eyes only where velocity is nonzero; zero shutter restores input exactly. Enabled/disabled camera and object output captured in the six-minute cohort.
+
+- [x] **ARP-V41** — Validate DoF against Advanced depth/HDR. Done 2026-09-07; Builds 49/50, OpenGL emulated OVR stereo; [scene-filter validation](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-07-stereo-scene-filters-and-executable-post-bindings). Two-eye focal-plane versus defocused captures are finite, show reduced checker edge contrast, and disabling restores HDR exactly. Final wrappers reproduce the blurred output exactly in the eight-minute Build 50 cohort.
+
+- [x] **ARP-V32** — Validate bloom threshold, spread and mip outputs. Done 2026-09-07; [textured stereo acceptance](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-07-textured-stereo-and-post-process-acceptance). OpenGL stereo mip 1/4 are exact zero at threshold 5 and finite/nonzero at 0.1. Combine brightens 818,824/818,431 pixels with no darkened samples; 17,910/17,584 are background spill. Native HDR is unchanged and final alpha remains 1.
+
+- [x] **ARP-V42** — Validate selected tone mapping. Done 2026-09-07; [textured stereo acceptance](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-07-textured-stereo-and-post-process-acceptance). OpenGL two-eye Linear/Reinhard/ACES raw EXR comparison at exposure 10: 786,336/786,274 interior pixels; maximum errors 0.003907/0.002449 match dither and half precision. Linear preserves values above 1. Other operators/backends are not certified.
+
+- [x] **ARP-V43** — Validate authored color grading. Done 2026-09-07; [textured stereo acceptance](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-07-textured-stereo-and-post-process-acceptance). OpenGL stereo tint (1,0.5,0.25) changes 800,962/800,901 pixels after ACES; maximum scaling error 0.001587. Neutral restoration reproduces both raw baseline images exactly.
+
+#### Stereo and offscreen output
+
+- [x] **ARP-V45** — Validate the admitted OpenGL SPS profile. Done 2026-09-07; [clean final stereo cohort](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-07-validation-resumption-opengl-final-stereo-output). RTX 3090, 1920x1080 per eye, GPU-indirect emulated SPS, approximately two minutes. Six captures are finite with alpha 1; frame 21608 has separate layer/history keys and matching generations. Clean 288-line OpenGL log. Hardware, complex materials, resets and other backends retain their own open rows.
+
+- [x] **ARP-V47** — Validate the admitted portal profile. Done 2026-09-08; Build119/Start92/PID47800. Eight completed outputs include independent camera change and 256x256→320x192 resize; every inspected export exactly matches its HDR producer and is finite/nonzero. Updating the thumbnail leaves the portal's original hash intact; matching portal poses reproduce matching pixels. Temporal history is disabled by this admitted profile. Retained-reader retirement and rapid deactivate/reactivate/resize behavior subsequently pass I77. [Evidence](../../investigations/rendering/vulkan-phase67-implementation.md#standalone-capture-scheduling-follow-up).
+
+- [x] **ARP-V48** — Validate the admitted Vulkan probe profile. Done 2026-09-08; Builds105/108, Starts79/82. All six faces have distinct geometry coverage and preserve opaque RGB/alpha when background changes; final-face depth/velocity/reactive data also match. After 20 completed Advanced refreshes, all 7 irradiance and 8 prefilter mips are finite, nonzero, and hash-identical to their array layers at version77. Native allocations plateau and output banks stay bounded (I76); Start82 Vulkan log has zero VUID/synchronization-validation matches before the separate thumbnail experiment. The irradiance image was inspected. This closes the single-probe Vulkan fixture; OpenGL array-copy regression is V68. [Evidence](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-08-probe-gpu-array-ownership-and-mip-production).
+
+- [x] **ARP-V68** — Validate the OpenGL probe-array copy after I71. Done 2026-09-08; Build125/Start98/PID3224. Twenty completed refreshes advance versions 4–24 over 13.375 seconds / 4,157 frames. All 7 irradiance and 8 prefilter source/array mip pairs are finite, nonzero and exactly hash-equal at version24; irradiance PNG inspected. Tracked VRAM plateaus at 731,702,920 bytes at iterations 10/15/20; buffer bytes stay 1,385,285. Transient descriptor-generation mismatches defer stale packages safely; no refresh stalls. This is the single-probe OpenGL fixture; cube/background inspection is separately tracked by I80/V25. [Investigation](../../investigations/rendering/vulkan-phase67-implementation.md#standalone-capture-scheduling-follow-up).
+
+- [x] **ARP-V49** — Validate the admitted thumbnail profile. Done 2026-09-08; Build119/Start92/PID47800. Eight completed outputs include camera change, 256x256→320x192 resize and five subsequent refreshes. Every inspected export exactly matches HDR; nonfinite samples zero. The actual pipeline 15 log contains seven native stages, authored background and offscreen blit, with no main temporal/post chain; all profile toggles are false. PNG inspected. Retained-reader retirement and rapid deactivate/reactivate/resize behavior subsequently pass I77. [Evidence](../../investigations/rendering/vulkan-phase67-implementation.md#standalone-capture-scheduling-follow-up).
+
+- [x] **ARP-V50** — Validate depth/visibility-only capture. Done 2026-09-08; Build132, OpenGL Start107 and Vulkan Start108/PID58608. Each backend completes eight writers per owner across camera movement and 256x256→320x192 resize. Inventories contain only visibility/depth resources and their stages, with no shading/post/UI work. All 32 independently decoded source/export EXRs are finite and exactly reproduce their runtime readback hashes. Cross-backend identity is bit-equal in all four states; depth differs by at most 1.1921e-7. PNGs inspected; all owners retire with zero references/package generation and no pending writer/quarantine. Vulkan logs have zero VUID/synchronization/recovery/output-rejection matches. [Evidence](../../investigations/rendering/vulkan-phase67-implementation.md#standalone-data-capture-validation).
+
+### Completed implementation and source audits
+
+**101 implementation tasks and nine audits are complete.** Expand a group for
+the individual changes. A checked item here establishes its named implementation
+or inventory; consult the validation sections for runtime acceptance.
+
+Completion dates and evidence links refer to the original work. The September 4
+baseline is `8b104bf7a`; later checkpoints describe the working changes and build/run
+identities used at that time. Full compiler, build, capture and review records stay
+at those links rather than being repeated in every summary.
+
+<details>
+<summary>OpenXR submission and lifecycle (13 completed items)</summary>
+
+- [x] **XR-I01** — Carry the exact accepted timeline semaphore/value and frozen XR frame/display identity in the submission receipt. Done 2026-09-04; [E1].
+
+- [x] **XR-I02** — Reserve bounded tracker capacity before ordinary, parallel, or mirror submission; honor rejected admission. Done 2026-09-04; [E1].
+
+- [x] **XR-I03** — Retain command, arena, upload, prepared-input, and native-resource ownership until the accepted receipt completes; settle completion payloads through the tracker. Done 2026-09-04; [E1].
+
+- [x] **XR-I04** — Encode two-/three-command render-plus-publish batches without a null command inside the submitted count. Done 2026-09-04; [E3].
+
+- [x] **XR-I05** — Supply immutable storage authority to XR mirror preparation and grow/reset XR arena slots without relocating live slot resources. Done 2026-09-04; [E1].
+
+- [x] **XR-I06** — Acquire the program mutation gate before the link lock on the affected cold program/layout paths. Done 2026-09-04; [E1].
+
+- [x] **XR-I07** — Retain dependent Vulkan image views/framebuffers behind a child-retirement receipt and keep the runtime parent alive while children remain. Done 2026-09-04; [E1].
+
+- [x] **XR-I08** — Represent application completion, acquired/released-image state, and pending teardown separately; reserve retired-generation capacity before detachment. Done 2026-09-04; [E1].
+
+- [x] **XR-I09** — Distinguish pre-detach deferral from failed/empty creation after `CleanupSwapchains`; route post-detach failure through safe partial-child cleanup and creation-eligible lifecycle state while retaining requested dimensions. Done 2026-09-06; [implementation resume](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-06-implementation-resume).
+
+- [x] **XR-I10** — Gate full instance/service dimension refresh on an explicit runtime capability/quirk. MonadoOpenXR enables the simulated-service restart capability; ordinary recommended extents use in-session replacement. Done 2026-09-06; [implementation resume][implementation-resume].
+
+- [x] **XR-I11** — Resolve parallel-eye foreground preparation failure and preserve paced recovery after readiness rejection. Done 2026-09-06; [paced parallel rerun](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-06-paced-parallel-eye-recovery).
+
+- [x] **XR-I12** — Resolve parallel-eye teardown's persistent GPU-quiescence deferral. Done 2026-09-06; [native view ownership fix](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-06-parallel-eye-teardown-native-view-ownership-fixed).
+
+- [x] **XR-A01** — Publish a complete submit-callsite ownership table: ordinary single/paired, parallel, SPS, external target, preview-only, and render-plus-publish. Done 2026-09-06; [source ownership inventory](../../progress/rendering/openxr-submit-ownership-audit-2026-09-06.md).
+
+</details>
+
+<details>
+<summary>Admission, canonical records, visibility and reconstruction (8 completed items)</summary>
+
+- [x] **ARP-I01** — Publish canonical record images and consume the 64-byte material/128-byte light record layouts through generated/accessor contracts. Done 2026-09-04; [E1], [S1].
+
+- [x] **ARP-I02** — Match the visibility payload's 96-byte CPU/GLSL stride and clear integer sentinels only at the first visibility scope. Done 2026-09-04; [E2].
+
+- [x] **ARP-I48** — Align the visibility candidate's individual fields with the GPU's 80-byte std430 record. Done 2026-09-07; [OpenGL implementation checkpoint](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-07-opengl-implementation-checkpoint).
+
+- [x] **ARP-I51** — Publish real standard material/kernel reconstruction requirements and finite tangent fallbacks. Textured OVR output is recorded; the full comparison matrix remains ARP-V56–V60. Done 2026-09-07; [reconstruction audit](../../progress/rendering/advanced-reconstruction-contract-audit-2026-09-07.md).
+
+- [x] **ARP-I88** — Fix finite tangent reconstruction for the textured capture consumer while preserving reference handedness. GL/Vulkan captures have zero invalid pixels, down from 4,742. The full reconstruction matrix remains ARP-V56–V60. Done 2026-09-08; [publication checkpoint](../../investigations/rendering/vulkan-phase67-implementation.md#canonical-capture-publication-ownership).
+
+- [x] **ARP-A01** — Complete the capability, selection, admission and editor/MCP profile inventory. Unsupported required-profile behavior remains ARP-V02. Done 2026-09-07; [admission/profile inventory](../../progress/rendering/advanced-admission-and-profile-audit-2026-09-07.md).
+
+- [x] **ARP-A07** — Trace early/late indirect-count draws, depth-pyramid/retest dispatches and barriers into actual Vulkan backend commands. Disocclusion and layered execution remain runtime obligations. Done 2026-09-07; [execution inventory](../../progress/rendering/advanced-visibility-execution-audit-2026-09-07.md).
+
+- [x] **ARP-A08** — Trace standard kernels through shared reconstruction, required-attribute masks and tangent handedness/MikkTSpace compatibility. Attribute-mask fixes are ARP-I51; comparisons remain ARP-V56–V60. Done 2026-09-07; [kernel/attribute inventory](../../progress/rendering/advanced-reconstruction-contract-audit-2026-09-07.md).
+
+</details>
+
+<details>
+<summary>Classification and clustered-light capacity (7 completed items)</summary>
+
+- [x] **ARP-I03** — Resolve draw/material/kernel handles and provide bounded classification storage for all 128 allowed kernel slots. Done 2026-09-04; [S1].
+
+- [x] **ARP-I04** — Generate bounded per-kernel membership ranges and indirect dispatch arguments on the GPU, clamping consumers to initialized capacity. Done 2026-09-04; [S1].
+
+- [x] **ARP-I05** — Derive froxel storage from extent, tile dimensions, depth slices, and view count. Done 2026-09-04; [S1].
+
+- [x] **ARP-I28** — Implement subgroup ballot/scan classification with a bounded shared-memory fallback for devices lacking the required subgroup capabilities. Done 2026-09-06; [implementation resume](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-06-implementation-resume).
+
+- [x] **ARP-I30** — Enforce derivative flags, membership kernel identity, metadata view identity, and overflow-safe producer/consumer range arithmetic at the executable classification/shading boundary. Done 2026-09-06; [classification audit](../../progress/rendering/advanced-classification-audit-2026-09-06.md).
+
+- [x] **ARP-A05** — Audit the classifier key: dense kernel grouping, guarded layout/coverage, and derivative/view identity checked by the consumer. Executable guards are ARP-I30. Done 2026-09-06; [classification audit](../../progress/rendering/advanced-classification-audit-2026-09-06.md).
+
+- [x] **ARP-A06** — Audit independent tile, membership and dispatch bounds and the GPU overflow-repair contract. Runtime capacity pressure remains ARP-V07. Done 2026-09-06; [classification audit](../../progress/rendering/advanced-classification-audit-2026-09-06.md).
+
+</details>
+
+<details>
+<summary>Native materials, shadows, AO and GI (15 completed items)</summary>
+
+- [x] **ARP-I06** — Wire canonical material constants/texture access and convention-aware shadow sampling into native opaque shading. Done 2026-09-04; [S1].
+
+- [x] **ARP-I07** — Connect visibility/native HDR to refreshed post-process texture/sampler bindings. Done 2026-09-04; [E2].
+
+- [x] **ARP-I08** — Produce per-tile/froxel decal lists and apply real surface/material modifiers before lighting. Done 2026-09-06; [compiled implementation evidence](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-06-compiled-decal-and-executable-late-pass-integration).
+
+- [x] **ARP-I09** — Publish and consume real IBL/probe/selected-GI resources through the provider contract. Done 2026-09-06; [canonical history/probe checkpoint](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-06-canonical-history-and-probe-checkpoint).
+
+- [x] **ARP-I16** — Add depth-derived GTAO dispatch and owned full-resolution R8 target after final visibility depth. Done 2026-09-04; [E1].
+
+- [x] **ARP-I17** — Bind AO storage/sample at 49/50, namespace GLSL helpers, guard reconstruction math, and read the correct reversed-depth component. Done 2026-09-04; [E1].
+
+- [x] **ARP-I18** — Provide `EnableBuiltInAmbientOcclusion` and a neutral-write path; keep custom providers explicitly rejected. Done 2026-09-04; [E1].
+
+- [x] **ARP-I19** — Feed AO into the actual indirect-light contribution from `ARP-I09`. Done 2026-09-06; [canonical history/probe checkpoint][probe-history].
+
+- [x] **ARP-I29** — Support R8Unorm AO texture diagnostic readback conversion and byte sizing. Done 2026-09-06; [AO capture checkpoint][ao-capture].
+
+- [x] **ARP-I38** — Preserve authored Assimp diffuse RGB factors in the standard material factory so the native path receives actual imported colors. Done 2026-09-06; [native color diagnosis](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-06-native-color-input-diagnosis).
+
+- [x] **ARP-I39** — Preserve exact recorded native depth-image layout and producer scopes when reopening an FBO after compute sampling. Done 2026-09-06; [canonical history/probe checkpoint][probe-history].
+
+- [x] **ARP-I40** — Consume pending probe writer receipts at the registered light-probe world boundary, including one-shot captures. Done 2026-09-06; [canonical history/probe checkpoint][probe-history].
+
+- [x] **ARP-I41** — Declare the forward probe-array/buffer imports used by Advanced late/debug consumers. Done 2026-09-06; [canonical history/probe checkpoint][probe-history].
+
+- [x] **ARP-I42** — Resolve black probe-capture/convolution RGB and require completion evidence for the actual output writers before accepting usable IBL. Done 2026-09-06; [exact-writer RGB proof](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-06-probe-writer-rgb-and-disabled-provider-proof).
+
+- [x] **ARP-I43** — Keep native stages executing with zero indirect contribution when GI mode is None or the selected native provider is null. Done 2026-09-06; [disabled-provider proof](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-06-probe-writer-rgb-and-disabled-provider-proof).
+
+</details>
+
+<details>
+<summary>Temporal history and motion (12 completed items)</summary>
+
+- [x] **ARP-I10** — Capture a bounded immutable desktop history candidate before every fallible plan/readiness/recording step. Done 2026-09-06; [H1].
+
+- [x] **ARP-I11** — Attest history for the actual recorded outputs, including synthetic `RequiresFreshEmptyTerminalWrite` with no static operation context. Done 2026-09-06; [H1].
+
+- [x] **ARP-I12** — Commit attested history only on the exact backend acceptance receipt. Done 2026-09-06; [H1].
+
+- [x] **ARP-I13** — Discard every rejected/superseded candidate on readiness, recording, submit failure, and teardown. Done 2026-09-06; [H1].
+
+- [x] **ARP-I14** — Add frozen desktop current-view history, per-draw temporal events, camera epochs, and explicit shader validity gates. Done 2026-09-04; [E1].
+
+- [x] **ARP-I15** — Keep OpenXR view history pending until a successful layered EndFrame and clear it across tracking/lifecycle invalidation. Done 2026-09-04; [E1].
+
+- [x] **ARP-I37** — Publish the exact resolved desktop history descriptor into the canonical GPU view record. Done 2026-09-06; [canonical history checkpoint](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-06-canonical-history-and-probe-checkpoint).
+
+- [x] **ARP-I55** — Make OpenGL temporal history copies cover all multiview layers without invalid framebuffer blits. Done 2026-09-07; [layer-copy checkpoint](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-07-layered-temporal-copies-picking-and-editor-gizmos).
+
+- [x] **ARP-I59** — Populate and record TSR history coverage in the Advanced command chain. Done 2026-09-07; [Temporal producer checkpoint](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-07-tsr-history-and-transparent-temporal-producers).
+
+- [x] **ARP-I60** — Bind the published Advanced reactive mask into TAA and TSR, with declared resource dependencies and matching mono/stereo debug views. Done 2026-09-07; [Temporal producer checkpoint](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-07-tsr-history-and-transparent-temporal-producers).
+
+- [x] **ARP-I61** — Correct the built-in colored-alpha temporal producer, per-eye motion bindings and explicit unsupported-input rejection. Accepted output is rigid OpenGL OVR; skin/morph/procedural deformation and NV stereo are excluded. Done 2026-09-08; [September 8 checkpoint](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-08-transparent-motion-and-render-thread-ownership).
+
+- [x] **ARP-I63** — Align native opaque history invalidation with the shared accepted-pose camera-cut policy. Separate translation/rotation cuts pass in OVR; OpenXR/mono and other reset causes remain separate. Done 2026-09-08; [Acceptance checkpoint](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-08-native-cut-and-sorted-alpha-acceptance).
+
+</details>
+
+<details>
+<summary>Background, transparency, post-processing and effect admission (15 completed items)</summary>
+
+- [x] **ARP-I20** — Invoke the exact-transparency helper and late/temporal/post/output stages from the Advanced command chain. Done 2026-09-04; [S1].
+
+- [x] **ARP-I31** — Evaluate exact-transparency consumer admission and selected peel-layer count at command execution, including objects becoming visible after pipeline construction. Done 2026-09-06; [late-lane audit](../../progress/rendering/advanced-late-lanes-audit-2026-09-06.md).
+
+- [x] **ARP-I32** — Produce and merge participating transparent velocity/reactive output with native opaque motion. Done 2026-09-06; [compiled implementation evidence](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-06-compiled-decal-and-executable-late-pass-integration).
+
+- [x] **ARP-I33** — Wire visible refractive/feedback consumers to the scene-snapshot predicate and binding contract. Done 2026-09-06; [late-lane audit][late-audit].
+
+- [x] **ARP-I34** — Implement PPLL's 128 MiB capacity bound, actual-buffer producer/resolve limits, ordered counter reset and link validation. Overflow rejection preserves preceding HDR; runtime pressure/output remains ARP-V29. Done 2026-09-06; [late safety checkpoint](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-06-late-transparency-safety-checkpoint).
+
+- [x] **ARP-I35** — Complete depth-peeling initialization/opaque-depth rejection and mixed transparency composition without overwriting preceding lanes from an obsolete scene copy. Done 2026-09-06; [late-lane audit][late-audit].
+
+- [x] **ARP-I36** — Connect late-pass eligibility metadata to executable submission and expose unsupported lane/profile reasons. Done 2026-09-06; [compiled implementation evidence](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-06-compiled-decal-and-executable-late-pass-integration).
+
+- [x] **ARP-I52** — Fix Advanced scene-filter copies, layer counts, sampler ABI and executable DoF/motion-blur settings bindings. Done 2026-09-07; [scene-filter validation](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-07-stereo-scene-filters-and-executable-post-bindings).
+
+- [x] **ARP-I53** — Connect existing Advanced post-stage uniform binding methods to the actual atmosphere, volumetric fog, temporal accumulation, TSR and weighted-transparent resolve quads. Done 2026-09-07; [scene-filter validation](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-07-stereo-scene-filters-and-executable-post-bindings).
+
+- [x] **ARP-I64** — Sort Advanced alpha-blended draws back to front. Done 2026-09-08; [Acceptance checkpoint](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-08-native-cut-and-sorted-alpha-acceptance).
+
+- [x] **ARP-I67** — Execute compatible authored sky/background draws after native opaque shading and before transparency/post while preserving HDR alpha, depth and temporal sidecars. ARP-V25 retains the remaining profiles. Done 2026-09-08; [Background checkpoint](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-08-authored-background-admission-and-depth-preservation).
+
+- [x] **ARP-I68** — Expose particle and landscape Advanced unsupported-profile reasons in their actual inspectors and MCP, and reject their callback draws before they bypass native/late admission. Done 2026-09-08; [A03 closure](../../progress/rendering/advanced-special-effects-and-upscaler-audit-2026-09-07.md#september-8-closure).
+
+- [x] **ARP-A02** — Complete the late-lane resource/capacity inventory. The metadata, motion, feedback and recovery corrections are recorded in ARP-I31–I36; lane acceptance remains separate. Done 2026-09-06; [executable late-lane audit](../../progress/rendering/advanced-late-lanes-audit-2026-09-06.md).
+
+- [x] **ARP-A03** — Record water, hair, particles, trails, beams, portals, mirrors and displacement-family dispositions. Dedicated hair/trail/beam renderers are absent; particle/landscape rejection is explicit. The inventory does not establish rendering support. Done 2026-09-08; [family dispositions and diagnostic closure](../../progress/rendering/advanced-special-effects-and-upscaler-audit-2026-09-07.md#september-8-closure).
+
+- [x] **ARP-A04** — Inventory native Vulkan and OpenGL/Vulkan-bridge vendor profiles, device/runtime gates and exclusions. ARP-V61–V67 own acceptance; no device is certified. Done 2026-09-07; [profile inventory](../../progress/rendering/advanced-special-effects-and-upscaler-audit-2026-09-07.md).
+
+</details>
+
+<details>
+<summary>Stereo execution and independent output banks (11 completed items)</summary>
+
+- [x] **ARP-I21** — Implement immutable per-view/layer addressing across visibility, classification, shading, depth, velocity, and histories. Done 2026-09-07; [implementation record][investigation].
+
+- [x] **ARP-I22** — Integrate Advanced-compatible work into RVC-owned OpenXR eyes. Done 2026-09-07; [implementation record][investigation].
+
+- [x] **ARP-I23** — Implement capability-based offscreen intent/export/completion contracts and owner registration. Standalone profiles have owners; the actual Advanced mirror integration remains ARP-I81. Done 2026-09-07; [implementation record][investigation].
+
+- [x] **ARP-I26** — Implement OpenGL SPS admission, native layered execution, fenced scene/sampler residency and independent per-eye histories. The accepted emulated profile is ARP-V45; deformation and hardware XR remain separate. Done 2026-09-07; [OpenGL implementation checkpoint](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-07-opengl-implementation-checkpoint).
+
+- [x] **ARP-I27** — Implement the conservative foveated derivative/LOD policy for admitted Advanced XR profiles. Done 2026-09-07; [implementation record][investigation].
+
+- [x] **ARP-I45** — Implement generation-safe output-bank retirement/reuse after all plan leases and GPU uses complete, with bounded capacity and allocation-failure diagnostics. Arbitrary XR/multi-owner pressure remains unproven. Done 2026-09-07; [implementation record][investigation].
+
+- [x] **ARP-I46** — Honor accepted view-history validity in depth-pyramid planning. Done 2026-09-06; [output-bank checkpoint][historical-stop].
+
+- [x] **ARP-I47** — Give eight logical output reservations independent occlusion, frame-slot descriptors, immutable inputs and stable bins, with exact-reservation preparation and activation-time CPU workspaces. Retirement/reuse is ARP-I45. Done 2026-09-06; [final wrap-up checkpoint](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-06-final-wrap-up-checkpoint).
+
+- [x] **ARP-I49** — Fix OpenGL stereo output storage/view formats and invalid copy/bindless-sampler operations. Done 2026-09-07; [clean final stereo cohort](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-07-validation-resumption-opengl-final-stereo-output).
+
+- [x] **ARP-I50** — Fix fullscreen stereo vertex/FBO agreement on OpenGL, including bloom and FXAA. Done 2026-09-07; [clean final stereo cohort](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-07-validation-resumption-opengl-final-stereo-output).
+
+- [x] **ARP-I69** — Fix Vulkan multi-output input-family provisioning so activation and lowering use the same static operation stream. This closes the admission failure; output and pressure proof remain profile-specific. Done 2026-09-08; [Evidence](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-08-vulkan-capture-provisioning-and-readback).
+
+</details>
+
+<details>
+<summary>Probe and standalone capture ownership (14 completed items)</summary>
+
+- [x] **ARP-I71** — Assemble Vulkan probe texture-array layers from the actual GPU source images, preserving prefilter mips, ordering and source/destination lifetime. Later mip-production fixes are ARP-I72/I73. Done 2026-09-08; [Evidence](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-08-probe-gpu-array-ownership-and-mip-production).
+
+- [x] **ARP-I72** — Use attached mip extents when snapshotting Vulkan mesh viewport/scissor state. Done 2026-09-08; [Evidence](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-08-probe-gpu-array-ownership-and-mip-production).
+
+- [x] **ARP-I73** — Allocate the explicit captured-environment cubemap mip chain before face rendering. Done 2026-09-08; [Evidence](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-08-probe-gpu-array-ownership-and-mip-production).
+
+- [x] **ARP-I74** — Record Advanced offscreen exports in their declared transfer pass after all source writers. Done 2026-09-08; [Evidence](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-08-probe-gpu-array-ownership-and-mip-production).
+
+- [x] **ARP-I75** — Key Vulkan canonical scene publications by the exact frozen view/frame/pass globals, coverage and diagnostic count so independent capture faces do not share stale data. Done 2026-09-08; [Evidence](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-08-probe-gpu-array-ownership-and-mip-production).
+
+- [x] **ARP-I76** — Fix probe-refresh allocation growth by activating buffers before upload and enabling deferred destruction. The 20-refresh Vulkan cohort reaches a stable allocation plateau (ARP-V48). Done 2026-09-08; [Evidence](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-08-probe-gpu-array-ownership-and-mip-production).
+
+- [x] **ARP-I77** — Complete standalone thumbnail/portal ownership, synchronized submission/publication and lease-gated retirement. Retained readers survive destruction and 20 rapid reactivation/resize cycles before a fresh capture. Done 2026-09-08; [Investigation](../../investigations/rendering/vulkan-phase67-implementation.md#standalone-capture-scheduling-follow-up).
+
+- [x] **ARP-I78** — Complete OpenGL probe writer settlement on the render thread and retry required convolution preparation. Twenty-refresh GL and Vulkan cohorts retain finite, matching source/array mips. Done 2026-09-08; [Investigation](../../investigations/rendering/vulkan-phase67-implementation.md#standalone-capture-scheduling-follow-up).
+
+- [x] **ARP-I79** — Distinguish physical texture tombstones from live references during OpenGL bindless lowering; retain fenced publication residency and reject inconsistent live/stale material rows. Done 2026-09-08; [Investigation](../../investigations/rendering/vulkan-phase67-implementation.md#standalone-capture-scheduling-follow-up).
+
+- [x] **ARP-I82** — Add standalone depth/visibility owners with exact output aspects, data-only stage/resource admission and completion/lease-gated retirement. Saved-file acceptance is ARP-I85/V50. Done 2026-09-08; [Evidence](../../investigations/rendering/vulkan-phase67-implementation.md#standalone-data-capture-validation).
+
+- [x] **ARP-I84** — Fix stale OpenGL visibility identity with fenced alias replacement that preserves logical sources and bounds the cache to 16 roles per slot. Done 2026-09-08; [Evidence](../../investigations/rendering/vulkan-phase67-implementation.md#standalone-data-capture-validation).
+
+- [x] **ARP-I86** — Retain standalone capture generations through canonical scene publications with exact-generation admission and atomic publication/retirement. GL/Vulkan readers prevent rewriting until withdrawal and release; this is a mirror prerequisite. Done 2026-09-08; [publication checkpoint](../../investigations/rendering/vulkan-phase67-implementation.md#canonical-capture-publication-ownership).
+
+- [x] **ARP-I87** — Clear erased material rows and payload tails before native validation while sealed snapshots retain their copies. GL/Vulkan consumer removal, reader drain and resize complete without stale binding rejection. Done 2026-09-08; [publication checkpoint](../../investigations/rendering/vulkan-phase67-implementation.md#canonical-capture-publication-ownership).
+
+- [x] **ARP-I92** — Complete existing mirror writer polling/package release on the render thread, 16-entry consumer-fence storage, serialized retirement, registered-intent tracking and viewport/FBO/texture replacement. Advanced targets use RGBA16F with only requested work. Default GL Start119 completes 12,147 captures and serial resize/deactivation to zero ownership; its source image is black. ARP-I81/I91/I93/I94 and ARP-V36 remain open. Done 2026-09-08; [wrap-up evidence](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-08-validation-wrap-up).
+
+</details>
+
+<details>
+<summary>Editor consumers, diagnostics and settings (15 completed items)</summary>
+
+- [x] **ARP-I24** — Connect asynchronous GL/Vulkan picking and editor/MCP consumers to retained canonical identity, with stale-generation rejection. OpenXR picking remains unavailable without an accepted XR source path. Done 2026-09-06; [final wrap-up checkpoint](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-06-final-wrap-up-checkpoint).
+
+- [x] **ARP-I25** — Expose real profile capability/blocker state and capture-stable per-stage resources/counters through editor/MCP. Done 2026-09-07; [implementation record][investigation].
+
+- [x] **ARP-I44** — Correct linear HDR radiance/alpha export and Q16 quantum scaling. The later FLOAT32 writer is ARP-I85; earlier broken EXRs are excluded from pixel evidence. Done 2026-09-06; [HDR export checkpoint][ao-ibl].
+
+- [x] **ARP-I54** — Capture related live resources at one post-render boundary and support OpenGL 2D/array view depth/stencil readback. Done 2026-09-07; [grouped readback evidence](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-07-grouped-motion-captures-and-temporal-copy-failure).
+
+- [x] **ARP-I56** — Reject unavailable OpenGL picking storage before dispatch, preserve pack-buffer state and check GPU transfer errors. Done 2026-09-07; [picking checkpoint](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-07-layered-temporal-copies-picking-and-editor-gizmos).
+
+- [x] **ARP-I57** — Select a complete compatible shader-stage combination for editor/late meshes targeting OpenGL OVR multiview. Done 2026-09-07; [Temporal/editor acceptance](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-07-material-includes-and-mono-stereo-gizmo-acceptance).
+
+- [x] **ARP-I58** — Preserve the explicitly declared filtered direct submission of participating Advanced late motion/reactive passes under a global opaque GPU strategy override. Done 2026-09-07; [temporal/editor acceptance](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-07-material-includes-and-mono-stereo-gizmo-acceptance).
+
+- [x] **ARP-I62** — Dispatch viewport/output rebinding and pipeline resource transitions by render-thread ownership, not context-local renderer activity. Done 2026-09-08; [September 8 checkpoint](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-08-transparent-motion-and-render-thread-ownership).
+
+- [x] **ARP-I65** — Reject GL texture capture before mip queries when the API wrapper has no live texture storage. Done 2026-09-08; [Capture checkpoint](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-08-capture-liveness-and-mono-scene-filters).
+
+- [x] **ARP-I66** — Preserve MCP numeric structures with explicit converters and transactional rejection of malformed input. Vector2/3/4, Quaternion and Matrix4x4 are covered in source; the live fixture exercises Vector3. Done 2026-09-08; [Scene-filter checkpoint](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-08-capture-liveness-and-mono-scene-filters).
+
+- [x] **ARP-I70** — Correct Vulkan depth/stencil readback: D32+stencil depth copies decode four-byte floats and stencil copies decode one byte. Done 2026-09-08; [Evidence](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-08-vulkan-capture-provisioning-and-readback).
+
+- [x] **ARP-I80** — Implement OpenGL cube-face/mip readback and bounds checks. Six faces and six mip-6 images pass; cube arrays/views have source support without separate live acceptance. Done 2026-09-08; [Investigation](../../investigations/rendering/vulkan-phase67-implementation.md#standalone-capture-scheduling-follow-up).
+
+- [x] **ARP-I83** — Decode Vulkan RG32_UINT diagnostic readback. Float images support inspection; raw integer picking remains authoritative for arbitrary 32-bit handles. Done 2026-09-08; [Investigation](../../investigations/rendering/vulkan-phase67-implementation.md#standalone-data-capture-validation).
+
+- [x] **ARP-I85** — Write uncompressed FLOAT32 diagnostic EXRs without quantum scaling, half conversion or nonfinite substitution. Independently decoded files match runtime hashes; historical HALF visibility exports are excluded. Done 2026-09-08; [Evidence](../../investigations/rendering/vulkan-phase67-implementation.md#standalone-data-capture-validation).
+
+- [x] **ARP-I89** — Separate mono/OVR/NV gizmo shader entry points so inactive stereo built-ins cannot reject mono admission. GL mono/OVR and Vulkan gizmos render; Vulkan placement remains ARP-I90. Done 2026-09-08; [entry-point checkpoint](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-08-gizmo-entry-point-admission).
+
+</details>
+
+## Evidence and maintenance
+
+The [September 8 wrap-up][wrapup] is the latest recorded implementation boundary.
+It records Build145, failed Start120, the removed Build144 experiment, the stopped
+task-owned editor `xr-advanced-0906`, and that no commit was created at that pause.
+Those are historical run facts, not actions performed by this documentation edit.
+
+Earlier [September 6][historical-stop] and [Build 32][gl-implementation] snapshots
+are retained in the investigation. Their old implementation-complete statements,
+launcher/storage blockers and checkbox counts do not override the current ledger.
+The original September 4 Monado cohort had AO descriptor errors; `XR-V01` records
+the later clean rerun. The initial static capture and source audit remain [E2] and [S1].
+
+The unchanged existing tangent test passed 1/1 through an isolated linked-source
+runner. At the latest recorded check, the normal UnitTests project still failed
+to compile against stale rendering/XR APIs. This is not a full test-suite pass.
+No test methods were added or changed during that work.
+
+Update rules:
+
+- Close an **I** row when its behavior exists and its narrow build/compiler check
+  passes. Close an **A** row with a recorded inventory; assign discovered gaps to
+  explicit implementation tasks before dependent validation can close.
+- Close a **V** row only with its specified evidence. Runtime records must name
+  revision/build, backend, output profile, configuration, duration or retained-frame
+  count, observed failures and capture/trace results. `ARP-V01` is explicitly a
+  compiler-only record. Supported flags and successful builds are not runtime proof.
+- Change the owning checkbox in the same change and append
+  `Done YYYY-MM-DD; revision/build; evidence link; observed result`. Update this
+  status summary, the investigation and the next task at the same time.
+- Keep task IDs stable and one checkbox per obligation. If an item needs independent
+  outcomes, split it before work starts and give the new tasks new IDs. A checked
+  implementation beside open validation means implemented, awaiting proof.
+- Keep unavailable hardware/runtime gates open with their exact blocker. Record
+  durable findings in the investigation; ignored captures/logs support that record.
+- Follow the master Phase 9.1 test-clearance policy. This documentation rewrite
+  authorizes no new tests or feature implementation.
 
 ## Exit and handoff to promotion
 
-Phase status is derived from the open tasks above; there is no “complete all
-rendering” checkbox hiding unfinished implementation. Before Phase 8, resolve
+Before Phase 8, resolve
 all applicable I/A tasks and their V tasks, record unsupported required
 profiles as blockers, and freeze the integrated revision. Hardware absence
 does not turn an open gate into a pass.
@@ -534,3 +746,13 @@ documentation. Closing a feature implementation box here does not waive them.
 [E3]: ../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-04-checkpoint-successful-monado-submissions-and-ao-admission
 [S1]: ../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-06-tracker-reorganization-and-source-audit
 [H1]: ../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-06-desktop-history-sequence-checkpoint
+[investigation]: ../../investigations/rendering/vulkan-phase67-implementation.md
+[wrapup]: ../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-08-validation-wrap-up
+[implementation-resume]: ../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-06-implementation-resume
+[ao-capture]: ../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-06-ao-capture-checkpoint
+[probe-history]: ../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-06-canonical-history-and-probe-checkpoint
+[ao-ibl]: ../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-06-exr-export-and-aoibl-contribution-acceptance
+[late-audit]: ../../progress/rendering/advanced-late-lanes-audit-2026-09-06.md
+[historical-stop]: ../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-06-final-wrap-up-checkpoint
+[gl-implementation]: ../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-07-opengl-implementation-checkpoint
+[publication]: ../../investigations/rendering/vulkan-phase67-implementation.md#canonical-capture-publication-ownership

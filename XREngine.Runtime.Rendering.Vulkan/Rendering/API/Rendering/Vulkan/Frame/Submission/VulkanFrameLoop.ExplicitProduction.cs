@@ -463,7 +463,7 @@ internal sealed partial class VulkanFrameLoop
                 EVulkanPresentNowReadinessStage.FramePlanSeal,
                 "prepared-mesh-ingress",
                 "ExplicitOutput -> prepared mesh dependency lowering",
-                "Prepared mesh ingress exceeded its fixed resource-use capacity.");
+                "Prepared mesh ingress finalization failed before stable-bin creation.");
         }
         if (_preparedMeshIngress.IsCohortHit)
             PublishPreparedMeshIngressCohortHit();

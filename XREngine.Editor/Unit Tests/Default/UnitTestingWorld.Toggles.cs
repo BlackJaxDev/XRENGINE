@@ -180,7 +180,6 @@ public static partial class EditorUnitTests
         public bool DynamicWaterQuad = false; //Adds a tessellated dynamic-water preview quad with grab-pass refraction, foam, and animated sphere/capsule eddy interactors. Best tested on the OpenGL unit-test path.
         public bool InitializeVolumetricFog = false; //Adds a demo volumetric fog volume to the default unit-testing world and enables volumetric fog on the unit-test camera(s).
         public bool InitializeAtmosphericScattering = false; //Adds a demo atmosphere component and enables atmospheric scattering on the unit-test camera(s).
-        public bool ForceDebugOpaquePipeline = false; //Forces the debug opaque render pipeline instead of the default pipeline.
 
         //Light
         public bool DirLight = true;

@@ -1,3 +1,4 @@
+using System.IO;
 using System.Numerics;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
@@ -37,7 +38,6 @@ public static class BootstrapRenderSettings
         var settings = RuntimeBootstrapState.Settings;
         var renderSettings = RuntimeEngine.Rendering.Settings;
         var debug = Engine.EditorPreferences.Debug;
-        ApplyPipelineSelection(settings);
         ApplyOpenGLShaderLinkSettings(settings);
 
         if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.RenderMeshBounds)))
@@ -141,21 +141,47 @@ public static class BootstrapRenderSettings
     }
 
     /// <summary>
-    /// Applies an explicitly configured unit-testing pipeline choice without changing persisted engine settings.
+    /// Creates the explicitly configured scene pipeline, or delegates to runtime automatic selection when no selection was configured.
     /// </summary>
-    public static void ApplyPipelineSelection(UnitTestingWorldSettings settings)
+    public static RenderPipeline CreateSceneRenderPipeline(bool stereo = false)
     {
+        UnitTestingWorldSettings settings = RuntimeBootstrapState.Settings;
         if (!settings.IsJsonPropertyPathSpecified(
                 nameof(UnitTestingWorldSettings.Rendering),
-                nameof(UnitTestingRenderSettings.UseAdvancedRenderPipeline)))
-        {
-            return;
-        }
+                nameof(UnitTestingRenderSettings.RenderPipeline)))
+            return RuntimeEngine.Rendering.NewRenderPipeline(stereo);
 
-        RuntimeEngine.Rendering.Settings.AdvancedRenderPipelineMode =
-            settings.Rendering.UseAdvancedRenderPipeline
-                ? EAdvancedRenderPipelineMode.Available
-                : EAdvancedRenderPipelineMode.Disabled;
+        return settings.Rendering.RenderPipeline switch
+        {
+            UnitTestingRenderPipeline.DefaultRenderPipeline => new DefaultRenderPipeline(stereo),
+            UnitTestingRenderPipeline.AdvancedRenderPipeline => new AdvancedRenderPipeline(stereo),
+            UnitTestingRenderPipeline.DebugOpaqueRenderPipeline when !stereo => new DebugOpaqueRenderPipeline(),
+            UnitTestingRenderPipeline.CustomRenderPipeline when !stereo => CreateCustomRenderPipeline(settings.Rendering.CustomRenderPipelineScriptPath),
+            UnitTestingRenderPipeline.DebugOpaqueRenderPipeline or UnitTestingRenderPipeline.CustomRenderPipeline => throw new InvalidOperationException(
+                $"{settings.Rendering.RenderPipeline} does not support stereo bootstrap cameras."),
+            _ => throw new InvalidOperationException($"Unsupported configured render pipeline '{settings.Rendering.RenderPipeline}'."),
+        };
+    }
+
+    private static CustomRenderPipeline CreateCustomRenderPipeline(string? scriptPath)
+    {
+        if (string.IsNullOrWhiteSpace(scriptPath))
+            throw new InvalidOperationException($"{nameof(UnitTestingRenderSettings.CustomRenderPipelineScriptPath)} is required when {nameof(UnitTestingRenderPipeline)} is {nameof(UnitTestingRenderPipeline.CustomRenderPipeline)}.");
+
+        string resolvedPath = Path.GetFullPath(scriptPath, Environment.CurrentDirectory);
+        if (!File.Exists(resolvedPath))
+            throw new FileNotFoundException($"Custom render-pipeline script was not found: '{resolvedPath}'.", resolvedPath);
+
+        try
+        {
+            CustomRenderPipeline pipeline = new();
+            pipeline.InitializeCompiledCommandsForBootstrap(RenderPipelineScript.Parse(File.ReadAllText(resolvedPath)).Compile(pipeline));
+            return pipeline;
+        }
+        catch (Exception ex) when (ex is not FileNotFoundException)
+        {
+            throw new InvalidOperationException($"Failed to parse or compile custom render-pipeline script '{resolvedPath}'.", ex);
+        }
     }
 
     public static void ReapplyEditorRenderStateAfterBootstrap(string reason)

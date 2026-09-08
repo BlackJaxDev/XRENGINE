@@ -634,6 +634,33 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         {
             using (RenderState.PushMainAttributesWithFrozenDesktopHistory(viewport, scene, camera, stereoRightEyeCamera, targetFBO, shadowPass, stereoPass, shadowMaterial, userInterface, meshRenderCommandsOverride ?? MeshRenderCommands, viewHistorySequenceId: viewHistorySequenceId, viewHistoryPipelineIdentity: TemporalHistoryPipelineIdentity, viewHistoryAuthoring: viewHistorySequenceId != 0UL, viewHistorySourceFrame: frozenHistoryCandidate.SourceFrame, viewHistoryOutputRequest: viewHistoryOutputRequest, frozenDesktopView: frozenDesktopView, frozenHistoryCandidate: frozenHistoryCandidate))
             {
+                // Resource factories and transactional backend preparation consume the active
+                // pipeline, camera, viewport, and frame-output state. Keep that state installed,
+                // but advance resources before accepting or reserving frozen history/output work.
+                DirectionalShadowPipelineDiagnostics.Record(
+                    EDirectionalShadowPipelineReceiptStage.BeforeResourceGeneration,
+                    this,
+                    Pipeline,
+                    targetFBO);
+                if (!EnsureResourceGenerationForCurrentFrame(viewport))
+                {
+                    DirectionalShadowPipelineDiagnostics.Record(
+                        EDirectionalShadowPipelineReceiptStage.ResourceGenerationFailed,
+                        this,
+                        Pipeline,
+                        targetFBO);
+                    _resizeCatchUpSkippedFrameId = RuntimeEngine.Rendering.State.RenderFrameId;
+                    Debug.RenderingEvery(
+                        $"RenderResources.FrameSkippedForResizeCatchUp.{ProfilerKey}",
+                        TimeSpan.FromMilliseconds(250),
+                        "[RenderResources] Skipping command chain until resources match the frame profile. Pipeline={0} Active={1} Pending={2} Viewport={3}",
+                        ProfilerKey,
+                        ActiveGeneration?.Key.ToString() ?? "<none>",
+                        PendingGeneration?.Key.ToString() ?? "<none>",
+                        viewport is null ? "<null>" : $"{viewport.Index}:{viewport.Width}x{viewport.Height}/{viewport.InternalWidth}x{viewport.InternalHeight}");
+                    return false;
+                }
+                _resizeCatchUpSkippedFrameId = ulong.MaxValue;
                 if (viewHistorySequenceId != 0UL && !RenderState.ViewHistoryCaptureAccepted)
                     return ReportExactOutputPreconditionFailure(in outputCompletionRequest, "The frozen view-history capture was rejected.");
                 RenderFrameViewHistoryBackendReservation historyReservation = default;
@@ -733,33 +760,8 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                     historyOwnershipTransferred = true;
                 }
                 WarnIfScreenSpaceUiHasNoRenderCommand(userInterface, viewport);
-                DirectionalShadowPipelineDiagnostics.Record(
-                    EDirectionalShadowPipelineReceiptStage.BeforeResourceGeneration,
-                    this,
-                    Pipeline,
-                    targetFBO);
-                if (!EnsureResourceGenerationForCurrentFrame(viewport))
-                {
-                    DirectionalShadowPipelineDiagnostics.Record(
-                        EDirectionalShadowPipelineReceiptStage.ResourceGenerationFailed,
-                        this,
-                        Pipeline,
-                        targetFBO);
-                    _resizeCatchUpSkippedFrameId = RuntimeEngine.Rendering.State.RenderFrameId;
-                    Debug.RenderingEvery(
-                        $"RenderResources.FrameSkippedForResizeCatchUp.{ProfilerKey}",
-                        TimeSpan.FromMilliseconds(250),
-                        "[RenderResources] Skipping command chain until resize resources catch up. Pipeline={0} Active={1} Pending={2} Viewport={3}",
-                        ProfilerKey,
-                        ActiveGeneration?.Key.ToString() ?? "<none>",
-                        PendingGeneration?.Key.ToString() ?? "<none>",
-                        viewport is null ? "<null>" : $"{viewport.Index}:{viewport.Width}x{viewport.Height}/{viewport.InternalWidth}x{viewport.InternalHeight}");
-                    return false;
-                }
-                _resizeCatchUpSkippedFrameId = ulong.MaxValue;
-                // Physical generation creation may have replaced the resources
-                // after the immutable view was captured. Retry with a new
-                // candidate; never label old history as valid for new images.
+                // Generation is normally settled before reservation. Retain the exact identity
+                // guards so a future in-scope mutation cannot authorize stale history/output.
                 if (historyReservationOwned &&
                     (historyReservation.Candidate.PipelineIdentity != TemporalHistoryPipelineIdentity ||
                      historyReservation.Output.Target.TargetGeneration != unchecked((ulong)ResourceGeneration) ||
@@ -1021,9 +1023,22 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             return true;
         }
 
+        var dimensions = frameOutput is not null
+            ? ResolvePipelineResourceDimensions(frameOutput.Value)
+            : ResolvePipelineResourceDimensions(viewport!);
+        ResourceGenerationKey key = BuildResourceGenerationKey(
+            dimensions.DisplayWidth,
+            dimensions.DisplayHeight,
+            dimensions.InternalWidth,
+            dimensions.InternalHeight,
+            viewport);
+
+        // A modal resize may retain the published dimensions, but it cannot
+        // retain an incompatible AA, feature, or output resource profile.
         if (viewport is not null &&
             ShouldDeferResourceGenerationForInteractiveWindowResize(viewport) &&
-            ActiveGeneration?.PipelineRevision == _appliedPipelineRevision)
+            ActiveGeneration is { } dragGeneration &&
+            (dragGeneration.Key == key || IsResizeOnlyGenerationDelta(dragGeneration.Key, key)))
         {
             DiscardPendingGeneration("InteractiveResize");
             return true;
@@ -1034,16 +1049,6 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         // shadow, UI, and presentation resource tuple alive until the settled
         // catch-up generation is prepared after WM_EXITSIZEMOVE.
         DrainRetiredGenerations();
-
-        var dimensions = frameOutput is not null
-            ? ResolvePipelineResourceDimensions(frameOutput.Value)
-            : ResolvePipelineResourceDimensions(viewport!);
-        ResourceGenerationKey key = BuildResourceGenerationKey(
-            dimensions.DisplayWidth,
-            dimensions.DisplayHeight,
-            dimensions.InternalWidth,
-            dimensions.InternalHeight,
-            viewport);
 
         if (viewport?.RendersToExternalSwapchainTarget == true)
             return EnsureExternalSwapchainResourceGenerationForCurrentFrame(viewport, key);
@@ -1087,12 +1092,11 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         if (ActiveGeneration.Key == key)
             return true;
 
-        // A feature/profile mismatch within the same asset revision can continue to use the
-        // complete prior generation while a successor is prepared. A pipeline asset transition
-        // cannot: its command chain may name entirely different resources despite an equivalent
-        // debug name, pass list, or layout shape.
-        return ActiveGeneration.PipelineRevision == _appliedPipelineRevision &&
-            !IsResizeOnlyGenerationDelta(ActiveGeneration.Key, key);
+        // Commands are authored against the current frame profile. Even when a previous
+        // generation is complete and shares the pipeline revision, an AA/feature/settings
+        // change can name a different resource set. Wait for the exact generation instead
+        // of executing that new command path against the old registry.
+        return false;
     }
 
     /// <summary>
@@ -1161,6 +1165,9 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
            oldKey.SettingsRevision == newKey.SettingsRevision &&
            oldKey.ReservedViewCount == newKey.ReservedViewCount &&
            oldKey.ReservedEyeIndex == newKey.ReservedEyeIndex &&
+           oldKey.ExternalTargetKind == newKey.ExternalTargetKind &&
+           oldKey.OutputColorFormat == newKey.OutputColorFormat &&
+           oldKey.OutputDepthFormat == newKey.OutputDepthFormat &&
            (oldKey.DisplayWidth != newKey.DisplayWidth ||
             oldKey.DisplayHeight != newKey.DisplayHeight ||
             oldKey.InternalWidth != newKey.InternalWidth ||

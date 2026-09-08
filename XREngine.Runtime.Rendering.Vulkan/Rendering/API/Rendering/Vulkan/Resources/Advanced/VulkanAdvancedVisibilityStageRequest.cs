@@ -62,7 +62,6 @@ internal readonly record struct VulkanAdvancedVisibilityStageRequest(
            Publication.ScenePublication.IsValid &&
            VisibilityContentGeneration != 0u &&
            Publication.VisibilityContentGeneration == VisibilityContentGeneration &&
-           Publication.DrawCount != 0u &&
            Extractor is not null && RenderFrameId != 0u &&
            Views.ViewCount > 0 &&
            NativeViewIndex < (uint)Views.ViewCount &&

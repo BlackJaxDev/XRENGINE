@@ -737,7 +737,7 @@ internal sealed class EngineRuntimeRenderingHostServices :
         => Engine.Assets?.Load<TAsset>(filePath);
 
     public IRuntimeRenderPipelineHost? CreateDefaultRenderPipeline()
-        => RuntimeEngine.Rendering.NewRenderPipeline();
+        => BootstrapRenderSettings.CreateSceneRenderPipeline();
 
     public VisualScene3D CreateVisualScene()
         => new();

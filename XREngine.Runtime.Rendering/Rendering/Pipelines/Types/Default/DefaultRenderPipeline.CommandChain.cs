@@ -212,7 +212,11 @@ public partial class DefaultRenderPipeline
                 c.Add<VPRC_DepthWrite>().Allow = true;
                 // This path is selected only when no mesh commands exist. CPU-direct execution
                 // preserves callback side effects without entering empty indirect dispatches.
-                c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.OpaqueForward, false);
+                VPRC_RenderMeshesPass opaqueCallbacks = c.Add<VPRC_RenderMeshesPass>();
+                opaqueCallbacks.SetOptions((int)EDefaultRenderPass.OpaqueForward, false);
+                // Both branches contribute metadata. Keep this branch's initial attachment
+                // clears separate from the full scene pass that must preserve the skybox.
+                opaqueCallbacks.RenderGraphPassName = "CallbackOnlyOpaqueForward";
             }
 
             c.Add<VPRC_DepthTest>().Enable = false;

@@ -217,17 +217,18 @@ internal sealed partial class VulkanAdvancedVisibilityResourceRuntime
             // Every logical view owns independent indirect/counter/history
             // segments. Raster routes each stream to its matching multiview
             // layer; native compute binds one physical layer per operation.
+            bool hasLogicalDraws = publication.DrawCount != 0u;
             if (!familySeal.IsValid || familySeal.Reservation != _assignedReservation ||
                 input is null ||
                 !input.MatchesPublication(in publication, in indirect) ||
-                publication.DrawCount == 0u || viewCount == 0u || viewCount > 2u ||
+                viewCount == 0u || viewCount > 2u ||
                 publication.RequiresCpuReadback ||
                 indirect.RequiresCpuCount ||
                 sourcePayloads.Length != publication.DrawCount ||
-                deformationOverlay.IsEmpty || !geometry.HasValidSources)
+                (hasLogicalDraws && (deformationOverlay.IsEmpty || !geometry.HasValidSources)))
             {
                 failure = EVulkanAdvancedVisibilityResourceFailure.InvalidPreparation;
-                reason = "The visibility producer currently requires one exact mono view, non-empty GPU-only payload data, canonical mesh-geometry slices, and no CPU count or readback dependency.";
+                reason = "The visibility producer requires one exact mono view, GPU-only payload data, and no CPU count or readback dependency; populated publications also require canonical mesh-geometry slices.";
                 return false;
             }
 
@@ -251,6 +252,10 @@ internal sealed partial class VulkanAdvancedVisibilityResourceRuntime
                 reason = "Ready (immutable family reuse)";
                 return true;
             }
+            // The descriptor ABI requires nonzero storage ranges even when this
+            // publication has no logical draws. Keep the logical capacity below
+            // at zero so no native stage can mistake backing storage for work.
+            uint bindingPayloadCapacity = Math.Max(1u, publication.DrawCount);
             uint payloadBytes;
             uint candidateBytes;
             uint producerBytes;
@@ -268,16 +273,16 @@ internal sealed partial class VulkanAdvancedVisibilityResourceRuntime
             uint persistentStateBytes;
             try
             {
-                payloadBytes = checked(publication.DrawCount * (uint)Unsafe.SizeOf<AdvancedVisibilityPayload>());
-                candidateBytes = checked(publication.DrawCount * (uint)Unsafe.SizeOf<AdvancedVisibilityCandidate>());
-                producerBytes = checked(publication.DrawCount * sizeof(uint));
+                payloadBytes = checked(bindingPayloadCapacity * (uint)Unsafe.SizeOf<AdvancedVisibilityPayload>());
+                candidateBytes = checked(bindingPayloadCapacity * (uint)Unsafe.SizeOf<AdvancedVisibilityCandidate>());
+                producerBytes = checked(bindingPayloadCapacity * sizeof(uint));
                 deformationOverlayBytes = checked(
-                    (uint)deformationOverlay.Length *
+                    (hasLogicalDraws ? (uint)deformationOverlay.Length : 1u) *
                     (uint)Unsafe.SizeOf<AdvancedPreparedDrawDeformationRecord>());
-                perViewIndexBytes = checked(publication.DrawCount * sizeof(uint));
+                perViewIndexBytes = checked(bindingPayloadCapacity * sizeof(uint));
                 perViewRangeBytes = checked(Math.Max(1u, indirect.RangeCount) * sizeof(uint));
-                perViewIndirectBytes = checked(publication.DrawCount * IndexedIndirectArgumentByteLength);
-                perViewMeshArgumentBytes = checked(publication.DrawCount * MeshIndirectArgumentByteLength);
+                perViewIndirectBytes = checked(bindingPayloadCapacity * IndexedIndirectArgumentByteLength);
+                perViewMeshArgumentBytes = checked(bindingPayloadCapacity * MeshIndirectArgumentByteLength);
                 totalPayloadCapacity = checked(publication.DrawCount * viewCount);
                 totalIndexBytes = checked(perViewIndexBytes * viewCount);
                 totalRangeBytes = checked(perViewRangeBytes * viewCount);
@@ -386,10 +391,18 @@ internal sealed partial class VulkanAdvancedVisibilityResourceRuntime
                 reason = "The complete set-1 visibility ABI did not fit the frame-slot lane.";
                 return false;
             }
-            if (!TryWritePayloads(arena, payloads, sourcePayloads) ||
-                !TryWritePayloads(arena, candidates, input.Candidates) ||
-                !TryWritePayloads(arena, producers, input.Producers) ||
-                !TryWritePayloads(arena, overlay, deformationOverlay) ||
+            if (!(hasLogicalDraws
+                    ? TryWritePayloads(arena, payloads, sourcePayloads)
+                    : TryClear(arena, payloads)) ||
+                !(hasLogicalDraws
+                    ? TryWritePayloads(arena, candidates, input.Candidates)
+                    : TryClear(arena, candidates)) ||
+                !(hasLogicalDraws
+                    ? TryWritePayloads(arena, producers, input.Producers)
+                    : TryClear(arena, producers)) ||
+                !(hasLogicalDraws
+                    ? TryWritePayloads(arena, overlay, deformationOverlay)
+                    : TryClear(arena, overlay)) ||
                 !TryWriteRangeMetadata(
                     arena,
                     rangeIndices,
@@ -435,7 +448,7 @@ internal sealed partial class VulkanAdvancedVisibilityResourceRuntime
                 geometry with { DeformationOverlay = overlay };
             VulkanAdvancedVisibilityFamilySeal realizedSeal =
                 familySeal with { Geometry = realizedGeometry };
-            if (!realizedSeal.IsValid)
+            if (!realizedSeal.IsValid || !realizedGeometry.IsValid)
             {
                 if (!TryRollbackFrameStorageTransaction(
                         arena, frameSlot, rollbackCursor, out string rollbackReason))
@@ -651,7 +664,7 @@ internal sealed partial class VulkanAdvancedVisibilityResourceRuntime
         ReadOnlySpan<int> payloadIndices,
         uint payloadCount)
     {
-        if (ranges.IsEmpty || payloadIndices.Length != payloadCount ||
+        if ((ranges.IsEmpty && payloadCount != 0u) || payloadIndices.Length != payloadCount ||
             !arena.TryBeginWrite(rangeIndices, out VulkanFrameDataWriteScope indexScope))
         {
             return false;

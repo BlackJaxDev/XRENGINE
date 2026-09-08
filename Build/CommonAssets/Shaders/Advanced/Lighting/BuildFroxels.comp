@@ -2,6 +2,17 @@
 #include "ClusteredLightingInterface.glslinc"
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 4) in;
 
+void getTileNdcBounds(XRAdvancedViewRecord view, uvec2 tile, out vec2 ndcMin, out vec2 ndcMax)
+{
+    // Froxel indices address physical framebuffer tiles. Convert both corners
+    // before ordering the bounds because the view convention can reverse Y.
+    vec2 uvMin = vec2(tile * 16u) / vec2(u_Push.screenExtent);
+    vec2 uvMax = vec2(min((tile + 1u) * 16u, u_Push.screenExtent)) / vec2(u_Push.screenExtent);
+    vec2 first = XR_ADV_FramebufferUvToClipNdc(view, uvMin);
+    vec2 second = XR_ADV_FramebufferUvToClipNdc(view, uvMax);
+    ndcMin = min(first, second);
+    ndcMax = max(first, second);
+}
 bool intersectsTile(XRAdvancedLightRecord light, XRAdvancedViewRecord view, uvec3 tile,
     float sliceMin, float sliceMax)
 {
@@ -12,8 +23,8 @@ bool intersectsTile(XRAdvancedLightRecord light, XRAdvancedViewRecord view, uvec
     vec3 viewPosition = XR_ADV_TransformRowVector(world, view.view).xyz;
     float depth = -viewPosition.z;
     if (depth + radius < sliceMin || depth - radius > sliceMax) return false;
-    vec2 ndcMin = (vec2(tile.xy * 16u) / vec2(u_Push.screenExtent)) * 2.0 - 1.0;
-    vec2 ndcMax = (vec2(min((tile.xy + 1u) * 16u, u_Push.screenExtent)) / vec2(u_Push.screenExtent)) * 2.0 - 1.0;
+    vec2 ndcMin, ndcMax;
+    getTileNdcBounds(view, tile.xy, ndcMin, ndcMax);
     // Homogeneous side planes avoid unstable projected radii near the camera.
     // Matrix columns form world-space planes for the engine's row-vector ABI.
     mat4 m = view.viewProjectionJittered;
@@ -24,18 +35,21 @@ bool intersectsTile(XRAdvancedLightRecord light, XRAdvancedViewRecord view, uvec
     return true;
 }
 
-uint allocateIndices(uint count, uint capacity)
+uint reserveLightIndicesForWorkgroup(uint count, uint capacity)
 {
+    if (count == 0u) return 0u;
+
     uint observed = atomicAdd(XR_ADV_LightingCounters.nextLightIndex, 0u);
-    for (;;)
+    for (uint attempt = 0u; attempt < 64u; ++attempt)
     {
         if (observed > capacity || count > capacity - observed) return XR_ADV_FROXEL_OVERFLOW;
         uint prior = atomicCompSwap(XR_ADV_LightingCounters.nextLightIndex, observed, observed + count);
         if (prior == observed) return observed;
         observed = prior;
     }
-}
 
+    return XR_ADV_FROXEL_OVERFLOW;
+}
 bool intersectsDecalTile(XRAdvancedDecalRecord decal, XRAdvancedViewRecord view, uvec3 tile,
     float sliceMin, float sliceMax)
 {
@@ -59,8 +73,8 @@ bool intersectsDecalTile(XRAdvancedDecalRecord decal, XRAdvancedViewRecord view,
     vec3 viewPosition = XR_ADV_TransformRowVector(center, view.view).xyz;
     float depth = -viewPosition.z;
     if (depth + radius < sliceMin || depth - radius > sliceMax) return false;
-    vec2 ndcMin = (vec2(tile.xy * 16u) / vec2(u_Push.screenExtent)) * 2.0 - 1.0;
-    vec2 ndcMax = (vec2(min((tile.xy + 1u) * 16u, u_Push.screenExtent)) / vec2(u_Push.screenExtent)) * 2.0 - 1.0;
+    vec2 ndcMin, ndcMax;
+    getTileNdcBounds(view, tile.xy, ndcMin, ndcMax);
     mat4 m = view.viewProjectionJittered;
     vec4 planes[4] = vec4[4](m[0] - ndcMin.x * m[3], ndcMax.x * m[3] - m[0],
         m[1] - ndcMin.y * m[3], ndcMax.y * m[3] - m[1]);
@@ -69,82 +83,200 @@ bool intersectsDecalTile(XRAdvancedDecalRecord decal, XRAdvancedViewRecord view,
     return true;
 }
 
-uint allocateDecalIndices(uint count, uint capacity)
+uint reserveDecalIndicesForWorkgroup(uint count, uint capacity)
 {
+    if (count == 0u) return 0u;
+
     uint observed = atomicAdd(XR_ADV_LightingCounters.nextDecalIndex, 0u);
-    for (;;)
+    for (uint attempt = 0u; attempt < 64u; ++attempt)
     {
         if (observed > capacity || count > capacity - observed) return XR_ADV_FROXEL_OVERFLOW;
         uint prior = atomicCompSwap(XR_ADV_LightingCounters.nextDecalIndex, observed, observed + count);
         if (prior == observed) return observed;
         observed = prior;
     }
+
+    return XR_ADV_FROXEL_OVERFLOW;
 }
+
+shared uint s_lightGroupCount;
+shared uint s_lightGroupBase;
+shared uint s_lightOverflowCellCount;
+shared uint s_decalGroupCount;
+shared uint s_decalGroupBase;
+shared uint s_decalOverflowCellCount;
 
 void main()
 {
     uvec3 tile = gl_GlobalInvocationID;
-    if (any(greaterThanEqual(tile, uvec3(u_Push.tilesCount, u_Push.depthSlices))) ||
-        u_Push.viewIndex >= uint(XR_ADV_Views.records.length())) return;
-    uint index = XR_ADV_GetFroxelIndex(tile.xy, tile.z, u_Push.viewIndex, u_Push.tilesCount, u_Push.depthSlices);
-    if (index >= uint(XR_ADV_FroxelGrid.records.length()))
+    uint lane = gl_LocalInvocationIndex;
+    bool tileInBounds = !any(greaterThanEqual(tile, uvec3(u_Push.tilesCount, u_Push.depthSlices)));
+    bool viewValid = u_Push.viewIndex < uint(XR_ADV_Views.records.length());
+    bool eligible = tileInBounds && viewValid;
+    bool gridIndexOutOfRange = false;
+    uint index = 0u;
+    if (eligible)
     {
-        atomicAdd(XR_ADV_LightingCounters.overflowCount, 1u);
-        return;
+        index = XR_ADV_GetFroxelIndex(tile.xy, tile.z, u_Push.viewIndex,
+            u_Push.tilesCount, u_Push.depthSlices);
+        gridIndexOutOfRange = index >= uint(XR_ADV_FroxelGrid.records.length()) ||
+            index >= uint(XR_ADV_FroxelDecalGrid.records.length());
+        eligible = !gridIndexOutOfRange;
     }
-    XRAdvancedViewRecord view = XR_ADV_LoadView(u_Push.viewIndex);
-    float nearPlane = max(view.cameraPositionAndNear.w, 0.0001);
-    float farPlane = max(view.cameraForwardAndFar.w, nearPlane + 0.0001);
-    float sliceMin = nearPlane * pow(farPlane / nearPlane, float(tile.z) / float(u_Push.depthSlices));
-    float sliceMax = nearPlane * pow(farPlane / nearPlane, float(tile.z + 1u) / float(u_Push.depthSlices));
-    uint lightCount = min(u_Push.lightCount, uint(XR_ADV_Lights.records.length()));
-    uint points = 0u, spots = 0u;
-    for (uint i = 0u; i < lightCount; ++i)
+
+    XRAdvancedViewRecord view;
+    float sliceMin = 0.0;
+    float sliceMax = 0.0;
+    if (eligible)
     {
-        XRAdvancedLightRecord light = XR_ADV_LoadLight(i);
-        if (!intersectsTile(light, view, tile, sliceMin, sliceMax)) continue;
-        if (light.type == 1u) ++points; else ++spots;
+        view = XR_ADV_LoadView(u_Push.viewIndex);
+        float nearPlane = max(view.cameraPositionAndNear.w, 0.0001);
+        float farPlane = max(view.cameraForwardAndFar.w, nearPlane + 0.0001);
+        sliceMin = nearPlane * pow(farPlane / nearPlane, float(tile.z) / float(u_Push.depthSlices));
+        sliceMax = nearPlane * pow(farPlane / nearPlane, float(tile.z + 1u) / float(u_Push.depthSlices));
     }
-    uint capacity = min(u_Push.maxLightIndices, uint(XR_ADV_LightIndexList.indices.length()));
-    uint base = allocateIndices(points + spots, capacity);
-    if (base == XR_ADV_FROXEL_OVERFLOW)
+
+    uint lightCount = 0u;
+    uint points = 0u;
+    uint spots = 0u;
+    if (eligible)
     {
-        // Exact GPU repair in shading evaluates all local lights for this
-        // froxel. It neither drops lighting nor requests a current-frame readback.
-        XR_ADV_FroxelGrid.records[index] = XRAdvancedFroxelRecord(0u, XR_ADV_FROXEL_OVERFLOW, 0u, 0u);
-        atomicAdd(XR_ADV_LightingCounters.overflowCount, 1u);
-    }
-    else
-    {
-        uint pointWrite = base, spotWrite = base + points;
+        lightCount = min(u_Push.lightCount, uint(XR_ADV_Lights.records.length()));
         for (uint i = 0u; i < lightCount; ++i)
         {
             XRAdvancedLightRecord light = XR_ADV_LoadLight(i);
             if (!intersectsTile(light, view, tile, sliceMin, sliceMax)) continue;
-            if (light.type == 1u) XR_ADV_LightIndexList.indices[pointWrite++] = i;
-            else XR_ADV_LightIndexList.indices[spotWrite++] = i;
+            if (light.type == 1u) ++points; else ++spots;
         }
-        XR_ADV_FroxelGrid.records[index] = XRAdvancedFroxelRecord(base, points, base + points, spots);
     }
-    uint decalCount = 0u;
-    for (uint i = 0u; i < uint(XR_ADV_Decals.records.length()); ++i)
+
+    uint lightCellCount = points + spots;
+    uint lightCapacity = min(u_Push.maxLightIndices, uint(XR_ADV_LightIndexList.indices.length()));
+    uint maxLightContribution = min(lightCapacity, 0xffffffffu / (gl_WorkGroupSize.x * gl_WorkGroupSize.y * gl_WorkGroupSize.z));
+    bool lightNeedsRepair = eligible && lightCellCount > maxLightContribution;
+    uint lightContribution = lightNeedsRepair ? 0u : lightCellCount;
+
+    if (lane == 0u)
     {
-        XRAdvancedDecalRecord decal = XR_ADV_Decals.records[i];
-        if (intersectsDecalTile(decal, view, tile, sliceMin, sliceMax)) ++decalCount;
+        s_lightGroupCount = 0u;
+        s_lightGroupBase = 0u;
+        s_lightOverflowCellCount = 0u;
     }
+    barrier();
+
+    // Preserve the capacity guard's diagnostic while keeping every lane in the
+    // workgroup barrier sequence. Padding and invalid views do not contribute.
+    if (gridIndexOutOfRange)
+        atomicAdd(s_lightOverflowCellCount, 1u);
+
+    uint lightLocalOffset = 0u;
+    if (lightContribution != 0u)
+        lightLocalOffset = atomicAdd(s_lightGroupCount, lightContribution);
+    barrier();
+
+    if (lane == 0u)
+        s_lightGroupBase = reserveLightIndicesForWorkgroup(s_lightGroupCount, lightCapacity);
+    barrier();
+
+    bool lightReservationFailed = lightContribution != 0u && s_lightGroupBase == XR_ADV_FROXEL_OVERFLOW;
+    if (eligible)
+    {
+        if (lightNeedsRepair || lightReservationFailed)
+        {
+            // Exact GPU repair in shading evaluates all local lights for this
+            // froxel. It neither drops lighting nor requests a current-frame readback.
+            XR_ADV_FroxelGrid.records[index] = uvec4(0u, XR_ADV_FROXEL_OVERFLOW, 0u, 0u);
+            atomicAdd(s_lightOverflowCellCount, 1u);
+        }
+        else if (lightCellCount == 0u)
+        {
+            XR_ADV_FroxelGrid.records[index] = uvec4(0u);
+        }
+        else
+        {
+            uint base = s_lightGroupBase + lightLocalOffset;
+            uint pointWrite = base;
+            uint spotWrite = base + points;
+            for (uint i = 0u; i < lightCount; ++i)
+            {
+                XRAdvancedLightRecord light = XR_ADV_LoadLight(i);
+                if (!intersectsTile(light, view, tile, sliceMin, sliceMax)) continue;
+                if (light.type == 1u) XR_ADV_LightIndexList.indices[pointWrite++] = i;
+                else XR_ADV_LightIndexList.indices[spotWrite++] = i;
+            }
+            XR_ADV_FroxelGrid.records[index] = uvec4(base, points, base + points, spots);
+        }
+    }
+    barrier();
+
+    // All lanes finish reading the group reservation before lane zero publishes
+    // aggregate repair state and the workgroup advances to decal allocation.
+    if (lane == 0u && s_lightOverflowCellCount != 0u)
+        atomicAdd(XR_ADV_LightingCounters.overflowCount, s_lightOverflowCellCount);
+    barrier();
+
+    uint decalRecordCount = 0u;
+    uint decalCellCount = 0u;
+    if (eligible)
+    {
+        decalRecordCount = uint(XR_ADV_Decals.records.length());
+        for (uint i = 0u; i < decalRecordCount; ++i)
+        {
+            XRAdvancedDecalRecord decal = XR_ADV_Decals.records[i];
+            if (intersectsDecalTile(decal, view, tile, sliceMin, sliceMax)) ++decalCellCount;
+        }
+    }
+
     uint decalCapacity = min(uint(XR_ADV_DecalIndexList.indices.length()), 65536u);
-    uint decalBase = decalCount > 65535u ? XR_ADV_FROXEL_OVERFLOW : allocateDecalIndices(decalCount, decalCapacity);
-    if (decalBase == XR_ADV_FROXEL_OVERFLOW || decalBase > 65535u)
+    uint maxDecalContribution = min(decalCapacity, 0xffffffffu / (gl_WorkGroupSize.x * gl_WorkGroupSize.y * gl_WorkGroupSize.z));
+    bool decalNeedsRepair = eligible && (decalCellCount > 65535u || decalCellCount > maxDecalContribution);
+    uint decalContribution = decalNeedsRepair ? 0u : decalCellCount;
+
+    if (lane == 0u)
     {
-        XR_ADV_FroxelDecalGrid.records[index] = XRAdvancedFroxelDecalRecord(0u, XR_ADV_DECAL_FROXEL_OVERFLOW);
-        atomicAdd(XR_ADV_LightingCounters.decalOverflowCount, 1u);
-        return;
+        s_decalGroupCount = 0u;
+        s_decalGroupBase = 0u;
+        s_decalOverflowCellCount = 0u;
     }
-    uint decalWrite = decalBase;
-    for (uint i = 0u; i < uint(XR_ADV_Decals.records.length()); ++i)
+    barrier();
+
+    uint decalLocalOffset = 0u;
+    if (decalContribution != 0u)
+        decalLocalOffset = atomicAdd(s_decalGroupCount, decalContribution);
+    barrier();
+
+    if (lane == 0u)
+        s_decalGroupBase = reserveDecalIndicesForWorkgroup(s_decalGroupCount, decalCapacity);
+    barrier();
+
+    bool decalReservationFailed = decalContribution != 0u && s_decalGroupBase == XR_ADV_FROXEL_OVERFLOW;
+    if (eligible)
     {
-        XRAdvancedDecalRecord decal = XR_ADV_Decals.records[i];
-        if (intersectsDecalTile(decal, view, tile, sliceMin, sliceMax)) XR_ADV_DecalIndexList.indices[decalWrite++] = i;
+        if (decalNeedsRepair || decalReservationFailed)
+        {
+            XR_ADV_FroxelDecalGrid.records[index] = uvec2(0u, XR_ADV_DECAL_FROXEL_OVERFLOW);
+            atomicAdd(s_decalOverflowCellCount, 1u);
+        }
+        else if (decalCellCount == 0u)
+        {
+            XR_ADV_FroxelDecalGrid.records[index] = uvec2(0u);
+        }
+        else
+        {
+            uint base = s_decalGroupBase + decalLocalOffset;
+            uint decalWrite = base;
+            for (uint i = 0u; i < decalRecordCount; ++i)
+            {
+                XRAdvancedDecalRecord decal = XR_ADV_Decals.records[i];
+                if (intersectsDecalTile(decal, view, tile, sliceMin, sliceMax))
+                    XR_ADV_DecalIndexList.indices[decalWrite++] = i;
+            }
+            XR_ADV_FroxelDecalGrid.records[index] = uvec2(base | (decalCellCount << 16u), 0u);
+        }
     }
-    XR_ADV_FroxelDecalGrid.records[index] = XRAdvancedFroxelDecalRecord(decalBase | (decalCount << 16u), 0u);
+    barrier();
+
+    if (lane == 0u && s_decalOverflowCellCount != 0u)
+        atomicAdd(XR_ADV_LightingCounters.decalOverflowCount, s_decalOverflowCellCount);
+    barrier();
 }

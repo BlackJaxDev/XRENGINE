@@ -7,6 +7,14 @@ namespace XREngine.Rendering.Vulkan;
 
 internal sealed partial class VulkanCommandRuntime
 {
+    // Cache paths once; native dispatch instrumentation must not allocate per frame.
+    private static readonly string[] NativeClassificationGpuProfilerPath = ["Advanced", "Classification", "ClassifyTiles"];
+    private static readonly string[] NativeClassificationArgumentsGpuProfilerPath = ["Advanced", "Classification", "BuildArguments"];
+    private static readonly string[] NativeAmbientOcclusionGpuProfilerPath = ["Advanced", "AmbientOcclusion", "GTAO"];
+    private static readonly string[] NativeFroxelGpuProfilerPath = ["Advanced", "Lighting", "BuildFroxels"];
+    private static readonly string[] NativeBackgroundGpuProfilerPath = ["Advanced", "Shading", "Background"];
+    private static readonly string[] NativeOpaqueGpuProfilerPath = ["Advanced", "Shading", "NativeOpaque"];
+    private static readonly string[] NativeOpaqueRepairGpuProfilerPath = ["Advanced", "Shading", "GpuOverflowRepair"];
     private int RecordAdvancedNativeComputePayload(
         scoped ref PrimaryCommandBufferRecordingState state,
         in VulkanAdvancedVisibilityOperationPayload payload,
@@ -51,7 +59,7 @@ internal sealed partial class VulkanCommandRuntime
                 FillNativeCounters(state.CommandBuffer, closure.KernelCounts);
             }
             RecordNativeDispatch(state.CommandBuffer, in payload, payload.NativeComputePipelines.Classify,
-                in push, tilesX, tilesY, 1, "Advanced.ClassifyTiles");
+                in push, tilesX, tilesY, 1, "Advanced.ClassifyTiles", NativeClassificationGpuProfilerPath);
             EmitNativeBufferDependency(state.CommandBuffer, closure.KernelCounts,
                 AccessFlags.ShaderWriteBit, AccessFlags.ShaderReadBit,
                 PipelineStageFlags.ComputeShaderBit, PipelineStageFlags.ComputeShaderBit);
@@ -59,7 +67,7 @@ internal sealed partial class VulkanCommandRuntime
                 AccessFlags.ShaderWriteBit, AccessFlags.ShaderReadBit,
                 PipelineStageFlags.ComputeShaderBit, PipelineStageFlags.ComputeShaderBit);
             RecordNativeDispatch(state.CommandBuffer, in payload, payload.NativeComputePipelines.BuildArguments,
-                in push, 1, 1, 1, "Advanced.BuildClassificationIndirect");
+                in push, 1, 1, 1, "Advanced.BuildClassificationIndirect", NativeClassificationArgumentsGpuProfilerPath);
             EmitNativeBufferDependency(state.CommandBuffer, closure.DispatchArguments,
                 AccessFlags.ShaderWriteBit, AccessFlags.IndirectCommandReadBit,
                 PipelineStageFlags.ComputeShaderBit, PipelineStageFlags.DrawIndirectBit);
@@ -80,7 +88,7 @@ internal sealed partial class VulkanCommandRuntime
         {
             TransitionNativeOutput(state.CommandBuffer, closure.AmbientOcclusion, closure.ViewIndex);
             RecordNativeDispatch(state.CommandBuffer, in payload, payload.NativeComputePipelines.AmbientOcclusion,
-                in push, tilesX, tilesY, 1, "Advanced.GTAO");
+                in push, tilesX, tilesY, 1, "Advanced.GTAO", NativeAmbientOcclusionGpuProfilerPath);
             EmitMemoryBarrierMask(state.CommandBuffer, EMemoryBarrierMask.ShaderImageAccess | EMemoryBarrierMask.TextureFetch);
             return info.OperationIndex;
         }
@@ -92,7 +100,7 @@ internal sealed partial class VulkanCommandRuntime
         TransitionNativeOutput(state.CommandBuffer, closure.ShadingDiagnostics, closure.ViewIndex);
         FillNativeCounters(state.CommandBuffer, closure.LightingCounters);
         RecordNativeDispatch(state.CommandBuffer, in payload, payload.NativeComputePipelines.BuildFroxels,
-            in push, DivideRoundUp(tilesX, 8), DivideRoundUp(tilesY, 8), DivideRoundUp(depthSlices, 4), "Advanced.BuildFroxels");
+            in push, DivideRoundUp(tilesX, 8), DivideRoundUp(tilesY, 8), DivideRoundUp(depthSlices, 4), "Advanced.BuildFroxels", NativeFroxelGpuProfilerPath);
         EmitNativeBufferDependency(state.CommandBuffer, closure.FroxelGrid,
             AccessFlags.ShaderWriteBit, AccessFlags.ShaderReadBit,
             PipelineStageFlags.ComputeShaderBit, PipelineStageFlags.ComputeShaderBit);
@@ -106,26 +114,29 @@ internal sealed partial class VulkanCommandRuntime
             AccessFlags.ShaderWriteBit, AccessFlags.ShaderReadBit,
             PipelineStageFlags.ComputeShaderBit, PipelineStageFlags.ComputeShaderBit);
         RecordNativeDispatch(state.CommandBuffer, in payload, payload.NativeComputePipelines.Background,
-            in push, tilesX, tilesY, 1, "Advanced.Background");
+            in push, tilesX, tilesY, 1, "Advanced.Background", NativeBackgroundGpuProfilerPath);
         EmitMemoryBarrierMask(state.CommandBuffer, EMemoryBarrierMask.ShaderImageAccess);
 
         VulkanAdvancedComputePipeline shade = payload.NativeComputePipelines.Shade;
-        CmdBeginLabel(state.CommandBuffer, "Advanced.NativeOpaque.Indirect");
-        BindPipelineTracked(state.CommandBuffer, PipelineBindPoint.Compute, shade.Pipeline);
-        BindAdvancedVisibilityDescriptorSets(state.CommandBuffer, PipelineBindPoint.Compute,
-            shade.Program.PipelineLayout, in payload, payload.NativeComputeDescriptorSet);
-        for (uint kernel = 0; kernel < AdvancedRenderPipeline.DefaultMaxShadingKernels; ++kernel)
+        using (TryBeginVulkanGpuProfilerScope(state.CommandBuffer, NativeOpaqueGpuProfilerPath))
         {
-            push = push with { KernelIndex = kernel };
-            PushNativeConstants(state.CommandBuffer, shade, in push);
-            Api.CmdDispatchIndirect(state.CommandBuffer, closure.DispatchArguments.NativeBuffer,
-                closure.DispatchArguments.NativeOffset + kernel * 16UL);
+            CmdBeginLabel(state.CommandBuffer, "Advanced.NativeOpaque.Indirect");
+            BindPipelineTracked(state.CommandBuffer, PipelineBindPoint.Compute, shade.Pipeline);
+            BindAdvancedVisibilityDescriptorSets(state.CommandBuffer, PipelineBindPoint.Compute,
+                shade.Program.PipelineLayout, in payload, payload.NativeComputeDescriptorSet);
+            for (uint kernel = 0; kernel < AdvancedRenderPipeline.DefaultMaxShadingKernels; ++kernel)
+            {
+                push = push with { KernelIndex = kernel };
+                PushNativeConstants(state.CommandBuffer, shade, in push);
+                Api.CmdDispatchIndirect(state.CommandBuffer, closure.DispatchArguments.NativeBuffer,
+                    closure.DispatchArguments.NativeOffset + kernel * 16UL);
+            }
+            CmdEndLabel(state.CommandBuffer);
         }
-        CmdEndLabel(state.CommandBuffer);
         EmitMemoryBarrierMask(state.CommandBuffer, EMemoryBarrierMask.ShaderImageAccess);
         push = push with { Flags = push.Flags | 1u };
         RecordNativeDispatch(state.CommandBuffer, in payload, shade,
-            in push, tilesX, tilesY, 1, "Advanced.NativeOpaque.GpuOverflowRepair");
+            in push, tilesX, tilesY, 1, "Advanced.NativeOpaque.GpuOverflowRepair", NativeOpaqueRepairGpuProfilerPath);
         EmitMemoryBarrierMask(state.CommandBuffer, EMemoryBarrierMask.ShaderImageAccess | EMemoryBarrierMask.TextureFetch);
         VulkanFrozenBufferBarrier lightingCounters = closure.LightingCounters;
         VulkanAdvancedVisibilityStageRequest lightingRequest = payload.Request;
@@ -138,8 +149,9 @@ internal sealed partial class VulkanCommandRuntime
 
     private void RecordNativeDispatch(CommandBuffer commandBuffer,
         in VulkanAdvancedVisibilityOperationPayload payload, in VulkanAdvancedComputePipeline pipeline,
-        in VulkanAdvancedNativeShadingPushConstants push, uint x, uint y, uint z, string label)
+        in VulkanAdvancedNativeShadingPushConstants push, uint x, uint y, uint z, string label, string[] profilerPath)
     {
+        using var profilerScope = TryBeginVulkanGpuProfilerScope(commandBuffer, profilerPath);
         CmdBeginLabel(commandBuffer, label);
         BindPipelineTracked(commandBuffer, PipelineBindPoint.Compute, pipeline.Pipeline);
         BindAdvancedVisibilityDescriptorSets(commandBuffer, PipelineBindPoint.Compute,

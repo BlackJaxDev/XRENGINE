@@ -1,7 +1,7 @@
 namespace XREngine.Data.Rendering;
 
 /// <summary>
-/// Controls how the engine evaluates and selects the advanced render pipeline.
+/// Controls default Advanced pipeline selection. An explicitly assigned camera pipeline remains authoritative when its output is realized.
 /// </summary>
 public enum EAdvancedRenderPipelineMode
 {

@@ -184,9 +184,12 @@ namespace XREngine
                 AdvancedRenderPipelineCapabilities capabilities =
                     renderer?.GetAdvancedRenderPipelineCapabilities()
                     ?? AdvancedRenderPipelineCapabilities.NoRenderer;
-                EAdvancedRenderPipelineMode mode = request.OffscreenIntent.HasValue
+                // The configured Advanced source owns this output. Its realization
+                // must not be disabled by the global factory-selection policy.
+                EAdvancedRenderPipelineMode mode = request.OffscreenIntent.HasValue ||
+                    AdvancedRenderPipelineMode == EAdvancedRenderPipelineMode.Required
                     ? EAdvancedRenderPipelineMode.Required
-                    : AdvancedRenderPipelineMode;
+                    : EAdvancedRenderPipelineMode.Available;
                 AdvancedVisibilityFamilyAdmission admission = renderer?.GetAdvancedVisibilityFamilyAdmission() ??
                     new(EAdvancedProductionExecutionState.Unsupported, "No active renderer is available for Advanced output admission.");
                 AdvancedRenderPipelineSelectionResult selection =
@@ -200,13 +203,9 @@ namespace XREngine
                         out AdvancedVisibilityFamilyReservation reservation,
                         out string reservationFailureReason);
 
-                EAdvancedRenderPipelineOutputBindingState state = mode switch
+                EAdvancedRenderPipelineOutputBindingState state = admission.State switch
                 {
-                    EAdvancedRenderPipelineMode.Disabled =>
-                        EAdvancedRenderPipelineOutputBindingState.Disabled,
-                    EAdvancedRenderPipelineMode.Diagnostic =>
-                        EAdvancedRenderPipelineOutputBindingState.DiagnosticOnly,
-                    _ when admission.State == EAdvancedProductionExecutionState.PendingResources =>
+                    EAdvancedProductionExecutionState.PendingResources =>
                         EAdvancedRenderPipelineOutputBindingState.PendingResources,
                     _ when selection.SelectsAdvanced =>
                         EAdvancedRenderPipelineOutputBindingState.Bound,
@@ -215,10 +214,6 @@ namespace XREngine
                 string? failureReason = state switch
                 {
                     EAdvancedRenderPipelineOutputBindingState.Bound => null,
-                    EAdvancedRenderPipelineOutputBindingState.Disabled =>
-                        "Advanced output binding is disabled by policy.",
-                    EAdvancedRenderPipelineOutputBindingState.DiagnosticOnly =>
-                        "Advanced output binding is diagnostic-only by policy.",
                     EAdvancedRenderPipelineOutputBindingState.PendingResources => admission.Reason,
                     _ => reservationFailureReason,
                 };

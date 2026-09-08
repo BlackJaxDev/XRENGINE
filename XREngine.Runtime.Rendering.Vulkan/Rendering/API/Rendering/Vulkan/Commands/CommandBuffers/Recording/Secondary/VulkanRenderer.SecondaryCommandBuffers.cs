@@ -300,6 +300,12 @@ namespace XREngine.Rendering.Vulkan
             Dictionary<VulkanMeshFrameDataRendererFamilyKey, int> meshFrameDataFamilyBases =
                 recordingScratch.DynamicUiMeshFrameDataFamilyBases;
             meshDrawSlotsByRendererFamily.Clear();
+            // Frame-data/layout prewarming can select a variant that differs from
+            // the pre-acquired UI key. An exact PresentNow frame must compile that
+            // variant before vkBeginCommandBuffer rather than terminally deferring it.
+            bool foregroundPipelinePrewarmRequired = policy.FreshSerialRecording &&
+                policy.IsPresentNow &&
+                policy.ReadinessPolicy == ERenderOutputReadinessPolicy.BlockForExact;
             bool graphicsPipelinesReady = true;
             string firstGraphicsPipelinePendingReason = string.Empty;
             for (int i = 0; i < dynamicUiBatchTextOps.Length; i++)
@@ -347,7 +353,7 @@ namespace XREngine.Rendering.Vulkan
                         drawContext.PassMetadata,
                         depthStencilReadOnly: false,
                         drawContext.PipelineInstance?.DebugName ?? "<no pipeline>",
-                        foregroundRequired: false,
+                        foregroundRequired: foregroundPipelinePrewarmRequired,
                         out _,
                         out string pipelineReason))
                 {
