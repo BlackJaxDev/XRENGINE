@@ -69,6 +69,7 @@ namespace XREngine.Rendering.Vulkan
                        new(_frameTelemetry, EVulkanCpuStage.PrimaryFinalization))
                 {
                     FinalizePrimaryCommandRecording(ref recordingState);
+                    FinalizeOutputCompletionReceipts(ref recordingState);
                 }
 
                 using (VulkanCpuStageScope endCommandBufferStage =

@@ -43,7 +43,7 @@ Related documentation and work:
 - [Vulkan Core Hardening And Device-Loss TODO](../rendering/vulkan-core-hardening-and-device-loss-todo.md)
 - [Vulkan Dynamic Rendering Migration TODO](../rendering/vulkan-dynamic-rendering-migration-todo.md)
 - [Completed Vulkan primary-reuse evidence](../../investigations/rendering/archive/vulkan-framerate-root-cause-2026-07-28.md)
-- [OpenXR Vulkan Submit Fence Wait TODO](../rendering/vr/openxr-vulkan-submit-fence-wait-todo.md)
+- [OpenXR Vulkan Submit Fence Wait TODO](../rendering/vulkan-xr-and-advanced-rendering-todo.md#phase-6)
 - [Vulkan Frame Loop Performance TODO](../COMPLETED/vulkan-frame-loop-performance-todo.md)
 - [Backend Renderer Folder Organization TODO](../COMPLETED/backend-renderer-folder-organization-todo.md)
 - [Vulkan Parallel Command Chain Refactor Design](../../design/rendering/vulkan-parallel-command-chain-refactor-design.md)

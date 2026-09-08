@@ -11,19 +11,19 @@ internal readonly record struct VulkanSubmissionOutputPolicy(
     bool IsOpenXrOutput,
     bool IsMirrorOutput,
     bool IsCaptureOutput,
-    bool IsExternalOutput)
+    bool IsExternalOutput,
+    AdvancedVisibilityFamilyReservation VisibilityReservation = default)
 {
     internal bool IsValid => PassIdentity != 0u;
 
     /// <summary>
-    /// The canonical visibility ABI currently has one desktop mono family.
-    /// These output classes need independently sealed target/history/runtime
-    /// ownership, so they are rejected instead of borrowing this family or
-    /// silently changing a submission strategy.
+    /// Capture and XR outputs require their own frozen visibility reservation.
+    /// Ordinary policy snapshots cannot borrow another output's family.
     /// </summary>
     internal bool AllowsCanonicalVisibilityFamily
-        => IsValid && !IsShadowPass && !IsExplicitOutput && !IsOpenXrOutput &&
-           !IsMirrorOutput && !IsCaptureOutput && !IsExternalOutput;
+        => IsValid && !IsShadowPass &&
+           (VisibilityReservation.IsValid ||
+            !IsExplicitOutput && !IsOpenXrOutput && !IsMirrorOutput && !IsCaptureOutput && !IsExternalOutput);
 
     internal string DescribeCanonicalVisibilityRejection()
     {

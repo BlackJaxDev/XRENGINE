@@ -121,6 +121,7 @@ internal sealed partial class VulkanFrameLoop
         {
             OutputFrameBuffer = outputFrameBuffer,
             OutputSchedulingInstanceIdentity = viewport?.FrameOutputIdentity ?? 0UL,
+            AdvancedVisibilityOutputIdentity = pipeline?.AdvancedOutputBinding.Request.OutputId ?? 0UL,
             OutputSchedulingRequest = viewport?.CurrentFrameOutputRequest ?? default,
             OperationWorkspace = _commandRuntime.GetFrameOpWorkspace(),
         });
@@ -236,7 +237,7 @@ internal sealed partial class VulkanFrameLoop
         }
 
         throw new InvalidOperationException(
-            "The desktop viewport has no matching submitted Vulkan resource-planner generation. " +
+            "The requested viewport has no matching submitted Vulkan resource-planner generation. " +
             "Capture again after its current resource generation has rendered; readback cannot create unwritten images.");
     }
 
@@ -771,7 +772,12 @@ internal sealed partial class VulkanFrameLoop
         {
             OutputFrameBuffer = outputFrameBuffer,
             OutputSchedulingInstanceIdentity = viewport?.FrameOutputIdentity ?? 0UL,
-            OutputSchedulingRequest = viewport?.CurrentFrameOutputRequest ?? default,
+            AdvancedVisibilityOutputIdentity = pipeline.AdvancedOutputBinding.Request.OutputId,
+            OutputSchedulingRequest = pipeline.RenderState.OutputCompletionRequest.IsDefined
+                ? pipeline.RenderState.OutputCompletionRequest
+                : pipeline.RenderState.ViewHistoryOutputRequest.IsDefined
+                    ? pipeline.RenderState.ViewHistoryOutputRequest
+                    : viewport?.CurrentFrameOutputRequest ?? default,
         }));
     }
 
@@ -779,6 +785,8 @@ internal sealed partial class VulkanFrameLoop
     {
         bool stereoEnabled = VulkanFramePlanner.ResolveFrameOpContextStereoEnabled(context);
         EVulkanFrameOpContextKind contextKind = ResolveFrameOpContextKind(context);
+        ulong historySequence =
+            context.PipelineInstance?.RenderState.ViewHistorySequenceId ?? 0UL;
         FrameOpContext complete = context with
         {
             OutputFrameBufferIdentity = VulkanFramePlanner.ComputeOutputFrameBufferIdentity(context.OutputFrameBufferName),
@@ -791,6 +799,14 @@ internal sealed partial class VulkanFrameLoop
             ResourceGeneration = ResolveFrameOpContextResourceGeneration(context.PipelineInstance),
             DescriptorGeneration = VulkanFramePlanner.ResolveFrameOpContextDescriptorGeneration(context.ResourceRegistry),
             ResourceRegistrySignatureSnapshot = VulkanFramePlanner.ComputeResourceRegistrySignature(context.ResourceRegistry),
+            OutputHistorySequenceId = historySequence,
+            OutputHistorySourceFrame = historySequence == 0UL
+                ? 0UL
+                : context.OutputSchedulingRequest.FrameId,
+            OutputCompletionReceiptId =
+                context.PipelineInstance?.RenderState.OutputCompletionReceiptId ?? 0UL,
+            OutputCompletionSourceFrame =
+                context.PipelineInstance?.RenderState.OutputCompletionRequest.FrameId ?? 0UL,
         };
 
         return VulkanFramePlanner.RefreshFrameOpContextRecordingFingerprint(complete);

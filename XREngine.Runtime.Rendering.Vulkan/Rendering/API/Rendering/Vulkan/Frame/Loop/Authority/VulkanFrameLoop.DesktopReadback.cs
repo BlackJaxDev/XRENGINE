@@ -67,16 +67,37 @@ internal sealed partial class VulkanFrameLoop
         in FrameOpContext requested, out IDisposable scope)
     {
         VulkanFrameOpPlannerStateKey key = VulkanFrameOpSnapshotSignatures.BuildPlannerStateKey(requested);
+        bool offscreen = requested.PipelineInstance?.Pipeline is AdvancedRenderPipeline { OffscreenProfile: not null };
+        int matchedIndex = -1;
         for (int index = 0; index < _desktopReadbackReceipts.Length; index++)
         {
             ref readonly VulkanDesktopReadbackReceipt receipt = ref _desktopReadbackReceipts[index];
-            if (receipt.SubmissionSerial == 0 || receipt.Key != key ||
+            // A completed offscreen viewport has left its caller-FBO scope. Its
+            // current context cannot reproduce that transient target/face identity.
+            // Select the newest submitted face, retaining exact pipeline, viewport,
+            // resource generation, layout signature and extent matching.
+            VulkanFrameOpPlannerStateKey candidateKey = offscreen
+                ? receipt.Key with
+                {
+                    ContextKind = key.ContextKind,
+                    OutputFrameBufferIdentity = key.OutputFrameBufferIdentity,
+                    OutputTargetIdentity = key.OutputTargetIdentity,
+                    LogicalViewId = key.LogicalViewId,
+                }
+                : receipt.Key;
+            if (receipt.SubmissionSerial == 0 || candidateKey != key ||
                 !ReferenceEquals(receipt.Context.ResourceRegistry, requested.ResourceRegistry) ||
                 !ReferenceEquals(receipt.Context.PipelineInstance, requested.PipelineInstance) ||
                 receipt.PlannerState.ResourceAllocator is null || receipt.PlannerState.ResourceAllocator.IsRetired)
                 continue;
+            if (matchedIndex < 0 || receipt.SubmissionSerial > _desktopReadbackReceipts[matchedIndex].SubmissionSerial)
+                matchedIndex = index;
+        }
 
-            _commandRuntime.ReconcileResourcePlannerImageLayouts(receipt.PlannerState.ResourceAllocator);
+        if (matchedIndex >= 0)
+        {
+            ref readonly VulkanDesktopReadbackReceipt receipt = ref _desktopReadbackReceipts[matchedIndex];
+            _commandRuntime.ReconcileResourcePlannerImageLayouts(receipt.PlannerState.ResourceAllocator!);
             scope = _resourcePlannerSessions.EnterRuntimeStateScope(receipt.PlannerState);
             return true;
         }

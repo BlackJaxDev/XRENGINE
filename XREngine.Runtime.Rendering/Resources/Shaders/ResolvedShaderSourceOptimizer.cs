@@ -64,6 +64,26 @@ public static partial class ResolvedShaderSourceOptimizer
 {
     public const int Version = 1;
 
+    /// <summary>
+    /// Removes conditional branches only when every macro used by the
+    /// expression has an explicit value in <paramref name="knownMacros"/>.
+    /// Unknown conditions remain verbatim so later shader compilation retains
+    /// its normal preprocessor authority.
+    /// </summary>
+    public static string PruneKnownConditionalBlocks(
+        string source,
+        IReadOnlySet<string> knownMacros,
+        IReadOnlySet<string> definedMacros)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(knownMacros);
+        ArgumentNullException.ThrowIfNull(definedMacros);
+        return UberShaderVariantBuilder.PruneKnownConditionalBlocks(
+            source,
+            knownMacros,
+            definedMacros);
+    }
+
     [GeneratedRegex(@"\b[A-Za-z_][A-Za-z0-9_]*\b", RegexOptions.Compiled)]
     private static partial Regex IdentifierRegex();
 

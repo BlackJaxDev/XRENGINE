@@ -1347,7 +1347,8 @@ internal sealed class VulkanPreparedStableBinStream
                     header.IndirectRange.Key.Coverage,
                     meshlet,
                     out VkRenderProgram program,
-                    out reason) ||
+                    out reason,
+                    multiview: target.DynamicRenderingFormats.ViewMask != 0u) ||
                 !VulkanCanonicalVisibilityPipelineFactory.TryPrepare(
                     program,
                     header.IndirectRange.Key.Coverage,

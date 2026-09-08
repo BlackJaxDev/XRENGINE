@@ -18,7 +18,7 @@ public partial class DefaultRenderPipeline
 
     private const string PpllNodeBufferName = "PpllNodeBuffer";
     private const string PpllCounterBufferName = "PpllCounterBuffer";
-    private const int PpllNodeStrideBytes = 32;
+    private const int PpllNodeStrideBytes = PpllCapacityContract.NodeStrideBytes;
     private const int PpllResolveFragmentLimit = 16;
     private const int MaxDepthPeelingLayersSupported = 4;
     private const float DepthPeelingEpsilon = 1e-5f;
@@ -33,7 +33,9 @@ public partial class DefaultRenderPipeline
         : GetTexture<XRTexture>(DepthPeelDepthTextureName(0));
     internal int ActiveDepthPeelLayerIndex => _activeDepthPeelLayerIndex;
     internal float ActiveDepthPeelingEpsilon => DepthPeelingEpsilon;
-    internal uint PpllMaxNodeCount => ComputePpllNodeCapacity();
+    internal uint PpllMaxNodeCount => PpllCapacityContract.ResolveActualNodeCapacity(
+        PpllNodeBuffer,
+        ComputePpllNodeCapacity());
 
     private bool ExactTransparencyEnabled
         => !Stereo &&
@@ -58,16 +60,12 @@ public partial class DefaultRenderPipeline
     private string DepthPeelingDebugShaderName() => "DepthPeelingDebug.fs";
 
     private uint ComputePpllNodeCapacity()
-    {
-        uint pixelCount = Math.Max(InternalWidth * InternalHeight, 1u);
-        return Math.Max(pixelCount * 2u, 1024u);
-    }
+        => PpllCapacityContract.ComputeNodeCapacity(InternalWidth, InternalHeight);
 
     private static uint ComputePpllNodeCapacity(RenderPipelineResourceProfile profile)
-    {
-        uint pixelCount = Math.Max(profile.InternalWidth * profile.InternalHeight, 1u);
-        return Math.Max(pixelCount * 2u, 1024u);
-    }
+        => PpllCapacityContract.ComputeNodeCapacity(
+            profile.InternalWidth,
+            profile.InternalHeight);
 
     private void AppendExactTransparencyCommands(ViewportRenderCommandContainer c)
     {
@@ -91,6 +89,7 @@ public partial class DefaultRenderPipeline
         {
             int capture = layerIndex;
             c.Add<VPRC_Manual>().ManualAction = () => _activeDepthPeelLayerIndex = capture;
+            using (c.AddUsing<VPRC_PushProgramBindings>(x => x.ApplyUniforms = ApplyDepthPeelingForwardProgramBindings))
             using (c.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(DepthPeelLayerFboName(capture), true, true, false, false)))
             {
                 c.Add<VPRC_DepthTest>().Enable = true;
@@ -100,6 +99,19 @@ public partial class DefaultRenderPipeline
         }
         c.Add<VPRC_RenderQuadToFBO>().SetOptions(DepthPeelingResolveFBOName, renderToSourceFrameBuffer: true);
         c.Add<VPRC_Manual>().ManualAction = () => _activeDepthPeelLayerIndex = -1;
+    }
+
+    private void ApplyDepthPeelingForwardProgramBindings(XRRenderProgram program)
+    {
+        XRTexture? previousDepth = PreviousDepthPeelDepthTexture;
+        if (previousDepth is not null)
+            program.Sampler("PrevPeelDepth", previousDepth, 8);
+
+        program.Uniform("ScreenWidth", (float)InternalWidth);
+        program.Uniform("ScreenHeight", (float)InternalHeight);
+        program.Uniform("DepthPeelLayerIndex", ActiveDepthPeelLayerIndex);
+        program.Uniform("DepthPeelEpsilon", ActiveDepthPeelingEpsilon);
+        program.Uniform("DepthPeelReversedDepth", RuntimeEngine.Rendering.State.RenderingCamera?.IsReversedDepth == true);
     }
 
     private XRDataBuffer CreatePpllNodeBuffer()
@@ -115,7 +127,7 @@ public partial class DefaultRenderPipeline
     }
 
     private static XRDataBuffer CreatePpllCounterBuffer()
-        => new(PpllCounterBufferName, EBufferTarget.ShaderStorageBuffer, 2u, EComponentType.UInt, 1u, false, true)
+        => new(PpllCounterBufferName, EBufferTarget.ShaderStorageBuffer, PpllCapacityContract.CounterWordCount, EComponentType.UInt, 1u, false, true)
         {
             Usage = EBufferUsage.DynamicCopy,
             BindingIndexOverride = 25u,
@@ -129,8 +141,8 @@ public partial class DefaultRenderPipeline
         if (counterBuffer is null)
             return;
 
-        counterBuffer.SetDataRawAtIndex(0, 0u);
-        counterBuffer.SetDataRawAtIndex(1, 0u);
+        for (uint counterIndex = 0u; counterIndex < PpllCapacityContract.CounterWordCount; counterIndex++)
+            counterBuffer.SetDataRawAtIndex(counterIndex, 0u);
         counterBuffer.PushSubData();
 
         XRTexture? headTexture = GetTexture<XRTexture>(PpllHeadPointerTextureName);

@@ -125,7 +125,7 @@ logs flushed, the sole runtime error was:
 There was no validation VUID or device loss. A warm-cache `-NoBuild` restart of
 the same named session reproduced the failure and was also stopped through the
 session manager. This limitation belongs to the separately active
-[Vulkan PresentNow frame-readiness investigation](../../todo/rendering/vulkan-present-now-frame-readiness-todo.md),
+[Vulkan PresentNow frame-readiness investigation](../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md#foundation-carryovers),
 whose live acceptance was already paused. P6.3 does not add a fallback or widen
 scope into that renderer rewrite.
 

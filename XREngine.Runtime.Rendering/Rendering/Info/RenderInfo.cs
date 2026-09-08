@@ -65,10 +65,13 @@ namespace XREngine.Rendering.Info
         {
             item.OnCollectedForRender -= CollectedForRender;
             item.OnSwapBuffers -= SwapBuffers;
+            if (ReferenceEquals(item.OwnerRenderInfo, this))
+                item.OwnerRenderInfo = null;
         }
 
         private void Added(RenderCommand item)
         {
+            item.OwnerRenderInfo = this;
             item.OnCollectedForRender += CollectedForRender;
             item.OnSwapBuffers += SwapBuffers;
         }

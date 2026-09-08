@@ -25,7 +25,7 @@ void main()
         XR_ADV_VisibilityPush.viewIndex).flags &
         XR_ADV_VIEW_FLAG_REVERSED_DEPTH) != 0u ||
         XR_ADV_LoadView(XR_ADV_VisibilityPush.viewIndex).depthParams.w != 0.0;
-    ivec2 sourceSize = textureSize(XR_ADV_DepthPyramidSampled, 0);
+    ivec2 sourceSize = XR_ADV_DEPTH_PYRAMID_SIZE();
     ivec2 tile = ivec2(gl_WorkGroupID.xy);
     uint localIndex = gl_LocalInvocationIndex;
     float farDepth = reversedDepth ? 0.0 : 1.0;
@@ -36,7 +36,7 @@ void main()
             ivec2(int(sourceIndex % XR_ADV_DEPTH_TILE_SIZE), int(sourceIndex / XR_ADV_DEPTH_TILE_SIZE));
         float sourceDepth = any(greaterThanEqual(source, sourceSize))
             ? farDepth
-            : texelFetch(XR_ADV_DepthPyramidSampled, source, 0).r;
+            : XR_ADV_LOAD_DEPTH_PYRAMID(source).r;
         // Invalid source depth and padded edge pixels must never invent an occluder.
         if (isnan(sourceDepth) || isinf(sourceDepth) || sourceDepth < 0.0 || sourceDepth > 1.0)
             sourceDepth = farDepth;
@@ -55,5 +55,5 @@ void main()
         barrier();
     }
     if (localIndex == 0u)
-        imageStore(XR_ADV_DepthPyramidStorage, tile, vec4(XR_ADV_DepthTile[0]));
+        XR_ADV_STORE_DEPTH_PYRAMID(tile, vec4(XR_ADV_DepthTile[0]));
 }

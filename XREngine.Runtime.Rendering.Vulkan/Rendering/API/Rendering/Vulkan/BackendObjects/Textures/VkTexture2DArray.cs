@@ -8,7 +8,7 @@ namespace XREngine.Rendering.Vulkan;
 /// Each element in <c>Data.Textures</c> maps to an array layer. Provides per-layer
 /// attachment views suitable for framebuffer targets (e.g. shadow cascades).
 /// </summary>
-internal sealed class VkTexture2DArray(VulkanBackendObjectContext backendContext, IRenderApiWrapperOwner owner, XRTexture2DArray data) : VkImageBackedTexture<XRTexture2DArray>(backendContext, owner, data)
+internal sealed partial class VkTexture2DArray(VulkanBackendObjectContext backendContext, IRenderApiWrapperOwner owner, XRTexture2DArray data) : VkImageBackedTexture<XRTexture2DArray>(backendContext, owner, data)
 {
     protected override ImageViewType DefaultImageViewType => ImageViewType.Type2DArray;
 
@@ -22,7 +22,9 @@ internal sealed class VkTexture2DArray(VulkanBackendObjectContext backendContext
         // the texture needs a specific mip chain (e.g. bloom stereo). Use SmallestMipmapLevel + 1.
         // Otherwise, default to 1 mip level (framebuffer targets don't need mip chains).
         bool hasExplicitMipRange = Data.SmallestAllowedMipmapLevel < 1000;
-        uint mipLevels = Data.AutoGenerateMipmaps || hasExplicitMipRange
+        uint mipLevels = Data.CopyGpuLayerSources && textures.Length > 0
+            ? (uint)Math.Max(1, textures[0].SmallestMipmapLevel + 1)
+            : Data.AutoGenerateMipmaps || hasExplicitMipRange
             ? (uint)Math.Max(1, Data.SmallestMipmapLevel + 1)
             : 1;
         return new TextureLayout(new Extent3D(width, height, 1), layers, mipLevels);
@@ -49,6 +51,12 @@ internal sealed class VkTexture2DArray(VulkanBackendObjectContext backendContext
 
     protected override void PushTextureData()
     {
+        if (Data.CopyGpuLayerSources)
+        {
+            PushGpuLayerSources();
+            return;
+        }
+
         XRTexture2D[] layers = Data.Textures;
         if (layers is null || layers.Length == 0)
         {

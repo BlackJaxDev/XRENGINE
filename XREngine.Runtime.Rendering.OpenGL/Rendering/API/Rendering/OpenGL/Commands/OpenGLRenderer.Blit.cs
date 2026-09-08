@@ -30,6 +30,117 @@ namespace XREngine.Rendering.OpenGL;
 
 public partial class OpenGLRenderer
 {
+    public override FrameBufferBlitSubmission TryBlitFBOToFBO(
+        XRFrameBuffer inFBO,
+        XRFrameBuffer outFBO,
+        EReadBufferMode readBufferMode,
+        bool colorBit,
+        bool depthBit,
+        bool stencilBit,
+        bool linearFilter)
+    {
+        int aspectCount = (colorBit ? 1 : 0) + (depthBit ? 1 : 0) + (stencilBit ? 1 : 0);
+        if (aspectCount != 1)
+            return FrameBufferBlitSubmission.Rejected("A strict OpenGL blit must copy exactly one aspect.");
+
+        return TryBlitStrictCore(
+            inFBO,
+            outFBO,
+            readBufferMode,
+            depthBit || stencilBit ? EReadBufferMode.None : EReadBufferMode.ColorAttachment0,
+            colorBit,
+            depthBit,
+            stencilBit,
+            linearFilter);
+    }
+
+    public override FrameBufferBlitSubmission TryBlitFBOToFBOSingleAttachment(
+        XRFrameBuffer inFBO,
+        XRFrameBuffer outFBO,
+        EReadBufferMode readBufferMode,
+        EReadBufferMode drawBufferMode,
+        bool linearFilter)
+    {
+        return TryBlitStrictCore(
+            inFBO,
+            outFBO,
+            readBufferMode,
+            drawBufferMode,
+            colorBit: true,
+            depthBit: false,
+            stencilBit: false,
+            linearFilter);
+    }
+
+    private FrameBufferBlitSubmission TryBlitStrictCore(
+        XRFrameBuffer inFBO,
+        XRFrameBuffer outFBO,
+        EReadBufferMode readBufferMode,
+        EReadBufferMode drawBufferMode,
+        bool colorBit,
+        bool depthBit,
+        bool stencilBit,
+        bool linearFilter)
+    {
+        if (inFBO.Width == 0 || inFBO.Height == 0 || outFBO.Width == 0 || outFBO.Height == 0)
+            return FrameBufferBlitSubmission.Rejected("An OpenGL blit cannot use an empty extent.");
+        if (colorBit && (readBufferMode == EReadBufferMode.None || drawBufferMode == EReadBufferMode.None))
+            return FrameBufferBlitSubmission.Rejected("A strict color blit requires enabled read and draw buffers.");
+
+        if (RequiresLayeredBlit(inFBO) || RequiresLayeredBlit(outFBO))
+        {
+            ClearBufferMask layeredMask = (colorBit ? ClearBufferMask.ColorBufferBit : 0)
+                | (depthBit ? ClearBufferMask.DepthBufferBit : 0)
+                | (stencilBit ? ClearBufferMask.StencilBufferBit : 0);
+            if (!TryBlitLayeredFramebuffers(inFBO, outFBO, 0, 0, inFBO.Width, inFBO.Height,
+                0, 0, outFBO.Width, outFBO.Height, readBufferMode, drawBufferMode,
+                layeredMask, linearFilter, out string failure))
+                return FrameBufferBlitSubmission.Rejected(failure);
+            if (colorBit)
+                MarkImmediateHistoryWrite(outFBO);
+            return FrameBufferBlitSubmission.CompletedImmediately();
+        }
+
+        uint sourceId = GenericToAPI<GLFrameBuffer>(inFBO)?.BindingId ?? 0u;
+        uint destinationId = GenericToAPI<GLFrameBuffer>(outFBO)?.BindingId ?? 0u;
+        Api.NamedFramebufferReadBuffer(sourceId, ToGLEnum(readBufferMode));
+        Api.NamedFramebufferDrawBuffer(destinationId, ToGLEnum(drawBufferMode));
+        GLEnum sourceStatus = Api.CheckNamedFramebufferStatus(sourceId, FramebufferTarget.ReadFramebuffer);
+        GLEnum destinationStatus = Api.CheckNamedFramebufferStatus(destinationId, FramebufferTarget.DrawFramebuffer);
+        if (sourceStatus != GLEnum.FramebufferComplete || destinationStatus != GLEnum.FramebufferComplete)
+            return FrameBufferBlitSubmission.Rejected(
+                $"OpenGL framebuffer blit requires complete source and destination FBOs (source={sourceStatus}, destination={destinationStatus}).");
+
+        ClearBufferMask mask = 0;
+        if (colorBit)
+            mask |= ClearBufferMask.ColorBufferBit;
+        if (depthBit)
+            mask |= ClearBufferMask.DepthBufferBit;
+        if (stencilBit)
+            mask |= ClearBufferMask.StencilBufferBit;
+        while (Api.GetError() != GLEnum.NoError) { }
+        Api.BlitNamedFramebuffer(
+            sourceId,
+            destinationId,
+            0,
+            0,
+            (int)inFBO.Width,
+            (int)inFBO.Height,
+            0,
+            0,
+            (int)outFBO.Width,
+            (int)outFBO.Height,
+            mask,
+            linearFilter ? BlitFramebufferFilter.Linear : BlitFramebufferFilter.Nearest);
+        GLEnum error = Api.GetError();
+        if (error != GLEnum.NoError)
+            return FrameBufferBlitSubmission.Rejected($"OpenGL framebuffer blit failed with {error}.");
+
+        if (colorBit)
+            MarkImmediateHistoryWrite(outFBO);
+        return FrameBufferBlitSubmission.CompletedImmediately();
+    }
+
     public override void Blit(
         XRFrameBuffer? inFBO,
         XRFrameBuffer? outFBO,
@@ -46,6 +157,16 @@ public partial class OpenGLRenderer
             mask |= ClearBufferMask.DepthBufferBit;
         if (stencilBit)
             mask |= ClearBufferMask.StencilBufferBit;
+
+        if (RequiresLayeredBlit(inFBO) || RequiresLayeredBlit(outFBO))
+        {
+            if (!TryBlitLayeredFramebuffers(inFBO, outFBO, inX, inY, inW, inH,
+                outX, outY, outW, outH, readBufferMode, null, mask, linearFilter, out string failure))
+                throw new InvalidOperationException(failure);
+            if (colorBit && outW != 0 && outH != 0)
+                MarkImmediateHistoryWrite(outFBO);
+            return;
+        }
 
         var glIn = GenericToAPI<GLFrameBuffer>(inFBO);
         var glOut = GenericToAPI<GLFrameBuffer>(outFBO);
@@ -90,6 +211,8 @@ public partial class OpenGLRenderer
         var blitErr = Api.GetError();
         if (blitErr != GLEnum.NoError)
             LogBlitErrorOnce(inID, outID, blitErr);
+        else if (colorBit && outW != 0 && outH != 0)
+            MarkImmediateHistoryWrite(outFBO);
     }
 
     private readonly HashSet<(uint, uint)> _blitErrorWarned = [];
@@ -130,6 +253,16 @@ public partial class OpenGLRenderer
         if (stencilBit)
             mask |= ClearBufferMask.StencilBufferBit;
 
+        if (RequiresLayeredBlit(inFBO) || RequiresLayeredBlit(outFBO))
+        {
+            if (!TryBlitLayeredFramebuffers(inFBO, outFBO, 0, 0, inW, inH,
+                0, 0, outW, outH, readBufferMode, drawBufferMode, mask, linearFilter, out string failure))
+                throw new InvalidOperationException(failure);
+            if (colorBit && outW != 0 && outH != 0)
+                MarkImmediateHistoryWrite(outFBO);
+            return;
+        }
+
         var glIn = GenericToAPI<GLFrameBuffer>(inFBO);
         var glOut = GenericToAPI<GLFrameBuffer>(outFBO);
         var inID = glIn?.BindingId ?? 0u;
@@ -159,6 +292,8 @@ public partial class OpenGLRenderer
         var blitErr = Api.GetError();
         if (blitErr != GLEnum.NoError)
             LogBlitErrorOnce(inID, outID, blitErr);
+        else if (colorBit && outW != 0 && outH != 0)
+            MarkImmediateHistoryWrite(outFBO);
     }
 
     public static int GetBytesPerPixel(InternalFormat internalFormat) => internalFormat switch

@@ -53,12 +53,14 @@ public sealed partial class BackendReadyFramePackage
 
             ulong commandSetSignature = RenderCommandCollection.ComputeOcclusionCommandSetSignature(
                 commands,
-                out int meshCount);
+                out int meshCount,
+                out uint sceneColorSnapshotConsumerCount);
             ulong dependencySignature = ComputePassDependencySignature(passIndex, commands);
             _passes[passCount++] = new BackendReadyRenderPass(
                 passIndex,
                 commands.Count,
                 meshCount,
+                sceneColorSnapshotConsumerCount,
                 commandSetSignature,
                 dependencySignature,
                 readOnlyCommands);
@@ -227,8 +229,37 @@ public sealed partial class BackendReadyFramePackage
             hash = AddHash(hash, material.BindingLayoutVersion);
             hash = AddHash(hash, unchecked((ulong)material.ShaderStateRevision));
             hash = AddHash(hash, unchecked((ulong)material.UberStateRevision));
+            AdvancedLatePassMetadata? lateMetadata = material.AdvancedLatePassMetadata;
+            if (lateMetadata is not null)
+            {
+                hash = AddHash(hash, (uint)lateMetadata.Kind);
+                hash = AddHash(hash, lateMetadata.RequiresSceneColorSnapshot ? 1u : 0u);
+                hash = AddHash(hash, lateMetadata.ParticipatesInMotionVectors ? 1u : 0u);
+                hash = AddHash(hash, lateMetadata.RequiresRigidTemporalGeometry ? 1u : 0u);
+                hash = AddHash(hash, lateMetadata.WritesDepth ? 1u : 0u);
+                hash = AddHash(hash, lateMetadata.IsOrderDependent ? 1u : 0u);
+                hash = AddHash(hash, lateMetadata.SceneColorTextureUnit);
+                hash = AddHash(hash, ComputeStableStringHash(lateMetadata.SceneColorSamplerName));
+                hash = AddHash(hash, ComputeStableStringHash(lateMetadata.UnsupportedReason));
+                hash = AddHash(hash, ComputeStableStringHash(lateMetadata.TemporalUnsupportedReason));
+            }
         }
         return MixHash(hash);
+    }
+
+    private static uint ComputeStableStringHash(string? value)
+    {
+        uint hash = 2166136261u;
+        if (value is null)
+            return hash;
+
+        for (int index = 0; index < value.Length; index++)
+        {
+            hash ^= value[index];
+            hash *= 16777619u;
+        }
+
+        return hash;
     }
 
     private void EnsurePassCapacity(int required)

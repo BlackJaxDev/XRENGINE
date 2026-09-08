@@ -9,7 +9,9 @@ namespace XREngine.Rendering.Vulkan;
 internal sealed partial class VulkanFrameLoop
 {
     private ulong _advancedVisibilityAdmissionFrameId;
-    private long _advancedVisibilityAdmissionPackageGeneration;
+    private readonly object _advancedVisibilityAdmissionGate = new();
+    private ulong _advancedVisibilityAdmissionOutputId;
+    private VulkanAdvancedVisibilityBackendPackageSnapshot _advancedVisibilityAdmissionPackage;
     private bool _advancedVisibilityAdmissionAccepted;
     private string _advancedVisibilityAdmissionReason = string.Empty;
 
@@ -42,12 +44,18 @@ internal sealed partial class VulkanFrameLoop
             failureReason = "The advanced visibility reservation is stale or belongs to another output.";
             return false;
         }
-        if (request.Views.ViewCount != 1)
+        if (request.Views.ViewCount > 2 ||
+            (request.Views.ViewCount > 1 && !_deviceContext.AdvancedMultiviewEnabled))
         {
-            failureReason =
-                "The Vulkan advanced visibility family currently admits exactly one view; stereo and multiview requests remain fail-closed.";
+            failureReason = "Advanced layered Vulkan requires an enabled multiview device and one or two views.";
             return false;
         }
+        for (int view = 0; view < request.Views.ViewCount; view++)
+            if (request.Views.GetView(view).OutputLayer != (uint)view)
+            {
+                failureReason = "Advanced layered Vulkan requires unique contiguous output layers in frozen view order.";
+                return false;
+            }
         VulkanAdvancedVisibilityPipelineReadiness pipelineReadiness =
             _commandRuntime.GetAdvancedVisibilityPipelineReadiness(out string pipelineReason);
         if (!SupportsAdvancedVisibilityStage(request.Stage) ||
@@ -68,13 +76,12 @@ internal sealed partial class VulkanFrameLoop
         }
 
         FrameOpContext context = CaptureFrameOpContextForCurrentPipelineScope();
-        if (context.OutputSchedulingInstanceIdentity != reservation.OutputId)
+        if (context.AdvancedVisibilityOutputIdentity != reservation.OutputId)
         {
             failureReason = "The active Vulkan pipeline scope does not match the output that owns the advanced visibility reservation.";
             return false;
         }
-        BackendReadyFramePackage? package = context.PipelineInstance?
-            .ActiveMeshRenderCommands.RenderingBackendReadyPackage;
+        BackendReadyFramePackage? package = request.BackendReadyPackage;
         if (!VulkanAdvancedVisibilityBackendPackageSnapshot.TryCapture(
                 package,
                 out VulkanAdvancedVisibilityBackendPackageSnapshot backendPackage))
@@ -94,6 +101,7 @@ internal sealed partial class VulkanFrameLoop
         if (!TryValidateAdvancedVisibilityPackageSources(
                 in backendPackage,
                 request.RenderFrameId,
+                reservation.OutputId,
                 out failureReason))
         {
             return false;
@@ -117,7 +125,10 @@ internal sealed partial class VulkanFrameLoop
             request.CurrentDepthPyramidTargetName,
             request.ShadingDebugView,
             request.RequireNativeOutput,
-            request.EnableBuiltInAmbientOcclusion);
+            request.EnableBuiltInAmbientOcclusion,
+            request.EnableLightProbesAndIbl,
+            request.IsMinimalVisibilityOutput,
+            request.NativeViewIndex);
         if (!_frameOperationQueue.TryAcquireAdvancedVisibilityInput(
                 in vulkanRequest,
                 out VulkanAdvancedVisibilityInputLease inputLease,
@@ -147,11 +158,22 @@ internal sealed partial class VulkanFrameLoop
     private bool TryValidateAdvancedVisibilityPackageSources(
         in VulkanAdvancedVisibilityBackendPackageSnapshot package,
         ulong renderFrameId,
+        ulong outputId,
+        out string reason)
+    {
+        lock (_advancedVisibilityAdmissionGate)
+            return TryValidateAdvancedVisibilityPackageSourcesLocked(in package, renderFrameId, outputId, out reason);
+    }
+
+    private bool TryValidateAdvancedVisibilityPackageSourcesLocked(
+        in VulkanAdvancedVisibilityBackendPackageSnapshot package,
+        ulong renderFrameId,
+        ulong outputId,
         out string reason)
     {
         if (_advancedVisibilityAdmissionFrameId == renderFrameId &&
-            _advancedVisibilityAdmissionPackageGeneration ==
-                package.PackageGeneration)
+            _advancedVisibilityAdmissionOutputId == outputId &&
+            _advancedVisibilityAdmissionPackage == package)
         {
             reason = _advancedVisibilityAdmissionReason;
             return _advancedVisibilityAdmissionAccepted;
@@ -163,8 +185,8 @@ internal sealed partial class VulkanFrameLoop
                 out EVulkanAdvancedSceneResourceFailure failure,
                 out string validationReason);
         _advancedVisibilityAdmissionFrameId = renderFrameId;
-        _advancedVisibilityAdmissionPackageGeneration =
-            package.PackageGeneration;
+        _advancedVisibilityAdmissionOutputId = outputId;
+        _advancedVisibilityAdmissionPackage = package;
         _advancedVisibilityAdmissionAccepted = accepted;
         _advancedVisibilityAdmissionReason = accepted
             ? "Ready"
@@ -214,8 +236,12 @@ internal sealed partial class VulkanFrameLoop
     internal ERendererComputeEnqueueStatus TryCompleteOrderedComputePass(EMemoryBarrierMask mask, string label)
         => _commandRuntime.TryEnqueueOrderedComputeBarrier(_frameOperationQueue, mask, label, RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex, CaptureFrameOpContextOrLastActive(), IsDeviceLost);
 
-    internal XRGpuFence? InsertOrderedComputeFence()
-        => _commandRuntime.TryEnqueueOrderedComputeFence(_frameOperationQueue, RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex, CaptureFrameOpContextOrLastActive());
+    internal XRGpuFence? InsertOrderedComputeFence(int requiredOperationCount = 0)
+        => _commandRuntime.TryEnqueueOrderedComputeFence(
+            _frameOperationQueue,
+            RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex,
+            CaptureFrameOpContextOrLastActive(),
+            requiredOperationCount);
 
     internal bool TryDrawMeshTasksIndirectCount(XRRenderProgram program, XRDataBuffer indirect, XRDataBuffer count, uint maxDrawCount, uint stride, nuint byteOffset, nuint countByteOffset, out string failureReason)
         => _commandRuntime.TryEnqueueMeshTaskIndirectCount(_resourceRuntime.WrapperLookup, _resourceRuntime.Descriptors, _frameOperationQueue, program, indirect, count, maxDrawCount, stride, byteOffset, countByteOffset, RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex, CaptureFrameOpContextForCurrentPipelineScope(), AllowSynchronousResourceUploads, out failureReason);

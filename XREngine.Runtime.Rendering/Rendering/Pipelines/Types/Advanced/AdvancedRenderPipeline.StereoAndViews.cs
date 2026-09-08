@@ -2,22 +2,19 @@ namespace XREngine.Rendering;
 
 public partial class AdvancedRenderPipeline
 {
-    private EAdvancedStereoMode _stereoMode = EAdvancedStereoMode.Mono;
     private AdvancedOffscreenProfile? _offscreenProfile;
+    private EAdvancedStageFamilyExecutionProfile _stageFamilyExecutionProfile;
 
     /// <summary>
-    /// Active stereo rendering mode (Mono, RvcTwoPass, OpenGlSinglePassStereo, or VulkanMultiview).
+    /// Stereo execution topology derived from the configured stage family and
+    /// renderer. It cannot disagree with the immutable layered resource profile.
     /// </summary>
     public EAdvancedStereoMode StereoMode
-    {
-        get => _stereoMode;
-        set
-        {
-            if (!SetField(ref _stereoMode, value))
-                return;
-            InvalidateStereoResourceProfile();
-        }
-    }
+        => _stageFamilyExecutionProfile == EAdvancedStageFamilyExecutionProfile.OpenXrTwoPassEye
+            ? EAdvancedStereoMode.RvcTwoPass
+            : !Stereo ? EAdvancedStereoMode.Mono
+            : (RuntimeRenderingHostServices.FrameTiming.CurrentRenderer?.GetAdvancedRenderPipelineCapabilities().Backend ?? CapabilityResult.Capabilities.Backend) == RuntimeGraphicsApiKind.OpenGL
+                ? EAdvancedStereoMode.OpenGlSinglePassStereo : EAdvancedStereoMode.VulkanMultiview;
 
     /// <summary>
     /// Optional offscreen capability profile if this pipeline instance drives a secondary view.
@@ -30,6 +27,7 @@ public partial class AdvancedRenderPipeline
             if (!SetField(ref _offscreenProfile, value))
                 return;
             InvalidateStereoResourceProfile();
+            RebuildCommandChain();
         }
     }
 
@@ -46,11 +44,56 @@ public partial class AdvancedRenderPipeline
         => OffscreenProfile?.EnablePostProcessing != false;
 
     private bool AllowsTemporalHistory
-        => AllowsPostProcessing && OffscreenProfile?.EnableTemporalHistory != false;
+        => AllowsPostProcessing &&
+           OffscreenProfile?.EnableTemporalHistory != false;
 
     private bool AllowsBloomAndDepthOfField
-        => AllowsPostProcessing && OffscreenProfile?.EnableBloomAndDoF != false;
+        => AllowsPostProcessing &&
+           OffscreenProfile?.EnableBloomAndDoF != false;
 
     private bool AllowsScreenSpaceUi
-        => OffscreenProfile is null;
+        => _stageFamilyExecutionProfile == EAdvancedStageFamilyExecutionProfile.DesktopPresent &&
+           OffscreenProfile is null;
+
+    private bool UsesMinimalVisibilityOutput
+        => OffscreenProfile?.IsMinimalVisibilityOutput == true;
+
+    internal bool IsMinimalVisibilityOutput
+        => UsesMinimalVisibilityOutput;
+
+    /// <summary>
+    /// Resolves the geometry consumers needed before this profile may author
+    /// its first native producer. Minimal depth and visibility exports must not
+    /// acquire reconstruction, lighting, shadow, or probe dependencies.
+    /// </summary>
+    internal EAdvancedPreparationConsumer RequiredPreparationConsumers
+        => UsesMinimalVisibilityOutput
+            ? EAdvancedPreparationConsumer.Visibility |
+              EAdvancedPreparationConsumer.Depth |
+              EAdvancedPreparationConsumer.Capture
+            : EAdvancedPreparationConsumer.Visibility |
+              EAdvancedPreparationConsumer.Depth |
+              EAdvancedPreparationConsumer.Velocity |
+              EAdvancedPreparationConsumer.MaterialReconstruction |
+              EAdvancedPreparationConsumer.DirectionalShadow |
+              EAdvancedPreparationConsumer.PointShadow |
+              EAdvancedPreparationConsumer.SpotShadow |
+              EAdvancedPreparationConsumer.Probe |
+              EAdvancedPreparationConsumer.Capture;
+
+    private bool IncludesStage(EAdvancedRenderStage stage)
+        => !UsesMinimalVisibilityOutput || stage is
+            EAdvancedRenderStage.FrameBegin or
+            EAdvancedRenderStage.Deformation or
+            EAdvancedRenderStage.VisibilityPreparation or
+            EAdvancedRenderStage.VisibilityRaster or
+            EAdvancedRenderStage.DepthPyramidAndLateVisibility or
+            EAdvancedRenderStage.Output;
+
+    // The two-pass family is rebound to the physical RVC eye instance before
+    // execution. Its persistent resources and frame-view-history identity are
+    // consequently per eye, even though the command definition is cached.
+    // Keep all temporal begin/accumulate/pop/commit predicates together.
+    private bool AllowsPostAntiAliasing
+        => true;
 }

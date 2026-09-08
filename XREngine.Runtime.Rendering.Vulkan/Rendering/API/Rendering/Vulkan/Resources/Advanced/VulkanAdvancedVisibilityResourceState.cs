@@ -37,10 +37,11 @@ internal readonly record struct VulkanAdvancedVisibilityResourceState(
     uint ViewCount,
     uint PayloadCapacity,
     uint RangeCapacity,
-    uint IndirectArgumentCapacity)
+    uint IndirectArgumentCapacity,
+    AdvancedVisibilityFamilyReservation Reservation = default)
 {
     internal bool IsValid
-        => FrameSlot >= 0 && FrameGeneration != 0u &&
+        => Reservation.IsValid && FrameSlot >= 0 && FrameGeneration != 0u &&
            DescriptorSet.Handle != 0 && Payloads.IsValid && Candidates.IsValid &&
            PersistentStateBuffer.Handle != 0 && PersistentStateByteLength != 0u &&
            PersistentStateTopologyGeneration != 0u &&

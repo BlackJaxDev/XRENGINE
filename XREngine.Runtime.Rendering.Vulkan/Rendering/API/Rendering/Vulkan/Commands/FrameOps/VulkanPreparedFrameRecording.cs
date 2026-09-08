@@ -65,7 +65,8 @@ internal sealed class VulkanPreparedFrameRecording
         new string[VulkanMeshOperationRequestQueue.Capacity];
     private readonly byte[] _canonicalPublicationNativeAttempts =
         new byte[VulkanMeshOperationRequestQueue.Capacity];
-    private BackendReadyCanonicalViewRecord[] _globalViews = [];
+    private BackendReadyCanonicalViewRecord[] _globalViews =
+        new BackendReadyCanonicalViewRecord[RenderFrameViewSet.MaxViewCount];
     private BackendReadyCanonicalPassRecord[] _globalPasses = [];
     private AdvancedGlobalPassPublicationCoverage[] _globalPassCoverage = [];
     private BackendReadyDiagnosticReadbackRequest[] _globalDiagnostics = [];
@@ -135,11 +136,67 @@ internal sealed class VulkanPreparedFrameRecording
     internal ReadOnlySpan<BackendReadyDiagnosticReadbackRequest> GlobalDiagnostics => _globalDiagnostics.AsSpan(0, _globalDiagnosticCount);
 
     internal void CaptureGlobalResources(BackendReadyFramePackage package, ulong packageGeneration)
+        => CaptureGlobalResourcesCore(
+            package,
+            packageGeneration,
+            hasAuthoringViews: false,
+            authoringViews: default);
+
+    /// <summary>
+    /// Captures package-owned scene data while replacing only its view rows with
+    /// the immutable view set resolved at render authoring. Desktop collection
+    /// runs before the preceding submission can commit, so its package view is
+    /// deliberately provisional; the accepted history candidate supplies the
+    /// exact previous matrices used by visibility and native shading.
+    /// </summary>
+    internal void CaptureGlobalResourcesWithAuthoringViews(
+        BackendReadyFramePackage package,
+        ulong packageGeneration,
+        in RenderFrameViewSet authoringViews)
+        => CaptureGlobalResourcesCore(
+            package,
+            packageGeneration,
+            hasAuthoringViews: true,
+            in authoringViews);
+
+    private void CaptureGlobalResourcesCore(
+        BackendReadyFramePackage package,
+        ulong packageGeneration,
+        bool hasAuthoringViews,
+        in RenderFrameViewSet authoringViews)
     {
         ArgumentNullException.ThrowIfNull(package);
         if (IsFrozen || packageGeneration == 0u)
             throw new InvalidOperationException("Global resources must be captured before prepared-frame freeze.");
-        Copy(package.CanonicalViews, ref _globalViews, out _globalViewCount);
+        if (hasAuthoringViews)
+        {
+            if (authoringViews.ViewCount < 1 ||
+                authoringViews.ViewCount > RenderFrameViewSet.MaxViewCount)
+            {
+                throw new VulkanPlanPreconditionException(
+                    "Authoring-owned canonical views must contain one to eight immutable views.");
+            }
+
+            ulong viewGeneration = package.CanonicalScenePublication.FrameGeneration;
+            if (viewGeneration == 0u)
+            {
+                throw new VulkanPlanPreconditionException(
+                    "Authoring-owned canonical views require a valid scene publication generation.");
+            }
+
+            for (int index = 0; index < authoringViews.ViewCount; ++index)
+            {
+                RenderFrameViewDescriptor view = authoringViews.GetView(index);
+                _globalViews[index] = BackendReadyFramePackage.CreateCanonicalViewRecord(
+                    in view,
+                    viewGeneration);
+            }
+            _globalViewCount = authoringViews.ViewCount;
+        }
+        else
+        {
+            Copy(package.CanonicalViews, ref _globalViews, out _globalViewCount);
+        }
         Copy(package.CanonicalPasses, ref _globalPasses, out _globalPassCount);
         Copy(package.GlobalPassCoverage, ref _globalPassCoverage, out _globalPassCoverageCount);
         Copy(package.DiagnosticReadbackRequests, ref _globalDiagnostics, out _globalDiagnosticCount);

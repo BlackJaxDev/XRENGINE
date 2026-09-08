@@ -17,4 +17,5 @@ public enum EAdvancedRenderPipelineRejectionReason
     MissingFrameSlotStorage,
     MissingStereoArrayResources,
     MissingShaderFamily,
+    MissingOpenGlMultiviewRaster,
 }

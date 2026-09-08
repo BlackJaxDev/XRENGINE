@@ -69,6 +69,8 @@ public unsafe partial class OpenGLRenderer
             (nint)countByteOffset,
             (int)maxDrawCount,
             (int)stride);
+        if (maxDrawCount != 0)
+            MarkImmediateHistoryGpuWriteUnproven();
 
         RuntimeEngine.Rendering.Stats.Frame.IncrementMultiDrawCalls();
         failureReason = string.Empty;

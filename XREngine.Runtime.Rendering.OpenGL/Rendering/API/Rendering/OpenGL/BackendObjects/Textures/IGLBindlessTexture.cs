@@ -16,4 +16,10 @@ internal interface IGLBindlessTexture
 
     /// <summary>Records that obtaining <paramref name="handle"/> froze the texture parameters.</summary>
     void MarkBindlessHandleAcquired(ulong handle);
+
+    /// <summary>Marks one advanced texture/sampler handle lease held by a submitted GL slot.</summary>
+    void AcquireAdvancedBindlessPairLease();
+
+    /// <summary>Releases one advanced texture/sampler handle lease after its GL fence signals.</summary>
+    void ReleaseAdvancedBindlessPairLease();
 }

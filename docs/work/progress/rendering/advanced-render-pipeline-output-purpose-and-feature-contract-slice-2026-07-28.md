@@ -2,7 +2,7 @@
 
 Status: Complete
 Parent TODO:
-[01 - Pipeline Identity And Frame Contract](../../todo/rendering/architectural-refactor/01-pipeline-identity-and-frame-contract-todo.md)
+[01 - Pipeline Identity And Frame Contract](../../todo/COMPLETED/01-pipeline-identity-and-frame-contract-todo.md)
 
 ## Scope
 

@@ -266,6 +266,8 @@ internal partial class Program
 
     private static void ConfigureOpenXrRuntimeServiceRecovery(UnitTestingWorldSettings settings)
     {
+        RuntimeRenderingHostServices.OpenXrRecommendedDimensionsRequireServiceRestart =
+            settings.VR.Mode == UnitTestingVrLaunchMode.MonadoOpenXR;
         RuntimeRenderingHostServices.OpenXrRuntimeServiceEnsurer =
             settings.VR.Mode == UnitTestingVrLaunchMode.MonadoOpenXR
                 ? UnitTestingWorldSettingsStore.TryEnsureMonadoServiceForCurrentProcess

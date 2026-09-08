@@ -12,6 +12,17 @@ namespace XREngine.Rendering.Commands;
 /// </summary>
 public sealed class AdvancedGpuMaterialPublisher
 {
+    // These three layouts share the standard native kernel. Keep the layout,
+    // kernel and expected material header identical: reconstruction intersects
+    // their requirements, and HeaderMatches must not republish every frame.
+    private const EAdvancedMaterialRequiredAttributeMask StandardRequiredAttributes =
+        EAdvancedMaterialRequiredAttributeMask.Position |
+        EAdvancedMaterialRequiredAttributeMask.Normal |
+        EAdvancedMaterialRequiredAttributeMask.Tangent |
+        EAdvancedMaterialRequiredAttributeMask.TexCoord0 |
+        EAdvancedMaterialRequiredAttributeMask.Color0 |
+        EAdvancedMaterialRequiredAttributeMask.AnalyticalDerivatives;
+
     private MaterialVariantEntry[] _variants;
     private uint[] _variantSlots;
     private uint[] _materialSlots;
@@ -547,6 +558,7 @@ public sealed class AdvancedGpuMaterialPublisher
             LayoutHash = Hash(layout.LayoutHash),
             ConstantWordCount = layout.RowWordCount,
             TextureReferenceCount = checked((uint)layout.Textures.Count),
+            RequiredAttributeMask = StandardRequiredAttributes,
         };
     }
 
@@ -594,6 +606,7 @@ public sealed class AdvancedGpuMaterialPublisher
         return new AdvancedShadingKernelRecord
         {
             MaterialLayoutHash = Hash(layout.LayoutHash),
+            RequiredAttributeMask = StandardRequiredAttributes,
             SupportedCoverageMask = coverageMask,
             SupportedEligibility = EAdvancedMaterialEligibilityFlags.NativeOpaque | EAdvancedMaterialEligibilityFlags.NativeMasked | EAdvancedMaterialEligibilityFlags.LateTransparent | EAdvancedMaterialEligibilityFlags.LateRefractive | EAdvancedMaterialEligibilityFlags.Unlit,
             SupportedFeatures = EAdvancedMaterialFeatureFlags.BaseColorTexture | EAdvancedMaterialFeatureFlags.NormalTexture | EAdvancedMaterialFeatureFlags.MetallicRoughnessTexture | EAdvancedMaterialFeatureFlags.Emissive | EAdvancedMaterialFeatureFlags.DoubleSided | EAdvancedMaterialFeatureFlags.ReceivesShadows | EAdvancedMaterialFeatureFlags.CastsShadows | EAdvancedMaterialFeatureFlags.VertexDeformation | EAdvancedMaterialFeatureFlags.Animated,
@@ -636,7 +649,7 @@ public sealed class AdvancedGpuMaterialPublisher
         {
             RenderStateClass = state,
             CoverageMode = coverage,
-            RequiredAttributeMask = EAdvancedMaterialRequiredAttributeMask.None,
+            RequiredAttributeMask = StandardRequiredAttributes,
             FeatureFlags = features,
             EligibilityFlags = eligibility,
         };

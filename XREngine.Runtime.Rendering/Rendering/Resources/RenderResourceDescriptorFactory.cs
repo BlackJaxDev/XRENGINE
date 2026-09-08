@@ -244,8 +244,11 @@ internal static class RenderResourceDescriptorFactory
         if (texture is XRTextureViewBase viewBase)
             return Math.Max(1u, viewBase.NumLevels);
 
-        if (texture.AutoGenerateMipmaps)
+        if (texture.AutoGenerateMipmaps || texture.SmallestAllowedMipmapLevel < 1000)
             return (uint)Math.Max(1, texture.SmallestMipmapLevel + 1);
+
+        if (texture is XRTexture2DArray { CopyGpuLayerSources: true, Textures.Length: > 0 } gpuArray)
+            return (uint)Math.Max(1, gpuArray.Textures[0].SmallestMipmapLevel + 1);
 
         return texture switch
         {

@@ -665,6 +665,8 @@ namespace XREngine.Rendering.Commands
         /// </summary>
         public BackendReadyFramePackage RenderingBackendReadyPackage
             => _renderingBackendReadyPackage;
+        internal BackendReadyFramePackage UpdatingBackendReadyPackage
+            => _updatingBackendReadyPackage;
 
         /// <summary>
         /// Prepares sorted pass membership, material selections, dependency
@@ -742,6 +744,19 @@ namespace XREngine.Rendering.Commands
             }
         }
 
+        /// <summary>Releases a completed one-shot output's canonical scene pin.
+        /// Exact generation matching protects a newer use of a shared capture
+        /// viewport. The caller must settle its submission before invoking this.</summary>
+        internal void ReleaseCompletedCanonicalFramePackage(long packageGeneration)
+        {
+            using (_lock.EnterScope())
+            {
+                using var renderingBufferScope = EnterRenderingBufferWriteScope();
+                if (_renderingBackendReadyPackage.PackageGeneration == packageGeneration)
+                    _renderingBackendReadyPackage.ResetCanonical();
+            }
+        }
+
         public int GetRenderingPassCommandCount(int renderPass)
         {
             using var renderingBufferScope = EnterRenderingBufferReadScope();
@@ -756,6 +771,18 @@ namespace XREngine.Rendering.Commands
             return _renderingPassMeshCommandCounts.TryGetValue(renderPass, out int count)
                 ? count
                 : 0;
+        }
+
+        /// <summary>
+        /// Gets the number of enabled mesh draws in a published pass whose
+        /// material explicitly requires the Advanced scene-color snapshot.
+        /// </summary>
+        public uint GetRenderingSceneColorSnapshotConsumerCount(int renderPass)
+        {
+            using var renderingBufferScope = EnterRenderingBufferReadScope();
+            return TryGetPublishedPassNoLock(renderPass, out BackendReadyRenderPass pass)
+                ? pass.SceneColorSnapshotConsumerCount
+                : 0u;
         }
 
         public bool TryGetRenderingPassCommands(int renderPass, out IReadOnlyCollection<RenderCommand>? commands)
@@ -985,7 +1012,8 @@ namespace XREngine.Rendering.Commands
             XRCamera? camera = null,
             bool allowExcludedGpuFallbackMeshes = true,
             Action<IRenderCommandMesh>? onExcludedGpuFallbackMesh = null,
-            bool suppressCpuOcclusionForPass = false)
+            bool suppressCpuOcclusionForPass = false,
+            bool enforceAdvancedLatePassEligibility = false)
         {
             using var renderingBufferScope = EnterRenderingBufferReadScope();
 
@@ -1082,6 +1110,19 @@ namespace XREngine.Rendering.Commands
             for (int commandIndex = 0; commandIndex < list.Count; commandIndex++)
             {
                 RenderCommand cmd = GetCommandAt(list, commandIndex);
+                if (enforceAdvancedLatePassEligibility &&
+                    !TryAdmitAdvancedLatePassCommand(
+                        cmd,
+                        renderPass,
+                        out string? latePassRejection))
+                {
+                    ReportAdvancedLatePassRejection(
+                        cmd,
+                        renderPass,
+                        latePassRejection);
+                    cpuCmdIndex++;
+                    continue;
+                }
                 if (ShouldSkipCpuExactTransparentSpsCommand(filterExactTransparentSps, cmd))
                 {
                     cpuCmdIndex++;
@@ -1550,6 +1591,44 @@ namespace XREngine.Rendering.Commands
             }
             probeCandidates?.Clear();
             visibleDrawCandidates?.Clear();
+        }
+
+        private static bool TryAdmitAdvancedLatePassCommand(
+            RenderCommand command,
+            int renderPass,
+            out string? rejectionReason)
+        {
+            if (command is not IRenderCommandMesh meshCommand)
+            {
+                rejectionReason = null;
+                return true;
+            }
+
+            XRMaterial? material =
+                meshCommand.MaterialOverride ?? meshCommand.Mesh?.Material;
+            return AdvancedLatePassEligibilityValidator.TryValidateLatePass(
+                material,
+                renderPass,
+                out rejectionReason);
+        }
+
+        private static void ReportAdvancedLatePassRejection(
+            RenderCommand command,
+            int renderPass,
+            string? reason)
+        {
+            if (!Debug.ShouldLogEvery("AdvancedLatePass.CommandRejected", TimeSpan.FromSeconds(2)))
+                return;
+            string materialName = command is IRenderCommandMesh mesh
+                ? (mesh.MaterialOverride ?? mesh.Mesh?.Material)?.Name ??
+                  "<unnamed-material>"
+                : "<non-mesh>";
+            Debug.RenderingWarning(
+                "[AdvancedLatePass] Rejected command {0} material '{1}' from pass {2}. Reason={3}",
+                command.StableQueryKey,
+                materialName,
+                renderPass,
+                reason ?? "Unknown material eligibility failure.");
         }
 
         private static CpuOcclusionProbeCandidate CreateCpuOcclusionProbeCandidate(
@@ -2442,6 +2521,15 @@ namespace XREngine.Rendering.Commands
         internal static ulong ComputeOcclusionCommandSetSignature(
             ICollection<RenderCommand> commands,
             out int meshCommandCount)
+            => ComputeOcclusionCommandSetSignature(
+                commands,
+                out meshCommandCount,
+                out _);
+
+        internal static ulong ComputeOcclusionCommandSetSignature(
+            ICollection<RenderCommand> commands,
+            out int meshCommandCount,
+            out uint sceneColorSnapshotConsumerCount)
         {
             // Membership is what invalidates keyed query history. Sort order is
             // intentionally ignored because normal camera motion can reorder an
@@ -2449,14 +2537,27 @@ namespace XREngine.Rendering.Commands
             ulong xor = 0UL;
             ulong sum = 0x9E3779B97F4A7C15UL;
             meshCommandCount = 0;
+            sceneColorSnapshotConsumerCount = 0u;
             for (int commandIndex = 0; commandIndex < commands.Count; commandIndex++)
             {
                 RenderCommand command = GetCommandAt(commands, commandIndex);
                 ulong mixed = MixOcclusionCommandKey(command.StableQueryKey);
                 xor ^= mixed;
                 sum += mixed;
-                if (command is IRenderCommandMesh)
+                if (command is IRenderCommandMesh meshCommand)
+                {
                     meshCommandCount++;
+                    XRMaterial? material = meshCommand.MaterialOverride ?? meshCommand.Mesh?.Material;
+                    if (meshCommand.Enabled &&
+                        material?.AdvancedLatePassMetadata?.RequiresSceneColorSnapshot == true &&
+                        AdvancedLatePassEligibilityValidator.TryValidateLatePass(
+                            material,
+                            meshCommand.RenderPass,
+                            out _))
+                    {
+                        sceneColorSnapshotConsumerCount = checked(sceneColorSnapshotConsumerCount + 1u);
+                    }
+                }
             }
 
             return MixOcclusionCommandKey(xor ^ BitOperations.RotateLeft(sum, 23) ^ (uint)commands.Count);

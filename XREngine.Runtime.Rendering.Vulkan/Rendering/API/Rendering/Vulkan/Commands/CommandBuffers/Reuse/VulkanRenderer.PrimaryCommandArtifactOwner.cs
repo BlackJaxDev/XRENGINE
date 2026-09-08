@@ -1,4 +1,5 @@
 using Silk.NET.Vulkan;
+using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -12,6 +13,16 @@ internal sealed class PrimaryCommandArtifactOwner(
 {
             private int[] _recordedStaticSourceOrder = [];
             private int[] _recordedDynamicUiSourceOrder = [];
+            private readonly OutputRequest[] _recordedTerminalOutputs =
+                new OutputRequest[VulkanAcceptedFramePlan.TerminalCapacity];
+            private readonly int[] _recordedTerminalOutputIndices =
+                new int[VulkanAcceptedFramePlan.TerminalCapacity];
+            private readonly XRFrameBuffer?[] _recordedTerminalTargets =
+                new XRFrameBuffer?[VulkanAcceptedFramePlan.TerminalCapacity];
+            private int _recordedTerminalOutputCount;
+            private readonly int[] _recordedDynamicUiTerminalOperationIndices =
+                new int[VulkanAcceptedFramePlan.UiCapacity];
+            private int _recordedDynamicUiTerminalOperationCount;
 
             public CommandBuffer PrimaryCommandBuffer { get; } = primaryCommandBuffer;
             public CommandBuffer DynamicUiSecondaryCommandBuffer { get; set; } = dynamicUiSecondaryCommandBuffer;
@@ -37,6 +48,109 @@ internal sealed class PrimaryCommandArtifactOwner(
             public bool RecordedSwapchainImageEverPresented { get; set; }
             public ImageLayout RecordedSwapchainFinalLayout { get; set; } = ImageLayout.PresentSrcKhr;
             public int RecordedSwapchainWriteCount { get; set; }
+
+            public void ClearRecordedTerminalOutputManifest()
+            {
+                _recordedTerminalOutputs.AsSpan(0, _recordedTerminalOutputCount).Clear();
+                _recordedTerminalOutputIndices.AsSpan(
+                    0,
+                    _recordedTerminalOutputCount).Fill(-1);
+                _recordedTerminalTargets.AsSpan(
+                    0,
+                    _recordedTerminalOutputCount).Clear();
+                _recordedTerminalOutputCount = 0;
+            }
+
+            public void RecordTerminalOutput(
+                FramePlan framePlan,
+                int outputIndex,
+                XRFrameBuffer? actualTarget)
+            {
+                ref readonly OutputRequest output =
+                    ref framePlan.GetOutput(outputIndex);
+                for (int index = 0; index < _recordedTerminalOutputCount; index++)
+                {
+                    if (_recordedTerminalOutputIndices[index] != outputIndex)
+                        continue;
+                    if (!_recordedTerminalOutputs[index].Equals(output) ||
+                        !ReferenceEquals(
+                            _recordedTerminalTargets[index],
+                            actualTarget))
+                    {
+                        throw new InvalidOperationException(
+                            "One recorded output index resolved to conflicting structural identities.");
+                    }
+                    return;
+                }
+                if (_recordedTerminalOutputCount >= _recordedTerminalOutputs.Length)
+                {
+                    Dirty = true;
+                    DirtyReason = "terminal output manifest capacity exceeded";
+                    throw new VulkanAcceptedFramePlanCapacityException(
+                        EVulkanAcceptedFrameLane.Output,
+                        _recordedTerminalOutputs.Length,
+                        _recordedTerminalOutputCount + 1);
+                }
+
+                int recordIndex = _recordedTerminalOutputCount++;
+                _recordedTerminalOutputIndices[recordIndex] = outputIndex;
+                _recordedTerminalOutputs[recordIndex] = output;
+                _recordedTerminalTargets[recordIndex] = actualTarget;
+            }
+
+            public void AttestReusableTerminalOutputs(
+                VulkanAcceptedFramePlan acceptedPlan,
+                FramePlan framePlan)
+            {
+                for (int index = 0; index < _recordedTerminalOutputCount; index++)
+                {
+                    acceptedPlan.MarkReusableFrameViewHistoryOutputRecorded(
+                        framePlan,
+                        _recordedTerminalOutputIndices[index],
+                        in _recordedTerminalOutputs[index],
+                        _recordedTerminalTargets[index]);
+                }
+            }
+
+            public int RecordedDynamicUiTerminalOperationCount =>
+                _recordedDynamicUiTerminalOperationCount;
+
+            public int GetRecordedDynamicUiTerminalOperationIndex(int index)
+            {
+                if ((uint)index >=
+                    (uint)_recordedDynamicUiTerminalOperationCount)
+                {
+                    throw new ArgumentOutOfRangeException(nameof(index));
+                }
+                return _recordedDynamicUiTerminalOperationIndices[index];
+            }
+
+            public void ClearRecordedDynamicUiTerminalOperationManifest()
+            {
+                _recordedDynamicUiTerminalOperationIndices.AsSpan(
+                    0,
+                    _recordedDynamicUiTerminalOperationCount).Fill(-1);
+                _recordedDynamicUiTerminalOperationCount = 0;
+            }
+
+            public void RecordDynamicUiTerminalOperation(int operationIndex)
+            {
+                if (_recordedDynamicUiTerminalOperationCount >=
+                    _recordedDynamicUiTerminalOperationIndices.Length)
+                {
+                    Dirty = true;
+                    DirtyReason =
+                        "dynamic UI terminal manifest capacity exceeded";
+                    throw new VulkanAcceptedFramePlanCapacityException(
+                        EVulkanAcceptedFrameLane.Ui,
+                        _recordedDynamicUiTerminalOperationIndices.Length,
+                        _recordedDynamicUiTerminalOperationCount + 1);
+                }
+
+                _recordedDynamicUiTerminalOperationIndices[
+                    _recordedDynamicUiTerminalOperationCount++] =
+                        operationIndex;
+            }
             public bool RecordedSwapchainRefreshFromLastPresentSource { get; set; }
             public ulong RecordedImageLayoutStartSignature { get; set; } = ulong.MaxValue;
             public ulong RecordedImageLayoutEndSignature { get; set; } = ulong.MaxValue;

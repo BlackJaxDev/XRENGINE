@@ -224,6 +224,10 @@ namespace XREngine.Rendering.Vulkan
             /// </summary>
             public void PushData()
             {
+                // A deferred upload can outlive the data owner. Never regenerate
+                // its wrapper after the owner has retired and disposed its payload.
+                if (Data.IsDestroyed)
+                    return;
                 if (SkipUploadBecauseDeviceLost("PushData"))
                     return;
                 if (HasBlockingActiveMapping())
@@ -231,6 +235,16 @@ namespace XREngine.Rendering.Vulkan
                 if (!RuntimeEngine.IsRenderThread)
                 {
                     EnqueueRenderThreadUpload(fullUpload: true, offset: 0, length: Data.Length, "PushData");
+                    return;
+                }
+
+                // Upload events can arrive before the wrapper's first Generate call.
+                // Native storage must have an active wrapper identity so Destroy can
+                // retire it. Generate sets that identity before PostGenerated uploads;
+                // return here to avoid uploading the same payload a second time.
+                if (!IsActive)
+                {
+                    Generate();
                     return;
                 }
 
@@ -325,7 +339,8 @@ namespace XREngine.Rendering.Vulkan
                             deviceUsage,
                             MemoryPropertyFlags.DeviceLocalBit,
                             null,
-                            createDeviceAddress);
+                            createDeviceAddress,
+                            GetDescribingName());
                         _vkBuffer = deviceBuffer;
                         _vkMemory = deviceMemory;
 
@@ -374,7 +389,8 @@ namespace XREngine.Rendering.Vulkan
                             usage,
                             memProps,
                             initialData,
-                            enableDeviceAddress);
+                            enableDeviceAddress,
+                            GetDescribingName());
                         if (requiredByteSize > 0 && initialData == VoidPtr.Zero)
                             PushSubData(0, checked((uint)requiredByteSize));
                         uploadedContent = requiredByteSize == 0 || initialData != VoidPtr.Zero || _uploadedByteCount >= requiredByteSize;
@@ -688,7 +704,8 @@ namespace XREngine.Rendering.Vulkan
                     stagingUsage,
                     stagingProps,
                     compressedSource.Address,
-                    enableDeviceAddress: true);
+                    enableDeviceAddress: true,
+                    owner: "VkDataBuffer.CompressedUpload");
 
                 try
                 {

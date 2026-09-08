@@ -23,7 +23,16 @@ namespace XREngine.Editor.Mcp
         private CancellationTokenSource? _cts;
         private readonly JsonSerializerOptions _serializerOptions = new()
         {
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+            Converters =
+            {
+                new McpColorF4JsonConverter(),
+                new McpNumericsJsonConverter<System.Numerics.Vector2>(),
+                new McpNumericsJsonConverter<System.Numerics.Vector3>(),
+                new McpNumericsJsonConverter<System.Numerics.Vector4>(),
+                new McpNumericsJsonConverter<System.Numerics.Quaternion>(),
+                new McpNumericsJsonConverter<System.Numerics.Matrix4x4>()
+            }
         };
 
         private Task? _listenerTask;

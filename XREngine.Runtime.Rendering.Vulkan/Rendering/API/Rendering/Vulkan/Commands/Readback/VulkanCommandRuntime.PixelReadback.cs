@@ -401,6 +401,18 @@ namespace XREngine.Rendering.Vulkan
 
             switch (format)
             {
+                case Format.R8Unorm:
+                    // Scalar diagnostic targets (including AO) export as grayscale.
+                    for (int i = 0; i < pixelCount; i++)
+                    {
+                        int dstIndex = i * 4;
+                        dstRgba[dstIndex + 0] = source[i];
+                        dstRgba[dstIndex + 1] = source[i];
+                        dstRgba[dstIndex + 2] = source[i];
+                        dstRgba[dstIndex + 3] = byte.MaxValue;
+                    }
+                    return true;
+
                 case Format.R8G8B8A8Unorm:
                 case Format.R8G8B8A8Srgb:
                     for (int i = 0; i < pixelCount; i++)
@@ -537,6 +549,18 @@ namespace XREngine.Rendering.Vulkan
 
             switch (format)
             {
+                case Format.R8Unorm:
+                    for (int i = 0; i < pixelCount; i++)
+                    {
+                        int dstIndex = i * 4;
+                        float value = source[i] / 255.0f;
+                        dstRgba[dstIndex + 0] = value;
+                        dstRgba[dstIndex + 1] = value;
+                        dstRgba[dstIndex + 2] = value;
+                        dstRgba[dstIndex + 3] = 1.0f;
+                    }
+                    return true;
+
                 case Format.R8G8B8A8Unorm:
                 case Format.R8G8B8A8Srgb:
                     for (int i = 0; i < pixelCount; i++)
@@ -637,6 +661,21 @@ namespace XREngine.Rendering.Vulkan
                     }
                     return true;
 
+                case Format.R32G32Uint:
+                    // Preserve identity channels numerically for diagnostic images.
+                    // Float captures are not a lossless serialization of arbitrary
+                    // 32-bit IDs; exact picking retains the raw integer path.
+                    for (int i = 0; i < pixelCount; i++)
+                    {
+                        int srcIndex = i * 8;
+                        int dstIndex = i * 4;
+                        dstRgba[dstIndex + 0] = ReadUInt32(source, srcIndex);
+                        dstRgba[dstIndex + 1] = ReadUInt32(source, srcIndex + 4);
+                        dstRgba[dstIndex + 2] = 0.0f;
+                        dstRgba[dstIndex + 3] = 1.0f;
+                    }
+                    return true;
+
                 case Format.R32Uint:
                     for (int i = 0; i < pixelCount; i++)
                     {
@@ -706,6 +745,7 @@ namespace XREngine.Rendering.Vulkan
         internal static uint GetColorFormatPixelSize(Format format)
             => format switch
             {
+                Format.R8Unorm => 1,
                 Format.R8G8B8A8Unorm => 4,
                 Format.R8G8B8A8Srgb => 4,
                 Format.B8G8R8A8Unorm => 4,
@@ -716,6 +756,7 @@ namespace XREngine.Rendering.Vulkan
                 Format.R16G16B16A16Sfloat => 8,
                 Format.R32Sfloat => 4,
                 Format.R32Uint => 4,
+                Format.R32G32Uint => 8,
                 Format.R32G32B32A32Sfloat => 16,
                 Format.B10G11R11UfloatPack32 => 4,
                 _ => 0,
@@ -727,7 +768,7 @@ namespace XREngine.Rendering.Vulkan
         {
             depth = 1.0f;
 
-            if (!source.IsValid || !IsDepthOrStencilAspect(source.AspectMask))
+            if (!source.IsValid || (source.AspectMask & ImageAspectFlags.DepthBit) == 0)
                 return false;
             if (!TryResolveLiveBlitImage(source, out BlitImageInfo liveSource))
                 return false;
@@ -826,9 +867,9 @@ namespace XREngine.Rendering.Vulkan
         {
             info = VulkanDepthReadbackDebugInfo.Failed("Depth readback was not attempted.", x, y);
 
-            if (!source.IsValid || !IsDepthOrStencilAspect(source.AspectMask))
+            if (!source.IsValid || (source.AspectMask & ImageAspectFlags.DepthBit) == 0)
             {
-                info = VulkanDepthReadbackDebugInfo.Failed("Source is not a depth/stencil image.", x, y);
+                info = VulkanDepthReadbackDebugInfo.Failed("Source does not include a depth aspect.", x, y);
                 return false;
             }
 
@@ -962,7 +1003,7 @@ namespace XREngine.Rendering.Vulkan
                 return false;
             }
 
-            uint pixelSize = GetDepthFormatPixelSize(liveSource.Format);
+            uint pixelSize = GetStencilFormatPixelSize(liveSource.Format);
             if (pixelSize == 0)
                 return false;
 
@@ -1041,15 +1082,23 @@ namespace XREngine.Rendering.Vulkan
         // =========== Depth Format Helpers ===========
 
         /// <summary>
-        /// Gets the byte size of a single pixel for a given depth format.
+        /// Gets the buffer texel size of a depth-aspect image copy. Vulkan copies
+        /// depth and stencil as separate planes, never as interleaved D+S pixels.
         /// </summary>
         internal static uint GetDepthFormatPixelSize(Format format) => format switch
         {
-            Format.D16Unorm => 2,
+            Format.D16Unorm or Format.D16UnormS8Uint => 2,
             Format.D32Sfloat => 4,
-            Format.D24UnormS8Uint => 4, // 3 bytes depth + 1 byte stencil
-            Format.D32SfloatS8Uint => 5, // 4 bytes depth + 1 byte stencil (may be 8 with padding)
+            Format.X8D24UnormPack32 or Format.D24UnormS8Uint => 4,
+            Format.D32SfloatS8Uint => 4,
             _ => 0, // Unknown format
+        };
+
+        /// <summary>All supported stencil-aspect copies contain one unsigned byte per texel.</summary>
+        private static uint GetStencilFormatPixelSize(Format format) => format switch
+        {
+            Format.S8Uint or Format.D16UnormS8Uint or Format.D24UnormS8Uint or Format.D32SfloatS8Uint => 1,
+            _ => 0,
         };
 
         /// <summary>
@@ -1063,9 +1112,9 @@ namespace XREngine.Rendering.Vulkan
 
             return format switch
             {
-                Format.D16Unorm => ReadUInt16(source, 0) / 65535f,
+                Format.D16Unorm or Format.D16UnormS8Uint => ReadUInt16(source, 0) / 65535f,
                 Format.D32Sfloat => ReadSingle(source, 0),
-                Format.D24UnormS8Uint => (ReadUInt32(source, 0) & 0x00FFFFFF) / 16777215f,
+                Format.X8D24UnormPack32 or Format.D24UnormS8Uint => (ReadUInt32(source, 0) & 0x00FFFFFF) / 16777215f,
                 Format.D32SfloatS8Uint => ReadSingle(source, 0),
                 _ => 1.0f,
             };
@@ -1124,21 +1173,7 @@ namespace XREngine.Rendering.Vulkan
             => ResourceRuntime.BackendObjectContext ?? throw new InvalidOperationException("Pixel readback requires an initialized Vulkan backend-object context.");
 
         private static byte ReadStencilValue(ReadOnlySpan<byte> source, Format format)
-        {
-            int requiredLength = checked((int)GetDepthFormatPixelSize(format));
-            if (format == Format.S8Uint)
-                requiredLength = 1;
-            if (requiredLength == 0 || source.Length < requiredLength)
-                return 0;
-
-            return format switch
-            {
-                Format.D24UnormS8Uint => (byte)((ReadUInt32(source, 0) >> 24) & 0xFF),
-                Format.D32SfloatS8Uint => source[4],
-                Format.S8Uint => source[0],
-                _ => 0,
-            };
-        }
+            => GetStencilFormatPixelSize(format) != 0 && !source.IsEmpty ? source[0] : (byte)0;
 
         public sealed record VulkanDepthReadbackDebugInfo(
             bool Success,

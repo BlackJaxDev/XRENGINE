@@ -23,9 +23,15 @@ internal sealed unsafe record RetiredOpenXrSwapchainGeneration(
     bool ExternalImageLifetimesDetached,
     VulkanOpenXrSwapchainChildRetirementReceipt ChildRetirementReceipt,
     bool RuntimeImagesReleased,
-    long EnqueuedTimestamp)
+    long EnqueuedTimestamp,
+    long RetirementGenerationId)
 {
     // Destruction is independently retryable per view. A failed xrDestroySwapchain
     // leaves both the native handle and its image-array owner reachable.
     public bool[] DestroyedSwapchains { get; } = new bool[Swapchains.Length];
+
+    // Access is serialized by VulkanXrGraphicsBinding._retiredSwapchainsGate.
+    // Keep diagnostics per retirement generation so a stuck generation is visible
+    // without producing a log entry on every render-thread retirement poll.
+    public long LastBlockerDiagnosticTimestamp { get; set; }
 }

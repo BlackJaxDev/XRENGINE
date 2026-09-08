@@ -405,7 +405,7 @@ public static class RenderGraphSynchronizationPlanner
         {
             ERenderPassResourceType.ColorAttachment or ERenderPassResourceType.ResolveAttachment => RenderGraphStageMask.ColorAttachmentOutput,
             ERenderPassResourceType.DepthAttachment or ERenderPassResourceType.StencilAttachment => RenderGraphStageMask.EarlyFragmentTests | RenderGraphStageMask.LateFragmentTests,
-            ERenderPassResourceType.TransferSource or ERenderPassResourceType.TransferDestination => RenderGraphStageMask.Transfer,
+            ERenderPassResourceType.TransferSource or ERenderPassResourceType.TransferDestination or ERenderPassResourceType.DepthTransferDestination => RenderGraphStageMask.Transfer,
             ERenderPassResourceType.VertexBuffer or ERenderPassResourceType.IndexBuffer => RenderGraphStageMask.VertexInput,
             ERenderPassResourceType.IndirectBuffer => RenderGraphStageMask.DrawIndirect,
             ERenderPassResourceType.UniformBuffer or ERenderPassResourceType.SampledTexture => passStage switch
@@ -477,6 +477,7 @@ public static class RenderGraphSynchronizationPlanner
                 mask |= RenderGraphAccessMask.TransferRead;
                 break;
             case ERenderPassResourceType.TransferDestination:
+            case ERenderPassResourceType.DepthTransferDestination:
                 mask |= RenderGraphAccessMask.TransferWrite;
                 break;
             default:
@@ -499,7 +500,7 @@ public static class RenderGraphSynchronizationPlanner
             ERenderPassResourceType.SampledTexture => RenderGraphImageLayout.ShaderReadOnly,
             ERenderPassResourceType.StorageTexture => RenderGraphImageLayout.General,
             ERenderPassResourceType.TransferSource => RenderGraphImageLayout.TransferSource,
-            ERenderPassResourceType.TransferDestination => RenderGraphImageLayout.TransferDestination,
+            ERenderPassResourceType.TransferDestination or ERenderPassResourceType.DepthTransferDestination => RenderGraphImageLayout.TransferDestination,
             _ => null
         };
     }

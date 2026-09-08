@@ -2,8 +2,9 @@
 #extension GL_EXT_mesh_shader : require
 #extension GL_ARB_shader_draw_parameters : require
 #extension GL_GOOGLE_include_directive : require
-
-#include "VisibilityInterface.glslinc"
+#if defined(XR_ADV_MULTIVIEW_RASTER)
+#extension GL_EXT_multiview : require
+#endif
 
 layout(local_size_x = 32) in;
 // The portable cooked profile is below the capability gate's 64/124 limits.
@@ -18,6 +19,9 @@ layout(push_constant, std430) uniform XRAdvancedVisibilityRasterPushConstants
     uint viewIndex;
     uint flags;
 } XR_ADV_VisibilityRasterPush;
+
+#define XR_ADV_VISIBILITY_COUNTER_INDEX XR_ADV_VisibilityRasterPush.viewIndex
+#include "VisibilityInterface.glslinc"
 
 layout(location = 0) flat out uint VisibilityDrawIndex[];
 layout(location = 1) flat out uint VisibilitySelectionId[];
@@ -68,6 +72,13 @@ bool XR_ADV_HasVertexRanges(
 }
 void main()
 {
+#if defined(XR_ADV_MULTIVIEW_RASTER)
+    if (uint(gl_ViewIndex) != XR_ADV_VisibilityRasterPush.viewIndex)
+    {
+        SetMeshOutputsEXT(0u, 0u);
+        return;
+    }
+#endif
     uint drawArgumentIndex = XR_ADV_VisibilityRasterPush.meshArgumentBase + uint(gl_DrawID);
     if (drawArgumentIndex < XR_ADV_VisibilityRasterPush.meshArgumentBase ||
         drawArgumentIndex >= uint(XR_ADV_VisibilityMeshPayloads.records.length()))

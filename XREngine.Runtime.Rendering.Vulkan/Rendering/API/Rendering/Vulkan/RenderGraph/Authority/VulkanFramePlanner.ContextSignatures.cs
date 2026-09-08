@@ -131,6 +131,7 @@ internal sealed partial class VulkanFramePlanner
         hash.Add((int)context.ContextKind);
         hash.Add(context.PipelineIdentity);
         hash.Add(context.ViewportIdentity);
+        hash.Add(context.AdvancedVisibilityOutputIdentity);
         hash.Add(context.OutputFrameBufferIdentity);
         hash.Add(context.OutputTargetIdentity);
         hash.Add(context.LogicalViewId);

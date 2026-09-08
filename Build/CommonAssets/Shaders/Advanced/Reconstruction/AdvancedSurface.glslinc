@@ -61,6 +61,7 @@ struct XRAdvancedSurface
     uint materialDenseIndex;
     uint shadingKernelDenseIndex;
     uint primitiveSection;
+    uint layerMask;
     uint requiredAttributeMask;
     vec3 worldPosition;
     vec3 geometricNormal;
@@ -97,6 +98,7 @@ XRAdvancedSurface XR_ADV_InvalidSurface(
     surface.materialDenseIndex = 0u;
     surface.shadingKernelDenseIndex = 0u;
     surface.primitiveSection = 0u;
+    surface.layerMask = 0u;
     surface.requiredAttributeMask = 0u;
     surface.worldPosition = vec3(0.0);
     surface.geometricNormal = vec3(0.0, 1.0, 0.0);

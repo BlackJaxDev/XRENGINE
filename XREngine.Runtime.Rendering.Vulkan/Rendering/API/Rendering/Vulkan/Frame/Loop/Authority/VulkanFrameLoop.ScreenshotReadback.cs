@@ -518,6 +518,11 @@ internal sealed partial class VulkanFrameLoop
         bool usedMultisampleResolve)
     {
         slot.Callback = callback;
+        slot.AdvancedPickingCallback = null;
+        slot.IsAdvancedPicking = false;
+        slot.AdvancedPickingIdentitySource = null;
+        slot.AdvancedPickingMetadataSource = null;
+        slot.AdvancedPickingSelectionSource = null;
         slot.SourceFormat = sourceFormat;
         slot.Width = width;
         slot.Height = height;
@@ -854,6 +859,12 @@ internal sealed partial class VulkanFrameLoop
             return false;
         }
 
+        if (slot.IsAdvancedPicking)
+        {
+            ProcessAdvancedPickingReadback(slot, rawPixels);
+            return true;
+        }
+
         Volatile.Write(ref slot.State, (int)EVulkanScreenshotReadbackSlotState.CpuProcessing);
         Task processingTask;
         try
@@ -1005,8 +1016,24 @@ internal sealed partial class VulkanFrameLoop
         if (Interlocked.Exchange(ref slot.CallbackDelivered, 1) != 0)
             return;
 
+        Action<AdvancedVisibilityEncodedSurface>? pickingCallback =
+            Interlocked.Exchange(ref slot.AdvancedPickingCallback, null);
         Action<ScreenshotReadbackResult>? callback = Interlocked.Exchange(ref slot.Callback, null);
         Interlocked.Increment(ref OutputRuntime.Capture.ScreenshotReadbackFailedCount);
+        if (pickingCallback is not null)
+        {
+            try
+            {
+                pickingCallback(AdvancedVisibilityEncodedSurface.Invalid);
+            }
+            catch (Exception ex)
+            {
+                Debug.VulkanWarning(
+                    "[Vulkan] Advanced picking readback failure callback threw: {0}",
+                    ex.Message);
+            }
+            return;
+        }
         if (callback is null)
             return;
 
@@ -1054,6 +1081,10 @@ internal sealed partial class VulkanFrameLoop
     {
         ReleaseScreenshotReadbackReservation(slot);
         slot.Callback = null;
+        slot.AdvancedPickingCallback = null;
+        slot.AdvancedPickingIdentitySource = null;
+        slot.AdvancedPickingMetadataSource = null;
+        slot.AdvancedPickingSelectionSource = null;
 
         if (_deviceLost)
         {
@@ -1120,6 +1151,11 @@ internal sealed partial class VulkanFrameLoop
     private void ClearScreenshotReadbackRequest(VulkanScreenshotReadbackSlot slot)
     {
         slot.Callback = null;
+        slot.AdvancedPickingCallback = null;
+        slot.IsAdvancedPicking = false;
+        slot.AdvancedPickingIdentitySource = null;
+        slot.AdvancedPickingMetadataSource = null;
+        slot.AdvancedPickingSelectionSource = null;
         slot.RawByteCount = 0;
         slot.Width = 0;
         slot.Height = 0;
@@ -1192,6 +1228,10 @@ internal sealed partial class VulkanFrameLoop
             }
 
             slot.Callback = null;
+            slot.AdvancedPickingCallback = null;
+            slot.AdvancedPickingIdentitySource = null;
+            slot.AdvancedPickingMetadataSource = null;
+            slot.AdvancedPickingSelectionSource = null;
             slot.Fence = default;
             slot.CommandBuffer = default;
             Volatile.Write(ref slot.State, (int)EVulkanScreenshotReadbackSlotState.Disposed);

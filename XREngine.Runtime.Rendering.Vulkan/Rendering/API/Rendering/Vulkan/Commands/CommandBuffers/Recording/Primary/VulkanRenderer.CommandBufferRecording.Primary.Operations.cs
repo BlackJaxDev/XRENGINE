@@ -1,13 +1,18 @@
 using System;
 using System.Diagnostics;
 using Silk.NET.Vulkan;
+using XREngine.Rendering.Commands;
 using XREngine.Rendering.Occlusion;
+using XREngine.Rendering.Diagnostics;
 
 namespace XREngine.Rendering.Vulkan;
 
 /// <summary>Primary recorder dispatch over the sealed, dense frame-operation stream.</summary>
 internal sealed partial class VulkanCommandRuntime
 {
+    private const byte RequiredProducerRecordedBit = 1 << 0;
+    private const byte RequiredProducerOperationBit = 1 << 1;
+
     private bool RecordPrimaryOperations(scoped ref PrimaryCommandBufferRecordingState recordingState)
     {
         using var mainLoopProfileScope = RuntimeRenderingHostServices.Profiling.StartProfileScope("Vulkan.RecordPrimary.MainOpLoop");
@@ -44,7 +49,17 @@ internal sealed partial class VulkanCommandRuntime
                                    ? EVulkanCpuStage.PrimaryMeshOperation
                                    : EVulkanCpuStage.PrimaryNonMeshOperation))
                     {
-                        operationIndex = RecordTypedPrimaryOperation(ref recordingState, in primaryNode, in header, operationIndex);
+                        int firstOperationIndex = operationIndex;
+                        operationIndex = RecordTypedPrimaryOperation(
+                            ref recordingState,
+                            in primaryNode,
+                            in header,
+                            operationIndex);
+                        RecordRequiredProducerOperationRangeOutcome(
+                            ref recordingState,
+                            firstOperationIndex,
+                            operationIndex,
+                            recordingState.CurrentPrimaryOperationRecorded);
                     }
                     if (recordingState.CommandChainPublicationDeferred)
                         return false;
@@ -66,7 +81,18 @@ internal sealed partial class VulkanCommandRuntime
                                ? EVulkanCpuStage.PrimaryMeshOperation
                                : EVulkanCpuStage.PrimaryNonMeshOperation))
                 {
-                    operationIndex = RecordTypedPrimaryOperation(ref recordingState, in primaryNode, in header, operationIndex, passIndex);
+                    int firstOperationIndex = operationIndex;
+                    operationIndex = RecordTypedPrimaryOperation(
+                        ref recordingState,
+                        in primaryNode,
+                        in header,
+                        operationIndex,
+                        passIndex);
+                    RecordRequiredProducerOperationRangeOutcome(
+                        ref recordingState,
+                        firstOperationIndex,
+                        operationIndex,
+                        recordingState.CurrentPrimaryOperationRecorded);
                 }
                 if (recordingState.CommandChainPublicationDeferred)
                     return false;
@@ -83,13 +109,15 @@ internal sealed partial class VulkanCommandRuntime
 
     private int RecordTypedPrimaryOperation(scoped ref PrimaryCommandBufferRecordingState state, in VulkanPrimaryPlanNode node, in FrameOperationHeader header, int index, int passIndex = int.MinValue)
     {
+        state.CurrentPrimaryOperationRecorded = true;
         int resolvedPass = passIndex == int.MinValue ? header.PassIndex : passIndex;
         VulkanPrimaryOperationRecordingInfo info = new(node.Actions, index, resolvedPass);
         if (info.EndsRendering && state.RenderScope.IsActive)
             EndActiveRenderPass(ref state);
 
         RecordVulkanCommandDiagnosticMarker(state.CommandBuffer, header.OpCode, resolvedPass, index);
-        if (TryRecordPlannedNonGraphicsSecondaryRange(
+        if (!IsRequiredProducerSourceOperation(ref state, index) &&
+            TryRecordPlannedNonGraphicsSecondaryRange(
                 ref state,
                 in header,
                 in info,
@@ -317,6 +345,22 @@ internal sealed partial class VulkanCommandRuntime
                 payload.State.PayloadCapacity,
                 Stopwatch.GetElapsedTime(testRecordStart).TotalMilliseconds);
             EmitMemoryBarrierMask(state.CommandBuffer, EMemoryBarrierMask.ShaderStorage);
+            const uint counterByteLength = 152u;
+            GpuDiagnosticReadbackPlanNode counterNode = new(
+                (ulong)payload.State.Counters.Buffer.Handle,
+                viewIndex,
+                checked(viewIndex * counterByteLength),
+                counterByteLength,
+                payload.Request.BackendPackage.Package.SubmissionResolution.Resolved,
+                EGpuDiagnosticReadbackDecoder.AdvancedVisibilityCounters,
+                payload.Request.Reservation.OutputId,
+                checked((int)payload.Request.BackendPackage.CanonicalFrame.FrameGeneration));
+            if (AdvancedVisibilityDiagnosticCopy is { } recordCounterCopy)
+            {
+                VulkanAdvancedVisibilityResourceState visibilityState = payload.State;
+                _ = recordCounterCopy(state.CommandBuffer, in visibilityState, in counterNode,
+                    payload.Request.RenderFrameId);
+            }
         }
 
         // The graph transition into LateRaster owns the attachment layout.
@@ -432,7 +476,8 @@ internal sealed partial class VulkanCommandRuntime
         FramePlan framePlan = state.FramePlan
             ?? throw new VulkanPlanPreconditionException(
                 "Advanced visibility raster reached recording without an accepted frame plan.");
-        VulkanPreparedStableBinStream bins = framePlan.StableBins;
+        VulkanPreparedStableBinStream bins = framePlan.GetAdvancedVisibilityFamilyBins(
+            payload.Request.Reservation, allowCreate: false);
         if (!payload.State.IsValid || !payload.SceneState.IsValid ||
             !payload.TargetClosure.IsValid || !bins.HasSealedSubmissionPlans ||
             payload.Request.Views.ViewCount <= 0 || !info.BeginsRendering)
@@ -546,7 +591,8 @@ internal sealed partial class VulkanCommandRuntime
                     "A visibility raster pipeline closure changed after frame-plan sealing.");
             }
             VulkanSealedBinSubmissionPlan plan = header.SubmissionPlan!;
-            if (!plan.OutputPolicy.AllowsCanonicalVisibilityFamily)
+            if (!plan.OutputPolicy.AllowsCanonicalVisibilityFamily ||
+                plan.OutputPolicy.VisibilityReservation != payload.Request.Reservation)
             {
                 throw new VulkanPlanPreconditionException(
                     $"Advanced visibility raster reached recording with an unsupported output policy: {plan.OutputPolicy.DescribeCanonicalVisibilityRejection()}.");
@@ -759,6 +805,27 @@ internal sealed partial class VulkanCommandRuntime
             }
         }
         CmdEndLabel(state.CommandBuffer);
+        ref readonly FrameOpContext context =
+            ref state.Ops.GetContext(info.OperationIndex);
+        // XR retains recorded work through its own submission tracker rather
+        // than the desktop accepted-plan receipt. Optional picking must not
+        // turn a valid eye draw into a missing-desktop-authority failure.
+        if (state.AcceptedFramePlan is null && context.ContextKind is
+            RenderGraph.EVulkanFrameOpContextKind.OpenXrEye or
+            RenderGraph.EVulkanFrameOpContextKind.OpenXrMirror)
+            return info.OperationIndex;
+        XRRenderPipelineInstance pipeline = context.PipelineInstance ??
+            throw new VulkanPlanPreconditionException(
+                "Advanced visibility raster has no owning pipeline for canonical picking publication.");
+        AdvancedGpuScenePublication publication =
+            payload.Request.Publication.ScenePublication;
+        (state.AcceptedFramePlan ??
+            throw new VulkanPlanPreconditionException(
+                "Advanced visibility raster has no accepted-plan picking authority."))
+            .MarkAdvancedPickingVisibilityRecorded(
+                pipeline,
+                in publication,
+                context.ResourceGeneration);
         return info.OperationIndex;
     }
 
@@ -965,7 +1032,44 @@ internal sealed partial class VulkanCommandRuntime
 
     private int RecordSubmissionMarkerPayload(scoped ref PrimaryCommandBufferRecordingState state, in SubmissionMarkerPayload payload, in VulkanPrimaryOperationRecordingInfo info)
     {
-        RegisterSubmissionMarker(state.CommandBuffer, payload.Fence);
+        if (payload.RequiredOperationCount <= 0)
+        {
+            RegisterSubmissionMarker(state.CommandBuffer, payload.Fence);
+            return info.OperationIndex;
+        }
+
+        ref readonly FrameOperationHeader markerHeader =
+            ref state.Ops.GetHeader(info.OperationIndex);
+        int firstRequiredSourceIndex = checked(
+            markerHeader.OriginalIndex - payload.RequiredOperationCount);
+        bool complete = firstRequiredSourceIndex >= 0;
+        for (int sourceIndex = firstRequiredSourceIndex;
+             complete && sourceIndex < markerHeader.OriginalIndex;
+             sourceIndex++)
+        {
+            complete =
+                (uint)sourceIndex <
+                    (uint)state.RequiredProducerRecordingOutcomesBySourceIndex.Length &&
+                state.RequiredProducerRecordingOutcomesBySourceIndex[sourceIndex] ==
+                    (RequiredProducerOperationBit |
+                     RequiredProducerRecordedBit);
+        }
+
+        if (complete)
+        {
+            RegisterSubmissionMarker(state.CommandBuffer, payload.Fence);
+            // Required producer receipts certify this exact recording attempt.
+            // Keep the artifact one-shot so a later producer cannot inherit the
+            // prior attempt's recording evidence through primary reuse.
+            state.FrameOpsRequireRerecordLocal = true;
+        }
+        else
+        {
+            payload.Fence.Fail();
+            state.FrameOpsRequireRerecordLocal = true;
+            throw new VulkanPlanPreconditionException(
+                "A required GPU producer operation was not recorded; the partial primary command buffer must not be submitted.");
+        }
         return info.OperationIndex;
     }
 
@@ -1097,6 +1201,7 @@ internal sealed partial class VulkanCommandRuntime
         CmdEndLabel(state.CommandBuffer);
         if (target is null)
             state.ActualSwapchainWriteCount++;
+        MarkActualTerminalOutput(ref state, in state.ActiveContext, target);
         return info.OperationIndex;
     }
 
@@ -1155,7 +1260,10 @@ internal sealed partial class VulkanCommandRuntime
     private int RecordMeshDrawPayload(scoped ref PrimaryCommandBufferRecordingState state, in MeshDrawPayload payload, in VulkanPrimaryOperationRecordingInfo info)
     {
         XRFrameBuffer? target = state.Ops.GetTarget(info.OperationIndex);
-        if (state.CommandChainSchedule is not null &&
+        bool requiredProducerMember =
+            IsRequiredProducerSourceOperation(ref state, info.OperationIndex);
+        if (!requiredProducerMember &&
+            state.CommandChainSchedule is not null &&
             state.ScheduledCommandChainKeysByOpIndex is not null &&
             state.ScheduledCommandChainCache is not null &&
             TryGetScheduledCommandChainForOp(
@@ -1169,6 +1277,10 @@ internal sealed partial class VulkanCommandRuntime
                 info.OperationIndex,
                 in payload,
                 info.PassIndex);
+            scheduledRunCount = LimitRangeBeforeRequiredProducerOperation(
+                ref state,
+                info.OperationIndex,
+                scheduledRunCount);
             if (scheduledRunCount > 0 &&
                 TryExecuteScheduledMeshCommandChainSecondaryRun(
                     ref state,
@@ -1178,6 +1290,10 @@ internal sealed partial class VulkanCommandRuntime
             {
                 if (target is null)
                     state.ActualSwapchainWriteCount += scheduledRunCount;
+                MarkActualTerminalOutputRange(
+                    ref state,
+                    info.OperationIndex,
+                    scheduledRunCount);
                 return info.OperationIndex + scheduledRunCount - 1;
             }
         }
@@ -1191,8 +1307,17 @@ internal sealed partial class VulkanCommandRuntime
         }
         int uniformSlot = GetMeshDrawUniformSlot(ref state, info.OperationIndex, payload.Draw.Renderer, state.ActiveContext, payload.Draw);
         bool recorded = RecordMeshDrawPayloadIntoCommandBuffer(ref state, state.CommandBuffer, in payload, target, state.ActiveContext, info.PassIndex, uniformSlot);
+        state.CurrentPrimaryOperationRecorded = recorded;
         if (state.ActiveInlineQuery is not null && recorded) state.ActiveInlineQueryRecordedDraw = true;
-        if (target is null) state.ActualSwapchainWriteCount++;
+        if (recorded)
+        {
+            if (target is null)
+                state.ActualSwapchainWriteCount++;
+            MarkActualTerminalOutput(
+                ref state,
+                in state.ActiveContext,
+                target);
+        }
         return info.OperationIndex;
     }
 
@@ -1208,7 +1333,28 @@ internal sealed partial class VulkanCommandRuntime
             if (payload.ClearDepth || payload.ClearStencil) { RecordClearPayload(state.CommandBuffer, state.ImageIndex, in payload, target, state.RenderScope.RenderArea, in state.SwapchainTarget, layers, viewMask, true); recorded = true; }
         }
         else { RecordClearPayload(state.CommandBuffer, state.ImageIndex, in payload, target, state.RenderScope.RenderArea, in state.SwapchainTarget, layers, viewMask); recorded = true; }
-        if (target is null && recorded) state.ActualSwapchainWriteCount++;
+        state.CurrentPrimaryOperationRecorded = recorded;
+        if (recorded && payload.ClearColor)
+        {
+            if (target is null)
+                state.ActualSwapchainWriteCount++;
+            MarkActualTerminalOutput(
+                ref state,
+                in state.ActiveContext,
+                target);
+        }
+        else if (recorded && payload.ClearDepth && !payload.ClearStencil)
+            MarkOutputCompletionTerminalOutput(
+                ref state,
+                in state.ActiveContext,
+                target,
+                ERenderOutputWriteAspect.Depth);
+        else if (recorded && payload.ClearStencil && !payload.ClearDepth)
+            MarkOutputCompletionTerminalOutput(
+                ref state,
+                in state.ActiveContext,
+                target,
+                ERenderOutputWriteAspect.Stencil);
         return info.OperationIndex;
     }
 
@@ -1217,9 +1363,99 @@ internal sealed partial class VulkanCommandRuntime
         if (payload.ColorBit && (payload.InFbo is null || payload.OutFbo is null)) EnsureSwapchainColorAttachmentLayoutForBlit(ref state);
         CmdBeginLabel(state.CommandBuffer, "Blit");
         bool recorded = RecordBlitPayload(state.CommandBuffer, state.ImageIndex, payload, in state.SwapchainTarget, exactColorSource: null);
+        if (payload.RequireExactCompatibility && !recorded)
+            throw new VulkanPlanPreconditionException("A strict Vulkan blit was accepted into the frame plan but could not be recorded.");
+        state.CurrentPrimaryOperationRecorded = recorded;
         CmdEndLabel(state.CommandBuffer);
-        if (payload.OutFbo is null && (payload.ColorBit || payload.DepthBit || payload.StencilBit) && recorded) { state.SwapchainWrittenOutsideRenderPass = true; if (payload.ColorBit) { state.SwapchainInColorAttachmentLayout = true; state.SwapchainFinalLayout = ImageLayout.ColorAttachmentOptimal; } state.ActualSwapchainWriteCount++; }
+        if ((payload.ColorBit || payload.DepthBit || payload.StencilBit) && recorded)
+        {
+            if (payload.OutFbo is null)
+            {
+                state.SwapchainWrittenOutsideRenderPass = true;
+                if (payload.ColorBit)
+                {
+                    state.SwapchainInColorAttachmentLayout = true;
+                    state.SwapchainFinalLayout = ImageLayout.ColorAttachmentOptimal;
+                    state.ActualSwapchainWriteCount++;
+                }
+            }
+            if (payload.ColorBit)
+            {
+                MarkActualTerminalOutput(
+                    ref state,
+                    in state.ActiveContext,
+                    payload.OutFbo);
+            }
+            else if (payload.DepthBit && !payload.StencilBit)
+                MarkOutputCompletionTerminalOutput(
+                    ref state,
+                    in state.ActiveContext,
+                    payload.OutFbo,
+                    ERenderOutputWriteAspect.Depth);
+            else if (payload.StencilBit && !payload.DepthBit)
+                MarkOutputCompletionTerminalOutput(
+                    ref state,
+                    in state.ActiveContext,
+                    payload.OutFbo,
+                    ERenderOutputWriteAspect.Stencil);
+        }
         return info.OperationIndex;
+    }
+
+    private static void RecordRequiredProducerOperationRangeOutcome(
+        scoped ref PrimaryCommandBufferRecordingState state,
+        int firstOperationIndex,
+        int lastOperationIndex,
+        bool recorded)
+    {
+        if (!recorded)
+            return;
+
+        for (int operationIndex = firstOperationIndex;
+             operationIndex <= lastOperationIndex;
+             operationIndex++)
+        {
+            ref readonly FrameOperationHeader header =
+                ref state.Ops.GetHeader(operationIndex);
+            int sourceIndex = header.OriginalIndex;
+            if ((uint)sourceIndex >=
+                (uint)state.RequiredProducerRecordingOutcomesBySourceIndex.Length)
+            {
+                continue;
+            }
+            state.RequiredProducerRecordingOutcomesBySourceIndex[sourceIndex] |=
+                RequiredProducerRecordedBit;
+        }
+    }
+
+    private static bool IsRequiredProducerSourceOperation(
+        scoped ref PrimaryCommandBufferRecordingState state,
+        int operationIndex)
+    {
+        ref readonly FrameOperationHeader header =
+            ref state.Ops.GetHeader(operationIndex);
+        int sourceIndex = header.OriginalIndex;
+        return (uint)sourceIndex <
+                   (uint)state.RequiredProducerRecordingOutcomesBySourceIndex.Length &&
+               (state.RequiredProducerRecordingOutcomesBySourceIndex[sourceIndex] &
+                RequiredProducerOperationBit) != 0;
+    }
+
+    private static int LimitRangeBeforeRequiredProducerOperation(
+        scoped ref PrimaryCommandBufferRecordingState state,
+        int firstOperationIndex,
+        int operationCount)
+    {
+        for (int offset = 0; offset < operationCount; offset++)
+        {
+            if (IsRequiredProducerSourceOperation(
+                    ref state,
+                    firstOperationIndex + offset))
+            {
+                return offset;
+            }
+        }
+        return operationCount;
     }
 
     private int RecordIndirectDrawPayload(scoped ref PrimaryCommandBufferRecordingState state, in IndirectDrawPayload payload, in VulkanPrimaryOperationRecordingInfo info)
@@ -1229,6 +1465,7 @@ internal sealed partial class VulkanCommandRuntime
         // secondary, so this must be attempted before the direct fallback. The
         // fallback remains necessary when the packet cannot satisfy secondary
         // inheritance or resource-preparation invariants.
+        XRFrameBuffer? target = state.Ops.GetTarget(info.OperationIndex);
         int secondaryRunCount = CountContiguousIndirectCommandChainRun(
             ref state,
             info.OperationIndex,
@@ -1240,17 +1477,27 @@ internal sealed partial class VulkanCommandRuntime
                 secondaryRunCount,
                 info.PassIndex))
         {
+            if (target is null)
+                state.ActualSwapchainWriteCount += secondaryRunCount;
+            MarkActualTerminalOutputRange(
+                ref state,
+                info.OperationIndex,
+                secondaryRunCount);
             return checked(info.OperationIndex + secondaryRunCount - 1);
         }
 
-        XRFrameBuffer? target = state.Ops.GetTarget(info.OperationIndex);
         EmitIndirectDrawRunReadBarrier(ref state);
         if (info.BeginsRendering) BeginRenderPassForTarget(ref state, target, info.PassIndex, state.ActiveContext);
         CmdBeginLabel(state.CommandBuffer, "IndirectDraw");
         RecordIndirectDrawPayloadIntoCommandBuffer(ref state, state.CommandBuffer, in payload, target, state.ActiveContext, info.PassIndex, info.OperationIndex);
         CmdEndLabel(state.CommandBuffer);
         RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanIndirectRecordingMode(false, false, 1);
-        if (target is null) state.ActualSwapchainWriteCount++;
+        if (target is null)
+            state.ActualSwapchainWriteCount++;
+        MarkActualTerminalOutput(
+            ref state,
+            in state.ActiveContext,
+            target);
         return info.OperationIndex;
     }
 

@@ -2,7 +2,7 @@
 
 Date: 2026-07-29
 Related TODO:
-[04 - Visibility Buffer Resources And Geometry](../../todo/rendering/architectural-refactor/04-visibility-buffer-resources-and-geometry-todo.md)
+[04 - Visibility Buffer Resources And Geometry](../../todo/rendering/vulkan-xr-and-advanced-rendering-todo.md#visibility-and-reconstruction-acceptance-carried-from-architecture-documents-0305)
 
 ## Outcome
 

@@ -2,7 +2,7 @@
 
 Date: 2026-08-22  
 Status: Complete — Phase 1B implementation accepted; two broader Phase 1 exit proofs remain open  
-Tracker: [Vulkan resident draw stream and render task pool](../../todo/rendering/optimization/vulkan-resident-draw-stream-and-render-task-pool-todo.md)
+Tracker: [Vulkan resident draw stream and render task pool](../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md#recovered-acceptance-contracts-and-specialized-child-ownership)
 
 ## Problem statement
 

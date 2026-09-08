@@ -34,4 +34,9 @@ internal sealed class VulkanScreenshotReadbackSlot
     public long FenceSignaledTimestamp;
     public DateTimeOffset SubmittedAtUtc;
     public Action<ScreenshotReadbackResult>? Callback;
+    public Action<AdvancedVisibilityEncodedSurface>? AdvancedPickingCallback;
+    public bool IsAdvancedPicking;
+    public XRTexture? AdvancedPickingIdentitySource;
+    public XRTexture? AdvancedPickingMetadataSource;
+    public XRTexture? AdvancedPickingSelectionSource;
 }

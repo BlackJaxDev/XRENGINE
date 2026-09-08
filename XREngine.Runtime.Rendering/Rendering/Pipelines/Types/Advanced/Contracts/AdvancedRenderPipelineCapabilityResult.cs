@@ -36,6 +36,8 @@ public readonly record struct AdvancedRenderPipelineCapabilityResult(
                 "The advanced pipeline requires current and previous frame-slot storage.",
             EAdvancedRenderPipelineRejectionReason.MissingStereoArrayResources =>
                 "Stereo advanced rendering requires layered texture-array resources.",
+            EAdvancedRenderPipelineRejectionReason.MissingOpenGlMultiviewRaster =>
+                "OpenGL Advanced stereo requires an admitted GL_OVR_multiview2 raster family; mono eye outputs remain independent.",
             EAdvancedRenderPipelineRejectionReason.MissingShaderFamily =>
                 "The active backend does not provide the complete visibility-buffer shader family.",
             _ => "The advanced pipeline capability result is invalid.",

@@ -14,6 +14,7 @@ namespace XREngine.Rendering
         /// Use to set uniforms to the program containing the fragment shader.
         /// </summary>
         private DelSetUniforms? _settingUniforms;
+        private readonly bool _useMultiview;
 
         public event DelSetUniforms? SettingUniforms
         {
@@ -74,7 +75,7 @@ namespace XREngine.Rendering
         /// Renders a material to the screen using a fullscreen orthographic quad.
         /// </summary>
         /// <param name="mat">The material containing textures to render to this fullscreen quad.</param>
-        public XRQuadFrameBuffer(XRMaterial mat, bool useTriangle = true, bool deriveRenderTargetsFromMaterial = true)
+        public XRQuadFrameBuffer(XRMaterial mat, bool useTriangle = true, bool deriveRenderTargetsFromMaterial = true, bool useMultiview = false)
             : base(mat, deriveRenderTargetsFromMaterial)
         {
             mat.RenderOptions.CullMode = ECullMode.None;
@@ -86,7 +87,22 @@ namespace XREngine.Rendering
                     EShaderType.Vertex,
                     XRShader.EngineShader(Path.Combine("Scene3D", "FullscreenTri.vs"), EShaderType.Vertex));
 
+            // Only array-aware fragment shaders participate. Mono utility effects
+            // retain their ordinary screen-space shader even in a stereo pipeline.
+            for (int i = 0; useMultiview && i < mat.FragmentShaders.Count; i++)
+                if (mat.FragmentShaders[i].HasExtension("GL_OVR_multiview2", XRShader.EExtensionBehavior.Require))
+                {
+                    _useMultiview = true;
+                    break;
+                }
+            if (_useMultiview)
+            {
+                ForceOvrMultiview = true;
+                mat.Shaders.Add(XRShader.EngineShader(Path.Combine("Scene3D", "FullscreenTriOVR.vs"), EShaderType.Vertex));
+            }
+
             FullScreenMesh = new XRMeshRenderer(Mesh(useTriangle), mat);
+            FullScreenMesh.ForceOvrMultiview = _useMultiview;
             FullScreenMesh.Name = $"FullscreenQuad:{mat.Name ?? "Material"}";
             FullScreenMesh.GenerateAsync = false;
             FullScreenMesh.CaptureUniformsOnRender = true;
@@ -97,7 +113,7 @@ namespace XREngine.Rendering
 
             // Force simple program linking for fullscreen blits; shader pipelines may skip rendering
             // if no separable program is present on the material (common for utility shaders).
-            var defaultVer = FullScreenMesh.GetDefaultVersion();
+            var defaultVer = _useMultiview ? FullScreenMesh.GetOVRMultiViewVersion() : FullScreenMesh.GetDefaultVersion();
 
             defaultVer.AllowShaderPipelines = false;
             defaultVer.Name = diagName;
@@ -126,11 +142,10 @@ namespace XREngine.Rendering
         private void SetUniforms(XRRenderProgram vertexProgram, XRRenderProgram materialProgram)
             => _settingUniforms?.Invoke(materialProgram);
 
-        // Fullscreen blits must keep their screen-space vertex shader during stereo passes.
-        // The Vulkan draw is still captured as stereo by render state, so multiview broadcasts
-        // the primitive to both layers while the fragment shader can sample gl_ViewIndex.
+        // Explicit OVR fullscreen passes retain screen-space positioning while
+        // selecting the vertex declaration that broadcasts into both array layers.
         public bool TryPrepareForRendering(bool forceNoStereo = true)
-            => FullScreenMesh.TryPrepareForRendering(forceNoStereo);
+            => FullScreenMesh.TryPrepareForRendering(forceNoStereo && !_useMultiview);
 
         /// <summary>
         /// Renders the FBO to the entire region set by RuntimeEngine.Rendering.State.PushRenderArea().
@@ -159,6 +174,7 @@ namespace XREngine.Rendering
         /// </summary>
         internal void EnqueueRender(bool forceNoStereo = true)
         {
+            forceNoStereo &= !_useMultiview;
             var state = RuntimeEngine.Rendering.State.RenderingPipelineState;
             if (state != null)
             {

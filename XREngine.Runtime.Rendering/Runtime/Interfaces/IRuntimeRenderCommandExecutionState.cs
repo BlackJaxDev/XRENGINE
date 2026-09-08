@@ -47,6 +47,12 @@ public interface IRuntimeRenderCommandExecutionState
     ulong ViewHistorySequenceId => 0UL;
 
     /// <summary>
+    /// Gets the output-scheduling frame paired with <see cref="ViewHistorySequenceId"/>.
+    /// This may differ from the engine frame currently executing the callback.
+    /// </summary>
+    ulong ViewHistorySourceFrame => 0UL;
+
+    /// <summary>
     /// Gets the pipeline and resource-generation identity captured with desktop view history.
     /// </summary>
     ulong ViewHistoryPipelineIdentity => 0UL;

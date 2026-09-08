@@ -18,7 +18,7 @@ public partial class AdvancedRenderPipeline
     {
         var late = commands.Add<VPRC_IfElse>();
         late.Label = "AdvancedLateTransparencyAllowed";
-        late.ConditionEvaluator = () => AllowsLateTransparency && HasAnyAdvancedLateConsumers();
+        late.ConditionEvaluator = HasAnyAdvancedLateConsumers;
         var lateCommands = new ViewportRenderCommandContainer(this);
 
         // The native stage owns HDRScene. Snapshot it only when a visible late
@@ -40,16 +40,21 @@ public partial class AdvancedRenderPipeline
             lateCommands.Add<VPRC_ColorMask>().Set(true, true, true, true);
             lateCommands.Add<VPRC_DepthTest>().Enable = true;
             lateCommands.Add<VPRC_DepthWrite>().Allow = false;
-            lateCommands.Add<VPRC_RenderMeshesPass>()
-                .SetOptions((int)EDefaultRenderPass.TransparentForward, EMeshSubmissionStrategy.CpuDirect);
+            VPRC_RenderMeshesPass transparentForward = lateCommands.Add<VPRC_RenderMeshesPass>();
+            transparentForward.SetOptions((int)EDefaultRenderPass.TransparentForward, EMeshSubmissionStrategy.CpuDirect);
+            transparentForward.EnforceAdvancedLatePassEligibility = true;
+            transparentForward.SetSampledTextures(AdvancedSceneColorContract.SceneColorSnapshotResourceName);
             lateCommands.Add<VPRC_DepthFunc>().Comp = EComparison.Always;
-            lateCommands.Add<VPRC_RenderMeshesPass>()
-                .SetOptions((int)EDefaultRenderPass.OnTopForward, EMeshSubmissionStrategy.CpuDirect);
+            VPRC_RenderMeshesPass onTopForward = lateCommands.Add<VPRC_RenderMeshesPass>();
+            onTopForward.SetOptions((int)EDefaultRenderPass.OnTopForward, EMeshSubmissionStrategy.CpuDirect);
+            onTopForward.EnforceAdvancedLatePassEligibility = true;
+            onTopForward.SetSampledTextures(AdvancedSceneColorContract.SceneColorSnapshotResourceName);
             lateCommands.Add<VPRC_DepthFunc>().Comp = EComparison.Lequal;
             lateCommands.Add<VPRC_DepthWrite>().Allow = true;
         }
 
         AppendExactTransparencyCommands(lateCommands);
+        AppendAdvancedParticipatingTransparentMotion(lateCommands);
         late.TrueCommands = lateCommands;
     }
 
@@ -57,14 +62,27 @@ public partial class AdvancedRenderPipeline
         => RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.ActiveMeshRenderCommands.HasRenderingCommands(renderPass) == true;
 
     private bool HasAnyAdvancedLateConsumers()
-        => HasRenderPassCommands((int)EDefaultRenderPass.WeightedBlendedOitForward)
-        || HasRenderPassCommands((int)EDefaultRenderPass.TransparentForward)
-        || HasRenderPassCommands((int)EDefaultRenderPass.OnTopForward)
-        || HasAdvancedExactTransparencyConsumers();
+        => ShouldRunAdvancedLatePass((int)EDefaultRenderPass.WeightedBlendedOitForward)
+        || ShouldRunAdvancedLatePass((int)EDefaultRenderPass.TransparentForward)
+        || ShouldRunAdvancedLatePass((int)EDefaultRenderPass.OnTopForward)
+        || ShouldRunAdvancedLatePass((int)EDefaultRenderPass.PerPixelLinkedListForward)
+        || ShouldRunAdvancedLatePass((int)EDefaultRenderPass.DepthPeelingForward);
 
     private bool RequiresAdvancedSceneSnapshot()
-        => HasRenderPassCommands((int)EDefaultRenderPass.WeightedBlendedOitForward)
-        || HasAdvancedExactTransparencyConsumers();
+    {
+        var renderingCommands = RuntimeEngine.Rendering.State
+            .CurrentRenderingPipeline?.ActiveMeshRenderCommands;
+        uint explicitConsumerCount = renderingCommands is null
+            ? 0u
+            : checked(
+                renderingCommands.GetRenderingSceneColorSnapshotConsumerCount(
+                    (int)EDefaultRenderPass.TransparentForward) +
+                renderingCommands.GetRenderingSceneColorSnapshotConsumerCount(
+                    (int)EDefaultRenderPass.OnTopForward));
+        bool hasFeedbackPass = ShouldRunAdvancedWeightedTransparency()
+            || HasAdvancedExactTransparencyConsumers();
+        return AdvancedSceneColorContract.RequiresSnapshot(explicitConsumerCount, hasFeedbackPass);
+    }
 
     private void AppendAdvancedWeightedTransparency(ViewportRenderCommandContainer commands)
     {
@@ -79,16 +97,18 @@ public partial class AdvancedRenderPipeline
         {
             weightedCommands.Add<VPRC_DepthTest>().Enable = true;
             weightedCommands.Add<VPRC_DepthWrite>().Allow = false;
-            weightedCommands.Add<VPRC_RenderMeshesPass>()
-                .SetOptions((int)EDefaultRenderPass.WeightedBlendedOitForward, EMeshSubmissionStrategy.CpuDirect);
+            VPRC_RenderMeshesPass weightedPass = weightedCommands.Add<VPRC_RenderMeshesPass>();
+            weightedPass.SetOptions((int)EDefaultRenderPass.WeightedBlendedOitForward, EMeshSubmissionStrategy.CpuDirect);
+            weightedPass.EnforceAdvancedLatePassEligibility = true;
+            weightedPass.SetSampledTextures(AdvancedSceneColorContract.SceneColorSnapshotResourceName);
         }
         weightedCommands.Add<VPRC_RenderQuadToFBO>().SetOptions(TransparentResolveFBOName, renderToSourceFrameBuffer: true);
         weighted.TrueCommands = weightedCommands;
     }
 
     private bool ShouldRunAdvancedWeightedTransparency()
-        => AllowsLateTransparency && EnableWeightedBlendedOitPasses
-        && HasRenderPassCommands((int)EDefaultRenderPass.WeightedBlendedOitForward);
+        => ShouldRunAdvancedLatePass(
+            (int)EDefaultRenderPass.WeightedBlendedOitForward);
 
     /// <summary>
     /// Runs the existing compositing chain from the native HDR scene result and keeps
@@ -106,17 +126,26 @@ public partial class AdvancedRenderPipeline
 
     private void AppendAdvancedPostProcessCommandsCore(ViewportRenderCommandContainer commands)
     {
-        AppendAdvancedTemporalAccumulation(commands);
-        AppendAdvancedMotionBlurAndDepthOfField(commands);
-        AppendAdvancedAtmosphereAndFog(commands);
+        if (AllowsTemporalHistory)
+            AppendAdvancedTemporalAccumulation(commands);
 
-        var bloom = commands.Add<VPRC_IfElse>();
-        bloom.Label = "AdvancedBloomActive";
-        bloom.ConditionEvaluator = () => AllowsBloomAndDepthOfField && ShouldUseBloom();
-        var bloomCommands = new ViewportRenderCommandContainer(this);
-        _advancedBloomProvider = bloomCommands.Add<VPRC_BloomPass>();
-        _advancedBloomProvider.SetTargetFBONames(ForwardPassFBOName, BloomBlurTextureName, Stereo);
-        bloom.TrueCommands = bloomCommands;
+        if (AllowsBloomAndDepthOfField)
+        {
+            AppendAdvancedMotionBlurAndDepthOfField(commands);
+            AppendAdvancedAtmosphereAndFog(commands);
+
+            var bloom = commands.Add<VPRC_IfElse>();
+            bloom.Label = "AdvancedBloomActive";
+            bloom.ConditionEvaluator = ShouldUseBloom;
+            var bloomCommands = new ViewportRenderCommandContainer(this);
+            _advancedBloomProvider = bloomCommands.Add<VPRC_BloomPass>();
+            _advancedBloomProvider.SetTargetFBONames(ForwardPassFBOName, BloomBlurTextureName, Stereo);
+            bloom.TrueCommands = bloomCommands;
+        }
+        else if (_stageFamilyExecutionProfile == EAdvancedStageFamilyExecutionProfile.OpenXrTwoPassEye)
+        {
+            AppendAdvancedOpenXrNeutralPostInputs(commands);
+        }
 
         commands.Add<VPRC_ExposureUpdate>().SetOptions(HDRSceneTextureName, true);
         using (commands.AddUsing<VPRC_PushViewportRenderArea>(x => x.UseInternalResolution = true))
@@ -130,12 +159,15 @@ public partial class AdvancedRenderPipeline
         }
 
         AppendAdvancedPostAntiAliasing(commands);
-        var temporalCommit = commands.Add<VPRC_IfElse>();
-        temporalCommit.Label = "AdvancedTemporalCommitActive";
-        temporalCommit.ConditionEvaluator = ShouldUseAdvancedTemporalAccumulationResources;
-        var temporalCommitCommands = new ViewportRenderCommandContainer(this);
-        temporalCommitCommands.Add<VPRC_TemporalAccumulationPass>().Phase = VPRC_TemporalAccumulationPass.EPhase.Commit;
-        temporalCommit.TrueCommands = temporalCommitCommands;
+        if (AllowsTemporalHistory)
+        {
+            var temporalCommit = commands.Add<VPRC_IfElse>();
+            temporalCommit.Label = "AdvancedTemporalCommitActive";
+            temporalCommit.ConditionEvaluator = ShouldUseAdvancedTemporalAccumulationResources;
+            var temporalCommitCommands = new ViewportRenderCommandContainer(this);
+            temporalCommitCommands.Add<VPRC_TemporalAccumulationPass>().Phase = VPRC_TemporalAccumulationPass.EPhase.Commit;
+            temporalCommit.TrueCommands = temporalCommitCommands;
+        }
     }
 
     // TSR consumes the temporal history inputs even though it does not use the
@@ -152,6 +184,7 @@ public partial class AdvancedRenderPipeline
         var temporalCommands = new ViewportRenderCommandContainer(this);
         var accumulate = temporalCommands.Add<VPRC_TemporalAccumulationPass>();
         accumulate.Phase = VPRC_TemporalAccumulationPass.EPhase.Accumulate;
+        accumulate.ReactiveMaskTextureName = AdvancedTemporalHistoryContract.ReactiveMaskResourceName;
         accumulate.ConfigureAccumulationTargets(
             ForwardPassFBOName,
             TemporalInputFBOName,
@@ -164,6 +197,9 @@ public partial class AdvancedRenderPipeline
 
     private void AppendAdvancedTemporalBegin(ViewportRenderCommandContainer commands)
     {
+        if (!AllowsTemporalHistory)
+            return;
+
         var temporal = commands.Add<VPRC_IfElse>();
         temporal.Label = "AdvancedTemporalBeginActive";
         temporal.ConditionEvaluator = ShouldUseAdvancedTemporalAccumulationResources;
@@ -174,22 +210,26 @@ public partial class AdvancedRenderPipeline
 
     private void AppendAdvancedPostAntiAliasing(ViewportRenderCommandContainer commands)
     {
+        if (!AllowsPostAntiAliasing)
+            return;
+
         var aa = commands.Add<VPRC_IfElse>();
         aa.Label = "AdvancedPostAntiAliasingActive";
-        aa.ConditionEvaluator = () => RuntimeEnableFxaa || RuntimeEnableSmaa || RuntimeNeedsTsrUpscale;
+        aa.ConditionEvaluator = ShouldRunAdvancedPostAntiAliasing;
         var aaCommands = new ViewportRenderCommandContainer(this);
         var tsr = aaCommands.Add<VPRC_IfElse>();
-        tsr.ConditionEvaluator = () => RuntimeNeedsTsrUpscale;
+        tsr.ConditionEvaluator = () => AllowsPostAntiAliasing && RuntimeNeedsTsrUpscale;
         var tsrCommands = new ViewportRenderCommandContainer(this);
         tsrCommands.Add<VPRC_RenderQuadToFBO>()
             .SetTargets(TsrUpscaleFBOName, TsrUpscaleFBOName, matchDestinationRenderArea: true)
             .SetRenderGraphResources(CreateAdvancedTsrResources());
-        tsrCommands.Add<VPRC_BlitFrameBuffer>().SetOptions(TsrUpscaleFBOName, TsrHistoryColorFBOName,
-            EReadBufferMode.ColorAttachment0, blitColor: true, blitDepth: false, blitStencil: false, linearFilter: false);
+        var captureTsrHistory = tsrCommands.Add<VPRC_TemporalAccumulationPass>();
+        captureTsrHistory.Phase = VPRC_TemporalAccumulationPass.EPhase.CaptureTsrHistoryColor;
+        captureTsrHistory.ConfigureTsrHistoryTargets(TsrUpscaleFBOName, TsrHistoryColorFBOName);
         tsr.TrueCommands = tsrCommands;
         var postAaCommands = new ViewportRenderCommandContainer(this);
         var fxaa = postAaCommands.Add<VPRC_IfElse>();
-        fxaa.ConditionEvaluator = () => RuntimeEnableFxaa;
+        fxaa.ConditionEvaluator = () => AllowsPostAntiAliasing && RuntimeEnableFxaa;
         var fxaaCommands = new ViewportRenderCommandContainer(this);
         var fxaaPass = fxaaCommands.Add<VPRC_FXAA>();
         fxaaPass.SourceFBOName = FinalPostProcessOutputFBOName;
@@ -224,8 +264,11 @@ public partial class AdvancedRenderPipeline
         VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor resources)
     {
         var commands = new ViewportRenderCommandContainer(this);
-        commands.Add<VPRC_BlitFrameBuffer>().SetOptions(ForwardPassFBOName, copyFboName,
-            EReadBufferMode.ColorAttachment0, blitColor: true, blitDepth: false, blitStencil: false, linearFilter: false);
+        // A multiview FBO cannot be blitted on OpenGL. The scene-copy quad
+        // writes the matching eye layer on both backends without attachment feedback.
+        commands.Add<VPRC_RenderQuadToFBO>()
+            .SetTargets(SceneCopyFBOName, copyFboName)
+            .SetRenderGraphResources(CreateAdvancedSceneCopyResources());
         commands.Add<VPRC_RenderQuadToFBO>().SetTargets(filterFboName, ForwardPassFBOName).SetRenderGraphResources(resources);
         return commands;
     }
@@ -305,19 +348,28 @@ public partial class AdvancedRenderPipeline
 
     private void AppendAdvancedOutputCommands(ViewportRenderCommandContainer commands)
     {
-        if (OffscreenProfile is not null)
+        if (OffscreenProfile is { } offscreenProfile)
+        {
+            AppendAdvancedOffscreenOutputCommands(commands, offscreenProfile);
             return;
+        }
+
+        if (!AllowsPostAntiAliasing)
+        {
+            commands.Add<VPRC_RenderToWindow>().SourceFBOName = FinalPostProcessOutputFBOName;
+            return;
+        }
 
         var output = commands.Add<VPRC_IfElse>();
         output.Label = "AdvancedFinalOutputSource";
-        output.ConditionEvaluator = () => RuntimeEnableFxaa || RuntimeEnableSmaa || RuntimeNeedsTsrUpscale;
+        output.ConditionEvaluator = ShouldRunAdvancedPostAntiAliasing;
         var antiAliasedOutput = new ViewportRenderCommandContainer(this);
         var tsr = antiAliasedOutput.Add<VPRC_IfElse>();
-        tsr.ConditionEvaluator = () => RuntimeNeedsTsrUpscale;
+        tsr.ConditionEvaluator = () => AllowsPostAntiAliasing && RuntimeNeedsTsrUpscale;
         tsr.TrueCommands = CreateAdvancedPresentCommands(TsrUpscaleFBOName);
         var postAa = new ViewportRenderCommandContainer(this);
         var fxaa = postAa.Add<VPRC_IfElse>();
-        fxaa.ConditionEvaluator = () => RuntimeEnableFxaa;
+        fxaa.ConditionEvaluator = () => AllowsPostAntiAliasing && RuntimeEnableFxaa;
         fxaa.TrueCommands = CreateAdvancedPresentCommands(FxaaFBOName);
         fxaa.FalseCommands = CreateAdvancedPresentCommands(SmaaFBOName);
         tsr.FalseCommands = postAa;
@@ -325,11 +377,35 @@ public partial class AdvancedRenderPipeline
         output.FalseCommands = CreateAdvancedPresentCommands(FinalPostProcessOutputFBOName);
     }
 
+    private static void AppendAdvancedOffscreenOutputCommands(
+        ViewportRenderCommandContainer commands,
+        AdvancedOffscreenProfile profile)
+    {
+        using (commands.AddUsing<VPRC_PushOutputFBORenderArea>())
+        using (commands.AddUsing<VPRC_BindOutputFBO>(
+            t => t.SetOptions(write: true, clearColor: false, clearDepth: false, clearStencil: false)))
+        {
+            commands.Add<VPRC_ExportAdvancedOffscreenOutput>().Output = profile.Output;
+        }
+    }
+
     private ViewportRenderCommandContainer CreateAdvancedPresentCommands(string sourceFboName)
     {
         var commands = new ViewportRenderCommandContainer(this);
         commands.Add<VPRC_RenderToWindow>().SourceFBOName = sourceFboName;
         return commands;
+    }
+
+    private bool ShouldRunAdvancedPostAntiAliasing()
+        => AllowsPostAntiAliasing &&
+           (RuntimeEnableFxaa || RuntimeEnableSmaa || RuntimeNeedsTsrUpscale);
+
+    private static void AppendAdvancedOpenXrNeutralPostInputs(
+        ViewportRenderCommandContainer commands)
+    {
+        commands.Add<VPRC_ClearTextureByName>().SetOptions(BloomBlurTextureName, ColorF4.Transparent);
+        commands.Add<VPRC_ClearTextureByName>().SetOptions(AtmosphereColorTextureName, ColorF4.Transparent);
+        commands.Add<VPRC_ClearTextureByName>().SetOptions(VolumetricFogColorTextureName, ColorF4.Transparent);
     }
 
     private static VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor CreateAdvancedSceneCopyResources()
@@ -364,7 +440,8 @@ public partial class AdvancedRenderPipeline
             .SampleTexture(DepthViewTextureName)
             .SampleTexture(HistoryDepthViewTextureName)
             .SampleTexture(TsrHistoryColorTextureName)
-            .SampleTexture(StencilViewTextureName);
+            .SampleTexture(StencilViewTextureName)
+            .SampleTexture(AdvancedTemporalHistoryContract.ReactiveMaskResourceName);
 
     private static VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor CreateAdvancedMotionBlurResources()
         => new VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor().SampleTexture(MotionBlurTextureName).SampleTexture(VelocityTextureName).SampleTexture(DepthViewTextureName);

@@ -54,6 +54,7 @@ namespace XREngine.Editor.Mcp
         /// Modifies a property on <see cref="GameStartupSettings"/> (or its nested <see cref="BuildSettings"/>).
         /// </summary>
         [XRMcp(Name = "set_game_setting", Permission = McpPermissionLevel.Mutate, PermissionReason = "Modifies game startup settings.")]
+        [McpThreadAffinity(McpThreadAffinity.Main)]
         [Description("Set a game startup setting by property name or dotted path, persistently or for the active process only.")]
         public static Task<McpToolResponse> SetGameSettingAsync(
             McpToolContext context,
@@ -150,6 +151,7 @@ namespace XREngine.Editor.Mcp
         /// Modifies an editor preference on the <see cref="Engine.GlobalEditorPreferences"/> object.
         /// </summary>
         [XRMcp(Name = "set_editor_preference", Permission = McpPermissionLevel.Mutate, PermissionReason = "Modifies editor preferences.")]
+        [McpThreadAffinity(McpThreadAffinity.Main)]
         [Description("Set an editor preference by property name or dotted path, either persistently or for this editor session only.")]
         public static Task<McpToolResponse> SetEditorPreferenceAsync(
             McpToolContext context,

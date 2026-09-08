@@ -114,6 +114,8 @@ internal static class VulkanAdvancedViewRecordFactory
             ViewGeneration = checked((uint)source.ViewGeneration),
             ViewMaskLo = source.ViewMaskLo,
             ViewMaskHi = source.ViewMaskHi,
+            FoveationCenterAndBias = source.FoveationCenterAndBias,
+            FoveationRadii = source.FoveationRadii,
         };
     }
 

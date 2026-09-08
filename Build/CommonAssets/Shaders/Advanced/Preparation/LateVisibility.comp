@@ -105,10 +105,15 @@ bool currentDepthOccludes(
     float maximumTextureY = framebufferYDown
         ? 1.0 - minimumUv.y
         : maximumUv.y;
+    // A foveated footprint widens the conservative occlusion rectangle. Use
+    // its maximum bias across the whole rectangle, so a foveal center cannot
+    // hide a peripheral edge. Geometry remains full rate for both eyes.
+    float guardPixels = view.foveationCenterAndBias.w == 0.0
+        ? 1.0 : exp2(view.foveationCenterAndBias.z);
     vec2 minimumPixel = floor(
-        vec2(minimumUv.x, minimumTextureY) * vec2(sourceSize)) - vec2(1.0);
+        vec2(minimumUv.x, minimumTextureY) * vec2(sourceSize)) - vec2(guardPixels);
     vec2 maximumPixel = ceil(
-        vec2(maximumUv.x, maximumTextureY) * vec2(sourceSize)) + vec2(1.0);
+        vec2(maximumUv.x, maximumTextureY) * vec2(sourceSize)) + vec2(guardPixels);
     if (any(isnan(minimumPixel)) || any(isnan(maximumPixel)) || isnan(nearestDepth) ||
         nearestDepth < 0.0 || nearestDepth > 1.0)
         return false;
@@ -116,7 +121,7 @@ bool currentDepthOccludes(
     const int tileSize = 64;
     const int maxTilesPerAxis = 8;
     ivec2 tileExtent = (sourceSize + ivec2(tileSize - 1)) / tileSize;
-    if (textureSize(XR_ADV_DepthPyramidSampled, 0) != tileExtent)
+    if (XR_ADV_DEPTH_PYRAMID_SIZE() != tileExtent)
         return false;
     ivec2 firstTile = clamp(ivec2(floor(minimumPixel)) / tileSize,
         ivec2(0), tileExtent - ivec2(1));
@@ -132,7 +137,7 @@ bool currentDepthOccludes(
     for (int y = firstTile.y; y <= lastTile.y; ++y)
     for (int x = firstTile.x; x <= lastTile.x; ++x)
     {
-        float tileDepth = texelFetch(XR_ADV_DepthPyramidSampled, ivec2(x, y), 0).r;
+        float tileDepth = XR_ADV_LOAD_DEPTH_PYRAMID(ivec2(x, y)).r;
         if (isnan(tileDepth) || isinf(tileDepth) || tileDepth < 0.0 || tileDepth > 1.0)
             return false;
         bool tileOccludes = reversedDepth

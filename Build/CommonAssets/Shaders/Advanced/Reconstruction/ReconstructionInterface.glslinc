@@ -29,13 +29,15 @@
 #endif
 
 #define XRAdvancedPackedVertex XRAdvancedVisibilityPackedVertex
-#define XRAdvancedReconstructionMeshlet XRAdvancedVisibilityMeshletDescriptor
 #define XR_ADV_StaticVertices XR_ADV_VisibilityStaticVertices
 #define XR_ADV_PreSkinnedCurrentVertices XR_ADV_VisibilityCurrentVertices
 #define XR_ADV_PreSkinnedPreviousVertices XR_ADV_VisibilityPreviousVertices
+#if !defined(XR_ADV_INDEXED_ONLY)
+#define XRAdvancedReconstructionMeshlet XRAdvancedVisibilityMeshletDescriptor
 #define XR_ADV_ReconstructionMeshlets XR_ADV_VisibilityMeshlets
 #define XR_ADV_ReconstructionMeshletVertices XR_ADV_VisibilityMeshletVertexIndices
 #define XR_ADV_ReconstructionMeshletTriangles XR_ADV_VisibilityMeshletTriangleWords
+#endif
 
 XR_ADV_VIS_TABLE_LAYOUT(XR_ADV_BINDING_RECONSTRUCTION_INDICES)
 readonly buffer XRAdvancedReconstructionIndexTable
@@ -63,6 +65,7 @@ buffer XRAdvancedReconstructionCounterTable
     uint deformedSurfaces;
     uint reserved;
 } XR_ADV_ReconstructionCounters;
+#if !defined(XR_ADV_INDEXED_ONLY)
 uint XR_ADV_ReconstructionTriangleByte(uint byteIndex)
 {
     uint word =
@@ -70,12 +73,13 @@ uint XR_ADV_ReconstructionTriangleByte(uint byteIndex)
             byteIndex >> 2u];
     return (word >> ((byteIndex & 3u) * 8u)) & 0xFFu;
 }
+#endif
 
-vec3 XR_ADV_DecodeOct(uint packed)
+vec3 XR_ADV_DecodeOct(uint packedValue)
 {
     vec2 value = vec2(
-        float(int(packed << 16u) >> 16u) / 32767.0,
-        float(int(packed) >> 16u) / 32767.0);
+        float(int(packedValue << 16u) >> 16u) / 32767.0,
+        float(int(packedValue) >> 16u) / 32767.0);
     vec3 decoded =
         vec3(value, 1.0 - abs(value.x) - abs(value.y));
     if (decoded.z < 0.0)
@@ -90,16 +94,16 @@ vec3 XR_ADV_DecodeOct(uint packed)
 }
 
 vec3 XR_ADV_DecodeTangent(
-    uint packed,
+    uint packedValue,
     out float handedness)
 {
-    handedness = (packed & 0x80000000u) != 0u
+    handedness = (packedValue & 0x80000000u) != 0u
         ? -1.0
         : 1.0;
-    int signedY = int((packed >> 16u) & 0x7FFFu);
+    int signedY = int((packedValue >> 16u) & 0x7FFFu);
     if ((signedY & 0x4000) != 0)
         signedY |= int(0xFFFF8000u);
-    float x = float(int(packed << 16u) >> 16u) / 32767.0;
+    float x = float(int(packedValue << 16u) >> 16u) / 32767.0;
     float y = float(signedY) / 16383.0;
     vec3 decoded = vec3(x, y, 1.0 - abs(x) - abs(y));
     if (decoded.z < 0.0)
@@ -115,13 +119,13 @@ vec3 XR_ADV_DecodeTangent(
     return normalize(decoded);
 }
 
-vec4 XR_ADV_UnpackRgba8(uint packed)
+vec4 XR_ADV_UnpackRgba8(uint packedValue)
 {
     return vec4(
-        float(packed & 0xFFu),
-        float((packed >> 8u) & 0xFFu),
-        float((packed >> 16u) & 0xFFu),
-        float((packed >> 24u) & 0xFFu)) / 255.0;
+        float(packedValue & 0xFFu),
+        float((packedValue >> 8u) & 0xFFu),
+        float((packedValue >> 16u) & 0xFFu),
+        float((packedValue >> 24u) & 0xFFu)) / 255.0;
 }
 
 bool XR_ADV_IsFinite(vec2 value)

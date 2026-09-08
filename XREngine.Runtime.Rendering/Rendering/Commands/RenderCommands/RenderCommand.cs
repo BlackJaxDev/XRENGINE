@@ -1,6 +1,7 @@
 using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
+using XREngine.Rendering.Info;
 using YamlDotNet.Serialization;
 
 namespace XREngine.Rendering.Commands
@@ -39,6 +40,12 @@ namespace XREngine.Rendering.Commands
         /// </summary>
         [YamlIgnore]
         public uint StableQueryKey { get; }
+
+        /// <summary>
+        /// Stable authoring owner used only to publish editor selection identity. Rendering
+        /// never dereferences this reference after the canonical identity row is sealed.
+        /// </summary>
+        internal RenderInfo? OwnerRenderInfo { get; set; }
 
         /// <summary>
         /// Optional world-space culling volume for this command, used by per-command

@@ -18,17 +18,22 @@ public sealed class VPRC_AcquireAdvancedPreparation : ViewportRenderCommand
         if (state.WorldSnapshot is not RenderWorldSnapshot world)
             return;
 
+        EAdvancedPreparationConsumer consumers = ActivePipelineInstance.Pipeline is
+            IAdvancedRenderStageFamilyHost familyHost
+                ? familyHost.AdvancedStageFamilyDefinition.RequiredPreparationConsumers
+                : EAdvancedPreparationConsumer.Visibility |
+                  EAdvancedPreparationConsumer.Depth |
+                  EAdvancedPreparationConsumer.Velocity |
+                  EAdvancedPreparationConsumer.MaterialReconstruction |
+                  EAdvancedPreparationConsumer.DirectionalShadow |
+                  EAdvancedPreparationConsumer.PointShadow |
+                  EAdvancedPreparationConsumer.SpotShadow |
+                  EAdvancedPreparationConsumer.Probe |
+                  EAdvancedPreparationConsumer.Capture;
+
         LastPublication = AdvancedSharedPreparationService.Instance.Acquire(
             world,
             state.FrameViewSet,
-            EAdvancedPreparationConsumer.Visibility |
-            EAdvancedPreparationConsumer.Depth |
-            EAdvancedPreparationConsumer.Velocity |
-            EAdvancedPreparationConsumer.MaterialReconstruction |
-            EAdvancedPreparationConsumer.DirectionalShadow |
-            EAdvancedPreparationConsumer.PointShadow |
-            EAdvancedPreparationConsumer.SpotShadow |
-            EAdvancedPreparationConsumer.Probe |
-            EAdvancedPreparationConsumer.Capture);
+            consumers);
     }
 }

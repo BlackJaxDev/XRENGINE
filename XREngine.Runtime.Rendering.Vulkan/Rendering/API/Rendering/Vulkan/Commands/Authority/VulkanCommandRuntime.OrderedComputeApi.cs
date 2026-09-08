@@ -150,7 +150,8 @@ internal sealed partial class VulkanCommandRuntime
     internal XRGpuFence? TryEnqueueOrderedComputeFence(
         VulkanFrameOperationQueue queue,
         int currentPassIndex,
-        in FrameOpContext context)
+        in FrameOpContext context,
+        int requiredOperationCount = 0)
     {
         if (!SupportsOrderedComputeWork)
             return null;
@@ -161,7 +162,11 @@ internal sealed partial class VulkanCommandRuntime
             context.PassMetadata);
         return passIndex == int.MinValue
             ? null
-            : EnqueueOrderedComputeFence(queue, passIndex, context);
+            : EnqueueOrderedComputeFence(
+                queue,
+                passIndex,
+                context,
+                requiredOperationCount);
     }
 
     internal bool TryEnsureComputeBufferReady(
@@ -332,11 +337,20 @@ internal sealed partial class VulkanCommandRuntime
             CreateMemoryBarrierOperation(passIndex, mask, context), passIndex));
 
     internal VulkanTimelineGpuFence EnqueueOrderedComputeFence(
-        VulkanFrameOperationQueue queue, int passIndex, in FrameOpContext context)
+        VulkanFrameOperationQueue queue,
+        int passIndex,
+        in FrameOpContext context,
+        int requiredOperationCount = 0)
     {
         VulkanTimelineGpuFence fence = RentTimelineGpuFence();
         queue.EnqueuePrepared(VulkanFrameOperationSemantics.Prepare(
-            new SubmissionMarkerOp(passIndex, fence, "SubmissionMarker", context), passIndex));
+            new SubmissionMarkerOp(
+                passIndex,
+                fence,
+                "SubmissionMarker",
+                context,
+                requiredOperationCount),
+            passIndex));
         return fence;
     }
 

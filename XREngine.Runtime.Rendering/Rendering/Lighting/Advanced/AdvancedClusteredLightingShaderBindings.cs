@@ -8,4 +8,6 @@ public static class AdvancedClusteredLightingShaderBindings
     public const uint FroxelGrid = 10u;
     public const uint LightIndexList = 11u;
     public const uint LightingCounters = 12u;
+    public const uint FroxelDecalGrid = 13u;
+    public const uint DecalIndexList = 14u;
 }

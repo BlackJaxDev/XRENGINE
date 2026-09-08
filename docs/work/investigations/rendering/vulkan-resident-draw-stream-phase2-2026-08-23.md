@@ -2,7 +2,7 @@
 
 Date: 2026-08-23  
 Status: Publication infrastructure implemented; CPU-direct Vulkan validation passed; material-payload and broader strategy parity pending  
-Tracker: [Vulkan resident draw stream and render task pool](../../todo/rendering/optimization/vulkan-resident-draw-stream-and-render-task-pool-todo.md)
+Tracker: [Vulkan resident draw stream and render task pool](../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md#recovered-acceptance-contracts-and-specialized-child-ownership)
 
 ## Problem statement
 

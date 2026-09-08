@@ -34,4 +34,6 @@ public readonly record struct BackendReadyCanonicalViewRecord(
     public ulong HistoryKey { get; init; }
     public uint ViewMaskLo { get; init; }
     public uint ViewMaskHi { get; init; }
+    public Vector4 FoveationCenterAndBias { get; init; }
+    public Vector4 FoveationRadii { get; init; }
 }

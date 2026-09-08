@@ -152,6 +152,36 @@ internal sealed class VulkanMeshOperationRequestQueue
     }
 
     /// <summary>
+    /// Captures a required producer and retains its explicit completion result in
+    /// the same capture boundary as its deferred mesh requests.
+    /// </summary>
+    internal int CaptureTo(
+        Func<bool> emitRequests,
+        VulkanMeshRenderRequest[] destination,
+        out bool producerComplete,
+        out VulkanMeshRequestLaneCapacityFailure capacityFailure)
+    {
+        ArgumentNullException.ThrowIfNull(emitRequests);
+        ArgumentNullException.ThrowIfNull(destination);
+        producerComplete = false;
+        capacityFailure = default;
+
+        ThreadCaptureState capture = BeginThreadCapture(destination);
+        bool completed = false;
+        try
+        {
+            producerComplete = emitRequests();
+            capacityFailure = capture.CapacityFailure;
+            completed = !capture.Failed;
+            return completed ? capture.Count : -1;
+        }
+        finally
+        {
+            EndThreadCapture(capture, clearCapturedRequests: !completed);
+        }
+    }
+
+    /// <summary>
     /// Captures one allocation-free OpenXR eye emission into caller-owned storage.
     /// </summary>
     internal int CaptureTo(
@@ -466,6 +496,18 @@ internal sealed class VulkanMeshOperationRequestQueue
 
         foreach (ThreadCaptureState capture in _threadCapture.Values)
             capture.ReleasePublicationLeases();
+    }
+
+    /// <summary>
+    /// Releases canonical-publication pins retained by the calling thread's most
+    /// recent direct capture when that captured cohort is rolled back.
+    /// </summary>
+    internal void ReleaseCurrentCapturePublicationLeases()
+    {
+        ThreadCaptureState capture = _threadCapture.Value
+            ?? throw new InvalidOperationException(
+                "The Vulkan mesh-operation request queue capture state is unavailable.");
+        capture.ReleaseCurrentPublicationLeases();
     }
 
     internal void ReleaseCanonicalPublicationBridge(

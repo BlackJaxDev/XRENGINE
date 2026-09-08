@@ -433,7 +433,10 @@ public sealed class AdvancedPreparationExtractor : IDisposable
                 1u,
                 currentGeneration,
                 previousGeneration,
-                PreviousValid: previousGeneration != 0u,
+                // A local generation counter is not proof that this view's
+                // previous output was accepted. In particular, progressive
+                // cube faces share a capture viewport but no temporal history.
+                PreviousValid: previousGeneration != 0u && view.HasValidTemporalHistory,
                 view.DepthZeroToOne,
                 view.ReversedDepth);
             AdvancedVisibilityDispatchPlan plan =

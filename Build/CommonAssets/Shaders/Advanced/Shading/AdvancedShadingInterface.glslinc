@@ -7,8 +7,19 @@
 #define XR_ADV_SHADING_LAYOUT(bindingIndex) layout(set = XR_ADV_VISIBILITY_SET, binding = bindingIndex)
 #define XR_ADV_SHADING_IMAGE(formatName, bindingIndex) layout(formatName, set = XR_ADV_VISIBILITY_SET, binding = bindingIndex)
 #else
-#define XR_ADV_SHADING_LAYOUT(bindingIndex) layout(binding = bindingIndex)
-#define XR_ADV_SHADING_IMAGE(formatName, bindingIndex) layout(formatName, binding = bindingIndex)
+// Desktop GL has independent, tightly bounded sampler/image namespaces.
+// Native image slots are HDR/velocity/reactive/diagnostics=0..3, AO=4.
+#define XR_ADV_GL_TEXTURE_BINDING_0 0
+#define XR_ADV_GL_TEXTURE_BINDING_1 1
+#define XR_ADV_GL_TEXTURE_BINDING_2 2
+#define XR_ADV_GL_TEXTURE_BINDING_50 3
+#define XR_ADV_GL_IMAGE_BINDING_15 0
+#define XR_ADV_GL_IMAGE_BINDING_16 1
+#define XR_ADV_GL_IMAGE_BINDING_17 2
+#define XR_ADV_GL_IMAGE_BINDING_18 3
+#define XR_ADV_GL_IMAGE_BINDING_49 4
+#define XR_ADV_SHADING_LAYOUT(bindingIndex) layout(binding = XR_ADV_GL_TEXTURE_BINDING_ ## bindingIndex)
+#define XR_ADV_SHADING_IMAGE(formatName, bindingIndex) layout(formatName, binding = XR_ADV_GL_IMAGE_BINDING_ ## bindingIndex)
 #endif
 
 // One 64-byte CPU/GPU contract shared by classification, lighting and shading.
@@ -37,7 +48,13 @@ layout(push_constant, std430) uniform XRAdvancedShadingPush
 
 uint XR_ADV_TotalTileCount()
 {
-    return u_Push.tilesCount.x * u_Push.tilesCount.y * u_Push.viewCount;
+    uint productHigh, tilesPerView;
+    umulExtended(u_Push.tilesCount.x, u_Push.tilesCount.y, productHigh, tilesPerView);
+    if (productHigh != 0u)
+        return 0u;
+    uint totalHigh, totalTiles;
+    umulExtended(tilesPerView, u_Push.viewCount, totalHigh, totalTiles);
+    return totalHigh == 0u ? totalTiles : 0u;
 }
 
 // Stable visibility IDs must pass through the publication's lookup segments.

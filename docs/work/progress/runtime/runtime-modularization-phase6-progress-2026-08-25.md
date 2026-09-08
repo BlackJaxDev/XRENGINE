@@ -600,7 +600,7 @@ Ignored evidence is under
   record, or submit. There was no VUID or device loss. The same result reproduced
   after a warm-cache `-NoBuild` restart, and only the named session was stopped.
   This is the independently paused renderer work tracked by
-  [Vulkan PresentNow frame readiness](../../todo/rendering/vulkan-present-now-frame-readiness-todo.md),
+  [Vulkan PresentNow frame readiness](../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md#foundation-carryovers),
   not a missing P6.3 world/render registration path; no fallback or unrelated
   renderer rewrite was introduced here.
 

@@ -898,17 +898,9 @@ public partial class DefaultRenderPipeline
                     tsrUpscale.Add<VPRC_RenderQuadToFBO>()
                         .SetTargets(TsrUpscaleFBOName, TsrUpscaleFBOName, matchDestinationRenderArea: true)
                         .SetRenderGraphResources(DefaultRenderPipelineQuadDescriptors.TsrUpscale());
-                tsrUpscale.Add<VPRC_BlitFrameBuffer>().SetOptions(
-                    TsrUpscaleFBOName,
-                    TsrHistoryColorFBOName,
-                    EReadBufferMode.ColorAttachment0,
-                    blitColor: true,
-                    blitDepth: false,
-                    blitStencil: false,
-                    linearFilter: false);
-                var markTsrHistory = tsrUpscale.Add<VPRC_TemporalAccumulationPass>();
-                markTsrHistory.Phase = VPRC_TemporalAccumulationPass.EPhase.MarkTsrHistoryColor;
-                markTsrHistory.ConfigureTsrHistoryTargets(TsrUpscaleFBOName, TsrHistoryColorFBOName);
+                var captureTsrHistory = tsrUpscale.Add<VPRC_TemporalAccumulationPass>();
+                captureTsrHistory.Phase = VPRC_TemporalAccumulationPass.EPhase.CaptureTsrHistoryColor;
+                captureTsrHistory.ConfigureTsrHistoryTargets(TsrUpscaleFBOName, TsrHistoryColorFBOName);
                 AppendDiagnosticTextureCapture(tsrUpscale, "14_TsrOutput", TsrOutputTextureName);
                 AppendDiagnosticTextureCapture(tsrUpscale, "14b_TsrHistoryColor", TsrHistoryColorTextureName);
                 AppendDiagnosticDesktopFinalCapture(tsrUpscale, "15_FinalOutput", TsrOutputTextureName);

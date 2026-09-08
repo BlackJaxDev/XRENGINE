@@ -18,8 +18,8 @@ public struct AdvancedInstanceRecord
     public AdvancedGpuHandle Deformation;
     public EAdvancedInstanceVisibilityFlags VisibilityFlags;
     public uint LodLevel;
-    public uint ViewMaskLow;
-    public uint ViewMaskHigh;
+    public uint LayerMask;
+    public uint RenderPassMask;
     public uint CurrentFrameSlot;
     public uint PreviousFrameSlot;
     public uint Reserved0;

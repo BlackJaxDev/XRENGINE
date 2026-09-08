@@ -10,6 +10,21 @@ namespace XREngine.Rendering
     [RuntimeOnly]
     public class XRFrameBuffer : GenericRenderObject
     {
+        private bool _forceOvrMultiview;
+
+        /// <summary>
+        /// Binds declared array views through OVR even on NVIDIA. Set before
+        /// generation when the producer uses an OVR vertex shader rather than NV layers.
+        /// </summary>
+        public bool ForceOvrMultiview
+        {
+            get => _forceOvrMultiview;
+            init => SetField(ref _forceOvrMultiview, value);
+        }
+
+        private bool UsesOvrMultiview
+            => ForceOvrMultiview || !RuntimeRenderingHostServices.FrameTiming.IsNvidia;
+
         private static readonly Action<object?> UnbindFromReadingAction =
             static state => ((XRFrameBuffer)state!).UnbindFromReading();
         private static readonly Action<object?> UnbindFromWritingAction =
@@ -596,7 +611,7 @@ namespace XREngine.Rendering
                     cuberef.Bind();
                     cuberef.AttachFaceToFBO(this, Attachment, ECubemapFace.PosX + LayerIndex, MipLevel);
                     break;
-                case XRTexture2DArray arrayref when arrayref.OVRMultiViewParameters is XRTexture2DArray.OVRMultiView ovr && !RuntimeRenderingHostServices.FrameTiming.IsNvidia:
+                case XRTexture2DArray arrayref when arrayref.OVRMultiViewParameters is XRTexture2DArray.OVRMultiView ovr && UsesOvrMultiview:
                     arrayref.Bind();
                     arrayref.AttachToFBO_OVRMultiView(this, Attachment, MipLevel, ovr.Offset, ovr.NumViews);
                     break;
@@ -627,7 +642,7 @@ namespace XREngine.Rendering
                 case XRTextureCube cuberef when LayerIndex >= 0 && LayerIndex < 6:
                     cuberef.DetachFaceFromFBO(this, Attachment, ECubemapFace.PosX + LayerIndex, MipLevel);
                     break;
-                case XRTexture2DArray arrayref when arrayref.OVRMultiViewParameters is XRTexture2DArray.OVRMultiView ovr:
+                case XRTexture2DArray arrayref when arrayref.OVRMultiViewParameters is XRTexture2DArray.OVRMultiView ovr && UsesOvrMultiview:
                     arrayref.DetachFromFBO_OVRMultiView(this, Attachment, MipLevel, ovr.Offset, ovr.NumViews);
                     break;
             }

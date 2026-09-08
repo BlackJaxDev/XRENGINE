@@ -6,7 +6,32 @@ namespace XREngine.Rendering;
 
 public partial class AdvancedRenderPipeline
 {
+    // The owning RVC pipeline can switch between mutually exclusive Default
+    // and Advanced layouts. Keep the frozen two-pass eye intent in the
+    // generation key as well as the command generation so resource packages
+    // from a desktop-present definition can never be reused for an eye FBO.
+    private const ulong OpenXrTwoPassEyeFamilyFeatureBit = 1UL << 63;
+    private const ulong MinimalVisibilityOffscreenFeatureBit = 1UL << 62;
     public const string ExternalOutputResourceName = "$ExternalOutput";
+
+    // Forward late/debug consumers retain the existing probe-array contract.
+    // Native shading uses canonical publication resources independently; these
+    // imports must still be declared before a newly ready probe binds forward.
+    private static void DeclareForwardProbeImports(RenderPipelineResourceLayoutBuilder builder)
+    {
+        string[] textures = [LightProbeIrradianceArrayName, LightProbePrefilterArrayName];
+        foreach (string name in textures)
+            builder.External(name)
+                .Contract(ExternalRenderResourceKind.Texture, ExternalRenderResourceOwnership.Scene, ExternalRenderResourceSynchronization.FrameBoundary)
+                .Add();
+
+        string[] buffers = [LightProbePositionBufferName, LightProbeParamBufferName,
+            LightProbeTetraBufferName, LightProbeGridCellBufferName, LightProbeGridIndexBufferName];
+        foreach (string name in buffers)
+            builder.External(name)
+                .Contract(ExternalRenderResourceKind.Buffer, ExternalRenderResourceOwnership.Scene, ExternalRenderResourceSynchronization.FrameBoundary)
+                .Add();
+    }
 
     /// <summary>
     /// Captures the complete immutable resource/state profile for this pipeline.
@@ -30,19 +55,23 @@ public partial class AdvancedRenderPipeline
     {
         AdvancedVisibilityResourceFeature visibilityFeatures =
             AdvancedVisibilityResourceFeature.Core;
-        if (VisibilityDebugView != EAdvancedVisibilityDebugView.Disabled ||
-            viewport?.CapturePolicy.RenderDebugOverlays == true)
+        if (!UsesMinimalVisibilityOutput &&
+            (VisibilityDebugView != EAdvancedVisibilityDebugView.Disabled ||
+             viewport?.CapturePolicy.RenderDebugOverlays == true))
         {
             visibilityFeatures |= AdvancedVisibilityResourceFeature.DebugOutput;
         }
-        if (EnableVisibilityGpuValidation)
+        if (!UsesMinimalVisibilityOutput && EnableVisibilityGpuValidation)
             visibilityFeatures |= AdvancedVisibilityResourceFeature.GpuValidation;
 
         AdvancedReconstructionResourceFeature reconstructionFeatures =
-            AdvancedReconstructionResourceFeature.Core;
-        if (ReconstructionDebugView !=
+            UsesMinimalVisibilityOutput
+                ? AdvancedReconstructionResourceFeature.None
+                : AdvancedReconstructionResourceFeature.Core;
+        if (!UsesMinimalVisibilityOutput &&
+            (ReconstructionDebugView !=
                 EAdvancedReconstructionDebugView.Disabled ||
-            viewport?.CapturePolicy.RenderDebugOverlays == true)
+             viewport?.CapturePolicy.RenderDebugOverlays == true))
         {
             reconstructionFeatures |=
                 AdvancedReconstructionResourceFeature.DebugOutput;
@@ -51,43 +80,62 @@ public partial class AdvancedRenderPipeline
             ReconstructionDebugView is
                 EAdvancedReconstructionDebugView.DerivativeError or
                 EAdvancedReconstructionDebugView.SelectedMip;
-        if (EnableReconstructionDerivativeDiagnostics ||
-            derivativeDebugView)
+        if (!UsesMinimalVisibilityOutput &&
+            (EnableReconstructionDerivativeDiagnostics ||
+             derivativeDebugView))
         {
             reconstructionFeatures |=
                 AdvancedReconstructionResourceFeature.DerivativeDiagnostics |
                 AdvancedReconstructionResourceFeature.DebugOutput;
         }
-        if (EnableReconstructionGpuValidation)
+        if (!UsesMinimalVisibilityOutput && EnableReconstructionGpuValidation)
             reconstructionFeatures |=
                 AdvancedReconstructionResourceFeature.GpuValidation;
-        if (EnableReconstructionReferenceOutput)
+        if (!UsesMinimalVisibilityOutput && EnableReconstructionReferenceOutput)
             reconstructionFeatures |=
                 AdvancedReconstructionResourceFeature.ReferenceOutput;
 
         AdvancedClassificationResourceFeature classificationFeatures =
-            AdvancedClassificationResourceFeature.Standard;
-        if (ClassificationDebugView != EAdvancedClassificationDebugView.Disabled ||
-            viewport?.CapturePolicy.RenderDebugOverlays == true)
+            UsesMinimalVisibilityOutput
+                ? AdvancedClassificationResourceFeature.None
+                : AdvancedClassificationResourceFeature.Standard;
+        if (!UsesMinimalVisibilityOutput &&
+            (ClassificationDebugView != EAdvancedClassificationDebugView.Disabled ||
+             viewport?.CapturePolicy.RenderDebugOverlays == true))
         {
             classificationFeatures |= AdvancedClassificationResourceFeature.DebugOutput;
         }
 
         ulong shadingFeatureMask = 0UL;
-        if (ShadingDebugView != EAdvancedShadingDebugView.Disabled ||
-            viewport?.CapturePolicy.RenderDebugOverlays == true)
+        if (!UsesMinimalVisibilityOutput &&
+            (ShadingDebugView != EAdvancedShadingDebugView.Disabled ||
+             viewport?.CapturePolicy.RenderDebugOverlays == true))
         {
             shadingFeatureMask = (1UL << 40);
         }
 
         ulong latePassFeatureMask = 0UL;
-        if (LatePassDebugView != EAdvancedLatePassDebugView.Disabled ||
-            viewport?.CapturePolicy.RenderDebugOverlays == true)
+        if (!UsesMinimalVisibilityOutput &&
+            (LatePassDebugView != EAdvancedLatePassDebugView.Disabled ||
+             viewport?.CapturePolicy.RenderDebugOverlays == true))
         {
             latePassFeatureMask = (1UL << 48);
         }
 
-        return (ulong)visibilityFeatures | (ulong)reconstructionFeatures | ((ulong)classificationFeatures << 32) | shadingFeatureMask | latePassFeatureMask;
+        ulong profileFeatureMask =
+            (_stageFamilyExecutionProfile ==
+                EAdvancedStageFamilyExecutionProfile.OpenXrTwoPassEye
+                ? OpenXrTwoPassEyeFamilyFeatureBit
+                : 0UL) |
+            (UsesMinimalVisibilityOutput
+                ? MinimalVisibilityOffscreenFeatureBit
+                : 0UL);
+        return (ulong)visibilityFeatures |
+            (ulong)reconstructionFeatures |
+            ((ulong)classificationFeatures << 32) |
+            shadingFeatureMask |
+            latePassFeatureMask |
+            profileFeatureMask;
     }
 
     /// <summary>
@@ -96,16 +144,39 @@ public partial class AdvancedRenderPipeline
     protected override void DescribeResources(RenderPipelineResourceLayoutBuilder builder)
     {
         DeclareVisibilityBufferResources(builder);
+        if (UsesMinimalVisibilityOutput)
+        {
+            DeclareExternalTarget(builder);
+            return;
+        }
+
         DeclareAttributeReconstructionResources(builder);
         DeclareClassificationResources(builder);
         DeclareNativeShadingResources(builder);
+        DeclareForwardProbeImports(builder);
+        // Every native shaded output can contain authored background. Share only
+        // its canonical HDR/depth framebuffer with late work and raw HDR export;
+        // this does not realize the rest of the late/post graph for captures.
+        DeclareForwardPassOutputResource(builder, RenderResourceSizePolicy.Internal());
         // Thumbnail and depth/visibility captures consume the native visibility
         // outputs directly.  Do not realize the late/post graph for those views.
         if (AllowsLateTransparency)
             DeclareTransparencyAndLatePassResources(builder);
-        if (AllowsLateTransparency || AllowsPostProcessing)
-            DeclareLateAndPostExecutionResources(builder);
+        if (AllowsLateTransparency)
+            DeclareAdvancedLateExecutionResources(builder);
+        // The cached definition is rebound to one outer RVC eye instance before
+        // resource realization. That instance owns a distinct reservation,
+        // persistent resource generation, and frame-view history identity, so
+        // the complete late/post family remains per-eye rather than shared.
+        if (AllowsPostProcessing)
+            DeclareAdvancedPostExecutionResources(builder);
 
+        DeclareExternalTarget(builder);
+    }
+
+    private static void DeclareExternalTarget(
+        RenderPipelineResourceLayoutBuilder builder)
+    {
         RenderPipelineExternalTargetKind kind = builder.Profile.ExternalTargetKind;
         if (kind == RenderPipelineExternalTargetKind.None)
             return;
@@ -136,15 +207,47 @@ public partial class AdvancedRenderPipeline
             .Add();
     }
 
-    private void DeclareLateAndPostExecutionResources(RenderPipelineResourceLayoutBuilder builder)
+    private void DeclareForwardPassOutputResource(
+        RenderPipelineResourceLayoutBuilder builder,
+        RenderResourceSizePolicy internalSize)
+        => builder.FrameBuffer(ForwardPassFBOName).Size(internalSize).Lifetime(RenderResourceLifetime.Persistent)
+            .Usage(RenderPipelineResourceUsage.ColorAttachment | RenderPipelineResourceUsage.DepthStencilAttachment)
+            .Color(0, HDRSceneTextureName).DepthStencil(AdvancedVisibilityResourceNames.DepthStencil)
+            .Factory(CreateForwardPassFBO).Add();
+
+    private void DeclareAdvancedLateExecutionResources(RenderPipelineResourceLayoutBuilder builder)
     {
         RenderResourceSizePolicy internalSize = RenderResourceSizePolicy.Internal();
-        RenderResourceSizePolicy windowSize = RenderResourceSizePolicy.Window();
         uint layers = Math.Max(builder.Profile.ViewCount, builder.Profile.Stereo ? 2u : 1u);
 
         DeclareLatePostColor(builder, TransparentSceneCopyTextureName, internalSize, layers, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f);
         DeclareLatePostColor(builder, TransparentAccumTextureName, internalSize, layers, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f);
         DeclareLatePostColor(builder, TransparentRevealageTextureName, internalSize, layers, EPixelInternalFormat.R8, EPixelFormat.Red, EPixelType.UnsignedByte, ESizedInternalFormat.R8);
+        builder.FrameBuffer(TransparentSceneCopyFBOName).Size(internalSize).Lifetime(RenderResourceLifetime.Persistent)
+            .Usage(RenderPipelineResourceUsage.ColorAttachment).Color(0, TransparentSceneCopyTextureName)
+            .Factory(CreateTransparentSceneCopyFBO).Add();
+        builder.FrameBuffer(TransparentAccumulationFBOName).Size(internalSize).Lifetime(RenderResourceLifetime.Persistent)
+            .Usage(RenderPipelineResourceUsage.ColorAttachment | RenderPipelineResourceUsage.DepthStencilAttachment)
+            .Color(0, TransparentAccumTextureName).Color(1, TransparentRevealageTextureName)
+            .DepthStencil(AdvancedVisibilityResourceNames.DepthStencil)
+            .Factory(CreateTransparentAccumulationFBO).Add();
+        builder.FrameBuffer(TransparentResolveFBOName).Size(internalSize).Lifetime(RenderResourceLifetime.Transient)
+            .Usage(RenderPipelineResourceUsage.ColorAttachment)
+            .Color(0, HDRSceneTextureName)
+            .DependsOn(TransparentSceneCopyTextureName, TransparentAccumTextureName, TransparentRevealageTextureName)
+            .Factory(CreateTransparentResolveFBO).Add();
+        builder.QuadMaterial(SceneCopyFBOName).Lifetime(RenderResourceLifetime.Transient)
+            .DependsOn(HDRSceneTextureName).Factory(CreateSceneCopyFBO).Add();
+
+        DeclareAdvancedExactTransparencyResources(builder, internalSize, layers);
+    }
+
+    private void DeclareAdvancedPostExecutionResources(RenderPipelineResourceLayoutBuilder builder)
+    {
+        RenderResourceSizePolicy internalSize = RenderResourceSizePolicy.Internal();
+        RenderResourceSizePolicy windowSize = RenderResourceSizePolicy.Window();
+        uint layers = Math.Max(builder.Profile.ViewCount, builder.Profile.Stereo ? 2u : 1u);
+
         DeclareLatePostColor(builder, BloomBlurTextureName, internalSize, layers, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f, mips: 5u);
         DeclareLatePostColor(builder, AutoExposureTextureName, RenderResourceSizePolicy.Absolute(1u, 1u), 1u, EPixelInternalFormat.R32f, EPixelFormat.Red, EPixelType.Float, ESizedInternalFormat.R32f);
         DeclareLatePostColor(builder, PostProcessOutputTextureName, internalSize, layers, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f);
@@ -184,25 +287,6 @@ public partial class AdvancedRenderPipeline
             .SizedFormat(ESizedInternalFormat.Depth32fStencil8).LayerRange(0u, layers).Target(array: Stereo, multisample: false)
             .Factory(CreateHistoryDepthViewTexture).Add();
 
-        builder.FrameBuffer(ForwardPassFBOName).Size(internalSize).Lifetime(RenderResourceLifetime.Persistent)
-            .Usage(RenderPipelineResourceUsage.ColorAttachment | RenderPipelineResourceUsage.DepthStencilAttachment)
-            .Color(0, HDRSceneTextureName).DepthStencil(AdvancedVisibilityResourceNames.DepthStencil)
-            .Factory(CreateForwardPassFBO).Add();
-        builder.FrameBuffer(TransparentSceneCopyFBOName).Size(internalSize).Lifetime(RenderResourceLifetime.Persistent)
-            .Usage(RenderPipelineResourceUsage.ColorAttachment).Color(0, TransparentSceneCopyTextureName)
-            .Factory(CreateTransparentSceneCopyFBO).Add();
-        builder.FrameBuffer(TransparentAccumulationFBOName).Size(internalSize).Lifetime(RenderResourceLifetime.Persistent)
-            .Usage(RenderPipelineResourceUsage.ColorAttachment | RenderPipelineResourceUsage.DepthStencilAttachment)
-            .Color(0, TransparentAccumTextureName).Color(1, TransparentRevealageTextureName)
-            .DepthStencil(AdvancedVisibilityResourceNames.DepthStencil)
-            .Factory(CreateTransparentAccumulationFBO).Add();
-        builder.FrameBuffer(TransparentResolveFBOName).Size(internalSize).Lifetime(RenderResourceLifetime.Transient)
-            .Usage(RenderPipelineResourceUsage.ColorAttachment)
-            .Color(0, HDRSceneTextureName)
-            .DependsOn(TransparentSceneCopyTextureName, TransparentAccumTextureName, TransparentRevealageTextureName)
-            .Factory(CreateTransparentResolveFBO).Add();
-        builder.QuadMaterial(SceneCopyFBOName).Lifetime(RenderResourceLifetime.Transient)
-            .DependsOn(HDRSceneTextureName).Factory(CreateSceneCopyFBO).Add();
         builder.FrameBuffer(PostProcessOutputFBOName).Size(internalSize).Lifetime(RenderResourceLifetime.Persistent)
             .Usage(RenderPipelineResourceUsage.ColorAttachment).Color(0, PostProcessOutputTextureName)
             .Factory(CreatePostProcessOutputFBO).Add();
@@ -224,7 +308,7 @@ public partial class AdvancedRenderPipeline
         builder.FrameBuffer(TemporalInputFBOName).Size(internalSize).Lifetime(RenderResourceLifetime.Persistent)
             .Usage(RenderPipelineResourceUsage.ColorAttachment).Color(0, TemporalColorInputTextureName).Factory(CreateTemporalInputFBO).Add();
         builder.QuadMaterial(TemporalAccumulationFBOName).Lifetime(RenderResourceLifetime.Transient)
-            .DependsOn(TemporalColorInputTextureName, HistoryColorTextureName, VelocityTextureName, DepthViewTextureName, HistoryDepthViewTextureName, HistoryExposureVarianceTextureName)
+            .DependsOn(TemporalColorInputTextureName, HistoryColorTextureName, VelocityTextureName, DepthViewTextureName, HistoryDepthViewTextureName, HistoryExposureVarianceTextureName, AdvancedTemporalHistoryContract.ReactiveMaskResourceName)
             .Factory(CreateTemporalAccumulationFBO).Add();
         builder.FrameBuffer(HistoryExposureFBOName).Size(internalSize).Lifetime(RenderResourceLifetime.Persistent)
             .Usage(RenderPipelineResourceUsage.ColorAttachment).Color(0, HistoryExposureVarianceTextureName).Factory(CreateHistoryExposureFBO).Add();
@@ -235,25 +319,107 @@ public partial class AdvancedRenderPipeline
         DeclareLatePostDestination(builder, TsrHistoryColorFBOName, TsrHistoryColorTextureName, windowSize, CreateTsrHistoryColorFBO);
         builder.FrameBuffer(TsrUpscaleFBOName).Size(windowSize).Lifetime(RenderResourceLifetime.Persistent)
             .Usage(RenderPipelineResourceUsage.ColorAttachment).Color(0, TsrOutputTextureName)
-            .DependsOn(FinalPostProcessOutputTextureName, VelocityTextureName, DepthViewTextureName, HistoryDepthViewTextureName, TsrHistoryColorTextureName, StencilViewTextureName)
+            .DependsOn(FinalPostProcessOutputTextureName, VelocityTextureName, DepthViewTextureName, HistoryDepthViewTextureName, TsrHistoryColorTextureName, StencilViewTextureName, AdvancedTemporalHistoryContract.ReactiveMaskResourceName)
             .Factory(CreateTsrUpscaleFBO).Add();
 
-        DeclareAdvancedExactTransparencyResources(builder, internalSize, layers);
+    }
+
+    /// <summary>
+    /// Declares only the inputs and two color-composition passes executed by
+    /// the bounded two-pass OpenXR profile. The profile deliberately does not
+    /// create temporal, AA/TSR, bloom, motion-blur, depth-of-field, atmosphere,
+    /// or fog execution targets for each eye.
+    /// </summary>
+    private void DeclareAdvancedOpenXrEyePostCompositionResources(
+        RenderPipelineResourceLayoutBuilder builder)
+    {
+        RenderResourceSizePolicy internalSize = RenderResourceSizePolicy.Internal();
+        RenderResourceSizePolicy neutralSize = RenderResourceSizePolicy.Absolute(1u, 1u);
+        uint layers = Math.Max(builder.Profile.ViewCount, builder.Profile.Stereo ? 2u : 1u);
+
+        // The shared post material retains these sampler bindings even when
+        // their effects are disabled. Keep neutral inputs allocation-bounded;
+        // depth/stencil remain full-size because the post shader may consume
+        // them for authored color grading and tonemapping decisions.
+        DeclareLatePostColor(builder, BloomBlurTextureName, neutralSize, 1u,
+            EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat,
+            ESizedInternalFormat.Rgba16f);
+        DeclareLatePostColor(builder, AutoExposureTextureName, neutralSize, 1u,
+            EPixelInternalFormat.R32f, EPixelFormat.Red, EPixelType.Float,
+            ESizedInternalFormat.R32f);
+        DeclareLatePostColor(builder, AtmosphereColorTextureName, neutralSize, 1u,
+            EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat,
+            ESizedInternalFormat.Rgba16f);
+        DeclareLatePostColor(builder, VolumetricFogColorTextureName, neutralSize, 1u,
+            EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat,
+            ESizedInternalFormat.Rgba16f);
+        DeclareLatePostColor(builder, PostProcessOutputTextureName, internalSize, layers,
+            EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat,
+            ESizedInternalFormat.Rgba16f);
+        DeclareLatePostColor(builder, FinalPostProcessOutputTextureName, internalSize, layers,
+            EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat,
+            ESizedInternalFormat.Rgba16f);
+
+        builder.TextureView(DepthStencilTextureName, AdvancedVisibilityResourceNames.DepthStencil)
+            .Size(internalSize).Lifetime(RenderResourceLifetime.Persistent)
+            .Usage(RenderPipelineResourceUsage.DepthStencilAttachment | RenderPipelineResourceUsage.SampledTexture)
+            .SizedFormat(ESizedInternalFormat.Depth32fStencil8).LayerRange(0u, layers)
+            .Target(array: Stereo, multisample: false)
+            .Factory(CreateAdvancedVisibilityDepthStencilAlias).Add();
+        builder.TextureView(DepthViewTextureName, AdvancedVisibilityResourceNames.DepthStencil)
+            .Size(internalSize).Lifetime(RenderResourceLifetime.Persistent)
+            .Usage(RenderPipelineResourceUsage.SampledTexture)
+            .DepthStencilAspect(EDepthStencilFmt.Depth)
+            .SizedFormat(ESizedInternalFormat.Depth32fStencil8).LayerRange(0u, layers)
+            .Target(array: Stereo, multisample: false)
+            .Factory(CreateAdvancedVisibilityDepthView).Add();
+        builder.TextureView(StencilViewTextureName, AdvancedVisibilityResourceNames.DepthStencil)
+            .Size(internalSize).Lifetime(RenderResourceLifetime.Persistent)
+            .Usage(RenderPipelineResourceUsage.SampledTexture)
+            .DepthStencilAspect(EDepthStencilFmt.Stencil)
+            .SizedFormat(ESizedInternalFormat.Depth32fStencil8).LayerRange(0u, layers)
+            .Target(array: Stereo, multisample: false)
+            .Factory(CreateAdvancedVisibilityStencilView).Add();
+
+        builder.FrameBuffer(PostProcessOutputFBOName).Size(internalSize)
+            .Lifetime(RenderResourceLifetime.Persistent)
+            .Usage(RenderPipelineResourceUsage.ColorAttachment)
+            .Color(0, PostProcessOutputTextureName)
+            .Factory(CreatePostProcessOutputFBO).Add();
+        builder.FrameBuffer(FinalPostProcessOutputFBOName).Size(internalSize)
+            .Lifetime(RenderResourceLifetime.Persistent)
+            .Usage(RenderPipelineResourceUsage.ColorAttachment)
+            .Color(0, FinalPostProcessOutputTextureName)
+            .Factory(CreateFinalPostProcessOutputFBO).Add();
+        builder.QuadMaterial(PostProcessFBOName).Lifetime(RenderResourceLifetime.Transient)
+            .DependsOn(
+                HDRSceneTextureName,
+                BloomBlurTextureName,
+                DepthViewTextureName,
+                StencilViewTextureName,
+                AutoExposureTextureName,
+                AtmosphereColorTextureName,
+                VolumetricFogColorTextureName)
+            .Factory(CreatePostProcessFBO).Add();
+        builder.QuadMaterial(FinalPostProcessFBOName).Lifetime(RenderResourceLifetime.Transient)
+            .DependsOn(PostProcessOutputTextureName)
+            .Factory(CreateFinalPostProcessFBO).Add();
     }
 
     private void DeclareAdvancedExactTransparencyResources(RenderPipelineResourceLayoutBuilder builder, RenderResourceSizePolicy internalSize, uint layers)
     {
+        uint ppllNodeCapacity = ComputePpllNodeCapacity(builder.Profile);
         DeclareLatePostColor(builder, PpllHeadPointerTextureName, internalSize, layers, EPixelInternalFormat.R32ui, EPixelFormat.RedInteger, EPixelType.UnsignedInt, ESizedInternalFormat.R32ui);
         DeclareLatePostColor(builder, PpllFragmentCountTextureName, internalSize, layers, EPixelInternalFormat.R16f, EPixelFormat.Red, EPixelType.HalfFloat, ESizedInternalFormat.R16f);
         builder.Buffer(PpllNodeBufferName).Lifetime(RenderResourceLifetime.Persistent).Usage(RenderPipelineResourceUsage.StorageBuffer)
-            .BufferFormat((ulong)ComputePpllNodeCapacity(builder.Profile) * PpllNodeStrideBytes, EBufferTarget.ShaderStorageBuffer, EBufferUsage.DynamicCopy)
-            .Elements(PpllNodeStrideBytes, ComputePpllNodeCapacity(builder.Profile)).Access(EBufferAccessPattern.ReadWrite).Factory(CreatePpllNodeBuffer).Add();
+            .BufferFormat(PpllCapacityContract.ComputeNodeBufferBytes(ppllNodeCapacity), EBufferTarget.ShaderStorageBuffer, EBufferUsage.DynamicCopy)
+            .Elements(PpllNodeStrideBytes, ppllNodeCapacity).Access(EBufferAccessPattern.ReadWrite).Factory(CreatePpllNodeBuffer).Add();
         builder.Buffer(PpllCounterBufferName).Lifetime(RenderResourceLifetime.Persistent).Usage(RenderPipelineResourceUsage.StorageBuffer)
-            .BufferFormat(2u * sizeof(uint), EBufferTarget.ShaderStorageBuffer, EBufferUsage.DynamicCopy)
-            .Elements(sizeof(uint), 2u).Access(EBufferAccessPattern.ReadWrite).Factory(CreatePpllCounterBuffer).Add();
+            .BufferFormat(PpllCapacityContract.CounterWordCount * sizeof(uint), EBufferTarget.ShaderStorageBuffer, EBufferUsage.DynamicCopy)
+            .Elements(sizeof(uint), PpllCapacityContract.CounterWordCount).Access(EBufferAccessPattern.ReadWrite).Factory(CreatePpllCounterBuffer).Add();
         builder.FrameBuffer(PpllResolveFBOName).Size(internalSize).Lifetime(RenderResourceLifetime.Transient)
             .Usage(RenderPipelineResourceUsage.ColorAttachment).Color(0, HDRSceneTextureName).Color(1, PpllFragmentCountTextureName)
-            .DependsOn(TransparentSceneCopyTextureName, PpllHeadPointerTextureName, PpllNodeBufferName, PpllCounterBufferName).Factory(CreatePpllResolveFBO).Add();
+            .DependsOn(PpllHeadPointerTextureName, PpllNodeBufferName, PpllCounterBufferName).Factory(CreatePpllResolveFBO).Add();
 
         for (int layerIndex = 0; layerIndex < MaxDepthPeelingLayersSupported; layerIndex++)
         {
@@ -296,8 +462,9 @@ public partial class AdvancedRenderPipeline
 
     private void DeclareAdvancedPostEffects(RenderPipelineResourceLayoutBuilder builder, RenderResourceSizePolicy internalSize)
     {
-        DeclareLatePostColor(builder, MotionBlurTextureName, internalSize, 1u, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f);
-        DeclareLatePostColor(builder, DepthOfFieldTextureName, internalSize, 1u, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f);
+        uint layers = Math.Max(builder.Profile.ViewCount, builder.Profile.Stereo ? 2u : 1u);
+        DeclareLatePostColor(builder, MotionBlurTextureName, internalSize, layers, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f);
+        DeclareLatePostColor(builder, DepthOfFieldTextureName, internalSize, layers, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f);
         DeclareLatePostDestination(builder, MotionBlurCopyFBOName, MotionBlurTextureName, internalSize, CreateMotionBlurCopyFBO);
         DeclareLatePostDestination(builder, DepthOfFieldCopyFBOName, DepthOfFieldTextureName, internalSize, CreateDepthOfFieldCopyFBO);
         builder.QuadMaterial(MotionBlurFBOName).Lifetime(RenderResourceLifetime.Transient).DependsOn(MotionBlurTextureName, VelocityTextureName, DepthViewTextureName).Factory(CreateMotionBlurFBO).Add();
@@ -375,12 +542,13 @@ public partial class AdvancedRenderPipeline
         if (layers > 1u)
         {
             XRTexture2DArray array = XRTexture2DArray.CreateFrameBufferTexture(
-                layers, width, height, internalFormat, pixelFormat, pixelType);
+                layers, width, height, internalFormat, pixelFormat, pixelType, EFrameBufferAttachment.ColorAttachment0);
             array.OVRMultiViewParameters = new(0, layers);
             array.SmallestAllowedMipmapLevel = checked((int)mips - 1);
             array.LargestMipmapLevel = 0;
-            array.MinFilter = mips > 1u ? ETexMinFilter.LinearMipmapLinear : ETexMinFilter.Linear;
-            array.MagFilter = ETexMagFilter.Linear;
+            array.MinFilter = pixelFormat == EPixelFormat.RedInteger ? ETexMinFilter.Nearest :
+                mips > 1u ? ETexMinFilter.LinearMipmapLinear : ETexMinFilter.Linear;
+            array.MagFilter = pixelFormat == EPixelFormat.RedInteger ? ETexMagFilter.Nearest : ETexMagFilter.Linear;
             array.UWrap = array.VWrap = ETexWrapMode.ClampToEdge;
             array.SizedInternalFormat = sizedFormat;
             array.Resizable = false;
@@ -401,7 +569,8 @@ public partial class AdvancedRenderPipeline
             result = mono;
         }
         result.Name = name;
-        result.SamplerName = name;
+        // The shared DoF shader also serves Default; preserve its existing sampler ABI.
+        result.SamplerName = name == DepthOfFieldTextureName ? "ColorSource" : name;
         result.AutoGenerateMipmaps = false;
         result.RequiresStorageUsage = true;
         return result;

@@ -1,9 +1,48 @@
 using XREngine.Rendering.Pipelines.Commands;
+using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering;
 
 public partial class AdvancedRenderPipeline
 {
+    AdvancedRenderPipeline IAdvancedRenderStageFamilyHost.AdvancedStageFamilyDefinition => this;
+
+    /// <summary>
+    /// Returns this full Advanced frame family with every command rebound to
+    /// <paramref name="executionOwner"/>. This deliberately does not render
+    /// through another pipeline instance: all resource lookup, reservations,
+    /// and output authoring remain owned by that active instance.
+    /// </summary>
+    internal ViewportRenderCommandContainer GetAdvancedStageFamilyCommandChain(
+        RenderPipeline executionOwner)
+    {
+        ArgumentNullException.ThrowIfNull(executionOwner);
+        ViewportRenderCommandContainer commands = CommandChain;
+        commands.ParentPipeline = executionOwner;
+        return commands;
+    }
+
+    /// <summary>
+    /// Creates a definition-only Advanced family for an outer two-pass OpenXR
+    /// eye pipeline. The outer RVC pipeline remains the sole owner of command
+    /// execution, resource generations, output reservations, and frame
+    /// lifecycle.
+    /// </summary>
+    internal static AdvancedRenderPipeline CreateOpenXrTwoPassEyeStageFamily()
+    {
+        var family = new AdvancedRenderPipeline(
+            stereo: false,
+            capabilityResult: null,
+            offscreenProfile: null,
+            stageFamilyProfile: EAdvancedStageFamilyExecutionProfile.OpenXrTwoPassEye,
+            subscribeToRuntimeSettings: false);
+        // The definition is cached across RVC command-chain rebuilds. Add its
+        // preparation acquire once here instead of mutating the shared root on
+        // every owning-pipeline rebuild.
+        family.CommandChain.Insert(0, new VPRC_AcquireAdvancedPreparation());
+        return family;
+    }
+
     protected override ViewportRenderCommandContainer GenerateCommandChain()
     {
         ViewportRenderCommandContainer commands = new(this);
@@ -16,10 +55,22 @@ public partial class AdvancedRenderPipeline
         AppendAdvancedTemporalBegin(commands);
 
         for (int i = 0; i < stages.Count; i++)
-            AppendStage(commands, stages[i]);
+        {
+            if (IncludesStage(stages[i].Stage))
+                AppendStage(commands, stages[i]);
+        }
 
         return commands;
     }
+
+    /// <summary>
+    /// Declares the complete resource family consumed by the Advanced command
+    /// chain. A composed owner uses these declarations without creating a
+    /// nested render-pipeline instance.
+    /// </summary>
+    internal void DescribeAdvancedStageFamilyResources(
+        RenderPipelineResourceLayoutBuilder builder)
+        => DescribeResources(builder);
 
     private void AppendStage(
         ViewportRenderCommandContainer commands,
@@ -34,6 +85,9 @@ public partial class AdvancedRenderPipeline
         // after their corresponding marker so they share the same ordered contract.
         switch (descriptor.Stage)
         {
+            case EAdvancedRenderStage.NativeOpaqueShading:
+                AppendAdvancedBackgroundCommands(commands);
+                break;
             case EAdvancedRenderStage.LatePasses:
                 AppendAdvancedLatePassCommands(commands);
                 break;

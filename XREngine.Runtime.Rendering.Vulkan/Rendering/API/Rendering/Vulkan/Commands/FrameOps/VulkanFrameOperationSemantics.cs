@@ -690,6 +690,7 @@ internal static class VulkanFrameOperationSemantics
                     // whenever a cached primary is reused. Marker position remains
                     // part of the structural signature because recording it closes
                     // the active render pass.
+                    hash.Add(ops.GetSubmissionMarker(i).RequiredOperationCount);
                     break;
                 case EVulkanPrimaryPlanNodeKind.TextureUpload:
                     VulkanImportedTexturePendingUpload upload = ops.GetTextureUpload(i).Upload;

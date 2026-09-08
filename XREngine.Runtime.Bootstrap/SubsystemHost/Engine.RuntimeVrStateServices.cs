@@ -212,6 +212,12 @@ internal sealed class EngineRuntimeVrStateServices : IRuntimeVrStateServices
 
     public bool TryGetHeadToEyeLocalPose(bool leftEye, out Matrix4x4 pose)
     {
+        if (RuntimeEngine.VRState.EmulatedRenderActive)
+        {
+            float halfIpd = RuntimeEngine.VRState.RealWorldIPD * 0.5f;
+            pose = Matrix4x4.CreateTranslation(leftEye ? -halfIpd : halfIpd, 0f, 0f);
+            return true;
+        }
         if (TryGetOpenXr(out OpenXRAPI? openXrApi))
         {
             if (openXrApi.TryGetHeadLocalPose(out Matrix4x4 headLocal) &&

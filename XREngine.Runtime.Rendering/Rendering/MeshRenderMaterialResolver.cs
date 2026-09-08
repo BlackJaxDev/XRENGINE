@@ -88,6 +88,13 @@ public static class MeshRenderMaterialResolver
                 return new(pipelineOverrideMaterial, null, false, true, "DepthNormalPipelineOverride");
         }
 
+        if (renderState?.AdvancedLateTemporalOutput is EAdvancedLateTemporalOutput output and not EAdvancedLateTemporalOutput.None)
+        {
+            XRMaterial? source = localMaterialOverride ?? meshRenderer.Material;
+            if (source?.TryGetAdvancedLateTemporalMaterial(output, out XRMaterial? temporalMaterial) == true)
+                return new(temporalMaterial!, source, false, true, $"AdvancedLate{output}");
+        }
+
         XRMaterial material =
             globalMaterialOverride ??
             pipelineOverrideMaterial ??

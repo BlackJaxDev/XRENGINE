@@ -56,6 +56,9 @@ internal sealed class VulkanAdvancedVisibilityInputStorage
             (Publication.AggregateDispatchExecuted &&
              DeformationPublication.JobCount == Publication.DeformationJobCount));
 
+    internal bool HasCapturedFamily => _captured;
+    internal AdvancedVisibilityFamilyReservation Reservation => _familyRequest.Reservation;
+
     internal AdvancedPreparationPublication Publication { get; private set; }
 
     internal AdvancedIndirectPreparationResult Indirect { get; private set; }

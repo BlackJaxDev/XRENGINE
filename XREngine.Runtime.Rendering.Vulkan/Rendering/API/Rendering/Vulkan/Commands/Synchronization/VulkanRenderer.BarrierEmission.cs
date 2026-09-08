@@ -412,7 +412,11 @@ namespace XREngine.Rendering.Vulkan
                         // recording or a completed submission.
                         includeEntryState: false))
                     {
-                        oldLayout = NormalizeFboAttachmentLayout(signature, recordedState.Layout);
+                        // The recorded layout is native state, not an attachment
+                        // preference. In particular, compute may sample depth in
+                        // SHADER_READ_ONLY_OPTIMAL; changing that old layout here
+                        // invents a transition that never occurred.
+                        oldLayout = recordedState.Layout;
                     }
                     else
                     {
@@ -436,12 +440,17 @@ namespace XREngine.Rendering.Vulkan
                         : ResolveFboAttachmentStage(oldLayout, signature, oldLayoutIsRenderAttachment);
                     PipelineStageFlags dstStage = ResolveFboAttachmentStage(newLayout, signature, newLayoutIsRenderAttachment);
 
+                    // Preserve compute/transfer producers as well as graphics
+                    // writers when reopening a shared attachment.
+                    srcStage |= ToLegacyAttachmentProducerStages(recordedState.StageMask);
+
                     ImageMemoryBarrier barrier = new()
                     {
                         SType = StructureType.ImageMemoryBarrier,
                         SrcAccessMask = oldLayout == ImageLayout.Undefined
                             ? 0
-                            : ResolveFboAttachmentAccess(oldLayout, signature, oldLayoutIsRenderAttachment),
+                            : ResolveFboAttachmentAccess(oldLayout, signature, oldLayoutIsRenderAttachment) |
+                              ToLegacyAttachmentProducerAccess(recordedState.AccessMask),
                         DstAccessMask = ResolveFboAttachmentAccess(newLayout, signature, newLayoutIsRenderAttachment),
                         OldLayout = oldLayout,
                         NewLayout = newLayout,
@@ -507,6 +516,16 @@ namespace XREngine.Rendering.Vulkan
                     barrierCount,
                     nativeBarriers);
         }
+
+        // Synchronization2 adds bits above the legacy mask width. Widen unknown
+        // producer scopes conservatively instead of silently losing dependencies.
+        private static PipelineStageFlags ToLegacyAttachmentProducerStages(PipelineStageFlags2 stages)
+            => (PipelineStageFlags)((ulong)stages & uint.MaxValue) |
+               (((ulong)stages >> 32) != 0 ? PipelineStageFlags.AllCommandsBit : 0);
+
+        private static AccessFlags ToLegacyAttachmentProducerAccess(AccessFlags2 access)
+            => (AccessFlags)((ulong)access & uint.MaxValue) |
+               (((ulong)access >> 32) != 0 ? AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit : 0);
 
         private static ImageLayout NormalizeFboAttachmentLayout(FrameBufferAttachmentSignature signature, ImageLayout layout)
         {

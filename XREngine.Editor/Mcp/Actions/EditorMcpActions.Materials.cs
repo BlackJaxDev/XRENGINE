@@ -29,6 +29,7 @@ namespace XREngine.Editor.Mcp
         /// submesh/LOD material slot on a <see cref="ModelComponent"/>.
         /// </summary>
         [XRMcp(Name = "get_material_uniforms", Permission = McpPermissionLevel.ReadOnly)]
+        [McpThreadAffinity(McpThreadAffinity.Main)]
         [Description("List all shader uniforms (Parameters) on a material, including names, types, and current values. Target by asset ID, a component's Material property, or a ModelComponent submesh/LOD material slot.")]
         public static Task<McpToolResponse> GetMaterialUniformsAsync(
             McpToolContext context,
@@ -59,6 +60,12 @@ namespace XREngine.Editor.Mcp
                 value = FormatUniformValue(p)
             }).ToArray();
 
+            XRMaterial? advancedMaterial = material as XRMaterial;
+            string? temporalReason = null;
+            bool temporalSourceValid = advancedMaterial?.TryValidateAdvancedLateTemporalSource(out temporalReason) == true;
+            string? backgroundMonoReason = null, backgroundStereoReason = null;
+            bool backgroundMonoValid = advancedMaterial?.TryValidateAdvancedBackground(false, out backgroundMonoReason) == true;
+            bool backgroundStereoValid = advancedMaterial?.TryValidateAdvancedBackground(true, out backgroundStereoReason) == true;
             return Task.FromResult(new McpToolResponse(
                 $"Material '{material.Name}' ({material.ID}) has {uniforms.Length} uniform(s).",
                 new
@@ -66,6 +73,19 @@ namespace XREngine.Editor.Mcp
                     materialId = material.ID,
                     materialName = material.Name,
                     materialType = material.GetType().FullName ?? material.GetType().Name,
+                    advancedBackground = advancedMaterial?.AdvancedBackgroundProfile is not null ? new
+                    {
+                        monoValid = backgroundMonoValid,
+                        monoReason = backgroundMonoReason,
+                        stereoValid = backgroundStereoValid,
+                        stereoReason = backgroundStereoReason,
+                    } : null,
+                    advancedTemporal = advancedMaterial?.AdvancedLatePassMetadata is { } metadata ? new
+                    {
+                        sourceValid = temporalSourceValid,
+                        reason = temporalReason,
+                        requiresRigidGeometry = metadata.RequiresRigidTemporalGeometry,
+                    } : null,
                     uniforms
                 }));
         }
@@ -77,6 +97,7 @@ namespace XREngine.Editor.Mcp
         /// or through a <see cref="ModelComponent"/> submesh/LOD material slot.
         /// </summary>
         [XRMcp(Name = "set_material_uniform", Permission = McpPermissionLevel.Mutate, PermissionReason = "Modifies a material's shader uniform value.")]
+        [McpThreadAffinity(McpThreadAffinity.Main)]
         [Description("Set a shader uniform value on a material by uniform name. Supports float, int, uint, vec2 ({X,Y}), vec3 ({X,Y,Z}), vec4 ({X,Y,Z,W}). Target by material asset ID, a component's Material property, or a ModelComponent submesh/LOD material slot.")]
         public static Task<McpToolResponse> SetMaterialUniformAsync(
             McpToolContext context,
@@ -141,6 +162,7 @@ namespace XREngine.Editor.Mcp
         /// Sets multiple shader uniform values on a material in a single call.
         /// </summary>
         [XRMcp(Name = "set_material_uniforms", Permission = McpPermissionLevel.Mutate, PermissionReason = "Modifies material shader uniform values.")]
+        [McpThreadAffinity(McpThreadAffinity.Main)]
         [Description("Set multiple shader uniforms on a material in one call. Pass a map of uniform_name -> value and target by material asset ID, a component's Material property, or a ModelComponent submesh/LOD material slot.")]
         public static Task<McpToolResponse> SetMaterialUniformsAsync(
             McpToolContext context,

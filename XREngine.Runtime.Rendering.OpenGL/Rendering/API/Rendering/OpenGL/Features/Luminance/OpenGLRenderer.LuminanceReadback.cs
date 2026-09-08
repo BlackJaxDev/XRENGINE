@@ -481,6 +481,7 @@ public partial class OpenGLRenderer
             // Create FBO and attach texture
             _luminanceFrontFbo = Api.GenFramebuffer();
             Api.BindFramebuffer(FramebufferTarget.DrawFramebuffer, _luminanceFrontFbo);
+            TrackHistoryDrawTarget(null, known: false);
             Api.FramebufferTexture2D(FramebufferTarget.DrawFramebuffer, FramebufferAttachment.ColorAttachment0, TextureTarget.Texture2D, _luminanceFrontTex, 0);
 
             // Create cached PBO for readback (4 bytes for RGBA8)
@@ -499,6 +500,7 @@ public partial class OpenGLRenderer
         {
             Api.BindTexture(TextureTarget.Texture2D, _luminanceFrontTex);
             Api.BindFramebuffer(FramebufferTarget.DrawFramebuffer, _luminanceFrontFbo);
+            TrackHistoryDrawTarget(null, known: false);
             // Re-attach mip 0 for the blit target
             Api.FramebufferTexture2D(FramebufferTarget.DrawFramebuffer, FramebufferAttachment.ColorAttachment0, TextureTarget.Texture2D, _luminanceFrontTex, 0);
         }

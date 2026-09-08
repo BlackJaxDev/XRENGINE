@@ -42,7 +42,12 @@ namespace XREngine.Scene.Transforms
         }
 
         private void ScaledIPDValueChanged(float value)
-            => MarkLocalModified();
+        {
+            // Emulation activation can change the base pose without changing
+            // the runtime enum. Refresh it along with the scale adjustment.
+            _headToEyeMatrix = null;
+            MarkLocalModified();
+        }
 
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {

@@ -511,15 +511,25 @@ public partial class OpenGLRenderer
             return false;
         }
 
-        if (texture is XRTexture2D tex2D && tex2D.MultiSample)
+        if (texture is XRTexture2D { MultiSample: true } or
+            XRTexture2DArray { MultiSample: true } or
+            XRTexture2DView { Multisample: true } or
+            XRTexture2DArrayView { Multisample: true })
         {
             failure = "Multisample textures do not support mip readback";
             return false;
         }
 
-        if (texture is XRTexture2DArray tex2DArray && tex2DArray.MultiSample)
+        if (texture is not (XRTexture2D or XRTexture2DArray or XRTexture2DView or XRTexture2DArrayView or
+            XRTextureCube or XRTextureCubeArray or XRTextureCubeView or XRTextureCubeArrayView))
         {
-            failure = "Multisample textures do not support mip readback";
+            failure = "Readback requires a 2D or cube texture, array, or view.";
+            return false;
+        }
+
+        if (mipLevel < 0 || layerIndex < 0)
+        {
+            failure = "Texture mip/layer readback is outside the requested image.";
             return false;
         }
 
@@ -537,53 +547,77 @@ public partial class OpenGLRenderer
             return false;
         }
 
-        int baseWidth;
-        int baseHeight;
-        switch (texture)
-        {
-            case XRTexture2D t2d:
-                baseWidth = (int)t2d.Width;
-                baseHeight = (int)t2d.Height;
-                break;
-            case XRTexture2DArray t2da:
-                baseWidth = (int)t2da.Width;
-                baseHeight = (int)t2da.Height;
-                break;
-            default:
-                failure = "Unsupported texture type";
-                return false;
-        }
-
-        width = Math.Max(1, baseWidth >> Math.Max(0, mipLevel));
-        height = Math.Max(1, baseHeight >> Math.Max(0, mipLevel));
-
         GL gl = RawGL;
-        if (texture is XRTexture2DArray array)
+        // A resource can retain an API wrapper while its prior storage is being
+        // replaced. A generated name alone is not an instantiated GL texture.
+        if (!gl.IsTexture(binding))
         {
-            int layers = Math.Max(1, (int)array.Depth);
-            int clampedLayer = Math.Clamp(layerIndex, 0, layers - 1);
-            int floatCountAll = width * height * 4 * layers;
-            float[] allLayers = new float[floatCountAll];
-
-            fixed (float* ptr = allLayers)
-            {
-                gl.GetTextureImage(binding, mipLevel, GLEnum.Rgba, GLEnum.Float, (uint)(sizeof(float) * floatCountAll), ptr);
-            }
-
-            int floatCountLayer = width * height * 4;
-            rgbaFloats = new float[floatCountLayer];
-            Array.Copy(allLayers, clampedLayer * floatCountLayer, rgbaFloats, 0, floatCountLayer);
-            return true;
+            failure = "Texture storage is not live in the current OpenGL context.";
+            return false;
         }
-
-        int floatCount = width * height * 4;
+        // Query the view's actual mip extent, rather than the parent texture's
+        // dimensions; view level/layer offsets are already encoded by GL.
+        gl.GetTextureLevelParameter(binding, mipLevel, GLEnum.TextureWidth, out width);
+        gl.GetTextureLevelParameter(binding, mipLevel, GLEnum.TextureHeight, out height);
+        gl.GetTextureLevelParameter(binding, mipLevel, GLEnum.TextureDepth, out int layers);
+        // A cube level reports a single 2D face's depth, while subimage readback
+        // addresses the six faces as z slices. Cube arrays already report all faces.
+        if (texture is XRTextureCube or XRTextureCubeView)
+            layers = 6;
+        if (width <= 0 || height <= 0 || layerIndex >= Math.Max(1, layers))
+        {
+            failure = "Texture mip/layer readback is outside the requested image.";
+            return false;
+        }
+        gl.GetTextureLevelParameter(binding, mipLevel, GLEnum.TextureRedType, out int redType);
+        gl.GetTextureLevelParameter(binding, mipLevel, GLEnum.TextureDepthSize, out int depthBits);
+        gl.GetTextureLevelParameter(binding, mipLevel, GLEnum.TextureStencilSize, out int stencilBits);
+        gl.GetTextureParameterI(binding, GLEnum.DepthStencilTextureMode, out int depthStencilMode);
+        bool readStencil = stencilBits > 0 && (depthBits == 0 || depthStencilMode == (int)GLEnum.StencilIndex);
+        bool readDepth = depthBits > 0 && !readStencil;
+        bool scalar = readDepth || readStencil;
+        bool unsignedInteger = redType == (int)GLEnum.UnsignedInt;
+        bool signedInteger = redType == (int)GLEnum.Int;
+        int floatCount = checked(width * height * 4);
         rgbaFloats = new float[floatCount];
+        int oldPackBuffer = gl.GetInteger(GLEnum.PixelPackBufferBinding);
+        gl.BindBuffer(GLEnum.PixelPackBuffer, 0u);
+        // Compute image writes require texture-update visibility for readback.
+        gl.MemoryBarrier(MemoryBarrierMask.TextureUpdateBarrierBit);
+        try
+        {
         fixed (float* ptr = rgbaFloats)
         {
-            gl.GetTextureImage(binding, mipLevel, GLEnum.Rgba, GLEnum.Float, (uint)(sizeof(float) * floatCount), ptr);
+            gl.GetTextureSubImage(binding, mipLevel, 0, 0, layerIndex, (uint)width, (uint)height, 1u,
+                readStencil ? GLEnum.StencilIndex : readDepth ? GLEnum.DepthComponent : unsignedInteger || signedInteger ? GLEnum.RgbaInteger : GLEnum.Rgba,
+                readStencil || unsignedInteger ? GLEnum.UnsignedInt : signedInteger ? GLEnum.Int : GLEnum.Float,
+                checked((uint)(sizeof(float) * floatCount)), ptr);
+            GLEnum error = gl.GetError();
+            if (error != GLEnum.NoError)
+            {
+                rgbaFloats = null;
+                failure = $"OpenGL texture readback failed: {error}.";
+                return false;
+            }
+            // Integer attachments cannot be read with GL_RGBA/GL_FLOAT. Read
+            // their native scalar type, then numerically convert for tooling.
+            // Scalar depth/stencil transfers occupy the start of the same buffer.
+            // Expand backwards so conversion cannot overwrite unread samples.
+            if (scalar)
+                for (int index = width * height - 1; index >= 0; index--)
+                {
+                    float value = readStencil ? ((uint*)ptr)[index] : ptr[index];
+                    ptr[index * 4] = ptr[index * 4 + 1] = ptr[index * 4 + 2] = value;
+                    ptr[index * 4 + 3] = 1.0f;
+                }
+            else if (unsignedInteger)
+                for (int index = 0; index < floatCount; index++) ptr[index] = ((uint*)ptr)[index];
+            else if (signedInteger)
+                for (int index = 0; index < floatCount; index++) ptr[index] = ((int*)ptr)[index];
         }
-
         return true;
+        }
+        finally { gl.BindBuffer(GLEnum.PixelPackBuffer, (uint)oldPackBuffer); }
     }
 
     public override bool TryReadTexturePixelRgbaFloat(

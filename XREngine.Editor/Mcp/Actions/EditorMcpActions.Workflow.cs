@@ -134,6 +134,7 @@ namespace XREngine.Editor.Mcp
         }
 
         [XRMcp(Name = "create_primitive_shape")]
+        [McpThreadAffinity(McpThreadAffinity.Main)]
         [Description("Create a visible primitive shape node with a default material in the active scene.")]
         public static Task<McpToolResponse> CreatePrimitiveShapeAsync(
             McpToolContext context,
@@ -143,7 +144,8 @@ namespace XREngine.Editor.Mcp
             [McpName("parent_id"), Description("Optional parent node ID.")] string? parentId = null,
             [McpName("scene_name"), Description("Optional scene name; defaults to first active scene.")] string? sceneName = null,
             [McpName("size"), Description("Uniform size scale for the primitive.")] float size = 1.0f,
-            [McpName("color"), Description("Optional color for the default material, e.g. {R:1,G:0,B:0,A:1} or hex '#FF0000'. Defaults to a neutral gray.")] object? color = null)
+            [McpName("color"), Description("Optional color for the default material, e.g. {R:1,G:0,B:0,A:1} or hex '#FF0000'. Defaults to a neutral gray.")] object? color = null,
+            [McpName("transparent"), Description("Use the built-in sorted transparent lit material with Advanced velocity/reactive variants. Supply color alpha below 1 for translucent coverage.")] bool transparent = false)
         {
             var world = context.World;
             var scene = ResolveScene(world, sceneName);
@@ -156,12 +158,15 @@ namespace XREngine.Editor.Mcp
             ColorF4 matColor = new(0.6f, 0.6f, 0.6f, 1f);
             if (color is not null)
             {
-                if (McpToolRegistry.TryConvertValue(color, typeof(ColorF4), out var converted, out _) && converted is ColorF4 c)
-                    matColor = c;
+                if (!McpToolRegistry.TryConvertValue(color, typeof(ColorF4), out var converted, out var colorError) || converted is not ColorF4 c)
+                    return Task.FromResult(new McpToolResponse($"Invalid primitive color: {colorError}", isError: true));
+                matColor = c;
             }
 
             // Create a default lit material so the primitive is immediately visible.
-            var defaultMaterial = XRMaterial.CreateLitColorMaterial(matColor, deferred: true);
+            var defaultMaterial = transparent
+                ? XRMaterial.CreateAdvancedTransparentLitColorMaterial(matColor)
+                : XRMaterial.CreateLitColorMaterial(matColor, deferred: true);
 
             SceneNode node;
             if (!string.IsNullOrWhiteSpace(parentId))

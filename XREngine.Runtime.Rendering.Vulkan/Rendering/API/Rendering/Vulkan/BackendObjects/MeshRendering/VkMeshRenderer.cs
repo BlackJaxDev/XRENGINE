@@ -390,6 +390,15 @@ internal unsafe partial class VkMeshRenderer(
                 instances,
                 shadowUniformState,
                 shadowCasterRelevance);
+        if (XREngine.Rendering.RenderDiagnosticsFlags.VkTraceDraw &&
+            MeshRenderer.Name?.StartsWith("LightProbe.", StringComparison.Ordinal) == true)
+        {
+            Debug.VulkanEvery(
+                $"Vulkan.Probe.Enqueue.{MeshRenderer.Name}", TimeSpan.FromSeconds(2),
+                "[Vulkan.Probe] renderer={0} pass={1} target={2} context={3} instances={4} expanded={5} shadow={6} pipeline={7}",
+                MeshRenderer.Name, passIndex, producer.Target?.Name ?? "<none>",
+                context.ContextKind, instances, expandedInstances, shadowUniformState.IsShadowPass, pipeline?.InstanceId ?? 0);
+        }
         if (expandedInstances == 0u)
             return;
 

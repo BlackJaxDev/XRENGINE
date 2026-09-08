@@ -8,7 +8,7 @@ namespace XREngine.Rendering.Vulkan;
 // recording.  They are not FrameOps: after Lower completes no producer object
 // is retained by a frame plan or a prepared worker.
 internal readonly record struct TextureUploadPayload(VulkanImportedTexturePendingUpload Upload);
-internal readonly record struct BlitPayload(XRFrameBuffer? InFbo, XRFrameBuffer? OutFbo, int InX, int InY, uint InW, uint InH, int OutX, int OutY, uint OutW, uint OutH, EReadBufferMode ReadBufferMode, bool ColorBit, bool DepthBit, bool StencilBit, bool LinearFilter);
+internal readonly record struct BlitPayload(XRFrameBuffer? InFbo, XRFrameBuffer? OutFbo, int InX, int InY, uint InW, uint InH, int OutX, int OutY, uint OutW, uint OutH, EReadBufferMode ReadBufferMode, bool ColorBit, bool DepthBit, bool StencilBit, bool LinearFilter, bool RequireExactCompatibility);
 internal readonly record struct ClearPayload(bool ClearColor, bool ClearDepth, bool ClearStencil, ColorF4 Color, float Depth, uint Stencil, Rect2D Rect);
 internal readonly record struct TransformFeedbackPayload(VkTransformFeedback TransformFeedback, EXRTransformFeedbackOperation Operation, XRDataBuffer? CounterBuffer, ulong FeedbackBufferOffset, ulong? FeedbackBufferSize, ulong CounterBufferOffset, uint CounterOffset, uint VertexStride, uint InstanceCount, uint FirstInstance);
 internal readonly record struct QueryPayload(VkRenderQuery Query, RenderQueryDescriptor Descriptor, ERenderQueryOperation Operation, PipelineStageFlags2 TimestampStage, uint PointIndex, ReadOnlyMemory<ulong> SourceHandles, Buffer ResultDestination, ulong ResultDestinationOffset, ulong ResultStride, bool IncludeAvailability);
@@ -18,7 +18,10 @@ internal readonly record struct MeshTaskDispatchIndirectCountPayload(VkRenderPro
 internal readonly record struct ComputeDispatchPayload(VkRenderProgram Program, uint GroupsX, uint GroupsY, uint GroupsZ, ComputeDispatchSnapshot Snapshot);
 internal readonly record struct ComputeDispatchIndirectPayload(VkRenderProgram Program, ComputeDispatchSnapshot Snapshot, VkDataBuffer ArgumentOwner, Buffer ArgumentBuffer, ulong ArgumentOffset, string Label);
 internal readonly record struct BufferCopyPayload(VkDataBuffer SourceOwner, Buffer SourceBuffer, ulong SourceOffset, VkDataBuffer DestinationOwner, Buffer DestinationBuffer, ulong DestinationOffset, ulong ByteCount, bool RequireGpuWriteVisibility, GpuDiagnosticSnapshotReceipt? DiagnosticReceipt, string Label);
-internal readonly record struct SubmissionMarkerPayload(VulkanTimelineGpuFence Fence, string Label);
+internal readonly record struct SubmissionMarkerPayload(
+    VulkanTimelineGpuFence Fence,
+    string Label,
+    int RequiredOperationCount);
 internal readonly record struct MemoryBarrierPayload(EMemoryBarrierMask Mask);
 internal readonly record struct PublishFramebufferPayload(XRFrameBuffer FrameBuffer);
 internal readonly record struct DlssUpscalePayload(NvidiaDlssManager.Native.NativeVulkanSession Session, VulkanStreamlineImage SourceColor, VulkanStreamlineImage Depth, VulkanStreamlineImage Motion, VulkanStreamlineImage OutputColor, VulkanStreamlineImage? Exposure, VulkanUpscaleBridgeDispatchParameters Parameters);
@@ -81,7 +84,9 @@ internal sealed class FrameOperationPayloadStore
     internal VulkanAdvancedVisibilityOperationPayload[] AdvancedVisibilities;
     internal VulkanAdvancedVisibilityLateClosureStorage[] AdvancedVisibilityLateClosures;
     internal VulkanAdvancedNativeComputeClosureStorage[] AdvancedVisibilityNativeComputeClosures;
-    internal readonly VulkanAdvancedVisibilityInputStorage AdvancedVisibilityInput;
+    private readonly int _advancedVisibilityDrawCapacity;
+    private readonly int _advancedVisibilityRangeCapacity;
+    internal readonly VulkanAdvancedVisibilityInputStorage?[] AdvancedVisibilityInputs;
 
     internal FrameOperationPayloadStore()
         : this(
@@ -135,11 +140,72 @@ internal sealed class FrameOperationPayloadStore
             CreateAdvancedVisibilityLateClosureStorage(generalCapacity);
         AdvancedVisibilityNativeComputeClosures =
             CreateAdvancedNativeComputeClosureStorage(generalCapacity);
-        AdvancedVisibilityInput = new VulkanAdvancedVisibilityInputStorage(
-            advancedVisibilityDrawCapacity,
-            advancedVisibilityRangeCapacity,
-            fixedCapacity,
-            lane);
+        _advancedVisibilityDrawCapacity = advancedVisibilityDrawCapacity;
+        _advancedVisibilityRangeCapacity = advancedVisibilityRangeCapacity;
+        AdvancedVisibilityInputs = new VulkanAdvancedVisibilityInputStorage?[VulkanAdvancedVisibilityOutputCapacity.Maximum];
+    }
+
+    internal void ProvisionAdvancedVisibilityFamily(int bankIndex)
+    {
+        if (Volatile.Read(ref AdvancedVisibilityInputs[bankIndex]) is null)
+            Volatile.Write(ref AdvancedVisibilityInputs[bankIndex], new(
+                _advancedVisibilityDrawCapacity, _advancedVisibilityRangeCapacity, _fixedCapacity, _lane));
+    }
+
+    internal VulkanAdvancedVisibilityInputStorage CaptureAdvancedVisibilityInput(
+        in VulkanAdvancedVisibilityStageRequest request,
+        VulkanAdvancedVisibilityInputStorage authoringInput)
+    {
+        VulkanAdvancedVisibilityInputStorage? empty = null;
+        for (int index = 0; index < AdvancedVisibilityInputs.Length; index++)
+        {
+            VulkanAdvancedVisibilityInputStorage? input = Volatile.Read(ref AdvancedVisibilityInputs[index]);
+            if (input is null)
+                continue;
+            if (!input.HasCapturedFamily)
+            {
+                empty ??= input;
+                continue;
+            }
+            if (input.Reservation.OutputId != request.Reservation.OutputId)
+                continue;
+            // Same-output duplicates must match the entire frozen family. They
+            // cannot consume another bank to bypass publication consistency.
+            input.CaptureOrValidate(in request, authoringInput);
+            return input;
+        }
+        if (empty is null)
+            throw CreateAdvancedInputCapacityFailure(in request);
+        empty.CaptureOrValidate(in request, authoringInput);
+        return empty;
+    }
+
+    private VulkanPlanPreconditionException CreateAdvancedInputCapacityFailure(
+        in VulkanAdvancedVisibilityStageRequest request)
+    {
+        // Failure-only diagnostics distinguish a missing cold provision from true
+        // output pressure. The successful frame path performs no string allocation.
+        var detail = new System.Text.StringBuilder(512);
+        detail.Append("The bounded Advanced input-family capacity is exhausted. lane=").Append(_lane)
+            .Append(" fixed=").Append(_fixedCapacity)
+            .Append(" drawCapacity=").Append(_advancedVisibilityDrawCapacity)
+            .Append(" rangeCapacity=").Append(_advancedVisibilityRangeCapacity)
+            .Append(" stage=").Append(request.Stage)
+            .Append(" requested=").Append(request.Reservation).Append(" banks=[");
+        for (int index = 0; index < AdvancedVisibilityInputs.Length; ++index)
+        {
+            if (index > 0)
+                detail.Append(';');
+            detail.Append(index).Append(':');
+            var input = Volatile.Read(ref AdvancedVisibilityInputs[index]);
+            if (input is null)
+                detail.Append("unprovisioned");
+            else if (!input.HasCapturedFamily)
+                detail.Append("empty");
+            else
+                detail.Append(input.Reservation);
+        }
+        return new VulkanPlanPreconditionException(detail.Append(']').ToString());
     }
 
     internal void EnsureCapacity(EVulkanPrimaryPlanNodeKind kind, int count)

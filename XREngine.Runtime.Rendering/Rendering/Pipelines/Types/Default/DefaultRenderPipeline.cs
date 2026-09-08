@@ -3279,19 +3279,18 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
 
     private void ClearProbeResources()
     {
-        bool removedIrradiance = RemoveProbeTextureResource(LightProbeIrradianceArrayName);
-        bool removedPrefilter = RemoveProbeTextureResource(LightProbePrefilterArrayName);
+        RemoveProbeTextureResource(LightProbeIrradianceArrayName);
+        RemoveProbeTextureResource(LightProbePrefilterArrayName);
         RemoveProbeBufferResource(LightProbePositionBufferName);
         RemoveProbeBufferResource(LightProbeParamBufferName);
         RemoveProbeBufferResource(LightProbeTetraBufferName);
         RemoveProbeBufferResource(LightProbeGridCellBufferName);
         RemoveProbeBufferResource(LightProbeGridIndexBufferName);
 
-        if (!removedIrradiance)
-            _probeIrradianceArray?.Destroy();
+        // Imported bindings do not own their instances; this pipeline does.
+        _probeIrradianceArray?.Destroy();
         _probeIrradianceArray = null;
-        if (!removedPrefilter)
-            _probePrefilterArray?.Destroy();
+        _probePrefilterArray?.Destroy();
         _probePrefilterArray = null;
         DestroyProbeBuffer(ref _probePositionBuffer);
         DestroyProbeBuffer(ref _probeParamBuffer);

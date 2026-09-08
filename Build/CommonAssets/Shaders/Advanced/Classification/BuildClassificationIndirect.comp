@@ -6,8 +6,9 @@ void main()
     uint kernel = gl_GlobalInvocationID.x;
     if (kernel >= XR_ADV_MAX_SHADING_KERNELS || kernel >= uint(XR_ADV_ClassificationDispatch.commands.length())) return;
     uint capacity = XR_ADV_TotalTileCount();
-    uint rangeBase = kernel * capacity;
-    uint available = rangeBase < u_Push.maxKernelTiles ? min(capacity, u_Push.maxKernelTiles - rangeBase) : 0u;
+    bool rangeFits = capacity != 0u && kernel <= u_Push.maxKernelTiles / capacity;
+    uint rangeBase = rangeFits ? kernel * capacity : u_Push.maxKernelTiles;
+    uint available = rangeFits ? min(capacity, u_Push.maxKernelTiles - rangeBase) : 0u;
     uint count = min(XR_ADV_KernelCounts.counts[kernel], available);
     // Any producer failure selects the separate GPU-only repair pass, avoiding
     // races between a partial kernel stream and full-screen recovery.

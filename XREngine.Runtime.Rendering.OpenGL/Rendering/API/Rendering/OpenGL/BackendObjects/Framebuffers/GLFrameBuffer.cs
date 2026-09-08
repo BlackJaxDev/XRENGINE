@@ -148,6 +148,7 @@ namespace XREngine.Rendering.OpenGL
             }
 
             Api.BindFramebuffer(GLEnum.DrawFramebuffer, BindingId);
+            Renderer.TrackHistoryDrawTarget(Data);
         }
         public void UnbindFromWriting()
         {
@@ -158,6 +159,7 @@ namespace XREngine.Rendering.OpenGL
             }
 
             Api.BindFramebuffer(GLEnum.DrawFramebuffer, 0);
+            Renderer.TrackHistoryDrawTarget(null);
         }
 
         //Same as BindForWriting, technically
@@ -170,6 +172,7 @@ namespace XREngine.Rendering.OpenGL
             }
 
             Api.BindFramebuffer(GLEnum.Framebuffer, BindingId);
+            Renderer.TrackHistoryDrawTarget(Data);
         }
         //Same as UnbindFromWriting, technically
         public void Unbind()
@@ -181,6 +184,7 @@ namespace XREngine.Rendering.OpenGL
             }
 
             Api.BindFramebuffer(GLEnum.Framebuffer, 0);
+            Renderer.TrackHistoryDrawTarget(null);
         }
 
         public unsafe void SetDrawBuffers()

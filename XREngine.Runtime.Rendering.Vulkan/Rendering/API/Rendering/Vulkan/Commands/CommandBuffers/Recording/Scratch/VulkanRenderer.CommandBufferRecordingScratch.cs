@@ -102,6 +102,7 @@ internal sealed partial class CommandBufferRecordingScratch
                 _primaryScheduledCommandChainFrameDataRefreshedByOpIndex = [];
             private bool[]
                 _primaryCommandChainRecordingAdmittedByOpIndex = [];
+            private byte[] _requiredProducerRecordingOutcomesBySourceIndex = [];
             private VulkanReusableFrameDataRefreshRequest[]
                 _primaryReusableFrameDataRefreshRequests = [];
             private VulkanReusableFrameDataRefreshRequest[]
@@ -455,6 +456,29 @@ internal sealed partial class CommandBufferRecordingScratch
                     0,
                     opCount);
                 return _primaryCommandChainRecordingAdmittedByOpIndex;
+            }
+
+            public byte[] PrepareRequiredProducerRecordingOutcomes(int opCount)
+            {
+                if (_requiredProducerRecordingOutcomesBySourceIndex.Length < opCount)
+                {
+                    int capacity = Math.Max(
+                        opCount,
+                        Math.Max(
+                            _requiredProducerRecordingOutcomesBySourceIndex.Length * 2,
+                            16));
+                    _requiredProducerRecordingOutcomesBySourceIndex =
+                        new byte[capacity];
+                }
+                else if (opCount > 0)
+                {
+                    Array.Clear(
+                        _requiredProducerRecordingOutcomesBySourceIndex,
+                        0,
+                        opCount);
+                }
+
+                return _requiredProducerRecordingOutcomesBySourceIndex;
             }
 
             private static void EnsureReusableFrameDataRefreshRequestCapacity(

@@ -17,5 +17,10 @@ public enum ERenderPassResourceType
     IndexBuffer,
     IndirectBuffer,
     TransferSource,
-    TransferDestination
+    TransferDestination,
+
+    /// <summary>
+    /// A transfer destination that addresses the depth aspect of an external output framebuffer.
+    /// </summary>
+    DepthTransferDestination,
 }

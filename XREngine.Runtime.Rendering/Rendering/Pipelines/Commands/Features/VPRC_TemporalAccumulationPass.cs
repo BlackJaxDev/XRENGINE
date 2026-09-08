@@ -20,10 +20,6 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
 {
     private const float TaaJitterScaleInTexels = 0.35f;
     private const float TsrJitterScaleInTexels = 0.20f;
-    // Keep ordinary tracked-head motion inside the temporal domain while still
-    // detecting discontinuous teleports and snap camera changes.
-    private const float CameraCutTranslationThreshold = 2.0f;
-    private const float CameraCutRotationThresholdDegrees = 55.0f;
     private const string TemporalInputCopyScopeName = "Temporal Copy Forward->Input";
     private const string TemporalAccumulationScopeName = "Temporal Accumulation shader=TemporalAccumulation.fs";
     private const string TemporalHistoryColorScopeName = "Temporal History Color";
@@ -390,10 +386,10 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         /// </summary>
         PopJitter,
         /// <summary>
-        /// Records that the full-resolution TSR history color copy was scheduled
-        /// for every required array layer.
+        /// Copies full-resolution TSR history color and records layer coverage
+        /// only after the backend accepts the copy.
         /// </summary>
-        MarkTsrHistoryColor,
+        CaptureTsrHistoryColor,
         Commit
     }
 
@@ -406,6 +402,8 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
     public string HistoryExposureFBOName { get; set; } = DefaultRenderPipeline.HistoryExposureFBOName;
     public string TsrSourceFBOName { get; set; } = DefaultRenderPipeline.TsrUpscaleFBOName;
     public string TsrHistoryColorFBOName { get; set; } = DefaultRenderPipeline.TsrHistoryColorFBOName;
+    /// <summary>Optional explicit reactive-mask input for a pipeline-specific resolve variant.</summary>
+    public string? ReactiveMaskTextureName { get; set; }
 
     public override string GpuProfilingName
         => $"{base.GpuProfilingName}[{Phase}]";
@@ -452,8 +450,8 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
             case EPhase.PopJitter:
                 PopActiveJitter();
                 break;
-            case EPhase.MarkTsrHistoryColor:
-                MarkTsrHistoryColorCaptured();
+            case EPhase.CaptureTsrHistoryColor:
+                CaptureTsrHistoryColor();
                 break;
             case EPhase.Commit:
                 //Debug.Out("[Temporal] Commit phase");
@@ -681,7 +679,8 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
 
         if (openXrVulkanRuntimeSelected &&
             externalSwapchainTarget &&
-            !RuntimeEngine.Rendering.State.IsStereoPass)
+            !RuntimeEngine.Rendering.State.IsStereoPass &&
+            !IsAdmittedRvcTwoPassEye())
         {
             reason = "external OpenXR Vulkan swapchain target";
             return EVrTemporalHistoryPolicy.DisabledExternalPerEyeSwapchain;
@@ -722,6 +721,10 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         };
         return resolution.TemporalHistoryPolicy;
     }
+
+    private static bool IsAdmittedRvcTwoPassEye()
+        => CurrentRenderingPipeline?.AssignedPipeline is RvcRenderPipeline pipeline &&
+           pipeline.IsAdvancedTwoPassEyeFamilyActive;
 
     private static bool IsHistoryIsolationPolicyDisabled(EVrTemporalHistoryPolicy policy)
         => policy is EVrTemporalHistoryPolicy.Disabled
@@ -784,6 +787,27 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
 
         data = default;
         return false;
+    }
+
+    /// <summary>
+    /// Reads the existing immutable snapshot for diagnostics without resolving an
+    /// ambient camera or creating/resetting history on behalf of a read-only tool.
+    /// </summary>
+    public static bool TryGetHistoryDiagnostics(
+        XRRenderPipelineInstance instance,
+        out TemporalHistoryDiagnostics diagnostics)
+    {
+        if (!TryGetTemporalUniformData(instance, out TemporalUniformData snapshot))
+        {
+            diagnostics = default;
+            return false;
+        }
+        diagnostics = new(instance.InstanceId, snapshot.Width, snapshot.Height,
+            snapshot.HistoryIsolationPolicy, snapshot.HistoryReady,
+            snapshot.LeftEyeHistoryReady, snapshot.RightEyeHistoryReady,
+            snapshot.ProfileGeneration, snapshot.LeftEyeResetGeneration, snapshot.RightEyeResetGeneration,
+            snapshot.LeftEyeSeededGeneration, snapshot.RightEyeSeededGeneration, snapshot.HistoryExposureReady);
+        return true;
     }
 
     /// <summary>
@@ -1336,7 +1360,9 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         }
     }
 
-    private void MarkTsrHistoryColorCaptured()
+    private const string TsrHistoryColorCopyPassName = "Temporal_TsrHistoryColorCopy";
+
+    private void CaptureTsrHistoryColor()
     {
         if (!TryGetActiveState(out XRRenderPipelineInstance? instance, out TemporalState? state))
             return;
@@ -1356,6 +1382,14 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
                 destination is null ? "missing" : "ready");
             return;
         }
+
+        AbstractRenderer renderer = AbstractRenderer.Current
+            ?? throw new InvalidOperationException("TSR history capture requires an active renderer.");
+        // Copy and coverage belong to one command: a failed copy must never be
+        // followed by an independent marker that certifies stale history.
+        using (IDisposable? passScope = PushRenderGraphPass(TsrHistoryColorCopyPassName))
+            renderer.BlitFBOToFBO(source, destination, EReadBufferMode.ColorAttachment0,
+                true, false, false, false);
 
         uint sourceMask = ResolveAttachmentLayerMask(source, color: true);
         uint destinationMask = ResolveAttachmentLayerMask(destination, color: true);
@@ -1654,8 +1688,8 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
             camera.Transform.RenderForward,
             eyeState.PreviousCameraPosition,
             eyeState.PreviousCameraForward,
-            CameraCutTranslationThreshold,
-            CameraCutRotationThresholdDegrees);
+            RenderFrameViewHistoryPolicy.TranslationThreshold,
+            RenderFrameViewHistoryPolicy.RotationThresholdDegrees);
 
     internal static bool IsCameraDiscontinuity(
         Vector3 currentPosition,
@@ -1664,21 +1698,8 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
         Vector3 previousForward,
         float translationThreshold,
         float rotationThresholdDegrees)
-    {
-        float translationDeltaSq = Vector3.DistanceSquared(
-            currentPosition,
-            previousPosition);
-        float clampedTranslationThreshold = Math.Max(translationThreshold, 0.0f);
-        if (translationDeltaSq > clampedTranslationThreshold * clampedTranslationThreshold)
-            return true;
-
-        float directionDot = Vector3.Dot(
-            NormalizeOrForward(currentForward),
-            NormalizeOrForward(previousForward));
-        float clampedRotationDegrees = Math.Clamp(rotationThresholdDegrees, 0.0f, 180.0f);
-        float rotationThresholdDot = MathF.Cos(clampedRotationDegrees * MathF.PI / 180.0f);
-        return directionDot < rotationThresholdDot;
-    }
+        => RenderFrameViewHistoryPolicy.IsDiscontinuity(currentPosition, currentForward,
+            previousPosition, previousForward, translationThreshold, rotationThresholdDegrees);
 
     internal static bool IsTemporalMatrixFinite(in Matrix4x4 matrix)
         => float.IsFinite(matrix.M11) && float.IsFinite(matrix.M12) && float.IsFinite(matrix.M13) && float.IsFinite(matrix.M14)
@@ -1697,6 +1718,14 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
     internal override void DescribeRenderPass(RenderGraphDescribeContext context)
     {
         base.DescribeRenderPass(context);
+
+        if (Phase == EPhase.CaptureTsrHistoryColor)
+        {
+            context.GetOrCreateSyntheticPass(TsrHistoryColorCopyPassName, ERenderGraphPassStage.Transfer)
+                .UseTransferSource(MakeFboColorResource(TsrSourceFBOName))
+                .UseTransferDestination(MakeFboColorResource(TsrHistoryColorFBOName));
+            return;
+        }
 
         if (Phase != EPhase.Accumulate)
             return;
@@ -1720,6 +1749,10 @@ public sealed class VPRC_TemporalAccumulationPass : ViewportRenderCommand
 
     private void DescribeTaaAccumulation(RenderGraphDescribeContext context)
     {
+        if (ReactiveMaskTextureName is not null)
+            context.GetOrCreateSyntheticPass(TemporalAccumulationResolvePassName, ERenderGraphPassStage.Graphics)
+                .SampleTexture(MakeTextureResource(ReactiveMaskTextureName));
+
         context.GetOrCreateSyntheticPass(TemporalAccumulationResolvePassName, ERenderGraphPassStage.Graphics)
             .SampleTexture(MakeFboColorResource(TemporalInputFBOName))
             .SampleTexture(MakeFboColorResource(HistoryColorFBOName))

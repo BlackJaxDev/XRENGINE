@@ -87,6 +87,8 @@ internal sealed class FramePlanBuilder
         internal bool[] OutputDue = new bool[OutputCapacity];
         internal bool[] OutputExecutable = new bool[OutputCapacity];
         internal int[] OutputExecutionRanks = new int[OutputCapacity];
+        internal bool[] SyntheticHistoryOutputs = new bool[OutputCapacity];
+        internal int[] FreshEmptyTerminalOutputIndices = new int[OutputCapacity];
         internal RenderOutputDagNodeDescriptor[] OutputExecutionNodes =
             new RenderOutputDagNodeDescriptor[OutputNodeCapacity];
         internal int[] OutputNodeOrderScratch = new int[OutputNodeCapacity];
@@ -109,6 +111,17 @@ internal sealed class FramePlanBuilder
     private readonly RenderOutputGraphPlanner _outputGraphPlanner = new();
     private long _nextGeneration;
     internal VulkanFrameOperationScheduler FrameScheduler => _frameScheduler;
+    internal Func<AdvancedVisibilityFamilyReservation, bool>? AcquireAdvancedVisibilityPlanLease { private get; set; }
+    internal Action<AdvancedVisibilityFamilyReservation>? ReleaseAdvancedVisibilityPlanLease { private get; set; }
+
+    /// <summary>Prepares an output's storage before its binding can author work.</summary>
+    internal void ProvisionAdvancedVisibilityFamily(int bankIndex)
+    {
+        foreach (Slot slot in _slots)
+            slot.Plan.ProvisionAdvancedVisibilityFamily(bankIndex);
+        foreach (Slot slot in _retiredSlots)
+            slot.Plan.ProvisionAdvancedVisibilityFamily(bankIndex);
+    }
 
     internal FramePlan BuildAndSeal(
         int frameSlot,
@@ -127,7 +140,8 @@ internal sealed class FramePlanBuilder
         int authoringTextureUploadOperationCount = -1,
         RenderOutputRequest? emptyPresentNowOutputContract = null,
         ERenderOutputReadinessPolicy? desktopReadinessPolicyOverride = null,
-        ERenderOutputWorkClass? desktopWorkClassOverride = null)
+        ERenderOutputWorkClass? desktopWorkClassOverride = null,
+        ReadOnlySpan<RenderFrameViewHistoryBackendReservation> historyReservations = default)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(frameSlot);
         ArgumentNullException.ThrowIfNull(operations);
@@ -155,6 +169,7 @@ internal sealed class FramePlanBuilder
 
         Slot slot = AcquireWritableSlot(frameSlot);
         slot.Plan.Reset();
+        Array.Clear(slot.SyntheticHistoryOutputs);
         ulong renderFrameId = RuntimeRenderingHostServices.FrameTiming.CurrentRenderFrameId;
         TryAttachLocatedOpenXrViews(slot.ViewSet);
         EVrOutputViewKind? openXrViewKind = ResolveOpenXrViewKind(
@@ -193,6 +208,28 @@ internal sealed class FramePlanBuilder
         int operationKeyCount = 0;
         AddPlanMetadata(slot, slot.Operations, dynamicOverlay: false, openXrViewKind, ref outputCount, ref operationKeyCount);
         AddPlanMetadata(slot, slot.DynamicOverlayOperations, dynamicOverlay: true, openXrViewKind, ref outputCount, ref operationKeyCount);
+        for (int historyIndex = 0; historyIndex < historyReservations.Length; historyIndex++)
+        {
+            ref readonly RenderFrameViewHistoryBackendReservation history =
+                ref historyReservations[historyIndex];
+            RenderOutputRequest historyOutput = history.Output;
+            if (!historyOutput.IsDefined ||
+                FindExactSchedulingContractOutputIndex(
+                    slot,
+                    outputCount,
+                    in historyOutput) >= 0)
+                continue;
+            AddOutput(slot, OutputRequest.FromSchedulingRequest(in historyOutput), ref outputCount);
+            int injectedIndex = FindExactSchedulingContractOutputIndex(
+                slot,
+                outputCount,
+                in historyOutput);
+            if (injectedIndex >= 0)
+            {
+                slot.SyntheticHistoryOutputs[injectedIndex] =
+                    history.TargetFrameBuffer is null;
+            }
+        }
         bool requiresFreshEmptyTerminalWrite = false;
         if (emptyPresentNowOutputContract is { } emptyContract)
         {
@@ -221,9 +258,14 @@ internal sealed class FramePlanBuilder
                 slot.Outputs[requiredOutputIndex] =
                     slot.Outputs[requiredOutputIndex]
                         .WithSchedulingContract(in emptyContract);
+                requiresFreshEmptyTerminalWrite =
+                    slot.SyntheticHistoryOutputs[requiredOutputIndex];
             }
         }
-        SortOutputs(slot.Outputs, outputCount);
+        SortOutputs(
+            slot.Outputs,
+            slot.SyntheticHistoryOutputs,
+            outputCount);
         int outputExecutionNodeCount = CompileOutputGraph(
             slot,
             outputCount,
@@ -231,6 +273,36 @@ internal sealed class FramePlanBuilder
             openXrImagesAcquired,
             desktopReadinessPolicyOverride,
             desktopWorkClassOverride);
+        int freshEmptyTerminalOutputCount = 0;
+        if (requiresFreshEmptyTerminalWrite &&
+            emptyPresentNowOutputContract is { } freshContract)
+        {
+            int requiredOutputIndex = FindSchedulingContractOutputIndex(
+                slot,
+                outputCount,
+                in freshContract);
+            if (requiredOutputIndex >= 0 &&
+                slot.OutputExecutable[requiredOutputIndex])
+            {
+                slot.FreshEmptyTerminalOutputIndices[
+                    freshEmptyTerminalOutputCount++] = requiredOutputIndex;
+            }
+
+            for (int outputIndex = 0;
+                 outputIndex < outputCount;
+                 outputIndex++)
+            {
+                if (!slot.SyntheticHistoryOutputs[outputIndex] ||
+                    !slot.OutputExecutable[outputIndex] ||
+                    outputIndex == requiredOutputIndex)
+                {
+                    continue;
+                }
+
+                slot.FreshEmptyTerminalOutputIndices[
+                    freshEmptyTerminalOutputCount++] = outputIndex;
+            }
+        }
         if (emptyPresentNowOutputContract is { } requiredContract)
         {
             int requiredOutputIndex = FindSchedulingContractOutputIndex(
@@ -331,7 +403,23 @@ internal sealed class FramePlanBuilder
             staticPlannerContextKeyCount,
             renderGraphPlanSignature,
             requiresFreshEmptyTerminalWrite,
+            slot.FreshEmptyTerminalOutputIndices,
+            freshEmptyTerminalOutputCount,
             preparedMeshIngress?.StableBinStream);
+        if (AcquireAdvancedVisibilityPlanLease is { } acquire &&
+            ReleaseAdvancedVisibilityPlanLease is { } release)
+        {
+            try
+            {
+                slot.Plan.AttachAdvancedVisibilityPlanLeases(acquire, release);
+            }
+            catch
+            {
+                // Do not expose a sealed plan whose bank ownership failed to attach.
+                slot.Plan.Reset();
+                throw;
+            }
+        }
         return slot.Plan;
     }
 
@@ -916,6 +1004,18 @@ internal sealed class FramePlanBuilder
         return -1;
     }
 
+    private static int FindExactSchedulingContractOutputIndex(
+        Slot slot,
+        int outputCount,
+        in RenderOutputRequest contract)
+    {
+        for (int index = 0; index < outputCount; index++)
+            if (slot.Outputs[index].SchedulingRequest.Equals(contract))
+                return index;
+
+        return -1;
+    }
+
     private int CompileOutputGraph(
         Slot slot,
         int outputCount,
@@ -1233,11 +1333,15 @@ internal sealed class FramePlanBuilder
             : EVrOutputViewKind.RightEye;
     }
 
-    private static void SortOutputs(OutputRequest[] outputs, int count)
+    private static void SortOutputs(
+        OutputRequest[] outputs,
+        bool[] syntheticHistoryOutputs,
+        int count)
     {
         for (int index = 1; index < count; index++)
         {
             OutputRequest candidate = outputs[index];
+            bool candidateIsSyntheticHistory = syntheticHistoryOutputs[index];
             int insertionIndex = index;
             while (insertionIndex > 0 &&
                    OutputRequest.CompareDeterministically(
@@ -1245,10 +1349,14 @@ internal sealed class FramePlanBuilder
                        outputs[insertionIndex - 1]) < 0)
             {
                 outputs[insertionIndex] = outputs[insertionIndex - 1];
+                syntheticHistoryOutputs[insertionIndex] =
+                    syntheticHistoryOutputs[insertionIndex - 1];
                 insertionIndex--;
             }
 
             outputs[insertionIndex] = candidate;
+            syntheticHistoryOutputs[insertionIndex] =
+                candidateIsSyntheticHistory;
         }
     }
 

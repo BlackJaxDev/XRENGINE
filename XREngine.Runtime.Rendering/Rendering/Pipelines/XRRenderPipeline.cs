@@ -312,7 +312,7 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
     protected void RebuildCommandChain()
     {
         if (!RuntimeEngine.IsRenderThread &&
-            RuntimeRenderingHostServices.FrameTiming.IsRendererActive)
+            RuntimeEngine.RenderThreadId != 0)
         {
             RuntimeEngine.EnqueueRenderThreadTask(
                 RebuildCommandChain,
@@ -535,7 +535,7 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
     internal void NotifyCommandChainStructureChanged()
     {
         if (!RuntimeEngine.IsRenderThread &&
-            RuntimeRenderingHostServices.FrameTiming.IsRendererActive)
+            RuntimeEngine.RenderThreadId != 0)
         {
             RuntimeEngine.EnqueueRenderThreadTask(
                 NotifyCommandChainStructureChanged,
@@ -573,7 +573,7 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
     protected void InvalidateOwnedInstancePhysicalResources(string reason)
     {
         if (!RuntimeEngine.IsRenderThread &&
-            RuntimeRenderingHostServices.FrameTiming.IsRendererActive)
+            RuntimeEngine.RenderThreadId != 0)
         {
             RuntimeEngine.EnqueueRenderThreadTask(
                 () => InvalidateOwnedInstancePhysicalResources(reason),
@@ -600,7 +600,7 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
     protected void InvalidateOwnedInstanceAntiAliasingResources(string reason)
     {
         if (!RuntimeEngine.IsRenderThread &&
-            RuntimeRenderingHostServices.FrameTiming.IsRendererActive)
+            RuntimeEngine.RenderThreadId != 0)
         {
             RuntimeEngine.EnqueueRenderThreadTask(
                 () => InvalidateOwnedInstanceAntiAliasingResources(reason),

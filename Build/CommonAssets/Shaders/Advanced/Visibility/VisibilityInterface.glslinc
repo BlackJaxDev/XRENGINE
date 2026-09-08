@@ -39,39 +39,87 @@ bool XR_ADV_IsSupportedVisibilityProducer(uint producer)
 #define XR_ADV_BINDING_VISIBILITY_COUNTERS 29
 #endif
 
+#ifndef XR_ADV_BINDING_VISIBILITY_CANDIDATES
 #define XR_ADV_BINDING_VISIBILITY_CANDIDATES 20
+#endif
+#ifndef XR_ADV_BINDING_VISIBILITY_PERSISTENT_STATE
 #define XR_ADV_BINDING_VISIBILITY_PERSISTENT_STATE 21
+#endif
+#ifndef XR_ADV_BINDING_VISIBILITY_DEFERRED_INDICES
 #define XR_ADV_BINDING_VISIBILITY_DEFERRED_INDICES 22
+#endif
+#ifndef XR_ADV_BINDING_VISIBILITY_VISIBLE_INDICES
 #define XR_ADV_BINDING_VISIBILITY_VISIBLE_INDICES 23
+#endif
+#ifndef XR_ADV_BINDING_VISIBILITY_PRODUCERS
 #define XR_ADV_BINDING_VISIBILITY_PRODUCERS 25
+#endif
+#ifndef XR_ADV_BINDING_VISIBILITY_RANGE_INDICES
 #define XR_ADV_BINDING_VISIBILITY_RANGE_INDICES 26
+#endif
+#ifndef XR_ADV_BINDING_VISIBILITY_RANGE_OFFSETS
 #define XR_ADV_BINDING_VISIBILITY_RANGE_OFFSETS 27
+#endif
+#ifndef XR_ADV_BINDING_VISIBILITY_RANGE_COUNTS
 #define XR_ADV_BINDING_VISIBILITY_RANGE_COUNTS 28
+#endif
+#ifndef XR_ADV_BINDING_VISIBILITY_INDEXED_ARGUMENTS
 #define XR_ADV_BINDING_VISIBILITY_INDEXED_ARGUMENTS 30
+#endif
+#ifndef XR_ADV_BINDING_VISIBILITY_MESH_ARGUMENTS
 #define XR_ADV_BINDING_VISIBILITY_MESH_ARGUMENTS 31
+#endif
+#ifndef XR_ADV_BINDING_VISIBILITY_MESH_PAYLOADS
 #define XR_ADV_BINDING_VISIBILITY_MESH_PAYLOADS 32
+#endif
+#ifndef XR_ADV_BINDING_VISIBILITY_STATIC_VERTICES
 #define XR_ADV_BINDING_VISIBILITY_STATIC_VERTICES 33
+#endif
+#ifndef XR_ADV_BINDING_VISIBILITY_CURRENT_VERTICES
 #define XR_ADV_BINDING_VISIBILITY_CURRENT_VERTICES 34
+#endif
+#ifndef XR_ADV_BINDING_VISIBILITY_PREVIOUS_VERTICES
 #define XR_ADV_BINDING_VISIBILITY_PREVIOUS_VERTICES 35
+#endif
+#ifndef XR_ADV_BINDING_VISIBILITY_MESHLET_DESCRIPTORS
 #define XR_ADV_BINDING_VISIBILITY_MESHLET_DESCRIPTORS 36
+#endif
+#ifndef XR_ADV_BINDING_VISIBILITY_MESHLET_VERTEX_INDICES
 #define XR_ADV_BINDING_VISIBILITY_MESHLET_VERTEX_INDICES 37
+#endif
+#ifndef XR_ADV_BINDING_VISIBILITY_MESHLET_TRIANGLE_WORDS
 #define XR_ADV_BINDING_VISIBILITY_MESHLET_TRIANGLE_WORDS 38
+#endif
 #ifndef XR_ADV_BINDING_PREPARED_DRAW_DEFORMATIONS
 #define XR_ADV_BINDING_PREPARED_DRAW_DEFORMATIONS 46
 #endif
 // Late visibility never overwrites the early producer's GPU-owned streams.
 // These three frame-slot ranges retain recovered candidates and their indexed
 // indirect expansion until the load-preserving late raster consumes them.
+#ifndef XR_ADV_BINDING_VISIBILITY_LATE_VISIBLE_INDICES
 #define XR_ADV_BINDING_VISIBILITY_LATE_VISIBLE_INDICES 39
+#endif
+#ifndef XR_ADV_BINDING_VISIBILITY_LATE_RANGE_COUNTS
 #define XR_ADV_BINDING_VISIBILITY_LATE_RANGE_COUNTS 40
+#endif
+#ifndef XR_ADV_BINDING_VISIBILITY_LATE_INDEXED_ARGUMENTS
 #define XR_ADV_BINDING_VISIBILITY_LATE_INDEXED_ARGUMENTS 41
+#endif
+#ifndef XR_ADV_BINDING_VISIBILITY_LATE_MESH_ARGUMENTS
 #define XR_ADV_BINDING_VISIBILITY_LATE_MESH_ARGUMENTS 44
+#endif
+#ifndef XR_ADV_BINDING_VISIBILITY_LATE_MESH_PAYLOADS
 #define XR_ADV_BINDING_VISIBILITY_LATE_MESH_PAYLOADS 45
+#endif
 // Per-frame depth-pyramid bindings are intentionally runtime-owned. Phase
 // 5.2 uses mip zero as a sparse 64x64-tile grid within the same-sized image;
 // they are populated only by the late-stage image closure, never loose uniforms.
+#ifndef XR_ADV_BINDING_VISIBILITY_DEPTH_PYRAMID_SAMPLED
 #define XR_ADV_BINDING_VISIBILITY_DEPTH_PYRAMID_SAMPLED 42
+#endif
+#ifndef XR_ADV_BINDING_VISIBILITY_DEPTH_PYRAMID_STORAGE
 #define XR_ADV_BINDING_VISIBILITY_DEPTH_PYRAMID_STORAGE 43
+#endif
 
 #if defined(XR_ADV_BACKEND_VULKAN)
 #define XR_ADV_VIS_TABLE_LAYOUT(bindingIndex) layout(set = XR_ADV_VISIBILITY_SET, binding = bindingIndex, std430, row_major)
@@ -350,6 +398,20 @@ layout(set = XR_ADV_VISIBILITY_SET, binding = XR_ADV_BINDING_VISIBILITY_DEPTH_PY
 uniform sampler2D XR_ADV_DepthPyramidSampled;
 layout(set = XR_ADV_VISIBILITY_SET, binding = XR_ADV_BINDING_VISIBILITY_DEPTH_PYRAMID_STORAGE, r32f)
 writeonly uniform image2D XR_ADV_DepthPyramidStorage;
+#define XR_ADV_DEPTH_PYRAMID_SIZE() textureSize(XR_ADV_DepthPyramidSampled, 0)
+#define XR_ADV_LOAD_DEPTH_PYRAMID(coordinate) texelFetch(XR_ADV_DepthPyramidSampled, coordinate, 0)
+#define XR_ADV_STORE_DEPTH_PYRAMID(coordinate, value) imageStore(XR_ADV_DepthPyramidStorage, coordinate, value)
+#elif defined(XR_ADV_ENABLE_DEPTH_PYRAMID_IMAGES) && defined(XR_ADV_BACKEND_OPENGL)
+// GL owns one layered image for the complete frozen view set.  The preparation
+// push record selects the physical layer, avoiding a mutable per-view uniform
+// lookup between dispatches.
+layout(binding = XR_ADV_BINDING_VISIBILITY_DEPTH_PYRAMID_SAMPLED)
+uniform sampler2DArray XR_ADV_DepthPyramidSampled;
+layout(binding = XR_ADV_BINDING_VISIBILITY_DEPTH_PYRAMID_STORAGE, r32f)
+writeonly uniform image2DArray XR_ADV_DepthPyramidStorage;
+#define XR_ADV_DEPTH_PYRAMID_SIZE() textureSize(XR_ADV_DepthPyramidSampled, 0).xy
+#define XR_ADV_LOAD_DEPTH_PYRAMID(coordinate) texelFetch(XR_ADV_DepthPyramidSampled, ivec3(coordinate, int(XR_ADV_VisibilityPush.viewIndex)), 0)
+#define XR_ADV_STORE_DEPTH_PYRAMID(coordinate, value) imageStore(XR_ADV_DepthPyramidStorage, ivec3(coordinate, int(XR_ADV_VisibilityPush.viewIndex)), value)
 #endif
 
 #define VisibilityDrawLookupSegment XR_ADV_VisibilityCounters.drawLookupSegment
@@ -438,9 +500,7 @@ bool XR_ADV_TryResolveTextureReference(
     uint encodedSamplerIndex = samplerDense + 1u;
     if (samplerDense == XR_ADV_INVALID_DENSE_INDEX ||
         samplerDense >= uint(XR_ADV_Samplers.records.length()) ||
-        encodedSamplerIndex == 0u ||
-        encodedSamplerIndex >=
-            uint(XR_ADV_EncodedSamplers.records.length()))
+        encodedSamplerIndex == 0u)
     {
         return false;
     }
@@ -455,17 +515,31 @@ bool XR_ADV_TryResolveTextureReference(
         return false;
     }
 
+#if defined(XR_ADV_TEXTURE_MODE_OPENGL_BINDLESS)
+    if (logicalReference.reserved == 0u || logicalReference.reserved >=
+        uint(XR_ADV_EncodedTextures.records.length()))
+        return false;
+    XRAdvancedEncodedTextureReference materialPair =
+        XR_ADV_LoadEncodedTexture(logicalReference.reserved);
+    if ((materialPair.flags & XR_ADV_RESOURCE_FLAG_RESIDENT) == 0u)
+        return false;
+    encodedReference = materialPair;
+#else
+    if (encodedSamplerIndex >= uint(XR_ADV_EncodedSamplers.records.length()))
+        return false;
     XRAdvancedEncodedSamplerReference encodedSampler =
         XR_ADV_LoadEncodedSampler(encodedSamplerIndex);
     if ((encodedSampler.flags & XR_ADV_RESOURCE_FLAG_RESIDENT) == 0u)
         return false;
-
     encodedReference =
         XR_ADV_LoadEncodedTexture(textureRecord.encodedReferenceIndex);
+#endif
     if ((encodedReference.flags & XR_ADV_RESOURCE_FLAG_RESIDENT) == 0u)
         return false;
 
+#if !defined(XR_ADV_TEXTURE_MODE_OPENGL_BINDLESS)
     encodedReference.payload1 = encodedSampler.payload0;
+#endif
     return true;
 }
 

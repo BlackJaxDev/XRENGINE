@@ -154,7 +154,7 @@ public sealed partial class XRRenderPipelineInstance
     private static void EnsureOwnedMutationRunsOnRenderThread()
     {
         if (!RuntimeEngine.IsRenderThread &&
-            RuntimeRenderingHostServices.FrameTiming.IsRendererActive)
+            RuntimeEngine.RenderThreadId != 0)
         {
             throw new InvalidOperationException(
                 "Pipeline-owned instance mutations must execute on the render thread while the renderer is active.");
@@ -192,7 +192,7 @@ public sealed partial class XRRenderPipelineInstance
 
             _pipelineTransitionQueued = 1;
             processInline = RuntimeEngine.IsRenderThread ||
-                !RuntimeRenderingHostServices.FrameTiming.IsRendererActive;
+                RuntimeEngine.RenderThreadId == 0;
         }
 
         if (processInline)
@@ -225,7 +225,7 @@ public sealed partial class XRRenderPipelineInstance
 
     private bool ProcessRequestedPipelineTransitions()
     {
-        if (!RuntimeEngine.IsRenderThread && RuntimeRenderingHostServices.FrameTiming.IsRendererActive)
+        if (!RuntimeEngine.IsRenderThread && RuntimeEngine.RenderThreadId != 0)
             throw new InvalidOperationException("Render pipeline transitions must execute on the render thread while the renderer is active.");
 
         while (true)
@@ -403,7 +403,7 @@ public sealed partial class XRRenderPipelineInstance
         if (System.Threading.Interlocked.Exchange(ref _terminalTeardownRequested, 1) != 0)
             return;
 
-        if (RuntimeEngine.IsRenderThread || !RuntimeRenderingHostServices.FrameTiming.IsRendererActive)
+        if (RuntimeEngine.IsRenderThread || RuntimeEngine.RenderThreadId == 0)
         {
             TerminalTeardownOnRenderThread();
             return;
@@ -417,7 +417,7 @@ public sealed partial class XRRenderPipelineInstance
 
     private void TerminalTeardownOnRenderThread()
     {
-        if (!RuntimeEngine.IsRenderThread && RuntimeRenderingHostServices.FrameTiming.IsRendererActive)
+        if (!RuntimeEngine.IsRenderThread && RuntimeEngine.RenderThreadId != 0)
             throw new InvalidOperationException("Render pipeline teardown must execute on the render thread while the renderer is active.");
 
         lock (_pipelineTransitionSync)

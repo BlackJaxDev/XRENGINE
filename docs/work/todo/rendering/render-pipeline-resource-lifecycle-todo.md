@@ -1,8 +1,8 @@
 # Render Pipeline Resource Lifecycle Finalization TODO
 
-Last Updated: 2026-07-10
+Last Updated: 2026-09-06
 Owner: Rendering
-Status: Active - phases 0–5 complete; hardening, validation, and closeout pending
+Status: Implementation phases 0–5 recorded complete; cross-pipeline hardening and acceptance remain active
 Execution: current worktree (branch creation explicitly declined by user)
 
 Design and architecture sources:
@@ -12,6 +12,10 @@ Design and architecture sources:
 - [DefaultRenderPipeline Notes](../../../architecture/rendering/default-render-pipeline-notes.md)
 - [Frame Lifecycle And Dispatch Paths](../../../architecture/rendering/frame-lifecycle-and-dispatch-paths.md)
 - [Vulkan Renderer](../../../architecture/rendering/vulkan-renderer.md)
+
+## 2026-09-06 ownership audit
+
+This remains the [master](vulkan-core-frame-loop-and-resident-rendering-master-todo.md)’s resource-lifecycle child. The older cache-command gap list is superseded by the phase 3–5 closeout immediately below it: those command types were removed. Current source includes RenderResourceGeneration and VulkanResourceGenerationTransactionService; that does not close failure/resize/imported-target/runtime gates. Audit remaining rows before proposing replacement code.
 
 ## Why This TODO Is Active Again
 
@@ -51,7 +55,7 @@ participate in executable render command lists.
 - Focused lifecycle tests cover layout construction, generation transitions,
   validation failures, and representative default-pipeline resource coverage.
 
-## Current Gaps
+## Historical gaps before the phase 3–5 closeout
 
 The remaining cache-command sites are not all equivalent. The implementation
 must classify each one before changing it:

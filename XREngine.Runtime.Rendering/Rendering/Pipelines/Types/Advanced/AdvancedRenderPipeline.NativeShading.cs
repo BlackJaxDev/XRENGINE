@@ -50,7 +50,7 @@ public partial class AdvancedRenderPipeline
     /// </summary>
     public const uint DefaultLightIndexListCapacity = 1048576u;
 
-    private IAdvancedGlobalIlluminationProvider? _globalIlluminationProvider;
+    private IAdvancedGlobalIlluminationProvider? _globalIlluminationProvider = AdvancedLightProbesAndIblProvider.Instance;
     private IAdvancedAmbientOcclusionProvider? _ambientOcclusionProvider = AdvancedDepthGtaoProvider.Instance;
     private bool _enableBuiltInAmbientOcclusion = true;
 
@@ -159,11 +159,11 @@ public partial class AdvancedRenderPipeline
 
             VisibilityBuffer<uint>(builder,
                     AdvancedClusteredLightingResourceNames.LightingCounters(slot),
-                    2u,
+                    4u,
                     EBufferTarget.ShaderStorageBuffer,
                     EBufferUsage.DynamicRead)
                 .Lifetime(RenderResourceLifetime.Transient)
-                .DebugLabel($"Advanced light-index allocation and overflow counters slot {slot}")
+                .DebugLabel($"Advanced light/decal-index allocation and overflow counters slot {slot}")
                 .Add();
         }
 
@@ -196,11 +196,37 @@ public partial class AdvancedRenderPipeline
                 ESizedInternalFormat.Rg16f)
             .Layers(layers)
             .StereoCompatible(layers > 1u)
+            .Usage(RenderPipelineResourceUsage.SampledTexture |
+                RenderPipelineResourceUsage.StorageImage |
+                RenderPipelineResourceUsage.TransferSource |
+                RenderPipelineResourceUsage.ColorAttachment)
             .DependsOn(
                 AdvancedVisibilityResourceNames.Identity,
                 AdvancedVisibilityResourceNames.Metadata,
                 AdvancedVisibilityResourceNames.DepthStencil)
             .DebugLabel("Advanced native motion vectors")
+            .Add();
+
+        // Native shading writes disocclusion guidance even for outputs without
+        // temporal accumulation or late transparency, such as HDR thumbnails.
+        ReconstructionTexture(
+                builder,
+                AdvancedTemporalHistoryContract.ReactiveMaskResourceName,
+                internalSize,
+                EPixelInternalFormat.R8,
+                EPixelFormat.Red,
+                EPixelType.UnsignedByte,
+                ESizedInternalFormat.R8)
+            .Layers(layers)
+            .StereoCompatible(layers > 1u)
+            .Usage(RenderPipelineResourceUsage.SampledTexture |
+                RenderPipelineResourceUsage.StorageImage |
+                RenderPipelineResourceUsage.TransferSource |
+                RenderPipelineResourceUsage.ColorAttachment)
+            .DependsOn(
+                AdvancedVisibilityResourceNames.Identity,
+                AdvancedVisibilityResourceNames.Metadata)
+            .DebugLabel("Advanced reactive temporal mask")
             .Add();
 
         // 7. Native Shading Diagnostics Image

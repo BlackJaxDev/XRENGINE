@@ -1,5 +1,3 @@
-using System.Numerics;
-
 namespace XREngine.Rendering;
 
 /// <summary>
@@ -20,5 +18,5 @@ public static class AdvancedSkyBackgroundContract
     /// <summary>
     /// Evaluates whether a DrawId represents a visibility-sentinel background pixel.
     /// </summary>
-    public static bool IsBackgroundPixel(uint drawId) => drawId == 0u;
+    public static bool IsBackgroundPixel(uint drawId) => drawId is 0u or uint.MaxValue;
 }

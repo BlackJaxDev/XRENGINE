@@ -88,7 +88,18 @@ namespace XREngine.Rendering.Pipelines.Commands
             /// <returns>The current render-graph resource descriptor.</returns>
             public RenderGraphResourceDescriptor ReadBuffer(string bufferName, ERenderPassResourceType bufferType = ERenderPassResourceType.StorageBuffer)
             {
-                _readBuffers.Add(new(bufferName, bufferType));
+                _readBuffers.Add(new(bufferName, bufferType, ERenderGraphAccess.Read));
+                return this;
+            }
+
+            /// <summary>
+            /// Adds a storage buffer read and written by the quad pass.
+            /// </summary>
+            public RenderGraphResourceDescriptor ReadWriteBuffer(
+                string bufferName,
+                ERenderPassResourceType bufferType = ERenderPassResourceType.StorageBuffer)
+            {
+                _readBuffers.Add(new(bufferName, bufferType, ERenderGraphAccess.ReadWrite));
                 return this;
             }
 
@@ -270,7 +281,10 @@ namespace XREngine.Rendering.Pipelines.Commands
                 for (int i = 0; i < _readBuffers.Count; i++)
                 {
                     BufferUsage usage = _readBuffers[i];
-                    builder.ReadBuffer(usage.Name, usage.Type);
+                    if (usage.Access == ERenderGraphAccess.ReadWrite)
+                        builder.ReadWriteBuffer(usage.Name, usage.Type);
+                    else
+                        builder.ReadBuffer(usage.Name, usage.Type);
                 }
             }
 
@@ -320,7 +334,10 @@ namespace XREngine.Rendering.Pipelines.Commands
             /// </summary>
             /// <param name="Name">The name of the buffer.</param>
             /// <param name="Type">The type of the buffer.</param>
-            private readonly record struct BufferUsage(string Name, ERenderPassResourceType Type);
+            private readonly record struct BufferUsage(
+                string Name,
+                ERenderPassResourceType Type,
+                ERenderGraphAccess Access);
 
             /// <summary>
             /// Describes a color attachment usage in the render-graph pass descriptor.

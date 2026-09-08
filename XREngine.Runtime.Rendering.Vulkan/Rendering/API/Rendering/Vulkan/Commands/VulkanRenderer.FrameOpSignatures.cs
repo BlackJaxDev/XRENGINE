@@ -599,7 +599,8 @@ namespace XREngine.Rendering.Vulkan
         {
             HashCode hash = new();
             hash.Add(marker.Label, StringComparer.Ordinal);
-            AddSignaturePart(parts, opIndex, opType, "submissionMarker", hash, $"label='{marker.Label}'");
+            hash.Add(marker.RequiredOperationCount);
+            AddSignaturePart(parts, opIndex, opType, "submissionMarker", hash, $"label='{marker.Label}' requiredOps={marker.RequiredOperationCount}");
         }
 
         private static void AddTextureUploadSignaturePart(List<FrameOpSignatureDebugPart> parts, int opIndex, string opType, TextureUploadFrameOp upload)

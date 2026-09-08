@@ -27,6 +27,11 @@ namespace XREngine.Scene.Components.Landscape;
 [XRComponentEditor("XREngine.Editor.ComponentEditors.GPULandscapeComponentEditor")]
 public class LandscapeComponent : XRComponent, IRenderable
 {
+    /// <summary>Terrain displacement and chunk submission have no native Advanced producer yet.</summary>
+    [Category("Rendering"), DisplayName("Advanced Rendering Unsupported Reason"), YamlIgnore]
+    public string AdvancedRenderingUnsupportedReason
+        => "Advanced rendering does not yet admit landscape height displacement, morphing, chunk submission, or parallax shading. The native visibility path cannot replace this terrain callback with an undisplaced mesh.";
+
     #region Constants
 
     /// <summary>
@@ -1324,6 +1329,13 @@ public class LandscapeComponent : XRComponent, IRenderable
 
     private void RenderTerrain()
     {
+        if (RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline is IAdvancedRenderStageFamilyHost)
+        {
+            if (Debug.ShouldLogEvery("Advanced.LandscapeCallbackRejected", TimeSpan.FromSeconds(5)))
+                Debug.RenderingWarning("[AdvancedLandscape] {0}", AdvancedRenderingUnsupportedReason);
+            return;
+        }
+
         if (_terrainRenderer is null || _visibleChunkCount == 0)
             return;
 

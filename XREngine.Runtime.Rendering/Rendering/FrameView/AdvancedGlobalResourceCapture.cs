@@ -22,6 +22,9 @@ public readonly record struct AdvancedGlobalResourceCapture(
     ReadOnlyMemory<AdvancedDecalRecord> Decals,
     ReadOnlyMemory<AdvancedGiResourceRecord> GiResources)
 {
+    /// <summary>Texture-owning probe rows paired with the numeric probe capture.</summary>
+    public ReadOnlyMemory<AdvancedProbeCaptureRow> ProbeRows { get; init; }
+
     public static AdvancedGlobalResourceCapture Empty(ulong frameId)
         => new(frameId, default, default, default, default, default, default, default, default);
 
@@ -84,9 +87,43 @@ public readonly record struct AdvancedGlobalResourceCapture(
             }
         }
 
-        // Probe texture references require the shared resource transaction, so
-        // this boundary capture retains only numeric influence state for now.
-        return new(frameId, lightSources, lights, default, shadowRows.ToArray(), default, default, default, default);
+        List<AdvancedProbeCaptureRow> probeRows = [];
+        foreach (LightProbeComponent probe in world.Lights.LightProbes)
+        {
+            if (!probe.TryGetActiveIblOutput(out LightProbeIblOutputGeneration generation))
+                continue;
+            Quaternion rotation = probe.ProxyBoxRotation;
+            float rotationLengthSquared = rotation.LengthSquared();
+            rotation = float.IsFinite(rotationLengthSquared) && rotationLengthSquared > 1.0e-8f
+                ? Quaternion.Normalize(rotation) : Quaternion.Identity;
+            Vector3 position = probe.Transform.RenderTranslation;
+            EAdvancedProbeRecordFlags flags = EAdvancedProbeRecordFlags.Valid | EAdvancedProbeRecordFlags.Octahedral;
+            if (probe.ParallaxCorrectionEnabled)
+                flags |= EAdvancedProbeRecordFlags.ParallaxCorrected;
+            if (probe.NormalizedCubemap)
+                flags |= EAdvancedProbeRecordFlags.Normalized;
+            probeRows.Add(new(probe, new AdvancedProbeRecord
+            {
+                Type = probe.InfluenceShape == LightProbeComponent.EInfluenceShape.Box ? EAdvancedProbeType.Box : EAdvancedProbeType.Sphere,
+                Flags = (uint)flags,
+                PositionAndRadius = new(position, probe.InfluenceSphereOuterRadius),
+                InfluenceInner = new(probe.InfluenceBoxInnerExtents, probe.InfluenceSphereInnerRadius),
+                InfluenceOuter = new(probe.InfluenceBoxOuterExtents, probe.InfluenceSphereOuterRadius),
+                InfluenceOffsetAndShape = new(probe.InfluenceOffset, probe.InfluenceShape == LightProbeComponent.EInfluenceShape.Box ? 1.0f : 0.0f),
+                ProxyCenterAndEnable = new(probe.ProxyBoxCenterOffset, probe.ParallaxCorrectionEnabled ? 1.0f : 0.0f),
+                ProxyHalfExtents = new(probe.ProxyBoxHalfExtents, probe.NormalizationScale),
+                ProxyRotation = new(rotation.X, rotation.Y, rotation.Z, rotation.W),
+                ViewMaskLo = 0u, ViewMaskHi = 0u, Priority = 0u, Reserved = generation.Generation,
+            }, generation));
+        }
+
+        AdvancedProbeRecord[] probes = new AdvancedProbeRecord[probeRows.Count];
+        for (int probeIndex = 0; probeIndex < probeRows.Count; ++probeIndex)
+            probes[probeIndex] = probeRows[probeIndex].Record;
+        return new(frameId, lightSources, lights, default, shadowRows.ToArray(), probes, default, default, default)
+        {
+            ProbeRows = probeRows.ToArray(),
+        };
     }
 
     private static void CaptureDirectionalShadows(Lights3DCollection lights, DirectionalLightComponent light, int lightIndex, List<AdvancedShadowCaptureRow> rows)
@@ -237,3 +274,16 @@ public readonly record struct AdvancedShadowCaptureRow(
     int LightIndex,
     AdvancedShadowRecord Record,
     XRTexture? Texture);
+
+/// <summary>
+/// Immutable probe texture ownership captured at the world-swap boundary.
+/// The publisher encodes and acquires both textures atomically with the row.
+/// </summary>
+public readonly record struct AdvancedProbeCaptureRow(
+    LightProbeComponent Source,
+    AdvancedProbeRecord Record,
+    LightProbeIblOutputGeneration Generation)
+{
+    public XRTexture2D Irradiance => Generation.Irradiance;
+    public XRTexture2D PrefilteredRadiance => Generation.PrefilteredRadiance;
+}

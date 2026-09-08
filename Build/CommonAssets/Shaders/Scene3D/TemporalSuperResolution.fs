@@ -19,6 +19,11 @@ uniform sampler2D TsrHistoryColor;
 // We detect the bit here and force history weight to zero for such pixels.
 uniform usampler2D StencilView;
 
+#ifdef XR_ADVANCED_REACTIVE_MASK
+// Canonical opaque/late reactivity is independent of final output alpha.
+uniform sampler2D AdvancedReactiveMask;
+#endif
+
 uniform bool HistoryReady;
 uniform vec2 SourceTexelSize;
 uniform vec2 HistoryTexelSize;
@@ -274,6 +279,9 @@ void main()
         motionMask,
         ReactiveTransparencyRange,
         ReactiveLumaThreshold);
+#ifdef XR_ADVANCED_REACTIVE_MASK
+    reactiveMask = max(reactiveMask, clamp(texture(AdvancedReactiveMask, uv).r, 0.0, 1.0));
+#endif
     float confidence = TsrComputeConfidence(
         geometryInstability,
         reactiveMask,

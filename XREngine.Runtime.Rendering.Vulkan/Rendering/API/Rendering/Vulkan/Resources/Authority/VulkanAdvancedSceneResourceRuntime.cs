@@ -303,7 +303,9 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
                 slot.BeginGeneration(frameGeneration);
             }
 
-            int existingIndex = slot.Find(database, publication);
+            // Scene tables may be shared by several outputs, but their set-0
+            // view/frame/pass ranges are immutable and must not alias another view.
+            int existingIndex = slot.Find(database, publication, views, in frame, passes, globalPassCoverage, diagnosticCount);
             if (existingIndex >= 0)
                 return TryArmUse(
                     slot,
@@ -366,6 +368,14 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
                 reason = "The retained publication does not own a complete strong texture-source image.";
                 return false;
             }
+
+            if (views.Length > RenderFrameViewSet.MaxViewCount)
+            {
+                failure = EVulkanAdvancedSceneResourceFailure.InvalidPublication;
+                reason = "The canonical view set exceeds the supported view count.";
+                return false;
+            }
+            slot.Entries[slot.EntryCount].Globals!.Capture(views, in frame, passes, globalPassCoverage, diagnosticCount);
 
             if (!TryBuildPublication(
                     slot,
@@ -1107,6 +1117,12 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
                 continue;
 
             AdvancedGpuHandle handle = textureHandles[denseIndex];
+            // Tombstoned physical rows remain in an immutable snapshot until
+            // compaction, but they have no current source-registry lease and
+            // must realize as fallback in this newer publication.
+            if (!snapshot.Textures.TryGetDenseIndex(handle, out uint liveDenseIndex) ||
+                liveDenseIndex != denseIndex)
+                continue;
             AdvancedTextureRecord canonical = textureRecords[denseIndex];
             if (!handle.IsValid || canonical.StableTextureId != handle.Index ||
                 canonical.Generation != handle.Generation ||
@@ -1212,6 +1228,8 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
             snapshot.Samplers.PhysicalOccupancy;
         for (int denseIndex = 0; denseIndex < samplerHighWater; ++denseIndex)
             if (samplerOccupancy[denseIndex] != 0 &&
+                snapshot.Samplers.TryGetDenseIndex(snapshot.Samplers.PhysicalHandles[denseIndex], out uint liveDenseIndex) &&
+                liveDenseIndex == denseIndex &&
                 _samplerValidationScratch[denseIndex] == 0)
             {
                 AdvancedGpuHandle handle =
@@ -1256,6 +1274,9 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
                 continue;
 
             AdvancedGpuHandle handle = textures.PhysicalHandles[denseIndex];
+            if (!textures.TryGetDenseIndex(handle, out uint liveDenseIndex) ||
+                liveDenseIndex != denseIndex)
+                continue;
             AdvancedTextureRecord record = records[denseIndex];
             if (!handle.IsValid || record.StableTextureId != handle.Index ||
                 record.Generation != handle.Generation ||
@@ -1383,6 +1404,9 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
                 continue;
 
             AdvancedGpuHandle handle = samplers.PhysicalHandles[denseIndex];
+            if (!samplers.TryGetDenseIndex(handle, out uint liveDenseIndex) ||
+                liveDenseIndex != denseIndex)
+                continue;
             AdvancedSamplerRecord record = records[denseIndex];
             if (!handle.IsValid || record.StableSamplerId != handle.Index ||
                 record.Generation != handle.Generation)

@@ -128,6 +128,7 @@ public sealed partial class RuntimeWorldRenderer : IRuntimeRenderWorld, IRuntime
 
     public void GlobalPreRender()
     {
+        Lights.PublishCompletedLightProbeOutputs();
         VisualScene.GlobalPreRender();
         Lights.RenderShadowMaps(false);
     }

@@ -687,6 +687,11 @@ namespace XREngine.Rendering.Vulkan
 
             switch (texture)
             {
+                case XRTextureCube cube:
+                    width = checked((int)cube.Extent);
+                    height = width;
+                    layerCount = 6;
+                    return true;
                 case XRTexture2D tex2D:
                     width = checked((int)tex2D.Width);
                     height = checked((int)tex2D.Height);

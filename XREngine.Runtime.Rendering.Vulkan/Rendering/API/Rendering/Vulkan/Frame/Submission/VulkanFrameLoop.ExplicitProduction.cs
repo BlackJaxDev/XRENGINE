@@ -241,6 +241,7 @@ internal sealed partial class VulkanFrameLoop
                 submitted = receipt.SubmissionAccepted;
                 if (submitted)
                 {
+                    acceptedPlan?.CommitRecordedAdvancedPickingSources();
                     mappedFrameArena?.MarkFrameSlotSubmitted(frameSlot, mappedFrameGeneration);
                     mappedFrameSlotPrepared = false;
                     frameDataArena?.MarkFrameSlotSubmitted(frameSlot, frameDataGeneration);

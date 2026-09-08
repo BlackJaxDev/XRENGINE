@@ -1,8 +1,8 @@
 # Advanced Render Pipeline Architectural Refactor TODO
 
-Last Updated: 2026-08-05
+Last Updated: 2026-09-06
 Owner: Rendering
-Status: Active - documents 01-05 remain phase records; phases 06-10 are consolidated into the Vulkan hardening and recording trackers
+Status: Architecture index; execution consolidated into the Vulkan master and XR/Advanced checklist
 Migration Source: `DefaultRenderPipeline2`
 Target Type: `AdvancedRenderPipeline`
 
@@ -15,6 +15,10 @@ Progress:
 - [Resource/State Contract Slice - 2026-07-29](../../../progress/rendering/advanced-render-pipeline-resource-state-contract-slice-2026-07-29.md)
 - [GPU Scene/Material Contract Slice - 2026-07-29](../../../progress/rendering/advanced-render-pipeline-gpu-scene-material-contract-slice-2026-07-29.md)
 - [GPU Visibility Preparation/Deformation Slice - 2026-07-29](../../../progress/rendering/advanced-render-pipeline-gpu-visibility-preparation-deformation-slice-2026-07-29.md)
+
+## 2026-09-06 ownership audit
+
+The [XR/Advanced checklist](../vulkan-xr-and-advanced-rendering-todo.md) owns feature implementation/audit/validation, including remaining document 03–05 acceptance. The [master](../vulkan-core-frame-loop-and-resident-rendering-master-todo.md) owns production selection, performance promotion, and deletion. Documents 01–02 are completed contract records. This index preserves the ordered design and invariants; it is not a second execution checklist.
 
 ## Direction
 
@@ -87,23 +91,24 @@ declared frame resources and immutable scene tables
 
 ## Ordered TODO Set
 
-Execute documents 01 through 05 and consolidated sections 10 through 14 in
-order. A later phase may prototype against an earlier phase's stable contract,
+The historical design order was documents 01 through 05 followed by sections
+10 through 14 of core hardening. Current execution follows the linked XR/Advanced
+checklist and master gates. A later phase may prototype against an earlier phase's stable contract,
 but it may not redefine that contract without updating the owning phase and
 this index.
 
 | Order | TODO | Required outcome |
 | --- | --- | --- |
-| 01 | [Pipeline Identity And Frame Contract](01-pipeline-identity-and-frame-contract-todo.md) | Rename and isolate the migration substrate, define capabilities, and replace the copied frame graph with an advanced-stage skeleton. |
-| 02 | [GPU Scene And Material Data Contract](02-gpu-scene-and-material-data-contract-todo.md) | Establish stable GPU-addressable draw, geometry, material, view, light, and texture records. |
-| 03 | [GPU Visibility Preparation And Deformation](03-gpu-visibility-preparation-and-deformation-todo.md) | Aggregate animation outputs, skinning, blendshapes, culling, and indirect preparation without per-renderer submission. |
-| 04 | [Visibility Buffer Resources And Geometry](04-visibility-buffer-resources-and-geometry-todo.md) | Rasterize backend-neutral surface identity and depth from all supported geometry producers. |
-| 05 | [Attribute Reconstruction](05-attribute-reconstruction-todo.md) | Recover stable surface attributes and derivatives from visibility identity. |
-| 06 | [Visible Material Work Classification](../vulkan-core-hardening-and-device-loss-todo.md#10-classify-visible-material-work-on-the-gpu) | Build bounded GPU material work proportional to visible coverage. |
-| 07 | [Native Material, Lighting, Decal, And GI Shading](../vulkan-core-hardening-and-device-loss-todo.md#11-shade-native-opaque-materials-lighting-decals-and-gi) | Shade opaque HDR directly without the classic deferred-light-combine path. |
-| 08 | [Transparency, Special Passes, And Post-Processing](../vulkan-core-hardening-and-device-loss-todo.md#12-integrate-transparency-special-passes-and-post-processing) | Reconnect legitimate late passes and the temporal/post chain around the new opaque output. |
-| 09 | [Stereo, XR, Capture, And Editor Integration](../vulkan-core-hardening-and-device-loss-todo.md#13-integrate-stereo-xr-capture-and-editor-views) | Make RVC-owned OpenXR views, advanced offscreen consumers, selection, diagnostics, and tooling first-class on shared scene/feature contracts. |
-| 10 | [Validation, Performance, Cutover, And Retirement](../vulkan-core-hardening-and-device-loss-todo.md#14-cut-over-production-rendering-and-retire-legacy-architecture) | Implement cutover/retirement after the companion testing tracker proves correctness and performance. |
+| 01 | [Pipeline Identity And Frame Contract](../../COMPLETED/01-pipeline-identity-and-frame-contract-todo.md) | Rename and isolate the migration substrate, define capabilities, and replace the copied frame graph with an advanced-stage skeleton. |
+| 02 | [GPU Scene And Material Data Contract](../../COMPLETED/02-gpu-scene-and-material-data-contract-todo.md) | Establish stable GPU-addressable draw, geometry, material, view, light, and texture records. |
+| 03 | [GPU Visibility Preparation And Deformation](../vulkan-xr-and-advanced-rendering-todo.md#visibility-and-reconstruction-acceptance-carried-from-architecture-documents-0305) | Aggregate animation outputs, skinning, blendshapes, culling, and indirect preparation without per-renderer submission. |
+| 04 | [Visibility Buffer Resources And Geometry](../vulkan-xr-and-advanced-rendering-todo.md#visibility-and-reconstruction-acceptance-carried-from-architecture-documents-0305) | Rasterize backend-neutral surface identity and depth from all supported geometry producers. |
+| 05 | [Attribute Reconstruction](../vulkan-xr-and-advanced-rendering-todo.md#visibility-and-reconstruction-acceptance-carried-from-architecture-documents-0305) | Recover stable surface attributes and derivatives from visibility identity. |
+| 06 | [Visible Material Work Classification](../vulkan-xr-and-advanced-rendering-todo.md#phase-7) | Build bounded GPU material work proportional to visible coverage. |
+| 07 | [Native Material, Lighting, Decal, And GI Shading](../vulkan-xr-and-advanced-rendering-todo.md#phase-7) | Shade opaque HDR directly without the classic deferred-light-combine path. |
+| 08 | [Transparency, Special Passes, And Post-Processing](../vulkan-xr-and-advanced-rendering-todo.md#phase-7) | Reconnect legitimate late passes and the temporal/post chain around the new opaque output. |
+| 09 | [Stereo, XR, Capture, And Editor Integration](../vulkan-xr-and-advanced-rendering-todo.md#stereo-offscreen-editor-and-diagnostics) | Make RVC-owned OpenXR views, advanced offscreen consumers, selection, diagnostics, and tooling first-class on shared scene/feature contracts. |
+| 10 | [Validation, Performance, Cutover, And Retirement](../vulkan-core-frame-loop-and-resident-rendering-master-todo.md#phase-9---phase-local-test-clearance-legacy-deletion--closeout) | Implement cutover/retirement after the current feature-local and master promotion gates prove correctness and performance. |
 
 ## Capability Policy
 

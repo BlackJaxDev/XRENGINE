@@ -40,6 +40,8 @@ public sealed partial class VulkanRenderer :
     IPhysicsChainComputeBackendFactoryCapability,
     IAdvancedVisibilityStageBackendCapability,
     IGpuBufferContentReuseCapability{
+    internal override bool AdvancedPickingSourceRequiresSubmissionAcceptance => true;
+
     private const int DesktopFramesInFlight = 2;
     private readonly VulkanDeviceContext _deviceContext;
     private readonly VulkanOutputRuntime _outputRuntime;
@@ -192,6 +194,14 @@ public sealed partial class VulkanRenderer :
                 : null);
         _commandRuntime.AdvancedVisibilityDiagnosticCopy =
             _frameLoop.TryRecordAdvancedVisibilityDiagnosticCopy;
+        _commandRuntime.AdvancedCounterDiagnosticCopy =
+            _frameLoop.TryRecordAdvancedCounterDiagnosticCopy;
+        _commandRuntime.ProvisionAdvancedVisibilityWorkspace =
+            _framePlanner.FramePlanBuilder.ProvisionAdvancedVisibilityFamily;
+        _framePlanner.FramePlanBuilder.AcquireAdvancedVisibilityPlanLease =
+            reservation => _commandRuntime.TryAcquireAdvancedVisibilityPlanLease(in reservation);
+        _framePlanner.FramePlanBuilder.ReleaseAdvancedVisibilityPlanLease =
+            reservation => _commandRuntime.ReleaseAdvancedVisibilityPlanLease(in reservation);
         VulkanBackendObjectContext backendObjectContext = _resourceRuntime.GetOrCreateBackendObjectContext(
             Api!,
             _deviceContext);
@@ -372,6 +382,12 @@ public sealed partial class VulkanRenderer :
     public override void BlitWithDrawBuffer(XRFrameBuffer? inFBO, XRFrameBuffer? outFBO, uint inW, uint inH, uint outW, uint outH, EReadBufferMode readBufferMode, EReadBufferMode drawBufferMode, bool colorBit, bool depthBit, bool stencilBit, bool linearFilter)
         => _frameLoop.BlitWithDrawBuffer(inFBO, outFBO, inW, inH, outW, outH, readBufferMode, drawBufferMode, colorBit, depthBit, stencilBit, linearFilter);
 
+    public override FrameBufferBlitSubmission TryBlitFBOToFBO(XRFrameBuffer inFBO, XRFrameBuffer outFBO, EReadBufferMode readBufferMode, bool colorBit, bool depthBit, bool stencilBit, bool linearFilter)
+        => _frameLoop.TryBlit(inFBO, outFBO, readBufferMode, colorBit, depthBit, stencilBit, linearFilter);
+
+    public override FrameBufferBlitSubmission TryBlitFBOToFBOSingleAttachment(XRFrameBuffer inFBO, XRFrameBuffer outFBO, EReadBufferMode readBufferMode, EReadBufferMode drawBufferMode, bool linearFilter)
+        => _frameLoop.TryBlit(inFBO, outFBO, readBufferMode, copyColor: true, copyDepth: false, copyStencil: false, linearFilter);
+
     public (Buffer stagingBuffer, DeviceMemory stagingMemory) CreateBuffer(ulong bufferSize, BufferUsageFlags usage, MemoryPropertyFlags properties, VoidPtr data, bool enableDeviceAddress = false)
         => _commandRuntime.CreateBuffer(bufferSize, usage, properties, data, enableDeviceAddress);
 
@@ -395,6 +411,21 @@ public sealed partial class VulkanRenderer :
     public override float GetDepth(int x, int y) => _frameLoop.GetDepth(x, y);
     public override void GetDepthAsync(XRFrameBuffer fbo, int x, int y, Action<float> depthCallback) => _frameLoop.GetDepthAsync(fbo, x, y, depthCallback);
     public override void GetPixelAsync(int x, int y, bool withTransparency, Action<ColorF4> colorCallback) => _frameLoop.GetPixelAsync(x, y, withTransparency, colorCallback);
+
+    public override bool TryQueueAdvancedPickingReadback(
+        XRTexture identity,
+        XRTexture metadata,
+        XRTexture selection,
+        in AdvancedPickingQuery query,
+        Action<AdvancedVisibilityEncodedSurface> callback,
+        out string? failure)
+        => _frameLoop.TryQueueAdvancedPickingReadback(
+            identity,
+            metadata,
+            selection,
+            query,
+            callback,
+            out failure);
     public override bool ScreenshotRequiresVerticalFlip => _frameLoop.ScreenshotRequiresVerticalFlip;
     public override void GetScreenshotAsync(BoundingRectangle region, bool withTransparency, Action<MagickImage, int> imageCallback) => _frameLoop.GetScreenshotAsync(region, withTransparency, imageCallback);
     public override bool CalcDotLuminance(XRTexture2DArray texture, Vector3 luminance, out float dotLuminance, bool genMipmapsNow) => _frameLoop.CalcDotLuminance(texture, luminance, out dotLuminance, genMipmapsNow);
@@ -410,6 +441,10 @@ public sealed partial class VulkanRenderer :
         => _commandRuntime.TryReserveAdvancedVisibilityFamily(outputId, out reservation, out failureReason);
     public override bool IsAdvancedVisibilityFamilyReservationCurrent(in AdvancedVisibilityFamilyReservation reservation)
         => _commandRuntime.IsAdvancedVisibilityReservationCurrent(in reservation);
+    public override void ReleaseAdvancedVisibilityFamilyOwner(in AdvancedVisibilityFamilyReservation reservation)
+        => _commandRuntime.ReleaseAdvancedVisibilityFamilyOwner(in reservation);
+    public override AdvancedOutputReservationDiagnosticsSnapshot CaptureAdvancedOutputReservationDiagnostics()
+        => _commandRuntime.CaptureAdvancedOutputReservationDiagnostics();
     public bool TryBeginOrderedComputeBatch() => _frameLoop.TryBeginOrderedComputeBatch();
     public void CommitOrderedComputeBatch() => _frameLoop.CommitOrderedComputeBatch();
     public void RollbackOrderedComputeBatch() => _frameLoop.RollbackOrderedComputeBatch();
@@ -426,6 +461,14 @@ public sealed partial class VulkanRenderer :
     }
     public override void CommitMeshTaskSubmissionBatch() => _frameLoop.CommitOrderedComputeBatch();
     public override void RollbackMeshTaskSubmissionBatch() => _frameLoop.RollbackOrderedComputeBatch();
+    internal override bool TryExecuteRequiredGpuProducerBatch(
+        Func<bool> producer,
+        out XRGpuFence? retentionFence,
+        out Exception? failure)
+        => _frameLoop.TryExecuteRequiredGpuProducerBatch(
+            producer,
+            out retentionFence,
+            out failure);
 
     public override void MemoryBarrier(EMemoryBarrierMask mask) => _frameLoop.EnqueueMemoryBarrier(mask);
     public override void PublishFrameBufferAttachmentsForSampling(XRFrameBuffer frameBuffer) => _frameLoop.PublishFrameBufferAttachmentsForSampling(frameBuffer);

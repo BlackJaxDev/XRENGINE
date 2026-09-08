@@ -203,16 +203,8 @@ internal sealed class VulkanMeshDrawViewSnapshot
                 : producer.Context.ViewportIdentity;
         if (renderAreaWidth <= 0 || renderAreaHeight <= 0)
         {
-            if (target is not null)
-            {
-                renderAreaWidth = (int)target.Width;
-                renderAreaHeight = (int)target.Height;
-            }
-            else
-            {
-                renderAreaWidth = (int)producer.TargetExtent.Width;
-                renderAreaHeight = (int)producer.TargetExtent.Height;
-            }
+            renderAreaWidth = (int)producer.TargetExtent.Width;
+            renderAreaHeight = (int)producer.TargetExtent.Height;
         }
 
         if (s_cachedSnapshot is not null &&

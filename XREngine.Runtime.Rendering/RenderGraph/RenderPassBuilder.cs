@@ -241,6 +241,12 @@ public sealed class RenderPassBuilder
         => AddUsage(resourceName, ERenderPassResourceType.TransferDestination, ERenderGraphAccess.Write, ERenderPassLoadOp.Load, ERenderPassStoreOp.Store);
 
     /// <summary>
+    /// Configures a transfer write to the depth aspect of an output framebuffer.
+    /// </summary>
+    public RenderPassBuilder UseDepthTransferDestination(string resourceName)
+        => AddUsage(resourceName, ERenderPassResourceType.DepthTransferDestination, ERenderGraphAccess.Write, ERenderPassLoadOp.Load, ERenderPassStoreOp.Store);
+
+    /// <summary>
     /// Declares an explicitly versioned logical resource use. Writes publish the supplied
     /// version and reads consume it, allowing the graph compiler to derive dependencies
     /// independently of declaration order.

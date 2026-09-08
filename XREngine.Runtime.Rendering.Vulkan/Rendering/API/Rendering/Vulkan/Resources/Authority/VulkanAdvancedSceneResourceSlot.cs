@@ -11,6 +11,8 @@ internal sealed class VulkanAdvancedSceneResourceSlot
         int receiptCapacity)
     {
         Entries = new VulkanAdvancedScenePublicationEntry[publicationCapacity];
+        for (int index = 0; index < Entries.Length; ++index)
+            Entries[index].Globals = new VulkanAdvancedSceneGlobalInputs();
         GlobalDescriptorSets = new DescriptorSet[publicationCapacity];
         ReceiptStates = new VulkanAdvancedScenePublicationUseState[receiptCapacity];
         for (int index = 0; index < ReceiptStates.Length; ++index)
@@ -79,11 +81,17 @@ internal sealed class VulkanAdvancedSceneResourceSlot
 
     internal int Find(
         AdvancedSharedGpuSceneDatabase database,
-        in AdvancedGpuScenePublicationReference publication)
+        in AdvancedGpuScenePublicationReference publication,
+        ReadOnlySpan<BackendReadyCanonicalViewRecord> views,
+        in BackendReadyCanonicalFrameRecord frame,
+        ReadOnlySpan<BackendReadyCanonicalPassRecord> passes,
+        ReadOnlySpan<AdvancedGlobalPassPublicationCoverage> coverage,
+        int diagnosticCount)
     {
         for (int index = 0; index < EntryCount; ++index)
             if (ReferenceEquals(Entries[index].Database, database) &&
-                Entries[index].Publication == publication)
+                Entries[index].Publication == publication &&
+                Entries[index].Globals!.Matches(views, in frame, passes, coverage, diagnosticCount))
             {
                 return index;
             }

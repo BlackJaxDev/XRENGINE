@@ -27,9 +27,21 @@ internal sealed partial class VulkanFrameLoop
         {
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.ParallelCommandBufferRecording.PrepareInputs"))
             {
-                if (!TryPrepareOpenXrEyeSwapchainCommandBuffer(firstEye, out preparedFirstEye) ||
-                    !TryPrepareOpenXrEyeSwapchainCommandBuffer(secondEye, out preparedSecondEye) ||
-                    !TryCreatePairedOpenXrLogicalPlan(
+                if (!TryPrepareOpenXrEyeSwapchainCommandBuffer(firstEye, out preparedFirstEye))
+                    throw CreateOpenXrEyePresentNowFailure(
+                        firstEye.OpenXrViewIndex,
+                        EVulkanPresentNowReadinessStage.FramePlanSeal,
+                        "parallel-first-eye-preparation",
+                        "OpenXREyeSubmit -> first prepared eye",
+                        "Foreground first-eye preparation returned no input.");
+                if (!TryPrepareOpenXrEyeSwapchainCommandBuffer(secondEye, out preparedSecondEye))
+                    throw CreateOpenXrEyePresentNowFailure(
+                        secondEye.OpenXrViewIndex,
+                        EVulkanPresentNowReadinessStage.FramePlanSeal,
+                        "parallel-second-eye-preparation",
+                        "OpenXREyeSubmit -> second prepared eye",
+                        "Foreground second-eye preparation returned no input.");
+                if (!TryCreatePairedOpenXrLogicalPlan(
                         in preparedFirstEye,
                         in preparedSecondEye,
                         out FramePlan pairedLogicalPlan))

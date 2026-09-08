@@ -82,6 +82,7 @@ namespace XREngine.Rendering.Vulkan
             forceRecord |= policy.FreshSerialRecording;
             if (dynamicUiBatchTextOps.Length == 0)
             {
+                variant.ClearRecordedDynamicUiTerminalOperationManifest();
                 variant.DynamicUiOpCount = 0;
                 variant.DynamicUiSignature = 0;
                 variant.DynamicUiSecondaryRecorded = false;
@@ -392,6 +393,7 @@ namespace XREngine.Rendering.Vulkan
 
             bool recordingStarted = false;
             int recordedDrawCount = 0;
+            variant.ClearRecordedDynamicUiTerminalOperationManifest();
             try
             {
                 ThrowIfVulkanDeviceOperationNotAdmitted("vkBeginCommandBuffer.DynamicUiSecondary");
@@ -469,6 +471,7 @@ namespace XREngine.Rendering.Vulkan
                     if (recordedDraw)
                     {
                         recordedDrawCount++;
+                        variant.RecordDynamicUiTerminalOperation(i);
                         if (XREngine.Rendering.RenderDiagnosticsFlags.VkTraceDraw ||
                             XREngine.Rendering.RenderDiagnosticsFlags.VkTraceSwapDraw)
                         {
@@ -521,6 +524,7 @@ namespace XREngine.Rendering.Vulkan
 
             if (recordedDrawCount == 0)
             {
+                variant.ClearRecordedDynamicUiTerminalOperationManifest();
                 variant.DynamicUiOpCount = 0;
                 variant.DynamicUiSignature = 0;
                 variant.DynamicUiSecondaryRecorded = false;

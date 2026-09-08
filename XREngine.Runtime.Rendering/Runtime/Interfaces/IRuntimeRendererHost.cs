@@ -58,9 +58,8 @@ public interface IRuntimeRendererHost
             "The active renderer does not expose Advanced visibility-family admission.");
 
     /// <summary>
-    /// Reserves the renderer generation's one advanced mono visibility family
-    /// for an output. A matching repeat is idempotent; another output is
-    /// rejected and must select the legacy path.
+    /// Reserves an independently owned Advanced visibility family for an
+    /// output. A matching repeat is idempotent; exhausted capacity is explicit.
     /// </summary>
     bool TryReserveAdvancedVisibilityFamily(
         ulong outputId,
@@ -79,6 +78,22 @@ public interface IRuntimeRendererHost
     bool IsAdvancedVisibilityFamilyReservationCurrent(
         in AdvancedVisibilityFamilyReservation reservation)
         => false;
+
+    /// <summary>
+    /// Releases the viewport/pipeline owner's claim on an Advanced output bank.
+    /// Sealed plans and native command buffers retain independent leases.
+    /// </summary>
+    void ReleaseAdvancedVisibilityFamilyOwner(
+        in AdvancedVisibilityFamilyReservation reservation)
+    {
+    }
+
+    /// <summary>
+    /// Captures output-bank lifetime and cold allocation diagnostics on demand.
+    /// Null means the backend does not expose this diagnostic surface.
+    /// </summary>
+    AdvancedOutputReservationDiagnosticsSnapshot? CaptureAdvancedOutputReservationDiagnostics()
+        => null;
 
     /// <summary>
     /// Returns the task/mesh shader dialect visible to this renderer.

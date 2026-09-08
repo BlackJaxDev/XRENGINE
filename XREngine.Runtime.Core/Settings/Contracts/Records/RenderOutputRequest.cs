@@ -15,7 +15,8 @@ public readonly record struct RenderOutputRequest(
     ulong ConsumerDependencySetId,
     ulong FrameId,
     ERenderOutputReadinessPolicy ReadinessPolicy = ERenderOutputReadinessPolicy.AllowDeferral,
-    ERenderOutputWorkClass WorkClass = ERenderOutputWorkClass.Background)
+    ERenderOutputWorkClass WorkClass = ERenderOutputWorkClass.Background,
+    ERenderOutputWriteAspect ExpectedWriteAspect = ERenderOutputWriteAspect.Color)
 {
     public bool IsDefined => OutputId != 0UL;
 
@@ -38,6 +39,7 @@ public readonly record struct RenderOutputRequest(
             AddProductIdentity(ref hash, ConsumerDependencySetId);
             AddProductIdentity(ref hash, (ulong)(uint)QualityRequirements);
             AddProductIdentity(ref hash, (ulong)(uint)CompletionRequirement);
+            AddProductIdentity(ref hash, (ulong)(uint)ExpectedWriteAspect);
             return hash == 0UL ? 1UL : hash;
         }
     }

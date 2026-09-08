@@ -5,9 +5,9 @@ public partial class OpenGLRenderer
     /// <inheritdoc />
     public override AdvancedRenderPipelineCapabilities GetAdvancedRenderPipelineCapabilities()
     {
-        EAdvancedIndirectSubmissionMode indirectSubmission = SupportsMeshletDispatch()
-            ? EAdvancedIndirectSubmissionMode.MeshTasksIndirectCount
-            : SupportsIndirectCountDraw()
+        if (!_advancedAdmissionReady && RuntimeEngine.IsRenderThread)
+            _ = GetAdvancedVisibilityFamilyAdmission();
+        EAdvancedIndirectSubmissionMode indirectSubmission = SupportsIndirectCountDraw()
                 ? EAdvancedIndirectSubmissionMode.MultiDrawIndirectCount
                 : EAdvancedIndirectSubmissionMode.MultiDrawIndirect;
 
@@ -27,15 +27,16 @@ public partial class OpenGLRenderer
             Synchronization: EAdvancedSynchronizationMode.OpenGlMemoryBarrier,
             SupportsFrameSlotStorage: true,
             SupportsStereoArrayResources: true,
-            // The frame contract exists, but production visibility shaders do not.
-            // Keep selection unavailable until the backend implements the full family.
-            ShaderFamily: EAdvancedShaderFamily.None,
+            ShaderFamily: _advancedAdmissionReady ? EAdvancedShaderFamily.VisibilityBuffer : EAdvancedShaderFamily.None,
             SupportsBufferDeviceAddress: false,
             SupportsDescriptorIndexing: false,
             SupportsDescriptorHeap: false,
             SupportsSubgroupOperations: false,
-            SupportsMeshShaders: SupportsMeshletDispatch(),
+            SupportsMeshShaders: false,
             SupportsAsyncCompute: false,
-            SupportsTimelineSemaphores: false);
+            SupportsTimelineSemaphores: false,
+            SupportsOpenGlMultiviewRaster: RuntimeEngine.IsRenderThread
+                ? _advancedAdmissionReady && TryEnsureAdvancedStereoPrograms(out _)
+                : _advancedStereoReady);
     }
 }

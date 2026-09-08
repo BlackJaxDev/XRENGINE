@@ -441,7 +441,11 @@ public static partial class RuntimeEngine
         /// Creates a render pipeline for an explicitly owned output.
         /// </summary>
         public static RenderPipeline NewRenderPipeline(RenderPipelineRequest request)
-            => Volatile.Read(ref _renderPipelineFactory)?.Invoke(request)
+        {
+            if (request.OffscreenIntent is { } offscreenIntent)
+                return CreateAdvancedOffscreenPipeline(request, offscreenIntent);
+
+            return Volatile.Read(ref _renderPipelineFactory)?.Invoke(request)
                 ?? request.Purpose switch
                 {
                     ERenderPipelinePurpose.OpenXrEye =>
@@ -455,6 +459,72 @@ public static partial class RuntimeEngine
                         request,
                         "Unknown render pipeline purpose."),
                 };
+        }
+
+        private static AdvancedRenderPipeline CreateAdvancedOffscreenPipeline(
+            in RenderPipelineRequest request,
+            in RenderPipelineOffscreenIntent intent)
+        {
+            if (request.Purpose != ERenderPipelinePurpose.OffscreenCapture)
+            {
+                throw new ArgumentException(
+                    "An advanced offscreen intent is valid only for an offscreen capture request.",
+                    nameof(request));
+            }
+
+            if ((intent.ViewIntent is ERenderPipelineOffscreenViewIntent.Mirror or ERenderPipelineOffscreenViewIntent.Portal) &&
+                !HasAdvancedOffscreenOwner(request.OutputId, intent))
+            {
+                throw new NotSupportedException(
+                    $"Advanced offscreen {intent.ViewIntent} requests require a registered dedicated owner with a stable output identity.");
+            }
+
+            if (intent.EnablePostProcessing ||
+                intent.EnableTemporalHistory ||
+                intent.EnableBloomAndDoF)
+            {
+                throw new NotSupportedException(
+                    "The first advanced offscreen slice exports raw HDR, depth, or visibility resources and does not implement post-processing or temporal history.");
+            }
+
+            bool validOutput = intent.ViewIntent switch
+            {
+                ERenderPipelineOffscreenViewIntent.SceneCapture or
+                ERenderPipelineOffscreenViewIntent.Mirror or
+                ERenderPipelineOffscreenViewIntent.Portal or
+                ERenderPipelineOffscreenViewIntent.ReflectionProbe or
+                ERenderPipelineOffscreenViewIntent.Thumbnail =>
+                    intent.Output == ERenderPipelineOffscreenOutput.HdrColor,
+                ERenderPipelineOffscreenViewIntent.DepthOnly =>
+                    intent.Output == ERenderPipelineOffscreenOutput.Depth,
+                ERenderPipelineOffscreenViewIntent.VisibilityOnly =>
+                    intent.Output == ERenderPipelineOffscreenOutput.Visibility,
+                _ => false,
+            };
+            if (!validOutput)
+            {
+                throw new ArgumentException(
+                    $"Advanced offscreen view intent '{intent.ViewIntent}' does not support output '{intent.Output}'.",
+                    nameof(intent));
+            }
+
+            AdvancedRenderPipelineCapabilityResult capabilities =
+                AdvancedRenderPipelineCapabilityResolver.ResolveCurrent(request.Stereo);
+            // Shader-family capability is certified only by the concrete viewport's
+            // live reservation. Construct an unbound source as for desktop Advanced;
+            // the explicit offscreen request must bind before any producer can run.
+            if (!capabilities.IsSupported &&
+                capabilities.RejectionReason != EAdvancedRenderPipelineRejectionReason.MissingShaderFamily)
+            {
+                throw new InvalidOperationException(
+                    $"Advanced offscreen capture is unavailable. {capabilities.Diagnostic}");
+            }
+
+            return new AdvancedRenderPipeline(
+                request.Stereo,
+                capabilities,
+                AdvancedOffscreenProfile.FromIntent(intent));
+        }
 
         public static RenderPipeline NewOpenXrEyeRenderPipeline(bool stereo)
             => NewRenderPipeline(RenderPipelineRequest.OpenXrEye(stereo));
@@ -869,6 +939,10 @@ public static partial class RuntimeEngine
             public static XRCamera? RenderingCamera => StateData.RenderingCamera;
             public static XRCamera? RenderingStereoRightEyeCamera => RenderingPipelineState?.StereoRightEyeCamera;
             public static XRFrameBuffer? RenderingTargetOutputFBO => RenderingPipelineState?.OutputFBO;
+            public static bool HasRequiredOffscreenAuthoringFailure =>
+                RenderingPipelineState?.HasRequiredOffscreenAuthoringFailure == true;
+            internal static void RejectRequiredOffscreenAuthoring(string reason)
+                => RenderingPipelineState?.RejectRequiredOffscreenAuthoring(reason);
             public static XRMaterial? OverrideMaterial => RenderingPipelineState?.OverrideMaterial;
             public static XRCamera? RenderingCameraOverride
             {

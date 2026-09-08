@@ -213,6 +213,7 @@ public partial class OpenGLRenderer
         var (prim, elem) = GetActivePrimitiveAndElementType();
         ApplyPatchParameters(ActiveMeshRenderer);
         Api.MultiDrawElementsIndirect(prim, elem, null, drawCount, stride);
+        if (drawCount != 0) MarkImmediateHistoryBoundWrite();
         RuntimeEngine.Rendering.Stats.Frame.IncrementMultiDrawCalls();
         RuntimeEngine.Rendering.Stats.Frame.IncrementDrawCalls((int)drawCount);
     }
@@ -222,6 +223,7 @@ public partial class OpenGLRenderer
         var (prim, elem) = GetActivePrimitiveAndElementType();
         ApplyPatchParameters(ActiveMeshRenderer);
         Api.MultiDrawElementsIndirect(prim, elem, (void*)byteOffset, drawCount, stride);
+        if (drawCount != 0) MarkImmediateHistoryBoundWrite();
         RuntimeEngine.Rendering.Stats.Frame.IncrementMultiDrawCalls();
         RuntimeEngine.Rendering.Stats.Frame.IncrementDrawCalls((int)drawCount);
     }
@@ -231,6 +233,8 @@ public partial class OpenGLRenderer
         var (prim, elem) = GetActivePrimitiveAndElementType();
         ApplyPatchParameters(ActiveMeshRenderer);
         Api.MultiDrawElementsIndirectCount(prim, elem, (void*)byteOffset, (IntPtr)countByteOffset, maxDrawCount, stride);
+        if (maxDrawCount != 0)
+            MarkImmediateHistoryGpuWriteUnproven();
         RuntimeEngine.Rendering.Stats.Frame.IncrementMultiDrawCalls();
         RuntimeEngine.Rendering.Stats.RecordRendererStateCounter(ERendererProfilerCounter.IndirectCountCalls);
         RuntimeEngine.Rendering.Stats.RecordGpuDrivenDelayedDiagnosticReadback(sizeof(uint));
@@ -249,6 +253,8 @@ public partial class OpenGLRenderer
             maxDrawCount,
             stride,
             1);
+        if (maxDrawCount != 0 && NVBindlessMultiDrawIndirectCount is not null)
+            MarkImmediateHistoryGpuWriteUnproven();
         RuntimeEngine.Rendering.Stats.Frame.IncrementMultiDrawCalls();
         RuntimeEngine.Rendering.Stats.RecordRendererStateCounter(ERendererProfilerCounter.IndirectCountCalls);
         RuntimeEngine.Rendering.Stats.RecordGpuDrivenDelayedDiagnosticReadback(sizeof(uint));
@@ -267,6 +273,8 @@ public partial class OpenGLRenderer
             (nint)drawCountOffset,
             maxDrawCount,
             stride);
+        if (maxDrawCount != 0)
+            MarkImmediateHistoryGpuWriteUnproven();
         RuntimeEngine.Rendering.Stats.Frame.IncrementMultiDrawCalls();
         RuntimeEngine.Rendering.Stats.RecordRendererStateCounter(ERendererProfilerCounter.IndirectCountCalls);
         RuntimeEngine.Rendering.Stats.RecordGpuDrivenDelayedDiagnosticReadback(sizeof(uint));

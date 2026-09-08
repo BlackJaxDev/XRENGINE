@@ -263,10 +263,14 @@ internal sealed class FrameOperationStream
     /// planning, or worker scheduling can observe the frame. Subsequent order
     /// changes move numeric headers only; dense payload records are stable.
     /// </summary>
+    internal void ProvisionAdvancedVisibilityFamily(int bankIndex)
+        => _payloads.ProvisionAdvancedVisibilityFamily(bankIndex);
+
     internal void Lower(FrameOperationIngress source)
     {
         Reset();
-        _payloads.AdvancedVisibilityInput.Reset();
+        for (int index = 0; index < _payloads.AdvancedVisibilityInputs.Length; index++)
+            Volatile.Read(ref _payloads.AdvancedVisibilityInputs[index])?.Reset();
         int sourceCount = source.Count;
         try
         {
@@ -611,7 +615,7 @@ internal sealed class FrameOperationStream
         out string reason)
     {
         reason = "Ready";
-        if (!state.IsValid || (uint)index >= (uint)_count ||
+        if (!state.IsValid || state.Reservation != request.Reservation || (uint)index >= (uint)_count ||
             _headers[index].OpCode != EVulkanPrimaryPlanNodeKind.AdvancedVisibility)
         {
             reason = "advanced visibility state does not match the sealed operation";
@@ -896,7 +900,7 @@ internal sealed class FrameOperationStream
         switch (kind)
         {
             case EVulkanPrimaryPlanNodeKind.TextureUpload: _payloads.TextureUploads[i] = new(((TextureUploadFrameOp)op).Upload); break;
-            case EVulkanPrimaryPlanNodeKind.Blit: { var p=(BlitOp)op; _payloads.Blits[i]=new(p.InFbo,p.OutFbo,p.InX,p.InY,p.InW,p.InH,p.OutX,p.OutY,p.OutW,p.OutH,p.ReadBufferMode,p.ColorBit,p.DepthBit,p.StencilBit,p.LinearFilter); break; }
+            case EVulkanPrimaryPlanNodeKind.Blit: { var p=(BlitOp)op; _payloads.Blits[i]=new(p.InFbo,p.OutFbo,p.InX,p.InY,p.InW,p.InH,p.OutX,p.OutY,p.OutW,p.OutH,p.ReadBufferMode,p.ColorBit,p.DepthBit,p.StencilBit,p.LinearFilter,p.RequireExactCompatibility); break; }
             case EVulkanPrimaryPlanNodeKind.Clear: { var p=(ClearOp)op; _payloads.Clears[i]=new(p.ClearColor,p.ClearDepth,p.ClearStencil,p.Color,p.Depth,p.Stencil,p.Rect); break; }
             case EVulkanPrimaryPlanNodeKind.TransformFeedback: { var p=(TransformFeedbackOp)op; _payloads.TransformFeedbacks[i]=new(p.TransformFeedback,p.Operation,p.CounterBuffer,p.FeedbackBufferOffset,p.FeedbackBufferSize,p.CounterBufferOffset,p.CounterOffset,p.VertexStride,p.InstanceCount,p.FirstInstance); break; }
             case EVulkanPrimaryPlanNodeKind.Query: { var p=(QueryOp)op; _payloads.Queries[i]=new(p.Query,p.Descriptor,p.Operation,p.TimestampStage,p.PointIndex,p.SourceHandles,p.ResultDestination,p.ResultDestinationOffset,p.ResultStride,p.IncludeAvailability); break; }
@@ -920,7 +924,7 @@ internal sealed class FrameOperationStream
             case EVulkanPrimaryPlanNodeKind.ComputeDispatch: { var p=(ComputeDispatchOp)op; _payloads.ComputeDispatches[i]=new(p.Program,p.GroupsX,p.GroupsY,p.GroupsZ,p.Snapshot.CreateSealedCopy()); break; }
             case EVulkanPrimaryPlanNodeKind.ComputeDispatchIndirect: { var p=(ComputeDispatchIndirectOp)op; _payloads.ComputeDispatchIndirects[i]=new(p.Program,p.Snapshot.CreateSealedCopy(),p.ArgumentOwner,p.ArgumentBuffer,p.ArgumentOffset,p.Label); break; }
             case EVulkanPrimaryPlanNodeKind.BufferCopy: { var p=(BufferCopyOp)op; _payloads.BufferCopies[i]=new(p.SourceOwner,p.SourceBuffer,p.SourceOffset,p.DestinationOwner,p.DestinationBuffer,p.DestinationOffset,p.ByteCount,p.RequireGpuWriteVisibility,p.DiagnosticReceipt,p.Label); break; }
-            case EVulkanPrimaryPlanNodeKind.SubmissionMarker: { var p=(SubmissionMarkerOp)op; _payloads.SubmissionMarkers[i]=new(p.Fence,p.Label); break; }
+            case EVulkanPrimaryPlanNodeKind.SubmissionMarker: { var p=(SubmissionMarkerOp)op; _payloads.SubmissionMarkers[i]=new(p.Fence,p.Label,p.RequiredOperationCount); break; }
             case EVulkanPrimaryPlanNodeKind.MemoryBarrier: _payloads.MemoryBarriers[i]=new(((MemoryBarrierOp)op).Mask); break;
             case EVulkanPrimaryPlanNodeKind.PublishFramebufferForSampling: _payloads.PublishedFramebuffers[i]=new(((PublishFramebufferForSamplingOp)op).FrameBuffer); break;
             case EVulkanPrimaryPlanNodeKind.DlssUpscale: { var p=(DlssUpscaleOp)op; _payloads.DlssUpscales[i]=new(p.Session,p.SourceColor,p.Depth,p.Motion,p.OutputColor,p.Exposure,p.Parameters); break; }
@@ -931,12 +935,12 @@ internal sealed class FrameOperationStream
                     ((AdvancedVisibilityOp)op).Request;
                 VulkanAdvancedVisibilityInputStorage authoringInput =
                     ((AdvancedVisibilityOp)op).InputLease.Input;
-                _payloads.AdvancedVisibilityInput.CaptureOrValidate(
+                VulkanAdvancedVisibilityInputStorage familyInput = _payloads.CaptureAdvancedVisibilityInput(
                     in request,
                     authoringInput);
                 _payloads.AdvancedVisibilities[i] = new(
                     request,
-                    _payloads.AdvancedVisibilityInput,
+                    familyInput,
                     default,
                     default,
                     default,

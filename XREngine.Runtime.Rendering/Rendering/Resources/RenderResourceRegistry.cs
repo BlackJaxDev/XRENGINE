@@ -33,6 +33,9 @@ public sealed class RenderResourceRegistry
     // descriptor set changes.
     private readonly object _descriptorSignatureLock = new();
     private int _descriptorRevision;
+    private int _lastDescriptorMutationRevision;
+    private string? _lastDescriptorMutationOperation;
+    private string? _lastDescriptorMutationResourceName;
     private int _cachedDescriptorSignature = EmptyDescriptorSignature;
     private int _cachedDescriptorSignatureRevision;
     private readonly object _instanceSnapshotLock = new();
@@ -67,6 +70,15 @@ public sealed class RenderResourceRegistry
     /// Monotonic counter that changes whenever the registered descriptor set changes materially.
     /// </summary>
     public int DescriptorRevision => Volatile.Read(ref _descriptorRevision);
+
+    /// <summary>Most recent descriptor mutation retained for bounded validation diagnostics.</summary>
+    internal int LastDescriptorMutationRevision => Volatile.Read(ref _lastDescriptorMutationRevision);
+
+    /// <summary>Operation that produced <see cref="LastDescriptorMutationRevision"/>.</summary>
+    internal string? LastDescriptorMutationOperation => Volatile.Read(ref _lastDescriptorMutationOperation);
+
+    /// <summary>Logical resource affected by the last descriptor mutation, when one exists.</summary>
+    internal string? LastDescriptorMutationResourceName => Volatile.Read(ref _lastDescriptorMutationResourceName);
 
     /// <summary>
     /// Monotonic counter for changes to live resource bindings.
@@ -128,7 +140,7 @@ public sealed class RenderResourceRegistry
         // optimistic TryGetValue above. Only the winning insert increments the descriptor revision.
         record = _textures.GetOrAdd(descriptor.Name, newRecord);
         if (ReferenceEquals(record, newRecord))
-            MarkDescriptorsChanged();
+            MarkDescriptorsChanged("RegisterTexture", descriptor.Name);
         else
             UpdateTextureDescriptorIfChanged(record, descriptor);
 
@@ -151,7 +163,7 @@ public sealed class RenderResourceRegistry
         RenderFrameBufferResource newRecord = new(descriptor);
         record = _frameBuffers.GetOrAdd(descriptor.Name, newRecord);
         if (ReferenceEquals(record, newRecord))
-            MarkDescriptorsChanged();
+            MarkDescriptorsChanged("RegisterFrameBuffer", descriptor.Name);
         else
             UpdateFrameBufferDescriptorIfChanged(record, descriptor);
 
@@ -174,7 +186,7 @@ public sealed class RenderResourceRegistry
         RenderBufferResource newRecord = new(descriptor);
         record = _buffers.GetOrAdd(descriptor.Name, newRecord);
         if (ReferenceEquals(record, newRecord))
-            MarkDescriptorsChanged();
+            MarkDescriptorsChanged("RegisterBuffer", descriptor.Name);
         else
             UpdateBufferDescriptorIfChanged(record, descriptor);
 
@@ -292,7 +304,7 @@ public sealed class RenderResourceRegistry
         RenderRenderBufferResource newRecord = new(descriptor);
         record = _renderBuffers.GetOrAdd(descriptor.Name, newRecord);
         if (ReferenceEquals(record, newRecord))
-            MarkDescriptorsChanged();
+            MarkDescriptorsChanged("RegisterRenderBuffer", descriptor.Name);
         else
             UpdateRenderBufferDescriptorIfChanged(record, descriptor);
 
@@ -481,7 +493,7 @@ public sealed class RenderResourceRegistry
 
         record.DestroyInstance();
         MarkInstancesChanged();
-        MarkDescriptorsChanged();
+        MarkDescriptorsChanged("RemoveTexture", name);
     }
 
     /// <summary>
@@ -494,7 +506,7 @@ public sealed class RenderResourceRegistry
         
         record.DestroyInstance();
         MarkInstancesChanged();
-        MarkDescriptorsChanged();
+        MarkDescriptorsChanged("RemoveFrameBuffer", name);
     }
 
     /// <summary>
@@ -507,7 +519,7 @@ public sealed class RenderResourceRegistry
         
         record.DestroyInstance();
         MarkInstancesChanged();
-        MarkDescriptorsChanged();
+        MarkDescriptorsChanged("RemoveBuffer", name);
     }
 
     /// <summary>
@@ -519,7 +531,7 @@ public sealed class RenderResourceRegistry
         {
             record.DestroyInstance();
             MarkInstancesChanged();
-            MarkDescriptorsChanged();
+            MarkDescriptorsChanged("RemoveRenderBuffer", name);
         }
     }
 
@@ -597,7 +609,7 @@ public sealed class RenderResourceRegistry
             _renderBuffers.Clear();
 
             if (hadDescriptors)
-                MarkDescriptorsChanged();
+                MarkDescriptorsChanged("ClearDescriptors");
         }
 
         if (firstFailure is not null)
@@ -668,8 +680,13 @@ public sealed class RenderResourceRegistry
     /// <summary>
     /// Advances the descriptor revision so cached signatures and dependent planners are invalidated.
     /// </summary>
-    private void MarkDescriptorsChanged()
-        => Interlocked.Increment(ref _descriptorRevision);
+    private void MarkDescriptorsChanged(string operation, string? resourceName = null)
+    {
+        Volatile.Write(ref _lastDescriptorMutationOperation, operation);
+        Volatile.Write(ref _lastDescriptorMutationResourceName, resourceName);
+        int revision = Interlocked.Increment(ref _descriptorRevision);
+        Volatile.Write(ref _lastDescriptorMutationRevision, revision);
+    }
 
     /// <summary>
     /// Updates a texture descriptor and invalidates the descriptor signature when it changed materially.
@@ -680,7 +697,7 @@ public sealed class RenderResourceRegistry
             return;
 
         if (!EqualityComparer<TextureResourceDescriptor>.Default.Equals(record.Descriptor, descriptor))
-            MarkDescriptorsChanged();
+            MarkDescriptorsChanged("UpdateTexture", descriptor.Name);
 
         record.UpdateDescriptor(descriptor);
     }
@@ -694,7 +711,7 @@ public sealed class RenderResourceRegistry
             return;
 
         if (!FrameBufferDescriptorsEquivalent(record.Descriptor, descriptor))
-            MarkDescriptorsChanged();
+            MarkDescriptorsChanged("UpdateFrameBuffer", descriptor.Name);
 
         record.UpdateDescriptor(descriptor);
     }
@@ -708,7 +725,7 @@ public sealed class RenderResourceRegistry
             return;
 
         if (!EqualityComparer<BufferResourceDescriptor>.Default.Equals(record.Descriptor, descriptor))
-            MarkDescriptorsChanged();
+            MarkDescriptorsChanged("UpdateBuffer", descriptor.Name);
 
         record.UpdateDescriptor(descriptor);
     }
@@ -722,7 +739,7 @@ public sealed class RenderResourceRegistry
             return;
 
         if (!EqualityComparer<RenderBufferResourceDescriptor>.Default.Equals(record.Descriptor, descriptor))
-            MarkDescriptorsChanged();
+            MarkDescriptorsChanged("UpdateRenderBuffer", descriptor.Name);
 
         record.UpdateDescriptor(descriptor);
     }

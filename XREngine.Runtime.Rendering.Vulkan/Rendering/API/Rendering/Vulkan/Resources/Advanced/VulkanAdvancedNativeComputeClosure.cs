@@ -28,6 +28,8 @@ internal readonly record struct VulkanAdvancedNativeComputeClosure(
     VulkanFrozenBufferBarrier FroxelGrid,
     VulkanFrozenBufferBarrier LightIndices,
     VulkanFrozenBufferBarrier LightingCounters,
+    VulkanFrozenBufferBarrier FroxelDecalGrid,
+    VulkanFrozenBufferBarrier DecalIndices,
     DescriptorImageInfo IdentityDescriptor,
     DescriptorImageInfo MetadataDescriptor,
     DescriptorImageInfo DepthDescriptor,
@@ -57,6 +59,8 @@ internal readonly record struct VulkanAdvancedNativeComputeClosure(
            HasFrozenRange(FroxelGrid) &&
            HasFrozenRange(LightIndices) &&
            HasFrozenRange(LightingCounters) &&
+           HasFrozenRange(FroxelDecalGrid) &&
+           HasFrozenRange(DecalIndices) &&
            IdentityDescriptor.ImageView.Handle != 0 &&
            MetadataDescriptor.ImageView.Handle != 0 &&
            DepthDescriptor.ImageView.Handle != 0 &&

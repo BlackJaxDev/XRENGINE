@@ -513,6 +513,15 @@ public sealed partial class RuntimeWorldRenderer
         {
             try
             {
+                lock (state)
+                {
+                    if (state.Generation != generation ||
+                        !ReferenceEquals(state.Candidate, candidate))
+                    {
+                        return;
+                    }
+                }
+
                 if (result.Hits.Count == 0)
                 {
                     GpuPickLog("readback: no hit records returned.");

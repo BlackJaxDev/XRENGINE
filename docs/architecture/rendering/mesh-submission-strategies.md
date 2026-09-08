@@ -16,6 +16,14 @@ Mesh drawing is selected by an explicit `EMeshSubmissionStrategy` instead of by 
 
 `GPURenderDispatch` remains a compatibility shim during migration. Setting it to `true` maps through the resolver; older boolean-only call sites still map `true` to `GpuIndirectInstrumented` to preserve legacy behavior.
 
+Advanced late color and participating temporal passes declare filtered
+`CpuDirect` submission independently of the opaque native GPU family. Their
+draws still execute on the GPU; the CPU filters authored late-lane eligibility.
+The temporal pass preserves that explicit strategy when a global opaque GPU
+override is active. Requesting GPU dispatch on a pass that requires filtered
+late participation is rejected because indirect replay cannot preserve that
+per-material admission contract.
+
 The CPU-built indirect reference is an explicit diagnostic sub-mode of
 `GpuIndirectInstrumented`. Launch with both
 `XRE_FORCE_MESH_SUBMISSION_STRATEGY=GpuIndirectInstrumented` and

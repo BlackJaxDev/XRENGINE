@@ -1,5 +1,6 @@
 using XREngine.Extensions;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using XREngine.Components;
 using XREngine.Components.Lights;
 using XREngine.Data.Core;
@@ -13,6 +14,7 @@ using XREngine.Rendering.Compute;
 using XREngine.Rendering.Info;
 using XREngine.Rendering.Picking;
 using XREngine.Rendering.RenderGraph;
+using XREngine.Rendering.Resources;
 using XREngine.Rendering.UI;
 using XREngine.Rendering.Vulkan;
 using XREngine.Scene;
@@ -37,6 +39,9 @@ namespace XREngine.Rendering
         /// <summary>Canonical output request frozen for the current render dispatch.</summary>
         public RenderOutputRequest CurrentFrameOutputRequest { get; private set; }
         private long _sceneRenderSequenceId;
+        private long _nextFrameViewHistorySequenceId;
+        private long _pendingFrameViewHistorySequenceId;
+        private long _renderingFrameViewHistorySequenceId;
         private readonly RenderFrameViewHistoryLedger _frameViewHistoryLedger = new();
 
         /// <summary>
@@ -86,6 +91,11 @@ namespace XREngine.Rendering
         /// Contains the mesh render commands, framebuffers, and other rendering state.
         /// </summary>
         private readonly XRRenderPipelineInstance _renderPipeline = new();
+        // Capture diagnostics are emitted only when the resource identity visible to collection changes.
+        // This keeps package provenance available without making normal collection noisy.
+        private int _lastBackendPackageRegistryIdentity = int.MinValue;
+        private int _lastBackendPackageResourceGeneration = int.MinValue;
+        private int _lastBackendPackageDescriptorGeneration = int.MinValue;
 
         /// <summary>
         /// Stable output ownership used to realize the configured pipeline asset for this viewport.
@@ -179,6 +189,12 @@ namespace XREngine.Rendering
         private FrameOutputPacingDecision _pendingFrameOutputPacing;
         private FrameOutputPacingDecision _renderingFrameOutputPacing;
         private bool _pendingFrameOutputSceneDue = true;
+        private ulong _nextExactOutputCollectionGeneration;
+        private ulong _pendingExactOutputCollectionGeneration;
+        private ulong _renderingExactOutputCollectionGeneration;
+        private long _pendingExactOutputPackageGeneration;
+        private RenderCommandCollection? _pendingExactOutputCommandCollection;
+        private RenderCommandCollection? _renderingExactOutputCommandCollection;
         private bool _renderingFrameOutputSceneDue = true;
         private double _skippedSceneRenderDeltaSeconds;
 
@@ -273,6 +289,60 @@ namespace XREngine.Rendering
         /// </summary>
         internal ulong SceneRenderSequenceId => unchecked((ulong)Volatile.Read(ref _sceneRenderSequenceId));
 
+        private ulong AllocateFrameViewHistorySequence()
+        {
+            long sequence;
+            do
+            {
+                sequence = Interlocked.Increment(
+                    ref _nextFrameViewHistorySequenceId);
+            }
+            while (sequence == 0L);
+            return unchecked((ulong)sequence);
+        }
+
+        private ulong ConsumeRenderingFrameViewHistorySequence()
+        {
+            long sequence = Interlocked.Exchange(
+                ref _renderingFrameViewHistorySequenceId,
+                0L);
+            return sequence == 0L
+                ? AllocateFrameViewHistorySequence()
+                : unchecked((ulong)sequence);
+        }
+
+        private void TransferPendingFrameViewHistorySequence(bool sceneAccepted)
+        {
+            long pending = Interlocked.Exchange(
+                ref _pendingFrameViewHistorySequenceId,
+                0L);
+            long replaced = Interlocked.Exchange(
+                ref _renderingFrameViewHistorySequenceId,
+                sceneAccepted ? pending : 0L);
+            if (replaced != 0L)
+            {
+                DiscardUnresolvedDesktopFrameViewHistory(
+                    unchecked((ulong)replaced));
+            }
+            if (!sceneAccepted && pending != 0L)
+            {
+                DiscardUnresolvedDesktopFrameViewHistory(
+                    unchecked((ulong)pending));
+            }
+        }
+
+        private void PublishPendingFrameViewHistorySequence(ulong sequence)
+        {
+            long replaced = Interlocked.Exchange(
+                ref _pendingFrameViewHistorySequenceId,
+                unchecked((long)sequence));
+            if (replaced != 0L && unchecked((ulong)replaced) != sequence)
+            {
+                DiscardUnresolvedDesktopFrameViewHistory(
+                    unchecked((ulong)replaced));
+            }
+        }
+
         /// <summary>
         /// Freezes one desktop view descriptor for the output sequence that visibility and rendering share.
         /// This is intentionally authoring-side history; deferred backend submission owns a later receipt.
@@ -284,7 +354,8 @@ namespace XREngine.Rendering
             ulong pipelineIdentity,
             bool authoring,
             in RenderFrameViewDescriptor current,
-            out bool accepted)
+            out bool accepted,
+            out RenderFrameViewHistoryCandidateToken candidate)
             => _frameViewHistoryLedger.Capture(
                 outputSequence,
                 sourceFrame,
@@ -294,7 +365,18 @@ namespace XREngine.Rendering
                 FrameOutputIdentity,
                 authoring,
                 current,
-                out accepted);
+                out accepted,
+                out candidate);
+
+        internal void DiscardUnresolvedDesktopFrameViewHistory(ulong sequence)
+            => _frameViewHistoryLedger.DiscardUnresolved(sequence);
+
+        /// <summary>
+        /// Gets a bounded, allocation-free snapshot of this viewport's desktop
+        /// temporal-history ownership state.
+        /// </summary>
+        public RenderFrameViewHistorySnapshot FrameViewHistorySnapshot
+            => _frameViewHistoryLedger.CaptureSnapshot();
 
         WindowInputSnapshot IRuntimeLocalPlayerViewport.ConsumeInputSnapshot()
             => Window?.ConsumeLatestWindowInputSnapshot() ?? default;
@@ -584,8 +666,10 @@ namespace XREngine.Rendering
         internal void RefreshRenderPipelineOutputBinding()
         {
             System.Threading.Interlocked.Increment(ref _pipelineOutputBindingRevision);
-            if (RuntimeEngine.IsRenderThread ||
-                !RuntimeRenderingHostServices.FrameTiming.IsRendererActive)
+            // Renderer activity is context-local: an HTTP/update worker sees no
+            // active renderer even while the render thread owns live GL fences.
+            // Only the pre-render-thread startup phase may publish inline off-thread.
+            if (RuntimeEngine.IsRenderThread || RuntimeEngine.RenderThreadId == 0)
             {
                 ApplyLatestRenderPipelineOutputBindingRefresh();
                 return;
@@ -1176,14 +1260,31 @@ namespace XREngine.Rendering
         /// <param name="renderCommandsOverride">Optional render command collection to populate instead of the pipeline's default collection.</param>
         /// <param name="allowScreenSpaceUICollectVisible">When true, also collects screen-space UI elements. Default: true.</param>
         /// <param name="collectionVolumeOverride">Optional custom volume for visibility testing instead of the camera's frustum.</param>
+        /// <param name="frameOutputPacing">Optional output scheduling decision shared with the later swap and render callbacks.</param>
         public void CollectVisible(
             bool collectMirrors = true,
             IRuntimeRenderWorld? worldOverride = null,
             XRCamera? cameraOverride = null,
             RenderCommandCollection? renderCommandsOverride = null,
             bool allowScreenSpaceUICollectVisible = true,
-            IVolume? collectionVolumeOverride = null)
+            IVolume? collectionVolumeOverride = null,
+            FrameOutputPacingDecision? frameOutputPacing = null)
         {
+            FrameOutputPacingDecision explicitPacing =
+                frameOutputPacing.GetValueOrDefault();
+            bool exactOutputCollection =
+                frameOutputPacing.HasValue &&
+                explicitPacing.Request.IsDefined;
+            if (exactOutputCollection)
+            {
+                _pendingFrameOutputPacing = explicitPacing;
+                _pendingFrameOutputSceneDue = false;
+                _pendingExactOutputCollectionGeneration = 0UL;
+                _pendingExactOutputPackageGeneration = 0L;
+                _pendingExactOutputCommandCollection = null;
+                _renderingExactOutputCollectionGeneration = 0UL;
+                _renderingExactOutputCommandCollection = null;
+            }
             if (_destroyed)
                 return;
 
@@ -1267,6 +1368,23 @@ namespace XREngine.Rendering
                 publishedViews.ViewCount > 1 &&
                 camera.StereoEyeLeft.HasValue;
             XRRenderPipelineInstance.RenderingState visibilityState = _renderPipeline.CollectVisibleState;
+            ulong visibilityHistorySequence = IsDesktopFacingOutput()
+                ? AllocateFrameViewHistorySequence()
+                : 0UL;
+            if (visibilityHistorySequence != 0UL)
+                PublishPendingFrameViewHistorySequence(visibilityHistorySequence);
+            RenderOutputRequest explicitVisibilityRequest =
+                frameOutputPacing?.Request ?? default;
+            RenderOutputRequest visibilityHistoryRequest =
+                explicitVisibilityRequest.IsDefined
+                    ? explicitVisibilityRequest
+                    : _pendingFrameOutputPacing.Request.IsDefined
+                    ? _pendingFrameOutputPacing.Request
+                    : CurrentFrameOutputRequest;
+            ulong visibilityHistorySourceFrame =
+                visibilityHistoryRequest.IsDefined
+                    ? visibilityHistoryRequest.FrameId
+                    : State.RenderFrameId;
             using var visibilityStateScope = visibilityState.PushMainAttributes(
                 this,
                 visualScene,
@@ -1279,9 +1397,11 @@ namespace XREngine.Rendering
                 screenSpaceUI: null,
                 meshRenderCommands: commandCollection,
                 applyRenderArea: false,
-                viewHistorySequenceId: IsDesktopFacingOutput() ? unchecked((ulong)(Volatile.Read(ref _sceneRenderSequenceId) + 1L)) : 0UL,
+                viewHistorySequenceId: visibilityHistorySequence,
                 viewHistoryPipelineIdentity: _renderPipeline.TemporalHistoryPipelineIdentity,
-                viewHistoryAuthoring: false);
+                viewHistoryAuthoring: false,
+                viewHistorySourceFrame: visibilityHistorySourceFrame,
+                viewHistoryOutputRequest: visibilityHistoryRequest);
 
             if (visualScene is VisualScene3D scene3D)
             {
@@ -1341,6 +1461,18 @@ namespace XREngine.Rendering
                 CollectVisible_ScreenSpaceUI();
 
             PrepareBackendReadyFramePackage(commandCollection);
+            if (exactOutputCollection)
+            {
+                ulong generation = unchecked(
+                    ++_nextExactOutputCollectionGeneration);
+                if (generation == 0UL)
+                    generation = unchecked(++_nextExactOutputCollectionGeneration);
+                _pendingExactOutputCollectionGeneration = generation;
+                _pendingExactOutputPackageGeneration = commandCollection
+                    .UpdatingBackendReadyPackage.PackageGeneration;
+                _pendingExactOutputCommandCollection = commandCollection;
+                _pendingFrameOutputSceneDue = true;
+            }
         }
 
         /// <summary>
@@ -1349,8 +1481,10 @@ namespace XREngine.Rendering
         /// </summary>
         private void PrepareBackendReadyFramePackage(RenderCommandCollection commandCollection)
         {
-            int descriptorGeneration =
-                _renderPipeline.ActiveGeneration?.Registry.DescriptorRevision ?? 0;
+            RenderResourceGeneration? activeGeneration = _renderPipeline.ActiveGeneration;
+            RenderResourceRegistry? activeRegistry = activeGeneration?.Registry;
+            int descriptorGeneration = activeRegistry?.DescriptorRevision ?? 0;
+            int registryIdentity = activeRegistry is null ? 0 : RuntimeHelpers.GetHashCode(activeRegistry);
             long collectGeneration = _renderPipeline.AssignedPipeline is ShadowRenderPipeline
                 ? BackendReadyFramePackageIdentity.RetainedCollectGeneration
                 : RuntimeRenderingHostServices.FrameTiming.RequestedCollectGeneration;
@@ -1366,6 +1500,22 @@ namespace XREngine.Rendering
                 dimensions.DisplayHeight,
                 dimensions.InternalWidth,
                 dimensions.InternalHeight);
+            if (_lastBackendPackageRegistryIdentity != registryIdentity ||
+                _lastBackendPackageResourceGeneration != identity.ResourceGeneration ||
+                _lastBackendPackageDescriptorGeneration != identity.DescriptorGeneration)
+            {
+                _lastBackendPackageRegistryIdentity = registryIdentity;
+                _lastBackendPackageResourceGeneration = identity.ResourceGeneration;
+                _lastBackendPackageDescriptorGeneration = identity.DescriptorGeneration;
+                Debug.Rendering(
+                    "[RenderFramePackage] Captured package ownership. Viewport={0} Instance={1} Registry={2} PackageResource={3} PackageDescriptor={4} Collect={5}",
+                    Index,
+                    _renderPipeline.InstanceId,
+                    registryIdentity,
+                    identity.ResourceGeneration,
+                    identity.DescriptorGeneration,
+                    identity.CollectGeneration);
+            }
             commandCollection.PrepareBackendReadyFramePackage(
                 identity,
                 World?.VisualScene?.GPUCommands,
@@ -1483,7 +1633,7 @@ namespace XREngine.Rendering
             }
 
             long started = System.Diagnostics.Stopwatch.GetTimestamp();
-            CollectVisible();
+            CollectVisible(frameOutputPacing: pacing);
             RecordFrameOutput(
                 EFrameOutputPhase.Collect,
                 pacing,
@@ -1545,6 +1695,33 @@ namespace XREngine.Rendering
             {
                 using var uiSample = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRViewport.SwapBuffers.ScreenSpaceUI");
                 SwapBuffers_ScreenSpaceUI();
+            }
+            TransferPendingFrameViewHistorySequence(sceneAccepted: true);
+            if (_pendingExactOutputCollectionGeneration != 0UL &&
+                ReferenceEquals(
+                    _pendingExactOutputCommandCollection,
+                    commandCollection) &&
+                commandCollection.RenderingBackendReadyPackage.State ==
+                    EBackendReadyFramePackageState.Published &&
+                commandCollection.RenderingBackendReadyPackage.PackageGeneration ==
+                    _pendingExactOutputPackageGeneration)
+            {
+                _renderingFrameOutputPacing = _pendingFrameOutputPacing;
+                _renderingFrameOutputSceneDue = true;
+                _renderingExactOutputCollectionGeneration =
+                    _pendingExactOutputCollectionGeneration;
+                _pendingExactOutputCollectionGeneration = 0UL;
+                _pendingExactOutputPackageGeneration = 0L;
+                _renderingExactOutputCommandCollection = commandCollection;
+                _pendingExactOutputCommandCollection = null;
+            }
+            else if (_pendingExactOutputCollectionGeneration != 0UL)
+            {
+                _pendingExactOutputCollectionGeneration = 0UL;
+                _pendingExactOutputPackageGeneration = 0L;
+                _pendingExactOutputCommandCollection = null;
+                _renderingExactOutputCollectionGeneration = 0UL;
+                _renderingExactOutputCommandCollection = null;
             }
         }
 
@@ -1622,6 +1799,7 @@ namespace XREngine.Rendering
                 // Skip 3D command buffer swap but still swap UI buffers
                 // so the editor overlay stays responsive.
                 SwapBuffers_ScreenSpaceUI();
+                TransferPendingFrameViewHistorySequence(sceneAccepted: false);
                 _renderingFrameOutputPacing = pacing;
                 _renderingFrameOutputSceneDue = false;
                 RecordFrameOutput(
@@ -1638,6 +1816,7 @@ namespace XREngine.Rendering
             {
                 long skipStart = System.Diagnostics.Stopwatch.GetTimestamp();
                 SwapBuffers_ScreenSpaceUI();
+                TransferPendingFrameViewHistorySequence(sceneAccepted: false);
                 _renderingFrameOutputPacing = pacing;
                 _renderingFrameOutputSceneDue = false;
                 RecordFrameOutput(
@@ -1705,7 +1884,69 @@ namespace XREngine.Rendering
             XRCamera? cameraOverride = null,
             bool shadowPass = false,
             XRMaterial? forcedMaterial = null)
+            => TryRenderInternal(
+                targetFbo,
+                worldOverride,
+                cameraOverride,
+                shadowPass,
+                forcedMaterial,
+                default,
+                out _,
+                out _);
+
+        public bool TryRenderWithCompletion(
+            XRFrameBuffer targetFbo,
+            in RenderOutputRequest outputRequest,
+            out XRGpuFence? completionFence,
+            IRuntimeRenderWorld? worldOverride = null,
+            XRCamera? cameraOverride = null,
+            XRMaterial? forcedMaterial = null)
+            => TryRenderInternal(
+                targetFbo,
+                worldOverride,
+                cameraOverride,
+                shadowPass: false,
+                forcedMaterial,
+                in outputRequest,
+                out completionFence,
+                out _);
+
+        /// <summary>
+        /// Records an exact output and reports whether a missing fence is a clean
+        /// pre-authoring rejection or an unsafe unfenced backend write.
+        /// </summary>
+        public bool TryRenderWithCompletion(
+            XRFrameBuffer targetFbo,
+            in RenderOutputRequest outputRequest,
+            out XRGpuFence? completionFence,
+            out ERenderOutputCompletionAuthoringDisposition disposition,
+            IRuntimeRenderWorld? worldOverride = null,
+            XRCamera? cameraOverride = null,
+            XRMaterial? forcedMaterial = null)
+            => TryRenderInternal(
+                targetFbo,
+                worldOverride,
+                cameraOverride,
+                shadowPass: false,
+                forcedMaterial,
+                in outputRequest,
+                out completionFence,
+                out disposition);
+
+        private bool TryRenderInternal(
+            XRFrameBuffer? targetFbo,
+            IRuntimeRenderWorld? worldOverride,
+            XRCamera? cameraOverride,
+            bool shadowPass,
+            XRMaterial? forcedMaterial,
+            in RenderOutputRequest outputCompletionRequest,
+            out XRGpuFence? completionFence,
+            out ERenderOutputCompletionAuthoringDisposition completionDisposition)
         {
+            completionFence = null;
+            completionDisposition = ERenderOutputCompletionAuthoringDisposition.RejectedBeforeAuthoring;
+            if (outputCompletionRequest.IsDefined && targetFbo is null)
+                return false;
             if (_destroyed)
                 return false;
 
@@ -1714,9 +1955,36 @@ namespace XREngine.Rendering
             if (ShouldSuspendPipelineWork(nameof(Render)))
                 return false;
 
+            long outputCompletionCollectGeneration = -1L;
+            if (outputCompletionRequest.IsDefined)
+            {
+                if (_renderingExactOutputCollectionGeneration == 0UL ||
+                    !_renderingFrameOutputPacing.Request.Equals(
+                        outputCompletionRequest) ||
+                    _renderingExactOutputCommandCollection is not
+                        { } exactOutputCommandCollection ||
+                    !ReferenceEquals(
+                        exactOutputCommandCollection,
+                        MeshRenderCommandsOverride ??
+                            _renderPipeline.MeshRenderCommands))
+                    return false;
+
+                outputCompletionCollectGeneration =
+                    exactOutputCommandCollection
+                        .RenderingBackendReadyPackage.Identity.CollectGeneration;
+                _renderingExactOutputCollectionGeneration = 0UL;
+                _renderingExactOutputCommandCollection = null;
+            }
+
             FrameOutputPacingDecision pacing = _renderingFrameOutputPacing.FrameId != 0UL
                 ? _renderingFrameOutputPacing
                 : FrameOutputPacingDecision.Due(ResolveOutputViewKind(), ResolveFrameOutputKind(), State.RenderFrameId);
+            RenderOutputRequest historyOutputRequest = outputCompletionRequest.IsDefined
+                ? outputCompletionRequest
+                : pacing.Request.IsDefined
+                ? pacing.Request
+                : BuildFrameOutputRequest(in pacing);
+            CurrentFrameOutputRequest = historyOutputRequest;
 
             if (targetFbo is null && !_renderingFrameOutputSceneDue && IsDesktopFacingOutput())
             {
@@ -1828,14 +2096,69 @@ namespace XREngine.Rendering
                     SkinningPrepassDispatcher.Instance.RunVisible(activeCommands);
 
                 LastRenderedTargetFBO = targetFbo;
-                ulong issuedSequence = unchecked((ulong)Interlocked.Increment(ref _sceneRenderSequenceId));
+                _ = Interlocked.Increment(ref _sceneRenderSequenceId);
                 bool tracksDesktopHistory = !Suppress3DSceneRendering && !shadowPass && IsDesktopFacingOutput();
-                if (!tracksDesktopHistory && !shadowPass && IsDesktopFacingOutput())
-                    _frameViewHistoryLedger.Discard(issuedSequence);
+                ulong issuedSequence = tracksDesktopHistory
+                    ? ConsumeRenderingFrameViewHistorySequence()
+                    : 0UL;
+                RenderFrameViewDescriptor? frozenDesktopView = null;
+                RenderFrameViewHistoryCandidateToken frozenHistoryCandidate =
+                    default;
+                if (tracksDesktopHistory)
+                {
+                    // History follows the output scheduling cohort. Collection
+                    // and render callbacks can observe different engine-frame
+                    // counters while still producing the same scheduled output.
+                    ulong sourceFrame = historyOutputRequest.FrameId;
+                    RenderFrameViewDescriptor currentView =
+                        RenderFrameViewSetCapture.CaptureView(
+                            camera,
+                            EVrOutputViewKind.DesktopEditor,
+                            0u,
+                            (uint)Math.Max(1, InternalWidth),
+                            (uint)Math.Max(1, InternalHeight),
+                            RenderFrameViewSetCapture.MonoHistoryKey);
+                    RenderFrameViewDescriptor capturedView =
+                        CaptureDesktopFrameViewHistory(
+                            issuedSequence,
+                            sourceFrame,
+                            camera,
+                            _renderPipeline.TemporalHistoryPipelineIdentity,
+                            authoring: true,
+                            in currentView,
+                            out bool historyAccepted,
+                            out frozenHistoryCandidate);
+                    if (!historyAccepted ||
+                        !frozenHistoryCandidate.IsValid)
+                    {
+                        RenderFrameViewHistorySnapshot snapshot =
+                            _frameViewHistoryLedger.CaptureSnapshot();
+                        Debug.RenderingWarningEvery(
+                            $"XRViewport.FrameViewHistory.AuthoringRejected.{GetHashCode()}[{Index}]",
+                            TimeSpan.FromSeconds(1),
+                            "[FrameViewHistory] Authoring rejected. VP[{0}] Sequence={1} SourceFrame={2} RequestDefined={3} RequestFrame={4} Pending={5} PendingRange={6}-{7} CommittedValid={8} CommittedSequence={9} Commits={10} Discards={11}",
+                            Index,
+                            issuedSequence,
+                            sourceFrame,
+                            historyOutputRequest.IsDefined,
+                            historyOutputRequest.FrameId,
+                            snapshot.PendingCount,
+                            snapshot.PendingMinimumSequence,
+                            snapshot.PendingMaximumSequence,
+                            snapshot.CommittedHistoryValid,
+                            snapshot.CommittedSequence,
+                            snapshot.EffectiveCommitCount,
+                            snapshot.EffectiveDiscardCount);
+                        frozenHistoryCandidate.Discard();
+                        return false;
+                    }
+                    frozenDesktopView = capturedView;
+                }
                 bool recorded;
+                bool outputCompletionAuthoringStarted;
                 try
                 {
-                    recorded = _renderPipeline.TryRender(
+                    recorded = _renderPipeline.TryRenderWithFrozenDesktopHistory(
                         world.VisualScene,
                         camera,
                         null,
@@ -1846,20 +2169,28 @@ namespace XREngine.Rendering
                         false,
                         forcedMaterial,
                         meshRenderCommandsOverride: MeshRenderCommandsOverride,
-                        viewHistorySequenceId: tracksDesktopHistory ? issuedSequence : 0UL);
+                        viewHistorySequenceId: tracksDesktopHistory ? issuedSequence : 0UL,
+                        viewHistoryOutputRequest: historyOutputRequest,
+                        frozenDesktopView: frozenDesktopView,
+                        frozenHistoryCandidate: frozenHistoryCandidate,
+                        outputCompletionRequest: outputCompletionRequest,
+                        outputCompletionCollectGeneration:
+                            outputCompletionCollectGeneration,
+                        completionFence: out completionFence,
+                        outputCompletionAuthoringStarted:
+                            out outputCompletionAuthoringStarted);
                 }
-                catch
+                finally
                 {
                     if (tracksDesktopHistory)
-                        _frameViewHistoryLedger.Discard(issuedSequence);
-                    throw;
+                        DiscardUnresolvedDesktopFrameViewHistory(issuedSequence);
                 }
 
-                if (tracksDesktopHistory)
-                {
-                    if (!recorded)
-                        _frameViewHistoryLedger.Discard(issuedSequence);
-                }
+                completionDisposition = outputCompletionAuthoringStarted
+                    ? completionFence is null
+                        ? ERenderOutputCompletionAuthoringDisposition.UnfencedAfterAuthoring
+                        : ERenderOutputCompletionAuthoringDisposition.AwaitingCompletion
+                    : ERenderOutputCompletionAuthoringDisposition.RejectedBeforeAuthoring;
 
                 if (!uiThroughPipeline)
                     RenderScreenSpaceUIOverlay(targetFbo);
@@ -2099,6 +2430,10 @@ namespace XREngine.Rendering
 
         private bool IsDesktopFacingOutput()
         {
+            // Offscreen products own exact writer receipts and must not acquire
+            // the desktop history ledger merely because their camera is mono.
+            if (PipelineRequest.Purpose == ERenderPipelinePurpose.OffscreenCapture)
+                return false;
             EVrOutputViewKind viewKind = ResolveOutputViewKind();
             return viewKind is EVrOutputViewKind.DesktopEditor or EVrOutputViewKind.CyclopeanDesktop;
         }
@@ -2970,6 +3305,88 @@ namespace XREngine.Rendering
         public Segment GetWorldSegment(Vector2 normalizedViewportPoint, bool useUnjitteredProjection = false)
             => _camera?.GetWorldSegment(normalizedViewportPoint, useUnjitteredProjection)
                 ?? new Segment(Vector3.Zero, Vector3.Zero);
+
+        /// <summary>
+        /// Queues a generation-safe asynchronous pick from the Advanced visibility attachments.
+        /// A newer request supersedes an older pending request before its callback can affect selection.
+        /// </summary>
+        public bool TryPickAdvancedAsync(
+            Vector2 normalizedViewportPosition,
+            uint viewIndex,
+            Action<AdvancedPickingResult> completed,
+            out AdvancedPickingRequest? request,
+            out string? failure)
+        {
+            if (!RuntimeEngine.IsRenderThread)
+            {
+                // The current renderer/context is transient between frames and is
+                // not an admission signal for a request queued from another thread.
+                if (_destroyed || RuntimeRenderingHostServices.FrameTiming.IsShuttingDown || RuntimeEngine.Windows.Count == 0)
+                {
+                    request = null;
+                    failure = "Advanced picking cannot be queued after viewport destruction, without a render window, or during shutdown.";
+                    return false;
+                }
+
+                var queued = RuntimeRenderingHostServices.Scheduling.InvokeRenderThreadTask(
+                    () =>
+                    {
+                        bool accepted = TryPickAdvancedAsync(
+                            normalizedViewportPosition,
+                            viewIndex,
+                            completed,
+                            out AdvancedPickingRequest? renderRequest,
+                            out string? renderFailure);
+                        return (accepted, renderRequest, renderFailure);
+                    },
+                    "XRViewport.AdvancedPickingReadback",
+                    RenderThreadJobKind.Readback);
+                request = queued.renderRequest;
+                failure = queued.renderFailure;
+                return queued.accepted;
+            }
+
+            int width = InternalWidth;
+            int height = InternalHeight;
+            if (width <= 0 || height <= 0 ||
+                !float.IsFinite(normalizedViewportPosition.X) ||
+                !float.IsFinite(normalizedViewportPosition.Y) ||
+                normalizedViewportPosition.X < 0.0f ||
+                normalizedViewportPosition.X > 1.0f ||
+                normalizedViewportPosition.Y < 0.0f ||
+                normalizedViewportPosition.Y > 1.0f)
+            {
+                request = null;
+                failure = "The Advanced picking coordinate is outside the active internal viewport.";
+                return false;
+            }
+
+            uint x = (uint)Math.Min(width - 1, (int)(normalizedViewportPosition.X * width));
+            uint y = (uint)Math.Min(height - 1, (int)(normalizedViewportPosition.Y * height));
+            AdvancedPickingQuery query = new(x, y, viewIndex);
+            AbstractRenderer? renderer = Window?.Renderer ?? AbstractRenderer.Current;
+            if (renderer is null)
+            {
+                request = null;
+                failure = "The viewport has no renderer for Advanced picking readback.";
+                return false;
+            }
+
+            if (!TryEnterRenderPipelineReadbackScope(out IDisposable? readbackScope))
+            {
+                request = null;
+                failure = "The viewport's published render-resource generation is not available for Advanced picking readback.";
+                return false;
+            }
+
+            using (readbackScope)
+                return _renderPipeline.TryQueueAdvancedPicking(
+                    renderer,
+                    query,
+                    completed,
+                    out request,
+                    out failure);
+        }
 
         //TODO: provide PickScene with a List<(XRComponent item, object? data)> pool to take from and release to. As few allocations as possible for constant picking every frame.
 

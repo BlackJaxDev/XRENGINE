@@ -14,10 +14,12 @@ internal sealed partial class VulkanAdvancedVisibilityResourceRuntime
         VulkanPhysicalImageGroup diagnostics, VulkanPhysicalImageGroup ambientOcclusion, uint slot,
         string activeName, string kernelName, string counterName, string dispatchName,
         string countName, string froxelName, string indexName, string lightingName,
+        string decalFroxelName, string decalIndexName,
         ref VulkanFrozenBufferBarrier active, ref VulkanFrozenBufferBarrier kernels,
         ref VulkanFrozenBufferBarrier counters, ref VulkanFrozenBufferBarrier dispatch,
         ref VulkanFrozenBufferBarrier counts, ref VulkanFrozenBufferBarrier froxels,
         ref VulkanFrozenBufferBarrier indices, ref VulkanFrozenBufferBarrier lighting,
+        ref VulkanFrozenBufferBarrier decalFroxels, ref VulkanFrozenBufferBarrier decalIndices,
         out string reason)
     {
         if (slot >= AdvancedFrameSlotContract.DefaultSlotCount)
@@ -62,7 +64,27 @@ internal sealed partial class VulkanAdvancedVisibilityResourceRuntime
             Check(in plannerState, countName, ref counts, AdvancedRenderPipeline.DefaultMaxShadingKernels * sizeof(uint), EBufferTarget.ShaderStorageBuffer, false, true, out reason) &&
             CheckFroxels(in plannerState, froxelName, ref froxels, tiles, out reason) &&
             Check(in plannerState, indexName, ref indices, AdvancedRenderPipeline.DefaultLightIndexListCapacity * sizeof(uint), EBufferTarget.ShaderStorageBuffer, false, false, out reason) &&
-            Check(in plannerState, lightingName, ref lighting, 2UL * sizeof(uint), EBufferTarget.ShaderStorageBuffer, false, true, out reason);
+            Check(in plannerState, lightingName, ref lighting, 4UL * sizeof(uint), EBufferTarget.ShaderStorageBuffer, false, true, out reason) &&
+            CheckDecalFroxels(in plannerState, decalFroxelName, ref decalFroxels, tiles, out reason) &&
+            Check(in plannerState, decalIndexName, ref decalIndices, AdvancedRenderPipeline.DefaultDecalIndexListCapacity * sizeof(uint), EBufferTarget.ShaderStorageBuffer, false, false, out reason);
+    }
+
+    private bool CheckDecalFroxels(in ResourcePlannerRuntimeState plannerState, string name,
+        ref VulkanFrozenBufferBarrier buffer, ulong tiles, out string reason)
+    {
+        if (!GetBuffer(in plannerState, name, buffer, out EBufferTarget target,
+                out ulong size, out BufferUsageFlags usage, out reason))
+            return false;
+        if (target != EBufferTarget.ShaderStorageBuffer ||
+            (usage & BufferUsageFlags.StorageBufferBit) == 0 ||
+            size % 8UL != 0u || size / 8UL < tiles || size / 8UL % tiles != 0u)
+        {
+            reason = "The decal-froxel range must exactly cover an integral 8-byte compact decal grid.";
+            return false;
+        }
+        buffer = buffer with { NativeSize = size };
+        reason = "Ready";
+        return true;
     }
 
     private static bool HasImage(VulkanPhysicalImageGroup group, Format format, ImageUsageFlags usage)

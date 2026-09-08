@@ -1,0 +1,95 @@
+// Static endpoint/corner data is expanded per eye on the GPU. No geometry stage
+// is needed, so OVR_multiview2 alone can render the editor's screen-space lines.
+layout(location = 0) in vec3 Position;
+layout(location = 1) in vec4 Color0;
+uniform mat4 ModelMatrix;
+uniform mat4 ViewProjectionMatrix_VTX;
+uniform mat4 LeftEyeViewProjectionMatrix_VTX;
+uniform mat4 RightEyeViewProjectionMatrix_VTX;
+uniform vec4 MatColor;
+uniform float ScreenWidth;
+uniform float ScreenHeight;
+uniform int ClipDepthRange;
+uniform int DepthMode;
+
+#if XR_GIZMO_ARROW
+uniform float ArrowHeadLengthPixels;
+uniform float ArrowHeadHalfWidthPixels;
+layout(location = 0) flat out vec4 ArrowColor;
+layout(location = 1) noperspective out vec3 ArrowBarycentric;
+#else
+uniform float LineWidth;
+layout(location = 0) flat out vec4 GizmoLineColor;
+layout(location = 1) noperspective out float GizmoLineDistancePixels;
+layout(location = 2) flat out float GizmoLineHalfWidthPixels;
+#endif
+
+bool ClipGizmoSegment(inout vec4 a, inout vec4 b)
+{
+    float da = DepthMode == 1 ? a.w - a.z : (ClipDepthRange == 1 ? a.z + a.w : a.z);
+    float db = DepthMode == 1 ? b.w - b.z : (ClipDepthRange == 1 ? b.z + b.w : b.z);
+    if (da < 0.0 && db < 0.0)
+        return false;
+    if (da < 0.0 || db < 0.0)
+    {
+        float denominator = da - db;
+        float t = abs(denominator) < 1e-6 ? 0.0 : da / denominator;
+        vec4 p = mix(a, b, clamp(t, 0.0, 1.0));
+        if (da < 0.0)
+            a = p;
+        else
+            b = p;
+    }
+    return a.w > 1e-6 && b.w > 1e-6;
+}
+
+vec4 ExpandGizmoCorner(mat4 viewProjection, int corner)
+{
+#if XR_GIZMO_ARROW
+    bool atEnd = corner == 0;
+#else
+    bool atEnd = corner >= 2;
+#endif
+    mat4 mvp = viewProjection * ModelMatrix;
+    vec4 start = mvp * vec4(atEnd ? Color0.xyz : Position, 1.0);
+    vec4 end = mvp * vec4(atEnd ? Position : Color0.xyz, 1.0);
+    if (!ClipGizmoSegment(start, end))
+        return vec4(0.0, 0.0, 2.0, 1.0);
+
+    vec2 viewport = max(vec2(ScreenWidth, ScreenHeight), vec2(1.0));
+    vec2 halfViewport = viewport * 0.5;
+    vec2 screenStart = start.xy / start.w * halfViewport;
+    vec2 screenEnd = end.xy / end.w * halfViewport;
+    vec2 delta = screenEnd - screenStart;
+    float len2 = dot(delta, delta);
+    vec2 direction = len2 < 1e-6 ? vec2(1.0, 0.0) : delta * inversesqrt(len2);
+    vec2 perpendicular = vec2(-direction.y, direction.x);
+#if XR_GIZMO_ARROW
+    vec2 baseCenter = screenEnd - direction * max(1.0, ArrowHeadLengthPixels);
+    vec2 screen = corner == 0 ? screenEnd : baseCenter +
+        perpendicular * max(1.0, ArrowHeadHalfWidthPixels) * (corner == 1 ? 1.0 : -1.0);
+    return vec4(screen / halfViewport * end.w, end.zw);
+#else
+    float rasterHalfWidth = max(0.45, LineWidth * 0.5) + 0.85;
+    float sign = (corner & 1) == 0 ? 1.0 : -1.0;
+    vec4 position = atEnd ? end : start;
+    position.xy += perpendicular * rasterHalfWidth * sign * (2.0 / viewport) * position.w;
+    return position;
+#endif
+}
+
+// Keep API-specific position built-ins in the entry shader. Backend admission
+// examines resolved source before the GLSL compiler removes inactive branches.
+int InitializeGizmoCorner()
+{
+    int corner = int(Color0.w + 0.5);
+#if XR_GIZMO_ARROW
+    ArrowColor = MatColor;
+    ArrowBarycentric = corner == 0 ? vec3(1, 0, 0) : (corner == 1 ? vec3(0, 1, 0) : vec3(0, 0, 1));
+#else
+    GizmoLineColor = MatColor;
+    GizmoLineHalfWidthPixels = max(0.45, LineWidth * 0.5);
+    GizmoLineDistancePixels = (GizmoLineHalfWidthPixels + 0.85) * ((corner & 1) == 0 ? 1.0 : -1.0);
+#endif
+    return corner;
+}

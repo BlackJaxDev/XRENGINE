@@ -28,6 +28,11 @@ namespace XREngine.Scene.Components.Particles;
 [XRComponentEditor("XREngine.Editor.ComponentEditors.GPUParticleEmitterComponentEditor")]
 public class ParticleEmitterComponent : XRComponent, IRenderable
 {
+    /// <summary>Admission boundary exposed by both the component inspector and MCP.</summary>
+    [Category("Rendering"), DisplayName("Advanced Rendering Unsupported Reason"), YamlIgnore]
+    public string AdvancedRenderingUnsupportedReason
+        => "Advanced rendering does not yet admit this particle callback's alive-list instancing, blend targets, and temporal outputs. Use a supported authored mesh lane or a different pipeline.";
+
     #region Constants
 
     /// <summary>
@@ -610,7 +615,9 @@ public class ParticleEmitterComponent : XRComponent, IRenderable
         var material = new XRMaterial(vertShader, fragShader)
         {
             RenderPass = Rendering.Models.Materials.ShaderHelper.ResolveTransparentRenderPass(particleTransparencyMode),
-            TransparencyMode = particleTransparencyMode
+            TransparencyMode = particleTransparencyMode,
+            AdvancedLatePassMetadata = new(EAdvancedLatePassKind.SpecialEffects,
+                unsupportedReason: AdvancedRenderingUnsupportedReason),
         };
 
         // Set blend mode based on property
@@ -663,6 +670,15 @@ public class ParticleEmitterComponent : XRComponent, IRenderable
 
     private void RenderParticles()
     {
+        // Method render commands do not pass through the mesh-material eligibility
+        // filter. Preserve that admission boundary at the actual callback as well.
+        if (RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline is IAdvancedRenderStageFamilyHost)
+        {
+            if (Debug.ShouldLogEvery("Advanced.ParticleCallbackRejected", TimeSpan.FromSeconds(5)))
+                Debug.RenderingWarning("[AdvancedParticles] {0}", AdvancedRenderingUnsupportedReason);
+            return;
+        }
+
         if (_particleRenderer is null || _counters.AliveCount == 0)
             return;
 

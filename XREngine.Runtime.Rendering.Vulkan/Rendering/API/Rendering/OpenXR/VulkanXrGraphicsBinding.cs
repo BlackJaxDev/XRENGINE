@@ -1,4 +1,5 @@
 using Silk.NET.OpenXR;
+using System.Runtime.CompilerServices;
 using XREngine.Rendering.API.Rendering.OpenXR;
 
 namespace XREngine.Rendering.Vulkan;
@@ -107,6 +108,7 @@ internal sealed partial class VulkanXrGraphicsBinding : IXrGraphicsBinding
 
     private readonly List<RetiredOpenXrSwapchainGeneration> _retiredSwapchainGenerations = new(4);
     private readonly object _retiredSwapchainsGate = new();
+    private long _nextRetiredSwapchainGenerationId;
     // OpenXR requires every acquired image to be released before its
     // swapchain is destroyed. Keep this runtime state separate from GPU
     // completion: a completed Vulkan submission cannot prove xrRelease.
@@ -245,7 +247,8 @@ internal sealed partial class VulkanXrGraphicsBinding : IXrGraphicsBinding
                 true,
                 childReceipt,
                 true,
-                System.Diagnostics.Stopwatch.GetTimestamp());
+                System.Diagnostics.Stopwatch.GetTimestamp(),
+                Interlocked.Increment(ref _nextRetiredSwapchainGenerationId));
 
             try
             {
@@ -319,9 +322,19 @@ internal sealed partial class VulkanXrGraphicsBinding : IXrGraphicsBinding
                     gen.ChildRetirementReceipt.ResourceGenerations);
             if (queryResult != Silk.NET.Vulkan.Result.Success || !completed ||
                 !resourceLifetimeCompleted || !gen.RuntimeImagesReleased ||
-                !gen.ExternalImageLifetimesDetached ||
-                !detachedSlotsReady || !childrenDestroyed)
+                !gen.ExternalImageLifetimesDetached || !detachedSlotsReady || !childrenDestroyed)
+            {
+                LogRetiredSwapchainBlocker(
+                    vulkanRenderer.CommandRuntime.ResourceRuntime,
+                    gen,
+                    _retiredSwapchainGenerations.Count,
+                    queryResult,
+                    completed,
+                    resourceLifetimeCompleted,
+                    detachedSlotsReady,
+                    childrenDestroyed);
                 continue;
+            }
 
             bool allDestroyed = true;
             for (int v = 0; v < gen.ViewCount; v++)
@@ -359,6 +372,54 @@ internal sealed partial class VulkanXrGraphicsBinding : IXrGraphicsBinding
                 _retiredSwapchainGenerations.RemoveAt(i);
             }
         }
+    }
+
+    private void LogRetiredSwapchainBlocker(
+        VulkanResourceRuntime resources,
+        RetiredOpenXrSwapchainGeneration generation,
+        int queuedGenerationCount,
+        Silk.NET.Vulkan.Result timelineQueryResult,
+        bool gpuCompleted,
+        bool resourceLifetimeCompleted,
+        bool detachedSlotsReady,
+        bool childrenDestroyed)
+    {
+        long now = System.Diagnostics.Stopwatch.GetTimestamp();
+        if (now - generation.LastBlockerDiagnosticTimestamp < System.Diagnostics.Stopwatch.Frequency)
+            return;
+
+        generation.LastBlockerDiagnosticTimestamp = now;
+        if (!childrenDestroyed)
+            resources.LogUndestroyedOpenXrChildren(generation.RetirementGenerationId,
+                generation.ChildRetirementReceipt.ResourceGenerations);
+        ulong leftSwapchain = generation.Swapchains.Length > 0 ? generation.Swapchains[0].Handle : 0UL;
+        ulong rightSwapchain = generation.Swapchains.Length > 1 ? generation.Swapchains[1].Handle : 0UL;
+        VulkanRetirementTicket ticket = generation.ResourceLifetimeTicket;
+        Debug.VulkanWarning(
+            "[OpenXR.Retirement] Blocked generation={0} owner=VulkanXrGraphicsBinding#{1} queued={2} views={3} swapchains=0x{4:X}/0x{5:X} gpu=(required={6},query={7},completed={8},timeline=0x{9:X}:{10}) lifetime=(authority={11},ready={12},resourceGeneration={13},graphics={14},transfer={15},other={16}) runtimeImagesReleased={17} externalDetached={18} detachedSlotsReady={19} children=(receiptValid={20},destroyed={21},count={22}).",
+            generation.RetirementGenerationId,
+            RuntimeHelpers.GetHashCode(this),
+            queuedGenerationCount,
+            generation.ViewCount,
+            leftSwapchain,
+            rightSwapchain,
+            generation.RequiresGpuCompletion,
+            timelineQueryResult,
+            gpuCompleted,
+            generation.TimelineSemaphore.Handle,
+            generation.TombstoneTimelineValue,
+            generation.HasResourceLifetimeAuthority,
+            resourceLifetimeCompleted,
+            ticket.ResourceGeneration,
+            ticket.GraphicsSequence,
+            ticket.TransferSequence,
+            ticket.OtherSequence,
+            generation.RuntimeImagesReleased,
+            generation.ExternalImageLifetimesDetached,
+            detachedSlotsReady,
+            generation.ChildRetirementReceipt.IsValid,
+            childrenDestroyed,
+            generation.ChildRetirementReceipt.ResourceGenerations.Length);
     }
 
     private unsafe bool TryCaptureActiveSwapchainResourceLifetimeTicket(

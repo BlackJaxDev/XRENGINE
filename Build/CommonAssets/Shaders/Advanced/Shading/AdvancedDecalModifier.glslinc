@@ -1,39 +1,31 @@
 #ifndef XR_ADVANCED_DECAL_MODIFIER_GLSLINC
 #define XR_ADVANCED_DECAL_MODIFIER_GLSLINC
 
-#include "Advanced/Reconstruction/AdvancedSurface.glslinc"
+#include "Advanced/Shading/StandardMaterial.glslinc"
 
-struct XRAdvancedDecalRecordLight
-{
-    uvec2 identity;
-    uvec2 material;
-    uint flags;
-    uint viewMaskLo;
-    uint viewMaskHi;
-    uint layerMask;
-    mat4 worldToDecal;
-    mat4 previousWorldToDecal;
-    vec4 halfExtentsAndFade;
-    uvec2 maskTexture;
-};
-
-XR_ADV_CLUSTERED_PASS_LAYOUT(15) readonly buffer XRAdvancedDecalsBuffer
-{
-    XRAdvancedDecalRecordLight records[];
-} XR_ADV_GlobalDecals;
+#define XR_ADV_DECAL_ENABLED 1u
+#define XR_ADV_DECAL_AFFECT_NORMALS 2u
 
 void XR_ADV_ApplyDecalToSurface(
     uint decalIndex,
     inout XRAdvancedSurface surface,
-    inout vec3 albedo,
-    inout float roughness)
+    inout vec3 albedo, inout vec3 normal, inout float roughness, inout float metallic)
 {
-    XRAdvancedDecalRecordLight decal = XR_ADV_GlobalDecals.records[decalIndex];
+    if (decalIndex >= uint(XR_ADV_Decals.records.length())) return;
+    XRAdvancedDecalRecord decal = XR_ADV_Decals.records[decalIndex];
+    if ((decal.flags & XR_ADV_DECAL_ENABLED) == 0u) return;
+    if ((decal.viewMaskLo | decal.viewMaskHi) != 0u &&
+        (surface.viewIndex < 32u ? (decal.viewMaskLo & (1u << surface.viewIndex)) == 0u :
+            (surface.viewIndex >= 64u || (decal.viewMaskHi & (1u << (surface.viewIndex - 32u))) == 0u))) return;
+    if (decal.layerMask != 0u && (decal.layerMask & surface.layerMask) == 0u) return;
 
-    vec4 decalLocalPos = decal.worldToDecal * vec4(surface.worldPosition, 1.0);
+    vec4 decalLocalPos = XR_ADV_TransformRowVector(vec4(surface.worldPosition, 1.0), decal.worldToDecal);
+    if (abs(decalLocalPos.w) < 0.00001 || any(isnan(decalLocalPos)) || any(isinf(decalLocalPos))) return;
+    decalLocalPos /= decalLocalPos.w;
 
-    // Box bounds test in decal local space (unit box [-1, 1])
+    // Box bounds test in decal local space.
     vec3 halfExtents = decal.halfExtentsAndFade.xyz;
+    if (any(lessThanEqual(halfExtents, vec3(0.00001)))) return;
     if (abs(decalLocalPos.x) > halfExtents.x ||
         abs(decalLocalPos.y) > halfExtents.y ||
         abs(decalLocalPos.z) > halfExtents.z)
@@ -51,9 +43,34 @@ void XR_ADV_ApplyDecalToSurface(
         halfExtents.z - abs(decalLocalPos.z));
     float weight = clamp(edgeDist / max(fade, 0.001), 0.0, 1.0);
 
-    // Apply decal surface modification
-    albedo = mix(albedo, albedo * 0.5, weight * 0.5);
-    roughness = mix(roughness, 0.8, weight * 0.5);
+    uint materialDense = XR_ADV_ResolveVisibilityHandle(decal.material, VisibilityMaterialLookupSegment, XR_ADV_DIAGNOSTIC_MATERIAL);
+    if (materialDense == XR_ADV_INVALID_DENSE_INDEX || materialDense >= uint(XR_ADV_Materials.records.length())) return;
+    XRAdvancedMaterialRecord material = XR_ADV_LoadMaterial(materialDense);
+    if (!XR_ADV_IsStandardMaterial(material)) return;
+    uint flags = XR_ADV_LoadMaterialConstant(material, XR_ADV_STANDARD_FLAGS_WORD);
+    vec4 decalBase = XR_ADV_StandardVector(material, XR_ADV_STANDARD_BASE_COLOR_WORD);
+    if ((flags & 1u) != 0u) decalBase *= XR_ADV_StandardTexture(material, 0u, decalUv, vec2(0.0), vec2(0.0), vec4(1.0));
+    float opacity = clamp(decalBase.a * weight, 0.0, 1.0);
+    XRAdvancedTextureRecord maskTexture;
+    XRAdvancedEncodedTextureReference maskReference;
+    if (XR_ADV_TryResolveTextureReference(decal.maskTexture.handle,
+        VisibilityTextureLookupSegment, VisibilitySamplerLookupSegment, maskTexture, maskReference))
+        opacity *= XR_ADV_SampleTexture2DGrad(maskReference, decalUv, vec2(0.0), vec2(0.0)).a;
+    if (opacity <= 0.0) return;
+    vec4 decalRmse = XR_ADV_StandardVector(material, XR_ADV_STANDARD_RMSE_WORD);
+    if ((flags & 4u) != 0u) decalRmse.xy *= XR_ADV_StandardTexture(material, 2u, decalUv, vec2(0.0), vec2(0.0), vec4(1.0)).rg;
+    albedo = mix(albedo, decalBase.rgb, opacity);
+    roughness = mix(roughness, clamp(decalRmse.x, 0.04, 1.0), opacity);
+    metallic = mix(metallic, clamp(decalRmse.y, 0.0, 1.0), opacity);
+    if ((decal.flags & XR_ADV_DECAL_AFFECT_NORMALS) != 0u && (flags & 2u) != 0u)
+    {
+        vec3 localNormal = XR_ADV_StandardTexture(material, 1u, decalUv, vec2(0.0), vec2(0.0), vec4(0.5,0.5,1.0,1.0)).xyz * 2.0 - 1.0;
+        // For p_local = p_world * worldToDecal, the local plane normal maps
+        // to world space through worldToDecal itself. This preserves the OBB
+        // tangent basis under non-uniform decal transforms.
+        vec3 projectedNormal = normalize(mat3(decal.worldToDecal) * localNormal);
+        normal = normalize(mix(normal, projectedNormal, opacity));
+    }
 }
 
 #endif // XR_ADVANCED_DECAL_MODIFIER_GLSLINC

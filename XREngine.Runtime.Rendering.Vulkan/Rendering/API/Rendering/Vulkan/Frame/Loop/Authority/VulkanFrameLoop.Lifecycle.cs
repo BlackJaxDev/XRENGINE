@@ -291,7 +291,7 @@ internal sealed partial class VulkanFrameLoop
             failures);
         RunCleanupStep(
             "advanced-visibility set-1 native resources",
-            _resourceRuntime.AdvancedVisibilityResources.RetireAll,
+            _resourceRuntime.RetireAdvancedVisibilityOutputs,
             failures);
         RunCleanupStep("query arenas", _resourceRuntime.Queries.DisposeArenas, failures);
         RunCleanupStep("mesh uniform buffers", _resourceRuntime.DestroyRemainingTrackedMeshUniformBuffers, failures);

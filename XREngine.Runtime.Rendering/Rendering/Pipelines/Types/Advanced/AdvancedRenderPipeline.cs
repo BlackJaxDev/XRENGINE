@@ -22,7 +22,7 @@ using static XREngine.RuntimeEngine.Rendering.State;
 
 namespace XREngine.Rendering;
 
-public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipelineFeatureProvider
+public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipelineFeatureProvider, IAdvancedRenderStageFamilyHost
 {
     internal override bool RequiresCanonicalGpuScenePublication => true;
 
@@ -795,7 +795,7 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
             return true;
 
         var textures = material.Textures;
-        if (textures.Count != 6)
+        if (textures.Count != 7)
             return true;
 
         if (!ReferenceEquals(textures[0], GetTexture<XRTexture>(FinalPostProcessOutputTextureName))
@@ -803,16 +803,15 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
             || !ReferenceEquals(textures[2], GetTexture<XRTexture>(DepthViewTextureName))
             || !ReferenceEquals(textures[3], GetTexture<XRTexture>(HistoryDepthViewTextureName))
             || !ReferenceEquals(textures[4], GetTexture<XRTexture>(TsrHistoryColorTextureName))
-            || !ReferenceEquals(textures[5], GetTexture<XRTexture>(StencilViewTextureName)))
+            || !ReferenceEquals(textures[5], GetTexture<XRTexture>(StencilViewTextureName))
+            || !ReferenceEquals(textures[6], GetTexture<XRTexture>(AdvancedTemporalHistoryContract.ReactiveMaskResourceName)))
             return true;
 
         var fragmentShaders = material.FragmentShaders;
         if (fragmentShaders.Count != 1)
             return true;
 
-        XRShader expectedShader = XRShader.EngineShader(
-            Path.Combine(SceneShaderPath, Stereo ? "TemporalSuperResolutionStereo.fs" : "TemporalSuperResolution.fs"),
-            EShaderType.Fragment);
+        XRShader expectedShader = CreateAdvancedTemporalShader(Stereo ? "TemporalSuperResolutionStereo.fs" : "TemporalSuperResolution.fs");
         return !ReferenceEquals(fragmentShaders[0], expectedShader);
     }
 
@@ -1390,6 +1389,10 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
             AdvancedRenderPipelineFrameContract.OrderedStages;
         for (int i = 0; i < stages.Count; i++)
             passes.Add((int)stages[i].Stage, null);
+        // Stage execution order comes from the command chain. This collection
+        // also holds authored material passes, whose sorted-alpha bucket must
+        // preserve painter's order instead of the scene's collection order.
+        passes[(int)EDefaultRenderPass.TransparentForward] = new FarToNearRenderCommandSorter();
         return passes;
     }
 
@@ -1581,14 +1584,31 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
     private const string VolumetricFogStageKey = "volumetricFog";
     private const string GpuBvhDebugStageKey = "gpuBvhDebug";
 
-    public AdvancedRenderPipeline() : this(false)
+    public AdvancedRenderPipeline() : this(false, capabilityResult: null, offscreenProfile: null)
     {
     }
 
-    public AdvancedRenderPipeline(bool stereo = false) : base(true)
+    public AdvancedRenderPipeline(bool stereo = false)
+        : this(stereo, capabilityResult: null, offscreenProfile: null)
+    {
+    }
+
+    private AdvancedRenderPipeline(
+        bool stereo,
+        AdvancedRenderPipelineCapabilityResult? capabilityResult,
+        AdvancedOffscreenProfile? offscreenProfile,
+        EAdvancedStageFamilyExecutionProfile stageFamilyProfile =
+            EAdvancedStageFamilyExecutionProfile.DesktopPresent,
+        bool subscribeToRuntimeSettings = true)
+        : base(true)
     {
         Stereo = stereo;
-        RefreshCapabilityResult();
+        if (capabilityResult is { } providedCapabilityResult)
+            CapabilityResult = providedCapabilityResult;
+        else
+            RefreshCapabilityResult();
+        _offscreenProfile = offscreenProfile;
+        _stageFamilyExecutionProfile = stageFamilyProfile;
         _forwardDepthPrePassEnabled = !string.Equals(
             Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ProfileDisableForwardDepthPrePass),
             "1",
@@ -1603,8 +1623,11 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
         _motionVectorsMaterial = new Lazy<XRMaterial>(CreateMotionVectorsMaterial, LazyThreadSafetyMode.PublicationOnly);
         _depthNormalPrePassMaterial = new Lazy<XRMaterial>(CreateDepthNormalPrePassMaterial, LazyThreadSafetyMode.PublicationOnly);
         _fullOverdrawCountMaterial = new Lazy<XRMaterial>(CreateFullOverdrawCountMaterial, LazyThreadSafetyMode.PublicationOnly);
-        RuntimeEngine.Rendering.SettingsChanged += HandleRenderingSettingsChanged;
-        RuntimeEngine.Rendering.AntiAliasingSettingsChanged += HandleAntiAliasingSettingsChanged;
+        if (subscribeToRuntimeSettings)
+        {
+            RuntimeEngine.Rendering.SettingsChanged += HandleRenderingSettingsChanged;
+            RuntimeEngine.Rendering.AntiAliasingSettingsChanged += HandleAntiAliasingSettingsChanged;
+        }
         ApplyAntiAliasingResolutionHint();
         InitializeCommandChain();
     }
@@ -2555,19 +2578,19 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
 
     private void ClearProbeResources()
     {
-        bool removedIrradiance = RemoveProbeTextureResource(LightProbeIrradianceArrayName);
-        bool removedPrefilter = RemoveProbeTextureResource(LightProbePrefilterArrayName);
+        RemoveProbeTextureResource(LightProbeIrradianceArrayName);
+        RemoveProbeTextureResource(LightProbePrefilterArrayName);
         RemoveProbeBufferResource(LightProbePositionBufferName);
         RemoveProbeBufferResource(LightProbeParamBufferName);
         RemoveProbeBufferResource(LightProbeTetraBufferName);
         RemoveProbeBufferResource(LightProbeGridCellBufferName);
         RemoveProbeBufferResource(LightProbeGridIndexBufferName);
 
-        if (!removedIrradiance)
-            _probeIrradianceArray?.Destroy();
+        // Imported bindings do not own their instances. The pipeline owns these
+        // arrays and must retire them even when unbinding succeeds.
+        _probeIrradianceArray?.Destroy();
         _probeIrradianceArray = null;
-        if (!removedPrefilter)
-            _probePrefilterArray?.Destroy();
+        _probePrefilterArray?.Destroy();
         _probePrefilterArray = null;
         DestroyProbeBuffer(ref _probePositionBuffer);
         DestroyProbeBuffer(ref _probeParamBuffer);
@@ -2596,120 +2619,6 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
         _probeBindingUseGrid = false;
         _probeBindingProbeCount = 0;
         _probeBindingTetraCount = 0;
-    }
-
-    private void BuildProbeResources(IList<LightProbeComponent> readyProbes, bool deferredByBatchCapture = false)
-    {
-        Stopwatch stopwatch = Stopwatch.StartNew();
-
-        ClearProbeResources();
-
-        if (readyProbes.Count == 0)
-        {
-            _pendingProbeRefresh = false;
-            stopwatch.Stop();
-            if (deferredByBatchCapture)
-                Debug.Lighting("[ProbeGI] Batch completed but no usable probe resources were built. Ready=0");
-            return;
-        }
-
-        var irrTextures = new List<XRTexture2D>(readyProbes.Count);
-        var preTextures = new List<XRTexture2D>(readyProbes.Count);
-        var positions = new List<ProbePositionData>(readyProbes.Count);
-        var parameters = new List<ProbeParamData>(readyProbes.Count);
-
-        foreach (var probe in readyProbes)
-        {
-            irrTextures.Add(probe.IrradianceTexture!);
-            preTextures.Add(probe.PrefilterTexture!);
-
-            var position = probe.Transform.RenderTranslation;
-            positions.Add(new ProbePositionData { Position = new Vector4(position, 1.0f) });
-
-            parameters.Add(new ProbeParamData
-            {
-                InfluenceInner = new Vector4(probe.InfluenceBoxInnerExtents, probe.InfluenceSphereInnerRadius),
-                InfluenceOuter = new Vector4(probe.InfluenceBoxOuterExtents, probe.InfluenceSphereOuterRadius),
-                InfluenceOffsetShape = new Vector4(probe.InfluenceOffset, probe.InfluenceShape == LightProbeComponent.EInfluenceShape.Box ? 1.0f : 0.0f),
-                ProxyCenterEnable = new Vector4(probe.ProxyBoxCenterOffset, probe.ParallaxCorrectionEnabled ? 1.0f : 0.0f),
-                ProxyHalfExtents = new Vector4(probe.ProxyBoxHalfExtents, probe.NormalizationScale),
-                ProxyRotation = new Vector4(probe.ProxyBoxRotation.X, probe.ProxyBoxRotation.Y, probe.ProxyBoxRotation.Z, probe.ProxyBoxRotation.W),
-            });
-            _cachedProbePositions[probe.ID] = position;
-            _cachedProbeTextures[probe.ID] = (probe.IrradianceTexture!, probe.PrefilterTexture!);
-            _observedProbeCaptureVersions[probe.ID] = probe.CaptureVersion;
-        }
-
-        if (irrTextures.Count == 0 || preTextures.Count == 0)
-        {
-            stopwatch.Stop();
-            return;
-        }
-
-        _probeIrradianceArray = new XRTexture2DArray([.. irrTextures])
-        {
-            Name = LightProbeIrradianceArrayName,
-            MinFilter = ETexMinFilter.Linear,
-            MagFilter = ETexMagFilter.Linear,
-            SizedInternalFormat = ESizedInternalFormat.Rgb16f,
-        };
-
-        _probePrefilterArray = new XRTexture2DArray([.. preTextures])
-        {
-            Name = LightProbePrefilterArrayName,
-            MinFilter = ETexMinFilter.LinearMipmapLinear,
-            MagFilter = ETexMagFilter.Linear,
-            SizedInternalFormat = ESizedInternalFormat.Rgb16f,  // Match prefilter texture format
-        };
-        RegisterProbeTextureArrays();
-        PushProbeTextureArrays();
-
-        _probePositionBuffer = new XRDataBuffer(LightProbePositionBufferName, EBufferTarget.ShaderStorageBuffer, (uint)positions.Count, EComponentType.Struct, (uint)Marshal.SizeOf<ProbePositionData>(), false, false)
-        {
-            BindingIndexOverride = 0,
-        };
-        _probePositionBuffer.SetDataRaw<ProbePositionData>(positions);
-        _probePositionBuffer.PushData();
-        RegisterProbeBuffer(_probePositionBuffer);
-
-        _probeParamBuffer = new XRDataBuffer(LightProbeParamBufferName, EBufferTarget.ShaderStorageBuffer, (uint)parameters.Count, EComponentType.Struct, (uint)Marshal.SizeOf<ProbeParamData>(), false, false)
-        {
-            BindingIndexOverride = 2,
-        };
-        _probeParamBuffer.SetDataRaw<ProbeParamData>(parameters);
-        _probeParamBuffer.PushData();
-        RegisterProbeBuffer(_probeParamBuffer);
-
-        _cachedProbePositionData = [.. positions];
-        _cachedProbeParamData = [.. parameters];
-
-        if (_useProbeGridAcceleration)
-            BuildProbeGrid(_cachedProbePositionData, _cachedProbeParamData, null);
-
-        _lastProbeCount = positions.Count;
-        _pendingProbeRefresh = false;
-        _pendingProbeRefreshDeferredByBatchCapture = false;
-
-        StartTetrahedralizationJob(readyProbes);
-
-        stopwatch.Stop();
-        ReportProbeResourceRefresh(structuralRefresh: true, readyProbes.Count, stopwatch.Elapsed, deferredByBatchCapture);
-    }
-
-    private void PushProbeTextureArrays()
-    {
-        var renderer = AbstractRenderer.Current;
-        if (_probeIrradianceArray is not null)
-        {
-            renderer?.GetOrCreateAPIRenderObject(_probeIrradianceArray, generateNow: true);
-            _probeIrradianceArray.PushData();
-        }
-
-        if (_probePrefilterArray is not null)
-        {
-            renderer?.GetOrCreateAPIRenderObject(_probePrefilterArray, generateNow: true);
-            _probePrefilterArray.PushData();
-        }
     }
 
     private void RegisterProbeTextureArrays()

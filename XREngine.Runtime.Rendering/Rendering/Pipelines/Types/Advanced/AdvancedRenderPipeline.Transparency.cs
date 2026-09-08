@@ -30,37 +30,36 @@ public partial class AdvancedRenderPipeline
         RenderResourceSizePolicy internalSize = RenderResourceSizePolicy.Internal();
         uint layers = Math.Max(builder.Profile.ViewCount, builder.Profile.Stereo ? 2u : 1u);
 
-        // 1. Dedicated Scene Color Snapshot (allocated on demand for refractive passes)
-        ReconstructionTexture(
-                builder,
+        // 1. Canonical view of the copy consumed by both explicit refractive
+        // materials and the existing weighted/exact transparency resolves.
+        builder.TextureView(
                 AdvancedSceneColorContract.SceneColorSnapshotResourceName,
-                internalSize,
-                EPixelInternalFormat.Rgba16f,
-                EPixelFormat.Rgba,
-                EPixelType.Float,
-                ESizedInternalFormat.Rgba16f)
-            .Layers(layers)
-            .StereoCompatible(layers > 1u)
-            .DependsOn(HDRSceneTextureName)
+                TransparentSceneCopyTextureName)
+            .Size(internalSize)
+            .Lifetime(RenderResourceLifetime.Persistent)
+            .Usage(RenderPipelineResourceUsage.SampledTexture)
+            .SizedFormat(ESizedInternalFormat.Rgba16f)
+            .LayerRange(0u, layers)
+            .Target(array: layers > 1u, multisample: false)
+            .Factory(CreateAdvancedSceneColorSnapshotView)
             .DebugLabel("Advanced scene color snapshot")
             .Add();
 
-        // 2. Reactive Mask (temporal TSR/TAA/upscaler disocclusion & transparency guidance)
-        ReconstructionTexture(
-                builder,
-                AdvancedTemporalHistoryContract.ReactiveMaskResourceName,
-                internalSize,
-                EPixelInternalFormat.R8,
-                EPixelFormat.Red,
-                EPixelType.UnsignedByte,
-                ESizedInternalFormat.R8)
-            .Layers(layers)
-            .StereoCompatible(layers > 1u)
+        builder.FrameBuffer(VelocityFBOName).Size(internalSize).Lifetime(RenderResourceLifetime.Transient)
+            .Usage(RenderPipelineResourceUsage.ColorAttachment | RenderPipelineResourceUsage.DepthStencilAttachment)
+            .DependsOn(VelocityTextureName, AdvancedVisibilityResourceNames.DepthStencil)
+            .Color(0, VelocityTextureName)
+            .DepthStencil(AdvancedVisibilityResourceNames.DepthStencil)
+            .Factory(CreateVelocityFBO).Add();
+
+        builder.FrameBuffer(TransparentMotionReactiveMaskFBOName).Size(internalSize).Lifetime(RenderResourceLifetime.Transient)
+            .Usage(RenderPipelineResourceUsage.ColorAttachment | RenderPipelineResourceUsage.DepthStencilAttachment)
             .DependsOn(
-                AdvancedVisibilityResourceNames.Identity,
-                AdvancedVisibilityResourceNames.Metadata)
-            .DebugLabel("Advanced reactive temporal mask")
-            .Add();
+                AdvancedTemporalHistoryContract.ReactiveMaskResourceName,
+                AdvancedVisibilityResourceNames.DepthStencil)
+            .Color(0, AdvancedTemporalHistoryContract.ReactiveMaskResourceName)
+            .DepthStencil(AdvancedVisibilityResourceNames.DepthStencil)
+            .Factory(CreateTransparentMotionReactiveMaskFBO).Add();
 
         // 3. Optional Late Pass Debug Output
         ReconstructionTexture(
@@ -79,5 +78,45 @@ public partial class AdvancedRenderPipeline
                 AdvancedVisibilityResourceNames.Metadata)
             .DebugLabel("Advanced late-pass debug visualization")
             .Add();
+    }
+
+    private XRTexture CreateAdvancedSceneColorSnapshotView()
+    {
+        const string name = AdvancedSceneColorContract.SceneColorSnapshotResourceName;
+        XRTexture source = GetTexture<XRTexture>(TransparentSceneCopyTextureName)
+            ?? throw new InvalidOperationException(
+                $"Required scene-color source '{TransparentSceneCopyTextureName}' was not realized.");
+        if (source is XRTexture2DArray array)
+        {
+            return new XRTexture2DArrayView(
+                array,
+                0u,
+                1u,
+                0u,
+                array.Depth,
+                ESizedInternalFormat.Rgba16f,
+                true,
+                false)
+            {
+                Name = name,
+                SamplerName = name,
+            };
+        }
+
+        if (source is not XRTexture2D texture)
+            throw new InvalidOperationException(
+                $"Scene-color source '{TransparentSceneCopyTextureName}' has unsupported type '{source.GetType().FullName}'.");
+
+        return new XRTexture2DView(
+            texture,
+            0u,
+            1u,
+            ESizedInternalFormat.Rgba16f,
+            false,
+            false)
+        {
+            Name = name,
+            SamplerName = name,
+        };
     }
 }

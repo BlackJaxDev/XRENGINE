@@ -363,7 +363,19 @@ namespace XREngine.Scene
                         case ECaptureWorkType.CubemapFace:
                             if (item.Component is SceneCaptureComponent scc)
                             {
-                                scc.ExecuteCaptureFace(item.FaceIndex);
+                                ECaptureStepResult result = scc.ExecuteCaptureFace(item.FaceIndex);
+                                if (result != ECaptureStepResult.Completed)
+                                {
+                                    if (result == ECaptureStepResult.Cancelled)
+                                        CompletePendingCapture(scc);
+                                    else
+                                        EnqueueCaptureWorkItem(result == ECaptureStepResult.RestartRequired
+                                            ? new CaptureWorkItem(scc, ECaptureWorkType.CubemapFace, 0)
+                                            : item);
+                                    // An unready face may be retried only after a new
+                                    // render boundary; never finalize partial content.
+                                    return;
+                                }
                                 if (item.FaceIndex < 5)
                                     EnqueueCaptureWorkItem(new CaptureWorkItem(scc, ECaptureWorkType.CubemapFace, item.FaceIndex + 1));
                                 else
@@ -373,7 +385,16 @@ namespace XREngine.Scene
 
                         case ECaptureWorkType.CaptureFinalize:
                             if (item.Component is SceneCaptureComponent finScc)
-                                finScc.FinalizeCubemapCapture();
+                            {
+                                ECaptureStepResult result = finScc.FinalizeCubemapCapture();
+                                if (result is ECaptureStepResult.Pending or ECaptureStepResult.RestartRequired)
+                                {
+                                    EnqueueCaptureWorkItem(result == ECaptureStepResult.RestartRequired
+                                        ? new CaptureWorkItem(finScc, ECaptureWorkType.CubemapFace, 0)
+                                        : item);
+                                    return;
+                                }
+                            }
                             CompletePendingCapture(item.Component);
                             break;
 

@@ -217,6 +217,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             or nameof(XRTexture1D.SizedInternalFormat)
             or nameof(XRTexture1DArray.Textures)
             or nameof(XRTexture2DArray.Textures)
+            or nameof(XRTexture2DArray.CopyGpuLayerSources)
             or nameof(XRTextureCubeArray.Cubes)
             or nameof(XRTexture2D.MultiSampleCount)
             or nameof(XRTexture2D.FixedSampleLocations)

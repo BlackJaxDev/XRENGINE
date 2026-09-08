@@ -17,6 +17,7 @@ internal sealed record BlitOp(
     bool DepthBit,
     bool StencilBit,
     bool LinearFilter,
+    bool RequireExactCompatibility,
     FrameOpContext Context) 
     : FrameOp(PassIndex, OutFbo, Context)
 {

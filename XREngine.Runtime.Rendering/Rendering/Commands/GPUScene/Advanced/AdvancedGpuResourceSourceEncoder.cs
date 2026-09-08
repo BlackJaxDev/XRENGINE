@@ -184,7 +184,8 @@ public static class AdvancedGpuResourceSourceEncoder
             return false;
         }
 
-        source = new(texture2D, textureRecord, samplerRecord, fallback, sourceContentGeneration);
+        source = new(texture2D, textureRecord, samplerRecord, fallback, sourceContentGeneration,
+            texture2D.CanonicalPublicationLifetime);
         compatibilityReason = EAdvancedCanonicalCompatibilityReason.None;
         reason = string.Empty;
         return true;

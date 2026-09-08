@@ -703,6 +703,7 @@ namespace XREngine.Rendering.OpenGL
                         ToGLEnum(ActiveMeshRenderer.TrianglesElementType),
                         null,
                         instances);
+                    if (instances != 0) MarkImmediateHistoryBoundWrite();
                     RuntimeEngine.Rendering.Stats.Frame.IncrementDrawCalls();
                     RuntimeEngine.Rendering.Stats.Frame.AddTrianglesRendered((int)(patchControlPoints / 3u * instances));
                 }
@@ -722,6 +723,7 @@ namespace XREngine.Rendering.OpenGL
                 GLRenderQuery? samplesProbe = ActiveMeshRenderer.BeginBatchedTextSamplesProbe();
                 Api.DrawElementsInstanced(GLEnum.Triangles, triangles, ToGLEnum(ActiveMeshRenderer.TrianglesElementType), null, instances);
                 ActiveMeshRenderer.EndBatchedTextSamplesProbe(samplesProbe, instances, triangles);
+                if (instances != 0) MarkImmediateHistoryBoundWrite();
                 RuntimeEngine.Rendering.Stats.Frame.IncrementDrawCalls();
                 RuntimeEngine.Rendering.Stats.Frame.AddTrianglesRendered((int)(triangles / 3 * instances));
             }
@@ -742,6 +744,7 @@ namespace XREngine.Rendering.OpenGL
             {
                 Api.VertexArrayElementBuffer(ActiveMeshRenderer.BindingId, lineEbo);
                 Api.DrawElementsInstanced(GLEnum.Lines, lines, ToGLEnum(ActiveMeshRenderer.LineIndicesElementType), null, instances);
+                if (instances != 0) MarkImmediateHistoryBoundWrite();
                 RuntimeEngine.Rendering.Stats.Frame.IncrementDrawCalls();
             }
 
@@ -753,6 +756,7 @@ namespace XREngine.Rendering.OpenGL
             {
                 Api.VertexArrayElementBuffer(ActiveMeshRenderer.BindingId, pointEbo);
                 Api.DrawElementsInstanced(GLEnum.Points, points, ToGLEnum(ActiveMeshRenderer.PointIndicesElementType), null, instances);
+                if (instances != 0) MarkImmediateHistoryBoundWrite();
                 RuntimeEngine.Rendering.Stats.Frame.IncrementDrawCalls();
             }
         }
@@ -770,6 +774,7 @@ namespace XREngine.Rendering.OpenGL
             var (primitiveType, elementType) = GetActivePrimitiveAndElementType();
             ApplyPatchParameters(ActiveMeshRenderer);
             Api.MultiDrawElementsIndirect(primitiveType, elementType, null, meshCount, 0);
+            if (meshCount != 0) MarkImmediateHistoryBoundWrite();
         }
     }
 }

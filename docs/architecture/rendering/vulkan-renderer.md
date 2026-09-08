@@ -446,7 +446,7 @@ For the complete current primary/secondary lifecycle, persistent worker
 ownership, deterministic merge, lifetime rules, and OpenXR differences, see
 [Vulkan Primary And Secondary Command Recording](vulkan-command-recording.md).
 Future changes are tracked in the
-[Vulkan Command Recording Architecture Optimization TODO](../../work/todo/rendering/optimization/vulkan-command-recording-architecture-optimization-todo.md).
+[Vulkan Command Recording Architecture Optimization TODO](../../work/todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md#recovered-acceptance-contracts-and-specialized-child-ownership).
 
 Vulkan lowers the sorted `FrameOp` stream into reusable packet schedules before
 recording. `Vulkan.CommandRecording.Mode` controls the policy:

@@ -16,7 +16,7 @@ namespace XREngine.Components.Lights
     /// <summary>
     /// Traditional mirror that renders the scene to a texture and displays it on a quad.
     /// </summary>
-    public class MirrorCaptureComponent : XRComponent, IRenderable
+    public partial class MirrorCaptureComponent : XRComponent, IRenderable
     {
         public static bool DisallowMirrors { get; private set; } = false;
         
@@ -32,8 +32,9 @@ namespace XREngine.Components.Lights
 
             _displayQuadRC = new RenderCommandMesh3D((int)EDefaultRenderPass.OpaqueForward, meshRenderer, Matrix4x4.Identity);
             RenderCommandMethod3D preRenderRC = new((int)EDefaultRenderPass.PreRender, PreRender);
+            RenderCommandMethod3D postRenderRC = new((int)EDefaultRenderPass.PostRender, RecordMirrorConsumerCompletion);
 
-            _renderInfo = RenderInfo3D.New(this, _displayQuadRC, preRenderRC);
+            _renderInfo = RenderInfo3D.New(this, _displayQuadRC, preRenderRC, postRenderRC);
             _renderInfo.LocalCullingVolume = AABB.FromCenterSize(Vector3.Zero, new Vector3(1.0f, 1.0f, 0.001f));
             _renderInfo.CullingOffsetMatrix = Matrix4x4.Identity;
             _renderInfo.PreCollectCommandsCallback += RenderCommand_OnPreAddRenderCommands;
@@ -42,11 +43,16 @@ namespace XREngine.Components.Lights
 
         private void PreRender()
         {
+            ++_mirrorPreRenderCount;
+            if (_mirrorRetirementRequested)
+                return;
+            SettleMirrorWriter();
             XRCamera? camera = RuntimeEngine.Rendering.State.RenderingCamera;
             UpdateRenderTransform(Transform);
             if (camera is not null && ShouldUpdateCamera(camera))
                 UpdateMirrorCamera(camera, true);
-            RenderToFBO();
+            if (!_mirrorResourcesQuarantined && SettleMirrorConsumerFences())
+                RenderToFBO();
         }
 
         private bool ShouldUpdateCamera(XRCamera camera) => 
@@ -71,6 +77,7 @@ namespace XREngine.Components.Lights
 
         private bool ShouldNotRenderThisMirror(XRCamera camera) =>
             DisallowMirrors || //Are mirrors disabled?
+            _mirrorRetirementRequested || _mirrorResourcesQuarantined ||
             camera == _mirrorCamera || //Is this camera the mirror camera itself?
             _collectedCameras.Contains(camera); //Has this camera already captured this mirror?
 
@@ -87,7 +94,27 @@ namespace XREngine.Components.Lights
         public bool CaptureDepthCubeMap
         {
             get => _captureDepthCubeMap;
-            set => SetField(ref _captureDepthCubeMap, value);
+            set
+            {
+                if (SetField(ref _captureDepthCubeMap, value))
+                    _captureResourcesDirty = true;
+            }
+        }
+
+        private bool _useAdvancedCapturePipeline;
+        /// <summary>
+        /// Selects the explicit Advanced mirror profile. The legacy pipeline remains the
+        /// default so existing mirrors do not acquire Advanced resources implicitly.
+        /// </summary>
+        public bool UseAdvancedCapturePipeline
+        {
+            get => _useAdvancedCapturePipeline;
+            set
+            {
+                if (!SetField(ref _useAdvancedCapturePipeline, value))
+                    return;
+                _captureResourcesDirty = true;
+            }
         }
 
         [YamlIgnore]
@@ -105,19 +132,26 @@ namespace XREngine.Components.Lights
         protected XRTexture2D? _environmentDepthTexture;
         public XRTexture2D? EnvironmentDepthTexture => _environmentDepthTexture;
 
-        private readonly XRFrameBuffer _renderFBO;
+        private XRFrameBuffer _renderFBO;
         protected XRFrameBuffer RenderFBO => _renderFBO;
 
         protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
+            lock (_mirrorLifetimeSync)
+                _mirrorRetirementRequested = false;
             InitializeForCapture();
-            RuntimeEngine.Time.Timer.SwapBuffers += SwapBuffers;
         }
         protected override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
-            RuntimeEngine.Time.Timer.SwapBuffers -= SwapBuffers;
+            QueueCaptureResourceRelease();
+        }
+
+        protected override void OnDestroying()
+        {
+            QueueCaptureResourceRelease();
+            base.OnDestroying();
         }
 
         private uint? _textureWidthOverride = 2560u;
@@ -169,6 +203,20 @@ namespace XREngine.Components.Lights
 
         protected virtual void InitializeForCapture()
         {
+            if (!RuntimeEngine.IsRenderThread)
+            {
+                RuntimeEngine.EnqueueMainThreadTask(InitializeForCapture,
+                    "MirrorCapture.Initialize", RenderThreadJobKind.RenderPipelineResource);
+                return;
+            }
+            if (_mirrorRetirementRequested || _mirrorResourcesQuarantined || World is null)
+                return;
+            SettleMirrorWriter();
+            if (HasPendingMirrorWriter || !SettleMirrorConsumerFences())
+            {
+                _captureResourcesDirty = true;
+                return;
+            }
             var scale = Transform.LocalMatrix.ExtractScale();
             uint width = TextureWidthOverride ?? (uint)scale.X;
             uint height = TextureHeightOverride ?? (uint)scale.Y;
@@ -177,28 +225,33 @@ namespace XREngine.Components.Lights
             if (height < 1)
                 height = 1;
 
-            _environmentTexture?.Destroy();
-            _environmentTexture = new XRTexture2D(width, height, EPixelInternalFormat.Rgba8, EPixelFormat.Rgba, EPixelType.UnsignedByte, false)
+            ReleaseMirrorResources();
+            _renderFBO = new XRFrameBuffer();
+            bool advanced = UseAdvancedCapturePipeline;
+            EnvironmentTexture = new XRTexture2D(width, height,
+                advanced ? EPixelInternalFormat.Rgba16f : EPixelInternalFormat.Rgba8,
+                EPixelFormat.Rgba, advanced ? EPixelType.HalfFloat : EPixelType.UnsignedByte, false)
             {
-                MinFilter = ETexMinFilter.NearestMipmapLinear,
+                MinFilter = ETexMinFilter.Linear,
                 MagFilter = ETexMagFilter.Nearest,
                 UWrap = ETexWrapMode.ClampToEdge,
                 VWrap = ETexWrapMode.ClampToEdge,
                 Resizable = false,
-                SizedInternalFormat = ESizedInternalFormat.Rgba8,
+                SizedInternalFormat = advanced ? ESizedInternalFormat.Rgba16f : ESizedInternalFormat.Rgba8,
                 Name = "SceneCaptureEnvColor",
                 AutoGenerateMipmaps = false,
                 //FrameBufferAttachment = EFrameBufferAttachment.ColorAttachment0,
             };
+            _captureResourcesDirty = false;
             //_envTex.Generate();
             _material.Textures = [_environmentTexture];
 
             if (CaptureDepthCubeMap)
             {
                 _environmentDepthTexture?.Destroy();
-                _environmentDepthTexture = new XRTexture2D(width, height, EPixelInternalFormat.DepthComponent24, EPixelFormat.DepthStencil, EPixelType.UnsignedInt248, false)
+                _environmentDepthTexture = new XRTexture2D(width, height, EPixelInternalFormat.Depth24Stencil8, EPixelFormat.DepthStencil, EPixelType.UnsignedInt248, false)
                 {
-                    MinFilter = ETexMinFilter.NearestMipmapLinear,
+                    MinFilter = ETexMinFilter.Nearest,
                     MagFilter = ETexMagFilter.Nearest,
                     UWrap = ETexWrapMode.ClampToEdge,
                     VWrap = ETexWrapMode.ClampToEdge,
@@ -218,14 +271,14 @@ namespace XREngine.Components.Lights
             }
 
             _mirrorCamera = new(_mirrorTransform);
+            RenderPipelineRequest pipelineRequest = CreatePipelineRequest();
             Viewport = new XRViewport(null, width, height)
             {
-                PipelineRequest = RenderPipelineRequest.OffscreenCapture(),
+                SetRenderPipelineFromCamera = false,
+                PipelineRequest = pipelineRequest,
                 WorldInstanceOverride = World.GetRenderWorld(),
                 Camera = _mirrorCamera,
-                RenderPipeline =
-                    RuntimeEngine.Rendering.NewOffscreenCaptureRenderPipeline(),
-                SetRenderPipelineFromCamera = false,
+                RenderPipeline = RuntimeEngine.Rendering.NewRenderPipeline(pipelineRequest),
                 AutomaticallyCollectVisible = false,
                 AutomaticallySwapBuffers = false,
                 AllowUIRender = false,
@@ -304,9 +357,14 @@ namespace XREngine.Components.Lights
         public void SwapBuffers()
         {
             using var sample = RuntimeEngine.Profiler.Start("MirrorCaptureComponent.SwapBuffers");
+            AdvanceMirrorCameraFrame();
+            Viewport?.SwapBuffers();
+        }
+
+        private void AdvanceMirrorCameraFrame()
+        {
             (_collectedCameras, _renderingCameras) = (_renderingCameras, _collectedCameras);
             _collectedCameras.Clear();
-            Viewport?.SwapBuffers();
         }
 
         private void RenderToFBO()
@@ -314,16 +372,53 @@ namespace XREngine.Components.Lights
             if (World is null || RenderFBO is null)
                 return;
 
-            if (ResolutionChanged())
+            if (HasPendingMirrorWriter)
+                return;
+            if (_captureResourcesDirty || ResolutionChanged())
+            {
                 InitializeForCapture();
+                if (HasPendingMirrorWriter || Viewport is null)
+                    return;
+                if (RuntimeEngine.Rendering.State.RenderingCamera is XRCamera sourceCamera)
+                {
+                    UpdateMirrorCamera(sourceCamera, true);
+                    UpdateRenderTransform(Transform);
+                }
+            }
 
             RenderFBO!.SetRenderTargets(
                 (_environmentTexture!, EFrameBufferAttachment.ColorAttachment0, 0, -1),
                 (GetDepthAttachment(), EFrameBufferAttachment.DepthStencilAttachment, 0, -1));
 
+            RenderOutputRequest output = CreateMirrorOutputRequest();
+            FrameOutputPacingDecision pacing = FrameOutputPacingDecision.Due(
+                output.ViewKind, output.OutputKind, output.FrameId) with { Request = output };
+            Viewport!.CollectVisible(collectMirrors: false, frameOutputPacing: pacing);
+            Viewport.SwapBuffers(allowScreenSpaceUISwap: false);
             RuntimeEngine.Rendering.State.PushMirrorPass();
-            Viewport!.Render(RenderFBO, null, null, false, null);
-            RuntimeEngine.Rendering.State.PopMirrorPass();
+            try
+            {
+                ++_mirrorAuthoringAttemptCount;
+                _mirrorWriterAuthored = Viewport.TryRenderWithCompletion(
+                    RenderFBO,
+                    in output,
+                    out _mirrorWriterFence,
+                    out ERenderOutputCompletionAuthoringDisposition disposition);
+                _lastMirrorAuthoringDisposition = disposition;
+                _mirrorWriterRenderer = AbstractRenderer.Current;
+                _mirrorWriterPipeline = Viewport.RenderPipelineInstance;
+                _mirrorWriterCommands = _mirrorWriterPipeline.ActiveMeshRenderCommands;
+                _mirrorWriterPackageGeneration = _mirrorWriterCommands.RenderingBackendReadyPackage.PackageGeneration;
+                if (_mirrorWriterFence is null && disposition == ERenderOutputCompletionAuthoringDisposition.UnfencedAfterAuthoring)
+                    QuarantineMirrorResources(_mirrorWriterRenderer);
+                else if (_mirrorWriterFence is null)
+                    ReleaseMirrorWriterPackage();
+            }
+            finally
+            {
+                RuntimeEngine.Rendering.State.PopMirrorPass();
+            }
+            AdvanceMirrorCameraFrame();
         }
 
         private IFrameBufferAttachement GetDepthAttachment()

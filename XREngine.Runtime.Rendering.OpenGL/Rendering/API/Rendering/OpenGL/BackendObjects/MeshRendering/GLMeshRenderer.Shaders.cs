@@ -70,7 +70,7 @@ namespace XREngine.Rendering.OpenGL
             }
 
             private bool UseShaderPipelinesForThisRenderer()
-                => RuntimeEngine.Rendering.Settings.AllowShaderPipelines && Data.AllowShaderPipelines;
+                => RuntimeEngine.Rendering.Settings.AllowShaderPipelines && Data.AllowShaderPipelines && !Data.UsesMultiview;
 
             private void ClearShaderProgramBindingsForRebuild()
             {

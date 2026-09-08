@@ -51,7 +51,7 @@ validation before workstream 06.
   records the workstream-04 package foundation.
 - [Vulkan Editor Steady-Frame CPU Cost Investigation](../../investigations/rendering/archive/vulkan-editor-frame-time-spikes-2026-07-30.md)
   records why workstream 04 was reopened.
-- [Vulkan Command Recording Architecture Optimization](../../todo/rendering/optimization/vulkan-command-recording-architecture-optimization-todo.md)
+- [Vulkan Command Recording Architecture Optimization](../../todo/rendering/vulkan-core-frame-loop-and-resident-rendering-master-todo.md#recovered-acceptance-contracts-and-specialized-child-ownership)
   owns the detailed binding schema, prepared-frame, command-artifact, and
   worker implementation.
 - [Vulkan Command Recording Worker Architecture Progress](../../progress/rendering/vulkan-command-recording-worker-architecture-2026-07-30.md)

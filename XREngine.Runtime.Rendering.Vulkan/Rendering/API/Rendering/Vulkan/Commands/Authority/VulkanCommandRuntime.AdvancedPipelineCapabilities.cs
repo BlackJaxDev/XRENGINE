@@ -1,4 +1,5 @@
 using XREngine.Rendering.RenderGraph;
+using System.Diagnostics.CodeAnalysis;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -6,9 +7,10 @@ namespace XREngine.Rendering.Vulkan;
 internal sealed partial class VulkanCommandRuntime
 {
     private readonly object _advancedVisibilityReservationGate = new();
-    private ulong _advancedVisibilityReservedOutputId;
-    private ulong _advancedVisibilityReservationId;
+    private readonly AdvancedVisibilityOutputBank[] _advancedVisibilityOutputBanks =
+        CreateAdvancedVisibilityOutputBanks();
     private long _advancedVisibilityReservationGeneration;
+    internal Action<int>? ProvisionAdvancedVisibilityWorkspace { private get; set; }
 
     // Promotion is deliberately coupled to a live reservation. Capability
     // snapshots remain advisory and cannot independently select a family.
@@ -26,7 +28,7 @@ internal sealed partial class VulkanCommandRuntime
     }
 
     internal bool IsAdvancedVisibilityProductionPromoted
-        => Volatile.Read(ref _advancedVisibilityReservationId) != 0 &&
+        => Volatile.Read(ref _advancedVisibilityReservationGeneration) != 0 &&
            CanAdmitAdvancedVisibilityFamily();
 
     internal bool TryReserveAdvancedVisibilityFamily(
@@ -48,32 +50,96 @@ internal sealed partial class VulkanCommandRuntime
             return false;
         }
 
-        long generation = checked((long)(ResourceRuntime.FrameDataArena?.Generation ?? 0UL));
-        if (generation <= 0)
-        {
-            failureReason = "The Vulkan advanced visibility frame-storage generation is unavailable.";
-            return false;
-        }
+        // A previous generation may have become provably complete since its
+        // last admission attempt. This never waits; incomplete work remains
+        // Retiring and keeps capacity unavailable.
+        TryFinalizeRetiringAdvancedVisibilityBanks();
 
+        lock (ResourceRuntime.AdvancedVisibilityStorageGate)
         lock (_advancedVisibilityReservationGate)
         {
+            long generation = checked((long)(ResourceRuntime.FrameDataArena?.Generation ?? 0UL));
+            if (generation <= 0)
+            {
+                failureReason = "The Vulkan advanced visibility frame-storage generation is unavailable.";
+                return false;
+            }
             if (_advancedVisibilityReservationGeneration != generation)
             {
+                if (!TryRetireAdvancedVisibilityGenerationNoLock(out failureReason))
+                    return false;
                 _advancedVisibilityReservationGeneration = generation;
-                _advancedVisibilityReservedOutputId = 0;
-                _advancedVisibilityReservationId = 0;
             }
-            if (_advancedVisibilityReservedOutputId != 0 &&
-                _advancedVisibilityReservedOutputId != outputId)
+            int index = FindActiveAdvancedVisibilityBankNoLock(outputId);
+            if (index >= 0)
             {
-                failureReason = "This Vulkan renderer generation has already reserved its single mono advanced visibility family for another output.";
+                AdvancedVisibilityOutputBank existing = _advancedVisibilityOutputBanks[index];
+                reservation = new(generation, outputId, checked((ulong)index + 1), existing.BankIncarnation);
+                failureReason = "Ready";
+                return true;
+            }
+            if (index < 0)
+                index = FindFreeAdvancedVisibilityBankNoLock();
+            if (index < 0)
+            {
+                failureReason = $"This Vulkan renderer generation has reached its bounded {_advancedVisibilityOutputBanks.Length}-output Advanced visibility capacity while existing output banks are active or retiring.";
                 return false;
             }
 
-            _advancedVisibilityReservedOutputId = outputId;
-            if (_advancedVisibilityReservationId == 0)
-                _advancedVisibilityReservationId = 1;
-            reservation = new(generation, outputId, _advancedVisibilityReservationId);
+            ulong reservationId = checked((ulong)index + 1);
+            AdvancedVisibilityOutputBank bank = _advancedVisibilityOutputBanks[index];
+            if (bank.BankIncarnation == long.MaxValue)
+            {
+                failureReason = "Advanced output-bank incarnation capacity is exhausted; the renderer generation must retire before this bank can be reused.";
+                return false;
+            }
+            long incarnation = bank.BankIncarnation + 1;
+            AdvancedVisibilityFamilyReservation pendingReservation = new(
+                generation, outputId, reservationId, incarnation);
+            // Complete every cold workspace before a reservation becomes visible.
+            // A failed activation leaves only dormant, idempotently reusable slots.
+            bool measureColdActivation = !bank.HasMeasuredColdActivation;
+            bool activationCompleted = false;
+            long activationStart = measureColdActivation
+                ? GC.GetAllocatedBytesForCurrentThread()
+                : 0;
+            try
+            {
+                if (!ResourceRuntime.TryInitializeAdvancedVisibilityOutput(
+                        in pendingReservation, DeviceContext, out failureReason))
+                    return false;
+                if (ProvisionAdvancedVisibilityWorkspace is not { } provisionWorkspace)
+                {
+                    failureReason = "Advanced output workspace activation is not configured.";
+                    return false;
+                }
+                provisionWorkspace(index);
+                activationCompleted = true;
+            }
+            catch (OutOfMemoryException ex)
+            {
+                bank.ActivationFailureCount++;
+                bank.LastActivationFailure = ex.Message;
+                failureReason = "Advanced output workspace activation ran out of managed memory.";
+                return false;
+            }
+            finally
+            {
+                if (measureColdActivation)
+                {
+                    bank.ManagedActivationBytes += Math.Max(
+                        0,
+                        GC.GetAllocatedBytesForCurrentThread() - activationStart);
+                    if (activationCompleted)
+                        bank.HasMeasuredColdActivation = true;
+                }
+            }
+            bank.OutputId = outputId;
+            bank.BackendGeneration = generation;
+            bank.BankIncarnation = incarnation;
+            bank.State = EAdvancedOutputReservationBankState.Active;
+            bank.LastActivationFailure = null;
+            reservation = pendingReservation;
             failureReason = "Ready";
             return true;
         }
@@ -84,10 +150,227 @@ internal sealed partial class VulkanCommandRuntime
     {
         if (!reservation.IsValid)
             return false;
+        long generation = checked((long)(ResourceRuntime.FrameDataArena?.Generation ?? 0UL));
+        if (generation <= 0)
+            return false;
         lock (_advancedVisibilityReservationGate)
-            return reservation.BackendGeneration == _advancedVisibilityReservationGeneration &&
-                   reservation.OutputId == _advancedVisibilityReservedOutputId &&
-                   reservation.ReservationId == _advancedVisibilityReservationId;
+            return generation == _advancedVisibilityReservationGeneration &&
+                TryGetCurrentAdvancedVisibilityBankNoLock(in reservation, out _);
+    }
+
+    /// <summary>
+    /// Accepts only exact sealed-plan work that retained its bank before the
+    /// viewport owner retired. Retiring banks cannot admit new plans.
+    /// </summary>
+    internal bool IsAdvancedVisibilityReservationConsumable(
+        in AdvancedVisibilityFamilyReservation reservation)
+    {
+        if (!reservation.IsValid)
+            return false;
+        lock (_advancedVisibilityReservationGate)
+            return TryGetConsumableAdvancedVisibilityBankNoLock(in reservation, out _);
+    }
+
+    internal bool TryAcquireAdvancedVisibilityPlanLease(
+        in AdvancedVisibilityFamilyReservation reservation)
+    {
+        long generation = checked((long)(ResourceRuntime.FrameDataArena?.Generation ?? 0UL));
+        if (generation <= 0 || reservation.BackendGeneration != generation)
+            return false;
+        lock (_advancedVisibilityReservationGate)
+        {
+            if (generation != _advancedVisibilityReservationGeneration ||
+                !TryGetCurrentAdvancedVisibilityBankNoLock(in reservation, out AdvancedVisibilityOutputBank? bank))
+                return false;
+            bank.PlanLeaseCount++;
+            return true;
+        }
+    }
+
+    internal void ReleaseAdvancedVisibilityPlanLease(
+        in AdvancedVisibilityFamilyReservation reservation)
+    {
+        lock (_advancedVisibilityReservationGate)
+        {
+            if (!TryGetExactAdvancedVisibilityBankNoLock(in reservation, out AdvancedVisibilityOutputBank? bank) ||
+                bank.PlanLeaseCount <= 0)
+                throw new InvalidOperationException("Advanced output-bank plan lease underflow or stale token.");
+            bank.PlanLeaseCount--;
+            TryFinalizeRetiringAdvancedVisibilityBankNoLock(bank);
+        }
+        TryFinalizeRetiringAdvancedVisibilityBanks();
+    }
+
+    internal void ReleaseAdvancedVisibilityFamilyOwner(
+        in AdvancedVisibilityFamilyReservation reservation)
+    {
+        if (!reservation.IsValid)
+            return;
+        lock (_advancedVisibilityReservationGate)
+        {
+            if (!TryGetExactAdvancedVisibilityBankNoLock(in reservation, out AdvancedVisibilityOutputBank? bank) ||
+                bank.State != EAdvancedOutputReservationBankState.Active)
+            {
+                return;
+            }
+            bank.State = EAdvancedOutputReservationBankState.Retiring;
+            TryFinalizeRetiringAdvancedVisibilityBankNoLock(bank);
+        }
+        TryFinalizeRetiringAdvancedVisibilityBanks();
+    }
+
+    internal AdvancedOutputReservationDiagnosticsSnapshot CaptureAdvancedOutputReservationDiagnostics()
+    {
+        CaptureAdvancedVisibilityRecordedLeaseOccupancy(
+            out int recordedCommandCapacity,
+            out int recordedCommandCount);
+        lock (_advancedVisibilityReservationGate)
+        {
+            AdvancedOutputReservationBankDiagnostic[] banks = new AdvancedOutputReservationBankDiagnostic[_advancedVisibilityOutputBanks.Length];
+            int active = 0;
+            int retiring = 0;
+            int free = 0;
+            int failures = 0;
+            long allocationBytes = 0;
+            for (int index = 0; index < _advancedVisibilityOutputBanks.Length; index++)
+            {
+                AdvancedVisibilityOutputBank bank = _advancedVisibilityOutputBanks[index];
+                switch (bank.State)
+                {
+                    case EAdvancedOutputReservationBankState.Active: active++; break;
+                    case EAdvancedOutputReservationBankState.Retiring: retiring++; break;
+                    default: free++; break;
+                }
+                failures += bank.ActivationFailureCount;
+                allocationBytes += bank.ManagedActivationBytes;
+                banks[index] = new(bank.OutputId, (ulong)index + 1, bank.BankIncarnation,
+                    bank.State, bank.PlanLeaseCount, bank.RecordedCommandBufferLeaseCount,
+                    bank.PendingQueueDomainCount,
+                    bank.ManagedActivationBytes, bank.LastActivationFailure);
+            }
+            return new(_advancedVisibilityReservationGeneration, banks.Length, active, retiring,
+                free, failures, allocationBytes, recordedCommandCapacity, recordedCommandCount, banks);
+        }
+    }
+
+    private bool TryRetireAdvancedVisibilityGenerationNoLock(out string failureReason)
+    {
+        for (int index = 0; index < _advancedVisibilityOutputBanks.Length; index++)
+        {
+            AdvancedVisibilityOutputBank bank = _advancedVisibilityOutputBanks[index];
+            if (bank.State == EAdvancedOutputReservationBankState.Active)
+                bank.State = EAdvancedOutputReservationBankState.Retiring;
+            TryFinalizeRetiringAdvancedVisibilityBankNoLock(bank);
+            if (bank.State != EAdvancedOutputReservationBankState.Free)
+            {
+                failureReason = "An Advanced output-bank generation is still leased by a sealed plan or pending GPU work.";
+                return false;
+            }
+        }
+        failureReason = string.Empty;
+        return true;
+    }
+
+    private static AdvancedVisibilityOutputBank[] CreateAdvancedVisibilityOutputBanks()
+    {
+        AdvancedVisibilityOutputBank[] banks = new AdvancedVisibilityOutputBank[VulkanAdvancedVisibilityOutputCapacity.Maximum];
+        for (int index = 0; index < banks.Length; index++)
+            banks[index] = new();
+        return banks;
+    }
+
+    private int FindActiveAdvancedVisibilityBankNoLock(ulong outputId)
+    {
+        for (int index = 0; index < _advancedVisibilityOutputBanks.Length; index++)
+            if (_advancedVisibilityOutputBanks[index].State == EAdvancedOutputReservationBankState.Active &&
+                _advancedVisibilityOutputBanks[index].OutputId == outputId)
+                return index;
+        return -1;
+    }
+
+    private int FindFreeAdvancedVisibilityBankNoLock()
+    {
+        for (int index = 0; index < _advancedVisibilityOutputBanks.Length; index++)
+            if (_advancedVisibilityOutputBanks[index].State == EAdvancedOutputReservationBankState.Free)
+                return index;
+        return -1;
+    }
+
+    private bool TryGetCurrentAdvancedVisibilityBankNoLock(
+        in AdvancedVisibilityFamilyReservation reservation,
+        [NotNullWhen(true)] out AdvancedVisibilityOutputBank? bank)
+    {
+        if (!TryGetExactAdvancedVisibilityBankNoLock(in reservation, out bank))
+            return false;
+        return bank.State == EAdvancedOutputReservationBankState.Active &&
+            bank.BackendGeneration == _advancedVisibilityReservationGeneration;
+    }
+
+    private bool TryGetConsumableAdvancedVisibilityBankNoLock(
+        in AdvancedVisibilityFamilyReservation reservation,
+        [NotNullWhen(true)] out AdvancedVisibilityOutputBank? bank)
+    {
+        if (!TryGetExactAdvancedVisibilityBankNoLock(in reservation, out bank))
+            return false;
+        return bank.State != EAdvancedOutputReservationBankState.Free &&
+            bank.PlanLeaseCount != 0;
+    }
+
+    private bool TryGetExactAdvancedVisibilityBankNoLock(
+        in AdvancedVisibilityFamilyReservation reservation,
+        [NotNullWhen(true)] out AdvancedVisibilityOutputBank? bank)
+    {
+        bank = null;
+        if (!reservation.IsValid || reservation.ReservationId > (ulong)_advancedVisibilityOutputBanks.Length)
+            return false;
+        AdvancedVisibilityOutputBank candidate = _advancedVisibilityOutputBanks[checked((int)reservation.ReservationId - 1)];
+        if (candidate.OutputId != reservation.OutputId ||
+            candidate.BackendGeneration != reservation.BackendGeneration ||
+            candidate.BankIncarnation != reservation.BankIncarnation)
+            return false;
+        bank = candidate;
+        return true;
+    }
+
+    private static void TryFinalizeRetiringAdvancedVisibilityBankNoLock(AdvancedVisibilityOutputBank bank)
+    {
+        if (bank.State != EAdvancedOutputReservationBankState.Retiring ||
+            bank.PlanLeaseCount != 0 || bank.RecordedCommandBufferLeaseCount != 0 ||
+            bank.PendingQueueDomainCount != 0)
+            return;
+        bank.OutputId = 0;
+        bank.BackendGeneration = 0;
+        bank.State = EAdvancedOutputReservationBankState.Free;
+    }
+
+    private static void TryFinalizeRetiringAdvancedVisibilityBankNoLock(
+        AdvancedVisibilityOutputBank bank,
+        ulong completedGraphics,
+        ulong completedTransfer,
+        ulong completedOther)
+    {
+        if (bank.State != EAdvancedOutputReservationBankState.Retiring ||
+            bank.PlanLeaseCount != 0 || bank.RecordedCommandBufferLeaseCount != 0)
+            return;
+        ClearCompletedAdvancedVisibilityWatermark(
+            ref bank.GraphicsCompletionWatermark, completedGraphics, bank);
+        ClearCompletedAdvancedVisibilityWatermark(
+            ref bank.TransferCompletionWatermark, completedTransfer, bank);
+        ClearCompletedAdvancedVisibilityWatermark(
+            ref bank.OtherCompletionWatermark, completedOther, bank);
+        TryFinalizeRetiringAdvancedVisibilityBankNoLock(bank);
+    }
+
+    private static void ClearCompletedAdvancedVisibilityWatermark(
+        ref long watermark,
+        ulong completed,
+        AdvancedVisibilityOutputBank bank)
+    {
+        long observed = Volatile.Read(ref watermark);
+        if (observed == 0 || unchecked((ulong)observed) > completed ||
+            Interlocked.CompareExchange(ref watermark, 0, observed) != observed)
+            return;
+        Interlocked.Decrement(ref bank.PendingQueueDomainCount);
     }
 
     internal AdvancedRenderPipelineCapabilities GetAdvancedRenderPipelineCapabilities()
@@ -107,13 +390,9 @@ internal sealed partial class VulkanCommandRuntime
             RuntimeGraphicsApiKind.Vulkan, true, true, EAdvancedVisibilityTargetEncoding.R32G32UInt,
             SupportsOrderedComputeWork, true, indirectSubmission, textureIndirection,
             DeviceContext.SupportsSynchronization2 ? EAdvancedSynchronizationMode.VulkanSynchronization2 : EAdvancedSynchronizationMode.VulkanLegacyBarriers,
-            supportsAdvancedFrameStorage, false,
-            // The realized visibility ABI is currently one mono family per
-            // primary frame plan. Global pipeline selection has no output-
-            // family reservation identity, so advertising the family here
-            // could select it independently for multiple mono outputs and
-            // reject the combined stream only at preflight. Keep production
-            // promotion fail-closed until that cardinality is represented.
+            supportsAdvancedFrameStorage, DeviceContext.AdvancedMultiviewEnabled,
+            // Global capability snapshots have no output reservation. Only
+            // a live output-bank reservation may promote the shader family.
             EAdvancedShaderFamily.None,
             DeviceContext.SupportsBufferDeviceAddress,
             advancedResources.IsReady,

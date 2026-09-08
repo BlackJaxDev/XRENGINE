@@ -1,0 +1,95 @@
+#ifndef XR_ADVANCED_STANDARD_IBL_GLSLINC
+#define XR_ADVANCED_STANDARD_IBL_GLSLINC
+
+// Probe record flags mirror EAdvancedProbeRecordFlags.  A probe is never
+// considered active merely because a row exists: both published texture
+// references must resolve through the immutable resource publication.
+#define XR_ADV_PROBE_VALID 1u
+#define XR_ADV_PROBE_OCTAHEDRAL 2u
+#define XR_ADV_PROBE_PARALLAX 4u
+#define XR_ADV_PROBE_NORMALIZED 8u
+
+vec2 XR_ADV_OctahedralUv(vec3 direction)
+{
+    // Probe IBL maps use the legacy X/Z/Y octahedral axis convention.
+    vec3 octDir = vec3(direction.x, direction.z, direction.y);
+    octDir /= max(abs(octDir.x) + abs(octDir.y) + abs(octDir.z), 1.0e-5);
+    vec2 uv = octDir.xy;
+    if (octDir.z < 0.0)
+    {
+        vec2 signDir = vec2(octDir.x >= 0.0 ? 1.0 : -1.0,
+            octDir.y >= 0.0 ? 1.0 : -1.0);
+        uv = (1.0 - abs(uv.yx)) * signDir;
+    }
+    return uv * 0.5 + 0.5;
+}
+
+float XR_ADV_ProbeWeight(XRAdvancedProbeRecord probe, vec3 worldPosition)
+{
+    vec3 local = worldPosition - probe.positionAndRadius.xyz - probe.influenceOffsetAndShape.xyz;
+    if (probe.influenceOffsetAndShape.w > 0.5)
+    {
+        vec3 inner = max(probe.influenceInner.xyz, vec3(0.0));
+        vec3 outer = max(probe.influenceOuter.xyz, inner + vec3(1.0e-4));
+        vec3 normalizedDistance = clamp((abs(local) - inner) / (outer - inner), 0.0, 1.0);
+        return 1.0 - smoothstep(0.0, 1.0, max(normalizedDistance.x,
+            max(normalizedDistance.y, normalizedDistance.z)));
+    }
+    float distance = length(local);
+    float innerRadius = max(probe.influenceInner.w, 0.0);
+    float outerRadius = max(probe.influenceOuter.w, innerRadius + 1.0e-4);
+    return 1.0 - smoothstep(innerRadius, outerRadius, distance);
+}
+
+vec3 XR_ADV_ParallaxCorrectedDirection(XRAdvancedProbeRecord probe, vec3 worldPosition, vec3 reflection)
+{
+    if ((probe.flags & XR_ADV_PROBE_PARALLAX) == 0u || probe.proxyCenterAndEnable.w <= 0.0)
+        return reflection;
+    vec3 halfExtents = max(probe.proxyHalfExtents.xyz, vec3(1.0e-4));
+    vec4 rotation = normalize(probe.proxyRotation);
+    vec3 center = probe.positionAndRadius.xyz + probe.proxyCenterAndEnable.xyz;
+    // Quaternion conjugate rotates world vectors into proxy local space.
+    vec3 qv = -rotation.xyz;
+    vec3 rayOrigin = worldPosition - center;
+    rayOrigin += 2.0 * cross(qv, cross(qv, rayOrigin) + rotation.w * rayOrigin);
+    vec3 rayDirection = reflection;
+    rayDirection += 2.0 * cross(qv, cross(qv, rayDirection) + rotation.w * rayDirection);
+    rayDirection = normalize(rayDirection);
+    vec3 absDirection = abs(rayDirection);
+    vec3 signDirection = mix(vec3(1.0), sign(rayDirection), step(vec3(1.0e-6), absDirection));
+    vec3 safeDirection = signDirection * max(absDirection, vec3(1.0e-6));
+    vec3 t1 = (halfExtents - rayOrigin) / safeDirection;
+    vec3 t2 = (-halfExtents - rayOrigin) / safeDirection;
+    float distance = min(max(t1.x, t2.x), min(max(t1.y, t2.y), max(t1.z, t2.z)));
+    if (distance <= 0.0 || isnan(distance) || isinf(distance))
+        return reflection;
+    vec3 hitLocal = rayOrigin + rayDirection * distance;
+    vec3 hitWorld = center + hitLocal + 2.0 * cross(rotation.xyz,
+        cross(rotation.xyz, hitLocal) + rotation.w * hitLocal);
+    vec3 corrected = hitWorld - probe.positionAndRadius.xyz;
+    return dot(corrected, corrected) > 1.0e-10 ? normalize(corrected) : reflection;
+}
+
+bool XR_ADV_TrySampleProbe(XRAdvancedProbeRecord probe, vec3 worldPosition, vec3 N, vec3 V, float roughness,
+    out vec3 diffuse, out vec3 specular)
+{
+    diffuse = vec3(0.0); specular = vec3(0.0);
+    if ((probe.flags & (XR_ADV_PROBE_VALID | XR_ADV_PROBE_OCTAHEDRAL)) !=
+        (XR_ADV_PROBE_VALID | XR_ADV_PROBE_OCTAHEDRAL)) return false;
+    XRAdvancedTextureRecord irradianceRecord, prefilterRecord;
+    XRAdvancedEncodedTextureReference irradianceReference, prefilterReference;
+    if (!XR_ADV_TryResolveTextureReference(probe.irradiance.handle, VisibilityTextureLookupSegment, VisibilitySamplerLookupSegment,
+            irradianceRecord, irradianceReference) ||
+        !XR_ADV_TryResolveTextureReference(probe.prefilteredRadiance.handle, VisibilityTextureLookupSegment, VisibilitySamplerLookupSegment,
+            prefilterRecord, prefilterReference) ||
+        irradianceRecord.dimension != 1u || prefilterRecord.dimension != 1u) return false;
+    vec3 R = XR_ADV_ParallaxCorrectedDirection(probe, worldPosition, reflect(-V, N));
+    float normalization = (probe.flags & XR_ADV_PROBE_NORMALIZED) != 0u ? probe.proxyHalfExtents.w : 1.0;
+    diffuse = XR_ADV_SampleTexture2D(irradianceReference, XR_ADV_OctahedralUv(N)).rgb * normalization;
+    float mip = roughness * max(float(prefilterRecord.mipCount) - 1.0, 0.0);
+    specular = XR_ADV_SampleTexture2DLod(prefilterReference, XR_ADV_OctahedralUv(R), mip).rgb * normalization;
+    return !any(isnan(diffuse)) && !any(isinf(diffuse)) &&
+        !any(isnan(specular)) && !any(isinf(specular));
+}
+
+#endif

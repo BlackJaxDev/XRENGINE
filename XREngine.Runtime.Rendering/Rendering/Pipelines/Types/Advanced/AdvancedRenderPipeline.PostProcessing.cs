@@ -1977,6 +1977,7 @@ public partial class AdvancedRenderPipeline
 
     private void ApplyTsrUpscaleProgramBindings(XRRenderProgram program)
     {
+        BindAdvancedTemporalReactiveMask(program);
         XRTexture? source = GetTexture<XRTexture>(FinalPostProcessOutputTextureName);
         if (source is not null)
             program.Sampler(PostProcessOutputTextureName, source, 0);
@@ -2079,6 +2080,7 @@ public partial class AdvancedRenderPipeline
 
     private void ApplyTemporalAccumulationProgramBindings(XRRenderProgram program)
     {
+        BindAdvancedTemporalReactiveMask(program);
         var state = RenderingPipelineState?.SceneCamera?.GetActivePostProcessState();
         TemporalResolveSettings temporalSettings = ResolveTemporalSettings(state);
         bool temporalHistoryAllowed = !DisableHistoryBasedVrEffects();

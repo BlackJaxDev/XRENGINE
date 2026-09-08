@@ -236,7 +236,7 @@ internal sealed partial class VulkanFramePlanner
         for (int usageIndex = 0; usageIndex < pass.ResourceUsages.Count; usageIndex++)
         {
             ERenderPassResourceType resourceType = pass.ResourceUsages[usageIndex].ResourceType;
-            if (resourceType is ERenderPassResourceType.TransferSource or ERenderPassResourceType.TransferDestination)
+            if (resourceType is ERenderPassResourceType.TransferSource or ERenderPassResourceType.TransferDestination or ERenderPassResourceType.DepthTransferDestination)
                 transferUsageCount++;
         }
     }

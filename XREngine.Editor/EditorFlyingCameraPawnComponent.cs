@@ -679,6 +679,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     /// to one throttle interval plus the GPU BVH readback latency behind the cursor).
     /// </summary>
     private bool _selectAfterForcedPick;
+    private AdvancedPickingResult _lastAdvancedPickingResult;
     private readonly Lock _pickDispatchLock = new();
     private bool _octreePickInFlight;
     private bool _pendingPickAfterCurrent;
@@ -1336,10 +1337,93 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         _lastPickCursorPosition = normalizedCursorPos;
         _forceRepick = false;
 
+        if (vp.RenderPipelineInstance.Pipeline is AdvancedRenderPipeline)
+        {
+            DispatchAdvancedVisibilityPick(vp, normalizedCursorPos);
+            return;
+        }
+
         var octreeResults = GetOctreePickResultDict();
         var physicsResults = GetPhysicsPickResultDict();
         vp.PickSceneAsync(normalizedCursorPos, false, true, true, _layerMask, _physxQueryFilter,
             octreeResults, physicsResults, OctreeRaycastCallback, PhysicsRaycastCallback, RaycastMode, useUnjitteredProjection: true);
+    }
+
+    private void DispatchAdvancedVisibilityPick(
+        XRViewport viewport,
+        Vector2 normalizedCursorPosition)
+    {
+        bool selectOnCompletion = _selectAfterForcedPick;
+        _selectAfterForcedPick = false;
+        if (viewport.TryPickAdvancedAsync(
+                normalizedCursorPosition,
+                viewIndex: 0u,
+                result => Engine.EnqueueMainThreadTask(
+                    () => ApplyAdvancedVisibilityPick(result, selectOnCompletion),
+                    "EditorFlyingCameraPawnComponent.AdvancedPickResult"),
+                out _,
+                out string? failure))
+        {
+            return;
+        }
+
+        Debug.RenderingWarningEvery(
+            "Editor.AdvancedPicking.ReadbackRejected",
+            TimeSpan.FromSeconds(2),
+            "[AdvancedPicking] The Advanced editor pick was rejected: {0}",
+            failure ?? "unspecified backend rejection");
+        ClearHoverHighlight();
+    }
+
+    private void ApplyAdvancedVisibilityPick(
+        in AdvancedPickingResult result,
+        bool selectOnCompletion)
+    {
+        _lastAdvancedPickingResult = result;
+        SceneNode? node = ResolveAdvancedPickingSceneNode(in result);
+        if (node is not null && !ReferenceEquals(node.World, World))
+            node = null;
+        if (result.IsHit && node is null)
+        {
+            Debug.RenderingWarningEvery(
+                "Editor.AdvancedPicking.ManagedOwnerMissing",
+                TimeSpan.FromSeconds(2),
+                "[AdvancedPicking] Canonical hit {0}:{1} has no live managed selection owner.",
+                result.Draw.Index,
+                result.Draw.Generation);
+        }
+
+        UpdateAdvancedPickingHover(result.AuthoringRenderInfo, result.PrimitiveSection);
+        if (selectOnCompletion)
+            Selection.SceneNodes = node is null ? [] : [node];
+    }
+
+    private static SceneNode? ResolveAdvancedPickingSceneNode(
+        in AdvancedPickingResult result)
+        => result.AuthoringRenderInfo?.Owner switch
+        {
+            XRComponent component => component.SceneNode,
+            TransformBase transform => transform.SceneNode,
+            _ => null,
+        };
+
+    private void UpdateAdvancedPickingHover(
+        RenderInfo? renderInfo,
+        uint primitiveSection)
+    {
+        if (!HoverOutlineEnabled || renderInfo?.Owner is not ModelComponent model)
+        {
+            ClearHoverHighlight();
+            return;
+        }
+
+        int meshIndex = primitiveSection <= int.MaxValue
+            ? (int)primitiveSection
+            : -1;
+        RenderableMesh? mesh = meshIndex >= 0 && meshIndex < model.Meshes.Count
+            ? model.Meshes[meshIndex]
+            : model.Meshes.FirstOrDefault();
+        UpdateHoverHighlight(mesh);
     }
 
     private void PhysicsRaycastCallback(SortedDictionary<float, List<(XRComponent? item, object? data)>>? dictionary)
