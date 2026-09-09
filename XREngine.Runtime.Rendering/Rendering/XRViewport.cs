@@ -3225,7 +3225,17 @@ namespace XREngine.Rendering
         /// Enters any renderer-specific readback state needed to resolve this viewport's live render-pipeline resources.
         /// </summary>
         public IDisposable? EnterRenderPipelineReadbackScope()
+            => EnterRenderPipelineReadbackScope(RenderPipelineInstance);
+
+        /// <summary>
+        /// Enters renderer-specific readback state for a live pipeline that renders through this viewport.
+        /// Specialized outputs such as legacy two-pass VR eyes own a pipeline separate from
+        /// <see cref="RenderPipelineInstance"/> while retaining this viewport as their output context.
+        /// </summary>
+        public IDisposable? EnterRenderPipelineReadbackScope(XRRenderPipelineInstance pipeline)
         {
+            ArgumentNullException.ThrowIfNull(pipeline);
+
             // External captures commonly run from a post-viewport callback, after transient
             // global render state has been cleared. The viewport's owning window remains the
             // authoritative renderer for its planner generation, including isolated OpenXR eyes.
@@ -3233,7 +3243,7 @@ namespace XREngine.Rendering
             return renderer is not null &&
                 ((IRuntimeRendererHost)renderer).TryGetBackendCapability<IRenderPipelineReadbackBackendCapability>(out var capability) &&
                 capability is not null
-                    ? capability.EnterPipelineResourcePlannerReadbackScope(RenderPipelineInstance, this)
+                    ? capability.EnterPipelineResourcePlannerReadbackScope(pipeline, this)
                     : null;
         }
 

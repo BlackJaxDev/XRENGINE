@@ -53,7 +53,12 @@ public sealed class InfiniteGridFloorComponent : XRComponent, IRenderable
         private bool _hasLastState;
         private ulong _generation = 1;
 
-        public ERenderBindingFrequency Frequency => ERenderBindingFrequency.View;
+        // Each grid plane owns a distinct material. Its parameters are therefore
+        // material-owned even when the height follows the component transform;
+        // the publisher generation carries that dynamic state. Declaring View
+        // here makes the typed publication disagree with the shader rewriter's
+        // material block and rejects the entire auto-uniform update on Vulkan.
+        public ERenderBindingFrequency Frequency => ERenderBindingFrequency.Material;
 
         public ulong Generation
         {

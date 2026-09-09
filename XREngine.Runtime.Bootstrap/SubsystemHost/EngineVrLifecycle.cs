@@ -21,6 +21,7 @@ using XREngine.Rendering;
 using XREngine.Rendering.API.Rendering.OpenXR;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Runtime.Bootstrap;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
 using ETextureType = Valve.VR.ETextureType;
@@ -484,19 +485,31 @@ namespace XREngine
                         vr.DeviceDetected -= OnDeviceDetected;
                         return false;
                     }
-                    else
-                    {
-                        _openVRApi = vr;
-                        _activeRuntime = VRRuntime.OpenVR;
 
-                        InstallApp(vrManifest);
-                        vr.SetActionManifest(actionManifest);
-                        CreateActions(actionManifest, vr);
-                        Engine.Time.Timer.PreUpdateFrame += Update;
-                        IsInVR = true;
-                        SyncRuntimeVrState();
-                        return true;
+                    // OpenVR.NET reports Init success when the system interface exists,
+                    // even if the scene compositor interface cannot be obtained. A scene
+                    // renderer requires both; otherwise UpdateDraw would dereference a
+                    // null compositor on every render callback.
+                    if (vr.CVR is null || Valve.VR.OpenVR.Compositor is null)
+                    {
+                        Debug.LogWarning(
+                            "SteamVR initialized without an IVRCompositor interface. " +
+                            "OpenVR scene rendering will not start.");
+                        vr.DeviceDetected -= OnDeviceDetected;
+                        vr.Exit();
+                        return false;
                     }
+
+                    _openVRApi = vr;
+                    _activeRuntime = VRRuntime.OpenVR;
+
+                    InstallApp(vrManifest);
+                    vr.SetActionManifest(actionManifest);
+                    CreateActions(actionManifest, vr);
+                    Engine.Time.Timer.PreUpdateFrame += Update;
+                    IsInVR = true;
+                    SyncRuntimeVrState();
+                    return true;
                 });
 
             /// <summary>
@@ -678,9 +691,12 @@ namespace XREngine
                     RightEyeViewport!.WorldInstanceOverride = ViewInformation.World;
                 }
 
-                var pipeline = (RenderPipeline)RuntimeEngine.Rendering.NewRenderPipeline(stereo: false);
+                // Keep an explicitly selected bootstrap scene family consistent across
+                // desktop and two-pass OpenVR eyes. Automatic selection can otherwise
+                // admit Advanced for the eyes while the controlled desktop camera uses Default.
+                var pipeline = BootstrapRenderSettings.CreateSceneRenderPipeline(stereo: false);
                 _twoPassLeftPipeline = new XRRenderPipelineInstance(pipeline);
-                _twoPassRightPipeline = new XRRenderPipelineInstance(RuntimeEngine.Rendering.NewRenderPipeline(stereo: false));
+                _twoPassRightPipeline = new XRRenderPipelineInstance(BootstrapRenderSettings.CreateSceneRenderPipeline(stereo: false));
                 _sharedMeshRenderCommands = new RenderCommandCollection();
                 _sharedMeshRenderCommands.SetRenderPasses(pipeline.PassIndicesAndSorters, pipeline.PassMetadata);
 
@@ -753,7 +769,7 @@ namespace XREngine
                     SetRenderPipelineFromCamera = false,
                     PipelineRequest = RenderPipelineRequest.DesktopScene(stereo: true),
                 });
-                StereoViewport.RenderPipeline = RuntimeEngine.Rendering.NewRenderPipeline(stereo: true);
+                StereoViewport.RenderPipeline = BootstrapRenderSettings.CreateSceneRenderPipeline(stereo: true);
                 StereoViewport.AutomaticallyCollectVisible = false;
                 StereoViewport.AutomaticallySwapBuffers = false;
 

@@ -153,6 +153,65 @@ internal sealed partial class VulkanDeviceContext
         featureSupported = featuresKhr.Maintenance5;
     }
 
+    internal unsafe void QueryMaintenance6Capabilities(out bool featureSupported)
+    {
+        PhysicalDeviceVulkan14Features features = new()
+        {
+            SType = StructureType.PhysicalDeviceVulkan14Features,
+        };
+        PhysicalDeviceFeatures2 features2 = new()
+        {
+            SType = StructureType.PhysicalDeviceFeatures2,
+            PNext = &features,
+        };
+        Api.GetPhysicalDeviceFeatures2(PhysicalDevice, &features2);
+        featureSupported = features.Maintenance6;
+    }
+
+    /// <summary>
+    /// Queries the Vulkan 1.3 shader invocation controls emitted by the
+    /// Vulkan 1.4 / SPIR-V 1.6 compiler profile. They are promoted core
+    /// features, so the aggregate is queried rather than extension aliases.
+    /// </summary>
+    internal unsafe void QueryShaderInvocationControlCapabilities(
+        out bool demoteToHelperInvocationSupported,
+        out bool terminateInvocationSupported)
+    {
+        PhysicalDeviceVulkan13Features features = new()
+        {
+            SType = StructureType.PhysicalDeviceVulkan13Features,
+        };
+        PhysicalDeviceFeatures2 features2 = new()
+        {
+            SType = StructureType.PhysicalDeviceFeatures2,
+            PNext = &features,
+        };
+        Api.GetPhysicalDeviceFeatures2(PhysicalDevice, &features2);
+        demoteToHelperInvocationSupported = features.ShaderDemoteToHelperInvocation;
+        terminateInvocationSupported = features.ShaderTerminateInvocation;
+    }
+
+    internal unsafe void QueryShaderUntypedPointersCapabilities(
+        bool extensionEnabled,
+        out bool featureSupported)
+    {
+        featureSupported = false;
+        if (!extensionEnabled)
+            return;
+
+        PhysicalDeviceShaderUntypedPointersFeaturesKHR features = new()
+        {
+            SType = StructureType.PhysicalDeviceShaderUntypedPointersFeaturesKhr,
+        };
+        PhysicalDeviceFeatures2 features2 = new()
+        {
+            SType = StructureType.PhysicalDeviceFeatures2,
+            PNext = &features,
+        };
+        Api.GetPhysicalDeviceFeatures2(PhysicalDevice, &features2);
+        featureSupported = features.ShaderUntypedPointers;
+    }
+
     internal unsafe void QueryShaderObjectCapabilities(bool extensionAvailable, out bool featureSupported, out PhysicalDeviceShaderObjectPropertiesEXT properties)
     {
         featureSupported = false;

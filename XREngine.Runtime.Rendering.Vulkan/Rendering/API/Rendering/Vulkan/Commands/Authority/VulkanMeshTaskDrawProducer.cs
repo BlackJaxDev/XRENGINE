@@ -90,7 +90,9 @@ internal static class VulkanMeshTaskDrawProducer
             useDynamicRendering ? 0UL : renderPass.Handle, dynamicFormats,
             program.ComputeGraphicsPipelineFingerprint(), program.LinkGeneration,
             VertexLayoutHash: 0UL, program.DescriptorSchemaFingerprint,
-            program.PipelineLayout.Handle, PassMetadataHash: 0UL, FeatureProfileHash: 0UL,
+            program.PipelineLayout.Handle,
+            program.MeshTaskBackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap,
+            PassMetadataHash: 0UL, FeatureProfileHash: 0UL,
             rasterizationSamples, state.DepthTestEnabled, state.DepthWriteEnabled,
             state.DepthCompareOp, state.StencilTestEnabled, state.FrontStencilState,
             state.BackStencilState, state.StencilWriteMask, state.CullMode, state.FrontFace,
@@ -129,6 +131,10 @@ internal static class VulkanMeshTaskDrawProducer
         VulkanGraphicsPipelineBuildRequest request = new(
             program.BindingId, program, program.MeshTaskProgramServices, useGraphicsPipelineLibraries: false,
             lease.Generation, key, "MeshTaskDeferred", colorAttachmentCount, program.PipelineLayout,
+            program.MeshTaskBackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap,
+            program.DescriptorHeapLayout is { Mappings.Length: > 0 } descriptorHeapLayout
+                ? [.. descriptorHeapLayout.Mappings]
+                : [],
             [], [], default, Math.Max(producer.IndexedViewportScissors.Count, 1u),
             RuntimeEngine.Rendering.ShouldUseNativeVulkanDepthClipControl, raster, samples, depth, blends,
             [DynamicState.Viewport, DynamicState.Scissor], renderPass, dynamicFormats,

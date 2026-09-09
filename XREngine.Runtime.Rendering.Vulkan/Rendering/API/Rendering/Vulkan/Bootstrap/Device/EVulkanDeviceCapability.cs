@@ -44,4 +44,7 @@ internal enum EVulkanDeviceCapability : ulong
     FragmentStoresAndAtomics = 1UL << 37,
     VertexPipelineStoresAndAtomics = 1UL << 38,
     Vulkan14 = 1UL << 39,
+    Maintenance6 = 1UL << 40,
+    ShaderDemoteToHelperInvocation = 1UL << 41,
+    ShaderTerminateInvocation = 1UL << 42,
 }

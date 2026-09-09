@@ -16,6 +16,7 @@ internal readonly record struct VulkanGraphicsPipelineKey(
     ulong VertexLayoutHash,
     ulong DescriptorLayoutHash,
     ulong PipelineLayoutHandle,
+    bool UsesDescriptorHeap,
     ulong PassMetadataHash,
     ulong FeatureProfileHash,
     SampleCountFlags RasterizationSamples,
@@ -51,6 +52,7 @@ internal readonly record struct VulkanGraphicsPipelineKey(
                DescriptorLayoutHash == other.DescriptorLayoutHash &&
                PassMetadataHash == other.PassMetadataHash &&
                PipelineLayoutHandle == other.PipelineLayoutHandle &&
+               UsesDescriptorHeap == other.UsesDescriptorHeap &&
                FeatureProfileHash == other.FeatureProfileHash &&
                RasterizationSamples == other.RasterizationSamples &&
                DepthTestEnabled == other.DepthTestEnabled &&
@@ -89,6 +91,7 @@ internal readonly record struct VulkanGraphicsPipelineKey(
             hash.Add(FeatureProfileHash);
             hash.Add(RasterizationSamples);
             hash.Add(PipelineLayoutHandle);
+            hash.Add(UsesDescriptorHeap);
             hash.Add(DepthTestEnabled);
             hash.Add(DepthWriteEnabled);
             hash.Add(DepthCompareOp);

@@ -13,6 +13,7 @@ internal sealed class VulkanBufferResourceManager
     internal ConcurrentDictionary<ulong, VulkanMemoryAllocation> Allocations { get; } = new();
     internal ConcurrentDictionary<ulong, VulkanMemoryAllocation> LegacyAllocations { get; } = new();
     internal ConcurrentDictionary<ulong, byte> LiveHandles { get; } = new();
+    internal ConcurrentDictionary<ulong, VulkanBufferDescriptorMetadata> DescriptorMetadata { get; } = new();
     private readonly object _meshUniformBuffersLock = new();
     private readonly Dictionary<ulong, DeviceMemory> _meshUniformBuffers = [];
 
@@ -49,18 +50,27 @@ internal sealed class VulkanBufferResourceManager
     /// </summary>
     internal void RegisterMappedFrameArenaChunk(
         Silk.NET.Vulkan.Buffer buffer,
-        in VulkanMemoryAllocation allocation)
+        in VulkanMemoryAllocation allocation,
+        ulong logicalSize,
+        BufferUsageFlags usage)
     {
-        if (buffer.Handle == 0 || allocation.Memory.Handle == 0)
+        if (buffer.Handle == 0 || allocation.Memory.Handle == 0 || logicalSize == 0)
             throw new ArgumentException("Mapped frame chunks require live buffer and memory handles.");
 
         if (!LiveHandles.TryAdd(buffer.Handle, 0))
             throw new InvalidOperationException($"Mapped frame chunk buffer 0x{buffer.Handle:X} was already registered.");
-        if (LegacyAllocations.TryAdd(buffer.Handle, allocation))
+        if (!LegacyAllocations.TryAdd(buffer.Handle, allocation))
+        {
+            LiveHandles.TryRemove(buffer.Handle, out _);
+            throw new InvalidOperationException($"Mapped frame chunk allocation 0x{buffer.Handle:X} was already registered.");
+        }
+
+        if (DescriptorMetadata.TryAdd(buffer.Handle, new(logicalSize, usage)))
             return;
 
+        LegacyAllocations.TryRemove(buffer.Handle, out _);
         LiveHandles.TryRemove(buffer.Handle, out _);
-        throw new InvalidOperationException($"Mapped frame chunk allocation 0x{buffer.Handle:X} was already registered.");
+        throw new InvalidOperationException($"Mapped frame chunk descriptor metadata 0x{buffer.Handle:X} was already registered.");
     }
 
     internal bool TryUnregisterMappedFrameArenaChunk(
@@ -68,6 +78,29 @@ internal sealed class VulkanBufferResourceManager
         out VulkanMemoryAllocation allocation)
     {
         LiveHandles.TryRemove(buffer.Handle, out _);
+        DescriptorMetadata.TryRemove(buffer.Handle, out _);
         return LegacyAllocations.TryRemove(buffer.Handle, out allocation);
+    }
+
+    internal void RegisterDescriptorMetadata(
+        Silk.NET.Vulkan.Buffer buffer,
+        ulong logicalSize,
+        BufferUsageFlags usage)
+    {
+        if (buffer.Handle == 0 || logicalSize == 0)
+            throw new ArgumentException("Buffer descriptor metadata requires a live buffer and non-zero logical size.");
+        if (!DescriptorMetadata.TryAdd(buffer.Handle, new(logicalSize, usage)))
+            throw new InvalidOperationException($"Buffer descriptor metadata 0x{buffer.Handle:X} was already registered.");
+    }
+
+    internal bool TryGetDescriptorMetadata(
+        Silk.NET.Vulkan.Buffer buffer,
+        out VulkanBufferDescriptorMetadata metadata)
+        => DescriptorMetadata.TryGetValue(buffer.Handle, out metadata);
+
+    internal void RemoveDescriptorMetadata(Silk.NET.Vulkan.Buffer buffer)
+    {
+        if (buffer.Handle != 0)
+            DescriptorMetadata.TryRemove(buffer.Handle, out _);
     }
 }

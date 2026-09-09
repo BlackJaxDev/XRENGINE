@@ -52,6 +52,11 @@ internal sealed class VulkanDeviceMutableCapabilities
     internal bool _supportsVertexPipelineStoresAndAtomics;
     internal bool _supportsGeometryShader;
     internal bool _supportsVulkan14;
+    internal bool _vulkan14DynamicRenderingLocalReadSupported;
+    internal bool _vulkan14Maintenance5Supported;
+    internal bool _vulkan14Maintenance6Supported;
+    internal bool _vulkan14ShaderDemoteToHelperInvocationSupported;
+    internal bool _vulkan14ShaderTerminateInvocationSupported;
     internal bool _supportsDynamicRenderingLocalRead;
     internal bool _supportsDynamicRenderingLocalReadStorageResources;
     internal bool _supportsDynamicRenderingLocalReadColorAttachments;
@@ -59,6 +64,9 @@ internal sealed class VulkanDeviceMutableCapabilities
     internal bool _supportsDynamicRenderingLocalReadMultisampledAttachments;
     internal bool _supportsMaintenance4;
     internal bool _supportsMaintenance5;
+    internal bool _supportsMaintenance6;
+    internal bool _supportsShaderDemoteToHelperInvocation;
+    internal bool _supportsShaderTerminateInvocation;
     internal bool _supportsExtendedFlags;
     internal bool _supportsDescriptorHeap;
     internal bool _supportsShaderObject;

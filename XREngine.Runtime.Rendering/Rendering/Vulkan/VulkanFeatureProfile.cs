@@ -67,9 +67,12 @@ public enum EVulkanBindlessMaterialCapabilityTier
 
 public enum EVulkanCapabilityTier
 {
+    /// <summary>Legacy request name. Vulkan 1.4 remains required at bootstrap.</summary>
     Vulkan13Production = 0,
-    Vulkan14OptInBaseline,
-    Vulkan14Experimental,
+    Vulkan14Production = 1,
+    /// <summary>Compatibility alias for the Vulkan 1.4 production baseline.</summary>
+    Vulkan14OptInBaseline = Vulkan14Production,
+    Vulkan14Experimental = 2,
 }
 
 public enum EVulkanDescriptorBackend
@@ -321,7 +324,17 @@ public static class VulkanFeatureProfile
     }
 
     public static bool TryGetCapabilityTierEnvOverride(out EVulkanCapabilityTier tier)
-        => TryGetEnumEnvOverride(CapabilityTierEnvVar, out tier);
+    {
+        if (!TryGetEnumEnvOverride(CapabilityTierEnvVar, out tier))
+            return false;
+
+        // Keep accepting the pre-1.4 name for existing launch settings, while
+        // ensuring it cannot be observed or applied as a downgrade request.
+        if (tier == EVulkanCapabilityTier.Vulkan13Production)
+            tier = EVulkanCapabilityTier.Vulkan14Production;
+
+        return true;
+    }
 
     public static bool TryGetDescriptorBackendEnvOverride(out EVulkanDescriptorBackend backend)
         => TryGetEnumEnvOverride(DescriptorBackendEnvVar, out backend);
@@ -448,7 +461,7 @@ public static class VulkanFeatureProfile
     public static EVulkanCapabilityTier RequestedCapabilityTier
         => TryGetCapabilityTierEnvOverride(out EVulkanCapabilityTier tier)
             ? tier
-            : EVulkanCapabilityTier.Vulkan13Production;
+            : EVulkanCapabilityTier.Vulkan14Production;
 
     public static EVulkanDescriptorBackend RequestedDescriptorBackend
         => TryGetDescriptorBackendEnvOverride(out EVulkanDescriptorBackend backend)

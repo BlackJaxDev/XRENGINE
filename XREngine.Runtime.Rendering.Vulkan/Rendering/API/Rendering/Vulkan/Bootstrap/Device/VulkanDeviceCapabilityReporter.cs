@@ -264,6 +264,9 @@ internal static class VulkanDeviceCapabilityReporter
         bool SupportsRayQuery = Supports(EVulkanDeviceCapability.RayQuery);
         bool SupportsDeviceGeneratedCommands = Supports(EVulkanDeviceCapability.DeviceGeneratedCommands);
         bool SupportsMaintenance5 = Supports(EVulkanDeviceCapability.Maintenance5);
+        bool SupportsMaintenance6 = Supports(EVulkanDeviceCapability.Maintenance6);
+        bool SupportsShaderDemoteToHelperInvocation = Supports(EVulkanDeviceCapability.ShaderDemoteToHelperInvocation);
+        bool SupportsShaderTerminateInvocation = Supports(EVulkanDeviceCapability.ShaderTerminateInvocation);
         bool SupportsExtendedFlags = mutable._supportsExtendedFlags;
         bool SupportsDepthClipControl = Supports(EVulkanDeviceCapability.DepthClipControl);
         bool SupportsIndexTypeUint8 = Supports(EVulkanDeviceCapability.IndexTypeUint8);
@@ -302,12 +305,15 @@ internal static class VulkanDeviceCapabilityReporter
             snapshot.DescriptorIndexingSupported &&
             SupportsBufferDeviceAddress &&
             deviceContext.MutableCapabilities._supportsDrawIndirectCount;
-        bool vulkan14OptInTierReady =
+        bool vulkan14ProductionBaselineReady =
             SupportsVulkan14 &&
             SupportsDynamicRenderingLocalRead &&
-            SupportsMaintenance5;
+            SupportsMaintenance5 &&
+            SupportsMaintenance6 &&
+            SupportsShaderDemoteToHelperInvocation &&
+            SupportsShaderTerminateInvocation;
         bool vulkan14ExperimentalTierReady =
-            vulkan14OptInTierReady &&
+            vulkan14ProductionBaselineReady &&
             HasExtension(VulkanDescriptorHeapExt.ExtensionName) &&
             snapshot.DescriptorHeapNativeApiAvailable &&
             SupportsShaderObject;
@@ -332,7 +338,7 @@ internal static class VulkanDeviceCapabilityReporter
         }
 
         VulkanDeviceCapabilityReporter.LogCapability(
-            "Vulkan13ProductionTier",
+            "Vulkan13PrerequisiteFeatures",
             VulkanDeviceCapabilityReporter.CapabilityState(true, productionTierReady, productionTierReady),
             apiVersion,
             "Vulkan 1.3",
@@ -342,14 +348,14 @@ internal static class VulkanDeviceCapabilityReporter
             productionTierReady ? string.Empty : "Production tier incomplete; see individual capability rows.");
 
         VulkanDeviceCapabilityReporter.LogCapability(
-            "Vulkan14OptInTier",
-            VulkanDeviceCapabilityReporter.CapabilityState(SupportsVulkan14, vulkan14OptInTierReady, false),
+            "Vulkan14ProductionBaseline",
+            VulkanDeviceCapabilityReporter.CapabilityState(SupportsVulkan14, vulkan14ProductionBaselineReady, vulkan14ProductionBaselineReady),
             apiVersion,
             "Vulkan 1.4",
-            "dynamicRenderingLocalRead+maintenance5",
+            "dynamicRenderingLocalRead+maintenance5+maintenance6+shaderDemoteToHelperInvocation+shaderTerminateInvocation",
             snapshot.RequestedCapabilityTier.ToString(),
-            $"ready={vulkan14OptInTierReady}",
-            vulkan14OptInTierReady ? string.Empty : "Optional Vulkan 1.4 tier is not fully available.");
+            $"ready={vulkan14ProductionBaselineReady}",
+            vulkan14ProductionBaselineReady ? string.Empty : "Required Vulkan 1.4 baseline is incomplete.");
 
         VulkanDeviceCapabilityReporter.LogCapability(
             "Vulkan14ExperimentalTier",
@@ -376,13 +382,13 @@ internal static class VulkanDeviceCapabilityReporter
             VulkanDeviceCapabilityReporter.CapabilityState(
                 HasExtension("VK_KHR_dynamic_rendering_local_read") || SupportsVulkan14,
                 SupportsDynamicRenderingLocalRead,
-                false),
+                SupportsDynamicRenderingLocalRead),
             apiVersion,
             "VK_KHR_dynamic_rendering_local_read / Vulkan 1.4",
             "dynamicRenderingLocalRead",
-            "OptionalPrototype",
-            $"storageResources={SupportsDynamicRenderingLocalReadStorageResources};singleSampledColor={SupportsDynamicRenderingLocalReadColorAttachments};depthStencil={SupportsDynamicRenderingLocalReadDepthStencilAttachments};multisampled={SupportsDynamicRenderingLocalReadMultisampledAttachments}",
-            SupportsDynamicRenderingLocalRead ? "No pass has opted into local-read barriers yet." : "Local read remains optional until Vulkan 1.4 tier is required.");
+            "RequiredVulkan14Baseline",
+            $"requested=True;supported={mutable._vulkan14DynamicRenderingLocalReadSupported};enabled={SupportsDynamicRenderingLocalRead};executableStorageResources={SupportsDynamicRenderingLocalReadStorageResources};executableSingleSampledColor={SupportsDynamicRenderingLocalReadColorAttachments};executableDepthStencil={SupportsDynamicRenderingLocalReadDepthStencilAttachments};executableMultisampled={SupportsDynamicRenderingLocalReadMultisampledAttachments}",
+            SupportsDynamicRenderingLocalRead ? "Feature enabled; depth/stencil and multisample use remains gated by the reported properties." : "Required Vulkan 1.4 local-read feature is unavailable.");
 
         VulkanDeviceCapabilityReporter.LogCapability(
             "Synchronization2",
@@ -639,13 +645,49 @@ internal static class VulkanDeviceCapabilityReporter
             VulkanDeviceCapabilityReporter.CapabilityState(
                 HasExtension("VK_KHR_maintenance5") || SupportsVulkan14,
                 SupportsMaintenance5,
-                false),
+                SupportsMaintenance5),
             apiVersion,
             "VK_KHR_maintenance5 / Vulkan 1.4",
             "maintenance5",
-            "DescriptorHeapDependency",
-            $"enabled={SupportsMaintenance5}",
-            SupportsMaintenance5 ? "Available for descriptor heap dependency checks." : "Maintenance5 unavailable.");
+            "RequiredVulkan14Baseline",
+            $"requested=True;supported={mutable._vulkan14Maintenance5Supported};enabled={SupportsMaintenance5};executable={SupportsMaintenance5}",
+            SupportsMaintenance5 ? string.Empty : "Required Vulkan 1.4 maintenance5 feature is unavailable.");
+
+        VulkanDeviceCapabilityReporter.LogCapability(
+            "Maintenance6",
+            VulkanDeviceCapabilityReporter.CapabilityState(SupportsVulkan14, SupportsMaintenance6, SupportsMaintenance6),
+            apiVersion,
+            "Vulkan 1.4",
+            "maintenance6",
+            "RequiredVulkan14Baseline",
+            $"requested=True;supported={mutable._vulkan14Maintenance6Supported};enabled={SupportsMaintenance6};executable={SupportsMaintenance6}",
+            SupportsMaintenance6 ? string.Empty : "Required Vulkan 1.4 maintenance6 feature is unavailable.");
+
+        VulkanDeviceCapabilityReporter.LogCapability(
+            "ShaderDemoteToHelperInvocation",
+            VulkanDeviceCapabilityReporter.CapabilityState(
+                VulkanDeviceContext.IsVulkanApiVersionAtLeast(properties.ApiVersion, 1u, 3u),
+                SupportsShaderDemoteToHelperInvocation,
+                SupportsShaderDemoteToHelperInvocation),
+            apiVersion,
+            "VK_EXT_shader_demote_to_helper_invocation / Vulkan 1.3",
+            "shaderDemoteToHelperInvocation",
+            "RequiredVulkan14ShaderProfile",
+            $"requested=True;supported={mutable._vulkan14ShaderDemoteToHelperInvocationSupported};enabled={SupportsShaderDemoteToHelperInvocation};executableDiscard={SupportsShaderDemoteToHelperInvocation}",
+            SupportsShaderDemoteToHelperInvocation ? string.Empty : "Vulkan 1.4 shader profile requires demote-to-helper invocation for fragment discard.");
+
+        VulkanDeviceCapabilityReporter.LogCapability(
+            "ShaderTerminateInvocation",
+            VulkanDeviceCapabilityReporter.CapabilityState(
+                VulkanDeviceContext.IsVulkanApiVersionAtLeast(properties.ApiVersion, 1u, 3u),
+                SupportsShaderTerminateInvocation,
+                SupportsShaderTerminateInvocation),
+            apiVersion,
+            "VK_KHR_shader_terminate_invocation / Vulkan 1.3",
+            "shaderTerminateInvocation",
+            "RequiredVulkan14ShaderProfile",
+            $"requested=True;supported={mutable._vulkan14ShaderTerminateInvocationSupported};enabled={SupportsShaderTerminateInvocation};executableTerminate={SupportsShaderTerminateInvocation}",
+            SupportsShaderTerminateInvocation ? string.Empty : "Vulkan 1.4 shader profile requires terminate invocation when generated by GLSL.");
 
         VulkanDeviceCapabilityReporter.LogCapability(
             "ExtendedFlags",
@@ -659,14 +701,17 @@ internal static class VulkanDeviceCapabilityReporter
 
         VulkanDeviceCapabilityReporter.LogCapability(
             "ShaderUntypedPointers",
-            VulkanDeviceCapabilityReporter.CapabilityState(HasExtension(VulkanDescriptorHeapExt.ShaderUntypedPointersExtensionName), snapshot.DescriptorHeapShaderUntypedPointersAvailable, false),
+            VulkanDeviceCapabilityReporter.CapabilityState(
+                HasExtension(VulkanDescriptorHeapExt.ShaderUntypedPointersExtensionName),
+                HasEnabledExtension(VulkanDescriptorHeapExt.ShaderUntypedPointersExtensionName) && snapshot.DescriptorHeapShaderUntypedPointersAvailable,
+                descriptorBackend == EVulkanDescriptorBackend.DescriptorHeap && snapshot.DescriptorHeapShaderUntypedPointersAvailable),
             apiVersion,
             VulkanDescriptorHeapExt.ShaderUntypedPointersExtensionName,
             "shaderUntypedPointers",
             "DescriptorHeapDependency",
-            $"available={snapshot.DescriptorHeapShaderUntypedPointersAvailable}",
+            $"supported={snapshot.DescriptorHeapShaderUntypedPointersAvailable};enabledExtension={HasEnabledExtension(VulkanDescriptorHeapExt.ShaderUntypedPointersExtensionName)};executable={descriptorBackend == EVulkanDescriptorBackend.DescriptorHeap && snapshot.DescriptorHeapShaderUntypedPointersAvailable}",
             snapshot.DescriptorHeapShaderUntypedPointersAvailable
-                ? "Descriptor heap dependency is present; legacy set/binding mappings do not require enabling it."
+                ? "Feature support is present; descriptor heap requires the extension enabled before the feature can execute."
                 : "Descriptor heap requires shader untyped pointers support.");
 
         VulkanDeviceCapabilityReporter.LogCapability(

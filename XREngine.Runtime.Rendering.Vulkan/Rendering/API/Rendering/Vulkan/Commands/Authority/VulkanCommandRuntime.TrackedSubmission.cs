@@ -507,6 +507,7 @@ internal sealed partial class VulkanCommandRuntime
             SubmissionSerial = unchecked((ulong)Interlocked.Increment(
                 ref FrameTelemetry._vulkanSubmissionSerial)),
             QueueKind = ResolveTrackedQueueKind(queue),
+            QueueHandle = unchecked((ulong)queue.Handle),
             Caller = caller,
             WaitSemaphoreCount = submitInfo.WaitSemaphoreCount,
             SignalSemaphoreCount = submitInfo.SignalSemaphoreCount,

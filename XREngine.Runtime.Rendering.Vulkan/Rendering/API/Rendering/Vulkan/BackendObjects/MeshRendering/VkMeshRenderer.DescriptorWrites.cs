@@ -555,6 +555,25 @@ internal unsafe partial class VkMeshRenderer
 			}
 		}
 
+		if (BackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap)
+		{
+			DescriptorHeapPushDataPayload? payload = allocation?.DescriptorHeapPushData is { Length: > 0 } heapPayloads &&
+				(uint)descriptorSlotIndex < (uint)heapPayloads.Length
+					? heapPayloads[descriptorSlotIndex]
+					: null;
+			if (payload is null || _program is null)
+				return FailDescriptorPreparation("descriptor heap payload or program is unavailable for the global material texture array");
+			if (!BackendContext.Resources.Descriptors.TryWriteGlobalMaterialTextureArrayHeapPayload(
+					_program,
+					payload,
+					bindingSnapshot?.MaterialTablePublication,
+					out string globalTextureHeapReason))
+			{
+				WarnOnce($"[WriteDescHeap] FAILED global material texture array for mesh '{Mesh?.Name ?? "?"}': {globalTextureHeapReason}");
+				return FailDescriptorPreparation($"global material texture array heap write failed: {globalTextureHeapReason}");
+			}
+		}
+
 		ulong compatibilityTicks = unchecked((ulong)(System.Diagnostics.Stopwatch.GetTimestamp() - publicationStart));
 		_descriptorPublicationTelemetry.Record(
 			descriptorsScanned,

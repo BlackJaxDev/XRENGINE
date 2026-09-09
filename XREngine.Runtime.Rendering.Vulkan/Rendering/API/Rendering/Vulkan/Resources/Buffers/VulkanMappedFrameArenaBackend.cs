@@ -54,6 +54,16 @@ internal unsafe sealed class VulkanMappedFrameArenaBackend(
         if (string.IsNullOrWhiteSpace(ownerLabel))
             throw new ArgumentException("Mapped frame chunks require an owner label for native diagnostics.", nameof(ownerLabel));
 
+        // Heap descriptors contain device addresses even for ordinary UBOs.
+        // These arenas can be reserved before heap storage is published, so use
+        // the enabled device capability rather than the storage-ready flag.
+        bool needsHeapAddress = _deviceContext.Capabilities.Supports(EVulkanDeviceCapability.DescriptorHeap) &&
+            (usage & (BufferUsageFlags.UniformBufferBit | BufferUsageFlags.StorageBufferBit |
+                      BufferUsageFlags.UniformTexelBufferBit | BufferUsageFlags.StorageTexelBufferBit)) != 0;
+        if (needsHeapAddress)
+            usage |= BufferUsageFlags.ShaderDeviceAddressBit;
+        bool enableDeviceAddress = (usage & BufferUsageFlags.ShaderDeviceAddressBit) != 0;
+
         BufferCreateInfo bufferInfo = new()
         {
             SType = StructureType.BufferCreateInfo,
@@ -89,9 +99,15 @@ internal unsafe sealed class VulkanMappedFrameArenaBackend(
                 return false;
             }
 
+            MemoryAllocateFlagsInfo addressFlags = new()
+            {
+                SType = StructureType.MemoryAllocateFlagsInfo,
+                Flags = MemoryAllocateFlags.DeviceAddressBit,
+            };
             MemoryAllocateInfo allocateInfo = new()
             {
                 SType = StructureType.MemoryAllocateInfo,
+                PNext = enableDeviceAddress ? &addressFlags : null,
                 AllocationSize = requirements.Size,
                 MemoryTypeIndex = memoryTypeIndex,
             };
@@ -143,7 +159,9 @@ internal unsafe sealed class VulkanMappedFrameArenaBackend(
                     memoryTypeIndex,
                     properties,
                     BlockId: -1,
-                    MappedData: (nint)mappedPtr));
+                    MappedData: (nint)mappedPtr),
+                bufferInfo.Size,
+                usage);
             try
             {
                 _resourceRuntime.RegisterMappedFrameArenaChunkLifetime(

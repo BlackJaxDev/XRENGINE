@@ -153,13 +153,54 @@ internal sealed unsafe class VulkanImGuiOutputPipelineService(
                 PipelineColorBlendStateCreateInfo colors = new() { SType = StructureType.PipelineColorBlendStateCreateInfo, AttachmentCount = 1, PAttachments = &blend };
                 DynamicState* states = stackalloc DynamicState[2] { DynamicState.Viewport, DynamicState.Scissor };
                 PipelineDynamicStateCreateInfo dynamic = new() { SType = StructureType.PipelineDynamicStateCreateInfo, DynamicStateCount = 2, PDynamicStates = states };
-                GraphicsPipelineCreateInfo info = new() { SType = StructureType.GraphicsPipelineCreateInfo, StageCount = 2, PStages = stages, PVertexInputState = &vertexInput, PInputAssemblyState = &assembly, PViewportState = &viewport, PRasterizationState = &raster, PMultisampleState = &multisample, PDepthStencilState = &depth, PColorBlendState = &colors, PDynamicState = &dynamic, Layout = handles.PipelineLayout, RenderPass = dynamicRendering ? default : resources.SwapchainRenderPass };
+                bool usesDescriptorHeap = resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap;
+                GraphicsPipelineCreateInfo info = new() { SType = StructureType.GraphicsPipelineCreateInfo, StageCount = 2, PStages = stages, PVertexInputState = &vertexInput, PInputAssemblyState = &assembly, PViewportState = &viewport, PRasterizationState = &raster, PMultisampleState = &multisample, PDepthStencilState = &depth, PColorBlendState = &colors, PDynamicState = &dynamic, Layout = usesDescriptorHeap ? default : handles.PipelineLayout, RenderPass = dynamicRendering ? default : resources.SwapchainRenderPass };
                 PipelineRenderingCreateInfo rendering = default;
                 Format color = output.Desktop.ImageFormat;
                 if (dynamicRendering)
                 {
                     rendering = new() { SType = StructureType.PipelineRenderingCreateInfo, ColorAttachmentCount = 1, PColorAttachmentFormats = &color };
                     info.PNext = &rendering;
+                }
+                PipelineCreateFlags2CreateInfoNative heapFlags = default;
+                ShaderDescriptorSetAndBindingMappingInfoEXTNative heapMappingInfo = default;
+                DescriptorSetAndBindingMappingEXTNative heapMapping = default;
+                if (usesDescriptorHeap)
+                {
+                    DescriptorMappingSourcePushIndexEXTNative pushIndex = new()
+                    {
+                        PushOffset = (uint)sizeof(VulkanImGuiPushConstants),
+                        HeapIndexStride = checked((uint)resources.Descriptors.Heap.Properties.ImageDescriptorSize),
+                        HeapArrayStride = checked((uint)resources.Descriptors.Heap.Properties.ImageDescriptorSize),
+                        SamplerPushOffset = (uint)sizeof(VulkanImGuiPushConstants) + sizeof(uint),
+                        SamplerHeapIndexStride = checked((uint)resources.Descriptors.Heap.Properties.SamplerDescriptorSize),
+                        SamplerHeapArrayStride = checked((uint)resources.Descriptors.Heap.Properties.SamplerDescriptorSize),
+                    };
+                    heapMapping = new DescriptorSetAndBindingMappingEXTNative
+                    {
+                        SType = VulkanDescriptorHeapExt.DescriptorSetAndBindingMappingSType,
+                        DescriptorSet = 0,
+                        FirstBinding = 0,
+                        BindingCount = 1,
+                        ResourceMask = VulkanSpirvResourceTypeFlagsEXT.All,
+                        Source = VulkanDescriptorMappingSourceEXT.HeapWithPushIndex,
+                        SourceData = new DescriptorMappingSourceDataEXTNative { PushIndex = pushIndex },
+                    };
+                    heapMappingInfo = new ShaderDescriptorSetAndBindingMappingInfoEXTNative
+                    {
+                        SType = VulkanDescriptorHeapExt.ShaderDescriptorSetAndBindingMappingInfoSType,
+                        MappingCount = 1,
+                        Mappings = &heapMapping,
+                    };
+                    stages[0].PNext = &heapMappingInfo;
+                    stages[1].PNext = &heapMappingInfo;
+                    heapFlags = new PipelineCreateFlags2CreateInfoNative
+                    {
+                        SType = VulkanDescriptorHeapExt.PipelineCreateFlags2CreateInfoSType,
+                        PNext = info.PNext,
+                        Flags = unchecked((ulong)info.Flags) | VulkanDescriptorHeapExt.PipelineCreate2DescriptorHeapBit,
+                    };
+                    info.PNext = &heapFlags;
                 }
                 Ensure(device.Api.CreateGraphicsPipelines(device.Device, default, 1, ref info, null, out handles.Pipeline), "create ImGui graphics pipeline");
                 resources.RegisterPipeline(handles.Pipeline, "ImGui.Pipeline");

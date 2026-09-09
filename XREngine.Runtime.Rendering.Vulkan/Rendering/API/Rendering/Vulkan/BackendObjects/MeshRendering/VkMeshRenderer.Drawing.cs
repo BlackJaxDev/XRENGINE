@@ -99,7 +99,7 @@ internal unsafe partial class VkMeshRenderer
 		using (StartMeshDrawDetailScope("Vulkan.MeshDraw.Prepare"))
 		{
 			preparedForRecord = draw.PreparedProgram is { } preparedProgram
-				? TryPrepareCapturedProgramForRecording(material, preparedProgram, draw.PreparedProgramIdentity, draw.PreparedProgramLinkGeneration, draw.ProgramBindingSnapshot, drawUniformSlot, out prepareReason)
+				? TryPrepareCapturedProgramForRecording(material, preparedProgram, draw.PreparedProgramIdentity, draw.PreparedProgramLinkGeneration, draw.ProgramBindingSnapshot, drawUniformSlot, frameDataImageIndex, out prepareReason)
 				: TryPrepareForRendering(material, out prepareReason);
 		}
 		if (!preparedForRecord)
@@ -675,6 +675,17 @@ internal unsafe partial class VkMeshRenderer
 			}
 			}
 
+			// Prepared recording publishes auto-uniform bytes before descriptor binding.
+			// The direct recording path reaches EnsureDescriptorSets first, but this path
+			// can reactivate a cached descriptor allocation and otherwise leave a newly
+			// reflected block without its mapped-frame view.
+			EnsureUniformDrawSlotCapacity(drawUniformSlot + 1);
+			if (!EnsureDescriptorUniformBuffers(program.DescriptorBindings))
+			{
+				reason = $"auto-uniform buffers unavailable ({_lastDescriptorPreparationFailure})";
+				return false;
+			}
+
 			UpdateEngineUniformBuffersForDraw(frameIndex, drawUniformSlot, draw);
 			if (!UpdateAutoUniformBuffersForDraw(
 					frameIndex,
@@ -710,6 +721,15 @@ internal unsafe partial class VkMeshRenderer
 				program.DescriptorBindings.Count > 0;
 			if (requiresDescriptors)
 			{
+				if (usesDescriptorHeap &&
+					!RefreshDescriptorHeapAutoUniformBindings(
+						frameIndex,
+						drawUniformSlot,
+						out reason))
+				{
+					return false;
+				}
+
 				if (_descriptorSets is not { Length: > 0 })
 				{
 					reason = "descriptor set array is empty after preparation";
@@ -776,12 +796,14 @@ internal unsafe partial class VkMeshRenderer
 				VulkanMeshRenderingConventions.GetCommonPushConstantStageFlags(
 					BackendContext.DeviceContext),
 				usesDescriptorHeap,
+				program.DescriptorHeapLayout?.ShaderConstantByteCount ?? 0u,
 				program.DescriptorHeapLayout?.PushByteCount ?? 0u,
 				descriptorRange,
 				dynamicOffsetRange,
 				default,
 				default,
 				heapDwordRange,
+				descriptorHeapPushData?.SnapshotResourceGenerations() ?? [],
 				vertexRange,
 				primitive0,
 				primitive1,
@@ -954,9 +976,11 @@ internal unsafe partial class VkMeshRenderer
 			{
 				if (!encoder.TryPushDescriptorHeapProgramData(
 						commandBuffer,
+						recordingState.DescriptorHeapShaderConstantByteCount,
 						recordingState.DescriptorHeapPushByteCount,
 						preparedFrame.GetDescriptorHeapPushDwords(recordingState.DescriptorHeapPushDwords),
-						recordingState.DescriptorHeapPushDwords.Count))
+						recordingState.DescriptorHeapPushDwords.Count,
+						recordingState.DescriptorHeapResourceGenerations))
 				{
 					return false;
 				}
@@ -1361,7 +1385,7 @@ internal unsafe partial class VkMeshRenderer
 		indexType = IndexType.Uint32;
 		var material = draw.MaterialOverride ?? ResolveMaterial(null, draw.Instances);
         bool preparedForRecord = draw.PreparedProgram is { } preparedProgram
-            ? TryPrepareCapturedProgramForRecording(material, preparedProgram, draw.PreparedProgramIdentity, draw.PreparedProgramLinkGeneration, draw.ProgramBindingSnapshot, drawUniformSlot, out global::System.String prepareReason)
+            ? TryPrepareCapturedProgramForRecording(material, preparedProgram, draw.PreparedProgramIdentity, draw.PreparedProgramLinkGeneration, draw.ProgramBindingSnapshot, drawUniformSlot, frameDataImageIndex, out global::System.String prepareReason)
             : TryPrepareForRendering(material, out prepareReason);
         if (!preparedForRecord)
 		{
@@ -1445,7 +1469,7 @@ internal unsafe partial class VkMeshRenderer
 
         var material = draw.MaterialOverride ?? ResolveMaterial(null, draw.Instances);
         bool preparedForRecord = draw.PreparedProgram is { } preparedProgram
-			? TryPrepareCapturedProgramForRecording(material, preparedProgram, draw.PreparedProgramIdentity, draw.PreparedProgramLinkGeneration, draw.ProgramBindingSnapshot, drawUniformSlot, out reason)
+			? TryPrepareCapturedProgramForRecording(material, preparedProgram, draw.PreparedProgramIdentity, draw.PreparedProgramLinkGeneration, draw.ProgramBindingSnapshot, drawUniformSlot, (int)Math.Min(imageIndex, int.MaxValue), out reason)
 			: TryPrepareForRendering(material, out reason);
 		if (!preparedForRecord)
 			return false;
@@ -1504,6 +1528,14 @@ internal unsafe partial class VkMeshRenderer
 						out string autoUniformFailure))
 				{
 					reason = $"auto uniforms: {autoUniformFailure}";
+					return false;
+				}
+				if (!RefreshDescriptorHeapAutoUniformBindings(
+						frameIndex,
+						drawUniformSlot,
+						out string autoUniformHeapReason))
+				{
+					reason = $"descriptor heap auto uniforms: {autoUniformHeapReason}";
 					return false;
 				}
 
@@ -1857,6 +1889,24 @@ internal unsafe partial class VkMeshRenderer
 
 		if (BackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap)
 		{
+			if (!RefreshDescriptorHeapAutoUniformBindings(
+					imageIndex,
+					drawUniformSlot,
+					out string autoUniformHeapReason))
+			{
+				WarnOnce($"[DescFail] mesh={meshName} prog={programName} mat={materialName} reason=descriptor heap auto uniforms: {autoUniformHeapReason}");
+				RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorBindingFailure(
+					programName,
+					"descriptor-heap-auto-uniform",
+					materialName,
+					0,
+					0,
+					skippedDraw: true,
+					skippedDispatch: false,
+					$"mesh={meshName} descriptor heap auto uniforms: {autoUniformHeapReason}");
+				return false;
+			}
+
 			DescriptorHeapPushDataPayload? payload = _activeDescriptorAllocation?.DescriptorHeapPushData is { Length: > 0 } heapPayloads &&
 				(uint)descriptorSlotIndex < (uint)heapPayloads.Length
 					? heapPayloads[descriptorSlotIndex]
@@ -2846,6 +2896,11 @@ internal unsafe partial class VkMeshRenderer
 		bool capturedDescriptorResources =
 			descriptorResourcesCapturedByFrameSignature ||
 			draw.ProgramBindingSnapshot is not null;
+		if (!HasReusableAutoUniformBuffers(out string autoUniformViewReason))
+		{
+			reason = $"descriptors {autoUniformViewReason}; command re-record required";
+			return false;
+		}
         using (VulkanCpuStageScope descriptorStage =
 				default)
         {
@@ -2951,13 +3006,33 @@ internal unsafe partial class VkMeshRenderer
 
 	internal string DescribeReusableCommandBufferFrameDataBlocker(in PendingMeshDraw draw, int drawUniformSlot)
 	{
-		XRMaterial material = draw.MaterialOverride ?? ResolveMaterial(null, draw.Instances);
-		if (!TryPrepareForRendering(material, out string prepareReason))
-			return $"render preparation failed: {prepareReason}; {LastPrepareDetail}";
+		lock (_recordDrawSync)
+		{
+			ActivateDrawMaterializationSnapshot(draw);
+			XRMaterial material = draw.MaterialOverride ?? ResolveMaterial(null, draw.Instances);
+			bool prepared = draw.PreparedProgram is { } preparedProgram
+				? TryPrepareCapturedProgramForRecording(
+					material,
+					preparedProgram,
+					draw.PreparedProgramIdentity,
+					draw.PreparedProgramLinkGeneration,
+					draw.ProgramBindingSnapshot,
+					drawUniformSlot,
+					descriptorFrameIndex: 0,
+					out string prepareReason)
+				: TryPrepareForRendering(material, out prepareReason);
+			if (!prepared)
+				return $"render preparation failed: {prepareReason}; {LastPrepareDetail}";
 
-		return CanReuseRecordedDescriptorSets(material, drawUniformSlot, out string reason)
-			? "reusable descriptor sets; refresh likely failed after descriptor check"
-			: reason;
+			return CanReuseRecordedDescriptorSets(
+				material,
+				drawUniformSlot,
+				resourcesCapturedByFrameSignature: draw.ProgramBindingSnapshot is not null,
+				bindingSnapshot: draw.ProgramBindingSnapshot,
+				out string reason)
+				? "reusable descriptor sets; refresh likely failed after descriptor check"
+				: reason;
+		}
 	}
 
     private void PushPerDrawConstants(CommandBuffer commandBuffer, XRMaterial material, in PendingMeshDraw draw)

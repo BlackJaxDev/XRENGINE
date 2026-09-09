@@ -22,6 +22,7 @@ internal readonly record struct VulkanSubmissionDiagnosticContext
     public ulong WaitTimelineValue { get; init; }
     public ulong SignalTimelineValue { get; init; }
     public string? QueueKind { get; init; }
+    public ulong QueueHandle { get; init; }
     public string? Caller { get; init; }
     public uint WaitSemaphoreCount { get; init; }
     public uint SignalSemaphoreCount { get; init; }

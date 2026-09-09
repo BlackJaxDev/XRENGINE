@@ -17,12 +17,15 @@ internal static class VulkanExplicitCapabilityPolicyValidator
             snapshot.BufferDeviceAddressEnabled &&
             snapshot.DrawIndirectCountEnabled &&
             snapshot.Maintenance4Enabled;
-        bool vulkan14OptInTierReady =
+        bool vulkan14ProductionBaselineReady =
             snapshot.Vulkan14PromotedToCore &&
             snapshot.DynamicRenderingLocalReadEnabled &&
-            snapshot.Maintenance5Enabled;
+            snapshot.Maintenance5Enabled &&
+            snapshot.Maintenance6Enabled &&
+            snapshot.ShaderDemoteToHelperInvocationEnabled &&
+            snapshot.ShaderTerminateInvocationEnabled;
         bool vulkan14ExperimentalTierReady =
-            vulkan14OptInTierReady &&
+            vulkan14ProductionBaselineReady &&
             snapshot.DescriptorHeapExtensionAvailable &&
             snapshot.DescriptorHeapDependenciesReady &&
             snapshot.DescriptorHeapNativeApiAvailable &&
@@ -38,12 +41,12 @@ internal static class VulkanExplicitCapabilityPolicyValidator
                     "Vulkan 1.3 production tier requires dynamic rendering, Sync2, timeline semaphores, descriptor indexing, buffer device address, draw indirect count, and maintenance4.");
             }
 
-            if (tier == EVulkanCapabilityTier.Vulkan14OptInBaseline && !vulkan14OptInTierReady)
+            if (tier == EVulkanCapabilityTier.Vulkan14Production && !vulkan14ProductionBaselineReady)
             {
                 ThrowExplicitCapabilityMissing(
                     VulkanFeatureProfile.CapabilityTierEnvVar,
                     tier.ToString(),
-                    "Vulkan 1.4 opt-in tier requires Vulkan 1.4, dynamic rendering local read, and maintenance5.");
+                    "Vulkan 1.4 production baseline requires Vulkan 1.4, dynamic rendering local read, maintenance5, maintenance6, shader demote-to-helper invocation, and shader terminate invocation.");
             }
 
             if (tier == EVulkanCapabilityTier.Vulkan14Experimental && !vulkan14ExperimentalTierReady)
@@ -51,7 +54,7 @@ internal static class VulkanExplicitCapabilityPolicyValidator
                 ThrowExplicitCapabilityMissing(
                     VulkanFeatureProfile.CapabilityTierEnvVar,
                     tier.ToString(),
-                    "Vulkan 1.4 experimental tier requires the opt-in tier plus descriptor heap binding support and shader-object capability.");
+                    "Vulkan 1.4 experimental tier requires the Vulkan 1.4 production baseline plus descriptor heap binding support and shader-object capability.");
             }
         }
 

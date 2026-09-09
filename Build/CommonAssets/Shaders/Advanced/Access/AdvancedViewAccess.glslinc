@@ -66,7 +66,40 @@ XRAdvancedViewRecord XR_ADV_LoadView(uint denseIndex)
         denseIndex = 0u;
     }
 #endif
-    return XR_ADV_Views.records[denseIndex];
+    // Materialize fields explicitly so storage-layout conversion does not emit
+    // OpCopyLogical of the entire matrix-bearing record. SPIR-V 1.6's optimizer
+    // can otherwise fold a subsequent field extraction into an invalid ID.
+    // Dead fields are still eliminated by the performance optimization pass.
+    XRAdvancedViewRecord result;
+    result.view = XR_ADV_Views.records[denseIndex].view;
+    result.projectionJittered = XR_ADV_Views.records[denseIndex].projectionJittered;
+    result.projectionUnjittered = XR_ADV_Views.records[denseIndex].projectionUnjittered;
+    result.viewProjectionJittered = XR_ADV_Views.records[denseIndex].viewProjectionJittered;
+    result.viewProjectionUnjittered = XR_ADV_Views.records[denseIndex].viewProjectionUnjittered;
+    result.previousView = XR_ADV_Views.records[denseIndex].previousView;
+    result.previousProjectionJittered = XR_ADV_Views.records[denseIndex].previousProjectionJittered;
+    result.previousProjectionUnjittered = XR_ADV_Views.records[denseIndex].previousProjectionUnjittered;
+    result.previousViewProjectionJittered = XR_ADV_Views.records[denseIndex].previousViewProjectionJittered;
+    result.previousViewProjectionUnjittered = XR_ADV_Views.records[denseIndex].previousViewProjectionUnjittered;
+    result.inverseViewProjectionJittered = XR_ADV_Views.records[denseIndex].inverseViewProjectionJittered;
+    result.inverseViewProjectionUnjittered = XR_ADV_Views.records[denseIndex].inverseViewProjectionUnjittered;
+    result.cameraPositionAndNear = XR_ADV_Views.records[denseIndex].cameraPositionAndNear;
+    result.cameraForwardAndFar = XR_ADV_Views.records[denseIndex].cameraForwardAndFar;
+    result.renderSizeAndInverse = XR_ADV_Views.records[denseIndex].renderSizeAndInverse;
+    result.outputSizeAndInverse = XR_ADV_Views.records[denseIndex].outputSizeAndInverse;
+    result.currentAndPreviousJitter = XR_ADV_Views.records[denseIndex].currentAndPreviousJitter;
+    result.depthParams = XR_ADV_Views.records[denseIndex].depthParams;
+    result.viewId = XR_ADV_Views.records[denseIndex].viewId;
+    result.outputLayer = XR_ADV_Views.records[denseIndex].outputLayer;
+    result.flags = XR_ADV_Views.records[denseIndex].flags;
+    result.historyKeyLo = XR_ADV_Views.records[denseIndex].historyKeyLo;
+    result.historyKeyHi = XR_ADV_Views.records[denseIndex].historyKeyHi;
+    result.viewGeneration = XR_ADV_Views.records[denseIndex].viewGeneration;
+    result.viewMaskLo = XR_ADV_Views.records[denseIndex].viewMaskLo;
+    result.viewMaskHi = XR_ADV_Views.records[denseIndex].viewMaskHi;
+    result.foveationCenterAndBias = XR_ADV_Views.records[denseIndex].foveationCenterAndBias;
+    result.foveationRadii = XR_ADV_Views.records[denseIndex].foveationRadii;
+    return result;
 }
 
 // Fragment locations and storage images use physical framebuffer coordinates.

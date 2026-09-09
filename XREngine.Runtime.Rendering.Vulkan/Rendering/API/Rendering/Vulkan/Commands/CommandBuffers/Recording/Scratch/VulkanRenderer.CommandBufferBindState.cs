@@ -16,4 +16,11 @@ internal struct CommandBufferBindState
     public ulong IndexOffset;
     public IndexType IndexType;
     public bool HasViewportScissorState;
+    public bool InheritsDescriptorHeaps;
+    public ulong InheritedSamplerHeapAddress;
+    public ulong InheritedSamplerHeapSize;
+    public ulong InheritedSamplerHeapReservedRangeSize;
+    public ulong InheritedResourceHeapAddress;
+    public ulong InheritedResourceHeapSize;
+    public ulong InheritedResourceHeapReservedRangeSize;
 }

@@ -20,10 +20,13 @@ namespace XREngine.Rendering.Vulkan;
 
 internal static class VulkanShaderCompiler
 {
-    // GL_EXT_mesh_shader is emitted as SPIR-V 1.6 by current shaderc/glslang.
-    // Keep this narrow: ordinary stages retain shaderc's existing default
-    // target so this capability opt-in cannot perturb their artifact output.
-    private const uint Vulkan13TargetEnvironmentVersion = 0x00403000u;
+    // shaderc_env_version_vulkan_1_4 from shaderc/env.h. Keep the numeric value
+    // here because Silk.NET exposes the environment kind but not its versions.
+    internal const uint Vulkan14TargetEnvironmentVersion = 0x00404000u;
+    internal const SpirvVersion VulkanTargetSpirvVersion = SpirvVersion.Shaderc16;
+    internal const string TargetProfileIdentity = "Vulkan1.4-SPIRV1.6";
+    internal const string ShaderAbiIdentity = "XREngine.VulkanShaderAbi.v3";
+
     private static readonly Shaderc ShadercApi = Shaderc.GetApi();
     private static readonly Regex OvrMultiviewExtensionRegex = new(
         @"^\s*#\s*extension\s+GL_OVR_multiview2\s*:\s*(?<behavior>\w+)\s*$",
@@ -159,6 +162,9 @@ internal static class VulkanShaderCompiler
         byte[] sourceBytes = Encoding.UTF8.GetBytes(prepared.RewrittenSource);
         byte[] nameBytes = GetNullTerminatedUtf8(shader.Name ?? $"Shader_{shader.GetHashCode():X8}");
         byte[] entryPointBytes = GetNullTerminatedUtf8(prepared.EntryPoint);
+        string? diagnosticBasePath = GetShaderDiagnosticBasePath(shader.Name ?? "UnnamedShader", sourceBytes);
+        if (diagnosticBasePath is not null)
+            File.WriteAllBytes(diagnosticBasePath + ".glsl", sourceBytes);
 
         CompilationResult* result;
         fixed (byte* sourcePtr = sourceBytes)
@@ -207,6 +213,7 @@ internal static class VulkanShaderCompiler
             byte[] spirv = new byte[(int)length];
             void* bytesPtr = ShadercApi.ResultGetBytes(result);
             Marshal.Copy((nint)bytesPtr, spirv, 0, spirv.Length);
+            ValidateModuleWhenRequested(shader.Name ?? "UnnamedShader", spirv);
 
             ShadercApi.ResultRelease(result);
             result = null;
@@ -233,6 +240,7 @@ internal static class VulkanShaderCompiler
         builder.AppendLine("XRENGINE_VULKAN=1");
         builder.Append("ShaderType=").Append(shader.Type).Append('\n');
         builder.Append("CompileTarget=").Append(GetCompileTargetLabel(shader.Type, rewrittenSource ?? shader.Source?.Text ?? string.Empty)).Append('\n');
+        builder.Append("ShaderAbi=").Append(ShaderAbiIdentity).Append('\n');
         builder.Append("ShaderName=").Append(shader.Name ?? "UnnamedShader").Append('\n');
         builder.Append("SourcePath=").Append(shader.Source?.FilePath ?? shader.FilePath ?? string.Empty).Append('\n');
         builder.Append("IsGeneratedUberVariant=").Append(shader.IsGeneratedUberVariant).Append('\n');
@@ -269,35 +277,109 @@ internal static class VulkanShaderCompiler
     }
 
     /// <summary>
-    /// Selects the target required by EXT mesh stages or an explicitly authored
-    /// subgroup extension. Subgroup operations require at least SPIR-V 1.3.
+    /// Configures every Vulkan compilation route for the engine's Vulkan 1.4 /
+    /// SPIR-V 1.6 baseline. Stage-specific capabilities remain authored in GLSL;
+    /// this method must never lower a target to accommodate a particular stage.
     /// </summary>
-    private static unsafe void ConfigureTargetEnvironment(CompileOptions* options, EShaderType shaderType, string source)
+    internal static unsafe void ConfigureTargetEnvironment(CompileOptions* options, EShaderType shaderType, string source)
     {
-        if (shaderType is not (EShaderType.Task or EShaderType.Mesh))
-        {
-            if (RequiresSubgroupTarget(source))
-            {
-                ShadercApi.CompileOptionsSetTargetEnv(options, TargetEnv.Vulkan, 0x00401000u);
-                ShadercApi.CompileOptionsSetTargetSpirv(options, SpirvVersion.Shaderc13);
-            }
-            return;
-        }
-
         ShadercApi.CompileOptionsSetTargetEnv(
             options,
             TargetEnv.Vulkan,
-            Vulkan13TargetEnvironmentVersion);
-        ShadercApi.CompileOptionsSetTargetSpirv(options, SpirvVersion.Shaderc16);
+            Vulkan14TargetEnvironmentVersion);
+        ShadercApi.CompileOptionsSetTargetSpirv(options, VulkanTargetSpirvVersion);
     }
 
-    private static bool RequiresSubgroupTarget(string source)
-        => source.Contains("#extension GL_KHR_shader_subgroup_", StringComparison.Ordinal);
-
     private static string GetCompileTargetLabel(EShaderType shaderType, string source)
-        => shaderType is EShaderType.Task or EShaderType.Mesh
-            ? "Vulkan1.3-SPIRV1.6"
-            : RequiresSubgroupTarget(source) ? "Vulkan1.1-SPIRV1.3" : "ShadercDefault";
+        => $"{TargetProfileIdentity};stage={shaderType};capabilities={GetRequiredCapabilityIdentity(shaderType, source)}";
+
+    private static string GetRequiredCapabilityIdentity(EShaderType shaderType, string source)
+    {
+        List<string> capabilities = ["core"];
+        if (shaderType is EShaderType.Task or EShaderType.Mesh)
+            capabilities.Add("GL_EXT_mesh_shader");
+        if (source.Contains("#extension GL_KHR_shader_subgroup_", StringComparison.Ordinal))
+            capabilities.Add("GL_KHR_shader_subgroup");
+        if (source.Contains("GL_EXT_multiview", StringComparison.Ordinal))
+            capabilities.Add("GL_EXT_multiview");
+
+        return string.Join(',', capabilities);
+    }
+
+    /// <summary>
+    /// Validates every newly produced or cache-loaded module when the explicit
+    /// diagnostics switch is enabled. The switch intentionally fails instead of
+    /// silently skipping validation when spirv-val is unavailable.
+    /// </summary>
+    internal static void ValidateModuleWhenRequested(string shaderName, byte[] spirv)
+    {
+        if (!string.Equals(
+                Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.VulkanValidateSpirv),
+                "1",
+                StringComparison.Ordinal))
+            return;
+
+        string? diagnosticBasePath = GetShaderDiagnosticBasePath(shaderName, spirv);
+        string temporaryPath = diagnosticBasePath is not null
+            ? diagnosticBasePath + ".spv"
+            : Path.Combine(Path.GetTempPath(), $"xrengine-vulkan-{Guid.NewGuid():N}.spv");
+        try
+        {
+            File.WriteAllBytes(temporaryPath, spirv);
+            System.Diagnostics.ProcessStartInfo startInfo = new("spirv-val")
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+            startInfo.ArgumentList.Add("--target-env");
+            startInfo.ArgumentList.Add("vulkan1.4");
+            startInfo.ArgumentList.Add(temporaryPath);
+
+            using System.Diagnostics.Process process = System.Diagnostics.Process.Start(startInfo)
+                ?? throw new InvalidOperationException("spirv-val did not start.");
+            string standardOutput = process.StandardOutput.ReadToEnd();
+            string standardError = process.StandardError.ReadToEnd();
+            process.WaitForExit();
+            if (process.ExitCode != 0)
+            {
+                string diagnostics = string.IsNullOrWhiteSpace(standardError) ? standardOutput : standardError;
+                throw new InvalidOperationException(
+                    $"SPIR-V validation failed for Vulkan shader '{shaderName}' against vulkan1.4: {diagnostics.Trim()}");
+            }
+        }
+        catch (System.ComponentModel.Win32Exception ex)
+        {
+            throw new InvalidOperationException(
+                $"{XREngineEnvironmentVariables.VulkanValidateSpirv}=1 requires spirv-val on PATH; validation was not skipped.",
+                ex);
+        }
+        finally
+        {
+            try
+            {
+                if (diagnosticBasePath is null && File.Exists(temporaryPath))
+                    File.Delete(temporaryPath);
+            }
+            catch
+            {
+            }
+        }
+    }
+
+    /// <summary>Opt-in retained compile inputs and validated modules for native compiler diagnosis.</summary>
+    private static string? GetShaderDiagnosticBasePath(string shaderName, byte[] content)
+    {
+        string? directory = Environment.GetEnvironmentVariable(
+            XREngineEnvironmentVariables.VulkanShaderDiagnosticsDirectory);
+        if (string.IsNullOrWhiteSpace(directory))
+            return null;
+        Directory.CreateDirectory(directory);
+        string safeName = string.Join('_', shaderName.Split(Path.GetInvalidFileNameChars()));
+        string hash = Convert.ToHexString(SHA256.HashData(content), 0, 12);
+        return Path.Combine(directory, $"{safeName}-{hash}");
+    }
 
     private static byte[] GetNullTerminatedUtf8(string value)
     {

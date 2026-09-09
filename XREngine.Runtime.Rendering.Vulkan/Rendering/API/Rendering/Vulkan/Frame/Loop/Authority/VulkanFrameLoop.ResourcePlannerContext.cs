@@ -233,7 +233,7 @@ internal sealed partial class VulkanFrameLoop
             ReferenceEquals(viewport, RuntimeEngine.VRState.RightEyeViewport))
         {
             throw new InvalidOperationException(
-                "The OpenXR eye viewport has no matching rendered Vulkan resource-planner generation.");
+                "The XR eye viewport has no matching rendered Vulkan resource-planner generation.");
         }
 
         throw new InvalidOperationException(
@@ -257,13 +257,11 @@ internal sealed partial class VulkanFrameLoop
             return true;
         }
 
-        if (ReferenceEquals(viewport, RuntimeEngine.VRState.LeftEyeViewport) ||
-            ReferenceEquals(viewport, RuntimeEngine.VRState.RightEyeViewport))
-        {
-            scope = null;
-            return false;
-        }
-
+        // Native OpenXR eyes publish into their dedicated state map above. Legacy
+        // two-pass eyes retain the XR viewport as output context but are submitted
+        // through the normal frame plan, so their exact accepted receipt is the
+        // authoritative provenance. Do not reject every eye viewport before that
+        // receipt can be matched.
         if (TryEnterDesktopSubmittedReadbackScope(
                 context,
                 out IDisposable desktopScope))

@@ -46,6 +46,7 @@ internal sealed class VulkanShaderCrossCompiler : IRuntimeShaderCrossCompiler
             sourceLanguage == ShaderSourceLanguage.Hlsl ? SourceLanguage.Hlsl : SourceLanguage.Glsl);
         ShadercApi.CompileOptionsSetOptimizationLevel(options, OptimizationLevel.Performance);
         ShadercApi.CompileOptionsSetWarningsAsErrors(options);
+        VulkanShaderCompiler.ConfigureTargetEnvironment(options, shaderType, source);
 
         byte[] sourceBytes = Encoding.UTF8.GetBytes(source);
         byte[] nameBytes = GetNullTerminatedUtf8(name ?? "Shader");
@@ -85,6 +86,7 @@ internal sealed class VulkanShaderCrossCompiler : IRuntimeShaderCrossCompiler
             byte[] spirv = new byte[(int)length];
             void* bytesPtr = ShadercApi.ResultGetBytes(result);
             Marshal.Copy((nint)bytesPtr, spirv, 0, spirv.Length);
+            VulkanShaderCompiler.ValidateModuleWhenRequested(name ?? "Shader", spirv);
 
             ShadercApi.ResultRelease(result);
             result = null;

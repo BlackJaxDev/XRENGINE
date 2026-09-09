@@ -623,7 +623,7 @@ namespace XREngine.Rendering.Vulkan
                 CommandBufferInheritanceDescriptorHeapInfoEXTNative descriptorHeapInheritanceInfo = default;
                 BindHeapInfoEXTNative inheritedSamplerHeapInfo = default;
                 BindHeapInfoEXTNative inheritedResourceHeapInfo = default;
-                TryAppendDescriptorHeapInheritancePNext(
+                bool inheritsDescriptorHeaps = TryAppendDescriptorHeapInheritancePNext(
                     ref inheritanceInfo,
                     &descriptorHeapInheritanceInfo,
                     &inheritedSamplerHeapInfo,
@@ -643,6 +643,8 @@ namespace XREngine.Rendering.Vulkan
                         ref beginInfo,
                         "PrimarySecondaryRange") != Result.Success)
                     throw new Exception("Failed to begin Vulkan indirect secondary command buffer.");
+                if (inheritsDescriptorHeaps)
+                    MarkDescriptorHeapInheritance(secondary);
                 }
 
                 MarkCommandChainSecondaryRecording(chain, secondary);
@@ -2406,7 +2408,7 @@ namespace XREngine.Rendering.Vulkan
                 CommandBufferInheritanceDescriptorHeapInfoEXTNative descriptorHeapInheritanceInfo = default;
                 BindHeapInfoEXTNative inheritedSamplerHeapInfo = default;
                 BindHeapInfoEXTNative inheritedResourceHeapInfo = default;
-                TryAppendDescriptorHeapInheritancePNext(
+                bool inheritsDescriptorHeaps = TryAppendDescriptorHeapInheritancePNext(
                     ref inheritanceInfo,
                     &descriptorHeapInheritanceInfo,
                     &inheritedSamplerHeapInfo,
@@ -2425,6 +2427,8 @@ namespace XREngine.Rendering.Vulkan
                         ref beginInfo,
                         "PreparedCommandChain") != Result.Success)
                     throw new Exception("Failed to begin Vulkan mesh command-chain secondary command buffer.");
+                if (inheritsDescriptorHeaps)
+                    MarkDescriptorHeapInheritance(secondary);
                 }
 
                 MarkCommandChainSecondaryRecording(chain, secondary);

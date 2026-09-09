@@ -1,10 +1,10 @@
 # Vulkan 1.4 Performance And Shader Modernization TODO
 
-Last Updated: 2026-09-06
+Last Updated: 2026-09-08
 
 Owner: Rendering / Vulkan
 
-Status: Planned; Source Findings Recorded; Runtime Acceptance Pending
+Status: A1–A4 complete; A5 / B acceptance incomplete due to heap indirect device loss
 
 ## Objective And Evidence
 
@@ -13,11 +13,18 @@ descriptor-heap contract, and reduce measured frame preparation, recording, and
 GPU synchronization costs. Add Slang incrementally while retaining existing
 GLSL authoring and OpenGL 4.6 support.
 
-The findings describe the source reviewed on 2026-09-06. No runtime speedup or
-rendered failure was demonstrated in this investigation. In particular,
-descriptor-heap pipeline creation contains a source-level API mismatch, but its
-runtime symptoms have not been reproduced. Recheck the named symbols before
-implementing a task; source locations and active paths can change.
+The original findings describe the source reviewed on 2026-09-06. Phase A/B
+implementation, reproduced failures, corrections and live validation are recorded
+in the [2026-09-08 investigation](../../investigations/rendering/vulkan14-phases-ab-2026-09-08.md).
+No runtime speedup is claimed. The historical "current state" descriptions below
+explain the original gaps; use the checklist and investigation for current status.
+
+Work stopped at the user's request on 2026-09-08. Desktop heap material edits,
+compute, UI, resize and emulated sequential XR output were exercised. Native GPU
+checkpoints isolate the remaining device loss to an indirect graphics draw;
+both bindless and non-bindless material-table variants reproduce it. Physical
+headset validation is unavailable with the installed SteamVR runtime contracts.
+The remaining acceptance checkboxes stay open; no binding-path fallback is enabled.
 
 This is a self-contained implementation backlog. Required technical rules are
 stated here, and links point only to repository code or related project notes.
@@ -122,23 +129,23 @@ Sources:
 `ConfigureTargetEnvironment`; and
 [VulkanShaderCrossCompiler.cs](../../../../XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/VulkanShaderCrossCompiler.cs).
 
-- [ ] **A1 — Record the current capability and compile-path inventory.** Enumerate
+- [x] **A1 — Record the current capability and compile-path inventory.** Enumerate
   desktop/XR negotiation, device tiers, normal/generated/native shaders,
   cross-compilation, prewarm, and background compilation. Record actual defaults
   and active gates. **Done when:** the investigation note maps every route to its
   API target, SPIR-V target, required features, source symbol, and migration gap.
-- [ ] **A2 — Require Vulkan 1.4 consistently.** Update version negotiation and
+- [x] **A2 — Require Vulkan 1.4 consistently.** Update version negotiation and
   capability policy without silently clamping to an older XR/runtime maximum.
   Keep the separately selected OpenGL renderer available. **Done when:** supported
   configurations report Vulkan 1.4 and incompatible loader/device/XR constraints
   produce clear diagnostics without an older API or renderer substitution.
-- [ ] **A3 — Align core and extension enablement.** Audit maintenance5,
+- [x] **A3 — Align core and extension enablement.** Audit maintenance5,
   maintenance6, dynamic rendering local read, and other used promoted features;
   verify remaining properties and additional extension requirements.
   **Done when:** capability reports distinguish supported, enabled, requested,
   and executable behavior, and feature-chain validation reports no duplicates
   or unsupported enables.
-- [ ] **A4 — Make every Vulkan shader target explicit.** Apply the Vulkan 1.4
+- [x] **A4 — Make every Vulkan shader target explicit.** Apply the Vulkan 1.4
   environment and recorded SPIR-V/capability profile to all A1 compiler routes.
   Include target/compiler/ABI identities in cache invalidation and validate
   generated modules with `spirv-val --target-env vulkan1.4`.
@@ -233,7 +240,7 @@ Sources:
 A high reuse ratio, fewer API calls, or a newer feature does not establish a
 speedup. Measure full CPU and GPU costs for equivalent visible work. Run
 correctness checks with `XRE_VULKAN_VALIDATION=1` and
-`XRE_VULKAN_SYNCHRONIZATION_VALIDATION=1`; measure production performance
+`XRE_VULKAN_SYNC_VALIDATION=1`; measure production performance
 separately with diagnostics overhead removed.
 
 Use static scenes, moving cameras, material edits, streaming, and volatile UI

@@ -66,6 +66,11 @@ namespace XREngine.Editor.Mcp
             if (viewport is null)
                 return new McpToolResponse(viewportError ?? "No viewport found to capture.", isError: true);
 
+            // Legacy two-pass VR renders through a dedicated pipeline instance and
+            // external eye framebuffer. Restore the submitted planner generation
+            // before binding that framebuffer for readback.
+            XRRenderPipelineInstance pipelineInstance = ResolveSelectedPipelineInstance(viewport, vrEye);
+
             string folder = outputDir ?? Path.Combine(Environment.CurrentDirectory, "McpCaptures");
             string fileName = $"Screenshot_{DateTime.Now:yyyyMMdd_HHmmss_fff}_{Guid.NewGuid():N}.png";
             string path = Path.Combine(folder, fileName);
@@ -75,13 +80,16 @@ namespace XREngine.Editor.Mcp
             static void BeginCapture(
                 AbstractRenderer renderer,
                 XRViewport viewport,
+                XRRenderPipelineInstance pipelineInstance,
+                string? vrEye,
                 string path,
                 TaskCompletionSource<(string Path, ScreenshotReadbackResult Readback)> tcs)
             {
-                using IDisposable? readbackScope = viewport.EnterRenderPipelineReadbackScope();
-                using IDisposable? targetReadScope = viewport.LastRenderedTargetFBO?.BindForReadingState();
+                using IDisposable? readbackScope = viewport.EnterRenderPipelineReadbackScope(pipelineInstance);
+                XRFrameBuffer? targetFbo = ResolveSelectedReadbackTarget(viewport, vrEye);
+                using IDisposable? targetReadScope = targetFbo?.BindForReadingState();
 
-                BoundingRectangle captureRegion = viewport.LastRenderedTargetFBO is { } targetFbo
+                BoundingRectangle captureRegion = targetFbo is not null
                     ? new BoundingRectangle(0, 0, (int)targetFbo.Width, (int)targetFbo.Height)
                     : viewport.Region;
                 if (targetReadScope is not null)
@@ -155,7 +163,7 @@ namespace XREngine.Editor.Mcp
                         return;
 
                     window.PostRenderViewportsCallback -= deferredHandler;
-                    BeginCapture(renderer, viewport, path, tcs);
+                    BeginCapture(renderer, viewport, pipelineInstance, vrEye, path, tcs);
                 };
 
                 window.PostRenderViewportsCallback += deferredHandler;

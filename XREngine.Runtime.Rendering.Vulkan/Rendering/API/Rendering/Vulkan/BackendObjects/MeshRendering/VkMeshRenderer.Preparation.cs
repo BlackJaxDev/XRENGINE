@@ -72,6 +72,7 @@ internal unsafe partial class VkMeshRenderer
 				material,
 				0,
 				bindingSnapshot: null,
+				frameIndex: 0,
 				out string descriptorDetail))
 			return SetPrepareResult(false, "DescriptorsPending", descriptorDetail, out reason);
 
@@ -146,6 +147,7 @@ internal unsafe partial class VkMeshRenderer
 		ulong preparedProgramLinkGeneration,
 		ComputeDispatchSnapshot? programBindingSnapshot,
 		int drawUniformSlot,
+		int descriptorFrameIndex,
 		out string reason)
 	{
 		reason = "Ready";
@@ -190,6 +192,7 @@ internal unsafe partial class VkMeshRenderer
 					material,
 					drawUniformSlot,
 					programBindingSnapshot,
+					descriptorFrameIndex,
 					out string reuseDescriptorDetail))
 				return SetPrepareResult(false, "DescriptorsPending", reuseDescriptorDetail, out reason);
 
@@ -211,6 +214,7 @@ internal unsafe partial class VkMeshRenderer
 				material,
 				drawUniformSlot,
 				programBindingSnapshot,
+				descriptorFrameIndex,
 				out string descriptorDetail))
 			return SetPrepareResult(false, "DescriptorsPending", descriptorDetail, out reason);
 
@@ -431,6 +435,7 @@ internal unsafe partial class VkMeshRenderer
 		XRMaterial material,
 		int drawUniformSlot,
 		ComputeDispatchSnapshot? bindingSnapshot,
+		int frameIndex,
 		out string detail)
 	{
 		try
@@ -438,6 +443,7 @@ internal unsafe partial class VkMeshRenderer
 			if (EnsureDescriptorSets(
 					material,
 					drawUniformSlot,
+					frameIndex,
 					bindingSnapshot: bindingSnapshot))
 			{
 				detail = string.Empty;

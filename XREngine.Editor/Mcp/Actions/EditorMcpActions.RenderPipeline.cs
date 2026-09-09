@@ -105,7 +105,7 @@ namespace XREngine.Editor.Mcp
             if (viewport is null)
                 return Task.FromResult(new McpToolResponse(viewportError ?? "No viewport found.", isError: true));
 
-            XRRenderPipelineInstance instance = viewport.RenderPipelineInstance;
+            XRRenderPipelineInstance instance = ResolveSelectedPipelineInstance(viewport, vrEye);
             RenderResourceRegistry resources = instance.Resources;
 
             var textures = resources.TextureRecords
@@ -189,6 +189,46 @@ namespace XREngine.Editor.Mcp
             return Task.FromResult(new McpToolResponse(
                 "Retrieved Advanced profile diagnostics. Enqueue observations are authoring evidence; only captured counter rows contain GPU observations.",
                 BuildAdvancedProfileDiagnostics(viewport)));
+        }
+
+        /// <summary>
+        /// Resolves the physical pipeline that produced the selected viewport's output.
+        /// Legacy two-pass VR preserves eye viewport ownership while rendering through
+        /// dedicated instances, so its resource registry is not the viewport default.
+        /// </summary>
+        private static XRRenderPipelineInstance ResolveSelectedPipelineInstance(XRViewport viewport, string? vrEye)
+        {
+            if (!string.IsNullOrWhiteSpace(vrEye))
+            {
+                if (ReferenceEquals(viewport, RuntimeEngine.VRState.LeftEyeViewport) &&
+                    RuntimeEngine.VRState.TwoPassLeftPipeline is { } leftPipeline)
+                    return leftPipeline;
+
+                if (ReferenceEquals(viewport, RuntimeEngine.VRState.RightEyeViewport) &&
+                    RuntimeEngine.VRState.TwoPassRightPipeline is { } rightPipeline)
+                    return rightPipeline;
+            }
+
+            return viewport.RenderPipelineInstance;
+        }
+
+        /// <summary>
+        /// Resolves the framebuffer produced by the selected viewport. Legacy two-pass VR renders
+        /// directly through its dedicated pipeline instance, so it does not populate the eye
+        /// viewport's <see cref="XRViewport.LastRenderedTargetFBO"/>.
+        /// </summary>
+        private static XRFrameBuffer? ResolveSelectedReadbackTarget(XRViewport viewport, string? vrEye)
+        {
+            if (!string.IsNullOrWhiteSpace(vrEye))
+            {
+                if (ReferenceEquals(viewport, RuntimeEngine.VRState.LeftEyeViewport))
+                    return RuntimeEngine.VRState.VRLeftEyeRenderTarget ?? viewport.LastRenderedTargetFBO;
+
+                if (ReferenceEquals(viewport, RuntimeEngine.VRState.RightEyeViewport))
+                    return RuntimeEngine.VRState.VRRightEyeRenderTarget ?? viewport.LastRenderedTargetFBO;
+            }
+
+            return viewport.LastRenderedTargetFBO;
         }
 
         private static object BuildAdvancedProfileDiagnostics(XRViewport viewport)
@@ -875,6 +915,8 @@ namespace XREngine.Editor.Mcp
             if (viewport is null)
                 return new McpToolResponse(viewportError ?? "No viewport found.", isError: true);
 
+            XRRenderPipelineInstance pipelineInstance = ResolveSelectedPipelineInstance(viewport, vrEye);
+
             string folder = outputDir ?? Path.Combine(Environment.CurrentDirectory, "McpCaptures", "RenderPipeline");
             string safeTextureName = SanitizeFileName(useTextureId ? textureId! : textureName);
             string fileName = $"RenderPipeline_{safeTextureName}_{DateTime.Now:yyyyMMdd_HHmmss}.{GetPipelineCaptureExtension(format)}";
@@ -900,7 +942,7 @@ namespace XREngine.Editor.Mcp
                     PipelineTextureCaptureResult result = CapturePipelineTexture(
                         renderer,
                         viewport,
-                        viewport.RenderPipelineInstance,
+                        pipelineInstance,
                         textureName,
                         path,
                         mipLevel,
@@ -923,7 +965,7 @@ namespace XREngine.Editor.Mcp
                         string companionPath = Path.Combine(folder,
                             $"{Path.GetFileNameWithoutExtension(path)}_companion{i}_{SanitizeFileName(companions[i])}.{GetPipelineCaptureExtension(format)}");
                         companionResults[i] = CapturePipelineTexture(
-                            renderer, viewport, viewport.RenderPipelineInstance, companions[i], companionPath,
+                            renderer, viewport, pipelineInstance, companions[i], companionPath,
                             mipLevel, layerIndex, normalize, orientation, preserveAlpha, format,
                             tonemapType, exposure, gamma, mobiusTransition, encodeSrgb);
                     }
@@ -1472,13 +1514,13 @@ namespace XREngine.Editor.Mcp
                 texture = liveTexture;
             }
 
-            using IDisposable? plannerScope = viewport.EnterRenderPipelineReadbackScope();
+            using IDisposable? plannerScope = viewport.EnterRenderPipelineReadbackScope(instance);
             if (plannerScope is null &&
                 (ReferenceEquals(viewport, RuntimeEngine.VRState.LeftEyeViewport) ||
                  ReferenceEquals(viewport, RuntimeEngine.VRState.RightEyeViewport)))
             {
                 throw new InvalidOperationException(
-                    "The Vulkan OpenXR eye capture could not enter its render-pipeline readback scope.");
+                    "The Vulkan XR eye capture could not enter its render-pipeline readback scope.");
             }
 
             return CaptureTexture(

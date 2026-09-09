@@ -110,6 +110,7 @@ internal unsafe partial class VkMeshRenderer
                 meshlet ? 0UL : vertexInput.LayoutHash,
                 descriptorLayoutHash,
                 visibilityProgram.PipelineLayout.Handle,
+                visibilityProgram.MeshTaskBackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap,
                 passMetadata.Value,
                 featureProfileHash,
                 draw.RasterizationSamples,

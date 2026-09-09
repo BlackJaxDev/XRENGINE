@@ -10,6 +10,7 @@ internal sealed record VulkanLogicalDeviceBootstrapResult(
     VulkanLogicalDeviceBootstrapResult.ResourcePublication Resources,
     VulkanLogicalDeviceBootstrapResult.CommandPublication Commands,
     VulkanLogicalDeviceBootstrapResult.EnginePublication Engine,
+    VulkanStartupCapabilitySnapshot StartupCapabilities,
     VulkanDiagnosticCapabilitySnapshot Diagnostics,
     VulkanExplicitCapabilityPolicySnapshot ExplicitPolicy,
     VulkanLayeredShadowCapabilityRequest LayeredShadows)

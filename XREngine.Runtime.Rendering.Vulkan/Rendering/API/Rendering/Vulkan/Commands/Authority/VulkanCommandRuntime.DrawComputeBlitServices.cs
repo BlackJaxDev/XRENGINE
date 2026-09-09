@@ -23,6 +23,9 @@ internal sealed partial class VulkanCommandRuntime
         string consumer,
         GPUMaterialTablePublication? publication)
     {
+        if (ResourceRuntime.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap)
+            return true;
+
         if (program.PipelineLayout.Handle == 0)
             throw new VulkanPlanPreconditionException(
                 $"Bindless material consumer '{consumer}' has no prepared pipeline layout.");

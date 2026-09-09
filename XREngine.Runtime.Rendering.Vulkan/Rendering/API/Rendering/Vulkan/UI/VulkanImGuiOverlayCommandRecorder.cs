@@ -205,6 +205,7 @@ internal sealed unsafe class VulkanImGuiOverlayCommandRecorder
         Vector2 scale = input.Snapshot.FramebufferScale * new Vector2(
             width / (float)input.Snapshot.FramebufferWidth,
             height / (float)input.Snapshot.FramebufferHeight);
+        bool usesDescriptorHeap = encoder.Runtime.ResourceRuntime.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap;
         DescriptorSet boundSet = default;
         uint vertexOffset = 0;
         uint indexOffset = 0;
@@ -214,14 +215,32 @@ internal sealed unsafe class VulkanImGuiOverlayCommandRecorder
             for (int commandIndex = 0; commandIndex < list.CommandCount; commandIndex++)
             {
                 VulkanImGuiCommandSnapshot command = list.Commands[commandIndex];
-                if (command.HasUserCallback || !input.DescriptorSets.TryGetValue(command.TextureId, out DescriptorSet set) || set.Handle == 0)
-                    set = input.Resources.FontDescriptorSet;
-                if (set.Handle == 0)
-                    continue;
-                if (set.Handle != boundSet.Handle)
+                if (usesDescriptorHeap)
                 {
-                    encoder.BindDescriptorSet(input.OverlayCommandBuffer, input.Resources.PipelineLayout, 0, set, []);
-                    boundSet = set;
+                    nint textureId = command.HasUserCallback ? (nint)1 : command.TextureId;
+                    if (!input.DescriptorHeapPushData.TryGetValue(textureId, out DescriptorHeapPushDataPayload? payload) &&
+                        !input.DescriptorHeapPushData.TryGetValue((nint)1, out payload))
+                    {
+                        throw new InvalidOperationException($"ImGui descriptor heap payload is unavailable for texture {textureId}.");
+                    }
+
+                    fixed (uint* descriptorData = payload.Dwords)
+                    {
+                        if (!encoder.TryPushDescriptorHeapData(input.OverlayCommandBuffer, (uint)sizeof(VulkanImGuiPushConstants), descriptorData, (uint)(payload.Dwords.Length * sizeof(uint)), payload, out string reason))
+                            throw new InvalidOperationException($"ImGui descriptor heap push-data failed: {reason}");
+                    }
+                }
+                else
+                {
+                    if (command.HasUserCallback || !input.DescriptorSets.TryGetValue(command.TextureId, out DescriptorSet set) || set.Handle == 0)
+                        set = input.Resources.FontDescriptorSet;
+                    if (set.Handle == 0)
+                        continue;
+                    if (set.Handle != boundSet.Handle)
+                    {
+                        encoder.BindDescriptorSet(input.OverlayCommandBuffer, input.Resources.PipelineLayout, 0, set, []);
+                        boundSet = set;
+                    }
                 }
 
                 Vector4 clip = command.ClipRect;

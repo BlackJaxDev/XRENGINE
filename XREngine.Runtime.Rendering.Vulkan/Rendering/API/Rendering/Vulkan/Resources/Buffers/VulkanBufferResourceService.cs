@@ -39,7 +39,9 @@ internal unsafe sealed class VulkanBufferResourceService(VulkanAllocationAuthori
     };
 
     internal bool ShouldEnableDeviceAddress(VulkanBackendObjectContext context, XRDataBuffer buffer)
-        => context.Supports(EVulkanDeviceCapability.BufferDeviceAddress) && IsSceneDatabaseDeviceAddressCandidate(buffer);
+        => context.Supports(EVulkanDeviceCapability.BufferDeviceAddress) &&
+           (IsSceneDatabaseDeviceAddressCandidate(buffer) ||
+            VulkanFeatureProfile.RequestedDescriptorBackend == EVulkanDescriptorBackend.DescriptorHeap);
 
     internal string ResolveDeviceAddressStatus(VulkanBackendObjectContext context, XRDataBuffer buffer, ulong address)
     {
@@ -390,6 +392,24 @@ internal unsafe sealed class VulkanBufferResourceService(VulkanAllocationAuthori
         return context.Api.GetBufferDeviceAddress(context.Device, &info);
     }
 
+    internal bool TryGetDescriptorMetadata(Buffer buffer, out VulkanBufferDescriptorMetadata metadata)
+        => allocations.Buffers.TryGetDescriptorMetadata(buffer, out metadata);
+
+    /// <summary>
+    /// Native heap bindings encode addresses for every buffer descriptor. Apply the
+    /// creation requirement at the allocator boundary so deferred table/publication paths
+    /// cannot allocate a storage or uniform buffer before their wrapper observes heap state.
+    /// </summary>
+    private static bool ShouldEnableDescriptorHeapDeviceAddress(
+        VulkanBackendObjectContext context,
+        BufferUsageFlags usage)
+        => context.Supports(EVulkanDeviceCapability.BufferDeviceAddress) &&
+           VulkanFeatureProfile.RequestedDescriptorBackend == EVulkanDescriptorBackend.DescriptorHeap &&
+           (usage & (BufferUsageFlags.UniformBufferBit |
+                     BufferUsageFlags.StorageBufferBit |
+                     BufferUsageFlags.UniformTexelBufferBit |
+                     BufferUsageFlags.StorageTexelBufferBit)) != 0;
+
     /// <summary>
     /// Creates a tracked buffer without routing wrapper allocation through the
     /// renderer facade.  This deliberately does not acquire the legacy staging
@@ -434,6 +454,7 @@ internal unsafe sealed class VulkanBufferResourceService(VulkanAllocationAuthori
             throw new InvalidOperationException("Cannot create a Vulkan buffer while the device is not operational.");
 
         size = Math.Max(size, 1UL);
+        enableDeviceAddress |= ShouldEnableDescriptorHeapDeviceAddress(context, usage);
         if (enableDeviceAddress)
             usage |= BufferUsageFlags.ShaderDeviceAddressBit;
 
@@ -456,6 +477,7 @@ internal unsafe sealed class VulkanBufferResourceService(VulkanAllocationAuthori
             if (bind != Result.Success)
                 throw new InvalidOperationException($"Failed to bind Vulkan buffer memory ({bind}).");
 
+            allocations.Buffers.RegisterDescriptorMetadata(buffer, size, usage);
             allocations.Buffers.LiveHandles[buffer.Handle] = 0;
             RequireLifetime().Tracker.RegisterResource(
                 new VulkanResourceLifetimeKey(ObjectType.Buffer, buffer.Handle), owner, externallyOwned: false);
@@ -464,6 +486,7 @@ internal unsafe sealed class VulkanBufferResourceService(VulkanAllocationAuthori
         catch
         {
             allocations.Buffers.Allocations.TryRemove(buffer.Handle, out _);
+            allocations.Buffers.RemoveDescriptorMetadata(buffer);
             if (allocation.Memory.Handle != 0)
                 RequireAllocator().Free(context.Api, context.Device, allocation);
             context.Api.DestroyBuffer(context.Device, buffer, null);
@@ -488,6 +511,7 @@ internal unsafe sealed class VulkanBufferResourceService(VulkanAllocationAuthori
             throw new InvalidOperationException("Cannot create a Vulkan buffer while the device is not operational.");
 
         size = Math.Max(size, 1UL);
+        enableDeviceAddress |= ShouldEnableDescriptorHeapDeviceAddress(context, usage);
         if (enableDeviceAddress)
             usage |= BufferUsageFlags.ShaderDeviceAddressBit;
 
@@ -536,6 +560,7 @@ internal unsafe sealed class VulkanBufferResourceService(VulkanAllocationAuthori
                 throw new InvalidOperationException("Failed to bind dedicated Vulkan buffer memory.");
 
             allocations.Buffers.LegacyAllocations[buffer.Handle] = allocation;
+            allocations.Buffers.RegisterDescriptorMetadata(buffer, size, usage);
             TrackLive(buffer, owner);
             RecordAllocationTelemetry(properties, checked((long)requirements.Size));
             return (buffer, memory);
@@ -543,6 +568,7 @@ internal unsafe sealed class VulkanBufferResourceService(VulkanAllocationAuthori
         catch
         {
             allocations.Buffers.LegacyAllocations.TryRemove(buffer.Handle, out _);
+            allocations.Buffers.RemoveDescriptorMetadata(buffer);
             if (memory.Handle != 0)
                 context.Api.FreeMemory(context.Device, memory, null);
             context.Api.DestroyBuffer(context.Device, buffer, null);
@@ -936,6 +962,7 @@ internal unsafe sealed class VulkanBufferResourceService(VulkanAllocationAuthori
         {
             allocations.Buffers.Allocations.TryRemove(buffer.Handle, out VulkanMemoryAllocation allocation);
             allocations.Buffers.LiveHandles.TryRemove(buffer.Handle, out _);
+            allocations.Buffers.RemoveDescriptorMetadata(buffer);
             context.Api.DestroyBuffer(context.Device, buffer, null);
             if (allocation.Memory.Handle != 0)
                 RequireAllocator().Free(context.Api, context.Device, allocation);

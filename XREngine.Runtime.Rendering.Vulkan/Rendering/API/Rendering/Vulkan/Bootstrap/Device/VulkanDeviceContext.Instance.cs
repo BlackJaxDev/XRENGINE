@@ -12,6 +12,8 @@ internal sealed partial class VulkanDeviceContext
 {
     private RendererNativeCallbackBridge.VulkanDebugRegistration? _debugRegistration;
     private DebugUtilsMessengerEXT _debugMessenger;
+    private bool _requestDeviceAddressBindingReport;
+    private bool _deviceAddressBindingDebugMessagesEnabled;
 
     public Vk Api { get; private set; } = null!;
     public Instance Instance { get; private set; }
@@ -73,6 +75,8 @@ internal sealed partial class VulkanDeviceContext
             throw new InvalidOperationException("The Vulkan device context already owns an instance.");
 
         VulkanDeviceValidationRequest validation = request.Validation;
+        _requestDeviceAddressBindingReport = validation.Flags.HasFlag(
+            EVulkanDiagnosticFlags.DeviceAddressBindingReport);
         bool enableValidationLayers = validation.EnableValidationLayers;
         if (enableValidationLayers && !CheckValidationLayerSupport(api))
         {
@@ -80,6 +84,7 @@ internal sealed partial class VulkanDeviceContext
             enableValidationLayers = false;
         }
 
+        ValidateVulkan14Loader(api);
         uint requestedApiVersion = ResolveRequestedApiVersion(request);
         string[] extensions = ResolveRequiredInstanceExtensions(api, request, enableValidationLayers);
         LogResolvedDiagnosticOptions(validation, enableValidationLayers, extensions);
@@ -227,10 +232,16 @@ internal sealed partial class VulkanDeviceContext
             SType = StructureType.DebugUtilsMessengerCreateInfoExt,
             MessageSeverity = DebugUtilsMessageSeverityFlagsEXT.VerboseBitExt |
                 DebugUtilsMessageSeverityFlagsEXT.WarningBitExt |
-                DebugUtilsMessageSeverityFlagsEXT.ErrorBitExt,
+                DebugUtilsMessageSeverityFlagsEXT.ErrorBitExt |
+                (_deviceAddressBindingDebugMessagesEnabled
+                    ? DebugUtilsMessageSeverityFlagsEXT.InfoBitExt
+                    : (DebugUtilsMessageSeverityFlagsEXT)0),
             MessageType = DebugUtilsMessageTypeFlagsEXT.GeneralBitExt |
                 DebugUtilsMessageTypeFlagsEXT.PerformanceBitExt |
-                DebugUtilsMessageTypeFlagsEXT.ValidationBitExt,
+                DebugUtilsMessageTypeFlagsEXT.ValidationBitExt |
+                (_deviceAddressBindingDebugMessagesEnabled
+                    ? DebugUtilsMessageTypeFlagsEXT.DeviceAddressBindingBitExt
+                    : (DebugUtilsMessageTypeFlagsEXT)0),
             PUserData = (void*)_debugRegistration.UserData,
             PfnUserCallback = Marshal.GetDelegateForFunctionPointer<DebugUtilsMessengerCallbackFunctionEXT>(
                 RendererNativeCallbackBridge.VulkanDebugCallbackPointer),
@@ -318,47 +329,75 @@ internal sealed partial class VulkanDeviceContext
 
     private static uint ResolveRequestedApiVersion(VulkanDeviceBootstrapRequest request)
     {
-        uint defaultApiVersion = Vk.Version13;
-        if (request.OpenXrMaximumApiVersion == 0)
-            return Math.Max(defaultApiVersion, request.StreamlineMinimumApiVersion);
+        const uint requiredApiVersion = (1u << 22) | (4u << 12);
+        if (request.StreamlineMinimumApiVersion > requiredApiVersion)
+        {
+            throw new NotSupportedException(
+                $"Streamline requires Vulkan {FormatApiVersion(request.StreamlineMinimumApiVersion)}, which is outside XRENGINE's Vulkan 1.4 baseline.");
+        }
 
         uint minimumApiVersion = ConvertOpenXrApiVersion(request.OpenXrMinimumApiVersion);
         uint maximumApiVersion = ConvertOpenXrApiVersion(request.OpenXrMaximumApiVersion);
+        bool hasOpenXrConstraint =
+            request.OpenXrMinimumApiVersion != 0 ||
+            request.OpenXrMaximumApiVersion != 0 ||
+            request.OpenXrInstanceExtensions.Count != 0;
+        if (!hasOpenXrConstraint)
+            return requiredApiVersion;
+
+        if (request.OpenXrMinimumApiVersion != 0 && minimumApiVersion == 0)
+        {
+            throw new NotSupportedException(
+                $"The active OpenXR runtime reported an invalid Vulkan API minimum: {request.OpenXrMinimumApiVersion}.");
+        }
+
         if (maximumApiVersion == 0)
-            return defaultApiVersion;
+        {
+            throw new NotSupportedException(
+                "The active OpenXR runtime reported Vulkan constraints but did not report a valid Vulkan API maximum; Vulkan 1.4 cannot be negotiated safely.");
+        }
 
         if (minimumApiVersion != 0 && maximumApiVersion < minimumApiVersion)
         {
-            Debug.VulkanWarning(
-                "[OpenXR] Ignoring invalid Vulkan API version range from runtime: min={0} max={1}.",
-                request.OpenXrMinimumApiVersion,
-                request.OpenXrMaximumApiVersion);
-            return defaultApiVersion;
+            throw new NotSupportedException(
+                $"The active OpenXR runtime reported an invalid Vulkan API range: min={request.OpenXrMinimumApiVersion} max={request.OpenXrMaximumApiVersion}.");
         }
 
-        uint resolvedApiVersion = defaultApiVersion;
-        if (minimumApiVersion != 0 && resolvedApiVersion < minimumApiVersion)
-            resolvedApiVersion = minimumApiVersion;
-        if (resolvedApiVersion > maximumApiVersion)
-            resolvedApiVersion = maximumApiVersion;
-
-        if (resolvedApiVersion < request.StreamlineMinimumApiVersion)
+        if ((minimumApiVersion != 0 && requiredApiVersion < minimumApiVersion) ||
+            requiredApiVersion > maximumApiVersion)
         {
             throw new NotSupportedException(
-                $"Streamline requires Vulkan {FormatApiVersion(request.StreamlineMinimumApiVersion)}, but the active OpenXR runtime caps Vulkan at {FormatApiVersion(maximumApiVersion)}.");
+                $"The active OpenXR runtime supports Vulkan {FormatApiVersion(minimumApiVersion)}-{FormatApiVersion(maximumApiVersion)}, which does not include XRENGINE's required Vulkan 1.4 baseline.");
         }
 
-        if (resolvedApiVersion != defaultApiVersion)
+        return requiredApiVersion;
+    }
+
+    private static void ValidateVulkan14Loader(Vk api)
+    {
+        const uint requiredApiVersion = (1u << 22) | (4u << 12);
+        uint loaderApiVersion = 0;
+        Result result;
+        try
         {
-            Debug.Vulkan(
-                "[OpenXR] Vulkan instance API version resolved to {0} for OpenXR runtime range {1}-{2} (default {3}).",
-                FormatApiVersion(resolvedApiVersion),
-                minimumApiVersion == 0 ? "<unknown>" : FormatApiVersion(minimumApiVersion),
-                FormatApiVersion(maximumApiVersion),
-                FormatApiVersion(defaultApiVersion));
+            result = api.EnumerateInstanceVersion(ref loaderApiVersion);
+        }
+        catch (EntryPointNotFoundException ex)
+        {
+            throw new NotSupportedException(
+                "The Vulkan loader does not export vkEnumerateInstanceVersion; XRENGINE requires a Vulkan 1.4 loader.",
+                ex);
+        }
+        if (result != Result.Success || loaderApiVersion < requiredApiVersion)
+        {
+            string available = result == Result.Success
+                ? FormatApiVersion(loaderApiVersion)
+                : $"unavailable ({result})";
+            throw new NotSupportedException(
+                $"The Vulkan loader reports {available}; XRENGINE requires Vulkan 1.4.");
         }
 
-        return resolvedApiVersion;
+        Debug.Vulkan("[Vulkan] Loader API version {0}; requiring Vulkan 1.4.", FormatApiVersion(loaderApiVersion));
     }
 
     private static uint ConvertOpenXrApiVersion(ulong openXrApiVersion)
@@ -500,6 +539,37 @@ internal sealed partial class VulkanDeviceContext
         _debugMessenger = messenger;
     }
 
+    /// <summary>
+    /// Recreates the post-instance messenger after the device-only address-binding
+    /// report extension and feature have been enabled. The instance-create callback
+    /// cannot request this device-extension message type.
+    /// </summary>
+    internal unsafe void EnableDeviceAddressBindingDebugMessages()
+    {
+        if (!_requestDeviceAddressBindingReport ||
+            !MutableCapabilities._supportsDeviceAddressBindingReport ||
+            !HasDebugMessenger ||
+            DebugUtils is null)
+            return;
+
+        _deviceAddressBindingDebugMessagesEnabled = true;
+        DebugUtilsMessengerCreateInfoEXT createInfo = PreparePostInstanceDebugMessengerCreateInfo();
+        Result result = DebugUtils.CreateDebugUtilsMessenger(
+            Instance,
+            in createInfo,
+            null,
+            out DebugUtilsMessengerEXT replacement);
+        if (result != Result.Success)
+        {
+            _deviceAddressBindingDebugMessagesEnabled = false;
+            throw new InvalidOperationException(
+                $"Failed to recreate the Vulkan debug messenger for device-address binding reports. Result={result}.");
+        }
+
+        DebugUtils.DestroyDebugUtilsMessenger(Instance, _debugMessenger, null);
+        _debugMessenger = replacement;
+    }
+
     public unsafe bool CmdBeginLabel(CommandBuffer commandBuffer, string name)
     {
         if (!CanRecordCommandBufferDebugLabels)
@@ -580,10 +650,16 @@ internal sealed partial class VulkanDeviceContext
             SType = StructureType.DebugUtilsMessengerCreateInfoExt,
             MessageSeverity = DebugUtilsMessageSeverityFlagsEXT.VerboseBitExt |
                 DebugUtilsMessageSeverityFlagsEXT.WarningBitExt |
-                DebugUtilsMessageSeverityFlagsEXT.ErrorBitExt,
+                DebugUtilsMessageSeverityFlagsEXT.ErrorBitExt |
+                (_deviceAddressBindingDebugMessagesEnabled
+                    ? DebugUtilsMessageSeverityFlagsEXT.InfoBitExt
+                    : (DebugUtilsMessageSeverityFlagsEXT)0),
             MessageType = DebugUtilsMessageTypeFlagsEXT.GeneralBitExt |
                 DebugUtilsMessageTypeFlagsEXT.PerformanceBitExt |
-                DebugUtilsMessageTypeFlagsEXT.ValidationBitExt,
+                DebugUtilsMessageTypeFlagsEXT.ValidationBitExt |
+                (_deviceAddressBindingDebugMessagesEnabled
+                    ? DebugUtilsMessageTypeFlagsEXT.DeviceAddressBindingBitExt
+                    : (DebugUtilsMessageTypeFlagsEXT)0),
             PUserData = (void*)_debugRegistration.UserData,
             PfnUserCallback = Marshal.GetDelegateForFunctionPointer<DebugUtilsMessengerCallbackFunctionEXT>(
                 RendererNativeCallbackBridge.VulkanDebugCallbackPointer),

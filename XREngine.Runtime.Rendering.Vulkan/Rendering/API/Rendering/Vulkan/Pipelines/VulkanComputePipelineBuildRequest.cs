@@ -10,6 +10,7 @@ internal sealed class VulkanComputePipelineBuildRequest(
     PipelineLayout pipelineLayout,
     DescriptorSetLayout[] descriptorSetLayouts,
     PipelineShaderStageCreateInfo computeStage,
+    bool usesDescriptorHeap,
     DescriptorSetAndBindingMappingEXTNative[] descriptorHeapMappings)
 {
     public VkRenderProgram Program { get; } = program;
@@ -18,5 +19,7 @@ internal sealed class VulkanComputePipelineBuildRequest(
     public PipelineLayout PipelineLayout { get; } = pipelineLayout;
     public DescriptorSetLayout[] DescriptorSetLayouts { get; } = descriptorSetLayouts;
     public PipelineShaderStageCreateInfo ComputeStage { get; } = computeStage;
+    /// <summary>Captured independently of mappings because zero-resource programs still require heap pipeline creation.</summary>
+    public bool UsesDescriptorHeap { get; } = usesDescriptorHeap;
     public DescriptorSetAndBindingMappingEXTNative[] DescriptorHeapMappings { get; } = descriptorHeapMappings;
 }

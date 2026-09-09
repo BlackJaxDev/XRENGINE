@@ -4,6 +4,7 @@ using System.Threading;
 using Silk.NET.Vulkan;
 using XREngine.Rendering.Resources;
 using XREngine.Rendering.UI;
+using XREngine.Rendering.Vulkan.DeviceBootstrap;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -91,6 +92,7 @@ internal sealed partial class VulkanFrameLoop
     private long _lastAcceptedPresentCompletedTimestamp;
     private readonly VulkanRenderer _ownerRenderer;
     private readonly long _backendGeneration;
+    private VulkanStartupCapabilitySnapshot _startupCapabilitySnapshot;
 
     internal VulkanFrameLoop(
         Vk api,

@@ -11,7 +11,7 @@ namespace XREngine.Rendering.Vulkan;
 internal sealed unsafe class VulkanValidationDiagnostics
 {
     private const int MaximumMessages = 128;
-    private const int MaximumDeviceAddressBindings = 128;
+    private const int MaximumDeviceAddressBindings = 1024;
     private readonly object _summaryLock = new();
     private readonly Dictionary<string, MessageAggregate> _messages =
         new(StringComparer.Ordinal);
@@ -129,6 +129,7 @@ internal sealed unsafe class VulkanValidationDiagnostics
                     long serial = ++_deviceAddressBindingSerial;
                     int index = unchecked((int)((serial - 1) % MaximumDeviceAddressBindings));
                     _deviceAddressBindings[index] = new(
+                        serial,
                         binding->BaseAddress,
                         binding->Size,
                         binding->BindingType,

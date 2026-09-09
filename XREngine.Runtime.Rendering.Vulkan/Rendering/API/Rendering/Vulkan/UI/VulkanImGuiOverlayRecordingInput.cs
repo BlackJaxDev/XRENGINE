@@ -12,6 +12,7 @@ internal readonly record struct VulkanImGuiOverlayRecordingInput(
     VulkanDynamicUiOverlayTarget Target,
     VulkanImGuiResources Resources,
     IReadOnlyDictionary<nint, DescriptorSet> DescriptorSets,
+    IReadOnlyDictionary<nint, DescriptorHeapPushDataPayload> DescriptorHeapPushData,
     bool ClearSwapchain,
     VulkanImGuiFrameSnapshot Snapshot)
 {

@@ -32,6 +32,9 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
     private readonly object _pendingMeshDescriptorSetRetirementLock = new();
     private readonly Dictionary<(ulong Pool, ulong Set), (DescriptorPool Pool, DescriptorSet Set)>
         _pendingMeshDescriptorSetRetirements = [];
+    // Published heap ranges are immutable. Phase E may reclaim retired generations;
+    // until then finite heap exhaustion is reported rather than risking in-flight reuse.
+    private readonly Dictionary<ulong, List<DescriptorHeapPublishedBinding>> _heapPublishedBindings = [];
 
     internal VulkanDescriptorLifetimeAuthority(
         VulkanResourceRuntime resources,
@@ -525,7 +528,8 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
     internal DescriptorHeapProgramLayout? CreateDescriptorHeapProgramLayout(
         IReadOnlyList<DescriptorBindingInfo> bindings,
         string programName,
-        out string reason)
+        out string reason,
+        uint shaderConstantByteCount = 0)
     {
         reason = string.Empty;
         if (!IsDescriptorHeapActive)
@@ -533,16 +537,27 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
             reason = "descriptor heap is not the active descriptor backend.";
             return null;
         }
-        if (bindings.Count == 0)
+        if ((shaderConstantByteCount & 3u) != 0)
+        {
+            reason = $"program '{programName}' shader constant range is not four-byte aligned.";
+            return null;
+        }
+        if (bindings.Count == 0 && shaderConstantByteCount == 0)
             return DescriptorHeapProgramLayout.Empty;
 
-        uint nextPushOffset = 0;
+        uint nextPushOffset = shaderConstantByteCount;
         DescriptorHeapBindingLayout[] layouts = new DescriptorHeapBindingLayout[bindings.Count];
         DescriptorSetAndBindingMappingEXTNative[] mappings = new DescriptorSetAndBindingMappingEXTNative[bindings.Count];
         Dictionary<DescriptorHeapBindingKey, DescriptorHeapBindingLayout> lookup = new(bindings.Count);
         for (int index = 0; index < bindings.Count; index++)
         {
             DescriptorBindingInfo binding = bindings[index];
+            DescriptorHeapBindingKey key = new(binding.Set, binding.Binding);
+            if (lookup.ContainsKey(key))
+            {
+                reason = $"program '{programName}' repeats descriptor heap binding set={binding.Set} binding={binding.Binding}.";
+                return null;
+            }
             if (!TryCreateHeapBindingLayout(binding, ref nextPushOffset, out DescriptorHeapBindingLayout? layout, out reason) ||
                 layout is null)
             {
@@ -550,12 +565,11 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
                 return null;
             }
             layouts[index] = layout;
-            lookup[new DescriptorHeapBindingKey(binding.Set, binding.Binding)] = layout;
+            lookup.Add(key, layout);
             mappings[index] = CreateHeapMapping(layout);
         }
 
-        if (_descriptors.Heap.Properties.MaxPushDataSize > 0 &&
-            nextPushOffset > _descriptors.Heap.Properties.MaxPushDataSize)
+        if (nextPushOffset > _descriptors.Heap.Properties.MaxPushDataSize)
         {
             reason = $"program '{programName}' descriptor heap push-data layout needs {nextPushOffset} bytes, maxPushDataSize={_descriptors.Heap.Properties.MaxPushDataSize}.";
             return null;
@@ -565,7 +579,7 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
             programName,
             bindings.Count,
             nextPushOffset);
-        return new DescriptorHeapProgramLayout(layouts, mappings, lookup, nextPushOffset);
+        return new DescriptorHeapProgramLayout(layouts, mappings, lookup, nextPushOffset, shaderConstantByteCount);
     }
 
     private bool TryCreateHeapBindingLayout(
@@ -587,24 +601,38 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
         DescriptorType resourceType = ResolveHeapResourceDescriptorType(binding.DescriptorType);
         ulong resourceStride = hasResource ? ResolveHeapDescriptorStride(resourceType) : 0;
         ulong samplerStride = hasSampler ? ResolveHeapDescriptorStride(DescriptorType.Sampler) : 0;
+        if (resourceStride > uint.MaxValue || samplerStride > uint.MaxValue)
+        {
+            reason = $"descriptor heap stride is not representable by the native mapping (resource={resourceStride}, sampler={samplerStride}).";
+            return false;
+        }
         uint resourceOffset = uint.MaxValue;
         uint samplerOffset = uint.MaxValue;
         if (hasResource)
         {
-            resourceOffset = nextPushOffset;
-            nextPushOffset += sizeof(uint);
+            if (!TryReserveHeapPushIndex(ref nextPushOffset, out resourceOffset))
+            {
+                reason = "descriptor heap push-data offsets overflow uint.";
+                return false;
+            }
         }
         if (hasSampler)
         {
             if (binding.DescriptorType == DescriptorType.Sampler)
             {
-                resourceOffset = nextPushOffset;
-                nextPushOffset += sizeof(uint);
+                if (!TryReserveHeapPushIndex(ref nextPushOffset, out resourceOffset))
+                {
+                    reason = "descriptor heap push-data offsets overflow uint.";
+                    return false;
+                }
             }
             else
             {
-                samplerOffset = nextPushOffset;
-                nextPushOffset += sizeof(uint);
+                if (!TryReserveHeapPushIndex(ref nextPushOffset, out samplerOffset))
+                {
+                    reason = "descriptor heap push-data offsets overflow uint.";
+                    return false;
+                }
             }
         }
         layout = new DescriptorHeapBindingLayout(
@@ -616,8 +644,21 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
             hasSampler,
             resourceOffset,
             samplerOffset,
-            checked((uint)Math.Min(resourceStride, uint.MaxValue)),
-            checked((uint)Math.Min(samplerStride, uint.MaxValue)));
+            checked((uint)resourceStride),
+            checked((uint)samplerStride));
+        return true;
+    }
+
+    private static bool TryReserveHeapPushIndex(ref uint nextPushOffset, out uint pushOffset)
+    {
+        if (nextPushOffset > uint.MaxValue - sizeof(uint))
+        {
+            pushOffset = uint.MaxValue;
+            return false;
+        }
+
+        pushOffset = nextPushOffset;
+        nextPushOffset += sizeof(uint);
         return true;
     }
 
@@ -681,40 +722,91 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
         }
 
         descriptorCount = Math.Max(1u, descriptorCount);
-        if (bindingLayout.HasResource)
+        if (!payload.IsValidFor(layout) || descriptorCount > bindingLayout.DescriptorCount)
         {
-            if (!TryWriteHeapResourceBinding(
-                    bindingLayout,
-                    bufferInfos,
-                    imageInfos,
-                    texelBufferViews,
-                    descriptorCount,
-                    out uint resourceIndex,
-                    out reason))
-            {
-                return false;
-            }
-            payload.SetDword(bindingLayout.ResourcePushOffset, resourceIndex);
+            reason = $"descriptor heap payload or array count is invalid for set={binding.Set} binding={binding.Binding}.";
+            return false;
         }
-
-        if (bindingLayout.HasSampler)
+        using (VulkanFrameLockScope.Enter(
+                   RequireSubmissionStateGate(),
+                   EVulkanFrameWaitReason.SubmissionStateLock))
+        using (VulkanFrameLockScope.Enter(
+                   _lifetime.Tracker.SyncRoot,
+                   EVulkanFrameWaitReason.ResourceLifetimeLock))
         {
-            if (!TryWriteHeapSamplerBinding(
-                    bindingLayout,
-                    imageInfos,
-                    descriptorCount,
-                    out uint samplerIndex,
-                    out reason))
+            ulong originalResourceHighWater = _descriptors.Heap.ResourceHighWaterBytes;
+            ulong originalSamplerHighWater = _descriptors.Heap.SamplerHighWaterBytes;
+            uint originalResource = bindingLayout.ResourcePushOffset == uint.MaxValue
+                ? 0u : payload.Dwords[checked((int)(bindingLayout.ResourcePushOffset / sizeof(uint)))];
+            uint samplerPushOffset = bindingLayout.DescriptorType == DescriptorType.Sampler
+                ? bindingLayout.ResourcePushOffset : bindingLayout.SamplerPushOffset;
+            uint originalSampler = samplerPushOffset == uint.MaxValue
+                ? 0u : payload.Dwords[checked((int)(samplerPushOffset / sizeof(uint)))];
+            bool resourcePublished = false;
+            bool samplerPublished = false;
+            uint resourceIndex = 0;
+            uint samplerIndex = 0;
+            try
             {
-                return false;
-            }
-            uint pushOffset = bindingLayout.DescriptorType == DescriptorType.Sampler
-                ? bindingLayout.ResourcePushOffset
-                : bindingLayout.SamplerPushOffset;
-            payload.SetDword(pushOffset, samplerIndex);
-        }
+                if (bindingLayout.HasResource &&
+                    !TryWriteHeapResourceBinding(
+                        bindingLayout,
+                        bufferInfos,
+                        imageInfos,
+                        texelBufferViews,
+                        descriptorCount,
+                        out resourceIndex,
+                        out resourcePublished,
+                        out reason,
+                        program.Data.Name))
+                {
+                    RestoreHeapBindingTransaction(originalResourceHighWater, originalSamplerHighWater);
+                    return false;
+                }
 
-        return true;
+                if (bindingLayout.HasSampler &&
+                    !TryWriteHeapSamplerBinding(
+                        bindingLayout,
+                        imageInfos,
+                        descriptorCount,
+                        out samplerIndex,
+                        out samplerPublished,
+                        out reason))
+                {
+                    RestoreHeapBindingTransaction(originalResourceHighWater, originalSamplerHighWater);
+                    return false;
+                }
+
+                if (!TryCaptureDescriptorHeapResourceGenerations(
+                        bindingLayout,
+                        bufferInfos,
+                        imageInfos,
+                        texelBufferViews,
+                        descriptorCount,
+                        payload,
+                        out reason))
+                {
+                    RestoreHeapBindingTransaction(originalResourceHighWater, originalSamplerHighWater);
+                    return false;
+                }
+
+                if (resourcePublished)
+                    PublishHeapBinding(false, bindingLayout.ResourceDescriptorType, bufferInfos, imageInfos, texelBufferViews, descriptorCount, resourceIndex);
+                if (samplerPublished)
+                    PublishHeapBinding(true, DescriptorType.Sampler, null, imageInfos, null, descriptorCount, samplerIndex);
+
+                if (bindingLayout.HasResource)
+                    payload.SetDword(bindingLayout.ResourcePushOffset, resourceIndex);
+                if (bindingLayout.HasSampler)
+                    payload.SetDword(samplerPushOffset, samplerIndex);
+                return true;
+            }
+            catch
+            {
+                RestoreHeapBindingTransaction(originalResourceHighWater, originalSamplerHighWater);
+                throw;
+            }
+        }
     }
 
     internal bool TryWriteCombinedImageSamplerHeapPayload(
@@ -741,13 +833,172 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
             SamplerPushOffset: sizeof(uint),
             ResourceStride: checked((uint)ResolveHeapDescriptorStride(DescriptorType.SampledImage)),
             SamplerStride: checked((uint)ResolveHeapDescriptorStride(DescriptorType.Sampler)));
-        if (!TryWriteHeapResourceBinding(layout, null, &imageInfo, null, 1u, out uint resourceIndex, out reason) ||
-            !TryWriteHeapSamplerBinding(layout, &imageInfo, 1u, out uint samplerIndex, out reason))
+        using (VulkanFrameLockScope.Enter(
+                   RequireSubmissionStateGate(),
+                   EVulkanFrameWaitReason.SubmissionStateLock))
+        using (VulkanFrameLockScope.Enter(
+                   _lifetime.Tracker.SyncRoot,
+                   EVulkanFrameWaitReason.ResourceLifetimeLock))
         {
+        ulong originalResourceHighWater = _descriptors.Heap.ResourceHighWaterBytes;
+        ulong originalSamplerHighWater = _descriptors.Heap.SamplerHighWaterBytes;
+        uint originalResource = payload.Dwords[0];
+        uint originalSampler = payload.Dwords[1];
+        if (!TryWriteHeapResourceBinding(layout, null, &imageInfo, null, 1u, out uint resourceIndex, out bool resourcePublished, out reason) ||
+            !TryWriteHeapSamplerBinding(layout, &imageInfo, 1u, out uint samplerIndex, out bool samplerPublished, out reason))
+        {
+            RestoreHeapBindingTransaction(originalResourceHighWater, originalSamplerHighWater);
+            payload.SetDword(0u, originalResource);
+            payload.SetDword(sizeof(uint), originalSampler);
             return false;
         }
+        if (!TryCaptureDescriptorHeapResourceGenerations(
+                layout,
+                null,
+                &imageInfo,
+                null,
+                1u,
+                payload,
+                out reason))
+        {
+            RestoreHeapBindingTransaction(originalResourceHighWater, originalSamplerHighWater);
+            payload.SetDword(0u, originalResource);
+            payload.SetDword(sizeof(uint), originalSampler);
+            return false;
+        }
+        if (resourcePublished)
+            PublishHeapBinding(false, DescriptorType.SampledImage, null, &imageInfo, null, 1u, resourceIndex);
+        if (samplerPublished)
+            PublishHeapBinding(true, DescriptorType.Sampler, null, &imageInfo, null, 1u, samplerIndex);
         payload.SetDword(0u, resourceIndex);
         payload.SetDword(sizeof(uint), samplerIndex);
+        return true;
+        }
+    }
+
+    private bool TryCaptureDescriptorHeapResourceGenerations(
+        DescriptorHeapBindingLayout layout,
+        DescriptorBufferInfo* bufferInfos,
+        DescriptorImageInfo* imageInfos,
+        BufferView* texelBufferViews,
+        uint descriptorCount,
+        DescriptorHeapPushDataPayload payload,
+        out string reason)
+    {
+        // Combined image/sampler descriptors retain the view, sampler, and
+        // backing image, so three pins per array element are sufficient.
+        int capacity = checked((int)(descriptorCount * 3u));
+        VulkanPinnedResourceGeneration[]? rented = null;
+        scoped Span<VulkanPinnedResourceGeneration> captured;
+        if (capacity <= 16)
+            captured = stackalloc VulkanPinnedResourceGeneration[16];
+        else
+        {
+            rented = ArrayPool<VulkanPinnedResourceGeneration>.Shared.Rent(capacity);
+            captured = rented;
+        }
+        int capturedCount = 0;
+        VulkanBackendObjectContext context = RequireBackendContext();
+        reason = string.Empty;
+
+        try
+        {
+            for (uint index = 0; index < descriptorCount; index++)
+            {
+                if (layout.HasResource)
+                {
+                    bool capturedResource = layout.ResourceDescriptorType switch
+                    {
+                        DescriptorType.UniformBuffer or DescriptorType.StorageBuffer =>
+                            bufferInfos is not null && TryAppendDescriptorHeapResourceGeneration(captured, ref capturedCount, context, ObjectType.Buffer, bufferInfos[index].Buffer.Handle, out reason),
+                        DescriptorType.SampledImage or DescriptorType.StorageImage or DescriptorType.InputAttachment =>
+                            imageInfos is not null && TryAppendDescriptorHeapResourceGeneration(captured, ref capturedCount, context, ObjectType.ImageView, imageInfos[index].ImageView.Handle, out reason),
+                        DescriptorType.UniformTexelBuffer or DescriptorType.StorageTexelBuffer =>
+                            texelBufferViews is not null && TryAppendDescriptorHeapResourceGeneration(captured, ref capturedCount, context, ObjectType.BufferView, texelBufferViews[index].Handle, out reason),
+                        _ => false,
+                    };
+                    if (!capturedResource)
+                    {
+                        if (string.IsNullOrEmpty(reason))
+                            reason = $"descriptor heap resource dependency is unavailable for {layout.ResourceDescriptorType}.";
+                        return false;
+                    }
+                }
+
+                if (layout.HasSampler &&
+                    (imageInfos is null || !TryAppendDescriptorHeapResourceGeneration(captured, ref capturedCount, context, ObjectType.Sampler, imageInfos[index].Sampler.Handle, out reason)))
+                {
+                    if (string.IsNullOrEmpty(reason))
+                        reason = "descriptor heap sampler dependency is unavailable.";
+                    return false;
+                }
+            }
+
+            payload.SetResourceGenerations(layout.Key, captured[..capturedCount]);
+            return true;
+        }
+        finally
+        {
+            if (rented is not null)
+                ArrayPool<VulkanPinnedResourceGeneration>.Shared.Return(rented);
+        }
+    }
+
+    private static bool TryAppendDescriptorHeapResourceGeneration(
+        scoped Span<VulkanPinnedResourceGeneration> captured,
+        ref int capturedCount,
+        VulkanBackendObjectContext context,
+        ObjectType type,
+        ulong handle,
+        out string reason)
+    {
+        reason = string.Empty;
+        if (handle == 0)
+            return true;
+
+        VulkanResourceLifetimeKey key = new(type, handle);
+        for (int index = 0; index < capturedCount; index++)
+        {
+            if (captured[index].Key == key)
+                return true;
+        }
+
+        ulong generation = context.Resources.GetPublishedGeneration(type, handle);
+        if (generation == 0)
+        {
+            reason = $"descriptor heap dependency {key} has no published generation.";
+            return false;
+        }
+        captured[capturedCount++] = new VulkanPinnedResourceGeneration(key, generation);
+
+        // Descriptor heap bytes reference views, but their backing image/buffer
+        // must survive too. Capture both generations under the same lifetime
+        // gate so the command ledger cannot later resolve a replacement parent.
+        VulkanResourceLifetimeTracker tracker = context.Resources.Lifetime.Tracker;
+        if (type == ObjectType.ImageView &&
+            tracker.ImageViewBackingImages.TryGetValue(handle, out ulong backingImage) &&
+            backingImage != 0)
+        {
+            return TryAppendDescriptorHeapResourceGeneration(
+                captured,
+                ref capturedCount,
+                context,
+                ObjectType.Image,
+                backingImage,
+                out reason);
+        }
+        if (type == ObjectType.BufferView &&
+            tracker.BufferViewBackingBuffers.TryGetValue(handle, out ulong backingBuffer) &&
+            backingBuffer != 0)
+        {
+            return TryAppendDescriptorHeapResourceGeneration(
+                captured,
+                ref capturedCount,
+                context,
+                ObjectType.Buffer,
+                backingBuffer,
+                out reason);
+        }
         return true;
     }
 
@@ -758,9 +1009,27 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
         BufferView* texelBufferViews,
         uint descriptorCount,
         out uint heapIndex,
-        out string reason)
+        out bool newlyPublished,
+        out string reason,
+        string? programName = null)
     {
         heapIndex = 0;
+        newlyPublished = false;
+        if (TryGetPublishedHeapBinding(
+                samplerHeap: false,
+                layout.ResourceDescriptorType,
+                bufferInfos,
+                imageInfos,
+                texelBufferViews,
+                descriptorCount,
+                out heapIndex))
+        {
+            reason = string.Empty;
+            return true;
+        }
+
+        VulkanDescriptorHeapState heap = _descriptors.Heap;
+        ulong originalHighWater = heap.ResourceHighWaterBytes;
         if (!TryAllocateHeapRange(
                 sampler: false,
                 layout.ResourceDescriptorType,
@@ -773,12 +1042,14 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
         }
 
         int count = checked((int)descriptorCount);
-        ResourceDescriptorInfoEXTNative[] resourcesArray = new ResourceDescriptorInfoEXTNative[count];
-        DeviceAddressRangeEXTNative[] rangesArray = new DeviceAddressRangeEXTNative[count];
-        ImageDescriptorInfoEXTNative[] imagesArray = new ImageDescriptorInfoEXTNative[count];
-        ImageViewCreateInfo[] imageViewsArray = new ImageViewCreateInfo[count];
-        TexelBufferDescriptorInfoEXTNative[] texelBuffersArray = new TexelBufferDescriptorInfoEXTNative[count];
+        ResourceDescriptorInfoEXTNative[] resourcesArray = ArrayPool<ResourceDescriptorInfoEXTNative>.Shared.Rent(count);
+        DeviceAddressRangeEXTNative[] rangesArray = ArrayPool<DeviceAddressRangeEXTNative>.Shared.Rent(count);
+        ImageDescriptorInfoEXTNative[] imagesArray = ArrayPool<ImageDescriptorInfoEXTNative>.Shared.Rent(count);
+        ImageViewCreateInfo[] imageViewsArray = ArrayPool<ImageViewCreateInfo>.Shared.Rent(count);
+        TexelBufferDescriptorInfoEXTNative[] texelBuffersArray = ArrayPool<TexelBufferDescriptorInfoEXTNative>.Shared.Rent(count);
         VulkanBackendObjectContext context = RequireBackendContext();
+        try
+        {
         fixed (ResourceDescriptorInfoEXTNative* resources = resourcesArray)
         fixed (DeviceAddressRangeEXTNative* ranges = rangesArray)
         fixed (ImageDescriptorInfoEXTNative* images = imagesArray)
@@ -800,7 +1071,7 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
                     if (bufferInfos is null ||
                         !TryCreateAddressRange(context, bufferInfos[index], out ranges[index], out reason))
                     {
-                        return false;
+                        return RollBackHeapAllocation(sampler: false, originalHighWater);
                     }
                     resources[index].Data.AddressRange = ranges + index;
                     break;
@@ -815,7 +1086,7 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
                         reason = imageInfos is null
                             ? "image descriptor heap write has no image data."
                             : $"image view 0x{imageInfos[index].ImageView.Handle:X} has no descriptor heap create-info metadata.";
-                        return false;
+                        return RollBackHeapAllocation(sampler: false, originalHighWater);
                     }
                     images[index] = new ImageDescriptorInfoEXTNative
                     {
@@ -835,13 +1106,13 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
                             out texelBuffers[index],
                             out reason))
                     {
-                        return false;
+                        return RollBackHeapAllocation(sampler: false, originalHighWater);
                     }
                     resources[index].Data.TexelBuffer = texelBuffers + index;
                     break;
                 default:
                     reason = $"descriptor type {layout.ResourceDescriptorType} is not a supported resource heap descriptor.";
-                    return false;
+                    return RollBackHeapAllocation(sampler: false, originalHighWater);
             }
         }
 
@@ -852,10 +1123,58 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
                 destinationSize,
                 out reason))
         {
-            return false;
+            return RollBackHeapAllocation(sampler: false, originalHighWater);
         }
-            heapIndex = checked((uint)(destinationOffset / layout.ResourceStride));
-            return true;
+        TraceHeapBufferAddressPublication(
+            programName,
+            layout,
+            bufferInfos,
+            ranges,
+            descriptorCount,
+            destinationOffset);
+        heapIndex = checked((uint)(destinationOffset / layout.ResourceStride));
+        newlyPublished = true;
+        return true;
+        }
+        }
+        finally
+        {
+            ArrayPool<ResourceDescriptorInfoEXTNative>.Shared.Return(resourcesArray);
+            ArrayPool<DeviceAddressRangeEXTNative>.Shared.Return(rangesArray);
+            ArrayPool<ImageDescriptorInfoEXTNative>.Shared.Return(imagesArray);
+            ArrayPool<ImageViewCreateInfo>.Shared.Return(imageViewsArray);
+            ArrayPool<TexelBufferDescriptorInfoEXTNative>.Shared.Return(texelBuffersArray);
+        }
+    }
+
+    /// <summary>
+    /// Emits cache-miss-only BDA evidence. Heap publication is immutable, so a
+    /// successful publication can be logged once without adding per-dispatch
+    /// diagnostic work or obscuring later device-fault correlation.
+    /// </summary>
+    private static unsafe void TraceHeapBufferAddressPublication(
+        string? programName,
+        in DescriptorHeapBindingLayout layout,
+        DescriptorBufferInfo* bufferInfos,
+        DeviceAddressRangeEXTNative* ranges,
+        uint descriptorCount,
+        ulong heapOffset)
+    {
+        if (!VulkanMeshRenderingConventions.DescriptorTraceEnabled ||
+            bufferInfos is null ||
+            ranges is null ||
+            layout.ResourceDescriptorType is not (DescriptorType.UniformBuffer or DescriptorType.StorageBuffer))
+        {
+            return;
+        }
+
+        for (uint index = 0; index < descriptorCount; index++)
+        {
+            DescriptorBufferInfo source = bufferInfos[index];
+            DeviceAddressRangeEXTNative range = ranges[index];
+            Debug.WriteAuxiliaryLog(
+                "vulkan-descriptor-heap-bda.log",
+                $"program={programName ?? "<unknown>"} set={layout.Key.Set} binding={layout.Key.Binding} element={index} type={layout.ResourceDescriptorType} heapOffset={heapOffset} buffer=0x{source.Buffer.Handle:X} baseAddress=0x{range.Address - source.Offset:X} address=0x{range.Address:X} offset={source.Offset} range={range.Size}");
         }
     }
 
@@ -864,14 +1183,31 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
         DescriptorImageInfo* imageInfos,
         uint descriptorCount,
         out uint heapIndex,
+        out bool newlyPublished,
         out string reason)
     {
         heapIndex = 0;
+        newlyPublished = false;
         if (imageInfos is null)
         {
             reason = "sampler descriptor heap write has no image/sampler descriptor data.";
             return false;
         }
+        if (TryGetPublishedHeapBinding(
+                samplerHeap: true,
+                DescriptorType.Sampler,
+                null,
+                imageInfos,
+                null,
+                descriptorCount,
+                out heapIndex))
+        {
+            reason = string.Empty;
+            return true;
+        }
+
+        VulkanDescriptorHeapState heap = _descriptors.Heap;
+        ulong originalHighWater = heap.SamplerHighWaterBytes;
         if (!TryAllocateHeapRange(
                 sampler: true,
                 DescriptorType.Sampler,
@@ -883,7 +1219,9 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
             return false;
         }
 
-        SamplerCreateInfo[] samplersArray = new SamplerCreateInfo[checked((int)descriptorCount)];
+        SamplerCreateInfo[] samplersArray = ArrayPool<SamplerCreateInfo>.Shared.Rent(checked((int)descriptorCount));
+        try
+        {
         fixed (SamplerCreateInfo* samplers = samplersArray)
         {
         for (uint index = 0; index < descriptorCount; index++)
@@ -892,7 +1230,7 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
             if (!_descriptors.TryGetSamplerCreateInfo(sampler, out samplers[index]))
             {
                 reason = $"sampler 0x{sampler.Handle:X} has no descriptor heap create-info metadata.";
-                return false;
+                return RollBackHeapAllocation(sampler: true, originalHighWater);
             }
         }
         if (!TryWriteSamplerDescriptors(
@@ -902,10 +1240,16 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
                 destinationSize,
                 out reason))
         {
-            return false;
+            return RollBackHeapAllocation(sampler: true, originalHighWater);
         }
             heapIndex = checked((uint)(destinationOffset / layout.SamplerStride));
+            newlyPublished = true;
             return true;
+        }
+        }
+        finally
+        {
+            ArrayPool<SamplerCreateInfo>.Shared.Return(samplersArray);
         }
     }
 
@@ -953,6 +1297,157 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
         return true;
     }
 
+    private bool RollBackHeapAllocation(bool sampler, ulong originalHighWater)
+    {
+        if (sampler)
+            _descriptors.Heap.SamplerHighWaterBytes = originalHighWater;
+        else
+            _descriptors.Heap.ResourceHighWaterBytes = originalHighWater;
+        return false;
+    }
+
+    private void RestoreHeapBindingTransaction(ulong resourceHighWater, ulong samplerHighWater)
+    {
+        _descriptors.Heap.ResourceHighWaterBytes = resourceHighWater;
+        _descriptors.Heap.SamplerHighWaterBytes = samplerHighWater;
+    }
+
+    private bool TryGetPublishedHeapBinding(
+        bool samplerHeap,
+        DescriptorType descriptorType,
+        DescriptorBufferInfo* bufferInfos,
+        DescriptorImageInfo* imageInfos,
+        BufferView* texelBufferViews,
+        uint descriptorCount,
+        out uint firstIndex)
+    {
+        ulong hash = ComputeHeapBindingHash(samplerHeap, descriptorType, bufferInfos, imageInfos, texelBufferViews, descriptorCount);
+        if (!_heapPublishedBindings.TryGetValue(hash, out List<DescriptorHeapPublishedBinding>? bucket))
+        {
+            firstIndex = 0;
+            return false;
+        }
+
+        for (int candidateIndex = 0; candidateIndex < bucket.Count; candidateIndex++)
+        {
+            DescriptorHeapPublishedBinding candidate = bucket[candidateIndex];
+            if (candidate.SamplerHeap != samplerHeap || candidate.DescriptorType != descriptorType ||
+                candidate.Sources.Length != descriptorCount)
+            {
+                continue;
+            }
+
+            bool matches = true;
+            for (uint index = 0; index < descriptorCount; index++)
+            {
+                if (candidate.Sources[index] != CaptureHeapBindingSource(samplerHeap, bufferInfos, imageInfos, texelBufferViews, index))
+                {
+                    matches = false;
+                    break;
+                }
+            }
+            if (matches)
+            {
+                firstIndex = candidate.FirstIndex;
+                return true;
+            }
+        }
+
+        firstIndex = 0;
+        return false;
+    }
+
+    private void PublishHeapBinding(
+        bool samplerHeap,
+        DescriptorType descriptorType,
+        DescriptorBufferInfo* bufferInfos,
+        DescriptorImageInfo* imageInfos,
+        BufferView* texelBufferViews,
+        uint descriptorCount,
+        uint firstIndex)
+    {
+        DescriptorHeapPublishedSource[] sources = new DescriptorHeapPublishedSource[checked((int)descriptorCount)];
+        for (uint index = 0; index < descriptorCount; index++)
+            sources[index] = CaptureHeapBindingSource(samplerHeap, bufferInfos, imageInfos, texelBufferViews, index);
+
+        ulong hash = ComputeHeapBindingHash(samplerHeap, descriptorType, bufferInfos, imageInfos, texelBufferViews, descriptorCount);
+        if (!_heapPublishedBindings.TryGetValue(hash, out List<DescriptorHeapPublishedBinding>? bucket))
+            _heapPublishedBindings.Add(hash, bucket = []);
+        bucket.Add(new DescriptorHeapPublishedBinding(descriptorType, samplerHeap, sources, firstIndex));
+    }
+
+    private DescriptorHeapPublishedSource CaptureHeapBindingSource(
+        bool samplerHeap,
+        DescriptorBufferInfo* bufferInfos,
+        DescriptorImageInfo* imageInfos,
+        BufferView* texelBufferViews,
+        uint index)
+    {
+        if (samplerHeap)
+        {
+            Sampler sampler = imageInfos![index].Sampler;
+            return new DescriptorHeapPublishedSource(
+                sampler.Handle,
+                _resources.GetPublishedGeneration(ObjectType.Sampler, sampler.Handle),
+                0UL,
+                0UL,
+                default);
+        }
+        if (bufferInfos is not null)
+        {
+            DescriptorBufferInfo buffer = bufferInfos[index];
+            return new DescriptorHeapPublishedSource(
+                buffer.Buffer.Handle,
+                _resources.GetPublishedGeneration(ObjectType.Buffer, buffer.Buffer.Handle),
+                buffer.Offset,
+                buffer.Range,
+                default);
+        }
+        if (imageInfos is not null)
+        {
+            DescriptorImageInfo image = imageInfos[index];
+            return new DescriptorHeapPublishedSource(
+                image.ImageView.Handle,
+                _resources.GetPublishedGeneration(ObjectType.ImageView, image.ImageView.Handle),
+                0UL,
+                0UL,
+                image.ImageLayout);
+        }
+
+        BufferView view = texelBufferViews![index];
+        return new DescriptorHeapPublishedSource(
+            view.Handle,
+            _resources.GetPublishedGeneration(ObjectType.BufferView, view.Handle),
+            0UL,
+            0UL,
+            default);
+    }
+
+    private ulong ComputeHeapBindingHash(
+        bool samplerHeap,
+        DescriptorType descriptorType,
+        DescriptorBufferInfo* bufferInfos,
+        DescriptorImageInfo* imageInfos,
+        BufferView* texelBufferViews,
+        uint descriptorCount)
+    {
+        VulkanStableHash64 hash = new(schemaVersion: 1);
+        hash.Add(samplerHeap);
+        hash.Add((int)descriptorType);
+        hash.Add(descriptorCount);
+        for (uint index = 0; index < descriptorCount; index++)
+        {
+            DescriptorHeapPublishedSource source = CaptureHeapBindingSource(
+                samplerHeap, bufferInfos, imageInfos, texelBufferViews, index);
+            hash.Add(source.Handle);
+            hash.Add(source.Generation);
+            hash.Add(source.Offset);
+            hash.Add(source.Range);
+            hash.Add((int)source.Layout);
+        }
+        return hash.Value;
+    }
+
     private bool TryWriteSamplerDescriptors(
         uint count,
         SamplerCreateInfo* samplers,
@@ -974,13 +1469,21 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
             reason = "descriptor heap sampler mapping lease could not be acquired.";
             return false;
         }
-        Result result;
+        Result result = Result.Success;
         using (lease)
         {
             fixed (byte* address = lease.Bytes)
             {
-                HostAddressRangeEXTNative destination = new() { Address = address + checked((nint)offset), Size = checked((nuint)size) };
-                result = heap.NativeFunctions.WriteSamplerDescriptors(device.Device, count, samplers, &destination);
+                // Vulkan expects one destination range per descriptor, not one
+                // range describing the entire array. Emit bounded scalar writes.
+                ulong stride = size / count;
+                for (uint index = 0; index < count; index++)
+                {
+                    HostAddressRangeEXTNative destination = new() { Address = address + checked((nint)(offset + index * stride)), Size = checked((nuint)stride) };
+                    result = heap.NativeFunctions.WriteSamplerDescriptors(device.Device, 1, samplers + index, &destination);
+                    if (result != Result.Success)
+                        break;
+                }
             }
         }
         if (result != Result.Success)
@@ -1018,13 +1521,19 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
             reason = "descriptor heap resource mapping lease could not be acquired.";
             return false;
         }
-        Result result;
+        Result result = Result.Success;
         using (lease)
         {
             fixed (byte* address = lease.Bytes)
             {
-                HostAddressRangeEXTNative destination = new() { Address = address + checked((nint)offset), Size = checked((nuint)size) };
-                result = heap.NativeFunctions.WriteResourceDescriptors(device.Device, count, resources, &destination);
+                ulong stride = size / count;
+                for (uint index = 0; index < count; index++)
+                {
+                    HostAddressRangeEXTNative destination = new() { Address = address + checked((nint)(offset + index * stride)), Size = checked((nuint)stride) };
+                    result = heap.NativeFunctions.WriteResourceDescriptors(device.Device, 1, resources + index, &destination);
+                    if (result != Result.Success)
+                        break;
+                }
             }
         }
         if (result != Result.Success)
@@ -2416,16 +2925,30 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
             reason = "buffer descriptor has no buffer handle or range.";
             return false;
         }
+        if (!TryResolveDescriptorHeapAddressRange(
+                bufferInfo.Buffer,
+                bufferInfo.Offset,
+                bufferInfo.Range,
+                out ulong resolvedRange,
+                out reason))
+        {
+            return false;
+        }
         ulong address = _resources.Buffers.GetDeviceAddress(context, bufferInfo.Buffer);
         if (address == 0)
         {
             reason = $"buffer 0x{bufferInfo.Buffer.Handle:X} has no device address; descriptor heap buffer descriptors require shader-device-address usage.";
             return false;
         }
+        if (address > ulong.MaxValue - bufferInfo.Offset)
+        {
+            reason = $"buffer 0x{bufferInfo.Buffer.Handle:X} device address overflows its descriptor offset {bufferInfo.Offset}.";
+            return false;
+        }
         range = new DeviceAddressRangeEXTNative
         {
-            Address = checked(address + bufferInfo.Offset),
-            Size = bufferInfo.Range,
+            Address = address + bufferInfo.Offset,
+            Size = resolvedRange,
         };
         return true;
     }
@@ -2443,10 +2966,24 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
             reason = $"buffer view 0x{bufferView.Handle:X} has no descriptor heap create-info metadata.";
             return false;
         }
+        if (!TryResolveDescriptorHeapAddressRange(
+                createInfo.Buffer,
+                createInfo.Offset,
+                createInfo.Range,
+                out ulong resolvedRange,
+                out reason))
+        {
+            return false;
+        }
         ulong address = _resources.Buffers.GetDeviceAddress(context, createInfo.Buffer);
         if (address == 0)
         {
             reason = $"buffer view 0x{bufferView.Handle:X} references buffer 0x{createInfo.Buffer.Handle:X} with no device address.";
+            return false;
+        }
+        if (address > ulong.MaxValue - createInfo.Offset)
+        {
+            reason = $"buffer view 0x{bufferView.Handle:X} device address overflows its descriptor offset {createInfo.Offset}.";
             return false;
         }
         info = new TexelBufferDescriptorInfoEXTNative
@@ -2456,39 +2993,72 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
             Format = createInfo.Format,
             AddressRange = new DeviceAddressRangeEXTNative
             {
-                Address = checked(address + createInfo.Offset),
-                Size = createInfo.Range,
+                Address = address + createInfo.Offset,
+                Size = resolvedRange,
             },
         };
+        return true;
+    }
+
+    private bool TryResolveDescriptorHeapAddressRange(
+        Silk.NET.Vulkan.Buffer buffer,
+        ulong offset,
+        ulong requestedRange,
+        out ulong resolvedRange,
+        out string reason)
+    {
+        resolvedRange = 0;
+        reason = string.Empty;
+        if (!_resources.Buffers.TryGetDescriptorMetadata(buffer, out VulkanBufferDescriptorMetadata metadata))
+        {
+            reason = $"buffer 0x{buffer.Handle:X} has no logical-size and usage metadata; descriptor heap address descriptors require a tracked buffer.";
+            return false;
+        }
+        if ((metadata.Usage & BufferUsageFlags.ShaderDeviceAddressBit) == 0)
+        {
+            reason = $"buffer 0x{buffer.Handle:X} was not created with shader-device-address usage.";
+            return false;
+        }
+        if (offset >= metadata.LogicalSize)
+        {
+            reason = $"buffer 0x{buffer.Handle:X} descriptor offset {offset} exceeds logical size {metadata.LogicalSize}.";
+            return false;
+        }
+
+        ulong available = metadata.LogicalSize - offset;
+        resolvedRange = requestedRange == Vk.WholeSize ? available : requestedRange;
+        if (resolvedRange == 0 || resolvedRange > available)
+        {
+            reason = $"buffer 0x{buffer.Handle:X} descriptor range {requestedRange} at offset {offset} exceeds logical size {metadata.LogicalSize}.";
+            return false;
+        }
         return true;
     }
 
     internal ulong ResolveHeapDescriptorStride(DescriptorType type)
     {
         PhysicalDeviceDescriptorHeapPropertiesEXTNative properties = _descriptors.Heap.Properties;
-        ulong fallbackSize = type == DescriptorType.Sampler
+        ulong size = type == DescriptorType.Sampler
             ? properties.SamplerDescriptorSize
             : IsImageResourceDescriptor(type)
                 ? properties.ImageDescriptorSize
                 : properties.BufferDescriptorSize;
-        ulong size = _descriptors.Heap.NativeFunctions?.TryGetDescriptorSize(
-            RequireDeviceContext().PhysicalDevice,
-            type,
-            out ulong exactSize) == true && exactSize != 0
-                ? exactSize
-                : Math.Max(1ul, fallbackSize);
         ulong alignment = type == DescriptorType.Sampler
             ? properties.SamplerDescriptorAlignment
             : IsImageResourceDescriptor(type)
                 ? properties.ImageDescriptorAlignment
                 : properties.BufferDescriptorAlignment;
-        return AlignHeapUp(Math.Max(size, 1ul), Math.Max(alignment, 1ul));
+        if (size == 0 || alignment == 0 || size % alignment != 0)
+            throw new NotSupportedException($"Descriptor heap {type} size/alignment is invalid ({size}/{alignment}).");
+        return size;
     }
 
     private static bool IsImageResourceDescriptor(DescriptorType type)
         => type is DescriptorType.CombinedImageSampler
             or DescriptorType.SampledImage
             or DescriptorType.StorageImage
+            or DescriptorType.UniformTexelBuffer
+            or DescriptorType.StorageTexelBuffer
             or DescriptorType.InputAttachment;
 
     private static bool DescriptorHeapBindingHasResource(DescriptorType type)

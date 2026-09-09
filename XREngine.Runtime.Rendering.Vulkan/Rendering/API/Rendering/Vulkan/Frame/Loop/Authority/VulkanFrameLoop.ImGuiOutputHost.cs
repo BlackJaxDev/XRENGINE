@@ -204,6 +204,7 @@ internal sealed partial class VulkanFrameLoop : IVulkanImGuiOutputHost
             target,
             _outputRuntime._imguiResources,
             _outputRuntime._imguiTextureRegistry.DescriptorSets,
+            _outputRuntime._imguiTextureRegistry.DescriptorHeapPushData,
             true,
             snapshot);
         return _imguiPlatformViewportRecorder.TryRecord(

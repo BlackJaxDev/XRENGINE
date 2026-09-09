@@ -259,9 +259,11 @@ namespace XREngine.Rendering.Vulkan
                     : Math.Max(requiredByteSize, 1UL);
                 BufferUsageFlags usage = ResolveVkUsageFlags(Data.Target, Data.Usage);
                 MemoryPropertyFlags memProps = ResolveMemoryProperties(Data, requestedAllocationBytes);
-                bool enableDeviceAddress =
-                    BackendContext.Resources.Buffers.ShouldEnableDeviceAddress(BackendContext, Data) ||
-                    BackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap;
+                // Descriptor-buffer mappings carry GPU addresses rather than descriptor-set
+                // references. Select that usage from the requested startup backend, not the
+                // active heap state: managed buffers can be allocated while descriptor-heap
+                // storage is still being initialized and cannot gain the usage afterwards.
+                bool enableDeviceAddress = BackendContext.Resources.Buffers.ShouldEnableDeviceAddress(BackendContext, Data);
                 if (enableDeviceAddress)
                     usage |= BufferUsageFlags.ShaderDeviceAddressBit;
 

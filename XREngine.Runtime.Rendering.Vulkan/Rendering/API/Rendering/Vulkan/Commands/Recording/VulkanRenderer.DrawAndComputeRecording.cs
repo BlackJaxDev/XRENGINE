@@ -85,16 +85,6 @@ namespace XREngine.Rendering.Vulkan
                 return;
             }
 
-            if (op.BindlessMaterialTextures is { } bindlessMaterialTextures &&
-                !TryBindPreparedGlobalMaterialTextureDescriptorSet(
-                    commandBuffer,
-                    bindlessMaterialTextures.Program,
-                    bindlessMaterialTextures.Consumer,
-                    op.Draw.ProgramBindingSnapshot?.MaterialTablePublication))
-            {
-                return;
-            }
-
             if (op.UseCount && _deviceContext.Capabilities.Supports(EVulkanDeviceCapability.DrawIndirectCount))
             {
                 VkDataBuffer parameterResource = op.ParameterBuffer ?? throw new VulkanPlanPreconditionException(
@@ -261,7 +251,6 @@ namespace XREngine.Rendering.Vulkan
             Silk.NET.Vulkan.Buffer indirectBuffer = RequirePreparedBuffer(op.IndirectBuffer, "indirect draw command");
             if (allowInlineBarrier) EmitIndirectReadBarrier(commandBuffer); else RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanAdhocBarrier(0, 1);
             if (op.DrawCount == 0) return;
-            if (op.BindlessMaterialTextures is { } binding && !TryBindPreparedGlobalMaterialTextureDescriptorSet(commandBuffer, binding.Program, binding.Consumer, op.Draw.ProgramBindingSnapshot?.MaterialTablePublication)) return;
             TrackVulkanCommandBufferResource(commandBuffer, ObjectType.Buffer, indirectBuffer.Handle, "IndirectDraw.Commands");
             if (op.UseCount && _deviceContext.Capabilities.Supports(EVulkanDeviceCapability.DrawIndirectCount))
             {
@@ -317,7 +306,11 @@ namespace XREngine.Rendering.Vulkan
                 return;
             }
 
-            if (op.BindlessMaterialTextures is { } bindlessMaterialTextures &&
+            // A heap-mode caller has already pushed its complete program root.
+            // Binding the legacy material table here would invalidate that heap
+            // mode immediately before the task draw.
+            if (ResourceRuntime.Descriptors.Heap.ActiveBackend != EVulkanDescriptorBackend.DescriptorHeap &&
+                op.BindlessMaterialTextures is { } bindlessMaterialTextures &&
                 !TryBindPreparedGlobalMaterialTextureDescriptorSet(
                     commandBuffer,
                     bindlessMaterialTextures.Program,
@@ -411,6 +404,15 @@ namespace XREngine.Rendering.Vulkan
                 throw new VulkanPlanPreconditionException(
                     "The mesh-task program requires the shared global material descriptor set, but no sealed binding was captured.");
             }
+            if (op.BindlessMaterialTextures is { } materialBinding &&
+                !TryBindPreparedGlobalMaterialTextureDescriptorSet(
+                    commandBuffer,
+                    materialBinding.Program,
+                    materialBinding.Consumer,
+                    op.ProgramBindingSnapshot.MaterialTablePublication))
+            {
+                return;
+            }
             BindPipelineTracked(commandBuffer, PipelineBindPoint.Graphics, op.Pipeline);
             if (op.ProducerSnapshot.IndexedViewportScissors.Count > 0)
                 SetViewportScissorTracked(commandBuffer, op.ProducerSnapshot.IndexedViewportScissors.Viewports!, op.ProducerSnapshot.IndexedViewportScissors.Scissors!, op.ProducerSnapshot.IndexedViewportScissors.Count);
@@ -434,13 +436,7 @@ namespace XREngine.Rendering.Vulkan
             RegisterComputeTransientUniformBuffers(imageIndex, meshTaskTemporaryBuffers);
             Silk.NET.Vulkan.Buffer indirect = RequirePreparedBuffer(op.IndirectBuffer, "mesh-task indirect command");
             Silk.NET.Vulkan.Buffer count = RequirePreparedBuffer(op.CountBuffer, "mesh-task indirect count");
-            if (op.MaxDrawCount == 0u ||
-                (op.BindlessMaterialTextures is { } materialBinding &&
-                 !TryBindPreparedGlobalMaterialTextureDescriptorSet(
-                     commandBuffer,
-                     materialBinding.Program,
-                     materialBinding.Consumer,
-                     op.ProgramBindingSnapshot.MaterialTablePublication)))
+            if (op.MaxDrawCount == 0u)
             {
                 return;
             }

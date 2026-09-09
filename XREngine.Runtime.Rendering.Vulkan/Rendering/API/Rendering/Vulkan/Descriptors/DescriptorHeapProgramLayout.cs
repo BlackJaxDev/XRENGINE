@@ -7,13 +7,16 @@ internal sealed class DescriptorHeapProgramLayout(
     DescriptorHeapBindingLayout[] bindings,
     DescriptorSetAndBindingMappingEXTNative[] mappings,
     Dictionary<DescriptorHeapBindingKey, DescriptorHeapBindingLayout> lookup,
-    uint pushByteCount)
+    uint pushByteCount,
+    uint shaderConstantByteCount = 0)
 {
     public static DescriptorHeapProgramLayout Empty { get; } = new([], [], [], 0u);
 
     public DescriptorHeapBindingLayout[] Bindings { get; } = bindings;
     public DescriptorSetAndBindingMappingEXTNative[] Mappings { get; } = mappings;
     public uint PushByteCount { get; } = pushByteCount;
+    /// <summary>Shader PushConstant bytes precede all reflected descriptor indices in the root ABI.</summary>
+    public uint ShaderConstantByteCount { get; } = shaderConstantByteCount;
     public int PushDwordCount { get; } = checked((int)((pushByteCount + 3u) / 4u));
 
     public bool TryGetBinding(uint set, uint binding, out DescriptorHeapBindingLayout layout)
