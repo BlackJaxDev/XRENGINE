@@ -233,6 +233,8 @@ public static class XREngineEnvironmentVariables
     public const string EnableVulkanUpscaleBridge = "XRE_ENABLE_VULKAN_UPSCALE_BRIDGE";
     public const string VkEnableAutoUniformRewrite = "XRE_VK_ENABLE_AUTO_UNIFORM_REWRITE";
     public const string VkDumpShaderOnError = "XRE_VK_DUMP_SHADER_ON_ERROR";
+    public const string VulkanValidateSpirv = "XRE_VULKAN_VALIDATE_SPIRV";
+    public const string VulkanShaderDiagnosticsDirectory = "XRE_VULKAN_SHADER_DIAGNOSTICS_DIR";
     public const string ShaderSourceOptimizer = "XRE_SHADER_SOURCE_OPTIMIZER";
     public const string VkTracePipeCreate = "XRE_VK_TRACE_PIPECREATE";
     public const string VkTraceSwapDraw = "XRE_VK_TRACE_SWAPDRAW";

@@ -4,7 +4,9 @@ using Silk.NET.Vulkan;
 
 namespace XREngine.Rendering.Vulkan;
 
-[StructLayout(LayoutKind.Explicit)]
+// The largest native union member is VkDescriptorMappingSourceIndirectIndexEXT
+// (56 bytes on the supported 64-bit ABI), even though this bridge uses PushIndex.
+[StructLayout(LayoutKind.Explicit, Size = 56)]
 internal unsafe struct DescriptorMappingSourceDataEXTNative
 {
     [FieldOffset(0)] public DescriptorMappingSourceConstantOffsetEXTNative ConstantOffset;

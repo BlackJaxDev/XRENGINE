@@ -16,6 +16,8 @@ internal sealed class VulkanGraphicsPipelineBuildRequest(
     string pipelineName,
     uint colorAttachmentCount,
     PipelineLayout pipelineLayout,
+    bool usesDescriptorHeap,
+    DescriptorSetAndBindingMappingEXTNative[] descriptorHeapMappings,
     VertexInputBindingDescription[] vertexBindings,
     VertexInputAttributeDescription[] vertexAttributes,
     PipelineInputAssemblyStateCreateInfo inputAssembly,
@@ -43,6 +45,9 @@ internal sealed class VulkanGraphicsPipelineBuildRequest(
         public string PipelineName { get; } = pipelineName;
         public uint ColorAttachmentCount { get; } = colorAttachmentCount;
         public PipelineLayout PipelineLayout { get; } = pipelineLayout;
+        /// <summary>Captured independently of mapping count because heap pipelines may have no reflected resources.</summary>
+        public bool UsesDescriptorHeap { get; } = usesDescriptorHeap;
+        public DescriptorSetAndBindingMappingEXTNative[] DescriptorHeapMappings { get; } = descriptorHeapMappings;
         public VertexInputBindingDescription[] VertexBindings { get; } = vertexBindings;
         public VertexInputAttributeDescription[] VertexAttributes { get; } = vertexAttributes;
         public PipelineInputAssemblyStateCreateInfo InputAssembly { get; } = inputAssembly;

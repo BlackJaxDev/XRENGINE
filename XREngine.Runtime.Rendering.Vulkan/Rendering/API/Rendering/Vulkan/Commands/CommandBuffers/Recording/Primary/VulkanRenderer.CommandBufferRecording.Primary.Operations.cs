@@ -116,6 +116,30 @@ internal sealed partial class VulkanCommandRuntime
             EndActiveRenderPass(ref state);
 
         RecordVulkanCommandDiagnosticMarker(state.CommandBuffer, header.OpCode, resolvedPass, index);
+        bool bracketNvCheckpoint = header.OpCode is
+            EVulkanPrimaryPlanNodeKind.ComputeDispatch or
+            EVulkanPrimaryPlanNodeKind.ComputeDispatchIndirect or
+            EVulkanPrimaryPlanNodeKind.AdvancedVisibility or
+            EVulkanPrimaryPlanNodeKind.IndirectDraw or
+            EVulkanPrimaryPlanNodeKind.MeshTaskDispatchIndirectCount;
+        ref readonly FrameOpContext checkpointContext = ref state.Ops.GetContext(index);
+        string? checkpointProgramName = bracketNvCheckpoint
+            ? GetNvCheckpointProgramName(ref state, header.OpCode, index)
+            : null;
+        ulong checkpointFrameId = state.FramePlan?.RenderFrameId ??
+            RuntimeRenderingHostServices.FrameTiming.CurrentRenderFrameId;
+        if (bracketNvCheckpoint)
+        {
+            RecordNvDiagnosticCheckpoint(
+                state.CommandBuffer,
+                header.OpCode,
+                checkpointProgramName,
+                EVulkanNvCheckpointPhase.Before,
+                in checkpointContext,
+                resolvedPass,
+                index,
+                checkpointFrameId);
+        }
         if (!IsRequiredProducerSourceOperation(ref state, index) &&
             TryRecordPlannedNonGraphicsSecondaryRange(
                 ref state,
@@ -123,10 +147,22 @@ internal sealed partial class VulkanCommandRuntime
                 in info,
                 out int lastSecondaryOperationIndex))
         {
+            if (bracketNvCheckpoint)
+            {
+                RecordNvDiagnosticCheckpoint(
+                    state.CommandBuffer,
+                    header.OpCode,
+                    checkpointProgramName,
+                    EVulkanNvCheckpointPhase.After,
+                    in checkpointContext,
+                    resolvedPass,
+                    lastSecondaryOperationIndex,
+                    checkpointFrameId);
+            }
             return lastSecondaryOperationIndex;
         }
 
-        return header.OpCode switch
+        int recordedOperationIndex = header.OpCode switch
         {
             EVulkanPrimaryPlanNodeKind.TextureUpload => RecordTextureUploadPayload(ref state, in state.Ops.GetTextureUpload(index), in info),
             EVulkanPrimaryPlanNodeKind.MemoryBarrier => RecordMemoryBarrierPayload(ref state, in state.Ops.GetMemoryBarrier(index), in info),
@@ -147,7 +183,33 @@ internal sealed partial class VulkanCommandRuntime
             EVulkanPrimaryPlanNodeKind.Blit => RecordBlitPayload(ref state, in state.Ops.GetBlit(index), in info),
             _ => throw new VulkanPlanPreconditionException($"Typed primary dispatch for '{header.OpCode}' has not been published."),
         };
+        if (bracketNvCheckpoint)
+        {
+            RecordNvDiagnosticCheckpoint(
+                state.CommandBuffer,
+                header.OpCode,
+                checkpointProgramName,
+                EVulkanNvCheckpointPhase.After,
+                in checkpointContext,
+                resolvedPass,
+                recordedOperationIndex,
+                checkpointFrameId);
+        }
+        return recordedOperationIndex;
     }
+
+    private static string? GetNvCheckpointProgramName(
+        scoped ref PrimaryCommandBufferRecordingState state,
+        EVulkanPrimaryPlanNodeKind operationCode,
+        int operationIndex)
+        => operationCode switch
+        {
+            EVulkanPrimaryPlanNodeKind.ComputeDispatch =>
+                state.Ops.GetComputeDispatch(operationIndex).Program.Data.Name,
+            EVulkanPrimaryPlanNodeKind.ComputeDispatchIndirect =>
+                state.Ops.GetComputeDispatchIndirect(operationIndex).Program.Data.Name,
+            _ => null,
+        };
 
     /// <summary>
     /// Records the first production advanced-visibility slice. The sequence

@@ -474,16 +474,28 @@ internal unsafe partial class VkMeshRenderer
 					frequencyMask,
 					block.Frequency))
 				continue;
-			if (!_autoUniformBuffers.TryGetValue(name, out AutoUniformBuffer[]? buffers) || buffers.Length == 0)
-				return CaptureAutoUniformWriteFailure(
-					block,
-					draw,
-					frameIndex,
-					drawUniformSlot,
-					BackendContext.Resources.MappedFrameArena,
-					null,
-					"the reflected block has no allocated auto-uniform buffer",
-					out failureReason);
+			if (!_autoUniformBuffers.TryGetValue(name, out AutoUniformBuffer[]? buffers) ||
+				buffers.Length == 0)
+			{
+				// Reusable command refresh validates immutable descriptor state without
+				// allocating it. A program can therefore be reactivated after its
+				// auto-uniform views were retired; allocate the reflected block before
+				// publishing bytes so every recording path shares this invariant.
+				if (!EnsureAutoUniformBuffer(name, Math.Max(block.Size, 1u)) ||
+					!_autoUniformBuffers.TryGetValue(name, out buffers) ||
+					buffers.Length == 0)
+				{
+					return CaptureAutoUniformWriteFailure(
+						block,
+						draw,
+						frameIndex,
+						drawUniformSlot,
+						BackendContext.Resources.MappedFrameArena,
+						null,
+						$"the reflected block has no allocated auto-uniform buffer ({_lastDescriptorPreparationFailure})",
+						out failureReason);
+				}
+			}
 
 			int idx = ResolveFrequencyOwnedAutoUniformBufferIndex(
 				block,
@@ -564,6 +576,38 @@ internal unsafe partial class VkMeshRenderer
 					frequencyReservation,
 					writeFailureReason,
 					out failureReason);
+			}
+		}
+
+		return true;
+	}
+
+	/// <summary>
+	/// Checks whether the active program's reflected auto-uniform views can be
+	/// consumed by a command buffer that was recorded previously. Reuse must not
+	/// allocate a replacement view: descriptor-heap bytes and descriptor-set
+	/// bindings in that command were recorded against the prior native range.
+	/// </summary>
+	private bool HasReusableAutoUniformBuffers(out string reason)
+	{
+		reason = string.Empty;
+		if (_program is null)
+			return true;
+
+		bool useFrameArena = BackendContext.Resources.MappedFrameArena is not null;
+		int bufferCount = UniformBufferArrayLength;
+		foreach (KeyValuePair<string, AutoUniformBlockInfo> pair in _program.AutoUniformBlockMap)
+		{
+			AutoUniformBlockInfo block = pair.Value;
+			if (!_autoUniformBuffers.TryGetValue(pair.Key, out AutoUniformBuffer[]? buffers) ||
+				!AutoUniformBuffersValid(
+					buffers,
+					bufferCount,
+					Math.Max(block.Size, 1u),
+					requireMappedPointers: !(useFrameArena && block.Frequency != EVulkanBindingFrequency.Unknown)))
+			{
+				reason = $"auto-uniform view '{pair.Key}' is absent or retired";
+				return false;
 			}
 		}
 
@@ -1595,8 +1639,7 @@ internal unsafe partial class VkMeshRenderer
 		out ulong ownerIdentity)
 	{
 		ownerIdentity = 0;
-		if (block.Frequency == EVulkanBindingFrequency.Unknown ||
-			BackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap)
+		if (block.Frequency == EVulkanBindingFrequency.Unknown)
 		{
 			return ResolveUniformBufferIndex(
 				frameIndex,
@@ -1628,7 +1671,6 @@ internal unsafe partial class VkMeshRenderer
 		int bufferCount)
 	{
 		if (block.Frequency == EVulkanBindingFrequency.Unknown ||
-			BackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap ||
 			!_autoUniformOwnerSlotTables.TryGetValue(
 				block.InstanceName,
 				out VulkanAutoUniformOwnerSlotTable? table) ||

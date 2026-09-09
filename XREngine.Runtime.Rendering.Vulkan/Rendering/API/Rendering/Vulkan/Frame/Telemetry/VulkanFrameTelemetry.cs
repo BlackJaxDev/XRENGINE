@@ -2,6 +2,7 @@ using System;
 using System.Buffers;
 using System.Collections.Generic;
 using System.Collections.Concurrent;
+using System.Runtime.InteropServices;
 using System.Threading;
 using Silk.NET.Vulkan;
 
@@ -32,7 +33,7 @@ internal sealed class VulkanFrameTelemetry
     private const int VulkanCrashBreadcrumbCapacity = 64;
     private const int VulkanDeviceAddressRangeCapacity = 512;
     private const int VulkanDeviceAddressBindingEventCapacity = 128;
-    private const int VulkanNvCheckpointMarkerCapacity = 256;
+    private const int VulkanNvCheckpointMarkerCapacity = 1024;
     private const int VulkanCommandDiagnosticMarkerCapacity = 512;
     private const int VulkanImageLayoutTransitionCapacity = 128;
     private static long s_nextAuthorityId;
@@ -146,6 +147,147 @@ internal sealed class VulkanFrameTelemetry
     internal readonly object _vulkanNvCheckpointMarkerLock = new();
     internal readonly VulkanNvCheckpointMarker[] _vulkanNvCheckpointMarkers =
         new VulkanNvCheckpointMarker[VulkanNvCheckpointMarkerCapacity];
+    private nint _vulkanNvCheckpointMarkerTokens;
+    private int _vulkanNvCheckpointMarkerCount;
+    private long _vulkanNvCheckpointMarkerSerial;
+    private long _vulkanNvCheckpointMarkerPublicationAttempts;
+    private long _vulkanNvCheckpointNativeCallCount;
+    private bool _vulkanNvCheckpointMarkerCapacityExhausted;
+    private Dictionary<VulkanNvCheckpointMarkerIdentity, int>? _vulkanNvCheckpointMarkersByIdentity;
+
+    internal unsafe bool TryPublishNvCheckpointMarker(
+        ulong renderFrameId,
+        string opKind,
+        string? programName,
+        EVulkanNvCheckpointPhase phase,
+        string? outputTargetName,
+        int passIndex,
+        int batchIndex,
+        int pipelineIdentity,
+        int viewportIdentity,
+        ulong commandBufferHandle,
+        ulong commandBufferRecordingGeneration,
+        out void* markerToken)
+    {
+        lock (_vulkanNvCheckpointMarkerLock)
+        {
+            Interlocked.Increment(ref _vulkanNvCheckpointMarkerPublicationAttempts);
+            markerToken = null;
+            VulkanNvCheckpointMarkerIdentity identity = new(
+                opKind, programName, phase, outputTargetName, passIndex,
+                batchIndex, pipelineIdentity, viewportIdentity);
+            if (_vulkanNvCheckpointMarkersByIdentity is not null &&
+                _vulkanNvCheckpointMarkersByIdentity.TryGetValue(identity, out int existingSlot))
+            {
+                markerToken = (void*)((ulong*)_vulkanNvCheckpointMarkerTokens + existingSlot);
+                return true;
+            }
+            if (_vulkanNvCheckpointMarkerCount >= _vulkanNvCheckpointMarkers.Length)
+            {
+                if (!_vulkanNvCheckpointMarkerCapacityExhausted)
+                {
+                    _vulkanNvCheckpointMarkerCapacityExhausted = true;
+                    Debug.VulkanWarning(
+                        "[VulkanDiag] NV checkpoint marker capacity ({0}) exhausted; later GPU operations cannot be attributed.",
+                        _vulkanNvCheckpointMarkers.Length);
+                }
+                return false;
+            }
+
+            if (_vulkanNvCheckpointMarkerTokens == 0)
+            {
+                _vulkanNvCheckpointMarkerTokens = (nint)NativeMemory.AllocZeroed(
+                    (nuint)_vulkanNvCheckpointMarkers.Length,
+                    (nuint)sizeof(ulong));
+            }
+
+            int slot = _vulkanNvCheckpointMarkerCount++;
+            _vulkanNvCheckpointMarkersByIdentity ??= new Dictionary<VulkanNvCheckpointMarkerIdentity, int>(
+                _vulkanNvCheckpointMarkers.Length);
+            ulong serial = unchecked((ulong)Interlocked.Increment(ref _vulkanNvCheckpointMarkerSerial));
+            _vulkanNvCheckpointMarkers[slot] = new VulkanNvCheckpointMarker
+            {
+                Serial = serial,
+                FirstRecordedFrameId = renderFrameId,
+                OpKind = opKind,
+                ProgramName = programName,
+                Phase = phase,
+                OutputTargetName = outputTargetName,
+                PassIndex = passIndex,
+                BatchIndex = batchIndex,
+                PipelineIdentity = pipelineIdentity,
+                ViewportIdentity = viewportIdentity,
+                FirstCommandBufferHandle = commandBufferHandle,
+                FirstCommandBufferRecordingGeneration = commandBufferRecordingGeneration,
+            };
+            ((ulong*)_vulkanNvCheckpointMarkerTokens)[slot] = serial;
+            _vulkanNvCheckpointMarkersByIdentity.Add(identity, slot);
+            markerToken = (void*)((ulong*)_vulkanNvCheckpointMarkerTokens + slot);
+            return true;
+        }
+    }
+
+    internal unsafe bool TryResolveNvCheckpointMarker(
+        void* markerToken,
+        out VulkanNvCheckpointMarker marker)
+    {
+        lock (_vulkanNvCheckpointMarkerLock)
+        {
+            marker = default;
+            if (markerToken == null || _vulkanNvCheckpointMarkerTokens == 0)
+                return false;
+
+            nint token = (nint)markerToken;
+            nint first = _vulkanNvCheckpointMarkerTokens;
+            nint endExclusive = first + (_vulkanNvCheckpointMarkerCount * sizeof(ulong));
+            if (token < first || token >= endExclusive || (token - first) % sizeof(ulong) != 0)
+                return false;
+
+            int slot = checked((int)((token - first) / sizeof(ulong)));
+            marker = _vulkanNvCheckpointMarkers[slot];
+            return marker.Serial != 0;
+        }
+    }
+
+    internal void RecordNvCheckpointNativeCall()
+        => Interlocked.Increment(ref _vulkanNvCheckpointNativeCallCount);
+
+    internal VulkanNvCheckpointMarker[] CaptureNvCheckpointMarkers(
+        out long publicationAttempts,
+        out long nativeCallCount,
+        out int capacity,
+        out bool capacityExhausted)
+    {
+        lock (_vulkanNvCheckpointMarkerLock)
+        {
+            publicationAttempts = Volatile.Read(ref _vulkanNvCheckpointMarkerPublicationAttempts);
+            nativeCallCount = Volatile.Read(ref _vulkanNvCheckpointNativeCallCount);
+            capacity = _vulkanNvCheckpointMarkers.Length;
+            capacityExhausted = _vulkanNvCheckpointMarkerCapacityExhausted;
+            VulkanNvCheckpointMarker[] markers = new VulkanNvCheckpointMarker[
+                _vulkanNvCheckpointMarkerCount];
+            Array.Copy(_vulkanNvCheckpointMarkers, markers, markers.Length);
+            return markers;
+        }
+    }
+
+    internal unsafe void ReleaseNvCheckpointMarkers()
+    {
+        lock (_vulkanNvCheckpointMarkerLock)
+        {
+            if (_vulkanNvCheckpointMarkerTokens != 0)
+                NativeMemory.Free((void*)_vulkanNvCheckpointMarkerTokens);
+            _vulkanNvCheckpointMarkerTokens = 0;
+            _vulkanNvCheckpointMarkerCount = 0;
+            _vulkanNvCheckpointMarkerSerial = 0;
+            _vulkanNvCheckpointMarkerPublicationAttempts = 0;
+            _vulkanNvCheckpointNativeCallCount = 0;
+            _vulkanNvCheckpointMarkerCapacityExhausted = false;
+            _vulkanNvCheckpointMarkersByIdentity?.Clear();
+            _vulkanNvCheckpointMarkersByIdentity = null;
+            Array.Clear(_vulkanNvCheckpointMarkers);
+        }
+    }
 
     // CPU scopes are authority-lifetime aggregates because many call sites do not yet carry a
     // frame root. They are intentionally absent from per-frame publications. Settlement merely

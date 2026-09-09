@@ -46,11 +46,6 @@ internal sealed unsafe class VulkanDynamicUiBatchTextOverlayRecorder
                 telemetry,
                 input.OverlayCommandBuffer,
                 input.SecondaryCommandBuffer);
-            encoder.Runtime.MergeSecondaryImageStatesForExecution(
-                input.OverlayCommandBuffer,
-                input.SecondaryCommandBuffer,
-                telemetry);
-
             if (input.Target.HasStreamlineUi)
             {
                 RecordSecondaryIntoAttachment(
@@ -145,9 +140,7 @@ internal sealed unsafe class VulkanDynamicUiBatchTextOverlayRecorder
         };
         encoder.Track(commandBuffer, ObjectType.ImageView, view.Handle);
         BeginDynamicRendering(encoder, commandBuffer, &renderingInfo, preferKhrDynamicRendering);
-        encoder.Track(commandBuffer, ObjectType.CommandBuffer, unchecked((ulong)secondary.Handle));
-        encoder.Runtime.Api.CmdExecuteCommands(commandBuffer, 1, &secondary);
-        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanExecuteSecondaryCommandBuffers(1);
+        encoder.Runtime.CmdExecuteCommandsTracked(commandBuffer, 1, &secondary);
         EndDynamicRendering(encoder, commandBuffer, preferKhrDynamicRendering);
 
         encoder.Runtime.EmitImageTransition(

@@ -275,11 +275,11 @@ This is not needed for Vulkan, which can create sessions from any thread since d
 
 The Vulkan renderer supports two creation modes. For runtimes that work well with `XR_KHR_vulkan_enable2`, the renderer can let OpenXR create the `VkInstance` and `VkDevice`, then reuse that OpenXR instance for session creation. For SteamVR, `Auto` mode uses app-created Vulkan handles and the legacy `XR_KHR_vulkan_enable` binding by default because SteamVR can raise a native breakpoint inside `xrCreateVulkanInstanceKHR` on some installations. Override with `XRE_OPENXR_VULKAN_ENABLE2_BOOTSTRAP=Force` for diagnostics, or `Disable` to force app-created Vulkan handles on any runtime.
 
-When the renderer owns Vulkan handle creation for an OpenXR launch, the Vulkan instance `ApiVersion` is resolved from the active runtime's `xrGetVulkanGraphicsRequirementsKHR` range. This prevents SteamVR from rejecting `xrCreateSession` because the app-created Vulkan instance requested a newer Vulkan version than the runtime advertises for OpenXR.
+When the renderer owns Vulkan handle creation for an OpenXR launch, the runtime's `xrGetVulkanGraphicsRequirementsKHR` range must contain Vulkan 1.4. The renderer requests Vulkan 1.4 and rejects an incompatible runtime range with diagnostics; it does not clamp the app-created instance to an older API.
 
 SteamVR also expects `xrGetVulkanGraphicsDeviceKHR` to be called on the same OpenXR instance that will later create the session. The app-owned Vulkan path validates the renderer's selected physical device with that session instance immediately before `xrCreateSession`; do not replace that with a cached result from an earlier bootstrap instance.
 
-When SteamVR clamps the app Vulkan instance below Vulkan 1.3, renderer code that normally uses dynamic rendering or synchronization2 must call the loaded KHR extension commands (`vkCmdBeginRenderingKHR`, `vkCmdEndRenderingKHR`, `vkQueueSubmit2KHR`, and `vkCmdPipelineBarrier2KHR`). Direct Vulkan 1.3 entry points are not guaranteed to exist on that instance.
+An OpenXR runtime that advertises a maximum Vulkan API below 1.4 is incompatible with this renderer configuration. The renderer reports the failed runtime requirement before session creation; no extension-command compatibility path or renderer fallback is selected.
 
 Vulkan OpenXR session creation waits for startup texture streaming and
 allocation pressure to settle before calling `xrCreateSession`. The desktop

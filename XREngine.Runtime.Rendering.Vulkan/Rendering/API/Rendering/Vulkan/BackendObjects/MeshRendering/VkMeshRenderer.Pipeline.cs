@@ -727,6 +727,7 @@ internal unsafe partial class VkMeshRenderer
 			vertexLayoutHash,
 			descriptorLayoutHash,
 			_program.PipelineLayout.Handle,
+			BackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap,
 			passMetadataHash,
 			featureProfileHash,
 			effectiveDraw.RasterizationSamples,
@@ -1314,6 +1315,10 @@ internal unsafe partial class VkMeshRenderer
 					pipelineName,
 					colorAttachmentCount,
 					program.PipelineLayout,
+					BackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap,
+					program.DescriptorHeapLayout is { Mappings.Length: > 0 } descriptorHeapLayout
+						? [.. descriptorHeapLayout.Mappings]
+						: [],
 					vertexBindings.ToArray(),
 					vertexAttributes.ToArray(),
 					inputAssembly,

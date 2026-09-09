@@ -196,6 +196,7 @@ internal sealed unsafe partial class VulkanDescriptorManager
                     _activeDescriptorBackend);
                 return;
             }
+            throw new NotSupportedException($"The explicitly requested Vulkan descriptor heap backend is unavailable: {_descriptorBackendFallbackReason}");
         }
 
         if (descriptorIndexingEnabled && requestedBackend != EVulkanDescriptorBackend.DescriptorSets)
@@ -249,9 +250,15 @@ internal sealed unsafe partial class VulkanDescriptorManager
 
         try
         {
-            ulong samplerDescriptorSize = ResolveDescriptorHeapDescriptorSize(DescriptorType.Sampler, _descriptorHeapProperties.SamplerDescriptorSize);
-            ulong imageDescriptorSize = ResolveDescriptorHeapDescriptorSize(DescriptorType.SampledImage, _descriptorHeapProperties.ImageDescriptorSize);
-            ulong bufferDescriptorSize = ResolveDescriptorHeapDescriptorSize(DescriptorType.StorageBuffer, _descriptorHeapProperties.BufferDescriptorSize);
+            // Use portable property sizes consistently for allocation, mappings and
+            // host writes. Per-type packed sizes need a separate packing contract.
+            ulong samplerDescriptorSize = _descriptorHeapProperties.SamplerDescriptorSize;
+            ulong imageDescriptorSize = _descriptorHeapProperties.ImageDescriptorSize;
+            ulong bufferDescriptorSize = _descriptorHeapProperties.BufferDescriptorSize;
+            if (samplerDescriptorSize == 0 || imageDescriptorSize == 0 || bufferDescriptorSize == 0 ||
+                _descriptorHeapProperties.SamplerHeapAlignment == 0 || _descriptorHeapProperties.ResourceHeapAlignment == 0 ||
+                _descriptorHeapProperties.MaxPushDataSize == 0)
+                throw new NotSupportedException("Descriptor heap properties contain zero descriptor sizes, alignments or maxPushDataSize.");
             ulong resourceDescriptorSize = Math.Max(imageDescriptorSize, bufferDescriptorSize);
 
             ulong samplerReserved = Math.Max(
@@ -272,8 +279,8 @@ internal sealed unsafe partial class VulkanDescriptorManager
                 _descriptorHeapProperties.ResourceHeapAlignment,
                 _descriptorHeapProperties.MaxResourceHeapSize);
 
-            _descriptorHeapSamplerStorage = CreateDescriptorHeapStorage("Sampler", samplerSize);
-            _descriptorHeapResourceStorage = CreateDescriptorHeapStorage("Resource", resourceSize);
+            _descriptorHeapSamplerStorage = CreateDescriptorHeapStorage("Sampler", samplerSize, _descriptorHeapProperties.SamplerHeapAlignment);
+            _descriptorHeapResourceStorage = CreateDescriptorHeapStorage("Resource", resourceSize, _descriptorHeapProperties.ResourceHeapAlignment);
             _descriptorHeapSamplerHighWaterBytes = samplerReserved;
             _descriptorHeapResourceHighWaterBytes = resourceReserved;
             _descriptorHeapStorageReady =
@@ -302,18 +309,7 @@ internal sealed unsafe partial class VulkanDescriptorManager
         }
     }
 
-    private ulong ResolveDescriptorHeapDescriptorSize(DescriptorType descriptorType, ulong fallbackSize)
-    {
-        if (_descriptorHeapApi?.TryGetDescriptorSize(DeviceContext.PhysicalDevice, descriptorType, out ulong exactSize) == true &&
-            exactSize > 0)
-        {
-            return exactSize;
-        }
-
-        return Math.Max(1ul, fallbackSize);
-    }
-
-    private VulkanDescriptorHeapStorage CreateDescriptorHeapStorage(string name, ulong size)
+    private VulkanDescriptorHeapStorage CreateDescriptorHeapStorage(string name, ulong size, ulong alignment)
     {
         BufferUsageFlags usage =
             VulkanDescriptorHeapExt.DescriptorHeapBufferUsage |
@@ -332,19 +328,11 @@ internal sealed unsafe partial class VulkanDescriptorManager
             (buffer, memory) = CreateDedicatedBufferRaw(
                 size,
                 usage,
-                MemoryPropertyFlags.DeviceLocalBit,
+                MemoryPropertyFlags.DeviceLocalBit | MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit,
                 enableDeviceAddress: true);
 
             if (!BackendContext.Resources.Buffers.TryCreateMappedSlice(BackendContext, buffer, memory, 0, size, out mappedSlice))
-            {
-                requiresCopy = true;
-                (stagingBuffer, stagingMemory) = CreateDedicatedBufferRaw(
-                    size,
-                    BufferUsageFlags.TransferSrcBit,
-                    MemoryPropertyFlags.HostVisibleBit | MemoryPropertyFlags.HostCoherentBit);
-                if (!BackendContext.Resources.Buffers.TryCreateMappedSlice(BackendContext, stagingBuffer, stagingMemory, 0, size, out mappedSlice))
-                    throw new InvalidOperationException($"Failed to map {name} descriptor heap staging storage.");
-            }
+                throw new NotSupportedException($"{name} descriptor heap requires coherent, host-visible device-local storage. Staged heap publication is not implemented.");
         }
         catch
         {
@@ -356,12 +344,12 @@ internal sealed unsafe partial class VulkanDescriptorManager
         }
 
         ulong address = GetBufferDeviceAddress(buffer);
-        if (address == 0)
+        if (address == 0 || address % alignment != 0)
         {
             if (stagingBuffer.Handle != 0)
                 DestroyBuffer(stagingBuffer, stagingMemory);
             DestroyBuffer(buffer, memory);
-            throw new InvalidOperationException($"{name} descriptor heap storage has no device address.");
+            throw new InvalidOperationException($"{name} descriptor heap address 0x{address:X} does not satisfy alignment {alignment}.");
         }
 
         FrameTelemetry.RegisterDeviceAddressRange(buffer, address, size, $"DescriptorHeap.{name}");
@@ -425,11 +413,14 @@ internal sealed unsafe partial class VulkanDescriptorManager
         ulong alignment,
         ulong maxHeapSize)
     {
-        ulong requested = checked(reservedBytes + descriptorSize * Math.Max(1u, descriptorCapacity));
-        ulong aligned = AlignDescriptorHeapUp(Math.Max(requested, 1ul), Math.Max(alignment, 1ul));
-        if (maxHeapSize > 0 && aligned > maxHeapSize)
-            aligned = AlignDescriptorHeapDown(maxHeapSize, Math.Max(alignment, 1ul));
-        return Math.Max(aligned, Math.Max(reservedBytes + descriptorSize, 1ul));
+        if (descriptorSize == 0 || alignment == 0 || maxHeapSize == 0)
+            throw new NotSupportedException("Descriptor heap size and alignment limits must be nonzero.");
+        ulong minimum = checked(AlignDescriptorHeapUp(reservedBytes, descriptorSize) + descriptorSize);
+        ulong requested = checked(AlignDescriptorHeapUp(reservedBytes, descriptorSize) + descriptorSize * Math.Max(1u, descriptorCapacity));
+        ulong aligned = Math.Min(AlignDescriptorHeapUp(requested, alignment), AlignDescriptorHeapDown(maxHeapSize, alignment));
+        if (aligned < minimum)
+            throw new NotSupportedException($"Descriptor heap limit {maxHeapSize} cannot fit reserved storage plus one descriptor ({minimum} bytes).");
+        return aligned;
     }
 
     private static ulong AlignDescriptorHeapUp(ulong value, ulong alignment)

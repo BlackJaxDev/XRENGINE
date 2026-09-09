@@ -13,6 +13,7 @@ internal readonly record struct VulkanGraphicsPipelineLibraryKey(
         ulong ProgramLinkGeneration,
         ulong VertexLayoutHash,
         ulong DescriptorLayoutHash,
+        bool UsesDescriptorHeap,
         ulong FeatureProfileHash,
         SampleCountFlags RasterizationSamples,
         bool DepthTestEnabled,

@@ -49,6 +49,19 @@ internal sealed partial class VulkanDeviceContext
         request.OutputRequirements.Validate();
         ValidateOutputRequirements(request.OutputRequirements);
 
+        if (!IsVulkanApiVersionAtLeast(request.Capabilities.Properties.ApiVersion, 1u, 4u))
+        {
+            Debug.VulkanWarning(
+                "[Vulkan] Rejecting physical device with Vulkan {0}; XRENGINE requires Vulkan 1.4.",
+                FormatVulkanApiVersion(request.Capabilities.Properties.ApiVersion));
+            result = VulkanPhysicalDeviceSelectionResult.Rejected(
+                request,
+                openXrRequestedDeviceMatched: false,
+                requiredExtensionsSupported: false,
+                swapchainAdequate: false);
+            return false;
+        }
+
         bool openXrRequestedDeviceMatched = request.OpenXrRequestedDevice.Matches(request.PhysicalDevice);
         if (!openXrRequestedDeviceMatched)
         {

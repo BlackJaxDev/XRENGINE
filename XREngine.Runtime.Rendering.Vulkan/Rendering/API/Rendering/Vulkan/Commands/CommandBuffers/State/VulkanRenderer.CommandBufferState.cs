@@ -274,6 +274,10 @@ namespace XREngine.Rendering.Vulkan
             }
         }
 
+        /// <summary>Heap binding is mutually exclusive with conventional descriptor-set state for this command buffer.</summary>
+        internal void NotifyDescriptorHeapDataPushed(CommandBuffer commandBuffer)
+            => InvalidateDescriptorSetBindingState(commandBuffer);
+
         /// <summary>
         /// Invalidates primary-command-buffer state after executing secondary command buffers.
         /// Vulkan leaves almost all primary state undefined at this boundary, so retaining cached
@@ -631,6 +635,24 @@ namespace XREngine.Rendering.Vulkan
             uint offset,
             in T value) where T : unmanaged
         {
+            if (ResourceRuntime.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap)
+            {
+                T heapValue = value;
+                if (!PrimaryCommandEncoder.TryPushDescriptorHeapData(
+                        commandBuffer,
+                        offset,
+                        &heapValue,
+                        (uint)sizeof(T),
+                        null,
+                        out string reason))
+                {
+                    throw new InvalidOperationException($"Descriptor heap push-data failed: {reason}");
+                }
+
+                RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanBindChurn(pushConstantWrites: 1);
+                return;
+            }
+
             if (layout.Handle == 0)
                 return;
 

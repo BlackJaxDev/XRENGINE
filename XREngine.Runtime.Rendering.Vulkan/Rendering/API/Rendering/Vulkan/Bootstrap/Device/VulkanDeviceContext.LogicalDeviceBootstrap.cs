@@ -602,7 +602,7 @@ internal sealed unsafe partial class VulkanDeviceContext
         _deviceContext.QueryDynamicRenderingLocalReadCapabilities(
             dynamicRenderingLocalReadExtensionEnabled,
             out bool dynamicRenderingLocalReadFeatureSupported,
-            out bool dynamicRenderingLocalReadPromotedToCore,
+            out _,
             out bool dynamicRenderingLocalReadDepthStencilSupported,
             out bool dynamicRenderingLocalReadMultisampledSupported);
         bool enableDynamicRenderingLocalReadFeature =
@@ -665,14 +665,59 @@ internal sealed unsafe partial class VulkanDeviceContext
         _deviceContext.QueryMaintenance5Capabilities(
             maintenance5ExtensionEnabled,
             out bool maintenance5FeatureSupported,
-            out bool maintenance5PromotedToCore);
+            out _);
         bool enableMaintenance5Feature = maintenance5FeatureSupported;
+        _deviceContext.QueryMaintenance6Capabilities(out bool maintenance6FeatureSupported);
+        bool enableMaintenance6Feature = vulkan14PromotedToCore && maintenance6FeatureSupported;
+        _deviceContext.QueryShaderInvocationControlCapabilities(
+            out bool shaderDemoteToHelperInvocationFeatureSupported,
+            out bool shaderTerminateInvocationFeatureSupported);
+        bool enableShaderDemoteToHelperInvocationFeature =
+            vulkan13PromotedToCore && shaderDemoteToHelperInvocationFeatureSupported;
+        bool enableShaderTerminateInvocationFeature =
+            vulkan13PromotedToCore && shaderTerminateInvocationFeatureSupported;
+
+        _deviceContext.MutableCapabilities._vulkan14DynamicRenderingLocalReadSupported =
+            dynamicRenderingLocalReadFeatureSupported;
+        _deviceContext.MutableCapabilities._vulkan14Maintenance5Supported = maintenance5FeatureSupported;
+        _deviceContext.MutableCapabilities._vulkan14Maintenance6Supported = maintenance6FeatureSupported;
+        _deviceContext.MutableCapabilities._vulkan14ShaderDemoteToHelperInvocationSupported =
+            shaderDemoteToHelperInvocationFeatureSupported;
+        _deviceContext.MutableCapabilities._vulkan14ShaderTerminateInvocationSupported =
+            shaderTerminateInvocationFeatureSupported;
+        Debug.Vulkan(
+            "[Vulkan] Capability.RequiredVulkan14Probe requested=True api={0} supportedLocalRead={1} supportedMaintenance5={2} supportedMaintenance6={3} supportedShaderDemoteToHelperInvocation={4} supportedShaderTerminateInvocation={5} localReadDepthStencil={6} localReadMultisampled={7} requestedEnableLocalRead={8} requestedEnableMaintenance5={9} requestedEnableMaintenance6={10} requestedEnableShaderDemoteToHelperInvocation={11} requestedEnableShaderTerminateInvocation={12} executable=False",
+            VulkanDeviceContext.FormatVulkanApiVersion(physicalDeviceProperties.ApiVersion),
+            dynamicRenderingLocalReadFeatureSupported,
+            maintenance5FeatureSupported,
+            maintenance6FeatureSupported,
+            shaderDemoteToHelperInvocationFeatureSupported,
+            shaderTerminateInvocationFeatureSupported,
+            dynamicRenderingLocalReadDepthStencilSupported,
+            dynamicRenderingLocalReadMultisampledSupported,
+            enableDynamicRenderingLocalReadFeature,
+            enableMaintenance5Feature,
+            enableMaintenance6Feature,
+            enableShaderDemoteToHelperInvocationFeature,
+            enableShaderTerminateInvocationFeature);
+
+        if (!vulkan14PromotedToCore || !enableDynamicRenderingLocalReadFeature ||
+            !enableMaintenance5Feature || !enableMaintenance6Feature ||
+            !enableShaderDemoteToHelperInvocationFeature || !enableShaderTerminateInvocationFeature)
+        {
+            throw new NotSupportedException(
+                $"The selected Vulkan device cannot satisfy XRENGINE's Vulkan 1.4 shader profile baseline: api={VulkanDeviceContext.FormatVulkanApiVersion(physicalDeviceProperties.ApiVersion)} dynamicRenderingLocalRead={enableDynamicRenderingLocalReadFeature} maintenance5={enableMaintenance5Feature} maintenance6={enableMaintenance6Feature} shaderDemoteToHelperInvocation={enableShaderDemoteToHelperInvocationFeature} shaderTerminateInvocation={enableShaderTerminateInvocationFeature}.");
+        }
 
         bool extendedFlagsExtensionAvailable = availableExtensionSet.Contains("VK_KHR_extended_flags");
         bool extendedFlagsExtensionEnabled = extensionsArray.Contains("VK_KHR_extended_flags");
         bool descriptorHeapExtensionAvailable = availableExtensionSet.Contains(VulkanDescriptorHeapExt.ExtensionName);
         bool descriptorHeapExtensionEnabled = extensionsArray.Contains(VulkanDescriptorHeapExt.ExtensionName);
         bool shaderUntypedPointersExtensionAvailable = availableExtensionSet.Contains(VulkanDescriptorHeapExt.ShaderUntypedPointersExtensionName);
+        bool shaderUntypedPointersExtensionEnabled = extensionsArray.Contains(VulkanDescriptorHeapExt.ShaderUntypedPointersExtensionName);
+        _deviceContext.QueryShaderUntypedPointersCapabilities(
+            shaderUntypedPointersExtensionEnabled,
+            out bool shaderUntypedPointersFeatureSupported);
         bool descriptorBufferExtensionAvailable = availableExtensionSet.Contains("VK_EXT_descriptor_buffer");
         bool memoryBudgetExtensionAvailable = availableExtensionSet.Contains("VK_EXT_memory_budget");
         bool memoryBudgetExtensionEnabled = extensionsArray.Contains("VK_EXT_memory_budget");
@@ -773,10 +818,11 @@ internal sealed unsafe partial class VulkanDeviceContext
             (vulkan14PromotedToCore ||
              ((maintenance5FeatureSupported || extendedFlagsExtensionAvailable) &&
               (bufferDeviceAddressFeatureSupported || vulkan12PromotedToCore))) &&
-            shaderUntypedPointersExtensionAvailable;
+            shaderUntypedPointersExtensionEnabled &&
+            shaderUntypedPointersFeatureSupported;
         ResourceRuntime.Descriptors.QueryDescriptorHeapCapabilities(
             descriptorHeapExtensionAvailable,
-            shaderUntypedPointersExtensionAvailable,
+            shaderUntypedPointersFeatureSupported,
             out bool descriptorHeapFeatureSupported,
             out bool descriptorHeapCaptureReplaySupported,
             out PhysicalDeviceDescriptorHeapPropertiesEXTNative descriptorHeapProperties);
@@ -948,18 +994,24 @@ internal sealed unsafe partial class VulkanDeviceContext
             DynamicRendering = enableDynamicRenderingFeature,
         };
 
-        PhysicalDeviceDynamicRenderingLocalReadFeatures dynamicRenderingLocalReadFeatureEnable = new()
+        // Vulkan 1.4 promotions share one aggregate node. Do not append the
+        // promoted extension feature nodes as well: duplicate sTypes in a
+        // device-create chain are invalid.
+        PhysicalDeviceVulkan14Features vulkan14FeatureEnable = new()
         {
-            SType = StructureType.PhysicalDeviceDynamicRenderingLocalReadFeatures,
+            SType = StructureType.PhysicalDeviceVulkan14Features,
             PNext = null,
             DynamicRenderingLocalRead = enableDynamicRenderingLocalReadFeature,
+            Maintenance5 = enableMaintenance5Feature,
+            Maintenance6 = enableMaintenance6Feature,
+            IndexTypeUint8 = enableIndexTypeUint8Feature,
         };
 
-        PhysicalDeviceDynamicRenderingLocalReadFeaturesKHR dynamicRenderingLocalReadFeatureEnableKhr = new()
+        PhysicalDeviceShaderUntypedPointersFeaturesKHR shaderUntypedPointersFeatureEnable = new()
         {
-            SType = StructureType.PhysicalDeviceDynamicRenderingLocalReadFeaturesKhr,
+            SType = StructureType.PhysicalDeviceShaderUntypedPointersFeaturesKhr,
             PNext = null,
-            DynamicRenderingLocalRead = enableDynamicRenderingLocalReadFeature,
+            ShaderUntypedPointers = enableDescriptorHeapFeature && shaderUntypedPointersFeatureSupported,
         };
 
         PhysicalDeviceSwapchainMaintenance1FeaturesEXT swapchainMaintenance1FeatureEnable = new()
@@ -1009,13 +1061,22 @@ internal sealed unsafe partial class VulkanDeviceContext
             Maintenance4 = enableMaintenance4Feature,
             PipelineCreationCacheControl = enablePipelineCreationCacheControlFeature,
             PrivateData = enablePrivateDataFeature,
+            ShaderDemoteToHelperInvocation = enableShaderDemoteToHelperInvocationFeature,
+            ShaderTerminateInvocation = enableShaderTerminateInvocationFeature,
         };
 
-        PhysicalDeviceIndexTypeUint8FeaturesEXT indexTypeUint8FeatureEnable = new()
+        PhysicalDeviceShaderDemoteToHelperInvocationFeatures shaderDemoteToHelperInvocationFeatureEnable = new()
         {
-            SType = StructureType.PhysicalDeviceIndexTypeUint8FeaturesExt,
+            SType = StructureType.PhysicalDeviceShaderDemoteToHelperInvocationFeatures,
             PNext = null,
-            IndexTypeUint8 = enableIndexTypeUint8Feature,
+            ShaderDemoteToHelperInvocation = enableShaderDemoteToHelperInvocationFeature,
+        };
+
+        PhysicalDeviceShaderTerminateInvocationFeatures shaderTerminateInvocationFeatureEnable = new()
+        {
+            SType = StructureType.PhysicalDeviceShaderTerminateInvocationFeatures,
+            PNext = null,
+            ShaderTerminateInvocation = enableShaderTerminateInvocationFeature,
         };
 
         PhysicalDeviceMaintenance4Features maintenance4FeatureEnable = new()
@@ -1025,19 +1086,6 @@ internal sealed unsafe partial class VulkanDeviceContext
             Maintenance4 = enableMaintenance4Feature,
         };
 
-        PhysicalDeviceMaintenance5Features maintenance5FeatureEnable = new()
-        {
-            SType = StructureType.PhysicalDeviceMaintenance5Features,
-            PNext = null,
-            Maintenance5 = enableMaintenance5Feature,
-        };
-
-        PhysicalDeviceMaintenance5FeaturesKHR maintenance5FeatureEnableKhr = new()
-        {
-            SType = StructureType.PhysicalDeviceMaintenance5FeaturesKhr,
-            PNext = null,
-            Maintenance5 = enableMaintenance5Feature,
-        };
 
         PhysicalDeviceTimelineSemaphoreFeatures timelineSemaphoreFeatureEnable = new()
         {
@@ -1280,26 +1328,27 @@ internal sealed unsafe partial class VulkanDeviceContext
             enableBufferDeviceAddress && !useVulkan12FeatureEnable);
         featureChainBuilder.Prepend(ref descriptorHeapFeatureEnable, enableDescriptorHeapFeature);
         featureChainBuilder.Prepend(
+            ref shaderUntypedPointersFeatureEnable,
+            enableDescriptorHeapFeature && shaderUntypedPointersFeatureSupported);
+        featureChainBuilder.Prepend(
             ref dynamicRenderingFeatureEnable,
             enableDynamicRenderingFeature && !useVulkan13FeatureEnable);
-        if (dynamicRenderingLocalReadPromotedToCore)
-            featureChainBuilder.Prepend(ref dynamicRenderingLocalReadFeatureEnable, enableDynamicRenderingLocalReadFeature);
-        else
-            featureChainBuilder.Prepend(ref dynamicRenderingLocalReadFeatureEnableKhr, enableDynamicRenderingLocalReadFeature);
+        featureChainBuilder.Prepend(
+            ref shaderDemoteToHelperInvocationFeatureEnable,
+            enableShaderDemoteToHelperInvocationFeature && !useVulkan13FeatureEnable);
+        featureChainBuilder.Prepend(
+            ref shaderTerminateInvocationFeatureEnable,
+            enableShaderTerminateInvocationFeature && !useVulkan13FeatureEnable);
+        featureChainBuilder.Prepend(ref vulkan14FeatureEnable, vulkan14PromotedToCore);
         featureChainBuilder.Prepend(ref swapchainMaintenance1FeatureEnable, enableSwapchainMaintenance1Feature);
         featureChainBuilder.Prepend(
             ref vulkan11FeatureEnable,
             enableShaderDrawParametersFeature || enableMultiviewFeature);
         featureChainBuilder.Prepend(ref vulkan12FeatureEnable, useVulkan12FeatureEnable);
         featureChainBuilder.Prepend(ref vulkan13FeatureEnable, useVulkan13FeatureEnable);
-        featureChainBuilder.Prepend(ref indexTypeUint8FeatureEnable, enableIndexTypeUint8Feature);
         featureChainBuilder.Prepend(
             ref maintenance4FeatureEnable,
             enableMaintenance4Feature && !useVulkan13FeatureEnable);
-        if (maintenance5PromotedToCore)
-            featureChainBuilder.Prepend(ref maintenance5FeatureEnable, enableMaintenance5Feature);
-        else
-            featureChainBuilder.Prepend(ref maintenance5FeatureEnableKhr, enableMaintenance5Feature);
         featureChainBuilder.Prepend(
             ref timelineSemaphoreFeatureEnable,
             enableTimelineSemaphoreFeature && !useVulkan12FeatureEnable);
@@ -1373,6 +1422,9 @@ internal sealed unsafe partial class VulkanDeviceContext
             enableDynamicRenderingLocalReadFeature && dynamicRenderingLocalReadMultisampledSupported;
         _deviceContext.MutableCapabilities._supportsMaintenance4 = enableMaintenance4Feature;
         _deviceContext.MutableCapabilities._supportsMaintenance5 = enableMaintenance5Feature;
+        _deviceContext.MutableCapabilities._supportsMaintenance6 = enableMaintenance6Feature;
+        _deviceContext.MutableCapabilities._supportsShaderDemoteToHelperInvocation = enableShaderDemoteToHelperInvocationFeature;
+        _deviceContext.MutableCapabilities._supportsShaderTerminateInvocation = enableShaderTerminateInvocationFeature;
         _deviceContext.MutableCapabilities._supportsExtendedFlags = extendedFlagsExtensionEnabled;
         ResourceRuntime.Descriptors._descriptorHeapFeatureSupported = descriptorHeapFeatureSupported;
         ResourceRuntime.Descriptors._descriptorHeapCaptureReplaySupported = descriptorHeapCaptureReplaySupported;
@@ -1395,6 +1447,7 @@ internal sealed unsafe partial class VulkanDeviceContext
             enableExtDeviceFaultFeature,
             enableExtDeviceFaultFeature && extDeviceFaultVendorBinaryFeatureSupported);
         _deviceContext.MutableCapabilities._supportsDeviceAddressBindingReport = enableDeviceAddressBindingReportFeature;
+        _deviceContext.EnableDeviceAddressBindingDebugMessages();
         _deviceContext.MutableCapabilities._supportsNvDiagnosticCheckpoints = enableNvDiagnosticCheckpoints;
         _deviceContext.MutableCapabilities._supportsNvDiagnosticsConfig = enableNvDiagnosticsConfigFeature;
         _deviceContext.MutableCapabilities._shaderObjectProperties = shaderObjectFeatureSupported ? shaderObjectProperties : default;
@@ -1494,6 +1547,9 @@ internal sealed unsafe partial class VulkanDeviceContext
             enableDynamicRenderingLocalReadFeature,
             enableMaintenance4Feature,
             enableMaintenance5Feature,
+            enableMaintenance6Feature,
+            enableShaderDemoteToHelperInvocationFeature,
+            enableShaderTerminateInvocationFeature,
             enableSynchronization2Feature,
             enableTimelineSemaphoreFeature,
             enableDescriptorIndexing,
@@ -1713,6 +1769,9 @@ internal sealed unsafe partial class VulkanDeviceContext
             enableDynamicRenderingLocalReadFeature,
             enableMaintenance4Feature,
             enableMaintenance5Feature,
+            enableMaintenance6Feature,
+            enableShaderDemoteToHelperInvocationFeature,
+            enableShaderTerminateInvocationFeature,
             enableSynchronization2Feature,
             enableTimelineSemaphoreFeature,
             enableDescriptorIndexing,
@@ -1736,6 +1795,34 @@ internal sealed unsafe partial class VulkanDeviceContext
             request.FeaturePolicy.ExplicitFoveationBackend,
             request.FeaturePolicy.ExplicitRayTracingBackend);
 
+        VulkanStartupCapabilitySnapshot startupCapabilities = new(
+            request.FeaturePolicy.RequestedCapabilityTier,
+            request.FeaturePolicy.RequestedDescriptorBackend,
+            ResourceRuntime.Descriptors._activeDescriptorBackend,
+            request.FeaturePolicy.RequestedProgramBindingBackend,
+            request.FeaturePolicy.RequestedFoveationBackend,
+            request.FeaturePolicy.RequestedRayTracingBackend,
+            request.Output.RequestedRenderTargetMode,
+            OutputRuntime.UseDynamicRenderingRenderTargets,
+            RuntimeEngine.Rendering.Settings.VulkanRobustnessSettings.SyncBackend,
+            RuntimeEngine.Rendering.Settings.VulkanRobustnessSettings.SyncBackend,
+            request.FeaturePolicy.ActiveGeometryFetchMode,
+            request.FeaturePolicy.EnableBindlessMaterialTable,
+            enableDescriptorIndexing,
+            default,
+            ResourceRuntime.Descriptors._descriptorHeapNativeApiAvailable,
+            false,
+            ResourceRuntime.Descriptors._descriptorHeapShaderUntypedPointersAvailable,
+            $"maxPushDataSize={ResourceRuntime.Descriptors._descriptorHeapProperties.MaxPushDataSize}," +
+            $"samplerDescriptorSize={ResourceRuntime.Descriptors._descriptorHeapProperties.SamplerDescriptorSize}," +
+            $"imageDescriptorSize={ResourceRuntime.Descriptors._descriptorHeapProperties.ImageDescriptorSize}," +
+            $"bufferDescriptorSize={ResourceRuntime.Descriptors._descriptorHeapProperties.BufferDescriptorSize}," +
+            $"samplerHeapAlignment={ResourceRuntime.Descriptors._descriptorHeapProperties.SamplerHeapAlignment}," +
+            $"resourceHeapAlignment={ResourceRuntime.Descriptors._descriptorHeapProperties.ResourceHeapAlignment}",
+            ResourceRuntime.Descriptors._descriptorBackendFallbackReason,
+            enableMultiviewFeature,
+            enableShaderOutputLayerFeature);
+
         return new VulkanLogicalDeviceBootstrapResult(
             _outputRuntime.CreatePublication(),
             ResourceRuntime.CreatePublication(),
@@ -1748,6 +1835,7 @@ internal sealed unsafe partial class VulkanDeviceContext
                 enableDepthClipControlFeature,
                 SupportsNvMemoryDecompression,
                 SupportsNvCopyMemoryIndirect),
+            startupCapabilities,
             diagnosticSnapshot,
             explicitPolicy,
             new VulkanLayeredShadowCapabilityRequest(

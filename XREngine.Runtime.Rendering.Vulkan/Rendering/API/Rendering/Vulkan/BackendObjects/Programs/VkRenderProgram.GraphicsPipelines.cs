@@ -100,11 +100,12 @@ internal unsafe partial class VkRenderProgram
         {
             pipelineInfo.StageCount = (uint)stages.Length;
             pipelineInfo.PStages = stagesPtr;
-            pipelineInfo.Layout = _pipelineLayout;
+            bool usesDescriptorHeap = BackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap;
+            pipelineInfo.Layout = usesDescriptorHeap ? default : _pipelineLayout;
 
             Result result;
             DescriptorHeapProgramLayout? descriptorHeapLayout = _descriptorHeapLayout;
-            if (BackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap)
+            if (usesDescriptorHeap)
             {
                 void* originalPipelinePNext = pipelineInfo.PNext;
                 PipelineCreateFlags2CreateInfoNative flags2 = new()

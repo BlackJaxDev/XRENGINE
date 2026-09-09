@@ -6,6 +6,7 @@ namespace XREngine.Rendering.Vulkan;
 /// Renderer-independent copy of a device-address binding callback payload.
 /// </summary>
 internal readonly record struct VulkanValidationDeviceAddressBinding(
+    long Serial,
     ulong BaseAddress,
     ulong Size,
     DeviceAddressBindingTypeEXT BindingType,

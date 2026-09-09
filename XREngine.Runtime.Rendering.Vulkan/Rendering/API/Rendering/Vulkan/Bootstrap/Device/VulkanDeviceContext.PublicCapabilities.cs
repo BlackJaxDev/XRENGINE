@@ -38,6 +38,9 @@ internal sealed partial class VulkanDeviceContext
     internal bool SupportsDynamicRenderingLocalReadMultisampledAttachments => SupportsDynamicRenderingLocalRead && MutableCapabilities._supportsDynamicRenderingLocalReadMultisampledAttachments;
     internal bool SupportsMaintenance4 => IsCapabilityEnabled(EVulkanDeviceCapability.Maintenance4, MutableCapabilities._supportsMaintenance4);
     internal bool SupportsMaintenance5 => IsCapabilityEnabled(EVulkanDeviceCapability.Maintenance5, MutableCapabilities._supportsMaintenance5);
+    internal bool SupportsMaintenance6 => IsCapabilityEnabled(EVulkanDeviceCapability.Maintenance6, MutableCapabilities._supportsMaintenance6);
+    internal bool SupportsShaderDemoteToHelperInvocation => IsCapabilityEnabled(EVulkanDeviceCapability.ShaderDemoteToHelperInvocation, MutableCapabilities._supportsShaderDemoteToHelperInvocation);
+    internal bool SupportsShaderTerminateInvocation => IsCapabilityEnabled(EVulkanDeviceCapability.ShaderTerminateInvocation, MutableCapabilities._supportsShaderTerminateInvocation);
     internal bool SupportsExtendedFlags => MutableCapabilities._supportsExtendedFlags;
     internal bool SupportsShaderObject => IsCapabilityEnabled(EVulkanDeviceCapability.ShaderObject, MutableCapabilities._supportsShaderObject);
     internal bool SupportsMemoryBudget => IsCapabilityEnabled(EVulkanDeviceCapability.MemoryBudget, MutableCapabilities._supportsMemoryBudget);

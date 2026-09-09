@@ -87,6 +87,16 @@ internal sealed partial class VulkanFrameLoop
             CreateFrameTimingResources();
             EnterInitializationStage(VulkanFrameLoopInitializationStage.SynchronizationBackend);
             _commandRuntime.InitializeSynchronizationBackend(_deviceContext.SupportsSynchronization2);
+            VulkanDeviceCapabilityReporter.LogStartupCapabilitySnapshot(
+                _deviceContext,
+                _startupCapabilitySnapshot with
+                {
+                    ActiveDescriptorBackend = _resourceRuntime.Descriptors.ActiveDescriptorBackend,
+                    DescriptorHeapStorageReady = _resourceRuntime.Descriptors.DescriptorHeapStorageReady,
+                    BindlessMaterialCapability = _resourceRuntime.Descriptors.BindlessMaterialCapability,
+                    DescriptorBackendFallbackReason = _resourceRuntime.Descriptors.DescriptorBackendFallbackReason,
+                    ActiveSynchronizationBackend = _commandRuntime.Synchronization._activeSynchronizationBackend,
+                });
             EnterInitializationStage(VulkanFrameLoopInitializationStage.MappedFrameArena);
             _resourceRuntime.InitializeMappedFrameArena(_deviceContext, FrameSlotCount);
             EnterInitializationStage(VulkanFrameLoopInitializationStage.FrameDataArenas);
@@ -358,6 +368,17 @@ internal sealed partial class VulkanFrameLoop
         RunCleanupStep("late dangling Vulkan wrappers", DestroyDanglingWrappers, failures);
         RunCleanupStep("late mesh uniform buffers", _resourceRuntime.DestroyRemainingTrackedMeshUniformBuffers, failures);
         RunCleanupStep("late retirement drain", ForceFlushAllRetiredResources, failures);
+        // Descriptor heap storage is allocator-backed and therefore must relinquish
+        // its allocations before the final generic allocation sweep consumes them.
+        // DestroyLogicalDevice invokes this again as an idempotent final safeguard.
+        RunCleanupStep(
+            "global material texture descriptor table",
+            _resourceRuntime.Descriptors.DestroyGlobalMaterialTextureDescriptorTable,
+            failures);
+        RunCleanupStep(
+            "descriptor heap storage",
+            _resourceRuntime.Descriptors.DestroyDescriptorHeapBackend,
+            failures);
         RunCleanupStep("remaining images", () => _resourceRuntime.Images.DestroyRemaining(Api, _deviceContext.Device), failures);
         RunCleanupStep("tracked pipeline layouts", () => _resourceRuntime.DestroyRemainingTrackedPipelineLayouts(Api, _deviceContext.Device), failures);
         RunCleanupStep("tracked allocations", () => _resourceRuntime.DestroyRemainingTrackedAllocations(BackendObjectContext), failures);
@@ -617,6 +638,7 @@ internal sealed partial class VulkanFrameLoop
 
     private void ApplyLogicalDevicePublication(VulkanLogicalDeviceBootstrapResult result)
     {
+        _startupCapabilitySnapshot = result.StartupCapabilities;
         _outputRuntime._streamlineDlssProvisioned = result.Output.StreamlineDlssProvisioned;
         _outputRuntime._streamlineFrameGenerationProvisioned = result.Output.StreamlineFrameGenerationProvisioned;
         _outputRuntime._streamlineGraphicsQueueFamily = result.Output.StreamlineGraphicsQueueFamily;
@@ -678,6 +700,7 @@ internal sealed partial class VulkanFrameLoop
         _resourceRuntime.PipelineManager.DestroyPipelineCache();
         VulkanCanonicalImmutableSamplerService.Destroy(_resourceRuntime, Api, _deviceContext.Device);
         _resourceRuntime.Samplers.DestroyRemaining(Api, _deviceContext.Device);
+        _telemetry.ReleaseNvCheckpointMarkers();
         _deviceContext.Destroy(Api);
     }
 }

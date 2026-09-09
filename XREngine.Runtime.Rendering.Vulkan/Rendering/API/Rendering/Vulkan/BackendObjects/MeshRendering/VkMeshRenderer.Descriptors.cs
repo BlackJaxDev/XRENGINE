@@ -203,6 +203,8 @@ internal unsafe partial class VkMeshRenderer
 				cachedAllocation,
 				drawUniformSlot,
 				bindingSnapshot);
+			if (!TryRefreshGlobalMaterialTextureArrayHeapPayload(cachedAllocation, frameIndex, bindingSnapshot))
+				return false;
 			_descriptorDirty = false;
 			return true;
 		}
@@ -229,6 +231,8 @@ internal unsafe partial class VkMeshRenderer
 					sharedAllocation,
 					drawUniformSlot,
 					bindingSnapshot);
+				if (!TryRefreshGlobalMaterialTextureArrayHeapPayload(sharedAllocation, frameIndex, bindingSnapshot))
+					return false;
 				_descriptorDirty = false;
 				return true;
 			}
@@ -810,6 +814,13 @@ internal unsafe partial class VkMeshRenderer
 			allocation,
 			drawUniformSlot,
 			bindingSnapshot);
+		if (!TryRefreshGlobalMaterialTextureArrayHeapPayload(
+				allocation,
+				refreshFrameIndex,
+				bindingSnapshot))
+		{
+			return false;
+		}
 		_descriptorDirty = false;
 		return true;
 	}
@@ -1149,6 +1160,8 @@ internal unsafe partial class VkMeshRenderer
 			viewFamilyIdentity,
 			bindingIdentityFingerprint,
 			resourceFingerprint,
+			refreshFrameIndex,
+			bindingSnapshot,
 			out reason))
 			return true;
 
@@ -1790,6 +1803,15 @@ internal unsafe partial class VkMeshRenderer
 			allocation,
 			drawUniformSlot,
 			bindingSnapshot);
+		if (refreshFrameIndex is { } heapPublicationFrameIndex &&
+			!TryRefreshGlobalMaterialTextureArrayHeapPayload(
+				allocation,
+				heapPublicationFrameIndex,
+				bindingSnapshot))
+		{
+			reason = _lastDescriptorPreparationFailure;
+			return false;
+		}
 		_descriptorDirty = false;
 		return true;
 	}
@@ -1887,6 +1909,8 @@ internal unsafe partial class VkMeshRenderer
 		int viewFamilyIdentity,
 		ulong bindingIdentityFingerprint,
 		ulong resourceFingerprint,
+		int? refreshFrameIndex,
+		ComputeDispatchSnapshot? bindingSnapshot,
 		out string reason)
 	{
 		reason = "reusable";
@@ -1987,7 +2011,16 @@ internal unsafe partial class VkMeshRenderer
 			return false;
 		}
 
-		ActivateDescriptorAllocation(allocation, drawUniformSlot);
+		ActivateDescriptorAllocation(allocation, drawUniformSlot, bindingSnapshot);
+		if (refreshFrameIndex is { } completedFrameIndex &&
+			!TryRefreshGlobalMaterialTextureArrayHeapPayload(
+				allocation,
+				completedFrameIndex,
+				bindingSnapshot))
+		{
+			reason = _lastDescriptorPreparationFailure;
+			return false;
+		}
 		_descriptorDirty = false;
 		return true;
 	}

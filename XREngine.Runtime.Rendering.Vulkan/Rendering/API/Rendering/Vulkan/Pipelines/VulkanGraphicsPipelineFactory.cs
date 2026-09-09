@@ -166,7 +166,10 @@ internal static unsafe class VulkanGraphicsPipelineFactory
 		{
 			pipelineInfo.StageCount = (uint)request.GraphicsStages.Length;
 			pipelineInfo.PStages = stagesPtr;
-			pipelineInfo.Layout = request.PipelineLayout;
+			pipelineInfo.Layout = request.UsesDescriptorHeap ? default : request.PipelineLayout;
+
+			if (request.UsesDescriptorHeap)
+				return CreateDescriptorHeapGraphicsPipeline(manager, request, ref pipelineInfo, pipelineCache, backgroundCompile, stagesPtr);
 
 			Result result = manager.CreateGraphicsPipelineWithCachePolicy(
 				ref pipelineInfo,
@@ -179,6 +182,81 @@ internal static unsafe class VulkanGraphicsPipelineFactory
 			request.ProgramServices.RegisterPipeline(pipeline, "VkMeshRenderer.Graphics");
 			request.ProgramServices.NotifyPipelineCreated("graphics");
 			return pipeline;
+		}
+	}
+
+	private static Pipeline CreateDescriptorHeapGraphicsPipeline(
+		VulkanPipelineManager manager,
+		VulkanGraphicsPipelineBuildRequest request,
+		ref GraphicsPipelineCreateInfo pipelineInfo,
+		PipelineCache pipelineCache,
+		bool backgroundCompile,
+		PipelineShaderStageCreateInfo* stagesPtr)
+	{
+		void* originalPipelinePNext = pipelineInfo.PNext;
+		PipelineCreateFlags2CreateInfoNative flags2 = new()
+		{
+			SType = VulkanDescriptorHeapExt.PipelineCreateFlags2CreateInfoSType,
+			PNext = originalPipelinePNext,
+			Flags = unchecked((ulong)pipelineInfo.Flags) | VulkanDescriptorHeapExt.PipelineCreate2DescriptorHeapBit,
+		};
+		pipelineInfo.PNext = &flags2;
+
+		Result result;
+		try
+		{
+			if (request.DescriptorHeapMappings.Length > 0)
+			{
+				fixed (DescriptorSetAndBindingMappingEXTNative* mappingPtr = request.DescriptorHeapMappings)
+				{
+					nint[] originalStagePNextAddresses = new nint[request.GraphicsStages.Length];
+					ShaderDescriptorSetAndBindingMappingInfoEXTNative[] mappingInfos = new ShaderDescriptorSetAndBindingMappingInfoEXTNative[request.GraphicsStages.Length];
+					fixed (nint* originalStagePNextPtr = originalStagePNextAddresses)
+					fixed (ShaderDescriptorSetAndBindingMappingInfoEXTNative* mappingInfosPtr = mappingInfos)
+					{
+						void** originalStagePNext = (void**)originalStagePNextPtr;
+						for (int i = 0; i < request.GraphicsStages.Length; i++)
+							originalStagePNext[i] = stagesPtr[i].PNext;
+						try
+						{
+							for (int i = 0; i < request.GraphicsStages.Length; i++)
+							{
+								mappingInfosPtr[i] = new ShaderDescriptorSetAndBindingMappingInfoEXTNative
+								{
+									SType = VulkanDescriptorHeapExt.ShaderDescriptorSetAndBindingMappingInfoSType,
+									PNext = originalStagePNext[i],
+									MappingCount = (uint)request.DescriptorHeapMappings.Length,
+									Mappings = mappingPtr,
+								};
+								stagesPtr[i].PNext = mappingInfosPtr + i;
+							}
+
+							result = manager.CreateGraphicsPipelineWithCachePolicy(ref pipelineInfo, pipelineCache, backgroundCompile, out Pipeline pipeline);
+							if (result != Result.Success)
+								throw new InvalidOperationException($"failed to create descriptor-heap graphics pipeline ({result}).");
+							request.ProgramServices.RegisterPipeline(pipeline, "VkMeshRenderer.GraphicsHeap");
+							request.ProgramServices.NotifyPipelineCreated("graphics");
+							return pipeline;
+						}
+						finally
+						{
+							for (int i = 0; i < request.GraphicsStages.Length; i++)
+								stagesPtr[i].PNext = originalStagePNext[i];
+						}
+					}
+				}
+			}
+
+			result = manager.CreateGraphicsPipelineWithCachePolicy(ref pipelineInfo, pipelineCache, backgroundCompile, out Pipeline heapPipeline);
+			if (result != Result.Success)
+				throw new InvalidOperationException($"failed to create descriptor-heap graphics pipeline ({result}).");
+			request.ProgramServices.RegisterPipeline(heapPipeline, "VkMeshRenderer.GraphicsHeap");
+			request.ProgramServices.NotifyPipelineCreated("graphics");
+			return heapPipeline;
+		}
+		finally
+		{
+			pipelineInfo.PNext = originalPipelinePNext;
 		}
 	}
 
@@ -198,7 +276,7 @@ internal static unsafe class VulkanGraphicsPipelineFactory
 		Pipeline vertexInput = EnsureGraphicsPipelineLibrary(
 			manager,
 			request,
-			CreateGraphicsPipelineLibraryKey(VulkanGraphicsPipelineLibrarySubset.VertexInputInterface, request.Key),
+			CreateGraphicsPipelineLibraryKey(VulkanGraphicsPipelineLibrarySubset.VertexInputInterface, request.Key, request.UsesDescriptorHeap),
 			ref pipelineInfo,
 			Array.Empty<PipelineShaderStageCreateInfo>(),
 			GraphicsPipelineLibraryFlagsEXT.VertexInputInterfaceBitExt,
@@ -208,7 +286,7 @@ internal static unsafe class VulkanGraphicsPipelineFactory
 		Pipeline preRasterization = EnsureGraphicsPipelineLibrary(
 			manager,
 			request,
-			CreateGraphicsPipelineLibraryKey(VulkanGraphicsPipelineLibrarySubset.PreRasterizationShaders, request.Key),
+			CreateGraphicsPipelineLibraryKey(VulkanGraphicsPipelineLibrarySubset.PreRasterizationShaders, request.Key, request.UsesDescriptorHeap),
 			ref pipelineInfo,
 			request.PreRasterStages,
 			GraphicsPipelineLibraryFlagsEXT.PreRasterizationShadersBitExt,
@@ -226,7 +304,7 @@ internal static unsafe class VulkanGraphicsPipelineFactory
 			Pipeline fragmentShader = EnsureGraphicsPipelineLibrary(
 				manager,
 				request,
-				CreateGraphicsPipelineLibraryKey(VulkanGraphicsPipelineLibrarySubset.FragmentShader, request.Key),
+				CreateGraphicsPipelineLibraryKey(VulkanGraphicsPipelineLibrarySubset.FragmentShader, request.Key, request.UsesDescriptorHeap),
 				ref pipelineInfo,
 				request.FragmentStages,
 				GraphicsPipelineLibraryFlagsEXT.FragmentShaderBitExt,
@@ -238,7 +316,7 @@ internal static unsafe class VulkanGraphicsPipelineFactory
 		Pipeline fragmentOutput = EnsureGraphicsPipelineLibrary(
 			manager,
 			request,
-			CreateGraphicsPipelineLibraryKey(VulkanGraphicsPipelineLibrarySubset.FragmentOutputInterface, request.Key),
+			CreateGraphicsPipelineLibraryKey(VulkanGraphicsPipelineLibrarySubset.FragmentOutputInterface, request.Key, request.UsesDescriptorHeap),
 			ref pipelineInfo,
 			Array.Empty<PipelineShaderStageCreateInfo>(),
 			GraphicsPipelineLibraryFlagsEXT.FragmentOutputInterfaceBitExt,
@@ -278,7 +356,18 @@ internal static unsafe class VulkanGraphicsPipelineFactory
 			linkedInfo.PViewportState = null;
 			linkedInfo.PRasterizationState = null;
 			linkedInfo.PDynamicState = null;
-			linkedInfo.Layout = request.PipelineLayout;
+			linkedInfo.Layout = request.UsesDescriptorHeap ? default : request.PipelineLayout;
+			PipelineCreateFlags2CreateInfoNative linkedFlags2 = default;
+			if (request.UsesDescriptorHeap)
+			{
+				linkedFlags2 = new PipelineCreateFlags2CreateInfoNative
+				{
+					SType = VulkanDescriptorHeapExt.PipelineCreateFlags2CreateInfoSType,
+					PNext = linkedInfo.PNext,
+					Flags = unchecked((ulong)linkedInfo.Flags) | VulkanDescriptorHeapExt.PipelineCreate2DescriptorHeapBit,
+				};
+				linkedInfo.PNext = &linkedFlags2;
+			}
 
 			long linkStart = global::System.Diagnostics.Stopwatch.GetTimestamp();
 			Result result = manager.CreateGraphicsPipelineWithCachePolicy(
@@ -311,7 +400,8 @@ internal static unsafe class VulkanGraphicsPipelineFactory
 
 	private static VulkanGraphicsPipelineLibraryKey CreateGraphicsPipelineLibraryKey(
 		VulkanGraphicsPipelineLibrarySubset subset,
-		in VulkanGraphicsPipelineKey pipeline)
+		in VulkanGraphicsPipelineKey pipeline,
+		bool usesDescriptorHeap)
 	{
 		bool hasRenderPassIdentity = subset is
 			VulkanGraphicsPipelineLibrarySubset.PreRasterizationShaders or
@@ -337,6 +427,7 @@ internal static unsafe class VulkanGraphicsPipelineFactory
 			hasProgram ? pipeline.ProgramLinkGeneration : 0UL,
 			hasVertexLayout ? pipeline.VertexLayoutHash : 0UL,
 			hasProgram ? pipeline.DescriptorLayoutHash : 0UL,
+			usesDescriptorHeap,
 			hasProgram || hasVertexLayout || hasRasterState ? pipeline.FeatureProfileHash : 0UL,
 			hasSampleState ? pipeline.RasterizationSamples : default,
 			hasDepthStencil && pipeline.DepthTestEnabled,
@@ -380,6 +471,80 @@ internal static unsafe class VulkanGraphicsPipelineFactory
 			VulkanGraphicsPipelineLibrarySubset.FragmentOutputInterface => pipeline.DynamicRenderingFormats,
 			_ => default,
 		};
+	}
+
+	private static Result CreateDescriptorHeapGraphicsPipelineLibrary(
+		VulkanPipelineManager manager,
+		VulkanGraphicsPipelineBuildRequest request,
+		ref GraphicsPipelineCreateInfo pipelineInfo,
+		PipelineCache pipelineCache,
+		bool backgroundCompile,
+		PipelineShaderStageCreateInfo* stages,
+		int stageCount,
+		out Pipeline pipeline)
+	{
+		void* originalPipelinePNext = pipelineInfo.PNext;
+		PipelineCreateFlags2CreateInfoNative flags2 = new()
+		{
+			SType = VulkanDescriptorHeapExt.PipelineCreateFlags2CreateInfoSType,
+			PNext = originalPipelinePNext,
+			Flags = unchecked((ulong)pipelineInfo.Flags) | VulkanDescriptorHeapExt.PipelineCreate2DescriptorHeapBit,
+		};
+		pipelineInfo.PNext = &flags2;
+
+		if (request.DescriptorHeapMappings.Length == 0 || stageCount == 0)
+		{
+			try
+			{
+				return manager.CreateGraphicsPipelineWithCachePolicy(
+					ref pipelineInfo,
+					pipelineCache,
+					backgroundCompile,
+					out pipeline);
+			}
+			finally
+			{
+				pipelineInfo.PNext = originalPipelinePNext;
+			}
+		}
+
+		fixed (DescriptorSetAndBindingMappingEXTNative* mappingPtr = request.DescriptorHeapMappings)
+		{
+			nint[] originalStagePNextAddresses = new nint[stageCount];
+			ShaderDescriptorSetAndBindingMappingInfoEXTNative[] mappingInfos = new ShaderDescriptorSetAndBindingMappingInfoEXTNative[stageCount];
+			fixed (nint* originalStagePNextPtr = originalStagePNextAddresses)
+			fixed (ShaderDescriptorSetAndBindingMappingInfoEXTNative* mappingInfosPtr = mappingInfos)
+			{
+				void** originalStagePNext = (void**)originalStagePNextPtr;
+				for (int index = 0; index < stageCount; index++)
+				{
+					originalStagePNext[index] = stages[index].PNext;
+					mappingInfosPtr[index] = new ShaderDescriptorSetAndBindingMappingInfoEXTNative
+					{
+						SType = VulkanDescriptorHeapExt.ShaderDescriptorSetAndBindingMappingInfoSType,
+						PNext = originalStagePNext[index],
+						MappingCount = (uint)request.DescriptorHeapMappings.Length,
+						Mappings = mappingPtr,
+					};
+					stages[index].PNext = mappingInfosPtr + index;
+				}
+
+				try
+				{
+					return manager.CreateGraphicsPipelineWithCachePolicy(
+						ref pipelineInfo,
+						pipelineCache,
+						backgroundCompile,
+						out pipeline);
+				}
+				finally
+				{
+					for (int index = 0; index < stageCount; index++)
+						stages[index].PNext = originalStagePNext[index];
+					pipelineInfo.PNext = originalPipelinePNext;
+				}
+			}
+		}
 	}
 
 	private static Pipeline EnsureGraphicsPipelineLibrary(
@@ -446,16 +611,33 @@ internal static unsafe class VulkanGraphicsPipelineFactory
 				libraryPipelineInfo.PNext = &libraryInfo;
 				libraryPipelineInfo.StageCount = (uint)stages.Length;
 				libraryPipelineInfo.PStages = stages.Length > 0 ? stagesPtr : null;
-				libraryPipelineInfo.Layout = request.PipelineLayout;
+				libraryPipelineInfo.Layout = request.UsesDescriptorHeap ? default : request.PipelineLayout;
 
 				ApplyGraphicsPipelineLibrarySubset(ref libraryPipelineInfo, key.Subset);
 
 				long createStart = global::System.Diagnostics.Stopwatch.GetTimestamp();
-				Result result = manager.CreateGraphicsPipelineWithCachePolicy(
-					ref libraryPipelineInfo,
-					pipelineCache,
-					backgroundCompile,
-					out Pipeline library);
+				Pipeline library;
+				Result result;
+				if (request.UsesDescriptorHeap)
+				{
+					result = CreateDescriptorHeapGraphicsPipelineLibrary(
+						manager,
+						request,
+						ref libraryPipelineInfo,
+						pipelineCache,
+						backgroundCompile,
+						stagesPtr,
+						stages.Length,
+						out library);
+				}
+				else
+				{
+					result = manager.CreateGraphicsPipelineWithCachePolicy(
+						ref libraryPipelineInfo,
+						pipelineCache,
+						backgroundCompile,
+						out library);
+				}
 				TimeSpan createElapsed = global::System.Diagnostics.Stopwatch.GetElapsedTime(createStart);
 				if (result != Result.Success)
 					throw new InvalidOperationException($"failed to create {key.Subset} graphics pipeline library ({result}) after {createElapsed.TotalMilliseconds:F2} ms.");

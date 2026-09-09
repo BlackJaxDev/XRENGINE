@@ -107,7 +107,7 @@ internal sealed partial class VulkanCommandRuntime
         CommandBufferInheritanceDescriptorHeapInfoEXTNative descriptorHeapInheritanceInfo = default;
         BindHeapInfoEXTNative inheritedSamplerHeapInfo = default;
         BindHeapInfoEXTNative inheritedResourceHeapInfo = default;
-        encoder.TryAppendDescriptorHeapInheritance(
+        bool inheritsDescriptorHeaps = encoder.TryAppendDescriptorHeapInheritance(
             ref inheritanceInfo,
             &descriptorHeapInheritanceInfo,
             &inheritedSamplerHeapInfo,
@@ -127,6 +127,8 @@ internal sealed partial class VulkanCommandRuntime
                 ref beginInfo,
                 "PreparedWorkerRecording") != Result.Success)
             throw new InvalidOperationException("Failed to begin Vulkan worker mesh command-chain secondary command buffer.");
+        if (inheritsDescriptorHeaps)
+            MarkDescriptorHeapInheritance(secondary);
         recordingStarted = true;
         }
 

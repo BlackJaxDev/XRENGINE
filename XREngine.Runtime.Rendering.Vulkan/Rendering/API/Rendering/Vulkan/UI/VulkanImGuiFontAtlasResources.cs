@@ -423,6 +423,13 @@ internal unsafe sealed class VulkanImGuiFontAtlasResources(
         };
         _resourceRuntime.DescriptorLifetime.UpdateDescriptorSets(1, &write);
         _textureRegistry.DescriptorSets[(nint)1] = resources.FontDescriptorSet;
+        if (_resourceRuntime.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap)
+        {
+            DescriptorHeapPushDataPayload payload = new(new uint[2]);
+            if (!_resourceRuntime.DescriptorLifetime.TryWriteCombinedImageSamplerHeapPayload(imageInfo, payload, out string reason))
+                throw new InvalidOperationException($"Failed to write ImGui font descriptor heap payload: {reason}");
+            _textureRegistry.DescriptorHeapPushData[(nint)1] = payload;
+        }
     }
 
     private void DestroyIncompleteFontResources(VulkanTargetOutputContext target, VulkanImGuiResources resources)

@@ -1135,7 +1135,7 @@ internal sealed partial class VulkanCommandRuntime
             primary,
             secondaryBuffers.AsSpan(0, Math.Min(secondaryCount, secondaryBuffers.Length)));
 
-    private unsafe void CmdExecuteCommandsTracked(
+    internal unsafe void CmdExecuteCommandsTracked(
         CommandBuffer primary,
         uint commandBufferCount,
         CommandBuffer* secondaryCommandBuffers)
@@ -1147,6 +1147,7 @@ internal sealed partial class VulkanCommandRuntime
             secondaryCommandBuffers,
             checked((int)commandBufferCount));
         PrimaryCommandEncoder.TrackCommandBuffers(primary, secondaries);
+        BindDescriptorHeapsForSecondaryExecution(primary, secondaries);
         // A secondary is never submitted directly, so its final image states
         // become globally visible only through the primary that executes it.
         // Publish one ordered batch instead of repeatedly locking and rebuilding
@@ -1580,6 +1581,59 @@ internal sealed partial class VulkanCommandRuntime
         _ = passIndex;
         _ = batchIndex;
     }
+
+    /// <summary>
+    /// Writes an opaque NV checkpoint token that remains valid until device teardown.
+    /// The driver returns the token for comparison only; no native callback pointer is dereferenced.
+    /// </summary>
+    internal unsafe void RecordNvDiagnosticCheckpoint(
+        CommandBuffer commandBuffer,
+        EVulkanPrimaryPlanNodeKind operationCode,
+        string? programName,
+        EVulkanNvCheckpointPhase phase,
+        in FrameOpContext context,
+        int passIndex,
+        int operationIndex,
+        ulong renderFrameId)
+    {
+        if (!_frameTelemetry._diagnosticOptions.RequestNvDiagnosticCheckpoints ||
+            !_deviceContext.SupportsNvDiagnosticCheckpoints ||
+            _deviceContext.ExtensionFunctions.NvDeviceDiagnosticCheckpoints is not { } checkpoints)
+        {
+            return;
+        }
+
+        if (!_frameTelemetry.TryPublishNvCheckpointMarker(
+                renderFrameId,
+                GetNvCheckpointOperationName(operationCode),
+                programName,
+                phase,
+                context.OutputTargetName,
+                passIndex,
+                operationIndex,
+                context.PipelineIdentity,
+                context.ViewportIdentity,
+                unchecked((ulong)commandBuffer.Handle),
+                ResolveCommandBufferRecordingGeneration(commandBuffer),
+                out void* markerToken))
+        {
+            return;
+        }
+
+        checkpoints.CmdSetCheckpoint(commandBuffer, markerToken);
+        _frameTelemetry.RecordNvCheckpointNativeCall();
+    }
+
+    private static string GetNvCheckpointOperationName(EVulkanPrimaryPlanNodeKind operationCode)
+        => operationCode switch
+        {
+            EVulkanPrimaryPlanNodeKind.ComputeDispatch => "ComputeDispatch",
+            EVulkanPrimaryPlanNodeKind.ComputeDispatchIndirect => "ComputeDispatchIndirect",
+            EVulkanPrimaryPlanNodeKind.AdvancedVisibility => "AdvancedVisibility",
+            EVulkanPrimaryPlanNodeKind.IndirectDraw => "IndirectDraw",
+            EVulkanPrimaryPlanNodeKind.MeshTaskDispatchIndirectCount => "MeshTaskDispatchIndirectCount",
+            _ => "Unknown",
+        };
 
         internal void RecordComputeDispatchIndirectPayload(
             CommandBuffer commandBuffer,

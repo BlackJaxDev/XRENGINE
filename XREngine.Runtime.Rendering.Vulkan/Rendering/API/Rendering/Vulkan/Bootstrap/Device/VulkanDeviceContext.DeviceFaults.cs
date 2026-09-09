@@ -76,6 +76,40 @@ internal sealed partial class VulkanDeviceContext
         return true;
     }
 
+    /// <summary>
+    /// Retrieves the active native device-fault report once the device-loss
+    /// authority has closed admission to new work. KHR is preferred only when
+    /// its command table was loaded; otherwise the enabled EXT command table
+    /// supplies the compatibility capture.
+    /// </summary>
+    internal bool TryAppendPersistedDeviceFaultSummary(
+        StringBuilder builder,
+        in VulkanDiagnosticOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(builder);
+        if (!options.RequestDeviceFault)
+            return false;
+
+        if (DeviceFaultFacility.IsUsingKhrDeviceFault)
+        {
+            return TryAppendPersistedKhrDeviceFaultSummary(
+                builder,
+                options,
+                DeviceFaultFacility.SupportsKhrDeviceFaultVendorBinary);
+        }
+
+        ExtDeviceFault? extension = ExtensionFunctions.ExtDeviceFault;
+        if (!DeviceFaultFacility.SupportsExtDeviceFault || extension is null)
+            return false;
+
+        return TryAppendPersistedExtDeviceFaultSummary(
+            builder,
+            extension,
+            options,
+            DeviceFaultFacility.SupportsKhrDeviceFault,
+            DeviceFaultFacility.SupportsExtDeviceFaultVendorBinary);
+    }
+
     private static void PersistDeviceFaultCapture(VulkanDeviceFaultCapture capture)
     {
         foreach (ref readonly VulkanDeviceFaultArtifact artifact in capture.Artifacts)

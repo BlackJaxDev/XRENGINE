@@ -138,6 +138,28 @@ internal readonly unsafe struct VulkanTrackedCommandEncoder
             "TrackedCommandEncoder.Track");
     }
 
+    internal void Track(
+        CommandBuffer commandBuffer,
+        ObjectType type,
+        ulong handle,
+        ulong expectedGeneration)
+    {
+        if (expectedGeneration == 0)
+        {
+            Track(commandBuffer, type, handle);
+            return;
+        }
+
+        // Lane receipts carry keys without generations. Route frozen descriptor
+        // closures through the runtime batch so the expected-generation
+        // handshake remains atomic with retirement even on worker lanes.
+        Runtime.TrackCommandBufferResource(
+            commandBuffer,
+            new VulkanResourceLifetimeKey(type, handle),
+            "TrackedCommandEncoder.TrackExactGeneration",
+            expectedGeneration);
+    }
+
     /// <summary>
     /// Records the secondary command buffers executed by one primary command in
     /// a single tracking transaction. Primary assembly can execute hundreds of
@@ -360,6 +382,14 @@ internal readonly unsafe struct VulkanTrackedCommandEncoder
 
     internal void PushConstants<T>(CommandBuffer commandBuffer, PipelineLayout layout, ShaderStageFlags stages, in T value) where T : unmanaged
     {
+        if (Runtime.ResourceRuntime.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap)
+        {
+            T heapValue = value;
+            if (!TryPushDescriptorHeapData(commandBuffer, 0, &heapValue, (uint)sizeof(T), null, out string reason))
+                throw new InvalidOperationException($"Descriptor heap push-data failed: {reason}");
+            return;
+        }
+
         Track(commandBuffer, ObjectType.PipelineLayout, layout.Handle);
         T copy = value;
         Api.CmdPushConstants(commandBuffer, layout, stages, 0, (uint)sizeof(T), &copy);
@@ -388,29 +418,43 @@ internal readonly unsafe struct VulkanTrackedCommandEncoder
     internal bool TryPushDescriptorHeapProgramData(
         CommandBuffer commandBuffer,
         VkRenderProgram program,
-        ReadOnlySpan<uint> dwords,
-        int dwordCount)
-        => TryPushDescriptorHeapProgramData(
+        DescriptorHeapPushDataPayload payload)
+    {
+        if (!payload.TryTrackResourceGenerations(this, commandBuffer, out _))
+            return false;
+        return TryPushDescriptorHeapProgramData(
             commandBuffer,
+            program.DescriptorHeapLayout?.ShaderConstantByteCount ?? 0u,
             program.DescriptorHeapLayout?.PushByteCount ?? 0u,
-            dwords,
-            dwordCount);
+            payload.Dwords,
+            payload.Dwords.Length,
+            []);
+    }
 
     /// <summary>Pushes an already-prepared program heap payload without retaining the program object in a worker-side draw record.</summary>
     internal bool TryPushDescriptorHeapProgramData(
         CommandBuffer commandBuffer,
+        uint shaderConstantByteCount,
         uint pushByteCount,
         ReadOnlySpan<uint> dwords,
-        int dwordCount)
+        int dwordCount,
+        ReadOnlySpan<VulkanPinnedResourceGeneration> resourceGenerations)
     {
         VulkanDescriptorHeapState heap = Runtime.ResourceRuntime.Descriptors.Heap;
         if (heap.ActiveBackend != EVulkanDescriptorBackend.DescriptorHeap)
             return true;
 
-        if (pushByteCount == 0)
+        uint descriptorOffset = AlignPushDataOffset(shaderConstantByteCount);
+        if (pushByteCount < descriptorOffset)
+            return false;
+
+        uint descriptorByteCount = pushByteCount - descriptorOffset;
+        if (descriptorByteCount == 0)
             return true;
-        int requiredDwordCount = checked((int)((pushByteCount + sizeof(uint) - 1) / sizeof(uint)));
-        if (dwordCount < requiredDwordCount || dwords.Length < dwordCount ||
+
+        int descriptorDwordOffset = checked((int)(descriptorOffset / sizeof(uint)));
+        int requiredDwordCount = checked((int)((descriptorByteCount + sizeof(uint) - 1) / sizeof(uint)));
+        if (dwordCount < descriptorDwordOffset + requiredDwordCount || dwords.Length < dwordCount ||
             heap.NativeFunctions is null || !heap.SamplerStorage.IsReady || !heap.ResourceStorage.IsReady)
         {
             return false;
@@ -418,30 +462,10 @@ internal readonly unsafe struct VulkanTrackedCommandEncoder
 
         Track(commandBuffer, ObjectType.Buffer, heap.SamplerStorage.Buffer.Handle);
         Track(commandBuffer, ObjectType.Buffer, heap.ResourceStorage.Buffer.Handle);
-        BindHeapInfoEXTNative samplerHeap = new()
-        {
-            SType = VulkanDescriptorHeapExt.BindHeapInfoSType,
-            HeapRange = new DeviceAddressRangeEXTNative
-            {
-                Address = heap.SamplerStorage.DeviceAddress,
-                Size = heap.SamplerStorage.Size,
-            },
-            ReservedRangeSize = Math.Max(
-                heap.Properties.MinSamplerHeapReservedRange,
-                heap.Properties.MinSamplerHeapReservedRangeWithEmbedded),
-        };
-        BindHeapInfoEXTNative resourceHeap = new()
-        {
-            SType = VulkanDescriptorHeapExt.BindHeapInfoSType,
-            HeapRange = new DeviceAddressRangeEXTNative
-            {
-                Address = heap.ResourceStorage.DeviceAddress,
-                Size = heap.ResourceStorage.Size,
-            },
-            ReservedRangeSize = heap.Properties.MinResourceHeapReservedRange,
-        };
-        heap.NativeFunctions.CmdBindSamplerHeap(commandBuffer, &samplerHeap);
-        heap.NativeFunctions.CmdBindResourceHeap(commandBuffer, &resourceHeap);
+        if (!TryTrackDescriptorHeapResources(commandBuffer, resourceGenerations, out _))
+            return false;
+        if (!Runtime.InheritsDescriptorHeaps(commandBuffer))
+            BindDescriptorHeaps(commandBuffer, heap);
         fixed (uint* data = dwords)
         {
             PushDataInfoEXTNative push = new()
@@ -449,15 +473,21 @@ internal readonly unsafe struct VulkanTrackedCommandEncoder
                 SType = VulkanDescriptorHeapExt.PushDataInfoSType,
                 Data = new HostAddressRangeConstEXTNative
                 {
-                    Address = data,
-                    Size = pushByteCount,
+                    Address = data + descriptorDwordOffset,
+                    Size = descriptorByteCount,
                 },
+                Offset = descriptorOffset,
             };
             heap.NativeFunctions.CmdPushData(commandBuffer, &push);
         }
 
+        Runtime.NotifyDescriptorHeapDataPushed(commandBuffer);
+
         return true;
     }
+
+    private static uint AlignPushDataOffset(uint value)
+        => checked((value + sizeof(uint) - 1u) & ~(sizeof(uint) - 1u));
 
     /// <summary>
     /// Binds the active descriptor heaps and pushes an ImGui texture payload.
@@ -468,6 +498,7 @@ internal readonly unsafe struct VulkanTrackedCommandEncoder
         uint offset,
         void* data,
         uint byteCount,
+        DescriptorHeapPushDataPayload? payload,
         out string reason)
     {
         reason = string.Empty;
@@ -479,8 +510,10 @@ internal readonly unsafe struct VulkanTrackedCommandEncoder
             reason = "descriptor heap state is not active and ready";
             return false;
         }
-        if (data is null || byteCount == 0 ||
-            (heap.Properties.MaxPushDataSize > 0 && offset + byteCount > heap.Properties.MaxPushDataSize))
+        ulong maxPushDataSize = heap.Properties.MaxPushDataSize;
+        if (data is null || byteCount == 0 || maxPushDataSize == 0 ||
+            (offset & 3u) != 0 || (byteCount & 3u) != 0 ||
+            offset > maxPushDataSize || byteCount > maxPushDataSize - offset)
         {
             reason = "descriptor heap push-data payload is invalid";
             return false;
@@ -488,30 +521,13 @@ internal readonly unsafe struct VulkanTrackedCommandEncoder
 
         Track(commandBuffer, ObjectType.Buffer, heap.SamplerStorage.Buffer.Handle);
         Track(commandBuffer, ObjectType.Buffer, heap.ResourceStorage.Buffer.Handle);
-        BindHeapInfoEXTNative samplerHeap = new()
+        if (payload is not null &&
+            !payload.TryTrackResourceGenerations(this, commandBuffer, out reason))
         {
-            SType = VulkanDescriptorHeapExt.BindHeapInfoSType,
-            HeapRange = new DeviceAddressRangeEXTNative
-            {
-                Address = heap.SamplerStorage.DeviceAddress,
-                Size = heap.SamplerStorage.Size,
-            },
-            ReservedRangeSize = Math.Max(
-                heap.Properties.MinSamplerHeapReservedRange,
-                heap.Properties.MinSamplerHeapReservedRangeWithEmbedded),
-        };
-        BindHeapInfoEXTNative resourceHeap = new()
-        {
-            SType = VulkanDescriptorHeapExt.BindHeapInfoSType,
-            HeapRange = new DeviceAddressRangeEXTNative
-            {
-                Address = heap.ResourceStorage.DeviceAddress,
-                Size = heap.ResourceStorage.Size,
-            },
-            ReservedRangeSize = heap.Properties.MinResourceHeapReservedRange,
-        };
-        heap.NativeFunctions.CmdBindSamplerHeap(commandBuffer, &samplerHeap);
-        heap.NativeFunctions.CmdBindResourceHeap(commandBuffer, &resourceHeap);
+            return false;
+        }
+        if (!Runtime.InheritsDescriptorHeaps(commandBuffer))
+            BindDescriptorHeaps(commandBuffer, heap);
         PushDataInfoEXTNative push = new()
         {
             SType = VulkanDescriptorHeapExt.PushDataInfoSType,
@@ -519,6 +535,28 @@ internal readonly unsafe struct VulkanTrackedCommandEncoder
             Data = new HostAddressRangeConstEXTNative { Address = data, Size = byteCount },
         };
         heap.NativeFunctions.CmdPushData(commandBuffer, &push);
+        Runtime.NotifyDescriptorHeapDataPushed(commandBuffer);
+        return true;
+    }
+
+    private bool TryTrackDescriptorHeapResources(
+        CommandBuffer commandBuffer,
+        ReadOnlySpan<VulkanPinnedResourceGeneration> resourceGenerations,
+        out string reason)
+    {
+        for (int index = 0; index < resourceGenerations.Length; index++)
+        {
+            VulkanPinnedResourceGeneration expected = resourceGenerations[index];
+            ulong actual = Runtime.GetResourceGeneration(expected.Key.Type, expected.Key.Handle);
+            if (actual == 0 || actual != expected.Generation)
+            {
+                reason = $"descriptor heap dependency {expected.Key} generation changed (expected={expected.Generation}, actual={actual}).";
+                return false;
+            }
+            Track(commandBuffer, expected.Key.Type, expected.Key.Handle, expected.Generation);
+        }
+
+        reason = string.Empty;
         return true;
     }
 
@@ -530,32 +568,14 @@ internal readonly unsafe struct VulkanTrackedCommandEncoder
     {
         VulkanDescriptorHeapState heap = Runtime.ResourceRuntime.Descriptors.Heap;
         if (heap.ActiveBackend != EVulkanDescriptorBackend.DescriptorHeap ||
-            heap.NativeFunctions is null || !heap.SamplerStorage.IsReady || !heap.ResourceStorage.IsReady ||
-            heapInfo is null || samplerHeapInfo is null || resourceHeapInfo is null)
+            heap.NativeFunctions is null || !heap.SamplerStorage.IsReady ||
+            !heap.ResourceStorage.IsReady)
         {
             return false;
         }
 
-        *samplerHeapInfo = new BindHeapInfoEXTNative
-        {
-            SType = VulkanDescriptorHeapExt.BindHeapInfoSType,
-            HeapRange = new DeviceAddressRangeEXTNative
-            {
-                Address = heap.SamplerStorage.DeviceAddress,
-                Size = heap.SamplerStorage.Size,
-            },
-            ReservedRangeSize = Math.Max(heap.Properties.MinSamplerHeapReservedRange, heap.Properties.MinSamplerHeapReservedRangeWithEmbedded),
-        };
-        *resourceHeapInfo = new BindHeapInfoEXTNative
-        {
-            SType = VulkanDescriptorHeapExt.BindHeapInfoSType,
-            HeapRange = new DeviceAddressRangeEXTNative
-            {
-                Address = heap.ResourceStorage.DeviceAddress,
-                Size = heap.ResourceStorage.Size,
-            },
-            ReservedRangeSize = heap.Properties.MinResourceHeapReservedRange,
-        };
+        *samplerHeapInfo = CreateSamplerHeapBindInfo(heap);
+        *resourceHeapInfo = CreateResourceHeapBindInfo(heap);
         *heapInfo = new CommandBufferInheritanceDescriptorHeapInfoEXTNative
         {
             SType = VulkanDescriptorHeapExt.CommandBufferInheritanceDescriptorHeapInfoSType,
@@ -565,6 +585,40 @@ internal readonly unsafe struct VulkanTrackedCommandEncoder
         };
         inheritanceInfo.PNext = heapInfo;
         return true;
+    }
+
+    private static BindHeapInfoEXTNative CreateSamplerHeapBindInfo(VulkanDescriptorHeapState heap)
+        => new()
+        {
+            SType = VulkanDescriptorHeapExt.BindHeapInfoSType,
+            HeapRange = new DeviceAddressRangeEXTNative
+            {
+                Address = heap.SamplerStorage.DeviceAddress,
+                Size = heap.SamplerStorage.Size,
+            },
+            ReservedRangeSize = Math.Max(
+                heap.Properties.MinSamplerHeapReservedRange,
+                heap.Properties.MinSamplerHeapReservedRangeWithEmbedded),
+        };
+
+    private static BindHeapInfoEXTNative CreateResourceHeapBindInfo(VulkanDescriptorHeapState heap)
+        => new()
+        {
+            SType = VulkanDescriptorHeapExt.BindHeapInfoSType,
+            HeapRange = new DeviceAddressRangeEXTNative
+            {
+                Address = heap.ResourceStorage.DeviceAddress,
+                Size = heap.ResourceStorage.Size,
+            },
+            ReservedRangeSize = heap.Properties.MinResourceHeapReservedRange,
+        };
+
+    internal static void BindDescriptorHeaps(CommandBuffer commandBuffer, VulkanDescriptorHeapState heap)
+    {
+        BindHeapInfoEXTNative samplerHeap = CreateSamplerHeapBindInfo(heap);
+        BindHeapInfoEXTNative resourceHeap = CreateResourceHeapBindInfo(heap);
+        heap.NativeFunctions!.CmdBindSamplerHeap(commandBuffer, &samplerHeap);
+        heap.NativeFunctions.CmdBindResourceHeap(commandBuffer, &resourceHeap);
     }
 
     internal bool TryAppendDynamicRenderingLocalReadInheritance(

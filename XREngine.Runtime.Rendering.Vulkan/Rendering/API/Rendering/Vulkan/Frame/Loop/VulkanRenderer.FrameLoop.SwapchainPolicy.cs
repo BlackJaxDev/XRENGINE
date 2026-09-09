@@ -10,8 +10,6 @@ namespace XREngine.Rendering.Vulkan
             TimeSpan.FromMilliseconds(16);
         private static readonly TimeSpan SwapchainResizeSettleDelay =
             TimeSpan.FromMilliseconds(250);
-        private const string ResizeReleaseRecreateDeferredDiagnosticKey =
-            "Vulkan.ResizeRelease.RecreateDeferredForCompleteHandoff";
         private const string ResizeReleaseSuccessorDeferredDiagnosticKey =
             "Vulkan.ResizeRelease.SuccessorDeferred";
 
@@ -65,16 +63,17 @@ namespace XREngine.Rendering.Vulkan
                         handoffLiveFramebufferSize.Y);
                 }
             }
+            // A resize invalidates the current viewport generation, so it may be
+            // impossible to record the replacement scene until the successor
+            // swapchain exists. Completion is enforced before the successor
+            // present below; blocking its creation on current-frame completion
+            // would leave the handoff permanently AwaitingReadyToRecreate.
             if (creatingResizeReleaseSuccessor &&
-                TryGetResizeReleasePresentationBlocker(
-                    out VulkanResizeReleaseBlocker handoffBlocker))
+                swapchainPolicy.ResizeReleaseSourceSwapchainGeneration !=
+                OutputRuntime.Desktop.Generation)
             {
-                Debug.VulkanEvery(
-                    ResizeReleaseRecreateDeferredDiagnosticKey,
-                    TimeSpan.FromMilliseconds(250),
-                    "[Vulkan][ResizeHandoff] Keeping the completed resize image visible until its replacement scene and UI are complete. Reason={0}",
-                    handoffBlocker);
-                return false;
+                swapchainPolicy.CancelResizeReleaseHandoff();
+                creatingResizeReleaseSuccessor = false;
             }
 
             long recreateStart = Stopwatch.GetTimestamp();
@@ -376,26 +375,6 @@ namespace XREngine.Rendering.Vulkan
                 resizeSettled);
         }
 
-        private bool TryGetResizeReleasePresentationBlocker(
-            out VulkanResizeReleaseBlocker blocker)
-        {
-            blocker = VulkanResizeReleaseBlocker.None;
-            VulkanDesktopSwapchainPolicyState swapchainPolicy =
-                _outputRuntime._desktopSwapchainPolicy;
-            if (swapchainPolicy.ResizeReleaseHandoffState !=
-                VulkanResizeReleaseHandoffState.AwaitingReadyToRecreate)
-                return false;
-
-            if (swapchainPolicy.ResizeReleaseSourceSwapchainGeneration !=
-                OutputRuntime.Desktop.Generation)
-            {
-                swapchainPolicy.CancelResizeReleaseHandoff();
-                return false;
-            }
-
-            return TryGetResizeReleaseContributorBlocker(out blocker);
-        }
-
         private bool TryGetResizeReleaseContributorBlocker(
             out VulkanResizeReleaseBlocker blocker)
         {
@@ -430,14 +409,18 @@ namespace XREngine.Rendering.Vulkan
 
             ReadOnlySpan<XRViewport> requiredUserInterfaceViewports =
                 swapchainPolicy.RequiredScreenSpaceUserInterfaceViewports;
+            ReadOnlySpan<IRuntimeScreenSpaceUserInterface> requiredUserInterfaces =
+                swapchainPolicy.RequiredScreenSpaceUserInterfaces;
             for (int index = 0; index < requiredUserInterfaceViewports.Length; index++)
             {
                 XRViewport viewport = requiredUserInterfaceViewports[index];
+                IRuntimeScreenSpaceUserInterface requiredUserInterface =
+                    requiredUserInterfaces[index];
                 if (!IsResizeReleaseViewportAttached(viewport) ||
                     !viewport.TryGetActiveScreenSpaceUserInterface(
-                        out IRuntimeScreenSpaceUserInterface? currentUserInterface))
-                    continue;
-                if (!currentUserInterface!.CompletedRenderCommandChainThisFrame)
+                        out IRuntimeScreenSpaceUserInterface? currentUserInterface) ||
+                    !ReferenceEquals(currentUserInterface, requiredUserInterface) ||
+                    !requiredUserInterface.CompletedRenderCommandChainThisFrame)
                 {
                     blocker = VulkanResizeReleaseBlocker
                         .ScreenSpaceUserInterfaceCommandChainIncomplete;
@@ -665,6 +648,19 @@ namespace XREngine.Rendering.Vulkan
             {
                 return;
             }
+
+            // Recovery replay intentionally preserves the held image while the
+            // successor catches up. It must never be treated as the authored
+            // successor presentation that releases the retained source.
+            if (attempt.ResizeReleaseContinuity ||
+                attempt.ResizeReleaseBlocker != VulkanResizeReleaseBlocker.None ||
+                TryGetResizeReleaseContributorBlocker(out _))
+            {
+                return;
+            }
+
+            if (!swapchainPolicy.HasActiveResizeReleaseHandoff)
+                return;
 
             ulong successorGeneration =
                 swapchainPolicy.ResizeReleaseSuccessorSwapchainGeneration;

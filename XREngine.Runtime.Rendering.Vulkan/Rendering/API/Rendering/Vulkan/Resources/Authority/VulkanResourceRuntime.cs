@@ -1996,6 +1996,11 @@ internal sealed partial class VulkanResourceRuntime
                         $"generation {retired.Ticket.ResourceGeneration} is no longer authoritative.");
                 }
 
+                // Descriptor heap address ranges must never use allocator block capacity.
+                // Once destruction has begun this handle cannot be published again, so retire
+                // its logical bounds and usage metadata with the native resource.
+                Allocations.Buffers.RemoveDescriptorMetadata(buffer);
+
                 // A buffer that is actually destroyed must not leave a stale
                 // staging-pool record. Match by buffer identity so this also
                 // cleans queue entries whose shared memory handle was deduped.

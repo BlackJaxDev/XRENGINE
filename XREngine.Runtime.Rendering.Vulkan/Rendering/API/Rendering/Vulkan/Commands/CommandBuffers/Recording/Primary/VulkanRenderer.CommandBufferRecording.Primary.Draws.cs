@@ -83,6 +83,15 @@ namespace XREngine.Rendering.Vulkan
                 SetViewportScissorTracked(commandBuffer, viewports, scissors, draw.ViewportScissorCount);
             else
                 SetViewportScissorTracked(commandBuffer, draw.Viewport, draw.Scissor);
+            if (payload.BindlessMaterialTextures is { } materialBinding &&
+                !TryBindPreparedGlobalMaterialTextureDescriptorSet(
+                    commandBuffer,
+                    materialBinding.Program,
+                    materialBinding.Consumer,
+                    draw.ProgramBindingSnapshot?.MaterialTablePublication))
+            {
+                return;
+            }
             if (!payload.MeshRenderer.RecordIndirectDrawState(commandBuffer, draw, recordingState.RenderScope.RenderPass, recordingState.RenderScope.UsesDynamicRendering, recordingState.RenderScope.DynamicRenderingFormats, passIndex, context.PassMetadata, recordingState.RenderScope.DepthStencilReadOnly, context.PipelineInstance?.DebugName ?? "<no pipeline>", target?.Name ?? "<swapchain>", GetMeshDrawUniformSlot(ref recordingState, opIndex, payload.MeshRenderer, context, draw), recordingState.CommandBufferImageSlot, out _)) return;
             RecordIndirectDrawPayload(commandBuffer, in payload, allowInlineBarrier: false);
         }
@@ -239,6 +248,16 @@ namespace XREngine.Rendering.Vulkan
             else
                 SetViewportScissorTracked(targetCommandBuffer, viewport, scissor);
 
+            if (indirectOp.BindlessMaterialTextures is { } materialBinding &&
+                !TryBindPreparedGlobalMaterialTextureDescriptorSet(
+                    targetCommandBuffer,
+                    materialBinding.Program,
+                    materialBinding.Consumer,
+                    indirectOp.Draw.ProgramBindingSnapshot?.MaterialTablePublication))
+            {
+                return;
+            }
+
             if (!indirectOp.MeshRenderer.RecordIndirectDrawState(
                     targetCommandBuffer,
                     indirectOp.Draw,
@@ -286,6 +305,16 @@ namespace XREngine.Rendering.Vulkan
                 SetViewportScissorTracked(targetCommandBuffer, indexedViewports, indexedScissors, viewportScissorCount);
             else
                 SetViewportScissorTracked(targetCommandBuffer, viewport, scissor);
+
+            if (payload.BindlessMaterialTextures is { } materialBinding &&
+                !TryBindPreparedGlobalMaterialTextureDescriptorSet(
+                    targetCommandBuffer,
+                    materialBinding.Program,
+                    materialBinding.Consumer,
+                    payload.Draw.ProgramBindingSnapshot?.MaterialTablePublication))
+            {
+                return;
+            }
 
             if (!payload.MeshRenderer.RecordPreparedIndirectDrawState(targetCommandBuffer, recordingState))
             {

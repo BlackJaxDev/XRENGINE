@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -11,7 +12,7 @@ namespace XREngine.Rendering.Vulkan;
 
 internal static class VulkanShaderArtifactCache
 {
-    internal const int SchemaVersion = 4;
+    internal const int SchemaVersion = 5;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -143,6 +144,7 @@ internal static class VulkanShaderArtifactCache
                 DeleteCacheFiles(binaryPath);
                 return false;
             }
+            VulkanShaderCompiler.ValidateModuleWhenRequested(shader.Name ?? "UnnamedShader", spirv);
 
             artifact = new VulkanShaderArtifact(
                 artifactIdentity,
@@ -369,10 +371,45 @@ internal static class VulkanShaderArtifactCache
     private static VulkanShaderArtifactRuntimeFingerprint CreateRuntimeFingerprint()
         => new(
             ShadercAssemblyVersion: typeof(Shaderc).Assembly.GetName().Version?.ToString() ?? string.Empty,
-            TargetEnvironment: "Vulkan",
+            ShadercNativeIdentity: GetShadercNativeIdentity(),
+            TargetEnvironment: "Vulkan1.4",
+            TargetSpirvVersion: "SPIRV1.6",
+            ShaderAbiIdentity: VulkanShaderCompiler.ShaderAbiIdentity,
             SourceLanguage: "GLSL",
             OptimizationLevel: OptimizationLevel.Performance.ToString(),
             OptimizerIdentity: ResolvedShaderSourceOptimizer.BuildIdentitySegment(),
-            RewriteIdentity: "VulkanShaderAutoUniforms+VulkanShaderTransformFeedback+InjectVulkanBackendDefine+ReflectionSourcePreprocessor:v2");
+            RewriteIdentity: "VulkanShaderAutoUniforms+VulkanShaderTransformFeedback+InjectVulkanBackendDefine+ReflectionSourcePreprocessor:v3");
+
+    private static string GetShadercNativeIdentity()
+    {
+        const string libraryName = "shaderc_shared";
+        if (!NativeLibrary.TryLoad(libraryName, out nint module))
+            return $"unresolved-process-{Environment.ProcessId}";
+
+        try
+        {
+            StringBuilder path = new(1024);
+            uint length = GetModuleFileName(module, path, (uint)path.Capacity);
+            if (length == 0 || length >= path.Capacity || !File.Exists(path.ToString()))
+                return $"unresolved-process-{Environment.ProcessId}";
+
+            FileInfo file = new(path.ToString());
+            string hash = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(file.FullName)), 0, 12);
+            return $"{Path.GetFileName(file.FullName)}:{file.Length}:{file.LastWriteTimeUtc.Ticks}:{hash}";
+        }
+        catch
+        {
+            // Do not reuse a disk artifact across processes when the exact native
+            // compiler cannot be attributed. This is conservative but cache-safe.
+            return $"unresolved-process-{Environment.ProcessId}";
+        }
+        finally
+        {
+            NativeLibrary.Free(module);
+        }
+    }
+
+    [DllImport("kernel32", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern uint GetModuleFileName(nint module, StringBuilder fileName, uint size);
 }
 

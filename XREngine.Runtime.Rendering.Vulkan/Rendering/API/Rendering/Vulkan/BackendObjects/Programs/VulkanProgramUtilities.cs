@@ -25,9 +25,11 @@ internal static class VulkanProgramUtilities
         string programName,
         uint explicitExternallyOwnedSetMask = 0u)
     {
+        bool usesDescriptorHeap =
+            descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap;
         List<DescriptorBindingInfo> reflectedBindings = bindings
             .Select(DescriptorBindingInfo.NormalizeKnownMetadata)
-            .Select(NormalizeGraphicsFrameDataBinding)
+            .Select(binding => NormalizeGraphicsFrameDataBinding(binding, usesDescriptorHeap))
             .ToList();
         if (VulkanFeatureProfile.EnableDescriptorContractValidation &&
             !VulkanDescriptorContracts.TryValidateContract(reflectedBindings, out string contractError))
@@ -192,12 +194,17 @@ internal static class VulkanProgramUtilities
             : ImageLayout.ShaderReadOnlyOptimal;
     }
 
-    private static DescriptorBindingInfo NormalizeGraphicsFrameDataBinding(DescriptorBindingInfo binding)
+    private static DescriptorBindingInfo NormalizeGraphicsFrameDataBinding(
+        DescriptorBindingInfo binding,
+        bool usesDescriptorHeap)
     {
         bool graphicsUniform = binding.Set == VulkanDescriptorManager.GlobalsSetIndex &&
             binding.DescriptorType == DescriptorType.UniformBuffer &&
             (binding.StageFlags & ShaderStageFlags.ComputeBit) == 0;
-        return graphicsUniform
+        // Descriptor heaps encode the concrete byte range in the descriptor.
+        // Dynamic descriptor types are neither representable by the heap mapping
+        // nor needed: mesh resolution already supplies the frame-slot offset.
+        return graphicsUniform && !usesDescriptorHeap
             ? binding with { DescriptorType = DescriptorType.UniformBufferDynamic }
             : binding;
     }

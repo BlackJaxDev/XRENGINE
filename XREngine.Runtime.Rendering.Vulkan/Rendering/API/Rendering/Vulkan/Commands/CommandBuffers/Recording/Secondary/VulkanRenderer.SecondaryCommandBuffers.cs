@@ -249,7 +249,7 @@ namespace XREngine.Rendering.Vulkan
             CommandBufferInheritanceDescriptorHeapInfoEXTNative descriptorHeapInheritanceInfo = default;
             BindHeapInfoEXTNative inheritedSamplerHeapInfo = default;
             BindHeapInfoEXTNative inheritedResourceHeapInfo = default;
-            TryAppendDescriptorHeapInheritancePNext(
+            bool inheritsDescriptorHeaps = TryAppendDescriptorHeapInheritancePNext(
                 ref inheritanceInfo,
                 &descriptorHeapInheritanceInfo,
                 &inheritedSamplerHeapInfo,
@@ -408,6 +408,8 @@ namespace XREngine.Rendering.Vulkan
                         ref beginInfo,
                         "DynamicUiSecondary") != Result.Success)
                     throw new Exception("Failed to begin dynamic UI text secondary command buffer.");
+                if (inheritsDescriptorHeaps)
+                    MarkDescriptorHeapInheritance(secondaryCommandBuffer);
 
                 ulong recGen = CommandBuffers.ResolveRecordingGeneration(secondaryCommandBuffer);
                 LaneRecordingContexts.BeginContext(

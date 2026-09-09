@@ -81,6 +81,7 @@ internal sealed partial class VulkanFrameLoop
             target,
             _outputRuntime._imguiResources,
             _outputRuntime._imguiTextureRegistry.DescriptorSets,
+            _outputRuntime._imguiTextureRegistry.DescriptorHeapPushData,
             ClearSwapchain: clearSwapchain,
             snapshot);
         return _imguiOverlayRecorder.TryRecord(

@@ -61,6 +61,7 @@ internal static class VulkanCanonicalVisibilityPipelineFactory
             meshlet ? 0UL : vertexInput.LayoutHash,
             program.DescriptorSchemaFingerprint,
             program.PipelineLayout.Handle,
+            program.MeshTaskBackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap,
             ComputePassMetadataHash(target),
             ComputeFeatureProfileHash(program),
             target.RasterizationSamples,
@@ -152,6 +153,10 @@ internal static class VulkanCanonicalVisibilityPipelineFactory
                 meshlet ? "CanonicalVisibilityMesh" : "CanonicalVisibilityRaster",
                 colorAttachmentCount,
                 program.PipelineLayout,
+                program.MeshTaskBackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap,
+                program.DescriptorHeapLayout is { Mappings.Length: > 0 } descriptorHeapLayout
+                    ? [.. descriptorHeapLayout.Mappings]
+                    : [],
                 meshlet ? [] : [.. vertexInput.Bindings],
                 meshlet ? [] : [.. vertexInput.Attributes],
                 inputAssembly,

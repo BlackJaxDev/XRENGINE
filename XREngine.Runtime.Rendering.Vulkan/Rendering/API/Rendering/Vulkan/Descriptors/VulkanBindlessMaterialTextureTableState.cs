@@ -14,6 +14,9 @@ internal sealed class VulkanBindlessMaterialTextureTableState
     internal readonly Queue<uint> FreeSlots = new();
     internal readonly VulkanBindlessDescriptorPublicationStream PublicationStream = new();
     internal MaterialTextureDescriptorSlot[] Slots = [];
+    internal DescriptorImageInfo[] HeapImageInfos = [];
+    internal uint HeapImageInfoCount;
+    internal bool HeapImageInfosDirty = true;
     internal DescriptorSetLayout SetLayout;
     internal DescriptorPool Pool;
     internal DescriptorSet Set;

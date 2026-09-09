@@ -1922,6 +1922,60 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
         Chain(metadata, EDefaultRenderPass.OnTopForward, EDefaultRenderPass.TransparentForward);
         Chain(metadata, EDefaultRenderPass.PostRender, EDefaultRenderPass.OnTopForward);
 
+        // The terminal command chain crosses FBO attachment and sampled-texture resource
+        // names. Those are intentionally separate graph resources, so the graph cannot
+        // infer their producer/consumer order from resource access alone. Keep the
+        // authored sequence explicit: scene -> exposure -> post -> final -> AA -> present.
+        string postProcessPass = VPRC_RenderQuadToFBO.BuildQuadBlitPassName(
+            PostProcessFBOName,
+            PostProcessOutputFBOName);
+        string finalPostProcessPass = VPRC_RenderQuadToFBO.BuildQuadBlitPassName(
+            FinalPostProcessFBOName,
+            FinalPostProcessOutputFBOName);
+        string fxaaPass = $"Fxaa_{FinalPostProcessOutputFBOName}_to_{FxaaFBOName}";
+        string smaaEdgePass = $"SmaaEdge_{FinalPostProcessOutputFBOName}_to_{SmaaEdgeFBOName}";
+        string smaaBlendPass = $"SmaaBlend_{SmaaEdgeTextureName}_to_{SmaaBlendFBOName}";
+        string smaaNeighborhoodPass = $"SmaaNeighborhood_{FinalPostProcessOutputFBOName}_to_{SmaaOutputTextureName}";
+        string tsrPass = VPRC_RenderQuadToFBO.BuildQuadBlitPassName(TsrUpscaleFBOName, TsrUpscaleFBOName);
+
+        AddDependencyByIndex(LateOnTopForwardPassName, (int)EDefaultRenderPass.TransparentForward);
+        AddDependencyByIndex(nameof(VPRC_ExposureUpdate), (int)EDefaultRenderPass.TransparentForward);
+        AddDependency(nameof(VPRC_ExposureUpdate), LateOnTopForwardPassName);
+        AddDependency(postProcessPass, nameof(VPRC_ExposureUpdate));
+        AddDependency("LateDebugOverlay", postProcessPass);
+        AddDependency(finalPostProcessPass, "LateDebugOverlay", postProcessPass);
+        AddDependency(fxaaPass, finalPostProcessPass);
+        AddDependency(smaaEdgePass, finalPostProcessPass);
+        AddDependency(smaaBlendPass, smaaEdgePass);
+        AddDependency(smaaNeighborhoodPass, smaaBlendPass);
+        AddDependency(tsrPass, finalPostProcessPass);
+
+        AddDependency("RenderToWindow_FinalPostProcessOutputTexture", finalPostProcessPass);
+        AddDependency("RenderToWindow_FxaaOutputTexture", fxaaPass);
+        AddDependency("RenderToWindow_SmaaOutputTexture", smaaNeighborhoodPass);
+        AddDependency("RenderToWindow_TsrOutputTexture", tsrPass);
+
+        void AddDependencyByIndex(string passName, params int[] dependencies)
+        {
+            if (!metadata.TryGetPassIndex(passName, out int passIndex))
+                return;
+
+            var builder = metadata.ForPass(passIndex);
+            foreach (int dependency in dependencies)
+                builder.DependsOn(dependency);
+        }
+
+        void AddDependency(string passName, params string[] dependencyNames)
+        {
+            if (!metadata.TryGetPassIndex(passName, out int passIndex))
+                return;
+
+            var builder = metadata.ForPass(passIndex);
+            foreach (string dependencyName in dependencyNames)
+                if (metadata.TryGetPassIndex(dependencyName, out int dependencyPassIndex))
+                    builder.DependsOn(dependencyPassIndex);
+        }
+
         if (metadata.TryGetPassIndex(LateOnTopForwardPassName, out int lateOnTopPassIndex) &&
             metadata.TryGetPassIndex(VPRC_BuildAccelerationStructure.RenderGraphPassName, out int accelerationStructurePassIndex))
         {

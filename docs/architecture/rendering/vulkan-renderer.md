@@ -67,8 +67,10 @@ public sealed class VulkanRenderer : AbstractRenderer<Vk>
 }
 ```
 
-The renderer targets **Vulkan 1.3** with a **1.1 minimum** device API. Desktop
-WSI uses two frame slots; fixed-output targets use the configured
+The renderer requires **Vulkan 1.4** from the loader, selected physical device,
+and active OpenXR runtime constraints. It rejects an older loader, device, or
+OpenXR Vulkan range with diagnostics and does not downgrade the API or switch
+renderers. Desktop WSI uses two frame slots; fixed-output targets use the configured
 `RenderTargetOutputProperties.FrameSlotCount`.
 
 ---
@@ -170,7 +172,7 @@ uses the normal cleanup path to unwind only reached stages in reverse order.
 
 From `Bootstrap/VulkanRenderer.Instance.cs`:
 
-- Creates a Vulkan 1.3 instance with application name "XRENGINE"
+- Creates a Vulkan 1.4 instance with application name "XRENGINE"
 - Enumerates available instance extensions via `vkEnumerateInstanceExtensionProperties`
 - Adds only extensions required by the selected target driver: desktop
   platform surface extensions, `VK_EXT_headless_surface`, or none for
@@ -227,7 +229,7 @@ wrapper code cannot mutate it after device publication.
 **Features enabled:**
 - `descriptorIndexing` — Runtime arrays, partial descriptor binding, update-after-bind
 - `bufferDeviceAddress` — GPU buffer pointers for advanced rendering
-- `dynamicRendering` — Renderpass-less rendering (Vulkan 1.3)
+- `dynamicRendering` — Required renderpass-less rendering feature, promoted in Vulkan 1.3
 - `shaderDrawParameters` — Built-in draw parameter access in shaders
 - `multiview` — Multi-view rendering for VR
 - `indexTypeUint8` — 8-bit index buffers for memory efficiency
@@ -786,9 +788,15 @@ Metadata:      Build/Cache/Vulkan/ShaderArtifacts/{artifactIdentity}.spv.json
 - `VulkanShaderCompiler.Prepare()` resolves includes, optimizes source, applies Vulkan shader rewrites, and computes the rewritten source used for identity validation.
 - `VulkanShaderCompiler.CompilePrepared()` runs shaderc only after the artifact cache misses or rejects an entry.
 - `VkShader` rehydrates cached SPIR-V, descriptor binding metadata, vertex input locations, and the rewritten-source identity, then creates `VkShaderModule` on the Vulkan device thread.
-- Metadata carries a schema version and runtime/compiler fingerprint so stale, corrupt, or incompatible entries are deleted instead of reused.
+- Metadata carries a schema version and runtime/compiler fingerprint so stale, corrupt, or incompatible entries are deleted instead of reused. The fingerprint includes the Vulkan 1.4 / SPIR-V 1.6 target, shader ABI, managed Shaderc assembly, and exact native Shaderc binary identity.
 - Cold compile misses write `.spv` payloads asynchronously, similar to the OpenGL binary shader cache pattern.
 - For `XRMeshRenderer.GenerateAsync` renderers, CPU shader preparation and shaderc compilation run on a worker task. Command-buffer recording sees the renderer as pending until the worker artifact is ready and the device-thread module/layout work completes.
+
+Set `XRE_VULKAN_VALIDATE_SPIRV=1` to validate generated and cached modules with
+`spirv-val --target-env vulkan1.4`; a missing validator fails the compile or cache
+read visibly. Set `XRE_VULKAN_SHADER_DIAGNOSTICS_DIR` to retain hash-named GLSL
+inputs and validated SPIR-V modules for compiler diagnosis. These diagnostics are
+opt-in and should write under an isolated validation run root.
 
 ### Pipeline Prewarm Manifest
 

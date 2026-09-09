@@ -1,6 +1,7 @@
 using System.Text;
 using System.Threading;
 using Silk.NET.Vulkan;
+using Silk.NET.Vulkan.Extensions.NV;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -129,20 +130,222 @@ internal sealed partial class VulkanFrameLoop
     {
         string baseReason = string.IsNullOrWhiteSpace(reason) ? "<unknown>" : reason.Trim();
         VulkanSubmissionDiagnosticContext submission = _deviceContext.SnapshotSubmissionDiagnostics();
-        if (submission.IsEmpty)
-            return baseReason;
-
         StringBuilder builder = new(baseReason);
-        builder.Append("; LastSubmission kind=")
-            .Append(submission.SubmissionKind ?? "<unknown>")
-            .Append(" caller=")
-            .Append(submission.Caller ?? "<unknown>")
-            .Append(" queue=")
-            .Append(submission.QueueKind ?? "<unknown>")
-            .Append(" frame=")
-            .Append(submission.FrameId)
-            .Append(" commandBuffer=0x")
-            .Append(submission.FirstCommandBufferHandle.ToString("X"));
+        if (!submission.IsEmpty)
+        {
+            builder.Append("; LastSubmission kind=")
+                .Append(submission.SubmissionKind ?? "<unknown>")
+                .Append(" caller=")
+                .Append(submission.Caller ?? "<unknown>")
+                .Append(" queue=")
+                .Append(submission.QueueKind ?? "<unknown>")
+                .Append(" frame=")
+                .Append(submission.FrameId)
+                .Append(" commandBuffer=0x")
+                .Append(submission.FirstCommandBufferHandle.ToString("X"));
+        }
+
+        AppendNvCheckpointDiagnostics(builder, in submission);
+
+        if (_deviceContext.TryAppendPersistedDeviceFaultSummary(
+            builder,
+            _telemetry._diagnosticOptions))
+        {
+            builder.Append("; DeviceFaultCapture=persisted");
+        }
+
+        AppendDeviceAddressBindingDiagnostics(builder);
         return builder.ToString();
+    }
+
+    /// <summary>
+    /// Persists the bounded native address-bind callbacks from
+    /// VK_EXT_device_address_binding_report during the single terminal
+    /// diagnostic pass. Callback collection remains allocation-free; this is
+    /// deliberately cold-path-only evidence for correlating a fault address.
+    /// </summary>
+    private void AppendDeviceAddressBindingDiagnostics(StringBuilder deviceLostReason)
+    {
+        if (!_telemetry._diagnosticOptions.RequestDeviceAddressBindingReport)
+            return;
+
+        try
+        {
+            VulkanValidationDeviceAddressBinding[] bindings =
+                _deviceContext.ValidationDiagnostics.DrainDeviceAddressBindings(
+                    out int overflowCount);
+            StringBuilder artifact = new();
+            artifact.Append("Vulkan Device Address Binding Events\n")
+                .Append("Count=").Append(bindings.Length)
+                .Append(" Overflow=").Append(overflowCount)
+                .Append('\n');
+            for (int index = 0; index < bindings.Length; index++)
+            {
+                VulkanValidationDeviceAddressBinding binding = bindings[index];
+                artifact.Append("Binding[").Append(index).Append("] serial=")
+                    .Append(binding.Serial)
+                    .Append(" base=0x")
+                    .Append(binding.BaseAddress.ToString("X"))
+                    .Append(" size=").Append(binding.Size)
+                    .Append(" type=").Append(binding.BindingType)
+                    .Append(" flags=").Append(binding.Flags)
+                    .Append('\n');
+            }
+
+            Debug.WriteAuxiliaryLog(
+                "vulkan-device-address-bindings.log",
+                artifact.ToString().TrimEnd());
+            deviceLostReason.Append("; DeviceAddressBindings=")
+                .Append(bindings.Length)
+                .Append(" overflow=").Append(overflowCount)
+                .Append(" artifact=vulkan-device-address-bindings.log");
+        }
+        catch (Exception exception)
+        {
+            Debug.VulkanWarning(
+                "[VulkanDiag] Device-address binding artifact persistence failed: {0}:{1}.",
+                exception.GetType().Name,
+                exception.Message);
+            deviceLostReason.Append("; DeviceAddressBindings=persistence-failed");
+        }
+    }
+
+    /// <summary>
+    /// Resolves only opaque checkpoint tokens published by this renderer. The driver-owned
+    /// token is never dereferenced; pointer identity is matched against the append-only table.
+    /// </summary>
+    private unsafe void AppendNvCheckpointDiagnostics(
+        StringBuilder deviceLostReason,
+        in VulkanSubmissionDiagnosticContext submission)
+    {
+        if (!_telemetry._diagnosticOptions.RequestNvDiagnosticCheckpoints ||
+            !_deviceContext.SupportsNvDiagnosticCheckpoints ||
+            _deviceContext.ExtensionFunctions.NvDeviceDiagnosticCheckpoints is not { } checkpoints)
+        {
+            return;
+        }
+
+        try
+        {
+            VulkanNvCheckpointMarker[] publishedMarkers =
+                _telemetry.CaptureNvCheckpointMarkers(
+                    out long publicationAttempts,
+                    out long nativeCallCount,
+                    out int markerCapacity,
+                    out bool capacityExhausted);
+            StringBuilder artifact = new();
+            artifact.Append("Vulkan NV Diagnostic Checkpoints\n")
+                .Append(" PublicationAttempts=").Append(publicationAttempts)
+                .Append(" NativeCalls=").Append(nativeCallCount)
+                .Append(" DistinctIdentities=").Append(publishedMarkers.Length)
+                .Append(" Capacity=").Append(markerCapacity)
+                .Append(" CapacityExhausted=").Append(capacityExhausted)
+                .Append(" LastSubmissionQueue=0x").Append(submission.QueueHandle.ToString("X"))
+                .Append('\n');
+            uint capturedCount = AppendNvCheckpointQueueDiagnostics(
+                checkpoints, _deviceContext.GraphicsQueue, "Graphics", artifact);
+            if (_deviceContext.SecondaryGraphicsQueue.Handle != _deviceContext.GraphicsQueue.Handle)
+                capturedCount += AppendNvCheckpointQueueDiagnostics(
+                    checkpoints, _deviceContext.SecondaryGraphicsQueue, "SecondaryGraphics", artifact);
+            if (_deviceContext.ComputeQueue.Handle != _deviceContext.GraphicsQueue.Handle &&
+                _deviceContext.ComputeQueue.Handle != _deviceContext.SecondaryGraphicsQueue.Handle)
+                capturedCount += AppendNvCheckpointQueueDiagnostics(
+                    checkpoints, _deviceContext.ComputeQueue, "Compute", artifact);
+            if (_deviceContext.TransferQueue.Handle != _deviceContext.GraphicsQueue.Handle &&
+                _deviceContext.TransferQueue.Handle != _deviceContext.SecondaryGraphicsQueue.Handle &&
+                _deviceContext.TransferQueue.Handle != _deviceContext.ComputeQueue.Handle)
+                capturedCount += AppendNvCheckpointQueueDiagnostics(
+                    checkpoints, _deviceContext.TransferQueue, "Transfer", artifact);
+
+            artifact.Append("Published identities:\n");
+            for (int index = 0; index < publishedMarkers.Length; index++)
+            {
+                VulkanNvCheckpointMarker marker = publishedMarkers[index];
+                artifact.Append("Identity[").Append(index).Append("] serial=")
+                    .Append(marker.Serial).Append(" op=").Append(marker.OpKind)
+                    .Append(" program=").Append(marker.ProgramName ?? "<none>")
+                    .Append(" phase=").Append(marker.Phase)
+                    .Append(" pass=").Append(marker.PassIndex)
+                    .Append(" batch=").Append(marker.BatchIndex)
+                    .Append(" pipeline=").Append(marker.PipelineIdentity)
+                    .Append(" viewport=").Append(marker.ViewportIdentity)
+                    .Append('\n');
+            }
+
+            Debug.WriteAuxiliaryLog(
+                "vulkan-nv-diagnostic-checkpoints.log",
+                artifact.ToString().TrimEnd());
+            deviceLostReason.Append("; NvCheckpoints=")
+                .Append(capturedCount)
+                .Append(" calls=").Append(nativeCallCount)
+                .Append(" identities=").Append(publishedMarkers.Length)
+                .Append(" artifact=vulkan-nv-diagnostic-checkpoints.log");
+        }
+        catch (Exception exception)
+        {
+            Debug.VulkanWarning(
+                "[VulkanDiag] NV checkpoint artifact persistence failed: {0}:{1}.",
+                exception.GetType().Name,
+                exception.Message);
+            deviceLostReason.Append("; NvCheckpoints=persistence-failed");
+        }
+    }
+
+    private unsafe uint AppendNvCheckpointQueueDiagnostics(
+        NVDeviceDiagnosticCheckpoints checkpoints,
+        Queue queue,
+        string queueName,
+        StringBuilder artifact)
+    {
+        if (queue.Handle == 0)
+            return 0;
+
+        uint reportedCount = 0;
+        checkpoints.GetQueueCheckpointData(queue, ref reportedCount, (CheckpointDataNV*)null);
+        const uint maximumCheckpointResults = 64;
+        uint requestedCount = Math.Min(reportedCount, maximumCheckpointResults);
+        CheckpointDataNV* checkpointData = stackalloc CheckpointDataNV[(int)maximumCheckpointResults];
+        for (int index = 0; index < requestedCount; index++)
+            checkpointData[index] = new CheckpointDataNV { SType = StructureType.CheckpointDataNV };
+        uint returnedCount = requestedCount;
+        if (requestedCount != 0)
+            checkpoints.GetQueueCheckpointData(queue, ref returnedCount, checkpointData);
+
+        uint capturedCount = Math.Min(returnedCount, requestedCount);
+        artifact.Append("Queue=").Append(queueName)
+            .Append(" Handle=0x").Append(unchecked((ulong)queue.Handle).ToString("X"))
+            .Append(" Reported=").Append(reportedCount)
+            .Append(" Captured=").Append(capturedCount)
+            .Append('\n');
+        for (int index = 0; index < capturedCount; index++)
+        {
+            CheckpointDataNV data = checkpointData[index];
+            artifact.Append("Checkpoint[").Append(queueName).Append(':').Append(index)
+                .Append("] stage=").Append(data.Stage)
+                .Append(" token=0x").Append(((nuint)data.PCheckpointMarker).ToString("X"));
+            if (_telemetry.TryResolveNvCheckpointMarker(
+                    data.PCheckpointMarker,
+                    out VulkanNvCheckpointMarker marker))
+            {
+                artifact.Append(" staticIdentity serial=").Append(marker.Serial)
+                    .Append(" firstRecordedFrame=").Append(marker.FirstRecordedFrameId)
+                    .Append(" op=").Append(marker.OpKind)
+                    .Append(" program=").Append(marker.ProgramName ?? "<none>")
+                    .Append(" phase=").Append(marker.Phase)
+                    .Append(" pass=").Append(marker.PassIndex)
+                    .Append(" batch=").Append(marker.BatchIndex)
+                    .Append(" pipeline=").Append(marker.PipelineIdentity)
+                    .Append(" viewport=").Append(marker.ViewportIdentity)
+                    .Append(" target=").Append(marker.OutputTargetName ?? "<none>")
+                    .Append(" firstCommandBuffer=0x").Append(marker.FirstCommandBufferHandle.ToString("X"))
+                    .Append(" firstRecordingGeneration=").Append(marker.FirstCommandBufferRecordingGeneration);
+            }
+            else
+            {
+                artifact.Append(" unresolved-token");
+            }
+            artifact.Append('\n');
+        }
+        return capturedCount;
     }
 }

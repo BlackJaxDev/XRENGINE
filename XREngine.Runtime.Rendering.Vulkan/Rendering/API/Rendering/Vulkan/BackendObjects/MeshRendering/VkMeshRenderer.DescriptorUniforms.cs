@@ -86,7 +86,11 @@ private bool TryResolveEngineUniformBuffer(DescriptorBindingInfo binding, int fr
 			if (!_autoUniformBuffers.TryGetValue(block.InstanceName, out AutoUniformBuffer[]? buffers) || buffers.Length == 0)
 				return false;
 
-			int idx = ResolveUniformBufferIndex(frameIndex, drawUniformSlot, buffers.Length);
+			int idx = ResolvePublishedAutoUniformBufferIndex(
+				block,
+				frameIndex,
+				drawUniformSlot,
+				buffers.Length);
 			AutoUniformBuffer target = buffers[idx];
 			if (target.Buffer.Handle == 0)
 				return false;
@@ -101,4 +105,110 @@ private bool TryResolveEngineUniformBuffer(DescriptorBindingInfo binding, int fr
 
 			return true;
 		}
+
+	/// <summary>
+	/// Rewrites the native heap payload after frequency-owned auto
+	/// uniform publication selects this draw's mapped-frame range. Descriptor-set
+	/// mode carries that range through dynamic offsets; native heap mode
+	/// must publish the resolved offset in the pushed descriptor bytes.
+	/// </summary>
+	private bool RefreshDescriptorHeapAutoUniformBindings(
+		int frameIndex,
+		int drawUniformSlot,
+		out string reason)
+	{
+		reason = string.Empty;
+		if (_program is null ||
+			BackendContext.Resources.Descriptors.Heap.ActiveBackend !=
+				EVulkanDescriptorBackend.DescriptorHeap)
+		{
+			return true;
+		}
+
+		if (_activeDescriptorAllocation?.DescriptorHeapPushData is not
+			{ Length: > 0 } payloads ||
+			_descriptorSets is not { Length: > 0 })
+		{
+			reason = "descriptor heap payload is unavailable after auto-uniform publication";
+			return false;
+		}
+
+		int descriptorSlotIndex = ResolveDescriptorFrameIndex(
+			frameIndex,
+			_descriptorSets.Length);
+		if ((uint)descriptorSlotIndex >= (uint)payloads.Length ||
+			payloads[descriptorSlotIndex] is not { } payload)
+		{
+			reason = $"descriptor heap payload is unavailable for frame slot {descriptorSlotIndex}";
+			return false;
+		}
+
+		IReadOnlyList<DescriptorBindingInfo> bindings = _program.DescriptorBindings;
+		for (int bindingIndex = 0; bindingIndex < bindings.Count; bindingIndex++)
+		{
+			DescriptorBindingInfo binding = bindings[bindingIndex];
+			if (binding.DescriptorType is not
+				(DescriptorType.UniformBuffer or DescriptorType.UniformBufferDynamic) ||
+				!_program.TryGetAutoUniformBlock(binding.Set, binding.Binding, out _))
+			{
+				continue;
+			}
+
+			if (VulkanBindlessMaterialDescriptors.ResolveDescriptorCount(binding) != 1 ||
+				!TryResolveAutoUniformBuffer(
+					binding,
+					frameIndex,
+					drawUniformSlot,
+					out DescriptorBufferInfo bufferInfo))
+			{
+				reason = $"auto-uniform descriptor '{binding.Name}' could not resolve its published range";
+				return false;
+			}
+
+			if (!BackendContext.Resources.DescriptorLifetime.TryWriteDescriptorHeapBinding(
+					_program,
+					binding,
+					payload,
+					&bufferInfo,
+					null,
+					null,
+					descriptorCount: 1,
+					out string heapReason))
+			{
+				reason = $"auto-uniform descriptor '{binding.Name}' heap write failed: {heapReason}";
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	private bool TryRefreshGlobalMaterialTextureArrayHeapPayload(
+		DescriptorAllocation allocation,
+		int frameIndex,
+		ComputeDispatchSnapshot? bindingSnapshot)
+	{
+		if (_program is null ||
+			BackendContext.Resources.Descriptors.Heap.ActiveBackend != EVulkanDescriptorBackend.DescriptorHeap)
+		{
+			return true;
+		}
+
+		if (allocation.DescriptorHeapPushData.Length == 0)
+			return FailDescriptorPreparation("descriptor heap payload is unavailable for the global material texture array");
+
+		int descriptorSlotIndex = ResolveDescriptorFrameIndex(frameIndex, allocation.DescriptorHeapPushData.Length);
+		if ((uint)descriptorSlotIndex >= (uint)allocation.DescriptorHeapPushData.Length)
+			return FailDescriptorPreparation("descriptor heap payload is unavailable for the global material texture array");
+		if (!BackendContext.Resources.Descriptors.TryWriteGlobalMaterialTextureArrayHeapPayload(
+				_program,
+				allocation.DescriptorHeapPushData[descriptorSlotIndex],
+				bindingSnapshot?.MaterialTablePublication,
+				out string reason))
+		{
+			return FailDescriptorPreparation($"global material texture array heap write failed: {reason}");
+		}
+
+		return true;
+	}
 }
