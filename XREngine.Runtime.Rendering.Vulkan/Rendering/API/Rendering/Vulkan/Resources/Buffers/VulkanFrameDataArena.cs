@@ -745,7 +745,8 @@ internal sealed partial class VulkanFrameDataArena
         EVulkanFrameDataLane.TransferStaging => BufferUsageFlags.TransferSrcBit | BufferUsageFlags.TransferDstBit,
         EVulkanFrameDataLane.Readback => BufferUsageFlags.TransferDstBit,
         EVulkanFrameDataLane.Uniform => BufferUsageFlags.UniformBufferBit | BufferUsageFlags.TransferSrcBit | BufferUsageFlags.TransferDstBit,
-        EVulkanFrameDataLane.Storage => BufferUsageFlags.StorageBufferBit | BufferUsageFlags.TransferSrcBit | BufferUsageFlags.TransferDstBit,
+        EVulkanFrameDataLane.Storage => BufferUsageFlags.StorageBufferBit | BufferUsageFlags.TransferSrcBit | BufferUsageFlags.TransferDstBit |
+            (VulkanNativeShadingRootPolicy.UsesAddress ? BufferUsageFlags.ShaderDeviceAddressBit : 0),
         // The immutable advanced-scene publication includes canonical packed
         // vertex and index atlases in the same mapped chunk as its descriptor
         // tables. Visibility raster therefore consumes this lane through all

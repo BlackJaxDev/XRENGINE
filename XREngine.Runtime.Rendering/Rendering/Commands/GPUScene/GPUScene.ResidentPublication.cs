@@ -5,6 +5,11 @@ public partial class GPUScene
     private AdvancedGpuScenePublisher _advancedScenePublisher = new();
     private bool _advancedScenePublisherDisposed;
     private AdvancedGlobalResourceCapture _advancedGlobalResources;
+    // A capture is consumed by precisely one requested publication. Retaining the
+    // capture itself lets the completed publication's later frame package inspect
+    // its global rows, while this bit prevents a later standalone swap from
+    // accidentally reusing an older world-swap capture.
+    private bool _hasAdvancedGlobalResourceCapture;
     private int _advancedPublicationRequested;
 
     /// <summary>
@@ -56,7 +61,31 @@ public partial class GPUScene
         => System.Threading.Interlocked.Exchange(ref _advancedPublicationRequested, 1);
 
     public void SetAdvancedGlobalResources(in AdvancedGlobalResourceCapture capture)
-        => _advancedGlobalResources = capture;
+    {
+        _advancedGlobalResources = capture;
+        _hasAdvancedGlobalResourceCapture = true;
+    }
+
+    /// <summary>
+    /// Supplies global rows captured for an explicit output identity. The scene
+    /// publication must use the same identity; accepting a mismatched capture
+    /// would produce a package whose scene and global-resource generations disagree.
+    /// </summary>
+    public void SetAdvancedGlobalResources(
+        ulong canonicalFrameId,
+        in AdvancedGlobalResourceCapture capture)
+    {
+        if (canonicalFrameId == 0UL)
+            throw new ArgumentOutOfRangeException(nameof(canonicalFrameId), "An explicit canonical frame ID must be nonzero.");
+        if (capture.FrameId != canonicalFrameId)
+        {
+            throw new ArgumentException(
+                "The advanced global-resource capture does not belong to the requested canonical frame.",
+                nameof(capture));
+        }
+
+        SetAdvancedGlobalResources(in capture);
+    }
 
     public bool TryGetCanonicalAdvancedPreparationHandles(
         uint commandIndex,
@@ -113,9 +142,25 @@ public partial class GPUScene
         if (System.Threading.Interlocked.Exchange(ref _advancedPublicationRequested, 0) == 0)
             return;
 
+        AdvancedGlobalResourceCapture globalResources = _advancedGlobalResources;
+        ulong frameId;
+        if (_hasAdvancedGlobalResourceCapture)
+        {
+            _hasAdvancedGlobalResourceCapture = false;
+            frameId = globalResources.FrameId;
+        }
+        else
+        {
+            // GPUScene can be swapped without RuntimeWorldRenderer. That legacy
+            // standalone path has no world capture, so it retains ambient identity
+            // and an explicitly empty global-resource cohort.
+            frameId = RuntimeEngine.Rendering.State.RenderFrameId;
+            globalResources = AdvancedGlobalResourceCapture.Empty(frameId);
+        }
+
         _advancedScenePublisher.Publish(
             this,
-            RuntimeEngine.Rendering.State.RenderFrameId,
-            in _advancedGlobalResources);
+            frameId,
+            in globalResources);
     }
 }

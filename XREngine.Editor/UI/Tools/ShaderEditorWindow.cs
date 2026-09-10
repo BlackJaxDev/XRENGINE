@@ -660,8 +660,12 @@ public sealed class ShaderEditorWindow
         ImGui.SetNextItemWidth(120f);
         if (ImGui.BeginCombo("##ShaderEditorCrossLanguage", _crossSourceLanguage.ToString()))
         {
+            // This picker targets the legacy synchronous GLSL/HLSL cross-compiler; native Slang is selected through XRShader.SourceLanguage/request APIs.
             foreach (ShaderSourceLanguage language in Enum.GetValues<ShaderSourceLanguage>())
             {
+                if (language == ShaderSourceLanguage.Slang)
+                    continue;
+
                 bool selected = _crossSourceLanguage == language;
                 if (ImGui.Selectable(language.ToString(), selected))
                 {

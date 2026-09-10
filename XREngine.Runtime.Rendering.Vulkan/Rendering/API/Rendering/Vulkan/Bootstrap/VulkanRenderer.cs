@@ -448,6 +448,8 @@ public sealed partial class VulkanRenderer :
         => _commandRuntime.ReleaseAdvancedVisibilityFamilyOwner(in reservation);
     public override AdvancedOutputReservationDiagnosticsSnapshot CaptureAdvancedOutputReservationDiagnostics()
         => _commandRuntime.CaptureAdvancedOutputReservationDiagnostics();
+    public VulkanNativeShadingRootDiagnosticSnapshot CaptureNativeShadingRootDiagnostics()
+        => _commandRuntime.CaptureNativeShadingRootDiagnostics();
     public bool TryBeginOrderedComputeBatch() => _frameLoop.TryBeginOrderedComputeBatch();
     public void CommitOrderedComputeBatch() => _frameLoop.CommitOrderedComputeBatch();
     public void RollbackOrderedComputeBatch() => _frameLoop.RollbackOrderedComputeBatch();

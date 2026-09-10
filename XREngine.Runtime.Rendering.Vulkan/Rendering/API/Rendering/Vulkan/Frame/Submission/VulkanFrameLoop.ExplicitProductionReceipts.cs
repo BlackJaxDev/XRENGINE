@@ -96,6 +96,9 @@ internal sealed partial class VulkanFrameLoop
             !TryGetExplicitProductionSubmissionCompletion(in receipt, out bool completed) || !completed)
             return false;
 
+        // Readback reuses the target's pool and fence. Release the completed
+        // split submissions before that fence can be reset or reused.
+        _commandRuntime.CompleteAdvancedQueueOverlapSlot(receipt.ExpectedFrameSlot, waitForFinal: true);
         color = RequireExplicitFrameTarget().ReadbackLastSubmittedColor(maxByteCount, sourceLayout);
         return true;
     }

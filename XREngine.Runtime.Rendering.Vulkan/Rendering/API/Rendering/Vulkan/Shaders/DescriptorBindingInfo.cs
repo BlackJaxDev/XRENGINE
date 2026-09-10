@@ -27,7 +27,9 @@ internal readonly record struct DescriptorBindingInfo(
     string Name,
     ImageViewType? ExpectedImageViewType = null,
     EVulkanDescriptorBindingRequirement Requirement =
-        EVulkanDescriptorBindingRequirement.Required)
+        EVulkanDescriptorBindingRequirement.Required,
+    EVulkanDescriptorOwner? DeclaredOwner = null,
+    EVulkanBindingFrequency? DeclaredFrequency = null)
 {
     internal static DescriptorBindingInfo NormalizeKnownMetadata(
         DescriptorBindingInfo binding)

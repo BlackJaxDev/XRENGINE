@@ -93,6 +93,13 @@ public sealed unsafe partial class VulkanExplicitTargetRendererHost :
             device.HasDebugMessenger);
     }
 
+    /// <summary>Captures native opaque shading root ABI recording counters.</summary>
+    public VulkanNativeShadingRootDiagnosticSnapshot CaptureNativeShadingRootDiagnostics()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        return _renderer.CaptureNativeShadingRootDiagnostics();
+    }
+
     public string AdapterName
     {
         get

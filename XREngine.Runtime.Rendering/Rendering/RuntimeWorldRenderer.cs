@@ -106,7 +106,27 @@ public sealed partial class RuntimeWorldRenderer : IRuntimeRenderWorld, IRuntime
 
     public void GlobalCollectVisible() => Lights.CollectVisibleItems();
 
+    /// <summary>
+    /// Publishes world-owned render buffers using the ambient engine frame identity.
+    /// This remains the normal window-driven swap path.
+    /// </summary>
     public void GlobalSwapBuffers()
+        => GlobalSwapBuffersCore(RuntimeEngine.Rendering.State.RenderFrameId, requireCanonicalFrameId: false);
+
+    /// <summary>
+    /// Publishes world-owned render buffers for an explicitly scheduled output frame.
+    /// Manual output lifecycles use this before they enter <c>BeginRenderFrame</c>,
+    /// when the ambient engine frame identity has not advanced yet.
+    /// </summary>
+    public void GlobalSwapBuffers(ulong canonicalFrameId)
+    {
+        if (canonicalFrameId == 0UL)
+            throw new ArgumentOutOfRangeException(nameof(canonicalFrameId), "An explicit canonical frame ID must be nonzero.");
+
+        GlobalSwapBuffersCore(canonicalFrameId, requireCanonicalFrameId: true);
+    }
+
+    private void GlobalSwapBuffersCore(ulong frameId, bool requireCanonicalFrameId)
     {
         ApplyRenderMatrixChanges();
         RenderableMesh.ProcessPendingRenderMatrixUpdates();
@@ -115,10 +135,12 @@ public sealed partial class RuntimeWorldRenderer : IRuntimeRenderWorld, IRuntime
         Lights.SwapBuffers();
         if (VisualScene.GPUCommands.AdvancedPublicationRequested)
         {
-            VisualScene.GPUCommands.SetAdvancedGlobalResources(
-                AdvancedGlobalResourceCapture.Capture(
-                    RuntimeEngine.Rendering.State.RenderFrameId,
-                    this));
+            AdvancedGlobalResourceCapture globalResources =
+                AdvancedGlobalResourceCapture.Capture(frameId, this);
+            if (requireCanonicalFrameId)
+                VisualScene.GPUCommands.SetAdvancedGlobalResources(frameId, in globalResources);
+            else
+                VisualScene.GPUCommands.SetAdvancedGlobalResources(in globalResources);
         }
         VisualScene.GlobalSwapBuffers();
         RuntimeEngine.Rendering.Stats.SkinnedBounds.SwapSkinnedBoundsStats();

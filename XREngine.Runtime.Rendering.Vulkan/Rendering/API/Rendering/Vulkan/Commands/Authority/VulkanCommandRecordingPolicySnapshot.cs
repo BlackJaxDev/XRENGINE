@@ -22,7 +22,8 @@ internal readonly record struct VulkanCommandRecordingPolicySnapshot(
     bool AllowSecondaryDeferral = true,
     bool AllowIndirectSecondaryArtifactReuse = false,
     EVulkanQueueOverlapMode QueueOverlapMode = EVulkanQueueOverlapMode.GraphicsOnly,
-    bool AllowAdvancedQueueOverlap = false)
+    bool AllowAdvancedQueueOverlap = false,
+    bool InitializeOutputColor = false)
 {
     /// <summary>Present-now outputs must either record fresh work or fail explicitly.</summary>
     internal bool IsPresentNow => WorkClass == ERenderOutputWorkClass.PresentNow;

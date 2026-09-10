@@ -73,6 +73,14 @@ internal sealed partial class VulkanFrameLoop
         bool frameDataSlotPrepared = false;
         CommandBuffer commandBuffer = default;
         ulong frameNumber = unchecked((ulong)OutputRuntime.NextExplicitTargetFrameNumber());
+        long frameStart = Stopwatch.GetTimestamp();
+        VulkanFrameTrace frameTrace = _frameTelemetry.BeginFrame(new VulkanFrameRootIdentity(
+            frameNumber,
+            frameNumber,
+            -1,
+            frameStart,
+            new VulkanFrameOutputIdentity(-1, 0)));
+        EVulkanFrameOutcome frameOutcome = EVulkanFrameOutcome.Failed;
         VulkanAcceptedFramePlan? acceptedPlan = null;
         ulong engineFrameId = 0UL;
         EVulkanQueueOverlapMode requestedQueueMode = RuntimeEngine.EffectiveSettings.VulkanQueueOverlapMode;
@@ -97,7 +105,9 @@ internal sealed partial class VulkanFrameLoop
             if ((uint)planIndex >= (uint)_explicitPrimaryPlans.Length)
                 throw new InvalidOperationException(
                     $"Explicit frame slot {planIndex} has no reusable primary plan.");
+            long resourcePrepareStart = Stopwatch.GetTimestamp();
             PublishFrameSlot(planIndex);
+            frameTrace.Identity = frameTrace.Identity with { FrameSlot = planIndex };
             uint frameSlot = preview.ExpectedFrameSlotIndex;
             _commandRuntime.CompleteAdvancedQueueOverlapSlot(frameSlot);
             ResourceRuntime.ResidentTemplateFrameSlotLifetimes.ReleaseFrameSlot(
@@ -132,10 +142,16 @@ internal sealed partial class VulkanFrameLoop
                     $"{frameSlot}, but its previous frame-data ownership was not " +
                     "ready to reopen before logical collection.");
             }
+            frameTrace.RecordStage(
+                EVulkanFrameStage.ResourcePrepare,
+                Stopwatch.GetElapsedTime(resourcePrepareStart),
+                EVulkanFrameIntervalClass.Work,
+                EVulkanFrameOutcome.Completed);
 
             // The caller observes the same output description it did before this
             // split, but logical collection/readiness now runs before any target
             // image, semaphore, or WSI obligation is held.
+            long planBuildStart = Stopwatch.GetTimestamp();
             _explicitProductionOutputContract = CreateExplicitProductionOutputContract(
                 in preview, frameNumber, backgroundCapture);
             RenderFrameOutputDescription previewOutput = preview.Output with
@@ -148,6 +164,12 @@ internal sealed partial class VulkanFrameLoop
                 in preview,
                 frameNumber);
             engineFrameId = acceptedPlan.SceneEpoch;
+            frameTrace.SetRenderFrameIdentity(engineFrameId);
+            frameTrace.RecordStage(
+                EVulkanFrameStage.PlanBuild,
+                Stopwatch.GetElapsedTime(planBuildStart),
+                EVulkanFrameIntervalClass.Work,
+                EVulkanFrameOutcome.Completed);
 
             if (probe is
                 {
@@ -156,6 +178,7 @@ internal sealed partial class VulkanFrameLoop
             {
                 ExecuteAfterLogicalSealBufferStressProbe(probe, acceptedPlan);
             }
+            long nativeBindingValidationStart = Stopwatch.GetTimestamp();
             try
             {
                 ValidateExplicitProductionLogicalPlanNativeBufferBindings(acceptedPlan);
@@ -165,11 +188,24 @@ internal sealed partial class VulkanFrameLoop
                 MarkAfterLogicalSealBufferStressProbeRejectedBeforeAcquire(exception);
                 throw;
             }
+            frameTrace.RecordStage(
+                EVulkanFrameStage.ResourcePrepare,
+                Stopwatch.GetElapsedTime(nativeBindingValidationStart),
+                EVulkanFrameIntervalClass.Work,
+                EVulkanFrameOutcome.Completed);
 
+            long acquireStart = Stopwatch.GetTimestamp();
             lease = target.AcquireFrameTarget(out commandBuffer);
             acquired = true;
             if (!lease.IsValid)
                 throw new InvalidOperationException($"Vulkan target '{FrameExecutionLabel}' returned an invalid frame-target lease.");
+            frameTrace.SetOutputIdentity(
+                unchecked((int)lease.Target.FrameSlotIndex),
+                lease.Target.TargetGeneration);
+            // Acquire proves the previous use of this slot has completed. Consume
+            // its production timestamps before recording resets the query pool.
+            ResourceRuntime.NotifyTimingQueryPoolsCompleted(
+                _frameTelemetry.SampleFrameTimingQueries(Api, _deviceContext.Device, planIndex));
             if (!preview.IsCompatible(in lease))
             {
                 throw new InvalidOperationException(
@@ -184,7 +220,14 @@ internal sealed partial class VulkanFrameLoop
                 _commandRuntime,
                 ResourceRuntime,
                 IsDeviceLost);
+            frameTrace.RecordStage(
+                EVulkanFrameStage.OutputAcquire,
+                Stopwatch.GetElapsedTime(acquireStart),
+                EVulkanFrameIntervalClass.Driver,
+                EVulkanFrameOutcome.Completed,
+                EVulkanFrameWaitReason.Driver);
 
+            long commandRecordStart = Stopwatch.GetTimestamp();
             VulkanPrimaryCommandRecordingResult recording = RecordAcceptedExplicitPrimary(
                 in lease,
                 commandBuffer,
@@ -197,6 +240,14 @@ internal sealed partial class VulkanFrameLoop
                     $"The production render graph could not record against {FrameExecutionLabel}: " +
                     (recording.Reason ?? recording.Disposition.ToString()));
             }
+            TimeSpan commandRecordElapsed = Stopwatch.GetElapsedTime(commandRecordStart);
+            frameTrace.RecordStage(
+                EVulkanFrameStage.CommandRecord,
+                commandRecordElapsed,
+                EVulkanFrameIntervalClass.Work,
+                EVulkanFrameOutcome.Completed);
+            frameTrace.RecordCommandBuffer += commandRecordElapsed;
+            frameTrace.RecordSceneCommandBuffer += commandRecordElapsed;
             acceptedPlan.TransferSubmissionMarkerOwnershipToCommandBuffer();
             if (recording.SwapchainLayoutAfterCommandBuffer != lease.Target.RequiredFinalColorLayout)
             {
@@ -212,6 +263,7 @@ internal sealed partial class VulkanFrameLoop
                 })
                 ExecuteAfterNativeRecordingBufferStressProbe(probe, recording.CommandBuffer, recordedContract);
 
+            long submitPrepareStart = Stopwatch.GetTimestamp();
             ulong graphicsSignalValue;
             mappedFrameSlotPrepared = mappedFrameArena is null ||
                 mappedFrameArena.TryPrepareFrameSlotForSubmission(frameSlot, mappedFrameGeneration);
@@ -225,6 +277,11 @@ internal sealed partial class VulkanFrameLoop
                     $"FrameDataPrepared={frameDataSlotPrepared}. " +
                     $"MappedState={mappedFrameArena?.DescribeSubmissionPreparationRejection(frameSlot, mappedFrameGeneration) ?? "not-enabled"}");
             }
+            frameTrace.RecordStage(
+                EVulkanFrameStage.SubmitPrepare,
+                Stopwatch.GetElapsedTime(submitPrepareStart),
+                EVulkanFrameIntervalClass.Work,
+                EVulkanFrameOutcome.Completed);
 
             CommandBuffer submittedCommandBuffer = recording.CommandBuffer;
             bool usesQueueOverlap = _commandRuntime.TryGetAdvancedQueueOverlapSlot(submittedCommandBuffer, out _);
@@ -235,6 +292,7 @@ internal sealed partial class VulkanFrameLoop
                     submittedCommandBuffer,
                     FrameSubmissionKind);
             VulkanSubmissionReceipt receipt;
+            long queueSubmitStart = Stopwatch.GetTimestamp();
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope(FrameSubmissionProfileName))
             using (VulkanCpuStageScope cpuStage = new(_frameTelemetry, EVulkanCpuStage.Submission))
             {
@@ -260,8 +318,19 @@ internal sealed partial class VulkanFrameLoop
                     frameDataSlotPrepared = false;
                     _commandRuntime.Synchronization._frameSlotTimelineValues![planIndex] = graphicsSignalValue;
                     target.NotifyFrameSubmitted(in lease);
+                    _frameTelemetry.MarkFrameTimingSubmitted(planIndex, engineFrameId);
                 }
             }
+            TimeSpan queueSubmitElapsed = Stopwatch.GetElapsedTime(queueSubmitStart);
+            frameTrace.RecordStage(
+                EVulkanFrameStage.QueueSubmit,
+                queueSubmitElapsed,
+                EVulkanFrameIntervalClass.Driver,
+                receipt.SubmissionAccepted
+                    ? EVulkanFrameOutcome.Completed
+                    : EVulkanFrameOutcome.Failed,
+                EVulkanFrameWaitReason.Driver);
+            frameTrace.SubmitQueue += queueSubmitElapsed;
             if (!receipt.SubmissionAccepted)
             {
                 if (receipt.Result == Result.ErrorDeviceLost)
@@ -286,6 +355,7 @@ internal sealed partial class VulkanFrameLoop
             if (probe is not null)
                 MarkExplicitProductionBufferStressSubmitted(in _lastExplicitProductionReceipt);
 
+            long outputCompleteStart = Stopwatch.GetTimestamp();
             ResourceRuntime.Uploads.PublicationState.QueueRecordedForTimeline(
                 graphicsSignalValue,
                 FrameSubmissionKind);
@@ -301,6 +371,12 @@ internal sealed partial class VulkanFrameLoop
                     ? recordedContract : null);
             if (probe is null)
                 ObserveExplicitProductionBufferStressSlotReuse(in _lastExplicitProductionReceipt);
+            frameTrace.RecordStage(
+                EVulkanFrameStage.OutputComplete,
+                Stopwatch.GetElapsedTime(outputCompleteStart),
+                EVulkanFrameIntervalClass.Work,
+                EVulkanFrameOutcome.Completed);
+            frameOutcome = EVulkanFrameOutcome.Completed;
             return _lastExplicitProductionReceipt;
         }
         catch (Exception)
@@ -322,6 +398,12 @@ internal sealed partial class VulkanFrameLoop
             if (acquired)
                 target.AbortFrameTarget(in lease, submitted);
             throw;
+        }
+        finally
+        {
+            frameTrace.PublishAfterFrame(
+                Stopwatch.GetElapsedTime(frameStart),
+                frameOutcome);
         }
     }
 
@@ -797,7 +879,9 @@ internal sealed partial class VulkanFrameLoop
             AllowIndirectSecondaryArtifactReuse:
                 acceptedPlan.OutputContract.WorkClass == ERenderOutputWorkClass.Background,
             QueueOverlapMode: requestedQueueMode,
-            AllowAdvancedQueueOverlap: TargetExecutionMode == RenderExecutionMode.Presentationless);
+            AllowAdvancedQueueOverlap: TargetExecutionMode == RenderExecutionMode.Presentationless,
+            InitializeOutputColor: TargetExecutionMode == RenderExecutionMode.Presentationless &&
+                acceptedPlan.OutputContract.ReadinessPolicy == ERenderOutputReadinessPolicy.BlockForExact);
         VulkanPreparedPrimaryAuthority authority = new(
             recordingTarget,
             CapturePreparedRenderTargetSnapshot(
@@ -841,6 +925,7 @@ internal sealed partial class VulkanFrameLoop
                     arena, checked((int)lease.Target.FrameSlotIndex))
                 : null,
             ExcludeDesktopSwapchainBarriers = true,
+            AcceptedFramePlan = acceptedPlan,
         };
         return _commandRuntime.RecordPrimary(in input);
     }

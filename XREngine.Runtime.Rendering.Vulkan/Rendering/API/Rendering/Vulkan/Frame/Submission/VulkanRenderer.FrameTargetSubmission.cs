@@ -320,9 +320,14 @@ internal sealed partial class VulkanFrameLoop
         try
         {
             _commandRuntime.SubmitAdvancedQueueOverlapPrefixes(overlap, in diagnosticContext);
+            VulkanSubmissionDiagnosticContext finalDiagnostics = diagnosticContext with
+            {
+                SubmissionKind = "AdvancedQueueOverlapFinal",
+                FrameOpKind = "AdvancedQueueOverlap.G2",
+            };
             receipt = SubmitFrameTargetLeaseCore(in lease, commandBuffers, commandBufferCount,
                 signalGraphicsTimeline, minimumGraphicsTimelineSignalValue,
-                out graphicsTimelineSignalValue, in diagnosticContext, caller, overlap.Classified);
+                out graphicsTimelineSignalValue, in finalDiagnostics, caller, overlap.Classified);
             return receipt;
         }
         finally

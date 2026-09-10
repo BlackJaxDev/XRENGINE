@@ -4,10 +4,6 @@ namespace XREngine.Rendering.Vulkan;
 
 internal sealed partial class VulkanCommandRuntime
 {
-    // Do not expose the executor until Final's image-access journal and the
-    // explicit canonical-publication bootstrap pass native runtime validation.
-    private static bool AdvancedQueueOverlapRuntimeValidated => false;
-
     /// <summary>
     /// Lowers one exact mono Advanced output to an explicitly owned four-primary
     /// execution. Other output families retain their independently validated path.
@@ -17,8 +13,6 @@ internal sealed partial class VulkanCommandRuntime
         EVulkanQueueOverlapMode mode = state.Policy.QueueOverlapMode;
         if (mode is EVulkanQueueOverlapMode.Auto or EVulkanQueueOverlapMode.GraphicsOnly)
             return;
-        if (!AdvancedQueueOverlapRuntimeValidated)
-            throw new NotSupportedException("The Advanced multi-queue executor is implemented but disabled pending canonical-publication, image-access, and native runtime validation. Select GraphicsOnly explicitly to run the validated path.");
         if (mode != EVulkanQueueOverlapMode.GraphicsCompute ||
             !state.Policy.AllowAdvancedQueueOverlap ||
             !DeviceContext.HasSecondaryGraphicsQueue ||
@@ -71,8 +65,8 @@ internal sealed partial class VulkanCommandRuntime
         // once, before Ready, instead of racing identical transitions on two queues.
         var closure = state.Ops.GetAdvancedVisibility(slot.ClassificationOperation).NativeComputeClosure
             ?? throw new VulkanPlanPreconditionException("The classification resource closure was lost before recording.");
-        TransitionNativeInput(state.CommandBuffer, closure.Identity, 0);
-        TransitionNativeInput(state.CommandBuffer, closure.Metadata, 0);
+        TransitionNativeSharedInput(state.CommandBuffer, closure.Identity, 0);
+        TransitionNativeSharedInput(state.CommandBuffer, closure.Metadata, 0);
         EndAdvancedQueueOverlapSegment(ref state);
 
         BeginAdvancedQueueOverlapSegment(ref state, slot.Classification, slot.Prefix, "Advanced.ClassificationQueue");
@@ -91,6 +85,7 @@ internal sealed partial class VulkanCommandRuntime
             return;
         EndAdvancedQueueOverlapSegment(ref state);
         BeginAdvancedQueueOverlapSegment(ref state, slot.Final, slot.Independent, "Advanced.ShadeAndOutput");
+        InitializeExplicitOutputColor(ref state);
     }
 
     private void EndAdvancedQueueOverlapSegment(scoped ref PrimaryCommandBufferRecordingState state)

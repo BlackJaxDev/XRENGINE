@@ -379,6 +379,8 @@ namespace XREngine.Rendering.OpenGL
 
             private string ResolveFullSourceCore(bool separableProgram)
             {
+                if (Data.SourceLanguage != ShaderSourceLanguage.Glsl)
+                    throw new NotSupportedException($"OpenGL requires an authored GLSL shader counterpart; '{Data.Name}' is {Data.SourceLanguage}.");
                 Data.TryGetOptimizedSource(out string src);
                 return GLShaderSourceCompatibility.InjectMissingGLPerVertexBlocks(src, Mode, separableProgram);
             }

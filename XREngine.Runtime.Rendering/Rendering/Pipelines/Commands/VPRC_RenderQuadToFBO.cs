@@ -50,7 +50,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         /// </summary>
         public bool RenderToSourceFrameBuffer { get; set; }
         /// <summary>
-        /// If true, the render area will match the destination FBO's dimensions.
+        /// If true, the render area and scissor match the destination FBO's dimensions.
         /// </summary>
         public bool MatchDestinationRenderArea { get; set; }
         /// <summary>
@@ -93,7 +93,7 @@ namespace XREngine.Rendering.Pipelines.Commands
         /// </summary>
         /// <param name="sourceQuadFBOName">The name of the source FBO.</param>
         /// <param name="destinationFBOName">The name of the destination FBO.</param>
-        /// <param name="matchDestinationRenderArea">If true, the render area will match the destination FBO's dimensions.</param>
+        /// <param name="matchDestinationRenderArea">If true, the render area and scissor match the destination FBO's dimensions.</param>
         /// <returns>The current instance of <see cref="VPRC_RenderQuadToFBO"/>.</returns>
         public VPRC_RenderQuadToFBO SetTargets(string sourceQuadFBOName, string? destinationFBOName = null, bool matchDestinationRenderArea = false)
         {

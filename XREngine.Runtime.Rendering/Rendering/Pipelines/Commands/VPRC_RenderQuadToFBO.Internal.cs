@@ -193,6 +193,12 @@ namespace XREngine.Rendering.Pipelines.Commands
             using var renderAreaScope = MatchDestinationRenderArea
                 ? activeInstance.RenderState.PushRenderArea(renderWidth, renderHeight)
                 : default;
+            // Matching a full destination also replaces the inherited scissor.
+            // Otherwise an internal-resolution crop can preserve old pixels in
+            // a larger retained post-process target after resize or upscaling.
+            using var cropAreaScope = MatchDestinationRenderArea
+                ? activeInstance.RenderState.PushCropArea(renderWidth, renderHeight)
+                : default;
 
             if (MatchDestinationRenderArea)
             {

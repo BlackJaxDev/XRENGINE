@@ -53,7 +53,7 @@ internal sealed partial class VulkanCommandRuntime
     /// is called after the caller has established its normal frame-slot
     /// completion point; the independent queue still needs an explicit fence.
     /// </summary>
-    internal unsafe void CompleteAdvancedQueueOverlapSlot(uint frameSlot)
+    internal unsafe void CompleteAdvancedQueueOverlapSlot(uint frameSlot, bool waitForFinal = false)
     {
         VulkanAdvancedQueueOverlapSlot?[]? slots = _advancedQueueOverlapSlots;
         if (slots is null || frameSlot >= (uint)slots.Length ||
@@ -67,6 +67,11 @@ internal sealed partial class VulkanCommandRuntime
         if (slot.FinalAccepted)
         {
             Result finalStatus = Api.GetFenceStatus(DeviceContext.Device, slot.FinalFence);
+            if (waitForFinal && finalStatus is Result.NotReady or Result.Timeout)
+            {
+                Fence finalFence = slot.FinalFence;
+                finalStatus = Api.WaitForFences(DeviceContext.Device, 1, &finalFence, true, ulong.MaxValue);
+            }
             if (finalStatus != Result.Success)
             {
                 if (finalStatus is not Result.NotReady and not Result.Timeout)

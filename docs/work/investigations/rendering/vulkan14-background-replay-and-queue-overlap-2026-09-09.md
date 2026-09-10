@@ -43,21 +43,27 @@ synchronization validation enabled, completed these runs:
 
 | Run | Completed frames | Native indirect reuses | Validation errors |
 | --- | ---: | ---: | ---: |
-| Background, static/material/root/buffer/viewport changes | 225 | 69 | 0 |
+| Background, static/material/root/buffer/viewport changes | 225 | 70 | 0 |
 | Matching foreground recording control | 225 | 0 | 0 |
 
-The foreground control rejected replay 223 times despite complete matching
-keys. This proves that the background contract grants the permission and that
-foreground policy remains effective. Both runs read back completed receipts;
-the inspected material image changes from magenta to cyan. Four startup Vulkan
-loader registry warnings occurred per run; no rendering validation warnings were
-reported. These counts establish native replay, not a frame-time speedup.
+The foreground control rejected replay despite complete matching keys. This
+proves that the background contract grants the permission and that foreground
+policy remains effective. Both runs read back completed receipts; the inspected
+material image changes from magenta to cyan. Standard and synchronization
+validation reported zero errors in each run; each had four startup Vulkan loader
+registry warnings and no rendering validation warnings. These counts establish
+native replay, not a frame-time speedup or default-policy promotion.
 
-Image inspection found retained pixels outside a shrunken viewport in both
-paths. Whole-output resize freshness remains open at the user's wrap-up request;
-these initial runs alone do not close E2. The compared image is
-`reports/replay-controls.png` under the evidence root. Material mutation,
-indirect-buffer replacement and restored viewport captures were inspected too.
+The final-scissor comparison, `reports/final-scissor-controls.png`, confirms
+fresh output for material mutation, root and buffer invalidation, an 800×450
+viewport shrink, and a 960×540 restore; the old 90-row retained-pixel band is
+gone. RenderDoc previously isolated the fault in `resize_capture.rdc`: at pixel
+300,50, EID 165 (`scissorClipped`) inherited an old `PostProcessFBO` scissor
+after `MatchDestinationRenderArea` updated the viewport. The earlier fixture
+target was clean. `VPRC_RenderQuadToFBO` now scopes the crop to its destination,
+and the full-resolution viewport fallback uses the explicit `FinalOutput`
+extent. An explicit whole-physical-extent clear alone does not attest a missing
+terminal writer. E2 is complete.
 
 ## F candidate and native execution
 
@@ -91,62 +97,112 @@ are retained separately by every command buffer that uses them.
 
 This is a selected mono presentationless Advanced executor. The generic
 cross-family frame-graph support gate remains closed. `GraphicsComputeTransfer`,
-desktop/XR and other output families reject explicit unsupported requests.
-`Auto` remains graphics-only pending a measured net benefit. Submission receipts
-report requested/executed modes and the actual native frame submission count.
+desktop/XR, and other output families reject explicit unsupported requests.
+The explicit transfer request reports `NotSupported` with zero Vulkan validation
+errors. `Auto` resolves to graphics-only because the measured split regressed;
+the receipt reports requested/executed modes and native submission count.
 
-The manual RenderBench lifecycle now finalizes its already prepared canonical
-GPU-scene package after the world publishes its swapped buffers. It preserves
-package identity/generation and collection membership; it does not fabricate
-readiness or rerun package preparation. The next graphics-only bootstrap run
-reached native preparation but failed with:
+The formerly pending publication and final-access issues are resolved. Manual
+collection carries the explicit nonzero output frame identity through world swap,
+global-resource capture, canonical scene publication, and finalization of the
+already prepared package. It does not clamp zero, rerun world swap, or reprepare
+the package. `AcceptedFramePlan` now propagates through the split path; split
+preparation occurs after `TryPrepare...`; and G2 records its real Identity and
+Metadata `General`/read accesses, barriers, and completion journal. Readback
+prefix completion occurs before pool/fence reuse, shutdown retires split work
+before borrowed target fences are destroyed, and production timing samples only
+completed slots. Temporary hooks and logging were removed.
 
-> Authoring-owned canonical views require a valid scene publication generation.
+## F validation and measured disposition
 
-The first world swap currently stamps the publication with ambient
-`RuntimeEngine.Rendering.State.RenderFrameId`, which is zero before the manual
-lifecycle calls `BeginRenderFrame`. The explicit output already owns a nonzero
-frame identity; publication must use the appropriate frame authority without
-clamping zero, relaxing readiness, or performing a second world swap. This fix
-was not applied before the user's wrap-up request.
+`advanced-control-lit` and `advanced-split-lit` each completed 140 frames with
+normal lit Advanced shading. Standard and synchronization validation reported
+zero errors; each run reported four Vulkan loader warnings. The native one-submit
+and four-submit readbacks were byte-identical, and the inspected
+`reports/advanced-split-lit/output.png` showed visible lit
+geometry.
 
-Final review also identified missing final-segment image access publication:
-G2 inherits entry layouts from G1, but must record its own real reads/writes for
-Identity, Metadata, Depth, AO, HDR, Velocity, Reactive and ShadingDiagnostics.
-Re-emit their exact transitions after the split, or record equivalent accesses
-in G2's journal. Do not copy inherited entries into fake exit states.
+`advanced-mode-changes` completed 80 frames across three slots, switching
+Compute → Only → Auto → Compute for 20 frames each. It passed with zero errors;
+Both `GraphicsOnly` and `Auto` selected one submission; `GraphicsCompute`
+selected four. A separate `advanced-auto` run completed 16 frames with one
+submission per frame. `advanced-gateway-recovery-g1` and `advanced-gateway-recovery-g2` each
+injected exactly one pre-native gateway rejection after validation and pin
+acquisition. G1 followed accepted G0/C; G2 followed accepted G0/C/G1. The
+same-host recovery completed 40 frames with four submissions per frame, with readback and
+dispose/exit succeeding and zero errors.
 
-The candidate executor is therefore **disabled** by
-`AdvancedQueueOverlapRuntimeValidated`; an explicit multi-queue request reports
-the unfinished validation instead of silently running graphics-only. Enable it
-only while completing the identified fixes and native validation.
+The paired timing protocol used six sequential alternating runs,
+C1/S1/S2/C2/C3/S3, with 80 warm-up and 400 measured frames per run at 1280×720,
+three slots, RTX 3090 / driver 610.88, DescriptorIndexing ShippingFast, and
+validation disabled. It used normal lit Advanced shading and no RenderDoc.
+There are 2,400 completed GPU samples with source identity. The exact table is
+in `reports/overlap-performance.txt` and `.json`:
 
-Consequently no four-submit frame, synchronization-valid split output, partial
-native submission failure, or paired performance comparison is claimed. F1 is
-complete; F2/F3 remain unchecked. Reviewed code is retained for continuation.
+| Metric (median of run medians) | Graphics-only | Split | Change |
+| --- | ---: | ---: | ---: |
+| GPU command-buffer timing | 0.939312 ms | 1.371344 ms | +45.9945% |
+| CPU timing | 7.42925 ms | 7.8792 ms | +6.06% |
+| Allocations | 322,296 bytes | 340,744 bytes | +5.72% |
 
-## Wrap-up validation and remaining sequence
+The graphics-only control GPU spread was 0.5236%. The CPU change is below the
+10.91% control spread, so it is not attributed to the split. All three paired
+outputs were byte-identical. GPU timing covers coarse G0-start through G2-end
+on the main queue; it does not prove physical overlap. An Nsight scheduling trace
+would be required for that claim.
 
-- The final Release RenderBench build passed with **zero warnings and errors**
-  (`logs/f-build-final.log`, elapsed 10.22 seconds).
-- `git diff --check` passed. Git emitted only existing LF/CRLF conversion notices.
-- No tests were added or changed. Runtime fixtures exercised the production
-  background/foreground paths; no native queue-overlap result was fabricated.
-- No editor or headset session was started for this continuation. All launched
-  runtime fixtures exited. No commit or push was made.
+F1–F3 are complete. The implementation remains opt-in and `Auto` remains
+graphics-only because the measured outcome is a regression, not a promotion.
+D4's rejected early-visibility candidate remains removed. Its next experiment
+requires a new boundary, stable timings, and scheduling-trace counter permission;
+there is no calendar prerequisite.
 
-Resume by fixing exact-output initialization for subrect rendering, the manual
-Advanced publication frame identity, and G2 image access publication. The clear
-belongs in the terminal output command buffer (G2 under F), must cover the whole
-physical extent, and must not count as a terminal producer. For publication,
-keep the ambient world-swap overload and add an explicit frame-ID overload; pair
-scene publication with the captured global-resource frame ID. Then run a small graphics-only and
-four-submit synchronization-validation comparison, inspect both outputs, cover
-multiple frame slots and rejection recovery, and finally collect stable paired
-CPU/GPU timings. Keep `Auto` graphics-only unless those measurements justify
-promotion. D4's rejected early-visibility candidate stays removed; its next
-experiment requires measured independent work and scheduling evidence, not a
-calendar date.
+## Durable RenderBench reproduction
+
+Reference `XREngine.RenderBench` from a local .NET 10 Windows harness, run from
+the repository root, and configure `XRE_VK_DESCRIPTOR_BACKEND=DescriptorIndexing`,
+`XRE_FORCE_MESH_SUBMISSION_STRATEGY=GpuIndirectZeroReadback` and
+`XRE_ZERO_READBACK_MATERIAL_DRAW_PATH=BindlessMaterialTable`. Enable
+`XRE_VULKAN_VALIDATION=1` and `XRE_VULKAN_SYNC_VALIDATION=1` for correctness;
+disable validation for timings. Keep harness outputs under `Build/_AgentValidation/`.
+The benchmark uses the production timing field, not the raw target-path timing:
+
+```csharp
+using System.Diagnostics;
+using XREngine;
+using XREngine.Data.Rendering;
+using XREngine.RenderBench;
+using XREngine.Rendering;
+using XREngine.Rendering.Vulkan;
+
+// options supplies Width=1280, Height=720, FrameSlots=3 and an output directory.
+using var scene = new RenderBenchProductionScene(
+    options, EOcclusionCullingMode.Disabled, useAdvancedPipeline: true);
+RuntimeEngine.Rendering.Settings.VulkanQueueOverlapMode = EVulkanQueueOverlapMode.GraphicsCompute;
+RuntimeEngine.Rendering.Settings.AdvancedRenderPipelineMode = EAdvancedRenderPipelineMode.Required;
+RuntimeEngine.Rendering.Stats.EnableTracking = true;
+VulkanExplicitProductionSubmissionReceipt receipt = default;
+for (int frame = 0; frame < 140; frame++)
+    receipt = scene.SubmitStep(1.0 / 60.0, backgroundCapture: true);
+VulkanGpuCommandBufferTimingSample timing =
+    RuntimeEngine.Rendering.Stats.Vulkan.LastCompletedVulkanFrameGpuCommandBufferTiming;
+if (!timing.IsCompleted)
+    throw new InvalidOperationException("No completed production timing sample.");
+var wait = Stopwatch.StartNew();
+while (!scene.Host.TryGetProductionSubmissionCompletion(in receipt, out bool completed) || !completed)
+{
+    if (wait.Elapsed.TotalSeconds > 15)
+        throw new TimeoutException("Production receipt did not complete.");
+    Thread.Sleep(1);
+}
+int byteCount = checked((int)(options.Width * options.Height * 4));
+if (!scene.Host.TryReadbackProductionColor(in receipt, byteCount, out byte[]? rgba))
+    throw new InvalidOperationException("Completed production readback failed.");
+```
+
+Submit enough frames to fill and retire every slot before sampling or reading
+back. `host.LastCompletedGpuFrameNanoseconds` is the raw target-path value and
+is not the production timing metric used above.
 
 ## Evidence locations
 
@@ -154,6 +210,16 @@ Disposable evidence for this continuation lives under
 `Build/_AgentValidation/20260909-202419-vulkan14-ef/`. Required findings and
 reproduction commands will be copied here; the implementation must not depend
 on ignored artifacts.
+
+Final verification completed: the uninstrumented source build passed with zero
+warnings and errors in 5.07 seconds (`logs/final-build.log`), and
+`advanced-final` completed 16 four-submit frames with zero errors plus successful
+readback and dispose/exit. `background-final-clean` completed 225 frames with
+70 native reuses and zero errors. Its six phase RGBA files were byte-identical to
+the visually verified final-scissor control. `git diff --check` passed, temporary
+hooks/log strings were absent, and no task-owned GPU processes remained. No tests
+were added or modified; validation used production runtime harnesses and a narrow
+build. No editor/headset session, commit or push was needed.
 
 The prior broker reasoning attempt failed because API billing had no available
 credit. Native agents are used for bounded independent architecture and

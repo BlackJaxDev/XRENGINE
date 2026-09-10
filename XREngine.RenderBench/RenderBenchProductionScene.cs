@@ -2,6 +2,7 @@ using System.Numerics;
 using System.Diagnostics;
 using System.Text;
 using XREngine;
+using XREngine.Components.Lights;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
@@ -135,6 +136,8 @@ public sealed class RenderBenchProductionScene : IDisposable
         try
         {
             _useAdvancedPipeline = useAdvancedPipeline;
+            if (_useAdvancedPipeline)
+                AddAdvancedFixtureDirectionalLight();
             // Register only the explicitly selected leaf. This installs its
             // streaming/compiler services, without enabling windows or XR.
             _explicitBackendRegistration = VulkanRendererBackendModule.Register(RuntimeRenderingHostServices.Factories.RendererBackends);
@@ -404,7 +407,10 @@ public sealed class RenderBenchProductionScene : IDisposable
                     with { Request = outputRequest };
                 viewport.CollectVisible(frameOutputPacing: pacing);
                 frame.CompleteCollect();
-                WorldHost.RenderWorld.GlobalSwapBuffers();
+                if (_useAdvancedPipeline)
+                    WorldHost.RenderWorld.GlobalSwapBuffers(output.SchedulingRequest.FrameId);
+                else
+                    WorldHost.RenderWorld.GlobalSwapBuffers();
                 if (_useAdvancedPipeline &&
                     !viewport.TryFinalizePreparedCanonicalFramePackageAfterWorldSwap())
                 {
@@ -585,6 +591,8 @@ public sealed class RenderBenchProductionScene : IDisposable
             .Append(pipeline.ActiveGeneration?.Key.ToString() ?? "<none>")
             .Append("; PendingGeneration=")
             .Append(pipeline.PendingGeneration?.Key.ToString() ?? "<none>")
+            .Append("; AdvancedAdmission=")
+            .Append(AbstractRenderer.Current?.GetAdvancedVisibilityFamilyAdmission().ToString() ?? "<no renderer>")
             .Append("; recentDebug=[");
         for (int index = firstRecentEntry; index < entries.Count; index++)
         {
@@ -712,6 +720,24 @@ public sealed class RenderBenchProductionScene : IDisposable
         model.Name = $"{name} Model";
         model.Model = new Model([new SubMesh(_boxMesh, material) { CullingBounds = _boxBounds }]);
         return node;
+    }
+
+    /// <summary>Provides deterministic direct light for normal Advanced fixture shading.</summary>
+    private void AddAdvancedFixtureDirectionalLight()
+    {
+        SceneNode node = World.Scenes[0].RootNodes[0].NewChild("Advanced Fixture Directional Light");
+        Transform transform = node.SetTransform<Transform>();
+        transform.Rotation = Quaternion.CreateFromYawPitchRoll(
+            XRMath.DegToRad(-120.0f),
+            XRMath.DegToRad(-55.0f),
+            0.0f);
+
+        DirectionalLightComponent light = node.AddComponent<DirectionalLightComponent>()!;
+        light.Name = "Advanced Fixture Directional Light";
+        light.Color = Vector3.One;
+        light.DiffuseIntensity = 1.0f;
+        light.Scale = new Vector3(100.0f, 100.0f, 900.0f);
+        light.CastsShadows = false;
     }
 
     private static XRMaterial[] CreateCandidateMaterials()

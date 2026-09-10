@@ -12,12 +12,19 @@ internal sealed class DescriptorSetLayoutBindingBuilder(DescriptorBindingInfo in
     public ShaderStageFlags StageFlags { get; private set; } = info.StageFlags;
     public ImageViewType? ExpectedImageViewType { get; private set; } = info.ExpectedImageViewType;
     public EVulkanDescriptorBindingRequirement Requirement { get; private set; } = info.Requirement;
+    public EVulkanDescriptorOwner? DeclaredOwner { get; private set; } = info.DeclaredOwner;
+    public EVulkanBindingFrequency? DeclaredFrequency { get; private set; } = info.DeclaredFrequency;
 
     public void Merge(DescriptorBindingInfo info)
     {
+        if ((DeclaredOwner.HasValue && info.DeclaredOwner.HasValue && DeclaredOwner != info.DeclaredOwner) ||
+            (DeclaredFrequency.HasValue && info.DeclaredFrequency.HasValue && DeclaredFrequency != info.DeclaredFrequency))
+            throw new InvalidOperationException($"Conflicting explicit descriptor ownership at {Set}:{Binding}.");
         uint incomingCount = VulkanBindlessMaterialDescriptors.ResolveDescriptorCount(info);
         if (info.DescriptorType != DescriptorType || incomingCount != Count)
         {
+            if (DeclaredOwner.HasValue || info.DeclaredOwner.HasValue)
+                throw new InvalidOperationException($"Conflicting native descriptor ABI at {Set}:{Binding}.");
             Debug.VulkanWarning($"Ignoring conflicting descriptor definition for set {Set}, binding {Binding}. Existing: {DescriptorType} x{Count}, incoming: {info.DescriptorType} x{incomingCount}.");
             return;
         }
@@ -26,6 +33,8 @@ internal sealed class DescriptorSetLayoutBindingBuilder(DescriptorBindingInfo in
             Name = info.Name;
 
         ExpectedImageViewType ??= info.ExpectedImageViewType;
+        DeclaredOwner ??= info.DeclaredOwner;
+        DeclaredFrequency ??= info.DeclaredFrequency;
         StageFlags |= info.StageFlags;
         if (info.Requirement == EVulkanDescriptorBindingRequirement.Required)
             Requirement = EVulkanDescriptorBindingRequirement.Required;
@@ -41,5 +50,5 @@ internal sealed class DescriptorSetLayoutBindingBuilder(DescriptorBindingInfo in
         };
 
     public DescriptorBindingInfo ToDescriptorBindingInfo()
-        => new(Set, Binding, DescriptorType, StageFlags, Count, Name, ExpectedImageViewType, Requirement);
+        => new(Set, Binding, DescriptorType, StageFlags, Count, Name, ExpectedImageViewType, Requirement, DeclaredOwner, DeclaredFrequency);
 }
