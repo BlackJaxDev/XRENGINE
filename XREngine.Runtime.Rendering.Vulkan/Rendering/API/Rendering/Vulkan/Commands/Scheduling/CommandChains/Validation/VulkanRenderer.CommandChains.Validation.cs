@@ -40,6 +40,12 @@ internal sealed partial class VulkanCommandRuntime
         int dynamicOverlayOpCount,
         IReadOnlyDictionary<CommandChainKey, CommandChain>? chains = null)
     {
+        if (chains is not null)
+        {
+            ValidateScheduledCommandChainSourceRanges(schedule, staticOps, chains);
+            return;
+        }
+
         ReadOnlySpan<RenderPassChainGroup> groups = schedule.Groups.Span;
         int groupIndex = 0;
         int queryBracketDepth = 0;
@@ -109,6 +115,65 @@ internal sealed partial class VulkanCommandRuntime
             RenderPassChainGroup group = groups[groupIndex];
             throw new InvalidOperationException(
                 $"Command-chain primary schedule contains an unmatched {(group.DynamicOverlay ? "dynamic overlay" : "static")} group at index {groupIndex}; dynamic overlay frame ops remain outside scheduled command chains ({dynamicOverlayOpCount} inline ops).");
+        }
+    }
+
+    /// <summary>
+    /// Checks the actual scheduled islands. Eligibility alone does not promise
+    /// lowering: small mesh packets and the bounded schedule suffix remain inline.
+    /// Their coverage is owned by the primary plan, while every scheduled source
+    /// range must still be ordered, disjoint, and compatible with its group.
+    /// </summary>
+    private static void ValidateScheduledCommandChainSourceRanges(
+        CommandChainSchedule schedule,
+        FrameOperationSequence staticOps,
+        IReadOnlyDictionary<CommandChainKey, CommandChain> chains)
+    {
+        int sourceCursor = 0;
+        int queryBracketDepth = 0;
+        ReadOnlySpan<RenderPassChainGroup> groups = schedule.Groups.Span;
+        for (int groupIndex = 0; groupIndex < groups.Length; groupIndex++)
+        {
+            RenderPassChainGroup group = groups[groupIndex];
+            if (group.DynamicOverlay || group.ChainKeys.IsEmpty)
+                throw new InvalidOperationException($"Command-chain group {groupIndex} is empty or contains inline dynamic-overlay operations.");
+
+            foreach (CommandChainKey key in group.ChainKeys.Span)
+            {
+                if (!chains.TryGetValue(key, out CommandChain? chain) || chain.Key != key ||
+                    chain.SourceCount <= 0 || chain.SourceStartIndex < sourceCursor ||
+                    chain.SourceStartIndex > staticOps.Length - chain.SourceCount)
+                {
+                    throw new InvalidOperationException($"Command-chain group {groupIndex} has an unmapped, overlapping, or out-of-range source '{key}'.");
+                }
+                if (key.DynamicOverlay || key.PassIndex != group.PassIndex || key.TargetIdentity != group.TargetIdentity)
+                    throw new InvalidOperationException($"Command-chain '{key}' disagrees with its scheduled group.");
+
+                while (sourceCursor < chain.SourceStartIndex)
+                {
+                    if (staticOps.GetHeader(sourceCursor).OpCode == EVulkanPrimaryPlanNodeKind.Query)
+                    {
+                        ERenderQueryOperation operation = staticOps.Stream.GetQuery(sourceCursor).Operation;
+                        if (operation == ERenderQueryOperation.Begin)
+                            queryBracketDepth++;
+                        else if (operation == ERenderQueryOperation.End && queryBracketDepth > 0)
+                            queryBracketDepth--;
+                    }
+                    sourceCursor++;
+                }
+
+                int sourceEnd = chain.SourceStartIndex + chain.SourceCount;
+                for (; sourceCursor < sourceEnd; sourceCursor++)
+                {
+                    ref readonly FrameOperationHeader header = ref staticOps.GetHeader(sourceCursor);
+                    if (queryBracketDepth != 0 || header.PassIndex != group.PassIndex ||
+                        header.TargetIdentity != group.TargetIdentity ||
+                        !IsSchedulableCommandChainFrameOp(staticOps.Stream, sourceCursor, dynamicOverlay: false))
+                    {
+                        throw new InvalidOperationException($"Command-chain '{key}' contains incompatible source operation {sourceCursor}.");
+                    }
+                }
+            }
         }
     }
 

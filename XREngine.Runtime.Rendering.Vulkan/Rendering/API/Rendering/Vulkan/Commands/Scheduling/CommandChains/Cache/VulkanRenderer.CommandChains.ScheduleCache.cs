@@ -162,7 +162,9 @@ internal sealed partial class VulkanCommandRuntime
     {
         schedule = null;
         stats = default;
-        if (!identity.IsReusable ||
+        // A cached executable schedule bypasses the per-chain forced-dirty
+        // decision. Benchmark recording must exercise that decision each frame.
+        if (!identity.IsReusable || CommandChainBenchmarkForceRerecord ||
             CommandChainValidationEnabled ||
             CommandChainTraceEnabled ||
             !TryGetIndexedCommandChainCacheSlot(imageIndex, out int slot))

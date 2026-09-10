@@ -810,6 +810,35 @@ opt-in and should write under an isolated validation run root.
 
 ### Descriptor Management
 
+The explicitly selected `VK_EXT_descriptor_heap` backend uses a null native
+pipeline layout while retaining the engine's logical program identity. Ordinary
+program roots reserve the same 128-byte shader-constant prefix as conventional
+pipeline layouts; descriptor indices begin after that prefix. Mesh recording
+publishes constants before descriptor data on both direct and indirect paths.
+All heap root writes use `vkCmdPushDataEXT`. ImGui has its own 16-byte projection
+prefix followed by its descriptor indices. Published heap ranges remain retained
+until device teardown; exhaustion fails visibly, with range reclamation planned
+separately. Global material-table slots can be rewritten only after their
+recorded-consumer leases end. That table uses a sparse arena, publishes slot zero
+and the exact material closure, and grows into a fresh power-of-two range.
+
+Mesh heap staging is owned by one renderer and reused across frames. Admission
+checks each selected frame slot's exact resource fingerprint and owner generation;
+an allocation-wide fingerprint cannot validate another slot. Retained payloads
+carry immutable owner, content-generation, layout, and root-byte identities.
+Native sampler/resource binds are skipped only when exact command-buffer binding
+state matches, while expected resource generations are still tracked. New
+recording, conventional descriptor state and secondary execution invalidate that
+state; inherited secondaries reject a heap mismatch rather than rebinding it.
+
+Prepared indirect-secondary keys include exact target, pipeline/layout, descriptor,
+mesh/argument-buffer, viewport/scissor and root state. Their encoder validates
+captured native generations before publishing an artifact. Current primary output
+policies prohibit this indirect artifact's reuse; validation mode can inspect key
+matching without relaxing policy. Other schedule and mesh caches retain their own
+admission rules. Runtime evidence and remaining E2 work are recorded in the
+[phase E investigation](../../work/investigations/rendering/vulkan14-phase-e-reuse-and-descriptors-2026-09-09.md).
+
 Multiple files handle descriptor set management:
 
 - **`VulkanDescriptorLayoutCache`** — Caches `VkDescriptorSetLayout` objects to avoid duplicate creation

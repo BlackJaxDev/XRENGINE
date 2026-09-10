@@ -464,7 +464,7 @@ internal sealed partial class VulkanFrameLoop
                 acceptedPlan.DynamicUiOperationCount,
             authoringTextureUploadOperationCount:
                 acceptedPlan.TextureUploadOperationCount,
-                emptyPresentNowOutputContract: provisionalContract,
+                requiredOutputContract: provisionalContract,
                 historyReservations: acceptedPlan.FrameViewHistory);
         }
         catch (VulkanNativeBufferBindingSupersededException exception)

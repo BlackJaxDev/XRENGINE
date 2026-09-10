@@ -20,6 +20,16 @@ internal readonly record struct VulkanAdvancedNativeComputeClosure(
     VulkanPhysicalImageGroup Reactive,
     VulkanPhysicalImageGroup ShadingDiagnostics,
     VulkanPhysicalImageGroup AmbientOcclusion,
+    VulkanAdvancedNativeImageClosure IdentityResource,
+    VulkanAdvancedNativeImageClosure MetadataResource,
+    VulkanAdvancedNativeImageClosure DepthResource,
+    VulkanAdvancedNativeImageClosure HdrResource,
+    VulkanAdvancedNativeImageClosure VelocityResource,
+    VulkanAdvancedNativeImageClosure ReactiveResource,
+    VulkanAdvancedNativeImageClosure ShadingDiagnosticsResource,
+    VulkanAdvancedNativeImageClosure AmbientOcclusionResource,
+    Sampler Sampler,
+    ulong SamplerGeneration,
     VulkanFrozenBufferBarrier ActiveTiles,
     VulkanFrozenBufferBarrier KernelTiles,
     VulkanFrozenBufferBarrier ClassificationCounters,
@@ -51,6 +61,11 @@ internal readonly record struct VulkanAdvancedNativeComputeClosure(
            Reactive is { IsAllocated: true } &&
            ShadingDiagnostics is { IsAllocated: true } &&
            AmbientOcclusion is { IsAllocated: true } &&
+           IdentityResource.IsValid && MetadataResource.IsValid &&
+           DepthResource.IsValid && HdrResource.IsValid &&
+           VelocityResource.IsValid && ReactiveResource.IsValid &&
+           ShadingDiagnosticsResource.IsValid && AmbientOcclusionResource.IsValid &&
+           Sampler.Handle != 0 && SamplerGeneration != 0 &&
            HasFrozenRange(ActiveTiles) &&
            HasFrozenRange(KernelTiles) &&
            HasFrozenRange(ClassificationCounters) &&

@@ -10,6 +10,8 @@ internal sealed class DescriptorHeapProgramLayout(
     uint pushByteCount,
     uint shaderConstantByteCount = 0)
 {
+    private static long s_nextIdentity;
+
     public static DescriptorHeapProgramLayout Empty { get; } = new([], [], [], 0u);
 
     public DescriptorHeapBindingLayout[] Bindings { get; } = bindings;
@@ -18,6 +20,8 @@ internal sealed class DescriptorHeapProgramLayout(
     /// <summary>Shader PushConstant bytes precede all reflected descriptor indices in the root ABI.</summary>
     public uint ShaderConstantByteCount { get; } = shaderConstantByteCount;
     public int PushDwordCount { get; } = checked((int)((pushByteCount + 3u) / 4u));
+    /// <summary>Monotonic identity for the reflected root ABI instance.</summary>
+    public ulong Identity { get; } = unchecked((ulong)Interlocked.Increment(ref s_nextIdentity));
 
     public bool TryGetBinding(uint set, uint binding, out DescriptorHeapBindingLayout layout)
         => lookup.TryGetValue(new DescriptorHeapBindingKey(set, binding), out layout!);

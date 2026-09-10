@@ -731,6 +731,44 @@ namespace XREngine.Rendering.Commands
         }
 
         /// <summary>
+        /// Finalizes only the canonical resident-scene projection of the already
+        /// prepared updating package after the world has swapped GPU-scene buffers.
+        /// This deliberately preserves package identity, membership, generation,
+        /// and the original backend request captured during visibility collection.
+        /// </summary>
+        public bool TryFinalizePreparedCanonicalFramePackageAfterWorldSwap(
+            GPUScene? scene,
+            XRCamera? camera,
+            int viewportWidth,
+            int viewportHeight)
+        {
+            using (_lock.EnterScope())
+            {
+                XRRenderPipelineInstance? ownerPipeline =
+                    _ownerPipeline as XRRenderPipelineInstance;
+                if (_updatingBackendReadyPackage.State !=
+                        EBackendReadyFramePackageState.Prepared ||
+                    _updatingBackendReadyPackage.SourceRevision != _updatingRevision ||
+                    ownerPipeline?.Pipeline?.RequiresCanonicalGpuScenePublication != true ||
+                    scene is null ||
+                    scene.AdvancedPublicationFaulted ||
+                    !scene.AdvancedScenePublication.IsValid)
+                {
+                    return false;
+                }
+
+                _updatingBackendReadyPackage.PrepareCanonicalFromScene(
+                    scene,
+                    camera,
+                    viewportWidth,
+                    viewportHeight);
+                return _updatingBackendReadyPackage.TryGetCanonicalPublication(
+                           out _, out _) &&
+                       !_updatingBackendReadyPackage.CanonicalViews.IsEmpty;
+            }
+        }
+
+        /// <summary>
         /// Cancels producer and consumer packages during viewport or pipeline
         /// shutdown after subscriptions have been detached.
         /// </summary>

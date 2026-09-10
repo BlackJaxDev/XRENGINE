@@ -1,12 +1,127 @@
 # Vulkan 1.4 baseline and descriptor heap contract
 
-Opened: 2026-09-08. Status: stopped at user request; indirect heap acceptance incomplete.
+Opened: 2026-09-08. Resumed and completed: 2026-09-09. Status: phases A/B complete.
 
 Scope: phases A and B of the Vulkan 1.4 performance and shader modernization
 todo. No performance improvement is claimed. No tests are added or modified.
 User acceptance has not yet been reported.
 
-## Closeout at user request
+## Final result
+
+All A/B acceptance checkboxes are complete. The final fixes preserve the
+128-byte common shader-constant prefix in ordinary heap program mappings and
+publish indirect per-draw constants before descriptors. This corrects the
+reproduced heap indirect device loss. OpenXR version bounds are compared in
+their original 64-bit representation, allowing Monado's broad maximum while
+still requiring Vulkan 1.4.
+
+Final build 52 passed with zero warnings/errors. Heap desktop controls 51/52
+and Monado smoke 53 have no Vulkan VUID/SYNC/ERROR matches through shutdown.
+The desktop captures were viewed, including changed materials and camera views.
+The source contains no temporary draw suppression, constant-color shader bypass
+or hard-coded indirect arguments. No tests were added/modified, no dependencies
+changed, and no commit was made during this resumed work. The named editor
+session is stopped. Earlier failures below are retained as investigation history.
+
+## Resumed acceptance work (2026-09-09)
+
+The user resumed A/B completion and selected the existing Monado path for XR.
+Previous implementation is now committed in `08283cda1`; the original stop note
+below remains historical evidence.
+
+- Control 44 (PID 30244, build 44: zero warnings/errors) disabled only
+  `Rendering.OpenGL.AllowProgramPipelines`. Bootstrap confirmed
+  `AllowShaderPipelines=False`. Vulkan 1.4, descriptor heaps and GPU indirect
+  submission remained enabled. Cube insertion still caused device loss, so GPL
+  linking is not the sole cause. This run's checkpoint tokens were null; it does
+  not replace the attributed draw bracket from controls 40/42. A timeline VUID
+  reported a current value of `UINT64_MAX` immediately before device loss;
+  earlier steady-state validation was clean.
+- Monado control 45 (PID 30128) reached the staged runtime but exposed a version
+  conversion bug: its XrVersion maximum `1023.1023.4095` was rejected for exceeding
+  Vulkan's packed major field. Negotiation now compares major/minor in the
+  original 64-bit OpenXR representation and ignores patch as required by the
+  [OpenXR graphics-requirements contract](https://registry.khronos.org/OpenXR/specs/1.1/man/html/XrGraphicsRequirementsVulkanKHR.html).
+  This retains the mandatory 1.4 requirement. Build 46 passed with zero warnings
+  and errors; Monado heap control 46 (PID 8788) then initialized Vulkan 1.4.341.
+- Monado heap control 46 captured both actual OpenXR preview eyes at 896x1007
+  with distinct stereo views. A blue material edit and world-space movement
+  changed the viewed left-eye output. Conventional descriptor-indexing control
+  47 (PID 30016, same build/settings) reproduced the bright cube and noisy RVC
+  background, so those visual limitations are not heap-specific evidence.
+  Both runs had zero Vulkan VUID/SYNC/ERROR matches through shutdown. Early
+  strict stereo frames reported pipeline-readiness retries; later eye captures
+  and desktop frame outcomes succeeded. Both named editor runs are stopped;
+  the task's Monado service ownership marker was cleaned up.
+- Bounded Monado heap smoke 48 (PID 13092, build 46) passed with exit code 0:
+  30 warmup + 120 retained frames, 139 successful true single-pass stereo
+  submissions, 11 startup no-layer frames, zero `xrEndFrame` failures and zero
+  sequential fallback attempts. Both eyes published 139 times; all 148 acquired
+  images per eye were released. Standard and synchronization validation were
+  effective, the summary has no failures, and teardown completed. Summary:
+  `Build/_AgentValidation/20260908-184611-vulkan14-ab/reports/monado48-heap-smoke.json`.
+- A bounded independent Sol review (`014db92e0feb43a1b2e11f48fa14d038`, requested
+  and actual `gpt-5.6-sol`) found no proven mapping ABI defect in the supplied
+  native mapping/root/indirect source. Actual GPU arguments and metadata remain
+  the next discriminator; unavailable counter readback is not evidence of zero.
+- Input capture 49 (PID 31240, build 49: zero warnings/errors) suppressed planned
+  indirect draws and copied their GPU-generated inputs in the same primary
+  command buffer, with consumption only after its completion. At frame 1110,
+  pass 1, the count word was 1. Active command 0 contained `indexCount=36`,
+  `instanceCount=1`, `firstIndex=15`, `vertexOffset=11`, `firstInstance=3`.
+  The canonical scene mapping independently identified the cube's legacy command
+  index as 3. Unconsumed command-array entries are not active draws. Frames
+  completed with the diagnostic enabled; this does not validate indirect raster
+  output. Exact shader-bound metadata and transform contents remain to be checked.
+- Fragment control 50 (PID 32336, build 50: zero warnings/errors) retained the
+  original fragment resources but added a temporary `gl_FragCoord.x >= 0` early
+  branch producing fixed G-buffer outputs. Disassembly confirms bindings 11/31
+  and the branch preceding resource loads. Device loss still occurred at frame
+  5432. This narrows executed fragment reads as a cause, but does not rule out
+  driver descriptor setup or prove the vertex/index path correct. Its native
+  checkpoint tokens were unresolved; earlier controls 40/42 remain the evidence
+  attributing the failure to indirect graphics. The temporary shader control is
+  diagnostic only and must be removed from the final implementation.
+- The local capture review found completion-ownership ordering and unused-tail
+  decoding issues; both were corrected before further validation. An optional
+  additional broker review failed because API credits were exhausted. Native
+  review and runtime investigation continued; no broker result was fabricated.
+- The decisive defect was in `VkMeshRenderer.RecordIndirectDrawState`: unlike
+  the other mesh paths, it published heap descriptor indices and then wrote
+  `MeshDrawPushConstants` at byte zero. Ordinary heap layout creation had also
+  omitted the common shader-constant prefix, so those writes aliased descriptor
+  indices. Record constants before descriptors, and reserve the existing
+  `VulkanPipelineManager.CommonPushConstantByteSize` (128 bytes) in ordinary heap
+  program layouts. ImGui already uses a separate explicit 16-byte prefix.
+- Control 51 (PID 33720, build 51: zero warnings/errors) changed only the indirect
+  ordering in the active rendering path. Full bindless material shaders and
+  native GPU-generated indirect-count draws then rendered successfully. Viewed
+  captures show the lit cube and grid, followed by a blue material edit, object
+  movement and a different camera view. Frame 5324 completed; the scene recorded
+  26 compute operations and one indirect draw. Full Vulkan logs contain zero
+  VUID/SYNC/ERROR matches through shutdown. The optional capture extension and
+  temporary fragment/direct controls were removed from production source;
+  control 49's command evidence remains in this note. No draw suppression or
+  shader bypass is part of the fix.
+- Final control 52 (PID 23952, build 52: zero warnings/errors) additionally
+  reserves the 128-byte prefix and removes the temporary diagnostics. A cube
+  and sphere render through the full heap GPU indirect path. A green cube
+  material edit, moved sphere and second camera view were captured and viewed.
+  Frame 2836 completed with 27 compute operations and one indirect draw;
+  full Vulkan validation remained clean through shutdown.
+- Final Monado smoke 53 (PID 21788, build 52) passed with exit code 0, 30 warmup
+  and 120 retained frames. It made 136 successful true single-pass stereo
+  submissions, with 14 startup no-layer frames, zero end-frame failures and zero
+  sequential fallback attempts. Both eyes acquired/released 148 images.
+  Validation and synchronization validation were effective, the failure list
+  is empty, and teardown completed. The full Vulkan log is clean. Summary:
+  `Build/_AgentValidation/20260908-184611-vulkan14-ab/reports/monado53-heap-smoke.json`.
+- Final native Sol review confirmed the overwrite and the common-prefix fix.
+  The observed largest descriptor tail is 104 bytes, totaling 232 with the
+  prefix, below this device's 256-byte push-data limit. Oversized layouts still
+  fail visibly. ImGui retains its separate 16-byte projection prefix.
+
+## Earlier closeout at user request
 
 A1–A4 are complete. The native heap implementation has substantial pipeline,
 root, storage, lifetime and state corrections, but A5/B acceptance remains open.
@@ -61,7 +176,7 @@ separately from the core feature. Host image copy is not inferred from API alone
 
 - Heap pipelines require a null native layout; retain the logical pipeline layout
   for engine identity and snapshot heap mode independently of resource count.
-- Root ABI preserves reflected PushConstant offsets first, followed by descriptor
+- Root ABI preserves the ordinary 128-byte PushConstant prefix first, followed by descriptor
   index words. All heap constant/index updates use `vkCmdPushDataEXT`; the
   descriptor tail does not overwrite shader constants. Check `maxPushDataSize`.
 - Heap state changes invalidate cached conventional descriptor bindings.
@@ -457,11 +572,12 @@ capability exposure is excluded. Feature enablement alone is not output proof.
 | Explicit configuration | Negotiation / enabled contract | Observed output / limitation |
 | --- | --- | --- |
 | OpenGL / Default / CPU direct | OpenGL 4.6, GLSL 4.60 | Lit cube and grid; driver compile/link retained |
-| Vulkan / Default / indexing | Requested 1.4, device 1.4.341; SPIR-V 1.6 | Lit cube and UI; grid defect under investigation |
+| Vulkan / Default / indexing | Requested 1.4, device 1.4.341; SPIR-V 1.6 | Lit cube and UI; GPU indirect control 19 passes; shared grid ordering corrected during this investigation |
 | Vulkan / Default / heap / CPU direct | Same API/target; native heap and untyped pointers enabled | Material edits, compute, UI and resize pass; final grid ordering/output validated in PID 34352 |
-| Vulkan / Default / heap / GPU indirect | Same API/target; indirect-count capability enabled | Initial state/usage VUIDs corrected; invalid GPU write still under investigation |
+| Vulkan / Default / heap / GPU indirect | Same API/target; indirect-count capability enabled | Controls 51/52 render cube/sphere, material edits and movement; full validation clean |
 | Vulkan / Advanced / heap | Same API/target | Advanced scene heap realization explicitly unsupported; no backend substitution |
 | Vulkan / heap / emulated sequential XR | Same API/target; multiview remains enabled | Both actual eye targets viewed; cube movement verified; PID 10348 full logs clean |
+| Vulkan / heap / Monado OpenXR | Runtime broad XrVersion range contains 1.4; true single-pass stereo | Both actual eye previews viewed; material/movement changes verified; final smoke 53 passes with clean validation and teardown |
 | Vulkan / physical OpenXR / SteamVR | Runtime advertises 1.0–1.2 | Rejected because range excludes 1.4; headset output unavailable on this runtime |
 | Vulkan / physical OpenVR / SteamVR | System initializes; compositor interface absent | Admission guard rejects missing compositor before render callbacks |
 

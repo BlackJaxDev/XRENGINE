@@ -885,6 +885,7 @@ internal sealed partial class VulkanFrameLoop
                 RuntimeRenderingHostServices.Presentation,
                 RuntimeRenderingHostServices.FrameTiming,
                 out _),
+            foregroundRequired,
             _telemetry);
         bool preparedCohortMatched = false;
         bool stagedPreparedCohort = false;
@@ -2197,7 +2198,8 @@ internal sealed partial class VulkanFrameLoop
             WorkClass: workClass,
             SourceFrameId: sourceFrameId,
             AllowArtifactReuse: workClass != ERenderOutputWorkClass.PresentNow,
-            AllowSecondaryDeferral: workClass != ERenderOutputWorkClass.PresentNow);
+            AllowSecondaryDeferral: workClass != ERenderOutputWorkClass.PresentNow,
+            QueueOverlapMode: RuntimeEngine.EffectiveSettings.VulkanQueueOverlapMode);
         authority = new VulkanPreparedPrimaryAuthority(
             target,
             CapturePreparedRenderTargetSnapshot(

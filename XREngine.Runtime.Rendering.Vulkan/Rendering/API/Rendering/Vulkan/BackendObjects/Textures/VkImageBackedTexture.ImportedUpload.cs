@@ -14,6 +14,10 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
 {
     #region Imported Upload
 
+    private int _importedUploadMetadataThreadId;
+    private bool IsApplyingImportedUploadMetadata
+        => Volatile.Read(ref _importedUploadMetadataThreadId) == Environment.CurrentManagedThreadId;
+
     internal bool TryCreateSynchronizedImportedUpload(
         in VulkanImportedTextureUploadRequest request,
         TextureStreamingResidentData residentData,
@@ -111,17 +115,32 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             return false;
         }
 
-        XRTexture2D.ApplyResidentDataForVulkanPublication(texture, residentData, includeMipChain);
-        RefreshLayout();
+        TextureLayout uploadLayout;
+        Format format;
+        lock (_imageStateLock)
+        {
+            // Property notifications describe the pending upload, not permission to
+            // destroy the currently published image. Publication transfers that old
+            // allocation into its immutable descriptor slot after the copy completes.
+            Volatile.Write(ref _importedUploadMetadataThreadId, Environment.CurrentManagedThreadId);
+            try
+            {
+                XRTexture2D.ApplyResidentDataForVulkanPublication(texture, residentData, includeMipChain);
+                uploadLayout = NormalizeLayout(DescribeTexture());
+                format = ReadFormatFromData();
+            }
+            finally
+            {
+                Volatile.Write(ref _importedUploadMetadataThreadId, 0);
+            }
+        }
 
-        Format format = Format;
         ImageAspectFlags aspectMask = NormalizeAspectMaskForFormat(format, AspectFlags);
         ImageUsageFlags usage = ResolveImportedUploadUsage(format);
         ImageLayout finalLayout = ResolveImportedUploadFinalLayout(usage, format);
-        AspectFlags = aspectMask;
-        Extent3D extent = _layout.Extent;
-        uint mipLevels = Math.Max(_layout.MipLevels, 1u);
-        uint arrayLayers = Math.Max(_layout.ArrayLayers, 1u);
+        Extent3D extent = uploadLayout.Extent;
+        uint mipLevels = Math.Max(uploadLayout.MipLevels, 1u);
+        uint arrayLayers = Math.Max(uploadLayout.ArrayLayers, 1u);
         string debugName = BuildImportedUploadDebugName(request, publicationToken);
 
         preparation = new VulkanImportedTextureUploadPreparation(
@@ -207,7 +226,7 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
                     return true;
 
                 case VulkanImportedTextureUploadPreparationStep.CreateSampler:
-                    preparation.Sampler = CreateImportedUploadSampler();
+                    preparation.Sampler = CreateImportedUploadSampler(preparation.MipLevels);
                     preparation.Step = VulkanImportedTextureUploadPreparationStep.Complete;
                     return true;
 
@@ -611,10 +630,10 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         return created;
     }
 
-    private Sampler CreateImportedUploadSampler()
+    private Sampler CreateImportedUploadSampler(uint mipLevels)
     {
         var (minFilter, magFilter, mipmapMode, uWrap, vWrap, wWrap, lodBias) = ReadSamplerSettingsFromData();
-        var (minLod, maxLod) = ResolveSamplerLodRange();
+        var (minLod, maxLod) = ResolveSamplerLodRange(mipLevels);
         var (compareEnable, compareOp) = ReadCompareSettingsFromData();
 
         uint anisotropyEnable = Vk.False;

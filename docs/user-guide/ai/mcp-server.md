@@ -99,6 +99,23 @@ Add this workspace MCP config when you want Copilot or another MCP-aware client 
 
 Start the editor, enable the server, then check the client tool picker for XRENGINE tools such as `list_worlds`, `list_scene_nodes`, `capture_viewport_screenshot`, and `start_viewport_sequence_capture`.
 
+For a desktop screenshot that includes screen-space UI, call
+`capture_viewport_screenshot` with `include_screen_space_ui: true`. The default
+captures the viewport's render target; the option captures the composited window
+region selected by `window_index` and `viewport_index`, including overlays.
+The response identifies `capture_source` as `ViewportTarget` or `CompositedWindow`.
+VR eye and detached offscreen targets do not support this option.
+The composited path is implemented for Vulkan and OpenGL; other renderers return
+an explicit unsupported-capture error.
+If an OpenGL viewport renders directly into the window without a separate
+framebuffer, its existing default readback also uses the window front buffer.
+
+On Vulkan, composited capture waits for the final scene/UI submission and its
+GPU copy before handing the image to presentation. PNG processing remains
+asynchronous. This is an explicit diagnostic stall: keep screenshots outside
+performance capture windows. OpenGL reads the completed front buffer. No OS
+screenshot or CPU-rendered replacement is used.
+
 ## In-Editor Assistant
 
 The ImGui editor includes **Tools > MCP Assistant**. It can use provider keys from editor preferences or environment variables such as `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, and `GITHUB_TOKEN`.
@@ -288,6 +305,59 @@ which identifies the submitted render frame, sample sequence, image slot, age
 and elapsed nanoseconds. Count each completed sequence once and reject samples
 whose source frame precedes the workload change. The legacy
 `gpu_command_buffer_ms` scalar alone does not identify the measured frame.
+
+`get_render_profiler_stats.vulkan.frame_lifecycle.detail` separates
+`wait_current_frame_slot_ms` from `wait_next_frame_slot_before_collect_ms`.
+Their sum remains `wait_frame_slot_ms`. The latter next-slot wait gates snapshot
+swap/publication; CPU visibility collection already runs before the timer waits
+for render completion. Do not equate the much larger collect-waits-for-render
+interval with a GPU slot stall. Profile NDJSON exports the same split as
+`vulkan_frame_wait_current_slot_ms` and
+`vulkan_frame_wait_next_slot_before_collect_ms`.
+
+The same detail object exposes `advanced_early_visibility_barrier_emissions`
+(`vulkan_advanced_early_visibility_barrier_emissions` in profile NDJSON). This is
+a process-wide cumulative count at the native Advanced early-visibility barrier
+call, including recordings later discarded. It proves recording reach, not GPU
+execution or completion. Correlate it with completed Advanced scene outputs and
+viewed synchronization validation when comparing barrier changes.
+
+`get_render_profiler_stats.vulkan.descriptor_heap` exposes cumulative native
+sampler/resource heap binds, heap pushes, successful sampler/resource descriptor
+writes, and payload-object allocations. Profile NDJSON exports the corresponding
+`vulkan_heap_*_total` counters. Compare differences between observations from the
+same process; never subtract across restarts. These counters include recording
+that can later be discarded, so they measure CPU/native activity rather than
+GPU execution or completion. A skipped redundant bind still retains exact native
+resource generations for submission lifetime validation.
+
+The `vulkan.command_chains` object also reports `process_scheduling_attempts`
+and `process_latest_schedule_decision`. These distinguish a disabled/bypassed
+schedule from a fresh build or cached replay even when optional frame statistics
+are disabled. NDJSON uses `vulkan_command_chain_scheduling_attempts_total` and
+the numeric `vulkan_command_chain_schedule_decision` enum. A scheduling decision
+does not prove secondary execution; use the native execute/invocation counters
+for that question.
+
+`process_indirect_secondary_reuses` and `process_indirect_secondary_recordings`
+count accepted cached artifacts and successful fresh indirect-secondary
+recordings. NDJSON exposes these as `vulkan_indirect_secondary_reuses_total`
+and `vulkan_indirect_secondary_recordings_total`. They remain available when
+optional frame statistics are disabled. Compare process-local differences;
+these decisions can precede a rejected submission and are not GPU completion
+counts. Forced-recording benchmarks must report no reuse decisions.
+
+The same object exposes `process_indirect_secondary_key_evaluations`,
+`process_indirect_secondary_complete_keys`, `process_indirect_secondary_matching_keys`,
+and `process_indirect_secondary_policy_rejections`. The corresponding NDJSON
+fields use `vulkan_indirect_secondary_` and the `_total` suffix. All current
+output contracts require fresh recording, so complete matching keys do not
+authorize reuse. Normal fresh-only recording skips key comparison;
+`XRE_VULKAN_COMMAND_CHAIN_VALIDATE=1` evaluates the proof for diagnostics while
+preserving the output policy. `process_indirect_secondary_incomplete_key_reason`
+is the last incomplete-key diagnostic, not a per-frame failure or a histogram.
+Mutation validation should compare process-counter differences before and after
+a controlled change, then verify output and completed frame results.
 
 `evaluate_gpu_hiz_crossover(samples_json, requirements_json)` evaluates supplied
 matched Disabled/Full/Coarse GPU timings without changing engine settings. Each

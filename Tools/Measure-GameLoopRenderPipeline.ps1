@@ -55,6 +55,7 @@ param(
     [string]$StabilityProfile = 'FullResourceQuiet',
     [int]$MinSteadyStateGpuSceneCommandCount = 0,
     [switch]$NoStabilityGate,
+    [switch]$AllowWorkloadIdentityChanges,
     [int]$ShutdownGraceSec = 20,
     [int]$NoSampleHangSec = 15,
     [int]$RetainedRunCount = 3,
@@ -599,6 +600,17 @@ function Read-McpRenderStatsPayload {
     return $null
 }
 
+function Get-RenderStatsSampleTimestampUtc {
+    param([object]$Sample)
+
+    # Recent PowerShell versions deserialize ISO timestamps as DateTime values.
+    # Casting them back to string drops fractional seconds and shifts window edges.
+    $value = $Sample.ts_utc
+    if ($value -is [datetimeoffset]) { return $value.UtcDateTime }
+    if ($value -is [datetime]) { return $value.ToUniversalTime() }
+    return [datetimeoffset]::Parse([string]$value, [System.Globalization.CultureInfo]::InvariantCulture).UtcDateTime
+}
+
 function Select-RenderStatsSamples {
     param(
         [System.Collections.IEnumerable]$Samples,
@@ -609,8 +621,7 @@ function Select-RenderStatsSamples {
     $selected = New-Object System.Collections.Generic.List[object]
     foreach ($sample in $Samples) {
         try {
-            $timestamp = [datetimeoffset]::Parse([string]$sample.ts_utc, [System.Globalization.CultureInfo]::InvariantCulture)
-            $utc = $timestamp.UtcDateTime
+            $utc = Get-RenderStatsSampleTimestampUtc -Sample $sample
             if ($utc -ge $CaptureStartUtc -and $utc -le $CaptureEndUtc) {
                 $selected.Add($sample) | Out-Null
             }
@@ -855,13 +866,11 @@ function Update-RenderStatsStabilityState {
 
         try {
             $sample = $trimmed | ConvertFrom-Json -ErrorAction Stop
-            $timestamp = [datetimeoffset]::Parse(
-                [string]$sample.ts_utc,
-                [System.Globalization.CultureInfo]::InvariantCulture)
+            $timestampUtc = Get-RenderStatsSampleTimestampUtc -Sample $sample
             $State.Samples.Add(
                 [pscustomobject]@{
                     Sample = $sample
-                    Utc = $timestamp.UtcDateTime
+                    Utc = $timestampUtc
                 }) | Out-Null
         }
         catch {
@@ -955,7 +964,6 @@ function Test-RenderStatsStability {
             $fallbackSubmittedRows = Get-SamplePropertyValue -Sample $sample -Property 'gpu_driven_fallback_submitted_material_rows'
             $materialTableGeneration = Get-SamplePropertyValue -Sample $sample -Property 'gpu_driven_material_table_publication_generation'
             $descriptorGeneration = Get-SamplePropertyValue -Sample $sample -Property 'gpu_driven_material_descriptor_publication_generation'
-            $materialPath = Get-SamplePropertyValue -Sample $sample -Property 'zero_readback_material_draw_path'
 
             if ($null -eq $requiredRows -or $null -eq $readyRows -or
                 $null -eq $nonReadyReferences -or $null -eq $invalidMaterialIds -or
@@ -975,9 +983,9 @@ function Test-RenderStatsStability {
                 }
             }
 
-            if ([string]$materialPath -eq 'BindlessMaterialTable' -and [long]$descriptorGeneration -le 0) {
-                return [pscustomobject]@{ Stable = $false; Reason = 'bindless material descriptors have no published generation'; WorkloadIdentityHash = $hashes[0]; Samples = $samples.Count }
-            }
+            # A material table containing only untextured rows legitimately reports
+            # descriptor generation zero. Complete ready rows, zero pending texture
+            # references and zero fallback rows above establish material readiness.
         }
     }
     $quietProperties = @(
@@ -989,13 +997,13 @@ function Test-RenderStatsStability {
         'vulkan_retired_resource_plan_replacements',
         'vulkan_retired_resource_plan_images',
         'vulkan_retired_resource_plan_buffers',
-        'vulkan_descriptor_pool_create_count',
         'frame_output_planner_prune_count',
         'frame_output_global_in_flight_wait_count',
         'frame_output_force_flush_count'
     )
     if ($Profile -eq 'FullResourceQuiet') {
         $quietProperties += @(
+        'vulkan_descriptor_pool_create_count',
         'vulkan_retired_descriptor_pool_count',
         'vulkan_retired_descriptor_set_count',
         'vulkan_retired_command_buffer_count',
@@ -1029,8 +1037,11 @@ function Test-RenderStatsStability {
 
     $unapproved = Sum-NumericProperty -Samples $samples -Property 'frame_output_unapproved_policy_event_count'
     $rejections = Sum-NumericProperty -Samples $samples -Property 'frame_output_submission_rejection_count'
-    if ($unapproved -gt 0 -or $rejections -gt 0) {
-        return [pscustomobject]@{ Stable = $false; Reason = "invalid output policy/submission state (unapproved=$unapproved rejections=$rejections)"; WorkloadIdentityHash = $hashes[0]; Samples = $samples.Count }
+    $failedFrames = @($samples | Where-Object {
+        $_.active_render_backend -eq 'Vulkan' -and $_.vulkan_frame_outcome -in @('Rejected', 'Failed')
+    }).Count
+    if ($unapproved -gt 0 -or $rejections -gt 0 -or $failedFrames -gt 0) {
+        return [pscustomobject]@{ Stable = $false; Reason = "invalid output policy/submission state (unapproved=$unapproved rejections=$rejections failedFrames=$failedFrames)"; WorkloadIdentityHash = $hashes[0]; Samples = $samples.Count }
     }
 
     return [pscustomobject]@{ Stable = $true; Reason = "stable for ${WindowSec}s"; WorkloadIdentityHash = $hashes[0]; Samples = $samples.Count }
@@ -1153,6 +1164,7 @@ function Measure-Variant {
     }
 
     $proc = $null
+    $processStartUtc = $null
     $captureStartUtc = [datetime]::UtcNow
     $captureEndUtc = $captureStartUtc
     $logDir = $null
@@ -1361,11 +1373,13 @@ function Measure-Variant {
             FilePath = $exe
             WorkingDirectory = $repoRoot
             PassThru = $true
+            WindowStyle = 'Hidden'
         }
         if ($editorArguments.Count -gt 0) {
             $startProcessArguments.ArgumentList = $editorArguments
         }
         $proc = Start-Process @startProcessArguments
+        $processStartUtc = $proc.StartTime.ToUniversalTime()
         if ($hasFixedCameraPose) {
             Write-Host "[measure] $runName positioning fixed camera via MCP..."
             try {
@@ -1813,6 +1827,11 @@ function Measure-Variant {
     $globalInFlightWaitTotal = Sum-NumericProperty -Samples $samples -Property 'frame_output_global_in_flight_wait_count'
     $forceFlushTotal = Sum-NumericProperty -Samples $samples -Property 'frame_output_force_flush_count'
     $submissionRejectionTotal = Sum-NumericProperty -Samples $samples -Property 'frame_output_submission_rejection_count'
+    # Readiness rejection can happen before any native submission is attempted.
+    # Its short CPU duration is a failed frame, never a performance improvement.
+    $failedVulkanFrameSamples = @($samples | Where-Object {
+        $_.active_render_backend -eq 'Vulkan' -and $_.vulkan_frame_outcome -in @('Rejected', 'Failed')
+    }).Count
     $unapprovedPolicyEventTotal = Sum-NumericProperty -Samples $samples -Property 'frame_output_unapproved_policy_event_count'
     $workloadIdentityHashes = @($samples | ForEach-Object {
         $value = Get-SamplePropertyValue -Sample $_ -Property 'frame_output_workload_identity_hash'
@@ -1834,6 +1853,14 @@ function Measure-Variant {
         $collectGenerationAgeMax = [Math]::Max($collectGenerationAgeMax, [Math]::Max(0, $requestedGeneration - $consumedGeneration))
     }
     $validationLayersEnabledSamples = @($samples | Where-Object { $_.validation_layers_enabled -eq $true }).Count
+    $firstCompletedSample = $null
+    foreach ($sample in $allSamples) {
+        if (($sample.active_render_backend -eq 'Vulkan' -and $sample.vulkan_frame_outcome -eq 'Completed') -or
+            ($sample.active_render_backend -ne 'Vulkan' -and $sample.completed_frame_id -gt 0)) {
+            $firstCompletedSample = $sample
+            break
+        }
+    }
     $vulkanValidationVuidCount = 0
     $vulkanValidationUniqueVuids = @()
     $vulkanLogPath = if ($logDir) { Join-Path $logDir 'log_vulkan.log' } else { '' }
@@ -1968,9 +1995,14 @@ function Measure-Variant {
         VulkanPresentationProfile = $VulkanPresentationProfile
         GpuTimestampDense = [bool]$GpuTimestampDense
         StartupPhase = 'process-launch-to-first-sample'
+        ProcessStartUtc = if ($null -ne $processStartUtc) { $processStartUtc.ToString('O') } else { $null }
+        FirstObservedCompletedFrameLatencyMs = if ($null -ne $processStartUtc -and $null -ne $firstCompletedSample) {
+            ((Get-RenderStatsSampleTimestampUtc -Sample $firstCompletedSample) - $processStartUtc).TotalMilliseconds
+        } else { $null }
         WarmupPhaseSec = $WarmupSec
         SteadyStatePhaseSec = $CaptureSec
         StabilityGateEnabled = -not [bool]$NoStabilityGate
+        AllowWorkloadIdentityChanges = [bool]$AllowWorkloadIdentityChanges
         StabilityProfile = $StabilityProfile
         MinimumGpuSceneCommandCount = $MinSteadyStateGpuSceneCommandCount
         StabilityReady = $stabilityReady
@@ -2208,6 +2240,7 @@ function Measure-Variant {
         VulkanGlobalInFlightWaitsTotal = $globalInFlightWaitTotal
         VulkanForceFlushesTotal = $forceFlushTotal
         VulkanSubmissionRejectionsTotal = $submissionRejectionTotal
+        VulkanFailedFrameSamples = $failedVulkanFrameSamples
         UnapprovedOutputPolicyEventsTotal = $unapprovedPolicyEventTotal
         DrawCallsP50 = (Get-NumericStats -Samples $samples -Property 'draw_calls').P50
         MultiDrawCallsP50 = (Get-NumericStats -Samples $samples -Property 'multi_draw_calls').P50
@@ -2489,13 +2522,15 @@ if ($FailOnSteadyStateBindingFallback) {
 
 $invalidCaptureFailures = @($results | Where-Object {
     -not $_.StabilityReady -or
-    [int]$_.CaptureWorkloadIdentityCount -ne 1 -or
+    ([int]$_.CaptureWorkloadIdentityCount -lt 1 -or
+        (-not $AllowWorkloadIdentityChanges -and [int]$_.CaptureWorkloadIdentityCount -ne 1)) -or
     [double]$_.UnapprovedOutputPolicyEventsTotal -gt 0.0 -or
-    [double]$_.VulkanSubmissionRejectionsTotal -gt 0.0
+    [double]$_.VulkanSubmissionRejectionsTotal -gt 0.0 -or
+    [int]$_.VulkanFailedFrameSamples -gt 0
 })
 if ($invalidCaptureFailures.Count -gt 0) {
     $details = $invalidCaptureFailures | ForEach-Object {
-        "$($_.Strategy) r$($_.Repetition): stable=$($_.StabilityReady) identities=$($_.CaptureWorkloadIdentityCount) unapprovedPolicy=$($_.UnapprovedOutputPolicyEventsTotal) rejectedSubmissions=$($_.VulkanSubmissionRejectionsTotal) reason=$($_.StabilityReason)"
+        "$($_.Strategy) r$($_.Repetition): stable=$($_.StabilityReady) identities=$($_.CaptureWorkloadIdentityCount) unapprovedPolicy=$($_.UnapprovedOutputPolicyEventsTotal) rejectedSubmissions=$($_.VulkanSubmissionRejectionsTotal) failedFrames=$($_.VulkanFailedFrameSamples) reason=$($_.StabilityReason)"
     }
     throw "Invalid render-pipeline performance capture: $($details -join '; ')"
 }

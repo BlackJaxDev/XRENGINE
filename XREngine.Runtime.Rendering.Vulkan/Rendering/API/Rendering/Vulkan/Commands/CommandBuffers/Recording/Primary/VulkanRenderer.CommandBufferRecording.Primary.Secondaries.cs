@@ -429,20 +429,33 @@ namespace XREngine.Rendering.Vulkan
                     VulkanIndirectSecondaryRecordingContract contract =
                         indirect.SecondaryRecordingContract;
                     CommandChain chain = secondaryChains[i];
+                    bool policyAllowsReuse = recordingState.Policy.AllowsIndirectSecondaryArtifactReuse;
+                    // Fresh-output contracts cannot benefit from key comparison.
+                    // Explicit validation still exercises the proof without
+                    // changing that output policy or reusing native commands.
+                    bool evaluateKey = policyAllowsReuse || CommandChainValidationEnabled;
                     VulkanPreparedCommandChainKey preparedKey =
-                        CapturePreparedIndirectCommandChainKey(
+                        evaluateKey ? CapturePreparedIndirectCommandChainKey(
+                            ref recordingState,
+                            startIndex + i,
                             chain,
-                            recordingStates[i]);
+                            in indirect,
+                            recordingStates[i]) : VulkanPreparedCommandChainKey.Incomplete;
+                    bool keysMatch = preparedKey.IsComplete && chain.PreparedKey.IsComplete &&
+                        chain.PreparedKey.Matches(in preparedKey);
+                    RuntimeEngine.Rendering.Stats.Vulkan.RecordIndirectSecondaryReuseProof(
+                        evaluateKey, preparedKey.IsComplete, keysMatch, policyAllowsReuse);
                     if (CanReuseIndirectCommandChainSecondary(
                             chain,
                             in contract,
                             uniformSlots[i],
-                            recordingState.Policy.FreshSerialRecording,
-                            in preparedKey,
+                            policyAllowsReuse,
+                            keysMatch,
                             in secondaryInheritance))
                     {
                         chain.State = CommandChainState.Reused;
                         chain.DirtyReason = CommandChainDirtyReason.None;
+                        RuntimeEngine.Rendering.Stats.Vulkan.RecordIndirectSecondaryArtifact(reused: true);
                         continue;
                     }
 
@@ -455,7 +468,10 @@ namespace XREngine.Rendering.Vulkan
                         secondaryChains,
                         uniformSlots,
                         recordingStates,
+                        in preparedKey,
                         in secondaryInheritance);
+                    if (recordingError is null)
+                        RuntimeEngine.Rendering.Stats.Vulkan.RecordIndirectSecondaryArtifact(reused: false);
                     firstError ??= recordingError;
                 }
 
@@ -539,6 +555,7 @@ namespace XREngine.Rendering.Vulkan
             CommandChain[] secondaryChains,
             int[] uniformSlots,
             VkMeshRenderer.IndirectDrawRecordingState[] recordingStates,
+            scoped in VulkanPreparedCommandChainKey preparedKey,
             scoped in VulkanRecordedCommandInheritance inheritance)
         {
             CommandChain chain = secondaryChains[relativeIndex];
@@ -623,11 +640,18 @@ namespace XREngine.Rendering.Vulkan
                 CommandBufferInheritanceDescriptorHeapInfoEXTNative descriptorHeapInheritanceInfo = default;
                 BindHeapInfoEXTNative inheritedSamplerHeapInfo = default;
                 BindHeapInfoEXTNative inheritedResourceHeapInfo = default;
+                DescriptorHeapBindingIdentity inheritedDescriptorHeapBinding = default;
                 bool inheritsDescriptorHeaps = TryAppendDescriptorHeapInheritancePNext(
                     ref inheritanceInfo,
                     &descriptorHeapInheritanceInfo,
                     &inheritedSamplerHeapInfo,
-                    &inheritedResourceHeapInfo);
+                    &inheritedResourceHeapInfo,
+                    out inheritedDescriptorHeapBinding);
+
+                if (preparedKey.IsComplete &&
+                    (preparedKey.UsesDescriptorHeap != inheritsDescriptorHeaps ||
+                     preparedKey.DescriptorHeapBinding != inheritedDescriptorHeapBinding))
+                    throw new VulkanPlanPreconditionException("Indirect-secondary heap inheritance changed after key capture; no artifact was published.");
 
                 CommandBufferBeginInfo beginInfo = new()
                 {
@@ -644,7 +668,7 @@ namespace XREngine.Rendering.Vulkan
                         "PrimarySecondaryRange") != Result.Success)
                     throw new Exception("Failed to begin Vulkan indirect secondary command buffer.");
                 if (inheritsDescriptorHeaps)
-                    MarkDescriptorHeapInheritance(secondary);
+                    MarkDescriptorHeapInheritance(secondary, in inheritedDescriptorHeapBinding);
                 }
 
                 MarkCommandChainSecondaryRecording(chain, secondary);
@@ -656,18 +680,20 @@ namespace XREngine.Rendering.Vulkan
                 using (RuntimeEngine.Rendering.State.PushRenderingPipelineOverride(
                            context.PipelineInstance))
                 {
-                    RecordIndirectDrawIntoSecondaryCommandBuffer(
+                    if (!RecordIndirectDrawIntoSecondaryCommandBuffer(
                         secondary,
                         in indirect,
                         target,
                         in context,
                         recordingStates[relativeIndex],
+                        in preparedKey,
                         passIndex,
                         inheritance.DynamicRendering,
                         inheritance.RenderPass,
                         inheritance.DynamicRenderingFormats,
                         inheritance.DepthStencilReadOnly,
-                        uniformSlots[relativeIndex]);
+                        uniformSlots[relativeIndex]))
+                        throw new VulkanPlanPreconditionException("Prepared indirect-secondary state changed before encoding; no artifact was published.");
                 }
 
                 if (EndCommandBufferTracked(secondary) != Result.Success)
@@ -686,9 +712,9 @@ namespace XREngine.Rendering.Vulkan
                 MarkCommandChainSecondaryCommandBufferRecorded(chain);
                 chain.RecordedIndirectSecondaryContract =
                     indirect.SecondaryRecordingContract;
-                chain.PreparedKey = CapturePreparedIndirectCommandChainKey(
-                    chain,
-                    recordingStates[relativeIndex]);
+                // Publish the proof captured before encoding. A later live
+                // resource read must not describe different bytes or heaps.
+                chain.PreparedKey = preparedKey;
                 chain.RecordedUniformSlotSignature =
                     unchecked((ulong)(uint)uniformSlots[relativeIndex]);
                 return null;
@@ -699,104 +725,6 @@ namespace XREngine.Rendering.Vulkan
                 secondaryBuffers[relativeIndex] = default;
                 return ex;
             }
-        }
-
-        private bool CanReuseIndirectCommandChainSecondary(
-            CommandChain chain,
-            in VulkanIndirectSecondaryRecordingContract contract,
-            int uniformSlot,
-            bool freshSerialRecording,
-            scoped in VulkanPreparedCommandChainKey preparedKey,
-            scoped in VulkanRecordedCommandInheritance inheritance)
-            => !freshSerialRecording &&
-                chain.SecondaryCommandBufferExecutable &&
-                preparedKey.IsComplete &&
-                chain.PreparedKey.IsComplete &&
-                chain.PreparedKey.Matches(in preparedKey) &&
-                chain.RecordedIndirectSecondaryContract ==
-                    contract &&
-                chain.RecordedUniformSlotSignature == unchecked((ulong)(uint)uniformSlot) &&
-                CommandChainSecondaryInheritanceMatches(
-                    chain,
-                    inheritance.DynamicRendering,
-                    inheritance.RenderPass,
-                    inheritance.Framebuffer,
-                    inheritance.DynamicRenderingFormats,
-                    inheritance.DepthStencilReadOnly,
-                    inheritance.Samples,
-                    inheritance.LocalReadSignature,
-                    inheritance.RenderingFlags);
-
-        /// <summary>
-        /// Captures exactly the pipeline, layout, and published descriptor sets
-        /// chosen during indirect-draw preparation. Reuse must not substitute
-        /// live renderer state after the primary has transitioned those images.
-        /// </summary>
-        private VulkanPreparedCommandChainKey CapturePreparedIndirectCommandChainKey(
-            CommandChain chain,
-            in VkMeshRenderer.IndirectDrawRecordingState state)
-        {
-            if (state.Program is null ||
-                state.Program.BindingId == 0u ||
-                state.Program.LinkGeneration == 0UL ||
-                state.Pipeline.Handle == 0UL ||
-                state.PipelineLayout.Handle == 0UL)
-            {
-                return VulkanPreparedCommandChainKey.Incomplete;
-            }
-
-            ulong pipelineGeneration = GetCurrentVulkanResourceGeneration(
-                ObjectType.Pipeline,
-                state.Pipeline.Handle);
-            ulong layoutGeneration = GetCurrentVulkanResourceGeneration(
-                ObjectType.PipelineLayout,
-                state.PipelineLayout.Handle);
-            if (pipelineGeneration == 0UL || layoutGeneration == 0UL)
-                return VulkanPreparedCommandChainKey.Incomplete;
-
-            FrameOpSignatureHasher pipelineHash = new();
-            pipelineHash.Add(state.Program.BindingId);
-            pipelineHash.Add(state.Program.LinkGeneration);
-            pipelineHash.Add(state.Pipeline.Handle);
-            pipelineHash.Add(pipelineGeneration);
-            pipelineHash.Add(state.PipelineLayout.Handle);
-            pipelineHash.Add(layoutGeneration);
-
-            DescriptorSet[]? descriptorSets = state.DescriptorSets;
-            int descriptorSetCount = descriptorSets?.Length ?? 0;
-            VulkanRecordedDescriptorSetIdentityBuffer exactDescriptorSets =
-                CaptureRecordedDescriptorSetIdentities(descriptorSets, null);
-            if (!exactDescriptorSets.IsComplete)
-                return VulkanPreparedCommandChainKey.Incomplete;
-
-            // Heap push payloads do not name stable native descriptor sets.
-            if (state.DescriptorHeapPushData is not null)
-                return VulkanPreparedCommandChainKey.Incomplete;
-
-            VulkanRecordedProgramIdentityBuffer exactPrograms = default;
-            exactPrograms.Initialize(1);
-            exactPrograms.Set(
-                0,
-                new VulkanRecordedProgramIdentity(
-                    state.Program.BindingId,
-                    state.Program.LinkGeneration,
-                    state.PipelineLayout.Handle,
-                    layoutGeneration,
-                    state.Pipeline.Handle,
-                    pipelineGeneration));
-            RecordedPacketKey preparedPacketKey =
-                chain.DependencySignature.RecordedPacketKey with
-                {
-                    DescriptorSets = exactDescriptorSets,
-                    Programs = exactPrograms,
-                };
-
-            return new VulkanPreparedCommandChainKey(
-                pipelineHash.ToHash(),
-                ComputeRecordedDescriptorSetIdentityHash(exactDescriptorSets),
-                descriptorSetCount,
-                preparedPacketKey,
-                IsComplete: preparedPacketKey.IsComplete);
         }
 
         private bool TryGetScheduledCommandChainForOp(scoped ref PrimaryCommandBufferRecordingState recordingState, int opIndex, out CommandChain chain, out CommandChainKey key)
@@ -1869,6 +1797,8 @@ namespace XREngine.Rendering.Vulkan
             bool programOverflow = false;
             VulkanRecordedDescriptorSetIdentityBuffer exactDescriptorSets = default;
             exactDescriptorSets.Initialize(0);
+            VulkanDescriptorHeapDrawIdentityBuffer heapDraws = default;
+            heapDraws.Initialize(0);
             bool complete = chain.SourceCount > 0;
             int descriptorSetCount = 0;
             for (int drawIndex = 0; drawIndex < chain.SourceCount; drawIndex++)
@@ -1944,11 +1874,11 @@ namespace XREngine.Rendering.Vulkan
 
                 if (state.UsesDescriptorHeap)
                 {
-                    failureReason = state.UsesDescriptorHeap
-                        ? "descriptor-heap push data has no stable descriptor-set identity"
-                        : "prepared descriptor bindings are incomplete";
-                    complete = false;
-                    continue;
+                    // Scheduled mesh reuse does not yet perform the per-frame
+                    // payload preflight that indirect secondaries use. Keep it
+                    // unavailable rather than authorizing a stale heap payload.
+                    failureReason = "scheduled mesh descriptor-heap reuse has no current payload preflight";
+                    return VulkanPreparedCommandChainKey.Incomplete;
                 }
 
                 VulkanRecordedDescriptorSetIdentityBuffer drawDescriptorSets =
@@ -2000,8 +1930,12 @@ namespace XREngine.Rendering.Vulkan
                 pipelineHash.ToHash(),
                 ComputeRecordedDescriptorSetIdentityHash(exactDescriptorSets),
                 descriptorSetCount,
-                preparedPacketKey,
-                complete && preparedPacketKey.IsComplete);
+                UsesDescriptorHeap: false,
+                DescriptorHeapBinding: default,
+                DescriptorHeapDraws: heapDraws,
+                RecordedPacketKey: preparedPacketKey,
+                IsComplete: complete && preparedPacketKey.IsComplete &&
+                heapDraws.IsComplete);
         }
 
         private void LogScheduledMeshCommandChainPreparationFallback(string reason)
@@ -2408,11 +2342,13 @@ namespace XREngine.Rendering.Vulkan
                 CommandBufferInheritanceDescriptorHeapInfoEXTNative descriptorHeapInheritanceInfo = default;
                 BindHeapInfoEXTNative inheritedSamplerHeapInfo = default;
                 BindHeapInfoEXTNative inheritedResourceHeapInfo = default;
+                DescriptorHeapBindingIdentity inheritedDescriptorHeapBinding = default;
                 bool inheritsDescriptorHeaps = TryAppendDescriptorHeapInheritancePNext(
                     ref inheritanceInfo,
                     &descriptorHeapInheritanceInfo,
                     &inheritedSamplerHeapInfo,
-                    &inheritedResourceHeapInfo);
+                    &inheritedResourceHeapInfo,
+                    out inheritedDescriptorHeapBinding);
 
                 CommandBufferBeginInfo beginInfo = new()
                 {
@@ -2428,7 +2364,7 @@ namespace XREngine.Rendering.Vulkan
                         "PreparedCommandChain") != Result.Success)
                     throw new Exception("Failed to begin Vulkan mesh command-chain secondary command buffer.");
                 if (inheritsDescriptorHeaps)
-                    MarkDescriptorHeapInheritance(secondary);
+                    MarkDescriptorHeapInheritance(secondary, in inheritedDescriptorHeapBinding);
                 }
 
                 MarkCommandChainSecondaryRecording(chain, secondary);

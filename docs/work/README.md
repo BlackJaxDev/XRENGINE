@@ -32,6 +32,7 @@ Avoid top-level subsystem buckets such as `docs/work/rendering/` for investigati
 
 | Area | Status | Canonical doc | Notes |
 |---|---|---|---|
+| Control plane managed server instances | Planned | [todo/networking/control-plane-managed-server-instances-todo.md](todo/networking/control-plane-managed-server-instances-todo.md) | Service/host supervision, verified world startup, player admission/accounting, authoritative synchronization, client workflow, restart recovery, and public hosting. |
 | Default render pipeline V2 | Active | [todo/default-render-pipeline-v2-todo.md](todo/default-render-pipeline-v2-todo.md) | Active implementation tracker. |
 | Default pipeline depth of field | Active | [todo/rendering/default-pipeline-depth-of-field-todo.md](todo/rendering/default-pipeline-depth-of-field-todo.md) | Optimization and feature roadmap for CoC, half-res near/far blur, stereo policy, debug views, and cinematic controls. |
 | Atmospheric scattering | Implemented + validation | [../developer-guides/components/atmospheric-scattering.md](../developer-guides/components/atmospheric-scattering.md), [todo/rendering/atmospheric-scattering-component-todo.md](todo/rendering/atmospheric-scattering-component-todo.md), [design/rendering/atmospheric-scattering-component-design.md](design/rendering/atmospheric-scattering-component-design.md) | OpenGL mono implementation is in place; visual screenshot/profiler validation and stereo/platform parity remain follow-up validation work. |

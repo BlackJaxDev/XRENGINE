@@ -1025,6 +1025,14 @@ internal sealed partial class VulkanCommandRuntime
             return false;
         }
 
+        // The explicit background host permits only the dedicated indirect
+        // artifact here. General capture mesh/compute chains remain volatile;
+        // actual replay still requires producer completion and the exact key.
+        if (header.OpCode == EVulkanPrimaryPlanNodeKind.IndirectDraw &&
+            !dynamicOverlay && IsExactBackgroundIndirectContext(
+                in operations.GetContext(operationIndex), header.PassIndex))
+            return true;
+
         if (header.OpCode != EVulkanPrimaryPlanNodeKind.MeshDraw)
             return !IsExplicitDynamicCommandRange(
                 in operations.GetContext(operationIndex),
@@ -1038,6 +1046,19 @@ internal sealed partial class VulkanCommandRuntime
                 dynamicOverlay,
                 IsUiBatchTextDraw(operations.GetMeshDraw(operationIndex).Draw)) &&
             operations.GetMeshDraw(operationIndex).Draw.ProgramBindingSnapshot?.HasMutableFrameSourceSamplerBindings != true;
+    }
+
+    private static bool IsExactBackgroundIndirectContext(in FrameOpContext context, int passIndex)
+    {
+        RenderOutputRequest request = context.OutputSchedulingRequest;
+        return context.ContextKind == EVulkanFrameOpContextKind.SceneCapture &&
+            context.PipelineInstance?.Pipeline is not UserInterfaceRenderPipeline &&
+            request.IsDefined && request.OutputKind == EFrameOutputKind.SceneCapture &&
+            request.WorkClass == ERenderOutputWorkClass.Background &&
+            request.ReadinessPolicy == ERenderOutputReadinessPolicy.BlockForExact &&
+            request.FallbackPolicy == ERenderOutputFallbackPolicy.None &&
+            context.OutputSchedulingInstanceIdentity == request.OutputId &&
+            ResolveSecondaryCachePolicy(in context, passIndex) == ERenderPassSecondaryCachePolicy.Stable;
     }
 
     /// <summary>

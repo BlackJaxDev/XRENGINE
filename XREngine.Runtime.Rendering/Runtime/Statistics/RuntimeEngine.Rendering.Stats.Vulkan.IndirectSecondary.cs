@@ -10,6 +10,54 @@ public static partial class RuntimeEngine
         {
             public static partial class Vulkan
             {
+                private static long _indirectSecondaryReuses;
+                private static long _indirectSecondaryRecordings;
+                private static long _indirectSecondaryKeyEvaluations;
+                private static long _indirectSecondaryCompleteKeys;
+                private static long _indirectSecondaryMatchingKeys;
+                private static long _indirectSecondaryPolicyRejections;
+                private static string _indirectSecondaryIncompleteKeyReason = string.Empty;
+
+                /// <summary>Process-wide accepted indirect-secondary reuse decisions; not GPU completion receipts.</summary>
+                public static long IndirectSecondaryReuses => Interlocked.Read(ref _indirectSecondaryReuses);
+
+                /// <summary>Process-wide successful indirect-secondary recordings, including later discarded primaries.</summary>
+                public static long IndirectSecondaryRecordings => Interlocked.Read(ref _indirectSecondaryRecordings);
+
+                /// <summary>Prepared-key evaluations, including explicitly requested diagnostic proof checks.</summary>
+                public static long IndirectSecondaryKeyEvaluations => Interlocked.Read(ref _indirectSecondaryKeyEvaluations);
+                /// <summary>Complete prepared native identities; does not imply policy permission to reuse.</summary>
+                public static long IndirectSecondaryCompleteKeys => Interlocked.Read(ref _indirectSecondaryCompleteKeys);
+                /// <summary>Exact matches against the previous recording, before output-policy admission.</summary>
+                public static long IndirectSecondaryMatchingKeys => Interlocked.Read(ref _indirectSecondaryMatchingKeys);
+                /// <summary>Producer-complete draws for which output policy requires fresh recording.</summary>
+                public static long IndirectSecondaryPolicyRejections => Interlocked.Read(ref _indirectSecondaryPolicyRejections);
+                /// <summary>Last incomplete-key classification from explicit command-chain validation.</summary>
+                public static string IndirectSecondaryIncompleteKeyReason => Volatile.Read(ref _indirectSecondaryIncompleteKeyReason);
+
+                public static void RecordIndirectSecondaryIncompleteKey(string reason)
+                    => Volatile.Write(ref _indirectSecondaryIncompleteKeyReason, reason);
+
+                public static void RecordIndirectSecondaryReuseProof(bool evaluated, bool complete, bool matches, bool policyAllowsReuse)
+                {
+                    if (evaluated)
+                        Interlocked.Increment(ref _indirectSecondaryKeyEvaluations);
+                    if (complete)
+                        Interlocked.Increment(ref _indirectSecondaryCompleteKeys);
+                    if (matches)
+                        Interlocked.Increment(ref _indirectSecondaryMatchingKeys);
+                    if (!policyAllowsReuse)
+                        Interlocked.Increment(ref _indirectSecondaryPolicyRejections);
+                }
+
+                public static void RecordIndirectSecondaryArtifact(bool reused)
+                {
+                    if (reused)
+                        Interlocked.Increment(ref _indirectSecondaryReuses);
+                    else
+                        Interlocked.Increment(ref _indirectSecondaryRecordings);
+                }
+
                 private static readonly long[]
                     _vulkanIndirectSecondaryEligibilityCounts =
                         new long[

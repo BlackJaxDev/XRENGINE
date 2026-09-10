@@ -300,7 +300,9 @@ internal unsafe partial class VkMeshRenderer
 	/// flips <see cref="_buffersDirty"/> back to true so the next EnsureBuffers call
 	/// picks up the now-cached buffer without stalling the render thread.
 	/// </summary>
-	private void EnsureBuffers(bool skipIndexBuffers = false)
+	private void EnsureBuffers(
+		bool skipIndexBuffers = false,
+		bool requireSynchronousIndexBuild = false)
 	{
 		lock (_bufferStateSync)
 		{
@@ -344,21 +346,21 @@ internal unsafe partial class VkMeshRenderer
 			else if (Mesh is not null)
 			{
 				_triangleIndexBufferExternallyProvided = false;
-				var tri = GetIndexBufferForBinding(EPrimitiveType.Triangles, out _triangleIndexSize, _triangleIndexBuffer);
+				var tri = GetIndexBufferForBinding(EPrimitiveType.Triangles, out _triangleIndexSize, _triangleIndexBuffer, requireSynchronousIndexBuild);
 				_triangleIndexBuffer = tri is not null
-					? WrapperLookup.GetOrCreate(tri, generateNow: allowSynchronousBufferUpload) as VkDataBuffer
+					? ProgramCreationPort.GetOrCreateBuffer(tri, generateNow: allowSynchronousBufferUpload)
 					: null;
 				_triangleIndexBuffer?.TryEnsureReadyForRendering(allowSynchronousBufferUpload);
 
-				var line = GetIndexBufferForBinding(EPrimitiveType.Lines, out _lineIndexSize, _lineIndexBuffer);
+				var line = GetIndexBufferForBinding(EPrimitiveType.Lines, out _lineIndexSize, _lineIndexBuffer, requireSynchronousIndexBuild);
 				_lineIndexBuffer = line is not null
-					? WrapperLookup.GetOrCreate(line, generateNow: allowSynchronousBufferUpload) as VkDataBuffer
+					? ProgramCreationPort.GetOrCreateBuffer(line, generateNow: allowSynchronousBufferUpload)
 					: null;
 				_lineIndexBuffer?.TryEnsureReadyForRendering(allowSynchronousBufferUpload);
 
-				var point = GetIndexBufferForBinding(EPrimitiveType.Points, out _pointIndexSize, _pointIndexBuffer);
+				var point = GetIndexBufferForBinding(EPrimitiveType.Points, out _pointIndexSize, _pointIndexBuffer, requireSynchronousIndexBuild);
 				_pointIndexBuffer = point is not null
-					? WrapperLookup.GetOrCreate(point, generateNow: allowSynchronousBufferUpload) as VkDataBuffer
+					? ProgramCreationPort.GetOrCreateBuffer(point, generateNow: allowSynchronousBufferUpload)
 					: null;
 				_pointIndexBuffer?.TryEnsureReadyForRendering(allowSynchronousBufferUpload);
 				_indexBuffersSkippedForShaderGeneratedVertices = false;
@@ -375,7 +377,11 @@ internal unsafe partial class VkMeshRenderer
 		}
 	}
 
-	private XRDataBuffer? GetIndexBufferForBinding(EPrimitiveType type, out IndexSize elementSize, VkDataBuffer? currentBinding)
+	private XRDataBuffer? GetIndexBufferForBinding(
+		EPrimitiveType type,
+		out IndexSize elementSize,
+		VkDataBuffer? currentBinding,
+		bool requireSynchronous)
 	{
 		if (Mesh is not { } mesh)
 		{
@@ -383,12 +389,36 @@ internal unsafe partial class VkMeshRenderer
 			return null;
 		}
 
+		bool hasCachedIndices = mesh.HasCachedIndexBuffer(type);
+		if (hasCachedIndices)
+			Interlocked.And(ref _asyncIndexBufferSubscriptions, ~(1 << (int)type));
+		if (mesh.TryGetIndexBufferBuildFailure(type, out Exception? error))
+		{
+			Interlocked.And(ref _asyncIndexBufferSubscriptions, ~(1 << (int)type));
+			throw new InvalidOperationException(
+				$"Index buffer build failed for mesh '{mesh.Name ?? "<unnamed>"}' primitive '{type}'.",
+				error);
+		}
+
 		Action<XRDataBuffer, IndexSize>? onReady =
-			currentBinding is null && !mesh.HasCachedIndexBuffer(type)
-				? OnAsyncIndexBufferReady
+			currentBinding is null && !requireSynchronous &&
+			!hasCachedIndices &&
+			TryRegisterAsyncIndexBufferSubscription(type)
+				? type switch
+				{
+					EPrimitiveType.Triangles => OnTriangleIndexBufferReady,
+					EPrimitiveType.Lines => OnLineIndexBufferReady,
+					EPrimitiveType.Points => OnPointIndexBufferReady,
+					_ => null,
+				}
 				: null;
 
-		return mesh.GetIndexBuffer(type, out elementSize, EBufferTarget.ElementArrayBuffer, onReady);
+		return mesh.GetIndexBuffer(
+			type,
+			out elementSize,
+			EBufferTarget.ElementArrayBuffer,
+			onReady,
+			requireSynchronous);
 	}
 
 	private void ClearIndexBufferBindings()
@@ -489,8 +519,18 @@ internal unsafe partial class VkMeshRenderer
 		return string.Empty;
 	}
 
-	private void OnAsyncIndexBufferReady(XRDataBuffer buffer, IndexSize elementSize)
+	private bool TryRegisterAsyncIndexBufferSubscription(EPrimitiveType type)
 	{
+		int bit = 1 << (int)type;
+		return (Interlocked.Or(ref _asyncIndexBufferSubscriptions, bit) & bit) == 0;
+	}
+
+	private void OnAsyncIndexBufferReady(
+		EPrimitiveType type,
+		XRDataBuffer buffer,
+		IndexSize elementSize)
+	{
+		Interlocked.And(ref _asyncIndexBufferSubscriptions, ~(1 << (int)type));
 		_ = buffer;
 		_ = elementSize;
 		// The worker publishes only an atomic readiness edge. EnsureBuffers consumes
@@ -498,6 +538,13 @@ internal unsafe partial class VkMeshRenderer
 		// PresentNow materialization loop never depends on pumping a generic callback.
 		Interlocked.Exchange(ref _pendingAsyncIndexBufferReady, 1);
 	}
+
+	private void OnTriangleIndexBufferReady(XRDataBuffer buffer, IndexSize size)
+		=> OnAsyncIndexBufferReady(EPrimitiveType.Triangles, buffer, size);
+	private void OnLineIndexBufferReady(XRDataBuffer buffer, IndexSize size)
+		=> OnAsyncIndexBufferReady(EPrimitiveType.Lines, buffer, size);
+	private void OnPointIndexBufferReady(XRDataBuffer buffer, IndexSize size)
+		=> OnAsyncIndexBufferReady(EPrimitiveType.Points, buffer, size);
 
 	private void ApplyIndexBufferReadyNoLock()
 	{

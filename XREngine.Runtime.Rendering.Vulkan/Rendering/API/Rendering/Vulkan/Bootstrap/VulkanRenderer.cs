@@ -397,6 +397,9 @@ public sealed partial class VulkanRenderer :
     public override bool TryQueueScreenshotReadback(BoundingRectangle region, bool withTransparency, Action<ScreenshotReadbackResult> callback, out string? failure)
         => _frameLoop.TryQueueScreenshotReadback(region, withTransparency, callback, out failure);
 
+    public override bool TryQueueCompositedScreenshotReadback(BoundingRectangle region, Action<ScreenshotReadbackResult> callback, out string? failure)
+        => _frameLoop.TryQueueCompositedScreenshotReadback(region, callback, out failure);
+
     public override void PollScreenshotReadbacks() => _frameLoop.PollScreenshotReadbacks();
     public override ScreenshotReadbackStatus GetScreenshotReadbackStatus() => _frameLoop.GetScreenshotReadbackStatus();
     public override void PollGpuRenderStatsReadbacks() => _frameLoop.PollGpuRenderStatsReadbacks();
@@ -774,7 +777,8 @@ public sealed partial class VulkanRenderer :
     /// the common Vulkan frame-target path.
     /// </summary>
     internal VulkanExplicitProductionSubmissionReceipt SubmitExplicitProductionFrame(
-        Action<RenderFrameOutputDescription> buildFrame)
+        Action<RenderFrameOutputDescription> buildFrame,
+        bool backgroundCapture = false)
     {
         using var creationOwner = GenericRenderObject.PushApiWrapperCreationOwner(this);
         // First explicit production submission is an intentional preparation
@@ -788,7 +792,7 @@ public sealed partial class VulkanRenderer :
         Active = true;
         try
         {
-            return _frameLoop.ExecuteExplicitProductionFrame(buildFrame);
+            return _frameLoop.ExecuteExplicitProductionFrame(buildFrame, backgroundCapture);
         }
         finally
         {

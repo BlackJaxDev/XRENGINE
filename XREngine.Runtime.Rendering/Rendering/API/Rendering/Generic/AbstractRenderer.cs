@@ -1134,6 +1134,20 @@ namespace XREngine.Rendering
         public virtual void PollScreenshotReadbacks() { }
 
         /// <summary>
+        /// Captures the composited window region, including screen-space UI. Backends must
+        /// retain image ownership until the copy completes; unsupported backends fail explicitly.
+        /// This diagnostic request may stall presentation and must stay outside timing captures.
+        /// </summary>
+        public virtual bool TryQueueCompositedScreenshotReadback(
+            BoundingRectangle region,
+            Action<ScreenshotReadbackResult> callback,
+            out string? failure)
+        {
+            failure = $"{GetType().Name} does not support composited window screenshots.";
+            return false;
+        }
+
+        /// <summary>
         /// Queues an exact integer readback of one Advanced visibility pixel. Implementations
         /// must stage through backend-owned memory and invoke the callback only after GPU
         /// completion; synchronous production texture reads do not satisfy this contract.

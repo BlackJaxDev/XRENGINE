@@ -32,6 +32,7 @@ namespace XREngine.Editor.Mcp
         /// <param name="windowIndex">Window index to capture from (default: 0).</param>
         /// <param name="viewportIndex">Viewport index within the window (default: 0).</param>
         /// <param name="outputDir">Output directory for the screenshot. Defaults to "McpCaptures" in the working directory.</param>
+        /// <param name="includeScreenSpaceUi">Capture the composited desktop window region, including screen-space UI.</param>
         /// <param name="token">Cancellation token.</param>
         /// <returns>
         /// A response containing:
@@ -45,7 +46,7 @@ namespace XREngine.Editor.Mcp
         /// Otherwise, the viewport is selected by window and viewport index.
         /// </remarks>
         [XRMcp(Name = "capture_viewport_screenshot")]
-        [Description("Capture a screenshot from a viewport or camera for LLM context.")]
+        [Description("Capture a viewport or camera screenshot. Set include_screen_space_ui to capture the composited desktop window region including overlays.")]
         public static async Task<McpToolResponse> CaptureViewportScreenshotAsync(
             McpToolContext context,
             [McpName("camera_node_id"), Description("Optional camera node ID to target.")] string? cameraNodeId = null,
@@ -53,6 +54,7 @@ namespace XREngine.Editor.Mcp
             [McpName("window_index"), Description("Optional window index to target.")] int windowIndex = 0,
             [McpName("viewport_index"), Description("Optional viewport index to target.")] int viewportIndex = 0,
             [McpName("output_dir"), Description("Optional directory to write the screenshot into.")] string? outputDir = null,
+            [McpName("include_screen_space_ui"), Description("Capture the composited desktop window region including screen-space UI. Diagnostic capture may stall presentation; not supported for VR eye targets.")] bool includeScreenSpaceUi = false,
             CancellationToken token = default)
         {
             XRViewport? viewport = ResolveViewport(
@@ -65,6 +67,9 @@ namespace XREngine.Editor.Mcp
 
             if (viewport is null)
                 return new McpToolResponse(viewportError ?? "No viewport found to capture.", isError: true);
+
+            if (includeScreenSpaceUi && (!string.IsNullOrWhiteSpace(vrEye) || viewport.Window is null))
+                return new McpToolResponse("Screen-space UI capture requires a desktop window viewport; VR eye and detached offscreen targets are not supported.", isError: true);
 
             // Legacy two-pass VR renders through a dedicated pipeline instance and
             // external eye framebuffer. Restore the submitted planner generation
@@ -82,11 +87,12 @@ namespace XREngine.Editor.Mcp
                 XRViewport viewport,
                 XRRenderPipelineInstance pipelineInstance,
                 string? vrEye,
+                bool includeScreenSpaceUi,
                 string path,
                 TaskCompletionSource<(string Path, ScreenshotReadbackResult Readback)> tcs)
             {
-                using IDisposable? readbackScope = viewport.EnterRenderPipelineReadbackScope(pipelineInstance);
-                XRFrameBuffer? targetFbo = ResolveSelectedReadbackTarget(viewport, vrEye);
+                using IDisposable? readbackScope = includeScreenSpaceUi ? null : viewport.EnterRenderPipelineReadbackScope(pipelineInstance);
+                XRFrameBuffer? targetFbo = includeScreenSpaceUi ? null : ResolveSelectedReadbackTarget(viewport, vrEye);
                 using IDisposable? targetReadScope = targetFbo?.BindForReadingState();
 
                 BoundingRectangle captureRegion = targetFbo is not null
@@ -101,7 +107,7 @@ namespace XREngine.Editor.Mcp
                     renderer.BindFrameBuffer(EFramebufferTarget.ReadFramebuffer, null);
                 }
 
-                bool queued = renderer.TryQueueScreenshotReadback(captureRegion, false, result =>
+                void CompleteReadback(ScreenshotReadbackResult result)
                 {
                     if (!result.Succeeded || result.Image is null)
                     {
@@ -131,7 +137,11 @@ namespace XREngine.Editor.Mcp
                     {
                         tcs.TrySetException(ex);
                     }
-                }, out string? queueFailure);
+                }
+
+                bool queued = includeScreenSpaceUi
+                    ? renderer.TryQueueCompositedScreenshotReadback(captureRegion, CompleteReadback, out string? queueFailure)
+                    : renderer.TryQueueScreenshotReadback(captureRegion, false, CompleteReadback, out queueFailure);
 
                 if (!queued)
                 {
@@ -163,7 +173,7 @@ namespace XREngine.Editor.Mcp
                         return;
 
                     window.PostRenderViewportsCallback -= deferredHandler;
-                    BeginCapture(renderer, viewport, pipelineInstance, vrEye, path, tcs);
+                    BeginCapture(renderer, viewport, pipelineInstance, vrEye, includeScreenSpaceUi, path, tcs);
                 };
 
                 window.PostRenderViewportsCallback += deferredHandler;
@@ -199,6 +209,8 @@ namespace XREngine.Editor.Mcp
                     new
                     {
                         path = savedPath,
+                        include_screen_space_ui = includeScreenSpaceUi,
+                        capture_source = includeScreenSpaceUi ? "CompositedWindow" : "ViewportTarget",
                         readback = new
                         {
                             backend = readback.Backend,

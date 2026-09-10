@@ -28,6 +28,8 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
 
     protected override void DataPropertyChanged(object? sender, IXRPropertyChangedEventArgs e)
     {
+        if (IsApplyingImportedUploadMetadata)
+            return;
         base.DataPropertyChanged(sender, e);
 
         if (IsSamplerDataProperty(e.PropertyName))
@@ -391,6 +393,8 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
     /// </summary>
     private void OnTextureResized()
     {
+        if (IsApplyingImportedUploadMetadata)
+            return;
         Destroy();
         _layoutInitialized = false;
         _currentImageLayout = ImageLayout.Undefined;

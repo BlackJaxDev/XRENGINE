@@ -531,7 +531,7 @@ pwsh Tools/Reports/generate_mcp_docs.ps1
 | `capture_openxr_desktop_mirror_texture` | Capture the latest OpenXR desktop mirror texture and report pixel statistics. |
 | `capture_openxr_eye_preview_texture` | Capture the latest OpenXR preview copy for the left or right eye and report pixel statistics. |
 | `capture_render_pipeline_texture` | Capture a named live render-pipeline texture to PNG, EXR, or Radiance HDR and report pixel statistics. |
-| `capture_viewport_screenshot` | Capture a screenshot from a viewport or camera for LLM context. |
+| `capture_viewport_screenshot` | Capture the viewport target; `include_screen_space_ui: true` captures the composited desktop window region, including UI. Vulkan retains acquired-image ownership through a diagnostic copy before present. |
 | `clear_selection` | Clear the current scene-node selection. |
 | `clone_scene` | Deep-clone a scene for experimentation. The clone is added to the world (hidden by default). |
 | `compile_game_scripts` | Regenerate game project files, compile, and hot-reload the game DLL. Returns compilation result. |

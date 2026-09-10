@@ -174,9 +174,10 @@ namespace XREngine.Rendering.Vulkan
 
         /// <summary>
         /// Pays the next slot's unavoidable reuse wait after the current submit
-        /// but before releasing visibility collection. This makes the slot-ready
-        /// publication truthful while presentation and non-render gameplay work
-        /// can still overlap after the boundary.
+        /// but before releasing visibility snapshot publication. CPU collection
+        /// already precedes the timer's render-done wait; swap jobs and render-side
+        /// snapshot replacement follow it. Do not move this wait by treating that
+        /// publication boundary as independent CPU collection.
         /// </summary>
         private void WaitForNextDesktopFrameSlotBeforeCollect(
             ref VulkanFrameAttempt attempt)

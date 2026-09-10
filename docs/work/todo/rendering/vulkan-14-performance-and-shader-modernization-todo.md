@@ -1,10 +1,10 @@
 # Vulkan 1.4 Performance And Shader Modernization TODO
 
-Last Updated: 2026-09-08
+Last Updated: 2026-09-09
 
 Owner: Rendering / Vulkan
 
-Status: A1–A4 complete; A5 / B acceptance incomplete due to heap indirect device loss
+Status: Phases A–C, D1–D3, E1, E3–E5 and F1 complete; E2 native replay demonstrated with resize freshness still open; F2 implemented pending live validation, F3 open; D4 research and phases G–J open
 
 ## Objective And Evidence
 
@@ -19,12 +19,17 @@ in the [2026-09-08 investigation](../../investigations/rendering/vulkan14-phases
 No runtime speedup is claimed. The historical "current state" descriptions below
 explain the original gaps; use the checklist and investigation for current status.
 
-Work stopped at the user's request on 2026-09-08. Desktop heap material edits,
-compute, UI, resize and emulated sequential XR output were exercised. Native GPU
-checkpoints isolate the remaining device loss to an indirect graphics draw;
-both bindless and non-bindless material-table variants reproduce it. Physical
-headset validation is unavailable with the installed SteamVR runtime contracts.
-The remaining acceptance checkboxes stay open; no binding-path fallback is enabled.
+Phases A/B were completed on 2026-09-09. The indirect device loss was caused by
+common push-data writes overwriting heap descriptor indices. Ordinary heap
+programs now reserve the existing 128-byte constant prefix, and indirect draws
+publish constants before descriptors. Final build 52 passed without warnings or
+errors. Desktop heap GPU rendering passed with multiple meshes, material edits,
+movement and camera changes; compute, UI, resize and emulated sequential XR were
+also exercised. Monado smoke 53 passed true single-pass stereo with clean Vulkan
+validation and teardown. OpenGL and descriptor-indexing controls remain supported.
+No binding-path fallback or diagnostic draw suppression is part of the result.
+Physical SteamVR limitations and previously observed visual/teardown limitations
+are recorded separately in the investigation.
 
 This is a self-contained implementation backlog. Required technical rules are
 stated here, and links point only to repository code or related project notes.
@@ -151,7 +156,7 @@ Sources:
   generated modules with `spirv-val --target-env vulkan1.4`.
   **Done when:** each route produces attributable, validated artifacts; target
   changes cannot reuse incompatible cache entries; unsupported tooling fails visibly.
-- [ ] **A5 — Validate the baseline without reducing features.** Exercise desktop,
+- [x] **A5 — Validate the baseline without reducing features.** Exercise desktop,
   relevant XR modes, and existing GLSL on Vulkan and OpenGL. Compare requested
   versus negotiated APIs, device features, binding paths, and compiler targets.
   **Done when:** the note records equivalent supported output and a before/after
@@ -214,28 +219,39 @@ Sources:
 [VkRenderProgram.Compute.cs](../../../../XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgram.Compute.cs);
 [VkMeshRenderer.Drawing.cs](../../../../XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Drawing.cs).
 
-- [ ] **B1 — Fix heap pipeline creation and identities.** Set the required null
+- [x] **B1 — Fix heap pipeline creation and identities.** Set the required null
   native layout, preserve complete resource mappings, and audit synchronous,
   background, native, and applicable shader-object paths.
   **Done when:** all selected heap variants create successfully with validation
   enabled, and cache/program identities support the null-layout contract.
-- [ ] **B2 — Define and use one heap root layout.** Reserve non-overlapping offsets
+- [x] **B2 — Define and use one heap root layout.** Reserve non-overlapping offsets
   for shader constants and heap references. Audit mesh, compute, native passes,
   and ImGui for mixed push APIs and binding modes.
   **Done when:** reflected shader offsets match the published payload, limits are
   checked, and every consumed value comes from valid state at draw/dispatch time.
-- [ ] **B3 — Verify the heap storage and mapping lifecycle.** Check native interop,
+- [x] **B3 — Verify the heap storage and mapping lifecycle.** Check native interop,
   flags, signatures, dependencies, descriptor sizes, reserved ranges, host writes,
   mode invalidation, and slot retirement against the selected SDK declarations.
   Preserve conventional GLSL mappings. **Done when:** supported bindings have
   valid mappings, referenced storage stays live, and unsupported cases fail visibly.
-- [ ] **B4 — Validate heap rendering before benchmarking.** Cover material edits,
+- [x] **B4 — Validate heap rendering before benchmarking.** Cover material edits,
   compute, indirect draws, UI, resize, and applicable XR output with validation
   logs and viewed captures. **Done when:** those cases preserve expected output
   and have no unresolved steady-state heap/push/pipeline validation errors;
   shutdown-only diagnostics are recorded separately.
 
 ## C. Establish Reproducible Measurements
+
+Completed collection, fixture corrections, capture evidence and predeclared
+comparison criteria are recorded in the
+[2026-09-09 baseline note](../../investigations/rendering/vulkan14-phase-c-baselines-2026-09-09.md).
+Sustained heap streaming currently fails on descriptor capacity and is excluded
+from performance comparisons; its rejected-frame loop is not a speedup.
+The note retains 34 accepted captures and five excluded attempts, with full
+timing distributions, allocation/cache/wait observations and run-to-run variation.
+Indexing material-edit, streaming and cold-start comparisons remain deferred
+by their recorded failures; noisy GPU and heap moving-camera comparisons are
+also deferred. Completing C records these limits rather than declaring them fixed.
 
 A high reuse ratio, fewer API calls, or a newer feature does not establish a
 speedup. Measure full CPU and GPU costs for equivalent visible work. Run
@@ -252,13 +268,13 @@ Sources:
 [VulkanDiagnosticOptions.cs](../../../../XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/VulkanDiagnosticOptions.cs);
 [Vulkan primary command-buffer reuse contract](../../../architecture/rendering/vulkan-primary-command-buffer-reuse.md).
 
-- [ ] **C1 — Capture the baseline and reproduction procedure.** Record hardware,
+- [x] **C1 — Capture the baseline and reproduction procedure.** Record hardware,
   driver/tool versions, scene, settings, launch configuration, warmup, sample
   duration, and exact selected API/features. Collect frame/CPU/GPU timing,
   allocation bytes, compilation/cache behavior, and relevant wait counters.
   **Done when:** another contributor can reproduce the run from the note and
   find its retained logs/captures without any external reference.
-- [ ] **C2 — Define comparison criteria before each change.** Select the workload,
+- [x] **C2 — Define comparison criteria before each change.** Select the workload,
   metric, acceptable output/latency behavior, and repeatable sampling procedure.
   Report timing distributions and run-to-run variation, not one FPS reading.
   **Done when:** each experiment has a comparable baseline and explicit
@@ -270,9 +286,27 @@ Sources:
 
 The ordinary desktop submission path calls
 `WaitForNextDesktopFrameSlotBeforeCollect` before
-`ReleaseCollectForDesktopFrame`. This may delay independent CPU collection.
-It also protects truthful slot-ready publication: removing the wait without
-moving the ownership boundary would be unsafe.
+`ReleaseCollectForDesktopFrame`. The D1 ownership review established that CPU
+collection already precedes the timer's render-done wait; this release gates
+swap jobs and render-side snapshot publication. The measured pre-publication
+wait is 0.013–0.014 ms median, below 0.1% of frame cost. D2 therefore retains
+the existing wait and ownership boundary.
+
+The [phase D investigation](../../investigations/rendering/vulkan14-phase-d-waits-and-barriers-2026-09-09.md)
+records the ownership map, direct wait telemetry, six Advanced barrier sites,
+viewed synchronization validation and three matched control/candidate pairs.
+The early-visibility specialization missed the 5% improvement threshold and
+was removed. D4 remains deferred: production GPU timings were noisy, frame p99
+did not satisfy the tail criterion, and actual GPU-gap evidence was unavailable.
+No performance optimization is promoted by this experiment.
+
+The [barrier research](../../investigations/rendering/vulkan14-barrier-performance-research-2026-09-09.md)
+now explains the missed threshold: the tested boundary contains dependent
+compute work with no proven local graphics overlap. D4 has no calendar wait;
+its next experiment requires a measured overlap opportunity, complete consumer
+coverage, matched barrier encoding, and stable paired controls. Nsight reaches
+the renderer but currently requires NVIDIA performance-counter permission to
+capture the missing scheduling evidence. Phase E proceeds independently.
 
 Generic `ShaderStorage` and `ShaderImageAccess` barriers expand to
 `AllGraphicsBit | ComputeShaderBit` in both directions with shader read/write
@@ -301,17 +335,19 @@ Sources:
 [VulkanRenderer.CommandBufferRecording.Primary.NativeShading.cs](../../../../XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Recording/Primary/VulkanRenderer.CommandBufferRecording.Primary.NativeShading.cs),
 `RecordAdvancedNativeComputePayload`.
 
-- [ ] **D1 — Map collection ownership and wait cost.** Measure the
+- [x] **D1 — Map collection ownership and wait cost.** Measure the
   `WaitNextFrameSlotBeforeCollect` timing counter; identify the first collection
   operation that touches slot-owned GPU-visible state. Separate CPU-only preparation from
   publication. **Done when:** the note contains an ownership boundary and a
   measured decision on whether deferring/splitting the wait is worthwhile.
-- [ ] **D2 — Move the wait only where D1 proves safe and useful.** Keep completion
+- [x] **D2 — Move the wait only where D1 proves safe and useful.** Keep completion
   immediately before the first operation requiring safe slot reuse.
   **Done when:** camera motion, mutation, resize, and desktop/XR coexistence
   preserve slot ownership, with no increased latency or workload deferrals and
-  a measured improvement in total preparation/frame timing.
-- [ ] **D3 — Build a producer/consumer dependency map.** Inventory reached generic
+  a measured improvement in total preparation/frame timing. **Disposition:** D1
+  found no useful relocation; no scheduling change was applied, so the
+  conditional move and its changed-scheduling validation are not applicable.
+- [x] **D3 — Build a producer/consumer dependency map.** Inventory reached generic
   barriers, including early visibility and native image shading; list all writes,
   reads, later consumers, layout changes, and graph-emitted dependencies.
   **Done when:** each proposed narrower barrier has a complete hazard explanation.
@@ -319,8 +355,16 @@ Sources:
   specific callers justified by D3, preserving generic API semantics.
   **Done when:** synchronization validation and viewed output pass, GPU timing/gap
   comparisons are recorded, and each change has a retain/reject/defer decision.
+  **Disposition:** the first candidate passed viewed synchronization validation
+  but failed promotion criteria and was restored to the generic barrier. GPU
+  gap capture requires driver counter access. Research is reopened with explicit
+  evidence gates and ranked experiments in the linked barrier report; no later
+  phase or arbitrary date is a prerequisite.
 
 ## E. Improve Command Reuse And Heap Publication
+
+Implementation and measurements are tracked in the
+[phase E investigation](../../investigations/rendering/vulkan14-phase-e-reuse-and-descriptors-2026-09-09.md).
 
 ### Current state and technical guidance
 
@@ -329,15 +373,22 @@ Avoided recording must exceed that total cost. Recording every frame may win for
 some workloads; a high reuse ratio may still lose if validation is expensive.
 Respect output policies that intentionally require fresh recording.
 
-The opt-in heap path has three concrete sources of additional work:
+The E implementation replaces heap-only incomplete indirect keys with exact
+prepared native identities and prevents key/encoder generation mismatches.
+Its live fixture verifies complete matching keys and material/root invalidation.
+The new presentationless background exact-output contract permits the dedicated
+indirect artifact to replay: 69 native reuses in 225 completed frames, versus zero
+in the matching foreground control, with no Vulkan validation errors. Image
+inspection found old pixels outside a shrunken viewport in both paths, so E2
+remains open for full-output resize freshness. See the
+[background replay and queue investigation](../../investigations/rendering/vulkan14-background-replay-and-queue-overlap-2026-09-09.md).
 
-- `CapturePreparedIndirectCommandChainKey` returns an incomplete key when heap
-  push payloads are present; `CanReuseIndirectCommandChainSecondary` requires
-  complete keys. This excludes that cache, not necessarily every renderer cache.
-- Compute heap publication creates a `DescriptorHeapPushDataPayload` and
-  `uint[]` for a nonempty layout and bypasses the prepared descriptor-set branch.
-- `TryPushDescriptorHeapProgramData` binds sampler and resource heaps before each
-  push; the generic/UI variant does likewise.
+Measured payload churn came from changing mesh allocation lookup keys, not an
+absence of compute scratch reuse. Heap allocation ownership is now stable per
+renderer, with exact frame-slot resource proof. Global material textures use a
+sparse leased arena, and exact per-command-buffer heap state suppresses redundant
+native binds while retaining native-resource tracking. See the investigation
+for accepted runtime evidence and the matched timing disposition.
 
 Changing heaps or binding modes can be expensive. Rebinding the same heap is not
 proof of a GPU stall, but redundant native calls are still a measurable cost.
@@ -352,7 +403,7 @@ Sources:
 [VulkanTrackedCommandEncoder.cs](../../../../XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/Authority/VulkanTrackedCommandEncoder.cs).
 Compute publication is in `VkRenderProgram.Compute.cs`, linked in phase B.
 
-- [ ] **E1 — Measure total reuse cost and rejection causes.** Compare allowed
+- [x] **E1 — Measure total reuse cost and rejection causes.** Compare allowed
   reuse with forced recording across C's workloads, including preparation,
   signatures, refresh, recording, submission, and allocations.
   **Done when:** results identify which workloads benefit and which validation
@@ -362,27 +413,41 @@ Compute publication is in `VkRenderProgram.Compute.cs`, linked in phase B.
   descriptor content, and referenced-resource ownership.
   **Done when:** unchanged valid packets reuse safely and changes invalidate;
   the incomplete-key guard is replaced by proof, not simply removed.
-- [ ] **E3 — Remove repeated heap payload allocation and publication.** Use
+  **Status:** the output contract, native replay and material/root/buffer
+  invalidation are implemented and exercised. Full-output clearing after viewport
+  shrink remains open; the foreground control exhibits the same retained pixels.
+  No dependency on D4 counter access.
+- [x] **E3 — Remove repeated heap payload allocation and publication.** Use
   recording-context/frame-owned reusable storage and existing generation tracking
   to avoid unnecessary descriptor writes. Keep worker scratch and retained
   prepared payloads isolated. **Done when:** representative steady-state heap
   dispatches add no payload object/array allocations and unchanged resources
   avoid redundant publication without stale bindings.
-- [ ] **E4 — Suppress redundant heap binds safely.** Track new recording, heap
+- [x] **E4 — Suppress redundant heap binds safely.** Track new recording, heap
   replacement, non-heap state, and secondary execution/inheritance boundaries.
   **Done when:** bind counters decrease for unchanged heaps, all invalidation
   cases restore correct state, and resource lifetime tracking remains complete.
-- [ ] **E5 — Compare completed heap and indexing paths under Vulkan 1.4.** Include
+- [x] **E5 — Compare completed heap and indexing paths under Vulkan 1.4.** Include
   descriptor writes, bind/push counts, reuse, allocation bytes, CPU time, and GPU
   pass/frame time. **Done when:** the chosen policy is supported by equivalent
   output and end-to-end measurements, with explicit requested-mode behavior.
+  **Disposition:** retain the current default and explicit heap selection.
+  Allocation and binding reductions are validated; mixed/noisy timings and
+  intermittent indexing mutation rejections do not justify default promotion
+  or a general FPS claim. The comparison is complete; those stability findings
+  and the remaining E2 resize-freshness issue remain explicit follow-up work.
 
 ## F. Execute Useful Frame-Graph Queue Overlap
 
-`SupportsFrameGraphMultiQueueSubmission` is currently false: frame-graph
-operations execute through one graphics primary. Queue scheduling metadata
-alone does not create native overlap. This finding does not exclude separate
-upload or auxiliary queue services elsewhere in the engine.
+`SupportsFrameGraphMultiQueueSubmission` remains false for the generic graph
+executor. A selected presentationless mono Advanced `GraphicsCompute` executor
+has now been implemented with four native primaries, two queues in the graphics
+family, binary dependencies and per-slot completion tracking. It has not yet
+completed live execution: Advanced RenderBench startup currently publishes
+canonical scene generation zero before its first render frame begins. The
+default remains graphics-only and the candidate is explicitly disabled pending
+validation. G2 still needs its own image-access journal publication after the
+split. No overlap or performance gain is claimed.
 
 Independent work is required. Visibility, depth-pyramid generation, and indirect
 generation often have real same-frame dependencies; simply assigning them to
@@ -393,20 +458,30 @@ Source:
 [VulkanRenderer.QueueOverlap.cs](../../../../XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/VulkanRenderer.QueueOverlap.cs),
 `SupportsFrameGraphMultiQueueSubmission`.
 
-- [ ] **F1 — Select one worthwhile independent workload.** Use D3's dependencies
+- [x] **F1 — Select one worthwhile independent workload.** Use D3's dependencies
   and C's timings to estimate available overlap, submission cost, and ownership
   transfer cost on target hardware. **Done when:** the note names one candidate
   with evidence for an experiment, or records why this work is deferred.
+  **Disposition:** WorkClassification can overlap GTAO, froxel construction and
+  background shading, with a prior measured ideal overlap ceiling of 0.427 ms.
+  Same-family queues avoid ownership-transfer cost; submission and contention
+  costs remain to be measured.
 - [ ] **F2 — Implement the candidate's actual native submissions.** Add semaphore
   dependencies, paired queue-family release/acquire operations where required,
   completion tracking, and failed/rejected submission handling.
   **Done when:** the executor owns the complete cross-queue lifecycle; changing
   the support gate is backed by working submissions rather than planner metadata.
+  **Status:** executor implemented and reviewed, including exact resource pins,
+  joined completion markers, timestamp-pool ownership and partial-submit draining.
+  Release build passes; native execution and failure-path validation remain open.
 - [ ] **F3 — Validate queue selection and net benefit.** Exercise supported queue
   configurations and compare total CPU/GPU timing against graphics-only execution.
   **Done when:** correctness passes, requested and executable modes are reported
   accurately, and the default choice follows measured benefit. An explicit
   unsupported multi-queue request must not silently run another mode.
+  **Status:** requested/executed modes are in submission receipts and unsupported
+  candidates reject explicitly. Live queue validation and paired CPU/GPU timings
+  remain outstanding. Work stopped at the user's wrap-up request.
 
 ## G. Evaluate Address-Based Shader Parameters
 

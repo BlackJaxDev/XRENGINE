@@ -19,7 +19,9 @@ public readonly struct VulkanExplicitProductionSubmissionReceipt : IEquatable<Vu
         uint expectedFrameSlot,
         ulong targetGeneration,
         ulong commandBufferHandle,
-        ulong graphicsTimelineSignal)
+        ulong graphicsTimelineSignal,
+        EVulkanQueueOverlapMode requestedQueueMode = EVulkanQueueOverlapMode.Auto,
+        EVulkanQueueOverlapMode executedQueueMode = EVulkanQueueOverlapMode.GraphicsOnly)
     {
         OwnerIdentity = ownerIdentity;
         BackendGeneration = backendGeneration;
@@ -30,6 +32,8 @@ public readonly struct VulkanExplicitProductionSubmissionReceipt : IEquatable<Vu
         TargetGeneration = targetGeneration;
         CommandBufferHandle = commandBufferHandle;
         GraphicsTimelineSignal = graphicsTimelineSignal;
+        RequestedQueueMode = requestedQueueMode;
+        ExecutedQueueMode = executedQueueMode;
     }
 
     /// <summary>Opaque identity of the renderer instance that accepted the submission.</summary>
@@ -42,6 +46,11 @@ public readonly struct VulkanExplicitProductionSubmissionReceipt : IEquatable<Vu
     public ulong TargetGeneration { get; }
     public ulong CommandBufferHandle { get; }
     public ulong GraphicsTimelineSignal { get; }
+    /// <summary>The queue policy frozen before this output transaction was built.</summary>
+    public EVulkanQueueOverlapMode RequestedQueueMode { get; }
+    /// <summary>The native executor that accepted this frame, independent of planner sidecars.</summary>
+    public EVulkanQueueOverlapMode ExecutedQueueMode { get; }
+    public int NativeFrameSubmissionCount => ExecutedQueueMode == EVulkanQueueOverlapMode.GraphicsCompute ? 4 : 1;
     public bool IsValid => OwnerIdentity != 0UL && ExplicitFrameNumber != 0UL && GraphicsTimelineSignal != 0UL;
 
     public bool Equals(VulkanExplicitProductionSubmissionReceipt other)
@@ -53,7 +62,9 @@ public readonly struct VulkanExplicitProductionSubmissionReceipt : IEquatable<Vu
            ExpectedFrameSlot == other.ExpectedFrameSlot &&
            TargetGeneration == other.TargetGeneration &&
            CommandBufferHandle == other.CommandBufferHandle &&
-           GraphicsTimelineSignal == other.GraphicsTimelineSignal;
+           GraphicsTimelineSignal == other.GraphicsTimelineSignal &&
+           RequestedQueueMode == other.RequestedQueueMode &&
+           ExecutedQueueMode == other.ExecutedQueueMode;
 
     public override bool Equals(object? obj)
         => obj is VulkanExplicitProductionSubmissionReceipt other && Equals(other);
@@ -70,6 +81,8 @@ public readonly struct VulkanExplicitProductionSubmissionReceipt : IEquatable<Vu
         hash.Add(TargetGeneration);
         hash.Add(CommandBufferHandle);
         hash.Add(GraphicsTimelineSignal);
+        hash.Add(RequestedQueueMode);
+        hash.Add(ExecutedQueueMode);
         return hash.ToHashCode();
     }
 

@@ -25,6 +25,7 @@ namespace XREngine.Rendering.Vulkan
     {
         public uint ImageIndex;
         public CommandBuffer CommandBuffer;
+        public VulkanAdvancedQueueOverlapSlot? AdvancedQueueOverlap;
         public VulkanLaneRecordingContext? LaneContext;
         public CommandBuffer DynamicUiBatchTextSecondaryCommandBuffer;
         public FrameOperationSequence Ops;

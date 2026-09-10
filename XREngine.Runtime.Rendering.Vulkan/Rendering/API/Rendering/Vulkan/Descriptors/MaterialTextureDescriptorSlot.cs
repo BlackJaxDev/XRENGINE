@@ -15,6 +15,11 @@ internal struct MaterialTextureDescriptorSlot
     public ulong WrapperDescriptorGeneration;
     public long StreamingGeneration;
     public uint Generation;
+    /// <summary>
+    /// Changes only when a never-used or lease-zero recycled slot is reserved.
+    /// It authorizes a scalar overwrite in the active heap arena.
+    /// </summary>
+    public ulong HeapRewriteSerial;
     public ulong LastUsedFrameId;
     public ulong RetireAfterFrameId;
     public bool Dirty;

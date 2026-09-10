@@ -21,6 +21,14 @@ internal sealed partial class VulkanFrameLoop
         bool withTransparency,
         Action<ScreenshotReadbackResult> callback,
         out string? failure)
+        => TryQueueScreenshotReadbackCore(region, withTransparency, callback, out failure, null);
+
+    private unsafe bool TryQueueScreenshotReadbackCore(
+        BoundingRectangle region,
+        bool withTransparency,
+        Action<ScreenshotReadbackResult> callback,
+        out string? failure,
+        BlitImageInfo? compositedSource)
     {
         ArgumentNullException.ThrowIfNull(callback);
         failure = null;
@@ -38,7 +46,7 @@ internal sealed partial class VulkanFrameLoop
         PollScreenshotReadbacks();
 
         IDisposable? submittedScope = null;
-        if (_commandRuntime.ActiveBoundReadFrameBuffer is null &&
+        if (!compositedSource.HasValue && _commandRuntime.ActiveBoundReadFrameBuffer is null &&
             !_resourcePlannerSessions.TryGetScopedFrameOpContext(out _) &&
             (_lastWindowPresentFrameOpContext is not { } context ||
              !TryEnterDesktopSubmittedReadbackScope(in context, out submittedScope)))
@@ -48,13 +56,23 @@ internal sealed partial class VulkanFrameLoop
         }
         using IDisposable? plannerScope = submittedScope;
 
-        if (!TryResolveScreenshotReadbackSource(
+        BlitImageInfo source;
+        int sourceX, sourceY, width, height;
+        if (compositedSource is { } windowSource)
+        {
+            source = windowSource;
+            VulkanCommandRuntime.ClampReadbackRegion(region, source.Extent.Width, source.Extent.Height,
+                out sourceX, out sourceY, out width, out height);
+            if (!VulkanCommandRuntime.IsRegionInsideExtent(sourceX, sourceY, width, height, source.Extent))
+                return RejectScreenshotReadback("The requested window capture region is outside the acquired image.", out failure);
+        }
+        else if (!TryResolveScreenshotReadbackSource(
                 region,
-                out BlitImageInfo source,
-                out int sourceX,
-                out int sourceY,
-                out int width,
-                out int height,
+                out source,
+                out sourceX,
+                out sourceY,
+                out width,
+                out height,
                 out failure))
         {
             Interlocked.Increment(ref OutputRuntime.Capture.ScreenshotReadbackRejectedCount);
@@ -230,19 +248,32 @@ internal sealed partial class VulkanFrameLoop
                     out failure);
             }
 
+            submitted = true;
+            // Publish ownership immediately after native acceptance, before any
+            // bookkeeping can throw and enter presentation recovery.
+            if (compositedSource.HasValue)
+                _pendingCompositedScreenshotFence = slot.Fence;
             ReadbackOutputResources.MarkStagingSliceSubmitted(slot.StagingSlice);
             Volatile.Write(ref slot.State, (int)EVulkanScreenshotReadbackSlotState.Submitted);
-            submitted = true;
             slot.SubmittedTimestamp = Stopwatch.GetTimestamp();
             slot.SubmittedAtUtc = DateTimeOffset.UtcNow;
             VulkanReadbackLayoutPolicy.PublishRestoredAttachmentLayout(
                 source,
                 VulkanReadbackLayoutPolicy.ResolvePostTransfer(source));
             Interlocked.Increment(ref OutputRuntime.Capture.ScreenshotReadbackQueuedCount);
+            // A swapchain image cannot be read after WSI takes ownership. This explicit
+            // diagnostic path waits only for its copy fence before allowing presentation.
+            // Ordinary viewport captures remain asynchronous and never take this wait.
+            if (compositedSource.HasValue)
+                CompletePendingCompositedScreenshotCopy();
             return true;
         }
         catch (Exception ex)
         {
+            // Preserve acquired-image ownership until the submitted copy has a
+            // completion proof, including a recovery attempt to present this frame.
+            if (submitted && compositedSource.HasValue)
+                throw;
             failure = $"Failed to queue Vulkan screenshot readback: {ex.Message}";
             Interlocked.Increment(ref OutputRuntime.Capture.ScreenshotReadbackRejectedCount);
             return false;
@@ -273,6 +304,7 @@ internal sealed partial class VulkanFrameLoop
 
         if (_deviceLost)
         {
+            FailPendingCompositedScreenshots(DeviceLostReason ?? "The Vulkan device was lost.");
             OutputRuntime.Capture.FailPendingScreenshotReadbacksForDeviceLoss(
                 DeviceLostReason ?? "The Vulkan device was lost.");
             return;
@@ -281,7 +313,7 @@ internal sealed partial class VulkanFrameLoop
         for (int i = 0; i < OutputRuntime.Capture.ScreenshotReadbackSlots.Length; ++i)
         {
             VulkanScreenshotReadbackSlot? slot = OutputRuntime.Capture.ScreenshotReadbackSlots[i];
-            if (slot is not null &&
+            if (slot is not null && slot.Fence.Handle != _pendingCompositedScreenshotFence.Handle &&
                 Volatile.Read(ref slot.State) == (int)EVulkanScreenshotReadbackSlotState.Submitted)
             {
                 TryConsumeScreenshotReadback(slot, i);
@@ -1193,6 +1225,7 @@ internal sealed partial class VulkanFrameLoop
 
     internal void DisposeScreenshotReadbacks()
     {
+        FailPendingCompositedScreenshots("The Vulkan renderer shut down before composited capture.");
         for (int i = 0; i < OutputRuntime.Capture.ScreenshotReadbackSlots.Length; ++i)
         {
             VulkanScreenshotReadbackSlot? slot = OutputRuntime.Capture.ScreenshotReadbackSlots[i];
@@ -1237,6 +1270,7 @@ internal sealed partial class VulkanFrameLoop
             Volatile.Write(ref slot.State, (int)EVulkanScreenshotReadbackSlotState.Disposed);
         }
 
+        _pendingCompositedScreenshotFence = default;
         Interlocked.Exchange(ref OutputRuntime.Capture.ScreenshotReadbackReservedRawBytes, 0);
     }
 }

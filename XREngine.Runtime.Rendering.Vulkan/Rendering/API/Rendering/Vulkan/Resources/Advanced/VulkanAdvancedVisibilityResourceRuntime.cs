@@ -1811,9 +1811,24 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
                 reason = "The frozen advanced native compute image view closure could not be acquired.";
                 return false;
             }
+            if (!TryCaptureNativeComputeImageClosure(identity, identityView, out VulkanAdvancedNativeImageClosure identityResource) ||
+                !TryCaptureNativeComputeImageClosure(metadata, metadataView, out VulkanAdvancedNativeImageClosure metadataResource) ||
+                !TryCaptureNativeComputeImageClosure(depth, depthView, out VulkanAdvancedNativeImageClosure depthResource) ||
+                !TryCaptureNativeComputeImageClosure(hdr, hdrView, out VulkanAdvancedNativeImageClosure hdrResource) ||
+                !TryCaptureNativeComputeImageClosure(velocity, velocityView, out VulkanAdvancedNativeImageClosure velocityResource) ||
+                !TryCaptureNativeComputeImageClosure(reactive, reactiveView, out VulkanAdvancedNativeImageClosure reactiveResource) ||
+                !TryCaptureNativeComputeImageClosure(shadingDiagnostics, shadingDiagnosticsView, out VulkanAdvancedNativeImageClosure shadingDiagnosticsResource) ||
+                !TryCaptureNativeComputeImageClosure(ambientOcclusion, ambientOcclusionView, out VulkanAdvancedNativeImageClosure ambientOcclusionResource) ||
+                !TryCaptureNativeComputeSamplerGeneration(sampler, out ulong samplerGeneration))
+            {
+                reason = "The frozen advanced native compute closure lost an image, view, or sampler generation.";
+                return false;
+            }
 
             closure = new VulkanAdvancedNativeComputeClosure(
                 graphPlan.Revision, identity, metadata, depth, hdr, velocity, reactive, shadingDiagnostics, ambientOcclusion,
+                identityResource, metadataResource, depthResource, hdrResource, velocityResource, reactiveResource,
+                shadingDiagnosticsResource, ambientOcclusionResource, sampler, samplerGeneration,
                 active, kernels, classificationCounters, dispatch, counts, froxelGrid,
                 indices, lighting, decalFroxelGrid, decalIndexList,
                 new DescriptorImageInfo { Sampler = sampler, ImageView = identityView, ImageLayout = ImageLayout.ShaderReadOnlyOptimal },
@@ -1835,6 +1850,29 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
             if (!captured)
                 storage.Release(context.Resources.Images);
         }
+    }
+
+    private bool TryCaptureNativeComputeImageClosure(
+        VulkanPhysicalImageGroup group,
+        ImageView view,
+        out VulkanAdvancedNativeImageClosure closure)
+    {
+        ulong imageGeneration = _resources.GetPublishedGeneration(ObjectType.Image, group.Image.Handle);
+        ulong viewGeneration = _resources.GetPublishedGeneration(ObjectType.ImageView, view.Handle);
+        closure = new VulkanAdvancedNativeImageClosure(
+            group.Image,
+            imageGeneration,
+            view,
+            viewGeneration);
+        return closure.IsValid;
+    }
+
+    private bool TryCaptureNativeComputeSamplerGeneration(
+        Sampler sampler,
+        out ulong generation)
+    {
+        generation = _resources.GetPublishedGeneration(ObjectType.Sampler, sampler.Handle);
+        return sampler.Handle != 0 && generation != 0;
     }
 
     private static bool TryGetNativeComputeImageGroups(

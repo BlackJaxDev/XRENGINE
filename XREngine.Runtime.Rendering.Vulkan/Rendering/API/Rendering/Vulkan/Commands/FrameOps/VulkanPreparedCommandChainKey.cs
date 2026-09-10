@@ -9,10 +9,14 @@ internal readonly record struct VulkanPreparedCommandChainKey(
     ulong PipelineIdentity,
     ulong DescriptorSetIdentity,
     int DescriptorSetCount,
+    bool UsesDescriptorHeap,
+    DescriptorHeapBindingIdentity DescriptorHeapBinding,
+    VulkanDescriptorHeapDrawIdentityBuffer DescriptorHeapDraws,
     RecordedPacketKey RecordedPacketKey,
     bool IsComplete)
 {
     private readonly RecordedPacketKey _recordedPacketKey = RecordedPacketKey;
+    internal VulkanIndirectDrawCommandIdentity IndirectCommand { get; init; }
 
     public RecordedPacketKey RecordedPacketKey
     {
@@ -35,6 +39,10 @@ internal readonly record struct VulkanPreparedCommandChainKey(
         return PipelineIdentity == other.PipelineIdentity &&
             DescriptorSetIdentity == other.DescriptorSetIdentity &&
             DescriptorSetCount == other.DescriptorSetCount &&
+            UsesDescriptorHeap == other.UsesDescriptorHeap &&
+            DescriptorHeapBinding == other.DescriptorHeapBinding &&
+            DescriptorHeapDraws.Equals(other.DescriptorHeapDraws) &&
+            IndirectCommand.Matches(other.IndirectCommand) &&
             IsComplete == other.IsComplete &&
             recordedPacketKey.Matches(in otherRecordedPacketKey);
     }

@@ -9,7 +9,8 @@ internal struct CommandBufferBindState
     public ulong ComputePipeline;
     public ulong GraphicsDescriptorSignature;
     public ulong ComputeDescriptorSignature;
-    public ulong DescriptorHeapSignature;
+    public DescriptorHeapBindingIdentity DescriptorHeapBinding;
+    public bool HasDescriptorHeapBinding;
     public ulong VertexBufferSignature;
     public ulong ViewportScissorSignature;
     public ulong IndexBuffer;
@@ -17,10 +18,5 @@ internal struct CommandBufferBindState
     public IndexType IndexType;
     public bool HasViewportScissorState;
     public bool InheritsDescriptorHeaps;
-    public ulong InheritedSamplerHeapAddress;
-    public ulong InheritedSamplerHeapSize;
-    public ulong InheritedSamplerHeapReservedRangeSize;
-    public ulong InheritedResourceHeapAddress;
-    public ulong InheritedResourceHeapSize;
-    public ulong InheritedResourceHeapReservedRangeSize;
+    public DescriptorHeapBindingIdentity InheritedDescriptorHeapBinding;
 }

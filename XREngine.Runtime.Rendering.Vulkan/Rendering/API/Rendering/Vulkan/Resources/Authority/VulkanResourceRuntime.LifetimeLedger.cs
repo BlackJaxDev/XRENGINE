@@ -274,6 +274,7 @@ internal sealed partial class VulkanResourceRuntime
             resource.RetirementSerial = unchecked(
                 (ulong)Interlocked.Increment(ref Lifetime.Tracker.RetirementSerial));
             resource.State |= EVulkanResourceLifetimeState.PendingRetirement;
+            resource.RetirementOwner = owner;
             resource.RetirementTicket = ticket;
             Lifetime.Tracker.SetPublishedGenerationNoLock(key, 0UL);
             beganRetirement = true;

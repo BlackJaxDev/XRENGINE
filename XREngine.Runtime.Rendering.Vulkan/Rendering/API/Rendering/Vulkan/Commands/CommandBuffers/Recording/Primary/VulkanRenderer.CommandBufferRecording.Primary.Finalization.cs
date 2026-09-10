@@ -29,17 +29,17 @@ namespace XREngine.Rendering.Vulkan
                 }
 
                 bool forceMagentaSwapchain = XREngine.Rendering.RenderDiagnosticsFlags.VkForceSwapchainMagenta;
-                bool isPresentNowTransaction =
-                    recordingState.Policy.WorkClass ==
-                        ERenderOutputWorkClass.PresentNow &&
+                bool requiresExactTerminal =
+                    recordingState.Policy.ReadinessPolicy ==
+                        ERenderOutputReadinessPolicy.BlockForExact &&
                     recordingState.TransitionSwapchainToPresent;
                 bool requiresFreshEmptyTerminalWrite =
                     recordingState.FramePlan?.RequiresFreshEmptyTerminalWrite == true &&
-                    isPresentNowTransaction;
+                    requiresExactTerminal;
                 if (requiresFreshEmptyTerminalWrite &&
                     recordingState.ActualSwapchainWriteCount == 0)
                 {
-                    RecordFreshEmptyPresentNowTerminalClear(ref recordingState);
+                    RecordFreshEmptyRequiredTerminalClear(ref recordingState);
                 }
                 int sceneActualSwapchainWritesBeforeOverlay = recordingState.ActualSwapchainWriteCount;
 
@@ -94,17 +94,17 @@ namespace XREngine.Rendering.Vulkan
                 else
                 {
                     EndActiveRenderPass(ref recordingState);
-                    if (isPresentNowTransaction &&
+                    if (requiresExactTerminal &&
                         recordingState.ActualSwapchainWriteCount == 0)
                     {
                         throw new VulkanPlanPreconditionException(
-                            $"PresentNow frame {recordingState.Policy.SourceFrameId} " +
+                            $"Exact-output frame {recordingState.Policy.SourceFrameId} " +
                             "recorded no fresh swapchain terminal. Replaying a " +
                             "previous presentation source is forbidden.");
                     }
 
                     bool refreshRequested =
-                        !isPresentNowTransaction &&
+                        !requiresExactTerminal &&
                         ShouldRefreshUnwrittenSwapchainForPresent(
                             touchSwapchainForFinalOverlay,
                             recordingState.TransitionSwapchainToPresent);
@@ -337,7 +337,7 @@ namespace XREngine.Rendering.Vulkan
             }
         }
 
-        private void RecordFreshEmptyPresentNowTerminalClear(
+        private void RecordFreshEmptyRequiredTerminalClear(
             scoped ref PrimaryCommandBufferRecordingState recordingState)
         {
             EndActiveRenderPass(ref recordingState);
@@ -377,15 +377,15 @@ namespace XREngine.Rendering.Vulkan
             recordingState.Metrics.ForcedDiagnosticSwapchainWriters++;
             MarkSwapchainStaticWriter(
                 ref recordingState,
-                "EmptyPresentNowClear",
-                "published a fresh deterministic terminal for an empty PresentNow frame",
+                "EmptyExactOutputClear",
+                "published a fresh deterministic terminal for an empty exact-output frame",
                 passIndex,
                 recordingState.Ops.Length,
                 context.PipelineIdentity);
             Debug.VulkanEvery(
-                $"Vulkan.EmptyPresentNowTerminalClear.{GetHashCode()}",
+                $"Vulkan.EmptyExactOutputTerminalClear.{GetHashCode()}",
                 TimeSpan.FromSeconds(1),
-                "[Vulkan] Published a fresh full-surface clear for empty PresentNow frame {0} on image {1}.",
+                "[Vulkan] Published a fresh full-surface clear for empty exact-output frame {0} on image {1}.",
                 recordingState.Policy.SourceFrameId,
                 recordingState.ImageIndex);
         }

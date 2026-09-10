@@ -499,12 +499,14 @@ internal sealed partial class VulkanCommandRuntime
         ref CommandBufferInheritanceInfo inheritanceInfo,
         CommandBufferInheritanceDescriptorHeapInfoEXTNative* heapInfo,
         BindHeapInfoEXTNative* samplerHeapInfo,
-        BindHeapInfoEXTNative* resourceHeapInfo)
+        BindHeapInfoEXTNative* resourceHeapInfo,
+        out DescriptorHeapBindingIdentity identity)
         => PrimaryCommandEncoder.TryAppendDescriptorHeapInheritance(
             ref inheritanceInfo,
             heapInfo,
             samplerHeapInfo,
-            resourceHeapInfo);
+            resourceHeapInfo,
+            out identity);
 
     private static DynamicRenderingFormatSignature CreateSwapchainDynamicRenderingFormatSignature(
         Format colorFormat,
@@ -734,7 +736,9 @@ internal sealed partial class VulkanCommandRuntime
         {
             return;
         }
-        Api.CmdWriteTimestamp(commandBuffer, PipelineStageFlags.BottomOfPipeBit, pools[frameSlot], 1);
+        QueryPool queryPool = pools[frameSlot];
+        PrimaryCommandEncoder.Track(commandBuffer, ObjectType.QueryPool, queryPool.Handle);
+        Api.CmdWriteTimestamp(commandBuffer, PipelineStageFlags.BottomOfPipeBit, queryPool, 1);
     }
 
     private void BeginVulkanGpuProfilerQueries(CommandBuffer commandBuffer, int frameSlot)
@@ -864,6 +868,7 @@ internal sealed partial class VulkanCommandRuntime
         queryPool = queryPools[frameSlot];
         if (queryPool.Handle == 0)
             return false;
+        PrimaryCommandEncoder.Track(commandBuffer, ObjectType.QueryPool, queryPool.Handle);
         startQuery = FrameTelemetry._vulkanGpuProfilerNextQuery++;
         endQuery = FrameTelemetry._vulkanGpuProfilerNextQuery++;
         return true;

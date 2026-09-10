@@ -13,19 +13,23 @@ internal sealed partial class VulkanFrameLoop
     /// owns acquisition, primary recording, queue submission, and completion.
     /// </summary>
     internal unsafe VulkanExplicitProductionSubmissionReceipt ExecuteExplicitProductionFrame(
-        Action<RenderFrameOutputDescription> buildFrame)
+        Action<RenderFrameOutputDescription> buildFrame,
+        bool backgroundCapture = false)
     {
         ArgumentNullException.ThrowIfNull(buildFrame);
+        if (backgroundCapture && TargetExecutionMode != RenderExecutionMode.Presentationless)
+            throw new NotSupportedException("Background production capture requires an engine-owned presentationless target.");
         if (!TryEnterExplicitFrameExecution())
             throw new ObjectDisposedException(nameof(VulkanFrameLoop));
 
         try
         {
             InvalidateExplicitProductionReadbackAuthority();
-            return ExecuteExplicitProductionFrameCore(buildFrame);
+            return ExecuteExplicitProductionFrameCore(buildFrame, null, backgroundCapture);
         }
         finally
         {
+            _explicitProductionOutputContract = default;
             ExitExplicitFrameExecution();
         }
     }
@@ -44,16 +48,15 @@ internal sealed partial class VulkanFrameLoop
         }
         finally
         {
+            _explicitProductionOutputContract = default;
             ExitExplicitFrameExecution();
         }
     }
 
     private unsafe VulkanExplicitProductionSubmissionReceipt ExecuteExplicitProductionFrameCore(
-        Action<RenderFrameOutputDescription> buildFrame)
-        => ExecuteExplicitProductionFrameCore(buildFrame, null);
-
-    private unsafe VulkanExplicitProductionSubmissionReceipt ExecuteExplicitProductionFrameCore(
-        Action<RenderFrameOutputDescription> buildFrame, VulkanExplicitProductionBufferStressProbeRequest? probe)
+        Action<RenderFrameOutputDescription> buildFrame,
+        VulkanExplicitProductionBufferStressProbeRequest? probe,
+        bool backgroundCapture = false)
     {
         AbstractRenderer renderer = AbstractRenderer.Current
             ?? throw new InvalidOperationException(
@@ -72,6 +75,7 @@ internal sealed partial class VulkanFrameLoop
         ulong frameNumber = unchecked((ulong)OutputRuntime.NextExplicitTargetFrameNumber());
         VulkanAcceptedFramePlan? acceptedPlan = null;
         ulong engineFrameId = 0UL;
+        EVulkanQueueOverlapMode requestedQueueMode = RuntimeEngine.EffectiveSettings.VulkanQueueOverlapMode;
 
         try
         {
@@ -95,6 +99,7 @@ internal sealed partial class VulkanFrameLoop
                     $"Explicit frame slot {planIndex} has no reusable primary plan.");
             PublishFrameSlot(planIndex);
             uint frameSlot = preview.ExpectedFrameSlotIndex;
+            _commandRuntime.CompleteAdvancedQueueOverlapSlot(frameSlot);
             ResourceRuntime.ResidentTemplateFrameSlotLifetimes.ReleaseFrameSlot(
                 planIndex);
             // Drop cache ownership of superseded payloads before preparing this
@@ -131,7 +136,12 @@ internal sealed partial class VulkanFrameLoop
             // The caller observes the same output description it did before this
             // split, but logical collection/readiness now runs before any target
             // image, semaphore, or WSI obligation is held.
-            RenderFrameOutputDescription previewOutput = preview.Output;
+            _explicitProductionOutputContract = CreateExplicitProductionOutputContract(
+                in preview, frameNumber, backgroundCapture);
+            RenderFrameOutputDescription previewOutput = preview.Output with
+            {
+                SchedulingRequest = _explicitProductionOutputContract,
+            };
             using (renderer.PushFrameOutput(in previewOutput))
                 buildFrame(previewOutput);
             acceptedPlan = PrepareExplicitProductionLogicalPlan(
@@ -179,7 +189,8 @@ internal sealed partial class VulkanFrameLoop
                 in lease,
                 commandBuffer,
                 _explicitPrimaryPlans[planIndex],
-                acceptedPlan);
+                acceptedPlan,
+                requestedQueueMode);
             if (!recording.Succeeded || recording.CommandBuffer.Handle == 0)
             {
                 throw new InvalidOperationException(
@@ -216,6 +227,7 @@ internal sealed partial class VulkanFrameLoop
             }
 
             CommandBuffer submittedCommandBuffer = recording.CommandBuffer;
+            bool usesQueueOverlap = _commandRuntime.TryGetAdvancedQueueOverlapSlot(submittedCommandBuffer, out _);
             VulkanSubmissionDiagnosticContext diagnosticContext =
                 CreateFrameTargetSubmissionDiagnosticContext(
                     in lease,
@@ -266,7 +278,9 @@ internal sealed partial class VulkanFrameLoop
                 frameSlot,
                 preview.TargetGeneration,
                 submittedCommandBuffer,
-                graphicsSignalValue);
+                graphicsSignalValue,
+                requestedQueueMode,
+                usesQueueOverlap ? EVulkanQueueOverlapMode.GraphicsCompute : EVulkanQueueOverlapMode.GraphicsOnly);
             // Observe real queue overlap before post-submit housekeeping can hide
             // a short GPU interval. No wait or artificial GPU hold is introduced.
             if (probe is not null)
@@ -337,11 +351,7 @@ internal sealed partial class VulkanFrameLoop
             RuntimeEngine.Rendering.State.RenderFrameId,
             in compatibility);
 
-        RenderOutputRequest provisionalOutputContract =
-            RenderOutputRequest.CreateDefault(
-                EVrOutputViewKind.Secondary,
-                EFrameOutputKind.DesktopScene,
-                frameNumber);
+        RenderOutputRequest provisionalOutputContract = _explicitProductionOutputContract;
         RenderOutputTargetDescriptor outputTarget =
             provisionalOutputContract.Target with
             {
@@ -563,7 +573,7 @@ internal sealed partial class VulkanFrameLoop
             authoringDynamicOverlayOperationCount: 0,
             authoringTextureUploadOperationCount:
                 acceptedPlan.TextureUploadOperationCount,
-                emptyPresentNowOutputContract: provisionalOutputContract);
+                requiredOutputContract: provisionalOutputContract);
         }
         catch (VulkanNativeBufferBindingSupersededException exception)
         {
@@ -587,7 +597,7 @@ internal sealed partial class VulkanFrameLoop
                 EVulkanPresentNowReadinessStage.FramePlanSeal,
                 "explicit-output-contract",
                 "ExplicitOutput -> exact terminal output",
-                "The sealed output DAG did not publish the required explicit PresentNow contract.");
+                "The sealed output DAG did not publish the required explicit output contract.");
         }
         outputTarget = outputContract.Target with
         {
@@ -628,7 +638,7 @@ internal sealed partial class VulkanFrameLoop
         using VulkanResourceRuntime.ReadOnlyStorageRecordingScope storageScope =
             ResourceRuntime.EnterReadOnlyStorageRecordingScope(storageAuthority);
 
-        if (outputContract.WorkClass == ERenderOutputWorkClass.PresentNow)
+        if (outputContract.RequiresCompleteFreshOutput)
         {
             VulkanPreparedResourcePlanStamp resourcePlanStamp = new(
                 frozenPlanningSnapshot,
@@ -708,7 +718,7 @@ internal sealed partial class VulkanFrameLoop
             in plannerState,
             in frozenPlanningSnapshot);
         watchdog.RecordProgress();
-        if (outputContract.WorkClass == ERenderOutputWorkClass.PresentNow)
+        if (outputContract.RequiresCompleteFreshOutput)
         {
             CompleteAcceptedPresentNowTextureReadiness(
                 acceptedPlan,
@@ -734,7 +744,8 @@ internal sealed partial class VulkanFrameLoop
         in VulkanFrameTargetLease lease,
         CommandBuffer primaryCommandBuffer,
         VulkanPrimaryCommandPlan primaryPlan,
-        VulkanAcceptedFramePlan acceptedPlan)
+        VulkanAcceptedFramePlan acceptedPlan,
+        EVulkanQueueOverlapMode requestedQueueMode)
     {
         if (!UseDynamicRenderingRenderTargets)
         {
@@ -772,7 +783,7 @@ internal sealed partial class VulkanFrameLoop
             UseDynamicRendering: true,
             AllowSynchronousResourceUploads:
                 _resourceRuntime.AllowSynchronousResourceUploads,
-            FreshSerialRecording: true,
+            FreshSerialRecording: acceptedPlan.OutputContract.WorkClass != ERenderOutputWorkClass.Background,
             IsExternalSwapchainTarget: lease.ImagesExternallyOwned,
             PreserveSwapchainForOverlay: false,
             TransitionSwapchainToPresent: true,
@@ -781,12 +792,12 @@ internal sealed partial class VulkanFrameLoop
             ReadinessPolicy: acceptedPlan.OutputContract.ReadinessPolicy,
             WorkClass: acceptedPlan.OutputContract.WorkClass,
             SourceFrameId: acceptedPlan.FrameId,
-            AllowArtifactReuse:
-                acceptedPlan.OutputContract.WorkClass !=
-                    ERenderOutputWorkClass.PresentNow,
-            AllowSecondaryDeferral:
-                acceptedPlan.OutputContract.WorkClass !=
-                    ERenderOutputWorkClass.PresentNow);
+            AllowArtifactReuse: false,
+            AllowSecondaryDeferral: false,
+            AllowIndirectSecondaryArtifactReuse:
+                acceptedPlan.OutputContract.WorkClass == ERenderOutputWorkClass.Background,
+            QueueOverlapMode: requestedQueueMode,
+            AllowAdvancedQueueOverlap: TargetExecutionMode == RenderExecutionMode.Presentationless);
         VulkanPreparedPrimaryAuthority authority = new(
             recordingTarget,
             CapturePreparedRenderTargetSnapshot(

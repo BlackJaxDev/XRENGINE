@@ -31,11 +31,20 @@ internal unsafe sealed class VulkanDescriptorHeapNativeFunctions
     }
 
     public void CmdBindSamplerHeap(CommandBuffer commandBuffer, BindHeapInfoEXTNative* bindInfo)
-        => _cmdBindSamplerHeap(commandBuffer, bindInfo);
+    {
+        _cmdBindSamplerHeap(commandBuffer, bindInfo);
+        RuntimeEngine.Rendering.Stats.Vulkan.RecordDescriptorHeapSamplerBind();
+    }
     public void CmdBindResourceHeap(CommandBuffer commandBuffer, BindHeapInfoEXTNative* bindInfo)
-        => _cmdBindResourceHeap(commandBuffer, bindInfo);
+    {
+        _cmdBindResourceHeap(commandBuffer, bindInfo);
+        RuntimeEngine.Rendering.Stats.Vulkan.RecordDescriptorHeapResourceBind();
+    }
     public void CmdPushData(CommandBuffer commandBuffer, PushDataInfoEXTNative* pushDataInfo)
-        => _cmdPushData(commandBuffer, pushDataInfo);
+    {
+        _cmdPushData(commandBuffer, pushDataInfo);
+        RuntimeEngine.Rendering.Stats.Vulkan.RecordDescriptorHeapPush();
+    }
     public bool TryGetDescriptorSize(PhysicalDevice physicalDevice, DescriptorType descriptorType, out ulong size)
     {
         size = 0;
@@ -45,9 +54,19 @@ internal unsafe sealed class VulkanDescriptorHeapNativeFunctions
         return size > 0;
     }
     public Result WriteSamplerDescriptors(Device device, uint samplerCount, SamplerCreateInfo* samplers, HostAddressRangeEXTNative* descriptors)
-        => _writeSamplerDescriptors(device, samplerCount, samplers, descriptors);
+    {
+        Result result = _writeSamplerDescriptors(device, samplerCount, samplers, descriptors);
+        if (result == Result.Success)
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordDescriptorHeapSamplerWrites(samplerCount);
+        return result;
+    }
     public Result WriteResourceDescriptors(Device device, uint resourceCount, ResourceDescriptorInfoEXTNative* resources, HostAddressRangeEXTNative* descriptors)
-        => _writeResourceDescriptors(device, resourceCount, resources, descriptors);
+    {
+        Result result = _writeResourceDescriptors(device, resourceCount, resources, descriptors);
+        if (result == Result.Success)
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordDescriptorHeapResourceWrites(resourceCount);
+        return result;
+    }
     public void ReleaseDelegates()
     {
         _cmdBindSamplerHeap = null;

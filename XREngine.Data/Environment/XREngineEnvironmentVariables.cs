@@ -124,6 +124,8 @@ public static class XREngineEnvironmentVariables
     public const string UpdateFps = "XRE_UPDATE_FPS";
     public const string ProfileScene = "XRE_PROFILE_SCENE";
     public const string ProfileCamera = "XRE_PROFILE_CAMERA";
+    public const string ProfileMutationWorkload = "XRE_PROFILE_MUTATION_WORKLOAD";
+    public const string ProfileStreamingAsset = "XRE_PROFILE_STREAMING_ASSET";
     public const string ProfileLights = "XRE_PROFILE_LIGHTS";
     public const string ProfileViewport = "XRE_PROFILE_VIEWPORT";
     public const string ProfileRenderScale = "XRE_PROFILE_RENDER_SCALE";

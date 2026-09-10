@@ -187,15 +187,15 @@ internal sealed partial class VulkanCommandRuntime
     internal bool TryPushProgramDescriptorHeapData(CommandBuffer commandBuffer, VkRenderProgram program, DescriptorHeapPushDataPayload payload)
         => PrimaryCommandEncoder.TryPushDescriptorHeapProgramData(commandBuffer, program, payload);
 
-    internal void MarkDescriptorHeapInheritance(CommandBuffer commandBuffer)
+    internal void MarkDescriptorHeapInheritance(
+        CommandBuffer commandBuffer,
+        in DescriptorHeapBindingIdentity identity)
     {
         ulong handle = unchecked((ulong)commandBuffer.Handle);
         if (handle == 0)
             throw new ArgumentException("A live command buffer is required.", nameof(commandBuffer));
 
-        VulkanDescriptorHeapState heap = ResourceRuntime.Descriptors.Heap;
-        if (heap.ActiveBackend != EVulkanDescriptorBackend.DescriptorHeap ||
-            !heap.SamplerStorage.IsReady || !heap.ResourceStorage.IsReady)
+        if (!identity.IsComplete)
         {
             throw new InvalidOperationException(
                 "Descriptor heap inheritance was appended without active heap storage.");
@@ -207,35 +207,26 @@ internal sealed partial class VulkanCommandRuntime
                 throw new InvalidOperationException("Descriptor heap inheritance must be marked after command-buffer recording begins.");
 
             state.InheritsDescriptorHeaps = true;
-            state.InheritedSamplerHeapAddress = heap.SamplerStorage.DeviceAddress;
-            state.InheritedSamplerHeapSize = heap.SamplerStorage.Size;
-            state.InheritedSamplerHeapReservedRangeSize = Math.Max(
-                heap.Properties.MinSamplerHeapReservedRange,
-                heap.Properties.MinSamplerHeapReservedRangeWithEmbedded);
-            state.InheritedResourceHeapAddress = heap.ResourceStorage.DeviceAddress;
-            state.InheritedResourceHeapSize = heap.ResourceStorage.Size;
-            state.InheritedResourceHeapReservedRangeSize =
-                heap.Properties.MinResourceHeapReservedRange;
+            state.InheritedDescriptorHeapBinding = identity;
+            state.DescriptorHeapBinding = identity;
+            state.HasDescriptorHeapBinding = true;
             CommandBuffers.BindStates[handle] = state;
         }
-    }
 
-    internal bool InheritsDescriptorHeaps(CommandBuffer commandBuffer)
-    {
-        ulong handle = unchecked((ulong)commandBuffer.Handle);
-        if (handle == 0)
-            return false;
-
-        lock (CommandBuffers.BindStateGate)
-            return CommandBuffers.BindStates.TryGetValue(handle, out CommandBufferBindState state) &&
-                   state.InheritsDescriptorHeaps;
+        if (LaneRecordingContexts.TryGetActiveContext(commandBuffer, out VulkanLaneRecordingContext? lane) && lane is not null)
+        {
+            lane.BindState.InheritsDescriptorHeaps = true;
+            lane.BindState.InheritedDescriptorHeapBinding = identity;
+            lane.BindState.DescriptorHeapBinding = identity;
+            lane.BindState.HasDescriptorHeapBinding = true;
+        }
     }
 
     internal void BindDescriptorHeapsForSecondaryExecution(
         CommandBuffer primary,
         ReadOnlySpan<CommandBuffer> secondaries)
     {
-        VulkanDescriptorHeapState heap = ResourceRuntime.Descriptors.Heap;
+        DescriptorHeapBindingIdentity identity = CaptureDescriptorHeapBindingIdentity();
         bool requiresHeapBinding = false;
         lock (CommandBuffers.BindStateGate)
         {
@@ -249,23 +240,13 @@ internal sealed partial class VulkanCommandRuntime
                     continue;
                 }
 
-                if (heap.ActiveBackend != EVulkanDescriptorBackend.DescriptorHeap ||
-                    heap.NativeFunctions is null || !heap.SamplerStorage.IsReady ||
-                    !heap.ResourceStorage.IsReady)
+                if (!identity.IsComplete)
                 {
                     throw new InvalidOperationException(
                         "A secondary command buffer inherits descriptor heaps, but the heap backend is not active and ready.");
                 }
 
-                ulong samplerReservedRangeSize = Math.Max(
-                    heap.Properties.MinSamplerHeapReservedRange,
-                    heap.Properties.MinSamplerHeapReservedRangeWithEmbedded);
-                if (state.InheritedSamplerHeapAddress != heap.SamplerStorage.DeviceAddress ||
-                    state.InheritedSamplerHeapSize != heap.SamplerStorage.Size ||
-                    state.InheritedSamplerHeapReservedRangeSize != samplerReservedRangeSize ||
-                    state.InheritedResourceHeapAddress != heap.ResourceStorage.DeviceAddress ||
-                    state.InheritedResourceHeapSize != heap.ResourceStorage.Size ||
-                    state.InheritedResourceHeapReservedRangeSize != heap.Properties.MinResourceHeapReservedRange)
+                if (state.InheritedDescriptorHeapBinding != identity)
                 {
                     throw new InvalidOperationException(
                         "A secondary command buffer inherits descriptor heaps that no longer match the active heap storage.");
@@ -278,10 +259,8 @@ internal sealed partial class VulkanCommandRuntime
         if (!requiresHeapBinding)
             return;
 
-        PrimaryCommandEncoder.Track(primary, ObjectType.Buffer, heap.SamplerStorage.Buffer.Handle);
-        PrimaryCommandEncoder.Track(primary, ObjectType.Buffer, heap.ResourceStorage.Buffer.Handle);
-        VulkanTrackedCommandEncoder.BindDescriptorHeaps(primary, heap);
-        NotifyDescriptorHeapDataPushed(primary);
+        if (!TryEnsureDescriptorHeapsBound(primary, in identity, out string reason))
+            throw new InvalidOperationException($"Cannot bind inherited descriptor heaps for secondary execution: {reason}");
     }
 
     internal Vk Api => DeviceContext.Api;

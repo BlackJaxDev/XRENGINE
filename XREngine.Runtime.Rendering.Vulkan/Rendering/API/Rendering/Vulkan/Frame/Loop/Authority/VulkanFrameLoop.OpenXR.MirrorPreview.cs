@@ -868,7 +868,8 @@ internal sealed partial class VulkanFrameLoop
                             : ERenderOutputWorkClass.Background,
                         SourceFrameId: framePlan.RenderFrameId,
                         AllowArtifactReuse: !hasForegroundContract,
-                        AllowSecondaryDeferral: !hasForegroundContract),
+                        AllowSecondaryDeferral: !hasForegroundContract,
+                        QueueOverlapMode: RuntimeEngine.EffectiveSettings.VulkanQueueOverlapMode),
                     TrackedTargetLayout: ImageLayout.Undefined,
                     FrameDataImageIndexOverride: recordImageIndex,
                     ReadOnlyStorageAuthority: readOnlyStorageAuthority,
@@ -982,19 +983,6 @@ internal sealed partial class VulkanFrameLoop
                 stats.ChainsRecorded,
                 stats.ChainsReused);
         }
-
-        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandChainMetrics(
-            chainsScheduled: stats.ChainsScheduled,
-            chainsRecorded: stats.ChainsRecorded,
-            chainsReused: stats.ChainsReused,
-            chainsFrameDataRefreshed: stats.ChainsFrameDataRefreshed,
-            volatileChainsRecorded: stats.VolatileChainsRecorded,
-            secondaryCommandBuffers: stats.SecondaryCommandBuffers,
-            visibilityPackets: stats.VisibilityPackets,
-            renderPackets: stats.RenderPackets,
-            firstStructuralDirtyReason: stats.FirstStructuralDirtyReason,
-            firstDescriptorGenerationMismatch: stats.FirstDescriptorGenerationMismatch,
-            firstResourcePlanRevisionMismatch: stats.FirstResourcePlanRevisionMismatch);
 
         return schedule;
     }

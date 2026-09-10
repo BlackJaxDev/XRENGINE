@@ -35,6 +35,7 @@ namespace XREngine.Rendering.Vulkan
             CancelCommandChainRecordingWorkers();
             DestroyCommandChainCaches();
             DestroyCommandChainRecordingWorkers();
+            _commandRuntime.DestroyAdvancedQueueOverlapResources();
 
             using (VulkanFrameLockScope.Enter(
                        CommandPoolsGate,

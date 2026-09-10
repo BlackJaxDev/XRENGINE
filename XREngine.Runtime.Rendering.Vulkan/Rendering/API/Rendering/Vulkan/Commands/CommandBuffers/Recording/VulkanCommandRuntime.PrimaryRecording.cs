@@ -30,6 +30,8 @@ internal sealed partial class VulkanCommandRuntime
     private void SettleFailedPrimaryRecordingMarkers(
         in VulkanPreparedPrimaryCommandInput input)
     {
+        SettleFailedAdvancedQueueOverlapMarkers(input.PrimaryCommandBuffer,
+            input.CallerOwnsSubmissionMarkersUntilRecordingSucceeds);
         if (input.FramePlan.IsSealed)
         {
             FailRequiredProducerSubmissionMarkers(
@@ -115,6 +117,7 @@ internal sealed partial class VulkanCommandRuntime
         FrameOperationSequence sealedDynamicUiOperations =
             input.FramePlan.GetNativeDynamicOverlayOperationsForRecording();
         if (owner is not null &&
+            input.Policy.QueueOverlapMode is EVulkanQueueOverlapMode.Auto or EVulkanQueueOverlapMode.GraphicsOnly &&
             (input.AcceptedFramePlan?.OutputCompletionCount > 0) != true &&
             VulkanPrimaryCommandBufferReuseEnabled &&
             CommandChainsEnabledForCurrentRecording &&

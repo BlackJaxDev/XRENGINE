@@ -69,7 +69,7 @@ namespace XREngine.Rendering.Vulkan
             return draw.Renderer.RecordDraw(commandBuffer, draw, recordingState.RenderScope.RenderPass, recordingState.RenderScope.UsesDynamicRendering, recordingState.RenderScope.DynamicRenderingFormats, passIndex, context.PassMetadata, target, context, recordingState.RenderScope.DepthStencilReadOnly, context.PipelineInstance?.DebugName ?? "<no pipeline>", target?.Name ?? "<swapchain>", uniformSlot, recordingState.CommandBufferImageSlot);
         }
 
-        internal void RecordIndirectDrawPayloadIntoCommandBuffer(
+        internal bool RecordIndirectDrawPayloadIntoCommandBuffer(
             scoped ref PrimaryCommandBufferRecordingState recordingState,
             CommandBuffer commandBuffer,
             in IndirectDrawPayload payload,
@@ -90,10 +90,11 @@ namespace XREngine.Rendering.Vulkan
                     materialBinding.Consumer,
                     draw.ProgramBindingSnapshot?.MaterialTablePublication))
             {
-                return;
+                return false;
             }
-            if (!payload.MeshRenderer.RecordIndirectDrawState(commandBuffer, draw, recordingState.RenderScope.RenderPass, recordingState.RenderScope.UsesDynamicRendering, recordingState.RenderScope.DynamicRenderingFormats, passIndex, context.PassMetadata, recordingState.RenderScope.DepthStencilReadOnly, context.PipelineInstance?.DebugName ?? "<no pipeline>", target?.Name ?? "<swapchain>", GetMeshDrawUniformSlot(ref recordingState, opIndex, payload.MeshRenderer, context, draw), recordingState.CommandBufferImageSlot, out _)) return;
+            if (!payload.MeshRenderer.RecordIndirectDrawState(commandBuffer, draw, recordingState.RenderScope.RenderPass, recordingState.RenderScope.UsesDynamicRendering, recordingState.RenderScope.DynamicRenderingFormats, passIndex, context.PassMetadata, recordingState.RenderScope.DepthStencilReadOnly, context.PipelineInstance?.DebugName ?? "<no pipeline>", target?.Name ?? "<swapchain>", GetMeshDrawUniformSlot(ref recordingState, opIndex, payload.MeshRenderer, context, draw), recordingState.CommandBufferImageSlot, out _)) return false;
             RecordIndirectDrawPayload(commandBuffer, in payload, allowInlineBarrier: false);
+            return true;
         }
 
         internal bool RecordMeshDrawIntoCommandBuffer(scoped ref PrimaryCommandBufferRecordingState recordingState,
@@ -281,12 +282,13 @@ namespace XREngine.Rendering.Vulkan
             RecordIndirectDrawOp(targetCommandBuffer, indirectOp, allowInlineBarrier: false);
         }
 
-        private void RecordIndirectDrawIntoSecondaryCommandBuffer(
+        private bool RecordIndirectDrawIntoSecondaryCommandBuffer(
             CommandBuffer targetCommandBuffer,
             in IndirectDrawPayload payload,
             XRFrameBuffer? target,
             in FrameOpContext context,
             in VkMeshRenderer.IndirectDrawRecordingState recordingState,
+            scoped in VulkanPreparedCommandChainKey preparedKey,
             int passIndex,
             bool inheritedDynamicRendering,
             RenderPass inheritedRenderPass,
@@ -313,7 +315,7 @@ namespace XREngine.Rendering.Vulkan
                     materialBinding.Consumer,
                     payload.Draw.ProgramBindingSnapshot?.MaterialTablePublication))
             {
-                return;
+                return false;
             }
 
             if (!payload.MeshRenderer.RecordPreparedIndirectDrawState(targetCommandBuffer, recordingState))
@@ -325,10 +327,10 @@ namespace XREngine.Rendering.Vulkan
                     payload.MeshRenderer.MeshRenderer.Mesh?.Name ?? "<unnamed mesh>",
                     target?.Name ?? "<swapchain>",
                     uniformSlot);
-                return;
+                return false;
             }
 
-            RecordIndirectDrawPayload(targetCommandBuffer, in payload, allowInlineBarrier: false);
+            return TryRecordPreparedIndirectDrawPayload(targetCommandBuffer, in payload, in preparedKey);
         }
 
         private int ResolveRunCandidatePassIndex(scoped ref PrimaryCommandBufferRecordingState recordingState, int drawPassIndex)
@@ -414,6 +416,10 @@ namespace XREngine.Rendering.Vulkan
 
         internal int CountContiguousIndirectCommandChainRun(scoped ref PrimaryCommandBufferRecordingState recordingState, int startIndex, in IndirectDrawPayload firstDraw, int passIndex)
         {
+            // This preflight runs before BeginRenderPass. A pass without a graph
+            // barrier may not have an active render-scope scheduling identity yet;
+            // the first immutable operation defines the run's context instead.
+            ref readonly FrameOpContext firstContext = ref recordingState.Ops.GetContext(startIndex);
             int count = 0;
             for (int i = startIndex; i < recordingState.Ops.Length; i++)
             {
@@ -423,16 +429,24 @@ namespace XREngine.Rendering.Vulkan
                     break;
                 ref readonly IndirectDrawPayload candidate = ref recordingState.Ops.GetIndirectDraw(i);
                 ref readonly FrameOpContext candidateContext = ref recordingState.Ops.GetContext(i);
-                if (!FrameOpContextCompatibility.AreRecordingCompatible(candidateContext, recordingState.ActiveContext))
+                if (!FrameOpContextCompatibility.AreRecordingCompatible(candidateContext, firstContext))
                     break;
-                if (candidateContext.SchedulingIdentity != recordingState.ActiveSchedulingIdentity)
+                if (candidateContext.SchedulingIdentity != firstContext.SchedulingIdentity)
                     break;
                 if (recordingState.Ops.GetTarget(i) != recordingState.Ops.GetTarget(startIndex))
                     break;
                 if (ResolveIndirectRunCandidatePassIndex(ref recordingState, recordingState.Ops.GetHeader(i).PassIndex) != passIndex)
                     break;
-                if (_commandRuntime.EvaluateIndirectSecondaryRecordingContract(in candidate) != EVulkanIndirectSecondaryEligibility.EligibleProducerComplete)
+                EVulkanIndirectSecondaryEligibility eligibility = _commandRuntime.EvaluateIndirectSecondaryRecordingContract(in candidate);
+                if (eligibility != EVulkanIndirectSecondaryEligibility.EligibleProducerComplete)
+                {
+                    // A rejected first packet never reaches the secondary executor,
+                    // which otherwise owns eligibility telemetry. Report its actual
+                    // rejection instead of leaving the frame as NotEvaluated.
+                    if (count == 0)
+                        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanIndirectSecondaryEligibility(eligibility);
                     break;
+                }
 
                 count++;
             }

@@ -430,6 +430,7 @@ internal sealed unsafe partial class VulkanDescriptorManager
                 Generation = 1u,
                 LastUsedFrameId = RuntimeEngine.Rendering.State.RenderFrameId,
             };
+            IssueGlobalMaterialTextureHeapRewriteSerial(ref _globalMaterialTextureDescriptorSlots[0]);
             MarkGlobalMaterialTextureDescriptorSlotDirty(0u);
             FlushGlobalMaterialTextureDescriptorUpdatesLocked();
             reason = string.Empty;
@@ -545,10 +546,9 @@ internal sealed unsafe partial class VulkanDescriptorManager
     }
 
     /// <summary>
-    /// Publishes the complete live prefix of the global material texture array into a
-    /// program-owned heap root. Material rows address this array by their stable
-    /// table index, so holes must retain the slot-zero placeholder rather than be
-    /// compacted.
+    /// Publishes the sealed material texture closure into a shared heap arena.
+    /// Material rows retain their stable table indices; only slot zero and the
+    /// exact referenced slots need descriptors and native-generation pins.
     /// </summary>
     internal bool TryWriteGlobalMaterialTextureArrayHeapPayload(
         VkRenderProgram program,
@@ -572,111 +572,21 @@ internal sealed unsafe partial class VulkanDescriptorManager
         if (arrayBinding is null)
             return true;
 
-        DescriptorBindingInfo bindingInfo = arrayBinding.Value;
-        unsafe
+        lock (_globalMaterialTextureTableLock)
         {
-            lock (_globalMaterialTextureTableLock)
+            GPUMaterialTablePublication? sealedPublication = publication;
+            if (sealedPublication is null && ReferenceEquals(BindlessMaterialTextures.ScopeProgram, program))
+                sealedPublication = BindlessMaterialTextures.ScopePublication;
+            if (sealedPublication is null)
             {
-				GPUMaterialTablePublication? sealedPublication = publication;
-				if (sealedPublication is null &&
-					ReferenceEquals(BindlessMaterialTextures.ScopeProgram, program))
-				{
-					sealedPublication = BindlessMaterialTextures.ScopePublication;
-				}
-				if (sealedPublication is null)
-				{
-					reason = "heap material texture array requires the sealed material-table publication captured for this program.";
-					return false;
-				}
-
-                uint limit = Math.Min(_nextGlobalMaterialTextureDescriptorSlot,
-                    unchecked((uint)_globalMaterialTextureDescriptorSlots.Length));
-                if (limit == 0 || _globalMaterialTextureDescriptorSlots.Length == 0)
-                {
-                    reason = "global material texture slot zero is unavailable.";
-                    return false;
-                }
-
-                uint reflectedCount = VulkanBindlessMaterialDescriptors.ResolveDescriptorCount(bindingInfo);
-                if (limit > reflectedCount)
-                {
-                    reason = $"global material texture table prefix {limit} exceeds reflected descriptor array size {reflectedCount}.";
-                    return false;
-                }
-
-                DescriptorImageInfo fallback = _globalMaterialTextureDescriptorSlots[0].ImageInfo;
-                if (fallback.ImageView.Handle == 0 || fallback.Sampler.Handle == 0)
-                {
-                    reason = "global material texture slot zero has no valid placeholder descriptor.";
-                    return false;
-                }
-
-				if (!ValidateSealedMaterialTextureReferencesLocked(sealedPublication.VulkanTextureReferences, limit, out reason))
-                    return false;
-
-                if (BindlessMaterialTextures.HeapImageInfosDirty ||
-                    BindlessMaterialTextures.HeapImageInfoCount != limit)
-                {
-                    if (BindlessMaterialTextures.HeapImageInfos.Length < limit)
-                        BindlessMaterialTextures.HeapImageInfos = new DescriptorImageInfo[checked((int)limit)];
-                    for (int index = 0; index < (int)limit; index++)
-                    {
-                        MaterialTextureDescriptorSlot slot = _globalMaterialTextureDescriptorSlots[index];
-                        BindlessMaterialTextures.HeapImageInfos[index] = slot.ImageInfo.ImageView.Handle != 0 &&
-                            slot.ImageInfo.Sampler.Handle != 0 && !slot.Dirty && slot.IsGenerationSnapshot
-                            ? slot.ImageInfo : fallback;
-                    }
-                    BindlessMaterialTextures.HeapImageInfoCount = limit;
-                    BindlessMaterialTextures.HeapImageInfosDirty = false;
-                }
-
-                fixed (DescriptorImageInfo* imageInfos = BindlessMaterialTextures.HeapImageInfos)
-                {
-                    if (!ResourceRuntime.DescriptorLifetime.TryWriteDescriptorHeapBinding(
-                            program,
-                            bindingInfo,
-                            payload,
-                            null,
-                            imageInfos,
-                            null,
-                            limit,
-                            out reason))
-                    {
-                        return false;
-                    }
-                }
-            }
-        }
-
-        return true;
-    }
-
-    private bool ValidateSealedMaterialTextureReferencesLocked(
-        ReadOnlySpan<GPUMaterialTextureReference> references,
-        uint limit,
-        out string reason)
-    {
-        for (int index = 0; index < references.Length; index++)
-        {
-            ref readonly GPUMaterialTextureReference reference = ref references[index];
-            if (reference.Kind != EGPUMaterialTextureReferenceKind.VulkanDescriptorIndex)
-                continue;
-            uint descriptorIndex = reference.VulkanDescriptorIndex;
-            if (descriptorIndex >= limit)
-            {
-                reason = $"sealed material row references descriptor slot {descriptorIndex} outside published heap prefix {limit}.";
+                reason = "Heap material texture publication requires the sealed material table captured for this program.";
                 return false;
             }
-            ref MaterialTextureDescriptorSlot slot = ref _globalMaterialTextureDescriptorSlots[descriptorIndex];
-            if (slot.Generation != reference.VulkanDescriptorGeneration || slot.Dirty ||
-                slot.PendingRetirement || !slot.IsGenerationSnapshot)
-            {
-                reason = $"sealed material row descriptor slot {descriptorIndex} generation {reference.VulkanDescriptorGeneration} is no longer exact.";
-                return false;
-            }
+
+            return ResourceRuntime.DescriptorLifetime.TryPublishGlobalMaterialTextureHeapArena(
+                program, arrayBinding.Value, payload, BindlessMaterialTextures.HeapArena,
+                _globalMaterialTextureDescriptorSlots, sealedPublication.VulkanTextureReferences, out reason);
         }
-        reason = string.Empty;
-        return true;
     }
 
     /// <summary>
@@ -891,11 +801,13 @@ internal sealed unsafe partial class VulkanDescriptorManager
     /// Tries to bind the global material texture descriptor set for the specified render program.
     /// </summary>
     /// <param name="commandBuffer">The command buffer to which the descriptor set should be bound.</param>
+    /// <param name="encoder">The recording authority that tracks ownership and invalidates heap state.</param>
     /// <param name="program">The render program for which the descriptor set is being bound.</param>
     /// <param name="consumer">The consumer requesting the binding.</param>
     /// <returns>True if the descriptor set was successfully bound; otherwise, false.</returns>
     internal bool TryBindGlobalMaterialTextureDescriptorSet(
         CommandBuffer commandBuffer,
+        VulkanTrackedCommandEncoder encoder,
         VkRenderProgram program,
         string consumer)
     {
@@ -929,18 +841,12 @@ internal sealed unsafe partial class VulkanDescriptorManager
         }
 
         FlushGlobalMaterialTextureDescriptorUpdates();
-        Span<DescriptorSet> sets = stackalloc DescriptorSet[1];
-        sets[0] = _globalMaterialTextureDescriptorSet;
-        fixed (DescriptorSet* setsPointer = sets)
-            Api.CmdBindDescriptorSets(
-                commandBuffer,
-                PipelineBindPoint.Graphics,
-                program.PipelineLayout,
-                VulkanBindlessMaterialDescriptors.TextureArraySet,
-                1,
-                setsPointer,
-                0,
-                null);
+        encoder.BindDescriptorSet(
+            commandBuffer,
+            program.PipelineLayout,
+            VulkanBindlessMaterialDescriptors.TextureArraySet,
+            _globalMaterialTextureDescriptorSet,
+            []);
         return true;
     }
 
@@ -1096,8 +1002,20 @@ internal sealed unsafe partial class VulkanDescriptorManager
             return false;
         }
 
+        IssueGlobalMaterialTextureHeapRewriteSerial(
+            ref _globalMaterialTextureDescriptorSlots[descriptorIndex]);
         reason = string.Empty;
         return true;
+    }
+
+    private void IssueGlobalMaterialTextureHeapRewriteSerial(
+        ref MaterialTextureDescriptorSlot slot)
+    {
+        ulong serial = checked(BindlessMaterialTextures.NextHeapRewriteSerial + 1UL);
+        if (serial == 0UL)
+            throw new InvalidOperationException("Global material texture heap rewrite serial overflowed.");
+        BindlessMaterialTextures.NextHeapRewriteSerial = serial;
+        slot.HeapRewriteSerial = serial;
     }
 
     private void RollbackGlobalMaterialTextureDescriptorSlotReservation(
@@ -1177,11 +1095,6 @@ internal sealed unsafe partial class VulkanDescriptorManager
             if (slot.Texture is not null)
                 slot.IsGenerationSnapshot = true;
         }
-
-        // Heap roots cache this table's descriptor bytes separately from the
-        // conventional descriptor set. A successful publication can turn a
-        // former fallback slot into a valid sealed material-row reference.
-        BindlessMaterialTextures.HeapImageInfosDirty = true;
 
         _globalMaterialTextureDescriptorWritesLastFlush = (ulong)dirtyCount;
         _globalMaterialTextureDescriptorWritesTotal += (ulong)dirtyCount;
@@ -1267,7 +1180,6 @@ internal sealed unsafe partial class VulkanDescriptorManager
     /// <param name="descriptorIndex">The index of the descriptor slot to mark as dirty.</param>
     private void MarkGlobalMaterialTextureDescriptorSlotDirty(uint descriptorIndex)
     {
-        BindlessMaterialTextures.HeapImageInfosDirty = true;
         if (descriptorIndex >= _globalMaterialTextureDescriptorSlots.Length)
             return;
 
@@ -1421,6 +1333,7 @@ internal sealed unsafe partial class VulkanDescriptorManager
             _globalMaterialTextureDescriptorSlotsByTexture.Clear();
             _freeGlobalMaterialTextureDescriptorSlots.Clear();
             _globalMaterialTextureDescriptorPublication.Reset();
+            BindlessMaterialTextures.HeapArena.Reset();
             _globalMaterialTextureDescriptorSlots = [];
             _globalMaterialTextureDescriptorCapacity = 0u;
             _nextGlobalMaterialTextureDescriptorSlot = 1u;

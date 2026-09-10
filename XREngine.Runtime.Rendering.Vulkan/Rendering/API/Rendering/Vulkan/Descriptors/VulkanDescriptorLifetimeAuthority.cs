@@ -17,7 +17,7 @@ namespace XREngine.Rendering.Vulkan;
 /// applies it only after the lock is released through the generation-local
 /// command-operation boundary.
 /// </remarks>
-internal sealed unsafe class VulkanDescriptorLifetimeAuthority
+internal sealed unsafe partial class VulkanDescriptorLifetimeAuthority
 {
     private const int MeshDescriptorPoolSlabAllocationCapacity = 64;
     private readonly VulkanResourceRuntime _resources;
@@ -950,23 +950,38 @@ internal sealed unsafe class VulkanDescriptorLifetimeAuthority
         VulkanBackendObjectContext context,
         ObjectType type,
         ulong handle,
-        out string reason)
+        out string reason,
+        ulong expectedGeneration = 0)
     {
         reason = string.Empty;
         if (handle == 0)
-            return true;
+        {
+            if (expectedGeneration == 0)
+                return true;
+            reason = $"descriptor heap dependency {type} has a null handle for sealed generation {expectedGeneration}.";
+            return false;
+        }
 
         VulkanResourceLifetimeKey key = new(type, handle);
+        ulong generation = context.Resources.GetPublishedGeneration(type, handle);
+        if (expectedGeneration != 0 && generation != expectedGeneration)
+        {
+            reason = $"descriptor heap dependency {key} generation {generation} differs from sealed generation {expectedGeneration}.";
+            return false;
+        }
         for (int index = 0; index < capturedCount; index++)
         {
             if (captured[index].Key == key)
                 return true;
         }
 
-        ulong generation = context.Resources.GetPublishedGeneration(type, handle);
         if (generation == 0)
         {
-            reason = $"descriptor heap dependency {key} has no published generation.";
+            VulkanResourceLifetimeTracker lifetimeTracker = context.Resources.Lifetime.Tracker;
+            string resourceDetail = lifetimeTracker.ResourceLifetimes.TryGetValue(key, out VulkanResourceLifetimeRecord? resource)
+                ? $" state={resource.State} owner='{resource.Owner}' generation={resource.Generation} retirementSerial={resource.RetirementSerial} retirementOwner='{resource.RetirementOwner}'"
+                : " no lifetime record";
+            reason = $"descriptor heap dependency {key} has no published generation;{resourceDetail}.";
             return false;
         }
         captured[capturedCount++] = new VulkanPinnedResourceGeneration(key, generation);

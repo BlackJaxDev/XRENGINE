@@ -249,11 +249,13 @@ namespace XREngine.Rendering.Vulkan
             CommandBufferInheritanceDescriptorHeapInfoEXTNative descriptorHeapInheritanceInfo = default;
             BindHeapInfoEXTNative inheritedSamplerHeapInfo = default;
             BindHeapInfoEXTNative inheritedResourceHeapInfo = default;
+            DescriptorHeapBindingIdentity inheritedDescriptorHeapBinding = default;
             bool inheritsDescriptorHeaps = TryAppendDescriptorHeapInheritancePNext(
                 ref inheritanceInfo,
                 &descriptorHeapInheritanceInfo,
                 &inheritedSamplerHeapInfo,
-                &inheritedResourceHeapInfo);
+                &inheritedResourceHeapInfo,
+                out inheritedDescriptorHeapBinding);
 
             CommandBufferBeginInfo beginInfo = new()
             {
@@ -408,15 +410,14 @@ namespace XREngine.Rendering.Vulkan
                         ref beginInfo,
                         "DynamicUiSecondary") != Result.Success)
                     throw new Exception("Failed to begin dynamic UI text secondary command buffer.");
-                if (inheritsDescriptorHeaps)
-                    MarkDescriptorHeapInheritance(secondaryCommandBuffer);
-
                 ulong recGen = CommandBuffers.ResolveRecordingGeneration(secondaryCommandBuffer);
                 LaneRecordingContexts.BeginContext(
                     EVulkanAcceptedFrameLane.Ui,
                     unchecked((int)Math.Min(imageIndex, int.MaxValue)),
                     secondaryCommandBuffer,
                     recGen);
+                if (inheritsDescriptorHeaps)
+                    MarkDescriptorHeapInheritance(secondaryCommandBuffer, in inheritedDescriptorHeapBinding);
 
                 recordingStarted = true;
                 meshDrawSlotsByRendererFamily.Clear();

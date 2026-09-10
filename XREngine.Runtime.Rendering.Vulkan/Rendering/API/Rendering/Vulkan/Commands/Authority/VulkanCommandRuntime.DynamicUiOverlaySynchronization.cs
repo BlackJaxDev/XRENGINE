@@ -534,7 +534,7 @@ internal sealed partial class VulkanCommandRuntime
                 image,
                 in range,
                 out state,
-                includeEntryState,
+                includeEntryState || recorded?.UseExecutionPredecessorEntryState == true,
                 includeUndefinedState);
         }
         finally

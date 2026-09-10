@@ -1525,6 +1525,23 @@ namespace XREngine.Rendering
         }
 
         /// <summary>
+        /// Completes an already prepared canonical GPU-scene package after the
+        /// world publishes its swapped resident-scene buffers. This does not
+        /// rerun package preparation or alter the frozen output identity.
+        /// </summary>
+        public bool TryFinalizePreparedCanonicalFramePackageAfterWorldSwap()
+        {
+            RenderCommandCollection commandCollection =
+                MeshRenderCommandsOverride ?? _renderPipeline.MeshRenderCommands;
+            var dimensions = _renderPipeline.ResolveBackendReadyFramePackageDimensions(this);
+            return commandCollection.TryFinalizePreparedCanonicalFramePackageAfterWorldSwap(
+                World?.VisualScene?.GPUCommands,
+                Camera,
+                dimensions.InternalWidth,
+                dimensions.InternalHeight);
+        }
+
+        /// <summary>
         /// Prepares the normal retained shadow package without CPU visibility
         /// collection. The GPU scene owns caster membership; the package still
         /// owns view/resource identity and must pass normal publication validation.

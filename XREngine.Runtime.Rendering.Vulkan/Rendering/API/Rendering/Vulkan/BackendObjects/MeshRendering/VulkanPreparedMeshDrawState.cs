@@ -13,6 +13,7 @@ internal readonly record struct VulkanPreparedMeshDrawState(
     bool UsesDescriptorHeap,
     uint DescriptorHeapShaderConstantByteCount,
     uint DescriptorHeapPushByteCount,
+    DescriptorHeapPushDataIdentity DescriptorHeapPushDataIdentity,
     VulkanPreparedStreamRange DescriptorBindings,
     VulkanPreparedStreamRange DynamicOffsets,
     VulkanPreparedStreamRange DescriptorImagePayloads,

@@ -361,7 +361,11 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
                 ERenderGraphPassStage.Graphics).PassIndex);
         }
         else if (descriptor.Stage == EAdvancedRenderStage.WorkClassification)
-            builder.DependsOn(GetPreviousStagePassIndex(context, stageIndex));
+            // Classification consumes visibility, independently of GTAO. The
+            // native overlap executor joins it with lighting preparation at shade.
+            builder.DependsOn(context.GetOrCreateSyntheticPass(
+                LateVisibilityRasterPassName,
+                ERenderGraphPassStage.Graphics).PassIndex);
         else if (stageIndex > 0)
             builder.DependsOn(GetPreviousStagePassIndex(context, stageIndex));
     }

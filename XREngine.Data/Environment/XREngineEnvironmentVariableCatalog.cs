@@ -33,6 +33,8 @@ public static class XREngineEnvironmentVariableCatalog
         nameof(XREngineEnvironmentVariables.VulkanLoaderLayersDisable),
         nameof(XREngineEnvironmentVariables.VulkanExternalValidationAllowlist),
         nameof(XREngineEnvironmentVariables.WindowTitle),
+        nameof(XREngineEnvironmentVariables.ProfileMutationWorkload),
+        nameof(XREngineEnvironmentVariables.ProfileStreamingAsset),
     ];
 
     private static readonly HashSet<string> KnownAutomaticFeatureFields =

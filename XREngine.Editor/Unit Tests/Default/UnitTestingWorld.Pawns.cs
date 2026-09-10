@@ -482,9 +482,6 @@ public static partial class EditorUnitTests
             if (cameraNode.Parent is { } parent)
                 ConfigureEditorViewCamera(parent, cameraNode);
 
-            if (ProfileCameraMotionComponent.IsRequested())
-                cameraNode.AddComponent<ProfileCameraMotionComponent>("Automated Profile Camera Motion");
-
             pawnComp.EnqueuePossessionByLocalPlayer(ELocalPlayerIndex.One);
             Engine.State.GetOrCreateLocalPlayer(ELocalPlayerIndex.One).OnPawnCameraChanged();
             return pawnComp;
@@ -597,6 +594,11 @@ public static partial class EditorUnitTests
 
         public static void ConfigureEditorViewCamera(SceneNode parent, SceneNode cameraNode)
         {
+            // Keep profiling on the world root when play mode moves the bootstrap
+            // camera into the editor scene, including worlds without unit boxes.
+            if (ProfileCameraMotionComponent.IsRequested() && parent.GetComponent<ProfileCameraMotionComponent>() is null)
+                parent.AddComponent<ProfileCameraMotionComponent>("Automated Profile Camera Motion");
+
             cameraNode.Name = EditorViewCameraName;
             cameraNode.IsEditorOnly = true;
             cameraNode.CanDeactivate = false;

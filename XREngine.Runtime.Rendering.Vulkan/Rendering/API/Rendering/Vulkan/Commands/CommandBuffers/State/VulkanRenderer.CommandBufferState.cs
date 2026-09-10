@@ -239,7 +239,7 @@ namespace XREngine.Rendering.Vulkan
         internal ulong ResolveCommandBufferRecordingGeneration(CommandBuffer commandBuffer)
             => _commandRuntime.CommandBuffers.ResolveRecordingGeneration(commandBuffer);
 
-        private void InvalidateDescriptorHeapBindingState(CommandBuffer commandBuffer)
+        internal void InvalidateDescriptorHeapBindingState(CommandBuffer commandBuffer)
         {
             if (_commandRuntime.LaneRecordingContexts.TryGetActiveContext(commandBuffer, out VulkanLaneRecordingContext? laneContext) && laneContext is not null)
             {
@@ -251,7 +251,7 @@ namespace XREngine.Rendering.Vulkan
             lock (_commandBindStateLock)
             {
                 _commandBindStates.TryGetValue(key, out CommandBufferBindState state);
-                state.DescriptorHeapSignature = 0;
+                state.HasDescriptorHeapBinding = false;
                 _commandBindStates[key] = state;
             }
         }
