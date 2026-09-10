@@ -116,6 +116,9 @@ vec3 evaluateLight(uint index, XRAdvancedSurface surface, vec3 N, vec3 V,
 
 void main()
 {
+#if defined(XR_ADV_SHADING_ADDRESS_ROOT_VERSION)
+    u_Push = XR_ADV_LoadShadingParameters();
+#endif
     bool repair = (u_Push.flags & XR_ADV_SHADING_REPAIR) != 0u;
     bool overflow = XR_ADV_ClassificationCounters.counters.overflowFlags != 0u;
     if (repair != overflow) return;

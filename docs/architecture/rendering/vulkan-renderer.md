@@ -94,6 +94,45 @@ code should read through `RuntimeEngine.EffectiveSettings` or
 `Engine.EffectiveSettings.RenderSnapshot.Vulkan` so project/user cascade logic
 stays outside backend classes.
 
+`VulkanQueueOverlapMode.Auto` executes graphics-only. Explicit `GraphicsCompute`
+supports one mono Advanced output on an engine-owned presentationless target,
+using a distinct compute-capable queue in the graphics family. Four submissions
+fork classification from independent GTAO/lighting work and join before native
+opaque shading; the receipt reports the requested/executed modes and submission
+count. Unsupported output cohorts and `GraphicsComputeTransfer` reject explicitly.
+The generic frame-graph multi-queue support gate remains false. The RTX 3090
+comparison increased GPU elapsed time, so this path remains opt-in; see the
+[runtime validation and measurements](../../work/investigations/rendering/vulkan14-background-replay-and-queue-overlap-2026-09-09.md).
+
+`SubmitBackgroundProductionFrame` provides an exact, engine-owned background
+output transaction. It permits proven indirect-secondary artifact replay while
+retaining fresh output production, resource readiness, receipt ownership and
+completion checks. Exact presentationless outputs initialize their full physical
+extent, and fullscreen passes matching a destination match its scissor as well
+as its viewport. Production GPU timings are published through
+`Stats.Vulkan.LastCompletedVulkanFrameGpuCommandBufferTiming`, with source-frame
+identity; the host's `LastCompletedGpuFrameNanoseconds` belongs to its raw target
+recording path.
+
+For CPU stage measurements on production outputs, use
+`TryGetProductionFrameTelemetry(receipt, out publication)` on the explicit-target
+host. It reads the latest allocation-free lifecycle publication only when its
+frame, slot and target generation match the supplied receipt. This does not wait
+for GPU completion. Native preparation is included in the command-record stage;
+pre-acquire resource maintenance has its own stage.
+
+`XRE_VK_NATIVE_SHADING_ROOT=BufferDeviceAddress` selects the phase G opaque
+shading parameter pilot before Vulkan initialization. The default `Immediate`
+path pushes the existing 64-byte block; the pilot uploads that block once per
+view into the frame-data arena and pushes a versioned 16-byte GPU-address root.
+It requires descriptor indexing, buffer device address, and fresh recording of
+an exact presentationless Advanced output. Heap, set-only, desktop/XR and
+reusable-primary cohorts are explicitly unsupported. Scene/image descriptors
+and GPU-generated indirect arguments remain unchanged. Use
+`CaptureNativeShadingRootDiagnostics()` on the explicit-target host to inspect
+recorded dispatch, push-byte and upload counters. See the
+[ABI, ownership and performance decision](../../work/investigations/rendering/vulkan14-address-shading-root-2026-09-10.md).
+
 Project overrides live under `GameStartupSettings.Rendering.Vulkan` and
 `GameStartupSettings.Rendering.Common`; user fallback overrides live under
 `UserSettings.Rendering.Common`. Editor-only Vulkan diagnostics are exposed as
@@ -1181,6 +1220,8 @@ early teardown error from leaking later renderer-owned resources.
 ---
 
 ## See Also
+
+- [Native Slang frontend and phase-H validation](../../work/investigations/rendering/vulkan14-native-slang-2026-09-10.md) — `XRShader.SourceLanguage` selects optional Slang 2026.8 direct SPIR-V. `XRE_SLANGC` overrides local compiler discovery; `XRE_SLANG_PILOTS=1` opts into the counter-copy and scene-copy pilots. GLSL stays independent and remains the default. Native Slang uses explicit physical ABI, supplier, descriptor-lifetime, frequency, and provider metadata; OpenGL uses authored GLSL counterparts.
 
 - [Vulkan Render Loop Target Architecture](../../work/design/rendering/vulkan-render-loop-target-architecture.md) - Target v1 ownership, lifecycle, simplicity, fault-containment, CPU-efficiency, and observability design
 

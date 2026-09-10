@@ -224,6 +224,13 @@ internal sealed partial class VulkanFrameLoop
 
             if (hasLogicalDevice)
                 CleanUpLogicalDeviceResources(stage, failures);
+            else if (_deviceContext.PhysicalDevice.Handle != 0)
+            {
+                // Capability/ABI rejection can occur after selecting a physical
+                // device but before creating a logical device. Clear that
+                // selection before the instance-owner teardown invariant runs.
+                RunCleanupStep("physical device selection", () => _deviceContext.Destroy(Api), failures);
+            }
 
             if (stage >= VulkanFrameLoopInitializationStage.OutputServices)
                 RunCleanupStep("output service detachment", DetachOutputServices, failures);
@@ -263,6 +270,9 @@ internal sealed partial class VulkanFrameLoop
         List<Exception> failures)
     {
         const string shutdownReason = "Vulkan renderer shutdown";
+        // Split slots borrow the target's final fence. Retire them while that
+        // fence and their retained native dependencies still exist.
+        RunCleanupStep("advanced queue overlap", _commandRuntime.DestroyAdvancedQueueOverlapResources, failures);
         RunCleanupStep("queued texture uploads", () => _resourceRuntime.Uploads.CancelAllQueuedWork(_commandRuntime, shutdownReason), failures);
         RunCleanupStep("imported texture upload frame operations", () => CancelPendingImportedTextureUploadFrameOps(shutdownReason), failures);
         RunCleanupStep("recorded texture upload publications", () => _commandRuntime.CancelRecordedTextureUploadPublications(shutdownReason), failures);

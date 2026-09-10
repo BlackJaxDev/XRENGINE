@@ -2,162 +2,162 @@
 
 ## Goal
 
-Add Slang as a first-class shader frontend/cross-compiler path so the engine can emit backend targets (starting with SPIR-V) without requiring migration of existing GLSL shader sources.
+Add Slang as an additive shader frontend for native `.slang` sources. The initial Slang route is direct SPIR-V for Vulkan 1.4, with reflection and explicit capability metadata. Existing GLSL remains an independent source and frontend for Vulkan and OpenGL 4.6.
 
 ## Non-Goals
 
 - Do not mass-convert existing `.glsl` assets to `.slang`.
-- Do not break current GLSL runtime/build-time compilation behavior.
-- Do not gate current Vulkan/OpenGL paths on Slang adoption.
+- Do not require GLSL to pass through Slang.
+- Do not break, gate, or retire existing GLSL, Shaderc, Vulkan, or OpenGL paths.
+- Do not introduce a global Slang default switch.
 
-## Key Requirement
+## Supported Routes
 
-Existing GLSL must remain source-of-truth where it already exists. The new pipeline must support:
+1. Existing GLSL -> existing GLSL preprocessing and Shaderc Vulkan compilation.
+2. Existing GLSL -> existing GLSL preprocessing and OpenGL driver compilation.
+3. Native Slang (`.slang`) -> direct Vulkan 1.4 SPIR-V plus reflection.
+4. Native Slang -> generated OpenGL GLSL only as an experimental, separately validated route. Shared passes use authored GLSL counterparts for OpenGL until generated output is proven.
 
-1. Existing GLSL -> Slang-compatible ingest path (directly or via generated wrapper/stub) -> target backend output.
-2. Native Slang (`.slang`) shaders for new development.
-3. Side-by-side operation so teams can adopt Slang incrementally.
+These routes operate side by side. Slang adoption is opt-in per user, project, profile, or pass. There is no required GLSL-to-Slang translation stage and no automatic GLSL/OpenGL retirement.
 
 ## Phase 0 — Discovery & Contract Definition
 
 ### Objectives
 
-- Define the engine shader compilation contract independent of frontend language.
-- Decide where Slang compiler invocation lives (editor tooling vs runtime service vs shared compile utility).
-- Lock minimum supported targets per backend (initially Vulkan SPIR-V; later HLSL/MSL as needed).
+- Define a language-agnostic shader compilation contract.
+- Specify frontend, backend, stage, entry point, capabilities, artifacts, reflection, layouts, bindings, semantic metadata, and diagnostics.
+- Lock Vulkan 1.4 SPIR-V as the initial Slang target.
 
 ### Deliverables
 
-- A language-agnostic `ShaderCompileRequest`/`ShaderCompileResult` contract draft.
-- Capability table for source language (`GLSL`, `Slang`) vs output target (`SPIR-V`, future targets).
-- Error/diagnostic format spec (file/line/entrypoint/stage) used by runtime + editor.
+- `ShaderCompileRequest`/`ShaderCompileResult` contract draft.
+- Capability matrix for GLSL and Slang against Vulkan SPIR-V and OpenGL GLSL.
+- Diagnostic format with source file, line, entry point, stage, and frontend.
+- Explicit ABI rules for packing, padding, scalar widths, array/matrix strides, matrix order, resource bindings, and GPU-address representation.
 
 ### Exit Criteria
 
-- Team agreement on compile API and adoption constraints.
-- No unresolved blocker on including Slang binaries/packages in the build pipeline.
+- The contract supports coexistence without translating or retiring existing GLSL.
+- Reflection metadata is joined with explicit engine ownership and update-frequency semantics; reflection alone does not define runtime semantics.
 
-## Phase 1 — Slang Toolchain Integration (No Behavior Change)
+## Phase 1 — Optional Slang Toolchain Integration
 
 ### Objectives
 
-- Integrate Slang compiler dependency and deterministic invocation path.
-- Keep current GLSL path as default; Slang path is feature-flagged/off by default.
+- Integrate deterministic invocation for the externally provisioned Slang compiler, without adding a package or redistributing compiler binaries.
+- Use process-per-compile as the initial isolation model.
+- Keep existing GLSL compilation usable when Slang is unavailable.
 
 ### Deliverables
 
-- Slang compiler bootstrap in engine/editor build scripts.
-- Version-pinned Slang dependency docs and setup instructions.
-- Smoke test command that compiles a trivial shader to SPIR-V.
+- Setup and discovery documentation for locally installed Slang 2026.8 through Vulkan SDK 1.4.350.0.
+- Smoke command compiling one native `.slang` shader directly to Vulkan 1.4 SPIR-V.
+- Compiler version and target profile in compile/cache identity.
 
 ### Exit Criteria
 
-- CI/dev machines can resolve and invoke Slang compiler reliably.
-- Existing GLSL compile path remains unchanged and passing.
+- A configured development machine can invoke Slang 2026.8 and produce Vulkan 1.4 SPIR-V.
+- Existing GLSL/Shaderc and OpenGL driver paths remain independently usable.
 
 ## Phase 2 — Unified Frontend Abstraction
 
 ### Objectives
 
-- Introduce a shader frontend abstraction (`GLSLFrontend`, `SlangFrontend`) behind a single compile service.
-- Route existing compile callers through the shared abstraction without changing asset format.
+- Introduce `GLSLFrontend` and `SlangFrontend` behind one compile service.
+- Route callers through the abstraction without changing existing asset formats.
 
 ### Deliverables
 
-- `IShaderFrontend` (or equivalent) interface with stage/entrypoint/macro/include handling.
-- GLSL frontend adapter preserving existing behavior.
-- Slang frontend adapter for native `.slang` input.
+- `IShaderFrontend` (or equivalent) with stage, entry point, macro, include, and diagnostic handling.
+- GLSL adapter preserving current behavior.
+- Native Slang adapter producing direct Vulkan SPIR-V and reflection.
 
 ### Exit Criteria
 
-- Engine/editor call sites compile through unified API.
-- No regression in existing GLSL shader compile outputs for current targets.
+- Engine/editor call sites can select either frontend explicitly.
+- Existing GLSL outputs remain independent of Slang availability.
 
-## Phase 3 — GLSL -> Slang-Compatible Cross-Compile Path
+## Phase 3 — Native Slang Vulkan Route
 
 ### Objectives
 
-- Enable existing GLSL shaders to flow through Slang-compatible processing for backend emission.
-- Preserve shader authoring in GLSL for legacy assets.
-
-### Approach
-
-- Implement a GLSL ingest strategy:
-  - Preferred: direct GLSL ingestion supported by Slang toolchain APIs/options.
-  - Fallback: generated translation wrapper/stub that maps GLSL stages/entrypoints/defines/includes into Slang-accepted form.
-- Ensure include semantics, macro expansion, and stage metadata remain equivalent.
+- Compile native `.slang` sources directly to Vulkan 1.4 SPIR-V.
+- Preserve existing GLSL authoring and compilation behavior.
 
 ### Deliverables
 
-- Feature flag: `UseSlangForGlslCrossCompile` (default off during rollout).
-- Mapping layer for GLSL stage/entrypoint/define/include normalization.
-- Golden-output tests comparing legacy GLSL->SPIR-V vs new GLSL->(Slang path)->SPIR-V for representative shaders.
+- Opt-in frontend/profile selection for direct Slang compilation.
+- Reflection and source diagnostics for native Slang inputs.
+- Capability checks that fail visibly when the selected Vulkan target or feature is unsupported.
 
 ### Exit Criteria
 
-- Representative GLSL corpus compiles via Slang path with acceptable parity.
-- Any deltas are documented and either fixed or explicitly waived.
+- A representative native Slang shader compiles to validated Vulkan 1.4 SPIR-V.
+- Equivalent existing GLSL remains buildable through its existing frontend.
 
 ## Phase 4 — Editor & Asset Pipeline Support
 
 ### Objectives
 
-- Expose compiler selection and diagnostics in editor tooling.
-- Support dual-source projects (`.glsl` + `.slang`) without ambiguity.
+- Expose explicit frontend and backend selection with actionable diagnostics.
+- Support projects containing `.glsl`, authored OpenGL GLSL counterparts, and `.slang` assets without ambiguity.
 
 ### Deliverables
 
-- Editor shader compile UI updates for frontend/backend selection per asset or profile.
-- Cache key/version updates including frontend + Slang version + target profile.
-- Asset import/build metadata updates for language + entrypoint conventions.
+- Per-asset or profile frontend/backend selection.
+- Cache keys containing source language, compiler/version, target, capabilities, stage, entry point, defines, dependencies, layout options, and schema versions.
+- Asset metadata for language, entry point, generated artifact, and counterpart relationships.
 
 ### Exit Criteria
 
-- Developers can inspect/choose compile frontend in tools.
-- Shader cache invalidation behaves correctly across frontend switches.
+- Developers can inspect and choose the compile frontend.
+- Frontend or target changes invalidate incompatible artifacts.
 
-## Phase 5 — Validation, Rollout, and Defaulting
+## Phase 5 — Validation and Opt-In Rollout
 
 ### Objectives
 
-- Validate correctness/perf/stability under real project content.
-- Roll out in stages, then optionally switch defaults.
+- Validate correctness, ABI compatibility, diagnostics, stability, and measured compile/CPU/GPU costs under representative content.
+- Promote only individually validated Slang passes.
 
 ### Deliverables
 
-- Test matrix results across:
-  - Shader stages: vertex/fragment/compute (and others used by engine).
-  - Feature classes: includes, macros, UBO/SSBO, push constants, sampler/image usage.
-  - Runtime modes: editor, client, dedicated server shader warmup paths.
-- Rollout plan:
-  1. Opt-in per user/project.
-  2. Opt-out default after stability threshold.
-  3. Full default switch with legacy fallback retained for one release window.
+- Matrix covering shader stages, includes/macros, UBO/SSBO, push constants, textures/images/samplers, stereo/multiview, editor/client/server warmup, and Vulkan 1.4 capability profiles.
+- Separate validation of generated OpenGL GLSL; authored GLSL counterparts remain the supported OpenGL route for shared passes.
+- Opt-in rollout controls and documented failure diagnostics.
 
 ### Exit Criteria
 
-- No high-severity regressions in target content set.
-- Documented fallback path remains available if Slang pipeline fails.
+- Validation establishes whether each pilot pass should retain or expand Slang.
+- Existing GLSL Vulkan/OpenGL routes remain available at every rollout stage.
+- No phase declares a global Slang default or automatic retirement.
 
 ## Compatibility & Risk Notes
 
-- Language semantic mismatches (layout qualifiers, extension behavior, preprocessor edge cases) are the primary migration risk.
-- Keep deterministic compiler version pinning to avoid cache churn and non-reproducible outputs.
-- Preserve source-path/line mapping so diagnostics still point to original GLSL where possible.
-- Avoid hard cutovers; always retain legacy GLSL compile fallback until parity is proven.
+- Language and layout semantic mismatches require explicit ABI validation.
+- Pin the compiler version to avoid cache churn and non-reproducible outputs.
+- Preserve source-path and line mapping for diagnostics.
+- Slang frontend session state is not assumed reentrant; serialize use or create independent process/session ownership for workers.
+- Generated OpenGL GLSL is experimental and cannot replace authored GLSL until engine-specific validation proves it.
 
-## Suggested Implementation Order (Code Touchpoints)
+## Primary References
 
-1. Shared compile contracts and abstraction layer.
-2. Slang tool invocation service + diagnostics adapter.
-3. GLSL frontend adapter parity lock.
-4. GLSL->Slang-compatible ingest/mapping path.
-5. Editor integration + cache key updates.
-6. Rollout flags, telemetry, and fallback controls.
+- [Slang command-line compilation](https://shader-slang.org/slang/user-guide/command-line-slangc.html)
+- [Slang reflection API](https://shader-slang.org/slang/user-guide/reflection-api.html)
+- [Vulkan SDK](https://vulkan.lunarg.com/sdk/home)
+
+## Suggested Implementation Order
+
+1. Shared compile contracts and explicit ABI metadata.
+2. Slang tool invocation and diagnostics adapter.
+3. GLSL frontend parity lock.
+4. Native Slang direct-SPIR-V frontend.
+5. Reflection, cache identity, and editor integration.
+6. Pilot validation and opt-in rollout controls.
 
 ## Success Criteria
 
 - Existing GLSL shaders continue to work without authoring conversion.
-- New shaders can be authored in Slang.
-- Engine can cross-compile through a unified path to required backend targets.
-- Build/editor/runtime diagnostics remain clear and actionable across both frontends.
+- New shaders can be authored in Slang and compiled directly to Vulkan 1.4 SPIR-V.
+- Shared passes have authored GLSL counterparts for OpenGL unless generated GLSL is separately validated.
+- Diagnostics and ABI metadata remain clear and actionable across both frontends.

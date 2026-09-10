@@ -12,7 +12,7 @@ namespace XREngine.Rendering.Vulkan;
 
 internal static class VulkanShaderArtifactCache
 {
-    internal const int SchemaVersion = 5;
+    internal const int SchemaVersion = 6;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {

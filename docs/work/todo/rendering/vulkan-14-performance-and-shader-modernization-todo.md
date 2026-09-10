@@ -1,10 +1,10 @@
 # Vulkan 1.4 Performance And Shader Modernization TODO
 
-Last Updated: 2026-09-09
+Last Updated: 2026-09-10
 
 Owner: Rendering / Vulkan
 
-Status: Phases A–C, D1–D3, E1, E3–E5 and F1 complete; E2 native replay demonstrated with resize freshness still open; F2 implemented pending live validation, F3 open; D4 research and phases G–J open
+Status: Phases A–C, D1–D3, E1–E5, F1–F3 and G1–G3 complete; D4 research and phases H–J open
 
 ## Objective And Evidence
 
@@ -377,10 +377,11 @@ The E implementation replaces heap-only incomplete indirect keys with exact
 prepared native identities and prevents key/encoder generation mismatches.
 Its live fixture verifies complete matching keys and material/root invalidation.
 The new presentationless background exact-output contract permits the dedicated
-indirect artifact to replay: 69 native reuses in 225 completed frames, versus zero
-in the matching foreground control, with no Vulkan validation errors. Image
-inspection found old pixels outside a shrunken viewport in both paths, so E2
-remains open for full-output resize freshness. See the
+indirect artifact to replay: 70 native reuses in 225 completed frames, versus zero
+in the matching foreground control, with no Vulkan validation errors. The final
+scissor controls confirm fresh output through material, root, and buffer
+invalidation plus an 800×450 viewport shrink and 960×540 restore. The old
+90-row retained-pixel band is gone. See the
 [background replay and queue investigation](../../investigations/rendering/vulkan14-background-replay-and-queue-overlap-2026-09-09.md).
 
 Measured payload churn came from changing mesh allocation lookup keys, not an
@@ -408,15 +409,18 @@ Compute publication is in `VkRenderProgram.Compute.cs`, linked in phase B.
   signatures, refresh, recording, submission, and allocations.
   **Done when:** results identify which workloads benefit and which validation
   or invalidation costs should change, without weakening output policy.
-- [ ] **E2 — Make indirect secondary reuse understand heaps.** Define identities
+- [x] **E2 — Make indirect secondary reuse understand heaps.** Define identities
   for root ABI/bytes, program generation, heap addresses/ranges/generations,
   descriptor content, and referenced-resource ownership.
   **Done when:** unchanged valid packets reuse safely and changes invalidate;
   the incomplete-key guard is replaced by proof, not simply removed.
-  **Status:** the output contract, native replay and material/root/buffer
-  invalidation are implemented and exercised. Full-output clearing after viewport
-  shrink remains open; the foreground control exhibits the same retained pixels.
-  No dependency on D4 counter access.
+  **Status:** the output contract, native replay, material/root/buffer
+  invalidation, and resize freshness are implemented and exercised. RenderDoc
+  isolated the former retained pixels to an inherited stale `PostProcessFBO`
+  scissor; `VPRC_RenderQuadToFBO` now scopes the destination crop, and the
+  full-resolution fallback uses the explicit `FinalOutput` extent. This does
+  not claim a speedup or default-policy promotion. No dependency on D4 counter
+  access.
 - [x] **E3 — Remove repeated heap payload allocation and publication.** Use
   recording-context/frame-owned reusable storage and existing generation tracking
   to avoid unnecessary descriptor writes. Keep worker scratch and retained
@@ -435,19 +439,17 @@ Compute publication is in `VkRenderProgram.Compute.cs`, linked in phase B.
   Allocation and binding reductions are validated; mixed/noisy timings and
   intermittent indexing mutation rejections do not justify default promotion
   or a general FPS claim. The comparison is complete; those stability findings
-  and the remaining E2 resize-freshness issue remain explicit follow-up work.
+  remain explicit follow-up work.
 
 ## F. Execute Useful Frame-Graph Queue Overlap
 
 `SupportsFrameGraphMultiQueueSubmission` remains false for the generic graph
-executor. A selected presentationless mono Advanced `GraphicsCompute` executor
-has now been implemented with four native primaries, two queues in the graphics
-family, binary dependencies and per-slot completion tracking. It has not yet
-completed live execution: Advanced RenderBench startup currently publishes
-canonical scene generation zero before its first render frame begins. The
-default remains graphics-only and the candidate is explicitly disabled pending
-validation. G2 still needs its own image-access journal publication after the
-split. No overlap or performance gain is claimed.
+executor. The selected presentationless mono Advanced `GraphicsCompute` executor
+uses four native primaries, two distinct compute-capable queues in the graphics
+family, binary dependencies, and per-slot completion tracking. It is opt-in.
+`Auto` resolves to graphics-only because the paired measurement regressed;
+desktop/XR, transfer, and generic frame-graph multi-queue execution remain
+unsupported.
 
 Independent work is required. Visibility, depth-pyramid generation, and indirect
 generation often have real same-frame dependencies; simply assigning them to
@@ -464,24 +466,28 @@ Source:
   with evidence for an experiment, or records why this work is deferred.
   **Disposition:** WorkClassification can overlap GTAO, froxel construction and
   background shading, with a prior measured ideal overlap ceiling of 0.427 ms.
-  Same-family queues avoid ownership-transfer cost; submission and contention
-  costs remain to be measured.
-- [ ] **F2 — Implement the candidate's actual native submissions.** Add semaphore
+  Same-family queues avoid ownership-transfer cost. F3 measured a net GPU
+  regression; separating submission overhead from contention requires a trace.
+- [x] **F2 — Implement the candidate's actual native submissions.** Add semaphore
   dependencies, paired queue-family release/acquire operations where required,
   completion tracking, and failed/rejected submission handling.
   **Done when:** the executor owns the complete cross-queue lifecycle; changing
   the support gate is backed by working submissions rather than planner metadata.
-  **Status:** executor implemented and reviewed, including exact resource pins,
-  joined completion markers, timestamp-pool ownership and partial-submit draining.
-  Release build passes; native execution and failure-path validation remain open.
-- [ ] **F3 — Validate queue selection and net benefit.** Exercise supported queue
+  **Status:** completed with explicit frame-publication identity, accepted-plan
+  propagation, split preparation after resource commitment, G2 access-journal
+  coverage, completion-before-readback/pool reuse, and shutdown retirement.
+- [x] **F3 — Validate queue selection and net benefit.** Exercise supported queue
   configurations and compare total CPU/GPU timing against graphics-only execution.
   **Done when:** correctness passes, requested and executable modes are reported
   accurately, and the default choice follows measured benefit. An explicit
   unsupported multi-queue request must not silently run another mode.
-  **Status:** requested/executed modes are in submission receipts and unsupported
-  candidates reject explicitly. Live queue validation and paired CPU/GPU timings
-  remain outstanding. Work stopped at the user's wrap-up request.
+  **Status:** lit controls and split output completed 140 frames with zero standard
+  or synchronization validation errors (four loader warnings each); native
+  one-submit and four-submit output readbacks were byte-identical. Mode changes
+  and injected gateway rejections recovered across three slots. On RTX 3090 /
+  driver 610.88, the split path regressed GPU median 0.939312 to 1.371344 ms
+  (+45.9945%); `Auto` therefore remains graphics-only. The CPU change (+6.06%)
+  is within the 10.91% control spread and is not attributed to the split.
 
 ## G. Evaluate Address-Based Shader Parameters
 
@@ -508,19 +514,35 @@ Source:
 [VkMeshRenderer.Uniforms.cs](../../../../XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VkMeshRenderer.Uniforms.cs),
 `EnsureEngineUniformBuffer` / `UploadUniform<T>`.
 
-- [ ] **G1 — Select the data and define its root ABI.** Measure descriptor/uniform
+- [x] **G1 — Select the data and define its root ABI.** Measure descriptor/uniform
   costs, then specify one versioned structure with fields, offsets, strides,
   GPU-address/descriptor types, valid ranges, alignment, and ownership.
   **Done when:** CPU/shader layout and the expected cost reduction are explicit.
-- [ ] **G2 — Add a separately selected address-based variant.** Use existing
+  **Status:** the opaque shading pilot replaces 129 repeated 64-byte pushes with
+  16-byte versioned roots and one 64-byte frame-owned block. CPU/SPIR-V offsets,
+  alignment, bounds, ownership and actual pushed/uploaded bytes are documented in
+  the [phase G evaluation](../../investigations/rendering/vulkan14-address-shading-root-2026-09-10.md).
+- [x] **G2 — Add a separately selected address-based variant.** Use existing
   arenas, preserve GPU-generated indirect arguments/counts, and integrate B/E
   lifetime and reuse rules. Keep the existing Vulkan 1.4 descriptor-backed
   GLSL variant. **Done when:** both variants render equivalent supported output
   and unsupported address/heap requirements produce clear diagnostics.
-- [ ] **G3 — Decide from full CPU/GPU costs.** Compare root loads, shader time,
+  **Status:** `XRE_VK_NATIVE_SHADING_ROOT=BufferDeviceAddress` selects the pilot;
+  `Immediate` remains default. Exact presentationless Advanced output with
+  descriptor indexing is supported; heap/set-only selection rejects explicitly.
+  Static, material, short resize/restore and split-moving controls are
+  byte-identical with zero Vulkan validation errors. Long-resize admission fails
+  in both variants and remains a separately documented control-path issue.
+- [x] **G3 — Decide from full CPU/GPU costs.** Compare root loads, shader time,
   descriptor work, preparation, and rerecording across representative scenes.
   **Done when:** the note records the chosen ABI/variant or rejects/defers it;
   geometry fetch strategy changes are evaluated separately on target GPUs.
+  **Status:** ten final runs use receipt-correlated production CPU stages and
+  completed GPU samples. Pushed bytes fall 75%, but static CPU changes are within
+  12.76–14.97% control spread; static GPU median is 0.776064/0.783968 ms
+  (Immediate/address), and moving/material CPU pairs do not favor promotion.
+  Keep Immediate default; retain the bounded opt-in variant. No resize timing
+  or isolated shader-time improvement is claimed.
 
 ## H. Add Slang While Preserving GLSL And OpenGL
 

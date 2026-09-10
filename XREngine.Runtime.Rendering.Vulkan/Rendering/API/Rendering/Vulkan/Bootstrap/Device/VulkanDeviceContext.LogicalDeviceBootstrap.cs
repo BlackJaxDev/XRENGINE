@@ -549,6 +549,9 @@ internal sealed unsafe partial class VulkanDeviceContext
         bool enableDescriptorIndexing = descriptorIndexingExtensionEnabled &&
             (descriptorIndexingRequestedByProfile || descriptorIndexingRequiredByStreamline) &&
             descriptorIndexingCapabilityReady;
+        if (VulkanNativeShadingRootPolicy.UsesAddress &&
+            (request.FeaturePolicy.RequestedDescriptorBackend != EVulkanDescriptorBackend.DescriptorIndexing || !enableDescriptorIndexing))
+            throw new NotSupportedException("XRE_VK_NATIVE_SHADING_ROOT=BufferDeviceAddress requires DescriptorIndexing: Advanced scene resources do not support DescriptorHeap or DescriptorSets in this pilot.");
 
         bool nvMemoryDecompressionExtensionEnabled = extensionsArray.Contains("VK_NV_memory_decompression");
         bool nvMemoryDecompressionRequestedByProfile = request.FeaturePolicy.EnableRtxIoVulkanDecompression;
@@ -581,7 +584,8 @@ internal sealed unsafe partial class VulkanDeviceContext
         _deviceContext.QueryBufferDeviceAddressCapabilities(out bool bufferDeviceAddressFeatureSupported);
         bool bufferDeviceAddressRequestedBySceneDatabase =
             request.FeaturePolicy.ActiveGeometryFetchMode == EVulkanGeometryFetchMode.BufferDeviceAddressPrototype ||
-            request.FeaturePolicy.EnableBindlessMaterialTable;
+            request.FeaturePolicy.EnableBindlessMaterialTable ||
+            VulkanNativeShadingRootPolicy.UsesAddress;
         bool bufferDeviceAddressRequiredByStreamline =
             _outputRuntime._streamlineRequiredFeatures12.Contains("bufferDeviceAddress", StringComparer.Ordinal);
         bool enableBufferDeviceAddress =
@@ -590,6 +594,8 @@ internal sealed unsafe partial class VulkanDeviceContext
              bufferDeviceAddressRequestedBySceneDatabase ||
              bufferDeviceAddressExtensionEnabled ||
              bufferDeviceAddressRequiredByStreamline);
+        if (VulkanNativeShadingRootPolicy.UsesAddress && !enableBufferDeviceAddress)
+            throw new NotSupportedException("XRE_VK_NATIVE_SHADING_ROOT=BufferDeviceAddress requires the Vulkan bufferDeviceAddress feature.");
 
         bool dynamicRenderingExtensionEnabled = extensionsArray.Contains("VK_KHR_dynamic_rendering");
         _deviceContext.QueryDynamicRenderingCapabilities(

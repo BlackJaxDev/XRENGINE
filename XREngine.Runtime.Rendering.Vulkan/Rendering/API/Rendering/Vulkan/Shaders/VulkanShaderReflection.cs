@@ -53,6 +53,23 @@ internal static class VulkanShaderReflection
             : ExtractBindingsFromSource(glslSourceFallback, stage);
     }
 
+    /// <summary>
+    /// Reads descriptor bindings solely from valid SPIR-V. Unlike the legacy route,
+    /// this refuses source fallback because a direct-bytecode frontend must provide
+    /// complete ABI metadata independently.
+    /// </summary>
+    internal static IReadOnlyList<DescriptorBindingInfo> ExtractBindingsStrict(byte[] spirv, ShaderStageFlags stage)
+    {
+        if (spirv.Length == 0)
+            throw new InvalidOperationException("SPIR-V reflection requires a non-empty module.");
+
+        SpirvModule module = new(spirv, stage);
+        List<DescriptorBindingInfo> bindings = module.CollectDescriptorBindings();
+        if (bindings.Count == 0)
+            throw new InvalidOperationException("SPIR-V did not declare any descriptor bindings.");
+        return bindings;
+    }
+
     private static IReadOnlyList<DescriptorBindingInfo> MergeSourceDescriptorMetadata(
         IReadOnlyList<DescriptorBindingInfo> reflectedBindings,
         IReadOnlyList<DescriptorBindingInfo> sourceBindings)

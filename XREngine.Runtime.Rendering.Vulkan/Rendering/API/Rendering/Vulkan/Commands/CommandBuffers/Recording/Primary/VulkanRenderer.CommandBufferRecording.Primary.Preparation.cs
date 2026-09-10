@@ -1168,6 +1168,17 @@ namespace XREngine.Rendering.Vulkan
                                 : EVulkanCommandRecordingFailureKind.RecoverAfterStateChange;
                         return false;
                     }
+                    if (nativePipelines.Shade.UsesAddressRoot &&
+                        nativePipelines.Shade.NativeShadingRootAbiVersion != VulkanNativeShadingRootPolicy.AbiVersion)
+                        throw new VulkanPlanPreconditionException("The native shading pipeline root ABI is not supported by this recorder.");
+                    if (nativePipelines.Shade.UsesAddressRoot && request.Stage == EAdvancedRenderStage.NativeOpaqueShading &&
+                        !nativeClosure.ShadingAddressRoot.IsValid)
+                    {
+                        nativeClosure = nativeClosure with
+                        {
+                            ShadingAddressRoot = PrepareNativeShadingAddressRoot(ref recordingState, framePlan.FrameSlot),
+                        };
+                    }
                     if (!recordingState.Ops.Stream.TryAssociateAdvancedNativeComputeClosure(
                             operationIndex,
                             in request,

@@ -29,7 +29,6 @@ namespace XREngine.Rendering.Vulkan
             CapturePrimaryCommandBufferRecordingContext(in context, ref recordingState);
 
             InitializePrimaryCommandBufferRecordingState(ref recordingState);
-            PrepareAdvancedQueueOverlapRecording(ref recordingState);
             using VulkanResourceRuntime.ReadOnlyStorageRecordingScope
                 readOnlyStorageScope = ResourceRuntime.EnterReadOnlyStorageRecordingScope(
                     recordingState.ReadOnlyStorageAuthority);
@@ -39,6 +38,7 @@ namespace XREngine.Rendering.Vulkan
                 return false;
 
             using VulkanMeshFrameDataManifestRecordingScope frameDataManifestScope = new(frameDataManifest);
+            PrepareAdvancedQueueOverlapRecording(ref recordingState);
             using VulkanCpuStageScope primaryCommandEncodingStage =
                 new(_frameTelemetry, EVulkanCpuStage.PrimaryCommandEncoding);
             using (VulkanCpuStageScope encodingSetupStage =
@@ -46,6 +46,8 @@ namespace XREngine.Rendering.Vulkan
             {
                 PreparePrimaryCommandEncoding(ref recordingState);
                 InitializePrimaryCommandEncodingState(ref recordingState);
+                if (recordingState.AdvancedQueueOverlap is null)
+                    InitializeExplicitOutputColor(ref recordingState);
             }
 
             try

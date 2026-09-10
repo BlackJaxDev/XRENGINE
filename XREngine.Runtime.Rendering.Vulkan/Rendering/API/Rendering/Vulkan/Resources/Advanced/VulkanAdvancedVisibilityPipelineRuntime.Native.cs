@@ -38,8 +38,13 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
         binding = default;
         try
         {
+            bool addressRoot = index == 5 && VulkanNativeShadingRootPolicy.UsesAddress;
+            if (addressRoot && _resources.BackendObjectContext?.Supports(EVulkanDeviceCapability.BufferDeviceAddress) != true)
+                throw new NotSupportedException("The requested native shading BufferDeviceAddress root requires an enabled Vulkan bufferDeviceAddress feature.");
             XRRenderProgram source = _nativeComputePrograms[index] ??= CreateComputeProgram(
-                path, path, index == 0 ? ResolveClassificationPreamble() : string.Empty);
+                path, path, index == 0 ? ResolveClassificationPreamble() : addressRoot
+                    ? $"#extension GL_EXT_buffer_reference : require\n#define XR_ADV_SHADING_ADDRESS_ROOT_VERSION {VulkanNativeShadingRootPolicy.AbiVersion}\n"
+                    : string.Empty);
             if (_resources.WrapperLookup.GetOrCreate(source, generateNow: true) is not VkRenderProgram program ||
                 !program.Link(allowAsyncShaderCompile: false) || !program.IsLinked || program.PipelineLayout.Handle == 0)
             {
@@ -50,7 +55,7 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
                 int.MinValue, null, out Pipeline pipeline, out string detail);
             if (readiness != VulkanComputePipelineReadiness.Ready)
                 return DescribeComputePipelineReadiness(readiness, path, detail, out reason);
-            binding = new(program, pipeline, program.LinkGeneration);
+            binding = new(program, pipeline, program.LinkGeneration, addressRoot ? VulkanNativeShadingRootPolicy.AbiVersion : 0);
             reason = "Ready";
             return VulkanAdvancedVisibilityPipelineReadiness.Ready;
         }

@@ -51,6 +51,8 @@ internal readonly record struct VulkanAdvancedNativeComputeClosure(
     DescriptorImageInfo AmbientOcclusionSampledDescriptor,
     uint ViewIndex)
 {
+    internal VulkanAdvancedNativeShadingRootBinding ShadingAddressRoot { get; init; }
+
     internal bool IsValid
         => GraphRevision != 0u &&
            Identity is { IsAllocated: true } &&

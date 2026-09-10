@@ -12,7 +12,7 @@ using XREngine.Diagnostics;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal sealed unsafe class VkShader(
+internal sealed unsafe partial class VkShader(
     VulkanBackendObjectContext backendContext,
     XRShader data) : VkObject<XRShader>(backendContext, data)
 {
@@ -242,6 +242,10 @@ internal sealed unsafe class VkShader(
             bool usesVulkanClipDepthRemap,
             VulkanTransformFeedbackCompilePlan? transformFeedbackPlan)
         {
+            if (Data.SourceLanguage == ShaderSourceLanguage.Slang)
+                return BuildSlangArtifact(shaderConfigVersion, usesVulkanClipDepthRemap, transformFeedbackPlan);
+            if (Data.SourceLanguage != ShaderSourceLanguage.Glsl || Data.EntryPoint != "main")
+                throw new NotSupportedException("The legacy Vulkan asset frontend requires GLSL with entry point main.");
             string transformFeedbackPlanIdentity = transformFeedbackPlan?.Identity ?? string.Empty;
             VulkanShaderCompiler.PreparedSource prepared = VulkanShaderCompiler.Prepare(Data, usesVulkanClipDepthRemap, transformFeedbackPlan);
             string artifactIdentity = VulkanShaderCompiler.BuildArtifactIdentity(
@@ -392,7 +396,9 @@ internal sealed unsafe class VkShader(
             string? artifactIdentity,
             string? rewrittenSource)
         {
-            artifactIdentity ??= VulkanShaderCompiler.BuildArtifactIdentity(
+            artifactIdentity ??= Data.SourceLanguage == ShaderSourceLanguage.Slang
+                ? $"SLANGVK-FAILED-{Data.SourceRevision}"
+                : VulkanShaderCompiler.BuildArtifactIdentity(
                 Data,
                 shaderConfigVersion,
                 usesVulkanClipDepthRemap,
@@ -478,7 +484,7 @@ internal sealed unsafe class VkShader(
                 string directory = Path.Combine("Build", "Logs", "vulkan-shader-failures");
                 Directory.CreateDirectory(directory);
                 string identitySuffix = string.IsNullOrWhiteSpace(artifactIdentity) ? "noidentity" : artifactIdentity;
-                string fileName = SanitizeDiagnosticFileName($"{Data.Name ?? "UnnamedShader"}-{Data.Type}-{identitySuffix}.glsl.txt");
+                string fileName = SanitizeDiagnosticFileName($"{Data.Name ?? "UnnamedShader"}-{Data.Type}-{identitySuffix}.{Data.SourceLanguage.ToString().ToLowerInvariant()}.txt");
                 string path = Path.Combine(directory, fileName);
 
                 StringBuilder builder = new();
@@ -556,7 +562,7 @@ internal sealed unsafe class VkShader(
 
         private static void AppendSourcePreview(StringBuilder builder, string source, int maxLines)
         {
-            builder.AppendLine("--- Rewritten GLSL preview ---");
+            builder.AppendLine("--- Compiler input source preview ---");
 
             using StringReader reader = new(source.Replace("\r\n", "\n", StringComparison.Ordinal));
             int lineNumber = 0;

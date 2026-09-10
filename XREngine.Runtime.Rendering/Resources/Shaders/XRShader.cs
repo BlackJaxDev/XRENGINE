@@ -10,10 +10,10 @@ namespace XREngine.Rendering
     [XRAssetInspector("XREngine.Editor.AssetEditors.XRShaderInspector")]
     [XRAssetContextMenu("Open Shader Editor...", "XREngine.Editor.UI.Tools.ShaderAssetMenuActions", "OpenInShaderEditor")]
     [XR3rdPartyExtensions(typeof(XREngine.Data.XRShaderImportOptions),
-        "glsl", "shader",
+        "glsl", "shader", "slang",
         "frag", "vert", "geom", "tesc", "tese", "comp", "task", "mesh",
         "fs", "vs", "gs", "tcs", "tes", "cs", "ts", "ms")]
-    public class XRShader : GenericRenderObject
+    public partial class XRShader : GenericRenderObject
     {
         private readonly object _resolvedSourceCacheLock = new();
         private string? _resolvedSourceCache;
@@ -129,6 +129,9 @@ namespace XREngine.Rendering
             }
 
             Type = loaded.Type;
+            SourceLanguage = loaded.SourceLanguage;
+            EntryPoint = loaded.EntryPoint;
+            SlangOptions = loaded.SlangOptions;
             Source = loaded.Source;
             GenerateAsync = loaded.GenerateAsync;
             IsGeneratedUberVariant = loaded.IsGeneratedUberVariant;
@@ -136,7 +139,7 @@ namespace XREngine.Rendering
         }
         public override bool Load3rdParty(string filePath)
         {
-            Type = ResolveType(Path.GetExtension(filePath));
+            ResolveFrontendFromPath(filePath);
             TextFile file = new(filePath);
             file.LoadText(filePath);
             Source = file;
@@ -158,7 +161,7 @@ namespace XREngine.Rendering
         }
         public override async Task<bool> Load3rdPartyAsync(string filePath)
         {
-            Type = ResolveType(Path.GetExtension(filePath));
+            ResolveFrontendFromPath(filePath);
             TextFile file = new(filePath);
             await file.LoadTextAsync(filePath);
             Source = file;
@@ -188,6 +191,9 @@ namespace XREngine.Rendering
             switch (propName)
             {
                 case nameof(Type):
+                case nameof(SourceLanguage):
+                case nameof(EntryPoint):
+                case nameof(SlangOptions):
                     InvalidateResolvedSourceCache();
                     Interlocked.Increment(ref _sourceRevision);
                     MarkDirty();
@@ -305,6 +311,14 @@ namespace XREngine.Rendering
             string sourceText = Source?.Text ?? string.Empty;
             string? sourcePath = Source?.FilePath;
 
+            // Native frontends own their include/import graph. Editor source views must
+            // neither rewrite it as GLSL nor replace compiler-discovered dependencies.
+            if (SourceLanguage != ShaderSourceLanguage.Glsl)
+            {
+                resolvedSource = new ResolvedShaderSource(sourcePath, sourceText, sourceText, [], [], ShaderSourceMacroSummary.Scan(sourceText));
+                return true;
+            }
+
             if (!annotateIncludes)
             {
                 lock (_resolvedSourceCacheLock)
@@ -373,6 +387,11 @@ namespace XREngine.Rendering
             ResolvedShaderSourceOptimizationOptions? options = null)
         {
             string sourceText = Source?.Text ?? string.Empty;
+            if (SourceLanguage != ShaderSourceLanguage.Glsl)
+            {
+                optimizedSource = sourceText;
+                return true;
+            }
             string? sourcePath = Source?.FilePath;
             bool useDefaultCache = !annotateIncludes && options is null;
 

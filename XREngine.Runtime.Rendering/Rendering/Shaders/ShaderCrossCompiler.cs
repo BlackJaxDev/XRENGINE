@@ -1,10 +1,23 @@
 namespace XREngine.Rendering;
 
+using XREngine.Rendering.Shaders.Compilation;
+
 /// <summary>
-/// Backend-neutral entry point for compiling GLSL or HLSL authoring sources to SPIR-V.
+/// Backend-neutral entry point for GLSL/HLSL and opt-in native Slang SPIR-V compilation.
 /// </summary>
 public static class ShaderCrossCompiler
 {
+    /// <summary>
+    /// Compiles an explicit frontend request while retaining its bytecode provenance.
+    /// </summary>
+    public static Task<ShaderCompileResult> CompileAsync(
+        ShaderCompileRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        return GetCompiler().CompileAsync(request, cancellationToken);
+    }
+
     public static byte[] CompileToSpirv(
         string source,
         EShaderType shaderType,

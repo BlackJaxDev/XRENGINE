@@ -49,8 +49,8 @@ internal sealed partial class VulkanCommandRuntime
         if (payload.Request.Stage != EAdvancedRenderStage.AmbientOcclusion &&
             !(state.AdvancedQueueOverlap is not null && payload.Request.Stage == EAdvancedRenderStage.WorkClassification))
         {
-            TransitionNativeInput(state.CommandBuffer, closure.Identity, closure.ViewIndex);
-            TransitionNativeInput(state.CommandBuffer, closure.Metadata, closure.ViewIndex);
+            TransitionNativeSharedInput(state.CommandBuffer, closure.Identity, closure.ViewIndex);
+            TransitionNativeSharedInput(state.CommandBuffer, closure.Metadata, closure.ViewIndex);
         }
         if (payload.Request.Stage == EAdvancedRenderStage.WorkClassification)
         {
@@ -125,7 +125,23 @@ internal sealed partial class VulkanCommandRuntime
         // final submit owns the Classified wait covering indirect argument reads.
         BeginAdvancedQueueOverlapShade(ref state);
         TrackAdvancedNativeShadeClosure(state.CommandBuffer, in closure);
+        if (state.AdvancedQueueOverlap is not null)
+        {
+            // Final owns these real accesses; inherited entry layouts alone do
+            // not publish its reads/writes into the completion journal.
+            TransitionNativeSharedInput(state.CommandBuffer, closure.Identity, closure.ViewIndex);
+            TransitionNativeSharedInput(state.CommandBuffer, closure.Metadata, closure.ViewIndex);
+            TransitionNativeInput(state.CommandBuffer, closure.Depth, closure.ViewIndex);
+            TransitionNativeInput(state.CommandBuffer, closure.AmbientOcclusion, closure.ViewIndex);
+            TransitionNativeOutput(state.CommandBuffer, closure.Hdr, closure.ViewIndex);
+            TransitionNativeOutput(state.CommandBuffer, closure.Velocity, closure.ViewIndex);
+            TransitionNativeOutput(state.CommandBuffer, closure.Reactive, closure.ViewIndex);
+            TransitionNativeOutput(state.CommandBuffer, closure.ShadingDiagnostics, closure.ViewIndex);
+        }
         VulkanAdvancedComputePipeline shade = payload.NativeComputePipelines.Shade;
+        ulong parameterAddress = shade.UsesAddressRoot
+            ? WriteNativeShadingAddressRoot(ref state, closure.ShadingAddressRoot, in push)
+            : 0UL;
         using (TryBeginVulkanGpuProfilerScope(state.CommandBuffer, NativeOpaqueGpuProfilerPath))
         {
             CmdBeginLabel(state.CommandBuffer, "Advanced.NativeOpaque.Indirect");
@@ -135,7 +151,7 @@ internal sealed partial class VulkanCommandRuntime
             for (uint kernel = 0; kernel < AdvancedRenderPipeline.DefaultMaxShadingKernels; ++kernel)
             {
                 push = push with { KernelIndex = kernel };
-                PushNativeConstants(state.CommandBuffer, shade, in push);
+                PushNativeConstants(state.CommandBuffer, shade, in push, parameterAddress);
                 Api.CmdDispatchIndirect(state.CommandBuffer, closure.DispatchArguments.NativeBuffer,
                     closure.DispatchArguments.NativeOffset + kernel * 16UL);
             }
@@ -144,7 +160,8 @@ internal sealed partial class VulkanCommandRuntime
         EmitMemoryBarrierMask(state.CommandBuffer, EMemoryBarrierMask.ShaderImageAccess);
         push = push with { Flags = push.Flags | 1u };
         RecordNativeDispatch(state.CommandBuffer, in payload, shade,
-            in push, tilesX, tilesY, 1, "Advanced.NativeOpaque.GpuOverflowRepair", NativeOpaqueRepairGpuProfilerPath);
+            in push, tilesX, tilesY, 1, "Advanced.NativeOpaque.GpuOverflowRepair", NativeOpaqueRepairGpuProfilerPath, parameterAddress);
+        RecordNativeShadingRootUse(shade.UsesAddressRoot, checked((int)AdvancedRenderPipeline.DefaultMaxShadingKernels + 1));
         EmitMemoryBarrierMask(state.CommandBuffer, EMemoryBarrierMask.ShaderImageAccess | EMemoryBarrierMask.TextureFetch);
         VulkanFrozenBufferBarrier lightingCounters = closure.LightingCounters;
         VulkanAdvancedVisibilityStageRequest lightingRequest = payload.Request;
@@ -157,26 +174,47 @@ internal sealed partial class VulkanCommandRuntime
 
     private void RecordNativeDispatch(CommandBuffer commandBuffer,
         in VulkanAdvancedVisibilityOperationPayload payload, in VulkanAdvancedComputePipeline pipeline,
-        in VulkanAdvancedNativeShadingPushConstants push, uint x, uint y, uint z, string label, string[] profilerPath)
+        in VulkanAdvancedNativeShadingPushConstants push, uint x, uint y, uint z, string label, string[] profilerPath,
+        ulong parameterAddress = 0)
     {
         using var profilerScope = TryBeginVulkanGpuProfilerScope(commandBuffer, profilerPath);
         CmdBeginLabel(commandBuffer, label);
         BindPipelineTracked(commandBuffer, PipelineBindPoint.Compute, pipeline.Pipeline);
         BindAdvancedVisibilityDescriptorSets(commandBuffer, PipelineBindPoint.Compute,
             pipeline.Program.PipelineLayout, in payload, payload.NativeComputeDescriptorSet);
-        PushNativeConstants(commandBuffer, pipeline, in push);
+        PushNativeConstants(commandBuffer, pipeline, in push, parameterAddress);
         Api.CmdDispatch(commandBuffer, x, y, z);
         CmdEndLabel(commandBuffer);
     }
 
     private void PushNativeConstants(CommandBuffer commandBuffer,
-        in VulkanAdvancedComputePipeline pipeline, in VulkanAdvancedNativeShadingPushConstants push)
-        => PushConstantsTracked(commandBuffer, pipeline.Program.PipelineLayout,
+        in VulkanAdvancedComputePipeline pipeline, in VulkanAdvancedNativeShadingPushConstants push, ulong parameterAddress = 0)
+    {
+        if (pipeline.UsesAddressRoot)
+        {
+            if (pipeline.NativeShadingRootAbiVersion != VulkanNativeShadingRootPolicy.AbiVersion)
+                throw new InvalidOperationException("Native shading address-root ABI does not match the admitted pipeline.");
+            if (parameterAddress == 0)
+                throw new VulkanPlanPreconditionException("The address-based shading pipeline has no prepared parameter root.");
+            PushConstantsTracked(commandBuffer, pipeline.Program.PipelineLayout,
+                VulkanMeshRenderingConventions.GetCommonPushConstantStageFlags(DeviceContext), 0,
+                new VulkanAdvancedNativeShadingAddressRoot(parameterAddress, push.KernelIndex, push.Flags));
+            return;
+        }
+        PushConstantsTracked(commandBuffer, pipeline.Program.PipelineLayout,
             VulkanMeshRenderingConventions.GetCommonPushConstantStageFlags(DeviceContext), 0, push);
+    }
 
     private void TransitionNativeInput(CommandBuffer commandBuffer, VulkanPhysicalImageGroup group, uint view)
         => EmitAdvancedVisibilityImageBarrier(commandBuffer, group, 0, view,
             ImageLayout.ShaderReadOnlyOptimal, AccessFlags.ShaderReadBit, PipelineStageFlags.ComputeShaderBit, false);
+
+    // Identity and metadata are sampled/storage-capable graph resources. Keep
+    // their sampled descriptors and both fork readers in the planner's GENERAL
+    // layout; transitioning in either child would race the other child's reads.
+    private void TransitionNativeSharedInput(CommandBuffer commandBuffer, VulkanPhysicalImageGroup group, uint view)
+        => EmitAdvancedVisibilityImageBarrier(commandBuffer, group, 0, view,
+            ImageLayout.General, AccessFlags.ShaderReadBit, PipelineStageFlags.ComputeShaderBit, false);
 
     private void TransitionNativeOutput(CommandBuffer commandBuffer, VulkanPhysicalImageGroup group, uint view)
         => EmitAdvancedVisibilityImageBarrier(commandBuffer, group, 0, view,

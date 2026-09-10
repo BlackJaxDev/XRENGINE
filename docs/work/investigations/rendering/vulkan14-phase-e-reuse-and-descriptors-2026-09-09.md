@@ -1,10 +1,11 @@
 # Vulkan 1.4 Phase E: command reuse and descriptor cost
 
-Date: 2026-09-09. Status: E1 and E3–E5 complete. The
+Date: 2026-09-09; completion verified 2026-09-10. Status: E1–E5 complete. The
 [later background-output implementation](vulkan14-background-replay-and-queue-overlap-2026-09-09.md)
-demonstrated 69 native reuses in 225 frames with zero Vulkan errors. E2 remains
-open for full-output resize freshness. The output-policy limitation described
-in the original experiment below is historical.
+demonstrated 70 native reuses in 225 frames with zero Vulkan errors, versus zero
+reuses in the foreground control. Full-output resize freshness now passes after
+fixing the inherited fullscreen-pass scissor. The E2 limitations and open status
+described in the original experiments below are historical.
 
 ## Scope and acceptance
 

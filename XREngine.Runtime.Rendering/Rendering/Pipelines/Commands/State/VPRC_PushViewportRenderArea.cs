@@ -37,6 +37,16 @@ namespace XREngine.Rendering.Pipelines.Commands
             {
                 outputRegion = new BoundingRectangle(0, 0, outputWidth, outputHeight);
             }
+            else if (ActivePipelineInstance.FinalOutput is
+                     { IsValid: true, ExecutionMode: RenderExecutionMode.Presentationless } finalOutput)
+            {
+                // Full-resolution post processing and the terminal composite
+                // share the acquired output extent. Cropping these passes to a
+                // resized viewport leaves old pixels in retained output FBOs.
+                outputRegion = new BoundingRectangle(0, 0,
+                    checked((int)finalOutput.Properties.Width),
+                    checked((int)finalOutput.Properties.Height));
+            }
 
             BoundingRectangle res = ResolveRenderArea(
                 UseInternalResolution,

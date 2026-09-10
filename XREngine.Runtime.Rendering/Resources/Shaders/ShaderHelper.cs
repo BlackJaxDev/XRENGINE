@@ -67,7 +67,7 @@ public static class ShaderHelper
 
     private static EngineShaderCacheKey CreateEngineShaderCacheKey(string relativePath, EShaderType shaderType)
     {
-        string normalizedPath = relativePath.Replace('\\', '/');
+        string normalizedPath = SlangShaderPilots.ResolvePath(relativePath).Replace('\\', '/');
         return new EngineShaderCacheKey(normalizedPath, shaderType);
     }
 
@@ -82,7 +82,8 @@ public static class ShaderHelper
     private static XRShader LoadAndWarmEngineShader(EngineShaderCacheKey key, bool bypassJobThread)
     {
         XRShader source = Services.LoadEngineAsset<XRShader>(JobPriority.Highest, bypassJobThread, "Shaders", key.RelativePath);
-        source._type = key.ShaderType;
+        source.Type = key.ShaderType;
+        SlangShaderPilots.Configure(source, key.RelativePath);
         source.TryGetResolvedSource(out _, annotateIncludes: false, logFailures: true);
         return source;
     }
@@ -90,7 +91,8 @@ public static class ShaderHelper
     private static async Task<XRShader> LoadAndWarmEngineShaderAsync(EngineShaderCacheKey key, bool bypassJobThread)
     {
         XRShader source = await Services.LoadEngineAssetAsync<XRShader>(JobPriority.Highest, bypassJobThread, "Shaders", key.RelativePath).ConfigureAwait(false);
-        source._type = key.ShaderType;
+        source.Type = key.ShaderType;
+        SlangShaderPilots.Configure(source, key.RelativePath);
         source.TryGetResolvedSource(out _, annotateIncludes: false, logFailures: true);
         return source;
     }

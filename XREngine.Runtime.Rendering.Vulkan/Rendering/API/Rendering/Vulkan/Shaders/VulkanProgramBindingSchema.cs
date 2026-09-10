@@ -189,6 +189,8 @@ internal sealed class VulkanProgramBindingSchema
         DescriptorBindingInfo binding,
         IReadOnlyDictionary<string, AutoUniformBlockInfo> autoUniformBlocks)
     {
+        if (binding.DeclaredOwner is EVulkanDescriptorOwner owner)
+            return owner;
         foreach (AutoUniformBlockInfo block in autoUniformBlocks.Values)
         {
             if (block.Set != binding.Set ||

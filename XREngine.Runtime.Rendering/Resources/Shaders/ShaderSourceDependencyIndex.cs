@@ -43,7 +43,8 @@ internal static class ShaderSourceDependencyIndex
     public static void Update(
         XRShader shader,
         string? sourcePath,
-        IReadOnlyList<ShaderSourceFileDependency> dependencies)
+        IReadOnlyList<ShaderSourceFileDependency> dependencies,
+        IReadOnlyList<string>? nativeSearchDirectories = null)
     {
         ArgumentNullException.ThrowIfNull(shader);
         ArgumentNullException.ThrowIfNull(dependencies);
@@ -52,6 +53,9 @@ internal static class ShaderSourceDependencyIndex
         AddNormalizedPath(normalizedPaths, sourcePath);
         for (int i = 0; i < dependencies.Count; i++)
             AddNormalizedPath(normalizedPaths, dependencies[i].Path);
+        if (nativeSearchDirectories is not null)
+            foreach (string directory in nativeSearchDirectories)
+                normalizedPaths.Add(NormalizePath(directory).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar);
 
         string[] replacementPaths = [.. normalizedPaths];
         lock (Sync)
@@ -237,21 +241,28 @@ internal static class ShaderSourceDependencyIndex
         XRShader[] shaders;
         lock (Sync)
         {
-            if (!ShadersByPath.TryGetValue(normalizedPath, out List<WeakReference<XRShader>>? entries))
-                return 0;
-
             HashSet<XRShader> unique = new(ReferenceEqualityComparer.Instance);
-            for (int i = entries.Count - 1; i >= 0; i--)
-            {
-                if (entries[i].TryGetTarget(out XRShader? shader))
-                    unique.Add(shader);
-                else
-                    entries.RemoveAt(i);
-            }
-
-            if (entries.Count == 0)
-                ShadersByPath.Remove(normalizedPath);
+            Collect(normalizedPath);
+            // Native module search paths also depend on absence: a newly created
+            // higher-priority module must invalidate shaders that imported the old one.
+            for (string? directory = Path.GetDirectoryName(normalizedPath); !string.IsNullOrEmpty(directory); directory = Path.GetDirectoryName(directory))
+                Collect(directory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar);
             shaders = [.. unique];
+
+            void Collect(string key)
+            {
+                if (!ShadersByPath.TryGetValue(key, out List<WeakReference<XRShader>>? entries))
+                    return;
+                for (int i = entries.Count - 1; i >= 0; i--)
+                {
+                    if (entries[i].TryGetTarget(out XRShader? shader))
+                        unique.Add(shader);
+                    else
+                        entries.RemoveAt(i);
+                }
+                if (entries.Count == 0)
+                    ShadersByPath.Remove(key);
+            }
         }
 
         return publishAtFrameSwap

@@ -22,6 +22,49 @@
 #define XR_ADV_SHADING_IMAGE(formatName, bindingIndex) layout(formatName, binding = XR_ADV_GL_IMAGE_BINDING_ ## bindingIndex)
 #endif
 
+// Only the separately selected Vulkan opaque variant loads this 64-byte block
+// through a typed GPU reference. All other native and OpenGL variants keep the
+// original immediate block. Descriptor-backed scene/image access is unchanged.
+#if defined(XR_ADV_SHADING_ADDRESS_ROOT_VERSION)
+#if !defined(XR_ADV_BACKEND_VULKAN) || XR_ADV_SHADING_ADDRESS_ROOT_VERSION != 1
+#error "Unsupported Advanced shading address-root ABI."
+#endif
+struct XRAdvancedShadingParameters
+{
+    uvec2 screenExtent;
+    uvec2 tilesCount;
+    uint viewIndex;
+    uint viewCount;
+    uint kernelIndex;
+    uint flags;
+    uint depthSlices;
+    uint maxLightIndices;
+    uint lightCount;
+    uint maxKernelTiles;
+    vec4 backgroundColor;
+};
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer XRAdvancedShadingParameterReference
+{
+    XRAdvancedShadingParameters values;
+};
+layout(push_constant, std430) uniform XRAdvancedShadingAddressRoot
+{
+    layout(offset = 0) XRAdvancedShadingParameterReference parameters;
+    layout(offset = 8) uint kernelIndex;
+    layout(offset = 12) uint flags;
+} u_AddressRoot;
+
+XRAdvancedShadingParameters XR_ADV_LoadShadingParameters()
+{
+    XRAdvancedShadingParameters value = u_AddressRoot.parameters.values;
+    value.kernelIndex = u_AddressRoot.kernelIndex;
+    value.flags = u_AddressRoot.flags;
+    return value;
+}
+// Private invocation state is initialized once at the opaque main entry point.
+// Helper functions then consume this value without repeating a pointer load.
+XRAdvancedShadingParameters u_Push;
+#else
 // One 64-byte CPU/GPU contract shared by classification, lighting and shading.
 layout(push_constant, std430) uniform XRAdvancedShadingPush
 {
@@ -37,6 +80,7 @@ layout(push_constant, std430) uniform XRAdvancedShadingPush
     uint maxKernelTiles;
     vec4 backgroundColor;
 } u_Push;
+#endif
 
 #define XR_ADV_MAX_SHADING_KERNELS 128u
 #define XR_ADV_CLASSIFICATION_OVERFLOW_TILES 1u
