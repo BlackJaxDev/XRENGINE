@@ -41,7 +41,10 @@ internal sealed partial class VulkanCommandRuntime
             ? CommandChainsExplicitlyRequested
             : CommandChainsEnabledForCurrentRecording;
         if (!commandChainsEnabledForTarget)
+        {
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordCommandChainScheduleDecision(EVulkanCommandChainScheduleDecision.Disabled);
             return null;
+        }
 
         // Mutable GPU publications remain inline in a freshly recorded primary.
         // Stable mesh-draw ranges on either side are still lowered to reusable
@@ -55,6 +58,7 @@ internal sealed partial class VulkanCommandRuntime
         // source indices occupy a separate namespace from the static frame ops.
         if (ContainsQueryFrameOp(volatileOps))
         {
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordCommandChainScheduleDecision(EVulkanCommandChainScheduleDecision.VolatileQueries);
             Debug.VulkanEvery(
                 $"Vulkan.CommandChains.QueryOpsInlineFallback.{GetHashCode()}",
                 TimeSpan.FromSeconds(5),
@@ -91,6 +95,7 @@ internal sealed partial class VulkanCommandRuntime
                 out CommandChainSchedule? cachedSchedule,
                 out stats))
         {
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordCommandChainScheduleDecision(EVulkanCommandChainScheduleDecision.ReusedSchedule);
             return cachedSchedule;
         }
         if (ShouldBypassCommandChainScheduleForStabilityGuard(
@@ -98,6 +103,7 @@ internal sealed partial class VulkanCommandRuntime
                 resourcePlanRevision,
                 out CommandChainStabilityBypassReason bypassReason))
         {
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordCommandChainScheduleDecision(EVulkanCommandChainScheduleDecision.StabilityGuard);
             LogCommandChainStabilityGuardBypass(
                 imageIndex,
                 resourcePlanRevision,
@@ -165,7 +171,10 @@ internal sealed partial class VulkanCommandRuntime
         if (packets.Count == 0)
         {
             if (staticOps.Count != 0 || volatileOps.Count != 0)
+            {
+                RuntimeEngine.Rendering.Stats.Vulkan.RecordCommandChainScheduleDecision(EVulkanCommandChainScheduleDecision.NoLoweredPackets);
                 return null;
+            }
 
             stats = new CommandChainLoweringStats(0, 0, 0, 0, 0, 0, 0, 0, null, null, null);
             CommandChainSchedule emptySchedule = RentCommandChainSchedule(imageIndex);
@@ -178,6 +187,7 @@ internal sealed partial class VulkanCommandRuntime
                 CommandChains.SnapshotArtifactMutationGeneration());
             CacheCommandChainSchedule(imageIndex, emptySchedule);
             ObserveCommandChainScheduleForStabilityGuard(imageIndex, resourcePlanRevision, in stats);
+            RuntimeEngine.Rendering.Stats.Vulkan.RecordCommandChainScheduleDecision(EVulkanCommandChainScheduleDecision.EmptySchedule);
             return emptySchedule;
         }
 
@@ -499,8 +509,21 @@ internal sealed partial class VulkanCommandRuntime
             firstStructuralDirtyReason,
             firstDescriptorMismatch,
             firstResourcePlanMismatch);
+        RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandChainMetrics(
+            chainsScheduled: stats.ChainsScheduled,
+            chainsRecorded: stats.ChainsRecorded,
+            chainsReused: stats.ChainsReused,
+            chainsFrameDataRefreshed: stats.ChainsFrameDataRefreshed,
+            volatileChainsRecorded: stats.VolatileChainsRecorded,
+            secondaryCommandBuffers: stats.SecondaryCommandBuffers,
+            visibilityPackets: stats.VisibilityPackets,
+            renderPackets: stats.RenderPackets,
+            firstStructuralDirtyReason: stats.FirstStructuralDirtyReason,
+            firstDescriptorGenerationMismatch: stats.FirstDescriptorGenerationMismatch,
+            firstResourcePlanRevisionMismatch: stats.FirstResourcePlanRevisionMismatch);
         CacheCommandChainSchedule(imageIndex, schedule);
         ObserveCommandChainScheduleForStabilityGuard(imageIndex, resourcePlanRevision, in stats);
+        RuntimeEngine.Rendering.Stats.Vulkan.RecordCommandChainScheduleDecision(EVulkanCommandChainScheduleDecision.BuiltSchedule);
         return schedule;
 
         void AddCurrentGroup()

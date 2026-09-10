@@ -393,6 +393,7 @@ internal readonly unsafe struct VulkanTrackedCommandEncoder
         Track(commandBuffer, ObjectType.PipelineLayout, layout.Handle);
         T copy = value;
         Api.CmdPushConstants(commandBuffer, layout, stages, 0, (uint)sizeof(T), &copy);
+        Runtime.InvalidateDescriptorHeapBindingState(commandBuffer);
     }
 
     internal void BindDescriptorSet(CommandBuffer commandBuffer, PipelineLayout layout, uint setIndex, DescriptorSet descriptorSet, ReadOnlySpan<uint> offsets)
@@ -402,6 +403,7 @@ internal readonly unsafe struct VulkanTrackedCommandEncoder
         DescriptorSet set = descriptorSet;
         fixed (uint* offsetsPtr = offsets)
             Api.CmdBindDescriptorSets(commandBuffer, PipelineBindPoint.Graphics, layout, setIndex, 1, &set, (uint)offsets.Length, offsetsPtr);
+        Runtime.InvalidateDescriptorHeapBindingState(commandBuffer);
     }
 
     internal bool TryAcquireFrameDataLease(
@@ -460,12 +462,10 @@ internal readonly unsafe struct VulkanTrackedCommandEncoder
             return false;
         }
 
-        Track(commandBuffer, ObjectType.Buffer, heap.SamplerStorage.Buffer.Handle);
-        Track(commandBuffer, ObjectType.Buffer, heap.ResourceStorage.Buffer.Handle);
         if (!TryTrackDescriptorHeapResources(commandBuffer, resourceGenerations, out _))
             return false;
-        if (!Runtime.InheritsDescriptorHeaps(commandBuffer))
-            BindDescriptorHeaps(commandBuffer, heap);
+        if (!Runtime.TryEnsureDescriptorHeapsBound(commandBuffer, out _))
+            return false;
         fixed (uint* data = dwords)
         {
             PushDataInfoEXTNative push = new()
@@ -519,15 +519,13 @@ internal readonly unsafe struct VulkanTrackedCommandEncoder
             return false;
         }
 
-        Track(commandBuffer, ObjectType.Buffer, heap.SamplerStorage.Buffer.Handle);
-        Track(commandBuffer, ObjectType.Buffer, heap.ResourceStorage.Buffer.Handle);
         if (payload is not null &&
             !payload.TryTrackResourceGenerations(this, commandBuffer, out reason))
         {
             return false;
         }
-        if (!Runtime.InheritsDescriptorHeaps(commandBuffer))
-            BindDescriptorHeaps(commandBuffer, heap);
+        if (!Runtime.TryEnsureDescriptorHeapsBound(commandBuffer, out reason))
+            return false;
         PushDataInfoEXTNative push = new()
         {
             SType = VulkanDescriptorHeapExt.PushDataInfoSType,
@@ -564,8 +562,10 @@ internal readonly unsafe struct VulkanTrackedCommandEncoder
         ref CommandBufferInheritanceInfo inheritanceInfo,
         CommandBufferInheritanceDescriptorHeapInfoEXTNative* heapInfo,
         BindHeapInfoEXTNative* samplerHeapInfo,
-        BindHeapInfoEXTNative* resourceHeapInfo)
+        BindHeapInfoEXTNative* resourceHeapInfo,
+        out DescriptorHeapBindingIdentity identity)
     {
+        identity = default;
         VulkanDescriptorHeapState heap = Runtime.ResourceRuntime.Descriptors.Heap;
         if (heap.ActiveBackend != EVulkanDescriptorBackend.DescriptorHeap ||
             heap.NativeFunctions is null || !heap.SamplerStorage.IsReady ||
@@ -574,8 +574,12 @@ internal readonly unsafe struct VulkanTrackedCommandEncoder
             return false;
         }
 
-        *samplerHeapInfo = CreateSamplerHeapBindInfo(heap);
-        *resourceHeapInfo = CreateResourceHeapBindInfo(heap);
+        identity = Runtime.CaptureDescriptorHeapBindingIdentity();
+        if (!identity.IsComplete)
+            return false;
+
+        *samplerHeapInfo = CreateSamplerHeapBindInfo(in identity);
+        *resourceHeapInfo = CreateResourceHeapBindInfo(in identity);
         *heapInfo = new CommandBufferInheritanceDescriptorHeapInfoEXTNative
         {
             SType = VulkanDescriptorHeapExt.CommandBufferInheritanceDescriptorHeapInfoSType,
@@ -587,36 +591,51 @@ internal readonly unsafe struct VulkanTrackedCommandEncoder
         return true;
     }
 
-    private static BindHeapInfoEXTNative CreateSamplerHeapBindInfo(VulkanDescriptorHeapState heap)
+    private static BindHeapInfoEXTNative CreateSamplerHeapBindInfo(in DescriptorHeapBindingIdentity identity)
         => new()
         {
             SType = VulkanDescriptorHeapExt.BindHeapInfoSType,
             HeapRange = new DeviceAddressRangeEXTNative
             {
-                Address = heap.SamplerStorage.DeviceAddress,
-                Size = heap.SamplerStorage.Size,
+                Address = identity.SamplerAddress,
+                Size = identity.SamplerSize,
             },
-            ReservedRangeSize = Math.Max(
-                heap.Properties.MinSamplerHeapReservedRange,
-                heap.Properties.MinSamplerHeapReservedRangeWithEmbedded),
+            ReservedRangeOffset = identity.SamplerReservedOffset,
+            ReservedRangeSize = identity.SamplerReservedSize,
         };
 
-    private static BindHeapInfoEXTNative CreateResourceHeapBindInfo(VulkanDescriptorHeapState heap)
+    private static BindHeapInfoEXTNative CreateResourceHeapBindInfo(in DescriptorHeapBindingIdentity identity)
         => new()
         {
             SType = VulkanDescriptorHeapExt.BindHeapInfoSType,
             HeapRange = new DeviceAddressRangeEXTNative
             {
-                Address = heap.ResourceStorage.DeviceAddress,
-                Size = heap.ResourceStorage.Size,
+                Address = identity.ResourceAddress,
+                Size = identity.ResourceSize,
             },
-            ReservedRangeSize = heap.Properties.MinResourceHeapReservedRange,
+            ReservedRangeOffset = identity.ResourceReservedOffset,
+            ReservedRangeSize = identity.ResourceReservedSize,
         };
 
-    internal static void BindDescriptorHeaps(CommandBuffer commandBuffer, VulkanDescriptorHeapState heap)
+    internal static void BindDescriptorHeaps(
+        CommandBuffer commandBuffer,
+        VulkanDescriptorHeapState heap,
+        in DescriptorHeapBindingIdentity identity)
     {
-        BindHeapInfoEXTNative samplerHeap = CreateSamplerHeapBindInfo(heap);
-        BindHeapInfoEXTNative resourceHeap = CreateResourceHeapBindInfo(heap);
+        BindHeapInfoEXTNative samplerHeap = new()
+        {
+            SType = VulkanDescriptorHeapExt.BindHeapInfoSType,
+            HeapRange = new DeviceAddressRangeEXTNative { Address = identity.SamplerAddress, Size = identity.SamplerSize },
+            ReservedRangeOffset = identity.SamplerReservedOffset,
+            ReservedRangeSize = identity.SamplerReservedSize,
+        };
+        BindHeapInfoEXTNative resourceHeap = new()
+        {
+            SType = VulkanDescriptorHeapExt.BindHeapInfoSType,
+            HeapRange = new DeviceAddressRangeEXTNative { Address = identity.ResourceAddress, Size = identity.ResourceSize },
+            ReservedRangeOffset = identity.ResourceReservedOffset,
+            ReservedRangeSize = identity.ResourceReservedSize,
+        };
         heap.NativeFunctions!.CmdBindSamplerHeap(commandBuffer, &samplerHeap);
         heap.NativeFunctions.CmdBindResourceHeap(commandBuffer, &resourceHeap);
     }

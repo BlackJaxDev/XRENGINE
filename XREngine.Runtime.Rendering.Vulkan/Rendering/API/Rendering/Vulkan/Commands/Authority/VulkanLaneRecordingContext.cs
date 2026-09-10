@@ -149,9 +149,7 @@ internal sealed class VulkanLaneRecordingContext
     }
 
     public void InvalidateDescriptorHeapBindingState()
-    {
-        BindState.DescriptorHeapSignature = 0;
-    }
+        => BindState.HasDescriptorHeapBinding = false;
 
     public void InvalidateDescriptorSetBindingState()
     {

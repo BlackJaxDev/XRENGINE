@@ -138,7 +138,7 @@ internal sealed class FramePlanBuilder
         int authoringOperationCount = -1,
         int authoringDynamicOverlayOperationCount = -1,
         int authoringTextureUploadOperationCount = -1,
-        RenderOutputRequest? emptyPresentNowOutputContract = null,
+        RenderOutputRequest? requiredOutputContract = null,
         ERenderOutputReadinessPolicy? desktopReadinessPolicyOverride = null,
         ERenderOutputWorkClass? desktopWorkClassOverride = null,
         ReadOnlySpan<RenderFrameViewHistoryBackendReservation> historyReservations = default)
@@ -231,14 +231,15 @@ internal sealed class FramePlanBuilder
             }
         }
         bool requiresFreshEmptyTerminalWrite = false;
-        if (emptyPresentNowOutputContract is { } emptyContract)
+        if (requiredOutputContract is { } emptyContract)
         {
             if (!emptyContract.IsDefined ||
-                emptyContract.WorkClass != ERenderOutputWorkClass.PresentNow)
+                (emptyContract.WorkClass != ERenderOutputWorkClass.PresentNow &&
+                 !emptyContract.RequiresCompleteFreshOutput))
             {
                 throw new ArgumentException(
-                    "An empty foreground plan requires a defined PresentNow output contract.",
-                    nameof(emptyPresentNowOutputContract));
+                    "A required output must define a PresentNow or exact-resource contract.",
+                    nameof(requiredOutputContract));
             }
 
             int requiredOutputIndex = FindSchedulingContractOutputIndex(
@@ -275,7 +276,7 @@ internal sealed class FramePlanBuilder
             desktopWorkClassOverride);
         int freshEmptyTerminalOutputCount = 0;
         if (requiresFreshEmptyTerminalWrite &&
-            emptyPresentNowOutputContract is { } freshContract)
+            requiredOutputContract is { } freshContract)
         {
             int requiredOutputIndex = FindSchedulingContractOutputIndex(
                 slot,
@@ -303,7 +304,7 @@ internal sealed class FramePlanBuilder
                     freshEmptyTerminalOutputCount++] = outputIndex;
             }
         }
-        if (emptyPresentNowOutputContract is { } requiredContract)
+        if (requiredOutputContract is { } requiredContract)
         {
             int requiredOutputIndex = FindSchedulingContractOutputIndex(
                 slot,
@@ -319,7 +320,7 @@ internal sealed class FramePlanBuilder
                     requiredContract.ReadinessPolicy)
             {
                 throw new InvalidOperationException(
-                    "A required PresentNow output contract has no exact executable output-DAG terminal.");
+                    "A required output contract has no exact executable output-DAG terminal.");
             }
         }
         ApplyOutputAdmission(

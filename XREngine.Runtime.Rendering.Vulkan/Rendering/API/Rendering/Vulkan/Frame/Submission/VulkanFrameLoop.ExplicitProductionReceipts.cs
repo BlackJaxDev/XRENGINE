@@ -180,7 +180,9 @@ internal sealed partial class VulkanFrameLoop
         uint expectedFrameSlot,
         ulong targetGeneration,
         CommandBuffer commandBuffer,
-        ulong graphicsTimelineSignal)
+        ulong graphicsTimelineSignal,
+        EVulkanQueueOverlapMode requestedQueueMode,
+        EVulkanQueueOverlapMode executedQueueMode)
         => new(
             _explicitProductionReceiptOwnerIdentity,
             _backendGeneration,
@@ -190,7 +192,9 @@ internal sealed partial class VulkanFrameLoop
             expectedFrameSlot,
             targetGeneration,
             unchecked((ulong)(nuint)commandBuffer.Handle),
-            graphicsTimelineSignal);
+            graphicsTimelineSignal,
+            requestedQueueMode,
+            executedQueueMode);
 
     private bool IsCurrentExplicitProductionReceipt(in VulkanExplicitProductionSubmissionReceipt receipt)
         => IsAuthenticExplicitProductionReceipt(in receipt) &&

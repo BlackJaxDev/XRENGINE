@@ -7,6 +7,7 @@ internal readonly record struct VulkanMeshMaterializationSnapshot(
     FrameOpContext? ActiveFrameOpContext,
     int DescriptorViewFamilyIdentity,
     bool AvoidSynchronousImageAllocationForOpenXr,
+    bool RequiresSynchronousGeometryPreparation,
     VulkanFrameTelemetry Telemetry)
 {
     internal static ImageLayout ResolveDescriptorImageLayout(

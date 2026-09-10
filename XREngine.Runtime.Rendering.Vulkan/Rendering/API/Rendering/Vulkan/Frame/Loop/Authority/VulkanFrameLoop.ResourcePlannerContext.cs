@@ -781,8 +781,15 @@ internal sealed partial class VulkanFrameLoop
 
     private FrameOpContext CompleteFrameOpContext(in FrameOpContext context)
     {
+        FrameOpContext effective = context with { ContextKind = ResolveFrameOpContextKind(context) };
+        effective = ApplyExplicitProductionOutputContract(in effective);
+        return CompleteEffectiveFrameOpContext(in effective);
+    }
+
+    private FrameOpContext CompleteEffectiveFrameOpContext(in FrameOpContext context)
+    {
         bool stereoEnabled = VulkanFramePlanner.ResolveFrameOpContextStereoEnabled(context);
-        EVulkanFrameOpContextKind contextKind = ResolveFrameOpContextKind(context);
+        EVulkanFrameOpContextKind contextKind = context.ContextKind;
         ulong historySequence =
             context.PipelineInstance?.RenderState.ViewHistorySequenceId ?? 0UL;
         FrameOpContext complete = context with

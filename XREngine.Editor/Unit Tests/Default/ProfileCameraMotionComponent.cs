@@ -14,6 +14,9 @@ public sealed class ProfileCameraMotionComponent : XRComponent
     private Vector3 _initialTranslation;
     private Quaternion _initialRotation;
     private float _startTime;
+    private float _setupDeadline;
+    private int _updates;
+    private bool _setupFailed;
 
     /// <summary>
     /// Returns whether the active profile requests the automated moving-camera path.
@@ -31,19 +34,18 @@ public sealed class ProfileCameraMotionComponent : XRComponent
     {
         base.OnComponentActivated();
 
-        _cameraTransform = Transform as Transform;
-        if (_cameraTransform is null)
-            return;
-
-        _initialTranslation = _cameraTransform.Translation;
-        _initialRotation = _cameraTransform.Rotation;
-        _startTime = Engine.Time.Timer.Time();
+        _cameraTransform = null;
+        _updates = 0;
+        _setupFailed = false;
+        _setupDeadline = Engine.Time.Timer.Time() + 5.0f;
         RegisterTick(ETickGroup.Normal, ETickOrder.Scene, UpdateCameraPose);
     }
 
     protected override void OnComponentDeactivated()
     {
         UnregisterTick(ETickGroup.Normal, ETickOrder.Scene, UpdateCameraPose);
+        Debug.WriteAuxiliaryLog("profile-camera-motion",
+            $"Deactivated updates={_updates} setupFailed={_setupFailed} camera={_cameraTransform?.SceneNode?.Name ?? "<none>"}");
         _cameraTransform = null;
         base.OnComponentDeactivated();
     }
@@ -52,7 +54,20 @@ public sealed class ProfileCameraMotionComponent : XRComponent
     {
         Transform? transform = _cameraTransform;
         if (transform is null)
-            return;
+        {
+            if (_setupFailed)
+                return;
+            if (!TryResolveActiveCamera())
+            {
+                if (Engine.Time.Timer.Time() >= _setupDeadline)
+                {
+                    _setupFailed = true;
+                    Debug.WriteAuxiliaryLog("profile-camera-motion", "Active viewport camera setup failed. Invalidate this profile run.");
+                }
+                return;
+            }
+            transform = _cameraTransform!;
+        }
 
         float elapsed = Engine.Time.Timer.Time() - _startTime;
         Vector3 localOffset = new(
@@ -66,5 +81,29 @@ public sealed class ProfileCameraMotionComponent : XRComponent
 
         transform.Translation = _initialTranslation + Vector3.Transform(localOffset, _initialRotation);
         transform.Rotation = Quaternion.Normalize(_initialRotation * localRotation);
+        _updates++;
+    }
+
+    private bool TryResolveActiveCamera()
+    {
+        // Play mode may replace the bootstrap editor pawn. Resolve the camera
+        // actually used by a desktop viewport after initial rendering begins.
+        if (RuntimeEngine.Rendering.State.RenderFrameId < 10)
+            return false;
+        foreach (var window in RuntimeEngine.Windows)
+        {
+            foreach (var viewport in window.Viewports)
+            {
+                if (viewport.ActiveCamera?.Transform is not Transform transform)
+                    continue;
+                _cameraTransform = transform;
+                _initialTranslation = transform.Translation;
+                _initialRotation = transform.Rotation;
+                _startTime = Engine.Time.Timer.Time();
+                Debug.WriteAuxiliaryLog("profile-camera-motion", $"Activated camera={transform.SceneNode?.Name}");
+                return true;
+            }
+        }
+        return false;
     }
 }

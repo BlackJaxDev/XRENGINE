@@ -49,6 +49,20 @@ internal unsafe sealed class VulkanProgramCreationPort(VulkanBackendObjectContex
         return wrapper;
     }
 
+    /// <summary>
+    /// Publishes CPU geometry completed by a worker at the render-owner cold
+    /// boundary. Wrapper-creation ownership deliberately does not flow to workers.
+    /// </summary>
+    internal VkDataBuffer GetOrCreateBuffer(XRDataBuffer buffer, bool generateNow)
+    {
+        VkDataBuffer wrapper = context.Resources.BackendObjects.Get(buffer) as VkDataBuffer
+            ?? context.Resources.CreateAPIRenderObject(buffer) as VkDataBuffer
+            ?? throw new InvalidOperationException("Geometry preparation could not publish its Vulkan buffer wrapper.");
+        if (generateNow && !wrapper.IsGenerated)
+            wrapper.Generate();
+        return wrapper;
+    }
+
     internal uint GetRenderPassColorAttachmentCount(RenderPass renderPass)
         => renderPass.Handle != 0 && context.Resources.RenderPassColorAttachmentCounts.TryGetValue(renderPass.Handle, out uint count)
             ? count

@@ -236,6 +236,7 @@ namespace XREngine.Rendering.Vulkan
         {
             ThrowIfDesktopFrameFaultInjected(
                 EVulkanDesktopFrameFaultPoint.Presentation);
+            CaptureCompositedScreenshotsBeforePresent(in attempt);
             Exception? auxiliaryFailure = null;
             bool dispatched = false;
             Semaphore queuedPresentSemaphore = attempt.PresentSemaphore;

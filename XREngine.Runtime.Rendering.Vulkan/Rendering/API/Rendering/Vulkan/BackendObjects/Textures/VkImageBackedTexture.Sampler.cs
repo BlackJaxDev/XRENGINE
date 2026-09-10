@@ -264,9 +264,9 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
         BackendContext.RegisterSampler(_sampler, in samplerInfo, nameof(VkImageBackedTexture<TTexture>));
     }
 
-    private (float minLod, float maxLod) ResolveSamplerLodRange()
+    private (float minLod, float maxLod) ResolveSamplerLodRange(uint? mipLevels = null)
     {
-        float maxMip = Math.Max(0f, ResolvedMipLevels - 1u);
+        float maxMip = Math.Max(mipLevels ?? ResolvedMipLevels, 1u) - 1u;
         float min = Math.Clamp(Math.Max(Data.MinLOD, Data.LargestMipmapLevel), 0f, maxMip);
         float max = Math.Clamp(Math.Min(Data.MaxLOD, Data.SmallestAllowedMipmapLevel), min, maxMip);
         return (min, max);

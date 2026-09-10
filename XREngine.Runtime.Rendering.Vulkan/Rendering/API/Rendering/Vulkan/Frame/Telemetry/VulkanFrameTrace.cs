@@ -234,7 +234,9 @@ internal ref struct VulkanFrameTrace
                 DrainRetiredResources,
                 AcquireBridgeSubmit,
                 WaitSwapchainImage,
-                ResetDynamicUniformRing),
+                ResetDynamicUniformRing,
+                WaitCurrentFrameSlot,
+                WaitNextFrameSlotBeforeCollect),
             PresentationProfile,
             new VulkanFramePresentationTelemetry(
                 ActualPresentInterval,

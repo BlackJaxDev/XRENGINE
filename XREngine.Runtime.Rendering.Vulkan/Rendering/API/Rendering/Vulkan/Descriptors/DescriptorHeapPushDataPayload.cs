@@ -2,11 +2,25 @@ using Silk.NET.Vulkan;
 
 namespace XREngine.Rendering.Vulkan;
 
-internal sealed class DescriptorHeapPushDataPayload(uint[] dwords)
+internal sealed class DescriptorHeapPushDataPayload
 {
+    private static long s_nextOwnerIdentity;
+
     public static DescriptorHeapPushDataPayload Empty { get; } = new([]);
 
-    public uint[] Dwords { get; } = dwords;
+    private readonly uint[] _dwords;
+    public ReadOnlySpan<uint> Dwords => _dwords;
+    internal ulong OwnerIdentity { get; } = unchecked((ulong)Interlocked.Increment(ref s_nextOwnerIdentity));
+    internal ulong ContentGeneration { get; private set; } = 1UL;
+
+    public DescriptorHeapPushDataPayload(uint[] dwords)
+    {
+        // The caller transfers this newly allocated array to the payload. All
+        // subsequent writes go through SetDword/ResetForReuse so cache tokens
+        // cannot outlive an unversioned mutation.
+        _dwords = dwords;
+        RuntimeEngine.Rendering.Stats.Vulkan.RecordDescriptorHeapPayloadAllocation();
+    }
 
     // Heap indices alone do not retain the native objects whose descriptor
     // bytes were written into the heap. Keep the exact published generations
@@ -16,6 +30,7 @@ internal sealed class DescriptorHeapPushDataPayload(uint[] dwords)
     private readonly Dictionary<DescriptorHeapBindingKey, int> _resourceGenerationEpochs = [];
     private VulkanPinnedResourceGeneration[] _resourceGenerationSnapshot = [];
     private bool _resourceGenerationSnapshotDirty = true;
+    private DescriptorHeapProgramLayout? _resourceGenerationSnapshotLayout;
     private DescriptorHeapProgramLayout? _reuseLayout;
     private int _reuseEpoch;
 
@@ -26,11 +41,26 @@ internal sealed class DescriptorHeapPushDataPayload(uint[] dwords)
 
         if ((byteOffset & 3u) != 0 || byteOffset / sizeof(uint) >= (uint)Dwords.Length)
             throw new ArgumentOutOfRangeException(nameof(byteOffset), "Heap root writes must be aligned and within the payload.");
-        Dwords[checked((int)(byteOffset / sizeof(uint)))] = value;
+        int index = checked((int)(byteOffset / sizeof(uint)));
+        if (Dwords[index] == value)
+            return;
+
+        _dwords[index] = value;
+        AdvanceContentGeneration();
     }
 
     public bool IsValidFor(DescriptorHeapProgramLayout layout)
         => Dwords.Length >= layout.PushDwordCount;
+
+    internal DescriptorHeapPushDataIdentity CaptureIdentity(DescriptorHeapProgramLayout? layout)
+        => layout is not null && IsValidFor(layout)
+            ? new DescriptorHeapPushDataIdentity(
+                OwnerIdentity,
+                ContentGeneration,
+                layout.Identity,
+                layout.ShaderConstantByteCount,
+                layout.PushByteCount)
+            : default;
 
     /// <summary>
     /// Begins one reusable recording. Binding arrays survive unchanged recordings;
@@ -38,7 +68,7 @@ internal sealed class DescriptorHeapPushDataPayload(uint[] dwords)
     /// </summary>
     internal void ResetForReuse(DescriptorHeapProgramLayout? layout)
     {
-        Array.Clear(Dwords);
+        Array.Clear(_dwords);
         if (!ReferenceEquals(_reuseLayout, layout))
         {
             _resourceGenerations.Clear();
@@ -54,6 +84,7 @@ internal sealed class DescriptorHeapPushDataPayload(uint[] dwords)
         }
         _reuseEpoch++;
         _resourceGenerationSnapshotDirty = true;
+        AdvanceContentGeneration();
     }
 
     internal void SetResourceGenerations(
@@ -63,51 +94,95 @@ internal sealed class DescriptorHeapPushDataPayload(uint[] dwords)
         if (generations.IsEmpty)
         {
             if (_resourceGenerationEpochs.Remove(binding))
+            {
                 _resourceGenerationSnapshotDirty = true;
+                AdvanceContentGeneration();
+            }
             return;
         }
 
+        bool wasActive = _resourceGenerationEpochs.TryGetValue(binding, out int previousEpoch) &&
+            previousEpoch == _reuseEpoch;
         _resourceGenerationEpochs[binding] = _reuseEpoch;
         if (_resourceGenerations.TryGetValue(binding, out VulkanPinnedResourceGeneration[]? existing) &&
             generations.SequenceEqual(existing))
         {
+            if (!wasActive)
+            {
+                _resourceGenerationSnapshotDirty = true;
+                AdvanceContentGeneration();
+            }
             return;
         }
 
         _resourceGenerations[binding] = generations.ToArray();
         _resourceGenerationSnapshotDirty = true;
+        AdvanceContentGeneration();
     }
 
-    internal VulkanPinnedResourceGeneration[] SnapshotResourceGenerations()
+    internal VulkanPinnedResourceGeneration[] SnapshotResourceGenerations(
+        DescriptorHeapProgramLayout layout)
     {
-        if (!_resourceGenerationSnapshotDirty)
+        if (!_resourceGenerationSnapshotDirty && ReferenceEquals(_resourceGenerationSnapshotLayout, layout))
             return _resourceGenerationSnapshot;
 
         if (_resourceGenerationEpochs.Count == 0)
         {
             _resourceGenerationSnapshot = [];
             _resourceGenerationSnapshotDirty = false;
+            _resourceGenerationSnapshotLayout = layout;
             return _resourceGenerationSnapshot;
         }
 
         int count = 0;
-        foreach ((DescriptorHeapBindingKey binding, int epoch) in _resourceGenerationEpochs)
+        foreach (DescriptorHeapBindingLayout bindingLayout in layout.Bindings)
         {
-            if (epoch == _reuseEpoch)
+            DescriptorHeapBindingKey binding = bindingLayout.Key;
+            if (_resourceGenerationEpochs.TryGetValue(binding, out int epoch) && epoch == _reuseEpoch)
                 count = checked(count + _resourceGenerations[binding].Length);
         }
         if (count == 0)
         {
             _resourceGenerationSnapshot = [];
             _resourceGenerationSnapshotDirty = false;
+            _resourceGenerationSnapshotLayout = layout;
             return _resourceGenerationSnapshot;
+        }
+
+        // Resetting scratch marks the snapshot dirty, but unchanged finalized
+        // bindings can retain the previous immutable array. Never refill an
+        // array that an already prepared draw may still reference.
+        if (_resourceGenerationSnapshot.Length == count)
+        {
+            int compared = 0;
+            bool unchanged = true;
+            foreach (DescriptorHeapBindingLayout bindingLayout in layout.Bindings)
+            {
+                DescriptorHeapBindingKey binding = bindingLayout.Key;
+                if (!_resourceGenerationEpochs.TryGetValue(binding, out int epoch) || epoch != _reuseEpoch)
+                    continue;
+                VulkanPinnedResourceGeneration[] generations = _resourceGenerations[binding];
+                if (!generations.AsSpan().SequenceEqual(_resourceGenerationSnapshot.AsSpan(compared, generations.Length)))
+                {
+                    unchanged = false;
+                    break;
+                }
+                compared += generations.Length;
+            }
+            if (unchanged)
+            {
+                _resourceGenerationSnapshotDirty = false;
+                _resourceGenerationSnapshotLayout = layout;
+                return _resourceGenerationSnapshot;
+            }
         }
 
         VulkanPinnedResourceGeneration[] snapshot = new VulkanPinnedResourceGeneration[count];
         int destination = 0;
-        foreach ((DescriptorHeapBindingKey binding, int epoch) in _resourceGenerationEpochs)
+        foreach (DescriptorHeapBindingLayout bindingLayout in layout.Bindings)
         {
-            if (epoch != _reuseEpoch)
+            DescriptorHeapBindingKey binding = bindingLayout.Key;
+            if (!_resourceGenerationEpochs.TryGetValue(binding, out int epoch) || epoch != _reuseEpoch)
                 continue;
             VulkanPinnedResourceGeneration[] generations = _resourceGenerations[binding];
             generations.CopyTo(snapshot, destination);
@@ -115,7 +190,15 @@ internal sealed class DescriptorHeapPushDataPayload(uint[] dwords)
         }
         _resourceGenerationSnapshot = snapshot;
         _resourceGenerationSnapshotDirty = false;
+        _resourceGenerationSnapshotLayout = layout;
         return _resourceGenerationSnapshot;
+    }
+
+    private void AdvanceContentGeneration()
+    {
+        if (ContentGeneration == ulong.MaxValue)
+            throw new InvalidOperationException("Descriptor-heap payload content generation overflowed.");
+        ContentGeneration++;
     }
 
     internal bool TryTrackResourceGenerations(

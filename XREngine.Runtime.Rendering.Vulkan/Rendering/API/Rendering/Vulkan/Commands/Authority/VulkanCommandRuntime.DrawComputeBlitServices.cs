@@ -23,9 +23,6 @@ internal sealed partial class VulkanCommandRuntime
         string consumer,
         GPUMaterialTablePublication? publication)
     {
-        if (ResourceRuntime.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap)
-            return true;
-
         if (program.PipelineLayout.Handle == 0)
             throw new VulkanPlanPreconditionException(
                 $"Bindless material consumer '{consumer}' has no prepared pipeline layout.");
@@ -50,6 +47,11 @@ internal sealed partial class VulkanCommandRuntime
                     "MaterialDescriptorClosure.Sampler", expectedGeneration: receipt.SamplerGeneration);
             }
         }
+
+        // Heap slots may be recycled only after every recorded consumer releases
+        // its exact material closure, just like descriptor-set consumers.
+        if (ResourceRuntime.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap)
+            return true;
 
         if (program.DescriptorSetLayouts.Count <= VulkanBindlessMaterialDescriptors.TextureArraySet)
             throw new VulkanPlanPreconditionException(

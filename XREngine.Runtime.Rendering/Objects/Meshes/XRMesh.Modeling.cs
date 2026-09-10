@@ -63,7 +63,10 @@ public partial class XRMesh
         => MarkGeometryChanged();
 
     internal bool HasCachedIndexBuffer(EPrimitiveType type)
-        => _indexBufferCache.ContainsKey(type);
+    {
+        lock (_indexBufferLock)
+            return _indexBufferCache.ContainsKey(type);
+    }
 
     internal bool HasAccelerationCache()
         => TriangleLookup is not null || _bvhTree is not null || SignedDistanceField is not null;

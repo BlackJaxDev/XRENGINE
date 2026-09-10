@@ -25,7 +25,9 @@ namespace XREngine.Rendering.Vulkan
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope("Vulkan.RecordPrimary.ResetAndBegin"))
             {
                 ReleaseDeferredSecondaryCommandBuffers(recordingState.FrameDataImageIndex);
-                ResetVulkanCommandBufferTracked(recordingState.CommandBuffer);
+                Result resetResult = ResetVulkanCommandBufferTracked(recordingState.CommandBuffer);
+                if (resetResult != Result.Success)
+                    throw new VulkanPlanPreconditionException($"The primary command buffer could not be reset ({resetResult}).");
                 ResetSubmissionMarkersForCommandBuffer(recordingState.CommandBuffer);
                 CleanupComputeTransientResources(recordingState.FrameDataImageIndex);
 

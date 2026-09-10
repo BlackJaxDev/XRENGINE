@@ -14,5 +14,6 @@ internal sealed class VulkanResourceLifetimeRecord
     public ulong LastFrameOpContextId;
     public string? LastFrameOpKind;
     public ulong RetirementSerial;
+    public string? RetirementOwner;
     public VulkanRetirementTicket RetirementTicket;
 }

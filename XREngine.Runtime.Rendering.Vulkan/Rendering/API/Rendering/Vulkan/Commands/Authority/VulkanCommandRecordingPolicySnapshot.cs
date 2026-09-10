@@ -19,13 +19,20 @@ internal readonly record struct VulkanCommandRecordingPolicySnapshot(
     ERenderOutputWorkClass WorkClass = ERenderOutputWorkClass.Background,
     ulong SourceFrameId = 0UL,
     bool AllowArtifactReuse = true,
-    bool AllowSecondaryDeferral = true)
+    bool AllowSecondaryDeferral = true,
+    bool AllowIndirectSecondaryArtifactReuse = false,
+    EVulkanQueueOverlapMode QueueOverlapMode = EVulkanQueueOverlapMode.GraphicsOnly,
+    bool AllowAdvancedQueueOverlap = false)
 {
     /// <summary>Present-now outputs must either record fresh work or fail explicitly.</summary>
     internal bool IsPresentNow => WorkClass == ERenderOutputWorkClass.PresentNow;
 
     internal bool AllowsArtifactReuse => AllowArtifactReuse && !IsPresentNow &&
         !FreshSerialRecording;
+
+    /// <summary>Allows the exact indirect packet lane without enabling primary replay.</summary>
+    internal bool AllowsIndirectSecondaryArtifactReuse => !IsPresentNow &&
+        !FreshSerialRecording && (AllowArtifactReuse || AllowIndirectSecondaryArtifactReuse);
 
     internal bool AllowsSecondaryDeferral => AllowSecondaryDeferral && !IsPresentNow;
 }

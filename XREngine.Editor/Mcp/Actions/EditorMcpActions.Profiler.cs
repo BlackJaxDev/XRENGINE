@@ -509,6 +509,15 @@ namespace XREngine.Editor.Mcp
                     },
                     vulkan = new
                     {
+                        descriptor_heap = new
+                        {
+                            sampler_binds_total = VulkanStats.DescriptorHeapSamplerBinds,
+                            resource_binds_total = VulkanStats.DescriptorHeapResourceBinds,
+                            pushes_total = VulkanStats.DescriptorHeapPushes,
+                            sampler_writes_total = VulkanStats.DescriptorHeapSamplerWrites,
+                            resource_writes_total = VulkanStats.DescriptorHeapResourceWrites,
+                            payload_allocations_total = VulkanStats.DescriptorHeapPayloadAllocations,
+                        },
                         frame_lifecycle = new
                         {
                             authority_id = vulkanFrame.AuthorityId,
@@ -706,6 +715,9 @@ namespace XREngine.Editor.Mcp
                             detail = new
                             {
                                 wait_frame_slot_ms = vulkanFrame.Detail.WaitFrameSlot.TotalMilliseconds,
+                                wait_current_frame_slot_ms = vulkanFrame.Detail.WaitCurrentFrameSlot.TotalMilliseconds,
+                                wait_next_frame_slot_before_collect_ms = vulkanFrame.Detail.WaitNextFrameSlotBeforeCollect.TotalMilliseconds,
+                                advanced_early_visibility_barrier_emissions = VulkanStats.AdvancedEarlyVisibilityBarrierEmissions,
                                 sample_timing_queries_ms = vulkanFrame.Detail.SampleTimingQueries.TotalMilliseconds,
                                 drain_retired_resources_ms = vulkanFrame.Detail.DrainRetiredResources.TotalMilliseconds,
                                 acquire_image_ms = vulkanFrame.Detail.AcquireImage.TotalMilliseconds,
@@ -1044,6 +1056,15 @@ namespace XREngine.Editor.Mcp
                         },
                         command_chains = new
                         {
+                            process_scheduling_attempts = VulkanStats.CommandChainSchedulingAttempts,
+                            process_latest_schedule_decision = VulkanStats.CommandChainScheduleDecision.ToString(),
+                            process_indirect_secondary_reuses = VulkanStats.IndirectSecondaryReuses,
+                            process_indirect_secondary_recordings = VulkanStats.IndirectSecondaryRecordings,
+                            process_indirect_secondary_key_evaluations = VulkanStats.IndirectSecondaryKeyEvaluations,
+                            process_indirect_secondary_complete_keys = VulkanStats.IndirectSecondaryCompleteKeys,
+                            process_indirect_secondary_matching_keys = VulkanStats.IndirectSecondaryMatchingKeys,
+                            process_indirect_secondary_policy_rejections = VulkanStats.IndirectSecondaryPolicyRejections,
+                            process_indirect_secondary_incomplete_key_reason = VulkanStats.IndirectSecondaryIncompleteKeyReason,
                             chains_scheduled = VulkanStats.VulkanCommandChainsScheduled,
                             chains_recorded = VulkanStats.VulkanCommandChainsRecorded,
                             chains_reused = VulkanStats.VulkanCommandChainsReused,

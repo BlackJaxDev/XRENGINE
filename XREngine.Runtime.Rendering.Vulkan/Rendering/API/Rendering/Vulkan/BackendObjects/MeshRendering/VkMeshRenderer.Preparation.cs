@@ -20,10 +20,10 @@ internal unsafe partial class VkMeshRenderer
 	public string LastPrepareDetail => _lastPrepareDetail;
 
 	public bool TryPrepareForRendering()
-		=> TryPrepareForDrawEnqueue(ResolveMaterial(null, 1u), out _);
+		=> TryPrepareForDrawEnqueue(ResolveMaterial(null, 1u), false, out _);
 
 	public bool TryPrepareForRendering(out string reason)
-		=> TryPrepareForDrawEnqueue(ResolveMaterial(null, 1u), out reason);
+		=> TryPrepareForDrawEnqueue(ResolveMaterial(null, 1u), false, out reason);
 
 	private bool TryPrepareForRendering(XRMaterial material, out string reason)
 	{
@@ -59,7 +59,7 @@ internal unsafe partial class VkMeshRenderer
 		if (!EnsureProgram(material))
 			return SetPrepareResult(false, "ProgramsPending", "No compatible Vulkan render program is available yet.", out reason);
 
-		bool usesShaderGeneratedVertices = ProgramUsesShaderGeneratedVertices();
+        bool usesShaderGeneratedVertices = ProgramUsesShaderGeneratedVertices();
 		EnsureBuffers(usesShaderGeneratedVertices);
 
 		if (!AreCachedBuffersReadyForRendering(out string bufferDetail, usesShaderGeneratedVertices))
@@ -85,7 +85,10 @@ internal unsafe partial class VkMeshRenderer
 	/// bindings, and vertex-input construction belong to command recording,
 	/// where the captured program and binding snapshot are authoritative.
 	/// </summary>
-	private bool TryPrepareForDrawEnqueue(XRMaterial material, out string reason)
+	private bool TryPrepareForDrawEnqueue(
+		XRMaterial material,
+		bool requireSynchronousIndexBuild,
+		out string reason)
 	{
 		reason = "Ready";
 
@@ -132,7 +135,10 @@ internal unsafe partial class VkMeshRenderer
 			return SetPrepareResult(false, "ProgramsPending", "No compatible Vulkan render program is available yet.", out reason);
 
 		bool usesShaderGeneratedVertices = ProgramUsesShaderGeneratedVertices();
-		EnsureBuffers(usesShaderGeneratedVertices);
+		EnsureBuffers(usesShaderGeneratedVertices, requireSynchronousIndexBuild);
+		if (requireSynchronousIndexBuild && !usesShaderGeneratedVertices &&
+			ResolveMissingExpectedIndexBufferDetail() is { Length: > 0 } missingIndex)
+			throw new InvalidOperationException($"Exact geometry preparation did not materialize mesh '{Mesh?.Name}': {missingIndex}; triangleCached={Mesh?.HasCachedIndexBuffer(EPrimitiveType.Triangles)}.");
 
 		if (!AreCachedBuffersReadyForRendering(out string bufferDetail, usesShaderGeneratedVertices))
 			return SetPrepareResult(false, "BuffersPending", bufferDetail, out reason);

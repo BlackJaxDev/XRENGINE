@@ -65,6 +65,7 @@ public sealed class RenderBenchProductionScene : IDisposable
     private XRViewport? _viewport;
     private bool _fixtureMaterialTexturesPrepared;
     private bool _disposed;
+    private readonly bool _useAdvancedPipeline;
 
     public RenderBenchProductionScene(uint width, uint height, bool reverseDepth, EOcclusionCullingMode occlusionMode)
     {
@@ -128,11 +129,12 @@ public sealed class RenderBenchProductionScene : IDisposable
         RuntimeEngine.AssignRenderThread(_renderThreadOwnerId);
     }
 
-    public RenderBenchProductionScene(RenderBenchOptions options, EOcclusionCullingMode occlusionMode)
+    public RenderBenchProductionScene(RenderBenchOptions options, EOcclusionCullingMode occlusionMode, bool useAdvancedPipeline = false)
         : this(options.Width, options.Height, options.ScenarioDepth.Equals("reversed", StringComparison.OrdinalIgnoreCase), occlusionMode)
     {
         try
         {
+            _useAdvancedPipeline = useAdvancedPipeline;
             // Register only the explicitly selected leaf. This installs its
             // streaming/compiler services, without enabling windows or XR.
             _explicitBackendRegistration = VulkanRendererBackendModule.Register(RuntimeRenderingHostServices.Factories.RendererBackends);
@@ -315,14 +317,17 @@ public sealed class RenderBenchProductionScene : IDisposable
     /// <summary>Runs one complete real collect/swap/render lifecycle within one production submission.</summary>
     public VulkanExplicitProductionSubmissionReceipt SubmitStep(
         double fixedDelta,
-        VulkanExplicitProductionBufferStressProbeRequest? probeRequest = null)
+        VulkanExplicitProductionBufferStressProbeRequest? probeRequest = null,
+        bool backgroundCapture = false)
     {
+        if (backgroundCapture && probeRequest is not null)
+            throw new ArgumentException("The foreground buffer-stress probe cannot be combined with a background capture.", nameof(probeRequest));
         long retryStart = 0;
         for (int attempt = 0; ; attempt++)
         {
             try
             {
-                VulkanExplicitProductionSubmissionReceipt receipt = SubmitStepAttempt(fixedDelta, probeRequest);
+                VulkanExplicitProductionSubmissionReceipt receipt = SubmitStepAttempt(fixedDelta, probeRequest, backgroundCapture);
                 if (retryStart != 0)
                     PipelineAdmissionRetryMilliseconds += Stopwatch.GetElapsedTime(retryStart).TotalMilliseconds;
                 return receipt;
@@ -346,7 +351,8 @@ public sealed class RenderBenchProductionScene : IDisposable
 
     private VulkanExplicitProductionSubmissionReceipt SubmitStepAttempt(
         double fixedDelta,
-        VulkanExplicitProductionBufferStressProbeRequest? probeRequest)
+        VulkanExplicitProductionBufferStressProbeRequest? probeRequest,
+        bool backgroundCapture)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (!RuntimeEngine.IsRenderThread || Environment.CurrentManagedThreadId != _renderThreadOwnerId)
@@ -358,13 +364,20 @@ public sealed class RenderBenchProductionScene : IDisposable
         EngineTimer.ExplicitFrameScope frame = Engine.Time.Timer.BeginExplicitFrame((float)fixedDelta);
         try
         {
-            Action<RenderFrameOutputDescription> submitProductionFrame = _ =>
+            Action<RenderFrameOutputDescription> submitProductionFrame = output =>
             {
                 // A window normally drives this boundary. Explicit production
                 // owns it here so worker-prepared uploads and other scheduled
                 // render work advance before collection captures dependencies.
                 RuntimeEngine.ProcessMainThreadTasks();
+                if (_useAdvancedPipeline && Camera.RenderPipeline is not AdvancedRenderPipeline)
+                    Camera.RenderPipeline = new AdvancedRenderPipeline(stereo: false);
                 XRViewport viewport = EnsureViewport();
+                viewport.PipelineRequest = _useAdvancedPipeline
+                    ? RenderPipelineRequest.AdvancedOffscreenCapture(
+                        new(ERenderPipelineOffscreenViewIntent.SceneCapture, ERenderPipelineOffscreenOutput.HdrColor),
+                        outputId: output.SchedulingRequest.OutputId)
+                    : RenderPipelineRequest.OffscreenCapture(outputId: output.SchedulingRequest.OutputId);
                 WorldHost.CoreWorld.Update();
                 WorldHost.CoreWorld.ProcessDirtyTransforms(ELoopType.Sequential);
                 if (!viewport.RenderPipelineInstance.TryPrepareExplicitFrameResources(
@@ -377,22 +390,40 @@ public sealed class RenderBenchProductionScene : IDisposable
                         CreateRenderDeclinedDiagnostic(viewport));
                 }
                 PrepareFixtureMaterialTexturesForFirstProductionFrame();
-                PrepareExplicitHiZCoarseTiles(viewport);
+                if (!_useAdvancedPipeline)
+                    PrepareExplicitHiZCoarseTiles(viewport);
                 LastCollectGeneration = frame.RequestCollect();
                 WorldHost.RenderWorld.GlobalPreCollectVisible();
                 WorldHost.RenderWorld.GlobalCollectVisible();
-                viewport.CollectVisible();
+                // Collection precedes BeginRenderFrame. Carry the host's exact
+                // output cohort through both collection and authoring instead
+                // of freezing history under the previous engine frame ID.
+                RenderOutputRequest outputRequest = output.SchedulingRequest;
+                FrameOutputPacingDecision pacing = FrameOutputPacingDecision.Due(
+                    outputRequest.ViewKind, outputRequest.OutputKind, outputRequest.FrameId)
+                    with { Request = outputRequest };
+                viewport.CollectVisible(frameOutputPacing: pacing);
                 frame.CompleteCollect();
                 WorldHost.RenderWorld.GlobalSwapBuffers();
+                if (_useAdvancedPipeline &&
+                    !viewport.TryFinalizePreparedCanonicalFramePackageAfterWorldSwap())
+                {
+                    throw new InvalidOperationException(
+                        "The Advanced RenderBench frame has no published canonical backend view package after the world swap. " +
+                        CreateRenderDeclinedDiagnostic(viewport));
+                }
                 viewport.SwapBuffers();
                 frame.PublishCollect();
                 frame.ConsumePublishedCollect();
-                PrepareOpaquePass(viewport);
+                if (!_useAdvancedPipeline)
+                    PrepareOpaquePass(viewport);
                 bool recorded = RenderViewportFrame(frame, viewport);
                 if (!recorded)
                     throw new InvalidOperationException(CreateRenderDeclinedDiagnostic(viewport));
             };
-            VulkanExplicitProductionSubmissionReceipt receipt = probeRequest is { } request
+            VulkanExplicitProductionSubmissionReceipt receipt = backgroundCapture
+                ? host.SubmitBackgroundProductionFrame(submitProductionFrame)
+                : probeRequest is { } request
                 ? host.SubmitProductionFrame(submitProductionFrame, request)
                 : host.SubmitProductionFrame(submitProductionFrame);
             // Completion is intentionally outside the native submission callback: it must cover

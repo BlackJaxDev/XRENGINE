@@ -336,8 +336,13 @@ internal sealed partial class VulkanDeviceContext
                 $"Streamline requires Vulkan {FormatApiVersion(request.StreamlineMinimumApiVersion)}, which is outside XRENGINE's Vulkan 1.4 baseline.");
         }
 
-        uint minimumApiVersion = ConvertOpenXrApiVersion(request.OpenXrMinimumApiVersion);
-        uint maximumApiVersion = ConvertOpenXrApiVersion(request.OpenXrMaximumApiVersion);
+        // OpenXR reports XrVersion bounds, not packed Vulkan versions. Compare in
+        // that representation so broad runtime bounds (for example Monado's
+        // 1023.1023 maximum) are not rejected or truncated to Vulkan's major bits.
+        // The graphics-requirements contract ignores the patch component.
+        const ulong requiredOpenXrApiVersion = (1UL << 48) | (4UL << 32);
+        ulong minimumApiVersion = request.OpenXrMinimumApiVersion & 0xFFFFFFFF00000000UL;
+        ulong maximumApiVersion = request.OpenXrMaximumApiVersion & 0xFFFFFFFF00000000UL;
         bool hasOpenXrConstraint =
             request.OpenXrMinimumApiVersion != 0 ||
             request.OpenXrMaximumApiVersion != 0 ||
@@ -345,13 +350,13 @@ internal sealed partial class VulkanDeviceContext
         if (!hasOpenXrConstraint)
             return requiredApiVersion;
 
-        if (request.OpenXrMinimumApiVersion != 0 && minimumApiVersion == 0)
+        if (request.OpenXrMinimumApiVersion != 0 && (minimumApiVersion >> 48) == 0)
         {
             throw new NotSupportedException(
                 $"The active OpenXR runtime reported an invalid Vulkan API minimum: {request.OpenXrMinimumApiVersion}.");
         }
 
-        if (maximumApiVersion == 0)
+        if ((maximumApiVersion >> 48) == 0)
         {
             throw new NotSupportedException(
                 "The active OpenXR runtime reported Vulkan constraints but did not report a valid Vulkan API maximum; Vulkan 1.4 cannot be negotiated safely.");
@@ -363,11 +368,11 @@ internal sealed partial class VulkanDeviceContext
                 $"The active OpenXR runtime reported an invalid Vulkan API range: min={request.OpenXrMinimumApiVersion} max={request.OpenXrMaximumApiVersion}.");
         }
 
-        if ((minimumApiVersion != 0 && requiredApiVersion < minimumApiVersion) ||
-            requiredApiVersion > maximumApiVersion)
+        if ((minimumApiVersion != 0 && requiredOpenXrApiVersion < minimumApiVersion) ||
+            requiredOpenXrApiVersion > maximumApiVersion)
         {
             throw new NotSupportedException(
-                $"The active OpenXR runtime supports Vulkan {FormatApiVersion(minimumApiVersion)}-{FormatApiVersion(maximumApiVersion)}, which does not include XRENGINE's required Vulkan 1.4 baseline.");
+                $"The active OpenXR runtime supports Vulkan {FormatOpenXrApiVersion(minimumApiVersion)}-{FormatOpenXrApiVersion(maximumApiVersion)}, which does not include XRENGINE's required Vulkan 1.4 baseline.");
         }
 
         return requiredApiVersion;
@@ -400,21 +405,8 @@ internal sealed partial class VulkanDeviceContext
         Debug.Vulkan("[Vulkan] Loader API version {0}; requiring Vulkan 1.4.", FormatApiVersion(loaderApiVersion));
     }
 
-    private static uint ConvertOpenXrApiVersion(ulong openXrApiVersion)
-    {
-        if (openXrApiVersion == 0)
-            return 0;
-
-        ulong major = openXrApiVersion >> 48;
-        ulong minor = (openXrApiVersion >> 32) & 0xFFFFUL;
-        ulong patch = openXrApiVersion & 0xFFFFFFFFUL;
-        if (major > 0x7FUL || minor > 0x3FFUL)
-            return 0;
-        if (patch > 0xFFFUL)
-            patch = 0xFFFUL;
-
-        return ((uint)major << 22) | ((uint)minor << 12) | (uint)patch;
-    }
+    private static string FormatOpenXrApiVersion(ulong apiVersion)
+        => $"{apiVersion >> 48}.{(apiVersion >> 32) & 0xFFFFUL}";
 
     private static string FormatApiVersion(uint apiVersion)
         => $"{apiVersion >> 22}.{(apiVersion >> 12) & 0x3FFu}.{apiVersion & 0xFFFu}";

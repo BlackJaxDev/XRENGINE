@@ -790,6 +790,10 @@ internal unsafe partial class VkMeshRenderer
 			// The cold record remains render-thread authority for validation and
 			// diagnostics. Worker encoding consumes only the frozen scalar state
 			// and prepared numeric streams below.
+			DescriptorHeapPushDataIdentity descriptorHeapPushDataIdentity =
+				program.DescriptorHeapLayout is { PushByteCount: > 0 } preparedHeapLayout
+					? descriptorHeapPushData?.CaptureIdentity(preparedHeapLayout) ?? default
+					: DescriptorHeapPushDataIdentity.CompleteNotUsed;
 			int coldDataIndex = preparedFrame.AddMeshDrawColdData(new VulkanPreparedMeshDrawColdData(this, program, target, context, BackendContext.Resources.MappedFrameArena?.Generation ?? 0UL, Mesh?.Name ?? "<unnamed mesh>"));
 			recordingState = new VulkanPreparedMeshDrawState(
 				program.PipelineLayout,
@@ -798,12 +802,14 @@ internal unsafe partial class VkMeshRenderer
 				usesDescriptorHeap,
 				program.DescriptorHeapLayout?.ShaderConstantByteCount ?? 0u,
 				program.DescriptorHeapLayout?.PushByteCount ?? 0u,
+				descriptorHeapPushDataIdentity,
 				descriptorRange,
 				dynamicOffsetRange,
 				default,
 				default,
 				heapDwordRange,
-				descriptorHeapPushData?.SnapshotResourceGenerations() ?? [],
+				descriptorHeapPushData is not null && program.DescriptorHeapLayout is { } resourceLayout
+					? descriptorHeapPushData.SnapshotResourceGenerations(resourceLayout) : [],
 				vertexRange,
 				primitive0,
 				primitive1,
@@ -1419,6 +1425,10 @@ internal unsafe partial class VkMeshRenderer
 		if (_program?.Data is { } programData)
 			NotifyDrawUniforms(material, programData, draw);
 
+		// Heap descriptors share push-data storage with shader constants. Publish
+		// the constants first so a shader with no constant block cannot have its
+		// descriptor indices overwritten by the common mesh payload.
+		PushPerDrawConstants(commandBuffer, material, draw);
 		if (!BindDescriptorsIfAvailable(
 				commandBuffer,
 				material,
@@ -1428,7 +1438,6 @@ internal unsafe partial class VkMeshRenderer
 				passIndex))
 			return false;
 
-		PushPerDrawConstants(commandBuffer, material, draw);
 		CommandOperations.BindIndexBufferTracked(commandBuffer, indexHandle, 0, indexType);
 		return true;
 	}
@@ -1439,6 +1448,7 @@ internal unsafe partial class VkMeshRenderer
 		PipelineLayout PipelineLayout,
 		DescriptorSet[]? DescriptorSets,
 		DescriptorHeapPushDataPayload? DescriptorHeapPushData,
+		DescriptorHeapPushDataIdentity DescriptorHeapPushDataIdentity,
 		VkBufferHandle[]? VertexBuffers,
 		uint[]? VertexBindings,
 		int VertexBufferCount,
@@ -1553,12 +1563,17 @@ internal unsafe partial class VkMeshRenderer
 				}
 			}
 
+			DescriptorHeapPushDataIdentity descriptorHeapPushDataIdentity =
+				program.DescriptorHeapLayout is { PushByteCount: > 0 } heapLayout
+					? descriptorHeapPushData?.CaptureIdentity(heapLayout) ?? default
+					: DescriptorHeapPushDataIdentity.CompleteNotUsed;
 			recordingState = new IndirectDrawRecordingState(
 				program,
 				pipeline,
 				program.PipelineLayout,
 				descriptorSets,
 				descriptorHeapPushData,
+				descriptorHeapPushDataIdentity,
 				vertexBuffers,
 				vertexBindings,
 				vertexBufferCount,
@@ -1601,6 +1616,14 @@ internal unsafe partial class VkMeshRenderer
 
 		if (BackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap)
 		{
+			if (recordingState.DescriptorHeapPushDataIdentity != DescriptorHeapPushDataIdentity.CompleteNotUsed &&
+				(recordingState.Program.DescriptorHeapLayout is not { } heapLayout ||
+				 recordingState.DescriptorHeapPushData?.CaptureIdentity(heapLayout) !=
+				 recordingState.DescriptorHeapPushDataIdentity))
+			{
+				WarnOnce($"Skipping prepared draw for mesh '{Mesh?.Name ?? "UnnamedMesh"}' because descriptor heap push data changed after preparation.");
+				return false;
+			}
 			if (!CommandOperations.TryPushDescriptorHeapProgramData(commandBuffer, recordingState.Program, recordingState.DescriptorHeapPushData, out string heapReason))
 			{
 				WarnOnce($"Skipping prepared draw for mesh '{Mesh?.Name ?? "UnnamedMesh"}' because descriptor heap push failed: {heapReason}");

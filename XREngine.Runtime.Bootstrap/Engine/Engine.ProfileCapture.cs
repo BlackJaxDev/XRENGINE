@@ -1186,6 +1186,15 @@ public static partial class Engine
             AppendVulkanFrameStageFields(s_lineBuilder, "output_complete", vulkanFrame.OutputComplete, ref first);
             AppendVulkanFrameStageFields(s_lineBuilder, "frame_settlement", vulkanFrame.FrameSettlement, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_frame_wait_fence_ms", vulkanFrame.Detail.WaitFrameSlot.TotalMilliseconds, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_wait_current_slot_ms", vulkanFrame.Detail.WaitCurrentFrameSlot.TotalMilliseconds, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_frame_wait_next_slot_before_collect_ms", vulkanFrame.Detail.WaitNextFrameSlotBeforeCollect.TotalMilliseconds, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_advanced_early_visibility_barrier_emissions", RuntimeEngine.Rendering.Stats.Vulkan.AdvancedEarlyVisibilityBarrierEmissions, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_heap_sampler_binds_total", RuntimeEngine.Rendering.Stats.Vulkan.DescriptorHeapSamplerBinds, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_heap_resource_binds_total", RuntimeEngine.Rendering.Stats.Vulkan.DescriptorHeapResourceBinds, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_heap_pushes_total", RuntimeEngine.Rendering.Stats.Vulkan.DescriptorHeapPushes, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_heap_sampler_writes_total", RuntimeEngine.Rendering.Stats.Vulkan.DescriptorHeapSamplerWrites, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_heap_resource_writes_total", RuntimeEngine.Rendering.Stats.Vulkan.DescriptorHeapResourceWrites, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_heap_payload_allocations_total", RuntimeEngine.Rendering.Stats.Vulkan.DescriptorHeapPayloadAllocations, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_frame_sample_timing_queries_ms", vulkanFrame.Detail.SampleTimingQueries.TotalMilliseconds, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_frame_drain_retired_resources_ms", vulkanFrame.Detail.DrainRetiredResources.TotalMilliseconds, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_frame_acquire_image_ms", vulkanFrame.Detail.AcquireImage.TotalMilliseconds, ref first);
@@ -1434,6 +1443,8 @@ public static partial class Engine
             AppendVulkanCpuStageFields(s_lineBuilder, "op_dispatch", EVulkanCpuStage.OpDispatch, ref first);
             AppendStringField(s_lineBuilder, "vulkan_command_buffer_dirty_summary", RuntimeEngine.Rendering.Stats.Vulkan.VulkanCommandBufferDirtySummary, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_command_chains_scheduled", RuntimeEngine.Rendering.Stats.Vulkan.VulkanCommandChainsScheduled, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_command_chain_scheduling_attempts_total", RuntimeEngine.Rendering.Stats.Vulkan.CommandChainSchedulingAttempts, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_command_chain_schedule_decision", (int)RuntimeEngine.Rendering.Stats.Vulkan.CommandChainScheduleDecision, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_command_chains_recorded", RuntimeEngine.Rendering.Stats.Vulkan.VulkanCommandChainsRecorded, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_command_chains_reused", RuntimeEngine.Rendering.Stats.Vulkan.VulkanCommandChainsReused, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_command_chains_frame_data_refreshed", RuntimeEngine.Rendering.Stats.Vulkan.VulkanCommandChainsFrameDataRefreshed, ref first);
@@ -1445,6 +1456,13 @@ public static partial class Engine
             AppendNumberField(s_lineBuilder, "vulkan_secondary_command_buffer_count", RuntimeEngine.Rendering.Stats.Vulkan.VulkanSecondaryCommandBufferCount, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_indirect_primary_record_ops", RuntimeEngine.Rendering.Stats.Vulkan.VulkanIndirectPrimaryRecordOps, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_indirect_secondary_record_ops", RuntimeEngine.Rendering.Stats.Vulkan.VulkanIndirectSecondaryRecordOps, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_indirect_secondary_reuses_total", RuntimeEngine.Rendering.Stats.Vulkan.IndirectSecondaryReuses, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_indirect_secondary_recordings_total", RuntimeEngine.Rendering.Stats.Vulkan.IndirectSecondaryRecordings, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_indirect_secondary_key_evaluations_total", RuntimeEngine.Rendering.Stats.Vulkan.IndirectSecondaryKeyEvaluations, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_indirect_secondary_complete_keys_total", RuntimeEngine.Rendering.Stats.Vulkan.IndirectSecondaryCompleteKeys, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_indirect_secondary_matching_keys_total", RuntimeEngine.Rendering.Stats.Vulkan.IndirectSecondaryMatchingKeys, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_indirect_secondary_policy_rejections_total", RuntimeEngine.Rendering.Stats.Vulkan.IndirectSecondaryPolicyRejections, ref first);
+            AppendStringField(s_lineBuilder, "vulkan_indirect_secondary_incomplete_key_reason", RuntimeEngine.Rendering.Stats.Vulkan.IndirectSecondaryIncompleteKeyReason, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_indirect_parallel_secondary_record_ops", RuntimeEngine.Rendering.Stats.Vulkan.VulkanIndirectParallelSecondaryRecordOps, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_indirect_secondary_eligibility", (int)RuntimeEngine.Rendering.Stats.Vulkan.VulkanLastIndirectSecondaryEligibility, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_indirect_secondary_eligible_producer_complete", RuntimeEngine.Rendering.Stats.Vulkan.GetVulkanIndirectSecondaryEligibilityCount(EVulkanIndirectSecondaryEligibility.EligibleProducerComplete), ref first);

@@ -277,6 +277,8 @@ The Vulkan renderer supports two creation modes. For runtimes that work well wit
 
 When the renderer owns Vulkan handle creation for an OpenXR launch, the runtime's `xrGetVulkanGraphicsRequirementsKHR` range must contain Vulkan 1.4. The renderer requests Vulkan 1.4 and rejects an incompatible runtime range with diagnostics; it does not clamp the app-created instance to an older API.
 
+Version bounds are compared as OpenXR `XrVersion` major/minor values, ignoring patch. Broad runtime maxima such as Monado's `1023.1023` remain valid bounds; they are not converted into Vulkan's narrower packed major field.
+
 SteamVR also expects `xrGetVulkanGraphicsDeviceKHR` to be called on the same OpenXR instance that will later create the session. The app-owned Vulkan path validates the renderer's selected physical device with that session instance immediately before `xrCreateSession`; do not replace that with a cached result from an earlier bootstrap instance.
 
 An OpenXR runtime that advertises a maximum Vulkan API below 1.4 is incompatible with this renderer configuration. The renderer reports the failed runtime requirement before session creation; no extension-command compatibility path or renderer fallback is selected.

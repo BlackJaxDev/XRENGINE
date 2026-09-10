@@ -13,11 +13,15 @@ internal sealed partial class VulkanCommandRuntime
     private const byte RequiredProducerRecordedBit = 1 << 0;
     private const byte RequiredProducerOperationBit = 1 << 1;
 
-    private bool RecordPrimaryOperations(scoped ref PrimaryCommandBufferRecordingState recordingState)
+    private bool RecordPrimaryOperations(scoped ref PrimaryCommandBufferRecordingState recordingState,
+        int firstOperation = 0, int endOperation = -1, int skipOperation = -1)
     {
         using var mainLoopProfileScope = RuntimeRenderingHostServices.Profiling.StartProfileScope("Vulkan.RecordPrimary.MainOpLoop");
-        for (int operationIndex = 0; operationIndex < recordingState.Ops.Length; operationIndex++)
+        int end = endOperation < 0 ? recordingState.Ops.Length : endOperation;
+        for (int operationIndex = firstOperation; operationIndex < end; operationIndex++)
         {
+            if (operationIndex == skipOperation)
+                continue;
             ref readonly FrameOperationHeader header = ref recordingState.Ops.GetHeader(operationIndex);
             if (recordingState.PipelineDeferredOperationIndices.Contains(operationIndex))
             {
@@ -300,6 +304,7 @@ internal sealed partial class VulkanCommandRuntime
 
         CmdBeginLabel(state.CommandBuffer, "Advanced.Visibility.EarlyToIndirect");
         EmitMemoryBarrierMask(state.CommandBuffer, EMemoryBarrierMask.ShaderStorage);
+        RuntimeEngine.Rendering.Stats.Vulkan.RecordAdvancedEarlyVisibilityBarrierEmission();
         CmdEndLabel(state.CommandBuffer);
 
         for (uint viewIndex = 0u; viewIndex < payload.State.ViewCount; ++viewIndex)
@@ -514,6 +519,8 @@ internal sealed partial class VulkanCommandRuntime
             NewLayout = nextLayout,
             SrcAccessMask = SourceAccessForAdvancedVisibilityLayout(oldLayout),
             DstAccessMask = destinationAccess,
+            SrcQueueFamilyIndex = Vk.QueueFamilyIgnored,
+            DstQueueFamilyIndex = Vk.QueueFamilyIgnored,
             Image = group.Image,
             SubresourceRange = range,
         };
@@ -1560,8 +1567,15 @@ internal sealed partial class VulkanCommandRuntime
         EmitIndirectDrawRunReadBarrier(ref state);
         if (info.BeginsRendering) BeginRenderPassForTarget(ref state, target, info.PassIndex, state.ActiveContext);
         CmdBeginLabel(state.CommandBuffer, "IndirectDraw");
-        RecordIndirectDrawPayloadIntoCommandBuffer(ref state, state.CommandBuffer, in payload, target, state.ActiveContext, info.PassIndex, info.OperationIndex);
+        bool recorded = RecordIndirectDrawPayloadIntoCommandBuffer(ref state, state.CommandBuffer, in payload, target, state.ActiveContext, info.PassIndex, info.OperationIndex);
         CmdEndLabel(state.CommandBuffer);
+        state.CurrentPrimaryOperationRecorded = recorded;
+        if (!recorded)
+        {
+            if (state.Policy.ReadinessPolicy == ERenderOutputReadinessPolicy.BlockForExact)
+                throw new VulkanPlanPreconditionException("An indirect draw required by an exact output could not bind its prepared material and mesh state.");
+            return info.OperationIndex;
+        }
         RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanIndirectRecordingMode(false, false, 1);
         if (target is null)
             state.ActualSwapchainWriteCount++;

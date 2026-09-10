@@ -169,6 +169,7 @@ internal sealed partial class VulkanCommandRuntime
             recorded.TouchedSubresources.Clear();
             recorded.QueueOwnershipTransfers.Clear();
             recorded.EntryStateIncomplete = false;
+            recorded.UseExecutionPredecessorEntryState = false;
             recorded.EntryStateFailure = default;
             recorded.RecordingGeneration = ResolveCommandBufferRecordingGeneration(commandBuffer);
         }

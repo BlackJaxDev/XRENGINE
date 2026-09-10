@@ -5,13 +5,15 @@ namespace XREngine.Rendering;
 /// Native images, views, synchronization primitives, and JavaScript handles stay
 /// in the concrete backend lease and never cross this runtime contract.
 /// </summary>
+/// <remarks>When supplied, SchedulingRequest is the canonical host-owned transaction cohort for collection and history readiness.</remarks>
 public readonly record struct RenderFrameOutputDescription(
     RenderExecutionMode ExecutionMode,
     RenderTargetOutputProperties Properties,
     ulong TargetGeneration,
     uint FrameSlotIndex,
     uint ViewIndex = 0,
-    RenderFrameOutputCapabilities Capabilities = RenderFrameOutputCapabilities.None)
+    RenderFrameOutputCapabilities Capabilities = RenderFrameOutputCapabilities.None,
+    RenderOutputRequest SchedulingRequest = default)
 {
     /// <summary>Gets whether this description identifies a usable acquired output.</summary>
     public bool IsValid =>

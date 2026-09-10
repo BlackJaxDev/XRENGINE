@@ -30,6 +30,7 @@ internal unsafe partial class VkMeshRenderer(
     private VulkanFinalPresentationDescriptorPort? _finalPresentationDescriptors;
     private VulkanMeshMaterializationSnapshot _materializationSnapshot;
     private long _preparationCompatibilityRevision = 1;
+    private int _asyncIndexBufferSubscriptions;
 
     private ref readonly VulkanMeshMaterializationSnapshot MaterializationSnapshot
         => ref _materializationSnapshot;
@@ -732,6 +733,7 @@ internal unsafe partial class VkMeshRenderer(
         if (!deferredBindingsActivated)
         {
             CommandOperations.MarkCommandBuffersDirtyForLegacyMeshState();
+            _ = SetPrepareResult(false, "DeferredBindingsUnavailable", "The captured deferred binding publication could not activate.", out _);
             return false;
         }
 
@@ -758,6 +760,7 @@ internal unsafe partial class VkMeshRenderer(
                 {
                     prepared = TryPrepareForDrawEnqueue(
                         effectiveMaterial,
+                        materializationSnapshot.RequiresSynchronousGeometryPreparation,
                         out prepareReason);
                 }
                 if (!prepared)

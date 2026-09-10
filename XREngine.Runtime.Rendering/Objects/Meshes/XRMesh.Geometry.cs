@@ -20,8 +20,7 @@ public partial class XRMesh
     // VkBuffer when multiple VkMeshRenderers share the same mesh.
     private readonly object _indexBufferLock = new();
     private readonly Dictionary<EPrimitiveType, (XRDataBuffer buffer, IndexSize elementSize)> _indexBufferCache = new();
-    private readonly HashSet<EPrimitiveType> _indexBufferBuilding = new();
-    private readonly Dictionary<EPrimitiveType, List<Action<XRDataBuffer, IndexSize>>> _indexBufferPendingCallbacks = new();
+    private readonly Dictionary<EPrimitiveType, IndexBufferBuildTicket> _indexBufferBuildTickets = new();
 
     /// <summary>
     /// Clears the cached index buffers so the next call to
@@ -33,9 +32,17 @@ public partial class XRMesh
         lock (_indexBufferLock)
         {
             if (type.HasValue)
+            {
                 _indexBufferCache.Remove(type.Value);
+                InvalidateBuildTicketNoLock(type.Value);
+            }
             else
+            {
                 _indexBufferCache.Clear();
+                foreach (IndexBufferBuildTicket ticket in _indexBufferBuildTickets.Values)
+                    ticket.Fail(new IndexBufferBuildInvalidatedException());
+                _indexBufferBuildTickets.Clear();
+            }
         }
     }
 
@@ -295,11 +302,16 @@ public partial class XRMesh
     /// the background task thread when the async build completes. Callers that need the callback
     /// on a specific thread should marshal inside the callback body.
     /// </param>
+    /// <param name="requireSynchronous">
+    /// Waits for the per-primitive build ticket when no cached buffer is available. The wait never
+    /// holds the cache lock and propagates a terminal worker failure to exact readiness callers.
+    /// </param>
     public XRDataBuffer? GetIndexBuffer(
         EPrimitiveType type,
         out IndexSize elementSize,
         EBufferTarget target = EBufferTarget.ElementArrayBuffer,
-        Action<XRDataBuffer, IndexSize>? onReady = null)
+        Action<XRDataBuffer, IndexSize>? onReady = null,
+        bool requireSynchronous = false)
     {
         elementSize = IndexSize.TwoBytes;
 
@@ -317,30 +329,47 @@ public partial class XRMesh
         if (!HasIndexData(type))
             return null;
 
-        lock (_indexBufferLock)
+        while (true)
         {
-            if (_indexBufferCache.TryGetValue(type, out var cached))
+            (XRDataBuffer buffer, IndexSize elementSize)? cached = null;
+            IndexBufferBuildTicket? ticket = null;
+            lock (_indexBufferLock)
             {
-                elementSize = cached.elementSize;
-                onReady?.Invoke(cached.buffer, cached.elementSize);
-                return cached.buffer;
+                if (_indexBufferCache.TryGetValue(type, out var cachedResult))
+                    cached = cachedResult;
+                else
+                    ticket = GetOrStartIndexBufferBuildNoLock(type);
+            }
+
+            if (cached is { } cachedBuffer)
+            {
+                elementSize = cachedBuffer.elementSize;
+                onReady?.Invoke(cachedBuffer.buffer, cachedBuffer.elementSize);
+                return cachedBuffer.buffer;
+            }
+
+            if (requireSynchronous)
+            {
+                try
+                {
+                    (XRDataBuffer buffer, IndexSize completedElementSize) =
+                        ticket!.Completion.Task.GetAwaiter().GetResult();
+                    elementSize = completedElementSize;
+                    onReady?.Invoke(buffer, completedElementSize);
+                    return buffer;
+                }
+                catch (IndexBufferBuildInvalidatedException)
+                {
+                    // A topology mutation won the race with the worker. Acquire the
+                    // replacement ticket rather than publishing obsolete indices.
+                    continue;
+                }
             }
 
             if (onReady is not null)
-            {
-                if (!_indexBufferPendingCallbacks.TryGetValue(type, out var list))
-                    _indexBufferPendingCallbacks[type] = list = new List<Action<XRDataBuffer, IndexSize>>();
-                list.Add(onReady);
-            }
-
-            if (_indexBufferBuilding.Add(type))
-            {
-                var buildType = type;
-                Task.Run(() => BuildIndexBufferWorker(buildType));
-            }
+                RegisterIndexBufferReadyCallback(ticket!, onReady);
+            return null;
         }
-
-        return null;
     }
 
     internal bool HasIndexData(EPrimitiveType type) => type switch
@@ -358,47 +387,105 @@ public partial class XRMesh
         _ => false,
     };
 
-    private void BuildIndexBufferWorker(EPrimitiveType type)
+    internal bool TryGetIndexBufferBuildFailure(EPrimitiveType type, out Exception? error)
     {
-        XRDataBuffer? buf = null;
+        lock (_indexBufferLock)
+        {
+            if (_indexBufferBuildTickets.TryGetValue(type, out IndexBufferBuildTicket? ticket) &&
+                ticket.Completion.Task.IsFaulted)
+            {
+                error = ticket.Completion.Task.Exception?.GetBaseException();
+                return error is not null;
+            }
+        }
+
+        error = null;
+        return false;
+    }
+
+    private IndexBufferBuildTicket GetOrStartIndexBufferBuildNoLock(EPrimitiveType type)
+    {
+        if (_indexBufferBuildTickets.TryGetValue(type, out IndexBufferBuildTicket? ticket))
+            return ticket;
+
+        ticket = new IndexBufferBuildTicket(GeometryRevision);
+        _indexBufferBuildTickets.Add(type, ticket);
+        _ = Task.Run(() => BuildIndexBufferWorker(type, ticket));
+        return ticket;
+    }
+
+    private void RegisterIndexBufferReadyCallback(
+        IndexBufferBuildTicket ticket,
+        Action<XRDataBuffer, IndexSize> onReady)
+        => _ = ticket.Completion.Task.ContinueWith(
+            completed =>
+            {
+                if (completed.Status != TaskStatus.RanToCompletion)
+                    return;
+
+                try
+                {
+                    (XRDataBuffer buffer, IndexSize elementSize) = completed.Result;
+                    onReady(buffer, elementSize);
+                }
+                catch (Exception ex)
+                {
+                    RuntimeRenderingHostServices.Diagnostics.LogException(ex);
+                }
+            },
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+
+    private void BuildIndexBufferWorker(EPrimitiveType type, IndexBufferBuildTicket ticket)
+    {
+        XRDataBuffer? buffer = null;
         IndexSize elementSize = IndexSize.TwoBytes;
         Exception? error = null;
 
         try
         {
-            buf = BuildIndexBuffer(type, EBufferTarget.ElementArrayBuffer, out elementSize);
+            buffer = BuildIndexBuffer(type, EBufferTarget.ElementArrayBuffer, out elementSize) ??
+                throw new InvalidOperationException($"Mesh has no {type} index data to build.");
         }
         catch (Exception ex)
         {
             error = ex;
         }
 
-        List<Action<XRDataBuffer, IndexSize>>? callbacks;
         lock (_indexBufferLock)
         {
-            if (buf is not null)
-                _indexBufferCache[type] = (buf, elementSize);
-            _indexBufferBuilding.Remove(type);
-            _indexBufferPendingCallbacks.Remove(type, out callbacks);
+            if (!_indexBufferBuildTickets.TryGetValue(type, out IndexBufferBuildTicket? current) ||
+                !ReferenceEquals(current, ticket) ||
+                ticket.GeometryRevision != GeometryRevision)
+            {
+                if (ReferenceEquals(current, ticket))
+                    _indexBufferBuildTickets.Remove(type);
+                ticket.Fail(new IndexBufferBuildInvalidatedException());
+                return;
+            }
+
+            if (error is null)
+            {
+                _indexBufferCache[type] = (buffer!, elementSize);
+                ticket.Completion.TrySetResult((buffer!, elementSize));
+                return;
+            }
+
+            ticket.Fail(error);
         }
 
         if (error is not null)
             RuntimeRenderingHostServices.Diagnostics.LogException(error);
 
-        if (buf is null || callbacks is null)
+    }
+
+    private void InvalidateBuildTicketNoLock(EPrimitiveType type)
+    {
+        if (!_indexBufferBuildTickets.Remove(type, out IndexBufferBuildTicket? ticket))
             return;
 
-        for (int i = 0; i < callbacks.Count; i++)
-        {
-            try
-            {
-                callbacks[i].Invoke(buf, elementSize);
-            }
-            catch (Exception ex)
-            {
-                RuntimeRenderingHostServices.Diagnostics.LogException(ex);
-            }
-        }
+        ticket.Fail(new IndexBufferBuildInvalidatedException());
     }
 
     private XRDataBuffer? BuildIndexBuffer(EPrimitiveType type, EBufferTarget target, out IndexSize elementSize)

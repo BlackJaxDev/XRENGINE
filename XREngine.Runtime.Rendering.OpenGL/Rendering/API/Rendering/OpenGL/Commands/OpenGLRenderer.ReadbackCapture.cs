@@ -30,6 +30,24 @@ namespace XREngine.Rendering.OpenGL;
 
 public partial class OpenGLRenderer
 {
+    /// <summary>Reads the completed front buffer, including the window's UI composition.</summary>
+    public override bool TryQueueCompositedScreenshotReadback(
+        BoundingRectangle region,
+        Action<ScreenshotReadbackResult> callback,
+        out string? failure)
+    {
+        int previousReadFramebuffer = Api.GetInteger(GetPName.ReadFramebufferBinding);
+        try
+        {
+            Api.BindFramebuffer(FramebufferTarget.ReadFramebuffer, 0);
+            return TryQueueScreenshotReadback(region, false, callback, out failure);
+        }
+        finally
+        {
+            Api.BindFramebuffer(FramebufferTarget.ReadFramebuffer, unchecked((uint)previousReadFramebuffer));
+        }
+    }
+
     public override void GetScreenshotAsync(BoundingRectangle region, bool withTransparency, Action<MagickImage, int> imageCallback)
     {
         //TODO: render to an FBO with the desired render size and capture from that, instead of using the window size.
@@ -38,7 +56,12 @@ public partial class OpenGLRenderer
         //This method is async on the CPU, but still executes synchronously on the GPU.
         //https://developer.download.nvidia.com/GTC/PDF/GTC2012/PresentationPDF/S0356-GTC2012-Texture-Transfers.pdf
 
-        CaptureFBOColorAttachment(region, withTransparency, imageCallback, 0u, ReadBufferMode.Front, -1, true);
+        // Honor the viewport read scope; composited capture explicitly selects the window.
+        uint readFramebuffer = unchecked((uint)Api.GetInteger(GetPName.ReadFramebufferBinding));
+        ReadBufferMode readBuffer = readFramebuffer == 0
+            ? ReadBufferMode.Front
+            : (ReadBufferMode)Api.GetInteger(GetPName.ReadBuffer);
+        CaptureFBOColorAttachment(region, withTransparency, imageCallback, readFramebuffer, readBuffer, -1, true);
     }
 
     public void CaptureFBOAttachment(

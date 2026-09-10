@@ -46,8 +46,12 @@ internal sealed partial class VulkanCommandRuntime
             checked((uint)(closure.KernelTiles.NativeSize / 16u)),
             new Vector4(clear.R, clear.G, clear.B, clear.A));
 
-        TransitionNativeInput(state.CommandBuffer, closure.Identity, closure.ViewIndex);
-        TransitionNativeInput(state.CommandBuffer, closure.Metadata, closure.ViewIndex);
+        if (payload.Request.Stage != EAdvancedRenderStage.AmbientOcclusion &&
+            !(state.AdvancedQueueOverlap is not null && payload.Request.Stage == EAdvancedRenderStage.WorkClassification))
+        {
+            TransitionNativeInput(state.CommandBuffer, closure.Identity, closure.ViewIndex);
+            TransitionNativeInput(state.CommandBuffer, closure.Metadata, closure.ViewIndex);
+        }
         if (payload.Request.Stage == EAdvancedRenderStage.WorkClassification)
         {
             // The shared compact tile list accumulates every eye. Only the
@@ -117,6 +121,10 @@ internal sealed partial class VulkanCommandRuntime
             in push, tilesX, tilesY, 1, "Advanced.Background", NativeBackgroundGpuProfilerPath);
         EmitMemoryBarrierMask(state.CommandBuffer, EMemoryBarrierMask.ShaderImageAccess);
 
+        // Classification and graphics preparation meet only at shading. The
+        // final submit owns the Classified wait covering indirect argument reads.
+        BeginAdvancedQueueOverlapShade(ref state);
+        TrackAdvancedNativeShadeClosure(state.CommandBuffer, in closure);
         VulkanAdvancedComputePipeline shade = payload.NativeComputePipelines.Shade;
         using (TryBeginVulkanGpuProfilerScope(state.CommandBuffer, NativeOpaqueGpuProfilerPath))
         {

@@ -42,6 +42,11 @@ internal unsafe partial class VkMeshRenderer
 		=> XREnvironment.IsEnabled(XREngineEnvironmentVariables.VulkanMaterialBindingDiag);
 
 	private ulong _descriptorAllocationUsageSerial;
+	private static long _nextHeapDescriptorAllocationOwnerIdentity;
+	// Allocation lookup is shared across renderers, but heap staging is mutable.
+	// An exact owner token keeps equal local draw slots from aliasing another mesh.
+	private readonly ulong _heapDescriptorAllocationOwnerIdentity =
+		unchecked((ulong)Interlocked.Increment(ref _nextHeapDescriptorAllocationOwnerIdentity));
 	private string _lastDescriptorPreparationFailure = "descriptor preparation did not report a reason";
 
 	// Descriptor writes are serialized per mesh renderer. Keep the reusable
@@ -168,8 +173,16 @@ internal unsafe partial class VkMeshRenderer
 			descriptorOwnerSlot,
 			usesSharedMaterialTier);
 		int materialIdentity = System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(material);
+		// A heap payload is CPU staging owned by this draw/frame slot. Recorded
+		// commands copy its root bytes and pin the published resource generations;
+		// changing a descriptor therefore refreshes this slot instead of creating
+		// another allocation variant for every frame slot. A renderer owner token
+		// isolates mutable staging in the shared allocation lookup. Conventional sets
+		// retain their immutable-resource key because their bytes remain bound.
 		ulong immutableResourceFingerprint =
-			ResolveDescriptorAllocationImmutableResourceFingerprint(
+			BackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap
+				? _heapDescriptorAllocationOwnerIdentity
+				: ResolveDescriptorAllocationImmutableResourceFingerprint(
 				descriptorBindingsAreDrawSlotInvariant,
 				DescriptorSetsAreUpdateAfterBind(activeSetMask),
 				bindingSnapshot is not null,
@@ -1233,7 +1246,9 @@ internal unsafe partial class VkMeshRenderer
 		if (usesSharedMaterialTier)
 			activeSetMask &= ~(1u << (int)VulkanMeshRenderingConventions.DescriptorSetMaterial);
 		ulong immutableResourceFingerprint =
-			ResolveDescriptorAllocationImmutableResourceFingerprint(
+			BackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap
+				? _heapDescriptorAllocationOwnerIdentity
+				: ResolveDescriptorAllocationImmutableResourceFingerprint(
 				descriptorBindingsAreDrawSlotInvariant,
 				DescriptorSetsAreUpdateAfterBind(activeSetMask),
 				bindingSnapshot is not null,
@@ -1305,7 +1320,7 @@ internal unsafe partial class VkMeshRenderer
 			return false;
 		}
 
-		if (allocation.ResourceFingerprint != resourceFingerprint)
+		if (!DescriptorAllocationSlotsMatch(allocation, material, refreshFrameIndex, resourceFingerprint))
 		{
 			if (DescriptorResourceFingerprintDiagnosticsEnabled)
 			{
@@ -1315,7 +1330,7 @@ internal unsafe partial class VkMeshRenderer
 			}
 			else
 			{
-				reason = $"resource fingerprint 0x{allocation.ResourceFingerprint:X16}->0x{resourceFingerprint:X16}";
+				reason = "descriptor slot resource or owner generation changed";
 			}
 			return false;
 		}
@@ -1744,21 +1759,7 @@ internal unsafe partial class VkMeshRenderer
 
 		RefreshDescriptorAllocationMetadata(allocation, program, material, descriptorFrameSlotCount, setCount);
 
-		bool resourceMatches = false;
-		if (refreshFrameIndex is { } currentFrameIndex)
-		{
-			// Descriptor sets are allocated per frame slot, while dynamic uniform offsets
-			// select the per-draw data inside that set. Folding drawUniformSlot into this
-			// lookup clamps most draws to the final swapchain slot and refreshes the wrong
-			// image's descriptors during primary-command-buffer reuse.
-			int descriptorSlotIndex = ResolveDescriptorFrameIndex(currentFrameIndex, allocation.Sets.Length);
-			resourceMatches = allocation.Sets[descriptorSlotIndex].Length == setCount &&
-				DescriptorSlotResourceFingerprintMatches(allocation, descriptorSlotIndex, resourceFingerprint);
-		}
-		else
-		{
-			resourceMatches = allocation.ResourceFingerprint == resourceFingerprint;
-		}
+		bool resourceMatches = DescriptorAllocationSlotsMatch(allocation, material, refreshFrameIndex, resourceFingerprint);
 
 		if (!resourceMatches)
 		{
@@ -2003,11 +2004,9 @@ internal unsafe partial class VkMeshRenderer
 			return false;
 		}
 
-		if (allocation.ResourceFingerprint != resourceFingerprint)
+		if (!DescriptorAllocationSlotsMatch(allocation, material, refreshFrameIndex, resourceFingerprint))
 		{
-			reason = DescriptorResourceFingerprintDiagnosticsEnabled
-				? $"active resource fingerprint 0x{allocation.ResourceFingerprint:X16}->0x{resourceFingerprint:X16}"
-				: "active resource fingerprint changed";
+			reason = "active descriptor slot resource or owner generation changed";
 			return false;
 		}
 
@@ -2022,6 +2021,28 @@ internal unsafe partial class VkMeshRenderer
 			return false;
 		}
 		_descriptorDirty = false;
+		return true;
+	}
+
+	/// <summary>Proves the exact slots that a reused recording will consume.</summary>
+	private static bool DescriptorAllocationSlotsMatch(
+		DescriptorAllocation allocation,
+		XRMaterial material,
+		int? refreshFrameIndex,
+		ulong resourceFingerprint)
+	{
+		if (allocation.Sets is not { Length: > 0 })
+			return false;
+		// Publishing one slot changes the allocation-wide fingerprint without
+		// updating other slots. A draw-uniform offset is not a frame-slot index.
+		int firstSlot = refreshFrameIndex is { } requestedFrame
+			? ResolveDescriptorFrameIndex(requestedFrame, allocation.Sets.Length)
+			: 0;
+		int endSlot = refreshFrameIndex.HasValue ? firstSlot + 1 : allocation.Sets.Length;
+		for (int slot = firstSlot; slot < endSlot; slot++)
+			if (!DescriptorSlotResourceFingerprintMatches(allocation, slot, resourceFingerprint) ||
+				!allocation.IsOwnerGenerationPublished(slot, material.BindingResourceVersion))
+				return false;
 		return true;
 	}
 

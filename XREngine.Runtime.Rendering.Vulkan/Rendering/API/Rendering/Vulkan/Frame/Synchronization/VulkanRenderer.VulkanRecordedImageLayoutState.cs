@@ -40,6 +40,9 @@ internal sealed class VulkanRecordedImageLayoutState
     /// <summary>The command-buffer recording generation that owns this journal.</summary>
     public ulong RecordingGeneration;
 
+    /// <summary>Fresh split primaries resolve planned barriers from their exact execution predecessor.</summary>
+    public bool UseExecutionPredecessorEntryState;
+
     /// <summary>
     /// Rebuilds the compact touched-subresource list from the current overlay
     /// so submission publication avoids re-discovering dictionary entries.

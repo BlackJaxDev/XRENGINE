@@ -86,7 +86,11 @@ internal unsafe partial class VkRenderProgram
             _descriptorHeapLayout = BackendContext.Resources.DescriptorLifetime.CreateDescriptorHeapProgramLayout(
                 _programDescriptorBindings,
                 programName,
-                out string descriptorHeapReason);
+                out string descriptorHeapReason,
+                // Preserve the same shader-constant prefix as conventional
+                // program layouts. Heap indices must never alias common
+                // per-draw or native program push-constant writes.
+                shaderConstantByteCount: VulkanPipelineManager.CommonPushConstantByteSize);
             if (_descriptorHeapLayout is null)
                 throw new InvalidOperationException($"Failed to create Vulkan descriptor heap mapping for program '{programName}': {descriptorHeapReason}");
         }

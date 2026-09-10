@@ -326,6 +326,10 @@ public static partial class EditorUnitTests
                     },
                 ]);
             }
+
+            ProfileMutationWorkloadComponent? workload = ProfileMutationWorkloadComponent.CreateRequested(sharedMaterials);
+            if (workload is not null)
+                rootNode.AddComponent(() => workload);
         }
 
         public static void ImportModels(string desktopDir, SceneNode rootNode, SceneNode characterParentNode, Action? onAllModelsImported = null)

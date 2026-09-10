@@ -439,6 +439,40 @@ namespace XREngine.Rendering
                     RenderThreadJobKind.RequiresGraphicsContext);
         }
 
+        /// <summary>Requests a client-area resize on this window's owning thread.</summary>
+        public void RequestResize(int width, int height)
+        {
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(width);
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(height);
+            if (_isDisposed || _isDisposing)
+                return;
+
+            if (IsNativeEventPumpExternallyOwned)
+            {
+                RuntimeRenderingHostServices.Scheduling.EnqueueWindowThreadTask(
+                    this,
+                    () => ResizeOnWindowThread(width, height),
+                    "XRWindow.RequestResize");
+                return;
+            }
+
+            if (RuntimeEngine.IsRenderThread)
+                ResizeOnWindowThread(width, height);
+            else
+                RuntimeEngine.EnqueueRenderThreadTask(
+                    () => ResizeOnWindowThread(width, height),
+                    "XRWindow.RequestResize",
+                    RenderThreadJobKind.RequiresGraphicsContext);
+        }
+
+        private void ResizeOnWindowThread(int width, int height)
+        {
+            if (_isDisposed || _isDisposing)
+                return;
+            WarnIfNotNativeWindowThread("Window.Size");
+            Window.Size = new Vector2D<int>(width, height);
+        }
+
         public void RequestClose()
         {
             if (_isDisposed || _isDisposing)

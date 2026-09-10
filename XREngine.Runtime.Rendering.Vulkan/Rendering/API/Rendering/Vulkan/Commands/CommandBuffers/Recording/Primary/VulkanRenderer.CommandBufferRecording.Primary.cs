@@ -29,6 +29,7 @@ namespace XREngine.Rendering.Vulkan
             CapturePrimaryCommandBufferRecordingContext(in context, ref recordingState);
 
             InitializePrimaryCommandBufferRecordingState(ref recordingState);
+            PrepareAdvancedQueueOverlapRecording(ref recordingState);
             using VulkanResourceRuntime.ReadOnlyStorageRecordingScope
                 readOnlyStorageScope = ResourceRuntime.EnterReadOnlyStorageRecordingScope(
                     recordingState.ReadOnlyStorageAuthority);
@@ -54,7 +55,7 @@ namespace XREngine.Rendering.Vulkan
                        new(_frameTelemetry, EVulkanCpuStage.PrimaryOperationLoop))
                 {
                     primaryOperationsRecorded =
-                        RecordPrimaryOperations(ref recordingState);
+                        RecordAdvancedQueueOverlapOperations(ref recordingState);
                 }
                 if (!primaryOperationsRecorded)
                 {
@@ -77,6 +78,11 @@ namespace XREngine.Rendering.Vulkan
                 {
                     if (!EndPrimaryCommandBuffer(ref recordingState))
                         return false;
+                    if (recordingState.AdvancedQueueOverlap is { } overlap)
+                    {
+                        ConsolidateAdvancedQueueOverlapSubmissionMarkers(overlap);
+                        overlap.Recorded = true;
+                    }
                 }
             }
             catch (VulkanPlanPreconditionException exception)

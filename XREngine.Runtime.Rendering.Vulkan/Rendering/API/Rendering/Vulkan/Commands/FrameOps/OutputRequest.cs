@@ -121,12 +121,11 @@ internal readonly record struct OutputRequest(
                 ViewKind,
                 frameId,
                 out RenderOutputSchedulingSnapshot scheduling);
-        bool hasMandatoryPresentNowContract =
+        bool hasMandatoryExactContract =
             SchedulingRequest.IsDefined &&
-            SchedulingRequest.WorkClass == ERenderOutputWorkClass.PresentNow &&
             SchedulingRequest.ReadinessPolicy ==
                 ERenderOutputReadinessPolicy.BlockForExact;
-        RenderOutputRequest request = hasMandatoryPresentNowContract
+        RenderOutputRequest request = hasMandatoryExactContract
             ? SchedulingRequest
             : hasSchedulingSnapshot
             ? scheduling.Request
@@ -161,7 +160,7 @@ internal readonly record struct OutputRequest(
             ConsumerDependencySetId = ConsumerDependencySetId,
             FrameId = frameId,
         };
-        decision = hasSchedulingOverride || hasMandatoryPresentNowContract
+        decision = hasSchedulingOverride || hasMandatoryExactContract
             ? RuntimeRenderingHostServices.Presentation.PlanRenderOutput(
                 resolved,
                 isDue: true,
