@@ -284,7 +284,10 @@ namespace XREngine.Rendering.OpenGL
                     Api.DispatchCompute(x, y, z);
                 }
                 if (x != 0 && y != 0 && z != 0)
+                {
+                    RecordShaderCommandCoverage(ShaderCommandKind.Compute, indirect: false, instancingKnown: false, instanced: false);
                     Renderer.MarkImmediateHistoryGpuWriteUnproven();
+                }
             }
 
             private string ResolveDispatchLabel()

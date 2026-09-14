@@ -397,6 +397,7 @@ namespace XREngine.Editor.Mcp
                 {
                     publication = activeGpuScene.AdvancedScenePublication.Publication,
                     publicationRejected = activeGpuScene.AdvancedPublicationRejected,
+                    publicationFailure = activeGpuScene.AdvancedPublicationFailure,
                     topologyDeltaCount = activeGpuScene.AdvancedTopologyDeltaCount,
                     contentDeltaCount = activeGpuScene.AdvancedContentDeltaCount,
                     residentDrawCount = activeGpuScene.AdvancedSharedDatabase.Scene.Draws.Count,

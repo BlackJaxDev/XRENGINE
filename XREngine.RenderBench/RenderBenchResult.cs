@@ -32,6 +32,8 @@ public sealed record RenderBenchResult
     public required double FixedStepSeconds { get; init; }
     public required int RandomSeed { get; init; }
     public required bool FrozenWorld { get; init; }
+    /// <summary>Specialized or benchmark-only GENERAL image-layout policy used by the GPU fixture.</summary>
+    public required string LayoutPolicy { get; init; }
     public required RenderBenchInputManifest DeterministicInputs { get; init; }
     public required RenderBenchFixtureManifest FixtureManifest { get; init; }
     public required RenderBenchWorkCounters WorkCounters { get; init; }

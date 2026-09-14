@@ -523,6 +523,7 @@ public unsafe partial class OpenXRAPI
                     CreateReferenceSpace();
                     graphicsBinding.CreateSwapchains(this, activeRenderer);
                     RequireCompleteOpenXrSwapchainSet();
+                    RecordSmokeSessionLifecycleStarted();
                     RecordAppliedOpenXrEyeResolutionSettings();
                     EnsureInputCreated();
                     SetRuntimeState(OpenXrRuntimeState.SessionCreated);
@@ -557,6 +558,7 @@ public unsafe partial class OpenXRAPI
                     CreateReferenceSpace();
                     graphicsBinding.CreateSwapchains(this, renderer);
                     RequireCompleteOpenXrSwapchainSet();
+                    RecordSmokeSessionLifecycleStarted();
                     RecordAppliedOpenXrEyeResolutionSettings();
                     EnsureInputCreated();
                 });
@@ -830,7 +832,7 @@ public unsafe partial class OpenXRAPI
             }
         }
 
-        if (!CleanupSwapchains() ||
+        if (CleanupSwapchains() != OpenXrSwapchainCleanupOutcome.Completed ||
             _graphicsBinding?.HasPendingDeferredSwapchainRetirement == true)
         {
             // Vulkan has retained child swapchain generations whose exact GPU

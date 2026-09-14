@@ -264,7 +264,7 @@ namespace XREngine.Rendering.Commands
     /// RenderCommands are collected and placed in sorted passes that are rendered in order.
     /// At the end of the render and update loop, the buffers are swapped for consumption and the update list is cleared for the next frame.
     /// </summary>
-    public sealed class RenderCommandCollection : XRBase
+    public sealed partial class RenderCommandCollection : XRBase
     {
         private static readonly CpuRenderOcclusionCoordinator s_cpuOcclusionCoordinator = new();
         private static readonly CpuSoftwareOcclusionCuller s_cpuSoftwareOcclusionCuller = new();
@@ -351,6 +351,7 @@ namespace XREngine.Rendering.Commands
         /// </summary>
         private void ClearPipelineTransitionPublicationsNoLock()
         {
+            CancelCollectedResourcesNoLock();
             foreach (ICollection<RenderCommand> pass in _updatingPasses.Values)
                 pass.Clear();
 
@@ -512,6 +513,7 @@ namespace XREngine.Rendering.Commands
         private BackendReadyFramePackage _renderingBackendReadyPackage = new();
         private BackendReadyFramePackageIdentity _updatingBackendReadyIdentity =
             BackendReadyFramePackageIdentity.Unspecified;
+        private bool _updatingExcludeProjectiveMirrors;
         private long _updatingRevision;
         private long _backendReadyPackageGeneration;
         private Dictionary<int, GPURenderPassCollection> _gpuPasses = [];
@@ -673,20 +675,22 @@ namespace XREngine.Rendering.Commands
         /// signatures, and resource-plan metadata on the collect-visible side.
         /// </summary>
         public void PrepareBackendReadyFramePackage(in BackendReadyFramePackageIdentity identity)
-            => PrepareBackendReadyFramePackage(identity, null, null, 0, 0);
+            => PrepareBackendReadyFramePackage(identity, null, null, 0, 0, false);
 
         public void PrepareBackendReadyFramePackage(
             in BackendReadyFramePackageIdentity identity,
             GPUScene? scene,
             XRCamera? camera,
             int viewportWidth,
-            int viewportHeight)
+            int viewportHeight,
+            bool excludeProjectiveMirrors)
         {
             long started = System.Diagnostics.Stopwatch.GetTimestamp();
 
             using (_lock.EnterScope())
             {
                 _updatingBackendReadyIdentity = identity;
+                _updatingExcludeProjectiveMirrors = excludeProjectiveMirrors;
                 PrepareBackendReadyFramePackageNoLock(
                     scene,
                     camera,
@@ -727,7 +731,8 @@ namespace XREngine.Rendering.Commands
                 scene,
                 camera,
                 viewportWidth,
-                viewportHeight);
+                viewportHeight,
+                _updatingExcludeProjectiveMirrors);
         }
 
         /// <summary>
@@ -761,7 +766,8 @@ namespace XREngine.Rendering.Commands
                     scene,
                     camera,
                     viewportWidth,
-                    viewportHeight);
+                    viewportHeight,
+                    _updatingExcludeProjectiveMirrors);
                 return _updatingBackendReadyPackage.TryGetCanonicalPublication(
                            out _, out _) &&
                        !_updatingBackendReadyPackage.CanonicalViews.IsEmpty;
@@ -779,6 +785,7 @@ namespace XREngine.Rendering.Commands
                 using var renderingBufferScope = EnterRenderingBufferWriteScope();
                 _updatingBackendReadyPackage.Cancel();
                 _renderingBackendReadyPackage.Cancel();
+                CancelCollectedResourcesNoLock();
             }
         }
 
@@ -886,6 +893,9 @@ namespace XREngine.Rendering.Commands
                     }
                     return; // No CPU pass found for this render command
                 }
+
+                if (!TryReserveCollectedResourceNoLock(item))
+                    return;
 
                 long sortOrderKey = GetSortOrderKey(pass);
                 int beforeCount = set.Count;
@@ -2362,6 +2372,7 @@ namespace XREngine.Rendering.Commands
                     PrepareBackendReadyFramePackageNoLock();
 
                 (_updatingPasses, _renderingPasses) = (_renderingPasses, _updatingPasses);
+                SwapCollectedResourcesNoLock();
                 (_updatingSwapQueue, _renderingSwapQueue) = (_renderingSwapQueue, _updatingSwapQueue);
                 (_updatingSwapQueueMembership, _renderingSwapQueueMembership) = (_renderingSwapQueueMembership, _updatingSwapQueueMembership);
                 (_updatingBackendReadyPackage, _renderingBackendReadyPackage) =

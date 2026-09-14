@@ -156,7 +156,10 @@ public unsafe partial class OpenXRAPI
                                         : cameraCut
                                             ? ERenderFrameViewHistoryStatus.CameraCut
                                             : ERenderFrameViewHistoryStatus.FrameGap,
-                PreviousViewProjectionMatrixUnjittered: previousUnjittered));
+                PreviousViewProjectionMatrixUnjittered: previousUnjittered)
+            {
+                SourceCameraIdentity = eyeCamera?.RenderIdentity ?? 0UL,
+            });
             _openXrPendingViewProjection[i] = viewProjection;
             _openXrPendingViewProjectionUnjittered[i] = viewProjection;
             _openXrPendingCameraHistoryEpochs[i] = cameraEpoch;

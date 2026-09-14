@@ -199,6 +199,8 @@ internal sealed partial class VulkanXrGraphicsBinding
 
     private void DestroyOpenXrPreviewTargets()
     {
+        ClearPreviewEyeFrameId(0);
+        ClearPreviewEyeFrameId(1);
         try
         {
             _previewLeftEyeTexture?.Destroy();

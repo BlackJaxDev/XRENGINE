@@ -1,10 +1,15 @@
 using Silk.NET.Vulkan;
+using Semaphore = Silk.NET.Vulkan.Semaphore;
 
 namespace XREngine.Rendering.Vulkan;
 
 internal sealed partial class VulkanFrameLoop
 {
     private VulkanExplicitProductionBufferStressProbeEvidence? _lastExplicitProductionBufferStressProbeEvidence;
+    private Semaphore _explicitProductionPendingSubmissionGate;
+    private VulkanExplicitProductionSubmissionReceipt _explicitProductionPendingSubmissionGateReceipt;
+    private bool _explicitProductionPendingSubmissionGateReleased;
+    private bool _explicitProductionPendingSubmissionGateSignalAttempted;
 
     internal bool TryGetLastExplicitProductionBufferStressProbeEvidence(out VulkanExplicitProductionBufferStressProbeEvidence? evidence)
     {
@@ -292,12 +297,146 @@ internal sealed partial class VulkanFrameLoop
             };
             if (!grew || !retained)
                 throw new InvalidOperationException(_lastExplicitProductionBufferStressProbeEvidence.Failure);
+
+            if (probe.RequirePendingSubmissionObservation)
+                ArmExplicitProductionPendingSubmissionGate(probe);
         }
         catch (Exception exception)
         {
             _lastExplicitProductionBufferStressProbeEvidence = _lastExplicitProductionBufferStressProbeEvidence with { Failure = exception.Message };
             throw;
         }
+    }
+
+    private unsafe void ArmExplicitProductionPendingSubmissionGate(
+        VulkanExplicitProductionBufferStressProbeRequest probe)
+    {
+        if (probe.Checkpoint != EVulkanExplicitProductionBufferStressCheckpoint.AfterNativeRecording)
+            throw new InvalidOperationException(
+                "Pending-submission observation is supported only after native recording.");
+        if (_explicitProductionPendingSubmissionGate.Handle != 0)
+            throw new InvalidOperationException(
+                "A pending-submission observation gate is already live.");
+
+        SemaphoreTypeCreateInfo timelineType = new()
+        {
+            SType = StructureType.SemaphoreTypeCreateInfo,
+            SemaphoreType = SemaphoreType.Timeline,
+            InitialValue = 0,
+        };
+        SemaphoreCreateInfo createInfo = new()
+        {
+            SType = StructureType.SemaphoreCreateInfo,
+            PNext = &timelineType,
+        };
+        Result result = Api.CreateSemaphore(
+            _deviceContext.Device,
+            ref createInfo,
+            null,
+            out _explicitProductionPendingSubmissionGate);
+        if (result != Result.Success)
+        {
+            _explicitProductionPendingSubmissionGate = default;
+            if (result == Result.ErrorDeviceLost)
+                throw CreateDeviceLostException(
+                    "vkCreateSemaphore.PendingSubmissionObservationGate",
+                    result);
+            throw new InvalidOperationException(
+                $"vkCreateSemaphore for the pending-submission observation gate failed ({result}).");
+        }
+
+        _lastExplicitProductionBufferStressProbeEvidence =
+            _lastExplicitProductionBufferStressProbeEvidence! with
+            {
+                PendingSubmissionGateArmed = true,
+            };
+        _explicitProductionPendingSubmissionGateReleased = false;
+        _explicitProductionPendingSubmissionGateSignalAttempted = false;
+    }
+
+    private Semaphore GetExplicitProductionPendingSubmissionGate(
+        VulkanExplicitProductionBufferStressProbeRequest? probe)
+        => probe is
+            {
+                Checkpoint: EVulkanExplicitProductionBufferStressCheckpoint.AfterNativeRecording,
+                RequirePendingSubmissionObservation: true,
+            }
+            ? _explicitProductionPendingSubmissionGate.Handle != 0
+                ? _explicitProductionPendingSubmissionGate
+                : throw new InvalidOperationException(
+                    "The pending-submission observation gate was not armed after growth.")
+            : default;
+
+    private unsafe void ReleaseExplicitProductionPendingSubmissionGateAfterSample()
+    {
+        if (_explicitProductionPendingSubmissionGate.Handle == 0 ||
+            _explicitProductionPendingSubmissionGateReleased ||
+            _explicitProductionPendingSubmissionGateSignalAttempted)
+            return;
+
+        SemaphoreSignalInfo signalInfo = new()
+        {
+            SType = StructureType.SemaphoreSignalInfo,
+            Semaphore = _explicitProductionPendingSubmissionGate,
+            Value = 1,
+        };
+        _explicitProductionPendingSubmissionGateSignalAttempted = true;
+        Result result = Api.SignalSemaphore(_deviceContext.Device, ref signalInfo);
+        if (result != Result.Success)
+        {
+            _lastExplicitProductionBufferStressProbeEvidence =
+                _lastExplicitProductionBufferStressProbeEvidence! with
+                {
+                    Failure = $"vkSignalSemaphore for the pending-submission observation gate failed ({result}).",
+                };
+            if (result == Result.ErrorDeviceLost)
+                throw CreateDeviceLostException(
+                    "vkSignalSemaphore.PendingSubmissionObservationGate",
+                    result);
+            throw new InvalidOperationException(
+                _lastExplicitProductionBufferStressProbeEvidence!.Failure);
+        }
+
+        // Latch release before allocating/publishing cold-path evidence. A
+        // subsequent evidence failure must never trigger a second host signal.
+        _explicitProductionPendingSubmissionGateReleased = true;
+        _lastExplicitProductionBufferStressProbeEvidence =
+            _lastExplicitProductionBufferStressProbeEvidence! with
+            {
+                PendingSubmissionGateReleased = true,
+            };
+    }
+
+    private unsafe void DiscardUnsubmittedExplicitProductionPendingSubmissionGate()
+    {
+        if (_explicitProductionPendingSubmissionGate.Handle == 0)
+            return;
+
+        Api.DestroySemaphore(_deviceContext.Device, _explicitProductionPendingSubmissionGate, null);
+        _explicitProductionPendingSubmissionGate = default;
+        _explicitProductionPendingSubmissionGateReceipt = default;
+        _explicitProductionPendingSubmissionGateReleased = false;
+        _explicitProductionPendingSubmissionGateSignalAttempted = false;
+    }
+
+    private unsafe void ReleaseCompletedExplicitProductionPendingSubmissionGate(
+        bool deviceIdleOrLost = false)
+    {
+        if (_explicitProductionPendingSubmissionGate.Handle == 0)
+            return;
+        if (!deviceIdleOrLost &&
+            (!TryGetExplicitProductionSubmissionCompletion(
+                _explicitProductionPendingSubmissionGateReceipt,
+                out bool completed) || !completed))
+        {
+            return;
+        }
+
+        Api.DestroySemaphore(_deviceContext.Device, _explicitProductionPendingSubmissionGate, null);
+        _explicitProductionPendingSubmissionGate = default;
+        _explicitProductionPendingSubmissionGateReceipt = default;
+        _explicitProductionPendingSubmissionGateReleased = false;
+        _explicitProductionPendingSubmissionGateSignalAttempted = false;
     }
 
     private VulkanNativeBufferLifetimeDiagnostic DescribeBufferLifetime(in VulkanNativeBufferDiagnosticDescription binding)
@@ -351,9 +490,12 @@ internal sealed partial class VulkanFrameLoop
     {
         if (_lastExplicitProductionBufferStressProbeEvidence is not { } evidence)
             return;
+        if (receipt.IsValid && evidence.PendingSubmissionGateArmed)
+            _explicitProductionPendingSubmissionGateReceipt = receipt;
         if (!receipt.IsValid || receipt.CommandBufferHandle != evidence.RecordedCommandBufferHandle)
         {
             _lastExplicitProductionBufferStressProbeEvidence = evidence with { Failure = "The native submission does not match the probe's recorded command buffer." };
+            RefreshExplicitProductionBufferStressEvidence();
             return;
         }
         VulkanResourceLifetimeTracker tracker = _resourceRuntime.Lifetime.Tracker;
@@ -375,6 +517,7 @@ internal sealed partial class VulkanFrameLoop
         if (!oldGenerationSubmitted)
         {
             _lastExplicitProductionBufferStressProbeEvidence = evidence with { Failure = "The accepted submission did not prove ownership of the recorded old buffer generation." };
+            RefreshExplicitProductionBufferStressEvidence();
             return;
         }
 
@@ -387,14 +530,30 @@ internal sealed partial class VulkanFrameLoop
             {
                 Failure = "The accepted submission receipt was rejected before overlap sampling.",
             };
+            RefreshExplicitProductionBufferStressEvidence();
             return;
         }
 
+        VulkanNativeBufferDiagnosticDescription oldBinding = evidence.OldBinding;
+        VulkanNativeBufferLifetimeDiagnostic lifetime = DescribeBufferLifetime(in oldBinding);
+        bool pendingSubmissionRetentionProven = evidence.PendingSubmissionGateArmed &&
+            oldGenerationSubmitted && !completed && lifetime.Found &&
+            lifetime.PendingRetirement && !lifetime.Destroyed && !lifetime.RetirementReady &&
+            lifetime.LastGraphicsSequence > lifetime.CompletedGraphicsSequence;
         _lastExplicitProductionBufferStressProbeEvidence = evidence with
         {
             SubmissionAllowed = true,
             Submission = receipt,
+            LatestLifetime = lifetime,
             GpuOverlapObserved = !completed,
+            PendingSubmissionSampled = evidence.PendingSubmissionGateArmed,
+            PendingSubmissionRetentionProven = pendingSubmissionRetentionProven,
+            RecordedRetentionProven = evidence.PendingSubmissionGateArmed
+                ? pendingSubmissionRetentionProven
+                : evidence.RecordedRetentionProven,
+            Failure = evidence.PendingSubmissionGateArmed && !pendingSubmissionRetentionProven
+                ? "The gated pending submission did not retain the exact old buffer generation."
+                : evidence.Failure,
         };
         RefreshExplicitProductionBufferStressEvidence();
     }
@@ -422,7 +581,12 @@ internal sealed partial class VulkanFrameLoop
     private void RefreshExplicitProductionBufferStressEvidence()
     {
         if (_lastExplicitProductionBufferStressProbeEvidence is not { SubmissionAllowed: true } evidence)
+        {
+            // A failed proof can still own a signaled gate for an accepted exact
+            // submission. Release it as soon as that receipt completes.
+            ReleaseCompletedExplicitProductionPendingSubmissionGate();
             return;
+        }
         VulkanNativeBufferDiagnosticDescription oldBinding = evidence.OldBinding;
         VulkanNativeBufferLifetimeDiagnostic lifetime = DescribeBufferLifetime(in oldBinding);
         VulkanExplicitProductionSubmissionReceipt receipt = evidence.Submission;
@@ -444,5 +608,6 @@ internal sealed partial class VulkanFrameLoop
             ReclamationObservedAfterCompletion = !prematureReclamation && (evidence.ReclamationObservedAfterCompletion || reclaimed),
             Failure = prematureReclamation ? "The old native generation disappeared before its submission completed." : evidence.Failure,
         };
+        ReleaseCompletedExplicitProductionPendingSubmissionGate();
     }
 }

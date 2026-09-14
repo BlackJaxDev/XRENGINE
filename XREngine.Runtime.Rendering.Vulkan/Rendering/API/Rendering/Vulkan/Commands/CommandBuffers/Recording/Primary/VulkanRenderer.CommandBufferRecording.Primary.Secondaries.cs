@@ -864,8 +864,9 @@ namespace XREngine.Rendering.Vulkan
                 batch.EnsureCapacity(runCount, runCount);
                 FramePlan? framePlan = recordingState.FramePlan;
                 batch.PreparedFrame.Begin(
-                    framePlan?.FrameSlot ?? recordingState.CommandBufferImageSlot,
-                    VulkanFrameCounter);
+                    recordingState.CommandBufferImageSlot,
+                    VulkanFrameCounter,
+                    framePlan?.FrameSlot);
                 if (framePlan is not null)
                     batch.PreparedFrame.AttachFramePlan(framePlan);
                 bool requiresAdvancedScenePublication = false;

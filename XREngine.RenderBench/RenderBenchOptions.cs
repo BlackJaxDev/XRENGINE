@@ -13,7 +13,7 @@ public sealed record RenderBenchOptions
         "layers", "frame-slots", "samples", "color-format", "depth-format", "warmup-frames",
         "stability-frames", "capture-frames", "fixed-step", "random-seed", "frozen-world", "help",
         "scenario", "scenario-lane", "scenario-depth", "scenario-frames", "scenario-repeats", "scenario-workload", "scenario-timing", "scenario-renderdoc", "scenario-renderdoc-step",
-        "scenario-cache-root",
+        "scenario-cache-root", "layout-policy",
     };
 
     public string Backend { get; init; } = "Vulkan";
@@ -55,6 +55,8 @@ public sealed record RenderBenchOptions
     public int ScenarioRenderDocStep { get; init; }
     /// <summary>Explicit cache owner for isolated cold/warm pipeline correctness runs.</summary>
     public string? ScenarioCacheRoot { get; init; }
+    /// <summary>Opt-in GPU fixture layout policy. The default preserves specialized layouts.</summary>
+    public string LayoutPolicy { get; init; } = "specialized";
 
     public RenderTargetOutputProperties OutputProperties
         => new(Width, Height, Layers, ColorFormat, DepthFormat, "Linear", Samples, FrameSlots);
@@ -137,7 +139,8 @@ public sealed record RenderBenchOptions
             ScenarioLane = values.GetValueOrDefault("scenario-lane"),
             ScenarioDepth = Get(values, "scenario-depth", "both").ToLowerInvariant(),
             ScenarioFrames = ParseInt(values, "scenario-frames",
-                string.Equals(values.GetValueOrDefault("scenario"), "phase53-streaming", StringComparison.OrdinalIgnoreCase) ? 240 : 24,
+                string.Equals(values.GetValueOrDefault("scenario"), "phase53-streaming", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(values.GetValueOrDefault("scenario"), "phase53-materials", StringComparison.OrdinalIgnoreCase) ? 240 : 24,
                 12, 240),
             ScenarioRepeats = ParseInt(values, "scenario-repeats", 2, 2, 4),
             ScenarioWorkload = Get(values, "scenario-workload", RenderBenchScenarioWorkloads.Default).ToLowerInvariant(),
@@ -147,7 +150,13 @@ public sealed record RenderBenchOptions
             ScenarioCacheRoot = values.TryGetValue("scenario-cache-root", out string? cacheRoot) && !string.IsNullOrWhiteSpace(cacheRoot)
                 ? Path.GetFullPath(cacheRoot)
                 : null,
+            LayoutPolicy = Get(values, "layout-policy", "specialized").ToLowerInvariant(),
         };
+
+        if (result.LayoutPolicy is not ("specialized" or "general"))
+            throw new ArgumentException("--layout-policy must be either 'specialized' or 'general'.");
+        if (result.LayoutPolicy == "general" && result.Scenario is not null)
+            throw new ArgumentException("--layout-policy general is supported only by a RenderBench GPU-pass profile, not correctness scenarios.");
 
         if (result.Scenario is not null)
         {
@@ -218,6 +227,7 @@ public sealed record RenderBenchOptions
           --color-format Rgba8 --depth-format DepthComponent32f
           --warmup-frames N --stability-frames N --capture-frames N
           --fixed-step seconds --random-seed N --frozen-world
+          --layout-policy specialized|general (GPU-pass paired layout experiment; GENERAL requires VK_KHR_unified_image_layouts)
           --scenario phase52-visibility|phase52-buffers|phase52-all
           --scenario phase53-streaming|phase53-materials|phase53-pipelines
           --scenario-cache-root <path> (required only for isolated pipeline cold/warm evidence)

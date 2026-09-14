@@ -995,6 +995,8 @@ internal static class VulkanFrameOperationSemantics
             item.Add(pair.Value.Data.GetHashCode());
             item.Add(pair.Value.Buffer.Handle);
             item.Add(pair.Value.Range);
+            item.Add(pair.Value.LifetimeSlot.Generation);
+            item.Add(pair.Value.NativeGeneration);
             AddUnorderedItemHash(ref xor, ref sum, item.ToHash());
         }
 

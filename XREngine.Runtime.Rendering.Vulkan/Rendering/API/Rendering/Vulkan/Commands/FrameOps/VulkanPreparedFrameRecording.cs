@@ -91,7 +91,9 @@ internal sealed class VulkanPreparedFrameRecording
     private int _residentTemplateUseCount;
     private bool _hasPrimaryPlan;
 
+    /// <summary>Native frame-data and retirement owner, including dedicated OpenXR eye slots.</summary>
     internal int FrameSlot { get; private set; } = -1;
+    internal int LogicalFrameSlot { get; private set; } = -1;
     internal ulong Generation { get; private set; }
     internal bool HasPrimaryPlan => _hasPrimaryPlan;
     internal int PrimaryPlanNodeCount => _primaryPlanNodeCount;
@@ -187,9 +189,9 @@ internal sealed class VulkanPreparedFrameRecording
             for (int index = 0; index < authoringViews.ViewCount; ++index)
             {
                 RenderFrameViewDescriptor view = authoringViews.GetView(index);
-                _globalViews[index] = BackendReadyFramePackage.CreateCanonicalViewRecord(
+                _globalViews[index] = package.ApplyCanonicalViewPolicy(BackendReadyFramePackage.CreateCanonicalViewRecord(
                     in view,
-                    viewGeneration);
+                    viewGeneration));
             }
             _globalViewCount = authoringViews.ViewCount;
         }
@@ -231,10 +233,11 @@ internal sealed class VulkanPreparedFrameRecording
         count = source.Length;
     }
 
-    internal void Begin(int frameSlot, ulong generation)
+    internal void Begin(int frameSlot, ulong generation, int? logicalFrameSlot = null)
     {
         Reset();
         FrameSlot = frameSlot;
+        LogicalFrameSlot = logicalFrameSlot ?? frameSlot;
         Generation = generation;
     }
 
@@ -259,8 +262,8 @@ internal sealed class VulkanPreparedFrameRecording
 
     /// <summary>
     /// Associates the frame-slot-owned plan built by lifecycle preparation with
-    /// this prepared recording. The caller must not attach a plan from another
-    /// frame slot or an unsealed plan.
+    /// this prepared recording. OpenXR eyes can share one logical plan while
+    /// each records into its own native frame-data slot; Begin names both owners.
     /// </summary>
     internal void AttachFramePlan(FramePlan framePlan)
     {
@@ -269,10 +272,10 @@ internal sealed class VulkanPreparedFrameRecording
             throw new InvalidOperationException("Prepared Vulkan frame recording is frozen.");
         if (!framePlan.IsSealed)
             throw new InvalidOperationException("Only sealed frame plans may be attached to prepared recording.");
-        if (framePlan.FrameSlot != FrameSlot)
+        if (framePlan.FrameSlot != LogicalFrameSlot)
         {
             throw new InvalidOperationException(
-                $"Frame plan slot {framePlan.FrameSlot} does not match prepared recording slot {FrameSlot}.");
+                $"Frame plan slot {framePlan.FrameSlot} does not match logical owner {LogicalFrameSlot} of prepared resource slot {FrameSlot}.");
         }
 
         if (ReferenceEquals(FramePlan, framePlan))
@@ -790,6 +793,7 @@ internal sealed class VulkanPreparedFrameRecording
                 FrameSlot,
                 _canonicalPublicationDatabases,
                 _canonicalPublicationReferences,
+                _canonicalPublicationNativeUses,
                 _canonicalPublicationLeaseCount,
                 _residentTemplateUses,
                 _residentTemplateUseCount))
@@ -889,6 +893,7 @@ internal sealed class VulkanPreparedFrameRecording
         PacketCount = 0;
         _hasPrimaryPlan = false;
         FrameSlot = -1;
+        LogicalFrameSlot = -1;
         Generation = 0;
         PrimaryPlanIdentity = 0;
         FramePlan?.ReleaseLease();

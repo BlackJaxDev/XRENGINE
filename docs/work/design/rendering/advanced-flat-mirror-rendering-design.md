@@ -2,6 +2,12 @@
 
 [<- Work docs](../README.md)
 
+Status note (2026-09-14): this document is a design proposal, not the current
+implementation contract. The implemented component owns bounded private capture
+banks for traditional and Advanced display. See the
+[planar mirror guide](../../../architecture/rendering/planar-mirror-capture.md)
+and [implementation evidence](../../investigations/rendering/arp-mirror-placement-2026-09-14.md).
+
 ## Goal
 
 Add a production-ready flat-plane mirror system that can render multiple visible mirrors with predictable quality and cost across both CPU-driven and GPU-driven rendering paths.

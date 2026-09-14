@@ -227,6 +227,8 @@ internal static class VulkanFrameOpSnapshotSignatures
             item.Add(binding.Data.GetHashCode());
             item.Add(binding.Buffer.Handle);
             item.Add(binding.Range);
+            item.Add(binding.LifetimeSlot.Generation);
+            item.Add(binding.NativeGeneration);
             AddUnorderedItemHash(ref xor, ref sum, item.ToHash());
         }
 

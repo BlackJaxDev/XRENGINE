@@ -120,7 +120,8 @@ public sealed class AdvancedGpuResourcePublicationSnapshot
         AdvancedGpuHandle handle,
         XRTexture source,
         ulong sourceContentGeneration,
-        IAdvancedGpuPublicationSourceLifetime? lifetime)
+        IAdvancedGpuPublicationSourceLifetime? lifetime,
+        bool sourceAlreadyReserved = false)
     {
         ArgumentNullException.ThrowIfNull(source);
         if (!handle.IsValid || handle.Index >= (uint)_textureSources.Length ||
@@ -131,7 +132,9 @@ public sealed class AdvancedGpuResourcePublicationSnapshot
             return false;
         }
 
-        if (lifetime is not null && !lifetime.TryRetainPublication(sourceContentGeneration))
+        if (lifetime is not null && !lifetime.TryRetainPublication(sourceContentGeneration) &&
+            !(sourceAlreadyReserved && lifetime is AdvancedMutableTexturePublicationLifetime mutable &&
+                mutable.TryRetainReservedGeneration(sourceContentGeneration)))
             return false;
 
         _textureSources[checked((int)handle.Index)] = source;

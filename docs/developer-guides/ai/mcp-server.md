@@ -455,6 +455,46 @@ reuse the editor UI implementation:
 These commands are intended for exact editor-workflow validation; direct
 importer or scene-instantiation calls do not prove those UI paths.
 
+### Shader Command Coverage And Eye Captures
+
+`configure_shader_command_coverage(enabled: true)` enables a bounded diagnostic
+collector. `get_shader_command_coverage` returns authored shader identities,
+language, stage, entry point, source revision/hash, and direct/indirect draw or
+dispatch counters. OpenGL reports CPU-issued commands; Vulkan reports commands
+recorded into command buffers. Neither proves fragments were produced, successful
+submission, or GPU completion. Pair this evidence with captures and validation.
+
+The collector is disabled by default and caches metadata when programs link.
+Draw/dispatch hooks allocate no metadata. Its 4,096-entry limit is explicit;
+`dropped_registrations` remains visible after a counter reset. Disable collection
+before timing a workload. `reset_shader_command_coverage` clears counters while
+preserving valid linked-program tokens. Snapshot counters are individually atomic,
+not a transactional frame snapshot. Authored-source hashes do not identify every
+preprocessor permutation or compiled artifact. The response lists excluded raw
+native/mesh-task paths and cached command replay; zero counts are not evidence of
+unsupported shaders.
+
+For `capture_viewport_screenshot`, `include_screen_space_ui: true` captures the
+composited desktop region. An explicit OpenXR `vr_eye: left|right` reads that
+eye's retained preview through `capture_openxr_eye_preview_texture`, including
+true single-pass stereo where legacy per-eye pipelines are released. Enable
+`VrCopyEyePreviewTextures` (Unit Testing World: `PreviewVRStereoViews`) first.
+The response includes `preview_copy_frame_id`, the render frame whose copy was
+issued; readback provides the captured pixels. An unavailable/failed preview,
+changed session, or wrong renderer fails explicitly. OpenXR eye capture uses the
+session's owning window; window/viewport/layer indices must be zero. UI and camera
+node selection cannot be combined with an explicit eye capture.
+
+On OpenGL, preview publication requires complete read/draw framebuffers and a
+blit without a GL error; a failed attempt leaves its copy frame ID invalid.
+This qualifies a successful copy operation, not GPU completion. Screenshot
+readback supplies the completion boundary before returning pixels.
+
+Screenshot scheduling propagates scope/readback failures, removes pending event
+callbacks on cancellation, and times out after 20 seconds. GPU cleanup already
+in flight can finish after cancellation; a completed readback is still required
+before any successful response.
+
 ### Viewport Sequence Capture Sessions
 
 Temporal captures use an asynchronous session so an MCP request does not remain open for the duration of capture and exceed the server's request timeout. Start a session, poll it by `capture_id`, and optionally cancel it. Only one sequence capture may be active for a given viewport at a time.
@@ -528,13 +568,16 @@ pwsh Tools/Reports/generate_mcp_docs.ps1
 | `build_and_reload_renderer` | Build one backend leaf project and activate exactly one validated collectible generation. |
 | `bulk_reparent_nodes` | Reparent multiple scene nodes to a new parent (or root) in one call. |
 | `cancel_viewport_sequence_capture` | Cancel an active viewport sequence capture, drain in-flight readbacks, and finalize its partial manifest/contact sheet. |
+| `get_openxr_runtime_diagnostics` | Read session state, exact submission ownership and XR swapchain retirement without forcing GPU completion. |
+| `request_openxr_session_exit` | Request the runtime's orderly session exit; inspect diagnostics for asynchronous completion. |
 | `capture_openxr_desktop_mirror_texture` | Capture the latest OpenXR desktop mirror texture and report pixel statistics. |
 | `capture_openxr_eye_preview_texture` | Capture the latest OpenXR preview copy for the left or right eye and report pixel statistics. |
-| `capture_render_pipeline_texture` | Capture a named live render-pipeline texture to PNG, EXR, or Radiance HDR and report pixel statistics. |
-| `capture_viewport_screenshot` | Capture the viewport target; `include_screen_space_ui: true` captures the composited desktop window region, including UI. Vulkan retains acquired-image ownership through a diagnostic copy before present. |
+| `capture_render_pipeline_texture` | Capture a named render-pipeline texture or a live texture object ID to PNG, EXR, or Radiance HDR and report pixel statistics. |
+| `capture_viewport_screenshot` | Capture a viewport or camera screenshot. Set include_screen_space_ui to capture the composited desktop window region including overlays. |
 | `clear_selection` | Clear the current scene-node selection. |
 | `clone_scene` | Deep-clone a scene for experimentation. The clone is added to the world (hidden by default). |
 | `compile_game_scripts` | Regenerate game project files, compile, and hot-reload the game DLL. Returns compilation result. |
+| `configure_shader_command_coverage` | Enable or disable bounded shader command coverage. It is disabled by default. |
 | `configure_vulkan_final_presentation_ledger` | Enable, freeze/unfreeze, or clear the Vulkan final-presentation ledger. Invariant failures freeze it automatically. |
 | `cook_asset` | Cook/package an asset for optimized runtime loading. Creates a cooked binary file at the specified output location. |
 | `copy_game_asset` | Copy a file within the game project's assets directory. |
@@ -562,10 +605,12 @@ pwsh Tools/Reports/generate_mcp_docs.ps1
 | `find_nodes_by_name` | Find scene nodes by name (exact or contains). |
 | `find_nodes_by_type` | Find scene nodes that have a component type. |
 | `focus_node_in_view` | Focus the editor camera on a scene node. |
+| `get_advanced_profile_diagnostics` | Get the selected viewport's Advanced capability, blocker, executable-stage, realized-resource, per-view, and captured GPU-counter evidence. |
 | `get_assembly_types` | List all types in a specific loaded assembly. |
 | `get_asset_dependencies` | List all assets referenced/embedded by a given asset. Specify by asset GUID or file path. |
 | `get_asset_info` | Get detailed info about a loaded asset by ID or path. |
 | `get_asset_references` | Find all loaded assets and scene nodes that reference a given asset. Specify by asset GUID or file path. |
+| `get_camera_post_process` | Read current post-process stage keys, parameter values, ranges and enum options for a desktop or VR camera. |
 | `get_compile_errors` | Compile the game scripts and return any errors and warnings as structured data. |
 | `get_compile_status` | Get the current compilation state of the game scripts: whether scripts are dirty, last binary path, compile-on-change status. |
 | `get_component_events` | List events on a component with subscriber counts. |
@@ -595,10 +640,12 @@ pwsh Tools/Reports/generate_mcp_docs.ps1
 | `get_scene_node_info` | Get detailed info about a scene node, including transform and components. |
 | `get_scene_statistics` | Get scene statistics including node and component counts. |
 | `get_selection` | Get the currently selected scene nodes. |
+| `get_shader_command_coverage` | Return opt-in shader command coverage. OpenGL counters are issued commands; Vulkan counters are command-buffer Recorded commands, never GPU-completed work. |
 | `get_texture_streaming_summary` | Return imported texture streaming summary telemetry, including Vulkan freeze and generation state. |
 | `get_time_state` | Get timing, delta, and target frequency information. |
 | `get_transform_decomposed` | Get local/world/render translation, rotation, and scale for a scene node. |
 | `get_transform_matrices` | Get local/world/render matrices for a scene node. |
+| `get_transform_tool_state` | Inspect the active transform gizmo's target, display matrices, scale and reference camera without changing selection. |
 | `get_type_hierarchy_tree` | Get a full inheritance tree rooted at a type as nested JSON. Supports up/down/both direction. |
 | `get_type_info` | Get full type metadata (name, namespace, base type, interfaces, flags) for any loaded type. |
 | `get_type_members` | Get properties, fields, methods, events, and constructors from any loaded type. |
@@ -644,6 +691,7 @@ pwsh Tools/Reports/generate_mcp_docs.ps1
 | `prefab_revert_overrides` | Revert recorded prefab overrides on an instance by restoring source prefab values. |
 | `probe_editor_depth_hit` | Probe the editor camera pawn depth-hit state at a normalized viewport coordinate. |
 | `probe_render_pipeline_depth` | Read depth from a named render-pipeline FBO at a normalized viewport coordinate. |
+| `query_advanced_pick` | Asynchronously resolve canonical Advanced visibility identities at one normalized viewport coordinate without a synchronous GPU readback. |
 | `query_references` | Query references for assets, scene nodes, and components by GUID. |
 | `read_game_asset` | Read the raw text contents of a file from the game project's assets directory (.asset, .json, .xml, .yaml, .cs, etc.). |
 | `read_game_config` | Read the contents of a config file from the project's Config/ directory. |
@@ -656,6 +704,7 @@ pwsh Tools/Reports/generate_mcp_docs.ps1
 | `rename_game_script` | Rename or move a .cs script file within the game project's assets directory. |
 | `rename_scene_node` | Rename a scene node by ID. |
 | `reparent_node` | Reparent a scene node to a new parent. |
+| `reset_shader_command_coverage` | Reset shader command counters without invalidating linked-program metadata tokens. |
 | `restart_renderer` | Transactionally restart the selected active backend generation. Active OpenXR requires restart_openxr_session=true; active OpenVR remains blocked. |
 | `restore_world_state` | Restore the active world from a previously captured snapshot. |
 | `rotate_transform` | Apply a local rotation to a scene node's transform (degrees). |
@@ -668,11 +717,14 @@ pwsh Tools/Reports/generate_mcp_docs.ps1
 | `select_node_by_name` | Select scene nodes by display name. |
 | `set_active_scene` | Set a scene as active (first in scene list). |
 | `set_asset_import_options` | Set a third-party import option property and save it. |
+| `set_camera_post_process_parameter` | Set one declared camera post-process parameter. Read get_camera_post_process first for exact keys, types, ranges and enum values. Applies only to the selected camera. |
+| `set_camera_tsr_render_scale` | Set the selected camera's TSR render scale from 0.5 to 1.0; omit scale to restore the global setting. Takes effect when TSR is active. Resource and history changes are applied by the next frame publication. |
 | `set_compile_on_change` | Toggle CodeManager.CompileOnChange: when enabled, game scripts auto-compile when .cs files change and editor regains focus. |
 | `set_component_properties` | Set multiple component properties/fields in one call. |
 | `set_component_property` | Set a component property or field value by name. |
 | `set_editor_camera_depth_mode` | Set normal or reversed-Z depth on the active editor camera and invalidate its viewport. |
 | `set_editor_camera_render_on_demand` | Set render-on-demand for the active editor camera pawn and optionally invalidate the viewport. |
+| `set_editor_camera_render_pipeline_asset` | Assign a loaded render-pipeline asset to the active editor camera by ID, path, or name. |
 | `set_editor_camera_view` | Set the editor camera view with interpolation using position plus look-at or Euler rotation. |
 | `set_editor_preference` | Set an editor preference by property name or dotted path, either persistently or for this editor session only. |
 | `set_game_setting` | Set a game startup setting by property name or dotted path, persistently or for the active process only. |

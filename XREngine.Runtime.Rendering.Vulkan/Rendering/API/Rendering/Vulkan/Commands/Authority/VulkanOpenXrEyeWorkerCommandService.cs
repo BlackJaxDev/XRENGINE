@@ -123,14 +123,18 @@ internal sealed class VulkanOpenXrEyeWorkerCommandService : IDisposable
                 runtime.ResourceRuntime.FrameDataArena?.Generation ?? 0UL,
                 frameSlots,
                 0L,
-                0L);
+                0L,
+                submissionShape: XREngine.Rendering.API.Rendering.OpenXR.EOpenXrSubmissionShape.PairedEyesParallel);
+            if (!trackerOwnsSubmission)
+                throw new InvalidOperationException("OpenXR parallel-eye submission could not transfer its payload to the submission tracker.");
             VulkanOpenXrSubmissionInput submissionInput = new(
                 leftRecorded.CommandBuffer,
                 rightRecorded.CommandBuffer,
                 default,
                 2,
                 diagnosticContext,
-                AdmissionTicket: admissionTicket);
+                AdmissionTicket: admissionTicket,
+                Shape: XREngine.Rendering.API.Rendering.OpenXR.EOpenXrSubmissionShape.PairedEyesParallel);
             VulkanOpenXrSubmissionResult submission =
                 runtime.SubmitAndWaitOpenXr(in submissionInput);
     
@@ -174,6 +178,14 @@ internal sealed class VulkanOpenXrEyeWorkerCommandService : IDisposable
     {
         if (result.RecordedUploads is { Length: > 0 } uploads)
             runtime.CancelOpenXrRecordedTextureUploads(uploads.AsSpan(), reason);
+        if (result.Success && result.Recorded.CommandBuffer.Handle != 0 &&
+            !runtime.ResourceRuntime.Lifetime.Tracker.DeviceLost)
+        {
+            OpenXrRecordedEyeCommandBuffer recorded = result.Recorded;
+            runtime.MarkUnsubmittedOpenXrPrimaryCommandBufferDirty(in recorded, reason);
+            runtime.ResourceRuntime.ResidentTemplateFrameSlotLifetimes.ReleaseFrameSlot(
+                checked((int)result.Recorded.FrameDataSlotIndex));
+        }
     }
 
     public void Dispose()

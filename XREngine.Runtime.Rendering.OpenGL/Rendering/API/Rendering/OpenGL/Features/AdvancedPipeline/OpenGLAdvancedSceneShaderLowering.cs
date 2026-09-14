@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.RegularExpressions;
+using XREngine.Rendering.Shaders;
 
 namespace XREngine.Rendering.OpenGL;
 
@@ -81,7 +82,7 @@ internal static class OpenGLAdvancedSceneShaderLowering
                 1u => 224u,
                 2u => 320u,
                 3u or 7u or 8u or 21u => 64u,
-                4u => 928u,
+                4u => AdvancedShaderRecordLayout.ViewSize,
                 5u or 14u => 128u,
                 6u => 272u,
                 9u or 22u => 48u,

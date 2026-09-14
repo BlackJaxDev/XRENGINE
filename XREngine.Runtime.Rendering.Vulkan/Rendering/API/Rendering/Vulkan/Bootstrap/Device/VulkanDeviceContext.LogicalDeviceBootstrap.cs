@@ -20,6 +20,9 @@ internal sealed unsafe partial class VulkanDeviceContext
     private const string NvDeviceDiagnosticCheckpointsExtensionName = "VK_NV_device_diagnostic_checkpoints";
     private const string NvDeviceDiagnosticsConfigExtensionName = "VK_NV_device_diagnostics_config";
     private const string SwapchainMaintenance1ExtensionName = "VK_EXT_swapchain_maintenance1";
+    private const string UnifiedImageLayoutsExtensionName = "VK_KHR_unified_image_layouts";
+    private const string DeviceAddressCommandsExtensionName = "VK_KHR_device_address_commands";
+    private const string RenderBenchUnifiedLayoutsEnvironmentVariable = "XRE_VK_RENDER_BENCH_UNIFIED_IMAGE_LAYOUTS";
     internal static readonly string[] DefaultOptionalDeviceExtensions =
     [
         "VK_KHR_multiview",
@@ -347,6 +350,10 @@ internal sealed unsafe partial class VulkanDeviceContext
         var availableExtensionSet = new HashSet<string>(
             _deviceContext.AvailableDeviceExtensions,
             StringComparer.Ordinal);
+        bool unifiedImageLayoutsRequested = string.Equals(
+            Environment.GetEnvironmentVariable(RenderBenchUnifiedLayoutsEnvironmentVariable),
+            "1",
+            StringComparison.Ordinal);
         bool meshShaderExtensionAdvertised = availableExtensionSet.Contains(ExtMeshShader.ExtensionName);
         bool meshShaderExtensionRequested = _deviceContext.Configuration.OptionalDeviceExtensions.Contains(
             ExtMeshShader.ExtensionName,
@@ -419,6 +426,12 @@ internal sealed unsafe partial class VulkanDeviceContext
         AddDiagnosticDeviceExtensionIfRequested(ExtDeviceAddressBindingReportExtensionName, _frameTelemetry._diagnosticOptions.RequestDeviceAddressBindingReport);
         AddDiagnosticDeviceExtensionIfRequested(NvDeviceDiagnosticCheckpointsExtensionName, _frameTelemetry._diagnosticOptions.RequestNvDiagnosticCheckpoints);
         AddDiagnosticDeviceExtensionIfRequested(NvDeviceDiagnosticsConfigExtensionName, _frameTelemetry._diagnosticOptions.RequestNvDiagnosticsConfig);
+
+        // This extension remains an explicit RenderBench-only experiment. The
+        // production resource/layout policy is intentionally unchanged until a
+        // paired correctness and timing result is retained.
+        if (unifiedImageLayoutsRequested)
+            AddDiagnosticDeviceExtensionIfRequested(UnifiedImageLayoutsExtensionName, true);
 
         foreach (string optionalExt in _deviceContext.Configuration.OptionalDeviceExtensions)
         {
@@ -596,6 +609,24 @@ internal sealed unsafe partial class VulkanDeviceContext
              bufferDeviceAddressRequiredByStreamline);
         if (VulkanNativeShadingRootPolicy.UsesAddress && !enableBufferDeviceAddress)
             throw new NotSupportedException("XRE_VK_NATIVE_SHADING_ROOT=BufferDeviceAddress requires the Vulkan bufferDeviceAddress feature.");
+
+        bool unifiedImageLayoutsExtensionAvailable = availableExtensionSet.Contains(UnifiedImageLayoutsExtensionName);
+        bool unifiedImageLayoutsExtensionEnabled = extensionsArray.Contains(UnifiedImageLayoutsExtensionName);
+        _deviceContext.QueryUnifiedImageLayoutsCapabilities(
+            unifiedImageLayoutsExtensionAvailable,
+            out bool unifiedImageLayoutsFeatureSupported,
+            out bool unifiedImageLayoutsVideoFeatureSupported);
+        bool enableUnifiedImageLayouts = unifiedImageLayoutsRequested &&
+            unifiedImageLayoutsExtensionEnabled &&
+            unifiedImageLayoutsFeatureSupported;
+        if (unifiedImageLayoutsRequested && !enableUnifiedImageLayouts)
+            throw new NotSupportedException(
+                $"{RenderBenchUnifiedLayoutsEnvironmentVariable}=1 requires {UnifiedImageLayoutsExtensionName} and unifiedImageLayouts=true on the selected device.");
+
+        bool deviceAddressCommandsExtensionAvailable = availableExtensionSet.Contains(DeviceAddressCommandsExtensionName);
+        _deviceContext.QueryDeviceAddressCommandsCapabilities(
+            deviceAddressCommandsExtensionAvailable,
+            out bool deviceAddressCommandsFeatureSupported);
 
         bool dynamicRenderingExtensionEnabled = extensionsArray.Contains("VK_KHR_dynamic_rendering");
         _deviceContext.QueryDynamicRenderingCapabilities(
@@ -1013,6 +1044,16 @@ internal sealed unsafe partial class VulkanDeviceContext
             IndexTypeUint8 = enableIndexTypeUint8Feature,
         };
 
+        PhysicalDeviceUnifiedImageLayoutsFeaturesKHRNative unifiedImageLayoutsFeatureEnable = new()
+        {
+            SType = PhysicalDeviceUnifiedImageLayoutsFeaturesKHRNative.StructureType,
+            PNext = null,
+            UnifiedImageLayouts = enableUnifiedImageLayouts,
+            // RenderBench covers ordinary image layouts only; video images retain
+            // their separate policy and are never enabled incidentally.
+            UnifiedImageLayoutsVideo = false,
+        };
+
         PhysicalDeviceShaderUntypedPointersFeaturesKHR shaderUntypedPointersFeatureEnable = new()
         {
             SType = StructureType.PhysicalDeviceShaderUntypedPointersFeaturesKhr,
@@ -1332,6 +1373,7 @@ internal sealed unsafe partial class VulkanDeviceContext
         featureChainBuilder.Prepend(
             ref bufferDeviceAddressFeatureEnable,
             enableBufferDeviceAddress && !useVulkan12FeatureEnable);
+        featureChainBuilder.Prepend(ref unifiedImageLayoutsFeatureEnable, enableUnifiedImageLayouts);
         featureChainBuilder.Prepend(ref descriptorHeapFeatureEnable, enableDescriptorHeapFeature);
         featureChainBuilder.Prepend(
             ref shaderUntypedPointersFeatureEnable,
@@ -1431,6 +1473,10 @@ internal sealed unsafe partial class VulkanDeviceContext
         _deviceContext.MutableCapabilities._supportsMaintenance6 = enableMaintenance6Feature;
         _deviceContext.MutableCapabilities._supportsShaderDemoteToHelperInvocation = enableShaderDemoteToHelperInvocationFeature;
         _deviceContext.MutableCapabilities._supportsShaderTerminateInvocation = enableShaderTerminateInvocationFeature;
+        _deviceContext.MutableCapabilities._supportsUnifiedImageLayouts = enableUnifiedImageLayouts;
+        _deviceContext.MutableCapabilities._unifiedImageLayoutsFeatureSupported = unifiedImageLayoutsFeatureSupported;
+        _deviceContext.MutableCapabilities._unifiedImageLayoutsVideoFeatureSupported = unifiedImageLayoutsVideoFeatureSupported;
+        _deviceContext.MutableCapabilities._deviceAddressCommandsFeatureSupported = deviceAddressCommandsFeatureSupported;
         _deviceContext.MutableCapabilities._supportsExtendedFlags = extendedFlagsExtensionEnabled;
         ResourceRuntime.Descriptors._descriptorHeapFeatureSupported = descriptorHeapFeatureSupported;
         ResourceRuntime.Descriptors._descriptorHeapCaptureReplaySupported = descriptorHeapCaptureReplaySupported;

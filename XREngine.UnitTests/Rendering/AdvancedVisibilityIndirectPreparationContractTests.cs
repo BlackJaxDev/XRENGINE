@@ -343,5 +343,6 @@ public sealed class AdvancedVisibilityIndirectPreparationContractTests
             PrimitiveTopology: 4u,
             Skinned: skinned,
             MeshletsResident: meshlets,
-            ForceCpuDiagnostic: false);
+            ForceCpuDiagnostic: false,
+            TemporalReason: EAdvancedVelocityValidityReason.Valid);
 }

@@ -247,10 +247,10 @@ at least one sample has been written. Harness summaries are written under
 `summary.json`, `summary.txt`, and `run-logdirs.txt`; by default the harness keeps
 only the latest three summary runs, configurable with `-RetainedRunCount`.
 
-### Render Stats Capture Schema v8
+### Render Stats Capture Schema v9
 
 `profiler-capture-manifest.json` now records
-`xrengine.profile_capture.render_stats.v8` with `schema_version = 8`. The
+`xrengine.profile_capture.render_stats.v9` with `schema_version = 9`. The
 manifest makes benchmark context explicit: build configuration, world mode,
 forced and effective mesh submission strategy, zero-readback material draw path,
 render backend, GPU/vendor, scene, camera, lights, viewport, render scale,
@@ -311,6 +311,26 @@ render: `update_frame_id`, `collect_frame_id`, `swap_frame_id`,
 `XRE_COLLECT_VISIBLE_LATE_POLICY=ReusePreviousVisibility` records stale-snapshot
 reuse when render intentionally skips a late collect/swap wait; the default
 `BlockUntilFresh` preserves fresh visibility publication before render.
+
+Vulkan samples retain the latest PresentNow readiness failure as
+`vulkan_present_now_failure_*`. `sequence` identifies the retained diagnostic,
+while `frame_id`, `frame_slot`, accepted scene epoch, and output generation make
+its ownership explicit. The diagnostic frame ID follows
+`vulkan_frame_engine_frame_number`, not a reused recording's source frame ID.
+Treat `vulkan_present_now_failure_matches_frame` as the
+attribution gate: a false value means the diagnostic does not match this sample
+and must not be reported as a new failure. The retained diagnostic also includes the
+readiness stage, active ticket, dependency chain, disposition, failure type, and
+detail without requiring a separate debug-log capture.
+
+`vulkan_material_table_*` reports native bank allocation, demand-growth retries,
+standby allocation/claim/failure totals, and current bank/pending counts for the
+same renderer authority. Check `vulkan_material_table_diagnostics_available`
+before reading them. These are lifetime totals and current occupancy, not work
+attributed to one frame. Standby work is counted separately from demand-growth
+admission; a completed reserve can be claimed without another rejected frame.
+The map maintains at most one completed and one pending reserve per arena
+generation and frame slot, with a demand allocation slot kept available.
 
 Frame output fields decompose the shared render-thread frame across desktop,
 mirror, XR submit, overlay, and present work. Top-level fields include
@@ -833,3 +853,28 @@ adapter/driver identity, output hash, optional PNG, and explicit gates for
 fixture/shader/fallback identity, expected work, query drainage, allocations,
 and percentile budgets. Expected counters are per retained frame and are
 multiplied by `capture_frames * repetitions` during validation.
+
+### Zero-readback validation scope
+
+`Tools/Measure-GameLoopRenderPipeline.ps1` accepts
+`-ZeroReadbackValidationScope All|Capture`. `All` is the default strict
+whole-run policy. `Capture` validates only the steady-state capture window;
+both modes retain `AllGpuReadbackBytesTotal` and
+`AllGpuMappedBuffersTotal` for diagnosis. The
+`Measure-Vulkan14Baseline.ps1` wrapper explicitly selects `Capture` to match
+the self-iteration steady-state contract, which permits bounded startup
+initialization readbacks while requiring zero readback in retained capture
+samples. It also forwards `-SampleIntervalFrames`; the default is 10.
+
+Readback counters are emitted per retained profiler sample. With
+`SampleIntervalFrames=10`, an event between retained samples can be absent
+from the parsed counter stream. Use `-SampleIntervalFrames 1` for correctness
+validation and producer diagnosis, and keep that run separate from performance
+claims because denser sampling changes measurement overhead.
+
+The Vulkan baseline wrapper independently invalidates a cohort when the raw
+`profiler-render-exceptions.log` is nonempty, even if the exception happened
+between retained samples. Generic startup exposure or buffer-mapping counters
+do not prove mesh fallback, and allowing startup readbacks under `Capture` does
+not permit readbacks during the capture window. The validation scope adds no
+environment variables.

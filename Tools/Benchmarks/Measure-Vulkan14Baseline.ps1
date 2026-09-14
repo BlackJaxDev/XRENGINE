@@ -25,6 +25,7 @@ param(
     [ValidateRange(1, 20)][int]$FirstRepetition = 1,
     [ValidateRange(1, 600)][int]$WarmupSec = 25,
     [ValidateRange(1, 3600)][int]$CaptureSec = 60,
+    [ValidateRange(1, 10000)][int]$SampleIntervalFrames = 10,
     [switch]$SkipCacheSeed,
     [switch]$ContinueOnInvalidCohort
 )
@@ -104,11 +105,12 @@ function Invoke-Cohort([string]$Binding, [string]$Workload, [string]$ReusePolicy
         EditorExecutablePath = $EditorExecutablePath; OutputDirectory = $output
         Configuration = 'Release'; RenderBackend = 'Vulkan'; UnitTestVrMode = 'Desktop'
         UnitTestingWorldSettingsPath = $settings; Strategies = @('GpuIndirectZeroReadback')
-        ZeroReadbackMaterialDrawPath = 'BindlessMaterialTable'; ProfileMode = 'ReleaseBenchmark'
+        ZeroReadbackMaterialDrawPath = 'BindlessMaterialTable'; ZeroReadbackValidationScope = 'Capture'
+        ProfileMode = 'ReleaseBenchmark'
         ProfileScene = $(if ($RenderPipeline -eq 'AdvancedRenderPipeline') { "Vulkan14-Advanced-$Workload" } else { "Vulkan14-$Workload" })
         ProfileCamera = $(if ($Workload -eq 'Moving') { 'Moving' } else { 'Static' })
         ProfileLights = 'CanonicalDirectional'; ProfileViewport = '1920x1080'; RenderScale = '1.0'
-        WindowWidth = 1920; WindowHeight = 1080; SampleIntervalFrames = 10
+        WindowWidth = 1920; WindowHeight = 1080; SampleIntervalFrames = $SampleIntervalFrames
         VulkanPresentationProfile = 'Uncapped'; GpuClockPolicy = 'UnmanagedBoost'
         VulkanRenderTargetMode = 'DynamicRendering'; VulkanDiagnosticPreset = 'Off'
         VulkanPrimaryReuse = $reuseOptions.VulkanPrimaryReuse; VulkanCommandChains = $reuseOptions.VulkanCommandChains
@@ -171,6 +173,13 @@ function Invoke-Cohort([string]$Binding, [string]$Workload, [string]$ReusePolicy
         }
         else {
             Get-ChildItem -LiteralPath $run.LogDir -File | Copy-Item -Destination $raw
+        }
+        # Exceptions can occur between retained profiler samples, including
+        # during warmup. They invalidate the run independently of timing data.
+        $renderExceptions = Join-Path $raw 'profiler-render-exceptions.log'
+        if ((Test-Path -LiteralPath $renderExceptions) -and
+            -not [string]::IsNullOrWhiteSpace([IO.File]::ReadAllText($renderExceptions))) {
+            $invalidReasons.Add('The render loop reported an exception; inspect raw/profiler-render-exceptions.log.')
         }
         if ($run.Samples -lt 10 -or -not $run.StabilityReady -or $run.Note -match 'exited early|no render-stats progress|forced stop|violation|requested backend|requested strategy|rejected submissions|unapproved output policy') {
             $invalidReasons.Add("Incomplete or invalid capture: samples=$($run.Samples), stable=$($run.StabilityReady), note=$($run.Note)")

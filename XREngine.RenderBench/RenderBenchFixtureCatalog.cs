@@ -82,8 +82,11 @@ public static class RenderBenchFixtureCatalog
                definition.ExecutionModes.Contains(mode))
            ?? throw new NotSupportedException($"No deterministic fixture '{name}' targets component '{component}' in mode '{mode}'.");
 
-    public static IRenderBenchFixture Create(RenderProfileRecipe recipe)
-        => new SyntheticRenderBenchFixture(Get(recipe.Fixture, recipe.Component, recipe.ExecutionMode), recipe);
+    public static IRenderBenchFixture Create(RenderProfileRecipe recipe, bool useUnifiedImageLayouts)
+        => new SyntheticRenderBenchFixture(
+            Get(recipe.Fixture, recipe.Component, recipe.ExecutionMode),
+            recipe,
+            useUnifiedImageLayouts);
 
     private static RenderBenchFixtureDefinition GpuPass(string name, string component)
         => new(name, component, RenderBenchFixtureKind.GpuPass, s_both,

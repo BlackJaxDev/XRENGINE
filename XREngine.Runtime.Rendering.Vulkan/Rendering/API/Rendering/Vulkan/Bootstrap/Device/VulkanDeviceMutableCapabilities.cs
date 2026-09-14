@@ -67,6 +67,10 @@ internal sealed class VulkanDeviceMutableCapabilities
     internal bool _supportsMaintenance6;
     internal bool _supportsShaderDemoteToHelperInvocation;
     internal bool _supportsShaderTerminateInvocation;
+    internal bool _supportsUnifiedImageLayouts;
+    internal bool _unifiedImageLayoutsFeatureSupported;
+    internal bool _unifiedImageLayoutsVideoFeatureSupported;
+    internal bool _deviceAddressCommandsFeatureSupported;
     internal bool _supportsExtendedFlags;
     internal bool _supportsDescriptorHeap;
     internal bool _supportsShaderObject;

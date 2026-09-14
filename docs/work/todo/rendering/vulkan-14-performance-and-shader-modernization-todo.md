@@ -1,10 +1,29 @@
 # Vulkan 1.4 Performance And Shader Modernization TODO
 
-Last Updated: 2026-09-10
+Last Updated: 2026-09-14
 
 Owner: Rendering / Vulkan
 
-Status: Phases A–C, D1–D3, E1–E5, F1–F3 and G1–G3 complete; D4 research and phases H–J open
+Status: Selected implementation, stability validation and H6/I policy decisions complete; D4 remains the sole unchecked, explicitly deferred implementation item
+
+The [final validation and outcome ledger](../../investigations/rendering/vulkan14-final-validation-2026-09-14.md)
+records viewed water/reload and Monado controls, final policy measurements,
+accepted behavior and remaining evidence limits. The framebuffer restoration
+and shader-replacement defects found by H6 are fixed and runtime-validated.
+Broader Slang coverage remains outside the selected scope. D4 is deliberately
+unchecked: the rejected candidate was removed, and further specialization needs
+usable GPU-gap evidence and a measured opportunity. I2 closes its evaluation
+with a defer decision; no unsupported address-command implementation is implied.
+The [September 14 follow-up](../../investigations/rendering/vulkan14-followup-stability-and-validation-2026-09-14.md)
+restored the selected tests, with 100 distinct cases passing including material
+contracts and two/three-slot native controls,
+closed G's long-resize failure, and completed I3's exact pending-submission
+retention proof. E's retired-buffer exception and asynchronous material-table
+admission gap are fixed: all eight every-frame controls pass, totaling 11,080
+captured frames with zero rejected frames, validation errors or capture readbacks.
+The material benchmark also records the existing asynchronous texture
+publication/pop-in policy explicitly; it does not claim strict required-texture admission.
+Broader class-wide test failures remain separately recorded.
 
 ## Objective And Evidence
 
@@ -355,11 +374,15 @@ Sources:
   specific callers justified by D3, preserving generic API semantics.
   **Done when:** synchronization validation and viewed output pass, GPU timing/gap
   comparisons are recorded, and each change has a retain/reject/defer decision.
-  **Disposition:** the first candidate passed viewed synchronization validation
-  but failed promotion criteria and was restored to the generic barrier. GPU
-  gap capture requires driver counter access. Research is reopened with explicit
-  evidence gates and ranked experiments in the linked barrier report; no later
-  phase or arbitrary date is a prerequisite.
+  **Final disposition: reject the tested candidate; defer further implementation.**
+  The first candidate passed viewed synchronization validation but improved
+  frame/GPU medians only 2.95%/1.27%, below the 5% gate. GPU control spread was
+  10.07% and frame p99 increased 14.03%. The generic barrier is restored.
+  Actual GPU-gap evidence remains unavailable; no overlap claim or implemented
+  specialization remains. Re-entry requires driver counter/scheduling access,
+  a measured critical-path opportunity, complete consumer coverage and stable
+  paired controls as specified in the barrier report. No later phase or date
+  triggers the work automatically. This unchecked item is the recorded handoff.
 
 ## E. Improve Command Reuse And Heap Publication
 
@@ -531,8 +554,10 @@ Source:
   `Immediate` remains default. Exact presentationless Advanced output with
   descriptor indexing is supported; heap/set-only selection rejects explicitly.
   Static, material, short resize/restore and split-moving controls are
-  byte-identical with zero Vulkan validation errors. Long-resize admission fails
-  in both variants and remains a separately documented control-path issue.
+  byte-identical with zero Vulkan validation errors. The September 14 follow-up
+  fixed logical-extent preparation and descriptor frame-slot sizing. Both long
+  resize controls now pass 481 submitted frames, including the first resized
+  image and exact restoration, with zero standard/synchronization errors.
 - [x] **G3 — Decide from full CPU/GPU costs.** Compare root loads, shader time,
   descriptor work, preparation, and rerecording across representative scenes.
   **Done when:** the note records the chosen ABI/variant or rejects/defers it;
@@ -591,43 +616,65 @@ Sources:
 [VulkanShaderArtifactRuntimeFingerprint.cs](../../../../XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Shaders/VulkanShaderArtifactRuntimeFingerprint.cs).
 The current GLSL preparation/compiler is linked in phase A.
 
-The existing [Slang cross-compile plan](../../design/scripting/slang-shader-cross-compile-plan.md)
-contains a mandatory GLSL-through-Slang stage and a later default switch. Neither
-is a prerequisite here. This backlog requires continued independent GLSL and
-Slang frontends, with no automatic retirement of GLSL/OpenGL support.
+The [Slang cross-compile plan](../../design/scripting/slang-shader-cross-compile-plan.md)
+now agrees with independent GLSL and Slang frontends, with no automatic retirement
+of GLSL/OpenGL support. The [native frontend investigation](../../investigations/rendering/vulkan14-native-slang-2026-09-10.md)
+records the implemented request, physical/semantic ABI, cache and diagnostic
+contracts and the passing frontend validation. H5's actual compute/material GPU
+pilots retain Slang as opt-in: output and reload agree, compilation costs are
+higher, and no general frame-time speedup is established. The
+[H6 qualification matrix](../../investigations/rendering/vulkan14-h6-qualification-2026-09-14.md)
+records the representative backend/stereo coverage and its explicit limits.
 
-- [ ] **H1 — Define the frontend contract and reconcile the older plan.** Specify
+- [x] **H1 — Define the frontend contract and reconcile the older plan.** Specify
   requests/results for language, target, stage/entry point, capabilities, emitted
   artifact, layouts, bindings, semantic metadata, and file/line diagnostics.
   **Done when:** the local design and supported backend matrix agree on
   coexistence and do not require translating or retiring existing GLSL.
-- [ ] **H2 — Add opt-in direct Slang compilation.** Integrate the chosen compiler
+- [x] **H2 — Add opt-in direct Slang compilation.** Integrate the chosen compiler
   through H1 without the GLSL rewrite path. Keep Slang selection independent of
   heap selection and report compiler/capability failures visibly.
   **Done when:** one native Slang shader produces validated Vulkan 1.4 SPIR-V
   while existing GLSL compilers remain usable without Slang.
-- [ ] **H3 — Adapt reflection and verify the C# ABI.** Join reflected physical
+- [x] **H3 — Adapt reflection and verify the C# ABI.** Join reflected physical
   layouts with explicit binding-owner/frequency metadata. Generate or validate
   blittable CPU structures and reject ambiguous mappings.
   **Done when:** offsets, strides, matrix order, resource bindings, and semantic
   providers agree for pilot uniforms, arrays, textures, and GPU-address fields.
-- [ ] **H4 — Integrate caching, diagnostics, and background compilation.** Apply
+- [x] **H4 — Integrate caching, diagnostics, and background compilation.** Apply
   the full cache identity above, dependency tracking, session ownership, and
   original source diagnostics. **Done when:** target/module/frontend changes
   invalidate appropriately, concurrent jobs do not share unsafe mutable compiler
   state, and errors identify the original shader location.
-- [ ] **H5 — Pilot one compute shader and one material pass.** Start with
+- [x] **H5 — Pilot one compute shader and one material pass.** Start with
   conventional Vulkan bindings. Compare ABI, output, hot reload, diagnostics,
   warm/cold compile cost, CPU preparation, and GPU time against equivalent GLSL.
   **Done when:** results establish whether to retain/expand Slang, and each shared
   pass has a validated OpenGL route before replacing its existing implementation.
-- [ ] **H6 — Verify continued GLSL and OpenGL support.** Exercise the representative
+  **Status:** actual counter-copy and scene-copy Slang/GLSL assets pass ABI,
+  output, source-reload and production module-generation checks. The report
+  records cold/warm compile costs and CPU/GPU pilot timings. Retain the explicit
+  Vulkan-only opt-in; authored GLSL/OpenGL counterparts and defaults remain.
+- [x] **H6 — Verify continued GLSL and OpenGL support.** Exercise the representative
   shader corpus on both renderers: includes/macros, material parameters, UBO/SSBO,
   textures/images/samplers, matrix and clip-depth conventions, instancing,
   supported stages, and relevant stereo/multiview paths. Evaluate generated
   OpenGL GLSL separately; evaluate native heap/BDA variants only after B/G.
   **Done when:** the supported source/backend matrix is backed by viewed output
   and no mandatory shader-source conversion or hidden renderer substitution.
+  **Disposition: retain the qualified authored GLSL routes and incremental Slang policy.**
+  Desktop Vulkan/OpenGL camera and reload controls are viewed. Final OpenGL
+  water, tessellation, geometry, successful source replacement, invalid-source
+  last-good retention and restoration pass. Final Monado Vulkan true single-pass
+  stereo and explicitly selected OpenGL sequential views have both eyes viewed;
+  Vulkan reports zero validation messages/errors. OpenGL true single-pass
+  requests fail explicitly without another mode or renderer being substituted.
+  Generic eye capture verifies the selected preview copy's frame, and disabled
+  preview copying fails promptly. Source/stage/instancing counters are bounded
+  diagnostics; Vulkan records commands rather than proving GPU completion.
+  The matrix excludes uncounted native mesh/task/replay paths, unqualified Vulkan
+  geometry/tessellation and exhaustive permutations. Generated OpenGL Slang is
+  not qualified; existing authored GLSL counterparts remain in use.
 
 ## I. Evaluate Optional Layout, Address, And Memory Policies
 
@@ -652,21 +699,49 @@ and completion-based retirement. Distinguish CPU-write traffic, GPU bandwidth,
 and readback behavior when choosing memory. Do not make a heap-specific memory
 requirement the universal policy for geometry, textures, and readback.
 
-- [ ] **I1 — Inventory and benchmark a unified-layout variant.** Record extension
+- [x] **I1 — Inventory and benchmark a unified-layout variant.** Record extension
   support and select one pass chain with measurable transition cost; preserve
   all required hazards and exceptional transitions.
   **Done when:** correctness and GPU timing are compared with the existing
   layout policy, and support/performance assumptions stay device-specific.
-- [ ] **I2 — Evaluate address-based command operands where lookup costs matter.**
+  **Disposition: retain specialized; retain GENERAL as an explicit experiment.** Extension/feature inventory, explicit ordinary-feature
+  admission, `--layout-policy specialized|general`, actual-host capability
+  checks, result identity and an eight-pass recipe are implemented. Both
+  policies passed a four-pass correctness smoke with identical output hashes.
+  The [paired RenderBench workflow](../../../developer-guides/rendering/renderbench-layout-policy.md)
+  preserves all barriers and exceptional transitions. Twelve matched RTX 3090
+  processes passed all gates and identical output hashes. Pooled completed GPU
+  median/p95 were 107.328/224.576 microseconds specialized and
+  107.040/338.656 GENERAL. The tiny median difference and worse candidate tail
+  do not justify promotion. See the [final policy measurements](../../investigations/rendering/vulkan14-phase-i-policy-validation-2026-09-14.md);
+  this is a synthetic pass-chain result on one adapter, not a production-wide gain.
+- [x] **I2 — Evaluate address-based command operands where lookup costs matter.**
   Record support, select one index/copy/indirect workload, and retain explicit
   range, ownership, count, and failure handling.
   **Done when:** measurements support a retain/reject/defer decision without
   reducing the existing GPU-driven or resource-lifetime behavior.
-- [ ] **I3 — Verify memory choices for retained heap/address variants.** Compare
+  **Disposition: defer the unsupported experiment.** Extension/feature availability is reported independently
+  of BDA. The 2026-09-13 RTX 3090 inventory does not advertise the command
+  extension. Defer operand code until a supporting device/feature and a measured
+  lookup-cost workload are available; no arbitrary date or later phase enables it.
+- [x] **I3 — Verify memory choices for retained heap/address variants.** Compare
   the relevant existing staging/mapped/device-local placements on target hardware.
   Record allocation properties, traffic, lifetime, and failure requirements.
   **Done when:** any changed placement has a measured workload justification;
   unrelated resources retain their appropriate allocator policy.
+  **Disposition: retain the existing resource-specific VMA/staging policy.** Native buffer diagnostics report the actual tracked memory
+  type, heap, property flags, mapped/coherent/device-local state and allocation
+  owner. Two production retained-buffer probes exercised allocation growth,
+  descriptor pinning and completion-based retirement. DrawMetadata used mapped
+  host-visible/coherent memory; LateDrawIds additionally used host-cached memory.
+  The final two 24-frame controls use an explicit timeline gate to prove that
+  the exact submission is pending while the old generation remains retained.
+  Both reclaim it after completion and slot drain, with zero standard or
+  synchronization errors. Earlier completed-before-query attempts remain
+  excluded from this proof. Zero transfer submission sequence does not measure
+  CPU-write or PCIe traffic. The
+  [placement comparison and limits](../../investigations/rendering/vulkan14-phase-i-policy-validation-2026-09-14.md)
+  justify retaining current placement; no changed allocator policy is selected.
 
 ## Existing Behavior To Preserve
 
@@ -701,7 +776,7 @@ Coordinate with the existing
 and [Present-Now readiness work](vulkan-core-frame-loop-and-resident-rendering-master-todo.md#foundation-carryovers).
 Do not weaken their provenance, readiness, or ownership rules.
 
-- [ ] **J1 — Record the outcome of every selected task and update project docs.**
+- [x] **J1 — Record the outcome of every selected task and update project docs.**
   For each attempt, include task ID, changed behavior, reproduction steps,
   requested/executed API/features, correctness evidence, CPU/GPU measurements,
   user feedback when available, and retain/reject/defer status.
@@ -709,3 +784,13 @@ Do not weaken their provenance, readiness, or ownership rules.
   deferred work has a reason and next decision, Vulkan 1.4 and GLSL/OpenGL
   requirements remain satisfied, and no item is called complete from source
   edits or an isolated performance counter alone.
+  **Final disposition:** the [outcome ledger](../../investigations/rendering/vulkan14-final-validation-2026-09-14.md#j-outcome-ledger)
+  records every task ID, retained/rejected/deferred behavior, requested/executed
+  modes, correctness and timing evidence, reproduction sources and limits.
+  OpenGL framebuffer/linking docs, the MCP capture/coverage reference, the
+  RenderBench workflow and H6/I qualification notes match the accepted behavior.
+  D4 remains an unchecked, gated implementation follow-up; I2's unsupported
+  experiment remain explicit. I3's final pending-submission lifetime proof and
+  G's long-resize controls pass. The selected 95 regression checks and two native
+  frame-slot tests now pass; broader test failures are separately recorded.
+  No broad performance promotion or user visual confirmation is claimed.

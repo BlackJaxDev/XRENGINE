@@ -599,6 +599,8 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         historyOwnershipTransferred = false;
         completionFence = null;
         outputCompletionAuthoringStarted = false;
+        if (_lastRenderDeclineReason is not null)
+            SetField(ref _lastRenderDeclineReason, null, nameof(LastRenderDeclineReason));
         IRuntimeRenderFrameTimingServices frameTiming = RuntimeRenderingHostServices.FrameTiming;
         if (!ApplyLatestRequestedPipelineIfNeeded())
             return ReportExactOutputPreconditionFailure(in outputCompletionRequest, "The requested pipeline transition has not completed.");
@@ -612,7 +614,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                 GetHashCode(),
                 camera?.Transform.SceneNode?.Name ?? "<null>",
                 viewport is null ? "<null>" : $"{viewport.Index}:{viewport.Width}x{viewport.Height}");
-            return false;
+            return DeclineRender("No render pipeline is assigned.");
         }
 
         if (frameTiming.IsPlayModeTransitioning)
@@ -625,7 +627,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                 frameTiming.PlayModeStateName,
                 camera?.Transform.SceneNode?.Name ?? stereoRightEyeCamera?.Transform.SceneNode?.Name ?? "<null>",
                 viewport is null ? "<null>" : $"{viewport.Index}:{viewport.Width}x{viewport.Height}");
-            return false;
+            return DeclineRender("The play-mode transition suspended pipeline execution.");
         }
 
         ApplyCurrentFrameProfile(camera, stereoRightEyeCamera, viewport);
@@ -658,7 +660,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                         ActiveGeneration?.Key.ToString() ?? "<none>",
                         PendingGeneration?.Key.ToString() ?? "<none>",
                         viewport is null ? "<null>" : $"{viewport.Index}:{viewport.Width}x{viewport.Height}/{viewport.InternalWidth}x{viewport.InternalHeight}");
-                    return false;
+                    return DeclineRender(LastRenderDeclineReason ?? LastResourceGenerationFailure ?? "Resources do not match the current frame profile.");
                 }
                 _resizeCatchUpSkippedFrameId = ulong.MaxValue;
                 if (viewHistorySequenceId != 0UL && !RenderState.ViewHistoryCaptureAccepted)
@@ -830,7 +832,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                         ProfilerKey,
                         RenderState.RequiredOffscreenAuthoringFailureCount,
                         RenderState.RequiredOffscreenAuthoringFailureReason ?? "unspecified");
-                    return false;
+                    return DeclineRender(RenderState.RequiredOffscreenAuthoringFailureReason ?? "Required offscreen output authoring failed.");
                 }
 
                 ValidateActiveGenerationDescriptorParity();
@@ -884,7 +886,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                 TimeSpan.FromSeconds(1),
                 "[RenderDiag] Exact output deferred before command execution. Pipeline={0} Output={1} Frame={2} Reason={3}",
                 ProfilerKey, output.OutputId, output.FrameId, reason);
-        return false;
+        return DeclineRender(reason);
     }
 
     internal void MarkForwardContactPrePassAvailable()
@@ -1023,9 +1025,11 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             return true;
         }
 
-        var dimensions = frameOutput is not null
-            ? ResolvePipelineResourceDimensions(frameOutput.Value)
-            : ResolvePipelineResourceDimensions(viewport!);
+        // Match collection, resize requests and commit validation. A physical
+        // output may contain a differently sized viewport or receive an upscale.
+        var dimensions = viewport is not null
+            ? ResolvePipelineResourceDimensions(viewport)
+            : ResolvePipelineResourceDimensions(frameOutput!.Value);
         ResourceGenerationKey key = BuildResourceGenerationKey(
             dimensions.DisplayWidth,
             dimensions.DisplayHeight,
@@ -1096,7 +1100,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         // generation is complete and shares the pipeline revision, an AA/feature/settings
         // change can name a different resource set. Wait for the exact generation instead
         // of executing that new command path against the old registry.
-        return false;
+        return DeclineRender($"Resources do not match the current frame profile. Required={key}; Active={ActiveGeneration.Key}.");
     }
 
     /// <summary>

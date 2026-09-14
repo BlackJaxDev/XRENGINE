@@ -389,6 +389,7 @@ internal sealed unsafe partial class OpenGlXrGraphicsBinding
 
     private void RenderViewportsToSwapchain(uint textureHandle, uint viewIndex)
     {
+        ClearPreviewEyeFrameId(viewIndex);
         if (Window is null)
             return;
 
@@ -532,22 +533,43 @@ internal sealed unsafe partial class OpenGlXrGraphicsBinding
                 if (previewTextureValid)
                 {
                     _gl.FramebufferTexture(FramebufferTarget.DrawFramebuffer, FramebufferAttachment.ColorAttachment0, previewTextureId, 0);
+                    var previewReadStatus = _gl.CheckFramebufferStatus(FramebufferTarget.ReadFramebuffer);
                     var previewDrawStatus = _gl.CheckFramebufferStatus(FramebufferTarget.DrawFramebuffer);
-                    if (previewDrawStatus == GLEnum.FramebufferComplete)
+                    if (previewReadStatus == GLEnum.FramebufferComplete && previewDrawStatus == GLEnum.FramebufferComplete)
                     {
-                        _gl.BlitFramebuffer(
-                            0, 0, (int)width, (int)height,
-                            0, 0, (int)width, (int)height,
-                            ClearBufferMask.ColorBufferBit,
-                            BlitFramebufferFilter.Linear);
+                        // Publish freshness only for a successful copy. An earlier
+                        // GL error also leaves this attempt unproven; never label
+                        // the retained pixels as a new eye image in that case.
+                        GLEnum previewError = _gl.GetError();
+                        if (previewError == GLEnum.NoError)
+                        {
+                            _gl.BlitFramebuffer(
+                                0, 0, (int)width, (int)height,
+                                0, 0, (int)width, (int)height,
+                                ClearBufferMask.ColorBufferBit,
+                                BlitFramebufferFilter.Linear);
+                            previewError = _gl.GetError();
+                            if (previewError == GLEnum.NoError)
+                                RecordPreviewEyeCopyIssued(viewIndex);
+                        }
+                        if (previewError != GLEnum.NoError)
+                        {
+                            Debug.OpenGLWarningEvery(
+                                $"OpenXR.OpenGL.UnprovenPreviewCopy.{viewIndex}",
+                                TimeSpan.FromSeconds(1),
+                                "[OpenXR] Eye preview copy for view {0} was not published: GL error={1}.",
+                                viewIndex,
+                                previewError);
+                        }
                     }
                     else
                     {
                         Debug.OpenGLWarningEvery(
                             $"OpenXR.OpenGL.InvalidPreviewFramebuffer.{viewIndex}",
                             TimeSpan.FromSeconds(1),
-                            "[OpenXR] Skipping eye preview blit for view {0}: preview FBO status={1}, texture={2}.",
+                            "[OpenXR] Skipping eye preview blit for view {0}: read FBO status={1}, preview FBO status={2}, texture={3}.",
                             viewIndex,
+                            previewReadStatus,
                             previewDrawStatus,
                             previewTextureId);
                     }
@@ -875,6 +897,8 @@ internal sealed unsafe partial class OpenGlXrGraphicsBinding
 
     private void DestroyOpenXrPreviewTargets()
     {
+        ClearPreviewEyeFrameId(0);
+        ClearPreviewEyeFrameId(1);
         try
         {
             _previewLeftEyeTexture?.Destroy();

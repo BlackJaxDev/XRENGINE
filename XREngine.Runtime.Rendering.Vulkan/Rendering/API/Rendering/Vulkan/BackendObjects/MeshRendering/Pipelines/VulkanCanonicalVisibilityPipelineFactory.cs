@@ -48,6 +48,9 @@ internal static class VulkanCanonicalVisibilityPipelineFactory
             return false;
 
         bool depthWrite = !target.DepthStencilReadOnly;
+        CompareOp depthCompare = target.ClearPolicy.ReversedDepth
+            ? CompareOp.GreaterOrEqual
+            : CompareOp.LessOrEqual;
         CullModeFlags cull = cullMode == 0u
             ? CullModeFlags.None
             : CullModeFlags.BackBit;
@@ -67,7 +70,7 @@ internal static class VulkanCanonicalVisibilityPipelineFactory
             target.RasterizationSamples,
             DepthTestEnabled: true,
             DepthWriteEnabled: depthWrite,
-            CompareOp.LessOrEqual,
+            depthCompare,
             StencilTestEnabled: false,
             default,
             default,
@@ -112,7 +115,7 @@ internal static class VulkanCanonicalVisibilityPipelineFactory
                 SType = StructureType.PipelineDepthStencilStateCreateInfo,
                 DepthTestEnable = Vk.True,
                 DepthWriteEnable = depthWrite ? Vk.True : Vk.False,
-                DepthCompareOp = CompareOp.LessOrEqual,
+                DepthCompareOp = depthCompare,
             };
             PipelineColorBlendAttachmentState blend = new()
             {

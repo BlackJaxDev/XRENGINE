@@ -350,6 +350,18 @@ Key design:
 - The renderer provides `Blit()` for framebuffer-to-framebuffer copies using `glBlitNamedFramebuffer`
 - The default framebuffer (backbuffer) is represented by binding FBO 0
 
+`XRFrameBuffer.BindState()` changes both read and write bindings. Its scope
+therefore participates in both binding stacks, including when lazy attachment
+work nests inside a read-only or write-only pass. Disposal restores the previous
+read and write targets independently; it must not bind FBO 0 merely because
+there was no enclosing general-bind scope. `BoundForReading` and
+`BoundForWriting` describe general bindings as well as directional bindings.
+
+Scaled grab textures compare their scaled, nonzero destination dimensions
+before resizing. Comparing the unscaled viewport dimensions to a scaled grab
+target needlessly reallocates/re-attaches it on every draw. Both invariants
+were exercised by the [tessellated-water qualification](../../work/investigations/rendering/vulkan14-final-validation-2026-09-14.md).
+
 ---
 
 ## State Management

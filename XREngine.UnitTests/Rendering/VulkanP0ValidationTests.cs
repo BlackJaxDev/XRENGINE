@@ -1152,11 +1152,11 @@ public sealed class VulkanP0ValidationTests
         string shaderSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkShader.cs");
         string compilerSource = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Shaders/VulkanShaderCompiler.cs");
 
-        cacheSource.ShouldContain("internal const int SchemaVersion");
+        cacheSource.ShouldContain("internal const int SchemaVersion = 7;");
         cacheSource.ShouldContain("Build");
         cacheSource.ShouldContain("Cache");
         cacheSource.ShouldContain("Vulkan");
-        cacheSource.ShouldContain("ShaderArtifacts");
+        cacheSource.ShouldContain("VulkanPipelineCacheStorage.GetShaderArtifactDirectory(root)");
         cacheSource.ShouldContain("TryRead(");
         cacheSource.ShouldContain("QueueWrite(");
         cacheSource.ShouldContain("ThreadPool.QueueUserWorkItem");
@@ -1166,6 +1166,9 @@ public sealed class VulkanP0ValidationTests
         compilerSource.ShouldContain("public sealed record PreparedSource");
         compilerSource.ShouldContain("public static PreparedSource Prepare");
         compilerSource.ShouldContain("public static unsafe byte[] CompilePrepared");
+
+        shaderSource.ShouldContain("if (Data.SourceLanguage == ShaderSourceLanguage.Slang)");
+        shaderSource.ShouldContain("BuildSlangArtifact(shaderConfigVersion, usesVulkanClipDepthRemap, transformFeedbackPlan)");
 
         string buildArtifact = SliceMethod(shaderSource, "private VulkanShaderArtifact BuildCpuArtifact");
         buildArtifact.ShouldContain("VulkanShaderArtifactCache.TryRead");

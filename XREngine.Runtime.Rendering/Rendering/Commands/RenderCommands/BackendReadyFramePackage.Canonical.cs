@@ -41,6 +41,12 @@ public sealed partial class BackendReadyFramePackage
 
     public BackendReadySubmissionResolution SubmissionResolution { get; private set; }
     public ReadOnlySpan<BackendReadyCanonicalViewRecord> CanonicalViews => _canonicalViews.AsSpan(0, _canonicalViewCount);
+
+    private EAdvancedViewRecordFlags _canonicalViewPolicyFlags;
+
+    /// <summary>Preserves collection policy when authoring freezes newer camera or eye matrices.</summary>
+    internal BackendReadyCanonicalViewRecord ApplyCanonicalViewPolicy(BackendReadyCanonicalViewRecord view)
+        => view with { Flags = view.Flags | _canonicalViewPolicyFlags };
     public ReadOnlySpan<BackendReadyCanonicalPassRecord> CanonicalPasses => _canonicalPasses.AsSpan(0, _canonicalPassCount);
     public ReadOnlySpan<BackendReadyCanonicalDirtyOwnerRange> CanonicalDirtyOwnerRanges => _canonicalDirtyOwnerRanges.AsSpan(0, _canonicalDirtyOwnerRangeCount);
     public ReadOnlySpan<BackendReadyDiagnosticReadbackRequest> DiagnosticReadbackRequests => _canonicalDiagnosticReadbackRequests.AsSpan(0, _canonicalDiagnosticReadbackRequestCount);
@@ -193,6 +199,7 @@ public sealed partial class BackendReadyFramePackage
         CanonicalFrame = default;
         SubmissionResolution = default;
         ClearCanonical(ref _canonicalViews, ref _canonicalViewCount);
+        _canonicalViewPolicyFlags = EAdvancedViewRecordFlags.None;
         ClearCanonical(ref _canonicalPasses, ref _canonicalPassCount);
         ClearCanonical(ref _canonicalDirtyOwnerRanges, ref _canonicalDirtyOwnerRangeCount);
         ClearCanonical(ref _canonicalDiagnosticReadbackRequests, ref _canonicalDiagnosticReadbackRequestCount);
@@ -212,7 +219,8 @@ public sealed partial class BackendReadyFramePackage
         GPUScene? scene,
         XRCamera? camera,
         int viewportWidth,
-        int viewportHeight)
+        int viewportHeight,
+        bool excludeProjectiveMirrors)
     {
         // A late package preparation only has command membership. It must not
         // discard the already captured canonical publication and its lease.
@@ -241,6 +249,9 @@ public sealed partial class BackendReadyFramePackage
 
         ResetCanonical();
         _canonicalPublicationLease = lease;
+        _canonicalViewPolicyFlags = excludeProjectiveMirrors
+            ? EAdvancedViewRecordFlags.ExcludeProjectiveMirrors
+            : EAdvancedViewRecordFlags.None;
 
         AdvancedGpuScenePublication identity = publication.Publication;
         CanonicalScenePublication = new BackendReadyCanonicalScenePublication(
@@ -270,6 +281,9 @@ public sealed partial class BackendReadyFramePackage
             _canonicalViews[0] = CreateCanonicalViewRecord(camera, viewportWidth, viewportHeight, identity.FrameGeneration);
             _canonicalViewCount = 1;
         }
+
+        for (int viewIndex = 0; viewIndex < _canonicalViewCount; ++viewIndex)
+            _canonicalViews[viewIndex] = ApplyCanonicalViewPolicy(_canonicalViews[viewIndex]);
 
         PopulateCanonicalResidentPasses(snapshot, in identity);
         PopulateCanonicalGlobalPassCoverage(snapshot, in identity);
@@ -310,7 +324,7 @@ public sealed partial class BackendReadyFramePackage
                 source.CurrentJitter.X, source.CurrentJitter.Y,
                 source.PreviousJitter.X, source.PreviousJitter.Y),
             source.OutputLayer, CreateAdvancedViewFlags(source), source.EffectiveHistoryKey,
-            viewMaskLo, viewMaskHi, generation) with
+            source.SourceCameraIdentity, viewMaskLo, viewMaskHi, generation) with
         {
             FoveationCenterAndBias = AdvancedFoveationContract.CaptureCenterAndBias(source.Foveation),
             FoveationRadii = AdvancedFoveationContract.CaptureRadii(source.Foveation),
@@ -339,7 +353,7 @@ public sealed partial class BackendReadyFramePackage
             new Vector4(camera.Transform.RenderTranslation, camera.NearZ),
             new Vector4(camera.Transform.RenderForward, camera.FarZ),
             new Vector4(camera.ProjectionJitter.X, camera.ProjectionJitter.Y, 0.0f, 0.0f), 0u, flags,
-            RenderFrameViewSetCapture.MonoHistoryKey, 1u, 0u, generation);
+            RenderFrameViewSetCapture.MonoHistoryKey, camera.RenderIdentity, 1u, 0u, generation);
     }
 
     private static BackendReadyCanonicalViewRecord CreateCanonicalViewRecord(
@@ -349,7 +363,7 @@ public sealed partial class BackendReadyFramePackage
         uint viewportWidth, uint viewportHeight,
         in Vector4 cameraPositionAndNear, in Vector4 cameraForwardAndFar,
         in Vector4 currentAndPreviousJitter, uint outputLayer, EAdvancedViewRecordFlags flags,
-        ulong historyKey, uint viewMaskLo, uint viewMaskHi, ulong generation)
+        ulong historyKey, ulong sourceCameraIdentity, uint viewMaskLo, uint viewMaskHi, ulong generation)
     {
         ExtractFrustumPlanes(viewProjectionUnjittered, (flags & EAdvancedViewRecordFlags.DepthZeroToOne) != 0,
             out Vector4 left, out Vector4 right, out Vector4 bottom, out Vector4 top, out Vector4 near, out Vector4 far);
@@ -377,6 +391,7 @@ public sealed partial class BackendReadyFramePackage
             OutputLayer = outputLayer,
             Flags = flags,
             HistoryKey = historyKey,
+            SourceCameraIdentity = sourceCameraIdentity,
             ViewMaskLo = viewMaskLo,
             ViewMaskHi = viewMaskHi,
         };

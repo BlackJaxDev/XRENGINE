@@ -317,6 +317,16 @@ internal sealed partial class VulkanFrameLoop
         RunCleanupStep("mesh uniform buffers", _resourceRuntime.DestroyRemainingTrackedMeshUniformBuffers, failures);
         RunCleanupStep("initial retirement drain", ForceFlushAllRetiredResources, failures);
 
+        // Device idle was proven before entering logical-device cleanup. Drain the
+        // tracker while its timelines, OpenXR resources, and frame arenas still
+        // exist; failure must retain those owners for the higher-level policy.
+        if (!_resourceRuntime.Lifetime.Tracker.DeviceLost &&
+            !_commandRuntime.TryDisposeOpenXrSubmissionTrackerAfterDrain())
+        {
+            throw new InvalidOperationException(
+                "OpenXR submission tracker did not drain after GPU completion; native ownership is retained.");
+        }
+
         RunCleanupStep("auto-exposure compute resources", _resourceRuntime.DestroyAutoExposureComputeResources, failures);
         RunCleanupStep("fallback texture", _resourceRuntime.FallbackTexture.RetireAll, failures);
         RunCleanupStep("black fallback texture", _resourceRuntime.BlackFallbackTexture.RetireAll, failures);

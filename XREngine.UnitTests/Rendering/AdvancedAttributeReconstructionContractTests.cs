@@ -343,7 +343,8 @@ public sealed class AdvancedAttributeReconstructionContractTests
             PrimitiveTopology: 4u,
             Skinned: false,
             MeshletsResident: false,
-            ForceCpuDiagnostic: false);
+            ForceCpuDiagnostic: false,
+            TemporalReason: EAdvancedVelocityValidityReason.Valid);
         AdvancedVisibilityProducerEncoder.TryEncode(
                 payload,
                 new AdvancedVisibilityPrimitiveReference(0u, 0u, 0u),
@@ -409,8 +410,10 @@ public sealed class AdvancedAttributeReconstructionContractTests
             "transpose(inverse(world3))");
         reconstruction.ShouldContain(
             "XR_ADV_SURFACE_CONSERVATIVE_MIP");
-        reconstruction.ShouldContain(
-            "geometry.source == XR_ADV_GEOMETRY_SOURCE_PRESKINNED");
+        reconstruction.ShouldContain("XR_ADV_TryLoadVertex(");
+        reconstruction.ShouldContain("if (!deformed)");
+        reconstruction.ShouldContain("XR_ADV_PreSkinnedCurrentVertices.records");
+        reconstruction.ShouldContain("XR_ADV_PreSkinnedPreviousVertices.records");
         reconstruction.ShouldContain(
             "geometry.fallbackGeometry");
         reconstruction.ShouldContain(
@@ -426,7 +429,8 @@ public sealed class AdvancedAttributeReconstructionContractTests
         interfaceSource.ShouldContain(
             "XR_ADV_ReconstructionMeshlets");
         interfaceSource.ShouldContain(
-            "set = XR_ADV_VISIBILITY_SET");
+            "#include \"Advanced/Visibility/VisibilityInterface.glslinc\"");
+        interfaceSource.ShouldContain("XR_ADV_VIS_TABLE_LAYOUT");
         reference.ShouldContain(
             "XR_ADV_RECONSTRUCTION_PASS_LAYOUT(0)");
         textureAccess.ShouldContain("textureGrad");

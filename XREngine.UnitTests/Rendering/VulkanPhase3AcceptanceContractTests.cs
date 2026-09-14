@@ -69,7 +69,7 @@ public sealed class VulkanPhase3AcceptanceContractTests
         state.ShouldContain("CanUpdateCompletedDescriptorFrameSlot(");
         material.ShouldContain(
             "state.SlotResourceFingerprints[resolvedFrame] = resourceFingerprint;");
-        state.ShouldContain("HasTimelineValueCompleted(");
+        state.ShouldContain("Synchronization.QueryTimelineCompletion(");
         pipeline.ShouldContain("RenderResourceChangeKind.CompatibleContentPublication");
     }
 

@@ -5,7 +5,10 @@ Date: 2026-09-09; completion verified 2026-09-10. Status: E1–E5 complete. The
 demonstrated 70 native reuses in 225 frames with zero Vulkan errors, versus zero
 reuses in the foreground control. Full-output resize freshness now passes after
 fixing the inherited fullscreen-pass scissor. The E2 limitations and open status
-described in the original experiments below are historical.
+described in the original experiments below are historical. The
+[September 14 stability follow-up](vulkan14-followup-stability-and-validation-2026-09-14.md)
+records the retired-buffer correction, graphics artifact containment,
+every-frame counter policy, and validated material-table allocation reserves.
 
 ## Scope and acceptance
 
@@ -193,14 +196,13 @@ secondary inheritance matches the captured heaps, and the encoder consumes the
 captured indirect/count handles with expected-generation lifetime tracking.
 Changed prepared state rejects the recording before publishing an artifact.
 
-This exposed a separate policy limit: **every current output constructor requires
-fresh recording**, including desktop, explicit output, OpenXR eyes and prewarm.
-The apparent background mirror branch is unreachable under its earlier
-foreground-output admission check. A complete key cannot authorize reuse under
-these contracts. E2 remains open until a supported output path intentionally
-permits artifact reuse and actual cached execution is validated there. Adding a
-new background output transaction is follow-up architecture, not a diagnostic
-bypass or a prerequisite for E3/E4. There is no calendar-based deferral.
+At that stage, a separate policy limit remained: every output constructor
+required fresh recording, including desktop, explicit output, OpenXR eyes and
+prewarm. The apparent background mirror branch was unreachable under its earlier
+foreground-output admission check. E2 therefore remained open until an output
+path explicitly permitted reuse and demonstrated cached execution. The later
+[background-output implementation](vulkan14-background-replay-and-queue-overlap-2026-09-09.md)
+closed that requirement while preserving the foreground freshness contract.
 
 Normal fresh-only recording skips the unnecessary key comparison. Explicit
 `XRE_VULKAN_COMMAND_CHAIN_VALIDATE=1` evaluates it without changing policy. The
@@ -371,9 +373,9 @@ were not. The production trace does not retain a detailed terminal cause, so
 this is not attributed to heap changes or to a particular lifetime race. The
 original failures remain excluded and retained even if repeat captures pass.
 
-The diagnostic DrawMetadataBuffer rejection is separate from stable heap
-allocation storage. `VulkanComputeBufferBinding` currently stores a captured raw
-native handle without its native generation. The direct indirect producer seals
+The diagnostic DrawMetadataBuffer rejection was separate from stable heap
+allocation storage. At the time, `VulkanComputeBufferBinding` stored a captured
+raw native handle without its native generation. The direct indirect producer sealed
 that snapshot without going through the persistent binding-artifact cache. A
 buffer recreation between capture and preparation can therefore present a
 retired handle; strict heap publication rejects it. Closing this gap requires
@@ -381,13 +383,46 @@ captured native generations, expected-generation validation at consumption, and
 an explicit frame replan when the sealed producer epoch is superseded. Rebinding
 the old snapshot to a new ambient buffer would be incorrect.
 
-The persistent binding-artifact cache has a separate ownership gap: an engine
+The persistent binding-artifact cache also had a separate ownership gap: an engine
 or publisher generation can admit additional ordinary buffer bindings whose
 native lifetimes it does not own. A containment change can reject those
 artifacts until ordinary buffer generations and leases participate in their
 proof. It cannot fix the direct indirect-snapshot path above. These findings
-remain visible follow-ups; no lifetime check was weakened to make E pass.
+were retained for the September 14 follow-up; no lifetime check was weakened to
+make E pass.
+
+The compute snapshot now captures an ABA-safe lifetime slot and native
+generation under the lifetime tracker lock. Consumption validates that exact
+allocation, and an actually superseded source requests a pre-acquire replan;
+stable descriptor-set errors remain terminal. Separately, graphics persistent
+artifacts now reject any ordinary captured buffers, even when another engine
+or publisher resource is generation-owned. Their native allocations have no
+artifact-owned leases, so the existing frame-owned snapshot path remains in
+use. This containment preserves the selected GPU draw strategy and backend.
 
 The separate [D4 barrier research](vulkan14-barrier-performance-research-2026-09-09.md)
 explains why D4 was deferred and sets conditions for its next experiment. E is
 independent of the unavailable NVIDIA performance-counter trace.
+
+## September 14 stability closeout
+
+The exact-generation compute fix, frame-owned graphics snapshot containment and
+bounded per-slot material reserves passed eight fresh mutation/streaming controls:
+two repetitions of Allowed and ForceRecording for each workload. All 11,080
+capture samples have standard/synchronization validation active, zero validation
+errors, zero rejected frames, a stable workload identity and zero capture
+readbacks. No render-exception log was produced. Eight reserves were claimed
+during capture without another demand-growth retry. Startup costs and the older
+failed cohorts remain recorded in the [follow-up](vulkan14-followup-stability-and-validation-2026-09-14.md).
+This closes the reported steady-state E failures; cold initialization and bursts
+beyond the bounded reserve retain typed admission retries.
+
+Four fresh native material controls also passed exact byte/owner/generation,
+single-row mutation and idle-work checks across three frame slots, completing
+all 31 chunks of the 4096² texture. This proves eventual atomic publication.
+Current streaming policy omits the affected unready indirect pass while frames
+continue, rather than admitting an unpublished image. The
+[material scenario guide](../../../developer-guides/rendering/renderbench-phase53-materials.md)
+and emitted evidence now state that policy and exclude strict required-texture
+admission from their claims. These diagnostic controls do not establish an FPS
+gain or change the earlier default-binding policy decision.

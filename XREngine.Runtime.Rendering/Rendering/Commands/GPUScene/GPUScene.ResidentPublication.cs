@@ -31,6 +31,9 @@ public partial class GPUScene
     public bool AdvancedPublicationRejected
         => _advancedScenePublisher.PublicationRejected;
 
+    public string? AdvancedPublicationFailure
+        => _advancedScenePublisher.LastPublicationFailure;
+
     public bool AdvancedPublicationFaulted
         => _advancedScenePublisher.PublicationFaulted;
 

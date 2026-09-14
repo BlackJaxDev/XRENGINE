@@ -29,7 +29,8 @@ internal readonly record struct DescriptorBindingInfo(
     EVulkanDescriptorBindingRequirement Requirement =
         EVulkanDescriptorBindingRequirement.Required,
     EVulkanDescriptorOwner? DeclaredOwner = null,
-    EVulkanBindingFrequency? DeclaredFrequency = null)
+    EVulkanBindingFrequency? DeclaredFrequency = null,
+    string? NativeAbiIdentity = null)
 {
     internal static DescriptorBindingInfo NormalizeKnownMetadata(
         DescriptorBindingInfo binding)

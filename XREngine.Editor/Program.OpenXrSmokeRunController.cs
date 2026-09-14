@@ -65,6 +65,7 @@ internal partial class Program
         private readonly int _warmupFrames;
         private readonly TimeSpan _timeout;
         private readonly string? _summaryPath;
+        private readonly OpenXrSubmissionValidationRequest _submissionValidationRequest;
         private readonly Stopwatch _stopwatch = Stopwatch.StartNew();
         private readonly OpenXrSmokeFrameLedgerEntry[] _frameLedger;
         private readonly OpenXrSmokeOcclusionViewLedgerEntry[] _occlusionViewLedger;
@@ -119,12 +120,18 @@ internal partial class Program
         private int _phase525SwapchainRetirementPendingHighWater;
         private int _phase525SwapchainRetirementFinalPendingCount;
 
-        private OpenXrSmokeRunController(int targetFrames, int warmupFrames, TimeSpan timeout, string? summaryPath)
+        private OpenXrSmokeRunController(
+            int targetFrames,
+            int warmupFrames,
+            TimeSpan timeout,
+            string? summaryPath,
+            OpenXrSubmissionValidationRequest submissionValidationRequest)
         {
             _targetFrames = targetFrames;
             _warmupFrames = warmupFrames;
             _timeout = timeout;
             _summaryPath = summaryPath;
+            _submissionValidationRequest = submissionValidationRequest;
             _frameLedger = new OpenXrSmokeFrameLedgerEntry[targetFrames];
             _occlusionViewLedger = new OpenXrSmokeOcclusionViewLedgerEntry[targetFrames * MaxOcclusionViewSnapshotsPerFrame];
             _outputLedger = new OpenXrSmokeOutputLedgerEntry[targetFrames * MaxOutputSnapshotsPerFrame];
@@ -148,7 +155,8 @@ internal partial class Program
                 Math.Max(0, targetFrames),
                 Math.Max(0, warmupFrames),
                 TimeSpan.FromSeconds(Math.Max(1, timeoutSeconds)),
-                summaryPath);
+                summaryPath,
+                ParseSubmissionValidationRequest(targetFrames));
         }
 
         public void Configure(UnitTestingWorldSettings settings)
@@ -198,7 +206,10 @@ internal partial class Program
             if (EditorRendererCapabilityResolver.TryGetRegistered(
                     RendererBackendId.Vulkan,
                     out IOpenXrSmokeDiagnosticsBackendCapability smokeDiagnostics))
+            {
+                smokeDiagnostics.ConfigureOpenXrSubmissionValidation(in _submissionValidationRequest);
                 smokeDiagnostics.ResetDesktopRejectionEvidence(injectDesktopRejection);
+            }
 
             Engine.Time.Timer.UpdateFrame += Update;
             _installed = true;
@@ -1370,7 +1381,10 @@ internal partial class Program
             if (EditorRendererCapabilityResolver.TryGetRegistered(
                     RendererBackendId.Vulkan,
                     out IOpenXrSmokeDiagnosticsBackendCapability smokeDiagnostics))
+            {
                 summary.DesktopRejectionEvidence = smokeDiagnostics.CaptureDesktopRejectionEvidence();
+                summary.SubmissionValidation = smokeDiagnostics.CaptureOpenXrSubmissionValidation();
+            }
             summary.OcclusionCullingModeRequested =
                 Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.OcclusionCullingMode) ?? string.Empty;
             summary.OcclusionCullingModeEffective = _occlusionCullingModeEffective;
@@ -1637,6 +1651,33 @@ internal partial class Program
                 string.Equals(value, "true", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(value, "on", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static OpenXrSubmissionValidationRequest ParseSubmissionValidationRequest(int targetFrames)
+        {
+            if (targetFrames <= 0)
+                return OpenXrSubmissionValidationRequest.Disabled;
+
+            string? raw = Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.OpenXrSubmissionValidation);
+            if (string.IsNullOrWhiteSpace(raw))
+                return OpenXrSubmissionValidationRequest.Disabled;
+
+            if (!Enum.TryParse(raw, ignoreCase: true, out EOpenXrSubmissionValidationScenario scenario))
+                throw new ArgumentException(
+                    $"{XREngineEnvironmentVariables.OpenXrSubmissionValidation} must be Disabled or Observe during the passive submission-validation phase; received '{raw}'.");
+
+            if (scenario == EOpenXrSubmissionValidationScenario.Disabled)
+                return OpenXrSubmissionValidationRequest.Disabled;
+
+            if (scenario != EOpenXrSubmissionValidationScenario.Observe)
+                throw new ArgumentException(
+                    $"{XREngineEnvironmentVariables.OpenXrSubmissionValidation}={scenario} is not implemented during the passive submission-validation phase. Use Observe.");
+
+            return new OpenXrSubmissionValidationRequest(
+                scenario,
+                EOpenXrSubmissionShape.Unknown,
+                0,
+                Math.Min(targetFrames, 32));
         }
 
         private int ResolveExitCode(OpenXrSmokeSummary summary, List<string> validationFailures)

@@ -459,7 +459,7 @@ public sealed class AdvancedVisibilityBufferContractTests
             .ShouldBeOfType<TextureSpec>();
         history.HistoryPolicy.ShouldBe(
             RenderResourceHistoryPolicy.PreserveWhenCompatible);
-        history.MipPolicy.MipLevelCount.ShouldBeGreaterThan(1u);
+        history.MipPolicy.MipLevelCount.ShouldBe(1u);
 
         for (uint slot = 0u;
              slot < AdvancedFrameSlotContract.DefaultSlotCount;
@@ -519,8 +519,7 @@ public sealed class AdvancedVisibilityBufferContractTests
         opaque.ShouldContain("VisibilityOrigin > 1u");
         opaque.ShouldNotContain("roughness", Case.Insensitive);
         opaque.ShouldNotContain("lighting", Case.Insensitive);
-        masked.ShouldContain("XR_ADV_LoadMaterialTextureBinding");
-        masked.ShouldContain("XR_ADV_SampleTexture2D");
+        masked.ShouldContain("XR_ADV_StandardTexture(material, 0u");
         masked.ShouldContain("ALPHA_CUTOFF_WORD");
         masked.ShouldContain("VisibilityOrigin > 1u");
         mesh.ShouldContain("XR_ADV_VisibilityMeshlets.records");
@@ -560,5 +559,6 @@ public sealed class AdvancedVisibilityBufferContractTests
             PrimitiveTopology: 4u,
             Skinned: skinned,
             MeshletsResident: meshlets,
-            ForceCpuDiagnostic: false);
+            ForceCpuDiagnostic: false,
+            TemporalReason: EAdvancedVelocityValidityReason.Valid);
 }

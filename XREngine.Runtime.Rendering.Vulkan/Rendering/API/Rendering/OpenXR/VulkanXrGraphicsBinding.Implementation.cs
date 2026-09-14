@@ -411,6 +411,10 @@ Target:                 new RenderFrameViewTargetDescriptor(
                     SupportsTransferDestinationLayout: (usage & SwapchainUsageFlags.TransferDstBit) != 0,
                     ResourceGeneration: attachmentSignature,
                     TemporalGeneration: GetOpenXrHistoryKey(kind)));
+            _vulkanOpenXrBatchPlanViews[i] = _vulkanOpenXrBatchPlanViews[i] with
+            {
+                SourceCameraIdentity = GetOpenXrEyeCamera((uint)i)?.RenderIdentity ?? 0UL,
+            };
         }
 
         RenderFrameViewSet viewSet = RenderFrameViewSet.Create(
@@ -2057,6 +2061,8 @@ Target:                 new RenderFrameViewTargetDescriptor(
         uint rightImageIndex,
         EVrViewRenderMode viewRenderMode)
     {
+        ClearPreviewEyeFrameId(0);
+        ClearPreviewEyeFrameId(1);
         SwapchainImageVulkan2KHR* leftImages = _swapchainImagesVK[0];
         SwapchainImageVulkan2KHR* rightImages = _swapchainImagesVK[1];
         if (leftImages == null || rightImages == null)
@@ -2227,9 +2233,15 @@ Target:                 new RenderFrameViewTargetDescriptor(
                         RecordSmokeDesktopMirrorComposed();
                 }
                 if (leftPreviewCopied)
+                {
+                    RecordPreviewEyeCopyIssued(0);
                     RecordSmokeDesktopMirrorComposed();
+                }
                 if (rightPreviewCopied)
+                {
+                    RecordPreviewEyeCopyIssued(1);
                     RecordSmokeDesktopMirrorComposed();
+                }
                 MarkVulkanEyeResourceWarmupComplete(0);
                 MarkVulkanEyeResourceWarmupComplete(1);
                 return true;
@@ -2344,6 +2356,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
         uint width,
         uint height)
     {
+        ClearPreviewEyeFrameId(viewIndex);
         if (sourceTexture is null)
             return;
 
@@ -2371,6 +2384,8 @@ Target:                 new RenderFrameViewTargetDescriptor(
 
         if (copiedPreview || copiedDesktopMirror)
             RecordSmokeDesktopMirrorComposed();
+        if (copiedPreview)
+            RecordPreviewEyeCopyIssued(viewIndex);
     }
 
     private static void LogVulkanEyeMirrorPublish(
@@ -2408,6 +2423,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
         uint width,
         uint height)
     {
+        ClearPreviewEyeFrameId(viewIndex);
         XRTexture2D? previewTexture = GetOpenXrPreviewTexture(viewIndex);
         bool shouldCopyPreview = ShouldCopyDirectVulkanEyeSwapchainPreview();
         bool copiedPreview = shouldCopyPreview &&
@@ -2448,6 +2464,8 @@ Target:                 new RenderFrameViewTargetDescriptor(
 
         if (copiedPreview || copiedDesktopMirror)
             RecordSmokeDesktopMirrorComposed();
+        if (copiedPreview)
+            RecordPreviewEyeCopyIssued(viewIndex);
     }
 
     private static bool ShouldCopyDirectVulkanEyeSwapchainPreview()

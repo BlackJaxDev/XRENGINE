@@ -7,11 +7,18 @@ namespace XREngine.RenderBench;
 public sealed record RenderBenchMaterialScenarioEvidence
 {
     public int SubmittedFrames { get; init; }
-    public int RequiredVisibleTextureCount { get; init; }
-    public int ReadyVisibleTextureCount { get; init; }
-    public int RequiredVisibleChunksSubmitted { get; init; }
-    public int RequiredVisibleChunksCompleted { get; init; }
+    public int BoundTextureCount { get; init; }
+    public int PublishedTextureCount { get; init; }
+    public int VisiblePriorityChunksSubmitted { get; init; }
+    public int VisiblePriorityChunksCompleted { get; init; }
+    /// <summary>All frame-admission retries, including cold native bank allocation.</summary>
     public int AdmissionRetryCount { get; init; }
+    /// <summary>Accepted receipts whose subsequent ticket query still found an unpublished texture.</summary>
+    public int AcceptedFramesBeforeTexturePublication { get; init; }
+    /// <summary>The sampled material path declares published texture generations only.</summary>
+    public string TexturePublicationPolicy { get; init; } = "PublishedGenerationsOnly";
+    /// <summary>This lane does not prove mandatory admission of an explicitly pending generation.</summary>
+    public bool StrictRequiredTextureAdmissionProven { get; init; }
     public string ScalarBefore { get; init; } = string.Empty;
     public string ScalarAfter { get; init; } = string.Empty;
     public string TextureBefore { get; init; } = string.Empty;

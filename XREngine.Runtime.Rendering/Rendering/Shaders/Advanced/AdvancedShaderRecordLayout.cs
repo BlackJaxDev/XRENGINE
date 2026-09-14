@@ -26,7 +26,7 @@ public static class AdvancedShaderRecordLayout
     public const int MaterialLayoutSize = 48;
     public const int MaterialLayoutMemberSize = 32;
     public const int MaterialTextureBindingSize = 32;
-    public const int ViewSize = 928;
+    public const int ViewSize = 944;
     public const int LightSize = 128;
     public const int ShadowSize = 272;
     public const int ProbeSize = 176;
@@ -87,6 +87,7 @@ public static class AdvancedShaderRecordLayout
         RequireOffset<AdvancedViewRecord>(nameof(AdvancedViewRecord.ViewId), 864);
         RequireOffset<AdvancedViewRecord>(nameof(AdvancedViewRecord.FoveationCenterAndBias), 896);
         RequireOffset<AdvancedViewRecord>(nameof(AdvancedViewRecord.FoveationRadii), 912);
+        RequireOffset<AdvancedViewRecord>(nameof(AdvancedViewRecord.SourceCameraIdentityLo), 928);
         RequireOffset<AdvancedLightRecord>(nameof(AdvancedLightRecord.CookieTexture), 80);
         RequireOffset<AdvancedLightRecord>(nameof(AdvancedLightRecord.ShadowRecord), 96);
         RequireOffset<AdvancedShadowRecord>(nameof(AdvancedShadowRecord.WorldToShadow), 32);
@@ -156,6 +157,7 @@ public static class AdvancedShaderRecordLayout
         AppendOffset<AdvancedViewRecord>(source, "VIEW_INVERSE_VIEW_PROJECTION", nameof(AdvancedViewRecord.InverseViewProjectionJittered));
         AppendOffset<AdvancedViewRecord>(source, "VIEW_CAMERA_POSITION", nameof(AdvancedViewRecord.CameraPositionAndNear));
         AppendOffset<AdvancedViewRecord>(source, "VIEW_ID", nameof(AdvancedViewRecord.ViewId));
+        AppendOffset<AdvancedViewRecord>(source, "VIEW_SOURCE_CAMERA_IDENTITY", nameof(AdvancedViewRecord.SourceCameraIdentityLo));
         AppendOffset<AdvancedLightRecord>(source, "LIGHT_COOKIE", nameof(AdvancedLightRecord.CookieTexture));
         AppendOffset<AdvancedLightRecord>(source, "LIGHT_SHADOW", nameof(AdvancedLightRecord.ShadowRecord));
         AppendOffset<AdvancedShadowRecord>(source, "SHADOW_WORLD_TO_SHADOW", nameof(AdvancedShadowRecord.WorldToShadow));

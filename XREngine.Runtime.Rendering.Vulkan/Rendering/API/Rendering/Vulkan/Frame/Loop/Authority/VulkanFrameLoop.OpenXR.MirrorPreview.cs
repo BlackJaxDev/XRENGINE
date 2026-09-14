@@ -574,7 +574,12 @@ internal sealed partial class VulkanFrameLoop
             _commandRuntime.MappedFrameArena, _commandRuntime.MappedFrameArena?.Generation ?? 0UL,
             _commandRuntime.ResourceRuntime.FrameDataArena, _commandRuntime.ResourceRuntime.FrameDataArena?.Generation ?? 0UL,
             frameSlots[..frameSlotCount], 0L, 0L,
-            temporaryCommandBuffer);
+            temporaryCommandBuffer,
+            hasSecond
+                ? XREngine.Rendering.API.Rendering.OpenXR.EOpenXrSubmissionShape.PairedEyesWithPublish
+                : XREngine.Rendering.API.Rendering.OpenXR.EOpenXrSubmissionShape.EyeWithPublish);
+        if (!trackerOwnsSubmission)
+            throw new InvalidOperationException("OpenXR mirror publication could not transfer its payload to the submission tracker.");
         OutputRuntime.OpenXrBackend.RecordedTextureUploadsForSubmit.Clear();
         return _commandRuntime.SubmitAndWaitOpenXr(new VulkanOpenXrSubmissionInput(
             firstRecorded.CommandBuffer,
@@ -584,7 +589,10 @@ internal sealed partial class VulkanFrameLoop
             hasSecond ? temporaryCommandBuffer : default,
             temporaryCommandBuffer.Handle != 0 ? (hasSecond ? 3U : 2U) : (hasSecond ? 2U : 1U),
             diagnosticContext,
-            AdmissionTicket: admissionTicket));
+            AdmissionTicket: admissionTicket,
+            Shape: hasSecond
+                ? XREngine.Rendering.API.Rendering.OpenXR.EOpenXrSubmissionShape.PairedEyesWithPublish
+                : XREngine.Rendering.API.Rendering.OpenXR.EOpenXrSubmissionShape.EyeWithPublish));
     }
 
     private bool TryRecordOpenXrEyeMirrorFrameBufferCommandBuffer(
@@ -598,6 +606,8 @@ internal sealed partial class VulkanFrameLoop
             return false;
 
         bool drainedFrameOps = false;
+        bool ownsFrameDataSlot = false;
+        bool recordingPublished = false;
         FrameOp[]? capturedOps = null;
         int openXrFrameDataSlotCount = ResolveOpenXrFrameDataSlotCount(OutputRuntime.Desktop.Images?.Length ?? 0);
         uint recordImageIndex = ResolveOpenXrRecordImageIndex(
@@ -633,6 +643,7 @@ internal sealed partial class VulkanFrameLoop
                 Api!, _deviceContext, _commandRuntime, ResourceRuntime, IsDeviceLost);
 
             ReopenOpenXrFrameDataSlot(recordImageIndex, frameDataSlotCompletionProven);
+            ownsFrameDataSlot = true;
 
             using VulkanOpenXrThreadRenderStateScope renderStateScope =
                 _commandRuntime.OpenXrRecording.EnterThreadRenderStateScope(
@@ -899,6 +910,7 @@ internal sealed partial class VulkanFrameLoop
                 if (uploads.Length != 0)
                     OutputRuntime.OpenXrBackend.RecordedTextureUploadsForSubmit
                         .AddRange(uploads);
+                recordingPublished = true;
                 return true;
             }
         }
@@ -921,6 +933,14 @@ internal sealed partial class VulkanFrameLoop
         {
             if (capturedOps is not null)
                 VulkanAdvancedVisibilityInputLease.ReleaseOperations(capturedOps);
+            if (ownsFrameDataSlot && !recordingPublished && !IsDeviceLost)
+            {
+                if (recorded.CommandBuffer.Handle != 0)
+                    _commandRuntime.MarkUnsubmittedOpenXrPrimaryCommandBufferDirty(
+                        in recorded, "OpenXR mirror recording was not published to its caller");
+                ResourceRuntime.ResidentTemplateFrameSlotLifetimes.ReleaseFrameSlot(
+                    checked((int)recordImageIndex));
+            }
         }
     }
 

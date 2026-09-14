@@ -57,6 +57,19 @@ namespace XREngine.Editor.Mcp
             [McpName("include_screen_space_ui"), Description("Capture the composited desktop window region including screen-space UI. Diagnostic capture may stall presentation; not supported for VR eye targets.")] bool includeScreenSpaceUi = false,
             CancellationToken token = default)
         {
+            if (RuntimeEngine.VRState.IsOpenXRActive && !string.IsNullOrWhiteSpace(vrEye))
+            {
+                if (includeScreenSpaceUi)
+                    return new McpToolResponse("Screen-space UI capture is not supported for VR eye targets.", isError: true);
+                if (!string.IsNullOrWhiteSpace(cameraNodeId))
+                    return new McpToolResponse("Choose either camera_node_id or vr_eye for a screenshot.", isError: true);
+
+                // True single-pass rendering releases the legacy per-eye pipeline.
+                // Read the retained exact-eye copy, never a null FBO/desktop fallback.
+                return await CaptureOpenXrEyePreviewTextureAsync(
+                    context, vrEye, windowIndex, viewportIndex, outputDir, token: token);
+            }
+
             XRViewport? viewport = ResolveViewport(
                 context.World,
                 cameraNodeId,
@@ -93,6 +106,8 @@ namespace XREngine.Editor.Mcp
             {
                 using IDisposable? readbackScope = includeScreenSpaceUi ? null : viewport.EnterRenderPipelineReadbackScope(pipelineInstance);
                 XRFrameBuffer? targetFbo = includeScreenSpaceUi ? null : ResolveSelectedReadbackTarget(viewport, vrEye);
+                if (!string.IsNullOrWhiteSpace(vrEye) && targetFbo is null)
+                    throw new InvalidOperationException("The selected VR eye has no rendered framebuffer available for capture.");
                 using IDisposable? targetReadScope = targetFbo?.BindForReadingState();
 
                 BoundingRectangle captureRegion = targetFbo is not null
@@ -150,60 +165,19 @@ namespace XREngine.Editor.Mcp
                 }
             }
 
-            var tcs = new TaskCompletionSource<(string Path, ScreenshotReadbackResult Readback)>(
-                TaskCreationOptions.RunContinuationsAsynchronously);
-            Action? deferredHandler = null;
-
             var window = viewport.Window
                 ?? RuntimeEngine.Windows.FirstOrDefault(w => w.Viewports.Contains(viewport))
                 ?? RuntimeEngine.Windows.FirstOrDefault();
             if (window is null)
                 return new McpToolResponse("No window found to capture from.", isError: true);
 
-            void ScheduleCaptureOnRenderThread()
-            {
-                int captureStarted = 0;
-                deferredHandler = () =>
-                {
-                    var renderer = AbstractRenderer.Current;
-                    if (renderer is null)
-                        return;
-
-                    if (Interlocked.CompareExchange(ref captureStarted, 1, 0) != 0)
-                        return;
-
-                    window.PostRenderViewportsCallback -= deferredHandler;
-                    BeginCapture(renderer, viewport, pipelineInstance, vrEye, includeScreenSpaceUi, path, tcs);
-                };
-
-                window.PostRenderViewportsCallback += deferredHandler;
-            }
-
-            if (Engine.IsRenderThread)
-            {
-                ScheduleCaptureOnRenderThread();
-            }
-            else
-            {
-                Engine.InvokeOnMainThread(ScheduleCaptureOnRenderThread, "MCP: Capture viewport screenshot", executeNowIfAlreadyMainThread: true);
-            }
-
-            using var reg = token.Register(() =>
-            {
-                if (deferredHandler is not null)
-                {
-                    var window = viewport.Window
-                        ?? RuntimeEngine.Windows.FirstOrDefault(w => w.Viewports.Contains(viewport))
-                        ?? RuntimeEngine.Windows.FirstOrDefault();
-                    window?.PostRenderViewportsCallback -= deferredHandler;
-                }
-
-                tcs.TrySetCanceled(token);
-            });
-
             try
             {
-                (string savedPath, ScreenshotReadbackResult readback) = await tcs.Task;
+                (string savedPath, ScreenshotReadbackResult readback) =
+                    await CaptureAfterWindowRenderAsync<(string Path, ScreenshotReadbackResult Readback)>(
+                        window,
+                        (renderer, completion) => BeginCapture(renderer, viewport, pipelineInstance, vrEye, includeScreenSpaceUi, path, completion),
+                        token);
                 return new McpToolResponse(
                     $"Captured screenshot to '{savedPath}'.",
                     new
@@ -222,6 +196,10 @@ namespace XREngine.Editor.Mcp
                             cpu_processing_seconds = readback.CpuProcessingSeconds,
                         },
                     });
+            }
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
+            {
+                throw;
             }
             catch (Exception ex)
             {

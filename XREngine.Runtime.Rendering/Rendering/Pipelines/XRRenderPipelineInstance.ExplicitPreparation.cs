@@ -37,7 +37,9 @@ public sealed partial class XRRenderPipelineInstance
             meshRenderCommands: MeshRenderCommands,
             applyRenderArea: false))
         {
-            var dimensions = ResolvePipelineResourceDimensions(FinalOutput.Value);
+            // The target supplies formats/layers, while scene resources and the
+            // collected package use this viewport's logical render extent.
+            var dimensions = ResolvePipelineResourceDimensions(viewport);
             ResourceGenerationKey key = BuildResourceGenerationKey(
                 dimensions.DisplayWidth,
                 dimensions.DisplayHeight,

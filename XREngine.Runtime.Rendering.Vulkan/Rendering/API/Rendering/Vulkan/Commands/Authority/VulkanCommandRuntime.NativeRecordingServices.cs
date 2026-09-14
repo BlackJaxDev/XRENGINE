@@ -1671,6 +1671,7 @@ internal sealed partial class VulkanCommandRuntime
         RegisterComputeTransientUniformBuffers(imageIndex, temporaryBuffers);
         TrackVulkanCommandBufferResource(commandBuffer, ObjectType.Buffer, operation.ArgumentBuffer.Handle, $"{operation.Label}.Arguments");
         Api.CmdDispatchIndirect(commandBuffer, operation.ArgumentBuffer, operation.ArgumentOffset);
+        operation.Program.RecordShaderCommandCoverage(ShaderCommandKind.Compute, indirect: true, instancingKnown: false, instanced: false);
     }
 
     internal unsafe void RecordBufferCopyPayload(CommandBuffer commandBuffer, in BufferCopyPayload operation)
@@ -1778,6 +1779,7 @@ internal sealed partial class VulkanCommandRuntime
             commandBuffer,
             operation.ArgumentBuffer,
             operation.ArgumentOffset);
+        operation.Program.RecordShaderCommandCoverage(ShaderCommandKind.Compute, indirect: true, instancingKnown: false, instanced: false);
     }
 
     internal unsafe void RecordBufferCopyOp(

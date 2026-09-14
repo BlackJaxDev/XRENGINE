@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using Silk.NET.Vulkan;
@@ -18,10 +19,17 @@ internal sealed class VulkanMaterialTablePreparedMap
     private const ulong InitialCapacity = 4096UL;
     private const int PublicationPageBytes = 64 * 1024;
     private const int MaximumPendingAllocations = 4;
+    // Keep one native-worker queue position available for demand. Standby replenishment is
+    // advisory and must never prevent a newly required material table from being admitted.
+    private const int MaximumPendingStandbyAllocations = MaximumPendingAllocations - 1;
+    private const int MaximumStandbyRetryTargets = 32;
+    private static readonly long StandbyRetryDelayTicks = Stopwatch.Frequency;
     private const int MaximumDiagnosticReadBytes = 16 * 1024 * 1024;
     private readonly object _sync = new();
     private readonly List<Bank> _banks = [];
     private readonly List<PendingAllocation> _pending = [];
+    private readonly Dictionary<StandbyKey, ulong> _standbyLargestObservedDemand = [];
+    private readonly Dictionary<StandbyRetryTarget, long> _standbyRetryAfterTicks = [];
     // The resource runtime exists before frame arenas. Do not start a native worker until an
     // allocation is actually admitted, otherwise an early initialization failure leaks a thread.
     private NativeAllocationWorker? _allocationWorker;
@@ -31,6 +39,10 @@ internal sealed class VulkanMaterialTablePreparedMap
     private long _reuses;
     private long _growthPending;
     private long _emergencyWaits;
+    private long _standbyReplenishmentFailures;
+    private long _standbyAllocationsQueued;
+    private long _standbyAllocationsReady;
+    private long _standbyClaims;
     private int _shutdownStarted;
 
     internal VulkanMaterialTablePreparedAuthority CreateAuthority(VulkanFrameDataArena arena, int frameSlot)
@@ -47,11 +59,31 @@ internal sealed class VulkanMaterialTablePreparedMap
     {
         lock (_sync)
         {
+            int ownerBanks = 0;
+            int standbyBanks = 0;
+            foreach (Bank bank in _banks)
+                if (bank.Kind == BankKind.Standby)
+                    ++standbyBanks;
+                else
+                    ++ownerBanks;
+
+            int demandPending = 0;
+            int standbyPending = 0;
+            foreach (PendingAllocation pending in _pending)
+                if (pending.Kind == PendingAllocationKind.Standby)
+                    ++standbyPending;
+                else
+                    ++demandPending;
+
             return new(
                 Volatile.Read(ref _nativeAllocations), Volatile.Read(ref _pageWrites),
                 Volatile.Read(ref _bytesWritten), Volatile.Read(ref _reuses),
                 Volatile.Read(ref _growthPending), Volatile.Read(ref _emergencyWaits),
-                _banks.Count, _pending.Count);
+                ownerBanks, demandPending,
+                Volatile.Read(ref _standbyAllocationsQueued),
+                Volatile.Read(ref _standbyAllocationsReady),
+                Volatile.Read(ref _standbyClaims),
+                Volatile.Read(ref _standbyReplenishmentFailures), standbyBanks, standbyPending);
         }
     }
 
@@ -85,10 +117,11 @@ internal sealed class VulkanMaterialTablePreparedMap
 
         lock (_sync)
         {
-            DrainCompletedAllocations(buffers);
+            DrainCompletedAllocations(buffers, in authority);
             Bank? bank = FindExact(in authority, publication);
             if (bank is not null)
             {
+                EnsureStandbyReplenishment(in authority, context, requiredBytes);
                 disposition = EVulkanMaterialTablePreparedDisposition.Ready;
                 reason = string.Empty;
                 return true;
@@ -97,7 +130,9 @@ internal sealed class VulkanMaterialTablePreparedMap
             bank = FindReusable(in authority, publication.OwnerId, requiredBytes);
             if (bank is null)
             {
-                if (!TryQueueOrPublishAllocation(in authority, context, buffers, publication.OwnerId,
+                bank = TryClaimCompletedStandby(in authority, publication.OwnerId, requiredBytes);
+                if (bank is null &&
+                    !TryQueueOrPublishAllocation(in authority, context, buffers, publication.OwnerId,
                         requiredBytes, out bank, out bool isPending, out reason))
                 {
                     disposition = isPending
@@ -116,6 +151,7 @@ internal sealed class VulkanMaterialTablePreparedMap
                 readyBank.Assign(in authority, publication, requiredBytes,
                     context.Resources.GetPublishedGeneration(ObjectType.Buffer, readyBank.Buffer.Handle));
                 RetireSupersededUndersizedBanks(in authority, publication.OwnerId, readyBank, buffers);
+                EnsureStandbyReplenishment(in authority, context, requiredBytes);
                 disposition = EVulkanMaterialTablePreparedDisposition.Ready;
                 reason = string.Empty;
                 return true;
@@ -198,6 +234,8 @@ internal sealed class VulkanMaterialTablePreparedMap
             foreach (PendingAllocation pending in _pending)
                 RetireCompletedPending(pending, buffers);
             _pending.Clear();
+            _standbyLargestObservedDemand.Clear();
+            _standbyRetryAfterTicks.Clear();
             foreach (Bank bank in _banks)
                 if (bank.Buffer.Handle != 0 && !bank.Retired)
                     buffers.Retire(bank.Buffer, bank.Memory, "MaterialTable.PreparedBacking");
@@ -224,7 +262,7 @@ internal sealed class VulkanMaterialTablePreparedMap
             if (result.Capacity < requiredBytes)
             {
                 buffers.Retire(result.Buffer, result.Memory, "MaterialTable.PreparedBacking.UndersizedPending");
-                bool queued = QueueAllocation(in authority, context, ownerId, requiredBytes, out _, out isPending, out reason);
+                bool queued = QueueDemandAllocation(in authority, context, ownerId, requiredBytes, out _, out isPending, out reason);
                 return queued;
             }
 
@@ -242,10 +280,10 @@ internal sealed class VulkanMaterialTablePreparedMap
             return false;
         }
 
-        return QueueAllocation(in authority, context, ownerId, requiredBytes, out bank, out isPending, out reason);
+        return QueueDemandAllocation(in authority, context, ownerId, requiredBytes, out bank, out isPending, out reason);
     }
 
-    private bool QueueAllocation(in VulkanMaterialTablePreparedAuthority authority,
+    private bool QueueDemandAllocation(in VulkanMaterialTablePreparedAuthority authority,
         VulkanBackendObjectContext context, ulong ownerId, ulong requiredBytes, out Bank? bank,
         out bool isPending, out string reason)
     {
@@ -263,12 +301,20 @@ internal sealed class VulkanMaterialTablePreparedMap
             return false;
         }
 
-        ulong capacity = CalculateCapacity(requiredBytes);
+        if (!TryCalculateAllocationCapacity(
+                requiredBytes,
+                GetStorageBufferAllocationLimit(context),
+                requireNextCapacityClass: false,
+                out ulong capacity))
+        {
+            reason = "Material-table backing demand exceeds the Vulkan storage-buffer allocation limit.";
+            return false;
+        }
         try
         {
             NativeAllocationWorker worker = _allocationWorker ??= new NativeAllocationWorker();
             Task<AllocationResult> task = worker.Enqueue(() => Allocate(context, capacity));
-            _pending.Add(new PendingAllocation(authority, ownerId, task));
+            _pending.Add(PendingAllocation.ForDemand(in authority, ownerId, task));
             Interlocked.Increment(ref _growthPending);
             isPending = true;
             reason = "Material-table backing growth was queued on the native allocation worker; retry preparation.";
@@ -281,11 +327,72 @@ internal sealed class VulkanMaterialTablePreparedMap
         }
     }
 
-    private void DrainCompletedAllocations(VulkanBufferResourceService buffers)
+    private void DrainCompletedAllocations(VulkanBufferResourceService buffers,
+        in VulkanMaterialTablePreparedAuthority currentAuthority)
     {
         for (int index = _pending.Count - 1; index >= 0; --index)
         {
             PendingAllocation pending = _pending[index];
+            if (pending.Kind == PendingAllocationKind.Standby)
+            {
+                if (!pending.Task.IsCompleted)
+                    continue;
+
+                _pending.RemoveAt(index);
+                StandbyRetryTarget retryTarget = new(pending.StandbyKey, pending.RequestedCapacity);
+                if (!pending.Task.IsCompletedSuccessfully)
+                {
+                    RecordStandbyReplenishmentFailure(in retryTarget, "the native allocation worker faulted");
+                    continue;
+                }
+
+                AllocationResult standbyAllocation = pending.Task.GetAwaiter().GetResult();
+                if (!standbyAllocation.Success || standbyAllocation.Buffer.Handle == 0)
+                {
+                    RecordStandbyReplenishmentFailure(
+                        in retryTarget,
+                        string.IsNullOrWhiteSpace(standbyAllocation.Error)
+                            ? "the native allocation failed"
+                            : standbyAllocation.Error);
+                    continue;
+                }
+
+                // Reset epochs are deliberately absent from standby identity. A completed
+                // reserve survives slot reuse, but never an arena generation replacement.
+                StandbyKey standbyKey = pending.StandbyKey;
+                if (!standbyKey.MatchesArena(in currentAuthority))
+                {
+                    _standbyRetryAfterTicks.Remove(retryTarget);
+                    buffers.Retire(standbyAllocation.Buffer, standbyAllocation.Memory,
+                        "MaterialTable.PreparedBacking.UnusedStandby");
+                    continue;
+                }
+
+                Bank? existingStandby = FindCompletedStandby(in standbyKey);
+                if (existingStandby is not null)
+                {
+                    if (existingStandby.Capacity >= standbyAllocation.Capacity)
+                    {
+                        _standbyRetryAfterTicks.Remove(retryTarget);
+                        buffers.Retire(standbyAllocation.Buffer, standbyAllocation.Memory,
+                            "MaterialTable.PreparedBacking.UndersizedStandbyReplacement");
+                        continue;
+                    }
+
+                    existingStandby.Retired = true;
+                    buffers.Retire(existingStandby.Buffer, existingStandby.Memory,
+                        "MaterialTable.PreparedBacking.StandbyReplacement");
+                    _banks.Remove(existingStandby);
+                }
+
+                Bank standby = new();
+                standby.ReserveStandby(in standbyKey, standbyAllocation);
+                _banks.Add(standby);
+                _standbyRetryAfterTicks.Remove(retryTarget);
+                Interlocked.Increment(ref _standbyAllocationsReady);
+                continue;
+            }
+
             VulkanMaterialTablePreparedAuthority pendingAuthority = pending.Authority;
             if (!pending.Task.IsCompleted || IsCurrent(in pendingAuthority))
                 continue;
@@ -299,6 +406,40 @@ internal sealed class VulkanMaterialTablePreparedMap
             spare.Reserve(in pendingAuthority, pending.TableOwnerId, allocation);
             _banks.Add(spare);
         }
+
+        for (int index = _banks.Count - 1; index >= 0; --index)
+        {
+            Bank bank = _banks[index];
+            if (bank.Kind != BankKind.Standby || bank.StandbyKey.MatchesArena(in currentAuthority))
+                continue;
+            bank.Retired = true;
+            buffers.Retire(bank.Buffer, bank.Memory, "MaterialTable.PreparedBacking.StaleStandby");
+            _banks.RemoveAt(index);
+        }
+
+        List<StandbyKey>? staleStandbyKeys = null;
+        foreach (StandbyKey key in _standbyLargestObservedDemand.Keys)
+        {
+            if (key.MatchesArena(in currentAuthority))
+                continue;
+            staleStandbyKeys ??= [];
+            staleStandbyKeys.Add(key);
+        }
+        if (staleStandbyKeys is not null)
+            foreach (StandbyKey key in staleStandbyKeys)
+                _standbyLargestObservedDemand.Remove(key);
+
+        List<StandbyRetryTarget>? staleRetryTargets = null;
+        foreach (StandbyRetryTarget target in _standbyRetryAfterTicks.Keys)
+        {
+            if (target.Key.MatchesArena(in currentAuthority))
+                continue;
+            staleRetryTargets ??= [];
+            staleRetryTargets.Add(target);
+        }
+        if (staleRetryTargets is not null)
+            foreach (StandbyRetryTarget target in staleRetryTargets)
+                _standbyRetryAfterTicks.Remove(target);
     }
 
     private static void RetireCompletedPending(PendingAllocation pending, VulkanBufferResourceService buffers)
@@ -333,7 +474,7 @@ internal sealed class VulkanMaterialTablePreparedMap
         for (int index = _banks.Count - 1; index >= 0; --index)
         {
             Bank candidate = _banks[index];
-            if (ReferenceEquals(candidate, replacement) || candidate.Retired || candidate.TableOwnerId != ownerId ||
+            if (ReferenceEquals(candidate, replacement) || candidate.Retired || candidate.Kind != BankKind.Owner || candidate.TableOwnerId != ownerId ||
                 !candidate.IsReusableBy(in authority) ||
                 candidate.Capacity >= replacement.Capacity)
                 continue;
@@ -348,7 +489,7 @@ internal sealed class VulkanMaterialTablePreparedMap
     private Bank? FindExact(in VulkanMaterialTablePreparedAuthority authority, GPUMaterialTablePublication publication)
     {
         foreach (Bank bank in _banks)
-            if (!bank.Retired && bank.Matches(in authority, publication))
+            if (!bank.Retired && bank.Kind == BankKind.Owner && bank.Matches(in authority, publication))
                 return bank;
         return null;
     }
@@ -356,7 +497,7 @@ internal sealed class VulkanMaterialTablePreparedMap
     private Bank? FindPublication(VulkanBackendObjectContext context, GPUMaterialTablePublication publication)
     {
         foreach (Bank bank in _banks)
-            if (!bank.Retired && bank.NativeGeneration != 0 &&
+            if (!bank.Retired && bank.Kind == BankKind.Owner && bank.NativeGeneration != 0 &&
                 context.Resources.GetPublishedGeneration(ObjectType.Buffer, bank.Buffer.Handle) == bank.NativeGeneration &&
                 bank.TableOwnerId == publication.OwnerId && bank.PublicationGeneration == publication.Generation &&
                 bank.DescriptorClosureGeneration == publication.DescriptorClosureGeneration)
@@ -367,7 +508,7 @@ internal sealed class VulkanMaterialTablePreparedMap
     private Bank? FindReusable(in VulkanMaterialTablePreparedAuthority authority, ulong ownerId, ulong requiredBytes)
     {
         foreach (Bank bank in _banks)
-            if (!bank.Retired && bank.TableOwnerId == ownerId && bank.IsReusableBy(in authority) &&
+            if (!bank.Retired && bank.Kind == BankKind.Owner && bank.TableOwnerId == ownerId && bank.IsReusableBy(in authority) &&
                 bank.Capacity >= requiredBytes)
                 return bank;
         return null;
@@ -376,11 +517,185 @@ internal sealed class VulkanMaterialTablePreparedMap
     private PendingAllocation? FindPending(in VulkanMaterialTablePreparedAuthority authority, ulong ownerId)
     {
         foreach (PendingAllocation pending in _pending)
-            if (pending.TableOwnerId == ownerId && pending.Authority.ArenaIdentity == authority.ArenaIdentity &&
+            if (pending.Kind == PendingAllocationKind.Demand && pending.TableOwnerId == ownerId && pending.Authority.ArenaIdentity == authority.ArenaIdentity &&
                 pending.Authority.ArenaGeneration == authority.ArenaGeneration &&
                 pending.Authority.FrameSlot == authority.FrameSlot)
                 return pending;
         return null;
+    }
+
+    private Bank? TryClaimCompletedStandby(
+        in VulkanMaterialTablePreparedAuthority authority,
+        ulong ownerId,
+        ulong requiredBytes)
+    {
+        StandbyKey key = StandbyKey.From(in authority);
+        Bank? standby = FindCompletedStandby(in key);
+        if (standby is null || standby.Capacity < requiredBytes)
+            return null;
+
+        standby.ClaimStandby(in authority, ownerId);
+        Interlocked.Increment(ref _standbyClaims);
+        return standby;
+    }
+
+    private Bank? FindCompletedStandby(in StandbyKey key)
+    {
+        foreach (Bank bank in _banks)
+            if (!bank.Retired && bank.Kind == BankKind.Standby && bank.StandbyKey == key)
+                return bank;
+        return null;
+    }
+
+    private void EnsureStandbyReplenishment(
+        in VulkanMaterialTablePreparedAuthority authority,
+        VulkanBackendObjectContext context,
+        ulong requiredBytes)
+    {
+        try
+        {
+            EnsureStandbyReplenishmentCore(in authority, context, requiredBytes);
+        }
+        catch (Exception exception)
+        {
+            // A standby is advisory. A successful exact/reusable/claimed demand publication
+            // remains valid if reserve setup, capability lookup, or worker admission fails.
+            StandbyKey key = StandbyKey.From(in authority);
+            RecordStandbyReplenishmentFailure(
+                new StandbyRetryTarget(key, requiredBytes),
+                $"reserve setup failed: {exception.Message}");
+        }
+    }
+
+    private void EnsureStandbyReplenishmentCore(
+        in VulkanMaterialTablePreparedAuthority authority,
+        VulkanBackendObjectContext context,
+        ulong requiredBytes)
+    {
+        StandbyKey key = StandbyKey.From(in authority);
+        ulong largestObservedDemand = Math.Max(
+            requiredBytes,
+            _standbyLargestObservedDemand.TryGetValue(key, out ulong previousDemand)
+                ? previousDemand
+                : 0UL);
+        _standbyLargestObservedDemand[key] = largestObservedDemand;
+
+        if (!TryCalculateAllocationCapacity(
+                largestObservedDemand, GetStorageBufferAllocationLimit(context),
+                requireNextCapacityClass: true, out ulong capacity))
+        {
+            RecordStandbyReplenishmentFailure(
+                new StandbyRetryTarget(key, largestObservedDemand),
+                "the largest observed demand cannot fit in the Vulkan storage-buffer allocation limit");
+            return;
+        }
+
+        StandbyRetryTarget retryTarget = new(key, capacity);
+        if (FindCompletedStandby(in key) is { } completedStandby && completedStandby.Capacity >= capacity)
+        {
+            _standbyRetryAfterTicks.Remove(retryTarget);
+            return;
+        }
+        if (FindPendingStandby(in key) is not null || !CanAttemptStandbyReplenishment(in retryTarget))
+            return;
+
+        if (Volatile.Read(ref _shutdownStarted) != 0)
+        {
+            RecordStandbyReplenishmentFailure(in retryTarget, "Vulkan shutdown has started");
+            return;
+        }
+        if (_pending.Count >= MaximumPendingStandbyAllocations)
+        {
+            RecordStandbyReplenishmentFailure(
+                in retryTarget,
+                $"the bounded native allocation queue retains one demand position ({MaximumPendingAllocations})");
+            return;
+        }
+
+        try
+        {
+            NativeAllocationWorker worker = _allocationWorker ??= new NativeAllocationWorker();
+            Task<AllocationResult> task = worker.Enqueue(() => Allocate(context, capacity));
+            _pending.Add(PendingAllocation.ForStandby(in authority, capacity, task));
+            Interlocked.Increment(ref _standbyAllocationsQueued);
+        }
+        catch (Exception exception)
+        {
+            RecordStandbyReplenishmentFailure(in retryTarget,
+                $"the native allocation worker did not admit the reserve: {exception.Message}");
+        }
+    }
+
+    /// <summary>Counts advisory standby replenishment failures without changing demand admission.</summary>
+    internal long StandbyReplenishmentFailureCount
+        => Volatile.Read(ref _standbyReplenishmentFailures);
+
+    private PendingAllocation? FindPendingStandby(in StandbyKey key)
+    {
+        foreach (PendingAllocation pending in _pending)
+            if (pending.Kind == PendingAllocationKind.Standby && pending.StandbyKey == key)
+                return pending;
+        return null;
+    }
+
+    private bool CanAttemptStandbyReplenishment(in StandbyRetryTarget target)
+        => !_standbyRetryAfterTicks.TryGetValue(target, out long retryAfter) ||
+           Stopwatch.GetTimestamp() >= retryAfter;
+
+    private void RecordStandbyReplenishmentFailure(in StandbyRetryTarget target, string detail)
+    {
+        if (_standbyRetryAfterTicks.Count >= MaximumStandbyRetryTargets &&
+            !_standbyRetryAfterTicks.ContainsKey(target))
+            _standbyRetryAfterTicks.Clear();
+        _standbyRetryAfterTicks[target] = Stopwatch.GetTimestamp() + StandbyRetryDelayTicks;
+        Interlocked.Increment(ref _standbyReplenishmentFailures);
+        global::XREngine.Debug.VulkanWarningEvery(
+            $"Vulkan.MaterialTable.Standby.{target.Key.ArenaIdentity}.{target.Key.ArenaGeneration}.{target.Key.FrameSlot}.{target.Capacity}",
+            TimeSpan.FromSeconds(1),
+            "[Vulkan][MaterialTable] standby replenishment deferred for arena={0} generation={1} slot={2} capacity={3}: {4}",
+            target.Key.ArenaIdentity,
+            target.Key.ArenaGeneration,
+            target.Key.FrameSlot,
+            target.Capacity,
+            detail);
+    }
+
+    private static ulong GetStorageBufferAllocationLimit(VulkanBackendObjectContext context)
+    {
+        VulkanPhysicalDeviceCapabilitySnapshot capabilities =
+            context.DeviceContext.PhysicalDeviceCapabilities
+            ?? throw new InvalidOperationException(
+                "The operational Vulkan device has no physical-device capability snapshot.");
+        return Math.Min(
+            Math.Max((ulong)capabilities.Properties.Limits.MaxStorageBufferRange, 1UL),
+            int.MaxValue);
+    }
+
+    private static bool TryCalculateAllocationCapacity(
+        ulong requiredBytes,
+        ulong maximumCapacity,
+        bool requireNextCapacityClass,
+        out ulong capacity)
+    {
+        capacity = 0UL;
+        if (requiredBytes == 0UL || requiredBytes > maximumCapacity)
+            return false;
+
+        capacity = Math.Min(InitialCapacity, maximumCapacity);
+        while (capacity < requiredBytes)
+        {
+            if (capacity > maximumCapacity / 2UL)
+            {
+                capacity = maximumCapacity;
+                break;
+            }
+            capacity *= 2UL;
+        }
+
+        if (requireNextCapacityClass && capacity < maximumCapacity)
+            capacity = capacity > maximumCapacity / 2UL ? maximumCapacity : capacity * 2UL;
+
+        return capacity >= requiredBytes;
     }
 
     private void WriteChangedPages(Bank bank, VulkanBackendObjectContext context,
@@ -457,22 +772,59 @@ internal sealed class VulkanMaterialTablePreparedMap
         }
     }
 
-    private static ulong CalculateCapacity(ulong requiredBytes)
+    private enum BankKind : byte { Owner, Standby }
+
+    private enum PendingAllocationKind : byte { Demand, Standby }
+
+    private readonly record struct StandbyKey(
+        ulong ArenaIdentity,
+        ulong ArenaGeneration,
+        int FrameSlot)
     {
-        ulong capacity = InitialCapacity;
-        while (capacity < requiredBytes)
-            capacity = checked(capacity * 2UL);
-        return capacity;
+        internal static StandbyKey From(in VulkanMaterialTablePreparedAuthority authority)
+            => new(authority.ArenaIdentity, authority.ArenaGeneration, authority.FrameSlot);
+
+        internal bool MatchesArena(in VulkanMaterialTablePreparedAuthority authority)
+            => ArenaIdentity == authority.ArenaIdentity &&
+               ArenaGeneration == authority.ArenaGeneration;
     }
 
-    private readonly record struct PendingAllocation(VulkanMaterialTablePreparedAuthority Authority,
-        ulong TableOwnerId, Task<AllocationResult> Task);
+    private readonly record struct StandbyRetryTarget(StandbyKey Key, ulong Capacity);
+
+    private readonly record struct PendingAllocation(
+        PendingAllocationKind Kind,
+        VulkanMaterialTablePreparedAuthority Authority,
+        ulong TableOwnerId,
+        StandbyKey StandbyKey,
+        ulong RequestedCapacity,
+        Task<AllocationResult> Task)
+    {
+        internal static PendingAllocation ForDemand(
+            in VulkanMaterialTablePreparedAuthority authority,
+            ulong ownerId,
+            Task<AllocationResult> task)
+            => new(PendingAllocationKind.Demand, authority, ownerId, default, 0UL, task);
+
+        internal static PendingAllocation ForStandby(
+            in VulkanMaterialTablePreparedAuthority authority,
+            ulong capacity,
+            Task<AllocationResult> task)
+            => new(
+                PendingAllocationKind.Standby,
+                authority,
+                0UL,
+                VulkanMaterialTablePreparedMap.StandbyKey.From(in authority),
+                capacity,
+                task);
+    }
 
     private readonly record struct AllocationResult(bool Success, Buffer Buffer, DeviceMemory Memory,
         ulong Capacity, string Error);
 
     private sealed class Bank
     {
+        internal BankKind Kind;
+        internal StandbyKey StandbyKey;
         internal Buffer Buffer;
         internal DeviceMemory Memory;
         internal ulong Capacity;
@@ -518,6 +870,8 @@ internal sealed class VulkanMaterialTablePreparedMap
 
         internal void Reserve(in VulkanMaterialTablePreparedAuthority authority, ulong ownerId, in AllocationResult allocation)
         {
+            Kind = BankKind.Owner;
+            StandbyKey = default;
             Buffer = allocation.Buffer;
             Memory = allocation.Memory;
             Capacity = allocation.Capacity;
@@ -526,6 +880,53 @@ internal sealed class VulkanMaterialTablePreparedMap
             FrameSlot = authority.FrameSlot;
             ResetEpoch = authority.ResetEpoch;
             TableOwnerId = ownerId;
+            PageTokens = [];
+            Shadow = [];
+            PageScratch = [];
+            HasShadow = false;
+        }
+
+        internal void ReserveStandby(in StandbyKey key, in AllocationResult allocation)
+        {
+            Kind = BankKind.Standby;
+            StandbyKey = key;
+            Buffer = allocation.Buffer;
+            Memory = allocation.Memory;
+            Capacity = allocation.Capacity;
+            ArenaIdentity = key.ArenaIdentity;
+            ArenaGeneration = key.ArenaGeneration;
+            FrameSlot = key.FrameSlot;
+            ResetEpoch = 0UL;
+            TableOwnerId = 0UL;
+            Range = 0UL;
+            NativeGeneration = 0UL;
+            PublicationGeneration = 0UL;
+            DescriptorClosureGeneration = 0UL;
+            PageTokens = [];
+            Shadow = [];
+            PageScratch = [];
+            HasShadow = false;
+        }
+
+        internal void ClaimStandby(
+            in VulkanMaterialTablePreparedAuthority authority,
+            ulong ownerId)
+        {
+            if (Kind != BankKind.Standby ||
+                StandbyKey != VulkanMaterialTablePreparedMap.StandbyKey.From(in authority))
+                throw new InvalidOperationException("A material-table standby belongs to a different frame arena slot.");
+
+            Kind = BankKind.Owner;
+            StandbyKey = default;
+            ArenaIdentity = authority.ArenaIdentity;
+            ArenaGeneration = authority.ArenaGeneration;
+            FrameSlot = authority.FrameSlot;
+            ResetEpoch = authority.ResetEpoch;
+            TableOwnerId = ownerId;
+            Range = 0UL;
+            NativeGeneration = 0UL;
+            PublicationGeneration = 0UL;
+            DescriptorClosureGeneration = 0UL;
             PageTokens = [];
             Shadow = [];
             PageScratch = [];

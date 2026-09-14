@@ -22,6 +22,7 @@ namespace XREngine.Rendering.OpenGL
         public partial class GLRenderProgram(OpenGLRenderer renderer, XRRenderProgram data) : GLObject<XRRenderProgram>(renderer, data), IEnumerable<GLShader>
         {
             private bool _isLinked = false;
+            private ShaderCommandCoverageProgramToken[]? _shaderCommandCoverageTokens;
             private uint _replacementProgramId;
             private bool _replacementProgramPending;
             private long _replacementSourceRevisionKey;
@@ -32,10 +33,19 @@ namespace XREngine.Rendering.OpenGL
                 get => _isLinked;
                 private set
                 {
-                    if (SetField(ref _isLinked, value))
+                    bool changed = SetField(ref _isLinked, value);
+                    if (changed)
+                    {
                         Data.SetBackendLinked(value);
+                    }
+                    if (value)
+                        _shaderCommandCoverageTokens = ShaderCommandCoverage.CreateProgramTokens("OpenGL", Data.Shaders.ToArray());
                 }
             }
+
+            /// <summary>Records a CPU-issued command using metadata prepared at successful link time.</summary>
+            internal void RecordShaderCommandCoverage(ShaderCommandKind kind, bool indirect, bool instancingKnown, bool instanced, bool rasterizerDiscard = false)
+                => ShaderCommandCoverage.Record(_shaderCommandCoverageTokens, kind, indirect, instancingKnown, instanced, rasterizerDiscard);
 
             public override EGLObjectType Type => EGLObjectType.Program;
 

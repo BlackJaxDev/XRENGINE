@@ -123,6 +123,8 @@ internal sealed partial class VulkanFrameLoop
         _openXrSubmissionRetiredCallback = OnOpenXrSubmissionRetired;
         _commandRuntime.OpenXrSubmissionTracker.SetSubmissionRetiredCallback(
             _openXrSubmissionRetiredCallback);
+        _commandRuntime.OpenXrSubmissionTracker.SetSubmissionFrameSlotLifetimeSettledCallback(
+            OnOpenXrSubmissionFrameSlotLifetimeSettled);
         if (targetDriver is IVulkanExplicitFrameTargetDriver explicitTarget)
         {
             _frameSlotCount = checked((int)explicitTarget.OutputProperties.FrameSlotCount);
@@ -136,6 +138,10 @@ internal sealed partial class VulkanFrameLoop
             _frameSlotCount = DesktopFrameSlotCount;
             _explicitPrimaryPlans = [];
         }
+        // Explicit targets can have more slots than the desktop default. Publish
+        // their count before any descriptor or uniform storage is materialized,
+        // so every slot binds the same native buffer that receives its writes.
+        _resourceRuntime.Descriptors.EnsureFrameSlotCountFloor(_frameSlotCount);
         _acceptedFramePlans = new VulkanAcceptedFramePlanArena(_frameSlotCount);
         _preWaitedFrameSlotTimelineValues = new ulong[_frameSlotCount];
         _window = window;

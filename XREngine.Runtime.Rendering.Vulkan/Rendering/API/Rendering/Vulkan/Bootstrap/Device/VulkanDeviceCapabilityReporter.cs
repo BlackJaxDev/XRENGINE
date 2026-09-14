@@ -267,6 +267,7 @@ internal static class VulkanDeviceCapabilityReporter
         bool SupportsMaintenance6 = Supports(EVulkanDeviceCapability.Maintenance6);
         bool SupportsShaderDemoteToHelperInvocation = Supports(EVulkanDeviceCapability.ShaderDemoteToHelperInvocation);
         bool SupportsShaderTerminateInvocation = Supports(EVulkanDeviceCapability.ShaderTerminateInvocation);
+        bool SupportsUnifiedImageLayouts = Supports(EVulkanDeviceCapability.UnifiedImageLayouts);
         bool SupportsExtendedFlags = mutable._supportsExtendedFlags;
         bool SupportsDepthClipControl = Supports(EVulkanDeviceCapability.DepthClipControl);
         bool SupportsIndexTypeUint8 = Supports(EVulkanDeviceCapability.IndexTypeUint8);
@@ -626,6 +627,32 @@ internal static class VulkanDeviceCapabilityReporter
             "Deferred",
             $"feature={SupportsDeviceGeneratedCommands}",
             SupportsDeviceGeneratedCommands ? "Deferred until descriptor heap/shader object architecture is stable." : "Device-generated commands unavailable.");
+
+        VulkanDeviceCapabilityReporter.LogCapability(
+            "UnifiedImageLayoutsKHR",
+            VulkanDeviceCapabilityReporter.CapabilityState(
+                HasExtension("VK_KHR_unified_image_layouts"),
+                mutable._unifiedImageLayoutsFeatureSupported,
+                SupportsUnifiedImageLayouts),
+            apiVersion,
+            "VK_KHR_unified_image_layouts",
+            "unifiedImageLayouts",
+            "RenderBenchOptIn",
+            $"requested={Environment.GetEnvironmentVariable("XRE_VK_RENDER_BENCH_UNIFIED_IMAGE_LAYOUTS") == "1"};supported={mutable._unifiedImageLayoutsFeatureSupported};ordinarySupported={mutable._unifiedImageLayoutsFeatureSupported};videoSupported={mutable._unifiedImageLayoutsVideoFeatureSupported};enabled={SupportsUnifiedImageLayouts}",
+            SupportsUnifiedImageLayouts ? "Benchmark-only ordinary-image policy enabled; graph hazards and exceptional layouts remain mandatory." : "Deferred unless the RenderBench opt-in requests and enables the ordinary-image feature.");
+
+        VulkanDeviceCapabilityReporter.LogCapability(
+            "DeviceAddressCommandsKHR",
+            VulkanDeviceCapabilityReporter.CapabilityState(
+                HasExtension("VK_KHR_device_address_commands"),
+                mutable._deviceAddressCommandsFeatureSupported,
+                false),
+            apiVersion,
+            "VK_KHR_device_address_commands",
+            "deviceAddressCommands",
+            "Deferred",
+            $"advertised={HasExtension("VK_KHR_device_address_commands")};featureSupported={mutable._deviceAddressCommandsFeatureSupported};enabled=False;bufferDeviceAddress={SupportsBufferDeviceAddress}",
+            "Deferred: address command operands require a measured workload plus explicit range, ownership, GPU-count, and lifetime authority; bufferDeviceAddress is not an equivalent feature.");
 
         VulkanDeviceCapabilityReporter.LogCapability(
             "Maintenance4",

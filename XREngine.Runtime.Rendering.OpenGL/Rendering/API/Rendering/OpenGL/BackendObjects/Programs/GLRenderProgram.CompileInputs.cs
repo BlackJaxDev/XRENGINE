@@ -21,7 +21,7 @@ namespace XREngine.Rendering.OpenGL
         {
             public void PrepareLinkData()
             {
-                if (_linkDataPrepared || IsLinked || _shaderCache.IsEmpty)
+                if (_linkDataPrepared || (IsLinked && !_replacementProgramPending) || _shaderCache.IsEmpty)
                     return;
 
                 long preparationStartTimestamp = Stopwatch.GetTimestamp();
@@ -77,9 +77,11 @@ namespace XREngine.Rendering.OpenGL
 
             public void BeginPrepareLinkData(bool registerPendingProgram = false)
             {
-                if (_linkDataPrepared || IsLinked || _shaderCache.IsEmpty)
+                // A hot reload keeps the previous program linked while preparing
+                // its replacement. A usable old build must not suppress that work.
+                if (_linkDataPrepared || (IsLinked && !_replacementProgramPending) || _shaderCache.IsEmpty)
                 {
-                    if (registerPendingProgram && _linkDataPrepared && !IsLinked)
+                    if (registerPendingProgram && _linkDataPrepared && (!IsLinked || _replacementProgramPending))
                         RegisterPendingAsyncProgram();
                     return;
                 }

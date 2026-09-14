@@ -662,8 +662,9 @@ internal sealed partial class VulkanCommandRuntime
         {
             VulkanComputeBufferBinding binding = pair.Value;
             AddRecordedBufferIdentity(
-                CaptureRecordedBufferIdentity(
+                CaptureRecordedBufferIdentityFromCapturedGeneration(
                     binding.Buffer.Handle,
+                    binding.NativeGeneration,
                     EVulkanRecordedBufferBindingKind.Descriptor,
                     pair.Key,
                     0UL,
@@ -680,15 +681,22 @@ internal sealed partial class VulkanCommandRuntime
         uint binding,
         ulong offset,
         ulong range)
-        => CaptureRecordedBufferIdentity(
-            buffer?.BufferHandle?.Handle ?? 0UL,
+    {
+        ulong handle = buffer?.BufferHandle?.Handle ?? 0UL;
+        return CaptureRecordedBufferIdentityFromCapturedGeneration(
+            handle,
+            handle == 0UL
+                ? 0UL
+                : GetCurrentVulkanResourceGeneration(ObjectType.Buffer, handle),
             kind,
             binding,
             offset,
             range);
+    }
 
-    private VulkanRecordedBufferIdentity CaptureRecordedBufferIdentity(
+    private static VulkanRecordedBufferIdentity CaptureRecordedBufferIdentityFromCapturedGeneration(
         ulong bufferHandle,
+        ulong nativeGeneration,
         EVulkanRecordedBufferBindingKind kind,
         uint binding,
         ulong offset,
@@ -697,9 +705,7 @@ internal sealed partial class VulkanCommandRuntime
             kind,
             binding,
             bufferHandle,
-            bufferHandle == 0UL
-                ? 0UL
-                : GetCurrentVulkanResourceGeneration(ObjectType.Buffer, bufferHandle),
+            nativeGeneration,
             offset,
             range);
 

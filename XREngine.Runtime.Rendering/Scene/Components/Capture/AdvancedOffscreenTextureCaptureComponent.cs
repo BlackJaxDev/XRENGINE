@@ -47,6 +47,27 @@ public abstract partial class AdvancedOffscreenTextureCaptureComponent : XRCompo
     protected abstract RenderPipelineOffscreenIntent OffscreenIntent { get; }
     protected abstract EFrameOutputKind CaptureOutputKind { get; }
 
+    /// <summary>Reflected slots may reuse the same ownership protocol with the Default pipeline.</summary>
+    protected virtual bool UsesAdvancedPipeline => true;
+
+    internal bool HasPendingCapture => HasPendingWriter;
+    internal bool IsCaptureQuarantined
+    {
+        get
+        {
+            lock (_publicationSync)
+                return _quarantined;
+        }
+    }
+    internal bool ResourcesRetired
+    {
+        get
+        {
+            lock (_publicationSync)
+                return _retirementRequested && _viewport is null && !_writeInProgress && !HasPendingWriter;
+        }
+    }
+
     /// <summary>Acquires a completed output generation for a consumer that will release after its GPU read completes.</summary>
     public bool TryAcquireCompletedOutput([NotNullWhen(true)] out AdvancedOffscreenTextureCaptureLease? lease)
     {
@@ -138,6 +159,9 @@ public abstract partial class AdvancedOffscreenTextureCaptureComponent : XRCompo
         bool previousCapturePass = RuntimeEngine.Rendering.State.IsSceneCapturePass;
         bool publicationWriteStarted = false;
         RuntimeEngine.Rendering.State.IsSceneCapturePass = true;
+        bool mirror = OffscreenIntent.ViewIntent == ERenderPipelineOffscreenViewIntent.Mirror;
+        if (mirror)
+            RuntimeEngine.Rendering.State.PushMirrorPass();
         try
         {
             EnsureResourcesCore();
@@ -147,6 +171,9 @@ public abstract partial class AdvancedOffscreenTextureCaptureComponent : XRCompo
             if (_canonicalLifetime is null || !_canonicalLifetime.TryBeginWrite())
                 return false;
             publicationWriteStarted = true;
+            // An attempted writer invalidates the previous generation even if
+            // initialization throws or authoring is cleanly rejected without a fence.
+            _hasCompletedCapture = false;
 
             UpdateCaptureCamera();
             RenderOutputRequest output = CreateOutputRequest();
@@ -177,6 +204,8 @@ public abstract partial class AdvancedOffscreenTextureCaptureComponent : XRCompo
         {
             if (publicationWriteStarted && _writerFence is null && !_quarantined)
                 _canonicalLifetime!.EndWrite(0);
+            if (mirror)
+                RuntimeEngine.Rendering.State.PopMirrorPass();
             RuntimeEngine.Rendering.State.IsSceneCapturePass = previousCapturePass;
             lock (_publicationSync)
                 _writeInProgress = false;
@@ -326,10 +355,15 @@ public abstract partial class AdvancedOffscreenTextureCaptureComponent : XRCompo
 
         _captureCamera ??= new XRCamera(_captureTransform,
             new XRPerspectiveCameraParameters(90.0f, 1.0f, 0.1f, 10000.0f));
-        RuntimeEngine.RegisterAdvancedOffscreenOwner(_outputIdentity, OffscreenIntent);
-        RenderPipelineRequest request = RenderPipelineRequest.AdvancedOffscreenCapture(
-            OffscreenIntent, outputId: _outputIdentity);
+        if (UsesAdvancedPipeline)
+            RuntimeEngine.RegisterAdvancedOffscreenOwner(_outputIdentity, OffscreenIntent);
+        RenderPipelineRequest request = UsesAdvancedPipeline
+            ? RenderPipelineRequest.AdvancedOffscreenCapture(OffscreenIntent, outputId: _outputIdentity)
+            : RenderPipelineRequest.OffscreenCapture();
         _viewport ??= new XRViewport(null, width, height);
+        // Capture resolution controls sampling density, not the source camera's
+        // projection. Its shared lens must remain read-only on this viewport.
+        _viewport.AllowCameraAspectRatioUpdates = false;
         // Assigning a camera normally adopts its main-view pipeline. This owner
         // must keep its explicit offscreen family before any camera assignment.
         _viewport.SetRenderPipelineFromCamera = false;

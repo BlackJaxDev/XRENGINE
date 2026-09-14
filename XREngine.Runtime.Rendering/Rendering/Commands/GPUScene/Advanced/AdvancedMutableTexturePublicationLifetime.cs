@@ -95,4 +95,26 @@ internal sealed class AdvancedMutableTexturePublicationLifetime : IAdvancedGpuPu
                 return;
         }
     }
+
+    /// <summary>
+    /// Transfers an already retained exact generation to a GPU/snapshot consumer
+    /// after withdrawal. The caller must own a retain for this generation; this
+    /// entry point never starts a new reader chain on an unowned allocation.
+    /// </summary>
+    internal bool TryRetainReservedGeneration(ulong expectedContentGeneration)
+    {
+        if (expectedContentGeneration == 0)
+            return false;
+        while (true)
+        {
+            long state = Volatile.Read(ref _state);
+            if ((state & (Writing | Retired)) != 0 || (state & ReferenceMask) == 0 ||
+                unchecked((ulong)Volatile.Read(ref _contentGeneration)) != expectedContentGeneration)
+                return false;
+            if ((state & ReferenceMask) == ReferenceMask)
+                throw new InvalidOperationException("Mutable texture publication reference overflow.");
+            if (Interlocked.CompareExchange(ref _state, state + 1, state) == state)
+                return true;
+        }
+    }
 }

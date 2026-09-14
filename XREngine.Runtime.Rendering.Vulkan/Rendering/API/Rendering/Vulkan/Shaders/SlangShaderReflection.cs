@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Silk.NET.Vulkan;
@@ -64,6 +65,7 @@ internal static partial class SlangShaderReflection
                 DeclaredOwner = Enum.Parse<EVulkanDescriptorOwner>((contract.DescriptorLifetime
                     ?? throw new InvalidOperationException($"Resource '{name}' requires an explicit descriptor lifetime.")).ToString()),
                 DeclaredFrequency = ToFrequency(contract.Frequency),
+                NativeAbiIdentity = "native-resource-v1:" + Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(contract))),
             });
             PhysicalResource physicalResource = physical.GetResource(contract.Set, contract.Binding);
             ValidatePhysicalResource(physicalResource, contract);

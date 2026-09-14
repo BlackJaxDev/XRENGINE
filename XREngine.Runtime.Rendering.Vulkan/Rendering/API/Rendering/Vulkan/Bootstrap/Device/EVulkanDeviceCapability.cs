@@ -47,4 +47,5 @@ internal enum EVulkanDeviceCapability : ulong
     Maintenance6 = 1UL << 40,
     ShaderDemoteToHelperInvocation = 1UL << 41,
     ShaderTerminateInvocation = 1UL << 42,
+    UnifiedImageLayouts = 1UL << 43,
 }

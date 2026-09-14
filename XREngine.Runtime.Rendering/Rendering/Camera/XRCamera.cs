@@ -911,6 +911,11 @@ namespace XREngine.Rendering
 
         #region Oblique near clipping
 
+        // The source projection matrices use System.Numerics' zero-to-one depth range. Keep this
+        // threshold relative to the evaluated denominator terms so callers cannot make an unstable
+        // projection valid merely by scaling an otherwise equivalent plane equation.
+        private const double ObliqueProjectionDenominatorRelativeEpsilon = 1.0e-5;
+
         /// <summary>
         /// Recalculates the oblique projection matrix when the transform or clipping plane changes.
         /// Transforms the oblique plane from world space to view space and applies it to the projection.
@@ -922,15 +927,23 @@ namespace XREngine.Rendering
             if (nearPlane is null)
                 return;
 
-            var transform = _transform;
-            if (transform is null)
-                return;
+            // Assignment is intentionally the final operation. A failed refresh must retain the
+            // last known-good matrix rather than publishing a partially calculated projection.
+            SetField(ref _obliqueProjectionMatrix, CalculateObliqueProjectionMatrix(nearPlane.Value),
+                publishNotifications: false);
+        }
 
-            Plane plane = nearPlane.Value;
-            Matrix4x4 viewMatrix = transform.InverseRenderMatrix;
-            Vector3 planePositionView = Vector3.Transform(XRMath.GetPlanePoint(plane), viewMatrix);
-            Vector3 planeNormalView = Vector3.TransformNormal(plane.Normal.Normalized(), viewMatrix);
-            _obliqueProjectionMatrix = CalculateObliqueProjectionMatrix(Parameters.GetProjectionMatrix(), new(planeNormalView.X, planeNormalView.Y, planeNormalView.Z, XRMath.GetPlaneDistance(planePositionView, planeNormalView)));
+        private Matrix4x4 CalculateObliqueProjectionMatrix(Plane worldPlane)
+        {
+            if (_transform is null)
+                throw new InvalidOperationException("An oblique clipping plane requires a configured camera transform.");
+
+            Matrix4x4 viewMatrix = _transform.InverseRenderMatrix;
+            if (!IsFinite(viewMatrix) || !Matrix4x4.Invert(viewMatrix, out _))
+                throw new InvalidOperationException("An oblique clipping plane requires an invertible camera view matrix.");
+
+            Plane viewPlane = NormalizeObliquePlane(Plane.Transform(NormalizeObliquePlane(worldPlane), viewMatrix));
+            return CalculateObliqueProjectionMatrix(Parameters.GetProjectionMatrix(), new Vector4(viewPlane.Normal, viewPlane.D));
         }
 
         /// <summary>
@@ -1849,18 +1862,47 @@ namespace XREngine.Rendering
         /// <returns>The modified projection matrix with an oblique near plane.</returns>
         public static Matrix4x4 CalculateObliqueProjectionMatrix(Matrix4x4 projection, Vector4 clipPlane)
         {
-            Vector4 Q = new(
-                (float.Sign(clipPlane.X) + projection.M31) / projection.M11,
-                (float.Sign(clipPlane.Y) + projection.M32) / projection.M22,
-                -1.0f,
-                (1.0f + projection.M33) / projection.M43);
+            Plane normalizedPlane = NormalizeObliquePlane(new Plane(clipPlane.X, clipPlane.Y, clipPlane.Z, clipPlane.W));
+            if (!IsFinite(projection) || !Matrix4x4.Invert(projection, out Matrix4x4 inverseProjection))
+                throw new ArgumentException("The projection must be finite and invertible.", nameof(projection));
 
-            float dot = clipPlane.Dot(Q);
-            Vector4 c = clipPlane * (2.0f / dot);
-            projection.M13 = c.X;
-            projection.M23 = c.Y;
-            projection.M33 = c.Z + 1.0f;
-            projection.M43 = c.W;
+            // System.Numerics projections map the near plane to z/w = 0. The far NDC corner is
+            // therefore z = 1; replacing the projection's z column with plane / dot(plane, q)
+            // maps the oblique plane to that same zero-depth boundary. Backend depth-range and
+            // reverse-depth policies are applied later by ApplyDepthPolicyToProjection.
+            Vector4 farCorner = new(
+                SelectFarCorner(normalizedPlane.Normal.X),
+                SelectFarCorner(normalizedPlane.Normal.Y),
+                1.0f,
+                1.0f);
+            Vector4 q = Vector4.Transform(farCorner, inverseProjection);
+            if (!IsFinite(q))
+                throw new ArgumentException("The inverse projection produced a non-finite far corner.", nameof(projection));
+
+            double denominator = Dot(normalizedPlane, q);
+            double denominatorMagnitude = DotMagnitude(normalizedPlane, q);
+            if (!double.IsFinite(denominator) || !double.IsFinite(denominatorMagnitude) ||
+                Math.Abs(denominator) <= denominatorMagnitude * ObliqueProjectionDenominatorRelativeEpsilon)
+            {
+                throw new ArgumentException(
+                    "The clipping plane is too close to the projection's far-side singularity.",
+                    nameof(clipPlane));
+            }
+
+            Vector4 replacementColumn = new(
+                (float)(normalizedPlane.Normal.X / denominator),
+                (float)(normalizedPlane.Normal.Y / denominator),
+                (float)(normalizedPlane.Normal.Z / denominator),
+                (float)(normalizedPlane.D / denominator));
+            if (!IsFinite(replacementColumn))
+                throw new ArgumentException("The clipping plane produced a non-finite oblique projection.", nameof(clipPlane));
+
+            projection.M13 = replacementColumn.X;
+            projection.M23 = replacementColumn.Y;
+            projection.M33 = replacementColumn.Z;
+            projection.M43 = replacementColumn.W;
+            if (!IsFinite(projection))
+                throw new ArgumentException("The clipping plane produced a non-finite oblique projection.", nameof(clipPlane));
 
             return projection;
         }
@@ -1870,9 +1912,15 @@ namespace XREngine.Rendering
         /// </summary>
         public void SetObliqueClippingPlane(Vector3 planePosWorld, Vector3 planeNormalWorld)
         {
-            _obliqueNearClippingPlane = XRMath.CreatePlaneFromPointAndNormal(planePosWorld, planeNormalWorld);
-            RefreshObliqueProjectionMatrix();
-            InvalidateProjectionMatrices();
+            if (!IsFinite(planePosWorld))
+                throw new ArgumentException("The clipping-plane position must be finite.", nameof(planePosWorld));
+
+            Plane unitNormalPlane = NormalizeObliquePlane(new Plane(planeNormalWorld, 0.0f));
+            float distance = -Vector3.Dot(unitNormalPlane.Normal, planePosWorld);
+            if (!float.IsFinite(distance))
+                throw new ArgumentException("The clipping-plane position cannot be represented safely.", nameof(planePosWorld));
+
+            SetObliqueClippingPlane(new Plane(unitNormalPlane.Normal, distance));
         }
 
         /// <summary>
@@ -1880,9 +1928,7 @@ namespace XREngine.Rendering
         /// </summary>
         public void SetObliqueClippingPlane(Vector3 planeNormalWorld, float planeDistance)
         {
-            _obliqueNearClippingPlane = new Plane(planeNormalWorld, planeDistance);
-            RefreshObliqueProjectionMatrix();
-            InvalidateProjectionMatrices();
+            SetObliqueClippingPlane(NormalizeObliquePlane(new Plane(planeNormalWorld, planeDistance)));
         }
 
         /// <summary>
@@ -1890,8 +1936,13 @@ namespace XREngine.Rendering
         /// </summary>
         public void SetObliqueClippingPlane(Plane plane)
         {
-            _obliqueNearClippingPlane = plane;
-            RefreshObliqueProjectionMatrix();
+            Plane normalizedPlane = NormalizeObliquePlane(plane);
+            Matrix4x4 candidateProjection = CalculateObliqueProjectionMatrix(normalizedPlane);
+
+            // Commit both pieces of oblique state only after every validation and calculation has
+            // completed. This avoids retaining a new plane with an old or invalid projection.
+            SetField<Plane?>(ref _obliqueNearClippingPlane, normalizedPlane, publishNotifications: false);
+            SetField(ref _obliqueProjectionMatrix, candidateProjection, publishNotifications: false);
             InvalidateProjectionMatrices();
         }
 
@@ -1900,9 +1951,55 @@ namespace XREngine.Rendering
         /// </summary>
         public void ClearObliqueClippingPlane()
         {
-            _obliqueNearClippingPlane = null;
+            SetField<Plane?>(ref _obliqueNearClippingPlane, null, publishNotifications: false);
             InvalidateProjectionMatrices();
         }
+
+        private static Plane NormalizeObliquePlane(Plane plane)
+        {
+            Vector3 normal = plane.Normal;
+            if (!IsFinite(normal) || !float.IsFinite(plane.D))
+                throw new ArgumentException("The clipping plane must contain only finite values.", nameof(plane));
+
+            float maximumComponent = MathF.Max(MathF.Abs(normal.X), MathF.Max(MathF.Abs(normal.Y), MathF.Abs(normal.Z)));
+            if (!float.IsFinite(maximumComponent) || maximumComponent <= 0.0f)
+                throw new ArgumentException("The clipping plane normal must be nondegenerate.", nameof(plane));
+
+            normal /= maximumComponent;
+            float normalLength = normal.Length();
+            if (!float.IsFinite(normalLength) || normalLength <= float.Epsilon)
+                throw new ArgumentException("The clipping plane normal must be nondegenerate.", nameof(plane));
+
+            float inverseLength = 1.0f / normalLength;
+            Plane normalizedPlane = new(normal * inverseLength, plane.D / maximumComponent * inverseLength);
+            if (!IsFinite(normalizedPlane.Normal) || !float.IsFinite(normalizedPlane.D))
+                throw new ArgumentException("The clipping plane cannot be normalized safely.", nameof(plane));
+
+            return normalizedPlane;
+        }
+
+        private static float SelectFarCorner(float component)
+            => component < 0.0f ? -1.0f : 1.0f;
+
+        private static double Dot(Plane plane, Vector4 vector)
+            => (double)plane.Normal.X * vector.X + (double)plane.Normal.Y * vector.Y +
+               (double)plane.Normal.Z * vector.Z + (double)plane.D * vector.W;
+
+        private static double DotMagnitude(Plane plane, Vector4 vector)
+            => Math.Abs((double)plane.Normal.X * vector.X) + Math.Abs((double)plane.Normal.Y * vector.Y) +
+               Math.Abs((double)plane.Normal.Z * vector.Z) + Math.Abs((double)plane.D * vector.W);
+
+        private static bool IsFinite(Vector3 value)
+            => float.IsFinite(value.X) && float.IsFinite(value.Y) && float.IsFinite(value.Z);
+
+        private static bool IsFinite(Vector4 value)
+            => float.IsFinite(value.X) && float.IsFinite(value.Y) && float.IsFinite(value.Z) && float.IsFinite(value.W);
+
+        private static bool IsFinite(Matrix4x4 value)
+            => float.IsFinite(value.M11) && float.IsFinite(value.M12) && float.IsFinite(value.M13) && float.IsFinite(value.M14) &&
+               float.IsFinite(value.M21) && float.IsFinite(value.M22) && float.IsFinite(value.M23) && float.IsFinite(value.M24) &&
+               float.IsFinite(value.M31) && float.IsFinite(value.M32) && float.IsFinite(value.M33) && float.IsFinite(value.M34) &&
+               float.IsFinite(value.M41) && float.IsFinite(value.M42) && float.IsFinite(value.M43) && float.IsFinite(value.M44);
 
         #endregion
 

@@ -6,4 +6,5 @@ namespace XREngine.RenderBench;
 public sealed record RenderBenchEffectiveConfiguration(
     int SchemaVersion,
     RenderProfileRecipe Recipe,
-    RenderBenchFixtureManifest Fixture);
+    RenderBenchFixtureManifest Fixture,
+    string LayoutPolicy);

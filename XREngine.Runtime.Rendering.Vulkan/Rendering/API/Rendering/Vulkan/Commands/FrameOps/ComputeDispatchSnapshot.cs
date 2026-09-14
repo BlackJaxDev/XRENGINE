@@ -853,7 +853,7 @@ internal sealed class ComputeDispatchSnapshot
     {
         Dictionary<uint, VulkanComputeBufferBinding> bindings = new(buffers.Count);
         foreach (KeyValuePair<uint, XRDataBuffer> pair in buffers)
-            bindings[pair.Key] = new VulkanComputeBufferBinding(pair.Value, default, 0UL, 0);
+            bindings[pair.Key] = new VulkanComputeBufferBinding(pair.Value, default, 0UL, 0, default, 0UL);
         return bindings;
     }
 
@@ -863,7 +863,7 @@ internal sealed class ComputeDispatchSnapshot
         foreach (XRDataBuffer buffer in buffers.Values)
         {
             if (!string.IsNullOrWhiteSpace(buffer.AttributeName))
-                buffersByName.TryAdd(buffer.AttributeName, new VulkanComputeBufferBinding(buffer, default, 0UL, 0));
+                buffersByName.TryAdd(buffer.AttributeName, new VulkanComputeBufferBinding(buffer, default, 0UL, 0, default, 0UL));
         }
 
         return buffersByName;

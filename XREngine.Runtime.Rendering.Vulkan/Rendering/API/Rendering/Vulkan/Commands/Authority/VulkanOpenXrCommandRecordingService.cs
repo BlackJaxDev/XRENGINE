@@ -84,6 +84,8 @@ internal sealed class VulkanOpenXrCommandRecordingService
             resourceRuntime.Uploads.PublicationState.RecordedForSubmit;
         uploadBatch.Clear();
         long recordingStart = Stopwatch.GetTimestamp();
+        bool recordingPublished = false;
+        OpenXrRecordedEyeCommandBuffer unpublishedRecording = default;
         try
         {
             ResourcePlannerRuntimeState plannerState = prepared.PlannerState;
@@ -149,16 +151,7 @@ internal sealed class VulkanOpenXrCommandRecordingService
                 return false;
             }
 
-            if (uploadBatch.Count != 0)
-            {
-                // Uploads are streaming/reload work rather than steady-state
-                // frame work. Copy them because the source list is worker-local
-                // and is reused by the next recording request on that thread.
-                recordedUploads = [.. uploadBatch];
-                uploadBatch.Clear();
-            }
-
-            recorded = new OpenXrRecordedEyeCommandBuffer(
+            unpublishedRecording = new OpenXrRecordedEyeCommandBuffer(
                 result.CommandBuffer,
                 prepared.FrameContext,
                 prepared.OpenXrViewIndex,
@@ -173,6 +166,17 @@ internal sealed class VulkanOpenXrCommandRecordingService
                 prepared.ResourceGeneration,
                 prepared.DescriptorGeneration,
                 OwnedByOpenXrPrimaryCache: true);
+            if (uploadBatch.Count != 0)
+            {
+                // Uploads are streaming/reload work rather than steady-state
+                // frame work. Copy them because the source list is worker-local
+                // and is reused by the next recording request on that thread.
+                recordedUploads = [.. uploadBatch];
+                uploadBatch.Clear();
+            }
+
+            recorded = unpublishedRecording;
+            recordingPublished = true;
             return true;
         }
         catch
@@ -181,6 +185,19 @@ internal sealed class VulkanOpenXrCommandRecordingService
                 deviceContext.State != EVulkanDeviceState.Healthy,
                 $"OpenXR eye worker {workerIndex} command recording failed");
             throw;
+        }
+        finally
+        {
+            // Recording may have adopted canonical/native uses before a later
+            // operation failed. No submission can own a failed recording.
+            if (!recordingPublished && deviceContext.IsOperational)
+            {
+                if (unpublishedRecording.CommandBuffer.Handle != 0)
+                    commandRuntime.MarkUnsubmittedOpenXrPrimaryCommandBufferDirty(
+                        in unpublishedRecording, "OpenXR eye recording did not publish its ownership payload");
+                resourceRuntime.ResidentTemplateFrameSlotLifetimes.ReleaseFrameSlot(
+                    checked((int)prepared.FrameDataSlotIndex));
+            }
         }
     }
 

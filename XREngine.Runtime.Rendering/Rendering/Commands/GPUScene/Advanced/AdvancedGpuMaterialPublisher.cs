@@ -22,6 +22,8 @@ public sealed class AdvancedGpuMaterialPublisher
         EAdvancedMaterialRequiredAttributeMask.TexCoord0 |
         EAdvancedMaterialRequiredAttributeMask.Color0 |
         EAdvancedMaterialRequiredAttributeMask.AnalyticalDerivatives;
+    private const EAdvancedMaterialRequiredAttributeMask ProjectiveMirrorRequiredAttributes =
+        EAdvancedMaterialRequiredAttributeMask.Position;
 
     private MaterialVariantEntry[] _variants;
     private uint[] _variantSlots;
@@ -85,8 +87,15 @@ public sealed class AdvancedGpuMaterialPublisher
             reason = string.Empty;
             return true;
         }
+
+        if (ReferenceEquals(layout, MaterialBindingLayouts.ProjectiveMirror))
+        {
+            translation = new(layout, EAdvancedMaterialCoverageMode.Opaque);
+            reason = string.Empty;
+            return true;
+        }
         translation = default;
-        reason = "Only OpaqueDeferred, ForwardOpaque, and MaskedForward have a canonical advanced-material translation.";
+        reason = "Only OpaqueDeferred, ForwardOpaque, MaskedForward, and ProjectiveMirror have a canonical advanced-material translation.";
         return false;
     }
 
@@ -149,8 +158,10 @@ public sealed class AdvancedGpuMaterialPublisher
         int missingLayoutCount = 0;
         int missingKernelCount = 0;
         uint missingLayoutMemberCount = 0u;
-        Span<byte> missingLayouts = stackalloc byte[3];
-        Span<byte> missingKernels = stackalloc byte[21];
+        Span<byte> missingLayouts = stackalloc byte[4];
+        missingLayouts.Clear();
+        Span<byte> missingKernels = stackalloc byte[28];
+        missingKernels.Clear();
         int maximumMemberCount = GetMaximumSupportedLayoutMemberCount();
         Span<AdvancedMaterialLayoutMember> memberScratch =
             stackalloc AdvancedMaterialLayoutMember[maximumMemberCount];
@@ -386,6 +397,7 @@ public sealed class AdvancedGpuMaterialPublisher
 
     internal bool HeaderMatches(
         AdvancedGpuHandle materialHandle,
+        MaterialBindingLayout layout,
         EAdvancedMaterialCoverageMode coverage,
         EAdvancedMaterialRenderStateClass state,
         ReadOnlySpan<AdvancedMaterialTextureBinding> textureBindings)
@@ -393,7 +405,7 @@ public sealed class AdvancedGpuMaterialPublisher
         if (!_database.Materials.TryGet(materialHandle, out AdvancedMaterialRecord current))
             return false;
         AdvancedMaterialRecord expected =
-            CreateMaterialRecord(coverage, state, textureBindings);
+            CreateMaterialRecord(layout, coverage, state, textureBindings);
         return current.RenderStateClass == expected.RenderStateClass &&
             current.CoverageMode == expected.CoverageMode &&
             current.RequiredAttributeMask == expected.RequiredAttributeMask &&
@@ -429,7 +441,7 @@ public sealed class AdvancedGpuMaterialPublisher
         AdvancedMaterialLayoutRecord layoutRecord = CreateLayoutRecord(layout, members, out int memberCount);
         AdvancedShadingKernelRecord kernelRecord = CreateKernelRecord(layout, coverage, state);
         AdvancedMaterialRecord materialRecord =
-            CreateMaterialRecord(coverage, state, textureBindings);
+            CreateMaterialRecord(layout, coverage, state, textureBindings);
         if (!_database.TryAddMaterialWithInternedSchema(
                 layoutRecord,
                 members[..memberCount],
@@ -498,7 +510,7 @@ public sealed class AdvancedGpuMaterialPublisher
             return false;
         }
         AdvancedMaterialRecord record =
-            CreateMaterialRecord(coverage, state, textureBindings);
+            CreateMaterialRecord(layout, coverage, state, textureBindings);
         if (!_database.TryReplaceMaterial(materialHandle, layoutHandle, kernelHandle, record, ReadOnlySpan<AdvancedMaterialValueDescriptor>.Empty, constantWords, textureBindings))
         {
             reason = "Canonical material replacement failed validation.";
@@ -558,7 +570,7 @@ public sealed class AdvancedGpuMaterialPublisher
             LayoutHash = Hash(layout.LayoutHash),
             ConstantWordCount = layout.RowWordCount,
             TextureReferenceCount = checked((uint)layout.Textures.Count),
-            RequiredAttributeMask = StandardRequiredAttributes,
+            RequiredAttributeMask = GetRequiredAttributes(layout),
         };
     }
 
@@ -584,6 +596,8 @@ public sealed class AdvancedGpuMaterialPublisher
             return 1;
         if (ReferenceEquals(layout, MaterialBindingLayouts.MaskedForward))
             return 2;
+        if (ReferenceEquals(layout, MaterialBindingLayouts.ProjectiveMirror))
+            return 3;
         throw new ArgumentOutOfRangeException(nameof(layout), "The layout is not part of the bounded canonical bridge.");
     }
 
@@ -594,8 +608,10 @@ public sealed class AdvancedGpuMaterialPublisher
             Math.Max(
                 MaterialBindingLayouts.ForwardOpaque.PackedMembers.Count +
                     MaterialBindingLayouts.ForwardOpaque.Textures.Count,
-                MaterialBindingLayouts.MaskedForward.PackedMembers.Count +
-                    MaterialBindingLayouts.MaskedForward.Textures.Count));
+                Math.Max(MaterialBindingLayouts.MaskedForward.PackedMembers.Count +
+                    MaterialBindingLayouts.MaskedForward.Textures.Count,
+                    MaterialBindingLayouts.ProjectiveMirror.PackedMembers.Count +
+                    MaterialBindingLayouts.ProjectiveMirror.Textures.Count)));
 
     private static AdvancedShadingKernelRecord CreateKernelRecord(
         MaterialBindingLayout layout,
@@ -603,57 +619,77 @@ public sealed class AdvancedGpuMaterialPublisher
         EAdvancedMaterialRenderStateClass state)
     {
         uint coverageMask = 1u << checked((int)coverage);
+        bool isProjectiveMirror = IsProjectiveMirrorLayout(layout);
         return new AdvancedShadingKernelRecord
         {
             MaterialLayoutHash = Hash(layout.LayoutHash),
-            RequiredAttributeMask = StandardRequiredAttributes,
+            RequiredAttributeMask = GetRequiredAttributes(layout),
             SupportedCoverageMask = coverageMask,
-            SupportedEligibility = EAdvancedMaterialEligibilityFlags.NativeOpaque | EAdvancedMaterialEligibilityFlags.NativeMasked | EAdvancedMaterialEligibilityFlags.LateTransparent | EAdvancedMaterialEligibilityFlags.LateRefractive | EAdvancedMaterialEligibilityFlags.Unlit,
-            SupportedFeatures = EAdvancedMaterialFeatureFlags.BaseColorTexture | EAdvancedMaterialFeatureFlags.NormalTexture | EAdvancedMaterialFeatureFlags.MetallicRoughnessTexture | EAdvancedMaterialFeatureFlags.Emissive | EAdvancedMaterialFeatureFlags.DoubleSided | EAdvancedMaterialFeatureFlags.ReceivesShadows | EAdvancedMaterialFeatureFlags.CastsShadows | EAdvancedMaterialFeatureFlags.VertexDeformation | EAdvancedMaterialFeatureFlags.Animated,
+            SupportedEligibility = isProjectiveMirror
+                ? EAdvancedMaterialEligibilityFlags.NativeOpaque | EAdvancedMaterialEligibilityFlags.Unlit
+                : EAdvancedMaterialEligibilityFlags.NativeOpaque | EAdvancedMaterialEligibilityFlags.NativeMasked | EAdvancedMaterialEligibilityFlags.LateTransparent | EAdvancedMaterialEligibilityFlags.LateRefractive | EAdvancedMaterialEligibilityFlags.Unlit,
+            SupportedFeatures = isProjectiveMirror
+                ? EAdvancedMaterialFeatureFlags.DoubleSided
+                : EAdvancedMaterialFeatureFlags.BaseColorTexture | EAdvancedMaterialFeatureFlags.NormalTexture | EAdvancedMaterialFeatureFlags.MetallicRoughnessTexture | EAdvancedMaterialFeatureFlags.Emissive | EAdvancedMaterialFeatureFlags.DoubleSided | EAdvancedMaterialFeatureFlags.ReceivesShadows | EAdvancedMaterialFeatureFlags.CastsShadows | EAdvancedMaterialFeatureFlags.VertexDeformation | EAdvancedMaterialFeatureFlags.Animated,
             ShaderIdentityHash = Mix(Hash(layout.LayoutHash), ((ulong)(uint)coverage << 32) | (uint)state),
             RenderStateClassMask = 1u << checked((int)state),
         };
     }
 
     private static AdvancedMaterialRecord CreateMaterialRecord(
+        MaterialBindingLayout layout,
         EAdvancedMaterialCoverageMode coverage,
         EAdvancedMaterialRenderStateClass state,
         ReadOnlySpan<AdvancedMaterialTextureBinding> textureBindings)
     {
+        bool isProjectiveMirror = IsProjectiveMirrorLayout(layout);
         EAdvancedMaterialFeatureFlags features = EAdvancedMaterialFeatureFlags.None;
-        if (textureBindings.Length > 0 && textureBindings[0].Texture.Handle.IsValid)
-            features |= EAdvancedMaterialFeatureFlags.BaseColorTexture;
-        if (textureBindings.Length > 1 && textureBindings[1].Texture.Handle.IsValid)
-            features |= EAdvancedMaterialFeatureFlags.NormalTexture;
-        if (textureBindings.Length > 2 && textureBindings[2].Texture.Handle.IsValid)
-            features |= EAdvancedMaterialFeatureFlags.MetallicRoughnessTexture;
+        if (!isProjectiveMirror)
+        {
+            if (textureBindings.Length > 0 && textureBindings[0].Texture.Handle.IsValid)
+                features |= EAdvancedMaterialFeatureFlags.BaseColorTexture;
+            if (textureBindings.Length > 1 && textureBindings[1].Texture.Handle.IsValid)
+                features |= EAdvancedMaterialFeatureFlags.NormalTexture;
+            if (textureBindings.Length > 2 && textureBindings[2].Texture.Handle.IsValid)
+                features |= EAdvancedMaterialFeatureFlags.MetallicRoughnessTexture;
+        }
         if (state is EAdvancedMaterialRenderStateClass.OpaqueDoubleSided or
             EAdvancedMaterialRenderStateClass.MaskedDoubleSided)
         {
             features |= EAdvancedMaterialFeatureFlags.DoubleSided;
         }
 
-        EAdvancedMaterialEligibilityFlags eligibility = coverage switch
-        {
-            EAdvancedMaterialCoverageMode.Opaque =>
-                EAdvancedMaterialEligibilityFlags.NativeOpaque,
-            EAdvancedMaterialCoverageMode.Masked =>
-                EAdvancedMaterialEligibilityFlags.NativeMasked,
-            EAdvancedMaterialCoverageMode.Transparent =>
-                EAdvancedMaterialEligibilityFlags.LateTransparent,
-            EAdvancedMaterialCoverageMode.Refractive =>
-                EAdvancedMaterialEligibilityFlags.LateRefractive,
-            _ => EAdvancedMaterialEligibilityFlags.Unsupported,
-        };
+        EAdvancedMaterialEligibilityFlags eligibility = isProjectiveMirror
+            ? EAdvancedMaterialEligibilityFlags.NativeOpaque | EAdvancedMaterialEligibilityFlags.Unlit
+            : coverage switch
+            {
+                EAdvancedMaterialCoverageMode.Opaque =>
+                    EAdvancedMaterialEligibilityFlags.NativeOpaque,
+                EAdvancedMaterialCoverageMode.Masked =>
+                    EAdvancedMaterialEligibilityFlags.NativeMasked,
+                EAdvancedMaterialCoverageMode.Transparent =>
+                    EAdvancedMaterialEligibilityFlags.LateTransparent,
+                EAdvancedMaterialCoverageMode.Refractive =>
+                    EAdvancedMaterialEligibilityFlags.LateRefractive,
+                _ => EAdvancedMaterialEligibilityFlags.Unsupported,
+            };
         return new AdvancedMaterialRecord
         {
             RenderStateClass = state,
             CoverageMode = coverage,
-            RequiredAttributeMask = StandardRequiredAttributes,
+            RequiredAttributeMask = GetRequiredAttributes(layout),
             FeatureFlags = features,
             EligibilityFlags = eligibility,
         };
     }
+
+    private static bool IsProjectiveMirrorLayout(MaterialBindingLayout layout)
+        => ReferenceEquals(layout, MaterialBindingLayouts.ProjectiveMirror);
+
+    private static EAdvancedMaterialRequiredAttributeMask GetRequiredAttributes(MaterialBindingLayout layout)
+        => IsProjectiveMirrorLayout(layout)
+            ? ProjectiveMirrorRequiredAttributes
+            : StandardRequiredAttributes;
 
     private int FindVariant(XRMaterial? material, ulong layoutHash, EAdvancedMaterialCoverageMode coverage, EAdvancedMaterialRenderStateClass state)
     {

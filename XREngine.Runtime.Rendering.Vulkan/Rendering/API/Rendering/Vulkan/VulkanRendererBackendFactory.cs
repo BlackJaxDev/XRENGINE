@@ -12,6 +12,14 @@ public sealed class VulkanRendererBackendFactory :
     IOpenXrSmokeDiagnosticsBackendCapability
 {
     /// <inheritdoc />
+    public void ConfigureOpenXrSubmissionValidation(in OpenXrSubmissionValidationRequest request)
+        => VulkanRenderer.ConfigureOpenXrSubmissionValidation(in request);
+
+    /// <inheritdoc />
+    public OpenXrSubmissionValidationSnapshot CaptureOpenXrSubmissionValidation()
+        => VulkanRenderer.CaptureOpenXrSubmissionValidation();
+
+    /// <inheritdoc />
     public void ResetDesktopRejectionEvidence(bool injectionRequested)
         => VulkanRenderer.ResetPhase524bDesktopRejectionEvidence(injectionRequested);
 

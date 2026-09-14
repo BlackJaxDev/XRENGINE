@@ -186,6 +186,7 @@ internal sealed unsafe class OpenGLAdvancedSceneTableUploader : IDisposable
             RenderFrameViewDescriptor view = views.GetView(index);
             Commands.BackendReadyCanonicalViewRecord canonical = Commands.BackendReadyFramePackage.CreateCanonicalViewRecord(
                 in view, package.CanonicalScenePublication.FrameGeneration);
+            canonical = package.ApplyCanonicalViewPolicy(canonical);
             records[index] = AdvancedViewRecordFactory.Create(in canonical);
         }
         Upload(AdvancedGlobalResourceBindings.Views, records[..views.ViewCount]);

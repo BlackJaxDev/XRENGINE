@@ -732,8 +732,11 @@ internal unsafe partial class VkRenderProgram
 
         bool shouldUpdateDescriptorData = allowSynchronousResourceUploads &&
             (isNewAllocation || reusableDescriptorBindingKey != 0UL);
-        if (shouldUpdateDescriptorData)
-            UpdateComputeDescriptorSets(descriptorSets, scratch);
+        if (shouldUpdateDescriptorData &&
+            !TryUpdateComputeDescriptorSets(descriptorSets, scratch, out _))
+        {
+            return false;
+        }
 
         recording.Commands.BindDescriptorSetsTracked(
             recording.CommandBuffer,
@@ -748,7 +751,10 @@ internal unsafe partial class VkRenderProgram
         return true;
     }
 
-    private void UpdateComputeDescriptorSets(DescriptorSet[] descriptorSets, VulkanComputeDescriptorScratchBuilder scratch)
+    private bool TryUpdateComputeDescriptorSets(
+        DescriptorSet[] descriptorSets,
+        VulkanComputeDescriptorScratchBuilder scratch,
+        out string failureReason)
     {
         PendingDescriptorWrite[] pendingWrites = scratch.Writes;
         DescriptorBufferInfo[] bufferArray = scratch.Buffers;
@@ -791,10 +797,18 @@ internal unsafe partial class VkRenderProgram
                 }
             }
 
-            if (!TryUpdateComputeDescriptorSetsWithTemplates(descriptorSets, writeArray.AsSpan(0, scratch.WriteCount)))
-                BackendContext.Resources.DescriptorLifetime.UpdateDescriptorSets((uint)scratch.WriteCount, writePtr);
+            if (!TryUpdateComputeDescriptorSetsWithTemplates(descriptorSets, writeArray.AsSpan(0, scratch.WriteCount)) &&
+                !BackendContext.Resources.DescriptorLifetime.TryUpdateDescriptorSets(
+                    (uint)scratch.WriteCount,
+                    writePtr,
+                    out failureReason))
+            {
+                return false;
+            }
             BackendContext.Resources.DescriptorLifetime.RecordTableGeneration();
         }
+        failureReason = string.Empty;
+        return true;
     }
 
     private bool TryBuildComputeDescriptorScratch(
@@ -1304,9 +1318,11 @@ internal unsafe partial class VkRenderProgram
         uint imageIndex,
         ComputeDispatchSnapshot snapshot,
         ulong reusableDescriptorBindingKey,
+        out bool bindingSuperseded,
         bool excludeGlobalTextureArray = false,
         bool allowSynchronousResourceUploads = true)
     {
+        bindingSuperseded = false;
         if (excludeGlobalTextureArray && !_canBindGlobalTextureArraySeparately)
             return false;
 
@@ -1316,6 +1332,12 @@ internal unsafe partial class VkRenderProgram
         uint descriptorSetLimit = checked((uint)descriptorLayouts.Length);
         if (descriptorLayouts.Length == 0 || _programDescriptorBindings.Count == 0)
             return true;
+
+        if (!ValidateComputeSnapshot(snapshot, out _))
+        {
+            bindingSuperseded = HasSupersededComputeBufferSnapshot(snapshot);
+            return false;
+        }
 
         foreach (DescriptorBindingInfo binding in _programDescriptorBindings)
         {
@@ -1369,7 +1391,7 @@ internal unsafe partial class VkRenderProgram
         if (reusableDescriptorBindingKey == 0UL || BackendContext.Resources.Descriptors.Heap.ActiveBackend == EVulkanDescriptorBackend.DescriptorHeap)
             return true;
 
-        return TryRefreshReusableComputeDescriptorSets(
+        bool refreshed = TryRefreshReusableComputeDescriptorSets(
             planner,
             imageIndex,
             snapshot,
@@ -1377,6 +1399,8 @@ internal unsafe partial class VkRenderProgram
             descriptorLayouts,
             descriptorSetLimit,
             allowSynchronousResourceUploads);
+        bindingSuperseded = !refreshed && HasSupersededComputeBufferSnapshot(snapshot);
+        return refreshed;
     }
     internal bool TryRefreshReusableComputeDispatchFrameData(in VulkanProgramPlannerRequest planner, uint imageIndex, ComputeDispatchSnapshot snapshot, ulong reusableDescriptorBindingKey)
     {
@@ -1518,7 +1542,8 @@ internal unsafe partial class VkRenderProgram
             return false;
         }
 
-        UpdateComputeDescriptorSets(descriptorSets, scratch);
+        if (!TryUpdateComputeDescriptorSets(descriptorSets, scratch, out _))
+            return false;
         if (snapshot.HasPublishedBindingLayoutSignatures)
             _reusableComputeDescriptorResourceSignatures[refreshKey] =
                 resourceSignature;
@@ -1712,6 +1737,9 @@ internal unsafe partial class VkRenderProgram
             return false;
 
         if (!VkDataBuffer.SupportsDescriptorType(binding.DescriptorType, snapshot.UsageFlags))
+            return false;
+
+        if (!TryValidateComputeBufferSnapshot(in snapshot, out _, out _))
             return false;
 
         bufferInfo = new DescriptorBufferInfo

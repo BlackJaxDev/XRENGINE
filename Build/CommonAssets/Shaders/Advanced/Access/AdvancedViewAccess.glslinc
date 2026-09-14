@@ -3,8 +3,10 @@
 
 #include "AdvancedDiagnostics.glslinc"
 
+const uint XR_ADV_VIEW_DEPTH_ZERO_TO_ONE = 1u << 0u;
 const uint XR_ADV_VIEW_FRAMEBUFFER_TEXTURE_Y_DOWN = 1u << 6u;
 const uint XR_ADV_VIEW_TEMPORAL_HISTORY_VALID = 1u << 7u;
+const uint XR_ADV_VIEW_EXCLUDE_PROJECTIVE_MIRRORS = 1u << 8u;
 
 struct XRAdvancedViewRecord
 {
@@ -36,6 +38,10 @@ struct XRAdvancedViewRecord
     uint viewMaskHi;
     vec4 foveationCenterAndBias;
     vec4 foveationRadii;
+    uint sourceCameraIdentityLo;
+    uint sourceCameraIdentityHi;
+    uint sourceCameraIdentityPadding0;
+    uint sourceCameraIdentityPadding1;
 };
 
 // Analytic reconstruction keeps full-rate visibility. Peripheral sampling only
@@ -99,6 +105,10 @@ XRAdvancedViewRecord XR_ADV_LoadView(uint denseIndex)
     result.viewMaskHi = XR_ADV_Views.records[denseIndex].viewMaskHi;
     result.foveationCenterAndBias = XR_ADV_Views.records[denseIndex].foveationCenterAndBias;
     result.foveationRadii = XR_ADV_Views.records[denseIndex].foveationRadii;
+    result.sourceCameraIdentityLo = XR_ADV_Views.records[denseIndex].sourceCameraIdentityLo;
+    result.sourceCameraIdentityHi = XR_ADV_Views.records[denseIndex].sourceCameraIdentityHi;
+    result.sourceCameraIdentityPadding0 = XR_ADV_Views.records[denseIndex].sourceCameraIdentityPadding0;
+    result.sourceCameraIdentityPadding1 = XR_ADV_Views.records[denseIndex].sourceCameraIdentityPadding1;
     return result;
 }
 

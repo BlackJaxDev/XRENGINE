@@ -3,6 +3,7 @@ namespace XREngine.Rendering.Vulkan;
 internal sealed partial class VulkanResourceRuntime
 {
     private VulkanRetirementMeter.BudgetBypassScope? _forcedRetirementBudgetBypass;
+    private long _terminalRetirementIntervalCount;
     /// <summary>Shared destruction budget for all slot drains in one production frame.</summary>
     internal VulkanRetirementMeter RetirementMeter { get; } = new();
     internal VulkanRetirementDrainScratch RetirementDrainScratch { get; } = new();
@@ -16,6 +17,18 @@ internal sealed partial class VulkanResourceRuntime
         RetirementMeter.BeginFrame(frameSerial);
         lock (Lifetime.Tracker.SyncRoot)
             Lifetime.Tracker.ReapObservedSubmissionsNoLock();
+    }
+
+    /// <summary>
+    /// Starts one bounded terminal drain after XR submission has stopped. The
+    /// owning render thread serializes this with production-frame accounting;
+    /// negative serials cannot alias a later ordinary production frame.
+    /// </summary>
+    internal void BeginTerminalRetirementMeteringInterval()
+    {
+        System.Diagnostics.Debug.Assert(RuntimeEngine.IsRenderThread);
+        long intervalSerial = checked(-++_terminalRetirementIntervalCount);
+        BeginRetirementMeteringFrame(intervalSerial);
     }
 
     /// <summary>Explicit shutdown-only budget bypass; it does not relax completion proof requirements.</summary>

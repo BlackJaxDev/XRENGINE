@@ -11,7 +11,7 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal unsafe sealed class VulkanMappedFrameArena
 {
-    private const int MaxFrameSlots = 8;
+    internal const int MaximumFrameSlotCount = 8;
     private const int MaxReservations = 131_072;
     private static long s_nextArenaIdentity;
 
@@ -85,8 +85,8 @@ internal unsafe sealed class VulkanMappedFrameArena
     {
         if (requiredFrameSlots <= _chunks.Length)
             return;
-        if ((uint)requiredFrameSlots > MaxFrameSlots)
-            throw new InvalidOperationException($"Vulkan frame-data arena requested {requiredFrameSlots} frame slots; the explicit limit is {MaxFrameSlots}.");
+        if ((uint)requiredFrameSlots > MaximumFrameSlotCount)
+            throw new InvalidOperationException($"Vulkan frame-data arena requested {requiredFrameSlots} frame slots; the explicit limit is {MaximumFrameSlotCount}.");
 
         int oldLength = _chunks.Length;
         Array.Resize(ref _chunks, requiredFrameSlots);

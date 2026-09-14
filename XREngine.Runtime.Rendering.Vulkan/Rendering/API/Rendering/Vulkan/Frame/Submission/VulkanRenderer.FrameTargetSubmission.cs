@@ -306,13 +306,14 @@ internal sealed partial class VulkanFrameLoop
         ulong minimumGraphicsTimelineSignalValue,
         out ulong graphicsTimelineSignalValue,
         in VulkanSubmissionDiagnosticContext diagnosticContext,
-        string caller)
+        string caller,
+        Semaphore pendingSubmissionGate = default)
     {
         if (commandBufferCount != 1 ||
             !_commandRuntime.TryGetAdvancedQueueOverlapSlot(commandBuffers[0], out var overlap))
             return SubmitFrameTargetLeaseCore(in lease, commandBuffers, commandBufferCount,
                 signalGraphicsTimeline, minimumGraphicsTimelineSignalValue,
-                out graphicsTimelineSignalValue, in diagnosticContext, caller, default);
+                out graphicsTimelineSignalValue, in diagnosticContext, caller, default, pendingSubmissionGate);
 
         VulkanSubmissionReceipt receipt = default;
         graphicsTimelineSignalValue = 0;
@@ -327,7 +328,7 @@ internal sealed partial class VulkanFrameLoop
             };
             receipt = SubmitFrameTargetLeaseCore(in lease, commandBuffers, commandBufferCount,
                 signalGraphicsTimeline, minimumGraphicsTimelineSignalValue,
-                out graphicsTimelineSignalValue, in finalDiagnostics, caller, overlap.Classified);
+                out graphicsTimelineSignalValue, in finalDiagnostics, caller, overlap.Classified, pendingSubmissionGate);
             return receipt;
         }
         finally
@@ -347,12 +348,13 @@ internal sealed partial class VulkanFrameLoop
         out ulong graphicsTimelineSignalValue,
         in VulkanSubmissionDiagnosticContext diagnosticContext,
         string caller,
-        Semaphore additionalWait)
+        Semaphore additionalWait,
+        Semaphore pendingSubmissionGate)
     {
-        Semaphore* waitSemaphores = stackalloc Semaphore[2];
+        Semaphore* waitSemaphores = stackalloc Semaphore[3];
         PipelineStageFlags* waitStages =
-            stackalloc PipelineStageFlags[2];
-        ulong* waitValues = stackalloc ulong[2];
+            stackalloc PipelineStageFlags[3];
+        ulong* waitValues = stackalloc ulong[3];
         uint waitSemaphoreCount = 0;
         if (lease.SubmissionWaitSemaphore.Handle != 0)
         {
@@ -368,6 +370,12 @@ internal sealed partial class VulkanFrameLoop
             waitSemaphores[waitSemaphoreCount] = additionalWait;
             waitStages[waitSemaphoreCount] = PipelineStageFlags.AllCommandsBit;
             waitValues[waitSemaphoreCount++] = 0;
+        }
+        if (pendingSubmissionGate.Handle != 0)
+        {
+            waitSemaphores[waitSemaphoreCount] = pendingSubmissionGate;
+            waitStages[waitSemaphoreCount] = PipelineStageFlags.AllCommandsBit;
+            waitValues[waitSemaphoreCount++] = 1;
         }
 
         Semaphore* signalSemaphores = stackalloc Semaphore[2];

@@ -171,10 +171,15 @@ namespace XREngine.Rendering
                 if (fbo is null)
                     return;
 
-                if (!_resizeToFit || w == fbo.Width && h == fbo.Height)
+                if (!_resizeToFit)
                     return;
 
-                fbo.Resize((uint)(w * _resizeScale), (uint)(h * _resizeScale));
+                uint targetWidth = Math.Max(1u, (uint)(w * _resizeScale));
+                uint targetHeight = Math.Max(1u, (uint)(h * _resizeScale));
+                if (targetWidth == fbo.Width && targetHeight == fbo.Height)
+                    return;
+
+                fbo.Resize(targetWidth, targetHeight);
             }
         }
     }

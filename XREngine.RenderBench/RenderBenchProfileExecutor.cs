@@ -88,9 +88,9 @@ public sealed class RenderBenchProfileExecutor : IRenderProfileExecutor
             FrozenWorld = recipe.Scene.AnimationIdentity.Equals("frozen", StringComparison.OrdinalIgnoreCase),
         };
 
-        _fixture = RenderBenchFixtureCatalog.Create(recipe);
+        _fixture = RenderBenchFixtureCatalog.Create(recipe, _processOptions.LayoutPolicy == "general");
         _recordFrame = RecordFixtureFrame;
-        RenderBenchEffectiveConfiguration effectiveConfiguration = new(1, recipe, _fixture.Manifest);
+        RenderBenchEffectiveConfiguration effectiveConfiguration = new(1, recipe, _fixture.Manifest, _processOptions.LayoutPolicy);
         RenderBenchWorkloadIdentity workloadIdentity = CreateWorkloadIdentity(recipe, _fixture.Manifest);
         _effectiveConfigurationJson = JsonSerializer.Serialize(effectiveConfiguration, s_jsonOptions);
         _workloadIdentityJson = JsonSerializer.Serialize(workloadIdentity, s_jsonOptions);
@@ -247,6 +247,7 @@ public sealed class RenderBenchProfileExecutor : IRenderProfileExecutor
             recipe.Scene.OutputIdentities);
         RenderBenchResult result = new()
         {
+            LayoutPolicy = _processOptions.LayoutPolicy,
             RunId = $"{_startedUtc:yyyyMMdd-HHmmss}-{Environment.ProcessId}",
             StartedUtc = _startedUtc,
             CompletedUtc = completedUtc,
@@ -350,6 +351,9 @@ public sealed class RenderBenchProfileExecutor : IRenderProfileExecutor
             new("shader_state", fixture.Definition.Kind is not (RenderBenchFixtureKind.GpuPass or RenderBenchFixtureKind.FullPresentationless) || host.SupportsDynamicRendering,
                 "Shader fixtures retain their precreated pipeline and required dynamic-rendering state.",
                 fixture.Definition.Kind is RenderBenchFixtureKind.GpuPass or RenderBenchFixtureKind.FullPresentationless ? "precreated fullscreen pipeline" : "not shader-owned"),
+            new("layout_policy", _processOptions.LayoutPolicy != "general" || host.SupportsUnifiedImageLayouts,
+                "GENERAL is valid only when the host enabled VK_KHR_unified_image_layouts.",
+                $"policy={_processOptions.LayoutPolicy}; unifiedImageLayoutsEnabled={host.SupportsUnifiedImageLayouts}"),
             new("fallback_state", true, "Unsupported fixture paths fail explicitly and never substitute another fixture/backend.", "no fallback selected"),
             new("gpu_query_drain", gpuDrained, "GPU timings use delayed frame-slot query retrieval.", $"drained {gpu.Count(double.IsFinite)} of {capturedFrames}"),
             new("expected_work", countsMatch, "Measured work must exactly match the fixture/recipe declaration.", $"expected={expected}; actual={actual}"),
@@ -414,14 +418,16 @@ public sealed class RenderBenchProfileExecutor : IRenderProfileExecutor
         };
     }
 
-    private static void ValidateRecipe(RenderProfileRecipe recipe)
+    private void ValidateRecipe(RenderProfileRecipe recipe)
     {
         recipe.Validate();
         if (recipe.Backend != RuntimeGraphicsApiKind.Vulkan)
             throw new NotSupportedException($"RenderBench supports only Vulkan recipes, not '{recipe.Backend}'.");
         if (recipe.ExecutionMode is not (RenderExecutionMode.Component or RenderExecutionMode.Presentationless))
             throw new NotSupportedException($"RenderBench cannot execute '{recipe.ExecutionMode}'.");
-        _ = RenderBenchFixtureCatalog.Get(recipe.Fixture, recipe.Component, recipe.ExecutionMode);
+        RenderBenchFixtureDefinition fixture = RenderBenchFixtureCatalog.Get(recipe.Fixture, recipe.Component, recipe.ExecutionMode);
+        if (_processOptions.LayoutPolicy == "general" && fixture.Kind != RenderBenchFixtureKind.GpuPass)
+            throw new ArgumentException("--layout-policy general is supported only by GPU-pass fixture profiles.");
     }
 
     private void RecordFixtureFrame(

@@ -76,6 +76,7 @@ internal unsafe partial class VkRenderProgram(
     private bool _descriptorSetsRequireVariableDescriptorCount;
     private uint _externallyOwnedDescriptorSetMask;
     private long _linkGeneration;
+    private ShaderCommandCoverageProgramToken[]? _shaderCommandCoverageTokens;
     private int _linkedShaderConfigVersion = -1;
     private bool _linkedUsesVulkanClipDepthRemap;
     private EShaderType? _linkedVulkanClipDepthRemapStage;
@@ -89,12 +90,18 @@ internal unsafe partial class VkRenderProgram(
         get => Volatile.Read(ref _isLinked);
         private set
         {
-            if (Volatile.Read(ref _isLinked) == value)
-                return;
-            Volatile.Write(ref _isLinked, value);
-            Data.SetBackendLinked(value);
+            if (Volatile.Read(ref _isLinked) != value)
+            {
+                Volatile.Write(ref _isLinked, value);
+                Data.SetBackendLinked(value);
+            }
+            if (value)
+                _shaderCommandCoverageTokens = ShaderCommandCoverage.CreateProgramTokens("Vulkan", Data.Shaders.ToArray());
         }
     }
+    /// <summary>Records a Vulkan command-buffer recording using linked shader metadata.</summary>
+    internal void RecordShaderCommandCoverage(ShaderCommandKind kind, bool indirect, bool instancingKnown, bool instanced)
+        => ShaderCommandCoverage.Record(_shaderCommandCoverageTokens, kind, indirect, instancingKnown, instanced);
     public PipelineLayout PipelineLayout => _pipelineLayout;
     internal ulong LinkGeneration => unchecked((ulong)Volatile.Read(ref _linkGeneration));
     internal DescriptorHeapProgramLayout? DescriptorHeapLayout => _descriptorHeapLayout;

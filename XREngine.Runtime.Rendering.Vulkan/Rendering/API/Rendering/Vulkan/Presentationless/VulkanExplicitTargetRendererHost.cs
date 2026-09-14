@@ -81,6 +81,8 @@ public sealed unsafe partial class VulkanExplicitTargetRendererHost :
         ?? throw new InvalidOperationException("The Vulkan host has no selected graphics queue family.");
     /// <summary>Whether dynamic rendering is enabled for the selected device.</summary>
     public bool SupportsDynamicRendering => _renderer.DeviceContext.SupportsDynamicRendering;
+    /// <summary>Whether VK_KHR_unified_image_layouts was enabled on this logical device.</summary>
+    public bool SupportsUnifiedImageLayouts => _renderer.DeviceContext.SupportsUnifiedImageLayouts;
 
     /// <summary>Captures this device's cumulative native validation evidence before teardown.</summary>
     public VulkanValidationDiagnosticSnapshot CaptureValidationDiagnostics()

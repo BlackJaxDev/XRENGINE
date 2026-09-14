@@ -32,4 +32,106 @@ vec4 XR_ADV_StandardTexture(XRAdvancedMaterialRecord material, uint slot,
     XR_ADV_TryResolveTextureReference(XR_ADV_LoadMaterialTextureBinding(material, slot), textureReference);
     return XR_ADV_SampleTexture2DGrad(textureReference, uv, dx, dy);
 }
+
+bool XR_ADV_IsProjectiveMirrorMaterial(XRAdvancedMaterialRecord material)
+{
+    return material.constantWordCount >= XR_ADV_PROJECTIVE_MIRROR_WORD_COUNT &&
+        material.textureReferenceCount >= 3u &&
+        material.constantWordOffset <= uint(XR_ADV_MaterialConstants.words.length()) &&
+        material.constantWordCount <= uint(XR_ADV_MaterialConstants.words.length()) - material.constantWordOffset &&
+        all(equal(material.materialLayoutHash,
+            uvec2(XR_ADV_PROJECTIVE_MIRROR_LAYOUT_LO, XR_ADV_PROJECTIVE_MIRROR_LAYOUT_HI)));
+}
+
+mat4 XR_ADV_ProjectiveMirrorMatrix(XRAdvancedMaterialRecord material, uint word)
+{
+    // Constants are packed as System.Numerics row-major matrix words. The GLSL constructor
+    // receives columns, so transpose the packed rows while materializing the logical row-major
+    // matrix consumed by XR_ADV_TransformRowVector.
+    return mat4(
+        vec4(uintBitsToFloat(XR_ADV_LoadMaterialConstant(material, word + 0u)),
+             uintBitsToFloat(XR_ADV_LoadMaterialConstant(material, word + 4u)),
+             uintBitsToFloat(XR_ADV_LoadMaterialConstant(material, word + 8u)),
+             uintBitsToFloat(XR_ADV_LoadMaterialConstant(material, word + 12u))),
+        vec4(uintBitsToFloat(XR_ADV_LoadMaterialConstant(material, word + 1u)),
+             uintBitsToFloat(XR_ADV_LoadMaterialConstant(material, word + 5u)),
+             uintBitsToFloat(XR_ADV_LoadMaterialConstant(material, word + 9u)),
+             uintBitsToFloat(XR_ADV_LoadMaterialConstant(material, word + 13u))),
+        vec4(uintBitsToFloat(XR_ADV_LoadMaterialConstant(material, word + 2u)),
+             uintBitsToFloat(XR_ADV_LoadMaterialConstant(material, word + 6u)),
+             uintBitsToFloat(XR_ADV_LoadMaterialConstant(material, word + 10u)),
+             uintBitsToFloat(XR_ADV_LoadMaterialConstant(material, word + 14u))),
+        vec4(uintBitsToFloat(XR_ADV_LoadMaterialConstant(material, word + 3u)),
+             uintBitsToFloat(XR_ADV_LoadMaterialConstant(material, word + 7u)),
+             uintBitsToFloat(XR_ADV_LoadMaterialConstant(material, word + 11u)),
+             uintBitsToFloat(XR_ADV_LoadMaterialConstant(material, word + 15u))));
+}
+
+bool XR_ADV_TrySampleProjectiveMirrorEntry(
+    XRAdvancedMaterialRecord material,
+    uint textureSlot,
+    uint matrixWord,
+    uint identityLoWord,
+    uint identityHiWord,
+    uint validWord,
+    uint framebufferYDownWord,
+    XRAdvancedViewRecord view,
+    vec3 worldPosition,
+    out vec3 color)
+{
+    color = vec3(0.0);
+    if (XR_ADV_LoadMaterialConstant(material, validWord) == 0u ||
+        XR_ADV_LoadMaterialConstant(material, identityLoWord) != view.sourceCameraIdentityLo ||
+        XR_ADV_LoadMaterialConstant(material, identityHiWord) != view.sourceCameraIdentityHi)
+        return false;
+
+    vec4 clip = XR_ADV_TransformRowVector(vec4(worldPosition, 1.0),
+        XR_ADV_ProjectiveMirrorMatrix(material, matrixWord));
+    if (!XR_ADV_IsFinite(clip) || clip.w <= 1.0e-6)
+        return false;
+
+    vec2 uv = clip.xy / clip.w * 0.5 + 0.5;
+    if (XR_ADV_LoadMaterialConstant(material, framebufferYDownWord) != 0u)
+        uv.y = 1.0 - uv.y;
+    if (!XR_ADV_IsFinite(uv) || any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0))))
+        return false;
+
+    // Surface reconstruction currently exposes texture-coordinate derivatives, but not world
+    // position derivatives. Use an explicit zero gradient, which selects the conservative base
+    // mip rather than sampling undefined implicit derivatives in this compute shader.
+    color = XR_ADV_StandardTexture(material, textureSlot, uv, vec2(0.0), vec2(0.0), vec4(0.0)).rgb;
+    return true;
+}
+
+bool XR_ADV_TrySampleProjectiveMirror(
+    XRAdvancedMaterialRecord material,
+    XRAdvancedViewRecord view,
+    vec3 worldPosition,
+    out vec3 color)
+{
+    return XR_ADV_TrySampleProjectiveMirrorEntry(material,
+        XR_ADV_PROJECTIVE_MIRROR_VIEW0_TEXTURE_WORD,
+        XR_ADV_PROJECTIVE_MIRROR_VIEW0_MATRIX_WORD,
+        XR_ADV_PROJECTIVE_MIRROR_VIEW0_IDENTITY_LO_WORD,
+        XR_ADV_PROJECTIVE_MIRROR_VIEW0_IDENTITY_HI_WORD,
+        XR_ADV_PROJECTIVE_MIRROR_VIEW0_VALID_WORD,
+        XR_ADV_PROJECTIVE_MIRROR_VIEW0_FRAMEBUFFER_Y_DOWN_WORD,
+        view, worldPosition, color) ||
+        XR_ADV_TrySampleProjectiveMirrorEntry(material,
+        XR_ADV_PROJECTIVE_MIRROR_VIEW1_TEXTURE_WORD,
+        XR_ADV_PROJECTIVE_MIRROR_VIEW1_MATRIX_WORD,
+        XR_ADV_PROJECTIVE_MIRROR_VIEW1_IDENTITY_LO_WORD,
+        XR_ADV_PROJECTIVE_MIRROR_VIEW1_IDENTITY_HI_WORD,
+        XR_ADV_PROJECTIVE_MIRROR_VIEW1_VALID_WORD,
+        XR_ADV_PROJECTIVE_MIRROR_VIEW1_FRAMEBUFFER_Y_DOWN_WORD,
+        view, worldPosition, color) ||
+        XR_ADV_TrySampleProjectiveMirrorEntry(material,
+        XR_ADV_PROJECTIVE_MIRROR_VIEW2_TEXTURE_WORD,
+        XR_ADV_PROJECTIVE_MIRROR_VIEW2_MATRIX_WORD,
+        XR_ADV_PROJECTIVE_MIRROR_VIEW2_IDENTITY_LO_WORD,
+        XR_ADV_PROJECTIVE_MIRROR_VIEW2_IDENTITY_HI_WORD,
+        XR_ADV_PROJECTIVE_MIRROR_VIEW2_VALID_WORD,
+        XR_ADV_PROJECTIVE_MIRROR_VIEW2_FRAMEBUFFER_Y_DOWN_WORD,
+        view, worldPosition, color);
+}
 #endif

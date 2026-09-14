@@ -10,5 +10,6 @@ internal enum EVulkanComputePreparationOutcome : byte
     ProgramLinkFailed,
     PipelineUnavailable,
     PipelineCreationFailed,
+    BindingSuperseded,
     DescriptorPreparationFailed
 }

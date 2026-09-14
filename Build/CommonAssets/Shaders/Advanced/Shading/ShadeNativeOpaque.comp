@@ -191,6 +191,18 @@ void main()
         return;
     }
     XRAdvancedMaterialRecord material = XR_ADV_LoadMaterial(materialDense);
+    XRAdvancedViewRecord view = XR_ADV_LoadView(viewIndex);
+    if (XR_ADV_IsProjectiveMirrorMaterial(material))
+    {
+        vec3 mirrorColor;
+        bool matchedView = XR_ADV_TrySampleProjectiveMirror(material, view, surface.worldPosition, mirrorColor);
+        // A cold slot, identity mismatch, invalid homogeneous projection, or out-of-bounds
+        // projective coordinate deliberately produces neutral black and never samples a texture.
+        imageStore(HDRSceneColor, XR_ADV_PIXEL(pixel, viewIndex), vec4(matchedView ? mirrorColor : vec3(0.0), 1.0));
+        imageStore(ReactiveMask, XR_ADV_PIXEL(pixel, viewIndex), vec4(0.0));
+        imageStore(ShadingDiagnostics, XR_ADV_PIXEL(pixel, viewIndex), uvec4(0u));
+        return;
+    }
     if (!XR_ADV_IsStandardMaterial(material))
     {
         imageStore(HDRSceneColor, XR_ADV_PIXEL(pixel, viewIndex), vec4(1.0, 0.0, 1.0, 1.0));
@@ -198,7 +210,6 @@ void main()
         imageStore(ShadingDiagnostics, XR_ADV_PIXEL(pixel, viewIndex), uvec4(1u << 17u));
         return;
     }
-    XRAdvancedViewRecord view = XR_ADV_LoadView(viewIndex);
     uint materialFlags = XR_ADV_LoadMaterialConstant(material, XR_ADV_STANDARD_FLAGS_WORD);
     vec4 base = XR_ADV_StandardVector(material, XR_ADV_STANDARD_BASE_COLOR_WORD) * surface.color0;
     vec4 rmse = XR_ADV_StandardVector(material, XR_ADV_STANDARD_RMSE_WORD);

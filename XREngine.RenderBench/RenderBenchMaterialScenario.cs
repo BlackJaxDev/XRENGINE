@@ -8,7 +8,7 @@ using XREngine.Rendering.Vulkan;
 
 namespace XREngine.RenderBench;
 
-/// <summary>Presentationless material-table mutation and required-visible texture admission lane.</summary>
+/// <summary>Presentationless material-table mutation and published-generation texture lane.</summary>
 internal static class RenderBenchMaterialScenario
 {
     internal static async Task<int> RunAsync(RenderBenchOptions options)
@@ -33,7 +33,7 @@ internal static class RenderBenchMaterialScenario
             Scenario = options.Scenario!, Lane = "matrix", Depth = options.ScenarioDepth,
             Workload = "mutable-sampled-material-table", Width = options.Width, Height = options.Height,
             Status = failures.Count == 0 ? "passed" : "failed", Failure = failures.FirstOrDefault(),
-            Failures = [.. failures], ChildResults = [.. children], DiagnosticReadbacks = false,
+            Failures = [.. failures], ChildResults = [.. children], DiagnosticReadbacks = true,
         });
         return failures.Count == 0 ? 0 : 1;
     }
@@ -46,13 +46,14 @@ internal static class RenderBenchMaterialScenario
         {
             Scenario = options.Scenario!, Lane = options.ScenarioLane!, Depth = options.ScenarioDepth,
             Workload = "mutable-sampled-material-table", Width = options.Width, Height = options.Height,
+            DiagnosticReadbacks = true,
         };
         try
         {
             Environment.SetEnvironmentVariable("XRE_FORCE_MESH_SUBMISSION_STRATEGY", "GpuIndirectZeroReadback");
-            // One 4096² RGBA mip chain exceeds the 16 MiB foreground staging ring. Binding it
-            // before production submission makes its upload generation a real required material
-            // dependency rather than a detached VisibleNow queue item.
+            // One 4096² RGBA mip chain exceeds the 16 MiB foreground staging ring.
+            // The bound texture is published atomically when its generation is ready. Until then,
+            // the affected indirect pass is skipped; no required-generation admission is claimed.
             using RenderBenchTextureStreamingFixture fixture = new(4096, 53);
             using RenderBenchProductionScene scene = new(options, EOcclusionCullingMode.Disabled);
             XRTexture2D albedo = new(4, 4, CreatePixels(17));
@@ -84,40 +85,44 @@ internal static class RenderBenchMaterialScenario
                 visible[i] = new() { Name = $"Phase53MaterialVisible{i}" };
                 if (!scene.Host.TryQueueTextureStreamingDiagnosticUpload(visible[i], fixture.Mipmaps,
                         TextureUploadPriorityClass.VisibleNow, CancellationToken.None, out tickets[i]))
-                    throw new InvalidOperationException($"Required-visible material texture {i} was not admitted.");
+                    throw new InvalidOperationException($"Bound material texture {i} was not queued.");
             }
             material.Textures[0] = visible[0];
             int ready = 0;
+            int acceptedFramesBeforeTexturePublication = 0;
             VulkanTextureStreamingTicketSnapshot[] ticketSnapshots = new VulkanTextureStreamingTicketSnapshot[visible.Length];
+            VulkanTextureStreamingDiagnosticSnapshot streamingDiagnostics = default;
             for (int step = 0; step < options.ScenarioFrames; step++)
             {
-                Submit(scene, options, frames, "material-visible-texture-admission");
+                Submit(scene, options, frames, "material-visible-texture-publication");
+                streamingDiagnostics = scene.Host.GetTextureStreamingDiagnostics();
                 ready = 0;
                 for (int index = 0; index < visible.Length; index++)
                 {
                     VulkanTextureStreamingTicketSnapshot snapshot = scene.Host.GetTextureStreamingTicketStatus(visible[index], in tickets[index]);
                     ticketSnapshots[index] = snapshot;
                     if (!snapshot.Found)
-                        throw new InvalidOperationException($"Required-visible material texture {index} lost its upload ticket.");
+                        throw new InvalidOperationException($"Bound material texture {index} lost its upload ticket.");
                     if (snapshot.TerminalFailure)
-                        throw new InvalidOperationException($"Required-visible material texture {index} upload failed: {snapshot.Detail}");
+                        throw new InvalidOperationException($"Bound material texture {index} upload failed: {snapshot.Detail}");
                     if (snapshot.Ready)
                         ready++;
                 }
                 if (ready == visible.Length)
                     break;
+                acceptedFramesBeforeTexturePublication++;
                 Thread.Yield();
             }
             if (ready != visible.Length)
-                throw new InvalidOperationException("Required-visible material textures remained pending after production boundaries.");
+                throw new InvalidOperationException(
+                    $"Bound material textures were not published after {options.ScenarioFrames} production boundaries; " +
+                    $"tickets={DescribeTickets(ticketSnapshots)}; streaming={streamingDiagnostics}.");
             int submittedChunks = ticketSnapshots.Sum(static snapshot => snapshot.ChunksSubmitted);
             int completedChunks = ticketSnapshots.Sum(static snapshot => snapshot.ChunksCompleted);
             if (completedChunks <= 4)
-                throw new InvalidOperationException("Required-visible material streaming did not demonstrate more than four completed upload chunks.");
+                throw new InvalidOperationException("Visible-priority material streaming did not demonstrate more than four completed upload chunks.");
 
-            // Update the actual sampler state after the queue has entered the material dependency
-            // manifest. The typed pending admission path has already retried fresh production plans
-            // until this >16 MiB required texture becomes resident.
+            // Update sampler state after the texture generation has been atomically published.
             visible[0].MinFilter = ETexMinFilter.NearestMipmapNearest;
             visible[0].UWrap = ETexWrapMode.ClampToEdge;
             VulkanMaterialTableDiagnosticCounters beforeTextureMutation = scene.Host.GetMaterialTableDiagnostics();
@@ -152,9 +157,11 @@ internal static class RenderBenchMaterialScenario
                 throw new InvalidOperationException($"Vulkan validation reported {validation.ErrorCount} errors.");
             evidence = new()
             {
-                SubmittedFrames = frames.Count, RequiredVisibleTextureCount = visible.Length,
-                ReadyVisibleTextureCount = ready, RequiredVisibleChunksSubmitted = submittedChunks,
-                RequiredVisibleChunksCompleted = completedChunks, AdmissionRetryCount = scene.PipelineAdmissionRetryCount,
+                SubmittedFrames = frames.Count, BoundTextureCount = visible.Length,
+                PublishedTextureCount = ready, VisiblePriorityChunksSubmitted = submittedChunks,
+                VisiblePriorityChunksCompleted = completedChunks, AdmissionRetryCount = scene.PipelineAdmissionRetryCount,
+                AcceptedFramesBeforeTexturePublication = acceptedFramesBeforeTexturePublication,
+                TexturePublicationPolicy = "PublishedGenerationsOnly", StrictRequiredTextureAdmissionProven = false,
                 ScalarBefore = "BaseColor=1,0,0", ScalarAfter = "BaseColor=0.15,0.75,0.35",
                 TextureBefore = albedo.Name ?? "fixture", TextureAfter = string.Join(',', visible.Select(static texture => texture.Name)),
                 IdleSnapshot = "all frame-slot banks replayed the mutation; subsequent idle receipts performed no material work",
@@ -305,4 +312,20 @@ internal static class RenderBenchMaterialScenario
 
     private static byte[] CreatePixels(byte value)
         => Enumerable.Repeat(value, 4 * 4 * 4).ToArray();
+
+    private static string DescribeTickets(ReadOnlySpan<VulkanTextureStreamingTicketSnapshot> tickets)
+    {
+        if (tickets.IsEmpty)
+            return "none";
+
+        string[] descriptions = new string[tickets.Length];
+        for (int index = 0; index < tickets.Length; index++)
+        {
+            VulkanTextureStreamingTicketSnapshot ticket = tickets[index];
+            descriptions[index] = $"{index}:ticket={ticket.Ticket},found={ticket.Found},state={ticket.State}," +
+                $"submitted={ticket.ChunksSubmitted},completed={ticket.ChunksCompleted}," +
+                $"ready={ticket.Ready},terminal={ticket.TerminalFailure},detail={ticket.Detail ?? "<none>"}";
+        }
+        return string.Join(" | ", descriptions);
+    }
 }

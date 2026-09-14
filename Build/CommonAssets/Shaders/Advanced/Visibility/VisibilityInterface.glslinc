@@ -456,6 +456,64 @@ uint XR_ADV_ResolveVisibilityStableIndex(
     return XR_ADV_HandleLookups.records[segment.x + stableIndex].denseIndex;
 }
 
+bool XR_ADV_ProjectiveMirrorEntryMatchesView(XRAdvancedMaterialRecord material,
+    XRAdvancedViewRecord view, uint validWord, uint identityLoWord, uint identityHiWord)
+{
+    return XR_ADV_LoadMaterialConstant(material, validWord) != 0u &&
+        XR_ADV_LoadMaterialConstant(material, identityLoWord) == view.sourceCameraIdentityLo &&
+        XR_ADV_LoadMaterialConstant(material, identityHiWord) == view.sourceCameraIdentityHi;
+}
+
+// A mirror must not write visibility or depth until this exact source camera has
+// a completed, retained capture. Reflection views additionally exclude every
+// projective mirror, even when the resident material contains a matching camera.
+bool XR_ADV_SelectedViewExcludesProjectiveMirror(uint candidateIndex, uint viewIndex)
+{
+    if (candidateIndex >= uint(XR_ADV_VisibilityPayloads.records.length()))
+        return false;
+
+    XRAdvancedVisibilityPayload payload =
+        XR_ADV_VisibilityPayloads.records[candidateIndex];
+    uint materialDense = XR_ADV_ResolveVisibilityHandle(
+        payload.material,
+        VisibilityMaterialLookupSegment,
+        XR_ADV_DIAGNOSTIC_MATERIAL);
+    if (materialDense == XR_ADV_INVALID_DENSE_INDEX ||
+        materialDense >= uint(XR_ADV_Materials.records.length()))
+    {
+        return false;
+    }
+
+    XRAdvancedMaterialRecord material = XR_ADV_LoadMaterial(materialDense);
+    if (!all(equal(material.materialLayoutHash,
+        uvec2(XR_ADV_PROJECTIVE_MIRROR_LAYOUT_LO,
+            XR_ADV_PROJECTIVE_MIRROR_LAYOUT_HI))))
+        return false;
+
+    XRAdvancedViewRecord view = XR_ADV_LoadView(viewIndex);
+    if ((view.flags & XR_ADV_VIEW_EXCLUDE_PROJECTIVE_MIRRORS) != 0u)
+        return true;
+    uint wordCount = uint(XR_ADV_MaterialConstants.words.length());
+    if (material.constantWordCount < XR_ADV_PROJECTIVE_MIRROR_WORD_COUNT ||
+        material.textureReferenceCount < 3u ||
+        material.constantWordOffset > wordCount ||
+        material.constantWordCount > wordCount - material.constantWordOffset)
+        return true;
+
+    return !(XR_ADV_ProjectiveMirrorEntryMatchesView(material, view,
+        XR_ADV_PROJECTIVE_MIRROR_VIEW0_VALID_WORD,
+        XR_ADV_PROJECTIVE_MIRROR_VIEW0_IDENTITY_LO_WORD,
+        XR_ADV_PROJECTIVE_MIRROR_VIEW0_IDENTITY_HI_WORD) ||
+        XR_ADV_ProjectiveMirrorEntryMatchesView(material, view,
+        XR_ADV_PROJECTIVE_MIRROR_VIEW1_VALID_WORD,
+        XR_ADV_PROJECTIVE_MIRROR_VIEW1_IDENTITY_LO_WORD,
+        XR_ADV_PROJECTIVE_MIRROR_VIEW1_IDENTITY_HI_WORD) ||
+        XR_ADV_ProjectiveMirrorEntryMatchesView(material, view,
+        XR_ADV_PROJECTIVE_MIRROR_VIEW2_VALID_WORD,
+        XR_ADV_PROJECTIVE_MIRROR_VIEW2_IDENTITY_LO_WORD,
+        XR_ADV_PROJECTIVE_MIRROR_VIEW2_IDENTITY_HI_WORD));
+}
+
 bool XR_ADV_TryResolveTextureReference(
     XRAdvancedMaterialTextureBinding logicalBinding,
     out XRAdvancedEncodedTextureReference encodedReference)

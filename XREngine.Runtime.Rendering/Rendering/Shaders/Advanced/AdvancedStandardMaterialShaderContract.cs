@@ -21,6 +21,28 @@ internal static class AdvancedStandardMaterialShaderContract
         AppendLayout(source, "XR_ADV_STANDARD_DEFERRED_LAYOUT", layout);
         AppendLayout(source, "XR_ADV_STANDARD_FORWARD_LAYOUT", MaterialBindingLayouts.ForwardOpaque);
         AppendLayout(source, "XR_ADV_STANDARD_MASKED_LAYOUT", MaterialBindingLayouts.MaskedForward);
+
+        MaterialBindingLayout projectiveMirror = MaterialBindingLayouts.ProjectiveMirror;
+        Append(source, "XR_ADV_PROJECTIVE_MIRROR_WORD_COUNT", projectiveMirror.RowWordCount);
+        AppendLayout(source, "XR_ADV_PROJECTIVE_MIRROR_LAYOUT", projectiveMirror);
+        AppendProjectiveMirrorMember(source, projectiveMirror, "View0CaptureHandleIndex", "XR_ADV_PROJECTIVE_MIRROR_VIEW0_TEXTURE_WORD");
+        AppendProjectiveMirrorMember(source, projectiveMirror, "View1CaptureHandleIndex", "XR_ADV_PROJECTIVE_MIRROR_VIEW1_TEXTURE_WORD");
+        AppendProjectiveMirrorMember(source, projectiveMirror, "View2CaptureHandleIndex", "XR_ADV_PROJECTIVE_MIRROR_VIEW2_TEXTURE_WORD");
+        AppendProjectiveMirrorMember(source, projectiveMirror, "View0ReflectedViewProjection", "XR_ADV_PROJECTIVE_MIRROR_VIEW0_MATRIX_WORD");
+        AppendProjectiveMirrorMember(source, projectiveMirror, "View0SourceCameraIdentityLo", "XR_ADV_PROJECTIVE_MIRROR_VIEW0_IDENTITY_LO_WORD");
+        AppendProjectiveMirrorMember(source, projectiveMirror, "View0SourceCameraIdentityHi", "XR_ADV_PROJECTIVE_MIRROR_VIEW0_IDENTITY_HI_WORD");
+        AppendProjectiveMirrorMember(source, projectiveMirror, "View0Valid", "XR_ADV_PROJECTIVE_MIRROR_VIEW0_VALID_WORD");
+        AppendProjectiveMirrorMember(source, projectiveMirror, "View0FramebufferYDown", "XR_ADV_PROJECTIVE_MIRROR_VIEW0_FRAMEBUFFER_Y_DOWN_WORD");
+        AppendProjectiveMirrorMember(source, projectiveMirror, "View1ReflectedViewProjection", "XR_ADV_PROJECTIVE_MIRROR_VIEW1_MATRIX_WORD");
+        AppendProjectiveMirrorMember(source, projectiveMirror, "View1SourceCameraIdentityLo", "XR_ADV_PROJECTIVE_MIRROR_VIEW1_IDENTITY_LO_WORD");
+        AppendProjectiveMirrorMember(source, projectiveMirror, "View1SourceCameraIdentityHi", "XR_ADV_PROJECTIVE_MIRROR_VIEW1_IDENTITY_HI_WORD");
+        AppendProjectiveMirrorMember(source, projectiveMirror, "View1Valid", "XR_ADV_PROJECTIVE_MIRROR_VIEW1_VALID_WORD");
+        AppendProjectiveMirrorMember(source, projectiveMirror, "View1FramebufferYDown", "XR_ADV_PROJECTIVE_MIRROR_VIEW1_FRAMEBUFFER_Y_DOWN_WORD");
+        AppendProjectiveMirrorMember(source, projectiveMirror, "View2ReflectedViewProjection", "XR_ADV_PROJECTIVE_MIRROR_VIEW2_MATRIX_WORD");
+        AppendProjectiveMirrorMember(source, projectiveMirror, "View2SourceCameraIdentityLo", "XR_ADV_PROJECTIVE_MIRROR_VIEW2_IDENTITY_LO_WORD");
+        AppendProjectiveMirrorMember(source, projectiveMirror, "View2SourceCameraIdentityHi", "XR_ADV_PROJECTIVE_MIRROR_VIEW2_IDENTITY_HI_WORD");
+        AppendProjectiveMirrorMember(source, projectiveMirror, "View2Valid", "XR_ADV_PROJECTIVE_MIRROR_VIEW2_VALID_WORD");
+        AppendProjectiveMirrorMember(source, projectiveMirror, "View2FramebufferYDown", "XR_ADV_PROJECTIVE_MIRROR_VIEW2_FRAMEBUFFER_Y_DOWN_WORD");
     }
 
     private static void AppendMember(StringBuilder source, MaterialBindingLayout layout, string name, string define)
@@ -31,6 +53,13 @@ internal static class AdvancedStandardMaterialShaderContract
             member.WordOffset != forward.WordOffset || member.WordOffset != masked.WordOffset ||
             member.WordCount != forward.WordCount || member.WordCount != masked.WordCount)
             throw new InvalidOperationException($"Native material field '{name}' requires an explicit shader translation for the published layout.");
+        Append(source, define, member.WordOffset);
+    }
+
+    private static void AppendProjectiveMirrorMember(StringBuilder source, MaterialBindingLayout layout, string name, string define)
+    {
+        if (!layout.TryGetPackedMember(name, out MaterialBindingPackedMember member))
+            throw new InvalidOperationException($"Native projective mirror field '{name}' is absent from its published layout.");
         Append(source, define, member.WordOffset);
     }
 

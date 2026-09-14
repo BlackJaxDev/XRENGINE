@@ -144,9 +144,9 @@ runs completed successfully. Longer final reruns failed in both variants with
 validation both enabled and disabled, after 80 warm-up frames at the 800x450
 transition. Family admission reports `Admitted/Ready`, so the remaining issue is
 in later history/package/offscreen authoring admission. It is not specific to
-ShippingFast. This existing control-path failure remains open; the next work is
-to propagate the exact viewport decline reason and inspect package/history
-readiness at that transition. No resize performance number is accepted.
+ShippingFast. This control-path failure was subsequently reproduced and fixed
+in the [September 14 follow-up](vulkan14-followup-stability-and-validation-2026-09-14.md).
+The original failed runs remain excluded from performance results.
 
 ### Final correctness evidence
 
@@ -208,9 +208,45 @@ in the total and native preparation/recording timers.
 
 **Decision:** retain the version 1 implementation for explicit experiments;
 reject default promotion. A 75% push-byte reduction does not establish lower
-CPU/GPU cost. Resolve the long-resize control failure and repeat on representative
-content and additional target GPUs before broader admission or promotion.
+CPU/GPU cost. The long-resize correctness failure is now resolved; repeat matched
+performance controls on representative content and additional target GPUs before
+broader admission or promotion.
 Geometry fetch/vertex pulling is a separate future experiment, not part of G.
+
+## September 14 resize closeout
+
+The decline diagnostic exposed a mismatch between the physical output extent
+and the resized logical viewport in resource-generation preparation. Preparation
+now consistently uses the logical viewport extent, while retaining output
+formats, sample count and layers. The explicit benchmark coordinator retries a
+pending incremental resource build within its existing time/attempt bounds.
+
+That correction exposed a separate first-frame rendering defect. The explicit
+target had three frame slots while descriptor/uniform storage still used the
+desktop default of two. Slot 2 wrote the resized pass constants into its third
+buffer, but the descriptor selected slot 1's buffer. A newly allocated range
+there contained zero screen dimensions. RenderDoc confirmed that native HDR
+contained the scene while postprocessing sampled the corner. The frame-loop
+constructor now publishes the target's slot count before any descriptor or
+uniform storage is materialized. Temporary tracing was removed.
+
+The final probe-free Release build passed with zero compiler warnings/errors.
+Fresh Immediate and BufferDeviceAddress controls each submitted **481 frames**
+(80 warmup, 400 measured, one first-resize capture) through the same three-slot
+target. Both returned 397 completed GPU samples and **zero standard or
+synchronization validation errors**, with four existing loader warnings each.
+The 1280×720 target was rendered at an 800×450 logical extent and restored.
+The first resized image equals the steady resized image; restoration equals
+the initial image. All four images also match between root variants, and the
+resized/restored PNGs were viewed. Raw RGBA SHA-256 values are:
+
+- Initial/restored: `a2bb6252065f0a4631d8b5e230d65d8be0fc381cc6d587da772531ac458e62b7`.
+- First/steady resize: `33747fb2659517e705b8579c09d7856ca7616890bfd731ac5fe04ce6a77bb2b3`.
+
+Evidence under the H run: `reports/followup-g-final-immediate/`,
+`reports/followup-g-final-address/`, and
+`reports/followup-g-final-image-validation.json`. These are correctness controls;
+their timings are not used for default promotion or a new performance claim.
 
 ## Primary references
 

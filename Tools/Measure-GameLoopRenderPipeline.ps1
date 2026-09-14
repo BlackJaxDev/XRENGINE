@@ -16,6 +16,10 @@ param(
     [string]$MeshletStandaloneCookedCacheRoot = '',
     [ValidateSet('FullBucketScanDiagnostic', 'ActiveBucketListReadbackDiagnostic', 'MaterialTable', 'BindlessMaterialTable', 'FullBucketScan', 'ActiveBucketList')]
     [string]$ZeroReadbackMaterialDrawPath = 'BindlessMaterialTable',
+    # Capture permits initialization readbacks while retaining their All* totals.
+    # All keeps the strict whole-run gate for callers that require it.
+    [ValidateSet('All', 'Capture')]
+    [string]$ZeroReadbackValidationScope = 'All',
     [string]$ProfileScene = '',
     [string]$ProfileCamera = '',
     [double]$CameraPositionX = [double]::NaN,
@@ -1577,6 +1581,8 @@ function Measure-Variant {
     $captureMappedTotal = Sum-NumericProperty -Samples $samples -Property 'gpu_mapped_buffers'
     $allReadbackTotal = Sum-NumericProperty -Samples $allSamples -Property 'gpu_readback_bytes'
     $allMappedTotal = Sum-NumericProperty -Samples $allSamples -Property 'gpu_mapped_buffers'
+    $validatedReadbackTotal = if ($ZeroReadbackValidationScope -eq 'Capture') { $captureReadbackTotal } else { $allReadbackTotal }
+    $validatedMappedTotal = if ($ZeroReadbackValidationScope -eq 'Capture') { $captureMappedTotal } else { $allMappedTotal }
     $allFallbackTotal = Sum-NumericProperty -Samples $allSamples -Property 'gpu_cpu_fallback_events'
     $allForbiddenFallbackTotal = Sum-NumericProperty -Samples $allSamples -Property 'forbidden_gpu_fallback_events'
     # Meshlet cook and render-path guards are lifetime counters, so use the
@@ -1896,8 +1902,8 @@ function Measure-Variant {
         }
     }
     if ($Strategy -eq 'GpuIndirectZeroReadback' -or $Strategy -eq 'GpuMeshletZeroReadback') {
-        if ($captureReadbackTotal -ne 0 -or $captureMappedTotal -ne 0 -or $allReadbackTotal -ne 0 -or $allMappedTotal -ne 0) {
-            $noteParts.Add("zero-readback violation capture(readbackBytes=$captureReadbackTotal mappedBuffers=$captureMappedTotal) all(readbackBytes=$allReadbackTotal mappedBuffers=$allMappedTotal)") | Out-Null
+        if ($validatedReadbackTotal -ne 0 -or $validatedMappedTotal -ne 0) {
+            $noteParts.Add("zero-readback violation scope=$ZeroReadbackValidationScope capture(readbackBytes=$captureReadbackTotal mappedBuffers=$captureMappedTotal) all(readbackBytes=$allReadbackTotal mappedBuffers=$allMappedTotal)") | Out-Null
         }
     }
     if ($Strategy -eq 'GpuMeshletZeroReadback') {
@@ -1975,6 +1981,7 @@ function Measure-Variant {
         VulkanCommandBufferLabels = [bool]$VulkanCommandBufferLabels
         OcclusionCullingMode = $OcclusionCullingMode
         ZeroReadbackMaterialDrawPath = $ZeroReadbackMaterialDrawPath
+        ZeroReadbackValidationScope = $ZeroReadbackValidationScope
         ProfileScene = $ProfileScene
         ProfileCamera = $ProfileCamera
         CameraPositionX = if ($hasFixedCameraPose) { $CameraPositionX } else { $null }
@@ -2405,6 +2412,7 @@ $results | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $summaryJson -Enco
     "ProfileMode: $ProfileMode"
     "CacheMode: $CacheMode"
     "ZeroReadbackMaterialDrawPath: $ZeroReadbackMaterialDrawPath"
+    "ZeroReadbackValidationScope: $ZeroReadbackValidationScope"
     "Scene: $ProfileScene"
     "Camera: $ProfileCamera"
     "CameraPose: $(if ($hasFixedCameraPose) { 'position=({0},{1},{2}) lookAt=({3},{4},{5})' -f $CameraPositionX,$CameraPositionY,$CameraPositionZ,$CameraLookAtX,$CameraLookAtY,$CameraLookAtZ } else { 'not fixed by harness' })"
@@ -2557,8 +2565,8 @@ $meshletProductionFailures = @($results | Where-Object {
         [double]$_.MeshletRenderPathCookerCalls -ne 0.0 -or
         [double]$_.MeshletMappedBytes -ne 0.0 -or
         [double]$_.MeshletDispatchCalls -le 0.0 -or
-        [double]$_.AllGpuReadbackBytesTotal -ne 0.0 -or
-        [double]$_.AllGpuMappedBuffersTotal -ne 0.0
+        [double]$(if ($_.ZeroReadbackValidationScope -eq 'Capture') { $_.GpuReadbackBytesTotal } else { $_.AllGpuReadbackBytesTotal }) -ne 0.0 -or
+        [double]$(if ($_.ZeroReadbackValidationScope -eq 'Capture') { $_.GpuMappedBuffersTotal } else { $_.AllGpuMappedBuffersTotal }) -ne 0.0
 
     if ($commonFailure) {
         return $true

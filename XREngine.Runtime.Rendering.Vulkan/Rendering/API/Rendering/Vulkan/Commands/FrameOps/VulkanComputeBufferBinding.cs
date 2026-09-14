@@ -12,4 +12,6 @@ internal readonly record struct VulkanComputeBufferBinding(
     XRDataBuffer Data,
     Buffer Buffer,
     ulong Range,
-    BufferUsageFlags UsageFlags);
+    BufferUsageFlags UsageFlags,
+    VulkanResourceSlotHandle LifetimeSlot,
+    ulong NativeGeneration);

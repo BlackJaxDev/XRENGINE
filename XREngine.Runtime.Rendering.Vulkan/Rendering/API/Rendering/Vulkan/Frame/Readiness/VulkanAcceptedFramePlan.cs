@@ -181,6 +181,16 @@ internal sealed class VulkanAcceptedFramePlan
                 if (_staticOperations[authoredIndex].ContextReference
                         .OutputCompletionReceiptId == receipt.ReceiptId)
                     authoredOperationCount++;
+            // Prepared mesh entries lower one-for-one beside captured FrameOps.
+            // Count the complete authored cohort before comparing it with the
+            // sealed stream; omitting these rejects valid mirror writer receipts.
+            for (int ingressIndex = 0; ingressIndex < PreparedMeshIngress.Count; ingressIndex++)
+            {
+                ref readonly VulkanPreparedMeshIngressEntry entry =
+                    ref PreparedMeshIngress.GetEntry(ingressIndex);
+                if (!entry.IsDynamicUi && entry.Context.OutputCompletionReceiptId == receipt.ReceiptId)
+                    authoredOperationCount++;
+            }
             for (int authoredIndex = 0;
                  authoredIndex < DynamicUiOperationCount;
                  authoredIndex++)

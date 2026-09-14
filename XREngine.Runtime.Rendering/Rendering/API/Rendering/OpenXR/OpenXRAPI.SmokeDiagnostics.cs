@@ -34,7 +34,9 @@ public unsafe partial class OpenXRAPI
     private int _smokeReferenceSpaceCreated;
     private int _smokeSwapchainsCreated;
     private int _smokeSessionRunning;
-    private int _smokeTeardownCompleted;
+    private long _smokeSessionLifecycleEpoch;
+    private long _smokeLastNormalTeardownEpoch;
+    private long _smokeNormalTeardownCount;
     private int _smokePredictedViewPoseCached;
     private int _smokeLateViewPoseCached;
     private int _smokePredictedActionPoseCacheUpdated;
@@ -68,7 +70,16 @@ public unsafe partial class OpenXRAPI
     public long SmokeEndFrameFailureCount => Volatile.Read(ref _smokeEndFrameFailureCount);
     public long StrictSinglePassStereoSequentialFallbackAttemptCount
         => Volatile.Read(ref _strictSinglePassStereoSequentialFallbackAttemptCount);
-    public bool SmokeTeardownCompleted => Volatile.Read(ref _smokeTeardownCompleted) != 0;
+    public bool SmokeTeardownCompleted
+    {
+        get
+        {
+            long epoch = Volatile.Read(ref _smokeSessionLifecycleEpoch);
+            long completedEpoch = Volatile.Read(ref _smokeLastNormalTeardownEpoch);
+            return epoch > 0 && completedEpoch == epoch &&
+                Volatile.Read(ref _smokeSessionLifecycleEpoch) == epoch;
+        }
+    }
     public event Action<long, long, long>? SmokeFrameCompleted;
 
     public long GetSmokeEyeAcquireCount(uint viewIndex)
@@ -108,6 +119,7 @@ public unsafe partial class OpenXRAPI
             runtimeManifestPath = TryGetOpenXRActiveRuntime();
 
         var (runtimeName, runtimeVersion) = TryReadRuntimeManifestMetadata(runtimeManifestPath);
+        OpenXrSwapchainRetirementSnapshot retirement = CaptureSwapchainRetirementSnapshot();
 
         lock (_smokeDiagnosticsLock)
         {
@@ -144,7 +156,11 @@ public unsafe partial class OpenXRAPI
                 ReferenceSpaceCreated = Volatile.Read(ref _smokeReferenceSpaceCreated) != 0,
                 SwapchainsCreated = Volatile.Read(ref _smokeSwapchainsCreated) != 0,
                 SessionRunning = Volatile.Read(ref _smokeSessionRunning) != 0,
-                TeardownCompleted = Volatile.Read(ref _smokeTeardownCompleted) != 0,
+                TeardownCompleted = SmokeTeardownCompleted,
+                SessionLifecycleEpoch = Volatile.Read(ref _smokeSessionLifecycleEpoch),
+                LastNormalTeardownEpoch = Volatile.Read(ref _smokeLastNormalTeardownEpoch),
+                NormalTeardownCount = Volatile.Read(ref _smokeNormalTeardownCount),
+                SwapchainRetirement = retirement,
                 SubmittedFrameCount = Volatile.Read(ref _smokeSubmittedFrameCount),
                 NoLayerFrameCount = Volatile.Read(ref _smokeNoLayerFrameCount),
                 EndFrameFailureCount = Volatile.Read(ref _smokeEndFrameFailureCount),
@@ -279,7 +295,9 @@ public unsafe partial class OpenXRAPI
         Volatile.Write(ref _smokeReferenceSpaceCreated, 0);
         Volatile.Write(ref _smokeSwapchainsCreated, 0);
         Volatile.Write(ref _smokeSessionRunning, 0);
-        Volatile.Write(ref _smokeTeardownCompleted, 0);
+        Volatile.Write(ref _smokeSessionLifecycleEpoch, 0);
+        Volatile.Write(ref _smokeLastNormalTeardownEpoch, 0);
+        Volatile.Write(ref _smokeNormalTeardownCount, 0);
         Volatile.Write(ref _smokePredictedViewPoseCached, 0);
         Volatile.Write(ref _smokeLateViewPoseCached, 0);
         Volatile.Write(ref _smokePredictedActionPoseCacheUpdated, 0);
@@ -521,8 +539,28 @@ public unsafe partial class OpenXRAPI
     private void RecordStrictSpsSuccessfulSubmission()
         => Interlocked.Increment(ref _strictSpsSuccessfulSubmissionCount);
 
+    /// <summary>Reads only backend-owned diagnostic state; never waits for GPU completion.</summary>
+    public OpenXrSwapchainRetirementSnapshot CaptureSwapchainRetirementSnapshot()
+        => _graphicsBinding?.CaptureSwapchainRetirementSnapshot() ?? new();
+
+    private void RecordSmokeSessionLifecycleStarted()
+    {
+        lock (_smokeDiagnosticsLock)
+            Interlocked.Increment(ref _smokeSessionLifecycleEpoch);
+    }
+
     private void RecordSmokeTeardownCompleted()
-        => Volatile.Write(ref _smokeTeardownCompleted, 1);
+    {
+        lock (_smokeDiagnosticsLock)
+        {
+            long epoch = Volatile.Read(ref _smokeSessionLifecycleEpoch);
+            if (epoch == 0 || Volatile.Read(ref _smokeLastNormalTeardownEpoch) == epoch)
+                return;
+
+            Interlocked.Increment(ref _smokeNormalTeardownCount);
+            Volatile.Write(ref _smokeLastNormalTeardownEpoch, epoch);
+        }
+    }
 
     private void RecordSmokeEffectiveTsrRenderScale(float? scale)
     {

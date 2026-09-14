@@ -274,7 +274,11 @@ internal sealed partial class VulkanCommandRuntime
             }
 
             VulkanOpenXrSubmissionResult result = SubmitTrackedOpenXrTemporaryCommand(
-                admissionTicket!.Value, ref trackerOwnsCommand, commandBuffer, default);
+                admissionTicket!.Value,
+                ref trackerOwnsCommand,
+                commandBuffer,
+                default,
+                XREngine.Rendering.API.Rendering.OpenXR.EOpenXrSubmissionShape.PreviewCopy);
             disposition = result.SubmissionDisposition;
             return result.Succeeded;
         }
@@ -320,7 +324,11 @@ internal sealed partial class VulkanCommandRuntime
         try
         {
             VulkanOpenXrSubmissionResult result = SubmitTrackedOpenXrTemporaryCommand(
-                admissionTicket!.Value, ref trackerOwnsCommand, commandBuffer, default);
+                admissionTicket!.Value,
+                ref trackerOwnsCommand,
+                commandBuffer,
+                default,
+                XREngine.Rendering.API.Rendering.OpenXR.EOpenXrSubmissionShape.MirrorPublish);
             disposition = result.SubmissionDisposition;
             return result.Succeeded;
         }
@@ -402,7 +410,11 @@ internal sealed partial class VulkanCommandRuntime
             }
 
             VulkanOpenXrSubmissionResult result = SubmitTrackedOpenXrTemporaryCommand(
-                admissionTicket!.Value, ref trackerOwnsCommand, commandBuffer, default);
+                admissionTicket!.Value,
+                ref trackerOwnsCommand,
+                commandBuffer,
+                default,
+                XREngine.Rendering.API.Rendering.OpenXR.EOpenXrSubmissionShape.DiagnosticClear);
             disposition = result.SubmissionDisposition;
             return result.Succeeded;
         }
@@ -523,7 +535,11 @@ internal sealed partial class VulkanCommandRuntime
                 return false;
             }
             VulkanOpenXrSubmissionResult result = SubmitTrackedOpenXrTemporaryCommand(
-                admissionTicket!.Value, ref trackerOwnsCommand, commandBuffer, default);
+                admissionTicket!.Value,
+                ref trackerOwnsCommand,
+                commandBuffer,
+                default,
+                XREngine.Rendering.API.Rendering.OpenXR.EOpenXrSubmissionShape.MirrorTextureCopy);
             disposition = result.SubmissionDisposition;
             return result.Succeeded;
         }
@@ -545,7 +561,8 @@ internal sealed partial class VulkanCommandRuntime
         OpenXrVulkanSubmissionTracker.SubmissionAdmissionTicket admissionTicket,
         ref bool trackerOwnsCommand,
         CommandBuffer commandBuffer,
-        in VulkanSubmissionDiagnosticContext diagnosticContext)
+        in VulkanSubmissionDiagnosticContext diagnosticContext,
+        XREngine.Rendering.API.Rendering.OpenXR.EOpenXrSubmissionShape submissionShape)
     {
         Span<uint> frameSlots = stackalloc uint[0];
         trackerOwnsCommand = OpenXrSubmissionTracker.RegisterSubmission(
@@ -559,10 +576,14 @@ internal sealed partial class VulkanCommandRuntime
             MappedFrameArena, MappedFrameArena?.Generation ?? 0UL,
             ResourceRuntime.FrameDataArena, ResourceRuntime.FrameDataArena?.Generation ?? 0UL,
             frameSlots, 0L, 0L,
-            temporaryCommandBuffer: commandBuffer);
+            temporaryCommandBuffer: commandBuffer,
+            submissionShape: submissionShape);
+        if (!trackerOwnsCommand)
+            throw new InvalidOperationException("OpenXR temporary submission could not transfer its command buffer to the submission tracker.");
         return SubmitAndWaitOpenXr(new VulkanOpenXrSubmissionInput(
             commandBuffer, default, default, 1, diagnosticContext,
-            AdmissionTicket: admissionTicket));
+            AdmissionTicket: admissionTicket,
+            Shape: submissionShape));
     }
 
     internal bool TryRecordOpenXrEyeMirrorPublishCommandBuffer(

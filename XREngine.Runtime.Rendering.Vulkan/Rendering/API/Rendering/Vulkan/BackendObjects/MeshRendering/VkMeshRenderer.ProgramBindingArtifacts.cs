@@ -488,6 +488,15 @@ internal unsafe partial class VkMeshRenderer
         artifact = null!;
         fallbackReason = EVulkanProgramBindingArtifactFallbackReason.None;
         fallbackDetail = null;
+        // Ordinary buffer snapshots contain exact native handles, but a shared
+        // artifact does not own their allocation leases. An unrelated engine
+        // or publisher generation cannot authorize retaining those handles.
+        if (snapshot.Buffers.Count != 0 || snapshot.BuffersByName.Count != 0)
+        {
+            fallbackReason = EVulkanProgramBindingArtifactFallbackReason.UnownedDescriptorResource;
+            fallbackDetail = "ordinary buffer bindings require a frame-owned binding snapshot";
+            return false;
+        }
         // Cross-frame artifacts are shared by reference and do not own a
         // publication lease per recorded consumer. Keep immutable storage on
         // the frame-owned GPU snapshot path until that cache supports leases.

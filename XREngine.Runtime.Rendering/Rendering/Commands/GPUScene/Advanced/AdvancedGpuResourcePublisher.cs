@@ -543,7 +543,8 @@ public sealed class AdvancedGpuResourcePublisher
     /// </summary>
     internal bool TryCapturePublication(
         ulong sequence,
-        AdvancedGpuResourcePublicationSnapshot snapshot)
+        AdvancedGpuResourcePublicationSnapshot snapshot,
+        ReadOnlySpan<AdvancedProjectiveMirrorSnapshot> reservedMirrors = default)
     {
         ArgumentNullException.ThrowIfNull(snapshot);
         if (!snapshot.TryBeginSourceCapture(
@@ -561,7 +562,8 @@ public sealed class AdvancedGpuResourcePublisher
                     entry.Handle,
                     out AdvancedTextureRecord retainedRecord) ||
                 !TextureEquals(retainedRecord, entry.Record) ||
-                !snapshot.TryAddTextureSource(entry.Handle, entry.Source, entry.SourceContentGeneration, entry.Lifetime))
+                !snapshot.TryAddTextureSource(entry.Handle, entry.Source, entry.SourceContentGeneration, entry.Lifetime,
+                    HasReservedMirrorSource(in entry, reservedMirrors)))
             {
                 snapshot.AbortSourceCapture();
                 return false;
@@ -582,6 +584,21 @@ public sealed class AdvancedGpuResourcePublisher
         }
 
         return snapshot.TryCompleteSourceCapture(sequence);
+    }
+
+    private static bool HasReservedMirrorSource(in TextureEntry entry,
+        ReadOnlySpan<AdvancedProjectiveMirrorSnapshot> snapshots)
+    {
+        for (int i = 0; i < snapshots.Length; ++i)
+            for (int viewIndex = 0; viewIndex < AdvancedProjectiveMirrorMaterial.ViewCapacity; ++viewIndex)
+            {
+                AdvancedProjectiveMirrorView view = snapshots[i][viewIndex];
+                if (view.Valid && ReferenceEquals(view.Texture, entry.Source) &&
+                    ReferenceEquals(view.CanonicalPublicationLifetime, entry.Lifetime) &&
+                    view.SourceContentGeneration == entry.SourceContentGeneration)
+                    return true;
+            }
+        return false;
     }
 
     /// <summary>

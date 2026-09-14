@@ -76,6 +76,9 @@ internal sealed class VulkanAdvancedSceneResourceSlot
     internal int ReceiptCount;
     internal int ActiveUseCount;
     internal ulong StorageBytesConsumed;
+    // Survives BeginGeneration so pressure can select a larger existing bounded
+    // reservation only after this slot's prior native readers have retired.
+    internal ulong DeferredStorageCapacity;
     internal bool Quarantined;
     internal bool TransactionIntegrityFault;
 
@@ -92,6 +95,22 @@ internal sealed class VulkanAdvancedSceneResourceSlot
             if (ReferenceEquals(Entries[index].Database, database) &&
                 Entries[index].Publication == publication &&
                 Entries[index].Globals!.Matches(views, in frame, passes, coverage, diagnosticCount))
+            {
+                return index;
+            }
+
+        return -1;
+    }
+
+    /// <summary>Finds immutable scene payload independently of output globals.</summary>
+    internal int FindPublication(
+        AdvancedSharedGpuSceneDatabase database,
+        in AdvancedGpuScenePublicationReference publication)
+    {
+        for (int index = 0; index < EntryCount; ++index)
+            if (ReferenceEquals(Entries[index].Database, database) &&
+                Entries[index].Publication == publication &&
+                Entries[index].State.IsValid)
             {
                 return index;
             }

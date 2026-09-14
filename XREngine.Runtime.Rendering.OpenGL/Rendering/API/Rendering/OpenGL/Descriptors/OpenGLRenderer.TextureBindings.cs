@@ -58,6 +58,8 @@ public partial class OpenGLRenderer
     private readonly Dictionary<int, IGLTexture?> _boundTexturesPerUnit = new();
     private readonly Dictionary<int, Dictionary<ETextureTarget, BoundTextureDebugState>> _boundTexturesPerUnitTarget = new();
     private string? _currentDrawProgramName;
+    private GLRenderProgram? _currentDrawCoverageVertexProgram;
+    private GLRenderProgram? _currentDrawCoverageMaterialProgram;
     private string? _currentDrawMaterialName;
     private string? _currentDrawMeshName;
     private IReadOnlyCollection<int>? _currentDrawTextureUnits;
@@ -145,8 +147,10 @@ public partial class OpenGLRenderer
             _boundTexturesPerUnitTarget.Remove(ActiveTextureUnit);
     }
 
-    public void SetDrawDebugContext(string? programName, string? materialName, string? meshName, IReadOnlyCollection<int>? textureUnits)
+    public void SetDrawDebugContext(GLRenderProgram? coverageVertexProgram, GLRenderProgram? coverageMaterialProgram, string? programName, string? materialName, string? meshName, IReadOnlyCollection<int>? textureUnits)
     {
+        _currentDrawCoverageVertexProgram = coverageVertexProgram;
+        _currentDrawCoverageMaterialProgram = coverageMaterialProgram;
         _currentDrawProgramName = string.IsNullOrWhiteSpace(programName) ? null : programName;
         _currentDrawMaterialName = string.IsNullOrWhiteSpace(materialName) ? null : materialName;
         _currentDrawMeshName = string.IsNullOrWhiteSpace(meshName) ? null : meshName;
@@ -155,10 +159,35 @@ public partial class OpenGLRenderer
 
     public void ClearDrawDebugContext()
     {
+        _currentDrawCoverageVertexProgram = null;
+        _currentDrawCoverageMaterialProgram = null;
         _currentDrawProgramName = null;
         _currentDrawMaterialName = null;
         _currentDrawMeshName = null;
         _currentDrawTextureUnits = null;
+    }
+
+    /// <summary>Records an emitted GL mesh command against the program active for this draw scope.</summary>
+    internal void RecordActiveDrawCoverage(bool indirect, uint instances, bool instancingKnown = true)
+    {
+        if (instances == 0 || !ShaderCommandCoverage.Enabled)
+            return;
+        bool rasterizerDiscard = Api.IsEnabled(EnableCap.RasterizerDiscard);
+        _currentDrawCoverageVertexProgram?.RecordShaderCommandCoverage(
+            ShaderCommandKind.Graphics,
+            indirect,
+            instancingKnown,
+            instanced: instances > 1,
+            rasterizerDiscard);
+        if (!ReferenceEquals(_currentDrawCoverageVertexProgram, _currentDrawCoverageMaterialProgram))
+        {
+            _currentDrawCoverageMaterialProgram?.RecordShaderCommandCoverage(
+                ShaderCommandKind.Graphics,
+                indirect,
+                instancingKnown,
+                instanced: instances > 1,
+                rasterizerDiscard);
+        }
     }
 
     private string BuildOpenGLErrorContext()

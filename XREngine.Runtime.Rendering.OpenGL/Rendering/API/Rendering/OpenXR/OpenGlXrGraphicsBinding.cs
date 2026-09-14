@@ -2,6 +2,7 @@ using Silk.NET.OpenGL;
 using Silk.NET.OpenXR;
 using Silk.NET.OpenXR.Extensions.KHR;
 using Silk.NET.Windowing;
+using System.Threading;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.API.Rendering.OpenXR;
 
@@ -37,6 +38,8 @@ internal sealed unsafe partial class OpenGlXrGraphicsBinding : IXrGraphicsBindin
     private EPixelInternalFormat _previewEyeTextureInternalFormat = EPixelInternalFormat.Rgba8;
     private ESizedInternalFormat _previewEyeTextureSizedFormat = ESizedInternalFormat.Rgba8;
     private int _openXrDebugFrameIndex;
+    private ulong _previewLeftEyeFrameId;
+    private ulong _previewRightEyeFrameId;
 
     private OpenXRAPI Host
         => _host ?? throw new InvalidOperationException("The OpenGL OpenXR binding is not attached to an API host.");
@@ -53,7 +56,26 @@ internal sealed unsafe partial class OpenGlXrGraphicsBinding : IXrGraphicsBindin
     public bool RequiresRenderThreadForTeardown => true;
     public XRTexture2D? PreviewLeftEyeTexture => _previewLeftEyeTexture;
     public XRTexture2D? PreviewRightEyeTexture => _previewRightEyeTexture;
+    public ulong PreviewLeftEyeFrameId => Volatile.Read(ref _previewLeftEyeFrameId);
+    public ulong PreviewRightEyeFrameId => Volatile.Read(ref _previewRightEyeFrameId);
     public XRTexture2D? DesktopMirrorTexture => _viewportMirrorColor;
+
+    private void ClearPreviewEyeFrameId(uint viewIndex)
+    {
+        if (viewIndex == 0)
+            Volatile.Write(ref _previewLeftEyeFrameId, 0);
+        else if (viewIndex == 1)
+            Volatile.Write(ref _previewRightEyeFrameId, 0);
+    }
+
+    private void RecordPreviewEyeCopyIssued(uint viewIndex)
+    {
+        ulong renderFrameId = RuntimeRenderingHostServices.FrameTiming.CurrentRenderFrameId;
+        if (viewIndex == 0)
+            Volatile.Write(ref _previewLeftEyeFrameId, renderFrameId);
+        else if (viewIndex == 1)
+            Volatile.Write(ref _previewRightEyeFrameId, renderFrameId);
+    }
 
     public bool TryCreateSession(OpenXRAPI api, AbstractRenderer renderer)
     {
