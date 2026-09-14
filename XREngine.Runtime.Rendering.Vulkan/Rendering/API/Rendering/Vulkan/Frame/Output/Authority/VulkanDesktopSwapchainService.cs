@@ -253,11 +253,10 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
                 ulong[] imageTimelineValues = new ulong[_output.Desktop.Images.Length];
                 if (oldGraphicsCompletionValue != 0)
                 {
-                    // Mapped frame-data slots are indexed by swapchain image. A
-                    // replacement generation may reuse an index before the old
-                    // image's accepted graphics work completes, so every new image
-                    // inherits the strongest old completion proof. Clearing this
-                    // ledger wedged the arena in Submitted after a resize/recreate.
+                    // Image-owned command artifacts and timing slots may reuse an
+                    // index before the previous generation's graphics work completes.
+                    // Carry its strongest completion proof into the replacement
+                    // ledger; logical frame-data storage has its own slot ledger.
                     Array.Fill(imageTimelineValues, oldGraphicsCompletionValue);
                 }
                 _output.Desktop.ImageTimelineValues = imageTimelineValues;

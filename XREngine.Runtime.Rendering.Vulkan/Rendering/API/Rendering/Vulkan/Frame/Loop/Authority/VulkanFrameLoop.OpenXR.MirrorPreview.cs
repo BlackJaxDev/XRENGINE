@@ -882,7 +882,8 @@ internal sealed partial class VulkanFrameLoop
                         AllowSecondaryDeferral: !hasForegroundContract,
                         QueueOverlapMode: RuntimeEngine.EffectiveSettings.VulkanQueueOverlapMode),
                     TrackedTargetLayout: ImageLayout.Undefined,
-                    FrameDataImageIndexOverride: recordImageIndex,
+                    FrameDataSlotIndex: recordImageIndex,
+                    TimingQuerySlotIndex: recordImageIndex,
                     ReadOnlyStorageAuthority: readOnlyStorageAuthority,
                     OpenXrTargetContext: null,
                     CommandChainSchedule: commandChainSchedule,
@@ -961,6 +962,10 @@ internal sealed partial class VulkanFrameLoop
 
     private void EnsureOpenXrFrameDataSlotCapacity(int frameDataSlotCount)
     {
+        // Mirror plans use the combined desktop/eye slot index. Provision only
+        // newly activated indices before accepting eye work; the warmed path
+        // performs no allocations and existing leased plans remain untouched.
+        _framePlanner.FramePlanBuilder.ProvisionFrameSlots(frameDataSlotCount);
         _commandRuntime.EnsureCommandBufferFrameDataSlotCapacity(frameDataSlotCount);
         ResourceRuntime.EnsureMappedFrameArenaFrameSlotCapacity(frameDataSlotCount);
         if (FrameDataArena is not { } storage || !storage.TryEnsureFrameSlotCount(frameDataSlotCount))
@@ -978,6 +983,7 @@ internal sealed partial class VulkanFrameLoop
     {
         CommandChainSchedule? schedule = _commandRuntime.TryBuildCommandChainSchedule(
             imageIndex: commandChainImageIndex,
+            frameDataSlotIndex: commandChainImageIndex,
             staticOps: staticOperations,
             volatileOps: FrameOperationStream.Empty,
             frameOpsSignature: frameOpsSignature,

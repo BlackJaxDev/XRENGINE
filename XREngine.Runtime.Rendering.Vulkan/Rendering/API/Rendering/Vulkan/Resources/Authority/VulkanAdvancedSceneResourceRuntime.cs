@@ -13,7 +13,11 @@ namespace XREngine.Rendering.Vulkan;
 internal sealed partial class VulkanAdvancedSceneResourceRuntime
 {
     private const uint RequestedDescriptorCapacity = 1024u;
-    private const int PublicationCapacityPerFrameSlot = 256;
+    /// <summary>
+    /// Maximum distinct native publication realizations retained by one frame
+    /// slot. This bounds publication ownership, not mesh-request capacity.
+    /// </summary>
+    internal const int PublicationCapacityPerFrameSlot = 256;
     private const int ReceiptCapacityPerFrameSlot = 1024;
     private const int SamplerCacheCapacity = 4096;
     // The first publication can measure its exact compact image and grow this
@@ -296,7 +300,7 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
                 {
                     failure =
                         EVulkanAdvancedSceneResourceFailure.FrameSlotStillInUse;
-                    reason = "The frame slot still owns advanced-scene publication uses from an incomplete generation.";
+                    reason = $"Frame slot {frameSlot} still owns {slot.ActiveUseCount} advanced-scene publication uses from generation {slot.FrameGeneration}; requested generation {frameGeneration}.";
                     return false;
                 }
 
@@ -790,7 +794,9 @@ internal sealed partial class VulkanAdvancedSceneResourceRuntime
                 out ulong rollbackCursor))
         {
             failure = EVulkanAdvancedSceneResourceFailure.FrameStorageCapacity;
-            reason = "The advanced-scene allocation cursor is unavailable.";
+            reason = "The advanced-scene allocation cursor is unavailable. " +
+                storageArena.DescribeReservedLaneCursorState(frameSlot, EVulkanFrameDataLane.AdvancedSceneStorage) +
+                $" PublicationGeneration={slot.FrameGeneration} ActiveUses={slot.ActiveUseCount} Entries={slot.EntryCount}";
             return false;
         }
 

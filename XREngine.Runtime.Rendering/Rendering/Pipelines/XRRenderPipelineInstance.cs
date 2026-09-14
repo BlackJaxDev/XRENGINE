@@ -1025,6 +1025,14 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             return true;
         }
 
+        if (viewport is not null && ShouldSuspendResourceGenerationForMinimizedWindow(viewport))
+        {
+            // A minimized desktop surface is not a new render profile. Preserve
+            // the last complete generation until a drawable extent is restored.
+            DiscardPendingGeneration("WindowMinimized");
+            return DeclineRender("The viewport's desktop window is minimized.");
+        }
+
         // Match collection, resize requests and commit validation. A physical
         // output may contain a differently sized viewport or receive an upscale.
         var dimensions = viewport is not null
@@ -1255,6 +1263,15 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             resolvedInternalWidth,
             resolvedInternalHeight);
     }
+
+    /// <summary>
+    /// Keeps minimized desktop extents out of resource generation without
+    /// suspending independently owned external swapchain outputs.
+    /// </summary>
+    private static bool ShouldSuspendResourceGenerationForMinimizedWindow(XRViewport viewport)
+        => !viewport.RendersToExternalSwapchainTarget &&
+           viewport.Window is { } window &&
+           (window.LatestWindowEventSnapshot.IsMinimized || window.LatestWindowSurfaceSnapshot.IsMinimized);
 
     private static bool ShouldDeferResourceGenerationForInteractiveWindowResize(XRViewport viewport)
         => !viewport.RendersToExternalSwapchainTarget &&
@@ -2157,23 +2174,45 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         DrainRetiredGenerations();
         if (_retiredGenerations.Count > MaxRetiredResourceGenerations)
         {
-            PrepareForPhysicalResourceDestruction("RetiredRenderResourceGenerationCap");
-            DrainRetiredGenerations(force: true);
+            WaitForRetirementProgress();
+            DrainRetiredGenerations();
+
+            if (_retiredGenerations.Count > MaxRetiredResourceGenerations)
+                Debug.RenderingWarningEvery(
+                    $"RenderResources.RetiredGenerationCapRetained.{GetHashCode()}",
+                    System.TimeSpan.FromSeconds(1),
+                    "[RenderResources] Retired generation cap remains above limit until a completion fence signals. Pipeline={0} RetainedQueue={1}",
+                    ProfilerKey,
+                    _retiredGenerations.Count);
         }
     }
-
-    private void DrainRetiredGenerations(bool force = false)
+    private void DrainRetiredGenerations()
     {
         while (_retiredGenerations.Count != 0)
         {
             RenderResourceGeneration retired = _retiredGenerations.Peek();
             EGpuFenceStatus fenceStatus = retired.PollRetirementFence();
-            if (!force && fenceStatus == EGpuFenceStatus.Pending)
+            if (fenceStatus == EGpuFenceStatus.Pending &&
+                !retired.HasRetirementFence)
+            {
+                AbstractRenderer? renderer = AbstractRenderer.Current;
+                if (retired.TryArmMissingRetirementFence(renderer?.InsertGpuFence()))
+                {
+                    Debug.RenderingWarningEvery(
+                        $"RenderResources.RetiredGenerationFenceArmedLate.{GetHashCode()}",
+                        System.TimeSpan.FromSeconds(1),
+                        "[RenderResources] Retired generation acquired a delayed completion fence. Pipeline={0} Key={1}",
+                        ProfilerKey,
+                        retired.Key);
+                    continue;
+                }
+            }
+
+            if (fenceStatus == EGpuFenceStatus.Pending)
                 return;
 
             XRViewport? viewport = RenderState.WindowViewport ?? LastWindowViewport;
-            if (!force &&
-                fenceStatus == EGpuFenceStatus.Failed &&
+            if (fenceStatus == EGpuFenceStatus.Failed &&
                 viewport?.Window?.IsInteractiveResizeInProgress == true)
             {
                 // The active generation remains the drag-time presentation source.
@@ -2184,28 +2223,39 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
 
             if (fenceStatus == EGpuFenceStatus.Failed)
             {
+                AbstractRenderer? renderer = AbstractRenderer.Current;
+                XRGpuFence? replacementFence = renderer?.InsertGpuFence();
+                if (replacementFence is null)
+                {
+                    Debug.RenderingWarningEvery(
+                        $"RenderResources.RetiredGenerationFenceFailed.{GetHashCode()}",
+                        System.TimeSpan.FromSeconds(1),
+                        "[RenderResources] Retired generation fence failed and no replacement receipt is available. Pipeline={0} Key={1}. Retaining generation.",
+                        ProfilerKey,
+                        retired.Key);
+                    return;
+                }
+
+                int retryCount = retired.ReplaceFailedRetirementFence(replacementFence);
                 Debug.RenderingWarningEvery(
                     $"RenderResources.RetiredGenerationFenceFailed.{GetHashCode()}",
                     System.TimeSpan.FromSeconds(1),
-                    "[RenderResources] Retired generation fence failed. Pipeline={0} Key={1} Force={2}",
+                    "[RenderResources] Retired generation fence failed. Pipeline={0} Key={1} Retry={2}. Retaining generation.",
                     ProfilerKey,
                     retired.Key,
-                    force);
-                PrepareForPhysicalResourceDestruction("RetiredRenderResourceGenerationFenceFailed");
+                    retryCount);
+                return;
             }
 
             _retiredGenerations.Dequeue();
             DisposeGeneration(retired, retired.RetirementReason ?? "Retired generation fence completed");
             Debug.Rendering(
-                "[RenderResources] Retired generation disposed. Pipeline={0} Key={1} Fence={2} Force={3} RemainingQueue={4}",
+                "[RenderResources] Retired generation disposed. Pipeline={0} Key={1} Fence={2} RemainingQueue={3}",
                 ProfilerKey,
                 retired.Key,
                 fenceStatus,
-                force,
                 _retiredGenerations.Count);
 
-            if (force && _retiredGenerations.Count <= MaxRetiredResourceGenerations)
-                return;
         }
     }
 
@@ -2418,6 +2468,13 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     }
 
     /// <summary>
+    /// Requests progress under retirement pressure. Only a subsequently signaled
+    /// receipt permits disposal; WaitForGpu can return early during device loss.
+    /// </summary>
+    private static void WaitForRetirementProgress()
+        => AbstractRenderer.Current?.WaitForGpu();
+
+    /// <summary>
     /// Prepares backend references before physical resources are retired. Vulkan
     /// destruction is generation/timeline deferred, so invalidating descriptor and
     /// command references is sufficient and must not drain unrelated output work.
@@ -2547,7 +2604,9 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             return;
 
         viewport ??= RenderState.WindowViewport ?? LastWindowViewport;
-        if (viewport is not null && ShouldDeferResourceGenerationForInteractiveWindowResize(viewport))
+        if (viewport is not null &&
+            (ShouldSuspendResourceGenerationForMinimizedWindow(viewport) ||
+             ShouldDeferResourceGenerationForInteractiveWindowResize(viewport)))
             return;
 
         var dimensions = ResolveViewportResizeResourceDimensions(

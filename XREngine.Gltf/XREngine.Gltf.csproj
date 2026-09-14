@@ -13,7 +13,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <FastGltfBridgeBuildInput Include="$(FastGltfBridgeProject);$(MSBuildProjectDirectory)\..\Build\Native\FastGltfBridge\**\*.cpp;$(MSBuildProjectDirectory)\..\Build\Native\FastGltfBridge\**\*.h;$(MSBuildProjectDirectory)\..\Build\Native\FastGltfBridge\**\*.hpp" />
+    <FastGltfBridgeBuildInput Include="$(MSBuildProjectFullPath);$(FastGltfBridgeProject);$(MSBuildProjectDirectory)\..\Build\Native\FastGltfBridge\**\*.cpp;$(MSBuildProjectDirectory)\..\Build\Native\FastGltfBridge\**\*.h;$(MSBuildProjectDirectory)\..\Build\Native\FastGltfBridge\**\*.hpp" />
   </ItemGroup>
 
   <ItemGroup>
@@ -42,26 +42,15 @@
           Condition="'$(XREngineUseExistingNativeBridges)' != 'true' and '$(OS)' == 'Windows_NT' and Exists('$(FastGltfBridgeProject)')">
     <PropertyGroup>
       <VsWhereExe>$(MSBuildProgramFiles32)\Microsoft Visual Studio\Installer\vswhere.exe</VsWhereExe>
-      <FastGltfBridgeMsBuildPathFile>$(BaseIntermediateOutputPath)fastgltf-msbuild-path.txt</FastGltfBridgeMsBuildPathFile>
     </PropertyGroup>
 
-    <MakeDir Directories="$(BaseIntermediateOutputPath)" />
-    <Exec Condition="Exists('$(VsWhereExe)')" Command="&quot;$(VsWhereExe)&quot; -latest -requires Microsoft.Component.MSBuild -find &quot;MSBuild\**\Bin\MSBuild.exe&quot; &gt; &quot;$(FastGltfBridgeMsBuildPathFile)&quot;" />
-    <ReadLinesFromFile Condition="Exists('$(FastGltfBridgeMsBuildPathFile)')" File="$(FastGltfBridgeMsBuildPathFile)">
-      <Output TaskParameter="Lines" PropertyName="FastGltfBridgeMsBuildPath" />
-    </ReadLinesFromFile>
+    <!-- MSBuild alone does not include C++ targets; include standalone Build Tools installations. -->
+    <Exec Condition="Exists('$(VsWhereExe)')" Command="&quot;$(VsWhereExe)&quot; -latest -products * -requires Microsoft.Component.MSBuild Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -find &quot;MSBuild\Current\Bin\MSBuild.exe&quot;" ConsoleToMSBuild="true" StandardOutputImportance="Low">
+      <Output TaskParameter="ConsoleOutput" PropertyName="FastGltfBridgeMsBuildPath" />
+    </Exec>
 
-    <PropertyGroup>
-      <FastGltfBridgeMsBuildPath Condition="'$(FastGltfBridgeMsBuildPath)' == '' and Exists('$(MSBuildProgramFiles32)\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe')">$(MSBuildProgramFiles32)\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe</FastGltfBridgeMsBuildPath>
-      <FastGltfBridgeMsBuildPath Condition="'$(FastGltfBridgeMsBuildPath)' == '' and Exists('$(MSBuildProgramFiles32)\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe')">$(MSBuildProgramFiles32)\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe</FastGltfBridgeMsBuildPath>
-      <FastGltfBridgeMsBuildPath Condition="'$(FastGltfBridgeMsBuildPath)' == '' and Exists('$(MSBuildProgramFiles32)\Microsoft Visual Studio\2022\Professional\MSBuild\Current\Bin\MSBuild.exe')">$(MSBuildProgramFiles32)\Microsoft Visual Studio\2022\Professional\MSBuild\Current\Bin\MSBuild.exe</FastGltfBridgeMsBuildPath>
-      <FastGltfBridgeMsBuildPath Condition="'$(FastGltfBridgeMsBuildPath)' == '' and Exists('$(MSBuildProgramFiles32)\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\MSBuild.exe')">$(MSBuildProgramFiles32)\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\MSBuild.exe</FastGltfBridgeMsBuildPath>
-      <FastGltfBridgeMsBuildPath Condition="'$(FastGltfBridgeMsBuildPath)' == '' and Exists('$(MSBuildProgramFiles32)\Microsoft Visual Studio\2019\BuildTools\MSBuild\Current\Bin\MSBuild.exe')">$(MSBuildProgramFiles32)\Microsoft Visual Studio\2019\BuildTools\MSBuild\Current\Bin\MSBuild.exe</FastGltfBridgeMsBuildPath>
-      <FastGltfBridgeMsBuildPath Condition="'$(FastGltfBridgeMsBuildPath)' == '' and Exists('$(MSBuildProgramFiles32)\Microsoft Visual Studio\2019\Community\MSBuild\Current\Bin\MSBuild.exe')">$(MSBuildProgramFiles32)\Microsoft Visual Studio\2019\Community\MSBuild\Current\Bin\MSBuild.exe</FastGltfBridgeMsBuildPath>
-    </PropertyGroup>
-
-    <Message Condition="'$(FastGltfBridgeMsBuildPath)' == '' and Exists('$(FastGltfBridgeNativeDll)')" Importance="high" Text="Skipping FastGltfBridge native rebuild because Visual Studio MSBuild.exe was not found; using existing $(FastGltfBridgeNativeDll)." />
-    <Error Condition="'$(FastGltfBridgeMsBuildPath)' == '' and !Exists('$(FastGltfBridgeNativeDll)')" Text="Could not locate Visual Studio MSBuild.exe required to build FastGltfBridge.vcxproj, and $(FastGltfBridgeNativeDll) is missing." />
+    <Message Condition="'$(FastGltfBridgeMsBuildPath)' == '' and Exists('$(FastGltfBridgeNativeDll)')" Importance="high" Text="Skipping FastGltfBridge native rebuild because Visual Studio MSBuild with C++ tools was not found; using existing $(FastGltfBridgeNativeDll)." />
+    <Error Condition="'$(FastGltfBridgeMsBuildPath)' == '' and !Exists('$(FastGltfBridgeNativeDll)')" Text="Could not locate Visual Studio MSBuild with C++ tools required to build FastGltfBridge.vcxproj, and $(FastGltfBridgeNativeDll) is missing. Install Visual Studio or Build Tools with Desktop development with C++ and the MSVC v143 x64/x86 build tools." />
 
     <Exec Condition="'$(FastGltfBridgeMsBuildPath)' != ''" Command="&quot;$(FastGltfBridgeMsBuildPath)&quot; &quot;$(FastGltfBridgeProject)&quot; /m /nologo /p:Configuration=$(Configuration);Platform=x64" />
     <WriteLinesToFile File="$(FastGltfBridgeBuildStampFile)" Lines="$(FastGltfBridgeCurrentBuildState)" Overwrite="true" />

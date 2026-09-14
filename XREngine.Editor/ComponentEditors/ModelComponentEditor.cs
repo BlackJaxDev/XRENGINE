@@ -1286,21 +1286,29 @@ public sealed class ModelComponentEditor : IXRComponentEditor
             return;
         }
 
-        bool hasPreview = TryGetTexturePreviewData(texture, out nint handle, out Vector2 displaySize, out Vector2 pixelSize, out string? failureReason);
-        
-        // Apply max size constraint if specified
-        if (maxSize.HasValue && hasPreview)
+        Vector2 pixelSize = GetTexturePixelSize(texture);
+        Vector2 displaySize = GetPreviewSize(pixelSize);
+        if (maxSize.HasValue)
         {
             float scale = Math.Min(maxSize.Value / displaySize.X, maxSize.Value / displaySize.Y);
             if (scale < 1f)
                 displaySize *= scale;
         }
-        
+
+        Vector2 reservedSize = new(displaySize.X, displaySize.Y + ImGui.GetFrameHeightWithSpacing() + ImGui.GetTextLineHeightWithSpacing());
+        if (!ImGui.IsRectVisible(reservedSize))
+        {
+            // Keep the cell's image, action, and size-label space while avoiding GPU handle resolution when clipped.
+            ImGui.Dummy(reservedSize);
+            return;
+        }
+
+        bool hasPreview = TryGetTexturePreviewData(texture, out nint handle, out _, out pixelSize, out string? failureReason);
         string previewLabel = FormatAssetLabel(texture.Name, texture);
 
+        bool openDialog = false;
         if (hasPreview)
         {
-            bool openDialog = false;
             ImGui.Image(handle, displaySize);
             if (ImGui.IsItemHovered())
             {
@@ -1312,20 +1320,33 @@ public sealed class ModelComponentEditor : IXRComponentEditor
                 if (ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left))
                     openDialog = true;
             }
-
-            if (ImGui.SmallButton("View Larger"))
-                openDialog = true;
-
-            if (openDialog)
-                ComponentEditorLayout.RequestPreviewDialog($"{previewLabel} Texture", handle, pixelSize, flipVertically: false);
         }
         else
         {
-            ImGui.TextDisabled(failureReason ?? "Preview unavailable");
+            DrawTexturePreviewFailurePlaceholder(
+                $"TexturePreviewFailure{texture.GetHashCode()}",
+                displaySize,
+                failureReason ?? "Preview unavailable");
         }
+
+        using (new ImGuiDisabledScope(!hasPreview))
+        {
+            if (ImGui.SmallButton("View Larger"))
+                openDialog = true;
+        }
+
+        if (openDialog)
+            ComponentEditorLayout.RequestPreviewDialog($"{previewLabel} Texture", handle, pixelSize, flipVertically: false);
 
         if (pixelSize.X > 0f && pixelSize.Y > 0f)
             ImGui.TextDisabled($"{(int)pixelSize.X} x {(int)pixelSize.Y}");
+    }
+
+    private static void DrawTexturePreviewFailurePlaceholder(string id, Vector2 size, string failure)
+    {
+        if (ImGui.BeginChild(id, size, ImGuiChildFlags.Borders, ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse))
+            ImGui.TextWrapped(failure);
+        ImGui.EndChild();
     }
 
     private static bool TryGetTexturePreviewData(

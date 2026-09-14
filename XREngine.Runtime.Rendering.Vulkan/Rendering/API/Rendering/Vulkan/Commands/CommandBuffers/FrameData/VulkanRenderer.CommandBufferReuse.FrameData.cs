@@ -83,6 +83,13 @@ namespace XREngine.Rendering.Vulkan
             }
 
             PrimaryCommandArtifactOwner variant = _primaryCommandArtifactOwners[imageIndex];
+            // Swapchain acquisition can revisit an image with a different in-flight
+            // slot. Refreshing that slot cannot rewrite bindings baked into a primary.
+            if (variant.RecordedFrameDataSlotIndex != frameDataImageIndex)
+            {
+                TraceCommandChainPrimaryReuseRejection(imageIndex, "FrameDataSlotChanged");
+                return false;
+            }
             if (variant.Dirty)
             {
                 TraceCommandChainPrimaryReuseRejection(
@@ -336,6 +343,7 @@ namespace XREngine.Rendering.Vulkan
                     using (VulkanCpuStageScope cpuStage = new(_frameTelemetry, EVulkanCpuStage.SecondaryRecording))
                         dynamicUiSecondaryReady = RecordDynamicUiBatchTextSecondaryCommandBuffer(
                             imageIndex,
+                            frameDataImageIndex,
                             variant,
                             sealedDynamicUiBatchTextOps,
                             dynamicUiBatchTextSignature,
@@ -353,6 +361,7 @@ namespace XREngine.Rendering.Vulkan
                     {
                         dynamicUiSecondaryReady = RecordDynamicUiBatchTextSecondaryCommandBuffer(
                             imageIndex,
+                            frameDataImageIndex,
                             variant,
                             sealedDynamicUiBatchTextOps,
                             dynamicUiBatchTextSignature,

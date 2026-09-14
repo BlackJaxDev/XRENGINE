@@ -45,7 +45,7 @@ internal sealed partial class VulkanCommandRuntime
         if (ambient < 0 || classification <= ambient || opaque <= classification)
             throw new NotSupportedException("GraphicsCompute requires the Advanced GTAO, work-classification, and native-opaque stages in one exact frame.");
 
-        VulkanAdvancedQueueOverlapSlot slot = PrepareAdvancedQueueOverlapSlot(state.FrameDataImageIndex, state.CommandBuffer);
+        VulkanAdvancedQueueOverlapSlot slot = PrepareAdvancedQueueOverlapSlot(state.FrameDataSlotIndex, state.CommandBuffer);
         slot.AmbientOcclusionOperation = ambient;
         slot.ClassificationOperation = classification;
         slot.NativeOpaqueOperation = opaque;
@@ -124,7 +124,7 @@ internal sealed partial class VulkanCommandRuntime
         ResetSubmissionMarkersForCommandBuffer(commandBuffer);
         BeginRecording(VulkanApi, DeviceContext.StateMachine, commandBuffer, "vkBeginCommandBuffer.AdvancedQueueOverlap");
         state.LaneContext = LaneRecordingContexts.BeginContext(EVulkanAcceptedFrameLane.MainScene,
-            (int)state.FrameDataImageIndex, commandBuffer, CommandBuffers.ResolveRecordingGeneration(commandBuffer));
+            (int)state.FrameDataSlotIndex, commandBuffer, CommandBuffers.ResolveRecordingGeneration(commandBuffer));
         SeedFreshExecutionImageLayoutState(commandBuffer, predecessor);
         CmdBeginLabel(commandBuffer, label);
     }

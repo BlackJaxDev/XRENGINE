@@ -61,6 +61,7 @@ public partial class AdvancedRenderPipeline
                 RequirePostProcessTexture(DepthViewTextureName),      // binding 2: sampler2DArray DepthView
                 RequirePostProcessTexture(StencilViewTextureName),    // binding 3: usampler2DArray StencilView
                 RequirePostProcessTexture(AutoExposureTextureName),   // binding 4: sampler2D AutoExposureTex
+                RequirePostProcessTexture(AdvancedVisibilityResourceNames.Metadata), // binding 5: usampler2DArray AdvancedVisibilityMetadata
             ]
             :
             [
@@ -71,8 +72,9 @@ public partial class AdvancedRenderPipeline
                 RequirePostProcessTexture(AutoExposureTextureName),   // binding 4: sampler2D AutoExposureTex
                 RequirePostProcessTexture(AtmosphereColorTextureName), // binding 5: sampler2D AtmosphereColor
                 RequirePostProcessTexture(VolumetricFogColorTextureName), // binding 6: sampler2D VolumetricFogColor
+                RequirePostProcessTexture(AdvancedVisibilityResourceNames.Metadata), // binding 7: usampler2D AdvancedVisibilityMetadata
             ];
-        XRShader postProcessShader = XRShader.EngineShader(Path.Combine(SceneShaderPath, PostProcessShaderName()), EShaderType.Fragment);
+        XRShader postProcessShader = CreateAdvancedPostProcessShader(PostProcessShaderName());
         XRMaterial postProcessMat = new(postProcessRefs, postProcessShader)
         {
             RenderOptions = new RenderingParameters()
@@ -91,6 +93,12 @@ public partial class AdvancedRenderPipeline
         PostProcessFBO.SettingUniforms += program => ApplyPostProcessProgramBindings(postProcessMat, program);
         return PostProcessFBO;
     }
+
+    private static XRShader CreateAdvancedPostProcessShader(string fileName)
+        => ShaderHelper.CreateDefinedShaderVariant(
+            XRShader.EngineShader(Path.Combine(SceneShaderPath, fileName), EShaderType.Fragment),
+            "XR_ADVANCED_EDITOR_HIGHLIGHT_METADATA")
+        ?? throw new InvalidOperationException($"Advanced post-process shader '{fileName}' is unavailable.");
 
     private XRTexture RequirePostProcessTexture(string resourceName)
         => GetTexture<XRTexture>(resourceName)

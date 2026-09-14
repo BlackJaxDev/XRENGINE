@@ -33,6 +33,7 @@ layout(location = 6) out vec2 VisibilityCoverageUv[];
 layout(location = 7) flat out uint VisibilityPrimitiveBase[];
 layout(location = 8) flat out uint VisibilityMeshletIndex[];
 layout(location = 9) flat out uint VisibilityMaterialDenseIndex[];
+layout(location = 10) flat out uint VisibilityEditorFlags[];
 
 const uint XR_ADV_MESH_GROUP_SIZE = 32u;
 const uint XR_ADV_MESH_MAX_VERTICES = 64u;
@@ -186,6 +187,14 @@ XRAdvancedDrawRecord draw = XR_ADV_LoadDraw(drawDense);
     XRAdvancedTransformRecord currentTransform = XR_ADV_LoadTransform(transformDense);
     XRAdvancedTransformRecord previousTransform = XR_ADV_LoadTransform(previousTransformDense);
     XRAdvancedViewRecord view = XR_ADV_LoadView(XR_ADV_VisibilityRasterPush.viewIndex);
+    uint editorSelectionId = XR_ADV_VIS_INVALID;
+    uint editorFlags = 0u;
+    if (editorDense != XR_ADV_INVALID_DENSE_INDEX)
+    {
+        XRAdvancedEditorIdentityRecord editorIdentity = XR_ADV_LoadEditorIdentity(editorDense);
+        editorSelectionId = editorIdentity.selectionId;
+        editorFlags = editorIdentity.flags & 3u;
+    }
     SetMeshOutputsEXT(meshlet.vertexCount, meshlet.triangleCount);
 
     uint localInvocation = gl_LocalInvocationID.x;
@@ -234,8 +243,8 @@ XRAdvancedDrawRecord draw = XR_ADV_LoadDraw(drawDense);
 
         gl_MeshVerticesEXT[vertex].gl_Position = worldPosition * view.viewProjectionJittered;
         VisibilityDrawIndex[vertex] = payload.draw.index;
-        VisibilitySelectionId[vertex] = editorDense != XR_ADV_INVALID_DENSE_INDEX
-            ? XR_ADV_LoadEditorIdentity(editorDense).selectionId : XR_ADV_VIS_INVALID;
+        VisibilitySelectionId[vertex] = editorSelectionId;
+        VisibilityEditorFlags[vertex] = editorFlags;
         VisibilityProducer[vertex] = XR_ADV_VisibilityRasterPush.producerAndOrigin & XR_ADV_VIS_PRODUCER_MASK;
         VisibilityViewIndex[vertex] = XR_ADV_VisibilityRasterPush.viewIndex;
         VisibilityOrigin[vertex] = (XR_ADV_VisibilityRasterPush.producerAndOrigin >> XR_ADV_VIS_ORIGIN_SHIFT) & 1u;

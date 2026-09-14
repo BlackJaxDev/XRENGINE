@@ -3,9 +3,10 @@ using Silk.NET.Vulkan;
 namespace XREngine.Rendering.Vulkan;
 
 /// <summary>
-/// Frozen command-side input for one desktop primary attempt. The frame loop
+/// Frozen command-side input for one primary attempt. The frame loop
 /// resolves the output target, image layout, presentation source, and planner
-/// stamp before constructing this value.
+/// stamp before constructing this value. Frame-data ownership is independent of
+/// the acquired image; timing ownership is frozen separately for desktop and XR.
 /// </summary>
 internal readonly record struct VulkanPreparedPrimaryCommandInput(
     uint ImageIndex,
@@ -19,7 +20,8 @@ internal readonly record struct VulkanPreparedPrimaryCommandInput(
     VulkanCommandClearStateSnapshot ClearState,
     VulkanCommandRecordingPolicySnapshot Policy,
     ImageLayout TrackedTargetLayout,
-    uint? FrameDataImageIndexOverride = null,
+    uint FrameDataSlotIndex,
+    uint TimingQuerySlotIndex,
     VulkanReadOnlyStoragePreparedAuthority? ReadOnlyStorageAuthority = null,
     OpenXrEyeRenderTargetContext? OpenXrTargetContext = null,
     CommandChainSchedule? CommandChainSchedule = null,

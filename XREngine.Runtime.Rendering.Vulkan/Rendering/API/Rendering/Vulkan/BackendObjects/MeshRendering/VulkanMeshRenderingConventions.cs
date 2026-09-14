@@ -49,7 +49,9 @@ internal static class VulkanMeshRenderingConventions
         => string.Equals(name, "SourceTexture", StringComparison.Ordinal) ||
            string.Equals(name, "SourceTex", StringComparison.Ordinal) ||
            string.Equals(name, "SourceTexture0", StringComparison.Ordinal) ||
-           string.Equals(name, "SourceTexture1", StringComparison.Ordinal);
+           string.Equals(name, "SourceTexture1", StringComparison.Ordinal) ||
+           // The GLSL alias resolves through its captured logical texture name.
+           string.Equals(name, "AdvancedVisibilityMetadata", StringComparison.Ordinal);
 
     internal static bool IsMutableFrameSourceSamplerName(string? name, XRRenderPipelineInstance? pipeline)
         => IsFrameSourceSamplerName(name) ||

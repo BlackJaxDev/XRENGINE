@@ -10,6 +10,7 @@ layout(location = 6) in vec2 VisibilityCoverageUv;
 layout(location = 7) flat in uint VisibilityPrimitiveBase;
 layout(location = 8) flat in uint VisibilityMeshletIndex;
 layout(location = 9) flat in uint VisibilityMaterialDenseIndex;
+layout(location = 10) flat in uint VisibilityEditorFlags;
 
 #define XR_ADV_VISIBILITY_COUNTER_INDEX VisibilityViewIndex
 #include "Advanced/Shading/StandardMaterial.glslinc"
@@ -70,7 +71,8 @@ void main()
         gl_FrontFacing,
         VisibilityVelocityValid != 0u,
         VisibilityViewIndex,
-        selectionValid);
+        selectionValid,
+        VisibilityEditorFlags);
     OutVisibilitySelection = selectionValid
         ? VisibilitySelectionId
         : XR_ADV_VIS_INVALID;

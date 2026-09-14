@@ -1070,7 +1070,7 @@ internal sealed partial class VulkanCommandRuntime
             info.PassIndex == VulkanBarrierPlanner.SwapchainPassIndex;
         if (!TryRecordSecondaryBucket(
                 primaryCommandBuffer: state.CommandBuffer,
-                state.FrameDataImageIndex,
+                state.FrameDataSlotIndex,
                 state.ExecutedCommandChainSecondaryHandles,
                 state.Ops,
                 state.ScheduledCommandChainKeysByOpIndex,
@@ -1176,7 +1176,7 @@ internal sealed partial class VulkanCommandRuntime
             ResolveComputeDispatchOccurrenceOrdinal(state.Ops.Stream, info.OperationIndex));
         RecordComputeDispatchPayload(
             state.CommandBuffer,
-            state.FrameDataImageIndex,
+            state.FrameDataSlotIndex,
             in payload,
             descriptorKey,
             state.Policy.AllowSynchronousResourceUploads);
@@ -1193,7 +1193,7 @@ internal sealed partial class VulkanCommandRuntime
             state.Policy.AllowSynchronousResourceUploads);
         RecordComputeDispatchIndirectPayload(
             state.CommandBuffer,
-            state.FrameDataImageIndex,
+            state.FrameDataSlotIndex,
             in payload,
             state.Policy.AllowSynchronousResourceUploads);
         CmdEndLabel(state.CommandBuffer);
@@ -1275,7 +1275,7 @@ internal sealed partial class VulkanCommandRuntime
         if (info.BeginsRendering)
             BeginRenderPassForTarget(ref state, target, info.PassIndex, state.ActiveContext);
         CmdBeginLabel(state.CommandBuffer, "MeshTaskDispatchIndirectCount");
-        RecordMeshTaskDispatchIndirectCountPayload(state.CommandBuffer, state.FrameDataImageIndex, in payload);
+        RecordMeshTaskDispatchIndirectCountPayload(state.CommandBuffer, state.FrameDataSlotIndex, in payload);
         CmdEndLabel(state.CommandBuffer);
         if (target is null)
             state.ActualSwapchainWriteCount++;
@@ -1380,7 +1380,7 @@ internal sealed partial class VulkanCommandRuntime
         {
             EndActiveRenderPass(ref state);
             int slot = GetMeshDrawUniformSlot(ref state, info.OperationIndex, payload.Draw.Renderer, state.ActiveContext, payload.Draw);
-            payload.Draw.Renderer.TryTransitionPreparedDescriptorImagesForSampling(state.CommandBuffer, payload.Draw, slot, state.CommandBufferImageSlot, target, info.PassIndex, state.ActiveContext.PassMetadata);
+            payload.Draw.Renderer.TryTransitionPreparedDescriptorImagesForSampling(state.CommandBuffer, payload.Draw, slot, state.FrameDataSlot, target, info.PassIndex, state.ActiveContext.PassMetadata);
             BeginRenderPassForTarget(ref state, target, info.PassIndex, state.ActiveContext);
         }
         int uniformSlot = GetMeshDrawUniformSlot(ref state, info.OperationIndex, payload.Draw.Renderer, state.ActiveContext, payload.Draw);

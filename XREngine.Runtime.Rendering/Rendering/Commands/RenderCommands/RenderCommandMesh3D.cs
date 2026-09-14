@@ -28,6 +28,7 @@ namespace XREngine.Rendering.Commands
         private uint _instances = 1;
         private bool _worldMatrixIsModelMatrix = true;
         private bool _forceCpuRendering;
+        private uint _editorHighlightBits;
         private AABB? _worldCullingVolumeOverride;
         private string? _gpuProfilingLabel;
 
@@ -120,6 +121,16 @@ namespace XREngine.Rendering.Commands
             get => _forceCpuRendering;
             set => SetField(ref _forceCpuRendering, value);
         }
+        /// <summary>
+        /// Editor hover (bit 0) and selection (bit 1). Native visibility carries
+        /// these as metadata; traditional draws retain the stencil override.
+        /// </summary>
+        public uint EditorHighlightBits
+        {
+            get => _editorHighlightBits;
+            set => SetField(ref _editorHighlightBits, value & 3u);
+        }
+
         /// <summary>
         /// Optional world-space bounds supplied by the owning render info. Skinned meshes use this
         /// because their draw matrix is identity while culling is rooted at the skeleton/bounds basis.

@@ -321,7 +321,7 @@ namespace XREngine.Rendering.Vulkan
                         expectedPresentTransitions);
                 }
 
-                EndFrameTimingQueries(recordingState.CommandBuffer, recordingState.CommandBufferImageSlot);
+                EndFrameTimingQueries(recordingState.CommandBuffer, recordingState.TimingQuerySlot);
 
                 _deviceContext.CmdEndLabel(recordingState.CommandBuffer);
 

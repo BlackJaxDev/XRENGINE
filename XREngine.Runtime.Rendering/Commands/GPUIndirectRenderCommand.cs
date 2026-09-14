@@ -99,7 +99,12 @@ namespace XREngine.Rendering.Commands
         /// The draw requires raster state that is not represented by the current
         /// canonical opaque-deferred meshlet pipeline (for example front-face culling).
         /// </summary>
-        NonCanonicalRasterState = 1 << 21
+        NonCanonicalRasterState = 1 << 21,
+        /// <summary>Editor hover metadata; traditional GPU dispatch retains the stencil draw.</summary>
+        EditorHovered = 1 << 22,
+        /// <summary>Editor selection metadata; native visibility keeps the mesh GPU-resident.</summary>
+        EditorSelected = 1 << 23,
+        EditorHighlightMask = EditorHovered | EditorSelected
     }
 
     public enum GPUSortAlgorithm

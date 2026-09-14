@@ -29,7 +29,8 @@ namespace XREngine.Rendering.Commands
         private uint ResolveDisabledFlagsMask()
             => MeshSubmissionStrategy.IsGpuZeroReadbackStrategy()
                 ? 0u
-                : (uint)GPUIndirectRenderFlags.CpuFallbackOnly;
+                : (uint)(GPUIndirectRenderFlags.CpuFallbackOnly |
+                         GPUIndirectRenderFlags.EditorHighlightMask);
 
         /// <summary>
         /// Measured backend/view/visibility crossover table used by GPU BVH
@@ -45,7 +46,7 @@ namespace XREngine.Rendering.Commands
         public uint LastGpuBvhCommandThreshold { get; private set; } =
             GpuBvhSelectorCalibration.UncalibratedCommandThreshold;
 
-        // Set true to bypass GPU frustum/flag culling and treat all commands as visible (debug only).
+        // Bypass GPU visibility culling while preserving CPU/GPU ownership filters (debug only).
         // Default is OFF; passthrough must be explicitly enabled in debug preferences.
         public bool ForcePassthroughCulling => RuntimeEngine.EditorPreferences?.Debug?.ForceGpuPassthroughCulling ?? false;
 
@@ -1146,7 +1147,7 @@ namespace XREngine.Rendering.Commands
         }
 
         /// <summary>
-        /// Culling passthrough mode – copy all input commands to culled buffer and mark all visible.
+        /// Copies pass-matching GPU-owned commands without applying visibility culling.
         /// </summary>
         /// <param name="scene"></param>
         /// <param name="numCommands"></param>
@@ -1207,6 +1208,7 @@ namespace XREngine.Rendering.Commands
 
             _copyCommandsProgram.Uniform("CopyCount", copyCount);
             _copyCommandsProgram.Uniform("TargetPass", RenderPass);
+            _copyCommandsProgram.Uniform("DisabledFlagsMask", ResolveDisabledFlagsMask());
             _copyCommandsProgram.Uniform("OutputCapacity", capacity);
             _copyCommandsProgram.Uniform("ActiveViewCount", (int)activeViewCount);
             int boundsCheckEnabled = (IsCopyBoundsValidationEnabledForPass() && _cullingOverflowFlagBuffer is not null) ? 1 : 0;
@@ -1371,6 +1373,8 @@ namespace XREngine.Rendering.Commands
 
             if (reason.StartsWith("render-pass-mismatch", StringComparison.OrdinalIgnoreCase))
                 return false;
+            if (reason.StartsWith("disabled-flags", StringComparison.OrdinalIgnoreCase))
+                return false;
 
             return true;
         }
@@ -1382,6 +1386,13 @@ namespace XREngine.Rendering.Commands
             if (!matchAll && cmd.RenderPass != targetPass && cmd.RenderPass != uint.MaxValue)
             {
                 reason = $"render-pass-mismatch (cmd={cmd.RenderPass} expected={targetPass})";
+                return false;
+            }
+
+            uint disabledFlagsMask = ResolveDisabledFlagsMask();
+            if (disabledFlagsMask != 0u && (cmd.Flags & disabledFlagsMask) != 0u)
+            {
+                reason = "disabled-flags";
                 return false;
             }
 

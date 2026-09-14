@@ -24,12 +24,12 @@ namespace XREngine.Rendering.Vulkan
 
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope("Vulkan.RecordPrimary.ResetAndBegin"))
             {
-                ReleaseDeferredSecondaryCommandBuffers(recordingState.FrameDataImageIndex);
+                ReleaseDeferredSecondaryCommandBuffers(recordingState.ImageIndex);
                 Result resetResult = ResetVulkanCommandBufferTracked(recordingState.CommandBuffer);
                 if (resetResult != Result.Success)
                     throw new VulkanPlanPreconditionException($"The primary command buffer could not be reset ({resetResult}).");
                 ResetSubmissionMarkersForCommandBuffer(recordingState.CommandBuffer);
-                CleanupComputeTransientResources(recordingState.FrameDataImageIndex);
+                CleanupComputeTransientResources(recordingState.FrameDataSlotIndex);
 
                 _commandRuntime.BeginRecording(
                     VulkanApi,
@@ -40,21 +40,21 @@ namespace XREngine.Rendering.Vulkan
                 ulong recGen = _commandRuntime.CommandBuffers.ResolveRecordingGeneration(recordingState.CommandBuffer);
                 recordingState.LaneContext = _commandRuntime.LaneRecordingContexts.BeginContext(
                     EVulkanAcceptedFrameLane.MainScene,
-                    (int)recordingState.FrameDataImageIndex,
+                    (int)recordingState.FrameDataSlotIndex,
                     recordingState.CommandBuffer,
                     recGen);
 
-                BeginFrameTimingQueries(recordingState.CommandBuffer, recordingState.CommandBufferImageSlot);
-                BeginVulkanGpuProfilerQueries(recordingState.CommandBuffer, recordingState.CommandBufferImageSlot);
+                BeginFrameTimingQueries(recordingState.CommandBuffer, recordingState.TimingQuerySlot);
+                BeginVulkanGpuProfilerQueries(recordingState.CommandBuffer, recordingState.TimingQuerySlot);
 
                 recordingState.RecordingScratch.PreparedInlineQueries.Clear();
                 recordingState.RecordingScratch.BegunInlineQueries.Clear();
 
                 if (_deviceContext.CanRecordCommandBufferDebugLabels)
                 {
-                    _deviceContext.CmdBeginLabel(recordingState.CommandBuffer, recordingState.FrameDataImageIndex == recordingState.ImageIndex
+                    _deviceContext.CmdBeginLabel(recordingState.CommandBuffer, recordingState.FrameDataSlotIndex == recordingState.ImageIndex
                         ? $"FrameCmd[{recordingState.ImageIndex}]"
-                        : $"FrameCmd[target={recordingState.ImageIndex} frame={recordingState.FrameDataImageIndex}]");
+                        : $"FrameCmd[target={recordingState.ImageIndex} frame={recordingState.FrameDataSlotIndex}]");
                 }
             }
         }

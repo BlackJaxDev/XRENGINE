@@ -34,6 +34,7 @@ internal sealed class PrimaryCommandArtifactOwner(
             public bool Dirty { get; set; } = true;
             public string? DirtyReason { get; set; } = "new variant";
             public ulong FrameOpsSignature { get; set; } = ulong.MaxValue;
+            public uint DynamicUiRecordedFrameDataSlotIndex { get; set; } = uint.MaxValue;
             public ulong DynamicUiSignature { get; set; } = ulong.MaxValue;
             public int DynamicUiOpCount { get; set; } = -1;
             public bool DynamicUiSecondaryRecorded { get; set; }
@@ -164,6 +165,8 @@ internal sealed class PrimaryCommandArtifactOwner(
             public bool AllPreparedDrawBindingsUseSecondaryBuffers { get; set; }
             public ulong CommandChainPrimarySkeletonSignature { get; set; } = ulong.MaxValue;
             public int CommandChainPrimaryGroupCount { get; set; } = -1;
+            /// <summary>Slot whose descriptors and secondaries are baked into this primary.</summary>
+            public uint RecordedFrameDataSlotIndex { get; set; } = uint.MaxValue;
             public ulong PlannerRevision { get; set; } = ulong.MaxValue;
             public bool GpuProfilerActive { get; set; }
             public int GpuProfilerFrameSlot { get; set; } = -1;

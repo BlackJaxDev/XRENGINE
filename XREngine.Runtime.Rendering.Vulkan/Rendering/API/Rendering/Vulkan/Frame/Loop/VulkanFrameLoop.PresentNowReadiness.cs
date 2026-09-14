@@ -604,44 +604,32 @@ internal sealed partial class VulkanFrameLoop
                 disposition: EVulkanPresentNowFailureDisposition.RecoverAfterStateChange);
         }
 
-        Image[]? desktopImages = OutputRuntime.Desktop.Images;
-        if (desktopImages is null || desktopImages.Length == 0)
+        // Readiness prepares the same sealed slot that completion maintenance
+        // reopened. An acquired swapchain image never owns frame-data storage.
+        uint frameDataSlotIndex = checked((uint)logicalPlan.FrameSlot);
+        computePreparation =
+            _commandRuntime.PrepareComputeFramePlanForRecording(
+                frameDataSlotIndex,
+                logicalPlan,
+                in plannerState);
+        if (!computePreparation.Succeeded)
         {
+            if (computePreparation.Pending)
+            {
+                retry = watchdog.CreateRetry(
+                    EVulkanPresentNowReadinessStage.PipelineCompilation,
+                    $"compute-frame-data:{frameDataSlotIndex}",
+                    "DesktopScene -> compute descriptors/uniforms",
+                    computePreparation.FormatFailure());
+                return false;
+            }
+
             throw watchdog.CreateFailure(
                 EVulkanPresentNowReadinessStage.PipelineCompilation,
-                "desktop-frame-data-slots",
+                $"compute-frame-data:{frameDataSlotIndex}",
                 "DesktopScene -> compute descriptors/uniforms",
-                "The desktop swapchain has no frame-data slots to prepare before acquire.",
+                computePreparation.FormatFailure(),
                 disposition: EVulkanPresentNowFailureDisposition.RecoverAfterStateChange);
-        }
-        for (uint frameDataImageIndex = 0;
-             frameDataImageIndex < (uint)desktopImages.Length;
-             frameDataImageIndex++)
-        {
-            computePreparation =
-                _commandRuntime.PrepareComputeFramePlanForRecording(
-                    frameDataImageIndex,
-                    logicalPlan,
-                    in plannerState);
-            if (!computePreparation.Succeeded)
-            {
-                if (computePreparation.Pending)
-                {
-                    retry = watchdog.CreateRetry(
-                        EVulkanPresentNowReadinessStage.PipelineCompilation,
-                        $"compute-frame-data:{frameDataImageIndex}",
-                        "DesktopScene -> compute descriptors/uniforms",
-                        computePreparation.FormatFailure());
-                    return false;
-                }
-
-                throw watchdog.CreateFailure(
-                    EVulkanPresentNowReadinessStage.PipelineCompilation,
-                    $"compute-frame-data:{frameDataImageIndex}",
-                    "DesktopScene -> compute descriptors/uniforms",
-                    computePreparation.FormatFailure(),
-                    disposition: EVulkanPresentNowFailureDisposition.RecoverAfterStateChange);
-            }
         }
 
         acceptedPlan.DeclareDependencies(logicalPlan);

@@ -482,7 +482,7 @@ internal sealed partial class VulkanFrameLoop
                         ResourceRuntime.EnterReadOnlyStorageRecordingScope(
                             readOnlyStorageAuthority);
                     computePreparation = _commandRuntime.PrepareComputeFramePlanForRecording(
-                        imageIndex,
+                        checked((uint)attempt.FrameSlot),
                         framePlan,
                         in plannerState,
                         allowSynchronousResourceUploads);
@@ -509,6 +509,7 @@ internal sealed partial class VulkanFrameLoop
                 VulkanPreparedPrimaryCommandInput input =
                     PreparePrimaryCommandInput(
                         imageIndex,
+                        checked((uint)attempt.FrameSlot),
                         primaryBuffers[imageIndex],
                         dynamicUiBuffers[imageIndex],
                         framePlan,
@@ -2063,6 +2064,7 @@ internal sealed partial class VulkanFrameLoop
     /// </summary>
     private VulkanPreparedPrimaryCommandInput PreparePrimaryCommandInput(
         uint imageIndex,
+        uint frameDataSlotIndex,
         CommandBuffer primaryCommandBuffer,
         CommandBuffer dynamicUiSecondaryCommandBuffer,
         FramePlan framePlan,
@@ -2078,6 +2080,7 @@ internal sealed partial class VulkanFrameLoop
         CommandChainSchedule? commandChainSchedule =
             _commandRuntime.TryBuildCommandChainSchedule(
                 imageIndex,
+                frameDataSlotIndex,
                 framePlan.StaticOperations,
                 authority.Policy.PreserveSwapchainForOverlay
                     ? FrameOperationStream.Empty
@@ -2110,10 +2113,12 @@ internal sealed partial class VulkanFrameLoop
             authority.ClearState,
             authority.Policy,
             authority.TrackedTargetLayout,
+            FrameDataSlotIndex: frameDataSlotIndex,
+            TimingQuerySlotIndex: imageIndex,
             ReadOnlyStorageAuthority: FrameDataArena is { } arena
                 ? ResourceRuntime.ReadOnlyStoragePreparedMap.CreateAuthority(
                     arena,
-                    CurrentFrameSlot)
+                    checked((int)frameDataSlotIndex))
                 : null,
             CommandChainSchedule: commandChainSchedule,
             CallerOwnsSubmissionMarkersUntilRecordingSucceeds:

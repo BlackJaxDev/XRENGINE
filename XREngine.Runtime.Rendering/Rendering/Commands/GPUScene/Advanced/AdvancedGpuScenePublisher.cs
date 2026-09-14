@@ -588,7 +588,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             CurrentTransform = currentTransform,
             PreviousTransform = previousTransform,
             PrimitiveSection = checked((uint)Math.Max(0, primitiveIndex)),
-            Flags = command.Flags,
+            Flags = command.Flags & ~(uint)GPUIndirectRenderFlags.EditorHighlightMask,
         };
         if (!tables.Draws.TryAdd(drawRecord, out AdvancedGpuHandle draw))
         {
@@ -702,7 +702,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
 
             draw.Geometry = replacementGeometry;
             draw.PrimitiveSection = checked((uint)Math.Max(0, primitiveIndex));
-            draw.Flags = command.Flags;
+            draw.Flags = command.Flags & ~(uint)GPUIndirectRenderFlags.EditorHighlightMask;
             draw.Material = material;
             if (!Database.Scene.Draws.TryReplace(
                     registration.Draw,
@@ -1112,7 +1112,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             Residency = EAdvancedGeometryResidency.Pending,
             MissingBehavior = EAdvancedMissingGeometryBehavior.SkipDraw,
             CookedLayoutVersion = AdvancedGeometryCookedLayout.CurrentVersion,
-            Flags = command.Flags,
+            Flags = command.Flags & ~(uint)GPUIndirectRenderFlags.EditorHighlightMask,
         };
     }
 
@@ -1125,7 +1125,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             PrimitiveTopology = checked((uint)(mesh?.Type ?? EPrimitiveType.Triangles)),
             CoverageMode = (command.Flags & (uint)GPUIndirectRenderFlags.Transparent) != 0u ? 1u : 0u,
             CullMode = (command.Flags & (uint)GPUIndirectRenderFlags.DoubleSided) != 0u ? 0u : 1u,
-            Flags = command.Flags,
+            Flags = command.Flags & ~(uint)GPUIndirectRenderFlags.EditorHighlightMask,
         };
 
     private static AdvancedEditorIdentityRecord CreateEditorIdentity(
@@ -1142,6 +1142,9 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             IdentityLow = stableComponentIdentity,
             IdentityHigh = command.LogicalMeshID,
             SelectionId = command.RenderIdentityID,
+            Flags =
+                ((command.Flags & (uint)GPUIndirectRenderFlags.EditorHovered) != 0u ? 1u : 0u) |
+                ((command.Flags & (uint)GPUIndirectRenderFlags.EditorSelected) != 0u ? 2u : 0u),
         };
     }
 
@@ -1158,7 +1161,9 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         hash = Mix(hash, command.RenderPass);
         hash = Mix(hash, command.RenderPassMask);
         hash = Mix(hash, command.StateClassID);
-        hash = Mix(hash, command.Flags);
+        // Hover/selection updates the editor identity in place; it must not
+        // retire geometry or change native draw handles on a pointer move.
+        hash = Mix(hash, command.Flags & ~(uint)GPUIndirectRenderFlags.EditorHighlightMask);
         hash = Mix(hash, checked((uint)Math.Max(0, primitiveIndex)));
         hash = Mix(hash, checked((uint)Math.Max(0, mesh?.VertexCount ?? 0)));
         hash = Mix(hash, checked((uint)Math.Max(0, mesh?.IndexCount ?? 0)));
@@ -1177,6 +1182,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         XRMaterial? material)
     {
         ulong hash = Mix(command.TransformID, command.InstanceCount);
+        hash = Mix(hash, command.Flags & (uint)GPUIndirectRenderFlags.EditorHighlightMask);
         hash = Mix(hash, command.LayerMask);
         hash = Mix(hash, bounds.BoundsVersion);
         hash = Mix(hash, material?.BindingValueVersion ?? 0u);

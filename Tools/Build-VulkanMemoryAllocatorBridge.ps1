@@ -13,25 +13,10 @@ function Find-MSBuild {
     if (-not [string]::IsNullOrWhiteSpace($programFilesX86)) {
         $vsWhere = Join-Path $programFilesX86 "Microsoft Visual Studio\Installer\vswhere.exe"
         if (Test-Path $vsWhere) {
-            $path = & $vsWhere -latest -requires Microsoft.Component.MSBuild -find "MSBuild\**\Bin\MSBuild.exe" | Select-Object -First 1
+            # MSBuild-only installations cannot build the native C++ bridge.
+            $path = & $vsWhere -latest -products * -requires Microsoft.Component.MSBuild Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -find "MSBuild\Current\Bin\MSBuild.exe" | Select-Object -First 1
             if (-not [string]::IsNullOrWhiteSpace($path) -and (Test-Path $path)) {
                 return $path
-            }
-        }
-
-        $fallbacks = @(
-            "Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe",
-            "Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe",
-            "Microsoft Visual Studio\2022\Professional\MSBuild\Current\Bin\MSBuild.exe",
-            "Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\MSBuild.exe",
-            "Microsoft Visual Studio\2019\BuildTools\MSBuild\Current\Bin\MSBuild.exe",
-            "Microsoft Visual Studio\2019\Community\MSBuild\Current\Bin\MSBuild.exe"
-        )
-
-        foreach ($relativePath in $fallbacks) {
-            $candidate = Join-Path $programFilesX86 $relativePath
-            if (Test-Path $candidate) {
-                return $candidate
             }
         }
     }
@@ -56,7 +41,7 @@ $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $projectPath = Join-Path $repoRoot "Build\Native\VulkanMemoryAllocatorBridge\VulkanMemoryAllocatorBridge.vcxproj"
 $headerPath = Join-Path $repoRoot "Build\Native\VulkanMemoryAllocatorBridge\vendor\VulkanMemoryAllocator\include\vk_mem_alloc.h"
 $dependencyScript = Join-Path $repoRoot "Tools\Dependencies\Get-VulkanMemoryAllocator.ps1"
-$nativeOutput = Join-Path $repoRoot "XREngine.Runtime.Rendering\runtimes\win-x64\native\VulkanMemoryAllocatorBridge.Native.dll"
+$nativeOutput = Join-Path $repoRoot "XREngine.Runtime.Rendering.Vulkan\runtimes\win-x64\native\VulkanMemoryAllocatorBridge.Native.dll"
 
 if (-not (Test-Path $projectPath)) {
     throw "Native VMA bridge project was not found: $projectPath"
@@ -87,7 +72,7 @@ if (-not (Test-Path $vulkanHeader) -or -not (Test-Path $vulkanLib)) {
 
 $msbuild = Find-MSBuild
 if ([string]::IsNullOrWhiteSpace($msbuild)) {
-    throw "Could not find Visual Studio MSBuild.exe. Install Visual Studio 2022 Build Tools with the 'Desktop development with C++' workload."
+    throw "Could not find Visual Studio MSBuild with C++ tools. Install Visual Studio or Build Tools with the 'Desktop development with C++' workload and the MSVC v143 x64/x86 build tools."
 }
 
 Invoke-Checked -Command $msbuild -Arguments @(

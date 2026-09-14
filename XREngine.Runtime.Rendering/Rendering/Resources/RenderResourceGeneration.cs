@@ -18,6 +18,7 @@ public sealed class RenderResourceGeneration(
     private readonly List<string> _diagnostics = [];
     private readonly Stopwatch _buildTimer = new();
     private XRGpuFence? _retirementFence;
+    private int _failedRetirementFenceRetryCount;
 
     /// <summary>
     /// The key identifying the resource generation.
@@ -169,11 +170,31 @@ public sealed class RenderResourceGeneration(
     {
         _retirementFence?.Dispose();
         _retirementFence = fence;
+        _failedRetirementFenceRetryCount = 0;
+    }
+
+    internal bool HasRetirementFence => _retirementFence is not null;
+
+    /// <summary>Arms a generation that was retired while no completion receipt could be submitted.</summary>
+    internal bool TryArmMissingRetirementFence(XRGpuFence? fence)
+    {
+        if (_retirementFence is not null || fence is null)
+            return false;
+
+        _retirementFence = fence;
+        return true;
+    }
+
+    /// <summary>Replaces a failed completion receipt without treating an unsubmitted fence as completion.</summary>
+    internal int ReplaceFailedRetirementFence(XRGpuFence fence)
+    {
+        _retirementFence?.Dispose();
+        _retirementFence = fence;
+        return ++_failedRetirementFenceRetryCount;
     }
 
     internal EGpuFenceStatus PollRetirementFence()
-        => _retirementFence?.Poll() ?? EGpuFenceStatus.Signaled;
-
+        => _retirementFence?.Poll() ?? EGpuFenceStatus.Pending;
     /// <summary>
     /// Disposes the resource generation, destroying all physical resources in the registry and transitioning its status to <see cref="RenderResourceGenerationStatus.Disposed"/>.
     /// </summary>

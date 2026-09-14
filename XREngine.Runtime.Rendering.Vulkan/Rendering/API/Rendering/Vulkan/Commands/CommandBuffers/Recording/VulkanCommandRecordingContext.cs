@@ -18,7 +18,8 @@ internal ref struct VulkanCommandRecordingContext(
     bool preserveSwapchainForOverlay,
     bool transitionSwapchainToPresent,
     VulkanPrimaryCommandPlan primaryCommandPlan,
-    uint? frameDataImageIndexOverride,
+    uint frameDataSlotIndex,
+    uint timingQuerySlotIndex,
     VulkanReadOnlyStoragePreparedAuthority? readOnlyStorageAuthority,
     OpenXrEyeRenderTargetContext? openXrTargetContext,
     bool excludeDesktopSwapchainBarriers,
@@ -42,7 +43,8 @@ internal ref struct VulkanCommandRecordingContext(
     public readonly bool PreserveSwapchainForOverlay = preserveSwapchainForOverlay;
     public readonly bool TransitionSwapchainToPresent = transitionSwapchainToPresent;
     public readonly VulkanPrimaryCommandPlan PrimaryCommandPlan = primaryCommandPlan;
-    public readonly uint? FrameDataImageIndexOverride = frameDataImageIndexOverride;
+    public readonly uint FrameDataSlotIndex = frameDataSlotIndex;
+    public readonly uint TimingQuerySlotIndex = timingQuerySlotIndex;
     public readonly VulkanReadOnlyStoragePreparedAuthority? ReadOnlyStorageAuthority = readOnlyStorageAuthority;
     public readonly OpenXrEyeRenderTargetContext? OpenXrTargetContext = openXrTargetContext;
     public readonly bool ExcludeDesktopSwapchainBarriers = excludeDesktopSwapchainBarriers;

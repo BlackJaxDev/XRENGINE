@@ -15,6 +15,7 @@ internal readonly record struct CommandChainScheduleCacheIdentity(
     ulong DescriptorVersionSignature,
     VulkanRecordedRenderTargetSnapshot RecordingTarget)
 {
+    internal uint FrameDataSlotIndex { get; init; }
     internal bool IsReusable =>
         ResourceVersionSignature != 0UL &&
         DescriptorVersionSignature != 0UL &&
@@ -41,6 +42,8 @@ internal readonly record struct CommandChainScheduleCacheIdentity(
             return $"ResourceVersionSignature 0x{ResourceVersionSignature:X}->0x{current.ResourceVersionSignature:X}";
         if (DescriptorVersionSignature != current.DescriptorVersionSignature)
             return $"DescriptorVersionSignature 0x{DescriptorVersionSignature:X}->0x{current.DescriptorVersionSignature:X}";
+        if (FrameDataSlotIndex != current.FrameDataSlotIndex)
+            return $"FrameDataSlotIndex {FrameDataSlotIndex}->{current.FrameDataSlotIndex}";
         if (RecordingTarget != current.RecordingTarget)
         {
             VulkanRecordedRenderTargetSnapshot currentTarget = current.RecordingTarget;

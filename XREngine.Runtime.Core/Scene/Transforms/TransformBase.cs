@@ -1774,15 +1774,28 @@ namespace XREngine.Scene.Transforms
         private async Task ChildrenRecalcAsync(bool setRenderMatrixNow)
         {
             var childrenCopy = RentChildrenCopy(out int count);
+            Task[]? tasks = null;
             try
             {
-                var tasks = new Task[count];
+                if (count == 0)
+                    return;
+                if (count == 1)
+                {
+                    await childrenCopy[0].RecalculateMatrixHierarchy(true, setRenderMatrixNow, ELoopType.Asynchronous);
+                    return;
+                }
+
+                tasks = ArrayPool<Task>.Shared.Rent(count);
                 for (int i = 0; i < count; i++)
                     tasks[i] = childrenCopy[i].RecalculateMatrixHierarchy(true, setRenderMatrixNow, ELoopType.Asynchronous);
-                await Task.WhenAll(tasks);
+                // A rented array can exceed the child count. Await only initialized
+                // entries, retaining the rental until every child has completed.
+                await Task.WhenAll(tasks.AsSpan(0, count));
             }
             finally
             {
+                if (tasks is not null)
+                    ArrayPool<Task>.Shared.Return(tasks, clearArray: true);
                 ReturnChildrenCopy(childrenCopy);
             }
         }
@@ -1855,22 +1868,34 @@ namespace XREngine.Scene.Transforms
         private async Task AsyncChildrenRenderMatrixRecalc()
         {
             var childrenCopy = RentChildrenCopy(out int count);
+            Task[]? tasks = null;
             // Snapshot render matrix once for all children
             Matrix4x4 parentRenderMatrix = RenderMatrix;
             AffineMatrix4x3 parentRenderAffine = default;
             bool canUseAffine = IsGuaranteedAffine && AffineMatrix4x3.TryFromMatrix4x4(parentRenderMatrix, out parentRenderAffine);
             try
             {
-                var tasks = new Task[count];
+                if (count == 0)
+                    return;
+                if (count == 1)
+                {
+                    TransformBase child = childrenCopy[0];
+                    await child.SetRenderMatrix(ComposeChildRenderMatrix(child, parentRenderMatrix, canUseAffine, parentRenderAffine), true);
+                    return;
+                }
+
+                tasks = ArrayPool<Task>.Shared.Rent(count);
                 for (int i = 0; i < count; i++)
                 {
                     TransformBase child = childrenCopy[i];
                     tasks[i] = child.SetRenderMatrix(ComposeChildRenderMatrix(child, parentRenderMatrix, canUseAffine, parentRenderAffine), true);
                 }
-                await Task.WhenAll(tasks);
+                await Task.WhenAll(tasks.AsSpan(0, count));
             }
             finally
             {
+                if (tasks is not null)
+                    ArrayPool<Task>.Shared.Return(tasks, clearArray: true);
                 ReturnChildrenCopy(childrenCopy);
             }
         }

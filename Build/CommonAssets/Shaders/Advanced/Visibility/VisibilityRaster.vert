@@ -46,6 +46,7 @@ layout(location = 6) out vec2 VisibilityCoverageUv;
 layout(location = 7) flat out uint VisibilityPrimitiveBase;
 layout(location = 8) flat out uint VisibilityMeshletIndex;
 layout(location = 9) flat out uint VisibilityMaterialDenseIndex;
+layout(location = 10) flat out uint VisibilityEditorFlags;
 
 uint XR_ADV_VisibilityPayloadIndex()
 {
@@ -65,6 +66,7 @@ void XR_ADV_RejectVisibilityVertex()
     VisibilityPrimitiveBase = 0u;
     VisibilityMeshletIndex = XR_ADV_VIS_INVALID;
     VisibilityMaterialDenseIndex = XR_ADV_INVALID_DENSE_INDEX;
+    VisibilityEditorFlags = 0u;
 }
 
 void main()
@@ -288,10 +290,18 @@ void main()
         draw.editorIdentity,
         VisibilityEditorIdentityLookupSegment,
         XR_ADV_DIAGNOSTIC_DRAW);
-    VisibilitySelectionId =
-        editorDense != XR_ADV_INVALID_DENSE_INDEX
-            ? XR_ADV_LoadEditorIdentity(editorDense).selectionId
-            : XR_ADV_VIS_INVALID;
+    if (editorDense != XR_ADV_INVALID_DENSE_INDEX)
+    {
+        XRAdvancedEditorIdentityRecord editorIdentity =
+            XR_ADV_LoadEditorIdentity(editorDense);
+        VisibilitySelectionId = editorIdentity.selectionId;
+        VisibilityEditorFlags = editorIdentity.flags & 3u;
+    }
+    else
+    {
+        VisibilitySelectionId = XR_ADV_VIS_INVALID;
+        VisibilityEditorFlags = 0u;
+    }
 
     // Eye membership comes from the independently culled submission stream
     // (and the GL multiview payload mask). Object layer/pass masks are not eye

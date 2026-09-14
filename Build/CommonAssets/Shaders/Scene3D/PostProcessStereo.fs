@@ -16,6 +16,9 @@ uniform vec3 SelectionOutlineColor = vec3(0.0f, 1.0f, 0.0f); // XRENGINE_FREQUEN
 
 // 1x1 R32F texture containing the current exposure value (GPU-driven auto exposure)
 uniform sampler2D AutoExposureTex;
+#ifdef XR_ADVANCED_EDITOR_HIGHLIGHT_METADATA
+uniform usampler2DArray AdvancedVisibilityMetadata;
+#endif
 uniform bool UseGpuAutoExposure; // XRENGINE_FREQUENCY(View)
 
 uniform float ChromaticAberrationIntensity; // XRENGINE_FREQUENCY(View)
@@ -223,6 +226,18 @@ float GetStencilMaskBit(uint stencilValue, uint bit)
     return (stencilValue & bit) != 0u ? 1.0f : 0.0f;
 }
 
+uint SampleEditorHighlightSource(vec2 uv, int viewIndex)
+{
+    uint stencilFlags = texture(StencilView, vec3(uv, viewIndex)).r & 3u;
+#ifdef XR_ADVANCED_EDITOR_HIGHLIGHT_METADATA
+    uint metadata = texture(AdvancedVisibilityMetadata, vec3(uv, viewIndex)).r;
+    uint metadataFlags = metadata == 0xFFFFFFFFu ? 0u : (metadata >> 25u) & 3u;
+    return stencilFlags | metadataFlags;
+#else
+    return stencilFlags;
+#endif
+}
+
 vec2 GetStencilOutlineIntensity(vec2 uv, int viewIndex)
 {
     int outlineSize = 3;
@@ -231,7 +246,7 @@ vec2 GetStencilOutlineIntensity(vec2 uv, int viewIndex)
     vec2 texelX = vec2(texelSize.x, 0.0f);
     vec2 texelY = vec2(0.0f, texelSize.y);
 
-    uint stencilCurrent = texture(StencilView, vec3(uv, viewIndex)).r;
+    uint stencilCurrent = SampleEditorHighlightSource(uv, viewIndex);
     float currentHover = GetStencilMaskBit(stencilCurrent, 1u);
     float currentSelection = GetStencilMaskBit(stencilCurrent, 2u);
 
@@ -249,10 +264,10 @@ vec2 GetStencilOutlineIntensity(vec2 uv, int viewIndex)
         vec2 xPos = clamp(uv + texelX * step, zero, one);
         vec2 xNeg = clamp(uv - texelX * step, zero, one);
 
-        uint sYPos = texture(StencilView, vec3(yPos, viewIndex)).r;
-        uint sYNeg = texture(StencilView, vec3(yNeg, viewIndex)).r;
-        uint sXPos = texture(StencilView, vec3(xPos, viewIndex)).r;
-        uint sXNeg = texture(StencilView, vec3(xNeg, viewIndex)).r;
+        uint sYPos = SampleEditorHighlightSource(yPos, viewIndex);
+        uint sYNeg = SampleEditorHighlightSource(yNeg, viewIndex);
+        uint sXPos = SampleEditorHighlightSource(xPos, viewIndex);
+        uint sXNeg = SampleEditorHighlightSource(xNeg, viewIndex);
 
         if (currentHover == 0.0f)
         {

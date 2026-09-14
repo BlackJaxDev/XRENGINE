@@ -46,7 +46,7 @@ public sealed partial class VulkanRenderer :
     private readonly VulkanDeviceContext _deviceContext;
     private readonly VulkanOutputRuntime _outputRuntime;
     private readonly VulkanFrameLoop _frameLoop;
-    private readonly VulkanFramePlanner _framePlanner = new();
+    private readonly VulkanFramePlanner _framePlanner;
     private readonly VulkanResourceRuntime _resourceRuntime;
     private readonly VulkanCommandRuntime _commandRuntime = new();
     internal VulkanCommandRuntime CommandRuntime => _commandRuntime;
@@ -174,6 +174,7 @@ public sealed partial class VulkanRenderer :
         int frameSlotCount = targetDriver is IVulkanExplicitFrameTargetDriver explicitTarget
             ? checked((int)explicitTarget.OutputProperties.FrameSlotCount)
             : DesktopFramesInFlight;
+        _framePlanner = new VulkanFramePlanner(frameSlotCount);
         // Resource ownership is initialized before OpenXR reserves its two eye
         // slots. Pre-size native lifetime tables to the mapped-arena hard bound;
         // the frame loop and active desktop target retain their actual slot count.

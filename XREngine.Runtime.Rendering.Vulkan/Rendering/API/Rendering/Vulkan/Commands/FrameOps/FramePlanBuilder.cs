@@ -11,7 +11,7 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal sealed class FramePlanBuilder
 {
-    private const int FrameSlotCapacity = 4;
+    private const int RetiredSlotCapacity = 4;
     private const int StaticOperationCapacity = VulkanAcceptedFramePlan.StaticCapacity;
     private const int DynamicOperationCapacity = VulkanAcceptedFramePlan.UiCapacity;
     private const int TextureUploadOperationCapacity = VulkanAcceptedFramePlan.UploadCapacity;
@@ -105,22 +105,65 @@ internal sealed class FramePlanBuilder
         internal Slot() => Plan = new FramePlan(ViewSet, Operations);
     }
 
-    private readonly Slot[] _slots = [new(), new(), new(), new()];
+    // Only the target's active slots own heavy workspaces. OpenXR may reserve
+    // additional indices at its existing frame-data provisioning boundary.
+    private readonly Slot[] _slots = new Slot[VulkanMappedFrameArena.MaximumFrameSlotCount];
     private readonly Slot[] _retiredSlots = [new(), new(), new(), new()];
-    private int _retiredSlotCount = FrameSlotCapacity;
+    private readonly bool[] _provisionedAdvancedFamilies = new bool[VulkanAdvancedVisibilityOutputCapacity.Maximum];
+    private readonly object _provisioningGate = new();
+    private int _provisionedSlotCount;
+    private int _retiredSlotCount = RetiredSlotCapacity;
     private readonly RenderOutputGraphPlanner _outputGraphPlanner = new();
     private long _nextGeneration;
     internal VulkanFrameOperationScheduler FrameScheduler => _frameScheduler;
     internal Func<AdvancedVisibilityFamilyReservation, bool>? AcquireAdvancedVisibilityPlanLease { private get; set; }
     internal Action<AdvancedVisibilityFamilyReservation>? ReleaseAdvancedVisibilityPlanLease { private get; set; }
 
+    internal FramePlanBuilder(int frameSlotCount)
+        => ProvisionFrameSlots(frameSlotCount);
+
+    /// <summary>
+    /// Allocates newly activated target slots before their first frame can be
+    /// accepted. Existing plans and all four retirement workspaces stay intact;
+    /// this never reallocates a published slot or grows storage during lowering.
+    /// </summary>
+    internal void ProvisionFrameSlots(int frameSlotCount)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(frameSlotCount);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(frameSlotCount, _slots.Length);
+        if (frameSlotCount <= Volatile.Read(ref _provisionedSlotCount))
+            return;
+
+        lock (_provisioningGate)
+        {
+            for (int index = _provisionedSlotCount; index < frameSlotCount; index++)
+            {
+                Slot slot = new();
+                for (int bankIndex = 0; bankIndex < _provisionedAdvancedFamilies.Length; bankIndex++)
+                    if (_provisionedAdvancedFamilies[bankIndex])
+                        slot.Plan.ProvisionAdvancedVisibilityFamily(bankIndex);
+                _slots[index] = slot;
+            }
+            // Publish only fully initialized slots, including output families
+            // that were already activated before an XR target was enabled.
+            if (frameSlotCount > _provisionedSlotCount)
+                Volatile.Write(ref _provisionedSlotCount, frameSlotCount);
+        }
+    }
+
     /// <summary>Prepares an output's storage before its binding can author work.</summary>
     internal void ProvisionAdvancedVisibilityFamily(int bankIndex)
     {
-        foreach (Slot slot in _slots)
-            slot.Plan.ProvisionAdvancedVisibilityFamily(bankIndex);
-        foreach (Slot slot in _retiredSlots)
-            slot.Plan.ProvisionAdvancedVisibilityFamily(bankIndex);
+        ArgumentOutOfRangeException.ThrowIfNegative(bankIndex);
+        ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(bankIndex, _provisionedAdvancedFamilies.Length);
+        lock (_provisioningGate)
+        {
+            for (int index = 0; index < _provisionedSlotCount; index++)
+                _slots[index].Plan.ProvisionAdvancedVisibilityFamily(bankIndex);
+            for (int index = 0; index < _retiredSlotCount; index++)
+                _retiredSlots[index].Plan.ProvisionAdvancedVisibilityFamily(bankIndex);
+            _provisionedAdvancedFamilies[bankIndex] = true;
+        }
     }
 
     internal FramePlan BuildAndSeal(
@@ -569,23 +612,32 @@ internal sealed class FramePlanBuilder
 
     private Slot AcquireWritableSlot(int frameSlot)
     {
-        if ((uint)frameSlot >= (uint)_slots.Length)
+        int slotCount = Volatile.Read(ref _provisionedSlotCount);
+        if ((uint)frameSlot >= (uint)slotCount)
             throw new VulkanAcceptedFramePlanCapacityException(
                 EVulkanAcceptedFrameLane.FrameSlot,
-                _slots.Length,
+                slotCount,
                 frameSlot + 1);
         Slot active = _slots[frameSlot];
         if (!active.Plan.IsPinned)
             return active;
 
-        Slot replacement = TakeUnpinnedRetiredSlot() ??
-            throw new VulkanAcceptedFramePlanCapacityException(
-                EVulkanAcceptedFrameLane.FrameSlot,
-                _slots.Length + _retiredSlots.Length,
-                _slots.Length + _retiredSlots.Length + 1);
-        _slots[frameSlot] = replacement;
-        RetireSlot(active);
-        return replacement;
+        // Serialize ownership-list exchanges with cold family provisioning so
+        // every active or retired workspace receives the same output banks.
+        lock (_provisioningGate)
+        {
+            active = _slots[frameSlot];
+            if (!active.Plan.IsPinned)
+                return active;
+            Slot replacement = TakeUnpinnedRetiredSlot() ??
+                throw new VulkanAcceptedFramePlanCapacityException(
+                    EVulkanAcceptedFrameLane.FrameSlot,
+                    slotCount + _retiredSlots.Length,
+                    slotCount + _retiredSlots.Length + 1);
+            _slots[frameSlot] = replacement;
+            RetireSlot(active);
+            return replacement;
+        }
     }
 
     private Slot? TakeUnpinnedRetiredSlot()

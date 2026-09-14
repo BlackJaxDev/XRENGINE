@@ -851,20 +851,23 @@ public static class ShaderHelper
             shader.Source?.FilePath,
             shader.Source?.Name);
 
+        // Variant identity is checked during frame-resource validation. Passing
+        // the shader as factory state avoids a closure on every cache hit.
         return DefinedVariantShaderCache.GetOrAdd(
             cacheKey,
-            _ =>
+            static (key, sourceShader) =>
             {
-                string variantSource = GetOrCreateDefinedVariantSource(source, defineName);
+                string variantSource = GetOrCreateDefinedVariantSource(key.SourceText, key.DefineName);
                 TextFile variantText = TextFile.FromText(variantSource);
-                variantText.FilePath = shader.Source?.FilePath;
-                variantText.Name = shader.Source?.Name;
-                return new XRShader(shader.Type, variantText)
+                variantText.FilePath = key.FilePath;
+                variantText.Name = key.SourceName;
+                return new XRShader(key.ShaderType, variantText)
                 {
-                    Name = shader.Name,
-                    GenerateAsync = shader.GenerateAsync,
+                    Name = sourceShader.Name,
+                    GenerateAsync = sourceShader.GenerateAsync,
                 };
-            });
+            },
+            shader);
     }
 
     private static string GetOrCreateDefinedVariantSource(string source, string defineName)

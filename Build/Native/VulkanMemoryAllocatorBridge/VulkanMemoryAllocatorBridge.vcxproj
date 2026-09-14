@@ -43,7 +43,7 @@
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup>
     <RepoRoot>$(MSBuildThisFileDirectory)..\..\..\</RepoRoot>
-    <ManagedRuntimeDir>$(RepoRoot)XREngine.Runtime.Rendering\runtimes\win-x64\native\</ManagedRuntimeDir>
+    <ManagedRuntimeDir>$(RepoRoot)XREngine.Runtime.Rendering.Vulkan\runtimes\win-x64\native\</ManagedRuntimeDir>
     <OutDir>$(ManagedRuntimeDir)</OutDir>
     <IntDir>$(RepoRoot)Build\_AgentValidation\00000000-000000-shared\tools\obj\VulkanMemoryAllocatorBridge\$(Configuration)\</IntDir>
     <TargetName>VulkanMemoryAllocatorBridge.Native</TargetName>

@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using XREngine.Rendering.Vulkan.RenderGraph;
+using VkBufferHandle = Silk.NET.Vulkan.Buffer;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -10,7 +11,18 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal readonly struct VulkanRenderBinNativeCompatibility : IEquatable<VulkanRenderBinNativeCompatibility>
 {
-    private readonly VulkanResidentDrawTemplateNativeState _native;
+    private readonly ulong _pipelineLayoutHandle;
+    private readonly VulkanPreparedMeshPrimitive _primitive0;
+    private readonly VulkanPreparedMeshPrimitive _primitive1;
+    private readonly VulkanPreparedMeshPrimitive _primitive2;
+    private readonly byte _primitiveCount;
+    private readonly int _vertexBufferCount;
+    private readonly VkBufferHandle _vertexBuffer0;
+    private readonly VkBufferHandle _vertexBuffer1;
+    private readonly uint _vertexBinding0;
+    private readonly uint _vertexBinding1;
+    private readonly ReadOnlyMemory<VkBufferHandle> _vertexBuffers;
+    private readonly ReadOnlyMemory<uint> _vertexBindings;
     private readonly object? _program;
     private readonly object? _bindingSnapshot;
     private readonly object? _materialOverride;
@@ -18,7 +30,22 @@ internal readonly struct VulkanRenderBinNativeCompatibility : IEquatable<VulkanR
     internal VulkanRenderBinNativeCompatibility(
         in VulkanResidentDrawTemplateNativeState native)
     {
-        _native = native;
+        _pipelineLayoutHandle = native.PipelineLayout.Handle;
+        _primitive0 = native.Primitive0;
+        _primitive1 = native.Primitive1;
+        _primitive2 = native.Primitive2;
+        _primitiveCount = native.PrimitiveCount;
+        _vertexBufferCount = native.VertexBufferCount;
+        _vertexBuffer0 = _vertexBufferCount > 0 ? native.GetVertexBuffer(0) : default;
+        _vertexBuffer1 = _vertexBufferCount > 1 ? native.GetVertexBuffer(1) : default;
+        _vertexBinding0 = _vertexBufferCount > 0 ? native.GetVertexBinding(0) : 0u;
+        _vertexBinding1 = _vertexBufferCount > 1 ? native.GetVertexBinding(1) : 0u;
+        _vertexBuffers = _vertexBufferCount > 2
+            ? native.VertexBufferStorage
+            : ReadOnlyMemory<VkBufferHandle>.Empty;
+        _vertexBindings = _vertexBufferCount > 2
+            ? native.VertexBindingStorage
+            : ReadOnlyMemory<uint>.Empty;
         _program = native.DrawTemplate.PreparedProgram;
         _bindingSnapshot = native.DrawTemplate.ProgramBindingSnapshot;
         _materialOverride = native.DrawTemplate.MaterialOverride;
@@ -26,9 +53,9 @@ internal readonly struct VulkanRenderBinNativeCompatibility : IEquatable<VulkanR
 
     public bool Equals(VulkanRenderBinNativeCompatibility other)
     {
-        if (_native.PipelineLayout.Handle != other._native.PipelineLayout.Handle ||
-            _native.PrimitiveCount != other._native.PrimitiveCount ||
-            _native.VertexBufferCount != other._native.VertexBufferCount ||
+        if (_pipelineLayoutHandle != other._pipelineLayoutHandle ||
+            _primitiveCount != other._primitiveCount ||
+            _vertexBufferCount != other._vertexBufferCount ||
             !ReferenceEquals(_program, other._program) ||
             !ReferenceEquals(_bindingSnapshot, other._bindingSnapshot) ||
             !ReferenceEquals(_materialOverride, other._materialOverride))
@@ -36,12 +63,12 @@ internal readonly struct VulkanRenderBinNativeCompatibility : IEquatable<VulkanR
             return false;
         }
 
-        for (int index = 0; index < _native.PrimitiveCount; ++index)
-            if (_native.GetPrimitive(index) != other._native.GetPrimitive(index))
+        for (int index = 0; index < _primitiveCount; ++index)
+            if (GetPrimitive(index) != other.GetPrimitive(index))
                 return false;
-        for (int index = 0; index < _native.VertexBufferCount; ++index)
-            if (_native.GetVertexBuffer(index).Handle != other._native.GetVertexBuffer(index).Handle ||
-                _native.GetVertexBinding(index) != other._native.GetVertexBinding(index))
+        for (int index = 0; index < _vertexBufferCount; ++index)
+            if (GetVertexBuffer(index).Handle != other.GetVertexBuffer(index).Handle ||
+                GetVertexBinding(index) != other.GetVertexBinding(index))
             {
                 return false;
             }
@@ -54,14 +81,14 @@ internal readonly struct VulkanRenderBinNativeCompatibility : IEquatable<VulkanR
     public override int GetHashCode()
     {
         HashCode hash = new();
-        hash.Add(_native.PipelineLayout.Handle);
-        hash.Add(_native.PrimitiveCount);
-        for (int index = 0; index < _native.PrimitiveCount; ++index)
-            hash.Add(_native.GetPrimitive(index));
-        for (int index = 0; index < _native.VertexBufferCount; ++index)
+        hash.Add(_pipelineLayoutHandle);
+        hash.Add(_primitiveCount);
+        for (int index = 0; index < _primitiveCount; ++index)
+            hash.Add(GetPrimitive(index));
+        for (int index = 0; index < _vertexBufferCount; ++index)
         {
-            hash.Add(_native.GetVertexBuffer(index).Handle);
-            hash.Add(_native.GetVertexBinding(index));
+            hash.Add(GetVertexBuffer(index).Handle);
+            hash.Add(GetVertexBinding(index));
         }
         hash.Add(GetReferenceHashCode(_program));
         hash.Add(GetReferenceHashCode(_bindingSnapshot));
@@ -71,6 +98,31 @@ internal readonly struct VulkanRenderBinNativeCompatibility : IEquatable<VulkanR
 
     private static int GetReferenceHashCode(object? value)
         => value is null ? 0 : RuntimeHelpers.GetHashCode(value);
+
+    private VulkanPreparedMeshPrimitive GetPrimitive(int index)
+        => index switch
+        {
+            0 => _primitive0,
+            1 => _primitive1,
+            2 => _primitive2,
+            _ => throw new ArgumentOutOfRangeException(nameof(index)),
+        };
+
+    private VkBufferHandle GetVertexBuffer(int index)
+        => index switch
+        {
+            0 => _vertexBuffer0,
+            1 => _vertexBuffer1,
+            _ => _vertexBuffers.Span[index],
+        };
+
+    private uint GetVertexBinding(int index)
+        => index switch
+        {
+            0 => _vertexBinding0,
+            1 => _vertexBinding1,
+            _ => _vertexBindings.Span[index],
+        };
 }
 
 /// <summary>

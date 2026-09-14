@@ -13,9 +13,9 @@ internal sealed partial class FramePlan
     private readonly VulkanPreparedStableBinStream _stableBins = new(
         VulkanMeshOperationRequestQueue.Capacity,
         VulkanMeshOperationRequestQueue.Capacity * 16);
-    // OpenXR can freeze two eye inputs concurrently. Keep a separate bounded
-    // header/resource-use view for each eye so both workers can consume the
-    // same immutable payload columns without a per-eye heap allocation.
+    // OpenXR can freeze two eye inputs concurrently. Keep fixed filtered
+    // headers for each eye while both workers share the physical source
+    // columns without a per-eye heap allocation.
     private readonly FrameOperationStream[] _logicalViewOperations;
     private readonly ulong[] _logicalViewIds;
     private OutputRequest[] _outputs = Array.Empty<OutputRequest>();
@@ -172,11 +172,9 @@ internal sealed partial class FramePlan
         _logicalViewOperations =
         [
             staticOperationStorage.CreateLogicalViewStorage(
-                staticOperationStorage.Capacity,
-                staticOperationStorage.ResourceUseCapacity),
+                staticOperationStorage.Capacity),
             staticOperationStorage.CreateLogicalViewStorage(
-                staticOperationStorage.Capacity,
-                staticOperationStorage.ResourceUseCapacity),
+                staticOperationStorage.Capacity),
         ];
         _logicalViewIds = new ulong[_logicalViewOperations.Length];
     }

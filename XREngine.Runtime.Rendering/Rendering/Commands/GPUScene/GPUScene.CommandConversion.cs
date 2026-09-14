@@ -126,6 +126,11 @@ namespace XREngine.Rendering.Commands
                 flags |= GPUIndirectRenderFlags.Dynamic;
             if (command.ForceCpuRendering || material.RenderOptions?.ExcludeFromGpuIndirect == true)
                 flags |= GPUIndirectRenderFlags.CpuFallbackOnly;
+            uint editorHighlightBits = command.EditorHighlightBits;
+            if ((editorHighlightBits & 1u) != 0u)
+                flags |= GPUIndirectRenderFlags.EditorHovered;
+            if ((editorHighlightBits & 2u) != 0u)
+                flags |= GPUIndirectRenderFlags.EditorSelected;
 
             return (uint)flags;
         }
@@ -151,8 +156,8 @@ namespace XREngine.Rendering.Commands
                     return true;
                 }
 
-                var subMeshes = meshCmd.Mesh?.GetMeshes();
-                if (subMeshes is null || subMeshes.Length == 0)
+                XRMeshRenderer? meshRenderer = meshCmd.Mesh;
+                if (meshRenderer is null)
                 {
                     if (_commandUpdateErrorLogBudget > 0 && Interlocked.Decrement(ref _commandUpdateErrorLogBudget) >= 0)
                         Debug.MeshesWarning($"[GPUScene] Mesh command lost submeshes; removing. Renderable={ResolveOwnerLabel(renderInfo.Owner)}");
@@ -176,13 +181,12 @@ namespace XREngine.Rendering.Commands
                         continue;
 
                     int subMeshIndex = lookup.subMeshIndex;
-                    if ((uint)subMeshIndex >= (uint)subMeshes.Length)
+                    if (!meshRenderer.TryGetMesh(subMeshIndex, out XRMesh? mesh, out XRMaterial? mat))
                     {
                         rebuildRenderable = true;
                         break;
                     }
 
-                    (XRMesh? mesh, XRMaterial? mat) = subMeshes[subMeshIndex];
                     XRMaterial? material = meshCmd.MaterialOverride ?? mat;
                     if (mesh is null || material is null)
                     {
@@ -340,7 +344,7 @@ namespace XREngine.Rendering.Commands
         /// <param name="mesh">The mesh to validate.</param>
         /// <param name="reason">The reason for failure if validation fails.</param>
         /// <returns>True if the mesh is valid for GPU rendering; false otherwise.</returns>
-        private bool ValidateMeshForGpu(XRMesh mesh, out string reason)
+        private static bool ValidateMeshForGpu(XRMesh mesh, out string reason)
         {
             if (mesh.VertexCount <= 0)
             {
@@ -360,10 +364,9 @@ namespace XREngine.Rendering.Commands
                 return false;
             }
 
-            bool hasTriangleList = mesh.Triangles is not null && mesh.Triangles.Count > 0;
-            bool hasIndexedTriangles = mesh.IndexCount >= 3 && mesh.GetIndices(EPrimitiveType.Triangles)?.Length >= 3;
-
-            if (!hasTriangleList && !hasIndexedTriangles)
+            // Swap/collect revalidates animated meshes every frame. Inspect topology
+            // metadata instead of allocating a flattened copy of every triangle.
+            if (!mesh.HasIndexData(EPrimitiveType.Triangles))
             {
                 reason = "has no triangle faces";
                 return false;

@@ -15,6 +15,8 @@ public readonly record struct AdvancedVisibilityMetadataWord(uint Value)
     private const int VersionShift = 16;
     private const uint VersionMask = 0xFFu;
     private const int SelectionValidShift = 24;
+    private const int EditorFlagsShift = 25;
+    private const uint EditorFlagsMask = 0x06000000u;
 
     public const uint MaximumViewCount = ViewMask + 1u;
     public static AdvancedVisibilityMetadataWord Invalid
@@ -32,7 +34,8 @@ public readonly record struct AdvancedVisibilityMetadataWord(uint Value)
         uint payloadVersion,
         bool selectionValid,
         out AdvancedVisibilityMetadataWord metadata,
-        out EAdvancedVisibilityPayloadOverflow overflow)
+        out EAdvancedVisibilityPayloadOverflow overflow,
+        uint editorFlags = 0u)
     {
         if (producer is not (
             EAdvancedGeometryProducer.StaticMeshlet or
@@ -66,6 +69,13 @@ public readonly record struct AdvancedVisibilityMetadataWord(uint Value)
             return false;
         }
 
+        if ((editorFlags & ~0x3u) != 0u)
+        {
+            metadata = Invalid;
+            overflow = EAdvancedVisibilityPayloadOverflow.InvalidProducerPayload;
+            return false;
+        }
+
         uint value = (uint)producer;
         value |= (uint)origin << OriginShift;
         value |= (masked ? 1u : 0u) << MaskedShift;
@@ -74,6 +84,7 @@ public readonly record struct AdvancedVisibilityMetadataWord(uint Value)
         value |= viewIndex << ViewShift;
         value |= payloadVersion << VersionShift;
         value |= (selectionValid ? 1u : 0u) << SelectionValidShift;
+        value |= (editorFlags & 0x3u) << EditorFlagsShift;
         metadata = new AdvancedVisibilityMetadataWord(value);
         overflow = EAdvancedVisibilityPayloadOverflow.None;
         return true;
@@ -92,6 +103,7 @@ public readonly record struct AdvancedVisibilityMetadataWord(uint Value)
             ((Value >> VelocityValidShift) & 0x1u) != 0u,
             (Value >> ViewShift) & ViewMask,
             (Value >> VersionShift) & VersionMask,
-            ((Value >> SelectionValidShift) & 0x1u) != 0u);
+            ((Value >> SelectionValidShift) & 0x1u) != 0u,
+            (Value & EditorFlagsMask) >> EditorFlagsShift);
     }
 }

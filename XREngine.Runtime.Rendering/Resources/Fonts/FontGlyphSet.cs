@@ -39,7 +39,7 @@ namespace XREngine.Rendering
         {
             _characters = characters;
             _glyphs = glyphs;
-            _atlas = atlas;
+            Atlas = atlas;
         }
 
         public FontGlyphSet() { }
@@ -76,7 +76,14 @@ namespace XREngine.Rendering
         public XRTexture2D? Atlas
         {
             get => _atlas;
-            set => SetField(ref _atlas, value);
+            set
+            {
+                // Glyph coordinates and coverage data describe the full atlas. A retained
+                // PNG path is provenance, not permission to replace it with a streamed preview.
+                if (value is not null)
+                    value.AllowAutomaticImportedTextureStreaming = false;
+                SetField(ref _atlas, value);
+            }
         }
 
         private EFontAtlasType _atlasType;

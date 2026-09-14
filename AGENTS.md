@@ -443,6 +443,10 @@ Hot paths include render submission, swap/present, visible collection, fixed upd
 
 Flag or refactor `new`, LINQ, captured closures, boxing, string concatenation, and `foreach` over non-struct enumerators in these paths. Prefer `Span<T>`, `stackalloc`, pooling, preallocated collections, `ref struct`, cached delegates, and appropriate unsafe code. If an allocation is unavoidable, add a short reason.
 
+Do not allocate arrays or call `.ToArray()` in hot paths just to count, inspect,
+or iterate existing data. Use existing counts, indexed access, spans, or reusable
+storage, including when an allocating convenience API hides the materialization.
+
 ## Risk And Dependencies
 
 Ask for approval before:

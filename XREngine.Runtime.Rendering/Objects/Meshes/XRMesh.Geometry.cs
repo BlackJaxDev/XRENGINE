@@ -46,10 +46,17 @@ public partial class XRMesh
         }
     }
 
-    // Indices API
+    /// <summary>
+    /// Allocates a flattened copy of the current topology's indices.
+    /// Use <see cref="IndexCount"/> or <see cref="HasIndexData"/> for hot-path metadata queries.
+    /// </summary>
     public int[]? GetIndices()
         => GetIndices(Type);
 
+    /// <summary>
+    /// Allocates a flattened copy of the requested topology's indices. Count and
+    /// presence checks must read the primitive lists instead of materializing this array.
+    /// </summary>
     public int[]? GetIndices(EPrimitiveType type) => type switch
     {
         EPrimitiveType.Triangles => _triangles?.SelectMany(x => new[] { x.Point0, x.Point1, x.Point2 }).ToArray(),

@@ -113,6 +113,20 @@ internal readonly struct VulkanResidentDrawTemplateNativeState
         => _vertexBuffers ?? ReadOnlySpan<VkBufferHandle>.Empty;
     internal ReadOnlySpan<uint> VertexBindings
         => _vertexBindings ?? ReadOnlySpan<uint>.Empty;
+
+    /// <summary>
+    /// Exposes the cold-constructor vertex-buffer snapshot without copying it.
+    /// Consumers must treat the returned storage as immutable.
+    /// </summary>
+    internal ReadOnlyMemory<VkBufferHandle> VertexBufferStorage
+        => _vertexBuffers is null ? ReadOnlyMemory<VkBufferHandle>.Empty : _vertexBuffers;
+
+    /// <summary>
+    /// Exposes the cold-constructor vertex-binding snapshot without copying it.
+    /// Consumers must treat the returned storage as immutable.
+    /// </summary>
+    internal ReadOnlyMemory<uint> VertexBindingStorage
+        => _vertexBindings is null ? ReadOnlyMemory<uint>.Empty : _vertexBindings;
     internal int VertexBufferCount
         => _inlineVertexBufferCount != 0
             ? _inlineVertexBufferCount

@@ -11,4 +11,5 @@ public readonly record struct AdvancedVisibilityDecodedMetadata(
     bool VelocityValid,
     uint ViewIndex,
     uint PayloadVersion,
-    bool SelectionValid);
+    bool SelectionValid,
+    uint EditorFlags = 0u);
