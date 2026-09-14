@@ -142,9 +142,8 @@ namespace XREngine.Rendering.Vulkan
 
         /// <summary>
         /// Determines whether descriptor contents for a frame-data slot can be rewritten without
-        /// <c>UPDATE_AFTER_BIND</c>. Desktop slots are serialized by their acquired swapchain
-        /// image timeline value; OpenXR reserves distinct frame-data slots and serializes them
-        /// through the corresponding frame-slot timeline value.
+        /// <c>UPDATE_AFTER_BIND</c>. Desktop and OpenXR data slots are serialized by
+        /// their frame-slot timeline values, independently of acquired image ownership.
         /// </summary>
         /// <remarks>
         /// Callers must use the exact frame-data slot that their recorded command buffer binds.
@@ -160,25 +159,13 @@ namespace XREngine.Rendering.Vulkan
                 return false;
             }
 
-            ulong completionValue;
-            if (_commandRuntime.Synchronization._desktopImageTimelineValues is { } imageTimelineValues &&
-                (uint)frameDataSlot < (uint)imageTimelineValues.Length)
-            {
-                // Desktop mapped frame data and descriptor sets are keyed by the
-                // acquired swapchain image, not the frame-in-flight slot that
-                // happened to acquire it. The image ledger is published on every
-                // accepted submission and waited before this image is prepared.
-                completionValue = imageTimelineValues[frameDataSlot];
-            }
-            else if (_commandRuntime.Synchronization._frameSlotTimelineValues is { } frameSlotValues &&
-                (uint)frameDataSlot < (uint)frameSlotValues.Length)
-            {
-                completionValue = frameSlotValues[frameDataSlot];
-            }
-            else
+            if (_commandRuntime.Synchronization._frameSlotTimelineValues is not { } frameSlotValues ||
+                (uint)frameDataSlot >= (uint)frameSlotValues.Length)
             {
                 return false;
             }
+
+            ulong completionValue = frameSlotValues[frameDataSlot];
 
             if (completionValue == 0)
                 return true;

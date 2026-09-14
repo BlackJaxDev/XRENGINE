@@ -18,8 +18,13 @@ internal sealed class VulkanResidentTemplateFrameSlotLifetimes
             new AdvancedGpuScenePublicationReference[VulkanMeshOperationRequestQueue.Capacity];
         internal readonly AdvancedGpuScenePublicationLease[] PublicationLeases =
             new AdvancedGpuScenePublicationLease[VulkanMeshOperationRequestQueue.Capacity];
+        // Keep failed/legacy raw publications at the original lease capacity.
+        // Native realizations have their own bounded pool; zero means no use.
         internal readonly VulkanAdvancedScenePublicationUse[] NativePublicationUses =
-            new VulkanAdvancedScenePublicationUse[VulkanMeshOperationRequestQueue.Capacity];
+            new VulkanAdvancedScenePublicationUse[VulkanAdvancedSceneResourceRuntime.PublicationCapacityPerFrameSlot + 1];
+        internal readonly int[] NativePublicationUseIndices =
+            new int[VulkanMeshOperationRequestQueue.Capacity];
+        internal int NativePublicationUseCount;
         internal readonly VulkanResidentDrawTemplate?[] Templates =
             new VulkanResidentDrawTemplate[VulkanMeshOperationRequestQueue.Capacity];
         internal int PublicationCount;
@@ -50,7 +55,7 @@ internal sealed class VulkanResidentTemplateFrameSlotLifetimes
         {
             if (!ReferenceEquals(slot.Databases[index], database) ||
                 slot.Publications[index] != publication ||
-                slot.NativePublicationUses[index].PublicationState != nativeUse.PublicationState)
+                slot.NativePublicationUses[slot.NativePublicationUseIndices[index]].PublicationState != nativeUse.PublicationState)
                 continue;
 
             // Only the exact native realization is redundant. Different
@@ -61,14 +66,21 @@ internal sealed class VulkanResidentTemplateFrameSlotLifetimes
             lease = default;
             return true;
         }
-        if (slot.PublicationCount == slot.PublicationLeases.Length)
+        bool hasNativeUse = nativeUse.HasReceipt;
+        if (slot.PublicationCount == slot.PublicationLeases.Length ||
+            (hasNativeUse && slot.NativePublicationUseCount == slot.NativePublicationUses.Length - 1))
             return false;
 
         int target = slot.PublicationCount++;
         slot.Databases[target] = database;
         slot.Publications[target] = publication;
         slot.PublicationLeases[target] = lease;
-        slot.NativePublicationUses[target] = nativeUse;
+        if (hasNativeUse)
+        {
+            int nativeUseIndex = ++slot.NativePublicationUseCount;
+            slot.NativePublicationUses[nativeUseIndex] = nativeUse;
+            slot.NativePublicationUseIndices[target] = nativeUseIndex;
+        }
         lease = default;
         nativeUse = default;
         return true;
@@ -83,25 +95,29 @@ internal sealed class VulkanResidentTemplateFrameSlotLifetimes
         ReadOnlySpan<AdvancedSharedGpuSceneDatabase?> databases,
         ReadOnlySpan<AdvancedGpuScenePublicationReference> publications,
         ReadOnlySpan<VulkanAdvancedScenePublicationUse> nativeUses,
+        ReadOnlySpan<int> nativeUseIndices,
         int publicationCount,
         ReadOnlySpan<VulkanResidentDrawTemplate?> templates,
         int templateCount)
     {
         Slot slot = GetSlot(frameSlot);
         if (publicationCount < 0 || publicationCount > databases.Length ||
-            publicationCount > publications.Length || publicationCount > nativeUses.Length ||
-            templateCount < 0 ||
-            templateCount > templates.Length)
+            publicationCount > publications.Length || publicationCount > nativeUseIndices.Length ||
+            templateCount < 0 || templateCount > templates.Length ||
+            nativeUses.IsEmpty || nativeUses[0].HasReceipt)
         {
             return false;
         }
 
         int publicationAdditions = 0;
+        int nativeUseAdditions = 0;
         for (int sourceIndex = 0; sourceIndex < publicationCount; ++sourceIndex)
         {
             AdvancedSharedGpuSceneDatabase? database = databases[sourceIndex];
-            if (database is null)
+            int nativeUseIndex = nativeUseIndices[sourceIndex];
+            if (database is null || (uint)nativeUseIndex >= (uint)nativeUses.Length)
                 return false;
+            ref readonly VulkanAdvancedScenePublicationUse nativeUse = ref nativeUses[nativeUseIndex];
 
             bool duplicate = false;
             for (int destinationIndex = 0;
@@ -110,19 +126,30 @@ internal sealed class VulkanResidentTemplateFrameSlotLifetimes
             {
                 if (ReferenceEquals(slot.Databases[destinationIndex], database) &&
                     slot.Publications[destinationIndex] == publications[sourceIndex] &&
-                    slot.NativePublicationUses[destinationIndex].PublicationState ==
-                        nativeUses[sourceIndex].PublicationState)
+                    slot.NativePublicationUses[slot.NativePublicationUseIndices[destinationIndex]].PublicationState ==
+                        nativeUse.PublicationState)
                 {
                     duplicate = true;
                     break;
                 }
             }
+            // Commit also collapses duplicates within this incoming batch.
+            // Count them once so a near-capacity transfer is not rejected even
+            // though the same exact ownership set would fit after adoption.
+            for (int priorIndex = 0; !duplicate && priorIndex < sourceIndex; priorIndex++)
+                duplicate = ReferenceEquals(databases[priorIndex], database) &&
+                    publications[priorIndex] == publications[sourceIndex] &&
+                    nativeUses[nativeUseIndices[priorIndex]].PublicationState == nativeUse.PublicationState;
             if (!duplicate)
+            {
                 ++publicationAdditions;
+                if (nativeUse.HasReceipt)
+                    ++nativeUseAdditions;
+            }
         }
 
-        if (publicationAdditions >
-            slot.PublicationLeases.Length - slot.PublicationCount)
+        if (publicationAdditions > slot.PublicationLeases.Length - slot.PublicationCount ||
+            nativeUseAdditions > slot.NativePublicationUses.Length - 1 - slot.NativePublicationUseCount)
         {
             return false;
         }
@@ -145,6 +172,8 @@ internal sealed class VulkanResidentTemplateFrameSlotLifetimes
                     break;
                 }
             }
+            for (int priorIndex = 0; !duplicate && priorIndex < sourceIndex; priorIndex++)
+                duplicate = ReferenceEquals(templates[priorIndex], template);
             if (!duplicate)
                 ++templateAdditions;
         }
@@ -185,14 +214,17 @@ internal sealed class VulkanResidentTemplateFrameSlotLifetimes
 
         for (int index = 0; index < slot.PublicationCount; ++index)
         {
-            slot.NativePublicationUses[index].Dispose();
-            slot.NativePublicationUses[index] = default;
+            int nativeUseIndex = slot.NativePublicationUseIndices[index];
+            slot.NativePublicationUses[nativeUseIndex].Dispose();
+            slot.NativePublicationUses[nativeUseIndex] = default;
+            slot.NativePublicationUseIndices[index] = 0;
             slot.PublicationLeases[index].Dispose();
             slot.PublicationLeases[index] = default;
             slot.Databases[index] = null;
             slot.Publications[index] = default;
         }
         slot.PublicationCount = 0;
+        slot.NativePublicationUseCount = 0;
     }
 
     internal void ReleaseAll()

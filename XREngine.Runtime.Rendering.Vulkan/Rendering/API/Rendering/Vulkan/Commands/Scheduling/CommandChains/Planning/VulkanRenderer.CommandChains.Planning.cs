@@ -17,6 +17,7 @@ internal sealed partial class VulkanCommandRuntime
 {
     internal CommandChainSchedule? TryBuildCommandChainSchedule(
         uint imageIndex,
+        uint frameDataSlotIndex,
         FrameOperationStream staticOps,
         FrameOperationStream volatileOps,
         ulong frameOpsSignature,
@@ -88,7 +89,10 @@ internal sealed partial class VulkanCommandRuntime
             resourcePlanRevision,
             resourceVersionSignature,
             descriptorVersionSignature,
-            preparedRecordingTarget);
+            preparedRecordingTarget)
+        {
+            FrameDataSlotIndex = frameDataSlotIndex,
+        };
         if (TryReuseCachedCommandChainSchedule(
                 imageIndex,
                 in cacheIdentity,
@@ -241,7 +245,7 @@ internal sealed partial class VulkanCommandRuntime
                 ResolveCommandChainDescriptorBindingVariant(packet.DescriptorSnapshot);
 
             CommandChainKey key = new(
-                unchecked((int)Math.Min(imageIndex, int.MaxValue)),
+                unchecked((int)Math.Min(frameDataSlotIndex, int.MaxValue)),
                 packet.ViewKey,
                 packet.PassIndex,
                 packet.TargetIdentity,
@@ -414,7 +418,7 @@ internal sealed partial class VulkanCommandRuntime
             chain.DescriptorSetSignature = packet.DescriptorSnapshot.DescriptorSetSignature;
             chain.SourceStartIndex = packet.SourceStartIndex;
             chain.SourceCount = packet.SourceCount;
-            chain.LastRecordedFrameSlot = unchecked((int)Math.Min(imageIndex, int.MaxValue));
+            chain.LastRecordedFrameSlot = unchecked((int)Math.Min(frameDataSlotIndex, int.MaxValue));
             chain.PublishPacketSnapshot(packet);
             lastScheduledChain = chain;
 
@@ -450,7 +454,7 @@ internal sealed partial class VulkanCommandRuntime
                 ? BuildCommandChainDependencySignature(
                     lastPacket,
                     new CommandChainKey(
-                        unchecked((int)Math.Min(imageIndex, int.MaxValue)),
+                        unchecked((int)Math.Min(frameDataSlotIndex, int.MaxValue)),
                         lastPacket.ViewKey,
                         lastPacket.PassIndex,
                         lastPacket.TargetIdentity,

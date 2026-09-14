@@ -148,7 +148,7 @@ namespace XREngine.Rendering.Vulkan
                 {
                     mappedFrameSlotPrepared = mappedFrameArena is null ||
                         mappedFrameArena.TryPrepareFrameSlotForSubmission(
-                            attempt.ImageIndex,
+                            checked((uint)attempt.FrameSlot),
                             mappedFrameGeneration);
                     frameDataSlotPrepared = frameDataArena is null ||
                         frameDataArena.TryPrepareFrameSlotForSubmission(
@@ -159,7 +159,7 @@ namespace XREngine.Rendering.Vulkan
                 {
                     if (mappedFrameSlotPrepared)
                         _ = mappedFrameArena?.TryCancelFrameSlotSubmission(
-                            attempt.ImageIndex,
+                            checked((uint)attempt.FrameSlot),
                             mappedFrameGeneration);
                     if (frameDataSlotPrepared)
                         _ = frameDataArena?.TryCancelFrameSlotSubmission(
@@ -172,7 +172,7 @@ namespace XREngine.Rendering.Vulkan
                 {
                     if (mappedFrameSlotPrepared)
                         _ = mappedFrameArena?.TryCancelFrameSlotSubmission(
-                            attempt.ImageIndex,
+                            checked((uint)attempt.FrameSlot),
                             mappedFrameGeneration);
                     if (frameDataSlotPrepared)
                         _ = frameDataArena?.TryCancelFrameSlotSubmission(
@@ -180,7 +180,7 @@ namespace XREngine.Rendering.Vulkan
                             frameDataGeneration);
                     CompleteMappedFrameArenaDeviceLossObservation();
                     _commandRuntime.CommandBuffers.MarkDirty(
-                        $"mapped frame-data preparation failed for image slot {attempt.ImageIndex} generation {mappedFrameGeneration} or frame slot {attempt.FrameSlot} generation {frameDataGeneration}");
+                        $"mapped/frame-data preparation failed for frame slot {attempt.FrameSlot}, mapped generation {mappedFrameGeneration}, storage generation {frameDataGeneration}");
                     SettleRejectedDesktopCommandArtifacts(
                         ref attempt,
                         "mapped frame-data submission preparation failed");
@@ -209,7 +209,7 @@ namespace XREngine.Rendering.Vulkan
                 catch
                 {
                     _ = mappedFrameArena?.TryCancelFrameSlotSubmission(
-                        attempt.ImageIndex,
+                        checked((uint)attempt.FrameSlot),
                         mappedFrameGeneration);
                     _ = frameDataArena?.TryCancelFrameSlotSubmission(
                         checked((uint)attempt.FrameSlot),
@@ -329,7 +329,7 @@ namespace XREngine.Rendering.Vulkan
                                 attempt.GraphicsSignalValue);
                             attempt.CommandArtifactsSettled = true;
                             mappedFrameArena?.MarkFrameSlotSubmitted(
-                                attempt.ImageIndex,
+                                checked((uint)attempt.FrameSlot),
                                 mappedFrameGeneration);
                             frameDataArena?.MarkFrameSlotSubmitted(
                                 checked((uint)attempt.FrameSlot),
@@ -369,7 +369,7 @@ namespace XREngine.Rendering.Vulkan
                 if (!attempt.Submitted)
                 {
                     _ = mappedFrameArena?.TryCancelFrameSlotSubmission(
-                        attempt.ImageIndex,
+                        checked((uint)attempt.FrameSlot),
                         mappedFrameGeneration);
                     _ = frameDataArena?.TryCancelFrameSlotSubmission(
                         checked((uint)attempt.FrameSlot),
@@ -389,7 +389,7 @@ namespace XREngine.Rendering.Vulkan
                 if (submitResult != Result.Success)
                 {
                     _ = mappedFrameArena?.TryCancelFrameSlotSubmission(
-                        attempt.ImageIndex,
+                        checked((uint)attempt.FrameSlot),
                         mappedFrameGeneration);
                     _ = frameDataArena?.TryCancelFrameSlotSubmission(
                         checked((uint)attempt.FrameSlot),

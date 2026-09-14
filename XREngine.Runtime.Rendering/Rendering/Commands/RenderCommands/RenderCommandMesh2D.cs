@@ -10,6 +10,9 @@ namespace XREngine.Rendering.Commands
 {
     public class RenderCommandMesh2D : RenderCommand2D, IRenderCommandMesh
     {
+        /// <summary>Screen-space meshes do not participate in scene selection outlines.</summary>
+        public uint EditorHighlightBits => 0u;
+
         private uint _gpuCommandIndex = uint.MaxValue;
         public uint GPUCommandIndex
         {

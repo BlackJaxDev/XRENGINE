@@ -770,6 +770,9 @@ internal sealed partial class VulkanFrameLoop
         _resourceRuntime.BeginRetirementMeteringFrame(unchecked((long)attempt.FrameNumber));
         _resourceRuntime.Descriptors.Heap.BeginFrame(attempt.FrameNumber);
         RecordDesktopFrameGap(ref attempt);
+        // A callback was observed even when a later readiness decision pauses output.
+        // Advance the gap baseline here so the pause does not re-report one historic stall.
+        RecordDesktopFrameTickObserved(attempt.StartTimestamp);
         CompleteDesktopFramePhaseTiming(
             ref attempt,
             EVulkanFrameStage.SnapshotHandoff,

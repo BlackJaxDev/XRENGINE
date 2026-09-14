@@ -440,7 +440,7 @@ public partial class AdvancedRenderPipeline
                 .SampleTexture(VolumetricFogColorTextureName);
         }
 
-        return resources;
+        return resources.SampleTexture(AdvancedVisibilityResourceNames.Metadata);
     }
 
     private static VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor CreateAdvancedFinalPostProcessResources()

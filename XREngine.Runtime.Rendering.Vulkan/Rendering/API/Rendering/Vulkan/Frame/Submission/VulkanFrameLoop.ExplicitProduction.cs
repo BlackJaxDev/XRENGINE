@@ -957,6 +957,7 @@ internal sealed partial class VulkanFrameLoop
             framePlan: framePlan);
         VulkanPreparedPrimaryCommandInput input = PreparePrimaryCommandInput(
             lease.Target.FrameSlotIndex,
+            lease.Target.FrameSlotIndex,
             primaryCommandBuffer,
             dynamicUiSecondaryCommandBuffer: default,
             framePlan,
@@ -964,7 +965,6 @@ internal sealed partial class VulkanFrameLoop
             in authority,
             callerOwnsSubmissionMarkersUntilRecordingSucceeds: true) with
         {
-            FrameDataImageIndexOverride = lease.Target.FrameSlotIndex,
             ReadOnlyStorageAuthority = FrameDataArena is { } arena
                 ? ResourceRuntime.ReadOnlyStoragePreparedMap.CreateAuthority(
                     arena, checked((int)lease.Target.FrameSlotIndex))

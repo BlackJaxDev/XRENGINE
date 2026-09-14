@@ -70,6 +70,7 @@ namespace XREngine.Rendering.Vulkan
 
         private unsafe bool RecordDynamicUiBatchTextSecondaryCommandBuffer(
             uint imageIndex,
+            uint frameDataSlotIndex,
             PrimaryCommandArtifactOwner variant,
             FrameOperationSequence dynamicUiBatchTextOps,
             ulong dynamicUiBatchTextSignature,
@@ -79,6 +80,7 @@ namespace XREngine.Rendering.Vulkan
             SwapchainRecordingTarget recordingTarget = default,
             VulkanCommandRecordingPolicySnapshot policy = default)
         {
+            int frameDataSlot = checked((int)frameDataSlotIndex);
             forceRecord |= policy.FreshSerialRecording;
             if (dynamicUiBatchTextOps.Length == 0)
             {
@@ -86,10 +88,12 @@ namespace XREngine.Rendering.Vulkan
                 variant.DynamicUiOpCount = 0;
                 variant.DynamicUiSignature = 0;
                 variant.DynamicUiSecondaryRecorded = false;
+                variant.DynamicUiRecordedFrameDataSlotIndex = uint.MaxValue;
                 return true;
             }
 
             if (!forceRecord &&
+                variant.DynamicUiRecordedFrameDataSlotIndex == frameDataSlotIndex &&
                 variant.DynamicUiSignature == dynamicUiBatchTextSignature &&
                 variant.DynamicUiSecondaryRecorded &&
                 variant.DynamicUiSecondaryIncludesDepth == includeDepthAttachment)
@@ -172,6 +176,7 @@ namespace XREngine.Rendering.Vulkan
                     dynamicUiBatchTextOps.GetHeader(0).PassIndex,
                     "a mutable secondary command buffer could not be allocated");
                 variant.DynamicUiSecondaryRecorded = false;
+                variant.DynamicUiRecordedFrameDataSlotIndex = uint.MaxValue;
                 return false;
             }
 
@@ -193,6 +198,7 @@ namespace XREngine.Rendering.Vulkan
                     dynamicUiBatchTextOps.GetHeader(0).PassIndex,
                     $"legacy swapchain inheritance unavailable renderPass=0x{inheritedRenderPass.Handle:X} framebuffer=0x{inheritedFramebuffer.Handle:X}");
                 variant.DynamicUiSecondaryRecorded = false;
+                variant.DynamicUiRecordedFrameDataSlotIndex = uint.MaxValue;
                 return false;
             }
 
@@ -271,7 +277,7 @@ namespace XREngine.Rendering.Vulkan
             if (!TryRegisterFrameWideMeshFrameDataRequirements(
                     default,
                     dynamicUiBatchTextOps,
-                    unchecked((int)Math.Min(imageIndex, int.MaxValue)),
+                    frameDataSlot,
                     sealAfterRegister: true,
                     meshDrawSlotsByRenderer,
                     recordingScratch,
@@ -323,13 +329,13 @@ namespace XREngine.Rendering.Vulkan
                     meshDrawSlotsByRendererFamily,
                     meshFrameDataFamilyBases,
                     drawOp.Draw.Renderer,
-                    unchecked((int)Math.Min(imageIndex, int.MaxValue)),
+                    frameDataSlot,
                     EVulkanMeshFrameDataStreamKind.DynamicUi,
                     drawContext,
                     drawOp.Draw);
                 using var pipelineScope = RuntimeEngine.Rendering.State.PushRenderingPipelineOverride(
                     drawContext.PipelineInstance);
-                int descriptorFrameIndex = imageIndex > int.MaxValue ? int.MaxValue : (int)imageIndex;
+                int descriptorFrameIndex = frameDataSlot;
                 if (!drawOp.Draw.Renderer.TryPrewarmFrameDataForRecording(
                         drawOp.Draw,
                         drawSlot,
@@ -375,6 +381,7 @@ namespace XREngine.Rendering.Vulkan
             {
                 frameDataManifest.End();
                 variant.DynamicUiSecondaryRecorded = false;
+                variant.DynamicUiRecordedFrameDataSlotIndex = uint.MaxValue;
                 Debug.VulkanWarningEvery(
                     $"Vulkan.DynamicUi.PipelinePrewarmPending.{GetHashCode()}",
                     TimeSpan.FromSeconds(1),
@@ -394,6 +401,7 @@ namespace XREngine.Rendering.Vulkan
             // Pipeline/materialization deferral must not reset the last executable secondary.
             // A cached primary may still reference it until that primary is safely re-recorded.
             variant.DynamicUiSecondaryRecorded = false;
+            variant.DynamicUiRecordedFrameDataSlotIndex = uint.MaxValue;
             Result resetResult = ResetVulkanCommandBufferTracked(secondaryCommandBuffer);
             if (resetResult != Result.Success)
                 throw new InvalidOperationException(
@@ -413,7 +421,7 @@ namespace XREngine.Rendering.Vulkan
                 ulong recGen = CommandBuffers.ResolveRecordingGeneration(secondaryCommandBuffer);
                 LaneRecordingContexts.BeginContext(
                     EVulkanAcceptedFrameLane.Ui,
-                    unchecked((int)Math.Min(imageIndex, int.MaxValue)),
+                    frameDataSlot,
                     secondaryCommandBuffer,
                     recGen);
                 if (inheritsDescriptorHeaps)
@@ -458,7 +466,7 @@ namespace XREngine.Rendering.Vulkan
                         meshDrawSlotsByRendererFamily,
                         meshFrameDataFamilyBases,
                         drawOp.Draw.Renderer,
-                        unchecked((int)Math.Min(imageIndex, int.MaxValue)),
+                        frameDataSlot,
                         EVulkanMeshFrameDataStreamKind.DynamicUi,
                         drawContext,
                         drawOp.Draw);
@@ -476,7 +484,7 @@ namespace XREngine.Rendering.Vulkan
                         drawContext.PipelineInstance?.DebugName ?? "<no pipeline>",
                         dynamicUiBatchTextOps.GetTarget(i)?.Name ?? "<swapchain>",
                         drawUniformSlot,
-                        unchecked((int)Math.Min(imageIndex, int.MaxValue)));
+                        frameDataSlot);
                     if (recordedDraw)
                     {
                         recordedDrawCount++;
@@ -537,11 +545,13 @@ namespace XREngine.Rendering.Vulkan
                 variant.DynamicUiOpCount = 0;
                 variant.DynamicUiSignature = 0;
                 variant.DynamicUiSecondaryRecorded = false;
+                variant.DynamicUiRecordedFrameDataSlotIndex = uint.MaxValue;
                 return false;
             }
 
             variant.DynamicUiOpCount = dynamicUiBatchTextOps.Length;
             variant.DynamicUiSignature = dynamicUiBatchTextSignature;
+            variant.DynamicUiRecordedFrameDataSlotIndex = frameDataSlotIndex;
             variant.DynamicUiSecondaryRecorded = true;
             variant.DynamicUiSecondaryIncludesDepth = includeDepthAttachment;
             RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanCommandChainMetrics(

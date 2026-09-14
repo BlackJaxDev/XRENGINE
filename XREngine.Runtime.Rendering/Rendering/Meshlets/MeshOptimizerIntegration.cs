@@ -291,7 +291,7 @@ public static class MeshOptimizerIntegration
             RuntimeCompatibilityToken = MeshletPayloadUtility.ComputeRuntimeCompatibilityToken(meshletSnapshot),
             SourceMeshIdentity = identity,
             SourceVertexCount = mesh.VertexCount,
-            SourceTriangleCount = (mesh.GetIndices(EPrimitiveType.Triangles)?.Length ?? 0) / 3,
+            SourceTriangleCount = mesh.Triangles?.Count ?? 0,
             SourceMeshHash = sourceHash,
             MeshletSettingsHash = meshletSettingsHash,
             LodSettingsHash = lodSettingsHash,

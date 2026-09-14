@@ -15,21 +15,26 @@ internal sealed partial class VulkanCommandRuntime
         {
             VulkanPrimaryCommandRecordingResult result = RecordPrimaryCore(in input);
             if (!result.Succeeded)
-                SettleFailedPrimaryRecordingMarkers(in input);
+                SettleFailedPrimaryRecording(in input);
             else if (result.Disposition == EVulkanPrimaryCommandRecordingDisposition.Recorded)
                 RegisterRecordedAdvancedVisibilityBanks(result.CommandBuffer, input.FramePlan);
             return result;
         }
         catch
         {
-            SettleFailedPrimaryRecordingMarkers(in input);
+            SettleFailedPrimaryRecording(in input);
             throw;
         }
     }
 
-    private void SettleFailedPrimaryRecordingMarkers(
+    private void SettleFailedPrimaryRecording(
         in VulkanPreparedPrimaryCommandInput input)
     {
+        // Admission reopened this slot after its last submitted use completed.
+        // Preparation may retain publications before a later recording step fails;
+        // those unsubmitted uses must not survive into another generation.
+        ResourceRuntime.ResidentTemplateFrameSlotLifetimes.ReleaseFrameSlot(
+            checked((int)input.FrameDataSlotIndex));
         SettleFailedAdvancedQueueOverlapMarkers(input.PrimaryCommandBuffer,
             input.CallerOwnsSubmissionMarkersUntilRecordingSucceeds);
         if (input.FramePlan.IsSealed)
@@ -150,7 +155,7 @@ internal sealed partial class VulkanCommandRuntime
                     input.ImageIndex,
                     input.FramePlan.Generation,
                     input.FramePlan.RenderFrameId,
-                    input.FrameDataImageIndexOverride ?? input.ImageIndex,
+                    input.FrameDataSlotIndex,
                     input.RecordingStaticOperationSignature,
                     frameOpContextFingerprint,
                     frameOpContextId,
@@ -159,7 +164,7 @@ internal sealed partial class VulkanCommandRuntime
                     input.ResourcePlanStamp.ResourcePlannerRevision,
                     imageLayoutStartSignature,
                     gpuPipelineProfilingActive,
-                    commandBufferImageSlot: checked((int)input.ImageIndex),
+                    commandBufferImageSlot: checked((int)input.TimingQuerySlotIndex),
                     operations,
                     sealedDynamicUiOperations,
                     sealedDynamicUiOperations,
@@ -199,6 +204,7 @@ internal sealed partial class VulkanCommandRuntime
         if (owner is not null && sealedDynamicUiOperations.Length > 0 &&
             !RecordDynamicUiBatchTextSecondaryCommandBuffer(
                 input.ImageIndex,
+                input.FrameDataSlotIndex,
                 owner,
                 sealedDynamicUiOperations,
                 input.FramePlan.DynamicOverlaySignature,
@@ -236,7 +242,8 @@ internal sealed partial class VulkanCommandRuntime
             input.Policy.PreserveSwapchainForOverlay,
             input.Policy.TransitionSwapchainToPresent,
             input.PrimaryCommandPlan,
-            input.FrameDataImageIndexOverride,
+            input.FrameDataSlotIndex,
+            input.TimingQuerySlotIndex,
             input.ReadOnlyStorageAuthority,
             input.OpenXrTargetContext,
             input.ExcludeDesktopSwapchainBarriers,
@@ -319,7 +326,7 @@ internal sealed partial class VulkanCommandRuntime
         FrameOperationSequence dynamicUiOperations)
         => TryPreparePrimaryReuseFrameDataCohort(
             input.ImageIndex,
-            input.FrameDataImageIndexOverride ?? input.ImageIndex,
+            input.FrameDataSlotIndex,
             input.FramePlan.Generation,
             input.FramePlan.RenderFrameId,
             input.CommandChainSchedule!,
@@ -449,6 +456,7 @@ internal sealed partial class VulkanCommandRuntime
         owner.FrameOpsSignature = input.RecordingStaticOperationSignature;
         owner.DynamicUiSignature = input.FramePlan.DynamicOverlaySignature;
         owner.DynamicUiOpCount = input.FramePlan.DynamicOverlayOperationCount;
+        owner.RecordedFrameDataSlotIndex = input.FrameDataSlotIndex;
         owner.PreserveSwapchainForOverlay = input.Policy.PreserveSwapchainForOverlay;
         owner.RecordedFrameOpContextFingerprint = contextHash.ToHash();
         owner.RecordedFrameOpContextId = operations.Length > 0
@@ -625,6 +633,13 @@ internal sealed partial class VulkanCommandRuntime
         in VulkanPreparedPrimaryCommandInput input,
         out string reason)
     {
+        if (input.ReadOnlyStorageAuthority is { } storageAuthority &&
+            (storageAuthority.FrameSlot != input.FrameDataSlotIndex || !storageAuthority.IsCurrent))
+        {
+            reason = "frame-plan precondition failed: frame-data slot and frozen storage authority do not share current ownership";
+            return false;
+        }
+
         bool allowsTargetlessExternalOperations =
             input.Policy.IsExternalSwapchainTarget &&
             input.ExcludeDesktopSwapchainBarriers &&

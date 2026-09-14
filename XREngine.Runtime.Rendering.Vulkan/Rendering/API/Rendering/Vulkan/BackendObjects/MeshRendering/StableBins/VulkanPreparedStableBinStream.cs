@@ -25,6 +25,9 @@ internal sealed class VulkanPreparedStableBinStream
     private readonly int[] _rangeIndexByPayloadScratch;
     private readonly VulkanTemplateResourceManifest[] _manifestTemplates;
     private readonly VulkanTemplateResourceManifest[] _visibilityAtlasManifests;
+    private readonly VulkanResidentDrawDependency[] _visibilityManifestResourceSlab;
+    private readonly VulkanTemplateNativeResourceUse[] _visibilityManifestNativeUseSlab;
+    private readonly VulkanBinResourceManifest[] _visibilityManifestViews;
     private readonly VulkanCpuIndirectParityArtifact _cpuIndirectParity;
     private readonly VulkanResidentDrawTemplate?[] _retainedTemplates;
     private readonly AdvancedVisibilityPayload[] _visibilityRasterPayloads;
@@ -57,9 +60,17 @@ internal sealed class VulkanPreparedStableBinStream
         _rangeIndexByPayloadScratch = new int[capacity];
         _manifestTemplates = new VulkanTemplateResourceManifest[capacity];
         _visibilityAtlasManifests = new VulkanTemplateResourceManifest[capacity];
+        _visibilityManifestResourceSlab = new VulkanResidentDrawDependency[checked(capacity * 3)];
+        _visibilityManifestNativeUseSlab = new VulkanTemplateNativeResourceUse[checked(capacity * 2)];
+        _visibilityManifestViews = new VulkanBinResourceManifest[capacity];
         for (int index = 0; index < capacity; ++index)
+        {
             _visibilityAtlasManifests[index] =
                 new VulkanTemplateResourceManifest(3, 3);
+            _visibilityManifestViews[index] = VulkanBinResourceManifest.CreateStreamOwned(
+                _visibilityManifestResourceSlab,
+                _visibilityManifestNativeUseSlab);
+        }
         _cpuIndirectParity = new VulkanCpuIndirectParityArtifact(capacity);
         _retainedTemplates = new VulkanResidentDrawTemplate?[capacity];
         _visibilityRasterPayloads = new AdvancedVisibilityPayload[capacity];
@@ -687,6 +698,8 @@ internal sealed class VulkanPreparedStableBinStream
     {
         ArgumentNullException.ThrowIfNull(source);
         if (source._recordCount > _records.Length ||
+            source._headerCount > _headers.Length ||
+            source._headerCount > _visibilityManifestViews.Length ||
             source._lateResourceUseCount > _lateResourceUses.Length ||
             source._deformationOverlayCount > _deformationOverlay.Length ||
             source._exceptions.Count > _exceptions.Capacity)
@@ -734,14 +747,37 @@ internal sealed class VulkanPreparedStableBinStream
         for (int headerIndex = 0; headerIndex < _headerCount; ++headerIndex)
         {
             VulkanPreparedStableBinHeader header = _headers[headerIndex];
+            VulkanBinResourceManifest manifest = header.ResourceManifest;
+            if (manifest.IsStreamOwned)
+            {
+                int recordCount = header.RecordCount;
+                if (recordCount < 0 || header.RecordOffset < 0 ||
+                    header.RecordOffset > _records.Length - recordCount ||
+                    !_visibilityManifestViews[headerIndex].TryCopyFrom(
+                        manifest,
+                        checked(header.RecordOffset * 3),
+                        checked(recordCount * 3),
+                        checked(header.RecordOffset * 2),
+                        checked(recordCount * 2),
+                        out _))
+                {
+                    throw new VulkanAcceptedFramePlanCapacityException(
+                        EVulkanAcceptedFrameLane.MainScene,
+                        _records.Length,
+                        source._recordCount);
+                }
+                manifest = _visibilityManifestViews[headerIndex];
+                header = header with { ResourceManifest = manifest };
+            }
             if (header.SubmissionPlan is not { } sourcePlan)
             {
                 _sealScratchPlanAssigned[headerIndex] = 0;
+                _headers[headerIndex] = header;
                 continue;
             }
             VulkanSealedBinSubmissionPlan destinationPlan =
                 _sealScratchPlans[headerIndex]!;
-            destinationPlan.CopyFrom(sourcePlan, _sealedExceptions);
+            destinationPlan.CopyFrom(sourcePlan, _sealedExceptions, manifest);
             _sealScratchPlanAssigned[headerIndex] = 1;
             _headers[headerIndex] = header with
             {
@@ -790,16 +826,40 @@ internal sealed class VulkanPreparedStableBinStream
             while (end < _recordCount && _records[end].Key == key)
                 ++end;
 
+            int templateCount = end - start;
+            bool canonicalVisibility = true;
+            for (int index = 0; index < templateCount; ++index)
+            {
+                VulkanPreparedStableBinRecord record = _records[start + index];
+                _manifestTemplates[index] = record.TemplateManifest;
+                canonicalVisibility &= !record.Template.IsValid;
+            }
+
             VulkanBinResourceManifest? manifest;
-            if (!cache.TryGet(topologyGeneration, key, out manifest))
+            if (canonicalVisibility)
+            {
+                if (_headerCount == _visibilityManifestViews.Length ||
+                    !_visibilityManifestViews[_headerCount].TryResetFromTemplates(
+                        _manifestTemplates.AsSpan(0, templateCount),
+                        checked(start * 3),
+                        checked(templateCount * 3),
+                        checked(start * 2),
+                        checked(templateCount * 2),
+                        out failure))
+                {
+                    if (failure == VulkanBinResourceManifestFailure.None)
+                        failure = VulkanBinResourceManifestFailure.CapacityExceeded;
+                    return false;
+                }
+                manifest = _visibilityManifestViews[_headerCount];
+            }
+            else if (!cache.TryGet(topologyGeneration, key, out manifest))
             {
                 int resourceCapacity = 0;
                 int nativeUseCapacity = 0;
-                int templateCount = end - start;
                 for (int index = 0; index < templateCount; ++index)
                 {
-                    VulkanTemplateResourceManifest template = _records[start + index].TemplateManifest;
-                    _manifestTemplates[index] = template;
+                    VulkanTemplateResourceManifest template = _manifestTemplates[index];
                     resourceCapacity = checked(resourceCapacity + template.Count);
                     nativeUseCapacity = checked(nativeUseCapacity + template.NativeUseCount);
                 }
@@ -814,7 +874,6 @@ internal sealed class VulkanPreparedStableBinStream
                 }
                 cache.Store(topologyGeneration, key, manifest!);
             }
-
             if (_headerCount == _headers.Length)
             {
                 failure = VulkanBinResourceManifestFailure.CapacityExceeded;

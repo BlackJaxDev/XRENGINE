@@ -135,11 +135,23 @@ internal sealed class FrameOperationPayloadStore
         PublishedFramebuffers = new PublishFramebufferPayload[generalCapacity];
         DlssUpscales = new DlssUpscalePayload[generalCapacity];
         DlssFrameGenerations = new DlssFrameGenerationPayload[generalCapacity];
-        AdvancedVisibilities = new VulkanAdvancedVisibilityOperationPayload[generalCapacity];
-        AdvancedVisibilityLateClosures =
-            CreateAdvancedVisibilityLateClosureStorage(generalCapacity);
-        AdvancedVisibilityNativeComputeClosures =
-            CreateAdvancedNativeComputeClosureStorage(generalCapacity);
+        // UI/upload lanes reserve no Advanced input rows or ranges. Their
+        // generic operation budget must not reserve large unused Advanced
+        // payloads and closure objects. Active scene lanes retain their full
+        // fixed budget, including when the current scene happens to be empty.
+        int advancedOperationCapacity =
+            advancedVisibilityDrawCapacity == 0 && advancedVisibilityRangeCapacity == 0
+                ? 0
+                : generalCapacity;
+        AdvancedVisibilities = advancedOperationCapacity == 0
+            ? Array.Empty<VulkanAdvancedVisibilityOperationPayload>()
+            : new VulkanAdvancedVisibilityOperationPayload[advancedOperationCapacity];
+        AdvancedVisibilityLateClosures = advancedOperationCapacity == 0
+            ? Array.Empty<VulkanAdvancedVisibilityLateClosureStorage>()
+            : CreateAdvancedVisibilityLateClosureStorage(advancedOperationCapacity);
+        AdvancedVisibilityNativeComputeClosures = advancedOperationCapacity == 0
+            ? Array.Empty<VulkanAdvancedNativeComputeClosureStorage>()
+            : CreateAdvancedNativeComputeClosureStorage(advancedOperationCapacity);
         _advancedVisibilityDrawCapacity = advancedVisibilityDrawCapacity;
         _advancedVisibilityRangeCapacity = advancedVisibilityRangeCapacity;
         AdvancedVisibilityInputs = new VulkanAdvancedVisibilityInputStorage?[VulkanAdvancedVisibilityOutputCapacity.Maximum];

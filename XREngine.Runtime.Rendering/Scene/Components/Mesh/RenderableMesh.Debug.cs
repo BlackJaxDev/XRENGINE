@@ -98,7 +98,7 @@ namespace XREngine.Components.Scene.Mesh
             {
                 _rc.MaterialOverride = Volatile.Read(ref _materialOverride);
                 _rc.RenderOptionsOverride = null;
-                _rc.ForceCpuRendering = false;
+                _rc.EditorHighlightBits = 0u;
 
                 // Enabling can race this common zero-bit path. Recheck after clearing:
                 // either the setter has already published the bit and we apply it below,
@@ -117,7 +117,7 @@ namespace XREngine.Components.Scene.Mesh
             {
                 _rc.MaterialOverride = Volatile.Read(ref _materialOverride);
                 _rc.RenderOptionsOverride = null;
-                _rc.ForceCpuRendering = false;
+                _rc.EditorHighlightBits = 0u;
                 return;
             }
 
@@ -130,7 +130,9 @@ namespace XREngine.Components.Scene.Mesh
             ConfigureHighlightStencil(_highlightRenderOptionsOverride, _highlightStencilBits);
             _rc.MaterialOverride = Volatile.Read(ref _materialOverride);
             _rc.RenderOptionsOverride = _highlightRenderOptionsOverride;
-            _rc.ForceCpuRendering = true;
+            // Highlighting changes editor metadata, not geometry ownership or
+            // GPU deformation eligibility. Legacy draws still use this stencil override.
+            _rc.EditorHighlightBits = unchecked((uint)_highlightStencilBits);
         }
 
         private static RenderingParameters CloneRenderingParameters(RenderingParameters source)

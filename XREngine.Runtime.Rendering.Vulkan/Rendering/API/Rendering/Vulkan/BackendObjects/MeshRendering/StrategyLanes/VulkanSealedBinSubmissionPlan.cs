@@ -64,12 +64,14 @@ internal sealed class VulkanSealedBinSubmissionPlan
 
     internal void CopyFrom(
         VulkanSealedBinSubmissionPlan source,
-        VulkanSealedBinExceptionSnapshot orderedExceptions)
+        VulkanSealedBinExceptionSnapshot orderedExceptions,
+        VulkanBinResourceManifest resourceManifest)
     {
         ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(resourceManifest);
         Reset(
             source.BinKey,
-            source.ResourceManifest,
+            resourceManifest,
             source.RequestedStrategy,
             source.ExecutionRequestedStrategy,
             source.ResolvedStrategy,

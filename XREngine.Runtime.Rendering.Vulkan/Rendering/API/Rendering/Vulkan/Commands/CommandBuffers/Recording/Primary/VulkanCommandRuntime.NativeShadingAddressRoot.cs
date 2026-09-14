@@ -33,7 +33,7 @@ internal sealed partial class VulkanCommandRuntime
     private ulong WriteNativeShadingAddressRoot(scoped ref PrimaryCommandBufferRecordingState state,
         in VulkanAdvancedNativeShadingRootBinding binding, in VulkanAdvancedNativeShadingPushConstants parameters)
     {
-        if (!binding.IsValid || binding.Slice.FrameSlot != checked((int)state.FrameDataImageIndex) ||
+        if (!binding.IsValid || binding.Slice.FrameSlot != checked((int)state.FrameDataSlotIndex) ||
             ResourceRuntime.FrameDataArena is not { IsActive: true } arena ||
             arena.GetFrameSlotResetEpoch(binding.Slice.FrameSlot) != binding.SlotResetEpoch ||
             GetResourceGeneration(ObjectType.Buffer, binding.Slice.Buffer.Handle) != binding.NativeBufferGeneration ||

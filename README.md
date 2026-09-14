@@ -92,7 +92,7 @@ Silk.NET operates as the main C# backend glue for supporting most typical render
 - Windows 10/11 with a Vulkan 1.4 or OpenGL 4.6 capable GPU
 - Git (submodules are used for third-party deps)
 - LunarG Vulkan SDK with `VULKAN_SDK` set, used to build the VMA native bridge
-- Visual Studio 2026 or Build Tools with Desktop development with C++, used for native bridge builds
+- Visual Studio 2022/2026 or Build Tools with Desktop development with C++ and the MSVC v143 x64/x86 build tools, used for native bridge builds
 
 You probably also want to have a VR headset to try out a VR game engine properly.
 
@@ -120,6 +120,12 @@ Or use the convenience script: `./Tools/Initialize-Submodules.bat`
 dotnet restore
 dotnet build XRENGINE.slnx
 ```
+
+The FastGltf and VMA native builds use `vswhere` to select the newest Visual Studio
+or standalone Build Tools installation containing both MSBuild and C++ tools.
+An installation containing only MSBuild is not sufficient. The native projects
+use the v143 toolset; keep that component installed even when using a newer IDE.
+VMA stages its DLL under `XREngine.Runtime.Rendering.Vulkan/runtimes/win-x64/native`.
 
 If you want the broadest one-command repo setup instead, run `ExecTool --bootstrap`.
 

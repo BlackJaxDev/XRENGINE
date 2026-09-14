@@ -1182,7 +1182,7 @@ namespace XREngine.Rendering.Commands
                     // Skip mesh commands that should go through GPU dispatch.
                     // Optionally allow opt-out meshes to keep rendering on CPU for diagnostics.
                     bool excludedFromGpuIndirect =
-                        !_renderingBackendReadyPackage.IsCanonicalGpuOwned(
+                        !_renderingBackendReadyPackage.IsTraditionalGpuOwned(
                             renderPass,
                             meshCmd.StableQueryKey);
                     if (!excludedFromGpuIndirect)
@@ -1838,7 +1838,7 @@ namespace XREngine.Rendering.Commands
                 if (cmd is IRenderCommandMesh meshCmd)
                 {
                     bool excludedFromGpuIndirect =
-                        !_renderingBackendReadyPackage.IsCanonicalGpuOwned(
+                        !_renderingBackendReadyPackage.IsTraditionalGpuOwned(
                             renderPass,
                             meshCmd.StableQueryKey);
                     if (!excludedFromGpuIndirect)
@@ -2249,7 +2249,8 @@ namespace XREngine.Rendering.Commands
                 AdvancedDrawSubmissionRecord submission = submissions[i];
                 if (submission.PassIndex == unchecked((uint)renderPass) &&
                     submission.CompatibilityReason == EAdvancedCanonicalCompatibilityReason.None &&
-                    (submission.Flags & (uint)GPUIndirectRenderFlags.CpuFallbackOnly) == 0u)
+                    (submission.Flags & (uint)(GPUIndirectRenderFlags.CpuFallbackOnly |
+                                               GPUIndirectRenderFlags.EditorHighlightMask)) == 0u)
                 {
                     return true;
                 }

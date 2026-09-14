@@ -112,7 +112,20 @@ public sealed partial class BackendReadyFramePackage
     /// </summary>
     public bool IsCanonicalGpuOwned(int renderPass, uint stableQueryKey)
         => TryGetCanonicalSubmission(renderPass, stableQueryKey, out AdvancedDrawSubmissionRecord submission) &&
-           submission.CompatibilityReason == EAdvancedCanonicalCompatibilityReason.None &&
+           IsCanonicalGpuOwned(in submission);
+
+    /// <summary>
+    /// Traditional GPU dispatch cannot write per-object highlight stencil state.
+    /// Its ordered draw path keeps that override; native Advanced visibility
+    /// consumes the same highlight bits from the canonical editor identity.
+    /// </summary>
+    public bool IsTraditionalGpuOwned(int renderPass, uint stableQueryKey)
+        => TryGetCanonicalSubmission(renderPass, stableQueryKey, out AdvancedDrawSubmissionRecord submission) &&
+           IsCanonicalGpuOwned(in submission) &&
+           (submission.Flags & (uint)GPUIndirectRenderFlags.EditorHighlightMask) == 0u;
+
+    private static bool IsCanonicalGpuOwned(in AdvancedDrawSubmissionRecord submission)
+        => submission.CompatibilityReason == EAdvancedCanonicalCompatibilityReason.None &&
            (submission.Flags & (uint)GPUIndirectRenderFlags.CpuFallbackOnly) == 0u;
 
     /// <summary>

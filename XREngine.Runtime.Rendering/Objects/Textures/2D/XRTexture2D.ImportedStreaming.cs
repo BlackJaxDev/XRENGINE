@@ -1,4 +1,5 @@
 using ImageMagick;
+using MemoryPack;
 using System.Diagnostics;
 using System.IO;
 using System.Threading;
@@ -52,6 +53,21 @@ public partial class XRTexture2D
             System.Diagnostics.Debug.Assert((epoch & 1L) == 0L, "Imported source metadata writes must complete on an even epoch.");
     }
 
+    private bool _allowAutomaticImportedTextureStreaming = true;
+
+    /// <summary>
+    /// Allows a retained image source path to opt this texture into imported streaming
+    /// when its material is used. Set before binding; this does not cancel existing work.
+    /// Specialized owners such as fonts disable this to preserve atlas dimensions and format.
+    /// Explicit streaming requests remain controlled by their callers.
+    /// </summary>
+    [MemoryPackIgnore]
+    internal bool AllowAutomaticImportedTextureStreaming
+    {
+        get => _allowAutomaticImportedTextureStreaming;
+        set => SetField(ref _allowAutomaticImportedTextureStreaming, value);
+    }
+
     internal const uint ImportedPreviewMaxDimensionInternal = 64;
     internal const double ImportedTextureTimingLogThresholdMilliseconds = 5.0;
 
@@ -71,11 +87,12 @@ public partial class XRTexture2D
     /// </summary>
     /// <returns>
     /// <see langword="true"/> when the texture was registered; otherwise
-    /// <see langword="false"/> when no rendering host or usable source path exists.
+    /// <see langword="false"/> when automatic streaming is disabled, or no rendering host or usable source path exists.
     /// </returns>
     public bool TryRestoreImportedTextureStreamingSource()
     {
-        if (!RuntimeRenderingHostServices.HasConcreteHost
+        if (!AllowAutomaticImportedTextureStreaming
+            || !RuntimeRenderingHostServices.HasConcreteHost
             || string.IsNullOrWhiteSpace(OriginalPath)
             || HasAssetExtension(OriginalPath))
         {

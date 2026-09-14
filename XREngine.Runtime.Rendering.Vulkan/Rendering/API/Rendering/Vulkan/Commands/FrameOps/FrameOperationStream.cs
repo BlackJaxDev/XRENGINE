@@ -15,6 +15,7 @@ internal sealed class FrameOperationStream
     // never release publication leases owned by that physical source stream.
     private readonly bool _ownsPayloads;
     private readonly bool _fixedCapacity;
+    private readonly FrameOperationStream? _logicalViewSource;
     private readonly EVulkanAcceptedFrameLane _lane;
     private FrameOperationHeader[] _headers;
     private FrameOperationHeader[] _headerOrderScratch;
@@ -56,38 +57,31 @@ internal sealed class FrameOperationStream
 
     /// <summary>
     /// Creates fixed frame-plan-owned header storage that shares this stream's
-    /// immutable payload columns. Logical OpenXR views only remap headers and
-    /// resource-use offsets, so duplicating payload columns would both waste
-    /// memory and permit them to diverge from the sealed source stream.
+    /// immutable payload, context, resource-use, and target columns. Logical
+    /// OpenXR views filter headers only, keeping every referenced index in the
+    /// sealed physical source namespace.
     /// </summary>
-    internal FrameOperationStream CreateLogicalViewStorage(
-        int operationCapacity,
-        int resourceUseCapacity)
+    internal FrameOperationStream CreateLogicalViewStorage(int operationCapacity)
     {
+        ThrowIfLogicalViewMutation();
         ArgumentOutOfRangeException.ThrowIfNegative(operationCapacity);
-        ArgumentOutOfRangeException.ThrowIfNegative(resourceUseCapacity);
-        return new FrameOperationStream(
-            _payloads,
-            operationCapacity,
-            resourceUseCapacity,
-            _lane);
+        return new FrameOperationStream(this, operationCapacity);
     }
 
     private FrameOperationStream(
-        FrameOperationPayloadStore payloads,
-        int operationCapacity,
-        int resourceUseCapacity,
-        EVulkanAcceptedFrameLane lane)
+        FrameOperationStream source,
+        int operationCapacity)
     {
-        _payloads = payloads;
+        _payloads = source._payloads;
         _ownsPayloads = false;
         _fixedCapacity = true;
-        _lane = lane;
+        _lane = source._lane;
+        _logicalViewSource = source;
         _headers = new FrameOperationHeader[operationCapacity];
-        _headerOrderScratch = new FrameOperationHeader[operationCapacity];
-        _contexts = new FrameOpContext[operationCapacity];
-        _resourceUses = new FrameOpResourceUse[resourceUseCapacity];
-        _targets = new XRFrameBuffer?[operationCapacity];
+        _headerOrderScratch = Array.Empty<FrameOperationHeader>();
+        _contexts = source._contexts;
+        _resourceUses = source._resourceUses;
+        _targets = source._targets;
     }
 
     /// <summary>
@@ -132,8 +126,11 @@ internal sealed class FrameOperationStream
         if (_count > 0)
         {
             Array.Clear(_headers, 0, _count);
-            Array.Clear(_contexts, 0, _count);
-            Array.Clear(_targets, 0, _count);
+            if (_logicalViewSource is null)
+            {
+                Array.Clear(_contexts, 0, _count);
+                Array.Clear(_targets, 0, _count);
+            }
         }
         _count = 0;
         _resourceUseCount = 0;
@@ -264,10 +261,14 @@ internal sealed class FrameOperationStream
     /// changes move numeric headers only; dense payload records are stable.
     /// </summary>
     internal void ProvisionAdvancedVisibilityFamily(int bankIndex)
-        => _payloads.ProvisionAdvancedVisibilityFamily(bankIndex);
+    {
+        ThrowIfLogicalViewMutation();
+        _payloads.ProvisionAdvancedVisibilityFamily(bankIndex);
+    }
 
     internal void Lower(FrameOperationIngress source)
     {
+        ThrowIfLogicalViewMutation();
         Reset();
         for (int index = 0; index < _payloads.AdvancedVisibilityInputs.Length; index++)
             Volatile.Read(ref _payloads.AdvancedVisibilityInputs[index])?.Reset();
@@ -337,6 +338,7 @@ internal sealed class FrameOperationStream
         VulkanPreparedMeshIngress ingress,
         bool dynamicUi)
     {
+        ThrowIfLogicalViewMutation();
         if (ingress.Count == 0)
             return;
 
@@ -398,6 +400,7 @@ internal sealed class FrameOperationStream
     /// <summary>Applies a compiled order to numeric headers without rebuilding payloads.</summary>
     internal void Reorder(ReadOnlySpan<int> order)
     {
+        ThrowIfLogicalViewMutation();
         if (order.Length != _count)
             throw new ArgumentException("The order must contain every operation exactly once.", nameof(order));
         EnsureHeaderOrderCapacity(_count);
@@ -419,6 +422,7 @@ internal sealed class FrameOperationStream
     /// </summary>
     internal void Retain(ReadOnlySpan<int> retainedIndices)
     {
+        ThrowIfLogicalViewMutation();
         if (retainedIndices.Length > _count)
             throw new ArgumentException("The retained operation count exceeds the stream.", nameof(retainedIndices));
         EnsureHeaderOrderCapacity(retainedIndices.Length);
@@ -452,48 +456,44 @@ internal sealed class FrameOperationStream
         if (logicalViewId == 0UL)
             throw new ArgumentOutOfRangeException(nameof(logicalViewId));
         ArgumentNullException.ThrowIfNull(destination);
+        if (ReferenceEquals(this, destination) ||
+            _logicalViewSource is not null ||
+            !ReferenceEquals(destination._logicalViewSource, this))
+        {
+            throw new InvalidOperationException(
+                "Logical-view slices can only be copied from their physical source into its dedicated view storage.");
+        }
         if (!ReferenceEquals(_payloads, destination._payloads))
             throw new InvalidOperationException("Logical-view storage must share the sealed stream payload store.");
+
+        // The physical stream can grow before publication. Rebind all shared
+        // immutable columns immediately before filtering headers so this view
+        // never retains an obsolete pre-growth array.
+        destination._contexts = _contexts;
+        destination._resourceUses = _resourceUses;
+        destination._targets = _targets;
+        destination.Reset();
 
         int matchCount = 0;
         for (int index = 0; index < _count; index++)
             if (GetContext(index).LogicalViewId == logicalViewId)
                 matchCount++;
 
-        int matchingResourceUseCount = 0;
-        for (int sourceIndex = 0; sourceIndex < _count; sourceIndex++)
-        {
-            ref readonly FrameOperationHeader header = ref _headers[sourceIndex];
-            if (_contexts[header.ContextIndex].LogicalViewId == logicalViewId)
-                matchingResourceUseCount += header.ResourceUseCount;
-        }
-        destination.Reset();
         destination.EnsureCapacity(matchCount);
-        destination.EnsureResourceUseCapacity(matchingResourceUseCount);
-        for (int sourceIndex = 0, destinationIndex = 0; sourceIndex < _count; sourceIndex++)
+        for (int sourceIndex = 0, destinationIndex = 0;
+             sourceIndex < _count;
+             sourceIndex++)
         {
             ref readonly FrameOperationHeader header = ref _headers[sourceIndex];
             if (_contexts[header.ContextIndex].LogicalViewId != logicalViewId)
                 continue;
 
-            int destinationResourceUseOffset = destination._resourceUseCount;
-            _resourceUses.AsSpan(
-                header.ResourceUseOffset,
-                header.ResourceUseCount).CopyTo(
-                    destination._resourceUses.AsSpan(
-                        destinationResourceUseOffset,
-                        header.ResourceUseCount));
-            destination._resourceUseCount += header.ResourceUseCount;
-            destination._headers[destinationIndex] = header with
-            {
-                ContextIndex = destinationIndex,
-                ResourceUseOffset = destinationResourceUseOffset,
-            };
-            destination._contexts[destinationIndex] = _contexts[header.ContextIndex];
-            destination._targets[destinationIndex] = _targets[header.ContextIndex];
-            destinationIndex++;
+            // Header indices remain in the physical source namespace, matching
+            // the shared context/resource/target columns without a data copy.
+            destination._headers[destinationIndex++] = header;
         }
         destination._count = matchCount;
+        destination._resourceUseCount = _resourceUseCount;
     }
 
     internal ref readonly FrameOperationHeader GetHeader(int index)
@@ -963,6 +963,13 @@ internal sealed class FrameOperationStream
             }
             default: throw new InvalidOperationException($"No payload writer exists for {kind}.");
         }
+    }
+
+    private void ThrowIfLogicalViewMutation()
+    {
+        if (_logicalViewSource is not null)
+            throw new InvalidOperationException(
+                "Logical OpenXR view storage only filters headers from its physical source.");
     }
 
     private void EnsureCapacity(int required)

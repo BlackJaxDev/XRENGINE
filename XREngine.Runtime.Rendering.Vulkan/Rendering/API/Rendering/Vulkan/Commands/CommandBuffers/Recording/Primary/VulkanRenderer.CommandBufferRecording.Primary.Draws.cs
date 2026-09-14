@@ -32,7 +32,7 @@ namespace XREngine.Rendering.Vulkan
                 recordingState.MeshDrawUniformSlotsByOpIndex,
                 recordingState.MeshDrawSlotsByRendererFamily,
                 recordingState.MeshFrameDataFamilyBases,
-                recordingState.CommandBufferImageSlot,
+                recordingState.FrameDataSlot,
                 renderer,
                 context,
                 draw);
@@ -61,12 +61,12 @@ namespace XREngine.Rendering.Vulkan
                     passIndex,
                     context,
                     uniformSlot,
-                    recordingState.CommandBufferImageSlot))
+                    recordingState.FrameDataSlot))
             {
                 return true;
             }
 
-            return draw.Renderer.RecordDraw(commandBuffer, draw, recordingState.RenderScope.RenderPass, recordingState.RenderScope.UsesDynamicRendering, recordingState.RenderScope.DynamicRenderingFormats, passIndex, context.PassMetadata, target, context, recordingState.RenderScope.DepthStencilReadOnly, context.PipelineInstance?.DebugName ?? "<no pipeline>", target?.Name ?? "<swapchain>", uniformSlot, recordingState.CommandBufferImageSlot);
+            return draw.Renderer.RecordDraw(commandBuffer, draw, recordingState.RenderScope.RenderPass, recordingState.RenderScope.UsesDynamicRendering, recordingState.RenderScope.DynamicRenderingFormats, passIndex, context.PassMetadata, target, context, recordingState.RenderScope.DepthStencilReadOnly, context.PipelineInstance?.DebugName ?? "<no pipeline>", target?.Name ?? "<swapchain>", uniformSlot, recordingState.FrameDataSlot);
         }
 
         internal bool RecordIndirectDrawPayloadIntoCommandBuffer(
@@ -92,7 +92,7 @@ namespace XREngine.Rendering.Vulkan
             {
                 return false;
             }
-            if (!payload.MeshRenderer.RecordIndirectDrawState(commandBuffer, draw, recordingState.RenderScope.RenderPass, recordingState.RenderScope.UsesDynamicRendering, recordingState.RenderScope.DynamicRenderingFormats, passIndex, context.PassMetadata, recordingState.RenderScope.DepthStencilReadOnly, context.PipelineInstance?.DebugName ?? "<no pipeline>", target?.Name ?? "<swapchain>", GetMeshDrawUniformSlot(ref recordingState, opIndex, payload.MeshRenderer, context, draw), recordingState.CommandBufferImageSlot, out _)) return false;
+            if (!payload.MeshRenderer.RecordIndirectDrawState(commandBuffer, draw, recordingState.RenderScope.RenderPass, recordingState.RenderScope.UsesDynamicRendering, recordingState.RenderScope.DynamicRenderingFormats, passIndex, context.PassMetadata, recordingState.RenderScope.DepthStencilReadOnly, context.PipelineInstance?.DebugName ?? "<no pipeline>", target?.Name ?? "<swapchain>", GetMeshDrawUniformSlot(ref recordingState, opIndex, payload.MeshRenderer, context, draw), recordingState.FrameDataSlot, out _)) return false;
             RecordIndirectDrawPayload(commandBuffer, in payload, allowInlineBarrier: false);
             return true;
         }
@@ -190,7 +190,7 @@ namespace XREngine.Rendering.Vulkan
                     passIndex,
                     drawOp.Context,
                     drawUniformSlot,
-                    recordingState.CommandBufferImageSlot))
+                    recordingState.FrameDataSlot))
             {
                 return true;
             }
@@ -209,7 +209,7 @@ namespace XREngine.Rendering.Vulkan
                 drawOp.Context.PipelineInstance?.DebugName ?? "<no pipeline>",
                 drawOp.Target?.Name ?? "<swapchain>",
                 drawUniformSlot,
-                recordingState.CommandBufferImageSlot);
+                recordingState.FrameDataSlot);
 
             if (DeferredLightingDiagnostics.Enabled &&
                 (string.Equals(drawTargetName, DefaultRenderPipeline.DeferredGBufferFBOName, StringComparison.Ordinal) ||
@@ -275,7 +275,7 @@ namespace XREngine.Rendering.Vulkan
                         indirectOp.MeshRenderer,
                         indirectOp.Context,
                         indirectOp.Draw),
-                    recordingState.CommandBufferImageSlot,
+                    recordingState.FrameDataSlot,
                     out _))
                 return;
 

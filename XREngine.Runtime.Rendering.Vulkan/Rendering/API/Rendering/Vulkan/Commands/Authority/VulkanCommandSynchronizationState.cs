@@ -19,8 +19,8 @@ internal sealed unsafe class VulkanCommandSynchronizationState
     internal ulong[]? _frameSlotTimelineValues;
     /// <summary>
     /// Non-owning view of the desktop swapchain-image completion ledger. Desktop
-    /// descriptor frame-data slots are keyed by acquired image, not by the
-    /// frame-in-flight slot that happened to acquire it.
+    /// image artifacts and timing queries use this ledger; descriptor and mapped
+    /// frame-data storage instead use the logical frame-slot completion ledger.
     /// </summary>
     internal ulong[]? _desktopImageTimelineValues;
     internal ulong _acquireTimelineValue;

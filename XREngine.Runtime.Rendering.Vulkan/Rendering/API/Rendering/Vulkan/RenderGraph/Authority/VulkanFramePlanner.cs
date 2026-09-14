@@ -22,8 +22,11 @@ internal sealed partial class VulkanFramePlanner
     internal static ConcurrentDictionary<IReadOnlyCollection<RenderPassMetadata>, RenderPassMetadataSignatureCacheEntry>
         PassMetadataSignatureCache { get; } = new(ReferenceEqualityComparer.Instance);
 
-    public VulkanFramePlanner()
-        => ResourcePublications = new VulkanResourcePlannerPublicationReader(this);
+    public VulkanFramePlanner(int frameSlotCount)
+    {
+        FramePlanBuilder = new FramePlanBuilder(frameSlotCount);
+        ResourcePublications = new VulkanResourcePlannerPublicationReader(this);
+    }
 
     public VulkanInteractiveResizePlannerExtentCache InteractiveResizeExtentCache { get; } =
         new(MaxInteractiveResizeExtentSnapshots);
@@ -40,7 +43,7 @@ internal sealed partial class VulkanFramePlanner
     public object PlannerReadbackGate { get; } = new();
     public VulkanRenderGraphCompiler Compiler { get; } = new();
     public VulkanFrameOperationQueue Operations { get; } = new();
-    public FramePlanBuilder FramePlanBuilder { get; } = new();
+    public FramePlanBuilder FramePlanBuilder { get; }
     public VulkanFrameOperationScheduler FrameScheduler => FramePlanBuilder.FrameScheduler;
     public VulkanFramePlannerMutableState<
         VulkanFrameOpPlannerStateKey,

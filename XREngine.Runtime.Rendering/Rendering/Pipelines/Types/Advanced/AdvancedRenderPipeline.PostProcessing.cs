@@ -1903,7 +1903,7 @@ public partial class AdvancedRenderPipeline
     /// </summary>
     private void BindCurrentPostProcessTextures(XRMaterial material, XRRenderProgram materialProgram)
     {
-        int expectedTextureCount = Stereo ? 5 : 7;
+        int expectedTextureCount = Stereo ? 6 : 8;
         if (material.Textures.Count != expectedTextureCount)
         {
             throw new InvalidOperationException(
@@ -1920,18 +1920,25 @@ public partial class AdvancedRenderPipeline
             BindCurrentPostProcessTexture(material, materialProgram, AtmosphereColorTextureName, 5);
             BindCurrentPostProcessTexture(material, materialProgram, VolumetricFogColorTextureName, 6);
         }
+        BindCurrentPostProcessTexture(
+            material,
+            materialProgram,
+            AdvancedVisibilityResourceNames.Metadata,
+            Stereo ? 5 : 7,
+            "AdvancedVisibilityMetadata");
     }
 
     private void BindCurrentPostProcessTexture(
         XRMaterial material,
         XRRenderProgram materialProgram,
         string resourceName,
-        int slot)
+        int slot,
+        string? samplerName = null)
     {
         XRTexture texture = RequirePostProcessTexture(resourceName);
         if (!ReferenceEquals(material.Textures[slot], texture))
             material.Textures[slot] = texture;
-        materialProgram.Sampler(resourceName, texture, slot);
+        materialProgram.Sampler(samplerName ?? resourceName, texture, slot);
     }
 
     private void ApplyFinalPostProcessProgramBindings(XRRenderProgram materialProgram)

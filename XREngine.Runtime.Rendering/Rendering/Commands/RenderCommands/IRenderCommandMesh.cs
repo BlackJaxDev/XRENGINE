@@ -17,5 +17,7 @@ namespace XREngine.Rendering.Commands
         XRMaterial? MaterialOverride { get; set; }
         RenderingParameters? RenderOptionsOverride { get; set; }
         bool ForceCpuRendering { get; set; }
+        /// <summary>Editor hover (bit 0) and selection (bit 1), independent of mesh submission strategy.</summary>
+        uint EditorHighlightBits { get; }
     }
 }

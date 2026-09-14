@@ -633,7 +633,8 @@ uint XR_ADV_PackVisibilityMetadata(
     bool frontFace,
     bool velocityValid,
     uint viewIndex,
-    bool selectionValid)
+    bool selectionValid,
+    uint editorFlags)
 {
     return (producer & XR_ADV_VIS_PRODUCER_MASK) |
         ((origin & 1u) << XR_ADV_VIS_ORIGIN_SHIFT) |
@@ -645,7 +646,8 @@ uint XR_ADV_PackVisibilityMetadata(
         (XR_ADV_VISIBILITY_PAYLOAD_VERSION <<
             XR_ADV_VIS_VERSION_SHIFT) |
         ((selectionValid ? 1u : 0u) <<
-            XR_ADV_VIS_SELECTION_VALID_SHIFT);
+            XR_ADV_VIS_SELECTION_VALID_SHIFT) |
+        ((editorFlags & 3u) << 25u);
 }
 
 #endif

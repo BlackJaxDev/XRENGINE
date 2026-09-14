@@ -57,8 +57,14 @@ internal sealed class VulkanPreparedFrameRecording
         new AdvancedGpuScenePublicationReference[VulkanMeshOperationRequestQueue.Capacity];
     private readonly AdvancedGpuScenePublicationLease[] _canonicalPublicationLeases =
         new AdvancedGpuScenePublicationLease[VulkanMeshOperationRequestQueue.Capacity];
+    // Raw leases retain the mesh-request budget even when native preparation
+    // fails. Only successful realizations consume the smaller native pool;
+    // index zero is the permanently empty receipt for an unmapped raw row.
     private readonly VulkanAdvancedScenePublicationUse[] _canonicalPublicationNativeUses =
-        new VulkanAdvancedScenePublicationUse[VulkanMeshOperationRequestQueue.Capacity];
+        new VulkanAdvancedScenePublicationUse[VulkanAdvancedSceneResourceRuntime.PublicationCapacityPerFrameSlot + 1];
+    private readonly int[] _canonicalPublicationNativeUseIndices =
+        new int[VulkanMeshOperationRequestQueue.Capacity];
+    private int _canonicalPublicationNativeUseCount;
     private readonly EVulkanAdvancedSceneResourceFailure[] _canonicalPublicationNativeFailures =
         new EVulkanAdvancedSceneResourceFailure[VulkanMeshOperationRequestQueue.Capacity];
     private readonly string?[] _canonicalPublicationNativeFailureReasons =
@@ -698,13 +704,21 @@ internal sealed class VulkanPreparedFrameRecording
                         ? "Ready"
                         : "advanced-scene native realization failed");
                 VulkanAdvancedScenePublicationUse cachedUse =
-                    _canonicalPublicationNativeUses[index];
+                    _canonicalPublicationNativeUses[_canonicalPublicationNativeUseIndices[index]];
                 state = cachedUse.PublicationState;
                 return cachedUse.IsValid;
             }
 
             _canonicalPublicationNativeAttempts[index] = 1;
             newlyAttempted = true;
+            if (_canonicalPublicationNativeUseCount == _canonicalPublicationNativeUses.Length - 1)
+            {
+                failure = EVulkanAdvancedSceneResourceFailure.ReceiptCapacity;
+                reason = "The prepared frame exhausted its native publication receipt pool.";
+                _canonicalPublicationNativeFailures[index] = failure;
+                _canonicalPublicationNativeFailureReasons[index] = reason;
+                return false;
+            }
             BackendReadyCanonicalFrameRecord canonicalFrame =
                 GlobalResources.Frame;
             if (!runtime.TryPreparePublication(
@@ -726,7 +740,9 @@ internal sealed class VulkanPreparedFrameRecording
                 return false;
             }
 
-            _canonicalPublicationNativeUses[index] = use;
+            int nativeUseIndex = ++_canonicalPublicationNativeUseCount;
+            _canonicalPublicationNativeUses[nativeUseIndex] = use;
+            _canonicalPublicationNativeUseIndices[index] = nativeUseIndex;
             state = use.PublicationState;
             _canonicalPublicationNativeFailures[index] =
                 EVulkanAdvancedSceneResourceFailure.None;
@@ -793,7 +809,8 @@ internal sealed class VulkanPreparedFrameRecording
                 FrameSlot,
                 _canonicalPublicationDatabases,
                 _canonicalPublicationReferences,
-                _canonicalPublicationNativeUses,
+                _canonicalPublicationNativeUses.AsSpan(0, _canonicalPublicationNativeUseCount + 1),
+                _canonicalPublicationNativeUseIndices,
                 _canonicalPublicationLeaseCount,
                 _residentTemplateUses,
                 _residentTemplateUseCount))
@@ -813,18 +830,20 @@ internal sealed class VulkanPreparedFrameRecording
                     database,
                     _canonicalPublicationReferences[index],
                     ref _canonicalPublicationLeases[index],
-                    ref _canonicalPublicationNativeUses[index]))
+                    ref _canonicalPublicationNativeUses[_canonicalPublicationNativeUseIndices[index]]))
             {
                 throw new InvalidOperationException(
                     "A preflighted canonical publication lifetime transfer failed during commit.");
             }
             _canonicalPublicationDatabases[index] = null;
             _canonicalPublicationReferences[index] = default;
+            _canonicalPublicationNativeUseIndices[index] = 0;
             _canonicalPublicationNativeAttempts[index] = 0;
             _canonicalPublicationNativeFailures[index] = default;
             _canonicalPublicationNativeFailureReasons[index] = null;
         }
         _canonicalPublicationLeaseCount = 0;
+        _canonicalPublicationNativeUseCount = 0;
         _globalViewCount = _globalPassCount = _globalPassCoverageCount =
             _globalDiagnosticCount = 0;
         GlobalResources = default;
@@ -857,17 +876,20 @@ internal sealed class VulkanPreparedFrameRecording
 
         for (int index = 0; index < _canonicalPublicationLeaseCount; ++index)
         {
-            _canonicalPublicationNativeUses[index].Dispose();
-            _canonicalPublicationNativeUses[index] = default;
+            int nativeUseIndex = _canonicalPublicationNativeUseIndices[index];
+            _canonicalPublicationNativeUses[nativeUseIndex].Dispose();
+            _canonicalPublicationNativeUses[nativeUseIndex] = default;
             _canonicalPublicationLeases[index].Dispose();
             _canonicalPublicationLeases[index] = default;
             _canonicalPublicationDatabases[index] = null;
             _canonicalPublicationReferences[index] = default;
+            _canonicalPublicationNativeUseIndices[index] = 0;
             _canonicalPublicationNativeAttempts[index] = 0;
             _canonicalPublicationNativeFailures[index] = default;
             _canonicalPublicationNativeFailureReasons[index] = null;
         }
         _canonicalPublicationLeaseCount = 0;
+        _canonicalPublicationNativeUseCount = 0;
         _globalViewCount = _globalPassCount = _globalPassCoverageCount =
             _globalDiagnosticCount = 0;
         GlobalResources = default;

@@ -333,7 +333,7 @@ namespace XREngine.Rendering.Vulkan
                     XRFrameBuffer? target = recordingState.Ops.GetTarget(opIndex);
                     using var pipelineScope = RuntimeEngine.Rendering.State.PushRenderingPipelineOverride(context.PipelineInstance);
                     if (!indirect.MeshRenderer.TryPrepareIndirectDrawRecordingState(
-                            recordingState.FrameDataImageIndex,
+                            recordingState.FrameDataSlotIndex,
                             indirect.Draw,
                             inheritedRenderPass,
                             inheritedDynamicRendering,
@@ -371,13 +371,13 @@ namespace XREngine.Rendering.Vulkan
                         recordingState.CommandBuffer,
                         indirect.Draw,
                         uniformSlots[i],
-                        recordingState.CommandBufferImageSlot,
+                        recordingState.FrameDataSlot,
                         target,
                         recordingState.Ops.GetHeader(opIndex).PassIndex,
                         context.PassMetadata);
                 }
 
-                Dictionary<CommandChainKey, CommandChain> commandChainCache = GetCommandChainCache(recordingState.FrameDataImageIndex);
+                Dictionary<CommandChainKey, CommandChain> commandChainCache = GetCommandChainCache(recordingState.ImageIndex);
                 for (int i = 0; i < runCount; i++)
                 {
                     int opIndex = startIndex + i;
@@ -390,7 +390,7 @@ namespace XREngine.Rendering.Vulkan
                     // command/count topology can retain the secondary artifact.
                     int primaryOwnedChainOrdinal = int.MinValue + startIndex + i;
                     CommandChainKey chainKey = new(
-                        recordingState.CommandBufferImageSlot,
+                        recordingState.FrameDataSlot,
                         BuildRenderViewKey(in indirectDraw, passIndex, in context, dynamicOverlay: false),
                         passIndex,
                         ResolveCommandChainTargetIdentity(recordingState.Ops.GetTarget(opIndex), in context),
@@ -398,7 +398,7 @@ namespace XREngine.Rendering.Vulkan
                         false,
                         primaryOwnedChainOrdinal);
                     CommandChain chain = GetOrCreateCommandChain(commandChainCache, chainKey);
-                    if (!TryEnsureMutableCommandChainSecondaryCommandBuffer(chain, recordingState.FrameDataImageIndex, recordingState.ExecutedCommandChainSecondaryHandles, out CommandBuffer secondary))
+                    if (!TryEnsureMutableCommandChainSecondaryCommandBuffer(chain, recordingState.ImageIndex, recordingState.ExecutedCommandChainSecondaryHandles, out CommandBuffer secondary))
                     {
                         RuntimeEngine.Rendering.Stats.Vulkan.
                             RecordVulkanIndirectSecondaryEligibility(
@@ -864,7 +864,7 @@ namespace XREngine.Rendering.Vulkan
                 batch.EnsureCapacity(runCount, runCount);
                 FramePlan? framePlan = recordingState.FramePlan;
                 batch.PreparedFrame.Begin(
-                    recordingState.CommandBufferImageSlot,
+                    recordingState.FrameDataSlot,
                     VulkanFrameCounter,
                     framePlan?.FrameSlot);
                 if (framePlan is not null)
@@ -1082,7 +1082,7 @@ namespace XREngine.Rendering.Vulkan
                                 SnapshotDescriptorSetContentUpdateGeneration();
                             bool refreshedFrameData =
                                 refreshDraw.Draw.Renderer.TryRefreshReusableCommandBufferFrameData(
-                                    recordingState.FrameDataImageIndex,
+                                    recordingState.FrameDataSlotIndex,
                                     refreshDraw.Draw,
                                     refreshUniformSlot,
                                     out string refreshReason,
@@ -1103,7 +1103,7 @@ namespace XREngine.Rendering.Vulkan
                                         $"Vulkan.FrameDataReuse.ScheduledChain.{GetHashCode()}",
                                         TimeSpan.FromSeconds(1),
                                         "[Vulkan] Scheduled command-chain frame-data refresh failed image={0} op={1}/{2} mesh='{3}' drawSlot={4}: {5}",
-                                        recordingState.FrameDataImageIndex,
+                                        recordingState.FrameDataSlotIndex,
                                         refreshOpIndex,
                                         recordingState.Ops.Length,
                                         refreshDraw.Draw.Renderer.MeshRenderer.Mesh?.Name ?? "<unnamed mesh>",
@@ -1412,7 +1412,7 @@ namespace XREngine.Rendering.Vulkan
                     workerEligibleOperationCount,
                     true,
                     forceSerial: false,
-                    recordingState.FrameDataImageIndex,
+                    recordingState.FrameDataSlotIndex,
                     out int workerCount,
                     out int workerFrameSlot);
                 bool useWorkers =
@@ -1459,7 +1459,7 @@ namespace XREngine.Rendering.Vulkan
                     bool allocated =
                         TryEnsureMutableCommandChainSecondaryCommandBufferFromWorkerPool(
                             chain,
-                            recordingState.FrameDataImageIndex,
+                            recordingState.ImageIndex,
                             laneArena,
                             recordingState.ExecutedCommandChainSecondaryHandles,
                             out CommandBuffer secondary);
@@ -2100,7 +2100,7 @@ namespace XREngine.Rendering.Vulkan
                             context.PipelineInstance);
                     if (!draw.Draw.Renderer.TryPrepareMeshDrawRecordingState(
                             batch.PreparedFrame,
-                            recordingState.CommandBufferImageSlot,
+                            recordingState.FrameDataSlot,
                             draw.Draw,
                             inheritedRenderPass,
                             inheritedDynamicRendering,
@@ -2218,14 +2218,14 @@ namespace XREngine.Rendering.Vulkan
             // cannot invalidate another variant that still references its old secondary.
             int primaryOwnedChainOrdinal = HashCode.Combine(startIndex, recordingState.CommandBuffer.Handle);
             CommandChainKey chainKey = new(
-                recordingState.CommandBufferImageSlot,
+                recordingState.FrameDataSlot,
                 BuildRenderViewKey(in firstPendingDraw, passIndex, in firstContext, dynamicOverlay: false),
                 passIndex,
                 ResolveCommandChainTargetIdentity(firstTarget, in firstContext),
                 0UL,
                 false,
                 primaryOwnedChainOrdinal);
-            CommandChain chain = GetOrCreateCommandChain(GetCommandChainCache(recordingState.FrameDataImageIndex), chainKey);
+            CommandChain chain = GetOrCreateCommandChain(GetCommandChainCache(recordingState.ImageIndex), chainKey);
             CommandBuffer secondary = chain.SecondaryCommandBuffer;
             bool executedInPrimary = false;
             bool meshLabelActive = false;
@@ -2248,7 +2248,7 @@ namespace XREngine.Rendering.Vulkan
                     secondary = default;
                 }
 
-                if (!TryEnsureMutableCommandChainSecondaryCommandBuffer(chain, recordingState.FrameDataImageIndex, recordingState.ExecutedCommandChainSecondaryHandles, out secondary))
+                if (!TryEnsureMutableCommandChainSecondaryCommandBuffer(chain, recordingState.ImageIndex, recordingState.ExecutedCommandChainSecondaryHandles, out secondary))
                     return false;
 
                 recordingState.RecordingScratch.EnsureMeshSecondaryCapacity(runCount);
@@ -2272,7 +2272,7 @@ namespace XREngine.Rendering.Vulkan
                         recordingState.CommandBuffer,
                         draw.Draw,
                         drawUniformSlot,
-                        recordingState.CommandBufferImageSlot,
+                        recordingState.FrameDataSlot,
                         target,
                         recordingState.Ops.GetHeader(opIndex).PassIndex,
                         context.PassMetadata);

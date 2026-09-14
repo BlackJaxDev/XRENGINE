@@ -33,20 +33,6 @@ public static partial class EditorImGuiUI
 
         private static readonly Dictionary<Type, CachedStructEditableProperty[]> _structEditablePropertyCache = new();
 
-        public sealed class InspectorTargetSet
-        {
-            public InspectorTargetSet(IReadOnlyList<object> targets, Type commonType)
-            {
-                Targets = targets;
-                CommonType = commonType;
-            }
-
-            public IReadOnlyList<object> Targets { get; }
-            public Type CommonType { get; }
-            public object PrimaryTarget => Targets[0];
-            public bool HasMultipleTargets => Targets.Count > 1;
-        }
-
         private static InspectorTargetSet CreateInspectorTargetSet(IEnumerable<object> targets)
         {
             var targetList = new List<object>();
@@ -141,6 +127,8 @@ public static partial class EditorImGuiUI
             if (bits == 0)
                 return "None";
 
+            if (_inspectorFlagPreviewCache.TryGetValue((enumType, bits), out string? preview))
+                return preview;
             var names = new List<string>();
             for (int i = 0; i < values.Length; i++)
             {
@@ -171,10 +159,11 @@ public static partial class EditorImGuiUI
             // Avoid overly long preview strings.
             const int maxPreviewChars = 64;
             string joined = string.Join(", ", names);
-            if (joined.Length <= maxPreviewChars)
-                return joined;
-
-            return $"{names.Count} flags";
+            preview = joined.Length <= maxPreviewChars ? joined : $"{names.Count} flags";
+            if (_inspectorFlagPreviewCache.Count >= 256)
+                _inspectorFlagPreviewCache.Clear();
+            _inspectorFlagPreviewCache[(enumType, bits)] = preview;
+            return preview;
         }
 
         // Property Type Picker state
@@ -342,115 +331,12 @@ public static partial class EditorImGuiUI
             bool hasSearch = !string.IsNullOrWhiteSpace(search);
             CachedInspectorTypeLayout layout = GetCachedInspectorTypeLayout(type);
 
-            var propertyInfos = new List<SettingPropertyDescriptor>(layout.Properties.Count);
-            for (int i = 0; i < layout.Properties.Count; i++)
-            {
-                CachedInspectorProperty cached = layout.Properties[i];
-                if (!IsEditorBrowsable(cached.EditorBrowsableCondition, targets.Targets))
-                    continue;
-
-                propertyInfos.Add(new SettingPropertyDescriptor
-                {
-                    Property = cached.Property,
-                    IsSimple = cached.IsSimple,
-                    Category = cached.Category,
-                    DisplayName = cached.DisplayName,
-                    Description = cached.Description,
-                    IsOverrideable = cached.IsOverrideable,
-                });
-            }
-
-            var fieldInfos = new List<SettingFieldDescriptor>(layout.Fields.Count);
-            for (int i = 0; i < layout.Fields.Count; i++)
-            {
-                CachedInspectorField cached = layout.Fields[i];
-                if (!IsEditorBrowsable(cached.EditorBrowsableCondition, targets.Targets))
-                    continue;
-
-                fieldInfos.Add(new SettingFieldDescriptor
-                {
-                    Field = cached.Field,
-                    IsSimple = cached.IsSimple,
-                    Category = cached.Category,
-                    DisplayName = cached.DisplayName,
-                    Description = cached.Description,
-                    CanWrite = cached.CanWrite,
-                });
-            }
-
-            // Pair overrideable settings with their base property (e.g., VSync + VSyncOverride)
-            if (propertyInfos.Count > 0)
-            {
-                // Use a plain dictionary to handle duplicate property names (e.g., `new` hiding in derived types).
-                var propertyMap = new Dictionary<string, SettingPropertyDescriptor>(propertyInfos.Count, StringComparer.Ordinal);
-                foreach (var info in propertyInfos)
-                    propertyMap.TryAdd(info.Property.Name, info);
-
-                foreach (SettingPropertyDescriptor info in propertyInfos)
-                {
-                    if (!info.IsOverrideable)
-                        continue;
-
-                    string propertyName = info.Property.Name;
-                    const string overrideSuffix = "Override";
-                    if (!propertyName.EndsWith(overrideSuffix, StringComparison.Ordinal))
-                        continue;
-
-                    string baseName = propertyName[..^overrideSuffix.Length];
-                    if (!propertyMap.TryGetValue(baseName, out var baseInfo))
-                        continue;
-
-                    info.PairedBaseProperty = baseInfo.Property;
-                    if (string.IsNullOrWhiteSpace(info.Description))
-                        info.Description = baseInfo.Description;
-
-                    // Hide the base property row; its editing is integrated into the override row.
-                    baseInfo.Hidden = true;
-
-                    // Prefer the base property's display name for the combined row to reduce duplication.
-                    info.DisplayName = baseInfo.DisplayName;
-                }
-            }
-
-            int rowCapacity = propertyInfos.Count + fieldInfos.Count;
-            if (rowCapacity == 0)
-            {
-                ImGui.TextDisabled("No properties or fields found.");
-                return;
-            }
-
-            var orderedRows = new List<InspectorMemberRow>(rowCapacity);
-            for (int i = 0; i < propertyInfos.Count; i++)
-            {
-                var row = new InspectorMemberRow(propertyInfos[i]);
-                if (row.Hidden)
-                    continue;
-
-                if (hasSearch && !MatchesInspectorSearch(row, search))
-                    continue;
-
-                orderedRows.Add(row);
-            }
-
-            for (int i = 0; i < fieldInfos.Count; i++)
-            {
-                var row = new InspectorMemberRow(fieldInfos[i]);
-                if (row.Hidden)
-                    continue;
-
-                if (hasSearch && !MatchesInspectorSearch(row, search))
-                    continue;
-
-                orderedRows.Add(row);
-            }
-
+            List<InspectorMemberRow> orderedRows = GetVisibleInspectorRows(layout, targets, search);
             if (orderedRows.Count == 0)
             {
                 ImGui.TextDisabled(hasSearch ? "No properties match the current search." : "No properties found.");
                 return;
             }
-
-            orderedRows.Sort(CompareInspectorRows);
 
             int categoryCount = 0;
             string? previousCategory = null;
@@ -491,9 +377,10 @@ public static partial class EditorImGuiUI
                         if (renderedCategoryHeader)
                             ImGui.Separator();
 
-                        string categoryLabel = string.IsNullOrWhiteSpace(row.Category) ? "General" : row.Category;
-                        ImGui.SetNextItemOpen(hasSearch, hasSearch ? ImGuiCond.Always : ImGuiCond.Once);
-                        activeCategoryOpen = ImGui.CollapsingHeader($"{categoryLabel}##InspectorCategory_{row.Category}", ImGuiTreeNodeFlags.SpanAvailWidth);
+                        var searchState = PrepareInspectorCategorySearch(primary, row.Category, hasSearch);
+                        activeCategoryOpen = ImGui.CollapsingHeader(row.CategoryHeader, ImGuiTreeNodeFlags.SpanAvailWidth);
+                        if (!hasSearch)
+                            searchState.LastOpen = activeCategoryOpen;
                         renderedCategoryHeader = true;
                     }
                 }
@@ -505,25 +392,24 @@ public static partial class EditorImGuiUI
                 {
                     if (!simpleTableOpen)
                     {
-                        string tableId = $"Properties_{primary.GetHashCode():X8}_{row.Category?.GetHashCode() ?? 0:X8}";
-                        if (!ImGui.BeginTable(tableId, 2, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.RowBg))
+                        if (!ImGui.BeginTable(row.TableId, 2, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.Resizable | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.NoBordersInBodyUntilResize))
                             continue;
 
-                        ImGui.TableSetupColumn("Property", ImGuiTableColumnFlags.WidthFixed, 280.0f);
-                        ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthStretch);
+                        SetupInspectorPropertyColumns();
                         simpleTableOpen = true;
                     }
 
-                    if (row.Property is not null)
+                    if (row.CanClip)
                     {
-                        bool propertyValueReadFailed = !TryGetPropertyValues(targets, row.Property.Property, out object?[] propertyValues);
-                        DrawSimplePropertyRow(targets, row.Property.Property, propertyValues, row.DisplayName, row.Description, propertyValueReadFailed);
+                        int end = i + 1;
+                        while (end < orderedRows.Count && orderedRows[end].CanClip
+                            && StringComparer.OrdinalIgnoreCase.Equals(row.Category, orderedRows[end].Category))
+                            end++;
+                        DrawClippedInspectorRows(targets, orderedRows, i, end);
+                        i = end - 1;
                     }
-                    else if (row.Field is not null)
-                    {
-                        bool fieldValueReadFailed = !TryGetFieldValues(targets, row.Field.Field, out object?[] fieldValues);
-                        DrawSimpleFieldRow(targets, row.Field.Field, fieldValues, row.DisplayName, row.Description, fieldValueReadFailed, row.Field.CanWrite);
-                    }
+                    else
+                        DrawInspectorSimpleRow(targets, row);
 
                     continue;
                 }
@@ -541,19 +427,21 @@ public static partial class EditorImGuiUI
                 }
 
                 bool valueRetrievalFailed;
-                object?[] values;
+                object? value;
                 if (row.Property is not null)
                 {
-                    valueRetrievalFailed = !TryGetPropertyValues(targets, row.Property.Property, out values);
+                    valueRetrievalFailed = !TryGetPropertyValues(targets, row.Property.Property, out InspectorValueBuffer values);
+                    value = values[0];
                 }
                 else if (row.Field is not null)
                 {
-                    valueRetrievalFailed = !TryGetFieldValues(targets, row.Field.Field, out values);
+                    valueRetrievalFailed = !TryGetFieldValues(targets, row.Field.Field, out InspectorValueBuffer values);
+                    value = values[0];
                 }
                 else
                 {
                     valueRetrievalFailed = true;
-                    values = Array.Empty<object?>();
+                    value = null;
                 }
 
                 if (valueRetrievalFailed)
@@ -563,8 +451,6 @@ public static partial class EditorImGuiUI
                         ImGui.SetTooltip(row.Description);
                     continue;
                 }
-
-                object? value = values.Length > 0 ? values[0] : null;
 
                 if (TryDrawXREventMember(primary, row, value, visited))
                     continue;
@@ -602,41 +488,39 @@ public static partial class EditorImGuiUI
                 ImGui.EndTable();
         }
 
-        private static bool TryGetPropertyValues(InspectorTargetSet targets, PropertyInfo property, out object?[] values)
+        private static bool TryGetPropertyValues(InspectorTargetSet targets, PropertyInfo property, out InspectorValueBuffer values)
         {
-            values = new object?[targets.Targets.Count];
-            for (int targetIndex = 0; targetIndex < targets.Targets.Count; targetIndex++)
+            values = targets.GetValues(property);
+            for (int i = 0; i < targets.Targets.Count; i++)
             {
                 try
                 {
-                    values[targetIndex] = property.GetValue(targets.Targets[targetIndex]);
+                    values[i] = property.GetValue(targets.Targets[i]);
                 }
                 catch
                 {
-                    values = Array.Empty<object?>();
+                    values.Clear();
                     return false;
                 }
             }
-
             return true;
         }
 
-        private static bool TryGetFieldValues(InspectorTargetSet targets, FieldInfo field, out object?[] values)
+        private static bool TryGetFieldValues(InspectorTargetSet targets, FieldInfo field, out InspectorValueBuffer values)
         {
-            values = new object?[targets.Targets.Count];
-            for (int targetIndex = 0; targetIndex < targets.Targets.Count; targetIndex++)
+            values = targets.GetValues(field);
+            for (int i = 0; i < targets.Targets.Count; i++)
             {
                 try
                 {
-                    values[targetIndex] = field.GetValue(targets.Targets[targetIndex]);
+                    values[i] = field.GetValue(targets.Targets[i]);
                 }
                 catch
                 {
-                    values = Array.Empty<object?>();
+                    values.Clear();
                     return false;
                 }
             }
-
             return true;
         }
 
@@ -723,6 +607,7 @@ public static partial class EditorImGuiUI
                 Properties = properties,
                 Fields = fields,
             };
+            InitializeInspectorLayout(layout);
             _inspectorTypeLayoutCache[type] = layout;
             return layout;
         }
@@ -789,6 +674,8 @@ public static partial class EditorImGuiUI
                 Category = property.Category;
                 IsSimple = property.IsSimple;
                 Hidden = property.Hidden;
+                CategoryHeader = $"{(string.IsNullOrWhiteSpace(Category) ? "General" : Category)}##InspectorCategory_{Category}";
+                TableId = $"Properties_{Category}";
             }
 
             public InspectorMemberRow(SettingFieldDescriptor field)
@@ -799,6 +686,8 @@ public static partial class EditorImGuiUI
                 Category = field.Category;
                 IsSimple = field.IsSimple;
                 Hidden = field.Hidden;
+                CategoryHeader = $"{(string.IsNullOrWhiteSpace(Category) ? "General" : Category)}##InspectorCategory_{Category}";
+                TableId = $"Properties_{Category}";
             }
 
             public SettingPropertyDescriptor? Property { get; }
@@ -809,6 +698,13 @@ public static partial class EditorImGuiUI
             public string? Category { get; }
             public bool IsSimple { get; }
             public bool Hidden { get; }
+            public string CategoryHeader { get; }
+            public string TableId { get; }
+            public int VisibilityIndex { get; init; }
+            public int PairedBaseIndex { get; init; } = -1;
+            public int HiddenByOverrideIndex { get; set; } = -1;
+            public bool IsPairedVariant { get; init; }
+            public bool CanClip { get; init; }
 
             public string MemberName
                 => Property?.Property.Name ?? Field?.Field.Name ?? string.Empty;
@@ -818,6 +714,9 @@ public static partial class EditorImGuiUI
         {
             public required IReadOnlyList<CachedInspectorProperty> Properties { get; init; }
             public required IReadOnlyList<CachedInspectorField> Fields { get; init; }
+            public InspectorMemberRow[] Rows { get; set; } = [];
+            public string? Search { get; set; }
+            public IReadOnlyList<InspectorMemberRow> SearchRows { get; set; } = [];
         }
 
         private sealed class CachedInspectorProperty
@@ -906,7 +805,7 @@ public static partial class EditorImGuiUI
                     visited.Remove(value);
                     try
                     {
-                        handledByAssetInspector = TryDrawAssetInspector(new InspectorTargetSet(new[] { asset }, asset.GetType()), visited);
+                        handledByAssetInspector = TryDrawAssetInspector(GetInspectorTargets(asset), visited);
                     }
                     finally
                     {
@@ -921,7 +820,7 @@ public static partial class EditorImGuiUI
                     if (effectiveType.IsValueType && !effectiveType.IsPrimitive && !effectiveType.IsEnum && canWrite)
                         DrawStructPropertyEditor(owner, property, value);
                     else
-                        DrawSettingsProperties(new InspectorTargetSet(new[] { value }, value.GetType()), visited);
+                        DrawSettingsProperties(GetInspectorTargets(value), visited);
                 }
 
                 ImGui.TreePop();
@@ -949,11 +848,10 @@ public static partial class EditorImGuiUI
             }
 
             string tableId = $"StructProps_{parentProperty.Name}_{owner.GetHashCode():X8}";
-            if (!ImGui.BeginTable(tableId, 2, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.RowBg))
+            if (!ImGui.BeginTable(tableId, 2, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.Resizable | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.NoBordersInBodyUntilResize))
                 return;
 
-            ImGui.TableSetupColumn("Property", ImGuiTableColumnFlags.WidthFixed, 200.0f);
-            ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthStretch);
+            SetupInspectorPropertyColumns();
 
             foreach (var subProp in subProperties)
             {
@@ -1025,11 +923,10 @@ public static partial class EditorImGuiUI
             }
 
             string tableId = $"StructFields_{parentField.Name}_{owner.GetHashCode():X8}";
-            if (!ImGui.BeginTable(tableId, 2, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.RowBg))
+            if (!ImGui.BeginTable(tableId, 2, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.Resizable | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.NoBordersInBodyUntilResize))
                 return;
 
-            ImGui.TableSetupColumn("Property", ImGuiTableColumnFlags.WidthFixed, 200.0f);
-            ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthStretch);
+            SetupInspectorPropertyColumns();
 
             foreach (var subProp in subProperties)
             {
@@ -1244,6 +1141,8 @@ public static partial class EditorImGuiUI
                 {
                     ImGui.TextDisabled("<empty>");
                 }
+                else if (!elementIsAsset && !elementUsesTypeSelector && IsUniformInspectorCollectionType(declaredElementType))
+                    DrawClippedInspectorCollection(adapter, declaredElementType, owner);
                 else
                 {
                     for (int i = 0; i < adapter.Count; i++)
@@ -1407,7 +1306,7 @@ public static partial class EditorImGuiUI
                         }
                         else
                         {
-                            DrawSettingsObject(new InspectorTargetSet(new[] { item }, item.GetType()), $"{label}[{i}]", description, visited, false, property.Name + i.ToString(CultureInfo.InvariantCulture));
+                            DrawSettingsObject(GetInspectorTargets(item), $"{label}[{i}]", description, visited, false, property.Name + i.ToString(CultureInfo.InvariantCulture));
                         }
 
                         if (item is null && adapter.CanAddRemove && itemUsesTypeSelector && availableTypeCount > 0)
@@ -1574,7 +1473,7 @@ public static partial class EditorImGuiUI
                 {
                     ImGui.TextDisabled("<empty>");
                 }
-                else if (ImGui.BeginTable("DictionaryItems", 2, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.RowBg))
+                else if (ImGui.BeginTable("DictionaryItems", 2, ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.Resizable | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.NoBordersInBodyUntilResize))
                 {
                     for (int i = 0; i < keys.Count; i++)
                     {
@@ -1657,7 +1556,7 @@ public static partial class EditorImGuiUI
                         else if (entryValue is not null)
                         {
                             string childLabel = $"{label}[{FormatDictionaryKey(key)}]";
-                            DrawSettingsObject(new InspectorTargetSet(new[] { entryValue! }, entryValue!.GetType()), childLabel, description, visited, false, property.Name + "_" + i.ToString(CultureInfo.InvariantCulture));
+                            DrawSettingsObject(GetInspectorTargets(entryValue!), childLabel, description, visited, false, property.Name + "_" + i.ToString(CultureInfo.InvariantCulture));
                         }
                         else
                         {
@@ -1734,7 +1633,7 @@ public static partial class EditorImGuiUI
             }
             else if (effectiveType.IsEnum)
             {
-                string[] enumNames = Enum.GetNames(effectiveType);
+                string[] enumNames = GetInspectorEnum(effectiveType).Names;
                 int currentIndex = currentValue is null ? -1 : Array.IndexOf(enumNames, Enum.GetName(effectiveType, currentValue));
                 if (currentIndex < 0)
                     currentIndex = 0;
@@ -2907,7 +2806,7 @@ public static partial class EditorImGuiUI
                 }
                 else
                 {
-                    DrawSettingsProperties(new InspectorTargetSet(new[] { value }, value.GetType()), visited);
+                    DrawSettingsProperties(GetInspectorTargets(value), visited);
                     visited.Remove(value);
                 }
 
@@ -3315,7 +3214,7 @@ public static partial class EditorImGuiUI
             }
             else if (effectiveType.IsEnum)
             {
-                string[] enumNames = Enum.GetNames(effectiveType);
+                string[] enumNames = GetInspectorEnum(effectiveType).Names;
                 int currentIndex = currentValue is null ? -1 : Array.IndexOf(enumNames, Enum.GetName(effectiveType, currentValue));
                 if (currentIndex < 0)
                     currentIndex = 0;
@@ -3602,6 +3501,7 @@ public static partial class EditorImGuiUI
             string? description,
             ActiveEditorPreferenceOverride? activeOverride = null)
         {
+            bool clippedLabel = ImGui.CalcTextSize(displayName).X > ImGui.GetContentRegionAvail().X;
             ImGui.TextUnformatted(displayName);
             bool labelHovered = ImGui.IsItemHovered();
 
@@ -3621,8 +3521,18 @@ public static partial class EditorImGuiUI
                     DrawDlssRuntimeWarningTooltip(warning);
             }
 
-            if (!string.IsNullOrEmpty(description) && labelHovered)
-                ImGui.SetTooltip(description);
+            if (labelHovered && (clippedLabel || !string.IsNullOrEmpty(description)))
+            {
+                ImGui.BeginTooltip();
+                ImGui.TextUnformatted(displayName);
+                if (!string.IsNullOrEmpty(description))
+                {
+                    ImGui.PushTextWrapPos(ImGui.GetFontSize() * 30f);
+                    ImGui.TextWrapped(description);
+                    ImGui.PopTextWrapPos();
+                }
+                ImGui.EndTooltip();
+            }
         }
 
         private static void DrawActiveEditorPreferenceOverrideTooltip(ActiveEditorPreferenceOverride activeOverride)
@@ -3841,10 +3751,13 @@ public static partial class EditorImGuiUI
             ImGui.EndTooltip();
         }
 
-        private static void DrawSimplePropertyRow(InspectorTargetSet targets, PropertyInfo property, IReadOnlyList<object?> values, string displayName, string? description, bool valueRetrievalFailed)
+        private static void DrawSimplePropertyRow(InspectorTargetSet targets, SettingPropertyDescriptor descriptor, IReadOnlyList<object?> values, bool valueRetrievalFailed)
         {
+            PropertyInfo property = descriptor.Property;
+            string displayName = descriptor.DisplayName;
+            string? description = descriptor.Description;
             using var profilerScope = Engine.Profiler.Start("UI.DrawSimplePropertyRow");
-            ImGui.TableNextRow();
+            BeginInspectorPropertyRow();
             ImGui.TableSetColumnIndex(0);
             TryGetActiveEditorPreferenceOverride(targets, property, out ActiveEditorPreferenceOverride? activeOverride);
             DrawInspectorMemberLabel(property, displayName, description, activeOverride);
@@ -3858,18 +3771,8 @@ public static partial class EditorImGuiUI
                 return;
             }
 
-            if (!targets.HasMultipleTargets && typeof(IOverrideableSetting).IsAssignableFrom(property.PropertyType) && values.FirstOrDefault() is IOverrideableSetting overrideable)
+            if (!targets.HasMultipleTargets && typeof(IOverrideableSetting).IsAssignableFrom(property.PropertyType) && values[0] is IOverrideableSetting overrideable)
             {
-                var descriptor = new SettingPropertyDescriptor
-                {
-                    Property = property,
-                    IsSimple = true,
-                    Category = null,
-                    DisplayName = displayName,
-                    Description = description,
-                    IsOverrideable = true
-                };
-
                 DrawOverrideableSettingRow(targets.PrimaryTarget, descriptor, overrideable);
                 ImGui.PopID();
                 return;
@@ -3882,7 +3785,9 @@ public static partial class EditorImGuiUI
             bool canWrite = property.CanWrite && property.SetMethod?.IsPublic == true;
 
             object? firstValue = values.Count > 0 ? values[0] : null;
-            bool hasMixedValues = values.Skip(1).Any(v => !Equals(v, firstValue));
+            bool hasMixedValues = HasMixedInspectorValues(values);
+            if (hasMixedValues && effectiveType != typeof(bool))
+                DrawInspectorMixedValueMarker();
 
             // Asset reference fields: draw as an asset picker with inline inspector.
             if (typeof(XRAsset).IsAssignableFrom(effectiveType))
@@ -3927,9 +3832,7 @@ public static partial class EditorImGuiUI
                 bool boolValue = currentValue is bool b && b;
                 using (new ImGuiDisabledScope(!canWrite))
                 {
-                    if (hasMixedValues)
-                        ImGui.SetItemDefaultFocus();
-                    if (ImGui.Checkbox("##Value", ref boolValue) && canWrite)
+                    if (DrawInspectorMixedCheckbox("##Value", ref boolValue, hasMixedValues) && canWrite)
                     {
                         if (TryApplyInspectorValue(targets, property, values, boolValue))
                         {
@@ -3939,7 +3842,7 @@ public static partial class EditorImGuiUI
                         }
                     }
 
-                    UpdateInspectorUndoScope($"Edit {property.Name}", targets);
+                    UpdateInspectorUndoScope(GetInspectorEditLabel(property), targets);
                 }
                 handled = true;
             }
@@ -3958,7 +3861,7 @@ public static partial class EditorImGuiUI
                         bits = 0;
                     }
 
-                    Array enumValues = Enum.GetValues(effectiveType);
+                    Array enumValues = GetInspectorEnum(effectiveType).Values;
                     string preview = hasMixedValues ? "<multiple>" : FormatFlagsEnumPreview(effectiveType, enumValues, bits);
 
                     using (new ImGuiDisabledScope(!canWrite))
@@ -3980,7 +3883,7 @@ public static partial class EditorImGuiUI
                                 }
                             }
 
-                            UpdateInspectorUndoScope($"Edit {property.Name}", targets);
+                            UpdateInspectorUndoScope(GetInspectorEditLabel(property), targets);
 
                             ImGui.Separator();
 
@@ -4017,7 +3920,7 @@ public static partial class EditorImGuiUI
                                     }
                                 }
 
-                                UpdateInspectorUndoScope($"Edit {property.Name}", targets);
+                                UpdateInspectorUndoScope(GetInspectorEditLabel(property), targets);
                             }
 
                             ImGui.EndCombo();
@@ -4028,7 +3931,7 @@ public static partial class EditorImGuiUI
                 }
                 else
                 {
-                    string[] enumNames = Enum.GetNames(effectiveType);
+                    string[] enumNames = GetInspectorEnum(effectiveType).Names;
                     int currentIndex = currentValue is null ? -1 : Array.IndexOf(enumNames, Enum.GetName(effectiveType, currentValue));
                     if (currentIndex < 0)
                         currentIndex = 0;
@@ -4054,12 +3957,12 @@ public static partial class EditorImGuiUI
                                     }
                                 }
 
-                                UpdateInspectorUndoScope($"Edit {property.Name}", targets);
+                                UpdateInspectorUndoScope(GetInspectorEditLabel(property), targets);
                             }
                             ImGui.EndCombo();
                         }
 
-                        UpdateInspectorUndoScope($"Edit {property.Name}", targets);
+                        UpdateInspectorUndoScope(GetInspectorEditLabel(property), targets);
                     }
                     handled = true;
                 }
@@ -4080,7 +3983,7 @@ public static partial class EditorImGuiUI
                         return true;
                     });
 
-                    UpdateInspectorUndoScope($"Edit {property.Name}", targets);
+                    UpdateInspectorUndoScope(GetInspectorEditLabel(property), targets);
                 }
                 else if (TryGetStringOptions(property, out string[] options) && options.Length > 0)
                 {
@@ -4115,7 +4018,7 @@ public static partial class EditorImGuiUI
                             ImGui.EndCombo();
                         }
 
-                        UpdateInspectorUndoScope($"Edit {property.Name}", targets);
+                        UpdateInspectorUndoScope(GetInspectorEditLabel(property), targets);
                     }
                 }
                 else
@@ -4145,7 +4048,7 @@ public static partial class EditorImGuiUI
                             }
                         }
 
-                        UpdateInspectorUndoScope($"Edit {property.Name}", targets);
+                        UpdateInspectorUndoScope(GetInspectorEditLabel(property), targets);
                     }
                 }
                 handled = true;
@@ -4166,7 +4069,7 @@ public static partial class EditorImGuiUI
                         }
                     }
 
-                    UpdateInspectorUndoScope($"Edit {property.Name}", targets);
+                    UpdateInspectorUndoScope(GetInspectorEditLabel(property), targets);
                 }
                 handled = true;
             }
@@ -4186,7 +4089,7 @@ public static partial class EditorImGuiUI
                         }
                     }
 
-                    UpdateInspectorUndoScope($"Edit {property.Name}", targets);
+                    UpdateInspectorUndoScope(GetInspectorEditLabel(property), targets);
                 }
                 handled = true;
             }
@@ -4206,7 +4109,7 @@ public static partial class EditorImGuiUI
                         }
                     }
 
-                    UpdateInspectorUndoScope($"Edit {property.Name}", targets);
+                    UpdateInspectorUndoScope(GetInspectorEditLabel(property), targets);
                 }
                 handled = true;
             }
@@ -4229,7 +4132,7 @@ public static partial class EditorImGuiUI
                     if (ImGui.IsItemHovered())
                         ImGui.SetTooltip("Layer bitmask. -1 = all layers.");
 
-                    UpdateInspectorUndoScope($"Edit {property.Name}", targets);
+                    UpdateInspectorUndoScope(GetInspectorEditLabel(property), targets);
                 }
                 handled = true;
             }
@@ -4253,7 +4156,7 @@ public static partial class EditorImGuiUI
                     if (ImGui.IsItemHovered())
                         ImGui.SetTooltip("Rotation as Euler angles (Pitch, Yaw, Roll) in degrees");
 
-                    UpdateInspectorUndoScope($"Edit {property.Name}", targets);
+                    UpdateInspectorUndoScope(GetInspectorEditLabel(property), targets);
                 }
                 handled = true;
             }
@@ -4313,7 +4216,7 @@ public static partial class EditorImGuiUI
                         }
                     }
 
-                    UpdateInspectorUndoScope($"Edit {property.Name}", targets);
+                    UpdateInspectorUndoScope(GetInspectorEditLabel(property), targets);
                 }
                 handled = true;
             }
@@ -4374,9 +4277,7 @@ public static partial class EditorImGuiUI
 
         private static void DrawEnvironmentVariablePreferenceControls(MemberInfo member, object? currentValue, bool hasMixedValues)
         {
-            EnvironmentVariablePreferenceAttribute[] attributes = member
-                .GetCustomAttributes<EnvironmentVariablePreferenceAttribute>(inherit: true)
-                .ToArray();
+            EnvironmentVariablePreferenceAttribute[] attributes = GetInspectorEnvironmentAttributes(member);
             if (attributes.Length == 0)
                 return;
 
@@ -4516,7 +4417,7 @@ public static partial class EditorImGuiUI
         private static void DrawSimpleFieldRow(InspectorTargetSet targets, FieldInfo field, IReadOnlyList<object?> values, string displayName, string? description, bool valueRetrievalFailed, bool canWrite)
         {
             using var profilerScope = Engine.Profiler.Start("UI.DrawSimpleFieldRow");
-            ImGui.TableNextRow();
+            BeginInspectorPropertyRow();
             ImGui.TableSetColumnIndex(0);
             DrawInspectorMemberLabel(field, displayName, description);
             ImGui.TableSetColumnIndex(1);
@@ -4536,7 +4437,9 @@ public static partial class EditorImGuiUI
             Type effectiveType = underlyingType ?? fieldType;
 
             object? firstValue = values.Count > 0 ? values[0] : null;
-            bool hasMixedValues = values.Skip(1).Any(v => !Equals(v, firstValue));
+            bool hasMixedValues = HasMixedInspectorValues(values);
+            if (hasMixedValues && effectiveType != typeof(bool))
+                DrawInspectorMixedValueMarker();
             object? currentValue = firstValue;
             bool isCurrentlyNull = currentValue is null;
 
@@ -4629,11 +4532,19 @@ public static partial class EditorImGuiUI
                 }
                 else
                 {
-                    handled = DrawInlineValueEditor(effectiveType, canWrite, ref currentValue, ref isCurrentlyNull, Apply, "##Value");
+                    if (effectiveType == typeof(bool))
+                    {
+                        bool boolValue = currentValue is true;
+                        if (DrawInspectorMixedCheckbox("##Value", ref boolValue, hasMixedValues) && canWrite)
+                            Apply(boolValue);
+                        handled = true;
+                    }
+                    else
+                        handled = DrawInlineValueEditor(effectiveType, canWrite, ref currentValue, ref isCurrentlyNull, Apply, "##Value");
                 }
 
                 if (handled)
-                    UpdateInspectorUndoScope($"Edit {field.Name}", targets);
+                    UpdateInspectorUndoScope(GetInspectorEditLabel(field), targets);
 
                 if (!handled)
                 {
@@ -4731,7 +4642,7 @@ public static partial class EditorImGuiUI
                 if (effectiveType.IsValueType && !effectiveType.IsPrimitive && !effectiveType.IsEnum && canWrite)
                     DrawStructFieldEditor(owner, field, value);
                 else
-                    DrawSettingsProperties(new InspectorTargetSet(new[] { value }, value.GetType()), visited);
+                    DrawSettingsProperties(GetInspectorTargets(value), visited);
 
                 ImGui.TreePop();
             }
@@ -5583,7 +5494,7 @@ public static partial class EditorImGuiUI
                         bits = 0;
                     }
 
-                    Array values = Enum.GetValues(effectiveType);
+                    Array values = GetInspectorEnum(effectiveType).Values;
                     string preview = FormatFlagsEnumPreview(effectiveType, values, bits);
 
                     using (new ImGuiDisabledScope(!canWrite))
@@ -5647,7 +5558,7 @@ public static partial class EditorImGuiUI
                 }
                 else
                 {
-                    string[] enumNames = Enum.GetNames(effectiveType);
+                    string[] enumNames = GetInspectorEnum(effectiveType).Names;
                     int currentIndex = currentValue is null ? -1 : Array.IndexOf(enumNames, Enum.GetName(effectiveType, currentValue));
                     if (currentIndex < 0)
                         currentIndex = 0;
@@ -6143,21 +6054,22 @@ public static partial class EditorImGuiUI
 
         private static unsafe bool TryDrawNumericProperty(InspectorTargetSet targets, PropertyInfo property, Type effectiveType, bool canWrite, IReadOnlyList<object?> previousValues, ref object? currentValue, ref bool isCurrentlyNull)
         {
-            var previousValueList = new List<object?>(previousValues);
+            IReadOnlyList<object?> previousValueList = previousValues;
 
             bool Apply(object? newValue)
             {
                 if (!TryApplyInspectorValue(targets, property, previousValueList, newValue))
                     return false;
 
-                for (int i = 0; i < previousValueList.Count; i++)
-                    previousValueList[i] = newValue;
+                if (previousValueList is InspectorValueBuffer buffer)
+                    for (int i = 0; i < buffer.Count; i++)
+                        buffer[i] = newValue;
                 return true;
             }
 
             bool handled = TryDrawNumericEditor(effectiveType, canWrite, ref currentValue, ref isCurrentlyNull, Apply, "##Value");
             if (handled)
-                UpdateInspectorUndoScope($"Edit {property.Name}", targets);
+                UpdateInspectorUndoScope(GetInspectorEditLabel(property), targets);
             return handled;
         }
 
@@ -6181,7 +6093,7 @@ public static partial class EditorImGuiUI
                         }
                     }
 
-                    UpdateInspectorUndoScope($"Edit {property.Name}", targets);
+                    UpdateInspectorUndoScope(GetInspectorEditLabel(property), targets);
                 }
                 return true;
             }
@@ -6202,7 +6114,7 @@ public static partial class EditorImGuiUI
                         }
                     }
 
-                    UpdateInspectorUndoScope($"Edit {property.Name}", targets);
+                    UpdateInspectorUndoScope(GetInspectorEditLabel(property), targets);
                 }
                 return true;
             }

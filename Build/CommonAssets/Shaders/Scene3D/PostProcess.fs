@@ -20,6 +20,9 @@ uniform sampler2D AtmosphereColor;
 // Produced by VolumetricFogScatter.fs; early-outs to (0,0,0,1) when the effect
 // is disabled so the composite becomes a no-op.
 uniform sampler2D VolumetricFogColor;
+#ifdef XR_ADVANCED_EDITOR_HIGHLIGHT_METADATA
+uniform usampler2D AdvancedVisibilityMetadata;
+#endif
 uniform bool UseGpuAutoExposure; // XRENGINE_FREQUENCY(View)
 uniform vec3 CameraPosition;
 uniform mat4 ViewMatrix;
@@ -206,6 +209,18 @@ uint SampleSceneStencilSource(vec2 sourceUv)
   return texture(StencilView, clamp(sourceUv, vec2(0.0f), vec2(1.0f))).r;
 }
 
+uint SampleSceneEditorHighlightSource(vec2 sourceUv)
+{
+  uint stencilFlags = SampleSceneStencilSource(sourceUv) & 3u;
+#ifdef XR_ADVANCED_EDITOR_HIGHLIGHT_METADATA
+  uint metadata = texture(AdvancedVisibilityMetadata, clamp(sourceUv, vec2(0.0f), vec2(1.0f))).r;
+  uint metadataFlags = metadata == 0xFFFFFFFFu ? 0u : (metadata >> 25u) & 3u;
+  return stencilFlags | metadataFlags;
+#else
+  return stencilFlags;
+#endif
+}
+
 float GetStencilMaskBit(uint stencilValue, uint bit)
 {
   return (stencilValue & bit) != 0u ? 1.0f : 0.0f;
@@ -219,7 +234,7 @@ vec2 GetStencilOutlineIntensity(vec2 sourceUv)
     vec2 texelX = vec2(texelSize.x, 0.0f);
     vec2 texelY = vec2(0.0f, texelSize.y);
 
-    uint stencilCurrent = SampleSceneStencilSource(sourceUv);
+    uint stencilCurrent = SampleSceneEditorHighlightSource(sourceUv);
   float currentHover = GetStencilMaskBit(stencilCurrent, 1u);
   float currentSelection = GetStencilMaskBit(stencilCurrent, 2u);
 
@@ -237,10 +252,10 @@ vec2 GetStencilOutlineIntensity(vec2 sourceUv)
       vec2 xPos = clamp(sourceUv + texelX * step, zero, one);
       vec2 xNeg = clamp(sourceUv - texelX * step, zero, one);
 
-      uint sYPos = SampleSceneStencilSource(yPos);
-      uint sYNeg = SampleSceneStencilSource(yNeg);
-      uint sXPos = SampleSceneStencilSource(xPos);
-      uint sXNeg = SampleSceneStencilSource(xNeg);
+      uint sYPos = SampleSceneEditorHighlightSource(yPos);
+      uint sYNeg = SampleSceneEditorHighlightSource(yNeg);
+      uint sXPos = SampleSceneEditorHighlightSource(xPos);
+      uint sXNeg = SampleSceneEditorHighlightSource(xNeg);
 
       if (currentHover == 0.0f)
       {

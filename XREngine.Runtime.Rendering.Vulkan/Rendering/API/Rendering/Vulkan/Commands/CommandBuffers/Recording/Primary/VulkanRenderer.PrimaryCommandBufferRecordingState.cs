@@ -34,10 +34,10 @@ namespace XREngine.Rendering.Vulkan
         public bool TransitionSwapchainToPresent;
         public bool ExcludeDesktopSwapchainBarriers;
         public bool FrameOpsRequireRerecordLocal;
-        public uint FrameDataImageIndex;
-        public uint? FrameDataImageIndexOverride;
+        public uint FrameDataSlotIndex;
         public VulkanReadOnlyStoragePreparedAuthority? ReadOnlyStorageAuthority;
-        public int CommandBufferImageSlot;
+        public int FrameDataSlot;
+        public int TimingQuerySlot;
         public SwapchainRecordingTarget SwapchainTarget;
         public Extent2D SwapchainRecordExtent;
         public bool ImageWasEverPresentedAtRecordStart;

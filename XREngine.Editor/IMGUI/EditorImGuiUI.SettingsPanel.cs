@@ -171,7 +171,7 @@ public static partial class EditorImGuiUI
             try
             {
                 var visited = new HashSet<object>(ReferenceEqualityComparer.Instance);
-                DrawSettingsObject(new InspectorTargetSet(new[] { settingsRoot }, settingsRoot.GetType()), headerLabel, null, visited, true);
+                DrawSettingsObject(GetInspectorTargets(settingsRoot), headerLabel, null, visited, true);
             }
             finally
             {

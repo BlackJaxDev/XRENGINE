@@ -835,7 +835,7 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
             return true;
 
         var textures = material.Textures;
-        int expectedCount = Stereo ? 5 : 7;
+        int expectedCount = Stereo ? 6 : 8;
         if (textures.Count != expectedCount)
             return true;
 
@@ -850,13 +850,14 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
             || !ReferenceEquals(textures[6], GetTexture<XRTexture>(VolumetricFogColorTextureName))))
             return true;
 
+        if (!ReferenceEquals(textures[Stereo ? 5 : 7], GetTexture<XRTexture>(AdvancedVisibilityResourceNames.Metadata)))
+            return true;
+
         var fragmentShaders = material.FragmentShaders;
         if (fragmentShaders.Count != 1)
             return true;
 
-        XRShader expectedShader = XRShader.EngineShader(
-            Path.Combine(SceneShaderPath, PostProcessShaderName()),
-            EShaderType.Fragment);
+        XRShader expectedShader = CreateAdvancedPostProcessShader(PostProcessShaderName());
         return !ReferenceEquals(fragmentShaders[0], expectedShader);
     }
 

@@ -74,6 +74,24 @@ namespace XREngine.Rendering.Vulkan
                     ref _commandRuntime.Workers.ActiveWorkerCount),
                 Stage: EVulkanFrameStage.CompletionMaintenance));
 
+            // Both uniform reservations and Advanced storage belong to the
+            // completed logical slot. Readiness may write them before acquire.
+            long mappedResetStarted = Stopwatch.GetTimestamp();
+            using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
+                       "Vulkan.FrameLifecycle.ResetDynamicUniformRing"))
+            {
+                if (MappedFrameArena is { } mappedArena &&
+                    !mappedArena.TryResetFrameSlot(
+                        checked((uint)attempt.FrameSlot),
+                        mappedArena.Generation,
+                        submissionCompletionProven: slotWaitValue != 0))
+                {
+                    throw new InvalidOperationException(
+                        $"Mapped frame-data slot {attempt.FrameSlot} could not be reopened after timeline completion {slotWaitValue}.");
+                }
+            }
+            attempt.Timing.ResetDynamicUniformRing += Stopwatch.GetElapsedTime(mappedResetStarted);
+
             if (FrameDataArena is { } frameDataArena &&
                 !frameDataArena.TryResetFrameSlot(
                     checked((uint)attempt.FrameSlot),
@@ -304,24 +322,6 @@ namespace XREngine.Rendering.Vulkan
             attempt.Timing.SampleTimingQueries +=
                 Stopwatch.GetElapsedTime(stageStartTimestamp);
 
-            stageStartTimestamp = Stopwatch.GetTimestamp();
-            using (RuntimeRenderingHostServices.Profiling.StartProfileScope(
-                       "Vulkan.FrameLifecycle.ResetDynamicUniformRing"))
-            {
-                if (MappedFrameArena is { } arena &&
-                    !arena.TryResetFrameSlot(
-                        attempt.ImageIndex,
-                        arena.Generation,
-                        submissionCompletionProven:
-                            imageCompletionValue != 0))
-                {
-                    throw new InvalidOperationException(
-                        $"Mapped frame-data slot {attempt.ImageIndex} could not be reopened after swapchain-image completion.");
-                }
-            }
-
-            attempt.Timing.ResetDynamicUniformRing +=
-                Stopwatch.GetElapsedTime(stageStartTimestamp);
             attempt.AdvanceTo(EDesktopFramePhase.ImageReady);
         }
     }

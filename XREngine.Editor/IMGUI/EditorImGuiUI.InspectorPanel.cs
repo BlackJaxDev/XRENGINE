@@ -335,6 +335,7 @@ public static partial class EditorImGuiUI
             if (!_showInspector) return;
 
             using var profilerScope = Engine.Profiler.Start("UI.DrawInspectorPanel");
+            using var inspectorMeasurement = new InspectorDrawMeasurement();
 
             if (!ImGui.Begin("Inspector", ref _showInspector))
             {
@@ -350,6 +351,7 @@ public static partial class EditorImGuiUI
             object? standaloneTarget = _inspectorStandaloneTarget;
             var selectedNodes = Selection.SceneNodes;
             SceneNode? fallbackNode = Selection.LastSceneNode;
+            RebaseInspectorSelectionCaches(selectedNodes);
 
             if (standaloneTarget is null && selectedNodes.Length == 0 && fallbackNode is null)
             {
@@ -357,30 +359,31 @@ public static partial class EditorImGuiUI
             }
             else
             {
-                ImGui.BeginChild("InspectorContent", Vector2.Zero, ImGuiChildFlags.Borders);
-
-                bool allowSceneInspector = false;
-
-                if (standaloneTarget is not null)
+                bool contentVisible = ImGui.BeginChild("InspectorContent", Vector2.Zero);
+                if (contentVisible)
                 {
-                    DrawStandaloneInspectorTarget(standaloneTarget);
+                    bool allowSceneInspector = false;
 
-                    if (_inspectorStandaloneTarget is null && (selectedNodes.Length > 0 || fallbackNode is not null))
+                    if (standaloneTarget is not null)
+                    {
+                        DrawStandaloneInspectorTarget(standaloneTarget);
+
+                        if (_inspectorStandaloneTarget is null && (selectedNodes.Length > 0 || fallbackNode is not null))
+                            allowSceneInspector = true;
+                    }
+                    else if (selectedNodes.Length > 0 || fallbackNode is not null)
+                    {
                         allowSceneInspector = true;
-                }
-                else if (selectedNodes.Length > 0 || fallbackNode is not null)
-                {
-                    allowSceneInspector = true;
-                }
+                    }
 
-                if (allowSceneInspector)
-                {
-                    if (selectedNodes.Length > 0)
-                        DrawSceneNodeInspector(selectedNodes);
-                    else if (fallbackNode is not null)
-                        DrawSceneNodeInspector(fallbackNode);
+                    if (allowSceneInspector)
+                    {
+                        if (selectedNodes.Length > 0)
+                            DrawSceneNodeInspector(selectedNodes);
+                        else if (fallbackNode is not null)
+                            DrawSceneNodeInspector(fallbackNode);
+                    }
                 }
-
                 ImGui.EndChild();
             }
 
@@ -447,14 +450,41 @@ public static partial class EditorImGuiUI
         private const int MaxDetailedMultiSelectionInspectorCount = 64;
         private static readonly List<TransformBase> _multiTransformScratch = [];
         private static readonly List<object> _multiTransformTargetsScratch = [];
+        private static readonly List<object> _multiComponentTargetsScratch = [];
+        private static InspectorTargetSet? _multiTransformTargetSet;
+        private static readonly Dictionary<Type, InspectorTargetSet> _multiComponentTargetSets = [];
+        private static readonly List<SceneNode> _multiComponentTargetSelection = [];
 
+        private static void RebaseInspectorSelectionCaches(IReadOnlyList<SceneNode> nodes)
+        {
+            bool changed = _multiComponentTargetSelection.Count != nodes.Count;
+            if (!changed)
+            {
+                for (int i = 0; i < nodes.Count; i++)
+                {
+                    if (!ReferenceEquals(_multiComponentTargetSelection[i], nodes[i]))
+                    {
+                        changed = true;
+                        break;
+                    }
+                }
+            }
+            if (!changed)
+                return;
+
+            _multiTransformTargetSet = null;
+            _multiComponentTargetSets.Clear();
+            _multiComponentTargetSelection.Clear();
+            for (int i = 0; i < nodes.Count; i++)
+                _multiComponentTargetSelection.Add(nodes[i]);
+        }
         private static partial void DrawSceneNodeInspector(SceneNode node)
         {
             using var profilerScope = Engine.Profiler.Start("UI.DrawSceneNodeInspector");
             _visitedScratch.Clear();
             _visitedScratch.Add(node);
 
-            ImGui.PushID(node.ID.ToString());
+            ImGui.PushID(node.GetHashCode());
 
             DrawSceneNodeBasics(node);
 
@@ -482,154 +512,111 @@ public static partial class EditorImGuiUI
         private static void DrawSceneNodeBasics(IReadOnlyList<SceneNode> nodes)
         {
             using var profilerScope = Engine.Profiler.Start("UI.DrawSceneNodeBasics.Multi");
-            const ImGuiTableFlags tableFlags = ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerV;
-            if (!ImGui.BeginTable("SceneNodeBasicsMulti", 2, tableFlags))
+            if (nodes.Count == 0)
                 return;
 
-            DrawInspectorRow("Name", () =>
+            const ImGuiTableFlags headerFlags = ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.NoSavedSettings;
+            if (ImGui.BeginTable("SceneNodeSummaryMulti", 2, headerFlags))
             {
+                ImGui.TableSetupColumn("Name", ImGuiTableColumnFlags.WidthStretch);
+                ImGui.TableSetupColumn("Active", ImGuiTableColumnFlags.WidthFixed);
+                ImGui.TableNextRow();
+                ImGui.TableSetColumnIndex(0);
                 string firstName = nodes[0].Name ?? string.Empty;
                 bool sameName = true;
-                for (int i = 1; i < nodes.Count; i++)
-                {
-                    if (!string.Equals(nodes[i].Name ?? string.Empty, firstName, StringComparison.Ordinal))
-                    {
-                        sameName = false;
-                        break;
-                    }
-                }
-
-                string? commonName = sameName ? firstName : null;
-                string name = sameName ? firstName : string.Empty;
-                ImGui.SetNextItemWidth(-1f);
-                string hint = commonName is null ? "<multiple>" : string.Empty;
-                if (ImGui.InputTextWithHint("##SceneNodeNameMulti", hint, ref name, 256))
-                {
-                    string trimmed = name.Trim();
-                    string newName = string.IsNullOrWhiteSpace(trimmed) ? SceneNode.DefaultName : trimmed;
-                    foreach (var node in nodes)
-                    {
-                        ImGuiUndoHelper.TrackDragUndo("Rename Node", node);
-                        node.Name = newName;
-                    }
-                }
-                if (ImGuiTextFieldHelper.DrawTextFieldContextMenu("ctx_NodeNameMulti", ref name))
-                {
-                    string trimmed = name.Trim();
-                    string newName = string.IsNullOrWhiteSpace(trimmed) ? SceneNode.DefaultName : trimmed;
-                    foreach (var node in nodes)
-                    {
-                        ImGuiUndoHelper.TrackDragUndo("Rename Node", node);
-                        node.Name = newName;
-                    }
-                }
-            });
-
-            DrawInspectorRow("Active Self", () =>
-            {
                 bool allActive = true;
                 bool allInactive = true;
                 for (int i = 0; i < nodes.Count; i++)
                 {
-                    if (nodes[i].IsActiveSelf)
+                    var current = nodes[i];
+                    sameName &= string.Equals(current.Name ?? string.Empty, firstName, StringComparison.Ordinal);
+                    if (current.IsActiveSelf)
                         allInactive = false;
                     else
                         allActive = false;
                 }
+                string name = sameName ? firstName : string.Empty;
+                ImGui.SetNextItemWidth(-1.0f);
+                if (ImGui.InputTextWithHint("##SceneNodeNameMulti", sameName ? string.Empty : "<multiple>", ref name, 256))
+                {
+                    string trimmed = name.Trim();
+                    string newName = string.IsNullOrWhiteSpace(trimmed) ? SceneNode.DefaultName : trimmed;
+                    using var interaction = Undo.BeginUserInteraction();
+                    using var scope = Undo.BeginChange("Rename Nodes");
+                    for (int i = 0; i < nodes.Count; i++)
+                    {
+                        Undo.Track(nodes[i]);
+                        nodes[i].Name = newName;
+                    }
+                }
+
+                ImGui.TableSetColumnIndex(1);
                 bool mixed = !allActive && !allInactive;
                 bool active = allActive;
-                bool canToggleActiveSelf = !allActive || nodes.All(static node => node.CanDeactivate);
-                if (mixed)
-                    ImGui.PushStyleVar(ImGuiStyleVar.Alpha, ImGui.GetStyle().Alpha * 0.6f);
-                if (!canToggleActiveSelf)
+                bool canToggle = !allActive;
+                if (!canToggle)
+                {
+                    for (int i = 0; i < nodes.Count; i++)
+                    {
+                        if (!nodes[i].CanDeactivate)
+                        {
+                            canToggle = false;
+                            break;
+                        }
+                        canToggle = true;
+                    }
+                }
+                if (!canToggle)
                     ImGui.BeginDisabled();
-                bool toggled = ImGui.Checkbox("##SceneNodeActiveSelfMulti", ref active);
-                if (!canToggleActiveSelf)
+                bool toggled = DrawInspectorMixedCheckbox("##SceneNodeActiveSelfMulti", ref active, mixed);
+                if (!canToggle)
                     ImGui.EndDisabled();
-                if (mixed)
-                    ImGui.PopStyleVar();
                 if (toggled)
                 {
                     using var interaction = Undo.BeginUserInteraction();
                     using var scope = Undo.BeginChange("Toggle Active Self");
-                    foreach (var node in nodes)
+                    for (int i = 0; i < nodes.Count; i++)
                     {
-                        Undo.Track(node);
-                        node.IsActiveSelf = active;
+                        Undo.Track(nodes[i]);
+                        nodes[i].IsActiveSelf = active;
                     }
                 }
-            });
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip(mixed ? "Mixed active state — click to set all." : "Toggle active state");
+                ImGui.EndTable();
+            }
 
-            DrawInspectorRow("Active In Hierarchy", () =>
+            if (!ImGui.CollapsingHeader("Details##SceneNodeDetailsMulti"))
+                return;
+
+            bool sameId = true;
+            bool samePath = true;
+            var firstId = nodes[0].ID;
+            string firstPath = nodes[0].GetPath();
+            bool allHierarchyActive = true;
+            bool allHierarchyInactive = true;
+            for (int i = 0; i < nodes.Count; i++)
             {
-                bool allActive = true;
-                bool allInactive = true;
-                for (int i = 0; i < nodes.Count; i++)
-                {
-                    if (nodes[i].IsActiveInHierarchy)
-                        allInactive = false;
-                    else
-                        allActive = false;
-                }
-                bool mixed = !allActive && !allInactive;
-                bool active = allActive;
-                bool canToggleActiveInHierarchy = !allActive || nodes.All(static node => node.CanDeactivate);
-                if (mixed)
-                    ImGui.PushStyleVar(ImGuiStyleVar.Alpha, ImGui.GetStyle().Alpha * 0.6f);
-                if (!canToggleActiveInHierarchy)
-                    ImGui.BeginDisabled();
-                bool toggled = ImGui.Checkbox("##SceneNodeActiveInHierarchyMulti", ref active);
-                if (!canToggleActiveInHierarchy)
-                    ImGui.EndDisabled();
-                if (mixed)
-                    ImGui.PopStyleVar();
-                if (toggled)
-                {
-                    using var interaction = Undo.BeginUserInteraction();
-                    using var scope = Undo.BeginChange("Toggle Active In Hierarchy");
-                    foreach (var node in nodes)
-                    {
-                        Undo.Track(node);
-                        node.IsActiveInHierarchy = active;
-                    }
-                }
-            });
-
-            DrawInspectorRow("ID", () =>
-            {
-                var firstId = nodes[0].ID;
-                bool same = true;
-                for (int i = 1; i < nodes.Count; i++)
-                {
-                    if (!Equals(nodes[i].ID, firstId))
-                    {
-                        same = false;
-                        break;
-                    }
-                }
-                ImGui.TextUnformatted(same ? nodes[0].ID.ToString() : "<multiple>");
-            });
-
-            DrawInspectorRow("Path", () =>
-            {
-                string firstPath = nodes[0].GetPath();
-                bool same = true;
-                for (int i = 1; i < nodes.Count; i++)
-                {
-                    if (!string.Equals(nodes[i].GetPath(), firstPath, StringComparison.Ordinal))
-                    {
-                        same = false;
-                        break;
-                    }
-                }
-                ImGui.PushTextWrapPos();
-                ImGui.TextUnformatted(same ? firstPath : "<multiple>");
-                ImGui.PopTextWrapPos();
-            });
-
+                var current = nodes[i];
+                sameId &= Equals(current.ID, firstId);
+                samePath &= string.Equals(current.GetPath(), firstPath, StringComparison.Ordinal);
+                if (current.IsActiveInHierarchy)
+                    allHierarchyInactive = false;
+                else
+                    allHierarchyActive = false;
+            }
+            const ImGuiTableFlags detailFlags = ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.NoSavedSettings;
+            if (!ImGui.BeginTable("SceneNodeDetailsMulti", 2, detailFlags))
+                return;
+            ImGui.TableSetupColumn("Label", ImGuiTableColumnFlags.WidthFixed, 116.0f);
+            ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthStretch);
+            ImGui.TableNextRow(); ImGui.TableSetColumnIndex(0); ImGui.TextDisabled("Active in hierarchy"); ImGui.TableSetColumnIndex(1);
+            bool hierarchyActive = allHierarchyActive;
+            ImGui.TextUnformatted(allHierarchyActive ? "Yes" : allHierarchyInactive ? "No" : "<mixed>");
+            ImGui.TableNextRow(); ImGui.TableSetColumnIndex(0); ImGui.TextDisabled("ID"); ImGui.TableSetColumnIndex(1); ImGui.TextUnformatted(sameId ? firstId.ToString() : "<multiple>");
+            ImGui.TableNextRow(); ImGui.TableSetColumnIndex(0); ImGui.TextDisabled("Path"); ImGui.TableSetColumnIndex(1); ImGui.PushTextWrapPos(); ImGui.TextUnformatted(samePath ? firstPath : "<multiple>"); ImGui.PopTextWrapPos();
             ImGui.EndTable();
         }
-
         private static void DrawStandaloneInspectorContent(object target, HashSet<object> visited)
         {
             if (target is AssetExplorerInspectorLoadState loadState)
@@ -656,11 +643,11 @@ public static partial class EditorImGuiUI
                     DrawEngineDefaultsInspectorNote(engineSettings);
 
                 DrawThirdPartyImportSettings(asset, visited);
-                if (TryDrawAssetInspector(new InspectorTargetSet(new[] { asset }, asset.GetType()), visited))
+                if (TryDrawAssetInspector(GetInspectorTargets(asset), visited))
                     return;
             }
 
-            DrawInspectableObject(new InspectorTargetSet(new[] { target }, target.GetType()), "StandaloneInspectorProperties", visited);
+            DrawInspectableObject(GetInspectorTargets(target), "StandaloneInspectorProperties", visited);
         }
 
         private static void DrawThirdPartyImportSettings(XRAsset asset, HashSet<object> visited)
@@ -744,7 +731,7 @@ public static partial class EditorImGuiUI
                 ImGui.Separator();
             }
 
-            DrawInspectableObject(new InspectorTargetSet(new[] { importOptions }, importOptions.GetType()), "ThirdPartyImportOptions", visited);
+            DrawInspectableObject(GetInspectorTargets(importOptions), "ThirdPartyImportOptions", visited);
 
             ImGui.Spacing();
             if (ImGui.Button(saveButtonLabel))
@@ -834,7 +821,7 @@ public static partial class EditorImGuiUI
 
             ImGui.TextColored(new Vector4(0.85f, 0.85f, 0.85f, 1.0f), "Generated Texture Asset");
             ImGui.Spacing();
-            if (!TryDrawAssetInspector(new InspectorTargetSet(new[] { texture }, texture.GetType()), visited))
+            if (!TryDrawAssetInspector(GetInspectorTargets(texture), visited))
                 DrawDefaultAssetInspector(texture, visited);
         }
 
@@ -1465,12 +1452,13 @@ public static partial class EditorImGuiUI
         private static partial void DrawSceneNodeBasics(SceneNode node)
         {
             using var profilerScope = Engine.Profiler.Start("UI.DrawSceneNodeBasics");
-            const ImGuiTableFlags tableFlags = ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerV;
-            if (!ImGui.BeginTable("SceneNodeBasics", 2, tableFlags))
-                return;
-
-            DrawInspectorRow("Name", () =>
+            const ImGuiTableFlags headerFlags = ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.NoSavedSettings;
+            if (ImGui.BeginTable("SceneNodeSummary", 2, headerFlags))
             {
+                ImGui.TableSetupColumn("Name", ImGuiTableColumnFlags.WidthStretch);
+                ImGui.TableSetupColumn("Active", ImGuiTableColumnFlags.WidthFixed);
+                ImGui.TableNextRow();
+                ImGui.TableSetColumnIndex(0);
                 string name = node.Name ?? string.Empty;
                 ImGui.SetNextItemWidth(-1f);
                 if (ImGui.InputText("##SceneNodeName", ref name, 256))
@@ -1491,10 +1479,8 @@ public static partial class EditorImGuiUI
                         node.Name = string.IsNullOrWhiteSpace(trimmed) ? SceneNode.DefaultName : trimmed;
                     }
                 }
-            });
 
-            DrawInspectorRow("Active Self", () =>
-            {
+                ImGui.TableSetColumnIndex(1);
                 bool active = node.IsActiveSelf;
                 bool canToggleActiveSelf = node.CanDeactivate || !node.IsActiveSelf;
                 if (!canToggleActiveSelf)
@@ -1506,35 +1492,43 @@ public static partial class EditorImGuiUI
                 }
                 if (!canToggleActiveSelf)
                     ImGui.EndDisabled();
-            });
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Toggle active state");
 
-            DrawInspectorRow("Active In Hierarchy", () =>
-            {
-                bool active = node.IsActiveInHierarchy;
-                bool canToggleActiveInHierarchy = node.CanDeactivate || !node.IsActiveInHierarchy;
-                if (!canToggleActiveInHierarchy)
-                    ImGui.BeginDisabled();
-                if (ImGui.Checkbox("##SceneNodeActiveInHierarchy", ref active))
-                {
-                    using var _ = Undo.TrackChange("Toggle Active In Hierarchy", node);
-                    node.IsActiveInHierarchy = active;
-                }
-                if (!canToggleActiveInHierarchy)
-                    ImGui.EndDisabled();
-            });
+                ImGui.TableNextRow();
+                ImGui.TableSetColumnIndex(0);
+                ImGui.TextDisabled(GetInspectorBreadcrumb(node));
+                ImGui.EndTable();
+            }
 
-            DrawInspectorRow("ID", () => ImGui.TextUnformatted(node.ID.ToString()));
+            if (!ImGui.CollapsingHeader("Details##SceneNodeDetails"))
+                return;
 
-            DrawInspectorRow("Path", () =>
-            {
-                ImGui.PushTextWrapPos();
-                ImGui.TextUnformatted(node.GetPath());
-                ImGui.PopTextWrapPos();
-            });
+            const ImGuiTableFlags detailFlags = ImGuiTableFlags.SizingStretchProp | ImGuiTableFlags.NoSavedSettings;
+            if (!ImGui.BeginTable("SceneNodeDetails", 2, detailFlags))
+                return;
 
+            ImGui.TableSetupColumn("Label", ImGuiTableColumnFlags.WidthFixed, 116.0f);
+            ImGui.TableSetupColumn("Value", ImGuiTableColumnFlags.WidthStretch);
+            ImGui.TableNextRow();
+            ImGui.TableSetColumnIndex(0);
+            ImGui.TextDisabled("Active in hierarchy");
+            ImGui.TableSetColumnIndex(1);
+            ImGui.TextUnformatted(node.IsActiveInHierarchy ? "Yes" : "No");
+            ImGui.TableNextRow();
+            ImGui.TableSetColumnIndex(0);
+            ImGui.TextDisabled("ID");
+            ImGui.TableSetColumnIndex(1);
+            ImGui.TextUnformatted(node.ID.ToString());
+            ImGui.TableNextRow();
+            ImGui.TableSetColumnIndex(0);
+            ImGui.TextDisabled("Path");
+            ImGui.TableSetColumnIndex(1);
+            ImGui.PushTextWrapPos();
+            ImGui.TextUnformatted(node.GetPath());
+            ImGui.PopTextWrapPos();
             ImGui.EndTable();
         }
-
         private static partial void DrawInspectorRow(string label, Action drawValue)
         {
             ImGui.TableNextRow();
@@ -1611,7 +1605,9 @@ public static partial class EditorImGuiUI
             }
 
             commonType ??= typeof(TransformBase);
-            var targetSet = new InspectorTargetSet(_multiTransformTargetsScratch, commonType);
+            if (_multiTransformTargetSet is null || !_multiTransformTargetSet.Matches(_multiTransformTargetsScratch, commonType))
+                _multiTransformTargetSet = new InspectorTargetSet(_multiTransformTargetsScratch, commonType);
+            var targetSet = _multiTransformTargetSet;
             if (commonType != typeof(TransformBase))
                 ImGui.TextDisabled($"Transform Type: {commonType.Name}");
             else if (hasMultipleConcreteTypes)
@@ -1820,36 +1816,20 @@ public static partial class EditorImGuiUI
                 string renamePopupId = cachedLabels.RenamePopup;
 
                 bool renameRequested = false;
-
                 bool open = false;
                 const ImGuiTableFlags headerRowFlags = ImGuiTableFlags.SizingFixedFit | ImGuiTableFlags.NoSavedSettings;
-                if (ImGui.BeginTable("ComponentHeaderRow", 4, headerRowFlags))
+                if (ImGui.BeginTable("ComponentHeaderRow", 3, headerRowFlags))
                 {
                     ImGui.TableSetupColumn("Header", ImGuiTableColumnFlags.WidthStretch);
                     ImGui.TableSetupColumn("Active", ImGuiTableColumnFlags.WidthFixed);
-                    ImGui.TableSetupColumn("Rename", ImGuiTableColumnFlags.WidthFixed);
-                    ImGui.TableSetupColumn("Remove", ImGuiTableColumnFlags.WidthFixed);
+                    ImGui.TableSetupColumn("Actions", ImGuiTableColumnFlags.WidthFixed);
                     ImGui.TableNextRow();
 
                     ImGui.TableSetColumnIndex(0);
-                    float headerAvail = ImGui.GetContentRegionAvail().X;
-                    // Use the cached header label when it matches the full display;
-                    // only allocate a truncated variant when the label actually needs shortening.
-                    string headerLabel;
-                    if (componentName is not null)
-                    {
-                        float fullWidth = ImGui.CalcTextSize(fullDisplayLabel).X;
-                        if (fullWidth > headerAvail)
-                            headerLabel = $"{componentName}##Component{componentHash}";
-                        else
-                            headerLabel = cachedLabels.Header;
-                    }
-                    else
-                    {
-                        headerLabel = cachedLabels.Header;
-                    }
-                    ImGuiTreeNodeFlags headerFlags = ImGuiTreeNodeFlags.DefaultOpen;
-                    open = ImGui.CollapsingHeader(headerLabel, headerFlags);
+                    bool searching = !string.IsNullOrWhiteSpace(_inspectorPropertySearch);
+                    PrepareInspectorComponentSearchExpansion(component, searching);
+                    open = ImGui.CollapsingHeader(cachedLabels.Header);
+                    RecordInspectorComponentHeaderState(component, open, searching);
                     if (ImGui.IsItemHovered())
                         ImGui.SetTooltip(fullDisplayLabel);
 
@@ -1876,25 +1856,23 @@ public static partial class EditorImGuiUI
                     ImGui.TableSetColumnIndex(2);
                     using (new ImGuiDisabledScope(component.IsDestroyed))
                     {
-                        if (ImGui.SmallButton("Rename"))
+                        if (ImGui.SmallButton("...##ComponentActions"))
+                            ImGui.OpenPopup("ComponentActions");
+                        if (ImGui.BeginPopup("ComponentActions"))
                         {
-                            renameRequested = true;
-                        }
-                    }
-
-                    ImGui.TableSetColumnIndex(3);
-                    using (new ImGuiDisabledScope(component.IsDestroyed))
-                    {
-                        if (ImGui.SmallButton("Remove"))
-                        {
-                            componentsToRemove ??= new List<XRComponent>();
-                            componentsToRemove.Add(component);
+                            if (ImGui.MenuItem("Rename"))
+                                renameRequested = true;
+                            if (ImGui.MenuItem("Remove"))
+                            {
+                                componentsToRemove ??= new List<XRComponent>();
+                                componentsToRemove.Add(component);
+                            }
+                            ImGui.EndPopup();
                         }
                     }
 
                     ImGui.EndTable();
                 }
-
                 if (renameRequested)
                 {
                     BeginComponentRename(component);
@@ -1938,7 +1916,6 @@ public static partial class EditorImGuiUI
                 if (open)
                 {
                     var labels = GetComponentInspectorLabels(component.GetType());
-                    ImGui.Indent();
 
                     if (!string.IsNullOrWhiteSpace(labels.Header))
                     {
@@ -1954,7 +1931,6 @@ public static partial class EditorImGuiUI
                         ImGui.TextWrapped(labels.Footer);
                     }
 
-                    ImGui.Unindent();
                 }
 
                 ImGui.PopID();
@@ -2143,26 +2119,35 @@ public static partial class EditorImGuiUI
                 if (allSame)
                     commonName = _multiComponentListScratch[0].Name;
             }
-            string displayLabel = string.IsNullOrWhiteSpace(commonName) ? componentType.Name : $"{commonName} ({componentType.Name})";
-            string headerLabel = $"{displayLabel}##ComponentMulti{componentHash}";
-
+            string typeName = componentType.Name;
+            var labelKey = (componentHash, commonName, typeName);
+            if (!_componentLabelCache.TryGetValue(labelKey, out var cachedLabels))
+            {
+                string fullDisplay = string.IsNullOrWhiteSpace(commonName) ? typeName : $"{commonName} ({typeName})";
+                cachedLabels = (fullDisplay, $"{fullDisplay}##ComponentMulti{componentHash}", string.Empty);
+                _componentLabelCache[labelKey] = cachedLabels;
+            }
+            string headerLabel = cachedLabels.Header;
             bool removeRequested = false;
-            bool open;
+            bool open = false;
             const ImGuiTableFlags headerRowFlags = ImGuiTableFlags.SizingFixedFit | ImGuiTableFlags.NoSavedSettings;
             if (ImGui.BeginTable("ComponentHeaderRowMulti", 3, headerRowFlags))
             {
                 ImGui.TableSetupColumn("Header", ImGuiTableColumnFlags.WidthStretch);
                 ImGui.TableSetupColumn("Active", ImGuiTableColumnFlags.WidthFixed);
-                ImGui.TableSetupColumn("Remove", ImGuiTableColumnFlags.WidthFixed);
+                ImGui.TableSetupColumn("Actions", ImGuiTableColumnFlags.WidthFixed);
                 ImGui.TableNextRow();
 
                 ImGui.TableSetColumnIndex(0);
-                open = ImGui.CollapsingHeader(headerLabel, ImGuiTreeNodeFlags.DefaultOpen);
+                if (!string.IsNullOrWhiteSpace(_inspectorPropertySearch))
+                    ImGui.SetNextItemOpen(true, ImGuiCond.Always);
+                open = ImGui.CollapsingHeader(headerLabel);
                 if (ImGui.IsItemHovered())
                     ImGui.SetTooltip($"{componentType.FullName} ({_multiComponentListScratch.Count} selected)");
 
                 ImGui.TableSetColumnIndex(1);
-                bool allActive = true, allInactive = true;
+                bool allActive = true;
+                bool allInactive = true;
                 for (int i = 0; i < _multiComponentListScratch.Count; i++)
                 {
                     if (_multiComponentListScratch[i].IsActive)
@@ -2172,11 +2157,7 @@ public static partial class EditorImGuiUI
                 }
                 bool mixed = !allActive && !allInactive;
                 bool active = allActive;
-                if (mixed)
-                    ImGui.PushStyleVar(ImGuiStyleVar.Alpha, ImGui.GetStyle().Alpha * 0.6f);
-                bool toggled = ImGui.Checkbox("##ComponentActiveMulti", ref active);
-                if (mixed)
-                    ImGui.PopStyleVar();
+                bool toggled = DrawInspectorMixedCheckbox("##ComponentActiveMulti", ref active, mixed);
                 if (toggled)
                 {
                     using var interaction = Undo.BeginUserInteraction();
@@ -2189,19 +2170,26 @@ public static partial class EditorImGuiUI
                     }
                 }
                 if (ImGui.IsItemHovered())
-                    ImGui.SetTooltip("Toggle component active state");
+                    ImGui.SetTooltip(mixed ? "Mixed active state — click to set all." : "Toggle component active state");
 
                 ImGui.TableSetColumnIndex(2);
-                if (ImGui.SmallButton("Remove"))
-                    removeRequested = true;
+                if (ImGui.SmallButton("...##ComponentActionsMulti"))
+                    ImGui.OpenPopup("ComponentActionsMulti");
+                if (ImGui.BeginPopup("ComponentActionsMulti"))
+                {
+                    if (ImGui.MenuItem("Remove from selected"))
+                        removeRequested = true;
+                    ImGui.EndPopup();
+                }
 
                 ImGui.EndTable();
             }
             else
             {
-                open = ImGui.CollapsingHeader(headerLabel, ImGuiTreeNodeFlags.DefaultOpen);
+                if (!string.IsNullOrWhiteSpace(_inspectorPropertySearch))
+                    ImGui.SetNextItemOpen(true, ImGuiCond.Always);
+                open = ImGui.CollapsingHeader(headerLabel);
             }
-
             if (removeRequested)
             {
                 for (int i = 0; i < _multiComponentListScratch.Count; i++)
@@ -2241,7 +2229,6 @@ public static partial class EditorImGuiUI
 
             if (open)
             {
-                ImGui.Indent();
 
                 if (!string.IsNullOrWhiteSpace(labels.Header))
                 {
@@ -2249,10 +2236,15 @@ public static partial class EditorImGuiUI
                     ImGui.Spacing();
                 }
 
-                var targetList = new List<object>(_multiComponentListScratch.Count);
+                _multiComponentTargetsScratch.Clear();
                 for (int i = 0; i < _multiComponentListScratch.Count; i++)
-                    targetList.Add(_multiComponentListScratch[i]);
-                var targetSet = new InspectorTargetSet(targetList, componentType);
+                    _multiComponentTargetsScratch.Add(_multiComponentListScratch[i]);
+                if (!_multiComponentTargetSets.TryGetValue(componentType, out var targetSet)
+                    || !targetSet.Matches(_multiComponentTargetsScratch, componentType))
+                {
+                    targetSet = new InspectorTargetSet(_multiComponentTargetsScratch, componentType);
+                    _multiComponentTargetSets[componentType] = targetSet;
+                }
                 DrawInspectableObject(targetSet, $"ComponentPropertiesMulti_{componentHash}", visited);
 
                 if (!string.IsNullOrWhiteSpace(labels.Footer))
@@ -2261,7 +2253,6 @@ public static partial class EditorImGuiUI
                     ImGui.TextWrapped(labels.Footer);
                 }
 
-                ImGui.Unindent();
             }
 
             ImGui.PopID();
@@ -2368,13 +2359,13 @@ public static partial class EditorImGuiUI
         }
 
         public static partial void DrawDefaultComponentInspector(XRComponent component, HashSet<object> visited)
-            => DrawInspectableObject(new InspectorTargetSet(new[] { component }, component.GetType()), "ComponentProperties", visited);
+            => DrawInspectableObject(GetInspectorTargets(component), "ComponentProperties", visited);
 
         public static partial void DrawDefaultTransformInspector(TransformBase transform, HashSet<object> visited)
-            => DrawInspectableObject(new InspectorTargetSet(new[] { transform }, transform.GetType()), "TransformProperties", visited);
+            => DrawInspectableObject(GetInspectorTargets(transform), "TransformProperties", visited);
 
         public static void DrawDefaultAssetInspector(XRAsset asset, HashSet<object> visited)
-            => DrawInspectableObject(new InspectorTargetSet(new[] { asset }, asset.GetType()), "AssetProperties", visited);
+            => DrawInspectableObject(GetInspectorTargets(asset), "AssetProperties", visited);
 
         public static void DrawDefaultAssetInspector(InspectorTargetSet targets, HashSet<object> visited)
             => DrawInspectableObject(targets, "AssetProperties", visited);
@@ -2388,7 +2379,7 @@ public static partial class EditorImGuiUI
         internal static void DrawAssetInspectorInline(XRAsset asset)
         {
             var visited = new HashSet<object>(ReferenceEqualityComparer.Instance);
-            var targets = new InspectorTargetSet(new[] { asset }, asset.GetType());
+            var targets = GetInspectorTargets(asset);
             if (!TryDrawAssetInspector(targets, visited))
                 DrawDefaultAssetInspector(asset, visited);
         }

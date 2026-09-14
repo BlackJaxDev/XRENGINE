@@ -87,17 +87,23 @@ histories, and output topology independent. The standard and RVC pipelines
 implement shared GI, probe-resource, reusable pass-material, temporal,
 volumetric/froxel, and post-process feature contracts.
 
-The advanced pipeline currently exposes the ordered visibility-oriented frame
-stage skeleton and Vulkan can bind its promoted visibility family to one stable
-mono output. Its shaded-output producer is still incomplete, so the bound
-pipeline deliberately terminates in the solid-red empty-output diagnostic until
-the Phase 8 output-parity work is complete. Backends or additional outputs that
-cannot reserve the family remain visibly unbound. OpenGL does not currently
-provide an advanced visibility-family reservation, so an explicitly configured
-advanced source remains authoritative there but cannot yet produce scene output.
+The advanced pipeline includes executable visibility, work classification,
+ambient occlusion, light clustering, native opaque/background shading, late
+passes, temporal/post-processing, and final output. Vulkan dispatches
+`Advanced/Shading/ShadeNativeOpaque.comp` to reconstruct admitted surfaces,
+evaluate material lighting, and write HDR scene color; the Advanced command
+chain consumes that output through post-processing and presentation.
 
-The inactive skeleton also defines its resource/state contract before declaring
-production visibility resources. Ownership is classified as pipeline
+The September 4–8 [Advanced acceptance records](../../work/todo/rendering/vulkan-xr-and-advanced-rendering-todo.md#static-surfaces-ao-and-gi)
+include bounded shaded-output, AO/IBL, temporal, post-processing, and OpenGL
+stereo cohorts. These establish implemented and exercised paths, not universal
+backend/material/output-profile certification. Consult the individual runtime
+acceptance rows for remaining coverage. The earlier August 29 description of
+an empty-output-only skeleton is obsolete. A rejected frame's diagnostic or
+recovery clear is not evidence that the shaded-output producer is missing.
+Physical outputs still require their backend capability/reservation checks.
+
+The pipeline declares its production resource/state contract. Ownership is classified as pipeline
 persistent, frame-slot transient, temporal history, imported, or external. The
 immutable profile includes output shape, selected backend encodings, frame-slot
 count, shader family, and declared capacities. Current/previous slot reuse is
@@ -829,3 +835,11 @@ entire resource plan, regenerate shader-program identities, or re-record the
 desktop primary. Deliberately discontinuous camera jumps can still cause
 bounded structural work when they expose a substantially different visible or
 shadow set.
+
+## Vulkan desktop frame-data ownership and minimized windows (2026-09-14)
+
+Desktop frame data is owned by the logical frame-in-flight slot, independently of the acquired swapchain image. Prepared primary recording inputs must explicitly carry both the frame-data slot and timing-query slot. Mapped/immutable arenas, descriptors, Advanced publications and data-dependent command reuse use the logical slot. Presentation, image artifacts and desktop timing queries retain acquired-image ownership. Reset, cancellation and accepted-submission publication must use the same slot. A rejected recording must release its unsubmitted retained publication uses.
+
+Retired render-resource generations require a Signaled completion fence before disposal. Missing fences remain pending; failed fences may be replaced but cannot authorize disposal. A request to wait for GPU progress is not itself a completion proof.
+
+A minimized desktop window is not a new 1x1 render profile. Suspend managed resource preparation and preserve the last complete generation until restoration; externally owned swapchain outputs remain independent. See the [Vulkan resize investigation](../../work/investigations/rendering/vulkan-default-world-resize-2026-09-14.md) for the reproduction, exact validation and missing-texture diagnosis.

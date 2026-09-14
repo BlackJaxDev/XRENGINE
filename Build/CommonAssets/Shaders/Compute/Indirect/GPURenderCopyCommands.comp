@@ -7,6 +7,7 @@ layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 
 uniform uint CopyCount;
 uniform int TargetPass;
+uniform uint DisabledFlagsMask;
 uniform int DebugEnabled;
 uniform int DebugMaxSamples;
 uniform int DebugInstanceStride;
@@ -178,6 +179,9 @@ void main()
     }
 
     if (!passMatches)
+        return;
+
+    if (DisabledFlagsMask != 0u && (draw.Flags & DisabledFlagsMask) != 0u)
         return;
 
     uint instanceCount = draw.InstanceCount;

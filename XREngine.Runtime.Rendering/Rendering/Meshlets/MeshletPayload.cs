@@ -184,7 +184,7 @@ public sealed class MeshletPayload
         ArgumentNullException.ThrowIfNull(mesh);
         ValidatePortablePayload();
         string identity = MeshletPayloadUtility.ResolveSourceMeshIdentity(mesh, expectedIdentity);
-        int triangleCount = (mesh.GetIndices(EPrimitiveType.Triangles)?.Length ?? 0) / 3;
+        int triangleCount = mesh.Triangles?.Count ?? 0;
         ulong sourceHash = MeshletPayloadUtility.ComputeSourceMeshHash(mesh);
         ulong freshness = MeshletPayloadUtility.ComputeFreshnessHash(identity, sourceHash, MeshletSettingsHash, LodSettingsHash, CookProvenanceKey);
         if (SourceVertexCount != mesh.VertexCount || SourceTriangleCount != triangleCount || SourceMeshHash != sourceHash
@@ -313,7 +313,7 @@ public sealed class MeshletPayload
         return PayloadVersion == CurrentPayloadVersion
             && OwnerGeometryRevision == mesh.GeometryRevision
             && SourceVertexCount == mesh.VertexCount
-            && SourceTriangleCount == ((mesh.GetIndices(EPrimitiveType.Triangles)?.Length ?? 0) / 3)
+            && SourceTriangleCount == (mesh.Triangles?.Count ?? 0)
             && SourceMeshHash == sourceHash
             && MeshletSettingsHash == meshletHash
             && LodSettingsHash == lodHash
@@ -334,7 +334,7 @@ public sealed class MeshletPayload
         return PayloadVersion == CurrentPayloadVersion
             && OwnerGeometryRevision == mesh.GeometryRevision
             && SourceVertexCount == mesh.VertexCount
-            && SourceTriangleCount == ((mesh.GetIndices(EPrimitiveType.Triangles)?.Length ?? 0) / 3)
+            && SourceTriangleCount == (mesh.Triangles?.Count ?? 0)
             && SourceMeshHash == sourceHash
             && FreshnessHash == freshness
             && string.Equals(SourceMeshIdentity, identity, StringComparison.Ordinal)
@@ -387,7 +387,7 @@ public sealed class MeshletPayload
             RuntimeCompatibilityToken = MeshletPayloadUtility.ComputeRuntimeCompatibilityToken(meshletSnapshot),
             SourceMeshIdentity = identity,
             SourceVertexCount = mesh.VertexCount,
-            SourceTriangleCount = (mesh.GetIndices(EPrimitiveType.Triangles)?.Length ?? 0) / 3,
+            SourceTriangleCount = mesh.Triangles?.Count ?? 0,
             SourceMeshHash = sourceHash,
             MeshletSettingsHash = meshletHash,
             LodSettingsHash = lodHash,

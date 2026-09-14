@@ -1,6 +1,7 @@
 using ImGuiNET;
 using System.Collections.Concurrent;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Linq;
@@ -25,6 +26,7 @@ public sealed class CameraComponentEditor : IXRComponentEditor
 {
     private const float PreviewMaxEdge = 256.0f;
     private const float PreviewMinEdge = 96.0f;
+    private const double PreviewDiscoveryRefreshSeconds = 0.125;
     private const string TonemappingStageKey = "tonemapping";
     private const int CascadePreviewsPerRow = 2;
 
@@ -36,6 +38,20 @@ public sealed class CameraComponentEditor : IXRComponentEditor
     private sealed class PostProcessStageSelectorState
     {
         public string SelectedStageKey = string.Empty;
+    }
+
+    /// <summary>
+    /// Caches only preview discovery metadata. GPU handles are deliberately resolved for every visible frame,
+    /// because a render-target recreation may invalidate them without changing the texture object identity.
+    /// </summary>
+    private sealed class CameraPreviewState
+    {
+        public XRCamera? Camera;
+        public XRFrameBuffer? DefaultRenderTarget;
+        public XRTexture? Texture;
+        public Vector2 PixelSize;
+        public string? Failure;
+        public long NextDiscoveryTimestamp;
     }
 
     private readonly struct PostProcessStageEntry
@@ -53,6 +69,7 @@ public sealed class CameraComponentEditor : IXRComponentEditor
     }
     private static readonly ConditionalWeakTable<XRTexture2DArray, Dictionary<int, XRTexture2DArrayView>> CascadePreviewViews = new();
     private static readonly ConditionalWeakTable<PipelinePostProcessState, PostProcessStageSelectorState> PostProcessStageSelectorStates = new();
+    private static readonly ConditionalWeakTable<CameraComponent, CameraPreviewState> PreviewStates = new();
     private static readonly ConcurrentDictionary<Type, PropertyInfo[]> PipelineCameraSettingProperties = new();
     private static readonly List<XRViewport> BoundViewportScratch = [];
 
@@ -1999,43 +2016,89 @@ public sealed class CameraComponentEditor : IXRComponentEditor
             return;
         }
 
-        if (!TryResolvePreviewTexture(component, out XRTexture? texture, out Vector2 pixelSize, out string? failure))
+        CameraPreviewState previewState = PreviewStates.GetOrCreateValue(component);
+        Vector2 reservedSize = CalculatePreviewSize(
+            previewState.PixelSize.X > 0.0f && previewState.PixelSize.Y > 0.0f
+                ? previewState.PixelSize
+                : new Vector2(PreviewMaxEdge, PreviewMaxEdge));
+        bool previewImageVisible = ImGui.IsRectVisible(reservedSize);
+        bool hasPreviewImage = false;
+        nint handle = nint.Zero;
+        XRTexture? resolvedTexture = null;
+        string? handleFailure = null;
+
+        if (previewImageVisible)
         {
-            ImGui.TextDisabled(failure ?? "Preview unavailable.");
-            return;
+            RefreshPreviewDiscovery(component, previewState, force: false);
+            if (previewState.Texture is XRTexture discoveredTexture
+                && TryGetTextureHandle(discoveredTexture, out handle, out handleFailure))
+            {
+                resolvedTexture = discoveredTexture;
+                hasPreviewImage = true;
+            }
+            else if (previewState.Texture is XRTexture)
+            {
+                // The cached texture may have been recreated in-place. Re-discover once before reporting failure.
+                RefreshPreviewDiscovery(component, previewState, force: true);
+                if (previewState.Texture is XRTexture refreshedTexture
+                    && TryGetTextureHandle(refreshedTexture, out handle, out handleFailure))
+                {
+                    resolvedTexture = refreshedTexture;
+                    hasPreviewImage = true;
+                }
+            }
         }
 
-        XRTexture resolvedTexture = texture!;
-
-        if (!TryGetTextureHandle(resolvedTexture, out nint handle, out string? handleFailure))
-        {
-            ImGui.TextDisabled(handleFailure ?? "Failed to acquire GPU handle.");
-            return;
-        }
-
+        Vector2 pixelSize = previewState.PixelSize;
         Vector2 displaySize = CalculatePreviewSize(pixelSize);
         Vector2 uv0 = new(0.0f, 1.0f);
         Vector2 uv1 = new(1.0f, 0.0f);
         bool openDialog = false;
 
-        ImGui.Image(handle, displaySize, uv0, uv1);
-        if (ImGui.IsItemHovered())
+        if (hasPreviewImage)
         {
-            string formatLabel = resolvedTexture is XRTexture2D tex2D
-                ? tex2D.SizedInternalFormat.ToString()
-                : resolvedTexture.GetType().Name;
-            ImGui.SetTooltip($"{pixelSize.X:0} x {pixelSize.Y:0} | {formatLabel}");
-            if (ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left))
-                openDialog = true;
+            ImGui.Image(handle, displaySize, uv0, uv1);
+            if (ImGui.IsItemHovered())
+            {
+                string formatLabel = resolvedTexture is XRTexture2D tex2D
+                    ? tex2D.SizedInternalFormat.ToString()
+                    : resolvedTexture!.GetType().Name;
+                ImGui.SetTooltip($"{pixelSize.X:0} x {pixelSize.Y:0} | {formatLabel}");
+                if (ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left))
+                    openDialog = true;
+            }
+        }
+        else if (previewImageVisible)
+        {
+            DrawPreviewFailurePlaceholder(
+                "CameraPreviewFailure",
+                reservedSize,
+                handleFailure ?? previewState.Failure ?? "Failed to acquire GPU handle.");
+        }
+        else
+        {
+            // Keep the image slot in the scroll layout while avoiding discovery and handle resolution when clipped.
+            ImGui.Dummy(reservedSize);
         }
 
-        ImGui.TextDisabled($"{pixelSize.X:0} x {pixelSize.Y:0} ({resolvedTexture.GetType().Name})");
-        if (ImGui.Button("Open Preview Window"))
-            openDialog = true;
+        if (previewState.Texture is XRTexture metadataTexture)
+        {
+            ImGui.TextDisabled($"{pixelSize.X:0} x {pixelSize.Y:0} ({metadataTexture.GetType().Name})");
+            using (new ImGuiDisabledScope(!hasPreviewImage))
+            {
+                if (ImGui.Button("Open Preview Window"))
+                    openDialog = true;
+            }
+        }
+        else if (!previewImageVisible)
+        {
+            ImGui.TextDisabled(previewState.Failure ?? "Preview unavailable.");
+        }
 
-        if (openDialog)
+        if (openDialog && resolvedTexture is not null)
             ComponentEditorLayout.RequestPreviewDialog(component.SceneNode?.Name ?? "Camera Preview", handle, pixelSize, flipVertically: true);
 
+        // Cascades have their own layout and must continue to submit independently of the main preview image.
         DrawActiveCascadeDepthPreviews(component);
     }
 
@@ -2089,20 +2152,37 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         ImGui.PushID(light.GetHashCode());
         ImGui.TextDisabled($"{lightLabel}: {activeCascades} active cascade(s)");
 
+        Vector2 pixelSize = GetPixelSize(cascadeTexture);
+        Vector2 displaySize = CalculatePreviewSize(pixelSize);
+        Vector2 reservedSize = new(displaySize.X, displaySize.Y + ImGui.GetFrameHeightWithSpacing() + 2.0f * ImGui.GetTextLineHeightWithSpacing());
         for (int cascadeIndex = 0; cascadeIndex < activeCascades; cascadeIndex++)
         {
-            XRTexture2DArrayView cascadeView = GetOrCreateCascadePreviewView(cascadeTexture, cascadeIndex);
-            if (!TryGetTextureHandle(cascadeView, out nint handle, out string? handleFailure))
-            {
-                ImGui.TextDisabled(handleFailure ?? $"Cascade {cascadeIndex} preview unavailable.");
-                continue;
-            }
-
             if (cascadeIndex > 0 && cascadeIndex % CascadePreviewsPerRow != 0)
                 ImGui.SameLine();
 
-            Vector2 pixelSize = GetPixelSize(cascadeView);
-            Vector2 displaySize = CalculatePreviewSize(pixelSize);
+            if (!ImGui.IsRectVisible(reservedSize))
+            {
+                // Each cascade reserves its complete group before allocating a layer view or resolving its handle.
+                ImGui.Dummy(reservedSize);
+                continue;
+            }
+
+            XRTexture2DArrayView cascadeView = GetOrCreateCascadePreviewView(cascadeTexture, cascadeIndex);
+            if (!TryGetTextureHandle(cascadeView, out nint handle, out string? handleFailure))
+            {
+                ImGui.BeginGroup();
+                DrawPreviewFailurePlaceholder(
+                    $"CascadePreviewFailure{cascadeIndex}",
+                    displaySize,
+                    handleFailure ?? $"Cascade {cascadeIndex} preview unavailable.");
+                ImGui.TextDisabled($"Cascade {cascadeIndex}");
+                ImGui.TextDisabled($"Split {light.GetCascadeSplit(cascadeIndex):F1}");
+                using (new ImGuiDisabledScope(true))
+                    ImGui.SmallButton($"Open##Cascade{cascadeIndex}");
+                ImGui.EndGroup();
+                continue;
+            }
+
             Vector2 uv0 = new(0.0f, 1.0f);
             Vector2 uv1 = new(1.0f, 0.0f);
             bool openDialog = false;
@@ -2201,6 +2281,31 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         return false;
     }
 
+    private static void RefreshPreviewDiscovery(CameraComponent component, CameraPreviewState state, bool force)
+    {
+        long now = Stopwatch.GetTimestamp();
+        bool sourceChanged = !ReferenceEquals(state.Camera, component.Camera)
+            || !ReferenceEquals(state.DefaultRenderTarget, component.DefaultRenderTarget);
+        if (!force && !sourceChanged && now < state.NextDiscoveryTimestamp)
+            return;
+
+        state.Camera = component.Camera;
+        state.DefaultRenderTarget = component.DefaultRenderTarget;
+        if (TryResolvePreviewTexture(component, out XRTexture? texture, out Vector2 pixelSize, out string? failure))
+        {
+            state.Texture = texture;
+            state.PixelSize = pixelSize;
+            state.Failure = null;
+        }
+        else
+        {
+            state.Texture = null;
+            state.PixelSize = Vector2.Zero;
+            state.Failure = failure;
+        }
+
+        state.NextDiscoveryTimestamp = now + (long)(Stopwatch.Frequency * PreviewDiscoveryRefreshSeconds);
+    }
     private static bool TryExtractTextureFromFbo(XRFrameBuffer? fbo, out XRTexture? texture, out Vector2 pixelSize)
     {
         texture = null;
@@ -2292,6 +2397,12 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         return new Vector2(width, height);
     }
 
+    private static void DrawPreviewFailurePlaceholder(string id, Vector2 size, string failure)
+    {
+        if (ImGui.BeginChild(id, size, ImGuiChildFlags.Borders, ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse))
+            ImGui.TextWrapped(failure);
+        ImGui.EndChild();
+    }
     private static Vector2 GetPixelSize(XRTexture texture)
     {
         Vector3 dims = texture.WidthHeightDepth;

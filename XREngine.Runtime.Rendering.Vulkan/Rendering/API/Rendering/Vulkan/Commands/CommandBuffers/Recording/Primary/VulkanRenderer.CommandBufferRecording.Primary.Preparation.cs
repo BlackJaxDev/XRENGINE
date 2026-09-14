@@ -39,7 +39,8 @@ namespace XREngine.Rendering.Vulkan
             recordingState.CommandChainSchedule = context.CommandChainSchedule;
             recordingState.PreserveSwapchainForOverlay = context.PreserveSwapchainForOverlay;
             recordingState.TransitionSwapchainToPresent = context.TransitionSwapchainToPresent;
-            recordingState.FrameDataImageIndexOverride = context.FrameDataImageIndexOverride;
+            recordingState.FrameDataSlotIndex = context.FrameDataSlotIndex;
+            recordingState.TimingQuerySlot = checked((int)context.TimingQuerySlotIndex);
             recordingState.ReadOnlyStorageAuthority = context.ReadOnlyStorageAuthority;
             recordingState.OpenXrTargetContext = context.OpenXrTargetContext;
             recordingState.ExcludeDesktopSwapchainBarriers = context.ExcludeDesktopSwapchainBarriers;
@@ -69,8 +70,7 @@ namespace XREngine.Rendering.Vulkan
             recordingState.Metrics.DroppedComputeOps = 0;
             recordingState.Metrics.DroppedFrameOps = 0;
             recordingState.Metrics.FirstFailure = null;
-            recordingState.FrameDataImageIndex = recordingState.FrameDataImageIndexOverride ?? recordingState.ImageIndex;
-            recordingState.CommandBufferImageSlot = unchecked((int)Math.Min(recordingState.FrameDataImageIndex, int.MaxValue));
+            recordingState.FrameDataSlot = checked((int)recordingState.FrameDataSlotIndex);
             // The strict-SPS mirror recorder targets an engine-owned layered FBO
             // and intentionally has no OpenXR image target context. Do not let its
             // frame-data index alias desktop swapchain image 0. Direct per-eye XR
@@ -366,7 +366,7 @@ namespace XREngine.Rendering.Vulkan
                 recordingScratch.IsReusableFrameDataRefreshCohortCurrent(
                     framePlan.Generation,
                     framePlan.RenderFrameId,
-                    recordingState.FrameDataImageIndex);
+                    recordingState.FrameDataSlotIndex);
             Dictionary<VulkanMeshFrameDataRendererFamilyKey, int>
                 meshFrameDataFamilyBases = reusePublishedRefreshCohort
                     ? recordingScratch.ReusableMeshFrameDataFamilyBases
@@ -389,7 +389,7 @@ namespace XREngine.Rendering.Vulkan
                     !TryRegisterFrameWideMeshFrameDataRequirements(
                         recordingState.Ops,
                         FrameOperationSequence.Empty,
-                        recordingState.CommandBufferImageSlot,
+                        recordingState.FrameDataSlot,
                         sealAfterRegister: true,
                         meshDrawSlotsByRenderer,
                         recordingScratch,
@@ -500,7 +500,7 @@ namespace XREngine.Rendering.Vulkan
                             recordingState.MeshDrawSlotsByRendererFamily,
                             recordingState.MeshFrameDataFamilyBases,
                             meshRenderer,
-                            recordingState.CommandBufferImageSlot,
+                            recordingState.FrameDataSlot,
                             EVulkanMeshFrameDataStreamKind.Primary,
                             operationContext,
                             pendingDraw);
@@ -514,7 +514,7 @@ namespace XREngine.Rendering.Vulkan
                     if (!meshRenderer.TryPrewarmFrameDataForRecording(
                             pendingDraw,
                             drawSlot,
-                            recordingState.CommandBufferImageSlot,
+                            recordingState.FrameDataSlot,
                             out string prewarmReason))
                     {
                         Debug.VulkanWarningEvery(
@@ -853,7 +853,7 @@ namespace XREngine.Rendering.Vulkan
                 }
                 if (!TryPrepareAdvancedVisibilityScenePublication(
                         framePlan,
-                        recordingState.CommandBufferImageSlot,
+                        recordingState.FrameDataSlot,
                         in request,
                         out VulkanAdvancedScenePublicationState sceneState,
                         out EVulkanAdvancedSceneResourceFailure sceneFailure,
@@ -972,7 +972,7 @@ namespace XREngine.Rendering.Vulkan
                     sceneState.NativeGeneration,
                     checked((uint)request.Views.ViewCount));
                 if (!familyResources.TryPrepare(
-                        recordingState.CommandBufferImageSlot,
+                        recordingState.FrameDataSlot,
                         framePlan.Generation,
                         in publication,
                         in indirect,
@@ -1179,7 +1179,7 @@ namespace XREngine.Rendering.Vulkan
                     {
                         nativeClosure = nativeClosure with
                         {
-                            ShadingAddressRoot = PrepareNativeShadingAddressRoot(ref recordingState, recordingState.CommandBufferImageSlot),
+                            ShadingAddressRoot = PrepareNativeShadingAddressRoot(ref recordingState, recordingState.FrameDataSlot),
                         };
                     }
                     if (!recordingState.Ops.Stream.TryAssociateAdvancedNativeComputeClosure(
@@ -1662,7 +1662,7 @@ namespace XREngine.Rendering.Vulkan
                         recordingState.MeshDrawSlotsByRendererFamily,
                         recordingState.MeshFrameDataFamilyBases,
                         meshRenderer,
-                        recordingState.CommandBufferImageSlot,
+                        recordingState.FrameDataSlot,
                         EVulkanMeshFrameDataStreamKind.Primary,
                         operationContext,
                         pendingDraw);
@@ -1676,7 +1676,7 @@ namespace XREngine.Rendering.Vulkan
                         recordingState.ResourcePlanStamp
                             .ResourceAllocationSignature,
                         MappedFrameArena?.Generation ?? 0UL,
-                        recordingState.CommandBufferImageSlot,
+                        recordingState.FrameDataSlot,
                         drawSlot);
                 if (admittedSignatures.Contains(preparationSignature))
                     continue;
@@ -2377,7 +2377,7 @@ namespace XREngine.Rendering.Vulkan
                    new(_frameTelemetry, EVulkanCpuStage.FrameDataRefresh))
             {
                 refreshed = TryRefreshReusableCommandBufferFrameData(
-                    recordingState.FrameDataImageIndex,
+                    recordingState.FrameDataSlotIndex,
                     scratch.ScheduledCommandChainFrameDataRefreshRequests,
                     scratch.ScheduledCommandChainFrameDataOwnerWorkRequests,
                     scratch.ScheduledCommandChainFrameDataRefreshBatchInfo,
