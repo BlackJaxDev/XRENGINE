@@ -14,7 +14,7 @@ internal readonly record struct VulkanComputePreparationResult(
     string? FailureReason = null)
 {
     public bool Succeeded => Outcome == EVulkanComputePreparationOutcome.Success;
-    public bool Pending => Outcome == EVulkanComputePreparationOutcome.PipelinePending;
+    public bool Pending => Outcome is EVulkanComputePreparationOutcome.PipelinePending or EVulkanComputePreparationOutcome.BindingSuperseded;
 
     public static VulkanComputePreparationResult Success { get; } =
         new(EVulkanComputePreparationOutcome.Success, -1, 0, null);
@@ -34,6 +34,8 @@ internal readonly record struct VulkanComputePreparationResult(
             EVulkanComputePreparationOutcome.PipelineCreationFailed =>
                 $"Compute pipeline '{programName}' preparation failed: " +
                 $"{FailureReason ?? "no detail"}",
+            EVulkanComputePreparationOutcome.BindingSuperseded =>
+                $"Compute buffer binding for '{programName}' was superseded before recording and requires a fresh logical plan.",
             EVulkanComputePreparationOutcome.DescriptorPreparationFailed =>
                 $"Compute descriptor resources for '{programName}' could not be prepared before recording " +
                 $"(op {OperationIndex}/{OperationCount}).",

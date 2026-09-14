@@ -2443,14 +2443,16 @@ public sealed class RenderPipelineResourceLifecycleTests
     public void VulkanSwapchainRecreation_DoesNotWaitForWholeDeviceIdle()
     {
         string source = ReadWorkspaceFile(
-            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/VulkanRenderer.Swapchain.cs");
-        int methodStart = source.IndexOf("private bool RecreateSwapChain()", StringComparison.Ordinal);
-        int methodEnd = source.IndexOf("private void DestroyAllSwapChainObjects()", methodStart, StringComparison.Ordinal);
+            "XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Output/Authority/VulkanDesktopSwapchainService.cs");
+        int methodStart = source.IndexOf("internal bool TryRecreateGeneration()", StringComparison.Ordinal);
+        int methodEnd = source.IndexOf("internal void CreateSwapchain(", methodStart, StringComparison.Ordinal);
+        methodStart.ShouldBeGreaterThanOrEqualTo(0);
+        methodEnd.ShouldBeGreaterThan(methodStart);
         string method = source[methodStart..methodEnd];
 
-        method.ShouldContain("TryPrepareSwapchainRetirementMarkers(");
-        method.ShouldContain("QueueRetiredSwapchainGeneration(retiredGeneration);");
-        method.ShouldNotContain("DeviceWaitIdle();");
+        method.ShouldContain("TryPrepareRetirementMarkers(out Fence graphicsMarker)");
+        method.ShouldContain("QueueRetiredGeneration(retired);");
+        method.ShouldNotContain("DeviceWaitIdle(");
     }
 
     [Test]

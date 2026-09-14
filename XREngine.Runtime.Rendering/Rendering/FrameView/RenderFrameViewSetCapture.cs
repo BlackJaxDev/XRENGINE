@@ -119,7 +119,10 @@ public static class RenderFrameViewSetCapture
             new Vector4(camera.Transform.RenderForward, camera.FarZ),
             ReversedDepth: camera.IsReversedDepth,
             ProjectionMatrixUnjittered: projectionUnjittered,
-            CurrentJitter: camera.ProjectionJitter);
+            CurrentJitter: camera.ProjectionJitter)
+        {
+            SourceCameraIdentity = (camera as XRCamera)?.RenderIdentity ?? 0UL,
+        };
         return current;
     }
 }

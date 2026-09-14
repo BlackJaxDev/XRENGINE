@@ -10,7 +10,7 @@ namespace XREngine.Rendering.Vulkan;
 /// Lowers exact retained canonical publications into immutable frame-slot
 /// storage plus independent sampled-image and sampler descriptor arrays.
 /// </summary>
-internal sealed class VulkanAdvancedSceneResourceRuntime
+internal sealed partial class VulkanAdvancedSceneResourceRuntime
 {
     private const uint RequestedDescriptorCapacity = 1024u;
     private const int PublicationCapacityPerFrameSlot = 256;
@@ -377,7 +377,22 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
             }
             slot.Entries[slot.EntryCount].Globals!.Capture(views, in frame, passes, globalPassCoverage, diagnosticCount);
 
-            if (!TryBuildPublication(
+            int sharedEntryIndex = slot.FindPublication(database, in publication);
+            bool built = sharedEntryIndex >= 0
+                ? TryBuildSharedPublication(
+                    slot,
+                    frameSlot,
+                    frameGeneration,
+                    in slot.Entries[sharedEntryIndex].State,
+                    snapshot,
+                    views,
+                    in frame,
+                    passes,
+                    diagnosticCount,
+                    out VulkanAdvancedScenePublicationState state,
+                    out failure,
+                    out reason)
+                : TryBuildPublication(
                     slot,
                     frameSlot,
                     frameGeneration,
@@ -386,12 +401,11 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
                     in frame,
                     passes,
                     diagnosticCount,
-                    out VulkanAdvancedScenePublicationState state,
+                    out state,
                     out failure,
-                    out reason))
-            {
+                    out reason);
+            if (!built)
                 return false;
-            }
 
             int entryIndex = slot.EntryCount;
             try
@@ -403,12 +417,12 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
                 entry.State = state;
                 entry.ActiveUseCount = 0;
                 ++slot.EntryCount;
-                slot.NextTextureDescriptor = checked(
-                    state.TextureDescriptorBase +
-                    state.TextureDescriptorCount);
-                slot.NextSamplerDescriptor = checked(
-                    state.SamplerDescriptorBase +
-                    state.SamplerDescriptorCount);
+                // Reusing an older payload after a newer publication must not
+                // rewind the append-only resource descriptor ranges.
+                slot.NextTextureDescriptor = Math.Max(slot.NextTextureDescriptor,
+                    checked(state.TextureDescriptorBase + state.TextureDescriptorCount));
+                slot.NextSamplerDescriptor = Math.Max(slot.NextSamplerDescriptor,
+                    checked(state.SamplerDescriptorBase + state.SamplerDescriptorCount));
             }
             catch
             {
@@ -796,22 +810,34 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
             StorageAlignment);
         bool compactFits = compactRequiredStorage <= storageCapacity &&
             compactConsumedStorage <= storageCapacity - compactRequiredStorage;
+        if (!retainFits && !compactFits &&
+            IsTransientStoragePressure(slot, compactConsumedStorage, compactRequiredStorage))
+        {
+            RecordDeferredStorageGrowth(slot, frameSlot, compactConsumedStorage, compactRequiredStorage);
+            failure = EVulkanAdvancedSceneResourceFailure.FrameSlotStillInUse;
+            reason = $"Frame slot {frameSlot} retains earlier publications using {compactConsumedStorage} bytes; its {compactRequiredStorage}-byte compact publication must retry at a completed frame-slot boundary.";
+            return false;
+        }
         string growthReason = string.Empty;
         bool grewStorage = false;
-        if (!retainFits && !compactFits &&
+        bool deferredGrowth = slot.EntryCount == 0 && slot.ActiveUseCount == 0 &&
+            slot.StorageBytesConsumed == 0u && slot.DeferredStorageCapacity > storageCapacity;
+        bool needsGrowth = !retainFits && !compactFits || deferredGrowth;
+        if (needsGrowth &&
             TryGrowStorageForEmptyFrameSlot(
                 storageArena,
                 frameSlot,
                 slot,
                 compactConsumedStorage,
-                compactRequiredStorage,
+                Math.Max(compactRequiredStorage, slot.DeferredStorageCapacity),
                 out growthReason))
         {
             storageCapacity = _storageCapacityPerFrameSlot[frameSlot];
             compactFits = compactRequiredStorage <= storageCapacity;
             grewStorage = true;
+            slot.DeferredStorageCapacity = 0u;
         }
-        else if (!retainFits && !compactFits && !string.IsNullOrEmpty(growthReason))
+        else if (needsGrowth && !string.IsNullOrEmpty(growthReason))
         {
             failure = EVulkanAdvancedSceneResourceFailure.FrameStorageCapacity;
             reason = growthReason;
@@ -2041,7 +2067,7 @@ internal sealed class VulkanAdvancedSceneResourceRuntime
         int count = Math.Max(source.Length, 1);
         Span<AdvancedViewRecord> records = stackalloc AdvancedViewRecord[8];
         for (int index = 0; index < source.Length; ++index)
-            records[index] = VulkanAdvancedViewRecordFactory.Create(in source[index]);
+            records[index] = AdvancedViewRecordFactory.Create(in source[index]);
         return _resources.FrameDataArena!.TryAllocateWrite(
             frameSlot,
             EVulkanFrameDataLane.AdvancedSceneStorage,

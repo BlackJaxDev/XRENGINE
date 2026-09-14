@@ -463,6 +463,11 @@ namespace XREngine.Rendering
         public void Bind()
         {
             BindStack.Push(this);
+            // A general framebuffer bind replaces both native bindings. Track it in
+            // both stacks so an attachment/grab scope can restore a surrounding
+            // read-only or write-only render pass independently.
+            ReadStack.Push(this);
+            WriteStack.Push(this);
             OnBind();
         }
 
@@ -479,20 +484,33 @@ namespace XREngine.Rendering
 
         public void Unbind()
         {
-            if (CurrentlyBound != this)
+            if (CurrentlyBound != this || BoundForReading != this || BoundForWriting != this)
                 return;
 
-            Stack<XRFrameBuffer>? stack = _bindStack;
-            if (stack is { Count: > 0 })
+            BindStack.Pop();
+            ReadStack.Pop();
+            WriteStack.Pop();
+
+            XRFrameBuffer? read = BoundForReading;
+            XRFrameBuffer? write = BoundForWriting;
+            if (ReferenceEquals(read, write))
             {
-                stack.Pop();
-                if (stack.TryPeek(out var fbo))
-                    fbo.OnBind();
+                if (read is not null)
+                    read.OnBind();
                 else
                     UnbindRequested?.Invoke();
+                return;
             }
+
+            if (read is not null)
+                read.OnBindForRead();
             else
-                UnbindRequested?.Invoke();
+                UnbindFromReadRequested?.Invoke();
+
+            if (write is not null)
+                write.OnBindForWrite();
+            else
+                UnbindFromWriteRequested?.Invoke();
         }
 
         public event Action? SetDrawBuffersRequested;

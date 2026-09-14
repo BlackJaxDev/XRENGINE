@@ -34,7 +34,24 @@ public unsafe partial class VulkanRenderer
         var descriptors = _resourceRuntime.Descriptors.SnapshotMaterialDescriptorDiagnostics();
         return new(counts.NativeAllocations, counts.PageWrites, counts.BytesWritten, counts.Reuses,
             counts.GrowthPending, counts.EmergencyWaits, counts.Banks, counts.PendingAllocations,
+            counts.StandbyAllocationsQueued, counts.StandbyAllocationsReady,
+            counts.StandbyClaims,
+            counts.StandbyReplenishmentFailures, counts.StandbyBanks,
+            counts.StandbyPendingAllocations,
             descriptors.Writes, descriptors.Retirements, descriptors.Acquires, descriptors.Releases,
             descriptors.LiveSlots, descriptors.LeasedSlots);
+    }
+
+    /// <summary>Reads cumulative material-table reserve diagnostics from the owner of a retained frame publication.</summary>
+    public bool TryCaptureMaterialTableDiagnostics(long frameAuthorityId,
+        out VulkanMaterialTableDiagnosticCounters counters)
+    {
+        counters = default;
+        if (!_frameTelemetry.TryGetLatestPublication(out VulkanFrameTelemetryPublication publication) ||
+            publication.AuthorityId != frameAuthorityId)
+            return false;
+
+        counters = GetMaterialTableDiagnostics();
+        return true;
     }
 }

@@ -22,6 +22,7 @@ internal sealed unsafe class SyntheticRenderBenchFixture : IRenderBenchFixture
     private readonly int _uploadBytes;
     private readonly int _passIterations;
     private readonly int _workerCount;
+    private readonly bool _useUnifiedImageLayouts;
     private readonly ulong[] _immutableChains;
     private readonly ulong[] _loweredPackets;
     private VulkanExplicitTargetRendererHost _host = null!;
@@ -45,10 +46,14 @@ internal sealed unsafe class SyntheticRenderBenchFixture : IRenderBenchFixture
     private bool _measuring;
     private bool _disposed;
 
-    public SyntheticRenderBenchFixture(RenderBenchFixtureDefinition definition, RenderProfileRecipe recipe)
+    public SyntheticRenderBenchFixture(
+        RenderBenchFixtureDefinition definition,
+        RenderProfileRecipe recipe,
+        bool useUnifiedImageLayouts)
     {
         Definition = definition;
         _recipe = recipe;
+        _useUnifiedImageLayouts = useUnifiedImageLayouts;
         _chainCount = recipe.Workload.ChainCount ?? definition.DefaultChainCount;
         _drawCount = recipe.Workload.DrawCount ?? definition.DefaultDrawCount;
         _descriptorCount = recipe.Workload.DescriptorCount ?? definition.DefaultDescriptorCount;
@@ -96,7 +101,12 @@ internal sealed unsafe class SyntheticRenderBenchFixture : IRenderBenchFixture
                 break;
             case RenderBenchFixtureKind.GpuPass:
             case RenderBenchFixtureKind.FullPresentationless:
-                _pipeline = new RenderBenchFullscreenPipeline(host, recipe, Definition.Name, _passIterations);
+                _pipeline = new RenderBenchFullscreenPipeline(
+                    host,
+                    recipe,
+                    Definition.Name,
+                    _passIterations,
+                    _useUnifiedImageLayouts);
                 break;
         }
     }

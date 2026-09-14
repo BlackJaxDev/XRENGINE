@@ -245,10 +245,10 @@ internal readonly record struct OutputRequest(
         {
             EFrameOutputKind.OpenXREyeSubmit or EFrameOutputKind.OpenVRSubmit =>
                 EVulkanFrameOpContextKind.OpenXrEye,
-            EFrameOutputKind.DesktopMirror or EFrameOutputKind.VrPickupMirror or
-                EFrameOutputKind.InWorldMirror =>
+            EFrameOutputKind.DesktopMirror =>
                 EVulkanFrameOpContextKind.OpenXrMirror,
-            EFrameOutputKind.SceneCapture or EFrameOutputKind.Thumbnail =>
+            EFrameOutputKind.SceneCapture or EFrameOutputKind.Thumbnail or
+                EFrameOutputKind.VrPickupMirror or EFrameOutputKind.InWorldMirror =>
                 EVulkanFrameOpContextKind.SceneCapture,
             EFrameOutputKind.LightProbeCapture or
                 EFrameOutputKind.ReflectionProbeCapture or
@@ -323,10 +323,11 @@ internal readonly record struct OutputRequest(
             EVulkanFrameOpContextKind.OpenXrMirror =>
                 canonical.OutputKind == EFrameOutputKind.DesktopMirror,
             EVulkanFrameOpContextKind.SceneCapture =>
-                // A thumbnail is a scene-capture producer with its own exact
-                // output contract, not an inferred viewport terminal.
+                // Reflected and thumbnail producers keep their owner's exact
+                // identity through the common scene-capture recording scope.
                 canonical.OutputKind is EFrameOutputKind.SceneCapture or
-                    EFrameOutputKind.Thumbnail,
+                    EFrameOutputKind.Thumbnail or EFrameOutputKind.VrPickupMirror or
+                    EFrameOutputKind.InWorldMirror,
             EVulkanFrameOpContextKind.LightProbeCapture =>
                 canonical.OutputKind is EFrameOutputKind.LightProbeCapture or
                     EFrameOutputKind.ReflectionProbeCapture or

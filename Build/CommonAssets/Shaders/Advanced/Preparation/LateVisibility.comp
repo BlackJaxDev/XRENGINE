@@ -189,6 +189,11 @@ void main()
 
     XRAdvancedViewRecord view =
         XR_ADV_LoadView(XR_ADV_VisibilityPush.viewIndex);
+    if (XR_ADV_SelectedViewExcludesProjectiveMirror(candidateIndex, XR_ADV_VisibilityPush.viewIndex))
+    {
+        storeVisibilityState(candidateIndex, candidate.Draw, 0u);
+        return;
+    }
     bool forceVisible = (candidate.Flags &
         (FLAG_NEW | FLAG_RESIZED | FLAG_INVALID_HISTORY | FLAG_UNCERTAIN)) != 0u;
     if (forceVisible || !currentDepthOccludes(

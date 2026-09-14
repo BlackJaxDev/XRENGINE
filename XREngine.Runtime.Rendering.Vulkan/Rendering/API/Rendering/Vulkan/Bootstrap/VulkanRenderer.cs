@@ -86,6 +86,20 @@ public sealed partial class VulkanRenderer :
     public VulkanPresentNowFailureDiagnostic CapturePresentNowFailureDiagnostic()
         => _frameTelemetry.CaptureLatestPresentNowFailureDiagnostic();
 
+    /// <summary>Reads a readiness diagnostic only from the owner of a retained frame publication.</summary>
+    public bool TryCapturePresentNowFailureDiagnostic(
+        long frameAuthorityId,
+        out VulkanPresentNowFailureDiagnostic diagnostic)
+    {
+        diagnostic = default;
+        if (!_frameTelemetry.TryGetLatestPublication(out VulkanFrameTelemetryPublication publication) ||
+            publication.AuthorityId != frameAuthorityId)
+            return false;
+
+        diagnostic = CapturePresentNowFailureDiagnostic();
+        return true;
+    }
+
     /// <summary>Captures the latest settled desktop-frame outcome and failure.</summary>
     public VulkanDesktopFrameTerminalDiagnostic CaptureDesktopFrameTerminalDiagnostic()
         => _frameTelemetry.CaptureLatestDesktopFrameTerminalDiagnostic();
@@ -160,7 +174,10 @@ public sealed partial class VulkanRenderer :
         int frameSlotCount = targetDriver is IVulkanExplicitFrameTargetDriver explicitTarget
             ? checked((int)explicitTarget.OutputProperties.FrameSlotCount)
             : DesktopFramesInFlight;
-        _resourceRuntime = new VulkanResourceRuntime(frameSlotCount);
+        // Resource ownership is initialized before OpenXR reserves its two eye
+        // slots. Pre-size native lifetime tables to the mapped-arena hard bound;
+        // the frame loop and active desktop target retain their actual slot count.
+        _resourceRuntime = new VulkanResourceRuntime(VulkanMappedFrameArena.MaximumFrameSlotCount);
         _outputRuntime = new VulkanOutputRuntime(VulkanTargetPolicySnapshot.Capture(targetDriver));
         _deviceContext = new VulkanDeviceContext(
             new VulkanDeviceContextConfiguration(
@@ -551,6 +568,14 @@ public sealed partial class VulkanRenderer :
     string IRenderBackendDiagnosticsCapability.EffectiveRenderTargetMode => EffectiveRenderTargetMode.ToString();
     public void ResetDesktopRejectionEvidence(bool injectionRequested) => ResetPhase524bDesktopRejectionEvidence(injectionRequested);
     public OpenXrSmokeDesktopRejectionEvidence CaptureDesktopRejectionEvidence() => CapturePhase524bDesktopRejectionEvidence();
+    void IOpenXrSmokeDiagnosticsBackendCapability.ConfigureOpenXrSubmissionValidation(in OpenXrSubmissionValidationRequest request)
+        => ConfigureOpenXrSubmissionValidationForRenderer(in request);
+    OpenXrSubmissionValidationSnapshot IOpenXrSmokeDiagnosticsBackendCapability.CaptureOpenXrSubmissionValidation()
+        => CaptureOpenXrSubmissionValidationForRenderer();
+    internal void ConfigureOpenXrSubmissionValidationForRenderer(in OpenXrSubmissionValidationRequest request)
+        => VulkanOpenXrSubmissionValidationState.Configure(in request);
+    internal OpenXrSubmissionValidationSnapshot CaptureOpenXrSubmissionValidationForRenderer()
+        => VulkanOpenXrSubmissionValidationState.Capture();
 
     public bool TryEnterPipelineResourcePlannerReadbackScope(XRRenderPipelineInstance pipeline, XRViewport? viewport, out IDisposable? scope) => _frameLoop.TryEnterPipelineResourcePlannerReadbackScope(pipeline, viewport, out scope);
     public IDisposable EnterPipelineResourcePlannerReadbackScope(XRRenderPipelineInstance pipeline, XRViewport? viewport) => _frameLoop.EnterPipelineResourcePlannerReadbackScope(pipeline, viewport);
@@ -627,6 +652,8 @@ public sealed partial class VulkanRenderer :
     internal static bool ShouldProvisionOptionalStreamlineFrameGeneration(bool toggles, bool runtimeAvailable, bool supported) => VulkanOutputRuntime.ShouldProvisionOptionalStreamlineFrameGeneration(toggles, runtimeAvailable, supported);
     internal static void ResetPhase524bDesktopRejectionEvidence(bool injectionRequested) => VulkanOutputRuntime.ResetPhase524bDesktopRejectionEvidence(injectionRequested);
     internal static OpenXrSmokeDesktopRejectionEvidence CapturePhase524bDesktopRejectionEvidence() => VulkanOutputRuntime.CapturePhase524bDesktopRejectionEvidence();
+    internal static void ConfigureOpenXrSubmissionValidation(in OpenXrSubmissionValidationRequest request) => VulkanOpenXrSubmissionValidationState.Configure(in request);
+    internal static OpenXrSubmissionValidationSnapshot CaptureOpenXrSubmissionValidation() => VulkanOpenXrSubmissionValidationState.Capture();
     ulong IVulkanVendorUpscaleBackendCapability.FrameIndex => _frameLoop.AcceptedAttemptCount;
     bool IVulkanVendorUpscaleBackendCapability.TryCreateDlssSession(uint viewportId, out IRuntimeVendorUpscaleSession? session, out string failureReason) => _outputRuntime.TryCreateDlssSession(_deviceContext, viewportId, out session, out failureReason);
     bool IVulkanVendorUpscaleBackendCapability.TryCreateFrameGenerationSession(uint viewportId, out IRuntimeVendorUpscaleSession? session, out string failureReason) => _outputRuntime.TryCreateFrameGenerationSession(_deviceContext, viewportId, out session, out failureReason);
@@ -729,6 +756,8 @@ public sealed partial class VulkanRenderer :
     public ulong NvCopyMemoryIndirectSupportedQueues => _deviceContext.NvCopyMemoryIndirectSupportedQueues;
 
     public override RendererBackendId BackendId => RendererBackendId.Vulkan;
+    public override bool IsDeviceLost => !_deviceContext.StateMachine.IsOperational;
+    public override string? DeviceLostReason => _deviceContext.DeviceFaultFacility.DeviceLostReason;
     protected override Vk GetAPI() => Vk.GetApi();
     public override void StencilMask(uint mask) => _commandRuntime.SetStencilMask(mask);
     public override void EnableStencilTest(bool enable) { }

@@ -31,6 +31,11 @@ public readonly record struct RenderFrameViewDescriptor(
 {
     public const uint InvalidViewId = uint.MaxValue;
 
+    /// <summary>
+    /// Stable runtime identity of the camera that authored this view, or zero when no camera exists.
+    /// </summary>
+    public ulong SourceCameraIdentity { get; init; }
+
     public bool HasParent => ParentViewId != InvalidViewId;
     public bool IsStereoEye => Kind is EVrOutputViewKind.LeftEye or EVrOutputViewKind.RightEye;
     public bool IsWideView => Kind is EVrOutputViewKind.LeftWide or EVrOutputViewKind.RightWide;

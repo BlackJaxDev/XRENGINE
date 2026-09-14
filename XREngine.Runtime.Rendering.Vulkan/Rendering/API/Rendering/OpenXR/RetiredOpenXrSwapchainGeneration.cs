@@ -1,5 +1,6 @@
 using Silk.NET.OpenXR;
 using Silk.NET.Vulkan;
+using XREngine.Rendering.API.Rendering.OpenXR;
 using Semaphore = Silk.NET.Vulkan.Semaphore;
 
 namespace XREngine.Rendering.Vulkan;
@@ -34,4 +35,5 @@ internal sealed unsafe record RetiredOpenXrSwapchainGeneration(
     // Keep diagnostics per retirement generation so a stuck generation is visible
     // without producing a log entry on every render-thread retirement poll.
     public long LastBlockerDiagnosticTimestamp { get; set; }
+    public EOpenXrSwapchainRetirementBlockers LastObservedBlockers { get; set; }
 }

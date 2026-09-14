@@ -116,7 +116,11 @@ public sealed class OpenXrTimingPipelineContractTests
     public void VulkanOpenXr_EyeSubmitRecordsBothEyesBeforeOneFenceWait()
     {
         string frameLifecycle = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.FrameLifecycle.cs");
+        string openXrState = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/OpenXRAPI.State.cs");
+        string graphicsBinding = ReadWorkspaceFile("XREngine.Runtime.Rendering/Rendering/API/Rendering/OpenXR/IXrGraphicsBinding.cs");
         string vulkanOpenXrApi = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/OpenXR/VulkanXrGraphicsBinding.Implementation.cs");
+        string vulkanBinding = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/OpenXR/VulkanXrGraphicsBinding.cs");
+        string openGlBinding = ReadWorkspaceFile("XREngine.Runtime.Rendering.OpenGL/Rendering/API/Rendering/OpenXR/OpenGlXrGraphicsBinding.cs");
         string vulkanRendererOpenXr = SourceContractWorkspace.ReadVulkanSourcesContaining(
             "TryRenderAndPublishOpenXrEyeMirrorFrameBuffers",
             "TryRenderOpenXrEyeSwapchains",
@@ -153,6 +157,16 @@ public sealed class OpenXrTimingPipelineContractTests
         frameLifecycle.ShouldContain("StartProfileScope(\"OpenXR.RenderFrame.TryRenderVulkanEyesBatch\")");
         frameLifecycle.ShouldContain("binding.TryRenderViewsBatch(");
         frameLifecycle.ShouldContain("out vulkanBatchHandled");
+        openXrState.ShouldContain("public ulong PreviewLeftEyeFrameId => _graphicsBinding?.PreviewLeftEyeFrameId ?? 0;");
+        openXrState.ShouldContain("public ulong PreviewRightEyeFrameId => _graphicsBinding?.PreviewRightEyeFrameId ?? 0;");
+        graphicsBinding.ShouldContain("Render-frame ID for the last API-issued successful left preview copy, or zero when unavailable.");
+        graphicsBinding.ShouldContain("Render-frame ID for the last API-issued successful right preview copy, or zero when unavailable.");
+        vulkanBinding.ShouldContain("Volatile.Read(ref _previewLeftEyeFrameId)");
+        vulkanBinding.ShouldContain("Volatile.Read(ref _previewRightEyeFrameId)");
+        vulkanBinding.ShouldContain("RecordPreviewEyeCopyIssued(uint viewIndex)");
+        openGlBinding.ShouldContain("Volatile.Read(ref _previewLeftEyeFrameId)");
+        openGlBinding.ShouldContain("Volatile.Read(ref _previewRightEyeFrameId)");
+        openGlBinding.ShouldContain("RecordPreviewEyeCopyIssued(uint viewIndex)");
 
         vulkanOpenXrApi.ShouldContain("OpenXrVulkanSerialEyeSubmit");
         vulkanOpenXrApi.ShouldContain("AcquireAndWaitOpenXrEyeImage(0");
@@ -171,6 +185,10 @@ public sealed class OpenXrTimingPipelineContractTests
         vulkanOpenXrApi.ShouldContain("previewFlippedY=False");
         vulkanOpenXrApi.ShouldContain("ShouldCopyDirectVulkanEyeSwapchainPreview");
         vulkanOpenXrApi.ShouldContain("bool copiedPreview = shouldCopyPreview &&");
+        vulkanOpenXrApi.ShouldContain("ClearPreviewEyeFrameId(0);");
+        vulkanOpenXrApi.ShouldContain("ClearPreviewEyeFrameId(1);");
+        vulkanOpenXrApi.ShouldContain("RecordPreviewEyeCopyIssued(0);");
+        vulkanOpenXrApi.ShouldContain("RecordPreviewEyeCopyIssued(1);");
         vulkanOpenXrApi.ShouldContain("VulkanCaptureEyeOutputs");
         vulkanOpenXrApi.ShouldContain("RuntimeRenderingHostServices.Presentation.VrCopyEyePreviewTextures");
         vulkanOpenXrApi.ShouldContain("RuntimeRenderingHostServices.Presentation.VrMirrorComposeFromEyeTextures");

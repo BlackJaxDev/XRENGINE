@@ -202,6 +202,7 @@ internal sealed partial class VulkanCommandRuntime
             }
 
             bool resourcesReady;
+            bool bindingSuperseded;
             if (framePlan is not null)
             {
                 if (!framePlan.TryGetRecordingPlannerGeneration(frameContext, out ResourcePlannerRuntimeGeneration generation))
@@ -211,20 +212,22 @@ internal sealed partial class VulkanCommandRuntime
                     new(ThreadWorkspace.Current, this, generation);
                 resourcesReady = program.TryPrepareComputeDispatchResources(
                     VulkanProgramPlannerRequest.From(frameContext), imageIndex, snapshot,
-                    reusableDescriptorKey, excludeGlobalTextureArray,
-                    allowSynchronousResourceUploads);
+                    reusableDescriptorKey, out bindingSuperseded,
+                    excludeGlobalTextureArray, allowSynchronousResourceUploads);
             }
             else
                 resourcesReady = program.TryPrepareComputeDispatchResources(
                     VulkanProgramPlannerRequest.From(frameContext), imageIndex, snapshot,
-                    reusableDescriptorKey, excludeGlobalTextureArray,
-                    allowSynchronousResourceUploads);
+                    reusableDescriptorKey, out bindingSuperseded,
+                    excludeGlobalTextureArray, allowSynchronousResourceUploads);
 
             if (resourcesReady)
                 continue;
 
             return new(
-                EVulkanComputePreparationOutcome.DescriptorPreparationFailed,
+                bindingSuperseded
+                    ? EVulkanComputePreparationOutcome.BindingSuperseded
+                    : EVulkanComputePreparationOutcome.DescriptorPreparationFailed,
                 operationIndex,
                 operations.Length,
                 program.Data.Name);

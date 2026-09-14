@@ -142,7 +142,8 @@ public sealed class AdvancedAttributeReconstructionDecoderTests
             PrimitiveTopology: (uint)EPrimitiveType.Triangles,
             Skinned: false,
             MeshletsResident: false,
-            ForceCpuDiagnostic: false);
+            ForceCpuDiagnostic: false,
+            TemporalReason: EAdvancedVelocityValidityReason.Valid);
         AdvancedVisibilityProducerEncoder.TryEncode(
                 payload,
                 new AdvancedVisibilityPrimitiveReference(0u, 0u, 0u),

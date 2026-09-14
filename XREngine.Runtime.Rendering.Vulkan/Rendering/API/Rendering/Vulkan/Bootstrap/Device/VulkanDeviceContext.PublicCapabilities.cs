@@ -41,6 +41,9 @@ internal sealed partial class VulkanDeviceContext
     internal bool SupportsMaintenance6 => IsCapabilityEnabled(EVulkanDeviceCapability.Maintenance6, MutableCapabilities._supportsMaintenance6);
     internal bool SupportsShaderDemoteToHelperInvocation => IsCapabilityEnabled(EVulkanDeviceCapability.ShaderDemoteToHelperInvocation, MutableCapabilities._supportsShaderDemoteToHelperInvocation);
     internal bool SupportsShaderTerminateInvocation => IsCapabilityEnabled(EVulkanDeviceCapability.ShaderTerminateInvocation, MutableCapabilities._supportsShaderTerminateInvocation);
+    internal bool SupportsUnifiedImageLayouts => IsCapabilityEnabled(EVulkanDeviceCapability.UnifiedImageLayouts, MutableCapabilities._supportsUnifiedImageLayouts);
+    internal bool UnifiedImageLayoutsVideoFeatureSupported => MutableCapabilities._unifiedImageLayoutsVideoFeatureSupported;
+    internal bool DeviceAddressCommandsFeatureSupported => MutableCapabilities._deviceAddressCommandsFeatureSupported;
     internal bool SupportsExtendedFlags => MutableCapabilities._supportsExtendedFlags;
     internal bool SupportsShaderObject => IsCapabilityEnabled(EVulkanDeviceCapability.ShaderObject, MutableCapabilities._supportsShaderObject);
     internal bool SupportsMemoryBudget => IsCapabilityEnabled(EVulkanDeviceCapability.MemoryBudget, MutableCapabilities._supportsMemoryBudget);

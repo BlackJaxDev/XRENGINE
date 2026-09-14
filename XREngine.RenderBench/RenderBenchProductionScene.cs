@@ -14,6 +14,7 @@ using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Materials;
+using XREngine.Rendering.Resources;
 using XREngine.Rendering.Vulkan;
 using XREngine.Runtime.Bootstrap;
 using XREngine.Scene;
@@ -388,9 +389,18 @@ public sealed class RenderBenchProductionScene : IDisposable
                     Camera,
                     viewport))
                 {
-                    throw new InvalidOperationException(
-                        "The explicit production frame could not commit its resource generation before collection. " +
-                        CreateRenderDeclinedDiagnostic(viewport));
+                    string detail = "The explicit production frame could not commit its resource generation before collection. " +
+                        CreateRenderDeclinedDiagnostic(viewport);
+                    // Replacement generations materialize incrementally. Retry through the
+                    // bounded cold coordinator before collection or target acquisition;
+                    // an actual failed/discarded generation remains a terminal error.
+                    if (viewport.RenderPipelineInstance.PendingGeneration is
+                        { Status: RenderResourceGenerationStatus.Created or RenderResourceGenerationStatus.Building or RenderResourceGenerationStatus.Ready })
+                    {
+                        throw new VulkanExplicitProductionAdmissionPendingException(
+                            "explicit-resource-generation", detail);
+                    }
+                    throw new InvalidOperationException(detail);
                 }
                 PrepareFixtureMaterialTexturesForFirstProductionFrame();
                 if (!_useAdvancedPipeline)
@@ -585,7 +595,9 @@ public sealed class RenderBenchProductionScene : IDisposable
         List<LogEntry> entries = Debug.GetConsoleEntries();
         int firstRecentEntry = Math.Max(0, entries.Count - 8);
         var summary = new StringBuilder(768)
-            .Append("The production viewport did not record a render frame. LastResourceGenerationFailure=")
+            .Append("The production viewport did not record a render frame. LastRenderDeclineReason=")
+            .Append(pipeline.LastRenderDeclineReason ?? "<none>")
+            .Append("; LastResourceGenerationFailure=")
             .Append(pipeline.LastResourceGenerationFailure ?? "<none>")
             .Append("; ActiveGeneration=")
             .Append(pipeline.ActiveGeneration?.Key.ToString() ?? "<none>")

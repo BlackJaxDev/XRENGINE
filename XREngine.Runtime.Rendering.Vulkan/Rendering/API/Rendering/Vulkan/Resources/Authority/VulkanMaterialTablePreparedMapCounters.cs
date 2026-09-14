@@ -9,4 +9,10 @@ internal readonly record struct VulkanMaterialTablePreparedMapCounters(
     long GrowthPending,
     long EmergencyWaits,
     int Banks,
-    int PendingAllocations);
+    int PendingAllocations,
+    long StandbyAllocationsQueued,
+    long StandbyAllocationsReady,
+    long StandbyClaims,
+    long StandbyReplenishmentFailures,
+    int StandbyBanks,
+    int StandbyPendingAllocations);

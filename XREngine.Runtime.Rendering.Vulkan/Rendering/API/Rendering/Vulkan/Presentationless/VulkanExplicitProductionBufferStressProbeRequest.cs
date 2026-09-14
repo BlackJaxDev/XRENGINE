@@ -4,6 +4,8 @@ namespace XREngine.Rendering.Vulkan;
 /// One-shot, synchronous explicit-production allocation stress request. It has
 /// no callback, global switch, or implicit GPU wait; unsupported checkpoints
 /// must report unproven evidence rather than silently succeeding.
+/// <see cref="RequirePendingSubmissionObservation"/> deliberately holds an
+/// opt-in private timeline gate only until the exact submission is sampled.
 /// A zero <see cref="RequestedByteSize"/> is permitted only for a named logical
 /// resource at <see cref="EVulkanExplicitProductionBufferStressCheckpoint.AfterLogicalSeal"/>,
 /// where the exact sealed owner derives one byte beyond its observed allocation.
@@ -12,4 +14,5 @@ public sealed record VulkanExplicitProductionBufferStressProbeRequest(
     XRDataBuffer Buffer,
     EVulkanExplicitProductionBufferStressCheckpoint Checkpoint,
     uint RequestedByteSize,
-    string? LogicalResourceName = null);
+    string? LogicalResourceName = null,
+    bool RequirePendingSubmissionObservation = false);

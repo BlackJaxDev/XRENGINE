@@ -1,3 +1,5 @@
+using XREngine.Rendering.Materials;
+
 namespace XREngine.Rendering.Commands;
 
 /// <summary>
@@ -55,7 +57,9 @@ public sealed class AdvancedSharedGpuSceneDatabase
             capacities.MaterialLayouts,
             capacities.MaterialLayoutMembers,
             capacities.MaterialConstantWords,
-            capacities.MaterialTextureBindings);
+            capacities.MaterialTextureBindings,
+            maximumConstantWordsPerMaterial: Math.Max(MaterialBindingLayouts.ProjectiveMirror.RowWordCount,
+                capacities.MaterialRecords == 0u ? 0u : capacities.MaterialConstantWords / capacities.MaterialRecords));
         Resources = new AdvancedGlobalResourceDatabase(
             capacities.TextureRecords,
             capacities.SamplerRecords,
@@ -950,22 +954,68 @@ public sealed class AdvancedSharedGpuSceneDatabase
 
     private void DrainAcknowledgedPublicationsAndReclaimTombstones()
     {
-        ulong safeSequence = GetMinimumReclaimableSequence();
-        while (_publicationCount > 0 &&
-               _publicationRing[_publicationHead].Sequence <= safeSequence &&
-               _packagePinCounts[_publicationHead] == 0u &&
-               _gpuPinCounts[_publicationHead] == 0u)
-        {
-            // No acknowledged package/GPU consumer can acquire this entry again
-            // after it leaves the ring. Retaining its source until eventual reuse
-            // can otherwise deadlock a bounded capture producer waiting to refresh.
-            _publicationSnapshots[_publicationHead].ResourcePayloads.ReleaseRetainedSources();
-            _publicationRing[_publicationHead] = default;
-            _publicationHead = (_publicationHead + 1) % _publicationRing.Length;
-            --_publicationCount;
-        }
+        CompactAcknowledgedPublicationsCore();
 
         ReclaimAcknowledgedTombstonesCore();
+    }
+
+    /// <summary>
+    /// Removes every fully acknowledged, unpinned publication without allowing
+    /// an older pinned entry to block later reusable entries. Publication
+    /// metadata, its snapshot object, and both pin counts always move together.
+    /// </summary>
+    private void CompactAcknowledgedPublicationsCore()
+    {
+        // The active transaction owns a tail slot selected from the current
+        // head/count pair. Moving entries would invalidate that ring index and
+        // its snapshot ownership before commit, so defer compaction until it
+        // is sealed or faulted.
+        if (_activePublicationSequence != 0u)
+            return;
+
+        ulong acknowledgedSequence = GetMinimumAcknowledgedSequence();
+        int retainedCount = 0;
+        for (int sourceOffset = 0; sourceOffset < _publicationCount; ++sourceOffset)
+        {
+            int sourceIndex = (_publicationHead + sourceOffset) % _publicationRing.Length;
+            bool isRemovable = _publicationRing[sourceIndex].Sequence <= acknowledgedSequence &&
+                _packagePinCounts[sourceIndex] == 0u &&
+                _gpuPinCounts[sourceIndex] == 0u;
+            if (isRemovable)
+            {
+                // Once every consumer has acknowledged this sequence and it
+                // has no leases, its resource source closure is no longer
+                // reachable. Release it before this reusable snapshot is
+                // swapped into a later free ring slot.
+                _publicationSnapshots[sourceIndex].ResourcePayloads.ReleaseRetainedSources();
+                _publicationRing[sourceIndex] = default;
+                _packagePinCounts[sourceIndex] = 0u;
+                _gpuPinCounts[sourceIndex] = 0u;
+                continue;
+            }
+
+            if (retainedCount != sourceOffset)
+            {
+                int destinationIndex = (_publicationHead + retainedCount) % _publicationRing.Length;
+                SwapPublicationRingEntries(destinationIndex, sourceIndex);
+            }
+
+            ++retainedCount;
+        }
+
+        _publicationCount = retainedCount;
+    }
+
+    private void SwapPublicationRingEntries(int firstIndex, int secondIndex)
+    {
+        (_publicationRing[firstIndex], _publicationRing[secondIndex]) =
+            (_publicationRing[secondIndex], _publicationRing[firstIndex]);
+        (_publicationSnapshots[firstIndex], _publicationSnapshots[secondIndex]) =
+            (_publicationSnapshots[secondIndex], _publicationSnapshots[firstIndex]);
+        (_packagePinCounts[firstIndex], _packagePinCounts[secondIndex]) =
+            (_packagePinCounts[secondIndex], _packagePinCounts[firstIndex]);
+        (_gpuPinCounts[firstIndex], _gpuPinCounts[secondIndex]) =
+            (_gpuPinCounts[secondIndex], _gpuPinCounts[firstIndex]);
     }
 
     private ulong GetMinimumAcknowledgedSequence()

@@ -81,7 +81,7 @@ public static partial class Engine
         private const string ManifestFileName = "profiler-capture-manifest.json";
         private const string SummaryFileName = "profiler-capture-summary.json";
         private const string RuntimeCaptureDirectoryName = "speed-profiles";
-        private const int ProfileCaptureSchemaVersion = 8;
+        private const int ProfileCaptureSchemaVersion = 9;
         private const int RuntimeCaptureRetentionCount = 3;
         private const int FlushIntervalMilliseconds = 1000;
         private const int MaxBufferedCharacters = 256 * 1024;
@@ -632,11 +632,11 @@ public static partial class Engine
             var manifest = new
             {
                 capture_file = FrameStatsFileName,
-                schema = "xrengine.profile_capture.render_stats.v8",
+                schema = "xrengine.profile_capture.render_stats.v9",
                 schema_version = ProfileCaptureSchemaVersion,
                 fields_note = metadata.SampleIntervalFrames == 1
-                    ? "One JSON object per completed render frame. CPU frame timings are wall-clock thread loop durations; GPU pipeline timings are backend timestamp-query snapshots when ready."
-                    : $"One JSON object for the first completed render frame and then every {metadata.SampleIntervalFrames} completed render frames. CPU frame timings are wall-clock thread loop durations; GPU pipeline timings are backend timestamp-query snapshots when ready.",
+                    ? "One JSON object per render loop frame, including rejected or failed Vulkan attempts. CPU frame timings are wall-clock thread loop durations; GPU pipeline timings are backend timestamp-query snapshots when ready."
+                    : $"One JSON object for the first render loop frame and then every {metadata.SampleIntervalFrames} frames, including rejected or failed Vulkan attempts. CPU frame timings are wall-clock thread loop durations; GPU pipeline timings are backend timestamp-query snapshots when ready.",
                 run = metadata,
             };
 
@@ -1081,6 +1081,24 @@ public static partial class Engine
             AppendNumberField(s_lineBuilder, "vulkan_consumed_draws", RuntimeEngine.Rendering.Stats.Vulkan.VulkanConsumedDraws, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_oom_fallback_count", RuntimeEngine.Rendering.Stats.Vulkan.VulkanOomFallbackCount, ref first);
             VulkanFrameTelemetryPublication vulkanFrame = RuntimeEngine.Rendering.Stats.Vulkan.LatestVulkanFrameTelemetry;
+            VulkanPresentNowFailureDiagnostic presentNowFailure = default;
+            VulkanRenderer? diagnosticRenderer = AbstractRenderer.Current as VulkanRenderer;
+            if (diagnosticRenderer is null ||
+                !diagnosticRenderer.TryCapturePresentNowFailureDiagnostic(vulkanFrame.AuthorityId, out presentNowFailure))
+            {
+                diagnosticRenderer = null;
+                var windows = RuntimeEngine.Windows;
+                for (int i = 0; i < windows.Count; i++)
+                    if (windows[i].Renderer is VulkanRenderer windowVulkan &&
+                        windowVulkan.TryCapturePresentNowFailureDiagnostic(vulkanFrame.AuthorityId, out presentNowFailure))
+                    {
+                        diagnosticRenderer = windowVulkan;
+                        break;
+                    }
+            }
+            VulkanMaterialTableDiagnosticCounters materialTableCounters = default;
+            bool materialTableDiagnosticsAvailable = diagnosticRenderer is not null &&
+                diagnosticRenderer.TryCaptureMaterialTableDiagnostics(vulkanFrame.AuthorityId, out materialTableCounters);
             AppendNumberField(s_lineBuilder, "vulkan_frame_authority_id", vulkanFrame.AuthorityId, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_frame_publication_sequence", vulkanFrame.PublicationSequence, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_frame_engine_frame_number", vulkanFrame.Identity.EngineFrameNumber, ref first);
@@ -1089,6 +1107,40 @@ public static partial class Engine
             AppendNumberField(s_lineBuilder, "vulkan_frame_output_index", vulkanFrame.Identity.Output.OutputIndex, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_frame_output_generation", vulkanFrame.Identity.Output.OutputGeneration, ref first);
             AppendStringField(s_lineBuilder, "vulkan_frame_outcome", vulkanFrame.Outcome.ToString(), ref first);
+            // The retained failure is intentionally not implied to belong to this sample. Consumers
+            // must use the explicit frame correlation flag before attributing a stable frame to it.
+            AppendNumberField(s_lineBuilder, "vulkan_present_now_failure_sequence", presentNowFailure.Sequence, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_present_now_failure_frame_id", presentNowFailure.FrameId, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_present_now_failure_frame_slot", presentNowFailure.FrameSlot, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_present_now_failure_accepted_scene_epoch", presentNowFailure.AcceptedSceneEpoch, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_present_now_failure_output_generation", presentNowFailure.OutputGeneration, ref first);
+            AppendBoolField(
+                s_lineBuilder,
+                "vulkan_present_now_failure_matches_frame",
+                presentNowFailure.IsValid &&
+                presentNowFailure.FrameId == vulkanFrame.Identity.EngineFrameNumber &&
+                presentNowFailure.FrameSlot == vulkanFrame.Identity.FrameSlot &&
+                presentNowFailure.OutputGeneration == vulkanFrame.Identity.Output.OutputGeneration,
+                ref first);
+            AppendStringField(s_lineBuilder, "vulkan_present_now_failure_stage", presentNowFailure.ReadinessStage, ref first);
+            AppendStringField(s_lineBuilder, "vulkan_present_now_failure_active_ticket", presentNowFailure.ActiveTicket, ref first);
+            AppendStringField(s_lineBuilder, "vulkan_present_now_failure_dependency_chain", presentNowFailure.DependencyChain, ref first);
+            AppendStringField(s_lineBuilder, "vulkan_present_now_failure_disposition", presentNowFailure.Disposition, ref first);
+            AppendStringField(s_lineBuilder, "vulkan_present_now_failure_type", presentNowFailure.FailureType, ref first);
+            AppendStringField(s_lineBuilder, "vulkan_present_now_failure_detail", presentNowFailure.Detail, ref first);
+            // These are cumulative counters and current occupancy for the matching renderer,
+            // not work attributed to the retained frame publication.
+            AppendBoolField(s_lineBuilder, "vulkan_material_table_diagnostics_available", materialTableDiagnosticsAvailable, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_material_table_native_allocations", materialTableCounters.NativeAllocations, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_material_table_growth_pending", materialTableCounters.GrowthPending, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_material_table_banks", materialTableCounters.Banks, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_material_table_pending_allocations", materialTableCounters.PendingAllocations, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_material_table_standby_allocations_queued", materialTableCounters.StandbyAllocationsQueued, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_material_table_standby_allocations_ready", materialTableCounters.StandbyAllocationsReady, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_material_table_standby_claims", materialTableCounters.StandbyClaims, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_material_table_standby_replenishment_failures", materialTableCounters.StandbyReplenishmentFailures, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_material_table_standby_banks", materialTableCounters.StandbyBanks, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_material_table_standby_pending_allocations", materialTableCounters.StandbyPendingAllocations, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_frame_total_ms", vulkanFrame.TotalElapsed.TotalMilliseconds, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_frame_gpu_command_buffer_ms", RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameGpuCommandBufferMs, ref first);
             AppendStringField(s_lineBuilder, "vulkan_presentation_profile_requested", vulkanFrame.PresentationProfile.RequestedProfile.ToString(), ref first);

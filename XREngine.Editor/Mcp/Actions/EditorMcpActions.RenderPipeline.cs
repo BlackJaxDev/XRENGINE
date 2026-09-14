@@ -1063,11 +1063,11 @@ namespace XREngine.Editor.Mcp
         public static async Task<McpToolResponse> CaptureOpenXrEyePreviewTextureAsync(
             McpToolContext context,
             [McpName("eye"), Description("Eye to capture: left or right.")] string eye,
-            [McpName("window_index"), Description("Optional window index to use for render-thread scheduling.")] int windowIndex = 0,
-            [McpName("viewport_index"), Description("Optional viewport index to use for render-thread scheduling.")] int viewportIndex = 0,
+            [McpName("window_index"), Description("Must be zero; capture uses the active OpenXR session's owning window.")] int windowIndex = 0,
+            [McpName("viewport_index"), Description("Must be zero; capture uses the active OpenXR session's owning window.")] int viewportIndex = 0,
             [McpName("output_dir"), Description("Optional directory to write the texture capture into.")] string? outputDir = null,
             [McpName("mip_level"), Description("Mip level to capture.")] int mipLevel = 0,
-            [McpName("layer_index"), Description("Array/cube layer index to capture.")] int layerIndex = 0,
+            [McpName("layer_index"), Description("Must be zero; each retained eye preview is a 2D texture.")] int layerIndex = 0,
             [McpName("normalize"), Description("Normalize RGB values to the captured min/max range before writing.")] bool normalize = false,
             [McpName("flip_vertically"), Description("Optional override for vertical export orientation. Omit for automatic render API + clip-space policy handling.")] bool? flipVertically = null,
             [McpName("preserve_alpha"), Description("Preserve captured alpha in the PNG. Defaults to opaque output for easier inspection.")] bool preserveAlpha = false,
@@ -1112,98 +1112,66 @@ namespace XREngine.Editor.Mcp
                 tonemapType = parsedTonemap;
             }
 
-            XRTexture2D? texture = leftEye
-                ? RuntimeEngine.VRState.OpenXRApi?.PreviewLeftEyeTexture
-                : RuntimeEngine.VRState.OpenXRApi?.PreviewRightEyeTexture;
-            if (texture is null)
-                return new McpToolResponse($"OpenXR {(leftEye ? "left" : "right")} eye preview texture is not available.", isError: true);
-
-            XRViewport? viewport = ResolveViewport(context.World, null, windowIndex, viewportIndex);
-            if (viewport is null)
-                return new McpToolResponse("No viewport found.", isError: true);
-
-            XRWindow? window = viewport.Window ?? RuntimeEngine.Windows.FirstOrDefault(w => w.Viewports.Contains(viewport));
-            if (window is null)
-                return new McpToolResponse("No window found for the target viewport.", isError: true);
+            var openXr = RuntimeEngine.VRState.OpenXRApi;
+            XRWindow? window = openXr?.Window;
+            if (!RuntimeEngine.VRState.IsOpenXRActive || openXr is null || window is null)
+                return new McpToolResponse("The active OpenXR session has no owning window.", isError: true);
+            if (!RuntimeEngine.Rendering.Settings.VrCopyEyePreviewTextures)
+                return new McpToolResponse("OpenXR eye capture requires VrCopyEyePreviewTextures so the selected eye has a published preview copy.", isError: true);
+            if (windowIndex != 0 || viewportIndex != 0)
+                return new McpToolResponse("OpenXR eye captures use the session's owning window. Omit window_index and viewport_index.", isError: true);
+            if (layerIndex != 0)
+                return new McpToolResponse("OpenXR eye previews are 2D textures; layer_index must be zero.", isError: true);
 
             string folder = outputDir ?? Path.Combine(Environment.CurrentDirectory, "McpCaptures", "OpenXR");
             string safeEyeName = leftEye ? "LeftEye" : "RightEye";
-            string fileName = $"OpenXRPreview_{safeEyeName}_{DateTime.Now:yyyyMMdd_HHmmss}.{GetPipelineCaptureExtension(format)}";
+            string fileName = $"OpenXRPreview_{safeEyeName}_{DateTime.Now:yyyyMMdd_HHmmss_fff}_{Guid.NewGuid():N}.{GetPipelineCaptureExtension(format)}";
             string path = Path.Combine(folder, fileName);
             Utility.EnsureDirPathExists(path);
 
-            var tcs = new TaskCompletionSource<PipelineTextureCaptureResult>(TaskCreationOptions.RunContinuationsAsynchronously);
-            Action? deferredHandler = null;
-
-            void BeginCapture(AbstractRenderer renderer)
+            string? capturedTextureName = null;
+            ulong capturedFrameId = 0;
+            void BeginCapture(AbstractRenderer renderer, TaskCompletionSource<PipelineTextureCaptureResult> completion)
             {
-                try
-                {
-                    PipelineCaptureOrientation orientation = ResolvePipelineCaptureOrientation(renderer, window, flipVertically);
-                    PipelineTextureCaptureResult result = CaptureTexture(
-                        renderer,
-                        texture,
-                        path,
-                        mipLevel,
-                        layerIndex,
-                        normalize,
-                        orientation,
-                        preserveAlpha,
-                        format,
-                        tonemapType,
-                        exposure,
-                        gamma,
-                        mobiusTransition,
-                        encodeSrgb);
-                    tcs.TrySetResult(result);
-                }
-                catch (Exception ex)
-                {
-                    tcs.TrySetException(ex);
-                }
+                if (!RuntimeEngine.VRState.IsOpenXRActive || !ReferenceEquals(openXr, RuntimeEngine.VRState.OpenXRApi) || !ReferenceEquals(openXr.Window, window))
+                    throw new InvalidOperationException("The OpenXR session or its owning window changed before capture.");
+                ulong previewFrameId = leftEye ? openXr.PreviewLeftEyeFrameId : openXr.PreviewRightEyeFrameId;
+                ulong renderedStereoFrameId = openXr.SmokeLastRenderedFrameId;
+                // Desktop scheduling can advance while XR is paced independently.
+                // Validate against the last rendered stereo frame, not the current
+                // desktop frame. Other paths invalidate their ID on each failed copy.
+                if (!RuntimeEngine.Rendering.Settings.VrCopyEyePreviewTextures || previewFrameId == 0 ||
+                    (renderedStereoFrameId != 0 && previewFrameId < renderedStereoFrameId))
+                    throw new InvalidOperationException("The selected OpenXR eye has no preview copy from the latest rendered frame.");
+
+                // Resolve at the render boundary: swapchain recreation can replace
+                // the preview after this request was queued. The engine owns this
+                // retained copy, so no released runtime swapchain image is read.
+                XRTexture2D texture = (leftEye ? openXr.PreviewLeftEyeTexture : openXr.PreviewRightEyeTexture)
+                    ?? throw new InvalidOperationException($"OpenXR {safeEyeName} preview texture is not available.");
+                capturedTextureName = texture.Name;
+                capturedFrameId = previewFrameId;
+                PipelineCaptureOrientation orientation = ResolvePipelineCaptureOrientation(renderer, window, flipVertically);
+                PipelineTextureCaptureResult result = CaptureTexture(
+                    renderer, texture, path, mipLevel, layerIndex, normalize, orientation,
+                    preserveAlpha, format, tonemapType, exposure, gamma, mobiusTransition, encodeSrgb);
+                completion.TrySetResult(result);
             }
-
-            void ScheduleCaptureOnRenderThread()
-            {
-                int captureStarted = 0;
-                deferredHandler = () =>
-                {
-                    var renderer = AbstractRenderer.Current;
-                    if (renderer is null)
-                        return;
-
-                    if (Interlocked.CompareExchange(ref captureStarted, 1, 0) != 0)
-                        return;
-
-                    window.PostRenderViewportsCallback -= deferredHandler;
-                    BeginCapture(renderer);
-                };
-
-                window.PostRenderViewportsCallback += deferredHandler;
-            }
-
-            if (Engine.IsRenderThread)
-                ScheduleCaptureOnRenderThread();
-            else
-                Engine.InvokeOnMainThread(ScheduleCaptureOnRenderThread, "MCP: Capture OpenXR eye preview texture", executeNowIfAlreadyMainThread: true);
-
-            using var reg = token.Register(() =>
-            {
-                if (deferredHandler is not null)
-                    window.PostRenderViewportsCallback -= deferredHandler;
-
-                tcs.TrySetCanceled(token);
-            });
 
             try
             {
-                PipelineTextureCaptureResult result = await tcs.Task;
+                PipelineTextureCaptureResult result = await CaptureAfterWindowRenderAsync<PipelineTextureCaptureResult>(window, BeginCapture, token);
                 return new McpToolResponse(
                     $"Captured OpenXR {safeEyeName} preview texture to '{result.Path}'.",
                     new
                     {
                         eye = leftEye ? "left" : "right",
-                        texture_name = texture.Name,
+                        vr_eye = leftEye ? "left" : "right",
+                        capture_source = "OpenXrEyePreview",
+                        include_screen_space_ui = false,
+                        last_rendered_frame_id = capturedFrameId,
+                        preview_copy_frame_id = capturedFrameId,
+                        texture_name = capturedTextureName,
                         path = result.Path,
                         width = result.Width,
                         height = result.Height,
@@ -1226,6 +1194,10 @@ namespace XREngine.Editor.Mcp
                         rgba_float_sha256 = result.RgbaFloatSha256,
                         stats = result.Stats,
                     });
+            }
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
+            {
+                throw;
             }
             catch (Exception ex)
             {

@@ -341,6 +341,8 @@ public unsafe partial class OpenXRAPI
 
     public XRTexture2D? PreviewLeftEyeTexture => _graphicsBinding?.PreviewLeftEyeTexture;
     public XRTexture2D? PreviewRightEyeTexture => _graphicsBinding?.PreviewRightEyeTexture;
+    public ulong PreviewLeftEyeFrameId => _graphicsBinding?.PreviewLeftEyeFrameId ?? 0;
+    public ulong PreviewRightEyeFrameId => _graphicsBinding?.PreviewRightEyeFrameId ?? 0;
     public XRTexture2D? DesktopMirrorTexture => _graphicsBinding?.DesktopMirrorTexture;
 
     #endregion

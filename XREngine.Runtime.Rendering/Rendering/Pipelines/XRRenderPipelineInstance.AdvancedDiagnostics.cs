@@ -56,6 +56,7 @@ public partial class XRRenderPipelineInstance
                     {
                         BackendReadyCanonicalViewRecord view = BackendReadyFramePackage.CreateCanonicalViewRecord(
                             views.GetView(viewIndex), observation.FrameId);
+                        view = ActiveMeshRenderCommands.RenderingBackendReadyPackage.ApplyCanonicalViewPolicy(view);
                         _advancedProfileEyes[viewIndex] = new AdvancedProfileEyeDiagnostic(
                             observation.FrameId, observation.ResourceGeneration, observation.OutputId,
                             view.ViewId, view.OutputLayer, view.HistoryKey, view.ViewMaskLo, view.ViewMaskHi,

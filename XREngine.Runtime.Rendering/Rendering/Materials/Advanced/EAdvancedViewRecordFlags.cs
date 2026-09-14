@@ -23,4 +23,9 @@ public enum EAdvancedViewRecordFlags : uint
     /// The view producer proved a compatible preceding output and camera history.
     /// </summary>
     TemporalHistoryValid = 1u << 7,
+    /// <summary>
+    /// Excludes projective mirror display materials while rendering a mirror
+    /// capture, preventing a capture from sampling its own reflection output.
+    /// </summary>
+    ExcludeProjectiveMirrors = 1u << 8,
 }

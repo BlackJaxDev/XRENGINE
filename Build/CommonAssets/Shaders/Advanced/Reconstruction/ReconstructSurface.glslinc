@@ -318,11 +318,11 @@ vec3 XR_ADV_ReconstructWorldPositionFromDepth(
     vec2 ndc = XR_ADV_FramebufferUvToClipNdc(
         viewRecord,
         framebufferUv);
-#if defined(XR_ADV_BACKEND_OPENGL)
-    float clipDepth = depth * 2.0 - 1.0;
-#else
-    float clipDepth = depth;
-#endif
+    // The inverse matrix carries the frozen view's depth convention. OpenGL
+    // also renders zero-to-one projections through clip control.
+    float clipDepth = (viewRecord.flags & XR_ADV_VIEW_DEPTH_ZERO_TO_ONE) != 0u
+        ? depth
+        : depth * 2.0 - 1.0;
     vec4 world =
         vec4(ndc, clipDepth, 1.0) *
         viewRecord.inverseViewProjectionJittered;

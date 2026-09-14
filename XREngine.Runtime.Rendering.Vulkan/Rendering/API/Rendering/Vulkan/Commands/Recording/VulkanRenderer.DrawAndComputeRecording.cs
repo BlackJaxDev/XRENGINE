@@ -147,6 +147,11 @@ namespace XREngine.Rendering.Vulkan
                     apiCalls: 1,
                     submittedDraws: op.DrawCount);
             }
+            op.Draw.PreparedProgram?.RecordShaderCommandCoverage(
+                ShaderCommandKind.Graphics,
+                indirect: true,
+                instancingKnown: false,
+                instanced: false);
         }
 
         internal void RecordTransformFeedbackOp(CommandBuffer commandBuffer, TransformFeedbackOp op)
@@ -493,6 +498,7 @@ namespace XREngine.Rendering.Vulkan
             _commandBufferRecordingScratch.Value!.PreparedComputePayload = new VulkanPreparedComputePayload(boundDescriptorSets);
             RegisterComputeTransientUniformBuffers(imageIndex, tempBuffers);
             Api!.CmdDispatch(commandBuffer, payload.GroupsX, payload.GroupsY, payload.GroupsZ);
+            payload.Program.RecordShaderCommandCoverage(ShaderCommandKind.Compute, indirect: false, instancingKnown: false, instanced: false);
         }
 
         /// <summary>

@@ -23,6 +23,12 @@ public interface IXrGraphicsBinding
 
     XRTexture2D? PreviewRightEyeTexture => null;
 
+    /// <summary>Render-frame ID for the last API-issued successful left preview copy, or zero when unavailable.</summary>
+    ulong PreviewLeftEyeFrameId => 0;
+
+    /// <summary>Render-frame ID for the last API-issued successful right preview copy, or zero when unavailable.</summary>
+    ulong PreviewRightEyeFrameId => 0;
+
     XRTexture2D? DesktopMirrorTexture => null;
 
     OpenXrSmokeCaptureLedgerEntry[] GetStrictSpsBoundaryCaptureLedger()
@@ -139,7 +145,10 @@ public interface IXrGraphicsBinding
     bool TryCreateSession(OpenXRAPI api, AbstractRenderer renderer);
     void CreateSwapchains(OpenXRAPI api, AbstractRenderer renderer);
     void CleanupSwapchains(OpenXRAPI api);
-    bool TryRetireSwapchainsForDeferredDestruction(OpenXRAPI api, AbstractRenderer renderer) => false;
+    OpenXrSwapchainRetirementOutcome RetireSwapchainsForDeferredDestruction(OpenXRAPI api, AbstractRenderer renderer)
+        => OpenXrSwapchainRetirementOutcome.Unsupported;
+    OpenXrSwapchainRetirementSnapshot CaptureSwapchainRetirementSnapshot()
+        => new();
     void PollDeferredSwapchainRetirement(OpenXRAPI api, AbstractRenderer renderer)
     {
     }

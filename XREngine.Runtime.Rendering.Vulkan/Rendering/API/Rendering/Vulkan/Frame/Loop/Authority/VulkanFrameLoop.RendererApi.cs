@@ -207,6 +207,8 @@ internal sealed partial class VulkanFrameLoop
     {
         if (timeout < TimeSpan.Zero)
             throw new ArgumentOutOfRangeException(nameof(timeout), timeout, "The shutdown timeout must be non-negative.");
+        if (IsDeviceLost)
+            return false;
         if (_deviceContext.Device.Handle == 0)
             return true;
         Exception? failure = null;
@@ -217,7 +219,7 @@ internal sealed partial class VulkanFrameLoop
         bool completed = waitThread.Join(timeout > maximumJoinTimeout ? maximumJoinTimeout : timeout);
         if (failure is not null)
             throw new InvalidOperationException("Vulkan device-idle wait failed during shutdown.", failure);
-        return completed;
+        return completed && !IsDeviceLost;
     }
 
     private XRFrameBuffer? ResolveWindowPresentFallbackFrameBuffer(XRTexture? colorTexture)

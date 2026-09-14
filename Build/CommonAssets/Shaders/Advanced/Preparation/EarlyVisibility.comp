@@ -205,7 +205,8 @@ void main()
         XR_ADV_VisibilityPersistentState.records[persistentWord + 5u]);
     state.DepthPyramidGeneration = XR_ADV_VisibilityPersistentState.records[persistentWord + 6u];
     state.Flags = XR_ADV_VisibilityPersistentState.records[persistentWord + 7u];
-    if (!candidateIncludesSelectedView(candidate.ViewMask))
+    if (!candidateIncludesSelectedView(candidate.ViewMask) ||
+        XR_ADV_SelectedViewExcludesProjectiveMirror(candidateIndex, XR_ADV_VisibilityPush.viewIndex))
     {
         state.Draw = candidate.Draw;
         state.LastTestedFrame = uvec2(0u);

@@ -24,15 +24,18 @@ public unsafe partial class OpenXRAPI
         if (!CanReplaceOpenXrSwapchainsInSession())
             return OpenXrSwapchainReplacementOutcome.DeferredBeforeDetachment;
 
+        bool sessionWasBegun = _sessionBegun;
         StopOpenXrPacingThread();
         if (_openXrPacingThread?.IsAlive == true)
+        {
+            ResumeOpenXrPacingAfterDeferredReplacement(sessionWasBegun);
             return OpenXrSwapchainReplacementOutcome.DeferredBeforeDetachment;
+        }
 
-        bool sessionWasBegun = _sessionBegun;
-        bool cleanupCompleted;
+        OpenXrSwapchainCleanupOutcome cleanup;
         try
         {
-            cleanupCompleted = CleanupSwapchains();
+            cleanup = CleanupSwapchains();
         }
         catch (Exception ex)
         {
@@ -40,13 +43,14 @@ public unsafe partial class OpenXRAPI
             return OpenXrSwapchainReplacementOutcome.FailedAfterDetachment;
         }
 
-        if (!cleanupCompleted || HasCreatedOpenXrSwapchains())
+        if (cleanup == OpenXrSwapchainCleanupOutcome.DeferredBeforeDetachment)
         {
-            // A cleanup failure may have detached some child state before it
-            // reported failure. Only checks before CleanupSwapchains are safe
-            // deferrals; every result after that mutation boundary recovers.
-            return OpenXrSwapchainReplacementOutcome.FailedAfterDetachment;
+            ResumeOpenXrPacingAfterDeferredReplacement(sessionWasBegun);
+            return OpenXrSwapchainReplacementOutcome.DeferredBeforeDetachment;
         }
+
+        if (cleanup != OpenXrSwapchainCleanupOutcome.Completed || HasCreatedOpenXrSwapchains())
+            return OpenXrSwapchainReplacementOutcome.FailedAfterDetachment;
 
         try
         {
@@ -65,6 +69,19 @@ public unsafe partial class OpenXRAPI
         }
     }
 
+    /// <summary>Restores pacing when retirement admission left the active generation intact.</summary>
+    private void ResumeOpenXrPacingAfterDeferredReplacement(bool sessionWasBegun)
+    {
+        if (!sessionWasBegun || !_sessionBegun || IsOpenXrRuntimeLossPending())
+            return;
+
+        // A timed-out join may leave the same thread inside xrWaitFrame. Clear
+        // its stop request as well as starting a replacement when it did exit.
+        Volatile.Write(ref _openXrPacingStopRequested, 0);
+        _openXrPacingWakeEvent.Set();
+        EnsureOpenXrPacingThreadStarted();
+    }
+
     /// <summary>
     /// Clears any partial replacement children and moves the runtime into the
     /// existing session-teardown path. The parent remains alive until deferred
@@ -75,7 +92,7 @@ public unsafe partial class OpenXRAPI
     {
         try
         {
-            if (!CleanupSwapchains() || HasCreatedOpenXrSwapchains())
+            if (CleanupSwapchains() != OpenXrSwapchainCleanupOutcome.Completed || HasCreatedOpenXrSwapchains())
             {
                 Debug.LogWarning(
                     $"[OpenXR] Swapchain replacement detached the active generation but child cleanup remains pending. " +

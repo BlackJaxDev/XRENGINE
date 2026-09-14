@@ -68,8 +68,47 @@ internal sealed partial class VulkanCommandRuntime
     private readonly object _retiredOpenXrSubmissionsGate = new();
     private OpenXrVulkanSubmissionTracker? _openXrSubmissionTracker;
 
-    internal OpenXrVulkanSubmissionTracker OpenXrSubmissionTracker =>
-        _openXrSubmissionTracker ??= new OpenXrVulkanSubmissionTracker(this);
+    internal OpenXrVulkanSubmissionTracker OpenXrSubmissionTracker
+    {
+        get
+        {
+            OpenXrVulkanSubmissionTracker? tracker = _openXrSubmissionTracker;
+            if (tracker is not null)
+                return tracker;
+            if (!DeviceContext.StateMachine.IsOperational)
+                throw new InvalidOperationException("OpenXR submission tracking is unavailable after device loss or disposal.");
+            return _openXrSubmissionTracker ??= new OpenXrVulkanSubmissionTracker(this);
+        }
+    }
+
+    /// <summary>
+    /// Releases the tracker after normal teardown has established GPU completion.
+    /// A failed drain leaves the tracker connected so its active ownership and
+    /// smoke evidence remain available to the caller's failure policy.
+    /// </summary>
+    internal bool TryDisposeOpenXrSubmissionTrackerAfterDrain()
+    {
+        OpenXrVulkanSubmissionTracker? tracker = _openXrSubmissionTracker;
+        if (tracker is null)
+            return true;
+        if (!tracker.TryDisposeAfterDrain())
+            return false;
+        _openXrSubmissionTracker = null;
+        return true;
+    }
+
+    /// <summary>
+    /// Abandons unresolved tracker ownership after device loss without treating
+    /// GPU work as complete. The tracker preserves smoke evidence while it
+    /// releases only CPU-side prepared-input leases.
+    /// </summary>
+    internal int AbandonOpenXrSubmissionTrackerAfterDeviceLoss()
+    {
+        OpenXrVulkanSubmissionTracker? tracker = _openXrSubmissionTracker;
+        if (tracker is null)
+            return 0;
+        return tracker.AbandonAfterDeviceLoss();
+    }
 
     internal ulong CurrentTimelineValue => Synchronization._graphicsTimelineValue;
 
@@ -245,6 +284,17 @@ internal sealed partial class VulkanCommandRuntime
             }
             long submitEnd = Stopwatch.GetTimestamp();
 
+            if (input.AdmissionTicket is { } receiptTicket)
+                OpenXrSubmissionTracker.ObserveSubmissionReceipt(
+                    in receiptTicket,
+                    in submitReceipt,
+                    acceptedIncomplete: false,
+                    shape: input.Shape,
+                    commandCount: input.CommandBufferCount,
+                    firstCommandBuffer: input.FirstCommandBuffer,
+                    secondCommandBuffer: input.SecondCommandBuffer,
+                    thirdCommandBuffer: input.ThirdCommandBuffer);
+
             if (submitReceipt.Result != Result.Success)
             {
                 Debug.VulkanWarning(
@@ -282,6 +332,23 @@ internal sealed partial class VulkanCommandRuntime
                 commandBuffersCompleted = false;
                 arenaSlotsReopened = true;
 
+                if (input.AdmissionTicket is { } admissionTicket)
+                    OpenXrSubmissionTracker.ObserveSubmissionReceipt(
+                        in admissionTicket,
+                        in submitReceipt,
+                        acceptedIncomplete: true,
+                        shape: input.Shape,
+                        commandCount: input.CommandBufferCount,
+                        firstCommandBuffer: input.FirstCommandBuffer,
+                        secondCommandBuffer: input.SecondCommandBuffer,
+                        thirdCommandBuffer: input.ThirdCommandBuffer);
+
+                // The accepted sink seals ownership before returning from the
+                // queue gateway. Do not expose it to completion polling until
+                // both receipt observations and publication work are complete.
+                if (input.AdmissionTicket is { } asyncAcceptedTicket)
+                    OpenXrSubmissionTracker.FinalizeAcceptedSubmissionReceipt(in asyncAcceptedTicket);
+
                 if (IsOpenXrTraceEnabled)
                 {
                     Debug.Vulkan(
@@ -298,6 +365,11 @@ internal sealed partial class VulkanCommandRuntime
                     injectedFailureStage,
                     submitReceipt);
             }
+
+            // Synchronous submissions have no second async observation, but
+            // must still open tracker ownership before the completion poll.
+            if (input.AdmissionTicket is { } synchronousAcceptedTicket)
+                OpenXrSubmissionTracker.FinalizeAcceptedSubmissionReceipt(in synchronousAcceptedTicket);
 
             long waitStart = Stopwatch.GetTimestamp();
             Result waitResult;

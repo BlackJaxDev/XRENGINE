@@ -10,4 +10,13 @@ public readonly record struct VulkanNativeBufferDiagnosticDescription(
     ulong AllocatedByteSize,
     ulong PublishedGeneration,
     bool IsGenerated,
-    bool IsDeviceOperational);
+    bool IsDeviceOperational,
+    uint MemoryTypeIndex = uint.MaxValue,
+    uint MemoryHeapIndex = uint.MaxValue,
+    ulong MemoryHeapSize = 0,
+    string MemoryTypeFlags = "Unknown",
+    string MemoryHeapFlags = "Unknown",
+    bool IsMapped = false,
+    bool IsHostCoherent = false,
+    bool IsDeviceLocal = false,
+    string AllocationOwnership = "Unknown");

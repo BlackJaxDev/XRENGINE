@@ -14,9 +14,14 @@ internal sealed class DescriptorSetLayoutBindingBuilder(DescriptorBindingInfo in
     public EVulkanDescriptorBindingRequirement Requirement { get; private set; } = info.Requirement;
     public EVulkanDescriptorOwner? DeclaredOwner { get; private set; } = info.DeclaredOwner;
     public EVulkanBindingFrequency? DeclaredFrequency { get; private set; } = info.DeclaredFrequency;
+    public string? NativeAbiIdentity { get; } = info.NativeAbiIdentity;
 
     public void Merge(DescriptorBindingInfo info)
     {
+        // Vulkan links descriptor topology, not host member layouts or semantic providers.
+        // An uncontracted stage cannot prove it shares a native resource's ABI either.
+        if (!string.Equals(NativeAbiIdentity, info.NativeAbiIdentity, StringComparison.Ordinal))
+            throw new InvalidOperationException($"Conflicting or uncontracted native resource ABI at {Set}:{Binding}.");
         if ((DeclaredOwner.HasValue && info.DeclaredOwner.HasValue && DeclaredOwner != info.DeclaredOwner) ||
             (DeclaredFrequency.HasValue && info.DeclaredFrequency.HasValue && DeclaredFrequency != info.DeclaredFrequency))
             throw new InvalidOperationException($"Conflicting explicit descriptor ownership at {Set}:{Binding}.");
@@ -50,5 +55,5 @@ internal sealed class DescriptorSetLayoutBindingBuilder(DescriptorBindingInfo in
         };
 
     public DescriptorBindingInfo ToDescriptorBindingInfo()
-        => new(Set, Binding, DescriptorType, StageFlags, Count, Name, ExpectedImageViewType, Requirement, DeclaredOwner, DeclaredFrequency);
+        => new(Set, Binding, DescriptorType, StageFlags, Count, Name, ExpectedImageViewType, Requirement, DeclaredOwner, DeclaredFrequency, NativeAbiIdentity);
 }

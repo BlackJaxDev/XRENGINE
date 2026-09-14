@@ -1040,7 +1040,25 @@ namespace XREngine.Rendering.Vulkan
                     return false;
                 }
 
-                snapshot = new VulkanComputeBufferBinding(Data, buffer, requestedRange, _lastUsageFlags);
+                VulkanResourceLifetimeTracker tracker = BackendContext.Resources.Lifetime.Tracker;
+                VulkanResourceLifetimeKey key = new(ObjectType.Buffer, buffer.Handle);
+                using (VulkanFrameLockScope.Enter(
+                    tracker.SyncRoot,
+                    EVulkanFrameWaitReason.ResourceLifetimeLock))
+                {
+                    if (!tracker.TryGetResourceSlotNoLock(key, out VulkanResourceSlotHandle slot) ||
+                        !tracker.TryResolvePublishedResourceSlotNoLock(
+                            slot,
+                            out VulkanResourceLifetimeRecord record) ||
+                        record.Key != key || record.Generation != slot.Generation ||
+                        record.PublishedGeneration != slot.Generation)
+                    {
+                        return false;
+                    }
+
+                    snapshot = new VulkanComputeBufferBinding(
+                        Data, buffer, requestedRange, _lastUsageFlags, slot, slot.Generation);
+                }
                 return true;
             }
 

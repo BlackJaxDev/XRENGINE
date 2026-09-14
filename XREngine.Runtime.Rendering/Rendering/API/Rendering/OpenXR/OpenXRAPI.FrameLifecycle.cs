@@ -1129,6 +1129,7 @@ public unsafe partial class OpenXRAPI
             collectMirrors: true,
             worldOverride: world,
             cameraOverride: leftCamera,
+            stereoRightEyeCamera: rightCamera,
             renderCommandsOverride: meshCommands,
             allowScreenSpaceUICollectVisible: false,
             collectionVolumeOverride: combinedWorldFrustum);

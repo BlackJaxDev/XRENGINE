@@ -2,6 +2,7 @@ using System.Runtime.CompilerServices;
 using NUnit.Framework;
 using Shouldly;
 using XREngine.Rendering;
+using XREngine.Rendering.Commands;
 
 namespace XREngine.UnitTests.Rendering;
 
@@ -57,29 +58,54 @@ public sealed class AdvancedStereoAndEditorIntegrationContractTests
         thumb.EnableLateTransparency.ShouldBeFalse();
 
         AdvancedOffscreenProfile mirror = AdvancedOffscreenProfile.ForMirror();
-        mirror.EnablePostProcessing.ShouldBeTrue();
+        mirror.EnablePostProcessing.ShouldBeFalse();
         mirror.EnableLateTransparency.ShouldBeTrue();
         mirror.EnableTemporalHistory.ShouldBeFalse();
     }
 
     [Test]
-    public void PickingContract_QueryLayoutAndResultDecoding()
+    public void PickingContract_QueryLayoutAndResolvedResultIdentity()
     {
         Unsafe.SizeOf<AdvancedPickingQuery>().ShouldBe(12);
 
         AdvancedPickingContract.IsInBounds(50, 50, 100, 100).ShouldBeTrue();
         AdvancedPickingContract.IsInBounds(100, 50, 100, 100).ShouldBeFalse();
 
-        // Decode miss for DrawId == 0
-        AdvancedPickingResult miss = AdvancedPickingResult.FromPayload(drawId: 0u, primitiveId: 10u, instanceId: 500UL, selectionId: 1u);
+        AdvancedPickingResult miss = AdvancedPickingResult.Miss(
+            requestGeneration: 10u,
+            databaseEpoch: 20u,
+            publicationSequence: 30u,
+            viewIndex: 1u);
         miss.IsHit.ShouldBeFalse();
+        miss.RequestGeneration.ShouldBe(10u);
+        miss.Draw.ShouldBe(AdvancedGpuHandle.Invalid);
 
-        // Decode hit for valid DrawId
-        AdvancedPickingResult hit = AdvancedPickingResult.FromPayload(drawId: 42u, primitiveId: 7u, instanceId: 1024UL, selectionId: 3u);
+        AdvancedPickingResult hit = new(
+            IsHit: true,
+            RequestGeneration: 10u,
+            DatabaseEpoch: 20u,
+            PublicationSequence: 30u,
+            Draw: new AdvancedGpuHandle(42u, 2u),
+            Instance: new AdvancedGpuHandle(1024u, 3u),
+            Geometry: new AdvancedGpuHandle(4u, 1u),
+            Material: new AdvancedGpuHandle(5u, 1u),
+            CurrentTransform: new AdvancedGpuHandle(6u, 1u),
+            PreviousTransform: new AdvancedGpuHandle(7u, 1u),
+            EditorIdentity: new AdvancedGpuHandle(8u, 1u),
+            StableComponentId: 9u,
+            LogicalMeshId: 10u,
+            SelectionId: 3u,
+            PrimitiveSection: 2u,
+            Producer: EAdvancedGeometryProducer.IndirectIndexed,
+            PrimitiveId: 7u,
+            MeshletOrClusterId: 11u,
+            LocalPrimitiveId: 12u,
+            ViewIndex: 1u,
+            AuthoringRenderInfo: null);
         hit.IsHit.ShouldBeTrue();
-        hit.DrawId.ShouldBe(42u);
+        hit.Draw.ShouldBe(new AdvancedGpuHandle(42u, 2u));
         hit.PrimitiveId.ShouldBe(7u);
-        hit.InstanceId.ShouldBe(1024UL);
+        hit.Instance.ShouldBe(new AdvancedGpuHandle(1024u, 3u));
         hit.SelectionId.ShouldBe(3u);
     }
 

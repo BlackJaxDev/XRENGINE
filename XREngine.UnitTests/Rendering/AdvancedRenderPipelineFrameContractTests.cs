@@ -19,25 +19,51 @@ public sealed class AdvancedRenderPipelineFrameContractTests
             AdvancedRenderPipelineFrameContract.OrderedStages;
         IReadOnlyList<ViewportRenderCommand> commands = pipeline.CommandChain.Commands;
 
-        commands.Count.ShouldBe(stages.Count * 4);
+        commands.OfType<VPRC_AdvancedRenderStage>().Count().ShouldBe(stages.Count);
+        int previousStageIndex = -1;
 
         for (int i = 0; i < stages.Count; i++)
         {
             AdvancedRenderStageDescriptor descriptor = stages[i];
-            int commandIndex = i * 4;
+            commands.OfType<VPRC_Annotation>()
+                .Count(command => command.Label == descriptor.GpuLabel)
+                .ShouldBe(1);
+            commands.OfType<VPRC_GPUTimerBegin>()
+                .Count(command => command.Label == descriptor.GpuLabel)
+                .ShouldBe(1);
+            commands.OfType<VPRC_AdvancedRenderStage>()
+                .Count(command => command.Stage == descriptor.Stage)
+                .ShouldBe(1);
+            commands.OfType<VPRC_GPUTimerEnd>()
+                .Count(command => command.Label == descriptor.GpuLabel)
+                .ShouldBe(1);
 
-            commands[commandIndex]
-                .ShouldBeOfType<VPRC_Annotation>()
-                .Label.ShouldBe(descriptor.GpuLabel);
-            commands[commandIndex + 1]
-                .ShouldBeOfType<VPRC_GPUTimerBegin>()
-                .Label.ShouldBe(descriptor.GpuLabel);
-            commands[commandIndex + 2]
-                .ShouldBeOfType<VPRC_AdvancedRenderStage>()
-                .Stage.ShouldBe(descriptor.Stage);
-            commands[commandIndex + 3]
-                .ShouldBeOfType<VPRC_GPUTimerEnd>()
-                .Label.ShouldBe(descriptor.GpuLabel);
+            int annotationIndex = commands
+                .Select((command, index) => (command, index))
+                .Single(entry => entry.command is VPRC_Annotation annotation &&
+                    annotation.Label == descriptor.GpuLabel)
+                .index;
+            int beginIndex = commands
+                .Select((command, index) => (command, index))
+                .Single(entry => entry.command is VPRC_GPUTimerBegin begin &&
+                    begin.Label == descriptor.GpuLabel)
+                .index;
+            int stageIndex = commands
+                .Select((command, index) => (command, index))
+                .Single(entry => entry.command is VPRC_AdvancedRenderStage stage &&
+                    stage.Stage == descriptor.Stage)
+                .index;
+            int endIndex = commands
+                .Select((command, index) => (command, index))
+                .Single(entry => entry.command is VPRC_GPUTimerEnd end &&
+                    end.Label == descriptor.GpuLabel)
+                .index;
+
+            annotationIndex.ShouldBeLessThan(beginIndex);
+            beginIndex.ShouldBeLessThan(stageIndex);
+            stageIndex.ShouldBeLessThan(endIndex);
+            previousStageIndex.ShouldBeLessThan(stageIndex);
+            previousStageIndex = stageIndex;
         }
     }
 
@@ -55,40 +81,46 @@ public sealed class AdvancedRenderPipelineFrameContractTests
     }
 
     [Test]
-    public void PassMetadata_MatchesStageOrderDomainsAndDependencies()
+    public void PassMetadata_DescribesConcretePassesWithResolvedDependencies()
     {
         AdvancedRenderPipeline pipeline = new();
-        AdvancedRenderStageDescriptor[] stages =
-            [.. AdvancedRenderPipelineFrameContract.OrderedStages];
         RenderPassMetadata[] passes =
             [.. pipeline.PassMetadata.OrderBy(static pass => pass.PassIndex)];
 
-        passes.Length.ShouldBe(stages.Length + 1);
+        RenderPassMetadata frameBegin = GetPass("Advanced.FrameBegin");
+        RenderPassMetadata deformation = GetPass("Advanced.Deformation");
+        RenderPassMetadata preparation = GetPass("Advanced.VisibilityPreparation");
+        RenderPassMetadata raster = GetPass("Advanced.VisibilityRaster");
+        RenderPassMetadata depthPyramid = GetPass("Advanced.DepthPyramidAndLateVisibility");
+        RenderPassMetadata lateRaster = GetPass("Advanced.LateVisibilityRaster");
+        RenderPassMetadata ambientOcclusion = GetPass("Advanced.AmbientOcclusion");
+        RenderPassMetadata classification = GetPass("Advanced.WorkClassification");
 
-        for (int i = 0; i < stages.Length; i++)
-        {
-            AdvancedRenderStageDescriptor stage = stages[i];
-            RenderPassMetadata pass = passes.First(p => p.PassIndex == (int)stage.Stage);
+        frameBegin.Stage.ShouldBe(ERenderGraphPassStage.Transfer);
+        deformation.Stage.ShouldBe(ERenderGraphPassStage.Compute);
+        deformation.ExplicitDependencies.ShouldContain(frameBegin.PassIndex);
+        preparation.Stage.ShouldBe(ERenderGraphPassStage.Compute);
+        preparation.ExplicitDependencies.ShouldContain(deformation.PassIndex);
+        preparation.ResourceUsages.ShouldContain(usage =>
+            usage.ResourceName == AdvancedVisibilityResourceNames.Candidates);
+        raster.Stage.ShouldBe(ERenderGraphPassStage.Graphics);
+        raster.ExplicitDependencies.ShouldContain(preparation.PassIndex);
+        raster.ResourceUsages.ShouldContain(usage =>
+            usage.ResourceName == AdvancedVisibilityResourceNames.Payloads);
+        depthPyramid.Stage.ShouldBe(ERenderGraphPassStage.Compute);
+        depthPyramid.ExplicitDependencies.ShouldContain(raster.PassIndex);
+        depthPyramid.ResourceUsages.ShouldContain(usage =>
+            usage.ResourceName == RenderGraphResourceNames.MakeTexture(
+                AdvancedVisibilityResourceNames.CurrentDepthPyramid));
+        lateRaster.Stage.ShouldBe(ERenderGraphPassStage.Graphics);
+        lateRaster.ExplicitDependencies.ShouldContain(depthPyramid.PassIndex);
+        ambientOcclusion.Stage.ShouldBe(ERenderGraphPassStage.Compute);
+        ambientOcclusion.ExplicitDependencies.ShouldContain(lateRaster.PassIndex);
+        classification.Stage.ShouldBe(ERenderGraphPassStage.Compute);
+        classification.ExplicitDependencies.ShouldContain(lateRaster.PassIndex);
 
-            pass.PassIndex.ShouldBe((int)stage.Stage);
-            pass.Name.ShouldBe(stage.PassName);
-            pass.Stage.ShouldBe(stage.RenderGraphStage);
-            bool visibilityStage = stage.Stage is
-                EAdvancedRenderStage.VisibilityPreparation or
-                EAdvancedRenderStage.VisibilityRaster or
-                EAdvancedRenderStage.DepthPyramidAndLateVisibility or
-                EAdvancedRenderStage.AttributeReconstruction;
-            pass.ResourceUsages.Any().ShouldBe(
-                visibilityStage,
-                stage.Stage.ToString());
-
-            if (i == 0)
-                pass.ExplicitDependencies.ShouldBeEmpty();
-            else if (stage.Stage == EAdvancedRenderStage.WorkClassification)
-                pass.ExplicitDependencies.Count.ShouldBe(1);
-            else
-                pass.ExplicitDependencies.ShouldBe([(int)stages[i - 1].Stage]);
-        }
+        RenderPassMetadata GetPass(string name)
+            => passes.Single(pass => pass.Name == name);
     }
 
     [Test]
@@ -165,10 +197,23 @@ public sealed class AdvancedRenderPipelineFrameContractTests
 
         RenderPipelineResourceLayout layout =
             new AdvancedRenderPipeline().BuildResourceLayout(profile);
-        ExternalResourceSpec output = layout.OrderedSpecs
-            .OfType<ExternalResourceSpec>()
-            .ShouldHaveSingleItem()
-            .ShouldBeOfType<ExternalResourceSpec>();
+        ExternalResourceSpec[] externalResources =
+            [.. layout.OrderedSpecs.OfType<ExternalResourceSpec>()];
+        ExternalResourceSpec output = externalResources.Single(
+            resource => resource.Name == AdvancedRenderPipeline.ExternalOutputResourceName);
+
+        externalResources
+            .Where(resource => resource.Name != AdvancedRenderPipeline.ExternalOutputResourceName)
+            .Select(resource => resource.Name)
+            .ShouldBe([
+                "LightProbeIrradianceArray",
+                "LightProbePrefilterArray",
+                "LightProbePositions",
+                "LightProbeParameters",
+                "LightProbeTetrahedra",
+                "LightProbeGridCells",
+                "LightProbeGridIndices",
+            ]);
 
         output.Name.ShouldBe(AdvancedRenderPipeline.ExternalOutputResourceName);
         output.Lifetime.ShouldBe(RenderResourceLifetime.External);
@@ -185,10 +230,9 @@ public sealed class AdvancedRenderPipelineFrameContractTests
         string vulkan = SourceContractWorkspace.ReadVulkanSourcesContaining(
             "EAdvancedShaderFamily.None");
 
-        openGl.ShouldContain("ShaderFamily: EAdvancedShaderFamily.None");
+        openGl.ShouldContain("ShaderFamily: _advancedAdmissionReady ? EAdvancedShaderFamily.VisibilityBuffer : EAdvancedShaderFamily.None");
         vulkan.ShouldContain("EAdvancedShaderFamily.None");
-        openGl.ShouldNotContain("ShaderFamily: EAdvancedShaderFamily.VisibilityBuffer");
-        vulkan.ShouldNotContain("EAdvancedShaderFamily.VisibilityBuffer");
+        openGl.ShouldNotContain("ShaderFamily: EAdvancedShaderFamily.VisibilityBuffer,");
     }
 
     [Test]

@@ -391,9 +391,12 @@ public sealed class VulkanCoreHardeningPhase524Tests
         string capture = viewportActions[captureStart..captureEnd];
 
         capture.ShouldContain("renderer.TryQueueScreenshotReadback(");
+        capture.ShouldContain("renderer.TryQueueCompositedScreenshotReadback(");
+        capture.ShouldContain("bool queued = includeScreenSpaceUi");
+        capture.ShouldContain("false, CompleteReadback, out queueFailure");
         capture.ShouldContain("if (!result.Succeeded || result.Image is null)");
-        capture.IndexOf("renderer.TryQueueScreenshotReadback(", StringComparison.Ordinal)
-            .ShouldBeLessThan(capture.IndexOf("tcs.TrySetResult", StringComparison.Ordinal));
+        capture.ShouldContain("if (!queued)");
+        capture.ShouldContain("queueFailure ?? \"The renderer rejected the screenshot readback request.\"");
     }
 
     [Test]

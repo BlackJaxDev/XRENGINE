@@ -37,7 +37,7 @@ internal sealed class VulkanProgramBindingSchema
         AutoUniformFrequencyMask = autoUniformFrequencyMask;
         HasUnknownAutoUniformFrequency = hasUnknownAutoUniformFrequency;
         _frequencyPublicationLayoutSignatures =
-            BuildFrequencyPublicationLayoutSignatures(autoUniformBlocks);
+            BuildFrequencyPublicationLayoutSignatures(autoUniformBlocks, descriptorBindings);
         _frequencyDependsOnMaterialOrRuntime =
             BuildFrequencyMaterialOrRuntimeDependencies(autoUniformBlocks);
         DescriptorBindings = descriptorBindings;
@@ -145,7 +145,8 @@ internal sealed class VulkanProgramBindingSchema
     }
 
     private static ulong[] BuildFrequencyPublicationLayoutSignatures(
-        Dictionary<string, VulkanAutoUniformBindingSchema> schemas)
+        Dictionary<string, VulkanAutoUniformBindingSchema> schemas,
+        VulkanDescriptorBindingSchemaEntry[] descriptors)
     {
         int frequencyCount = (int)EVulkanBindingFrequency.Count;
         List<ulong>[] signaturesByFrequency = new List<ulong>[frequencyCount];
@@ -157,6 +158,22 @@ internal sealed class VulkanProgramBindingSchema
 
             (signaturesByFrequency[index] ??= [])
                 .Add(schema.PublicationLayoutSignature);
+        }
+
+        foreach (VulkanDescriptorBindingSchemaEntry descriptor in descriptors)
+        {
+            DescriptorBindingInfo binding = descriptor.Reflection;
+            if (binding.NativeAbiIdentity is not string nativeIdentity ||
+                binding.DeclaredFrequency is not EVulkanBindingFrequency frequency)
+                continue;
+            int index = (int)frequency;
+            if ((uint)index >= (uint)frequencyCount)
+                continue;
+            FrameOpSignatureHasher hash = new();
+            hash.Add(binding.Set);
+            hash.Add(binding.Binding);
+            hash.Add(nativeIdentity);
+            (signaturesByFrequency[index] ??= []).Add(hash.ToHash());
         }
 
         ulong[] signatures = new ulong[frequencyCount];

@@ -114,12 +114,12 @@ public sealed class SwapchainContextCoalescingTests
     /// <summary>Creates a <see cref="BlitOp"/> targeting the swapchain (OutFbo == null).</summary>
     private static BlitOp SwapchainBlit(int passIndex, FrameOpContext ctx) =>
         new(passIndex, InFbo: null, OutFbo: null, 0, 0, 0, 0, 0, 0, 0, 0,
-            default, false, false, false, false, Context: ctx);
+            default, false, false, false, false, RequireExactCompatibility: false, Context: ctx);
 
     /// <summary>Creates a <see cref="BlitOp"/> targeting an FBO (OutFbo != null).</summary>
     private static BlitOp FboBlit(int passIndex, FrameOpContext ctx, XREngine.Rendering.XRFrameBuffer fbo) =>
         new(passIndex, InFbo: null, OutFbo: fbo, 0, 0, 0, 0, 0, 0, 0, 0,
-            default, false, false, false, false, Context: ctx);
+            default, false, false, false, false, RequireExactCompatibility: false, Context: ctx);
 
     /// <summary>Creates an <see cref="IndirectDrawOp"/> (always targets swapchain — Target is always null).</summary>
     private static IndirectDrawOp SwapchainIndirectDraw(int passIndex, FrameOpContext ctx) =>
@@ -133,7 +133,7 @@ public sealed class SwapchainContextCoalescingTests
     /// <summary>Creates a <see cref="ComputeDispatchOp"/> (never targets swapchain).</summary>
     private static ComputeDispatchOp ComputeDispatch(int passIndex, FrameOpContext ctx) =>
         new(passIndex, Program: null!, GroupsX: 1, GroupsY: 1, GroupsZ: 1,
-            Snapshot: null!, Context: ctx);
+            Snapshot: new ComputeDispatchSnapshot(), Context: ctx);
 
     /// <summary>Creates a <see cref="MemoryBarrierOp"/> (never targets swapchain).</summary>
     private static MemoryBarrierOp MemoryBarrier(int passIndex, FrameOpContext ctx) =>
@@ -143,11 +143,21 @@ public sealed class SwapchainContextCoalescingTests
     /// Builds a <see cref="VulkanCompiledRenderGraph"/> with the given pass order mapping.
     /// Pass indices not present in this map default to <c>int.MaxValue</c> during sort.
     /// </summary>
-    private static VulkanCompiledRenderGraph GraphWithPassOrder(Dictionary<int, int> passOrder) =>
-        new(Array.Empty<RenderPassMetadata>(),
+    private static VulkanCompiledRenderGraph GraphWithPassOrder(Dictionary<int, int> passOrder)
+    {
+        RenderPassMetadata[] orderedPasses =
+            [.. passOrder.OrderBy(pair => pair.Value).Select((pair, index) =>
+                new RenderPassMetadata(
+                    pair.Key,
+                    $"Pass{pair.Key}",
+                    ERenderGraphPassStage.Graphics,
+                    declarationOrder: index))];
+        return new(
+            orderedPasses,
             passOrder,
             Array.Empty<VulkanCompiledPassBatch>(),
             RenderGraphSynchronizationInfo.Empty);
+    }
 
     private static IReadOnlyCollection<RenderPassMetadata> Metadata(params (int PassIndex, string Name, int[] Dependencies)[] passes)
     {
@@ -714,7 +724,7 @@ public sealed class SwapchainContextCoalescingTests
     }
 
     [Test]
-    public void SecondaryBuckets_SplitBlitsByResolvedTarget()
+    public void SecondaryBuckets_ExcludeBlitsThatRequirePrimaryRecording()
     {
         VulkanFrameOperationScheduler scheduler = new();
         List<VulkanSecondaryRecordingBucket> buckets = [];
@@ -728,17 +738,11 @@ public sealed class SwapchainContextCoalescingTests
 
         scheduler.BuildSecondaryRecordingBuckets(new FrameOperationSequence(LowerOperations(ops)), buckets);
 
-        buckets.Count.ShouldBe(2);
-        buckets[0].StartIndex.ShouldBe(0);
-        buckets[0].Count.ShouldBe(1);
-        buckets[0].TargetIdentity.ShouldBe(firstFbo.GetHashCode());
-        buckets[1].StartIndex.ShouldBe(1);
-        buckets[1].Count.ShouldBe(1);
-        buckets[1].TargetIdentity.ShouldBe(secondFbo.GetHashCode());
+        buckets.ShouldBeEmpty();
     }
 
     [Test]
-    public void SecondaryBuckets_SplitIndirectDrawsByResolvedTarget()
+    public void SecondaryBuckets_ExcludeIndirectDrawsThatRequirePrimaryRecording()
     {
         VulkanFrameOperationScheduler scheduler = new();
         List<VulkanSecondaryRecordingBucket> buckets = [];
@@ -752,13 +756,11 @@ public sealed class SwapchainContextCoalescingTests
 
         scheduler.BuildSecondaryRecordingBuckets(new FrameOperationSequence(LowerOperations(ops)), buckets);
 
-        buckets.Count.ShouldBe(2);
-        buckets[0].TargetIdentity.ShouldBe(firstFbo.GetHashCode());
-        buckets[1].TargetIdentity.ShouldBe(secondFbo.GetHashCode());
+        buckets.ShouldBeEmpty();
     }
 
     [Test]
-    public void SecondaryBuckets_CoalesceContextsThatDifferOnlyByDiagnosticId()
+    public void SecondaryBuckets_ExcludeIndirectDrawsRegardlessOfRecordingCompatibility()
     {
         VulkanFrameOperationScheduler scheduler = new();
         List<VulkanSecondaryRecordingBucket> buckets = [];
@@ -773,8 +775,7 @@ public sealed class SwapchainContextCoalescingTests
 
         scheduler.BuildSecondaryRecordingBuckets(new FrameOperationSequence(LowerOperations(ops)), buckets);
 
-        buckets.Count.ShouldBe(1);
-        buckets[0].Count.ShouldBe(2);
+        buckets.ShouldBeEmpty();
 
         ops[1] = FboIndirectDraw(
             1,
@@ -782,7 +783,7 @@ public sealed class SwapchainContextCoalescingTests
             fbo);
         scheduler.BuildSecondaryRecordingBuckets(new FrameOperationSequence(LowerOperations(ops)), buckets);
 
-        buckets.Count.ShouldBe(2);
+        buckets.ShouldBeEmpty();
     }
 
     [Test]

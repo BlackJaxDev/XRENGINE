@@ -2,6 +2,7 @@ using System.Diagnostics;
 using Silk.NET.Vulkan;
 using XREngine.Data.Colors;
 using XREngine.Rendering.Shadows;
+using Semaphore = Silk.NET.Vulkan.Semaphore;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -284,6 +285,8 @@ internal sealed partial class VulkanFrameLoop
                 EVulkanFrameOutcome.Completed);
 
             CommandBuffer submittedCommandBuffer = recording.CommandBuffer;
+            Semaphore pendingSubmissionGate =
+                GetExplicitProductionPendingSubmissionGate(probe);
             bool usesQueueOverlap = _commandRuntime.TryGetAdvancedQueueOverlapSlot(submittedCommandBuffer, out _);
             VulkanSubmissionDiagnosticContext diagnosticContext =
                 CreateFrameTargetSubmissionDiagnosticContext(
@@ -304,7 +307,8 @@ internal sealed partial class VulkanFrameLoop
                     minimumGraphicsTimelineSignalValue: 1UL,
                     out graphicsSignalValue,
                     in diagnosticContext,
-                    caller: nameof(ExecuteExplicitProductionFrame));
+                    caller: nameof(ExecuteExplicitProductionFrame),
+                    pendingSubmissionGate: pendingSubmissionGate);
                 // Queue acceptance is irreversible. Publish ownership before even
                 // profiling-scope disposal or diagnostics can throw, and never
                 // reopen these slots through the unsubmitted cancellation path.
@@ -350,10 +354,32 @@ internal sealed partial class VulkanFrameLoop
                 graphicsSignalValue,
                 requestedQueueMode,
                 usesQueueOverlap ? EVulkanQueueOverlapMode.GraphicsCompute : EVulkanQueueOverlapMode.GraphicsOnly);
-            // Observe real queue overlap before post-submit housekeeping can hide
-            // a short GPU interval. No wait or artificial GPU hold is introduced.
+            // Observe the exact receipt before post-submit housekeeping. The opt-in
+            // probe holds only its private timeline gate until this sample completes.
             if (probe is not null)
-                MarkExplicitProductionBufferStressSubmitted(in _lastExplicitProductionReceipt);
+            {
+                try
+                {
+                    MarkExplicitProductionBufferStressSubmitted(in _lastExplicitProductionReceipt);
+                }
+                catch (Exception)
+                {
+                    // The proof sample must see an incomplete exact receipt. Release the
+                    // host-signaled gate immediately afterward so normal publication and
+                    // readback can proceed without an artificial synchronous wait. Keep a
+                    // primary proof failure intact if cleanup also reports a signal failure.
+                    try
+                    {
+                        ReleaseExplicitProductionPendingSubmissionGateAfterSample();
+                    }
+                    catch (Exception)
+                    {
+                    }
+                    throw;
+                }
+
+                ReleaseExplicitProductionPendingSubmissionGateAfterSample();
+            }
 
             long outputCompleteStart = Stopwatch.GetTimestamp();
             ResourceRuntime.Uploads.PublicationState.QueueRecordedForTimeline(
@@ -381,8 +407,22 @@ internal sealed partial class VulkanFrameLoop
         }
         catch (Exception)
         {
+            if (submitted)
+            {
+                // Preserve the original post-submit failure. The release helper
+                // records a signal failure itself; a primary exception must not
+                // be replaced by the cleanup backstop's exception.
+                try
+                {
+                    ReleaseExplicitProductionPendingSubmissionGateAfterSample();
+                }
+                catch (Exception)
+                {
+                }
+            }
             if (!submitted)
             {
+                DiscardUnsubmittedExplicitProductionPendingSubmissionGate();
                 acceptedPlan?.SettleUnsubmittedSubmissionMarkers();
                 _commandRuntime.FailSubmissionMarkersForCommandBuffer(commandBuffer);
                 CancelPendingImportedTextureUploadFrameOps(
@@ -401,6 +441,11 @@ internal sealed partial class VulkanFrameLoop
         }
         finally
         {
+            // Once vkQueueSubmit accepts the gate, every subsequent failure path
+            // must release it. The helper is idempotent because normal probing
+            // releases immediately after its receipt sample.
+            if (submitted)
+                ReleaseExplicitProductionPendingSubmissionGateAfterSample();
             frameTrace.PublishAfterFrame(
                 Stopwatch.GetElapsedTime(frameStart),
                 frameOutcome);

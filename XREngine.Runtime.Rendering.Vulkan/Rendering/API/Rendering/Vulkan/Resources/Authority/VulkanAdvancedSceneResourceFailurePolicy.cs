@@ -9,6 +9,7 @@ internal static class VulkanAdvancedSceneResourceFailurePolicy
     internal static bool RequiresFrameRetry(
         EVulkanAdvancedSceneResourceFailure failure)
         => failure is
+            EVulkanAdvancedSceneResourceFailure.FrameSlotStillInUse or
             EVulkanAdvancedSceneResourceFailure.PublicationSnapshotUnavailable or
             EVulkanAdvancedSceneResourceFailure.SourceMismatch or
             EVulkanAdvancedSceneResourceFailure.TextureWrapperUnavailable or

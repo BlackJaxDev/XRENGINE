@@ -77,6 +77,7 @@ internal sealed partial class VulkanFrameLoop
 
         _commandRuntime.AbandonRetiredSynchronousSubmissionsAfterDeviceLoss();
         _commandRuntime.AbandonAdvancedQueueOverlapResourcesAfterDeviceLoss();
+        _commandRuntime.AbandonOpenXrSubmissionTrackerAfterDeviceLoss();
 
         string deviceLostReason = BuildDeviceLostReason(reason);
         lock (_telemetry._deviceLostTransitionLock)

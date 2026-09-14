@@ -14,14 +14,42 @@ public partial class XRTexture2D
     // consumes that change at its next SwapCommandBuffers boundary.
     private long _canonicalSourceContentGeneration = 1L;
 
+    // Imported-streaming metadata is written as one logical transaction. This is
+    // deliberately separate from CanonicalSourceContentGeneration: capture outputs
+    // also advance that generation, but their values do not carry seqlock parity.
+    private readonly object _importedSourceMetadataWriteSync = new();
+    private long _importedSourceMetadataEpoch = 2L;
+
     internal ulong CanonicalSourceContentGeneration
         => unchecked((ulong)Volatile.Read(ref _canonicalSourceContentGeneration));
+
+    /// <summary>
+    /// Even, nonzero values identify a coherent imported-source metadata snapshot;
+    /// odd values indicate that an imported resident-data write is in progress.
+    /// </summary>
+    internal ulong ImportedSourceMetadataEpoch
+        => unchecked((ulong)Volatile.Read(ref _importedSourceMetadataEpoch));
 
     private void PublishCanonicalSourceContentMutation()
     {
         long generation = Interlocked.Increment(ref _canonicalSourceContentGeneration);
         if (generation == 0L)
             _ = Interlocked.Increment(ref _canonicalSourceContentGeneration);
+    }
+
+    private void BeginImportedSourceMetadataWrite()
+    {
+        long epoch = Interlocked.Increment(ref _importedSourceMetadataEpoch);
+        System.Diagnostics.Debug.Assert((epoch & 1L) != 0L, "Imported source metadata writes must begin on an odd epoch.");
+    }
+
+    private void CompleteImportedSourceMetadataWrite()
+    {
+        long epoch = Interlocked.Increment(ref _importedSourceMetadataEpoch);
+        if (epoch == 0L)
+            Volatile.Write(ref _importedSourceMetadataEpoch, 2L);
+        else
+            System.Diagnostics.Debug.Assert((epoch & 1L) == 0L, "Imported source metadata writes must complete on an even epoch.");
     }
 
     internal const uint ImportedPreviewMaxDimensionInternal = 64;
@@ -278,6 +306,11 @@ public partial class XRTexture2D
         TextureStreamingResidentData residentData,
         bool includeMipChain)
     {
+        lock (texture._importedSourceMetadataWriteSync)
+        {
+            texture.BeginImportedSourceMetadataWrite();
+            try
+            {
         int previousMipmapCount = texture.Mipmaps?.Length ?? 0;
         uint previousWidth = texture.Mipmaps is { Length: > 0 } ? texture.Mipmaps[0].Width : 0u;
         uint previousHeight = texture.Mipmaps is { Length: > 0 } ? texture.Mipmaps[0].Height : 0u;
@@ -339,6 +372,12 @@ public partial class XRTexture2D
             $"previous={previousWidth}x{previousHeight}({previousMipmapCount}mips) -> " +
             $"new={newWidth}x{newHeight}({residentData.Mipmaps.Length}mips) " +
             $"lockMipLevel={lockMipLevel} SmallestAllowedMipmapLevel={texture.SmallestAllowedMipmapLevel}.");
+            }
+            finally
+            {
+                texture.CompleteImportedSourceMetadataWrite();
+            }
+        }
     }
 
     internal static void ApplyResidentDataForVulkanPublication(
@@ -346,6 +385,11 @@ public partial class XRTexture2D
         TextureStreamingResidentData residentData,
         bool includeMipChain)
     {
+        lock (texture._importedSourceMetadataWriteSync)
+        {
+            texture.BeginImportedSourceMetadataWrite();
+            try
+            {
         int previousMipmapCount = texture.Mipmaps?.Length ?? 0;
         uint previousWidth = texture.Mipmaps is { Length: > 0 } ? texture.Mipmaps[0].Width : 0u;
         uint previousHeight = texture.Mipmaps is { Length: > 0 } ? texture.Mipmaps[0].Height : 0u;
@@ -399,6 +443,12 @@ public partial class XRTexture2D
             $"previous={previousWidth}x{previousHeight}({previousMipmapCount}mips) -> " +
             $"new={newWidth}x{newHeight}({residentData.Mipmaps.Length}mips) " +
             $"lockMipLevel={lockMipLevel} SmallestAllowedMipmapLevel={texture.SmallestAllowedMipmapLevel}.");
+            }
+            finally
+            {
+                texture.CompleteImportedSourceMetadataWrite();
+            }
+        }
     }
 
     internal static uint GetPreviewResidentSize(uint sourceMaxDimension)

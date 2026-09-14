@@ -1,6 +1,7 @@
 using NUnit.Framework;
 using Shouldly;
 using Silk.NET.Vulkan;
+using XREngine;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Vulkan;
@@ -91,11 +92,14 @@ public sealed unsafe class VulkanPresentationIndependentHostTests
         source.ShouldContain("new VulkanOutputDeviceProbeFacts(");
     }
 
-    [Test]
-    public void ProductionRenderer_PresentationlessModeInitializesSharedDeviceCoreWithoutSurfaceRequirements()
+    [TestCase(2)]
+    [TestCase(3)]
+    public void ProductionRenderer_PresentationlessModeInitializesSharedDeviceCoreWithoutSurfaceRequirements(int frameSlotCount)
     {
+        using var workSchedulerScope =
+            VulkanPresentationIndependentHostWorkSchedulerScope.EnsureInstalled();
         RendererHostContext context = new(
-            new PresentationlessRenderTarget(16, 16, FrameSlotCount: 2),
+            new PresentationlessRenderTarget(16, 16, FrameSlotCount: (uint)frameSlotCount),
             backendGeneration: 31);
         VulkanRenderer renderer = new(context);
 
@@ -104,9 +108,11 @@ public sealed unsafe class VulkanPresentationIndependentHostTests
             renderer.TargetDriverName.ShouldBe("VulkanPresentationlessTargetDriver");
             renderer.TargetRequiresPresentQueue.ShouldBeFalse();
             renderer.TargetRequiresSwapchainOutput.ShouldBeFalse();
+            renderer.CommandRuntime.DescriptorFrameSlotFrameCount.ShouldBe(frameSlotCount);
 
             renderer.Initialize();
 
+            renderer.CommandRuntime.DescriptorFrameSlotFrameCount.ShouldBe(frameSlotCount);
             renderer.Device.Handle.ShouldNotBe(0);
             renderer.GraphicsQueue.Handle.ShouldNotBe(0);
             renderer.PresentQueue.Handle.ShouldBe(0);

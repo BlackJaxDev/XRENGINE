@@ -668,6 +668,41 @@ namespace XREngine.Rendering.Materials
             ],
             supportsGeneratedMaterialTableDispatch: true);
 
+        /// <summary>
+        /// Fixed native mirror payload: three capture texture references followed by a padded
+        /// 20-word record for desktop, left-eye, and right-eye projective camera state.
+        /// This is consumed only by the Advanced opaque shading path.
+        /// </summary>
+        public static MaterialBindingLayout ProjectiveMirror { get; } = new(
+            "ProjectiveMirror",
+            (int)EDefaultRenderPass.OpaqueDeferred,
+            [
+                new("Color", 0, "vec4"),
+            ],
+            [
+                new("View0ReflectedViewProjection", "mat4", "projectiveMirrorView0ReflectedViewProjection", "mat4(1.0)"),
+                new("View0SourceCameraIdentityLo", "uint", "projectiveMirrorView0SourceCameraIdentityLo", "0u"),
+                new("View0SourceCameraIdentityHi", "uint", "projectiveMirrorView0SourceCameraIdentityHi", "0u"),
+                new("View0Valid", "uint", "projectiveMirrorView0Valid", "0u"),
+                new("View0FramebufferYDown", "uint", "projectiveMirrorView0FramebufferYDown", "0u"),
+                new("View1ReflectedViewProjection", "mat4", "projectiveMirrorView1ReflectedViewProjection", "mat4(1.0)"),
+                new("View1SourceCameraIdentityLo", "uint", "projectiveMirrorView1SourceCameraIdentityLo", "0u"),
+                new("View1SourceCameraIdentityHi", "uint", "projectiveMirrorView1SourceCameraIdentityHi", "0u"),
+                new("View1Valid", "uint", "projectiveMirrorView1Valid", "0u"),
+                new("View1FramebufferYDown", "uint", "projectiveMirrorView1FramebufferYDown", "0u"),
+                new("View2ReflectedViewProjection", "mat4", "projectiveMirrorView2ReflectedViewProjection", "mat4(1.0)"),
+                new("View2SourceCameraIdentityLo", "uint", "projectiveMirrorView2SourceCameraIdentityLo", "0u"),
+                new("View2SourceCameraIdentityHi", "uint", "projectiveMirrorView2SourceCameraIdentityHi", "0u"),
+                new("View2Valid", "uint", "projectiveMirrorView2Valid", "0u"),
+                new("View2FramebufferYDown", "uint", "projectiveMirrorView2FramebufferYDown", "0u"),
+            ],
+            [
+                new("View0Capture", "projectiveMirrorView0Capture", "2D"),
+                new("View1Capture", "projectiveMirrorView1Capture", "2D"),
+                new("View2Capture", "projectiveMirrorView2Capture", "2D"),
+            ],
+            usesFlags: false);
+
         public static bool TryGetDefaultForRenderPass(int renderPass, out MaterialBindingLayout layout)
         {
             if (renderPass == OpaqueDeferred.RenderPass)

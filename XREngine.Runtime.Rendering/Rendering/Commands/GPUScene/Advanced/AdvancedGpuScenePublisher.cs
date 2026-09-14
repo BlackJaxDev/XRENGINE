@@ -35,6 +35,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
     private int _topologyDeltaCount;
     private int _contentDeltaCount;
     private bool _publicationRejected;
+    private string? _lastPublicationFailure;
     private AdvancedGpuScenePublicationReference _currentPublication;
     private int _dirtyOwnerRangeCount;
     private uint _registrationLookupGeneration;
@@ -77,6 +78,13 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
 
     public bool PublicationRejected => _publicationRejected;
 
+    /// <summary>
+    /// Gets the most recent reason a canonical scene publication was rejected.
+    /// The value remains available until a later publication commits or reuses
+    /// a verified unchanged resident image.
+    /// </summary>
+    public string? LastPublicationFailure => _lastPublicationFailure;
+
     public bool PublicationFaulted => Database.PublicationFaulted;
 
     public AdvancedGpuScenePublicationReference CurrentPublication
@@ -102,6 +110,18 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
         ulong frameId,
         in AdvancedGlobalResourceCapture globalResources)
     {
+        try
+        {
+            PublishCore(scene, frameId, in globalResources);
+        }
+        finally
+        {
+            ReleasePlannedMirrorSnapshots();
+        }
+    }
+
+    private void PublishCore(GPUScene scene, ulong frameId, in AdvancedGlobalResourceCapture globalResources)
+    {
         _topologyDeltaCount = 0;
         _contentDeltaCount = 0;
         _legacyMappingCount = 0;
@@ -110,7 +130,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
 
         if (Database.PublicationFaulted)
         {
-            _publicationRejected = true;
+            RejectPublication("The canonical scene publication database is faulted.");
             return;
         }
 
@@ -121,7 +141,7 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
                 scene.TotalCommandCount,
                 checked((uint)capturedGlobalResourceCount)))
         {
-            _publicationRejected = true;
+            RejectPublication("The canonical resident tables cannot grow at this frame boundary.");
             return;
         }
         Array.Clear(
@@ -129,31 +149,34 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
             0,
             checked((int)scene.TotalCommandCount));
         RebuildRegistrationLookup();
-        if (!TryBuildAndPreflightWholeScenePlan(scene, frameId, out _))
+        if (!TryBuildAndPreflightWholeScenePlan(scene, frameId, out string planFailure))
         {
-            _publicationRejected = true;
+            RejectPublication(planFailure);
             return;
         }
         if (!TryEnsurePlannedGeometryBoundaryCapacity())
         {
-            _publicationRejected = true;
+            RejectPublication("The canonical geometry arenas cannot satisfy the planned append.");
             return;
         }
         AdvancedGlobalResourceCapture acceptedGlobalResources =
             globalResources.FrameId == frameId
                 ? globalResources
                 : AdvancedGlobalResourceCapture.Empty(frameId);
-        if (!TryPreflightGlobalResources(in acceptedGlobalResources, out _))
+        if (!TryPreflightGlobalResources(in acceptedGlobalResources, out string globalResourceFailure))
         {
-            _publicationRejected = true;
+            RejectPublication(globalResourceFailure);
             return;
         }
         if (TryReuseUnchangedPublication(frameId))
+        {
+            ClearPublicationFailure();
             return;
+        }
         if (!Database.TryBeginPublication(
                 out AdvancedGpuScenePublicationTransaction transaction))
         {
-            _publicationRejected = true;
+            RejectPublication("The canonical publication ring has no reusable slot.");
             return;
         }
         _sequence = transaction.Sequence;
@@ -258,7 +281,8 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
 
             if (!_resourcePublisher.TryCapturePublication(
                     provisional.Sequence,
-                    provisional.Snapshot!.ResourcePayloads))
+                    provisional.Snapshot!.ResourcePayloads,
+                    _plannedMirrorSnapshots.AsSpan(0, _plannedMirrorSnapshotCount)))
             {
                 provisional.Snapshot.ResourcePayloads.AbortSourceCapture();
                 Database.FaultActivePublication(
@@ -294,18 +318,34 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
 
             _currentPublication = committed;
             publicationCommitted = true;
+            ClearPublicationFailure();
         }
-        catch
+        catch (Exception exception)
         {
             if (!publicationCommitted)
                 provisional.Snapshot?.ResourcePayloads.AbortSourceCapture();
-            _publicationRejected = true;
+            RejectPublication(exception.Message);
             Database.FaultActivePublication(
                 in transaction,
                 EAdvancedGpuScenePublicationFault.InvariantFailure);
             throw;
         }
     }
+
+    private void RejectPublication(string reason)
+    {
+        _publicationRejected = true;
+        if (string.Equals(_lastPublicationFailure, reason, StringComparison.Ordinal))
+            return;
+
+        _lastPublicationFailure = reason;
+        Debug.RenderingWarning(
+            "[CanonicalPublication] Rejected: {0}",
+            reason);
+    }
+
+    private void ClearPublicationFailure()
+        => _lastPublicationFailure = null;
 
     private AdvancedGpuHandle[] _identityHandleScratch =
         new AdvancedGpuHandle[InitialCapacity];
@@ -1164,24 +1204,30 @@ public sealed partial class AdvancedGpuScenePublisher : IDisposable
 
     private static AdvancedSharedGpuSceneCapacityProfile CreateCapacityProfile(uint capacity)
     {
-        uint materialLayoutCapacity = 3u;
+        uint materialLayoutCapacity = 4u;
         uint materialLayoutMemberCapacity = checked((uint)(
             MaterialBindingLayouts.OpaqueDeferred.PackedMembers.Count +
             MaterialBindingLayouts.OpaqueDeferred.Textures.Count +
             MaterialBindingLayouts.ForwardOpaque.PackedMembers.Count +
             MaterialBindingLayouts.ForwardOpaque.Textures.Count +
             MaterialBindingLayouts.MaskedForward.PackedMembers.Count +
-            MaterialBindingLayouts.MaskedForward.Textures.Count));
+            MaterialBindingLayouts.MaskedForward.Textures.Count +
+            MaterialBindingLayouts.ProjectiveMirror.PackedMembers.Count +
+            MaterialBindingLayouts.ProjectiveMirror.Textures.Count));
         uint maximumConstantWords = Math.Max(
             MaterialBindingLayouts.OpaqueDeferred.RowWordCount,
             Math.Max(
                 MaterialBindingLayouts.ForwardOpaque.RowWordCount,
-                MaterialBindingLayouts.MaskedForward.RowWordCount));
+                Math.Max(
+                    MaterialBindingLayouts.MaskedForward.RowWordCount,
+                    MaterialBindingLayouts.ProjectiveMirror.RowWordCount)));
         uint maximumTextureBindings = checked((uint)Math.Max(
             MaterialBindingLayouts.OpaqueDeferred.Textures.Count,
             Math.Max(
                 MaterialBindingLayouts.ForwardOpaque.Textures.Count,
-                MaterialBindingLayouts.MaskedForward.Textures.Count)));
+                Math.Max(
+                    MaterialBindingLayouts.MaskedForward.Textures.Count,
+                    MaterialBindingLayouts.ProjectiveMirror.Textures.Count))));
         uint materialConstantWords = checked(capacity * maximumConstantWords);
         uint materialTextureBindings = checked(capacity * maximumTextureBindings);
 

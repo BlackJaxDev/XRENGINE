@@ -89,12 +89,38 @@ internal sealed class VulkanFrameOperationQueue : IDisposable
             ref OutputCompletionEntry entry = ref _outputCompletions[index];
             if (!succeeded)
             {
+                DiscardPendingOutputCompletionOperationsNoLock(entry.Reservation.ReceiptId);
                 FailOutputCompletionFence(entry.Reservation.Fence);
                 entry = default;
                 return;
             }
             entry.State = EOutputCompletionState.Ready;
         }
+    }
+
+    /// <summary>
+    /// Abandons only the failed output's unsubmitted operations. Once its receipt
+    /// is removed they can never drain, so their producer fences and retained
+    /// inputs must settle here rather than pinning a GPU output slot forever.
+    /// </summary>
+    private void DiscardPendingOutputCompletionOperationsNoLock(ulong receiptId)
+    {
+        Span<FrameOp> operations = CollectionsMarshal.AsSpan(Pending);
+        int retainedCount = 0;
+        for (int index = 0; index < operations.Length; ++index)
+        {
+            FrameOp operation = operations[index];
+            if (operation.ContextReference.OutputCompletionReceiptId != receiptId)
+            {
+                operations[retainedCount++] = operation;
+                continue;
+            }
+            ReadOnlySpan<FrameOp> abandoned = operations.Slice(index, 1);
+            FailPendingSubmissionMarkers(abandoned);
+            VulkanAdvancedVisibilityInputLease.ReleaseOperations(abandoned);
+        }
+        if (retainedCount < Pending.Count)
+            Pending.RemoveRange(retainedCount, Pending.Count - retainedCount);
     }
 
     internal void ReleaseDrainedOutputCompletionOwnership()

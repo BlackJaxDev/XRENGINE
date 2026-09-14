@@ -15,6 +15,7 @@ internal sealed unsafe class RenderBenchFullscreenPipeline : IDisposable
     private readonly Format _colorFormat;
     private readonly SampleCountFlags _samples;
     private readonly ExtDebugUtils? _debugUtils;
+    private readonly bool _useUnifiedImageLayouts;
     private readonly nint[] _labelNames;
     private ShaderModule _vertexShader;
     private ShaderModule _fragmentShader;
@@ -25,13 +26,17 @@ internal sealed unsafe class RenderBenchFullscreenPipeline : IDisposable
         VulkanExplicitTargetRendererHost host,
         RenderProfileRecipe recipe,
         string fixtureName,
-        int passIterations)
+        int passIterations,
+        bool useUnifiedImageLayouts)
     {
         _host = host;
         if (!host.SupportsDynamicRendering)
             throw new NotSupportedException("GPU-pass fixtures require Vulkan dynamic rendering; no legacy fallback is selected.");
+        if (useUnifiedImageLayouts && !host.SupportsUnifiedImageLayouts)
+            throw new NotSupportedException("The GENERAL RenderBench layout policy requires VK_KHR_unified_image_layouts enabled on this Vulkan host.");
         _colorFormat = ResolveColorFormat(recipe.ColorFormat);
         _samples = ResolveSamples(recipe.SampleCount);
+        _useUnifiedImageLayouts = useUnifiedImageLayouts;
         _debugUtils = recipe.LabelPolicy == RenderProfileLabelPolicy.Disabled ? null : host.DebugUtils;
         _labelNames = _debugUtils is null
             ? []
@@ -86,16 +91,17 @@ internal sealed unsafe class RenderBenchFullscreenPipeline : IDisposable
                 };
                 _debugUtils.CmdBeginDebugUtilsLabel(commandBuffer, in label);
             }
-            Transition(api, commandBuffer, target, currentLayout, ImageLayout.ColorAttachmentOptimal);
+            ImageLayout renderingLayout = _useUnifiedImageLayouts ? ImageLayout.General : ImageLayout.ColorAttachmentOptimal;
+            Transition(api, commandBuffer, target, currentLayout, renderingLayout, AccessFlags.ColorAttachmentWriteBit);
             barriers++;
-            currentLayout = ImageLayout.ColorAttachmentOptimal;
+            currentLayout = renderingLayout;
 
             ClearValue clear = new() { Color = Color(colorSeed, pass, 0.2f) };
             RenderingAttachmentInfo attachment = new()
             {
                 SType = StructureType.RenderingAttachmentInfo,
                 ImageView = target.ColorView,
-                ImageLayout = ImageLayout.ColorAttachmentOptimal,
+                ImageLayout = renderingLayout,
                 LoadOp = AttachmentLoadOp.Clear,
                 StoreOp = AttachmentStoreOp.Store,
                 ClearValue = clear,
@@ -124,8 +130,12 @@ internal sealed unsafe class RenderBenchFullscreenPipeline : IDisposable
                 api.CmdDraw(commandBuffer, 3, 1, 0, 0);
             }
             api.CmdEndRendering(commandBuffer);
+            // The specialized control restores GENERAL between passes. Keep it
+            // intact so the paired GENERAL variant isolates layout selection;
+            // both variants retain the inter-pass memory dependency.
             ImageLayout next = pass + 1 == passIterations ? target.RequiredFinalColorLayout : ImageLayout.General;
-            Transition(api, commandBuffer, target, currentLayout, next);
+            Transition(api, commandBuffer, target, currentLayout, next,
+                pass + 1 == passIterations ? AccessFlags.TransferReadBit : AccessFlags.ColorAttachmentWriteBit);
             barriers++;
             currentLayout = next;
             _debugUtils?.CmdEndDebugUtilsLabel(commandBuffer);
@@ -187,7 +197,13 @@ internal sealed unsafe class RenderBenchFullscreenPipeline : IDisposable
         }
     }
 
-    private static void Transition(Vk api, CommandBuffer commandBuffer, VulkanRenderFrameTarget target, ImageLayout oldLayout, ImageLayout newLayout)
+    private static void Transition(
+        Vk api,
+        CommandBuffer commandBuffer,
+        VulkanRenderFrameTarget target,
+        ImageLayout oldLayout,
+        ImageLayout newLayout,
+        AccessFlags destinationAccess)
     {
         ImageMemoryBarrier barrier = new()
         {
@@ -195,7 +211,7 @@ internal sealed unsafe class RenderBenchFullscreenPipeline : IDisposable
             OldLayout = oldLayout,
             NewLayout = newLayout,
             SrcAccessMask = oldLayout == ImageLayout.Undefined ? 0 : AccessFlags.MemoryWriteBit,
-            DstAccessMask = newLayout == ImageLayout.ColorAttachmentOptimal ? AccessFlags.ColorAttachmentWriteBit : AccessFlags.TransferReadBit,
+            DstAccessMask = destinationAccess,
             Image = target.ColorImage,
             SubresourceRange = new ImageSubresourceRange(ImageAspectFlags.ColorBit, 0, 1, 0, target.Layers),
         };

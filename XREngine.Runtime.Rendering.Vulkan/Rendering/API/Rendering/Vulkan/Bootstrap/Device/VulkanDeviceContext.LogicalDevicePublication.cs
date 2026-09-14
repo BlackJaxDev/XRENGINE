@@ -218,6 +218,7 @@ internal sealed partial class VulkanDeviceContext
         Include(ref capabilities, EVulkanDeviceCapability.Maintenance6, MutableCapabilities._supportsMaintenance6);
         Include(ref capabilities, EVulkanDeviceCapability.ShaderDemoteToHelperInvocation, MutableCapabilities._supportsShaderDemoteToHelperInvocation);
         Include(ref capabilities, EVulkanDeviceCapability.ShaderTerminateInvocation, MutableCapabilities._supportsShaderTerminateInvocation);
+        Include(ref capabilities, EVulkanDeviceCapability.UnifiedImageLayouts, MutableCapabilities._supportsUnifiedImageLayouts);
         Include(ref capabilities, EVulkanDeviceCapability.MemoryBudget, MutableCapabilities._supportsMemoryBudget);
         Include(ref capabilities, EVulkanDeviceCapability.MemoryPriority, MutableCapabilities._supportsMemoryPriority);
         Include(ref capabilities, EVulkanDeviceCapability.ShaderObject, MutableCapabilities._supportsShaderObject);

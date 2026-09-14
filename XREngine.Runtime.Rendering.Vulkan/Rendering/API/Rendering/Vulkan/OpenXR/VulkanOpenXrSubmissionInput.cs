@@ -1,4 +1,5 @@
 using Silk.NET.Vulkan;
+using XREngine.Rendering.API.Rendering.OpenXR;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -13,7 +14,8 @@ internal readonly record struct VulkanOpenXrSubmissionInput(
     uint CommandBufferCount,
     VulkanSubmissionDiagnosticContext DiagnosticContext,
     bool ForceSynchronousCompletion = false,
-    OpenXrVulkanSubmissionTracker.SubmissionAdmissionTicket? AdmissionTicket = null)
+    OpenXrVulkanSubmissionTracker.SubmissionAdmissionTicket? AdmissionTicket = null,
+    EOpenXrSubmissionShape Shape = EOpenXrSubmissionShape.Unknown)
 {
     internal bool IsValid =>
         CommandBufferCount is >= 1 and <= 3 &&

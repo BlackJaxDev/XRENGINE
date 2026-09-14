@@ -91,7 +91,8 @@ internal static class RenderBenchScenarioBufferLane
             VulkanExplicitProductionBufferStressProbeRequest request = new(
                 probeSource,
                 EVulkanExplicitProductionBufferStressCheckpoint.AfterNativeRecording,
-                requestedByteSize);
+                requestedByteSize,
+                RequirePendingSubmissionObservation: true);
             VulkanExplicitProductionSubmissionReceipt probeReceipt = scene.SubmitStep(options.FixedStepSeconds, request);
             evidence = evidence with { ProbeReceipt = probeReceipt };
             bool completionQueryAccepted = scene.Host.TryGetProductionSubmissionCompletion(in probeReceipt, out bool completedBeforeWait);
@@ -274,6 +275,13 @@ internal static class RenderBenchScenarioBufferLane
         }
         if (!afterCompletion.GpuOverlapObserved)
             failures.Add("Probe: GPU overlap was not observed; recorded pin retention is not sufficient.");
+        if (!afterCompletion.PendingSubmissionGateArmed ||
+            !afterCompletion.PendingSubmissionSampled ||
+            !afterCompletion.PendingSubmissionGateReleased ||
+            !afterCompletion.PendingSubmissionRetentionProven)
+        {
+            failures.Add("Probe: the exact pending submission did not prove old-generation retention behind the timeline gate.");
+        }
         if (afterCompletion.PrematureReclamationObserved || afterSlotDrain.PrematureReclamationObserved)
             failures.Add("Probe: the old native generation was reclaimed before GPU completion.");
         if (!afterSlotDrain.ReclamationObservedAfterCompletion)

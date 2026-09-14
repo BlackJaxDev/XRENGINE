@@ -20,6 +20,10 @@ public sealed record VulkanExplicitProductionBufferStressProbeEvidence
     public bool GpuOverlapObserved { get; init; }
     public bool PrematureReclamationObserved { get; init; }
     public bool ReclamationObservedAfterCompletion { get; init; }
+    public bool PendingSubmissionGateArmed { get; init; }
+    public bool PendingSubmissionSampled { get; init; }
+    public bool PendingSubmissionGateReleased { get; init; }
+    public bool PendingSubmissionRetentionProven { get; init; }
     public ulong RecordedCommandBufferHandle { get; init; }
     public bool RecordedFrameSlotReused { get; init; }
     public VulkanExplicitProductionSubmissionReceipt SlotReuseSubmission { get; init; }

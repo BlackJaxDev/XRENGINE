@@ -606,8 +606,8 @@ internal sealed partial class VulkanCommandRuntime
                         out VulkanImageSubresourceState? stableState) ||
                     !ReferenceEquals(state, stableState) ||
                     state.PendingQueueOwnershipRelease is not null ||
-                    !IsSealedImageStateQueueCompatible(entry.Value, queueFamilyIndex) ||
-                    !IsSealedImageStateQueueCompatible(state.Submitted, queueFamilyIndex) ||
+                    !IsSealedImageStateSupported(entry.Value, queueFamilyIndex) ||
+                    !IsSealedImageStateSupported(state.Submitted, queueFamilyIndex) ||
                     VulkanImageEntryStateContract.Compare(state.Submitted, entry.Value) !=
                         EVulkanPrimaryEntryStateMismatch.None)
                 {
@@ -875,7 +875,7 @@ internal sealed partial class VulkanCommandRuntime
         VulkanImageAccessState state,
         uint queueFamilyIndex)
     {
-        if (!IsSealedImageStateQueueCompatible(state, queueFamilyIndex) ||
+        if (!IsSealedImageStateSupported(state, queueFamilyIndex) ||
             !Synchronization._trackedImageSubresourceStates.TryGetValue(
                 key,
                 out VulkanImageSubresourceState? tracked) ||
@@ -892,11 +892,15 @@ internal sealed partial class VulkanCommandRuntime
         return tracked.StableSlot;
     }
 
-    private static bool IsSealedImageStateQueueCompatible(
+    private static bool IsSealedImageStateSupported(
         in VulkanImageAccessState state,
         uint queueFamilyIndex)
-        => state.QueueFamilyIndex == Vk.QueueFamilyIgnored ||
-           state.QueueFamilyIndex == queueFamilyIndex;
+        // The sealed publisher updates engine-owned subresources only. XR
+        // acquire/release transitions also update external ownership authority
+        // and therefore require the complete image-state publication path.
+        => state.ExternalOwnership == EVulkanExternalImageOwnership.EngineOwned &&
+           (state.QueueFamilyIndex == Vk.QueueFamilyIgnored ||
+            state.QueueFamilyIndex == queueFamilyIndex);
 
     private unsafe bool TryValidateSealedSubmissionContractNoPins(
         Queue queue,

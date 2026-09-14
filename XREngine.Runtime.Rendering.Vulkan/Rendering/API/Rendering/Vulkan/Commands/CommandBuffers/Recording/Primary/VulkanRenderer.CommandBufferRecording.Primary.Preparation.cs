@@ -853,6 +853,7 @@ namespace XREngine.Rendering.Vulkan
                 }
                 if (!TryPrepareAdvancedVisibilityScenePublication(
                         framePlan,
+                        recordingState.CommandBufferImageSlot,
                         in request,
                         out VulkanAdvancedScenePublicationState sceneState,
                         out EVulkanAdvancedSceneResourceFailure sceneFailure,
@@ -971,7 +972,7 @@ namespace XREngine.Rendering.Vulkan
                     sceneState.NativeGeneration,
                     checked((uint)request.Views.ViewCount));
                 if (!familyResources.TryPrepare(
-                        framePlan.FrameSlot,
+                        recordingState.CommandBufferImageSlot,
                         framePlan.Generation,
                         in publication,
                         in indirect,
@@ -1124,6 +1125,8 @@ namespace XREngine.Rendering.Vulkan
                             .TryCaptureNativeComputeClosure(
                                 nativeOperationPlan,
                                 nativeGeneration,
+                                // Graph resource names use the authored profile slot;
+                                // dedicated XR arena slots are a separate identity.
                                 checked((uint)framePlan.FrameSlot),
                                 request.NativeViewIndex,
                                 request.AmbientOcclusionTargetName,
@@ -1176,7 +1179,7 @@ namespace XREngine.Rendering.Vulkan
                     {
                         nativeClosure = nativeClosure with
                         {
-                            ShadingAddressRoot = PrepareNativeShadingAddressRoot(ref recordingState, framePlan.FrameSlot),
+                            ShadingAddressRoot = PrepareNativeShadingAddressRoot(ref recordingState, recordingState.CommandBufferImageSlot),
                         };
                     }
                     if (!recordingState.Ops.Stream.TryAssociateAdvancedNativeComputeClosure(
@@ -1354,6 +1357,7 @@ namespace XREngine.Rendering.Vulkan
         /// </summary>
         private bool TryPrepareAdvancedVisibilityScenePublication(
             FramePlan framePlan,
+            int resourceFrameSlot,
             in VulkanAdvancedVisibilityStageRequest request,
             out VulkanAdvancedScenePublicationState state,
             out EVulkanAdvancedSceneResourceFailure failure,
@@ -1373,7 +1377,7 @@ namespace XREngine.Rendering.Vulkan
 
             VulkanPreparedFrameRecording preparation =
                 _advancedVisibilityPublicationPreparation;
-            preparation.Begin(framePlan.FrameSlot, framePlan.Generation);
+            preparation.Begin(resourceFrameSlot, framePlan.Generation, framePlan.FrameSlot);
             try
             {
                 preparation.AttachFramePlan(framePlan);

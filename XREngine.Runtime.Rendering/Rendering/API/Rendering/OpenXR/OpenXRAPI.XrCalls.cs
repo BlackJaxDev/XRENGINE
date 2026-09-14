@@ -724,13 +724,19 @@ public unsafe partial class OpenXRAPI
         }
     }
 
-    internal bool CleanupSwapchains()
+    internal OpenXrSwapchainCleanupOutcome CleanupSwapchains()
     {
-        InvalidateOpenXrViewHistory();
-        if (Window?.Renderer is AbstractRenderer renderer &&
-            _graphicsBinding is not null &&
-            _graphicsBinding.TryRetireSwapchainsForDeferredDestruction(this, renderer))
+        OpenXrSwapchainRetirementOutcome retirement = Window?.Renderer is AbstractRenderer renderer &&
+            _graphicsBinding is not null
+            ? _graphicsBinding.RetireSwapchainsForDeferredDestruction(this, renderer)
+            : OpenXrSwapchainRetirementOutcome.Unsupported;
+        if (retirement == OpenXrSwapchainRetirementOutcome.DeferredBeforeDetachment)
+            return OpenXrSwapchainCleanupOutcome.DeferredBeforeDetachment;
+        if (retirement == OpenXrSwapchainRetirementOutcome.FailedAfterDetachment)
+            return OpenXrSwapchainCleanupOutcome.FailedAfterDetachment;
+        if (retirement == OpenXrSwapchainRetirementOutcome.Retired)
         {
+            InvalidateOpenXrViewHistory();
             for (int i = 0; i < _viewCount; i++)
             {
                 _swapchainImageCounts[i] = 0;
@@ -739,24 +745,27 @@ public unsafe partial class OpenXRAPI
                 _swapchains[i] = default;
             }
             _viewCount = 0;
-            return true;
+            return OpenXrSwapchainCleanupOutcome.Completed;
         }
 
         if (_graphicsBinding?.RequiresDeferredSwapchainRetirement == true)
-            return false;
+            return OpenXrSwapchainCleanupOutcome.FailedAfterDetachment;
 
+        InvalidateOpenXrViewHistory();
         _graphicsBinding?.CleanupSwapchains(this);
 
         for (int i = 0; i < _viewCount; i++)
         {
+            if (_swapchains[i].Handle != 0 &&
+                CheckResult(Api.DestroySwapchain(_swapchains[i]), "xrDestroySwapchain") != Result.Success)
+                return OpenXrSwapchainCleanupOutcome.FailedAfterDetachment;
+            _swapchains[i] = default;
+
             if (_swapchainImagesDX[i] != null)
             {
                 Marshal.FreeHGlobal((nint)_swapchainImagesDX[i]);
                 _swapchainImagesDX[i] = null;
             }
-
-            if (_swapchains[i].Handle != 0)
-                Api.DestroySwapchain(_swapchains[i]);
 
             _swapchainImageCounts[i] = 0;
             _swapchainWidths[i] = 0;
@@ -765,6 +774,6 @@ public unsafe partial class OpenXRAPI
         }
 
         _viewCount = 0;
-        return true;
+        return OpenXrSwapchainCleanupOutcome.Completed;
     }
 }

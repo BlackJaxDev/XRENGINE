@@ -92,6 +92,7 @@ public sealed partial class AdvancedGpuScenePublisher
             Array.Resize(ref _plannedMaterials, required);
             Array.Resize(ref _plannedMaterialRequests, required);
             Array.Resize(ref _plannedMaterialReleases, required);
+            Array.Resize(ref _plannedMirrorSnapshots, required);
         }
 
         int constantCapacity = checked(required * (int)Database.Materials.MaximumConstantWordsPerMaterial);
@@ -329,8 +330,14 @@ public sealed partial class AdvancedGpuScenePublisher
         if (command.RenderPass > int.MaxValue ||
             !MaterialBindingLayouts.TryGetDefaultForRenderPass(
                 checked((int)command.RenderPass),
-                out MaterialBindingLayout layout) ||
-            !AdvancedGpuMaterialPublisher.TryTranslateLayout(
+                out MaterialBindingLayout layout))
+        {
+            compatibilityReason = EAdvancedCanonicalCompatibilityReason.UnsupportedRenderPass;
+            return false;
+        }
+        if (material is AdvancedProjectiveMirrorMaterial && command.RenderPass == (uint)EDefaultRenderPass.OpaqueDeferred)
+            layout = MaterialBindingLayouts.ProjectiveMirror;
+        if (!AdvancedGpuMaterialPublisher.TryTranslateLayout(
                 layout,
                 out AdvancedMaterialLayoutTranslation translation,
                 out _))
@@ -342,7 +349,7 @@ public sealed partial class AdvancedGpuScenePublisher
 
         EGpuMaterialStateClass expectedLegacyState = ReferenceEquals(
             layout,
-            MaterialBindingLayouts.OpaqueDeferred)
+            MaterialBindingLayouts.OpaqueDeferred) || ReferenceEquals(layout, MaterialBindingLayouts.ProjectiveMirror)
                 ? EGpuMaterialStateClass.OpaqueDeferred
                 : ReferenceEquals(layout, MaterialBindingLayouts.ForwardOpaque)
                     ? EGpuMaterialStateClass.OpaqueForward
@@ -389,31 +396,31 @@ public sealed partial class AdvancedGpuScenePublisher
         Span<uint> constantWords = _plannedMaterialConstantWords.AsSpan(
             constantOffset,
             checked((int)layout.RowWordCount));
-        MaterialBindingSourceSnapshot sourceSnapshot =
-            MaterialBindingSourceEncoder.Encode(material);
-        if (material is null)
-        {
-            MaterialBindingRowPacker.WriteDefaultRow(layout, constantWords);
-        }
-        else if (!MaterialBindingRowPacker.TryWriteOpaqueDeferred(
-                     layout,
-                     sourceSnapshot.Entry,
-                     constantWords,
-                     out reason))
-        {
-            fatal = true;
-            return false;
-        }
-
         Span<AdvancedGpuResourceBindingSource> resourceSources =
             _plannedResourceSources.AsSpan(bindingOffset, layout.Textures.Count);
-        if (!TryEncodeMaterialResourceSources(
-                in sourceSnapshot,
-                resourceSources,
-                out compatibilityReason,
-                out reason))
+        if (material is AdvancedProjectiveMirrorMaterial mirror)
         {
-            return false;
+            if (!TryCaptureMirrorMaterial(mirror, constantWords, resourceSources, out reason))
+            {
+                fatal = true;
+                return false;
+            }
+        }
+        else
+        {
+            MaterialBindingSourceSnapshot sourceSnapshot = MaterialBindingSourceEncoder.Encode(material);
+            if (material is null)
+                MaterialBindingRowPacker.WriteDefaultRow(layout, constantWords);
+            else if (!MaterialBindingRowPacker.TryWriteOpaqueDeferred(
+                         layout, sourceSnapshot.Entry, constantWords, out reason))
+            {
+                fatal = true;
+                return false;
+            }
+
+            if (!TryEncodeMaterialResourceSources(
+                    in sourceSnapshot, resourceSources, out compatibilityReason, out reason))
+                return false;
         }
 
         bool existing = _materialPublisher.TryFindVariant(
@@ -491,6 +498,7 @@ public sealed partial class AdvancedGpuScenePublisher
         bool headerChanged = existing && !resourcesChanged &&
             !_materialPublisher.HeaderMatches(
                 existingHandle,
+                layout,
                 translation.RequiredCoverage,
                 state,
                 _plannedResolvedBindings.AsSpan(

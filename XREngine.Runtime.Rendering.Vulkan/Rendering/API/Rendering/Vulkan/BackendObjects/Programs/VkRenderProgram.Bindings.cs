@@ -553,7 +553,7 @@ internal unsafe partial class VkRenderProgram
             if (WrapperLookup.GetOrCreate(buffer, generateNow: allowSynchronousUpload) is not VkDataBuffer vkBuffer ||
                 !vkBuffer.TryCaptureComputeBufferSnapshot(allowSynchronousUpload, out VulkanComputeBufferBinding bufferBinding))
             {
-                bufferBinding = new VulkanComputeBufferBinding(buffer, default, 0UL, 0);
+                bufferBinding = new VulkanComputeBufferBinding(buffer, default, 0UL, 0, default, 0UL);
             }
 
             snapshot.Buffers[pair.Key] = bufferBinding;
@@ -611,7 +611,9 @@ internal unsafe partial class VkRenderProgram
         for (int index = 0; index < _programDescriptorBindings.Count; index++)
         {
             DescriptorBindingInfo binding = _programDescriptorBindings[index];
-            if (binding.DescriptorType is not (DescriptorType.StorageBuffer or DescriptorType.StorageBufferDynamic))
+            if (binding.DescriptorType is not (
+                DescriptorType.StorageBuffer or DescriptorType.StorageBufferDynamic or
+                DescriptorType.UniformBuffer or DescriptorType.UniformBufferDynamic))
                 continue;
 
             bool found = snapshot.Buffers.TryGetValue(binding.Binding, out VulkanComputeBufferBinding buffer);
@@ -620,6 +622,9 @@ internal unsafe partial class VkRenderProgram
 
             if (!found)
             {
+                if (binding.DescriptorType is DescriptorType.UniformBuffer or DescriptorType.UniformBufferDynamic)
+                    continue;
+
                 failure = $"missing storage buffer at set {binding.Set}, binding {binding.Binding} ('{binding.Name}')";
                 return false;
             }
@@ -635,10 +640,93 @@ internal unsafe partial class VkRenderProgram
                 failure = $"storage buffer '{buffer.Data.AttributeName}' was created with incompatible usage {buffer.UsageFlags}";
                 return false;
             }
+
+            if (!TryValidateComputeBufferSnapshot(in buffer, out string reason, out _))
+            {
+                failure = $"storage buffer '{buffer.Data.AttributeName}' snapshot is superseded: {reason}";
+                return false;
+            }
         }
 
         failure = null;
         return true;
+    }
+
+    private bool TryValidateComputeBufferSnapshot(
+        in VulkanComputeBufferBinding snapshot,
+        out string reason,
+        out bool superseded)
+    {
+        superseded = false;
+        if (snapshot.Buffer.Handle == 0 || snapshot.Range == 0 ||
+            snapshot.LifetimeSlot.Generation == 0 || snapshot.NativeGeneration == 0 ||
+            WrapperLookup.GetOrCreate(snapshot.Data, generateNow: false) is not VkDataBuffer buffer)
+        {
+            reason = "captured owner allocation or range is no longer current";
+            return false;
+        }
+
+        if (buffer.BufferHandle is not Silk.NET.Vulkan.Buffer native ||
+            native.Handle != snapshot.Buffer.Handle ||
+            buffer.AllocatedByteSize < snapshot.Range ||
+            (buffer.LastUsageFlags & snapshot.UsageFlags) != snapshot.UsageFlags)
+        {
+            superseded = true;
+            reason = "captured owner allocation, range, or usage was recreated";
+            return false;
+        }
+
+        VulkanResourceLifetimeTracker tracker = BackendContext.Resources.Lifetime.Tracker;
+        VulkanResourceLifetimeKey key = new(ObjectType.Buffer, snapshot.Buffer.Handle);
+        using (VulkanFrameLockScope.Enter(tracker.SyncRoot, EVulkanFrameWaitReason.ResourceLifetimeLock))
+        {
+            if (!tracker.TryResolvePublishedResourceSlotNoLock(
+                    snapshot.LifetimeSlot,
+                    out VulkanResourceLifetimeRecord record) ||
+                record.Key != key || record.Generation != snapshot.NativeGeneration ||
+                record.PublishedGeneration != snapshot.NativeGeneration)
+            {
+                superseded = true;
+                reason = "captured native generation was superseded";
+                return false;
+            }
+        }
+
+        reason = "Ready";
+        return true;
+    }
+
+    private bool HasSupersededComputeBufferSnapshot(ComputeDispatchSnapshot snapshot)
+    {
+        for (int index = 0; index < _programDescriptorBindings.Count; index++)
+        {
+            DescriptorBindingInfo descriptor = _programDescriptorBindings[index];
+            if (descriptor.DescriptorType is not (
+                DescriptorType.StorageBuffer or DescriptorType.StorageBufferDynamic or
+                DescriptorType.UniformBuffer or DescriptorType.UniformBufferDynamic))
+            {
+                continue;
+            }
+
+            bool found = snapshot.Buffers.TryGetValue(
+                descriptor.Binding,
+                out VulkanComputeBufferBinding binding);
+            if (!found && !string.IsNullOrWhiteSpace(descriptor.Name))
+            {
+                found = snapshot.BuffersByName.TryGetValue(
+                    descriptor.Name,
+                    out binding);
+            }
+
+            if (found &&
+                !TryValidateComputeBufferSnapshot(in binding, out _, out bool superseded) &&
+                superseded)
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     internal bool HasBoundDescriptorResources()

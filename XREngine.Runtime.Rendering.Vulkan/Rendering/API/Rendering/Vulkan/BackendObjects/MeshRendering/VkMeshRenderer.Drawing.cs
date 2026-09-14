@@ -224,6 +224,7 @@ internal unsafe partial class VkMeshRenderer
 			{
 				CommandOperations.BindIndexBufferTracked(commandBuffer, indexHandle, 0, ToVkIndexType(size));
 				Api!.CmdDrawIndexed(commandBuffer, indexCount, drawInstances, 0, 0, 0);
+				_program?.RecordShaderCommandCoverage(ShaderCommandKind.Graphics, indirect: false, instancingKnown: true, instanced: drawInstances > 1);
 			}
 
 			return true;
@@ -355,6 +356,7 @@ internal unsafe partial class VkMeshRenderer
 
 				using (StartMeshDrawDetailScope("Vulkan.MeshDraw.CmdDraw"))
 					Api!.CmdDraw(commandBuffer, vertexCount, drawInstances, 0, 0);
+					_program?.RecordShaderCommandCoverage(ShaderCommandKind.Graphics, indirect: false, instancingKnown: true, instanced: drawInstances > 1);
 				drew = true;
 			}
 		}

@@ -314,10 +314,19 @@ previous linked handle remains active until the replacement has successfully
 loaded or linked, reflected runtime binding state, and reached a frame-safe
 adoption point.
 
+`IsLinked` describes the active program, so it must not block source preparation
+while `_replacementProgramPending` is true. Both synchronous preparation and
+background scheduling admit that state; otherwise a valid active program can
+leave every subsequent edit stuck at `SourceQueued`.
+
 If a replacement fails, stalls, hits queue backpressure, or is abandoned, the old
 program remains renderable. Old handles are deferred for deletion for at least
 two render frames so queued draws and program pipelines cannot reference a
 destroyed handle.
+
+The [2026-09-14 runtime qualification](../../work/investigations/rendering/vulkan14-final-validation-2026-09-14.md)
+exercises a visible water-shader edit, a syntax error retaining the last valid
+output, and restoration of the authored shader.
 
 ## Separable Programs
 

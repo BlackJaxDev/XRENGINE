@@ -57,12 +57,23 @@ public sealed class OpenXrSubmissionTrackerTests
                 2u,
                 timelineValue,
                 semaphore,
-                timestamp);
+                RequiresGpuCompletion: true,
+                ResourceLifetimeTicket: default,
+                HasResourceLifetimeAuthority: false,
+                LifetimeImages: [],
+                DetachedLifetimeSlots: [],
+                ExternalImageLifetimesDetached: false,
+                ChildRetirementReceipt: default,
+                RuntimeImagesReleased: false,
+                EnqueuedTimestamp: timestamp,
+                RetirementGenerationId: 17L);
 
             generation.ViewCount.ShouldBe(2u);
             generation.TombstoneTimelineValue.ShouldBe(42UL);
             generation.TimelineSemaphore.Handle.ShouldBe(201UL);
             generation.EnqueuedTimestamp.ShouldBe(123456789L);
+            generation.RequiresGpuCompletion.ShouldBeTrue();
+            generation.RetirementGenerationId.ShouldBe(17L);
             generation.Swapchains[0].Handle.ShouldBe(101UL);
             generation.Swapchains[1].Handle.ShouldBe(102UL);
         }

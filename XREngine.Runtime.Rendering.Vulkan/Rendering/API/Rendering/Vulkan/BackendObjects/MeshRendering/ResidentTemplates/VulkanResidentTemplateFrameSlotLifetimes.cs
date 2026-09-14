@@ -49,9 +49,12 @@ internal sealed class VulkanResidentTemplateFrameSlotLifetimes
         for (int index = 0; index < slot.PublicationCount; ++index)
         {
             if (!ReferenceEquals(slot.Databases[index], database) ||
-                slot.Publications[index] != publication)
+                slot.Publications[index] != publication ||
+                slot.NativePublicationUses[index].PublicationState != nativeUse.PublicationState)
                 continue;
 
+            // Only the exact native realization is redundant. Different
+            // outputs can share a scene payload while owning distinct globals.
             nativeUse.Dispose();
             nativeUse = default;
             lease.Dispose();
@@ -79,13 +82,15 @@ internal sealed class VulkanResidentTemplateFrameSlotLifetimes
         int frameSlot,
         ReadOnlySpan<AdvancedSharedGpuSceneDatabase?> databases,
         ReadOnlySpan<AdvancedGpuScenePublicationReference> publications,
+        ReadOnlySpan<VulkanAdvancedScenePublicationUse> nativeUses,
         int publicationCount,
         ReadOnlySpan<VulkanResidentDrawTemplate?> templates,
         int templateCount)
     {
         Slot slot = GetSlot(frameSlot);
         if (publicationCount < 0 || publicationCount > databases.Length ||
-            publicationCount > publications.Length || templateCount < 0 ||
+            publicationCount > publications.Length || publicationCount > nativeUses.Length ||
+            templateCount < 0 ||
             templateCount > templates.Length)
         {
             return false;
@@ -104,7 +109,9 @@ internal sealed class VulkanResidentTemplateFrameSlotLifetimes
                  ++destinationIndex)
             {
                 if (ReferenceEquals(slot.Databases[destinationIndex], database) &&
-                    slot.Publications[destinationIndex] == publications[sourceIndex])
+                    slot.Publications[destinationIndex] == publications[sourceIndex] &&
+                    slot.NativePublicationUses[destinationIndex].PublicationState ==
+                        nativeUses[sourceIndex].PublicationState)
                 {
                     duplicate = true;
                     break;

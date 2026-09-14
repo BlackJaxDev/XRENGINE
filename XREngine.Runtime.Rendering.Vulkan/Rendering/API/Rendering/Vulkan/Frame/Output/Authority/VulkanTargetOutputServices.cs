@@ -33,6 +33,9 @@ internal sealed partial class VulkanFrameLoop : IVulkanTargetOutputHost
     {
         int desktopSlots = Math.Max(Math.Max(desktopImageCount, 2), 1);
         int totalSlots = checked(desktopSlots + _outputRuntime.OpenXrBackend.EyeFrameDataSlotCount);
+        if (totalSlots > VulkanMappedFrameArena.MaximumFrameSlotCount)
+            throw new InvalidOperationException(
+                $"OpenXR requires {totalSlots} frame-data slots, exceeding the fixed mapped-frame capacity of {VulkanMappedFrameArena.MaximumFrameSlotCount}.");
         _resourceRuntime.Descriptors.EnsureFrameSlotCountFloor(totalSlots);
         _commandRuntime.EnsureFrameDataSlotCapacity(totalSlots);
         return totalSlots;

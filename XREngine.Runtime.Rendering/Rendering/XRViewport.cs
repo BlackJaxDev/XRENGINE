@@ -1257,6 +1257,7 @@ namespace XREngine.Rendering
         /// <param name="collectMirrors">When true, also collects mirror/reflection surfaces for recursive rendering. Default: true.</param>
         /// <param name="worldOverride">Optional world instance to collect from instead of the viewport's World property.</param>
         /// <param name="cameraOverride">Optional camera to use for visibility determination instead of ActiveCamera.</param>
+        /// <param name="stereoRightEyeCamera">Optional second eye camera for a single-pass stereo collection.</param>
         /// <param name="renderCommandsOverride">Optional render command collection to populate instead of the pipeline's default collection.</param>
         /// <param name="allowScreenSpaceUICollectVisible">When true, also collects screen-space UI elements. Default: true.</param>
         /// <param name="collectionVolumeOverride">Optional custom volume for visibility testing instead of the camera's frustum.</param>
@@ -1265,6 +1266,7 @@ namespace XREngine.Rendering
             bool collectMirrors = true,
             IRuntimeRenderWorld? worldOverride = null,
             XRCamera? cameraOverride = null,
+            XRCamera? stereoRightEyeCamera = null,
             RenderCommandCollection? renderCommandsOverride = null,
             bool allowScreenSpaceUICollectVisible = true,
             IVolume? collectionVolumeOverride = null,
@@ -1389,7 +1391,7 @@ namespace XREngine.Rendering
                 this,
                 visualScene,
                 camera,
-                stereoRightEyeCamera: null,
+                stereoRightEyeCamera,
                 target: null,
                 shadowPass: false,
                 stereoPass: stereoFamily,
@@ -1460,7 +1462,7 @@ namespace XREngine.Rendering
             if (allowScreenSpaceUICollectVisible)
                 CollectVisible_ScreenSpaceUI();
 
-            PrepareBackendReadyFramePackage(commandCollection);
+            PrepareBackendReadyFramePackage(commandCollection, !collectMirrors);
             if (exactOutputCollection)
             {
                 ulong generation = unchecked(
@@ -1479,7 +1481,9 @@ namespace XREngine.Rendering
         /// Captures pure backend-planning inputs after visibility collection,
         /// while the previous frame is still rendering.
         /// </summary>
-        private void PrepareBackendReadyFramePackage(RenderCommandCollection commandCollection)
+        private void PrepareBackendReadyFramePackage(
+            RenderCommandCollection commandCollection,
+            bool excludeProjectiveMirrors = false)
         {
             RenderResourceGeneration? activeGeneration = _renderPipeline.ActiveGeneration;
             RenderResourceRegistry? activeRegistry = activeGeneration?.Registry;
@@ -1521,7 +1525,8 @@ namespace XREngine.Rendering
                 World?.VisualScene?.GPUCommands,
                 Camera,
                 dimensions.InternalWidth,
-                dimensions.InternalHeight);
+                dimensions.InternalHeight,
+                excludeProjectiveMirrors);
         }
 
         /// <summary>
@@ -2134,7 +2139,10 @@ namespace XREngine.Rendering
                             0u,
                             (uint)Math.Max(1, InternalWidth),
                             (uint)Math.Max(1, InternalHeight),
-                            RenderFrameViewSetCapture.MonoHistoryKey);
+                            RenderFrameViewSetCapture.MonoHistoryKey) with
+                        {
+                            SourceCameraIdentity = camera.RenderIdentity,
+                        };
                     RenderFrameViewDescriptor capturedView =
                         CaptureDesktopFrameViewHistory(
                             issuedSequence,
@@ -3014,14 +3022,23 @@ namespace XREngine.Rendering
                 reason);
         }
 
+        private bool _allowCameraAspectRatioUpdates = true;
+
         /// <summary>
-        /// Updates the camera's aspect ratio to match the viewport dimensions.
-        /// Applies to perspective cameras with InheritAspectRatio enabled,
-        /// and orthographic cameras with InheritAspectRatio enabled.
-        /// Called internally when the viewport resizes or camera changes.
+        /// Allows viewport resizing to update an inheriting camera lens. Offscreen
+        /// views that borrow a source lens disable this to keep it read-only.
         /// </summary>
+        public bool AllowCameraAspectRatioUpdates
+        {
+            get => _allowCameraAspectRatioUpdates;
+            set => SetField(ref _allowCameraAspectRatioUpdates, value);
+        }
+
+        /// <summary>Updates an inheriting camera lens when its viewport resizes or changes camera.</summary>
         private void SetAspectRatioToCamera()
         {
+            if (!AllowCameraAspectRatioUpdates)
+                return;
             if (ActiveCamera?.Parameters is XRPerspectiveCameraParameters p && p.InheritAspectRatio)
             {
                 p.AspectRatio = (float)_region.Width / _region.Height;

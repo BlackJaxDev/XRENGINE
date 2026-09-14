@@ -40,6 +40,8 @@ public static class AdvancedViewRecordFactory
             HistoryKeyLo = unchecked((uint)source.HistoryKey), HistoryKeyHi = unchecked((uint)(source.HistoryKey >> 32)),
             ViewGeneration = checked((uint)source.ViewGeneration), ViewMaskLo = source.ViewMaskLo, ViewMaskHi = source.ViewMaskHi,
             FoveationCenterAndBias = source.FoveationCenterAndBias, FoveationRadii = source.FoveationRadii,
+            SourceCameraIdentityLo = unchecked((uint)source.SourceCameraIdentity),
+            SourceCameraIdentityHi = unchecked((uint)(source.SourceCameraIdentity >> 32)),
         };
     }
 

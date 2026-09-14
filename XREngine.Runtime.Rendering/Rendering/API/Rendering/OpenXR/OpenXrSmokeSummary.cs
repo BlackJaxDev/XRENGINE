@@ -2,7 +2,7 @@ namespace XREngine.Rendering.API.Rendering.OpenXR;
 
 public sealed class OpenXrSmokeSummary
 {
-    public const int CurrentSchemaVersion = 9;
+    public const int CurrentSchemaVersion = 11;
 
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
     public DateTimeOffset CapturedAtUtc { get; set; } = DateTimeOffset.UtcNow;
@@ -51,6 +51,9 @@ public sealed class OpenXrSmokeSummary
     public bool SwapchainsCreated { get; set; }
     public bool SessionRunning { get; set; }
     public bool TeardownCompleted { get; set; }
+    public long SessionLifecycleEpoch { get; set; }
+    public long LastNormalTeardownEpoch { get; set; }
+    public long NormalTeardownCount { get; set; }
     public long SubmittedFrameCount { get; set; }
     public long NoLayerFrameCount { get; set; }
     public long EndFrameFailureCount { get; set; }
@@ -103,6 +106,8 @@ public sealed class OpenXrSmokeSummary
     public OpenXrSmokeTemporalStateLedgerEntry[] TemporalStateLedger { get; set; } = [];
     public long TemporalStateLedgerOverflowCount { get; set; }
     public OpenXrSmokeDesktopRejectionEvidence DesktopRejectionEvidence { get; set; } = new();
+    public OpenXrSubmissionValidationSnapshot SubmissionValidation { get; set; } = new();
+    public OpenXrSwapchainRetirementSnapshot SwapchainRetirement { get; set; } = new();
     public OpenXrSmokeSwapchainSummary[] Swapchains { get; set; } = [];
     public string[] RuntimeStateTransitions { get; set; } = [];
     public string[] SessionStateTransitions { get; set; } = [];

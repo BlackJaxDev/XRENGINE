@@ -47,4 +47,9 @@ public struct AdvancedViewRecord
     public Vector4 FoveationCenterAndBias;
     /// <summary>Ordered inner, guard, middle, and outer eccentricity radii.</summary>
     public Vector4 FoveationRadii;
+
+    public uint SourceCameraIdentityLo;
+    public uint SourceCameraIdentityHi;
+    public uint SourceCameraIdentityPadding0;
+    public uint SourceCameraIdentityPadding1;
 }

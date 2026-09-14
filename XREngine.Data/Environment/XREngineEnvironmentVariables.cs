@@ -102,6 +102,7 @@ public static class XREngineEnvironmentVariables
     public const string OpenXrSmokeWarmupFrames = "XRE_SMOKE_WARMUP_FRAMES";
     public const string OpenXrSmokeTimeoutSeconds = "XRE_SMOKE_TIMEOUT_SECONDS";
     public const string OpenXrSmokeSummary = "XRE_OPENXR_SMOKE_SUMMARY";
+    public const string OpenXrSubmissionValidation = "XRE_OPENXR_SUBMISSION_VALIDATION";
     public const string OpenXrRenderPacingMode = "XRE_OPENXR_RENDER_PACING_MODE";
     public const string OpenXrPoseTimeOffsetMs = "XRE_OPENXR_POSE_TIME_OFFSET_MS";
     public const string SmokeSummary = "XRE_SMOKE_SUMMARY";

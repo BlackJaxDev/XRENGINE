@@ -7,6 +7,10 @@ namespace XREngine.Rendering;
 /// </summary>
 public interface IOpenXrSmokeDiagnosticsBackendCapability
 {
+    void ConfigureOpenXrSubmissionValidation(in OpenXrSubmissionValidationRequest request);
+
+    OpenXrSubmissionValidationSnapshot CaptureOpenXrSubmissionValidation();
+
     void ResetDesktopRejectionEvidence(bool injectionRequested);
 
     OpenXrSmokeDesktopRejectionEvidence CaptureDesktopRejectionEvidence();

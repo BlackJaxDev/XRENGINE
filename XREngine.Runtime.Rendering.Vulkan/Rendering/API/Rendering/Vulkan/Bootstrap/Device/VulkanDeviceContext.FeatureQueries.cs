@@ -70,6 +70,51 @@ internal sealed partial class VulkanDeviceContext
         featureSupported = features.BufferDeviceAddress;
     }
 
+    internal unsafe void QueryUnifiedImageLayoutsCapabilities(
+        bool extensionEnabled,
+        out bool featureSupported,
+        out bool videoFeatureSupported)
+    {
+        featureSupported = false;
+        videoFeatureSupported = false;
+        if (!extensionEnabled)
+            return;
+
+        PhysicalDeviceUnifiedImageLayoutsFeaturesKHRNative features = new()
+        {
+            SType = PhysicalDeviceUnifiedImageLayoutsFeaturesKHRNative.StructureType,
+        };
+        PhysicalDeviceFeatures2 features2 = new()
+        {
+            SType = StructureType.PhysicalDeviceFeatures2,
+            PNext = &features,
+        };
+        Api.GetPhysicalDeviceFeatures2(PhysicalDevice, &features2);
+        featureSupported = features.UnifiedImageLayouts;
+        videoFeatureSupported = features.UnifiedImageLayoutsVideo;
+    }
+
+    internal unsafe void QueryDeviceAddressCommandsCapabilities(
+        bool extensionEnabled,
+        out bool featureSupported)
+    {
+        featureSupported = false;
+        if (!extensionEnabled)
+            return;
+
+        PhysicalDeviceDeviceAddressCommandsFeaturesKHRNative features = new()
+        {
+            SType = PhysicalDeviceDeviceAddressCommandsFeaturesKHRNative.StructureType,
+        };
+        PhysicalDeviceFeatures2 features2 = new()
+        {
+            SType = StructureType.PhysicalDeviceFeatures2,
+            PNext = &features,
+        };
+        Api.GetPhysicalDeviceFeatures2(PhysicalDevice, &features2);
+        featureSupported = features.DeviceAddressCommands;
+    }
+
     internal static bool IsVulkanApiVersionAtLeast(uint apiVersion, uint major, uint minor)
     {
         if (major == 1u && minor == 4u)

@@ -86,10 +86,20 @@ public static class AdvancedGpuResourceSourceEncoder
             return false;
         }
 
-        // A streamed texture can complete on a worker while the scene boundary
-        // is capturing resources. Require one stable source generation around
-        // every source-metadata read; a later boundary will retry against the
-        // completed source instead of publishing a torn description.
+        // Imported streaming updates a coupled set of logical texture fields.
+        // Its dedicated epoch, unlike the general content generation, uses
+        // seqlock parity and makes the capture reject an in-progress update.
+        ulong importedMetadataEpoch = texture2D.ImportedSourceMetadataEpoch;
+        if (!IsStableImportedMetadataEpoch(importedMetadataEpoch))
+        {
+            source = default;
+            compatibilityReason = EAdvancedCanonicalCompatibilityReason.EmptyResourceTexture;
+            reason = "Imported texture metadata is being updated.";
+            return false;
+        }
+
+        // GPU-authored outputs also use this generation, but it has no parity
+        // contract; retain the existing equality check for those mutations.
         ulong sourceContentGeneration = texture2D.CanonicalSourceContentGeneration;
 
         if (texture2D.Rectangle || texture2D.MultiSample)
@@ -176,7 +186,14 @@ public static class AdvancedGpuResourceSourceEncoder
             addressV,
             compareOperation,
             mipCount);
-        if (sourceContentGeneration != texture2D.CanonicalSourceContentGeneration)
+        var publicationLifetime = texture2D.CanonicalPublicationLifetime;
+        // The trailing acquire read alone does not order preceding metadata loads.
+        // Finish those reads before verifying that the writer epoch stayed unchanged.
+        System.Threading.Thread.MemoryBarrier();
+        ulong completedImportedMetadataEpoch = texture2D.ImportedSourceMetadataEpoch;
+        if (sourceContentGeneration != texture2D.CanonicalSourceContentGeneration ||
+            importedMetadataEpoch != completedImportedMetadataEpoch ||
+            !IsStableImportedMetadataEpoch(completedImportedMetadataEpoch))
         {
             source = default;
             compatibilityReason = EAdvancedCanonicalCompatibilityReason.EmptyResourceTexture;
@@ -185,7 +202,7 @@ public static class AdvancedGpuResourceSourceEncoder
         }
 
         source = new(texture2D, textureRecord, samplerRecord, fallback, sourceContentGeneration,
-            texture2D.CanonicalPublicationLifetime);
+            publicationLifetime);
         compatibilityReason = EAdvancedCanonicalCompatibilityReason.None;
         reason = string.Empty;
         return true;
@@ -274,6 +291,9 @@ public static class AdvancedGpuResourceSourceEncoder
             return checked((uint)Math.Max(1, texture.SmallestMipmapLevel + 1));
         return sourceMipCount;
     }
+
+    private static bool IsStableImportedMetadataEpoch(ulong epoch)
+        => epoch != 0u && (epoch & 1u) == 0u;
 
     private static bool TryTranslateAddressMode(
         ETexWrapMode mode,

@@ -210,6 +210,9 @@ internal sealed partial class VulkanFrameLoop
     {
         VulkanCommandSynchronizationState sync = _commandRuntime.Synchronization;
         sync.FailAllSubmissionMarkers();
+        // Lifecycle has already established device-idle completion or device-loss
+        // authority before synchronization handles can be torn down.
+        ReleaseCompletedExplicitProductionPendingSubmissionGate(deviceIdleOrLost: true);
         if (sync.acquireBridgeSemaphores is not null)
             for (int index = 0; index < sync.acquireBridgeSemaphores.Length; index++)
                 Api.DestroySemaphore(_deviceContext.Device, sync.acquireBridgeSemaphores[index], null);

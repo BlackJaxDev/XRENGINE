@@ -558,6 +558,8 @@ namespace XREngine.Rendering.OpenGL
                 LogDeformationBindingDiagnostic(vtx!);
                 GLRenderProgram materialProgram = mat!;
                 Renderer.SetDrawDebugContext(
+                    vtx,
+                    materialProgram,
                     materialProgram.Data.Name,
                     bindingMaterial.Data.Name,
                     Mesh?.Name,
