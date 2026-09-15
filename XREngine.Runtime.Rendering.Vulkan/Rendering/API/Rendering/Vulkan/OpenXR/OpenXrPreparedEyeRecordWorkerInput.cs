@@ -6,7 +6,7 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal readonly record struct OpenXrPreparedEyeRecordWorkerInput(
     VulkanPreparedPrimaryCommandInput CommandInput,
-    ResourcePlannerRuntimeState PlannerState,
+    ResourcePlannerRuntimeGeneration PlannerGeneration,
     VulkanOpenXrFrameContext FrameContext,
     uint OpenXrViewIndex,
     uint OpenXrImageIndex,
@@ -31,6 +31,7 @@ internal readonly record struct OpenXrPreparedEyeRecordWorkerInput(
         OutputContract.IsDefined &&
         RenderLaneId >= 0 &&
         RenderFrameSlot >= 0 &&
-        PlannerState.ResourceAllocator is not null &&
-        PlannerState.RenderGraphPlan is not null;
+        PlannerGeneration is not null &&
+        PlannerGeneration.State.ResourceAllocator is not null &&
+        PlannerGeneration.State.RenderGraphPlan is not null;
 }

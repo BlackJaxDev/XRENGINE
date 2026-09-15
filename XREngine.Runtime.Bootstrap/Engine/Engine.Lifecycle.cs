@@ -190,6 +190,11 @@ namespace XREngine
                 RuntimeLifecycleState.Current.CompleteStartup();
             }
 
+            // Index the verified authored graph before game callbacks can create, move, or remove nodes.
+            if (success)
+                foreach (RuntimeWorld world in WorldInstances)
+                    _ = EngineRuntimeNetworkWorldContext.Get(world).ReplicatedEntityWorld;
+
             if (beginPlayingAllWorlds && success)
                 BeginPlayAllWorlds();
 
@@ -227,7 +232,12 @@ namespace XREngine
         {
             Debug.Out("Blocking without local rendering.");
             while (IsEngineStillActive())
+            {
+                // Presentationless hosts have no render-frame callback to drain this queue. Managed
+                // control directives (kick/drain/stop) are intentionally enqueued here for safe world mutation.
+                ProcessHeadlessMainThreadTasks();
                 Thread.Sleep(10);
+            }
             Debug.Out("No longer blocking presentationless main thread.");
         }
 

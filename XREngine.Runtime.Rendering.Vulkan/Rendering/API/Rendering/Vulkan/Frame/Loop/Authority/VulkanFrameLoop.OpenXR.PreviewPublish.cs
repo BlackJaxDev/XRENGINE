@@ -20,6 +20,7 @@ internal sealed partial class VulkanFrameLoop
         Extent2D sourceExtent,
         XRTexture2D? destinationTexture,
         string destinationLabel,
+        in OpenXrImageSubmissionIdentity submissionIdentity,
         bool flipY = false)
     {
         try
@@ -52,7 +53,7 @@ internal sealed partial class VulkanFrameLoop
                 return false;
             }
 
-            return _commandRuntime.ExecuteOpenXrPreviewCopy(in plan);
+            return _commandRuntime.ExecuteOpenXrPreviewCopy(in plan, in submissionIdentity);
         }
         catch (Exception ex)
         {
@@ -134,6 +135,7 @@ internal sealed partial class VulkanFrameLoop
     internal bool TryPublishOpenXrEyeMirrorTextures(
         in OpenXrEyeMirrorPublishRequest firstEye,
         in OpenXrEyeMirrorPublishRequest secondEye,
+        in OpenXrImageSubmissionIdentity submissionIdentity,
         out bool firstPreviewCopied,
         out bool secondPreviewCopied)
     {
@@ -151,6 +153,7 @@ internal sealed partial class VulkanFrameLoop
             return _commandRuntime.ExecuteOpenXrMirrorPublish(
                 in firstPlan,
                 in secondPlan,
+                in submissionIdentity,
                 out firstPreviewCopied,
                 out secondPreviewCopied);
         }
@@ -284,6 +287,7 @@ internal sealed partial class VulkanFrameLoop
         XRTexture? sourceTexture,
         XRTexture2D? destinationTexture,
         string destinationLabel,
+        in OpenXrImageSubmissionIdentity submissionIdentity,
         bool flipY = false)
     {
         if (IsDeviceLost || sourceTexture is null || destinationTexture is null)
@@ -355,7 +359,8 @@ internal sealed partial class VulkanFrameLoop
                 destinationExtent,
                 destinationOldLayout,
                 destinationAspect,
-                flipY);
+                flipY,
+                in submissionIdentity);
         }
         catch (Exception ex)
         {

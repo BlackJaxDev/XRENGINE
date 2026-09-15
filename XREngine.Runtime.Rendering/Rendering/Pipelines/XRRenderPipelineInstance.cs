@@ -519,6 +519,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             frozenHistoryCandidate: default,
             outputCompletionRequest: default,
             outputCompletionCollectGeneration: -1L,
+            consumedCollectGenerationOverride: null,
             out _,
             out _);
 
@@ -539,6 +540,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         RenderFrameViewHistoryCandidateToken frozenHistoryCandidate,
         RenderOutputRequest outputCompletionRequest,
         long outputCompletionCollectGeneration,
+        long? consumedCollectGenerationOverride,
         out XRGpuFence? completionFence,
         out bool outputCompletionAuthoringStarted)
     {
@@ -564,6 +566,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                 frozenHistoryCandidate,
                 outputCompletionRequest,
                 outputCompletionCollectGeneration,
+                consumedCollectGenerationOverride,
                 out historyOwnershipTransferred,
                 out completionFence,
                 out outputCompletionAuthoringStarted);
@@ -592,6 +595,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         RenderFrameViewHistoryCandidateToken frozenHistoryCandidate,
         RenderOutputRequest outputCompletionRequest,
         long outputCompletionCollectGeneration,
+        long? consumedCollectGenerationOverride,
         out bool historyOwnershipTransferred,
         out XRGpuFence? completionFence,
         out bool outputCompletionAuthoringStarted)
@@ -673,6 +677,12 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                 AbstractRenderer? completionReservationOwner = null;
                 try
                 {
+                if (consumedCollectGenerationOverride.HasValue &&
+                    outputCompletionRequest.IsDefined &&
+                    consumedCollectGenerationOverride.Value != outputCompletionCollectGeneration)
+                    return ReportExactOutputPreconditionFailure(
+                        in outputCompletionRequest,
+                        "The OpenXR package collect generation does not match the exact output completion generation.");
                 if (outputCompletionRequest.IsDefined)
                 {
                     bool validCompletionContract =
@@ -783,9 +793,10 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                 if (!TryValidateBackendReadyFramePackage(
                         activeCommands,
                         viewport,
-                        outputCompletionRequest.IsDefined
+                        consumedCollectGenerationOverride ??
+                        (outputCompletionRequest.IsDefined
                             ? outputCompletionCollectGeneration
-                            : null,
+                            : null),
                         out string? packageFailure))
                 {
                     DirectionalShadowPipelineDiagnostics.Record(

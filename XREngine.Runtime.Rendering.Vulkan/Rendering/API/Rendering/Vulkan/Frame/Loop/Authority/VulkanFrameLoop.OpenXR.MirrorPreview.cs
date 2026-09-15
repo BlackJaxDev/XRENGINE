@@ -674,6 +674,10 @@ internal sealed partial class VulkanFrameLoop
                         "eye mirror render");
                 }
 
+                FrameOpContext plannerContext = VulkanFramePlanner.SelectPrimaryPlannerContext(ops);
+                ResourcePlannerRuntimeState plannerState;
+                using PooledExternalResourcePlannerReadbackScope plannerScope =
+                    RentPipelineResourcePlannerScope(in plannerContext);
                 if (TryDescribeRecentResourceAllocationFailure(out string prePlanFailureReason))
                 {
                     Debug.VulkanWarningEvery(
@@ -681,18 +685,6 @@ internal sealed partial class VulkanFrameLoop
                         TimeSpan.FromSeconds(1),
                         "[OpenXR] Deferring Vulkan eye mirror command buffer preparation: {0}",
                         prePlanFailureReason);
-                    return false;
-                }
-
-                FrameOpContext plannerContext = PrepareResourcePlannerForFrameOps(ops);
-                ResourcePlannerRuntimeState plannerState = CaptureResourcePlannerRuntimeState();
-                if (TryDescribeRecentResourceAllocationFailure(out string postPlanFailureReason))
-                {
-                    Debug.VulkanWarningEvery(
-                        $"OpenXR.Vulkan.EyeMirrorFrameOpPlanFailed.{GetHashCode()}.{request.OpenXrViewIndex}",
-                        TimeSpan.FromSeconds(1),
-                        "[OpenXR] Deferring Vulkan eye mirror command buffer preparation: {0}",
-                        postPlanFailureReason);
                     return false;
                 }
 
@@ -722,6 +714,9 @@ internal sealed partial class VulkanFrameLoop
                 {
                     return false;
                 }
+                _commandRuntime.ReconcileResourcePlannerImageLayouts(
+                    CaptureResourcePlannerRuntimeState().ResourceAllocator);
+                plannerState = CaptureResourcePlannerRuntimeState();
                 ulong plannerRevision = plannerState.ResourcePlannerRevision;
                 ulong frameOpsSignature = 0UL;
                 uint mirrorCommandChainImageIndex = recordImageIndex;
@@ -747,8 +742,31 @@ internal sealed partial class VulkanFrameLoop
                         plannerState.FrameOpResourcePlannerSwitchingState,
                         _framePlanner,
                         _resourceRuntime.BackendObjectContext),
-                    openXrViewIndex: request.OpenXrViewIndex);
+                    openXrViewIndex: request.OpenXrViewIndex,
+                    logicalFrameSlot: 0);
                 framePlan.PrepareRecordingPlannerGenerations(in plannerState);
+                VulkanFrameOpPlannerStateKey recordingPlannerKey =
+                    VulkanFrameOpSnapshotSignatures.BuildPlannerStateKey(plannerContext);
+                VulkanPreparedResourcePlanStamp originalResourceStamp = new(
+                    planningSnapshot,
+                    plannerState.ResourcePlannerRevision,
+                    plannerState.ResourcePlannerSignature,
+                    plannerState.ResourceAllocationSignature);
+                ResourcePlannerRuntimeGeneration recordingPlannerGeneration =
+                    ResolveOpenXrSealedRecordingPlannerGeneration(
+                        in plannerState,
+                        in originalResourceStamp,
+                        plannerRevision,
+                        request.OpenXrViewIndex,
+                        framePlan,
+                        in recordingPlannerKey);
+                VulkanPreparedResourcePlanStamp recordingResourceStamp = originalResourceStamp with
+                {
+                    PlanningSnapshot = planningSnapshot with
+                    {
+                        RenderGraphPlan = recordingPlannerGeneration.State.RenderGraphPlan,
+                    },
+                };
                 EVrOutputViewKind viewKind = default;
                 EVrOutputViewKind indexedViewKind = default;
                 int outputIndex = -1;
@@ -849,11 +867,7 @@ internal sealed partial class VulkanFrameLoop
                     owner.PrimaryCommandPlan,
                     RecordingTarget: default,
                     PresentationSource: default,
-                    new VulkanPreparedResourcePlanStamp(
-                        planningSnapshot,
-                        plannerState.ResourcePlannerRevision,
-                        plannerState.ResourcePlannerSignature,
-                        plannerState.ResourceAllocationSignature),
+                    recordingResourceStamp,
                     new VulkanCommandClearStateSnapshot(
                         clearState.ClearColor,
                         clearState.ClearDepth,
@@ -887,7 +901,10 @@ internal sealed partial class VulkanFrameLoop
                     ReadOnlyStorageAuthority: readOnlyStorageAuthority,
                     OpenXrTargetContext: null,
                     CommandChainSchedule: commandChainSchedule,
-                    ExcludeDesktopSwapchainBarriers: true);
+                    ExcludeDesktopSwapchainBarriers: true,
+                    LogicalViewOperationsOverride: recordingOperations.Stream,
+                    LogicalViewId: logicalViewId,
+                    RecordingPlannerKey: recordingPlannerKey);
                 if (!_commandRuntime.TryRecordPreparedOpenXrMirror(
                         in commandInput,
                         CreateOpenXrMirrorFrameContext(in request),

@@ -66,6 +66,20 @@ public interface IXrGraphicsBinding
     bool InvalidateRendererOwnedInstance(AbstractRenderer renderer, string reason)
         => false;
 
+    /// <summary>
+    /// Abandons renderer-owned OpenXR children after terminal device loss without
+    /// issuing Vulkan completion, retirement, or resource-destruction work.
+    /// </summary>
+    OpenXrDeviceLossBindingAbandonment AbandonAfterDeviceLoss(
+        OpenXRAPI api,
+        AbstractRenderer renderer,
+        string reason)
+        => default;
+
+    /// <summary>Destroys a renderer-owned OpenXR bootstrap instance after device loss.</summary>
+    Result TryDestroyRendererOwnedInstanceAfterDeviceLoss(AbstractRenderer renderer, string reason)
+        => Result.ErrorFunctionUnsupported;
+
     bool UsesOpenXrVulkanEnable2Creation(AbstractRenderer renderer)
         => false;
 
@@ -158,9 +172,19 @@ public interface IXrGraphicsBinding
     /// </summary>
     bool RequiresDeferredSwapchainRetirement => false;
     bool HasPendingDeferredSwapchainRetirement => false;
+    /// <summary>Whether the backend still owns an accepted OpenXR submission.</summary>
+    bool HasPendingOpenXrSubmissionOwnership => false;
+
+    int PendingOpenXrSubmissionCount => 0;
+
+    string? PendingOpenXrSubmissionReceiptSource => null;
     bool WaitForGpuIdle(OpenXRAPI api, AbstractRenderer renderer);
+    Result BeginFrame(OpenXRAPI api, in FrameBeginInfo frameBeginInfo)
+        => api.Api.BeginFrame(api.GraphicsBindingHost.Session, in frameBeginInfo);
     Result AcquireSwapchainImage(OpenXRAPI api, Swapchain swapchain, out uint imageIndex);
     Result WaitSwapchainImage(OpenXRAPI api, Swapchain swapchain, long timeoutNs);
     Result ReleaseSwapchainImage(OpenXRAPI api, Swapchain swapchain);
+    Result EndFrame(OpenXRAPI api, in FrameEndInfo frameEndInfo)
+        => api.Api.EndFrame(api.GraphicsBindingHost.Session, in frameEndInfo);
     void RenderViews(OpenXRAPI api, in CompositionLayerProjectionView projectionView, uint viewIndex);
 }

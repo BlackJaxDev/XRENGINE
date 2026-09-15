@@ -12,11 +12,29 @@ namespace XREngine
         {
         }
     }
-    public sealed record ServerJoinAdmissionResult(ServerSessionContext? SessionContext, AdmissionFailureReason FailureReason = AdmissionFailureReason.None, string? Message = null)
+    public sealed record ServerJoinAdmissionResult(
+        ServerSessionContext? SessionContext,
+        AdmissionFailureReason FailureReason = AdmissionFailureReason.None,
+        string? Message = null,
+        string? AccountId = null,
+        string? ReservationId = null,
+        int? CredentialPurpose = null,
+        long CredentialEpoch = 0,
+        DateTimeOffset? AcceptedUtc = null)
     {
         public bool Success => SessionContext is not null && FailureReason == AdmissionFailureReason.None;
     }
 
-    public sealed record ServerSessionPlayerEvent(Guid SessionId, string ClientId, int ServerPlayerIndex, Guid TransformId);
+    public sealed record ServerSessionPlayerEvent(
+        Guid SessionId,
+        string ClientId,
+        int ServerPlayerIndex,
+        Guid TransformId,
+        string? AccountId = null,
+        string? ReservationId = null,
+        int? CredentialPurpose = null,
+        long CredentialEpoch = 0,
+        DateTimeOffset ConnectedUtc = default,
+        DateTimeOffset? SynchronizedUtc = null);
 
 }

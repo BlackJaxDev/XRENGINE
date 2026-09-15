@@ -140,6 +140,8 @@ internal sealed partial class VulkanFrameLoop
         out VulkanPresentNowReadinessRetry retry)
     {
         retry = default;
+        RenderFrameViewSetPublicationSnapshot openXrPublication =
+            RenderFrameViewSetPublication.CaptureLatest();
         VulkanPresentNowTargetCompatibilityKey compatibility =
             CaptureDesktopTargetCompatibility();
         acceptedPlan = _acceptedFramePlans.Begin(
@@ -179,7 +181,7 @@ internal sealed partial class VulkanFrameLoop
             }
         }
 
-        CapturePresentNowAuthoredOperations(acceptedPlan);
+        CapturePresentNowAuthoredOperations(acceptedPlan, in openXrPublication);
 
         _preparedMeshIngress.Clear();
         int requestCount;
@@ -221,6 +223,9 @@ internal sealed partial class VulkanFrameLoop
                 "The bounded request queue rejected an accepted foreground cohort.");
         }
 
+        if (!openXrPublication.HasViewSet)
+            requestCount = RemoveOpenXrMeshRequests(requestCount);
+
         attempt.PresentNowMeshRequestCount = requestCount;
         acceptedPlan.CaptureRequiredTextureReferences(
             _meshOperationRequestScratch.AsSpan(0, requestCount));
@@ -253,7 +258,7 @@ internal sealed partial class VulkanFrameLoop
                 meshFailure);
         }
 
-        CapturePresentNowAuthoredOperations(acceptedPlan);
+        CapturePresentNowAuthoredOperations(acceptedPlan, in openXrPublication);
         VulkanFramePlanningSnapshot planningSnapshot =
             _framePlanner.CaptureSnapshot();
         VulkanSwapchainContextCoalescer.Coalesce(
@@ -444,6 +449,15 @@ internal sealed partial class VulkanFrameLoop
         FramePlan logicalPlan;
         try
         {
+            if (!RenderFrameViewSetPublication.IsCurrent(openXrPublication.Revision))
+            {
+                retry = watchdog.CreateRetry(
+                    EVulkanPresentNowReadinessStage.FramePlanSeal,
+                    "openxr-view-publication",
+                    "DesktopScene -> captured OpenXR view authority",
+                    $"Publication changed before plan seal. Captured={openXrPublication.Revision}.");
+                return false;
+            }
             logicalPlan = _framePlanner.FramePlanBuilder.BuildAndSeal(
             attempt.FrameSlot,
             plannerState.ResourcePlannerRevision,
@@ -465,7 +479,18 @@ internal sealed partial class VulkanFrameLoop
             authoringTextureUploadOperationCount:
                 acceptedPlan.TextureUploadOperationCount,
                 requiredOutputContract: provisionalContract,
-                historyReservations: acceptedPlan.FrameViewHistory);
+                historyReservations: acceptedPlan.FrameViewHistory,
+                publicationSnapshot: openXrPublication);
+            if (!RenderFrameViewSetPublication.IsCurrent(openXrPublication.Revision))
+            {
+                logicalPlan.Reset();
+                retry = watchdog.CreateRetry(
+                    EVulkanPresentNowReadinessStage.FramePlanSeal,
+                    "openxr-view-publication",
+                    "DesktopScene -> captured OpenXR view authority",
+                    $"Publication changed after plan seal. Captured={openXrPublication.Revision}.");
+                return false;
+            }
         }
         catch (VulkanNativeBufferBindingSupersededException exception)
         {
@@ -635,6 +660,16 @@ internal sealed partial class VulkanFrameLoop
         acceptedPlan.DeclareDependencies(logicalPlan);
         acceptedPlan.MarkNonTextureDependenciesReady();
         _ = acceptedPlan.SynchronizeTextureDependencies();
+        if (!RenderFrameViewSetPublication.IsCurrent(openXrPublication.Revision))
+        {
+            logicalPlan.Reset();
+            retry = watchdog.CreateRetry(
+                EVulkanPresentNowReadinessStage.FramePlanSeal,
+                "openxr-view-publication",
+                "DesktopScene -> captured OpenXR view authority",
+                $"Publication changed during readiness preparation. Captured={openXrPublication.Revision}.");
+            return false;
+        }
         acceptedPlan.Seal(
             in outputContract,
             logicalPlan,
@@ -644,13 +679,15 @@ internal sealed partial class VulkanFrameLoop
     }
 
     private void CapturePresentNowAuthoredOperations(
-        VulkanAcceptedFramePlan acceptedPlan)
+        VulkanAcceptedFramePlan acceptedPlan,
+        in RenderFrameViewSetPublicationSnapshot openXrPublication)
     {
         bool claimFrameViewHistory = !acceptedPlan.HasClaimedFrameViewHistory;
         bool claimOutputCompletions = !acceptedPlan.HasClaimedOutputCompletions;
         FrameOp[] operations = _framePlanner.Operations.DrainForPrimary(
             out FrameOp[] textureUploadOperations,
             drainFrameViewHistory: claimFrameViewHistory || claimOutputCompletions,
+            excludeOpenXrTargets: !openXrPublication.HasViewSet,
             acceptedOutputCompletions: claimOutputCompletions
                 ? default
                 : acceptedPlan.OutputCompletions);
@@ -682,6 +719,22 @@ internal sealed partial class VulkanFrameLoop
             _framePlanner.Operations.DiscardDrainedFrameViewHistoryOwnership();
             throw;
         }
+    }
+
+    private int RemoveOpenXrMeshRequests(int requestCount)
+    {
+        int retainedCount = 0;
+        for (int index = 0; index < requestCount; index++)
+        {
+            VulkanMeshRenderRequest request = _meshOperationRequestScratch[index];
+            if (request.Context.ContextKind is EVulkanFrameOpContextKind.OpenXrEye or
+                EVulkanFrameOpContextKind.OpenXrMirror)
+                continue;
+            _meshOperationRequestScratch[retainedCount++] = request;
+        }
+
+        _meshOperationRequestScratch.AsSpan(retainedCount, requestCount - retainedCount).Clear();
+        return retainedCount;
     }
 
     private VulkanPresentNowTargetCompatibilityKey

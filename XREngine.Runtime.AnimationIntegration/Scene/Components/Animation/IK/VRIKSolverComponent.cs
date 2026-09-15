@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Numerics;
+using System.Buffers.Binary;
 using XREngine.Core.Attributes;
 using XREngine.Networking;
 using XREngine.Scene.Transforms;
@@ -15,8 +16,6 @@ namespace XREngine.Components.Animation
     {
         private const double BaselineIntervalSeconds = 1.0;
         private static readonly long BaselineIntervalTicks = Math.Max(1L, (long)Math.Round(BaselineIntervalSeconds * System.Diagnostics.Stopwatch.Frequency));
-        private static readonly Dictionary<ushort, (QuantizedHumanoidPose pose, ushort sequence)> _receivedBaselines = new();
-        private static readonly Dictionary<ushort, VRIKSolverComponent> _registry = new();
 
         public IKSolverVR Solver { get; } = new();
 
@@ -101,14 +100,7 @@ namespace XREngine.Components.Animation
         public ushort PoseEntityId
         {
             get => _poseEntityId;
-            set
-            {
-                if (_poseEntityId == value)
-                    return;
-                Unregister();
-                _poseEntityId = value;
-                Register();
-            }
+            set => SetField(ref _poseEntityId, value);
         }
 
         /// <summary>
@@ -121,8 +113,25 @@ namespace XREngine.Components.Animation
         /// </summary>
         public bool PoseReceiveEnabled { get; set; } = true;
 
+        /// <summary>Managed identity bound to this remote avatar's pose stream.</summary>
+        public Guid BoundPoseSessionId { get; private set; }
+
+        /// <summary>Managed client identity bound to this remote avatar's pose stream.</summary>
+        public string? BoundPoseClientId { get; private set; }
+
+        /// <summary>Last validated managed pose frame applied by this remote solver.</summary>
+        public uint LastAppliedNetworkPoseFrameSequence => _lastReceivedFrameSequence;
+
+        /// <summary>Number of validated managed pose frames applied by this solver.</summary>
+        public long AppliedNetworkPoseFrameCount => _appliedNetworkPoseFrameCount;
+
         private ushort _poseEntityId;
         private QuantizedHumanoidPose? _baselinePose;
+        private QuantizedHumanoidPose? _receivedBaselinePose;
+        private readonly Dictionary<ushort, (QuantizedHumanoidPose Pose, ushort Sequence)> _legacyReceivedBaselines = [];
+        private ushort _receivedBaselineSequence;
+        private uint _lastReceivedFrameSequence;
+        private long _appliedNetworkPoseFrameCount;
         private ushort _baselineSequence;
         private long _lastBaselineTicks;
 
@@ -174,15 +183,55 @@ namespace XREngine.Components.Animation
             if (PoseEntityId == 0)
                 PoseEntityId = PoseIdFromSceneNode();
 
-            Register();
             SubscribeNetworking();
         }
 
         protected override void OnComponentDeactivated()
         {
             base.OnComponentDeactivated();
-            Unregister();
             UnsubscribeNetworking();
+            ClearReceivedPoseState();
+            BoundPoseSessionId = Guid.Empty;
+            BoundPoseClientId = null;
+        }
+
+        protected override void OnDestroying()
+        {
+            UnsubscribeNetworking();
+            ClearReceivedPoseState();
+            BoundPoseSessionId = Guid.Empty;
+            BoundPoseClientId = null;
+            base.OnDestroying();
+        }
+
+        /// <summary>
+        /// Binds this instance to one server-authorized remote avatar. Binding is
+        /// intentionally per solver so poses cannot bleed across worlds or clients.
+        /// </summary>
+        public void BindNetworkPose(Guid sessionId, string clientId, ushort entityId)
+        {
+            if (sessionId == Guid.Empty)
+                throw new ArgumentOutOfRangeException(nameof(sessionId));
+            if (string.IsNullOrWhiteSpace(clientId))
+                throw new ArgumentException("A remote pose requires a client identity.", nameof(clientId));
+            if (entityId == 0)
+                throw new ArgumentOutOfRangeException(nameof(entityId));
+
+            if (BoundPoseSessionId == sessionId
+                && string.Equals(BoundPoseClientId, clientId, StringComparison.Ordinal)
+                && PoseEntityId == entityId)
+            {
+                PoseBroadcastEnabled = false;
+                PoseReceiveEnabled = true;
+                return;
+            }
+
+            BoundPoseSessionId = sessionId;
+            BoundPoseClientId = clientId;
+            PoseEntityId = entityId;
+            PoseBroadcastEnabled = false;
+            PoseReceiveEnabled = true;
+            ClearReceivedPoseState();
         }
 
         protected override void UpdateSolver()
@@ -383,56 +432,122 @@ namespace XREngine.Components.Animation
 
         private void OnHumanoidPoseFrame(HumanoidPoseFrame frame)
         {
+            if (!PoseReceiveEnabled)
+                return;
+
+            if (BoundPoseSessionId == Guid.Empty)
+            {
+                ApplyLegacyPoseFrame(frame);
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(BoundPoseClientId)
+                || frame.SessionId != BoundPoseSessionId
+                || !string.Equals(frame.SourceClientId, BoundPoseClientId, StringComparison.Ordinal)
+                || frame.AvatarCount != 1
+                || frame.FrameSequence == 0
+                || frame.FrameSequence <= _lastReceivedFrameSequence)
+            {
+                return;
+            }
+
+            bool parsed = frame.Kind switch
+            {
+                HumanoidPosePacketKind.Baseline => TryApplyReceivedBaseline(frame),
+                HumanoidPosePacketKind.Delta => TryApplyReceivedDelta(frame),
+                _ => false,
+            };
+            if (parsed)
+            {
+                _lastReceivedFrameSequence = frame.FrameSequence;
+                _appliedNetworkPoseFrameCount++;
+            }
+        }
+
+        private void ApplyLegacyPoseFrame(HumanoidPoseFrame frame)
+        {
             ReadOnlySpan<byte> payload = frame.Payload;
             int offset = 0;
-
-            for (int i = 0; i < frame.AvatarCount && offset < payload.Length; i++)
+            for (int avatar = 0; avatar < frame.AvatarCount; avatar++)
             {
                 if (payload.Length - offset < 6)
-                    break;
+                    return;
 
-                HumanoidPoseFlags flags = (HumanoidPoseFlags)BitConverter.ToUInt16(payload[(offset + 2)..]);
+                ushort entityId = BinaryPrimitives.ReadUInt16LittleEndian(payload[offset..]);
+                HumanoidPoseFlags flags = (HumanoidPoseFlags)BinaryPrimitives.ReadUInt16LittleEndian(payload[(offset + 2)..]);
                 bool isBaseline = flags.HasFlag(HumanoidPoseFlags.Baseline);
-
                 bool parsed;
-                QuantizedHumanoidPose pose = default;
-                HumanoidPoseAvatarHeader header = default;
-                int consumed = 0;
-
+                QuantizedHumanoidPose pose;
+                HumanoidPoseAvatarHeader header;
+                int consumed;
                 if (isBaseline)
                     parsed = HumanoidPoseCodec.TryReadBaselineAvatar(payload[offset..], out header, out pose, out consumed);
-                else if (_receivedBaselines.TryGetValue(BitConverter.ToUInt16(payload[offset..]), out var baseline) && baseline.sequence == frame.BaselineSequence)
-                    parsed = HumanoidPoseCodec.TryReadDeltaAvatar(payload[offset..], baseline.pose, out header, out pose, out consumed, _delta);
+                else if (_legacyReceivedBaselines.TryGetValue(entityId, out var baseline) && baseline.Sequence == frame.BaselineSequence)
+                    parsed = HumanoidPoseCodec.TryReadDeltaAvatar(payload[offset..], baseline.Pose, out header, out pose, out consumed, _delta);
                 else
-                    parsed = false;
+                    return;
 
-                if (!parsed || consumed <= 0)
-                    break;
+                if (!parsed || consumed <= 0 || offset + consumed > payload.Length)
+                    return;
 
                 offset += consumed;
-
                 if (isBaseline)
-                    _receivedBaselines[header.EntityId] = (pose, frame.BaselineSequence);
+                {
+                    _legacyReceivedBaselines[entityId] = (pose, header.Sequence);
+                    if (entityId == PoseEntityId)
+                    {
+                        _receivedBaselinePose = pose;
+                        _receivedBaselineSequence = header.Sequence;
+                    }
+                }
 
-                if (header.EntityId == PoseEntityId)
+                if (entityId == PoseEntityId)
                     ApplyPose(pose);
             }
         }
 
-        private void Register()
+        private bool TryApplyReceivedBaseline(HumanoidPoseFrame frame)
         {
-            if (PoseEntityId == 0)
-                return;
+            if (!HumanoidPoseCodec.TryReadBaselineAvatar(frame.Payload, out HumanoidPoseAvatarHeader header, out QuantizedHumanoidPose pose, out int consumed)
+                || consumed != frame.Payload.Length
+                || header.EntityId != PoseEntityId
+                || !header.Flags.HasFlag(HumanoidPoseFlags.Baseline)
+                || header.Sequence == 0
+                || header.Sequence != frame.BaselineSequence)
+            {
+                return false;
+            }
 
-            _registry[PoseEntityId] = this;
+            _receivedBaselinePose = pose;
+            _receivedBaselineSequence = header.Sequence;
+            ApplyPose(pose);
+            return true;
         }
 
-        private void Unregister()
+        private bool TryApplyReceivedDelta(HumanoidPoseFrame frame)
         {
-            if (PoseEntityId == 0)
-                return;
+            if (_receivedBaselinePose is not { } baseline || frame.BaselineSequence == 0 || frame.BaselineSequence != _receivedBaselineSequence)
+                return false;
 
-            _registry.Remove(PoseEntityId);
+            if (!HumanoidPoseCodec.TryReadDeltaAvatar(frame.Payload, baseline, out HumanoidPoseAvatarHeader header, out QuantizedHumanoidPose pose, out int consumed, _delta)
+                || consumed != frame.Payload.Length
+                || header.EntityId != PoseEntityId
+                || header.Flags.HasFlag(HumanoidPoseFlags.Baseline))
+            {
+                return false;
+            }
+
+            ApplyPose(pose);
+            return true;
+        }
+
+        private void ClearReceivedPoseState()
+        {
+            _receivedBaselinePose = null;
+            _legacyReceivedBaselines.Clear();
+            _receivedBaselineSequence = 0;
+            _lastReceivedFrameSequence = 0;
+            _appliedNetworkPoseFrameCount = 0;
         }
 
         private static float GetYawRadians(Quaternion q)

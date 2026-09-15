@@ -28,6 +28,7 @@ public unsafe partial class OpenXRAPI
         StopOpenXrPacingThread();
         if (_openXrPacingThread?.IsAlive == true)
         {
+            PublishOpenXrEyeResolutionReplacementRetryBackoff();
             ResumeOpenXrPacingAfterDeferredReplacement(sessionWasBegun);
             return OpenXrSwapchainReplacementOutcome.DeferredBeforeDetachment;
         }
@@ -45,11 +46,17 @@ public unsafe partial class OpenXRAPI
 
         if (cleanup == OpenXrSwapchainCleanupOutcome.DeferredBeforeDetachment)
         {
+            PublishOpenXrEyeResolutionReplacementRetryBackoff();
             ResumeOpenXrPacingAfterDeferredReplacement(sessionWasBegun);
             return OpenXrSwapchainReplacementOutcome.DeferredBeforeDetachment;
         }
 
         if (cleanup != OpenXrSwapchainCleanupOutcome.Completed || HasCreatedOpenXrSwapchains())
+            return OpenXrSwapchainReplacementOutcome.FailedAfterDetachment;
+
+        if (TryConsumeSmokeLifecycleFault(
+                OpenXrSmokeLifecycleFaultStage.PostDetachReplacementFailure,
+                "Simulated post-detach replacement failure before CreateSwapchains."))
             return OpenXrSwapchainReplacementOutcome.FailedAfterDetachment;
 
         try

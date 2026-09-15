@@ -33,6 +33,8 @@ http://localhost:5467/mcp/
 
 Use an isolated editor session for agent-driven MCP work. Each named session gets its own managed build output and intermediate files, MCP port, process identity, editor preferences, asset cache/metadata, and logs. A normal solution build can then overwrite `Build/Editor` without touching a running session.
 
+For a window configured for OpenXR, `get_openxr_runtime_diagnostics` reads session state, submission ownership and deferred retirement without waiting for the GPU. Use `request_openxr_session_exit` for an orderly runtime exit. Once diagnostics show teardown completed, `request_openxr_session_start` resumes session creation on that window. Both requests complete asynchronously; confirm the resulting session state and fresh eye output in diagnostics and captures. A renderer-recreation-required state remains terminal until the renderer is replaced. `restart_renderer` with `restart_openxr_session: true` replaces the renderer and resumes OpenXR only if presentation was active when replacement began.
+
 ```powershell
 pwsh Tools/Manage-McpEditorSession.ps1 Start -Name agent-rendering
 pwsh Tools/Manage-McpEditorSession.ps1 Start -Name agent-physics

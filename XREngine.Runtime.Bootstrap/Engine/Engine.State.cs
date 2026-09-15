@@ -153,6 +153,16 @@ namespace XREngine
         /// </summary>
         private static int GetDedicatedBackgroundThreadCount(out string[] names)
         {
+            // A headless host does not install Vulkan/OpenXR frame, recording, or pipeline lanes.
+            // Reserving those renderer-owned threads would make managed workers exceed their Job Object
+            // CPU budget before a world, UDP socket, or tick can start.
+            if (RuntimeApplicationCapabilityServices.Current.IsConfigured
+                && !RuntimeApplicationCapabilityServices.Current.AllowsWindows)
+            {
+                names = ["job-manager-deferred-enqueue", "job-manager-remote-dispatch"];
+                return names.Length;
+            }
+
             const int defaultVulkanCommandChainWorkers = 4;
             const int maximumVulkanCommandChainWorkers = 8;
             int vulkanCommandChainWorkers = defaultVulkanCommandChainWorkers;

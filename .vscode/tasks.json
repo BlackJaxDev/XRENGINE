@@ -1,6 +1,23 @@
-﻿{
+{
 	"version": "2.0.0",
 	"tasks": [
+		{
+			"label": "Build-ControlPlane-Service",
+			"type": "process",
+			"command": "dotnet",
+			"args": ["build", "${workspaceFolder}/XREngine.ControlPlane.Service/XREngine.ControlPlane.Service.csproj"],
+			"group": "build",
+			"problemMatcher": "$msCompile"
+		},
+		{
+			"label": "Start-ControlPlane-Service",
+			"type": "process",
+			"command": "dotnet",
+			"args": ["run", "--no-build", "--project", "${workspaceFolder}/XREngine.ControlPlane.Service", "--", "--config", "${input:controlPlaneConfig}"],
+			"dependsOn": "Build-ControlPlane-Service",
+			"presentation": { "reveal": "always", "panel": "dedicated" },
+			"problemMatcher": []
+		},
 		{
 			"label": "Build-Editor",
 			"command": "dotnet",
@@ -436,7 +453,7 @@
 			"args": [
 				"/d",
 				"/c",
-				"start \"\" /D \"${workspaceFolder}\\XREngine.Server\" \"${workspaceFolder}\\XREngine.Server\\bin\\Debug\\net10.0-windows10.0.26100.0\\XREngine.Server.exe\""
+				"start \"\" /D \"${workspaceFolder}\\XREngine.Server\" \"${workspaceFolder}\\XREngine.Server\\bin\\Debug\\net10.0-windows10.0.26100.0\\XREngine.Server.exe\" --development"
 			],
 			"dependsOn": "Build-Server",
 			"presentation": {
@@ -1468,6 +1485,13 @@
 				"$msCompile"
 			],
 			"group": "build"
+		}
+	],
+	"inputs": [
+		{
+			"id": "controlPlaneConfig",
+			"type": "promptString",
+			"description": "Absolute path to the local control-plane operator configuration JSON"
 		}
 	]
 }

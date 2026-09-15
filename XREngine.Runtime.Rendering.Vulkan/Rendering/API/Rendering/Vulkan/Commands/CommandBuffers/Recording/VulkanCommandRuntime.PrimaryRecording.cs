@@ -665,7 +665,29 @@ internal sealed partial class VulkanCommandRuntime
             reason = "frame-plan precondition failed: the prepared primary command plan is not frozen";
             return false;
         }
-        if (input.FramePlan.PlannerRevision !=
+        if (input.RecordingPlannerKey is { } recordingPlannerKey)
+        {
+            if (input.LogicalViewId == 0UL ||
+                recordingPlannerKey.LogicalViewId != input.LogicalViewId)
+            {
+                reason =
+                    "frame-plan precondition failed: the logical-view planner key does not match the prepared input";
+                return false;
+            }
+            VulkanPreparedResourcePlanStamp resourcePlanStamp = input.ResourcePlanStamp;
+            if (!input.FramePlan.MatchesRecordingPlannerStamp(
+                    in recordingPlannerKey,
+                    in resourcePlanStamp))
+            {
+                reason =
+                    "frame-plan precondition failed: the sealed logical-view planner owner does not match the resource stamp; " +
+                    input.FramePlan.DescribeRecordingPlannerStampMismatch(
+                        in recordingPlannerKey,
+                        in resourcePlanStamp);
+                return false;
+            }
+        }
+        else if (input.FramePlan.PlannerRevision !=
             input.ResourcePlanStamp.ResourcePlannerRevision)
         {
             reason =

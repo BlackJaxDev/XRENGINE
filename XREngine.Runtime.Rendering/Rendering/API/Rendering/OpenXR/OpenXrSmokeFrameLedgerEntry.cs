@@ -2,6 +2,7 @@ namespace XREngine.Rendering.API.Rendering.OpenXR;
 
 public struct OpenXrSmokeFrameLedgerEntry
 {
+    public OpenXrSmokeFrameTiming Timing { get; set; }
     public int RetainedIndex { get; set; }
     public long CompletedFrameCount { get; set; }
     public long SubmittedFrameCount { get; set; }

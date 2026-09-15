@@ -205,37 +205,84 @@ public unsafe partial class OpenXRAPI
         OpenXrEyeResolutionSettingsSnapshot current,
         OpenXrEyeResolutionSettingsSnapshot applied)
     {
-        if (Interlocked.Exchange(ref _openXrEyeResolutionRecreateQueued, 1) != 0)
+        if (Interlocked.CompareExchange(
+                ref _openXrEyeResolutionReplacementAdmissionState,
+                (int)OpenXrEyeResolutionReplacementAdmissionState.DrainRequested,
+                (int)OpenXrEyeResolutionReplacementAdmissionState.Idle) !=
+            (int)OpenXrEyeResolutionReplacementAdmissionState.Idle)
             return;
 
         string reason = $"OpenXR eye resolution changed from {applied} to {current}.";
-        Debug.LogWarning($"[OpenXR] {reason} Replacing OpenXR session swapchains with the new dimensions.");
+        Debug.LogWarning($"[OpenXR] {reason} Draining the active frame before replacing session swapchains.");
+    }
 
-        bool scheduled = false;
-        try
+    private void ServiceOpenXrEyeResolutionReplacement()
+    {
+        if (!_sessionBegun || IsOpenXrRuntimeLossPending() ||
+            Window?.Renderer is not { IsDeviceLost: false })
+            return;
+
+        PromoteOpenXrEyeResolutionReplacementRetryIfDue();
+        if (Volatile.Read(ref _openXrEyeResolutionReplacementAdmissionState) !=
+            (int)OpenXrEyeResolutionReplacementAdmissionState.DrainRequested ||
+            !CanReplaceOpenXrSwapchainsInSession())
+            return;
+
+        OpenXrEyeResolutionSettingsSnapshot current = CaptureCurrentOpenXrEyeResolutionSettings();
+        OpenXrEyeResolutionSettingsSnapshot applied = CaptureAppliedOpenXrEyeResolutionSettings();
+        if (OpenXrEyeResolutionSettingsMatch(current, applied))
         {
-            RuntimeRenderingHostServices.Scheduling.InvokeRenderThreadTask(
-                () =>
-                {
-                    try
-                    {
-                        RecreateOpenXrSessionResourcesForEyeResolution(reason);
-                        return true;
-                    }
-                    finally
-                    {
-                        Interlocked.Exchange(ref _openXrEyeResolutionRecreateQueued, 0);
-                    }
-                },
-                "OpenXR.EyeResolution.RecreateSessionResources",
-                RenderThreadJobKind.RequiresGraphicsContext);
-            scheduled = true;
+            CompleteActiveOpenXrEyeResolutionReplacementRequest();
+            return;
         }
-        finally
-        {
-            if (!scheduled)
-                Interlocked.Exchange(ref _openXrEyeResolutionRecreateQueued, 0);
-        }
+
+        RecreateOpenXrSessionResourcesForEyeResolution(
+            $"OpenXR eye resolution changed from {applied} to {current}.");
+    }
+
+    private void PublishOpenXrEyeResolutionReplacementRetryBackoff()
+    {
+        long delay = (long)(_intentionalOpenXrRecreateProbeInterval.TotalSeconds * System.Diagnostics.Stopwatch.Frequency);
+        Volatile.Write(
+            ref _openXrEyeResolutionReplacementRetryTimestamp,
+            System.Diagnostics.Stopwatch.GetTimestamp() + Math.Max(1L, delay));
+        Volatile.Write(
+            ref _openXrEyeResolutionReplacementAdmissionState,
+            (int)OpenXrEyeResolutionReplacementAdmissionState.RetryBackoff);
+    }
+
+    private void PromoteOpenXrEyeResolutionReplacementRetryIfDue()
+    {
+        if (Volatile.Read(ref _openXrEyeResolutionReplacementAdmissionState) !=
+            (int)OpenXrEyeResolutionReplacementAdmissionState.RetryBackoff ||
+            System.Diagnostics.Stopwatch.GetTimestamp() <
+            Volatile.Read(ref _openXrEyeResolutionReplacementRetryTimestamp))
+            return;
+
+        Interlocked.CompareExchange(
+            ref _openXrEyeResolutionReplacementAdmissionState,
+            (int)OpenXrEyeResolutionReplacementAdmissionState.DrainRequested,
+            (int)OpenXrEyeResolutionReplacementAdmissionState.RetryBackoff);
+    }
+
+    private void ClearOpenXrEyeResolutionReplacementRequest()
+    {
+        Volatile.Write(ref _openXrEyeResolutionReplacementRetryTimestamp, 0L);
+        Volatile.Write(
+            ref _openXrEyeResolutionReplacementAdmissionState,
+            (int)OpenXrEyeResolutionReplacementAdmissionState.Idle);
+        if (_sessionBegun)
+            SignalPacingThreadFrameSubmitted();
+    }
+
+    /// <summary>
+    /// Completes a live-session request, then rechecks settings so a change
+    /// coalesced while the prior replacement was active is not lost.
+    /// </summary>
+    private void CompleteActiveOpenXrEyeResolutionReplacementRequest()
+    {
+        ClearOpenXrEyeResolutionReplacementRequest();
+        HandleOpenXrRenderSettingsChanged();
     }
 
     private void RecreateOpenXrSessionResourcesForEyeResolution(string reason)
@@ -258,15 +305,24 @@ public unsafe partial class OpenXRAPI
             GetOpenXrRuntimeDimensionRefreshRequirement(current);
         if (refreshRequirement != OpenXrRuntimeDimensionRefreshRequirement.None)
         {
-            BeginOpenXrRuntimeDimensionRefresh(refreshRequirement, reason);
             if (!CanReplaceOpenXrSwapchainsInSession())
             {
-                Debug.LogWarning($"[OpenXR] Deferred runtime dimension refresh until the active frame and retired swapchain generations are quiescent. Requirement={refreshRequirement}; Reason={reason}");
                 return;
             }
 
+            if (RequiresRendererRecreationForInstanceReplacement(out string rendererRecreationReason))
+            {
+                ClearOpenXrEyeResolutionReplacementRequest();
+                EnterRendererRecreationRequiredTerminal(
+                    OpenXrRuntimeLossReason.RuntimeUnavailable,
+                    $"runtime dimension refresh requires service restart, but {rendererRecreationReason}");
+                return;
+            }
+
+            BeginOpenXrRuntimeDimensionRefresh(refreshRequirement, reason);
             if (!TearDownSessionResourcesOnOwningThread(destroyInstance: true))
             {
+                ClearOpenXrEyeResolutionReplacementRequest();
                 // Teardown can stop pacing and clear the begun state before a
                 // deferred child blocks parent destruction. Never retain the
                 // SessionRunning label after that boundary.
@@ -274,6 +330,8 @@ public unsafe partial class OpenXRAPI
                 Debug.LogWarning($"[OpenXR] Runtime dimension refresh teardown is waiting for child retirement. Requirement={refreshRequirement}; Reason={reason}");
                 return;
             }
+
+            ClearOpenXrEyeResolutionReplacementRequest();
 
             string serviceReason = $"OpenXR eye resolution dimension refresh: {reason}";
             SetRuntimeState(OpenXrRuntimeState.DesktopOnly);
@@ -293,7 +351,6 @@ public unsafe partial class OpenXRAPI
         OpenXrSwapchainReplacementOutcome replacement = TryReplaceSwapchainsInSession(reason);
         if (replacement == OpenXrSwapchainReplacementOutcome.DeferredBeforeDetachment)
         {
-            Debug.LogWarning($"[OpenXR] Deferred eye-resolution replacement because the active frame, CPU preparation, or retirement state is not yet safe. Reason={reason}");
             return;
         }
 
@@ -307,6 +364,7 @@ public unsafe partial class OpenXRAPI
         // runtime state. Re-probing/restarting here would invalidate a live
         // session after the new swapchains were already created.
         RecordAppliedOpenXrEyeResolutionSettings();
+        CompleteActiveOpenXrEyeResolutionReplacementRequest();
         ResetOpenXrProbeFailureState();
         Debug.Out($"[OpenXR] Applied in-session eye-resolution replacement. Reason={reason}");
     }

@@ -30,7 +30,8 @@ internal readonly record struct VulkanPreparedPrimaryCommandInput(
     ulong LogicalViewId = 0,
     ulong? RecordingStaticOperationSignatureOverride = null,
     bool CallerOwnsSubmissionMarkersUntilRecordingSucceeds = false,
-    VulkanAcceptedFramePlan? AcceptedFramePlan = null)
+    VulkanAcceptedFramePlan? AcceptedFramePlan = null,
+    VulkanFrameOpPlannerStateKey? RecordingPlannerKey = null)
 {
     /// <summary>
     /// Structural identity of the exact static stream submitted to this

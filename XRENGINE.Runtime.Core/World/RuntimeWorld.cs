@@ -291,6 +291,8 @@ public sealed partial class RuntimeWorld : IRuntimeWorldContext, IRuntimePhysics
     public void FixedUpdate()
     {
         ThrowIfDisposed();
+        if (PlayState != RuntimeWorldPlayState.Playing)
+            return;
         TickGroup(ETickGroup.PrePhysics);
         if (PhysicsEnabled)
         {

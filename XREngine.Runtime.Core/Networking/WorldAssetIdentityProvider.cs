@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Runtime.CompilerServices;
 using XREngine.Networking;
 using XREngine.Scene;
 
@@ -7,8 +8,26 @@ namespace XREngine;
 
 public static class WorldAssetIdentityProvider
 {
+    private static readonly ConditionalWeakTable<XRWorld, WorldAssetIdentity> VerifiedIdentities = new();
+    private static readonly ConditionalWeakTable<XRWorld, HashSet<string>> VerifiedAssets = new();
+
+    /// <summary>Registers the manifest paths only after every package file has passed integrity verification.</summary>
+    public static void RegisterVerifiedAssetPaths(XRWorld world, IEnumerable<string> paths)
+    {
+        var verified = new HashSet<string>(paths.Select(static path => path.Replace('\\', '/')), StringComparer.Ordinal);
+        VerifiedAssets.Remove(world);
+        VerifiedAssets.Add(world, verified);
+    }
+
+    public static bool IsVerifiedAssetPath(XRWorld? world, string? path)
+        => world is not null && !string.IsNullOrWhiteSpace(path) && path.Length <= 512
+            && VerifiedAssets.TryGetValue(world, out HashSet<string>? paths) && paths.Contains(path);
+
     public static WorldAssetIdentity Create(XRWorld? world, string fallbackBuildVersion)
     {
+        if (world is not null && VerifiedIdentities.TryGetValue(world, out WorldAssetIdentity? verified))
+            return Clone(verified);
+
         string worldId = GetOverride(XREngineEnvironmentVariables.WorldId)
             ?? (world?.ID.ToString("D") ?? "local-world");
         string revisionId = GetOverride(XREngineEnvironmentVariables.WorldRevision)
@@ -32,6 +51,26 @@ public static class WorldAssetIdentityProvider
             }
         };
     }
+
+    /// <summary>Binds an immutable package identity to a world after the package bytes were verified.</summary>
+    public static void RegisterVerifiedIdentity(XRWorld world, WorldAssetIdentity identity)
+    {
+        ArgumentNullException.ThrowIfNull(world);
+        ArgumentNullException.ThrowIfNull(identity);
+        VerifiedIdentities.Remove(world);
+        VerifiedIdentities.Add(world, Clone(identity));
+    }
+
+    private static WorldAssetIdentity Clone(WorldAssetIdentity source)
+        => new()
+        {
+            WorldId = source.WorldId,
+            RevisionId = source.RevisionId,
+            ContentHash = source.ContentHash,
+            AssetSchemaVersion = source.AssetSchemaVersion,
+            RequiredBuildVersion = source.RequiredBuildVersion,
+            Metadata = new Dictionary<string, string>(source.Metadata, StringComparer.Ordinal),
+        };
 
     private static string ResolveRevisionId(XRWorld? world)
     {

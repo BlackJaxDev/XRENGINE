@@ -63,7 +63,9 @@ namespace XREngine.Timers
 
         #region Pause Support
 
-        private bool _paused = false;
+        private volatile bool _paused = false;
+        private volatile bool _simulationBoundaryPaused;
+        internal bool SimulationBoundaryPaused { get => _simulationBoundaryPaused; set => _simulationBoundaryPaused = value; }
         private bool _stepOneFrame = false;
 
         /// <summary>
@@ -103,6 +105,8 @@ namespace XREngine.Timers
         /// </summary>
         private bool ShouldDispatchUpdate()
         {
+            if (_simulationBoundaryPaused)
+                return false;
             if (!_paused)
                 return true;
 

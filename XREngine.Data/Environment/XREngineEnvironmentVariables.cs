@@ -54,6 +54,8 @@ public static class XREngineEnvironmentVariables
     public const string RealtimeJoinPayloadFile = "XRE_REALTIME_JOIN_PAYLOAD_FILE";
     public const string SessionId = "XRE_SESSION_ID";
     public const string SessionToken = "XRE_SESSION_TOKEN";
+    public const string ManagedWorkerConfigFile = "XRE_MANAGED_WORKER_CONFIG_FILE";
+    public const string ManagedClientConfigFile = "XRE_MANAGED_CLIENT_CONFIG_FILE";
     public const string UdpAdvertisedPort = "XRE_UDP_ADVERTISED_PORT";
     public const string UdpBindPort = "XRE_UDP_BIND_PORT";
     public const string UdpClientReceivePort = "XRE_UDP_CLIENT_RECEIVE_PORT";
@@ -198,6 +200,8 @@ public static class XREngineEnvironmentVariables
     public const string SkinCullRejectDiag = "XRE_SKIN_CULL_REJECT_DIAG";
     public const string FirstChanceExceptions = "XRE_FIRST_CHANCE_EXCEPTIONS";
     public const string OpenXrStrictSpsFailureStage = "XRE_OPENXR_STRICT_SPS_FAILURE_STAGE";
+    /// <summary>Opt-in OpenXR smoke-only lifecycle fault scenario (V08, V10, or V20).</summary>
+    public const string OpenXrSmokeLifecycleFaultStage = "XRE_OPENXR_SMOKE_LIFECYCLE_FAULT_STAGE";
     public const string BypassVendorUpscale = "XRE_BYPASS_VENDOR_UPSCALE";
     public const string GlDebug = "XRE_GL_DEBUG";
     public const string GlSubmitTrace = "XRE_GL_SUBMIT_TRACE";

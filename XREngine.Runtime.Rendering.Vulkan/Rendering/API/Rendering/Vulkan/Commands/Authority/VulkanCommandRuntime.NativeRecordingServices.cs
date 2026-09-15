@@ -54,14 +54,14 @@ internal sealed partial class VulkanCommandRuntime
         switch (target)
         {
             case EFramebufferTarget.Framebuffer:
-                CommandBuffers.BoundReadFrameBuffer = frameBuffer;
-                CommandBuffers.BoundDrawFrameBuffer = frameBuffer;
+                ActiveBoundReadFrameBuffer = frameBuffer;
+                ActiveBoundDrawFrameBuffer = frameBuffer;
                 break;
             case EFramebufferTarget.ReadFramebuffer:
-                CommandBuffers.BoundReadFrameBuffer = frameBuffer;
+                ActiveBoundReadFrameBuffer = frameBuffer;
                 break;
             case EFramebufferTarget.DrawFramebuffer:
-                CommandBuffers.BoundDrawFrameBuffer = frameBuffer;
+                ActiveBoundDrawFrameBuffer = frameBuffer;
                 break;
             default:
                 return;

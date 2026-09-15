@@ -582,3 +582,437 @@ fault/restart validation and physical headset availability remain unanswered.
 The scratch deletion's automatic reviewer disclosed only `blocked by policy`;
 the precise blocking rule remains unknown. No retry, bypass, or policy change
 was made. All current evidence reused this task's existing scratch root.
+
+### Resumed after remote master pull
+
+The user restored shell/filesystem access and requested remote master followed
+by all Phase 6 work. The checkout had no tracked local changes. SSH fetch failed
+with public-key authentication; HTTPS to the same repository fast-forwarded
+master from `51ffc79f8` to `e72ef7ce5`. The saved origin URL is unchanged and
+submodules were not recursively updated. The new AGENTS allocation rule was read.
+
+XR-I18's fallback now uses `ActiveBoundDrawFrameBuffer`, respecting the XR
+thread-local unbind. The tracker also closes accepted admission before validating
+completion data so a corrupt receipt remains quarantined. The next live baseline
+is Build36/Start36. Further diagnostics and lifetime work will be built separately.
+
+No Monado service remained at resumption. The existing service helper started
+a stationary simulated HMD with this task's marker at
+`reports/phase6-owned-monado.json`; startup reported PID10148. Generic OpenXR
+settings continue to avoid implicit service management. The user identified
+SteamVR as the available physical OpenXR runtime for the final hardware check.
+
+### Resumed Build38 and Start38–40 evidence
+
+Build36/37 encountered incomplete control-plane changes from another active task;
+those files were preserved. Build38 passed with zero warnings/errors in 71.57s.
+It includes the final target lookup, real frame/view/image provenance on preview
+submissions, the ordinary serial-eye route, and an immutable direct-eye emitter.
+
+Start38 submitted 2,267 projection frames. A real `xrRequestExitSession` first
+reported pending child retirement and incomplete teardown, then normal epoch 1
+completed with one generation queued/drained, no acquired swapchains, no pending
+tracker ownership, and 6,801 accepted/completed/retired submissions. Publication
+failures were zero. This closes XR-I17; the black output keeps visual validation
+open. Evidence: `mcp-output/38-after-exit.json`, `38-after-exit-final.json`,
+`logs/build-38.log` and `logs/engine-38` in the task evidence root.
+
+Start39 loaded RenderDoc successfully, but Monado starts/ends a capture around
+every XR frame whenever RenderDoc is loaded. The capture overhead disturbed
+pacing and produced desktop-only evidence; it does not validate XR output. One
+54,208,537-byte capture is retained as `renderdoc/phase6-39-eyes.rdc` with an
+inspected desktop export. The 98 task-owned temporary captures (about 5 GiB)
+were deleted after copying that capture. The exact-path cleanup succeeded under
+the current permissions; no specific cause for the earlier rejection is known.
+
+Start40 used Build38 without RenderDoc. It reached 8,310 projection frames and
+24,930 accepted/completed/retired submissions with zero publication failures.
+Per-eye visible/draw counts were four. Fresh readbacks of both post-processing
+and upstream resources were black: `HDRSceneTex`, FXAA/post/final, visibility
+identity/metadata/selection/depth, and shading diagnostics. The visibility PNG
+was visually inspected. Crucially, MCP identifies the eye pipeline as
+`RvcRenderPipeline`, with 57 resources including the Advanced visibility and
+shading resources; the desktop fixture's Default pipeline is not the eye pipeline.
+The target-binding correction alone therefore does not close XR-I18. Evidence:
+`mcp-output/40-left-resources.json`, `40-left-post-textures.json`,
+`40-left-hdr.json`, `40-left-visibility.json`, `40-before-exit.json` and
+`logs/engine-40`. The named editor was stopped after these captures.
+
+V06 capacity ownership guards, V13 timing/reuse evidence, V14 allocation counters,
+V07 one-shot failure seams, and I16 device-loss parent settlement are separate
+source work after Build38. They require a fresh build and runtime evidence; no
+tests have been added or modified.
+
+### Build44 allocation evidence and SteamVR Vulkan negotiation
+
+Build42 compiled rendering but hit a concurrent networking API mismatch in the
+editor. The stale two-argument `LeaveInstance` call now constructs the existing
+request DTO, preserving its two values. Build43 overlapped the new lifecycle
+validation partial before its OpenXR namespace import was complete. Build44 then
+passed with zero warnings/errors (67.74s). Its Monado Observe run, with verbose
+Vulkan tracing disabled, recorded **zero managed bytes** across 5,660 warmed
+registration calls, 9,435 polls, and 5,661 retirement calls. All 5,724 accepted
+submissions completed and retired; real session exit completed normal epoch 1.
+Per-poll native timeline queries still duplicated matching semaphore observations;
+the subsequent change shares one actual observation within each poll only.
+
+The Monado service helper had a UTC conversion defect: PowerShell deserialized
+the timestamp as `DateTime`, then a string cast lost its UTC kind before a second
+parse added the local offset. The helper now preserves `DateTime`'s UTC value.
+The original task-owned PID10148 was verified against its exact executable and
+start time, then the corrected helper stopped it successfully. A fresh owned
+service started as PID43392 with the same task marker.
+
+SteamVR Start41 failed in the engine's version guard before native graphics
+creation. The runtime advertises Vulkan 1.0–1.2, but the
+[OpenXR graphics requirements specification](https://registry.khronos.org/OpenXR/specs/1.1/man/html/XrGraphicsRequirementsVulkanKHR.html)
+defines the maximum as the highest tested instance version and explicitly permits
+newer compatible versions. The previous statement that this proves SteamVR cannot
+use Vulkan 1.4 was incorrect. The guard now warns above the tested ceiling while
+retaining actual Vulkan 1.4 loader/device/features and all native creation checks.
+
+Build45 passed with zero warnings/errors (72.49s). SteamVR Start45 successfully
+created a focused session and two 2688×2688, three-image swapchains. Logs report
+loader 1.4.350 and physical-device API 1.4.341. This closes XR-I19's initialization
+defect. It does not close hardware rendering: the early run has no accepted eye
+submissions and reports `The exact canonical scene publication is unavailable
+for advanced preparation` for each native eye stage. The version retry therefore
+reaches the rendering problem instead of failing a speculative compatibility gate.
+Evidence: `logs/41-editor.stderr.log`, `logs/build-44.log`,
+`mcp-output/44-after-exit.json`, `mcp-output/45-steamvr-runtime.json`,
+`45-steamvr-warm.json`, `45-steamvr-advanced.json` and the PID42884 session logs.
+
+### Planner identity and instrumented eye preparation
+
+The later Start45 diagnostic retry reached accepted native preparation, then
+rejected the paired logical plan because independent eye planners had revisions
+2 and 1 (21 and 22 operations). Those revisions are local to their owners and
+need not agree. The correction retains each eye's normalized logical-view key
+and validates its own frozen graph, revision, planner signature and allocation
+signature. Desktop/mirror inputs retain their existing global revision check.
+This correction still requires a fresh runtime result.
+
+Start46 used the actual single-eye route with SteamVR and GPU counters enabled.
+It recorded two projection frames and 16 accepted/completed/retired submissions
+before repeated preparation failures; its preview readback timed out. It is not
+successful single-eye output evidence. The named editor was stopped.
+
+Build47 passed with zero warnings/errors (71.64s). Its Monado run with
+`GpuIndirectInstrumented` exposed a separate frozen-publication mismatch:
+the left-eye operations requested pass signature 1714642880, while that exact
+left owner had published 1847552347. The former signature appeared on the right
+owner's publication. No submission was accepted and no GPU counter receipt was
+available. This is a planning failure before GPU execution, not evidence about
+the black visibility buffer's GPU cause. The first failure is retained in
+`logs/engine-47/log_vulkan_start.log`; runtime snapshots are
+`mcp-output/47-runtime.json` and `47-advanced.json`.
+
+The retained Build44 ledger independently supports timing and allocation work:
+32 rows have real frame IDs 8–18, populated predicted display times, and strictly
+ordered submit-start, submit-end and observed-completion timestamps. Every row
+is accepted, shape-matching, ownership-intact and retired, with no cancellation,
+abandonment or early settlement violation. First-use image ages are unknown;
+subsequent paired-eye image reuse ages are independently three frames while
+indices cycle 2, 0, 1. Forced-wait fields are zero because that cohort did not
+force a wait. V13 therefore still needs the pressure cohort's actual wait trace;
+V14 still needs fresh evidence after the per-poll query deduplication change.
+
+Build48 found a by-reference property argument error in the new validation;
+the argument now uses a local value. Build49 passed with zero warnings/errors
+(49.30s), but the exact graph-reference check rejected all native eye recording.
+Build50 added cold failure details and passed with zero warnings/errors (52.88s).
+Its diagnostic showed only the graph object changed: revision, planner signature
+and allocation signature were identical. Native resource realization can refreeze
+one eye's graph while preparing the other eye, so an earlier captured graph is
+not the final sealed graph even when physical ownership is unchanged.
+
+The subsequent correction validates the original stamp/state, allocator object,
+allocator ownership ID, revision and both signatures, then carries the exact
+`FramePlan`-owned `ResourcePlannerRuntimeGeneration` into the recording worker.
+The command stamp uses that generation's immutable graph. The final graph-reference
+check remains mandatory. Source review found no added hot-path allocation; Build52
+is the first runtime attempt with this correction.
+
+Start51 used Build50's three-command mirror/publish route. It accepted no work
+because the frozen graph lacked required Advanced native compute resources.
+This is separate from successful output or pressure validation. Starts49–51 were
+stopped through the named session manager; their failure evidence is retained in
+`mcp-output/49-runtime.json`, `50-runtime.json`, `51-runtime.json`,
+`logs/engine-49/log_vulkan_start.log`, and `logs/engine-50/log_vulkan_start.log`.
+
+Build52 passed with zero warnings/errors (51.34s), but continuity validation
+still rejected the eye. Build53's expanded diagnostic establishes why:
+the coherent producer stamp used live allocator owner 29, while the sealed
+publication used owner 20. Both had identical revisions and signatures.
+Eye authoring had published the exact keyed owner inside its pipeline resource
+scope; later preparation ran on the restored outer eye scope and created a
+duplicate allocator. Preparation now re-enters the selected pipeline's exact
+resource scope, checks its failure state, realizes resources, reconciles layouts,
+and captures its final state before recording. The sealed-generation adoption
+still handles later graph refreezes. This is source-corrected but awaits Build54
+runtime evidence. The exact owner diagnostic is retained in
+`logs/engine-53/log_vulkan_start.log`.
+
+Build54 encountered a concurrent networking compile error: a duplicate recursive
+`HandlePlayerLeave` stub. Removing that stub preserves the existing implementation.
+Build55 passed but still selected sealed owner 20 instead of prepared owner 28.
+The logical-plan builders substituted the global planner switching map for the
+map owned by the exact eye. Single-eye planning now retains the eye's captured
+map; paired planning needs exact lookup across both captured maps without merging
+them or falling back across owners.
+
+Build56 passed with zero warnings/errors (67.69s). The ordinary single-eye run
+submitted two projection frames and accepted/completed/retired 12 eye and preview
+submissions. Its ledger confirms intact ownership and no early settlement, but
+rendering then stopped advancing after foreground pipeline-preparation exceptions.
+The retained pending XR frame was retried with no new eye operations; a preview
+readback timed out. This is not successful output acceptance. The named session
+was stopped. Evidence: `mcp-output/56-runtime-warm.json`, `56-left-preview.json`,
+`logs/engine-56-start.log`, and `logs/engine-56-tail.log`.
+
+Build57 passed with zero warnings/errors (77.31s). It includes paired lookup
+across the two eye maps, exact graph/allocator ownership, and cache checks for
+the map and both signatures. A final provenance guard was initially too broad:
+desktop resource publication clones the map but shallow-copies historical
+entries, which intentionally keep their historical embedded map. The next
+build applies map-container equality only to paired authority; exact graph,
+allocator liveness and ownership ID remain required on every path.
+
+The same run confirms the frame-failure cleanup gap and its bounded correction.
+After consuming `_framePrepared`, `RenderFrame` now owns finalization through
+`try/catch/finally`: it attempts a no-layer end on healthy pre-end failure,
+preserves the original exception, discards only pending history, and releases
+pacing. One attempt marker prevents a second native end after a post-call
+exception. Start57 advances through 47 no-layer frames with zero EndFrame errors
+despite the planner rejection; it accepts no GPU work and proves no visible
+output. Final review additionally orders all old-frame/loss writes before the
+pending-frame admission publication and rechecks health after preparation
+admission. Build58 is the first run with those last ordering/provenance changes.
+Evidence: `logs/build-57.log`, `logs/rendering-57-start.log`,
+`mcp-output/57-runtime-final.json`, and `reports/phase6-57-single-summary.json`.
+
+### Visible paired output and bounded tracker acceptance
+
+Build58 passed with zero warnings/errors (71.74s). Its ordinary single-eye run
+exposed XR-I21: the eye's paced published collection is compared against the
+independently advancing desktop consumed-collection generation. The later log
+example has package collect 187171 versus desktop consumed 198494, with matching
+resource/descriptor generations. A separate exact collection/package authority
+is needed; relaxing the validator or fabricating an output request is inappropriate.
+
+Start59 uses Build58 with sequential paired submission (`serial=0`, `mirrorFBO=0`).
+Both 896×1007 RVC eye previews show the red cube with stereo parallax. The left
+and right render/copy IDs agree at 907/911. After moving the cube, the later left
+capture at frame 4104 changes pixels and position. The desktop capture also shows
+the cube and grid. These PNGs were opened and inspected. Exact planner ownership,
+active framebuffer state and graph-generation continuity close XR-I18; paired
+receipt/output and preview ownership close XR-V18/V19.
+
+The 32 retained receipt rows contain 11 paired and 21 preview submissions. All
+are accepted, shape-matching, pins-transferred, ownership-intact while incomplete,
+actually completed and retired, with no early-settlement violation. Each paired
+row releases two recorded/prepared owners and resets two frame slots once; each
+preview row releases one temporary command once. The final real session exit
+retires all 17,829 accepted submissions, drains two queued generations and reaches
+normal teardown epoch 1 with zero active/reserved/pending-commit ownership. There
+are no Vulkan validation errors or publication failures in this cohort. Native
+slot ownership and the reviewed shared runtime queue gates close XR-I13/I20.
+
+XR-V14's warmed observation reports 3,203 registration calls, 5,339 polls and
+3,201 retirement calls with zero allocated bytes/high-water in every category.
+The 5,338 timeline queries across those polls support shared-semaphore query
+deduplication; an empty poll needs no native query. Retained storage limits are
+64 uploads, three command buffers, three slots, 64 image records and 32 ledger
+rows. The three active entries at the intermediate snapshot are a live tail,
+not orphaned work; final teardown settles them.
+
+Start59 also exposes two outstanding lifecycle limits. Repeated active-session
+resize attempts safely defer before detachment but starve because each queued
+attempt observes another begun XR frame; the admission boundary needs a pending
+replacement intent. After normal XR teardown, desktop completion maintenance
+attempts to obtain a live XR view set that has already been cleared. This is a
+separate remaining cleanup failure despite truthful zero XR ownership.
+
+Evidence: `mcp-output/59-runtime-warm.json`, `59-final-runtime.json`,
+`59-left-preview.json`, `59-right-preview.json`, `59-left-shifted-later.json`,
+`59-main.json`, `59-after-exit.json`, `logs/general-59-resize-tail.log`, and
+`logs/vulkan-59-tail.log`. The sampled desktop Vulkan transaction has acquire
+0.0092ms, slot completion wait 0.0191ms and native present 0.0457ms; the coarse
+16.35ms “Present” label includes the entire transaction, chiefly CPU preparation
+and recording. XR deadline correlation remains XR-V15/V16 work.
+
+### Submission capacity and rejection fault runs
+
+Start60 holds completion observation on real accepted work until the tracker
+reaches its capacity of three. It records high-water three, one visible admission
+deferral, released hold and continuing projection output. The first retained
+paired/preview receipts retain ownership while completion is unobserved and
+settle only after the actual completion query; no early-settlement violations
+occur. Real exit completes/retires all 5,157 accepted submissions and reaches
+normal teardown epoch 1 with zero active/pending ownership. No forced wait was
+needed in this scenario. Evidence: `60-held-runtime.json`, `60-before-exit.json`
+and `60-after-exit.json` under `mcp-output/`.
+
+Start61 rejects one paired submission before the native call. Its receipt has
+no submit/completion timestamp, semaphore or timeline value; it is cancelled
+without transferred pins or false GPU completion. Its two recorded/prepared
+owners and slots are released once with zero early-settlement violations.
+Rendering recovers, and real exit reports 1,272 accepted/completed submissions,
+one rejection and 1,273 total retired records, with zero remaining ownership.
+The accepted-publication boundary is exercised separately below. Evidence:
+`mcp-output/61-rejection-runtime.json` and `61-after-exit.json`.
+
+Start62 injects one publication failure after the paired native submission was
+accepted (serial 1, frame 8). Its real submit interval, semaphore and timeline
+value remain attached; transferred pins survive the accepted-incomplete
+observation. Actual completion releases the two recorded/prepared owners and
+slots once, with one retirement callback and no early-settlement violation.
+Real exit completes/retires all 3,783 accepted submissions, reports exactly one
+publication failure and zero rejection, and reaches normal teardown epoch 1 with
+zero active/reserved/pending-commit ownership and zero pending generations.
+This and Start61 close XR-V07 without equating pre-submit cancellation with GPU
+completion. Evidence: `mcp-output/62-publication-failure-runtime.json` and
+`62-after-exit.json`.
+
+### Exact XR package consumption authority and serial validation
+
+The direct eye path now captures an immutable internal authority containing its
+effective command collection, published package generation and collect generation.
+Capture and revalidation use the existing collection read scope. The pipeline
+receives that collect generation independently of desktop collection; exact-output
+requests still require matching identity. Missing or changed authority fails
+explicitly. No global generation or package validation rule was weakened.
+
+Build63 initially caught an explicit `in` argument applied to a property; omitting
+that modifier lets C# supply the readonly parameter's stack copy. The corrected
+build passes with zero warnings/errors in 50.45 seconds. Start63 submits ordinary
+serial eyes while desktop collection advances. Both eye PNGs were opened and
+inspected: red cube, stereo parallax, matching render/copy IDs. The first left
+capture preceded application of the asynchronous cube move; the later frame
+9690 capture shows the moved cube, as does right frame 8763. The retained ledger
+contains 16 single-command eye receipts and 16 preview receipts. Eye ownership
+remains intact while accepted-incomplete, then releases its recorded owner and
+mapped/data slot once on actual completion. No Vulkan validation errors were
+found in the observed run.
+
+Real session exit completes/retires all 5,106 accepted submissions, with zero
+active/reserved/pending-commit records, zero publication or EndFrame failures,
+and normal teardown epoch 1. This closes XR-I21 and XR-V02. Evidence:
+`mcp-output/63-{runtime,warm-runtime,left-later,right,after-exit}.json`,
+`logs/build-63.log`; exact engine log session is the named MCP session's
+`logs/XREngine.Editor_debug/windows_x64/` directory ending in `pid47912`.
+
+### Parallel recording and combined mirror publication
+
+Start64 uses Build63 with `ParallelCommandBufferRecording`, asynchronous
+submission and mirror-FBO mode disabled. Both eye PNGs were viewed: the red cube
+has stereo parallax and exact render/copy frame IDs (2272 left, 2276 right).
+Eleven retained paired-parallel receipts (shape 3) each contain two commands,
+two recorded/prepared owners and two slots. Ownership survives the real
+accepted-incomplete observation, then settles once with no early violations.
+The fixture has no pending texture uploads. Real exit completes/retires all
+2,592 accepted submissions and reports zero active/reserved/pending ownership,
+normal teardown epoch 1 and no EndFrame failure. This closes XR-V03. Evidence:
+`mcp-output/64-{runtime,warm-runtime,left,right,after-exit}.json`.
+
+Start65 enables mirror-FBO mode for the three-command path. No submission was
+accepted: the mirror helper still used desktop collect authority and rejected
+the independently paced XR package. Frame failure cleanup keeps no-layer frames
+advancing; real exit reaches normal teardown epoch 1. The mirror helper now
+uses the same exact package capture/validation API, with its target framebuffer
+passed explicitly. Runtime acceptance of that extension remains pending.
+
+### Runtime Vulkan queue synchronization audit (source and runtime evidence)
+
+The session and engine select the same Vulkan graphics family and queue index
+zero. Engine submission/presentation acquires device admission for reading, then
+the queue gate. The four OpenXR calls that may use that queue bypassed both;
+dedicated/CollectVisible frame preparation can call `xrBeginFrame` on another
+thread, making this a real synchronization gap (XR-I20).
+
+The [OpenXR Vulkan concurrency and swapchain contract](https://registry.khronos.org/OpenXR/specs/1.1-khr/html/xrspec.html#XR_KHR_vulkan_enable2)
+requires host synchronization for begin/end/acquire/release and permits release
+while previously submitted commands are incomplete. The runtime does not need
+access to the engine's private retirement timeline. The correction will acquire
+the same two engine gates in their established order around each relevant native
+call, release them in reverse order, and leave `xrWaitFrame`/`xrWaitSwapchainImage`
+outside that scope. Failed device admission will remain an explicit graphics
+failure, without inventing an OpenXR result. Build56 includes the wrappers and
+passes with zero warnings/errors. Source review confirms matching queue identity,
+lock order, exception unwind and no new happy-path allocation. A follow-up makes
+the failure diagnostic read the current device state after admission and releases
+admission in `finally`. Steady-state and lifecycle runtime validation remain pending.
+
+### Retained STOPPING acceptance scope
+
+The Start38 real session-exit cohort closes XR-V12 for pending generation
+retirement. `38-after-exit.json` records Visible → Synchronized → Stopping → Idle →
+Exiting, one queued/pending generation, zero drained generations, blocker mask 64
+and `teardownCompleted=false`. `38-after-exit-final.json` records one drained
+generation, zero pending generations/blockers, normal teardown epoch 1 and
+`teardownCompleted=true`. Both snapshots report 6,801 accepted/completed/retired
+submissions and zero active/reserved/pending-commit submissions. No incomplete
+GPU work is claimed at STOPPING; the explicit pending work is generation
+retirement. Start44 independently finishes normal teardown with 5,724 completed
+and retired submissions and zero remaining generation ownership.
+
+### Build67–70 follow-up evidence
+
+Build67 passed with zero warnings/errors in 68.19 seconds. Within session epoch
+1, the eye resize moved from 896×1007 to 960×1080; both new-size PNGs were
+viewed with cube parallax. Two generations retired/drained, device-wait-idle
+calls were zero, and exit reached 7,326 accepted/completed/retired submissions,
+zero ownership and normal teardown epoch 1. The configured runtime-refresh case
+remains unrun, so XR-V09 stays open.
+
+Build68 provides bounded real retirement-pressure evidence: capacity and
+high-water were 4, five attempts were observed, one deferred before active
+detachment while a held 1120×1080 generation remained live, and the hold then
+released normally. A later 1152×1080 generation continued running; five
+generations queued and drained. Exit reached 3,315 accepted/completed/retired
+submissions with zero ownership. No Vulkan VUID appears in the log. This was
+real retirement observation, not injected slow-GPU behavior. XR-V08 is closed;
+the hold was released normally and was not a terminal-path proof.
+
+Build69 consumed the post-detachment fault at frame 1112 and still completed
+3,300 accepted/retired submissions with normal teardown epoch 1. A later
+custom 0×0 trigger was correctly rejected during bootstrap. The run exposed
+two empty-view observations without an actual native payload, leaving a
+resource-lifetime deferral path open; the empty-payload guard is implemented
+but not runtime-validated. XR-V10 and XR-I14 remain open.
+
+Build70 exercised the simulated LOSS_PENDING state at frame 7 with one accepted
+tracked pending submission, then completed/retired three accepted submissions
+with normal teardown epoch 1. Recovery repeated
+`GetVulkanGraphicsDevice` twice with `ErrorValidationFailure`; XR-V20 remains
+open.
+
+Mirror66 accepted three shape-5 submissions but exposed missing native compute
+slot-3 resources. The logical-slot/native-slot correction and exact keyed
+sealed-graph review are implemented/reviewed but unbuilt. These follow-ups are
+tracked as XR-I22 (mirror logical/native slot and exact planner graph) and
+XR-I23 (stale desktop/XR queue-ownership snapshot/revision); XR-I23 source work
+is implemented but runtime review remains pending. The bounded direct-eye
+XR-I21 result above remains unchanged.
+
+### Build71–72 follow-up evidence
+
+Build71 recorded 0 accepted submissions, 4,735 no-layer frames and 0 EndFrame
+failures. The failure exposed the absence of a prematerialized mirror logical
+slice and desktop prewarm viewport-extent leakage. The source correction now
+records the exact `renderingOperations.Stream` and isolates prewarm thread
+render state.
+
+Build72 then passed cleanly with 0 warnings/errors in 42.51 seconds after a
+transient concurrent license-copy failure on the first attempt. PID43208
+accepted three mirror submissions, then remained pipeline-pending before
+`vkBeginCommandBuffer`; final exit nevertheless reported three accepted and
+retired, zero active/reserved/pending-commit submissions, zero pending retired
+swapchains, 1,892 no-layer frames, 0 EndFrame failures and normal teardown
+epoch 1. Source loss/cleanup review is approved. XR-I22 and XR-V04 remain
+open because the healthy three-command acceptance was not obtained.
+
+Build72's desktop after-exit screenshot was viewed with the live cube/grid;
+the stale immutable-view-set exception was no longer reported. XR-I23 source
+review confirms reset and unleased logical-plan release, but it remains open
+until healthy cohort exit/restart evidence is obtained from the live73 run.

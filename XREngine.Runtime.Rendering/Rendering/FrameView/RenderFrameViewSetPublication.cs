@@ -8,6 +8,7 @@ public static class RenderFrameViewSetPublication
     private static readonly object Sync = new();
     private static RenderFrameViewSet _latest;
     private static ulong _latestFrameId;
+    private static ulong _revision;
     private static bool _hasLatest;
 
     public static void Publish(ulong frameId, in RenderFrameViewSet viewSet)
@@ -17,6 +18,7 @@ public static class RenderFrameViewSetPublication
             _latest = viewSet;
             _latestFrameId = frameId;
             _hasLatest = true;
+            _revision++;
         }
     }
 
@@ -56,6 +58,25 @@ public static class RenderFrameViewSetPublication
         }
     }
 
+    /// <summary>Captures the exact current publication, including explicit absence.</summary>
+    public static RenderFrameViewSetPublicationSnapshot CaptureLatest()
+    {
+        lock (Sync)
+        {
+            return new RenderFrameViewSetPublicationSnapshot(
+                _revision,
+                _hasLatest,
+                _latest);
+        }
+    }
+
+    /// <summary>Returns whether the publication has not changed since capture.</summary>
+    public static bool IsCurrent(ulong revision)
+    {
+        lock (Sync)
+            return _revision == revision;
+    }
+
     public static void Clear()
     {
         lock (Sync)
@@ -63,6 +84,7 @@ public static class RenderFrameViewSetPublication
             _latest = default;
             _latestFrameId = 0UL;
             _hasLatest = false;
+            _revision++;
         }
     }
 }

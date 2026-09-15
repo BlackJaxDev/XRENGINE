@@ -14,6 +14,7 @@ public interface IRuntimeTimingServices
     float UpdateDeltaSeconds { get; }
     float FixedDeltaSeconds { get; }
     event Action? Update;
+    event Action? FixedUpdate;
 }
 
 /// <summary>
@@ -81,6 +82,12 @@ public static class RuntimeTimingServices
         public float FixedDeltaSeconds => 1.0f / 60.0f;
 
         public event Action? Update
+        {
+            add { }
+            remove { }
+        }
+
+        public event Action? FixedUpdate
         {
             add { }
             remove { }

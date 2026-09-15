@@ -46,6 +46,8 @@ namespace XREngine.VRClient
             using IDisposable applicationServices =
                 RuntimeApplicationBootstrap.Install(RuntimeApplicationProfile.VrClient);
             Engine.ConfigureMemoryPolicy(EngineMemoryProfile.VRLowLatency);
+            if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.ManagedClientConfigFile)))
+                throw new NotSupportedException("Managed realtime launch must be handled by the paired main game process; the VR input/render proxy cannot load or join a managed world.");
             IVRGameStartupSettings settings = GenerateSettings();
 
             // Check if this is already running

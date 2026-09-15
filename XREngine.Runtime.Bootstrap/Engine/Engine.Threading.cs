@@ -599,6 +599,17 @@ namespace XREngine
             => ProcessPendingMainThreadWork();
 
         /// <summary>
+        /// Drains the main-thread queue for a presentationless host. Unlike render dispatch, this
+        /// uses a fresh bounded budget on every call because a headless process has no advancing
+        /// render-frame identifier to replenish a frame-scoped budget.
+        /// </summary>
+        internal static void ProcessHeadlessMainThreadTasks()
+        {
+            using var scope = Engine.Profiler.Start("HeadlessMainThreadJobs.Dispatch", ProfilerScopeKind.ConditionalLoop);
+            Jobs.ProcessMainThreadJobs(MaxRenderThreadJobsPerDispatch, RenderThreadJobBudgetMs);
+        }
+
+        /// <summary>
         /// Processes tasks queued for the update thread.
         /// </summary>
         /// <param name="maxTasks">Maximum number of tasks to process per call.</param>

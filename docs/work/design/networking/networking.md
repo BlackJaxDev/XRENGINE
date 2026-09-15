@@ -12,7 +12,7 @@ Peer-to-peer host switching roadmap: [peer-to-peer-host-switching.md](peer-to-pe
 - **Last updated:** 2026-04-24
 - **Boundary status:** XRENGINE now owns only direct realtime data-plane connections. Instance directory, allocation, join orchestration, host capacity, token issuance, and world artifact delivery live in the adjacent control-plane app.
 - **Realtime status:** engine-side contracts now carry session id/token and exact local world asset identity instead of control-plane room/ticket/artifact DTOs.
-- **Next status:** authoritative replication, per-peer UDP sequencing, AOT-safe world bootstrap, and P2P disposition are implemented for the direct realtime path. Peer-to-peer host switching is now tracked as the next networking implementation focus.
+- **Completion boundary:** per-peer UDP sequencing, replication envelopes, identity/admission and bootstrap primitives exist. Complete replicated-world initialization, entity/component lifecycle, playable acknowledgment and authoritative buffered-input simulation remain work in Phases 5-7 of the [managed instances tracker](../../todo/networking/control-plane-managed-server-instances-todo.md). P2P host switching is a separate ownership/recovery project; these primitives do not establish its completion.
 
 ## 1. Problem Statement
 

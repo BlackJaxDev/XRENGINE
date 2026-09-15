@@ -305,7 +305,7 @@ internal sealed partial class VulkanCommandRuntime
                 .CurrentRenderTargetBinding;
         return binding is { Write: true, FrameBuffer: { } target }
             ? target
-            : CommandBuffers.BoundDrawFrameBuffer;
+            : ActiveBoundDrawFrameBuffer;
     }
 
     internal VulkanMeshProducerSnapshot CaptureIndirectProducerSnapshot(XRFrameBuffer? target)

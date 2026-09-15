@@ -542,6 +542,18 @@ internal sealed unsafe class VulkanCommandSynchronizationState
         Semaphore semaphore,
         ulong value,
         out bool completed)
+        => QueryTimelineCompletion(api, deviceContext, lifetimeTracker, semaphore, value,
+            out completed, out _);
+
+    /// <summary>Returns the observed counter so one poll can share its proof across matching submissions.</summary>
+    internal Result QueryTimelineCompletion(
+        Vk api,
+        VulkanDeviceContext deviceContext,
+        VulkanResourceLifetimeTracker lifetimeTracker,
+        Semaphore semaphore,
+        ulong value,
+        out bool completed,
+        out ulong observedValue)
     {
         ulong currentValue = 0;
         Result result = api.GetSemaphoreCounterValue(
@@ -549,6 +561,7 @@ internal sealed unsafe class VulkanCommandSynchronizationState
             semaphore,
             &currentValue);
         deviceContext.ObserveNativeResult("vkGetSemaphoreCounterValue", result);
+        observedValue = currentValue;
         completed = result == Result.Success && currentValue >= value;
         if (completed)
             CompleteTimelineSubmissions(lifetimeTracker, semaphore, currentValue);

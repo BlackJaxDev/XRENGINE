@@ -19,4 +19,10 @@ internal sealed class EngineRuntimeTimingServices(EngineTimer timer) : IRuntimeT
         add { if (value is not null) timer.UpdateFrame += value; }
         remove { if (value is not null) timer.UpdateFrame -= value; }
     }
+
+    public event Action? FixedUpdate
+    {
+        add { if (value is not null) timer.FixedUpdate += value; }
+        remove { if (value is not null) timer.FixedUpdate -= value; }
+    }
 }

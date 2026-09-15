@@ -15,6 +15,8 @@ public sealed partial class RuntimeWorld
     public void Update()
     {
         ThrowIfDisposed();
+        if (PlayState != RuntimeWorldPlayState.Playing)
+            return;
         TickGroup(ETickGroup.Normal);
         TickGroup(ETickGroup.Late);
     }

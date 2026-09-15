@@ -16,9 +16,9 @@ $nugetRoot = if ($env:NUGET_PACKAGES) {
     Join-Path $env:USERPROFILE '.nuget\packages'
 }
 
-function Invoke-Git([string[]]$args, [string]$workingDir) {
+function Invoke-Git([string[]]$gitArguments, [string]$workingDir) {
     try {
-        $out = & git -C $workingDir @args 2>$null
+        $out = & git -C $workingDir @gitArguments 2>$null
         if ($LASTEXITCODE -ne 0) { return $null }
         if ($out) { return ($out | Select-Object -First 1).Trim() }
         return $null
@@ -28,18 +28,18 @@ function Invoke-Git([string[]]$args, [string]$workingDir) {
 }
 
 function Get-RepoCommitId([string]$repoRoot) {
-    return Invoke-Git -args @('rev-parse', 'HEAD') -workingDir $repoRoot
+    return Invoke-Git -gitArguments @('rev-parse', 'HEAD') -workingDir $repoRoot
 }
 
 function Get-GitOriginUrl([string]$path) {
     try {
-        $top = Invoke-Git -args @('rev-parse', '--show-toplevel') -workingDir $path
+        $top = Invoke-Git -gitArguments @('rev-parse', '--show-toplevel') -workingDir $path
         if (-not $top) { return $null }
         if (-not $top) { return $null }
         $rp = (Resolve-Path -LiteralPath $path).Path
         if ($top -ne $rp) { return $null }
 
-        $u = Invoke-Git -args @('remote', 'get-url', 'origin') -workingDir $path
+        $u = Invoke-Git -gitArguments @('remote', 'get-url', 'origin') -workingDir $path
         if ($u) { return $u }
     } catch {
     }
@@ -1115,7 +1115,7 @@ if (Test-Path $gitmodulesPath) {
 $submodulesDir = Join-Path $root 'Build\Submodules'
 if (Test-Path $submodulesDir) {
     Get-ChildItem -LiteralPath $submodulesDir -Directory | ForEach-Object {
-        if ($_.Name -eq 'Build') { return }
+        if ($_.Name -in @('Build', 'artifacts', 'bin', 'obj')) { return }
 
         $origin = Get-GitOriginUrl $_.FullName
         $licInfo = Get-SubmoduleLicenseInfo -fullPath $_.FullName

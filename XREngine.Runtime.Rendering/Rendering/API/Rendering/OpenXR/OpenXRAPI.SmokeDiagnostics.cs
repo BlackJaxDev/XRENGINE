@@ -37,6 +37,9 @@ public unsafe partial class OpenXRAPI
     private long _smokeSessionLifecycleEpoch;
     private long _smokeLastNormalTeardownEpoch;
     private long _smokeNormalTeardownCount;
+    private long _smokeLastDeviceLossAbandonmentEpoch;
+    private long _smokeDeviceLossAbandonmentCount;
+    private OpenXrDeviceLossAbandonmentSnapshot? _smokeDeviceLossAbandonment;
     private int _smokePredictedViewPoseCached;
     private int _smokeLateViewPoseCached;
     private int _smokePredictedActionPoseCacheUpdated;
@@ -81,6 +84,8 @@ public unsafe partial class OpenXRAPI
         }
     }
     public event Action<long, long, long>? SmokeFrameCompleted;
+    public OpenXrSmokeFrameTiming SmokeLastFrameTiming { get; private set; }
+    private OpenXrSmokeFrameTiming _smokePendingFrameTiming;
 
     public long GetSmokeEyeAcquireCount(uint viewIndex)
         => ReadEyeCounter(_smokePerEyeAcquireCounts, viewIndex);
@@ -160,6 +165,10 @@ public unsafe partial class OpenXRAPI
                 SessionLifecycleEpoch = Volatile.Read(ref _smokeSessionLifecycleEpoch),
                 LastNormalTeardownEpoch = Volatile.Read(ref _smokeLastNormalTeardownEpoch),
                 NormalTeardownCount = Volatile.Read(ref _smokeNormalTeardownCount),
+                LastDeviceLossAbandonmentEpoch = Volatile.Read(ref _smokeLastDeviceLossAbandonmentEpoch),
+                DeviceLossAbandonmentCount = Volatile.Read(ref _smokeDeviceLossAbandonmentCount),
+                DeviceLossAbandonment = _smokeDeviceLossAbandonment,
+                LifecycleFault = CaptureSmokeLifecycleFaultSnapshot(),
                 SwapchainRetirement = retirement,
                 SubmittedFrameCount = Volatile.Read(ref _smokeSubmittedFrameCount),
                 NoLayerFrameCount = Volatile.Read(ref _smokeNoLayerFrameCount),
@@ -298,6 +307,9 @@ public unsafe partial class OpenXRAPI
         Volatile.Write(ref _smokeSessionLifecycleEpoch, 0);
         Volatile.Write(ref _smokeLastNormalTeardownEpoch, 0);
         Volatile.Write(ref _smokeNormalTeardownCount, 0);
+        Volatile.Write(ref _smokeLastDeviceLossAbandonmentEpoch, 0);
+        Volatile.Write(ref _smokeDeviceLossAbandonmentCount, 0);
+        _smokeDeviceLossAbandonment = null;
         Volatile.Write(ref _smokePredictedViewPoseCached, 0);
         Volatile.Write(ref _smokeLateViewPoseCached, 0);
         Volatile.Write(ref _smokePredictedActionPoseCacheUpdated, 0);
@@ -451,6 +463,11 @@ public unsafe partial class OpenXRAPI
 
     private void RecordSmokeEndFrame(Result result, uint layerCount)
     {
+        _smokePendingFrameTiming.EndFrameResult = (int)result;
+        _smokePendingFrameTiming.EndFrameLayerCount = layerCount;
+        _smokePendingFrameTiming.DesktopRenderWindowCpuInterval =
+            Window?.LastCompletedRenderWindowInterval ?? default;
+        SmokeLastFrameTiming = _smokePendingFrameTiming;
         Volatile.Write(ref _smokeLastEndFrameResult, (int)result);
         Volatile.Write(ref _smokeLastEndFrameLayerCount, layerCount);
         if (result == Result.Success)

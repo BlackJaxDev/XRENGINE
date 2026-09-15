@@ -368,11 +368,22 @@ internal sealed partial class VulkanDeviceContext
                 $"The active OpenXR runtime reported an invalid Vulkan API range: min={request.OpenXrMinimumApiVersion} max={request.OpenXrMaximumApiVersion}.");
         }
 
-        if ((minimumApiVersion != 0 && requiredOpenXrApiVersion < minimumApiVersion) ||
-            requiredOpenXrApiVersion > maximumApiVersion)
+        if (minimumApiVersion != 0 && requiredOpenXrApiVersion < minimumApiVersion)
         {
             throw new NotSupportedException(
-                $"The active OpenXR runtime supports Vulkan {FormatOpenXrApiVersion(minimumApiVersion)}-{FormatOpenXrApiVersion(maximumApiVersion)}, which does not include XRENGINE's required Vulkan 1.4 baseline.");
+                $"The active OpenXR runtime requires Vulkan {FormatOpenXrApiVersion(minimumApiVersion)}, which exceeds XRENGINE's Vulkan 1.4 instance version.");
+        }
+
+        // OpenXR defines the maximum as the highest tested instance version,
+        // explicitly allowing newer compatible versions. It is not a device
+        // feature ceiling. Keep the 1.4 loader/device requirements and let the
+        // runtime's actual Vulkan creation and graphics binding validate use.
+        if (requiredOpenXrApiVersion > maximumApiVersion)
+        {
+            Debug.VulkanWarning(
+                "[OpenXR] Vulkan 1.4 exceeds the runtime's tested instance version {0}. " +
+                "Attempting compatible-version negotiation with the required Vulkan 1.4 features; native creation and session results remain authoritative.",
+                FormatOpenXrApiVersion(maximumApiVersion));
         }
 
         return requiredApiVersion;
@@ -731,6 +742,23 @@ internal sealed partial class VulkanDeviceContext
                 "[OpenXR] Vulkan handles were created through XR_KHR_vulkan_enable2; keeping the logical device live after XR instance teardown. Vulkan device loss will be reported separately if the driver/runtime invalidates the handles.");
         }
         return true;
+    }
+
+    public Silk.NET.OpenXR.Result TryDestroyRendererOwnedInstanceAfterDeviceLoss(string reason)
+    {
+        OpenXrVulkanEnable2BootstrapContext? context = OpenXrBootstrapContext;
+        if (context is null)
+            return Silk.NET.OpenXR.Result.ErrorHandleInvalid;
+
+        Silk.NET.OpenXR.Result result = context.DestroyXrInstanceAfterDeviceLoss();
+        if (result == Silk.NET.OpenXR.Result.Success || result == Silk.NET.OpenXR.Result.ErrorInstanceLost)
+        {
+            context.Dispose();
+            OpenXrBootstrapContext = null;
+        }
+        else
+            context.AbandonXrInstanceOnDispose($"Device-loss instance destruction failed ({result}): {reason}");
+        return result;
     }
 
     public unsafe void DestroyInstance(Vk api, string? deviceLostReason)

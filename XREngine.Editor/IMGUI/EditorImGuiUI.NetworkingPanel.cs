@@ -9,6 +9,8 @@ using XREngine.ControlPlane;
 using XREngine.Diagnostics;
 using XREngine.Networking;
 using XREngine.Rendering;
+using XREngine.Runtime.Bootstrap;
+using XREngine.Scene;
 using static XREngine.Engine;
 
 namespace XREngine.Editor;
@@ -45,7 +47,24 @@ public static partial class EditorImGuiUI
         private static string _controlPlaneHandoffJson = string.Empty;
         private static string _controlPlaneStatus = string.Empty;
         private static bool _controlPlaneResolverInstalled;
+        private static Func<PlayerJoinRequest, ServerJoinAdmissionResult?>? _controlPlanePreviousResolver;
+        private static Action<ServerSessionPlayerEvent>? _controlPlaneConnectedHandler;
+        private static Action<ServerSessionPlayerEvent>? _controlPlaneDisconnectedHandler;
+        private static int? _controlPlanePreviousMaximumPlayers;
         private static Dictionary<string, string?>? _controlPlaneOriginalWorldEnvironment;
+        private static string _managedServiceUrl = "http://127.0.0.1:5088";
+        private static string _managedServiceBearer = string.Empty;
+        private static string _managedServicePackageId = string.Empty;
+        private static string _managedServiceInstanceId = string.Empty;
+        private static string _managedServiceClientId = $"editor-{Environment.MachineName}-{Guid.NewGuid():N}";
+        private static string _managedServiceStatus = string.Empty;
+        private static string _managedServiceDirectory = string.Empty;
+        private static int _managedServiceMaxPlayers = 4;
+        private static Task<XRWorld>? _managedServiceLaunchTask;
+        private static Task? _managedServiceLeaveTask;
+        private static Task<string>? _managedServiceOperationTask;
+        private static CancellationTokenSource? _managedServiceCancellation;
+        private static readonly ManagedClientJoinCoordinator _managedJoinCoordinator = new();
 
         private static void DrawNetworkingPanel()
         {
@@ -62,6 +81,8 @@ public static partial class EditorImGuiUI
             }
 
             DrawNetworkingControls();
+            ImGui.Separator();
+            DrawManagedServiceControls();
             ImGui.Separator();
             DrawControlPlaneControls();
             ImGui.Separator();
@@ -162,6 +183,134 @@ public static partial class EditorImGuiUI
             if (!string.IsNullOrWhiteSpace(_controlPlaneStatus))
                 ImGui.TextWrapped(_controlPlaneStatus);
         }
+
+        private static void DrawManagedServiceControls()
+        {
+            _managedJoinCoordinator.Observe();
+            ImGui.TextUnformatted("Managed Service");
+            ImGui.InputText("Service URL", ref _managedServiceUrl, 256);
+            ImGui.InputText("Service Bearer", ref _managedServiceBearer, 512, ImGuiInputTextFlags.Password);
+            ImGui.InputText("Service Package", ref _managedServicePackageId, 128);
+            ImGui.InputText("Service Instance", ref _managedServiceInstanceId, 128);
+            ImGui.InputText("Service Client", ref _managedServiceClientId, 128);
+            ImGui.InputInt("Service Max Players", ref _managedServiceMaxPlayers);
+
+            bool configured = Uri.TryCreate(_managedServiceUrl, UriKind.Absolute, out _) && !string.IsNullOrWhiteSpace(_managedServiceBearer);
+            bool busy = _managedServiceLaunchTask is not null || _managedServiceLeaveTask is not null || _managedServiceOperationTask is not null;
+            using (new ImGuiDisabledScope(!configured || busy))
+            {
+                if (ImGui.Button("Browse Managed Service", new Vector2(-1, 0)))
+                    _managedServiceOperationTask = BrowseManagedServiceAsync();
+                if (ImGui.Button("Create Managed Instance", new Vector2(-1, 0)))
+                    _managedServiceOperationTask = CreateManagedInstanceAsync();
+                if (ImGui.Button("Reserve / Join Managed Instance", new Vector2(-1, 0)))
+                {
+                    _managedServiceCancellation?.Dispose();
+                    _managedServiceCancellation = new CancellationTokenSource();
+                    _managedServiceLaunchTask = ReserveManagedLaunchAsync(_managedServiceCancellation.Token);
+                }
+            }
+            using (new ImGuiDisabledScope(!busy))
+                if (ImGui.Button("Cancel Managed Service Request", new Vector2(-1, 0)))
+                    _managedServiceCancellation?.Cancel();
+
+            if (_managedServiceOperationTask is { IsCompleted: true } operation)
+            {
+                _managedServiceOperationTask = null;
+                try
+                {
+                    string result = operation.GetAwaiter().GetResult();
+                    if (result.StartsWith("{", StringComparison.Ordinal))
+                    {
+                        _managedServiceDirectory = result;
+                        using JsonDocument document = JsonDocument.Parse(result);
+                        if (document.RootElement.TryGetProperty("instanceId", out JsonElement id))
+                            _managedServiceInstanceId = id.GetString() ?? _managedServiceInstanceId;
+                        _managedServiceStatus = "Managed service operation completed.";
+                    }
+                    else
+                        _managedServiceStatus = result;
+                }
+                catch (Exception exception) { _managedServiceStatus = $"Managed service operation failed: {exception.Message}"; }
+            }
+            if (_managedServiceLaunchTask is { IsCompleted: true } launchTask)
+            {
+                _managedServiceLaunchTask = null;
+                _managedServiceCancellation?.Dispose();
+                _managedServiceCancellation = null;
+                try
+                {
+                    _ = launchTask.GetAwaiter().GetResult();
+                    _managedServiceStatus = "Managed world applied; waiting for assignment and synchronization.";
+                }
+                catch (Exception exception) { _managedServiceStatus = $"Managed join failed: {exception.Message}"; }
+            }
+            if (_managedServiceLeaveTask is { IsCompleted: true } leaveTask)
+            {
+                _managedServiceLeaveTask = null;
+                try { leaveTask.GetAwaiter().GetResult(); _managedServiceStatus = "Managed instance left."; }
+                catch (Exception exception) { _managedServiceStatus = $"Managed leave failed: {exception.Message}"; }
+            }
+
+            if (!string.IsNullOrWhiteSpace(_managedServiceStatus))
+                ImGui.TextWrapped(_managedServiceStatus);
+            if (!string.IsNullOrWhiteSpace(_managedServiceDirectory))
+                ImGui.InputTextMultiline("##ManagedServiceDirectory", ref _managedServiceDirectory, ControlPlaneHandoffTextCapacity, new Vector2(-1, 75), ImGuiInputTextFlags.ReadOnly);
+            ManagedClientJoinStatus status = _managedJoinCoordinator.Status;
+            ImGui.TextWrapped($"Managed client: {status.State} — {status.Message}");
+            if (status.FailureKind != ManagedClientJoinFailureKind.None)
+                ImGui.TextColored(new Vector4(1f, .5f, .35f, 1f), $"Outcome: {status.FailureKind}");
+            if (status.State is not (ManagedClientJoinState.Idle or ManagedClientJoinState.Leaving))
+                if (ImGui.Button("Leave Managed Instance", new Vector2(-1, 0)))
+                    _managedServiceLeaveTask = _managedJoinCoordinator.LeaveAsync();
+        }
+
+        private static ManagedInstanceServiceClient CreateManagedServiceClient()
+            => new(new Uri(_managedServiceUrl), _managedServiceBearer);
+
+        private static async Task<string> BrowseManagedServiceAsync()
+        {
+            using ManagedInstanceServiceClient client = CreateManagedServiceClient();
+            using JsonDocument packages = await client.ListPackagesAsync().ConfigureAwait(false);
+            using JsonDocument instances = await client.ListInstancesAsync().ConfigureAwait(false);
+            return JsonSerializer.Serialize(new { packages = packages.RootElement, instances = instances.RootElement }, new JsonSerializerOptions { WriteIndented = true });
+        }
+
+        private static async Task<string> CreateManagedInstanceAsync()
+        {
+            using ManagedInstanceServiceClient client = CreateManagedServiceClient();
+            using JsonDocument created = await client.CreateInstanceAsync(new()
+            {
+                OperationId = Guid.NewGuid().ToString("N"),
+                PackageId = _managedServicePackageId,
+                DisplayName = string.IsNullOrWhiteSpace(_controlPlaneDisplayName) ? "Editor managed instance" : _controlPlaneDisplayName,
+                MaxPlayers = Math.Max(1, _managedServiceMaxPlayers),
+                IsPublic = true,
+            }).ConfigureAwait(false);
+            return created.RootElement.GetRawText();
+        }
+
+        private static async Task<XRWorld> ReserveManagedLaunchAsync(CancellationToken cancellationToken)
+        {
+            using ManagedInstanceServiceClient client = CreateManagedServiceClient();
+            ManagedAdmissionReservation reservation = await client.ReserveAsync(_managedServiceInstanceId, new()
+            {
+                OperationId = Guid.NewGuid().ToString("N"),
+                ClientId = _managedServiceClientId,
+                BuildVersion = RealtimeJoinHandoff.CurrentProtocolVersion,
+            }, cancellationToken).ConfigureAwait(false);
+            var cache = new RemoteWorldPackageCache(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "XREngine", "ManagedWorldCache"));
+            for (int attempt = 0; attempt < 40; attempt++)
+            {
+                try { return await _managedJoinCoordinator.JoinAsync(client, _managedServiceInstanceId, reservation.ReservationId, cache, cancellationToken).ConfigureAwait(false); }
+                catch (System.Net.Http.HttpRequestException exception) when (exception.StatusCode == System.Net.HttpStatusCode.Conflict)
+                {
+                    await Task.Delay(500, cancellationToken).ConfigureAwait(false);
+                }
+            }
+            throw new TimeoutException("The managed service did not deliver an admission before its retry window elapsed.");
+        }
+
 
         private static void DrawNetworkingStatus()
         {
@@ -468,6 +617,9 @@ public static partial class EditorImGuiUI
 
         private static void InstallControlPlaneServerResolver(string instanceId)
         {
+            _controlPlanePreviousResolver = Engine.ServerJoinAdmissionResolver;
+            _controlPlanePreviousMaximumPlayers = Engine.ServerMaximumPlayers;
+            Engine.ServerMaximumPlayers = _editorControlPlane.GetInstance(instanceId).Value?.MaxPlayers;
             Engine.ServerJoinAdmissionResolver = request =>
             {
                 ControlPlaneResult<MultiplayerInstanceInfo> instanceResult = _editorControlPlane.GetInstance(instanceId, includeToken: true);
@@ -486,33 +638,41 @@ public static partial class EditorImGuiUI
                 if (sessionFailure != AdmissionFailureReason.None)
                     return new ServerJoinAdmissionResult(null, sessionFailure, sessionMessage);
 
-                ControlPlaneResult<JoinMultiplayerInstanceResult> joinResult = _editorControlPlane.JoinInstance(new JoinMultiplayerInstanceRequest
-                {
-                    InstanceId = instance.InstanceId,
-                    ClientId = request.ClientId,
-                    DisplayName = request.DisplayName,
-                    LocalWorldAsset = request.ClientWorldAsset,
-                    BuildVersion = request.BuildVersion,
-                });
-
-                if (!joinResult.Success || joinResult.Value is null)
-                {
-                    return new ServerJoinAdmissionResult(
-                        null,
-                        MapControlPlaneFailure(joinResult.FailureReason),
-                        joinResult.Message);
-                }
-
                 RuntimeWorld? worldInstance = ResolveEditorWorldInstance();
                 if (worldInstance is null)
                     return new ServerJoinAdmissionResult(null, AdmissionFailureReason.SessionNotFound, "No editor world instance is loaded.");
 
-                MultiplayerInstanceInfo joinedInstance = joinResult.Value.Instance;
                 return new ServerJoinAdmissionResult(new ServerSessionContext(
-                    joinedInstance.SessionId,
+                    instance.SessionId,
                     worldInstance,
-                    joinResult.Value.HandoffPayload.WorldAsset));
+                    instance.WorldAsset));
             };
+            // Record occupancy only after runtime world validation and pawn/controller creation.
+            // Failed admission therefore never leaves a player in the editor's directory.
+            _controlPlaneConnectedHandler = player =>
+            {
+                MultiplayerInstanceInfo? instance = _editorControlPlane.GetInstance(instanceId).Value;
+                if (instance is null || instance.SessionId != player.SessionId)
+                    return;
+                var joined = _editorControlPlane.JoinInstance(new JoinMultiplayerInstanceRequest
+                {
+                    InstanceId = instanceId, ClientId = player.ClientId,
+                    LocalWorldAsset = instance.WorldAsset, BuildVersion = instance.Endpoint.ProtocolVersion,
+                });
+                if (!joined.Success && Engine.Networking is ServerNetworkingManager server)
+                    server.KickClient(player.ServerPlayerIndex, "Editor admission accounting rejected the connection.");
+            };
+            _controlPlaneDisconnectedHandler = player =>
+            {
+                if (_editorControlPlane.GetInstance(instanceId).Value?.SessionId == player.SessionId)
+                    _editorControlPlane.LeaveInstance(new LeaveMultiplayerInstanceRequest
+                    {
+                        InstanceId = instanceId,
+                        ClientId = player.ClientId,
+                    });
+            };
+            Engine.ServerPlayerConnected += _controlPlaneConnectedHandler;
+            Engine.ServerPlayerDisconnected += _controlPlaneDisconnectedHandler;
             _controlPlaneResolverInstalled = true;
         }
 
@@ -521,7 +681,13 @@ public static partial class EditorImGuiUI
             if (!_controlPlaneResolverInstalled)
                 return;
 
-            Engine.ServerJoinAdmissionResolver = null;
+            Engine.ServerJoinAdmissionResolver = _controlPlanePreviousResolver;
+            Engine.ServerMaximumPlayers = _controlPlanePreviousMaximumPlayers;
+            Engine.ServerPlayerConnected -= _controlPlaneConnectedHandler;
+            Engine.ServerPlayerDisconnected -= _controlPlaneDisconnectedHandler;
+            _controlPlanePreviousResolver = null;
+            _controlPlaneConnectedHandler = null;
+            _controlPlaneDisconnectedHandler = null;
             _controlPlaneResolverInstalled = false;
         }
 
@@ -560,16 +726,6 @@ public static partial class EditorImGuiUI
 
             _controlPlaneOriginalWorldEnvironment = null;
         }
-
-        private static AdmissionFailureReason MapControlPlaneFailure(ControlPlaneFailureReason failureReason)
-            => failureReason switch
-            {
-                ControlPlaneFailureReason.InstanceNotFound or ControlPlaneFailureReason.InstanceNotRunning => AdmissionFailureReason.SessionNotFound,
-                ControlPlaneFailureReason.InstanceFull => AdmissionFailureReason.SessionFull,
-                ControlPlaneFailureReason.BuildVersionMismatch => AdmissionFailureReason.BuildVersionMismatch,
-                ControlPlaneFailureReason.WorldAssetMismatch => AdmissionFailureReason.WorldAssetMismatch,
-                _ => AdmissionFailureReason.InvalidRequest,
-            };
 
         private static int ClampUdpPort(int port, int fallback)
             => port is >= 1 and <= 65535 ? port : fallback;

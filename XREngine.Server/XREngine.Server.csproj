@@ -40,14 +40,13 @@
 
   <ItemGroup>
     <PackageReference Include="MemoryPack" Version="1.21.4" />
-    <PackageReference Include="Microsoft.Data.Sqlite.Core" Version="10.0.10" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
     <PackageReference Include="Steamworks.NET" Version="2024.8.0" />
-    <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.22.0" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\XREngine.Data\XREngine.Data.csproj" />
+    <ProjectReference Include="..\XREngine.ControlPlane\XREngine.ControlPlane.csproj" />
     <ProjectReference Include="..\XREngine.Extensions\XREngine.Extensions.csproj" />
     <ProjectReference Include="..\XREngine.Fbx\XREngine.Fbx.csproj" />
     <!-- NuGet's recursive restore drops custom ProjectReference properties. Restore

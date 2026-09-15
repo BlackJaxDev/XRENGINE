@@ -2,7 +2,10 @@ namespace XREngine.Rendering.API.Rendering.OpenXR;
 
 public sealed class OpenXrSmokeSummary
 {
-    public const int CurrentSchemaVersion = 11;
+    public long StopwatchFrequency { get; set; } = System.Diagnostics.Stopwatch.Frequency;
+    /// <summary>False when the runtime exposes no authoritative compositor reprojection statistics.</summary>
+    public bool ReprojectionStatusAvailable { get; set; }
+    public const int CurrentSchemaVersion = 13;
 
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
     public DateTimeOffset CapturedAtUtc { get; set; } = DateTimeOffset.UtcNow;
@@ -54,6 +57,10 @@ public sealed class OpenXrSmokeSummary
     public long SessionLifecycleEpoch { get; set; }
     public long LastNormalTeardownEpoch { get; set; }
     public long NormalTeardownCount { get; set; }
+    public long LastDeviceLossAbandonmentEpoch { get; set; }
+    public long DeviceLossAbandonmentCount { get; set; }
+    public OpenXrDeviceLossAbandonmentSnapshot? DeviceLossAbandonment { get; set; }
+    public OpenXrSmokeLifecycleFaultSnapshot LifecycleFault { get; set; } = new();
     public long SubmittedFrameCount { get; set; }
     public long NoLayerFrameCount { get; set; }
     public long EndFrameFailureCount { get; set; }

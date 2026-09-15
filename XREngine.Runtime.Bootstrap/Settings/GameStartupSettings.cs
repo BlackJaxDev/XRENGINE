@@ -50,6 +50,14 @@ namespace XREngine
         private RealtimeTransportKind _multiplayerTransport = RealtimeTransportKind.NativeUdp;
         private Guid? _multiplayerSessionId;
         private string? _multiplayerSessionToken;
+        private string? _multiplayerAccountId;
+        private string? _multiplayerReservationId;
+        private string? _multiplayerAdmissionSecret;
+        private string? _multiplayerClientId;
+        private Guid? _multiplayerWorkerGeneration;
+        private bool _multiplayerResumeRequested;
+        private long _multiplayerCredentialEpoch;
+        private bool _ignoreEnvironmentRealtimeHandoffs;
         private string? _expectedMultiplayerProtocolVersion;
         private WorldAssetIdentity? _expectedMultiplayerWorldAsset;
 
@@ -162,6 +170,69 @@ namespace XREngine
         {
             get => _multiplayerSessionToken;
             set => SetField(ref _multiplayerSessionToken, value);
+        }
+
+        [Category("Networking")]
+        [Description("Stable authenticated account identity supplied by a player-scoped realtime handoff.")]
+        public string? MultiplayerAccountId
+        {
+            get => _multiplayerAccountId;
+            set => SetField(ref _multiplayerAccountId, value);
+        }
+
+        [Category("Networking")]
+        [Description("Control-plane reservation carried by a player-scoped realtime handoff.")]
+        public string? MultiplayerReservationId
+        {
+            get => _multiplayerReservationId;
+            set => SetField(ref _multiplayerReservationId, value);
+        }
+
+        [Category("Networking")]
+        [Description("Opaque player-scoped admission grant. This must not be persisted or logged.")]
+        public string? MultiplayerAdmissionSecret
+        {
+            get => _multiplayerAdmissionSecret;
+            set => SetField(ref _multiplayerAdmissionSecret, value);
+        }
+
+        [Category("Networking")]
+        public string? MultiplayerClientId
+        {
+            get => _multiplayerClientId;
+            set => SetField(ref _multiplayerClientId, value);
+        }
+
+        [Category("Networking")]
+        public Guid? MultiplayerWorkerGeneration
+        {
+            get => _multiplayerWorkerGeneration;
+            set => SetField(ref _multiplayerWorkerGeneration, value);
+        }
+
+        [Category("Networking")]
+        public bool MultiplayerResumeRequested
+        {
+            get => _multiplayerResumeRequested;
+            set => SetField(ref _multiplayerResumeRequested, value);
+        }
+
+        [Category("Networking")]
+        public long MultiplayerCredentialEpoch
+        {
+            get => _multiplayerCredentialEpoch;
+            set => SetField(ref _multiplayerCredentialEpoch, value);
+        }
+
+        /// <summary>
+        /// Treats the in-memory realtime fields as an explicit trusted launch and ignores ambient
+        /// handoff environment variables. Runtime coordinators set this after verified staging.
+        /// </summary>
+        [Category("Networking")]
+        public bool IgnoreEnvironmentRealtimeHandoffs
+        {
+            get => _ignoreEnvironmentRealtimeHandoffs;
+            set => SetField(ref _ignoreEnvironmentRealtimeHandoffs, value);
         }
 
         [Category("Networking")]

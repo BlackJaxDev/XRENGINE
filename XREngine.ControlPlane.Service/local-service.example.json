@@ -1,0 +1,26 @@
+{
+  "listenUrl": "http://127.0.0.1:5088",
+  "hostId": "local-host",
+  "serverExecutable": "../XREngine.Server/bin/Debug/net10.0-windows10.0.26100.0/XREngine.Server.exe",
+  "workingRoot": "../Build/LocalManagedWorkers",
+  "bindAddress": "127.0.0.1",
+  "advertisedHost": "127.0.0.1",
+  "firstUdpPort": 5200,
+  "lastUdpPort": 5299,
+  "maxInstances": 4,
+  "maxPlayerSlots": 32,
+  "workerCpuPercent": 25,
+  "workerMemoryLimitBytes": 2147483648,
+  "hostMemoryBudgetBytes": 8589934592,
+  "startupTimeoutSeconds": 90,
+  "shutdownTimeoutSeconds": 15,
+  "drainTimeoutSeconds": 60,
+  "admissionTimeoutSeconds": 60,
+  "workerLeaseSeconds": 15,
+  "resumeWindowSeconds": 30,
+  "users": [
+    { "userId": "admin", "tokenEnvironmentVariable": "XRE_LOCAL_ADMIN_TOKEN", "isAdministrator": true },
+    { "userId": "player", "tokenEnvironmentVariable": "XRE_LOCAL_PLAYER_TOKEN", "isAdministrator": false }
+  ],
+  "packages": {}
+}

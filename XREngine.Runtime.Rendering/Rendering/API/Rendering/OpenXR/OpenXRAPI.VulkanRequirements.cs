@@ -54,6 +54,17 @@ internal sealed unsafe class OpenXrVulkanEnable2BootstrapContext(
             string.IsNullOrWhiteSpace(reason) ? "<unspecified>" : reason);
     }
 
+    internal Result DestroyXrInstanceAfterDeviceLoss()
+    {
+        if (xrInstance.Handle == 0)
+            return Result.ErrorHandleInvalid;
+
+        Result result = api.DestroyInstance(xrInstance);
+        if (result == Result.Success || result == Result.ErrorInstanceLost)
+            _destroyXrInstanceOnDispose = false;
+        return result;
+    }
+
     internal bool TryCreateVulkanInstance(
         void* vulkanCreateInfo,
         PfnVoidFunction pfnGetInstanceProcAddr,

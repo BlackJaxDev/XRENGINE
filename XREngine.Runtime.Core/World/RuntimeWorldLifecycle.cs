@@ -24,7 +24,12 @@ public sealed class RuntimeWorldLifecycle
     }
 
     public XRWorld? TargetWorld { get; set; }
-    public RuntimeWorldPlayState PlayState { get; set; }
+    private int _playState;
+    public RuntimeWorldPlayState PlayState
+    {
+        get => (RuntimeWorldPlayState)Volatile.Read(ref _playState);
+        set => Volatile.Write(ref _playState, (int)value);
+    }
     public RootNodeCollection RootNodes { get; }
 
     public bool IsPlaySessionActive

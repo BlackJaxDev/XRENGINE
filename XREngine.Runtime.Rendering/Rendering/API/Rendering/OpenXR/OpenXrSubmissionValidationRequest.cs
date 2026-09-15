@@ -4,7 +4,9 @@ namespace XREngine.Rendering.API.Rendering.OpenXR;
 public readonly record struct OpenXrSubmissionValidationRequest(
     EOpenXrSubmissionValidationScenario Scenario,
     EOpenXrSubmissionShape RequiredShape,
-    int ArmAfterAcceptedSubmissionCount,
+    // Entries at or before this lifecycle frame are observed but excluded from
+    // the bounded cohort and one-shot scenario activation.
+    ulong ArmAfterOpenXrLifecycleFrameId,
     int LedgerCapacity)
 {
     public static OpenXrSubmissionValidationRequest Disabled => new(
