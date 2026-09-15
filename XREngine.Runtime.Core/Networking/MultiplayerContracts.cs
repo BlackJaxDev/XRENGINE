@@ -20,6 +20,8 @@ public enum AdmissionFailureReason : byte
 public enum RealtimeTransportKind : byte
 {
     NativeUdp = 0,
+    /// <summary>Managed realtime datagrams framed inside server-authenticated TLS 1.3 over TCP.</summary>
+    NativeTls = 1,
 }
 
 [MemoryPackable]
@@ -77,6 +79,13 @@ public sealed class RealtimeJoinHandoffPayload
 {
     public Guid? SessionId { get; set; }
     public string? SessionToken { get; set; }
+    public string? AccountId { get; set; }
+    public string? ClientId { get; set; }
+    public string? ReservationId { get; set; }
+    public string? AdmissionSecret { get; set; }
+    public Guid? WorkerGeneration { get; set; }
+    public bool ResumeRequested { get; set; }
+    public long CredentialEpoch { get; set; }
     public RealtimeEndpointDescriptor? Endpoint { get; set; }
     public WorldAssetIdentity? WorldAsset { get; set; }
 }

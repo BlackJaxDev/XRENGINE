@@ -1913,6 +1913,7 @@ namespace XREngine.Rendering
                 shadowPass,
                 forcedMaterial,
                 default,
+                consumedCollectGenerationOverride: null,
                 out _,
                 out _);
 
@@ -1930,6 +1931,7 @@ namespace XREngine.Rendering
                 shadowPass: false,
                 forcedMaterial,
                 in outputRequest,
+                consumedCollectGenerationOverride: null,
                 out completionFence,
                 out _);
 
@@ -1952,8 +1954,73 @@ namespace XREngine.Rendering
                 shadowPass: false,
                 forcedMaterial,
                 in outputRequest,
+                consumedCollectGenerationOverride: null,
                 out completionFence,
                 out disposition);
+
+        /// <summary>
+        /// Captures authority for the effective rendering collection while its
+        /// published package remains protected from a buffer swap.
+        /// </summary>
+        internal bool TryCaptureRenderingBackendReadyFramePackageAuthority(
+            out BackendReadyFramePackageConsumptionAuthority authority)
+        {
+            RenderCommandCollection commands =
+                MeshRenderCommandsOverride ?? _renderPipeline.MeshRenderCommands;
+            using var renderingBufferScope = commands.EnterRenderingBufferReadScope();
+            BackendReadyFramePackage package = commands.RenderingBackendReadyPackage;
+            if (package.State != EBackendReadyFramePackageState.Published ||
+                package.PackageGeneration <= 0L ||
+                package.Identity.CollectGeneration < 0L)
+            {
+                authority = default;
+                return false;
+            }
+
+            authority = new BackendReadyFramePackageConsumptionAuthority(
+                commands,
+                package.PackageGeneration,
+                package.Identity.CollectGeneration);
+            return true;
+        }
+
+        /// <summary>
+        /// Renders an OpenXR eye from one exact package captured during collection.
+        /// </summary>
+        internal bool TryRenderOpenXrFramePackage(
+            IRuntimeRenderWorld? worldOverride,
+            XRCamera? cameraOverride,
+            in BackendReadyFramePackageConsumptionAuthority packageAuthority,
+            XRFrameBuffer? targetFbo = null)
+        {
+            if (!packageAuthority.IsValid)
+                return false;
+
+            RenderCommandCollection commands =
+                MeshRenderCommandsOverride ?? _renderPipeline.MeshRenderCommands;
+            if (!ReferenceEquals(commands, packageAuthority.Commands))
+                return false;
+
+            using (commands.EnterRenderingBufferReadScope())
+            {
+                BackendReadyFramePackage package = commands.RenderingBackendReadyPackage;
+                if (package.State != EBackendReadyFramePackageState.Published ||
+                    package.PackageGeneration != packageAuthority.PackageGeneration ||
+                    package.Identity.CollectGeneration != packageAuthority.CollectGeneration)
+                    return false;
+            }
+
+            return TryRenderInternal(
+                targetFbo,
+                worldOverride,
+                cameraOverride,
+                shadowPass: false,
+                forcedMaterial: null,
+                outputCompletionRequest: default,
+                consumedCollectGenerationOverride: packageAuthority.CollectGeneration,
+                out _,
+                out _);
+        }
 
         private bool TryRenderInternal(
             XRFrameBuffer? targetFbo,
@@ -1962,6 +2029,7 @@ namespace XREngine.Rendering
             bool shadowPass,
             XRMaterial? forcedMaterial,
             in RenderOutputRequest outputCompletionRequest,
+            long? consumedCollectGenerationOverride,
             out XRGpuFence? completionFence,
             out ERenderOutputCompletionAuthoringDisposition completionDisposition)
         {
@@ -1997,6 +2065,11 @@ namespace XREngine.Rendering
                 _renderingExactOutputCollectionGeneration = 0UL;
                 _renderingExactOutputCommandCollection = null;
             }
+
+            if (consumedCollectGenerationOverride.HasValue &&
+                outputCompletionRequest.IsDefined &&
+                consumedCollectGenerationOverride.Value != outputCompletionCollectGeneration)
+                return false;
 
             FrameOutputPacingDecision pacing = _renderingFrameOutputPacing.FrameId != 0UL
                 ? _renderingFrameOutputPacing
@@ -2201,6 +2274,8 @@ namespace XREngine.Rendering
                         outputCompletionRequest: outputCompletionRequest,
                         outputCompletionCollectGeneration:
                             outputCompletionCollectGeneration,
+                        consumedCollectGenerationOverride:
+                            consumedCollectGenerationOverride,
                         completionFence: out completionFence,
                         outputCompletionAuthoringStarted:
                             out outputCompletionAuthoringStarted);

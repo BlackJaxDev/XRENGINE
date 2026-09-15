@@ -1,8 +1,8 @@
 # Control Plane Managed Server Instances and Client Synchronization Todo
 
-Last updated: 2026-09-09
+Last updated: 2026-09-14
 
-Status: Planned. This tracker follows a source-level gap analysis; it does not claim runtime validation or completed implementation.
+Status: Phases 0–6 implemented and validated with local dedicated processes and native clients. Phases 7–10 remain. See [Phases 0–4 evidence](../../progress/networking/control-plane-managed-instances-local.md) and [Phases 5–6 evidence](../../progress/networking/managed-transport-and-replication.md).
 
 ## Objective
 
@@ -22,7 +22,9 @@ The website is a management interface for native clients in this scope. A browse
 - [Dedicated server and matchmaking design](../../design/networking/networking.md)
 - [Peer-to-peer host switching todo](peer-to-peer-host-switching-todo.md)
 
-| Current behavior | Source | Remaining integration |
+The following table records the starting source analysis, before Phases 0–4 were implemented.
+
+| Starting behavior | Source | Integration identified |
 |---|---|---|
 | In-memory host/instance records, capacity checks, shared session tokens, and environment handoffs | [InMemoryControlPlane.cs](../../../../XREngine.ControlPlane/InMemoryControlPlane.cs) | Runnable service, process supervision, observed lifecycle, player reservations, and recovery |
 | Host snapshot capacity uses active players; placement uses configured slot reservations | [ControlPlaneHostSnapshot.cs](../../../../XREngine.ControlPlane/Models/ControlPlaneHostSnapshot.cs) | One consistent capacity model |
@@ -41,7 +43,7 @@ The website is a management interface for native clients in this scope. A browse
 | Owner | Responsibility |
 |---|---|
 | `XREngine.ControlPlane` | Reusable orchestration contracts, instance/player state, placement, reservation policy, and storage abstractions |
-| Service wrapper and local host agent; project names to be selected in Phase 0 | Website/game APIs, process ownership, endpoint reservation, worker management, and content staging |
+| `XREngine.ControlPlane.Service` with its in-process Windows supervisor | Website/game APIs, process ownership, endpoint reservation, worker management, and content staging |
 | `XREngine.Server` | Validated worker startup, selected game/world loading, management adapter, readiness, and graceful shutdown |
 | `XREngine.Runtime.Core` and `XREngine.Runtime.Bootstrap` | Realtime admission primitives, transport, replication, simulation integration, and application composition |
 | Editor, VR client, game integration, and sample website/launcher | User-facing lifecycle, authenticated handoff, content acquisition, connection, synchronization, and failure feedback |
@@ -61,15 +63,15 @@ The website is a management interface for native clients in this scope. A browse
 
 Owners: control plane, server, client/runtime. Dependency: none.
 
-- [ ] Select service/host-agent project boundaries, a private worker-management transport, and the minimal website/launcher integration; keep the existing library reusable.
-- [ ] Define a versioned worker launch contract: instance/session IDs, worker generation, game/build identity, package manifest and entry point, startup parameters, player limit, tick/physics settings, resource limits, bind/advertised endpoints, and management credentials.
-- [ ] Define instance transitions covering allocation, staging, starting, ready, draining, stopping, stopped, and failed. Specify timeout, cancellation, retry, and failure reasons for every operation.
-- [ ] Define separate player reservation/connection/synchronization/resume states and which component owns each transition.
-- [ ] Define correlated, idempotent service operations and worker events with operation IDs, worker generations, event ordering, and reconciliation snapshots.
-- [ ] Define stable account/player identity separately from a client connection ID, reservation ID, and reconnect credential; carry the required identity through handoff and assignment.
-- [ ] Define public directory DTOs separately from privileged launch/package/credential DTOs; avoid exposing local paths or private host metadata.
-- [ ] Align build, wire protocol, content revision/hash, and schema compatibility checks across allocation, staging, handoff, and UDP admission. Make development overrides an explicit mode.
-- [ ] Update the networking design's completion claims to distinguish implemented primitives from incomplete world synchronization and authoritative simulation; align overlapping P2P boundary proposals without implementing P2P here.
+- [x] Select service/host-agent project boundaries, a private worker-management transport, and the minimal website/launcher integration; keep the existing library reusable.
+- [x] Define a versioned worker launch contract: instance/session IDs, worker generation, game/build identity, package manifest and entry point, startup parameters, player limit, tick/physics settings, resource limits, bind/advertised endpoints, and management credentials.
+- [x] Define instance transitions covering allocation, staging, starting, ready, draining, stopping, stopped, and failed. Specify timeout, cancellation, retry, and failure reasons for every operation.
+- [x] Define separate player reservation/connection/synchronization/resume states and which component owns each transition.
+- [x] Define correlated, idempotent service operations and worker events with operation IDs, worker generations, event ordering, and reconciliation snapshots.
+- [x] Define stable account/player identity separately from a client connection ID, reservation ID, and reconnect credential; carry the required identity through handoff and assignment.
+- [x] Define public directory DTOs separately from privileged launch/package/credential DTOs; avoid exposing local paths or private host metadata.
+- [x] Align build, wire protocol, content revision/hash, and schema compatibility checks across allocation, staging, handoff, and UDP admission. Make development overrides an explicit mode.
+- [x] Update the networking design's completion claims to distinguish implemented primitives from incomplete world synchronization and authoritative simulation; align overlapping P2P boundary proposals without implementing P2P here.
 
 Acceptance: One documented create-to-stop sequence accounts for every side effect, owner, credential, identity, state transition, and failure acknowledgment. Subsequent phases implement these same contracts.
 
@@ -77,14 +79,14 @@ Acceptance: One documented create-to-stop sequence accounts for every side effec
 
 Owners: control plane and service wrapper. Dependency: Phase 0.
 
-- [ ] Host the library in a runnable local service with configuration, structured errors, version information, and a minimal identity provider suitable for local development.
-- [ ] Expose browse/get/create/join/leave/drain/stop operations with authorization and observable operation status. Add filtering, visibility policy, and bounded pagination for the directory.
-- [ ] Keep new instances pending until a matching worker generation reports readiness; exclude unavailable/draining instances from normal admission.
-- [ ] Make create, leave, stop, and repeated client requests idempotent; define races between stop, ready, join, and cancellation.
-- [ ] Unify host capacity calculations around configured reservations and separately expose reserved slots, connected players, instance limits, and resource headroom.
-- [ ] Reject invalid or conflicting instance IDs, endpoints, package identities, and launch options. Prevent direct-endpoint creation from accidentally bypassing managed-host accounting.
-- [ ] Add host registration leases/heartbeats and explicit unhealthy/unavailable status; stop placing workers on stale hosts.
-- [ ] Return progress and failure details suitable for the sample website and game UI, with correlation to host/worker logs.
+- [x] Host the library in a runnable local service with configuration, structured errors, version information, and a minimal identity provider suitable for local development.
+- [x] Expose browse/get/create/join/leave/drain/stop operations with authorization and observable operation status. Add filtering, visibility policy, and bounded pagination for the directory.
+- [x] Keep new instances pending until a matching worker generation reports readiness; exclude unavailable/draining instances from normal admission.
+- [x] Make create, leave, stop, and repeated client requests idempotent; define races between stop, ready, join, and cancellation.
+- [x] Unify host capacity calculations around configured reservations and separately expose reserved slots, connected players, instance limits, and resource headroom.
+- [x] Reject invalid or conflicting instance IDs, endpoints, package identities, and launch options. Prevent direct-endpoint creation from accidentally bypassing managed-host accounting.
+- [x] Add host registration leases/heartbeats and explicit unhealthy/unavailable status; stop placing workers on stale hosts.
+- [x] Return progress and failure details suitable for the sample website and game UI, with correlation to host/worker logs.
 
 Acceptance: Independent callers share one authoritative directory; concurrent and repeated create/join requests cannot over-reserve capacity or claim an unready instance is available.
 
@@ -92,16 +94,16 @@ Acceptance: Independent callers share one authoritative directory; concurrent an
 
 Owners: host agent and server management adapter. Dependencies: Phases 0-1.
 
-- [ ] Implement a process launcher/supervisor abstraction and a Windows local implementation for built dedicated-server executables.
-- [ ] Track instance ID, worker generation, process identity, executable/configuration identity, start time, and exit status. Stop only processes owned by this host agent.
-- [ ] Reserve distinct UDP endpoints atomically; model bind and advertised addresses/ports separately. Handle OS bind races and failed launches without leaking reservations.
-- [ ] Allocate isolated working/configuration/state/log directories per worker so concurrent instances do not share mutable game state or contend over build outputs.
-- [ ] Implement the private worker channel for startup progress, ready, liveness, status, roster, metrics, kick, drain, and graceful shutdown. Authenticate requests and reject stale generations.
-- [ ] Publish ready only after content verification, world/game initialization, required simulation services, and UDP binding succeed. Return explicit startup failures and useful exit codes.
-- [ ] Add bounded startup/shutdown deadlines, crash observation, retry/backoff policy, and cancellation of in-flight staging/launch operations.
-- [ ] Drain by disabling new admissions, reporting remaining players, and applying an explicit completion/deadline policy; release capacity/ports only after worker exit is confirmed.
-- [ ] Apply per-worker CPU/memory/resource policies supported by the host and expose saturation instead of silently overcommitting.
-- [ ] Validate malformed or missing managed-launch configuration explicitly rather than silently falling back to unrelated sessions, ports, or worlds.
+- [x] Implement a process launcher/supervisor abstraction and a Windows local implementation for built dedicated-server executables.
+- [x] Track instance ID, worker generation, process identity, executable/configuration identity, start time, and exit status. Stop only processes owned by this host agent.
+- [x] Reserve distinct UDP endpoints atomically; model bind and advertised addresses/ports separately. Handle OS bind races and failed launches without leaking reservations.
+- [x] Allocate isolated working/configuration/state/log directories per worker so concurrent instances do not share mutable game state or contend over build outputs.
+- [x] Implement the private worker channel for startup progress, ready, liveness, status, roster, metrics, kick, drain, and graceful shutdown. Authenticate requests and reject stale generations.
+- [x] Publish ready only after content verification, world/game initialization, required simulation services, and UDP binding succeed. Return explicit startup failures and useful exit codes.
+- [x] Add bounded startup/shutdown deadlines, crash observation, retry/backoff policy, and cancellation of in-flight staging/launch operations.
+- [x] Drain by disabling new admissions, reporting remaining players, and applying an explicit completion/deadline policy; release capacity/ports only after worker exit is confirmed.
+- [x] Apply per-worker CPU/memory/resource policies supported by the host and expose saturation instead of silently overcommitting.
+- [x] Validate malformed or missing managed-launch configuration explicitly rather than silently falling back to unrelated sessions, ports, or worlds.
 
 Acceptance: Create and stop two worker processes with distinct endpoints; a bind conflict, startup failure, crash, and repeated stop each converge to accurate instance state without affecting unrelated processes.
 
@@ -109,14 +111,14 @@ Acceptance: Create and stop two worker processes with distinct endpoints; a bind
 
 Owners: control-plane content layer, server bootstrap, client launcher. Dependencies: Phases 0-2.
 
-- [ ] Define a package entry manifest that names the loadable world, required scenes/assets, registered game bootstrap, build/schema compatibility, and permitted game configuration.
-- [ ] Integrate package verification/staging with worker launch and client join; stage into a temporary location and publish the verified revision atomically.
-- [ ] Validate manifest integrity, file hashes/lengths, identity consistency, and path containment. Reject traversal, unsafe links, incomplete packages, and conflicting package/asset declarations.
-- [ ] Make `XREngine.Server` load the selected package/world/game; retain the minimal generated server world only as an explicit development profile.
-- [ ] Derive the hosted world identity from the verified content actually loaded. Restrict synthetic `XRE_WORLD_*` overrides to declared development workflows.
-- [ ] Load the same immutable revision into editor/game/VR clients before realtime admission; support cancellation, cache reuse, progress, and meaningful compatibility errors.
-- [ ] Register game bootstrap and serialization contracts for published/AOT builds; fail clearly when a required game or content schema is unavailable.
-- [ ] Validate headless game composition: no accidental local camera, input device, audio listener, or rendering dependency is required to simulate the selected world.
+- [x] Define a package entry manifest that names the loadable world, required scenes/assets, registered game bootstrap, build/schema compatibility, and permitted game configuration.
+- [x] Integrate package verification/staging with worker launch and client join; stage into a temporary location and publish the verified revision atomically.
+- [x] Validate manifest integrity, file hashes/lengths, identity consistency, and path containment. Reject traversal, unsafe links, incomplete packages, and conflicting package/asset declarations.
+- [x] Make `XREngine.Server` load the selected package/world/game; retain the minimal generated server world only as an explicit development profile.
+- [x] Derive the hosted world identity from the verified content actually loaded. Restrict synthetic `XRE_WORLD_*` overrides to declared development workflows.
+- [x] Load the same immutable revision into editor/game/VR clients before realtime admission; support cancellation, cache reuse, progress, and meaningful compatibility errors.
+- [x] Register game bootstrap and serialization contracts for published/AOT builds; fail clearly when a required game or content schema is unavailable.
+- [x] Validate headless game composition: no accidental local camera, input device, audio listener, or rendering dependency is required to simulate the selected world.
 
 Acceptance: Two different selected packages produce the corresponding server worlds. A client with different or altered bytes cannot become ready merely by copying the expected identity strings.
 
@@ -124,30 +126,33 @@ Acceptance: Two different selected packages produce the corresponding server wor
 
 Owners: control plane, server admission adapter, runtime/client. Dependencies: Phases 0-3.
 
-- [ ] Replace immediate player-count increments with expiring admission reservations; retain separate counts for reservations, connected players, synchronized players, and resume holds.
-- [ ] Issue player-scoped credentials bound to reservation, instance/session, worker generation, content/build, expiry, and allowed operation. Define replay, duplicate connection, revocation, and reconnect behavior.
-- [ ] Carry authenticated identity through the handoff to the runtime instead of generating an unrelated ID for every networking manager.
-- [ ] Validate/consume the reservation at server admission and enforce a local hard capacity limit. A copied shared session token must not authorize arbitrary additional players.
-- [ ] Confirm connection only after all admission/world checks and pawn/controller creation succeed; roll back failed reservations and partial server objects.
-- [ ] Wire connected, heartbeat, synchronized, disconnected, timed-out, and kicked events to the manager. Reconcile with periodic authoritative roster snapshots so lost/duplicate events do not corrupt occupancy.
-- [ ] Expire unused handoffs; handle client cancellation, loading failure, network failure, and join races without leaving permanent occupied slots.
-- [ ] Integrate the editor's admission and departure paths with the same accounting, fixing stale occupancy after leave/kick/timeout and rollback after failed joins.
-- [ ] Define resume behavior within and beyond the grace window, including slot reservation, pawn ownership, credential renewal, and identity continuity across client restart.
-- [ ] Define control-plane outage behavior: existing authenticated sessions continue where valid; new joins fail clearly unless an explicit bounded offline admission policy permits them.
+- [x] Replace immediate player-count increments with expiring admission reservations; retain separate counts for reservations, connected players, synchronized players, and resume holds.
+- [x] Issue player-scoped credentials bound to reservation, instance/session, worker generation, content/build, expiry, and allowed operation. Define replay, duplicate connection, revocation, and reconnect behavior.
+- [x] Carry authenticated identity through the handoff to the runtime instead of generating an unrelated ID for every networking manager.
+- [x] Validate/consume the reservation at server admission and enforce a local hard capacity limit. A copied shared session token must not authorize arbitrary additional players.
+- [x] Confirm connection only after all admission/world checks and pawn/controller creation succeed; roll back failed reservations and partial server objects.
+- [x] Wire connected, heartbeat, synchronized, disconnected, timed-out, and kicked events to the manager. Reconcile with periodic authoritative roster snapshots so lost/duplicate events do not corrupt occupancy.
+- [x] Expire unused handoffs; handle client cancellation, loading failure, network failure, and join races without leaving permanent occupied slots.
+- [x] Integrate the editor's admission and departure paths with the same accounting, fixing stale occupancy after leave/kick/timeout and rollback after failed joins.
+- [x] Define resume behavior within and beyond the grace window, including slot reservation, pawn ownership, credential renewal, and identity continuity across client restart.
+- [x] Define control-plane outage behavior: existing authenticated sessions continue where valid; new joins fail clearly unless an explicit bounded offline admission policy permits them.
 
 Acceptance: Website identity, reservation, server connection, and displayed occupancy agree. Full rooms reject excess clients; unused tickets expire; disconnect/reconnect and duplicate events do not leak or double-count slots.
+
+
+Implementation boundary for Phases 0–4: managed client startup and the headless game path use verified packages; VR runs through its main game/editor, while the standalone VRClient remains an input/render companion. The ImGui development host has corrected admission/departure accounting; routing its browse/join UI through the service is Phase 8. Phase 6 now reports synchronized state only after actual bootstrap acknowledgment. The service uses bounded local leases and manual retry; durable recovery and public hosting remain later phases.
 
 ## Phase 5: Bind Realtime Traffic to Authenticated Connections
 
 Owners: shared networking runtime and server admission adapter. Dependency: Phase 4. Required before shared-network/public use.
 
-- [ ] Associate admitted transport peers with authenticated connection/session identities; authorize messages against that association before dispatching mutations.
-- [ ] Validate input, transform, pose, leave, and heartbeat senders against the admitted connection rather than trusting payload player/client/entity IDs.
-- [ ] Require session identity on managed traffic and reject missing/mismatched identity instead of filling it from another player's record.
-- [ ] Prevent heartbeat or repeated join traffic from changing an existing connection's endpoint without authenticated rebinding/resume.
-- [ ] Enforce message direction and privilege for assignments, authority updates, clock messages, replication, and remote-job requests/responses; gate any other exposed mutation/dispatch paths.
-- [ ] Add bounded packet/payload/decompression/queue limits, replay/order checks, and per-peer admission/traffic limits with visible diagnostics.
-- [ ] Keep authorization independent from application-provided entity identifiers and ensure rejection leaves world, roster, leases, and endpoint state unchanged.
+- [x] Associate admitted transport peers with authenticated connection/session identities; authorize messages against that association before dispatching mutations.
+- [x] Validate input, transform, pose, leave, and heartbeat senders against the admitted connection rather than trusting payload player/client/entity IDs.
+- [x] Require session identity on managed traffic and reject missing/mismatched identity instead of filling it from another player's record.
+- [x] Prevent heartbeat or repeated join traffic from changing an existing connection's endpoint without authenticated rebinding/resume.
+- [x] Enforce message direction and privilege for assignments, authority updates, clock messages, replication, and remote-job requests/responses; gate any other exposed mutation/dispatch paths.
+- [x] Add bounded packet/payload/decompression/queue limits, replay/order checks, and per-peer admission/traffic limits with visible diagnostics.
+- [x] Keep authorization independent from application-provided entity identifiers and ensure rejection leaves world, roster, leases, and endpoint state unchanged.
 
 Acceptance: A connection cannot move another player's pawn, submit their input/pose, refresh or redirect their heartbeat, remove them, or publish server-only state by changing payload IDs.
 
@@ -155,17 +160,17 @@ Acceptance: A connection cannot move another player's pawn, submit their input/p
 
 Owners: shared runtime, server/game replication adapter, client integration. Dependencies: Phases 3-5.
 
-- [ ] Define the replicated entity/component schema and opt-in game-state extension boundary, stable network IDs, factories, ownership metadata, schema versions, and unsupported-type diagnostics.
-- [ ] Implement server producers and client consumers behind the existing snapshot/delta transport hooks; carry actual entity/component/game state rather than only envelopes.
-- [ ] Send a complete relevant roster and entity baseline to each joining client, including stationary players, dynamic objects, current component/game state, and authority metadata.
-- [ ] Create/destroy entities and components in a defined order; resolve references, parents, assets, and remote pawn/controller identity deterministically.
-- [ ] Capture a consistent baseline at a simulation tick; buffer subsequent deltas during transfer and apply them after the baseline. Bound memory, chunk sizes, acknowledgment/retry windows, and transfer time.
-- [ ] Handle missing/duplicate/out-of-order deltas, baseline mismatches, and interrupted joins through explicit resynchronization.
-- [ ] Turn advisory scene metadata into a verified loaded-content contract; fail joins when required scenes or game factories are unavailable.
-- [ ] Add a synchronization-complete acknowledgment and playable gate; assignment alone must not enable gameplay or report the player ready.
-- [ ] Integrate humanoid baseline/delta initialization, ownership, and late-join recovery with replicated avatar creation.
-- [ ] Apply existing relevance/bandwidth policy to initial and ongoing replication; handle entities entering/leaving interest with baselines and explicit removals.
-- [ ] Clean up server/client pawns, controllers, input buffers, leases, replication state, and transport state on leave, kick, expired resume, stop, and repeated instance switches.
+- [x] Define the replicated entity/component schema and opt-in game-state extension boundary, stable network IDs, factories, ownership metadata, schema versions, and unsupported-type diagnostics.
+- [x] Implement server producers and client consumers behind the existing snapshot/delta transport hooks; carry actual entity/component/game state rather than only envelopes.
+- [x] Send a complete relevant roster and entity baseline to each joining client, including stationary players, dynamic objects, current component/game state, and authority metadata.
+- [x] Create/destroy entities and components in a defined order; resolve references, parents, assets, and remote pawn/controller identity deterministically.
+- [x] Capture a consistent baseline at a simulation tick; buffer subsequent deltas during transfer and apply them after the baseline. Bound memory, chunk sizes, acknowledgment/retry windows, and transfer time.
+- [x] Handle missing/duplicate/out-of-order deltas, baseline mismatches, and interrupted joins through explicit resynchronization.
+- [x] Turn advisory scene metadata into a verified loaded-content contract; fail joins when required scenes or game factories are unavailable.
+- [x] Add a synchronization-complete acknowledgment and playable gate; assignment alone must not enable gameplay or report the player ready.
+- [x] Integrate humanoid baseline/delta initialization, ownership, and late-join recovery with replicated avatar creation.
+- [x] Apply existing relevance/bandwidth policy to initial and ongoing replication; handle entities entering/leaving interest with baselines and explicit removals.
+- [x] Clean up server/client pawns, controllers, input buffers, leases, replication state, and transport state on leave, kick, expired resume, stop, and repeated instance switches.
 
 Acceptance: A late joiner receives the same relevant live state as existing clients, including stationary actors and objects changed before joining. Loss/reordering causes recovery or a visible failure, never silent partial readiness.
 
@@ -173,17 +178,19 @@ Acceptance: A late joiner receives the same relevant live state as existing clie
 
 Owners: server/game simulation integration and shared runtime/client. Dependencies: Phases 5-6.
 
-- [ ] Consume validated buffered inputs at fixed simulation ticks with bounded ordering, duplicate rejection, timing windows, and explicit handling of late/missing input.
-- [ ] Apply supported input commands to server-owned simulation/physics instead of treating receipt as completed processing.
-- [ ] Generate authoritative movement/state from server simulation. Validate or reject client transform proposals under an explicit authority policy.
-- [ ] Advance `LastProcessedInputSequence` only when the corresponding input has actually been simulated; stamp state with the correct simulation tick and baseline.
-- [ ] Integrate client prediction history, server correction, rewind/replay of unacknowledged input where supported, and remote interpolation.
-- [ ] Define game extension points for interactions and additional input schemas beyond character locomotion; preserve AOT-safe serialization.
-- [ ] Separate tracked-avatar pose updates from authoritative physics/gameplay effects. Validate timing, ownership, and bounds before accepting pose-driven interactions.
-- [ ] Define and implement lease grant/renew/revoke/transfer behavior for replicated interactable entities, with deterministic ownership conflict resolution by the server.
+- [x] Consume validated buffered inputs at fixed simulation ticks with bounded ordering, duplicate rejection, timing windows, and explicit handling of late/missing input.
+- [x] Apply supported input commands to server-owned simulation/physics instead of treating receipt as completed processing.
+- [x] Generate authoritative movement/state from server simulation. Validate or reject client transform proposals under an explicit authority policy.
+- [x] Advance `LastProcessedInputSequence` only when the corresponding input has actually been simulated; stamp state with the correct simulation tick and baseline.
+- [x] Integrate client prediction history, server correction, rewind/replay of unacknowledged input where supported, and remote interpolation.
+- [x] Define game extension points for interactions and additional input schemas beyond character locomotion; preserve AOT-safe serialization.
+- [x] Separate tracked-avatar pose updates from authoritative physics/gameplay effects. Validate timing, ownership, and bounds before accepting pose-driven interactions.
+- [x] Define and implement lease grant/renew/revoke/transfer behavior for replicated interactable entities, with deterministic ownership conflict resolution by the server.
 - [ ] Record tick duration, input queue age/depth, correction magnitude, and replication cost; validate configured tick/physics budgets and hot-path allocations with multiple clients.
 
 Acceptance: A client's movement is reconstructed from its inputs on the server; invalid transform proposals do not become authoritative merely by being received. Clients converge under latency/loss while acknowledgments refer to simulated inputs.
+
+Runtime evidence: `Build/_AgentValidation/20260914-185107-managed-sync/scratch/live-simulation.ps1` passed with three authenticated clients, fixed-tick input acknowledgement/correction, registered game-schema apply and replication, client-side unknown/oversized schema rejection before queueing, client-transform rejection, and server-authorized interactable grant, transfer, and revoke. `GameInputSnapshot` is a bounded AOT MemoryPack union with an explicit immutable registry of schema ID/version validators and server fixed-tick apply callbacks; unknown schemas are rejected before buffering and acknowledgements advance only after a callback succeeds. The managed sample fallback is collisionless planar kinematic locomotion; games may implement `IAuthoritativeCharacterInputSimulator` for server-owned physics. Jump, collision, and arbitrary interaction schemas remain unsupported. Client prediction replays at the local fixed cadence, so games must configure matching client/server fixed steps for exact kinematic convergence. Tick-duration, queue-depth/age, simulated/rejected input, and transform-byte counters are published in worker metrics; correction magnitude, allocation sampling, and configured tick-budget headroom remain required before the metrics item can be completed.
 
 ## Phase 8: Website, Launcher, Editor, and Game Workflow
 
@@ -200,6 +207,8 @@ Owners: service sample UI, client integration, editor/VR client. Dependencies: P
 - [ ] Add documented local launch/stop tasks for the service, host agent, sample UI, and multiple clients without concurrent builds sharing mutable outputs.
 
 Acceptance: A user can create an instance from the sample website, launch or direct a native client into it, see synchronized players, switch instances, and stop it without manual handoff editing or a readiness pause.
+
+Progress (local implementation): the loopback service has a bearer-authenticated sample UI and an optional allowlisted local native launcher. Bootstrap exposes `ManagedInstanceServiceClient` and `ManagedClientJoinCoordinator`; they download verified remote content, switch a running hosted world, retain a package cache lease, and report observed assignment/synchronization state. The ImGui Networking panel uses this client path alongside its retained direct-development controls. End-to-end multi-client validation remains part of the Phase 9 local milestone; this does not provide a public launcher or hosting surface.
 
 ## Phase 9: Local End-to-End Milestone and Restart Recovery
 
@@ -237,7 +246,7 @@ Acceptance: Authenticated users can manage and join reachable workers across hos
 
 ## Validation, Documentation, and Closeout
 
-This is a planning-only change. Do not create or run feature tests just to add this document. During implementation, follow the repository's feature-validation-first policy: validate the relevant live/runtime path first, then begin new or modified regression/integration test work only after explicit user clearance. Existing targeted checks may be used when necessary to diagnose an active defect.
+Phases 0–6 have live runtime evidence; Phases 7–10 remain implementation work. Follow the repository's feature-validation-first policy: validate the relevant live/runtime path first, then begin new or modified regression/integration test work only after explicit user clearance. Existing targeted checks may be used when necessary to diagnose an active defect.
 
 - [ ] Maintain phase evidence in `docs/work/progress/networking/` and focused investigations in `docs/work/investigations/networking/`; record attempts, results, and user-reported failures without marking unverified work complete.
 - [ ] Keep disposable builds, process logs, captures, and reports under a bounded `Build/_AgentValidation/<run>/` root. Use named isolated sessions for editor MCP validation and stop only task-owned processes.

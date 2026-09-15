@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows10.0.26100.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <XREngineIncludeSharedExecutableDependencies>false</XREngineIncludeSharedExecutableDependencies>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\XREngine.ControlPlane\XREngine.ControlPlane.csproj" />
+  </ItemGroup>
+</Project>

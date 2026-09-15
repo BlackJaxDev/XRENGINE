@@ -1,4 +1,5 @@
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
@@ -14,16 +15,18 @@ using XREngine.Timers;
 
 namespace XREngine
 {
-    public class ClientNetworkingManager : BaseNetworkingManager
+    public partial class ClientNetworkingManager : BaseNetworkingManager
         {
             public override bool IsServer => false;
             public override bool IsClient => true;
             public override bool HasConnectedRemotePeer => _assignmentReceived;
 
-            private readonly string _clientId = Guid.NewGuid().ToString("N");
+            private readonly string _generatedClientId = Guid.NewGuid().ToString("N");
             private bool _joinRequested;
             private bool _tickRegistered;
             private volatile bool _assignmentReceived;
+            private volatile int _primaryAssignedServerPlayerIndex = -1;
+            private NetworkEntityId _primaryAssignedEntityId = NetworkEntityId.Empty;
             private long _lastInputSyncTicks;
             private long _lastTransformSyncTicks;
             private long _lastJoinRequestTicks;
@@ -42,7 +45,7 @@ namespace XREngine
             private readonly Dictionary<int, RemotePlayerState> _remotePlayers = new();
             private readonly HashSet<int> _localServerIndices = new();
             private WorldAssetIdentity? _localWorldAsset;
-            private string EffectiveClientId => _clientId;
+            private string EffectiveClientId => string.IsNullOrWhiteSpace(StableClientId) ? _generatedClientId : StableClientId.Trim();
 
             public ClientNetworkingManager() : base(peerId: null)
             {
@@ -52,7 +55,11 @@ namespace XREngine
             {
                 if (disposing)
                 {
+                    LastServerError = null;
                     SendPlayerLeaveForLocals("Client disposed");
+                    DisposeManagedTransport();
+                    _tlsTunnel?.Dispose();
+                    _tlsTunnel = null;
 
                     if (_tickRegistered)
                     {
@@ -60,7 +67,7 @@ namespace XREngine
                         _tickRegistered = false;
                     }
 
-                    ClearRemotePlayers();
+                    DisposeReplicationSynchronization();
                 }
 
                 base.Dispose(disposing);
@@ -78,10 +85,29 @@ namespace XREngine
             public UdpClient? UdpSender { get; set; }
             public Guid? SessionId { get; set; }
             public string? SessionToken { get; set; }
+            /// <summary>Stable client-instance identity supplied by a trusted launcher when available.</summary>
+            public string? StableClientId { get; set; }
+            /// <summary>Stable control-plane account identity carried through a managed handoff.</summary>
+            public string? AccountId { get; set; }
+            public Guid? WorkerGeneration { get; set; }
+            public bool ResumeRequested { get; set; }
+            public long CredentialEpoch { get; set; }
+            public string? ReservationId { get; set; }
+            /// <summary>Opaque player-specific admission grant. Never log this value.</summary>
+            public string? AdmissionSecret { get; set; }
             public WorldAssetIdentity? LocalWorldAsset => _localWorldAsset ??= CreateLocalWorldAsset();
             public double EstimatedServerClockOffsetSeconds => _clockOffsetSeconds;
             public long LastReceivedServerTickId => _lastReceivedServerTickId;
             public uint LastProcessedInputSequence => _lastProcessedInputSequence;
+            /// <summary>Last server-reported non-secret failure applicable to this client session.</summary>
+            public ServerErrorMessage? LastServerError { get; private set; }
+            public Guid? AssignedSessionId => _activeSessionId == Guid.Empty ? null : _activeSessionId;
+            public int? PrimaryAssignedServerPlayerIndex => _primaryAssignedServerPlayerIndex < 0 ? null : _primaryAssignedServerPlayerIndex;
+            /// <summary>Authoritative assigned pawn identity, retained even when this process has no UI local player.</summary>
+            public NetworkEntityId? PrimaryAssignedEntityId => _primaryAssignedEntityId.IsEmpty ? null : _primaryAssignedEntityId;
+            /// <summary>True only after a local assignment has supplied both a session and player identity.</summary>
+            public bool HasValidLocalAssignment
+                => _assignmentReceived && _activeSessionId != Guid.Empty && _primaryAssignedServerPlayerIndex >= 0;
 
             public void Start(
                 IPAddress udpMulticastGroupIP,
@@ -91,9 +117,12 @@ namespace XREngine
                 int udpClientReceivePort)
             {
                 Debug.Log(ELogCategory.Networking, $"Starting client with udp(receive:{udpClientReceivePort}) sending to server at ({serverIP}:{udpSendPort})");
-                StartUdpSender(serverIP, udpSendPort, udpClientReceivePort);
+                LastServerError = null;
+                StartSelectedTransport(serverIP, udpSendPort, udpClientReceivePort);
+                PauseUntilReplicationAssignment();
                 EnsureClientTick();
-                SendJoinRequest();
+                if (!StartManagedTransportHandshake())
+                    SendJoinRequest();
             }
 
             protected void StartUdpSender(IPAddress serverIP, int udpMulticastServerPort, int udpClientReceivePort)
@@ -123,6 +152,9 @@ namespace XREngine
                     targets.Add(ServerIP);
             }
 
+            protected override bool IsAllowedInboundSender(IPEndPoint? sender, EBroadcastType type)
+                => sender is not null && ServerIP is not null && sender.Equals(ServerIP);
+
             public override void ConsumeQueues()
             {
                 base.ConsumeQueues();
@@ -132,14 +164,24 @@ namespace XREngine
                 {
                     SendPlayerLeaveForLocals("UDP disconnected");
                     _assignmentReceived = false;
+                    ResetReplicationSynchronization();
                 }
             }
 
             protected override void HandleStateChange(StateChangeInfo change, IPEndPoint? sender)
             {
-                if (change.Type is EStateChangeType.RemoteJobRequest or EStateChangeType.RemoteJobResponse or EStateChangeType.HumanoidPoseFrame)
+                if (TryHandleReplicationStateChange(change, sender))
+                    return;
+
+                // Remote jobs are not part of the managed realtime authority surface. They can
+                // load/process arbitrary application data and must use an explicitly provisioned
+                // control transport instead of a gameplay UDP sender.
+                if (change.Type is EStateChangeType.RemoteJobRequest or EStateChangeType.RemoteJobResponse)
+                    return;
+
+                if (change.Type == EStateChangeType.HumanoidPoseFrame)
                 {
-                    base.HandleStateChange(change, sender);
+                    QueueReplicationPresentation(() => base.HandleStateChange(change, sender));
                     return;
                 }
 
@@ -147,15 +189,15 @@ namespace XREngine
                 {
                     case EStateChangeType.PlayerAssignment:
                         if (StateChangePayloadSerializer.TryDeserialize<PlayerAssignment>(change.Data, out var assignment) && assignment is not null)
-                            HandlePlayerAssignment(assignment);
+                            RuntimeNetworkingHostServices.Current.EnqueueSimulation(() => HandlePlayerAssignment(assignment));
                         break;
                     case EStateChangeType.PlayerTransformUpdate:
                         if (StateChangePayloadSerializer.TryDeserialize<PlayerTransformUpdate>(change.Data, out var transformUpdate) && transformUpdate is not null)
-                            HandleRemoteTransform(transformUpdate);
+                            QueueReplicationPresentation(() => HandleRemoteTransform(transformUpdate));
                         break;
                     case EStateChangeType.PlayerLeave:
                         if (StateChangePayloadSerializer.TryDeserialize<PlayerLeaveNotice>(change.Data, out var leave) && leave is not null)
-                            HandlePlayerLeave(leave);
+                            RuntimeNetworkingHostServices.Current.EnqueueSimulation(() => HandlePlayerLeave(leave));
                         break;
                     case EStateChangeType.ServerError:
                         if (StateChangePayloadSerializer.TryDeserialize<ServerErrorMessage>(change.Data, out var error) && error is not null)
@@ -163,7 +205,7 @@ namespace XREngine
                         break;
                     case EStateChangeType.AuthorityLeaseUpdate:
                         if (StateChangePayloadSerializer.TryDeserialize<NetworkAuthorityLease>(change.Data, out var lease) && lease is not null)
-                            HandleAuthorityLeaseUpdate(lease);
+                            QueueReplicationPresentation(() => HandleAuthorityLeaseUpdate(lease));
                         break;
                     case EStateChangeType.ClockSync:
                         if (StateChangePayloadSerializer.TryDeserialize<ClockSyncMessage>(change.Data, out var clock) && clock is not null)
@@ -187,7 +229,12 @@ namespace XREngine
 
             private void TickClientNetwork()
             {
+                TickReplicationSynchronization();
+                TickManagedTransportHandshake();
                 if (!UDPServerConnectionEstablished)
+                    return;
+
+                if (IsManagedTransportRequested && !IsManagedTransportEstablished)
                     return;
 
                 long nowTicks = CurrentEngineTicks();
@@ -196,13 +243,13 @@ namespace XREngine
                 if (!_assignmentReceived && (!_joinRequested || HasElapsed(nowTicks, _lastJoinRequestTicks, JoinRetrySeconds)))
                     SendJoinRequest();
 
-                if (HasElapsed(nowTicks, _lastInputSyncTicks, InputSyncIntervalSeconds))
+                if (IsGameplayReady && HasElapsed(nowTicks, _lastInputSyncTicks, InputSyncIntervalSeconds))
                 {
                     SendLocalInputSnapshots();
                     _lastInputSyncTicks = nowTicks;
                 }
 
-                if (HasElapsed(nowTicks, _lastTransformSyncTicks, TransformSyncIntervalSeconds))
+                if (!IsManagedTransportRequested && IsGameplayReady && HasElapsed(nowTicks, _lastTransformSyncTicks, TransformSyncIntervalSeconds))
                 {
                     SendLocalTransformSnapshots();
                     _lastTransformSyncTicks = nowTicks;
@@ -217,6 +264,12 @@ namespace XREngine
 
             private void SendJoinRequest()
             {
+                if (IsManagedTransportRequested)
+                {
+                    // The handshake starts once with the connection and owns its retry state.
+                    // Accept can precede simulation-thread assignment; never restart with the erased secret.
+                    return;
+                }
                 long nowTicks = CurrentEngineTicks();
                 _localWorldAsset ??= CreateLocalWorldAsset();
 
@@ -229,6 +282,12 @@ namespace XREngine
                     ClientWorldAsset = _localWorldAsset,
                     SessionId = SessionId ?? (_activeSessionId == Guid.Empty ? null : _activeSessionId),
                     SessionToken = SessionToken,
+                    AccountId = AccountId,
+                    ReservationId = ReservationId,
+                    AdmissionSecret = AdmissionSecret,
+                    WorkerGeneration = WorkerGeneration,
+                    ResumeRequested = ResumeRequested,
+                    CredentialEpoch = CredentialEpoch,
                 };
 
                 BroadcastStateChange(EStateChangeType.PlayerJoin, request, compress: true);
@@ -238,6 +297,7 @@ namespace XREngine
 
             private void SendHeartbeat()
             {
+                bool emittedAssignedPlayer = false;
                 foreach (var player in RuntimeNetworkingHostServices.Current.LocalPlayers)
                 {
                     if (player is null)
@@ -262,6 +322,21 @@ namespace XREngine
                     };
 
                     BroadcastStateChange(EStateChangeType.Heartbeat, heartbeat, compress: false);
+                    emittedAssignedPlayer |= serverIndex == _primaryAssignedServerPlayerIndex;
+                }
+
+                if (!emittedAssignedPlayer && HasValidLocalAssignment)
+                {
+                    BroadcastStateChange(EStateChangeType.Heartbeat, new PlayerHeartbeat
+                    {
+                        ServerPlayerIndex = _primaryAssignedServerPlayerIndex,
+                        ClientId = EffectiveClientId,
+                        TimestampUtc = GetUtcSeconds(),
+                        ClientSendTimestampUtc = GetUtcSeconds(),
+                        LastReceivedServerTickId = _lastReceivedServerTickId,
+                        LastProcessedInputSequence = _lastProcessedInputSequence,
+                        SessionId = _activeSessionId,
+                    }, compress: false);
                 }
             }
 
@@ -282,11 +357,14 @@ namespace XREngine
                     if (player.ControlledPawnComponent is not PawnComponent pawn)
                         continue;
 
+                    if (pawn.CaptureNetworkInputState() is not CharacterPawnInputSnapshot capturedInput)
+                        continue;
+
                     var snapshot = new PlayerInputSnapshot
                     {
                         ServerPlayerIndex = serverIndex,
                         EntityId = playerInfo.NetworkEntityId,
-                        Input = pawn.CaptureNetworkInputState(),
+                        Input = capturedInput,
                         TimestampUtc = GetUtcSeconds(),
                         ClientSendTimestampUtc = GetUtcSeconds(),
                         InputSequence = ++_inputSequence,
@@ -294,6 +372,7 @@ namespace XREngine
                         SessionId = playerInfo.SessionId
                     };
 
+                    RecordPredictedInput(snapshot);
                     BroadcastStateChange(EStateChangeType.PlayerInputSnapshot, snapshot, compress: true);
                 }
             }
@@ -335,6 +414,7 @@ namespace XREngine
 
             private void SendPlayerLeaveForLocals(string reason)
             {
+                bool emittedAssignedPlayer = false;
                 foreach (var player in RuntimeNetworkingHostServices.Current.LocalPlayers)
                 {
                     if (player is null)
@@ -356,28 +436,59 @@ namespace XREngine
                     };
 
                     BroadcastStateChange(EStateChangeType.PlayerLeave, leave, compress: false);
+                    emittedAssignedPlayer |= serverIndex == _primaryAssignedServerPlayerIndex;
 
                     playerInfo.ServerIndex = -1;
                     playerInfo.NetworkEntityId = NetworkEntityId.Empty;
                     playerInfo.AuthorityLease = null;
                     _localServerIndices.Remove(serverIndex);
                 }
+
+                if (!emittedAssignedPlayer && HasValidLocalAssignment)
+                {
+                    BroadcastStateChange(EStateChangeType.PlayerLeave, new PlayerLeaveNotice
+                    {
+                        ServerPlayerIndex = _primaryAssignedServerPlayerIndex,
+                        ClientId = EffectiveClientId,
+                        Reason = reason,
+                        SessionId = _activeSessionId,
+                    }, compress: false);
+                }
+
+                if (_primaryAssignedServerPlayerIndex >= 0)
+                {
+                    _localServerIndices.Remove(_primaryAssignedServerPlayerIndex);
+                    _primaryAssignedServerPlayerIndex = -1;
+                    _primaryAssignedEntityId = NetworkEntityId.Empty;
+                    _assignmentReceived = false;
+                    _activeSessionId = Guid.Empty;
+                    ResetReplicationSynchronization();
+                }
             }
 
             private void HandlePlayerAssignment(PlayerAssignment assignment)
             {
-                bool isLocal = string.Equals(assignment.ClientId, EffectiveClientId, StringComparison.OrdinalIgnoreCase);
+                if (IsReplicationDisposed)
+                    return;
 
-                if (assignment.World is not null)
-                    ApplyWorldDescriptor(assignment.World);
+                bool isLocal = string.Equals(assignment.ClientId, EffectiveClientId, StringComparison.OrdinalIgnoreCase);
 
                 if (!isLocal && _activeSessionId != Guid.Empty && assignment.SessionId != _activeSessionId)
                     return;
 
                 if (isLocal)
                 {
+                    // Headless native clients intentionally have no local controller to attach. The
+                    // network assignment is still authoritative and must retain its session identity.
+                    _activeSessionId = assignment.SessionId;
                     AttachAssignmentToLocalPlayer(assignment);
                     _assignmentReceived = true;
+                    _primaryAssignedServerPlayerIndex = assignment.ServerPlayerIndex;
+                    _primaryAssignedEntityId = assignment.PlayerEntityId;
+                    _localServerIndices.Add(assignment.ServerPlayerIndex);
+                    BeginReplicationSynchronization(assignment);
+                    if (assignment.World is not null)
+                        RuntimeNetworkingHostServices.Current.EnqueueSimulation(() => ApplyWorldDescriptor(assignment.World));
                     Debug.Networking(
                         "[Client] Realtime assignment accepted playerIndex={0}; session={1}; world={2}",
                         assignment.ServerPlayerIndex,
@@ -415,6 +526,10 @@ namespace XREngine
                         return;
                     }
                 }
+
+                if (assignment.World is not null)
+                    ApplyWorldDescriptor(assignment.World);
+
             }
 
             private void ApplyWorldDescriptor(WorldSyncDescriptor descriptor)
@@ -426,6 +541,9 @@ namespace XREngine
                     if (worldInstance is null)
                         return;
                 }
+
+                if (!IsGameplayReady && worldInstance.WorldInstance is RuntimeWorld runtimeWorld)
+                    runtimeWorld.PausePlay();
 
                 if (!string.IsNullOrWhiteSpace(descriptor.WorldName) && worldInstance.TargetWorld is not null)
                     worldInstance.TargetWorld.Name = descriptor.WorldName!;
@@ -500,6 +618,16 @@ namespace XREngine
                     }
                 }
 
+                if (leave.ServerPlayerIndex == _primaryAssignedServerPlayerIndex)
+                {
+                    _localServerIndices.Remove(leave.ServerPlayerIndex);
+                    _primaryAssignedServerPlayerIndex = -1;
+                    _primaryAssignedEntityId = NetworkEntityId.Empty;
+                    _assignmentReceived = false;
+                    _activeSessionId = Guid.Empty;
+                    ResetReplicationSynchronization();
+                }
+
                 // Remove remote avatar if present
                 RemoveRemotePlayer(leave.ServerPlayerIndex);
             }
@@ -513,6 +641,16 @@ namespace XREngine
                     return;
 
                 string title = string.IsNullOrWhiteSpace(error.Title) ? "Server Error" : error.Title;
+                LastServerError = new ServerErrorMessage
+                {
+                    StatusCode = error.StatusCode,
+                    Title = title,
+                    Detail = error.Detail,
+                    ClientId = error.ClientId,
+                    ServerPlayerIndex = error.ServerPlayerIndex,
+                    RequestId = error.RequestId,
+                    Fatal = error.Fatal,
+                };
                 Debug.Out($"[Client][Error {error.StatusCode}] {title}: {error.Detail}");
 
                 if (error.Fatal)
@@ -532,7 +670,10 @@ namespace XREngine
                     _localServerIndices.Clear();
                     ClearRemotePlayers();
                     _assignmentReceived = false;
+                    _primaryAssignedServerPlayerIndex = -1;
+                    _primaryAssignedEntityId = NetworkEntityId.Empty;
                     _activeSessionId = Guid.Empty;
+                    ResetReplicationSynchronization();
                 }
             }
 
@@ -563,7 +704,10 @@ namespace XREngine
                     if (player?.PlayerInfo is not { } playerInfo || playerInfo.ServerIndex != update.ServerPlayerIndex)
                         continue;
 
+                    if (player.ControlledPawnComponent?.SceneNode?.Transform is Transform transform)
+                        RecordPredictionCorrection(transform.Translation, update.Translation);
                     player.ApplyNetworkTransform(update);
+                    ReplayPredictedInputs(player, update);
                     return;
                 }
             }
@@ -605,6 +749,15 @@ namespace XREngine
 
             protected override void PrepareOutgoingHumanoidPoseFrame(HumanoidPoseFrame frame)
             {
+                if (!IsGameplayReady)
+                {
+                    // Base exposes pose broadcast to renderer/XR callers. Keep the frame
+                    // structurally invalid until synchronization permits gameplay traffic.
+                    frame.SessionId = Guid.Empty;
+                    frame.SourceClientId = string.Empty;
+                    frame.EntityIds = [];
+                    return;
+                }
                 if (frame.SessionId == Guid.Empty)
                     frame.SessionId = _activeSessionId;
                 if (string.IsNullOrWhiteSpace(frame.SourceClientId))
@@ -615,9 +768,34 @@ namespace XREngine
                     frame.EntityIds = GetLocalNetworkEntityIds();
                 frame.AuthorityMode = NetworkAuthorityMode.ClientPredicted;
                 frame.Channel = NetworkReplicationChannel.HumanoidPose;
+
+                if (!IsManagedTransportRequested)
+                    return;
+
+                if (_primaryAssignedServerPlayerIndex is <= 0 or > ushort.MaxValue
+                    || _primaryAssignedEntityId.IsEmpty
+                    || frame.AvatarCount != 1
+                    || frame.Payload.Length < 6
+                    || frame.BaselineSequence == 0)
+                {
+                    RejectManagedPoseFrame(frame);
+                    return;
+                }
+
+                // Managed pose traffic has one stable avatar, bound by the server-assigned
+                // player index. The server re-parses the complete frame before accepting it.
+                BinaryPrimitives.WriteUInt16LittleEndian(frame.Payload, (ushort)_primaryAssignedServerPlayerIndex);
+                frame.EntityIds = [_primaryAssignedEntityId];
             }
 
-            private static NetworkEntityId[] GetLocalNetworkEntityIds()
+            private void RejectManagedPoseFrame(HumanoidPoseFrame frame)
+            {
+                frame.SessionId = Guid.Empty;
+                frame.SourceClientId = string.Empty;
+                frame.EntityIds = [];
+            }
+
+            private NetworkEntityId[] GetLocalNetworkEntityIds()
             {
                 List<NetworkEntityId> ids = [];
                 foreach (var player in RuntimeNetworkingHostServices.Current.LocalPlayers)
@@ -626,10 +804,13 @@ namespace XREngine
                         ids.Add(playerInfo.NetworkEntityId);
                 }
 
+                if (ids.Count == 0 && !_primaryAssignedEntityId.IsEmpty)
+                    ids.Add(_primaryAssignedEntityId);
+
                 return [.. ids];
             }
 
-            private RemotePlayerState? GetOrCreateRemotePlayer(int serverPlayerIndex, string? displayName = null)
+            private RemotePlayerState? GetOrCreateRemotePlayer(int serverPlayerIndex, string? displayName = null, IRuntimeNetworkWorldContext? preferredWorld = null)
             {
                 if (_localServerIndices.Contains(serverPlayerIndex))
                     return null;
@@ -640,7 +821,7 @@ namespace XREngine
                     return existing;
                 }
 
-                IRuntimeNetworkWorldContext? worldInstance = ResolvePrimaryWorldInstance() ?? EnsureClientWorld(new WorldSyncDescriptor());
+                IRuntimeNetworkWorldContext? worldInstance = preferredWorld ?? ResolvePrimaryWorldInstance() ?? EnsureClientWorld(new WorldSyncDescriptor());
                 if (worldInstance is null)
                     return null;
 
@@ -656,7 +837,7 @@ namespace XREngine
 
                 RuntimeNetworkingHostServices.Current.AddRemotePlayer(controller);
 
-                var remote = new RemotePlayerState(serverPlayerIndex, controller, pawn);
+                var remote = new RemotePlayerState(serverPlayerIndex, controller, pawn, worldInstance, _replicationWorldLease.Token);
                 _remotePlayers[serverPlayerIndex] = remote;
                 return remote;
             }
@@ -673,17 +854,22 @@ namespace XREngine
                 _remotePlayers.Remove(serverPlayerIndex);
             }
 
-            private void ClearRemotePlayers()
+            private void ClearRemotePlayers(IRuntimeNetworkWorldContext? worldContext = null, bool clearAll = true, long? bindingGeneration = null)
             {
-                foreach (var remote in _remotePlayers.Values)
+                foreach (var remote in _remotePlayers.Values.Where(remote => clearAll
+                    || ReferenceEquals(remote.WorldContext, worldContext) && (!bindingGeneration.HasValue || remote.ReplicationBindingGeneration == bindingGeneration.Value)).ToArray())
+                {
                     DestroyRemotePlayer(remote);
+                    _remotePlayers.Remove(remote.ServerPlayerIndex);
+                }
 
-                _remotePlayers.Clear();
+                if (clearAll)
+                    _remotePlayers.Clear();
             }
 
             private static void DestroyRemotePlayer(RemotePlayerState remote)
             {
-                RuntimeNetworkingHostServices.Current.ResolvePrimaryWorld()?.DestroyPawn(remote.Pawn);
+                remote.WorldContext.DestroyPawn(remote.Pawn);
                 RuntimeNetworkingHostServices.Current.RemoveRemotePlayer(remote.Controller);
                 if (remote.Controller is XRObjectBase controllerObj)
                     controllerObj.Destroy();
@@ -729,16 +915,20 @@ namespace XREngine
 
             private sealed class RemotePlayerState
             {
-                public RemotePlayerState(int serverPlayerIndex, IPawnController controller, PawnComponent pawn)
+                public RemotePlayerState(int serverPlayerIndex, IPawnController controller, PawnComponent pawn, IRuntimeNetworkWorldContext worldContext, long replicationBindingGeneration)
                 {
                     ServerPlayerIndex = serverPlayerIndex;
                     Controller = controller;
                     Pawn = pawn;
+                    WorldContext = worldContext;
+                    ReplicationBindingGeneration = replicationBindingGeneration;
                 }
 
                 public int ServerPlayerIndex { get; }
                 public IPawnController Controller { get; }
                 public PawnComponent Pawn { get; }
+                public IRuntimeNetworkWorldContext WorldContext { get; }
+                public long ReplicationBindingGeneration { get; }
             }
 
             ~ClientNetworkingManager()

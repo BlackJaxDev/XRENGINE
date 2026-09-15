@@ -1,4 +1,5 @@
 using XREngine.Rendering.API.Rendering.OpenXR;
+using System;
 using System.Collections.Generic;
 
 namespace XREngine.Rendering.Vulkan;
@@ -125,6 +126,11 @@ internal static class VulkanOpenXrSubmissionValidationState
         OpenXrSubmissionValidationSnapshot source,
         bool includeLiveCounts)
     {
+        aggregate.StopwatchFrequency = MergeStableCapacity(aggregate.StopwatchFrequency, source.StopwatchFrequency, nameof(OpenXrSubmissionValidationSnapshot.StopwatchFrequency));
+        aggregate.TrackedUploadCapacity = MergeStableCapacity(aggregate.TrackedUploadCapacity, source.TrackedUploadCapacity, nameof(OpenXrSubmissionValidationSnapshot.TrackedUploadCapacity));
+        aggregate.TrackedCommandBufferCapacity = MergeStableCapacity(aggregate.TrackedCommandBufferCapacity, source.TrackedCommandBufferCapacity, nameof(OpenXrSubmissionValidationSnapshot.TrackedCommandBufferCapacity));
+        aggregate.TrackedFrameSlotCapacity = MergeStableCapacity(aggregate.TrackedFrameSlotCapacity, source.TrackedFrameSlotCapacity, nameof(OpenXrSubmissionValidationSnapshot.TrackedFrameSlotCapacity));
+        aggregate.TrackedSwapchainImageCapacity = MergeStableCapacity(aggregate.TrackedSwapchainImageCapacity, source.TrackedSwapchainImageCapacity, nameof(OpenXrSubmissionValidationSnapshot.TrackedSwapchainImageCapacity));
         aggregate.OverflowCount += source.OverflowCount;
         aggregate.AdmissionHighWater = Math.Max(aggregate.AdmissionHighWater, source.AdmissionHighWater);
         aggregate.AdmissionCapacity = Math.Max(aggregate.AdmissionCapacity, source.AdmissionCapacity);
@@ -132,9 +138,37 @@ internal static class VulkanOpenXrSubmissionValidationState
         aggregate.ForcedWaitCount += source.ForcedWaitCount;
         aggregate.HoldArmed |= source.HoldArmed;
         aggregate.HoldReleased |= source.HoldReleased;
+        if (source.HoldReleaseReason != EOpenXrCompletionObservationHoldReleaseReason.None)
+            aggregate.HoldReleaseReason = aggregate.HoldReleaseReason == EOpenXrCompletionObservationHoldReleaseReason.None ||
+                aggregate.HoldReleaseReason == source.HoldReleaseReason
+                    ? source.HoldReleaseReason
+                    : EOpenXrCompletionObservationHoldReleaseReason.Multiple;
+        aggregate.AllocationMeasurementWarmupAcceptedCount = Math.Max(
+            aggregate.AllocationMeasurementWarmupAcceptedCount,
+            source.AllocationMeasurementWarmupAcceptedCount);
+        aggregate.AllocationMeasurementMatured |= source.AllocationMeasurementMatured;
+        aggregate.RegisterInvocationCount += source.RegisterInvocationCount;
+        aggregate.RegisterAllocatedBytes += source.RegisterAllocatedBytes;
+        aggregate.RegisterAllocationHighWaterBytes = Math.Max(
+            aggregate.RegisterAllocationHighWaterBytes,
+            source.RegisterAllocationHighWaterBytes);
+        aggregate.PollInvocationCount += source.PollInvocationCount;
+        aggregate.PollAllocatedBytes += source.PollAllocatedBytes;
+        aggregate.PollAllocationHighWaterBytes = Math.Max(
+            aggregate.PollAllocationHighWaterBytes,
+            source.PollAllocationHighWaterBytes);
+        aggregate.PollTimelineQueryCount += source.PollTimelineQueryCount;
+        aggregate.PollRetirementWorkCount += source.PollRetirementWorkCount;
+        aggregate.RetirementInvocationCount += source.RetirementInvocationCount;
+        aggregate.RetirementAllocatedBytes += source.RetirementAllocatedBytes;
+        aggregate.RetirementAllocationHighWaterBytes = Math.Max(
+            aggregate.RetirementAllocationHighWaterBytes,
+            source.RetirementAllocationHighWaterBytes);
         aggregate.AcceptedCount += source.AcceptedCount;
         aggregate.RejectedCount += source.RejectedCount;
         aggregate.PublicationFailureCount += source.PublicationFailureCount;
+        aggregate.InjectedPreNativeSubmitRejectionCount += source.InjectedPreNativeSubmitRejectionCount;
+        aggregate.InjectedAcceptedPublicationFailureCount += source.InjectedAcceptedPublicationFailureCount;
         aggregate.RealCompletionCount += source.RealCompletionCount;
         aggregate.RetiredCount += source.RetiredCount;
         aggregate.AbandonedSubmissionCount += source.AbandonedSubmissionCount;
@@ -144,6 +178,28 @@ internal static class VulkanOpenXrSubmissionValidationState
         aggregate.ActiveCount += source.ActiveCount;
         aggregate.ReservedCount += source.ReservedCount;
         aggregate.PendingCommitCount += source.PendingCommitCount;
+    }
+
+    private static long MergeStableCapacity(long aggregate, long source, string name)
+    {
+        if (source == 0)
+            return aggregate;
+        if (aggregate == 0)
+            return source;
+        if (aggregate != source)
+            throw new InvalidOperationException($"OpenXR submission-validation {name} changed across renderer lifetimes.");
+        return aggregate;
+    }
+
+    private static int MergeStableCapacity(int aggregate, int source, string name)
+    {
+        if (source == 0)
+            return aggregate;
+        if (aggregate == 0)
+            return source;
+        if (aggregate != source)
+            throw new InvalidOperationException($"OpenXR submission-validation {name} changed across renderer lifetimes.");
+        return aggregate;
     }
 
     private static void AppendEntries(

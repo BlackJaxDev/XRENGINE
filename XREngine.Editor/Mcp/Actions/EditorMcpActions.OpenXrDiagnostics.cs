@@ -40,4 +40,27 @@ public sealed partial class EditorMcpActions
         api.RequestSmokeSessionExit();
         return Task.FromResult(new McpToolResponse("Requested OpenXR session exit; completion remains asynchronous."));
     }
+
+    /// <summary>Resumes runtime monitoring on the already configured OpenXR window.</summary>
+    [XRMcp(Name = "request_openxr_session_start", Permission = McpPermissionLevel.Mutate,
+        PermissionReason = "Resumes OpenXR runtime monitoring and session creation on the configured editor window.")]
+    [McpThreadAffinity(McpThreadAffinity.Main)]
+    [Description("Request OpenXR session startup on the configured window after an orderly exit. Inspect runtime diagnostics to observe asynchronous creation or an explicit recovery failure.")]
+    public static Task<McpToolResponse> RequestOpenXrSessionStartAsync(McpToolContext context)
+    {
+        OpenXRAPI? api = RuntimeEngine.VRState.OpenXRApi;
+        if (api?.Window is null)
+            return Task.FromResult(new McpToolResponse("No configured OpenXR window is available.", isError: true));
+        if (RuntimeEngine.VRState.IsOpenVRActive)
+            return Task.FromResult(new McpToolResponse("Stop active OpenVR presentation before starting OpenXR.", isError: true));
+        if (api.IsSessionRunning)
+            return Task.FromResult(new McpToolResponse("The OpenXR session is already running."));
+
+        bool requested = RuntimeEngine.VRState.InitializeOpenXR(api.Window);
+        return Task.FromResult(new McpToolResponse(
+            requested
+                ? "Requested OpenXR session startup; completion remains asynchronous."
+                : "OpenXR runtime monitoring could not be started.",
+            isError: !requested));
+    }
 }

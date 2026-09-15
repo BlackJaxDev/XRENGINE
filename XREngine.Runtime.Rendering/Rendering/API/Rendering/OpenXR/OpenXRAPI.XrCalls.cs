@@ -139,7 +139,14 @@ public unsafe partial class OpenXRAPI
     {
         AssertOpenXrRenderThread(nameof(BeginFrame));
         var frameBeginInfo = new FrameBeginInfo { Type = StructureType.FrameBeginInfo };
-        Result result = CheckResult(Api.BeginFrame(_session, in frameBeginInfo), "xrBeginFrame");
+        IXrGraphicsBinding binding = _graphicsBinding ?? throw new InvalidOperationException(
+            "OpenXR cannot begin a frame without its current graphics binding.");
+        // Bounds the binding dispatch, including any binding-specific queue-admission gate.
+        long beginStart = Stopwatch.GetTimestamp();
+        _smokePendingFrameTiming.BeginStartQpc = beginStart;
+        Result nativeResult = binding.BeginFrame(this, in frameBeginInfo);
+        _smokePendingFrameTiming.BeginEndQpc = Stopwatch.GetTimestamp();
+        Result result = CheckResult(nativeResult, "xrBeginFrame");
         if (result != Result.Success)
         {
             Debug.LogWarning(
@@ -162,7 +169,11 @@ public unsafe partial class OpenXRAPI
         var frameWaitInfo = new FrameWaitInfo { Type = StructureType.FrameWaitInfo };
         frameState = new FrameState { Type = StructureType.FrameState };
         long waitStart = Stopwatch.GetTimestamp();
-        Result result = CheckResult(Api.WaitFrame(_session, in frameWaitInfo, ref frameState), "xrWaitFrame");
+        _smokePendingFrameTiming.WaitStartQpc = waitStart;
+        Result nativeResult = Api.WaitFrame(_session, in frameWaitInfo, ref frameState);
+        long waitEnd = Stopwatch.GetTimestamp();
+        _smokePendingFrameTiming.WaitEndQpc = waitEnd;
+        Result result = CheckResult(nativeResult, "xrWaitFrame");
         if (result != Result.Success)
         {
             Debug.LogWarning(
@@ -171,11 +182,15 @@ public unsafe partial class OpenXRAPI
                 $"PendingFrame={Volatile.Read(ref _pendingXrFrame)} PrepActive={Volatile.Read(ref _openXrFramePrepActive)}");
             return false;
         }
-        long waitEnd = Stopwatch.GetTimestamp();
+        _smokePendingFrameTiming.WaitEndXrAvailable = TryConvertPerformanceCounterToXrTime(waitEnd, out long waitEndXr);
+        _smokePendingFrameTiming.WaitEndXr = waitEndXr;
         long waitTicks = waitEnd - waitStart;
         RuntimeEngine.Rendering.Stats.Vr.RecordVrXrWaitFrameBlockTime(TimeSpan.FromSeconds(waitTicks / (double)Stopwatch.Frequency));
 
         _frameState = frameState;
+        _smokePendingFrameTiming.PredictedDisplayTimeXr = frameState.PredictedDisplayTime;
+        _smokePendingFrameTiming.PredictedDisplayPeriodXr = frameState.PredictedDisplayPeriod;
+        _smokePendingFrameTiming.ShouldRender = frameState.ShouldRender;
         double leadMs = TryGetPredictedDisplayLeadTimeMs(frameState, waitEnd);
         RuntimeEngine.Rendering.Stats.Vr.RecordVrXrPredictedDisplayLeadTime(leadMs);
 
@@ -312,19 +327,47 @@ public unsafe partial class OpenXRAPI
 
     private Result EndFrameWithTiming(in FrameEndInfo frameEndInfo)
     {
+        bool endFrameAttempted = false;
+        return EndFrameWithTiming(in frameEndInfo, ref endFrameAttempted);
+    }
+
+    private Result EndFrameWithTiming(
+        in FrameEndInfo frameEndInfo,
+        ref bool endFrameAttempted)
+    {
         AssertOpenXrRenderThread("xrEndFrame");
-        long start = Stopwatch.GetTimestamp();
+        IXrGraphicsBinding binding = _graphicsBinding ?? throw new InvalidOperationException(
+            "OpenXR cannot end a frame without its current graphics binding.");
+        long start;
+        long end;
         Result result;
         using (var endFrameSample = RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.XrEndFrame"))
         {
-            result = CheckResult(Api.EndFrame(_session, in frameEndInfo), "xrEndFrame");
+            endFrameAttempted = true;
+            start = Stopwatch.GetTimestamp();
+            _smokePendingFrameTiming.EndStartQpc = start;
+            result = binding.EndFrame(this, in frameEndInfo);
+            end = Stopwatch.GetTimestamp();
         }
-        long end = Stopwatch.GetTimestamp();
+        result = CheckResult(result, "xrEndFrame");
+        _smokePendingFrameTiming.EndEndQpc = end;
+        _smokePendingFrameTiming.EndStartXrAvailable = TryConvertPerformanceCounterToXrTime(start, out long endStartXr);
+        _smokePendingFrameTiming.EndStartXr = endStartXr;
+        _smokePendingFrameTiming.EndEndXrAvailable = TryConvertPerformanceCounterToXrTime(end, out long endEndXr);
+        _smokePendingFrameTiming.EndEndXr = endEndXr;
+        long safetyMargin = (long)(Math.Max(0.0, OpenXrDeadlineSafetyMarginMs) * 1_000_000.0);
+        _smokePendingFrameTiming.SafetyMarginNanoseconds = safetyMargin;
+        _smokePendingFrameTiming.HandoffSlackAvailable = _smokePendingFrameTiming.EndStartXrAvailable;
+        _smokePendingFrameTiming.HandoffSlackNanoseconds = _smokePendingFrameTiming.EndStartXrAvailable
+            ? _frameState.PredictedDisplayTime - safetyMargin - endStartXr : 0L;
+        _smokePendingFrameTiming.ReturnSlackAvailable = _smokePendingFrameTiming.EndEndXrAvailable;
+        _smokePendingFrameTiming.ReturnSlackNanoseconds = _smokePendingFrameTiming.EndEndXrAvailable
+            ? _frameState.PredictedDisplayTime - safetyMargin - endEndXr : 0L;
         long ticks = end - start;
         RuntimeRenderingHostServices.Statistics.RecordRenderVrXrEndFrameSubmitTime(
             TimeSpan.FromSeconds(ticks / (double)Stopwatch.Frequency),
             Volatile.Read(ref _openXrLastRenderedFrameId));
-        RecordDeadlineStatus(frameEndInfo.DisplayTime, end, frameEndInfo.LayerCount);
+        RecordDeadlineStatus(frameEndInfo.DisplayTime, start, frameEndInfo.LayerCount);
         RecordSmokeEndFrame(result, frameEndInfo.LayerCount);
         return result;
     }
@@ -692,13 +735,18 @@ public unsafe partial class OpenXRAPI
         _openXrLeftViewport?.Camera = null;
         _openXrRightViewport?.Camera = null;
 
-        if (!TearDownSessionResourcesOnOwningThread(true))
+        bool preserveRendererOwnedInstance = _instanceOwnedByRenderer;
+        if (!TearDownSessionResourcesOnOwningThread(!preserveRendererOwnedInstance))
         {
             _pendingShutdownCleanup = true;
+            _pendingShutdownPreservesRendererOwnedInstance = preserveRendererOwnedInstance;
             ScheduleProbeRetry(TimeSpan.FromMilliseconds(100));
             Debug.LogWarning("[OpenXR] Cleanup retained graphics backend resources because session teardown is incomplete.");
             return false;
         }
+
+        if (preserveRendererOwnedInstance)
+            DetachRendererOwnedInstanceAssociation();
 
         CompleteGraphicsBackendCleanup();
         return true;
@@ -721,6 +769,8 @@ public unsafe partial class OpenXRAPI
         {
             _graphicsBackendResourcesDestroyed = true;
             _pendingShutdownCleanup = false;
+            _pendingShutdownPreservesRendererOwnedInstance = false;
+            _pendingStopRuntimeMonitoringAfterSessionTeardown = false;
         }
     }
 

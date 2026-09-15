@@ -20,6 +20,8 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
     private const int MaxTrackedCommandBuffers = 3;
     internal const int MaxTrackedUploads = 64;
     internal const int MaxSubmissionValidationEntries = 32;
+    // Ignore startup/JIT noise and sample only the established submission path.
+    internal const int SubmissionValidationAllocationWarmupAcceptedCount = 64;
     // A full 100ms recovery wait exceeds several OpenXR display intervals. Keep
     // admission recovery bounded to one short scheduling opportunity, then
     // re-query completion before allowing another recording transaction.
@@ -34,6 +36,8 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
         public uint ViewMask;
         public uint LeftImageIndex;
         public uint RightImageIndex;
+        public uint? LeftImageReuseAgeFrames;
+        public uint? RightImageReuseAgeFrames;
         public OpenXrRecordedEyeCommandBuffer FirstRecorded;
         public OpenXrRecordedEyeCommandBuffer SecondRecorded;
         public bool HasFirst;
@@ -59,6 +63,8 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
         public int ResidentLifetimeReleaseIndex;
         public long SubmitStartTimestamp;
         public long SubmitEndTimestamp;
+        public long CompletionTimestamp;
+        public long InFlightWallAgeTicks;
         public long EnqueuedTimestamp;
         public bool CompletionProven;
         public bool Reopened;
@@ -82,6 +88,8 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
         public bool SubmissionValidationCompletionCounted;
         public bool SubmissionValidationRetiredCounted;
         public bool SubmissionValidationAbandonedCounted;
+        public EOpenXrSubmissionShape SubmissionValidationShape;
+        public bool SubmissionValidationFaultConsumed;
     }
 
     private struct SubmissionValidationLedgerRecord
@@ -92,6 +100,10 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
         public ulong TicketGeneration;
         public ulong FrameId;
         public long PredictedDisplayTime;
+        public long SubmitStartTimestamp;
+        public long SubmitEndTimestamp;
+        public long CompletionTimestamp;
+        public long InFlightWallAgeTicks;
         public EOpenXrSubmissionShape Shape;
         public EOpenXrSubmissionPayloadKind PayloadKinds;
         public uint CommandCount;
@@ -99,6 +111,8 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
         public uint ViewMask;
         public uint LeftImageIndex;
         public uint RightImageIndex;
+        public uint? LeftImageReuseAgeFrames;
+        public uint? RightImageReuseAgeFrames;
         public uint FirstViewIndex;
         public uint FirstImageIndex;
         public uint SecondViewIndex;
@@ -109,10 +123,19 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
         public int UploadCount;
         public int FrameSlotCount;
         public int ExternalTargetCount;
+        public ulong CompletionSemaphoreHandle;
         public ulong TimelineValue;
+        public long ForcedWaitStartTimestamp;
+        public long ForcedWaitEndTimestamp;
+        public int ForcedWaitResult;
+        public bool ForcedWaitAttempted;
+        public bool ObservationPressureAtCapacity;
+        public bool PreWaitCompletionProven;
+        public int PreWaitSettlementCount;
         public int ReceiptResult;
         public bool LifetimePinsTransferred;
         public bool PostSubmissionPublicationSucceeded;
+        public EOpenXrSubmissionValidationScenario InjectedValidationScenario;
         public EOpenXrSubmissionDisposition Disposition;
         public bool SubmissionAccepted;
         public bool AcceptedIncompleteObserved;
@@ -195,6 +218,9 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
                 completionValue,
                 _submitStartTimestamp,
                 Stopwatch.GetTimestamp());
+
+        internal bool TryConsumeValidationFault(EOpenXrSubmissionValidationScenario scenario)
+            => _tracker.TryConsumeValidationFault(in _ticket, scenario);
     }
 
     private readonly VulkanCommandRuntime _commandRuntime;
@@ -214,6 +240,12 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
     private ulong _lastCompletedFrameId;
     private readonly ulong[] _leftImageLastFrame = new ulong[MaxTrackedSwapchainImages];
     private readonly ulong[] _rightImageLastFrame = new ulong[MaxTrackedSwapchainImages];
+    private readonly uint[] _leftImageLastReuseAge = new uint[MaxTrackedSwapchainImages];
+    private readonly uint[] _rightImageLastReuseAge = new uint[MaxTrackedSwapchainImages];
+    private readonly bool[] _leftImageSeen = new bool[MaxTrackedSwapchainImages];
+    private readonly bool[] _rightImageSeen = new bool[MaxTrackedSwapchainImages];
+    private readonly bool[] _leftImageReuseAgeKnown = new bool[MaxTrackedSwapchainImages];
+    private readonly bool[] _rightImageReuseAgeKnown = new bool[MaxTrackedSwapchainImages];
     private VulkanSemaphore _latestAcceptedCompletionSemaphore;
     private ulong _latestAcceptedCompletionValue;
     private readonly SubmissionValidationLedgerRecord[] _submissionValidationLedger =
@@ -227,10 +259,29 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
     private int _submissionValidationAcceptedCount;
     private int _submissionValidationRejectedCount;
     private int _submissionValidationPublicationFailureCount;
+    private int _submissionValidationInjectedPreNativeSubmitRejectionCount;
+    private int _submissionValidationInjectedAcceptedPublicationFailureCount;
+    private bool _submissionValidationFaultConsumed;
     private int _submissionValidationRealCompletionCount;
     private int _submissionValidationRetiredCount;
     private long _submissionValidationAbandonedCount;
     private int _submissionValidationEnabled;
+    private int _submissionValidationReservationDeferralCount;
+    private bool _submissionValidationHoldArmed;
+    private bool _submissionValidationHoldReleased;
+    private EOpenXrCompletionObservationHoldReleaseReason _submissionValidationHoldReleaseReason;
+    private int _submissionValidationAllocationMeasurementMatured;
+    private long _submissionValidationRegisterInvocationCount;
+    private long _submissionValidationRegisterAllocatedBytes;
+    private long _submissionValidationRegisterAllocationHighWaterBytes;
+    private long _submissionValidationPollInvocationCount;
+    private long _submissionValidationPollAllocatedBytes;
+    private long _submissionValidationPollAllocationHighWaterBytes;
+    private long _submissionValidationPollTimelineQueryCount;
+    private long _submissionValidationPollRetirementWorkCount;
+    private long _submissionValidationRetirementInvocationCount;
+    private long _submissionValidationRetirementAllocatedBytes;
+    private long _submissionValidationRetirementAllocationHighWaterBytes;
     private int _disposed;
     private Action<InFlightSubmission, uint>? _onSubmissionFrameSlotLifetimeSettled;
 
@@ -264,9 +315,28 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
             _submissionValidationAcceptedCount = 0;
             _submissionValidationRejectedCount = 0;
             _submissionValidationPublicationFailureCount = 0;
+            _submissionValidationInjectedPreNativeSubmitRejectionCount = 0;
+            _submissionValidationInjectedAcceptedPublicationFailureCount = 0;
+            _submissionValidationFaultConsumed = false;
             _submissionValidationRealCompletionCount = 0;
             _submissionValidationRetiredCount = 0;
             _submissionValidationAbandonedCount = 0;
+            _submissionValidationReservationDeferralCount = 0;
+            _submissionValidationHoldArmed = false;
+            _submissionValidationHoldReleased = false;
+            _submissionValidationHoldReleaseReason = EOpenXrCompletionObservationHoldReleaseReason.None;
+            _submissionValidationAllocationMeasurementMatured = 0;
+            _submissionValidationRegisterInvocationCount = 0;
+            _submissionValidationRegisterAllocatedBytes = 0;
+            _submissionValidationRegisterAllocationHighWaterBytes = 0;
+            _submissionValidationPollInvocationCount = 0;
+            _submissionValidationPollAllocatedBytes = 0;
+            _submissionValidationPollAllocationHighWaterBytes = 0;
+            _submissionValidationPollTimelineQueryCount = 0;
+            _submissionValidationPollRetirementWorkCount = 0;
+            _submissionValidationRetirementInvocationCount = 0;
+            _submissionValidationRetirementAllocatedBytes = 0;
+            _submissionValidationRetirementAllocationHighWaterBytes = 0;
             Array.Clear(_submissionValidationLedger);
             for (int i = 0; i < _inFlight.Length; i++)
             {
@@ -279,6 +349,7 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
                 entry.SubmissionValidationCompletionCounted = false;
                 entry.SubmissionValidationRetiredCounted = false;
                 entry.SubmissionValidationAbandonedCounted = false;
+                entry.SubmissionValidationFaultConsumed = false;
             }
             Volatile.Write(ref _submissionValidationEnabled, _submissionValidationRequest.Enabled ? 1 : 0);
         }
@@ -295,18 +366,43 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
     {
         lock (_gate)
         {
+            long capturedAt = Stopwatch.GetTimestamp();
             var snapshot = new OpenXrSubmissionValidationSnapshot
             {
+                StopwatchFrequency = Stopwatch.Frequency,
+                TrackedUploadCapacity = MaxTrackedUploads,
+                TrackedCommandBufferCapacity = MaxTrackedCommandBuffers,
+                TrackedFrameSlotCapacity = MaxTrackedCommandBuffers,
+                TrackedSwapchainImageCapacity = MaxTrackedSwapchainImages,
+                AllocationMeasurementWarmupAcceptedCount = SubmissionValidationAllocationWarmupAcceptedCount,
+                AllocationMeasurementMatured = Volatile.Read(ref _submissionValidationAllocationMeasurementMatured) != 0,
+                RegisterInvocationCount = Interlocked.Read(ref _submissionValidationRegisterInvocationCount),
+                RegisterAllocatedBytes = Interlocked.Read(ref _submissionValidationRegisterAllocatedBytes),
+                RegisterAllocationHighWaterBytes = Interlocked.Read(ref _submissionValidationRegisterAllocationHighWaterBytes),
+                PollInvocationCount = Interlocked.Read(ref _submissionValidationPollInvocationCount),
+                PollAllocatedBytes = Interlocked.Read(ref _submissionValidationPollAllocatedBytes),
+                PollAllocationHighWaterBytes = Interlocked.Read(ref _submissionValidationPollAllocationHighWaterBytes),
+                PollTimelineQueryCount = Interlocked.Read(ref _submissionValidationPollTimelineQueryCount),
+                PollRetirementWorkCount = Interlocked.Read(ref _submissionValidationPollRetirementWorkCount),
+                RetirementInvocationCount = Interlocked.Read(ref _submissionValidationRetirementInvocationCount),
+                RetirementAllocatedBytes = Interlocked.Read(ref _submissionValidationRetirementAllocatedBytes),
+                RetirementAllocationHighWaterBytes = Interlocked.Read(ref _submissionValidationRetirementAllocationHighWaterBytes),
                 Request = _submissionValidationRequest,
                 OverflowCount = _submissionValidationOverflowCount,
                 AdmissionHighWater = _submissionValidationAdmissionHighWater,
                 AdmissionCapacity = DefaultMaxInFlightSubmissions,
                 ForcedWaitCount = _forcedWaitCount,
+                ReservationDeferralCount = _submissionValidationReservationDeferralCount,
+                HoldArmed = _submissionValidationHoldArmed,
+                HoldReleased = _submissionValidationHoldReleased,
+                HoldReleaseReason = _submissionValidationHoldReleaseReason,
                 ActiveCount = CountActiveSubmissionsNoLock(),
                 ReservedCount = _reservedSubmissionCount,
                 AcceptedCount = _submissionValidationAcceptedCount,
                 RejectedCount = _submissionValidationRejectedCount,
                 PublicationFailureCount = _submissionValidationPublicationFailureCount,
+                InjectedPreNativeSubmitRejectionCount = _submissionValidationInjectedPreNativeSubmitRejectionCount,
+                InjectedAcceptedPublicationFailureCount = _submissionValidationInjectedAcceptedPublicationFailureCount,
                 RealCompletionCount = _submissionValidationRealCompletionCount,
                 RetiredCount = _submissionValidationRetiredCount,
                 AbandonedSubmissionCount = _submissionValidationAbandonedCount,
@@ -323,6 +419,10 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
                     TicketGeneration = record.TicketGeneration,
                     FrameId = record.FrameId,
                     PredictedDisplayTime = record.PredictedDisplayTime,
+                    SubmitStartTimestamp = record.SubmitStartTimestamp,
+                    SubmitEndTimestamp = record.SubmitEndTimestamp,
+                    CompletionTimestamp = record.CompletionTimestamp,
+                    InFlightWallAgeTicks = ResolveSnapshotInFlightWallAgeTicksNoLock(record, capturedAt),
                     Shape = record.Shape,
                     PayloadKinds = record.PayloadKinds,
                     CommandCount = record.CommandCount,
@@ -334,17 +434,28 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
                     FirstImageIndex = record.FirstImageIndex,
                     SecondViewIndex = record.SecondViewIndex,
                     SecondImageIndex = record.SecondImageIndex,
+                    LeftImageReuseAgeFrames = record.LeftImageReuseAgeFrames,
+                    RightImageReuseAgeFrames = record.RightImageReuseAgeFrames,
                     RecordedCommandCount = record.RecordedCommandCount,
                     PreparedInputCount = record.PreparedInputCount,
                     TemporaryCommandCount = record.TemporaryCommandCount,
                     UploadCount = record.UploadCount,
                     FrameSlotCount = record.FrameSlotCount,
                     ExternalTargetCount = record.ExternalTargetCount,
+                    CompletionSemaphoreHandle = record.CompletionSemaphoreHandle,
                     TimelineValue = record.TimelineValue,
+                    ForcedWaitStartTimestamp = record.ForcedWaitStartTimestamp,
+                    ForcedWaitEndTimestamp = record.ForcedWaitEndTimestamp,
+                    ForcedWaitResult = record.ForcedWaitResult,
+                    ForcedWaitAttempted = record.ForcedWaitAttempted,
+                    ObservationPressureAtCapacity = record.ObservationPressureAtCapacity,
+                    PreWaitCompletionProven = record.PreWaitCompletionProven,
+                    PreWaitSettlementCount = record.PreWaitSettlementCount,
                     ReceiptResult = record.ReceiptResult,
                     SubmissionAccepted = record.SubmissionAccepted,
                     LifetimePinsTransferred = record.LifetimePinsTransferred,
                     PostSubmissionPublicationSucceeded = record.PostSubmissionPublicationSucceeded,
+                    InjectedValidationScenario = record.InjectedValidationScenario,
                     Disposition = record.Disposition,
                     AcceptedIncompleteObserved = record.AcceptedIncompleteObserved,
                     OwnershipIntactWhenAcceptedIncomplete = record.OwnershipIntactWhenAcceptedIncomplete,
@@ -367,6 +478,29 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
                     snapshot.PendingCommitCount++;
             return snapshot;
         }
+    }
+
+    private long ResolveSnapshotInFlightWallAgeTicksNoLock(
+        in SubmissionValidationLedgerRecord record,
+        long capturedAt)
+    {
+        if (record.CompletionTimestamp != 0)
+            return record.InFlightWallAgeTicks;
+
+        for (int i = 0; i < _inFlight.Length; i++)
+        {
+            InFlightSubmission entry = _inFlight[i];
+            if (!entry.Active ||
+                entry.AdmissionSlotIndex != record.AdmissionSlotIndex ||
+                entry.TicketGeneration != record.TicketGeneration)
+                continue;
+            long startedAt = entry.SubmitStartTimestamp != 0
+                ? entry.SubmitStartTimestamp
+                : entry.EnqueuedTimestamp;
+            return startedAt == 0 ? 0 : Math.Max(0L, capturedAt - startedAt);
+        }
+
+        return record.InFlightWallAgeTicks;
     }
 
     internal void SetSubmissionRetiredCallback(Action<InFlightSubmission> callback)
@@ -417,6 +551,25 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
         }
     }
 
+    /// <summary>Counts OpenXR submissions accepted by Vulkan that still retain tracker ownership.</summary>
+    public int AcceptedPendingSubmissionCount
+    {
+        get
+        {
+            lock (_gate)
+            {
+                int count = 0;
+                for (int i = 0; i < _inFlight.Length; i++)
+                {
+                    InFlightSubmission entry = _inFlight[i];
+                    if ((entry.Active || entry.Retiring) && entry.NativeSubmissionAccepted)
+                        count++;
+                }
+                return count;
+            }
+        }
+    }
+
     private int CountActiveSubmissionsNoLock()
     {
         int count = 0;
@@ -428,6 +581,65 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
 
     private int CountOwnedSubmissionsNoLock()
         => CountActiveSubmissionsNoLock() + _reservedSubmissionCount;
+
+    private bool IsSubmissionValidationHoldActiveNoLock()
+        => _submissionValidationHoldArmed && !_submissionValidationHoldReleased;
+
+    private bool ReleaseValidationHoldAtCapacityNoLock(int maxInFlight)
+    {
+        if (_submissionValidationRequest.Scenario != EOpenXrSubmissionValidationScenario.HoldCompletionObservationUntilCapacity ||
+            !IsSubmissionValidationHoldActiveNoLock() ||
+            CountOwnedSubmissionsNoLock() < Math.Min(maxInFlight, DefaultMaxInFlightSubmissions))
+            return false;
+
+        ReleaseSubmissionValidationHoldNoLock(EOpenXrCompletionObservationHoldReleaseReason.CapacityDeferral);
+        _submissionValidationReservationDeferralCount++;
+        return true;
+    }
+
+    private void ReleaseSubmissionValidationHoldNoLock(EOpenXrCompletionObservationHoldReleaseReason reason)
+    {
+        if (!IsSubmissionValidationHoldActiveNoLock())
+            return;
+        _submissionValidationHoldReleased = true;
+        _submissionValidationHoldReleaseReason = reason;
+    }
+
+    internal bool OwnsRegisteredFrameDataSlot(
+        uint frameSlot,
+        VulkanMappedFrameArena? mappedFrameArena,
+        ulong mappedFrameGeneration,
+        VulkanFrameDataArena? frameDataArena,
+        ulong frameDataGeneration)
+    {
+        lock (_gate)
+        {
+            for (int i = 0; i < _inFlight.Length; i++)
+            {
+                InFlightSubmission entry = _inFlight[i];
+                if (!entry.Active && !entry.Retiring && !entry.PendingCommit)
+                    continue;
+                bool mappedArenaMatches = mappedFrameArena is not null &&
+                    ReferenceEquals(entry.MappedFrameArena, mappedFrameArena) &&
+                    entry.MappedFrameGeneration == mappedFrameGeneration;
+                bool frameDataArenaMatches = frameDataArena is not null &&
+                    ReferenceEquals(entry.FrameDataArena, frameDataArena) &&
+                    entry.FrameDataGeneration == frameDataGeneration;
+                if (!mappedArenaMatches && !frameDataArenaMatches)
+                    continue;
+                for (int slotIndex = 0; slotIndex < entry.FrameSlotCount; slotIndex++)
+                    if (entry.FrameSlots[slotIndex] == frameSlot)
+                        return true;
+            }
+            return false;
+        }
+    }
+
+    internal void NotifyRegisteredFrameDataSlotPressure()
+    {
+        lock (_gate)
+            ReleaseSubmissionValidationHoldNoLock(EOpenXrCompletionObservationHoldReleaseReason.FrameDataSlotPressureAbort);
+    }
 
     private InFlightSubmission? FindReusableSubmissionNoLock()
     {
@@ -477,6 +689,9 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
         ticket = null;
         if (Volatile.Read(ref _disposed) != 0 || !_commandRuntime.DeviceContext.IsOperational)
             return false;
+        lock (_gate)
+            if (ReleaseValidationHoldAtCapacityNoLock(maxInFlight))
+                return false;
         PollCompletions();
         lock (_gate)
         {
@@ -581,6 +796,10 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
             throw new InvalidOperationException(
                 "OpenXR submission payload exceeds the fixed tracker ownership capacity.");
 
+        bool measureRegisterAllocation = IsSubmissionValidationAllocationMeasurementMatured();
+        long registerAllocatedBefore = measureRegisterAllocation
+            ? GC.GetAllocatedBytesForCurrentThread()
+            : 0L;
         uint oldestAge = 0;
         uint imageReuseAge = 0;
         int inFlightSnapshot;
@@ -602,6 +821,8 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
             entry.ViewMask = viewMask;
             entry.LeftImageIndex = leftImageIndex;
             entry.RightImageIndex = rightImageIndex;
+            entry.LeftImageReuseAgeFrames = null;
+            entry.RightImageReuseAgeFrames = null;
             entry.FirstRecorded = firstRecorded;
             entry.HasFirst = hasFirst;
             entry.SecondRecorded = secondRecorded;
@@ -632,6 +853,8 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
             entry.UploadCount += additionalUploadCount;
             entry.SubmitStartTimestamp = submitStartTimestamp;
             entry.SubmitEndTimestamp = submitEndTimestamp;
+            entry.CompletionTimestamp = 0;
+            entry.InFlightWallAgeTicks = 0;
             entry.EnqueuedTimestamp = Stopwatch.GetTimestamp();
             entry.CompletionProven = false;
             entry.Reopened = false;
@@ -654,6 +877,8 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
             entry.SubmissionValidationCompletionCounted = false;
             entry.SubmissionValidationRetiredCounted = false;
             entry.SubmissionValidationAbandonedCounted = false;
+            entry.SubmissionValidationShape = submissionShape;
+            entry.SubmissionValidationFaultConsumed = false;
             int preparedIndex = Array.IndexOf(_inFlight, entry);
             inFlightSnapshot = CountActiveSubmissionsNoLock() + 1;
             ulong oldestFrame = FindOldestFrameNoLock();
@@ -661,17 +886,9 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
                 oldestAge = (uint)Math.Min(frameId >= oldestFrame ? frameId - oldestFrame : 0UL, uint.MaxValue);
 
             if (hasFirst)
-                RecordImageReuseAgeNoLock(
-                    firstRecorded.OpenXrViewIndex,
-                    leftImageIndex,
-                    frameId,
-                    ref imageReuseAge);
+                RecordImageReuseAgeNoLock(firstRecorded.OpenXrViewIndex, firstRecorded.OpenXrImageIndex, frameId, entry, ref imageReuseAge);
             if (hasSecond)
-                RecordImageReuseAgeNoLock(
-                    secondRecorded.OpenXrViewIndex,
-                    rightImageIndex,
-                    frameId,
-                    ref imageReuseAge);
+                RecordImageReuseAgeNoLock(secondRecorded.OpenXrViewIndex, secondRecorded.OpenXrImageIndex, frameId, entry, ref imageReuseAge);
 
             // All validation, collection reads and telemetry calculations precede
             // the ownership boundary. Nothing after these assignments may throw
@@ -702,6 +919,12 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
             try { Debug.VulkanWarning("[OpenXR.Tracker] Post-registration telemetry failed: {0}", ex.Message); }
             catch { /* Diagnostics cannot reverse ownership transfer. */ }
         }
+        if (measureRegisterAllocation)
+            RecordSubmissionValidationAllocationSample(
+                ref _submissionValidationRegisterInvocationCount,
+                ref _submissionValidationRegisterAllocatedBytes,
+                ref _submissionValidationRegisterAllocationHighWaterBytes,
+                registerAllocatedBefore);
         return true;
     }
 
@@ -729,6 +952,9 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
 
         entry.SubmissionValidationTracked = true;
         _submissionValidationAdmissionHighWater = Math.Max(_submissionValidationAdmissionHighWater, inFlightCount);
+        if (entry.FrameId <= _submissionValidationRequest.ArmAfterOpenXrLifecycleFrameId)
+            return;
+
         int capacity = _submissionValidationRequest.LedgerCapacity;
         if (_submissionValidationLedgerCount >= capacity)
         {
@@ -766,6 +992,10 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
             TicketGeneration = entry.TicketGeneration,
             FrameId = entry.FrameId,
             PredictedDisplayTime = entry.PredictedDisplayTime,
+            SubmitStartTimestamp = entry.SubmitStartTimestamp,
+            SubmitEndTimestamp = entry.SubmitEndTimestamp,
+            CompletionTimestamp = entry.CompletionTimestamp,
+            InFlightWallAgeTicks = entry.InFlightWallAgeTicks,
             Shape = shape,
             PayloadKinds = payloadKinds,
             CommandCount = (uint)((hasFirst ? 1 : 0) + (hasSecond ? 1 : 0) + (hasTemporaryCommandBuffer ? 1 : 0)),
@@ -776,6 +1006,8 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
             FirstImageIndex = hasFirst ? entry.FirstRecorded.OpenXrImageIndex : 0U,
             SecondViewIndex = hasSecond ? entry.SecondRecorded.OpenXrViewIndex : 0U,
             SecondImageIndex = hasSecond ? entry.SecondRecorded.OpenXrImageIndex : 0U,
+            LeftImageReuseAgeFrames = entry.LeftImageReuseAgeFrames,
+            RightImageReuseAgeFrames = entry.RightImageReuseAgeFrames,
             RecordedCommandCount = (hasFirst ? 1 : 0) + (hasSecond ? 1 : 0),
             PreparedInputCount = (hasFirstPrepared ? 1 : 0) + (hasSecondPrepared ? 1 : 0),
             TemporaryCommandCount = hasTemporaryCommandBuffer ? 1 : 0,
@@ -790,6 +1022,48 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
         entry.ValidationLedgerIndex = index;
     }
 
+    internal bool TryConsumeValidationFault(
+        in SubmissionAdmissionTicket ticket,
+        EOpenXrSubmissionValidationScenario scenario)
+    {
+        if (scenario is not EOpenXrSubmissionValidationScenario.RejectBeforeNativeSubmit and
+            not EOpenXrSubmissionValidationScenario.FailAcceptedPublication)
+            return false;
+        if (Volatile.Read(ref _submissionValidationEnabled) == 0)
+            return false;
+
+        lock (_gate)
+        {
+            if (_submissionValidationRequest.Scenario != scenario ||
+                _submissionValidationFaultConsumed)
+                return false;
+
+            for (int i = 0; i < _inFlight.Length; i++)
+            {
+                InFlightSubmission entry = _inFlight[i];
+                if (!entry.Active ||
+                    entry.AdmissionSlotIndex != ticket.AdmissionSlotIndex ||
+                    entry.TicketGeneration != ticket.Generation ||
+                    !entry.SubmissionValidationTracked ||
+                    entry.FrameId <= _submissionValidationRequest.ArmAfterOpenXrLifecycleFrameId ||
+                    entry.SubmissionValidationFaultConsumed)
+                    continue;
+
+                _submissionValidationFaultConsumed = true;
+                entry.SubmissionValidationFaultConsumed = true;
+                if ((uint)entry.ValidationLedgerIndex < (uint)_submissionValidationLedgerCount)
+                    _submissionValidationLedger[entry.ValidationLedgerIndex].InjectedValidationScenario = scenario;
+                if (scenario == EOpenXrSubmissionValidationScenario.RejectBeforeNativeSubmit)
+                    _submissionValidationInjectedPreNativeSubmitRejectionCount++;
+                else
+                    _submissionValidationInjectedAcceptedPublicationFailureCount++;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private void SynchronizeSubmissionValidation(InFlightSubmission entry, bool retired = false)
     {
         if (entry.ValidationLedgerIndex < 0)
@@ -799,6 +1073,11 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
             if ((uint)entry.ValidationLedgerIndex < (uint)_submissionValidationLedgerCount)
             {
                 ref SubmissionValidationLedgerRecord record = ref _submissionValidationLedger[entry.ValidationLedgerIndex];
+                record.SubmitStartTimestamp = entry.SubmitStartTimestamp;
+                record.SubmitEndTimestamp = entry.SubmitEndTimestamp;
+                record.CompletionTimestamp = entry.CompletionTimestamp;
+                record.InFlightWallAgeTicks = entry.InFlightWallAgeTicks;
+                record.CompletionSemaphoreHandle = entry.TimelineSemaphore.Handle;
                 record.TimelineValue = entry.TimelineValue;
                 record.SubmissionAccepted = entry.NativeSubmissionAccepted;
                 record.CompletionProven = entry.CompletionProven;
@@ -825,6 +1104,37 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
         lock (_gate)
             if ((uint)entry.ValidationLedgerIndex < (uint)_submissionValidationLedgerCount)
                 _submissionValidationLedger[entry.ValidationLedgerIndex].EarlySettlementViolationCount++;
+    }
+
+    private void RecordSubmissionValidationForcedWaitNoLock(
+        int ledgerIndex,
+        int admissionSlotIndex,
+        ulong ticketGeneration,
+        VulkanSemaphore semaphore,
+        ulong timelineValue,
+        long waitStartTimestamp,
+        long waitEndTimestamp,
+        Result waitResult,
+        bool observationPressureAtCapacity,
+        bool preWaitCompletionProven,
+        int preWaitSettlementCount)
+    {
+        if ((uint)ledgerIndex >= (uint)_submissionValidationLedgerCount)
+            return;
+
+        ref SubmissionValidationLedgerRecord record = ref _submissionValidationLedger[ledgerIndex];
+        if (record.AdmissionSlotIndex != admissionSlotIndex ||
+            record.TicketGeneration != ticketGeneration ||
+            record.CompletionSemaphoreHandle != semaphore.Handle ||
+            record.TimelineValue != timelineValue)
+            return;
+        record.ForcedWaitStartTimestamp = waitStartTimestamp;
+        record.ForcedWaitEndTimestamp = waitEndTimestamp;
+        record.ForcedWaitResult = (int)waitResult;
+        record.ForcedWaitAttempted = true;
+        record.ObservationPressureAtCapacity = observationPressureAtCapacity;
+        record.PreWaitCompletionProven = preWaitCompletionProven;
+        record.PreWaitSettlementCount = preWaitSettlementCount;
     }
 
     internal void ObserveSubmissionReceipt(
@@ -857,6 +1167,15 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
                     {
                         entry.SubmissionValidationAcceptedCounted = true;
                         _submissionValidationAcceptedCount++;
+                        if (_submissionValidationAcceptedCount >= SubmissionValidationAllocationWarmupAcceptedCount)
+                            Volatile.Write(ref _submissionValidationAllocationMeasurementMatured, 1);
+                        if (entry.FrameId > _submissionValidationRequest.ArmAfterOpenXrLifecycleFrameId &&
+                            (_submissionValidationRequest.Scenario is
+                                EOpenXrSubmissionValidationScenario.HoldCompletionObservationUntilCapacity or
+                                EOpenXrSubmissionValidationScenario.HoldCompletionObservationUntilRecoveryWait) &&
+                            !_submissionValidationHoldArmed &&
+                            !_submissionValidationHoldReleased)
+                            _submissionValidationHoldArmed = true;
                     }
                     if (!receipt.PostSubmissionPublicationSucceeded && !entry.SubmissionValidationPublicationFailureCounted)
                     {
@@ -924,23 +1243,69 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
         uint viewIndex,
         uint imageIndex,
         ulong frameId,
+        InFlightSubmission entry,
         ref uint imageReuseAge)
     {
-        if (imageIndex >= MaxTrackedSwapchainImages)
+        if (viewIndex > 1 || imageIndex >= MaxTrackedSwapchainImages)
             return;
 
         ulong[] imageLastFrames = viewIndex == 0
             ? _leftImageLastFrame
             : _rightImageLastFrame;
-        ulong previousFrame = imageLastFrames[imageIndex];
-        if (previousFrame > 0)
+        uint[] imageLastReuseAges = viewIndex == 0
+            ? _leftImageLastReuseAge
+            : _rightImageLastReuseAge;
+        bool[] imageSeen = viewIndex == 0 ? _leftImageSeen : _rightImageSeen;
+        bool[] imageReuseAgeKnown = viewIndex == 0 ? _leftImageReuseAgeKnown : _rightImageReuseAgeKnown;
+        if (!imageSeen[imageIndex])
         {
-            imageReuseAge = Math.Max(
-                imageReuseAge,
-                (uint)Math.Min(frameId >= previousFrame ? frameId - previousFrame : 0UL, uint.MaxValue));
+            imageSeen[imageIndex] = true;
+            imageLastFrames[imageIndex] = frameId;
+            return;
         }
 
-        imageLastFrames[imageIndex] = frameId;
+        ulong previousFrame = imageLastFrames[imageIndex];
+        uint age;
+        if (previousFrame == frameId)
+        {
+            if (!imageReuseAgeKnown[imageIndex])
+                return;
+            age = imageLastReuseAges[imageIndex];
+        }
+        else
+        {
+            age = (uint)Math.Min(frameId >= previousFrame ? frameId - previousFrame : 0UL, uint.MaxValue);
+            imageLastFrames[imageIndex] = frameId;
+            imageLastReuseAges[imageIndex] = age;
+            imageReuseAgeKnown[imageIndex] = true;
+        }
+        imageReuseAge = Math.Max(imageReuseAge, age);
+        if (viewIndex == 0)
+            entry.LeftImageReuseAgeFrames = age;
+        else
+            entry.RightImageReuseAgeFrames = age;
+    }
+
+    private bool IsSubmissionValidationAllocationMeasurementMatured()
+        => Volatile.Read(ref _submissionValidationAllocationMeasurementMatured) != 0;
+
+    private static void RecordSubmissionValidationAllocationSample(
+        ref long invocationCount,
+        ref long allocatedBytes,
+        ref long allocationHighWaterBytes,
+        long allocatedBefore)
+    {
+        long allocated = Math.Max(0L, GC.GetAllocatedBytesForCurrentThread() - allocatedBefore);
+        Interlocked.Increment(ref invocationCount);
+        Interlocked.Add(ref allocatedBytes, allocated);
+        long highWater = Volatile.Read(ref allocationHighWaterBytes);
+        while (allocated > highWater)
+        {
+            long observed = Interlocked.CompareExchange(ref allocationHighWaterBytes, allocated, highWater);
+            if (observed == highWater)
+                break;
+            highWater = observed;
+        }
     }
 
     /// <summary>Publishes the exact receipt for a pre-populated ownership slot.</summary>
@@ -972,6 +1337,8 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
             // Queue acceptance is irrevocable even if the receipt is corrupt.
             // Quarantine must never allow cancellation to reclaim this payload.
             entry.NativeSubmissionAccepted = true;
+            admissionSlot.Active = false;
+            admissionSlot.PreparedSlotIndex = -1;
             if (completionSemaphore.Handle == 0 || completionValue == 0)
             {
                 MarkCommitInvariantFailureNoThrow(ticket);
@@ -983,8 +1350,6 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
             entry.SubmitEndTimestamp = submitEndTimestamp;
             _latestAcceptedCompletionSemaphore = completionSemaphore;
             _latestAcceptedCompletionValue = completionValue;
-            admissionSlot.Active = false;
-            admissionSlot.PreparedSlotIndex = -1;
             SynchronizeSubmissionValidation(entry);
         }
     }
@@ -1104,11 +1469,24 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
     /// </summary>
     public int PollCompletions()
     {
+        bool measurePollAllocation = IsSubmissionValidationAllocationMeasurementMatured();
+        long pollAllocatedBefore = measurePollAllocation
+            ? GC.GetAllocatedBytesForCurrentThread()
+            : 0L;
         lock (_settlementGate)
         {
             _settlementDepth++;
             try { return PollCompletionsCore(); }
-            finally { EndSettlementNoLock(); }
+            finally
+            {
+                EndSettlementNoLock();
+                if (measurePollAllocation)
+                    RecordSubmissionValidationAllocationSample(
+                        ref _submissionValidationPollInvocationCount,
+                        ref _submissionValidationPollAllocatedBytes,
+                        ref _submissionValidationPollAllocationHighWaterBytes,
+                        pollAllocatedBefore);
+            }
         }
     }
 
@@ -1119,9 +1497,18 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
 
         Span<int> readyToRetire = stackalloc int[DefaultMaxInFlightSubmissions];
         int readyCount = 0;
+        // A single observed timeline value proves every earlier submission on
+        // that semaphore. Keep the proof local to this poll; a later poll must
+        // observe the device again when work was incomplete.
+        Span<ulong> observedSemaphores = stackalloc ulong[DefaultMaxInFlightSubmissions];
+        Span<ulong> observedValues = stackalloc ulong[DefaultMaxInFlightSubmissions];
+        Span<Result> observedResults = stackalloc Result[DefaultMaxInFlightSubmissions];
+        int observedCount = 0;
 
         lock (_gate)
         {
+            if (IsSubmissionValidationHoldActiveNoLock())
+                return 0;
             for (int i = 0; i < _inFlight.Length; i++)
             {
                 InFlightSubmission entry = _inFlight[i];
@@ -1133,17 +1520,34 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
                 {
                     entry.Retiring = true;
                     readyToRetire[readyCount++] = i;
+                    if (IsSubmissionValidationAllocationMeasurementMatured())
+                        Interlocked.Increment(ref _submissionValidationPollRetirementWorkCount);
                     continue;
                 }
                 if (!entry.CompletionProven)
                 {
-                    Result queryResult = _commandRuntime.Synchronization.QueryTimelineCompletion(
-                        _commandRuntime.Api,
-                        _commandRuntime.DeviceContext,
-                        _commandRuntime.ResourceRuntime.Lifetime.Tracker,
-                        entry.TimelineSemaphore,
-                        entry.TimelineValue,
-                        out bool completed);
+                    int observedIndex = 0;
+                    while (observedIndex < observedCount &&
+                        observedSemaphores[observedIndex] != entry.TimelineSemaphore.Handle)
+                        ++observedIndex;
+                    if (observedIndex == observedCount)
+                    {
+                        if (IsSubmissionValidationAllocationMeasurementMatured())
+                            Interlocked.Increment(ref _submissionValidationPollTimelineQueryCount);
+                        observedResults[observedIndex] = _commandRuntime.Synchronization.QueryTimelineCompletion(
+                            _commandRuntime.Api,
+                            _commandRuntime.DeviceContext,
+                            _commandRuntime.ResourceRuntime.Lifetime.Tracker,
+                            entry.TimelineSemaphore,
+                            entry.TimelineValue,
+                            out _,
+                            out observedValues[observedIndex]);
+                        observedSemaphores[observedIndex] = entry.TimelineSemaphore.Handle;
+                        ++observedCount;
+                    }
+                    Result queryResult = observedResults[observedIndex];
+                    bool completed = queryResult == Result.Success &&
+                        observedValues[observedIndex] >= entry.TimelineValue;
 
                     if (queryResult != Result.Success)
                     {
@@ -1164,6 +1568,13 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
                     if (ShouldStopNormalSettlement(entry))
                         break;
                     entry.CompletionProven = true;
+                    entry.CompletionTimestamp = Stopwatch.GetTimestamp();
+                    long startedAt = entry.SubmitStartTimestamp != 0
+                        ? entry.SubmitStartTimestamp
+                        : entry.EnqueuedTimestamp;
+                    entry.InFlightWallAgeTicks = startedAt == 0
+                        ? 0
+                        : Math.Max(0L, entry.CompletionTimestamp - startedAt);
                     if (entry.SubmissionValidationTracked && !entry.SubmissionValidationCompletionCounted)
                     {
                         entry.SubmissionValidationCompletionCounted = true;
@@ -1175,6 +1586,8 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
 
                 entry.Retiring = true;
                 readyToRetire[readyCount++] = i;
+                if (IsSubmissionValidationAllocationMeasurementMatured())
+                    Interlocked.Increment(ref _submissionValidationPollRetirementWorkCount);
             }
         }
 
@@ -1225,40 +1638,56 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
 
     private bool RetireCompletedSubmission(InFlightSubmission entry)
     {
-        if (entry.Reopened)
-            return true;
-        if (ShouldStopNormalSettlement(entry))
-            return false;
-
-        if (!SettleUploads(entry, publish: true) ||
-            ShouldStopNormalSettlement(entry) ||
-            !ReleaseSubmissionFrameSlotLifetimes(entry) ||
-            ShouldStopNormalSettlement(entry) ||
-            !InvokeRetiredCallbackOnce(entry) ||
-            ShouldStopNormalSettlement(entry) ||
-            !ReleaseRecordedCommandBuffers(entry) ||
-            ShouldStopNormalSettlement(entry) ||
-            !ReleaseTemporaryCommandBuffer(entry) ||
-            ShouldStopNormalSettlement(entry) ||
-            !ReleasePreparedInputs(entry) ||
-            ShouldStopNormalSettlement(entry) ||
-            !ReopenArenas(entry) ||
-            ShouldStopNormalSettlement(entry))
-            return false;
-
-        entry.Reopened = true;
-        SynchronizeSubmissionValidation(entry, retired: true);
-
-        if (_commandRuntime.IsOpenXrTraceEnabled)
+        bool measureRetirementAllocation = IsSubmissionValidationAllocationMeasurementMatured();
+        long retirementAllocatedBefore = measureRetirementAllocation
+            ? GC.GetAllocatedBytesForCurrentThread()
+            : 0L;
+        try
         {
-            Debug.Vulkan(
-                "[OpenXR.Tracker] Retired submission frame={0} timelineValue={1} frameSlots={2}",
-                entry.FrameId,
-                entry.TimelineValue,
-                entry.FrameSlotCount);
-        }
+            if (entry.Reopened)
+                return true;
+            if (ShouldStopNormalSettlement(entry))
+                return false;
 
-        return true;
+            if (!SettleUploads(entry, publish: true) ||
+                ShouldStopNormalSettlement(entry) ||
+                !ReleaseSubmissionFrameSlotLifetimes(entry) ||
+                ShouldStopNormalSettlement(entry) ||
+                !InvokeRetiredCallbackOnce(entry) ||
+                ShouldStopNormalSettlement(entry) ||
+                !ReleaseRecordedCommandBuffers(entry) ||
+                ShouldStopNormalSettlement(entry) ||
+                !ReleaseTemporaryCommandBuffer(entry) ||
+                ShouldStopNormalSettlement(entry) ||
+                !ReleasePreparedInputs(entry) ||
+                ShouldStopNormalSettlement(entry) ||
+                !ReopenArenas(entry) ||
+                ShouldStopNormalSettlement(entry))
+                return false;
+
+            entry.Reopened = true;
+            SynchronizeSubmissionValidation(entry, retired: true);
+
+            if (_commandRuntime.IsOpenXrTraceEnabled)
+            {
+                Debug.Vulkan(
+                    "[OpenXR.Tracker] Retired submission frame={0} timelineValue={1} frameSlots={2}",
+                    entry.FrameId,
+                    entry.TimelineValue,
+                    entry.FrameSlotCount);
+            }
+
+            return true;
+        }
+        finally
+        {
+            if (measureRetirementAllocation)
+                RecordSubmissionValidationAllocationSample(
+                    ref _submissionValidationRetirementInvocationCount,
+                    ref _submissionValidationRetirementAllocatedBytes,
+                    ref _submissionValidationRetirementAllocationHighWaterBytes,
+                    retirementAllocatedBefore);
+        }
     }
 
     private bool ReleaseSubmissionFrameSlotLifetimes(InFlightSubmission entry)
@@ -1601,12 +2030,40 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
         PollCompletions();
 
         InFlightSubmission? oldest = null;
+        VulkanSemaphore oldestSemaphore = default;
+        ulong oldestTimelineValue = 0;
+        ulong oldestFrameId = 0;
+        int oldestLedgerIndex = -1;
+        int oldestAdmissionSlotIndex = -1;
+        ulong oldestTicketGeneration = 0;
+        bool observationPressureAtCapacity = false;
+        bool preWaitCompletionProven = false;
+        int preWaitSettlementCount = 0;
         lock (_gate)
         {
             if (CountOwnedSubmissionsNoLock() < maxInFlight)
                 return true;
 
             oldest = FindOldestSubmissionNoLock();
+            if (oldest is not null)
+            {
+                oldestSemaphore = oldest.TimelineSemaphore;
+                oldestTimelineValue = oldest.TimelineValue;
+                oldestFrameId = oldest.FrameId;
+                oldestLedgerIndex = oldest.ValidationLedgerIndex;
+                oldestAdmissionSlotIndex = oldest.AdmissionSlotIndex;
+                oldestTicketGeneration = oldest.TicketGeneration;
+                observationPressureAtCapacity = IsSubmissionValidationHoldActiveNoLock() &&
+                    _submissionValidationRequest.Scenario == EOpenXrSubmissionValidationScenario.HoldCompletionObservationUntilRecoveryWait;
+                preWaitCompletionProven = oldest.CompletionProven;
+                if ((uint)oldestLedgerIndex < (uint)_submissionValidationLedgerCount)
+                {
+                    ref SubmissionValidationLedgerRecord record = ref _submissionValidationLedger[oldestLedgerIndex];
+                    preWaitSettlementCount = record.UploadSettlementCount + record.RecordedReleaseCount +
+                        record.PreparedReleaseCount + record.TemporaryReleaseCount +
+                        record.MappedFrameSlotResetCount + record.FrameDataSlotResetCount + record.RetiredCallbackCount;
+                }
+            }
         }
 
         if (oldest is null || !_commandRuntime.DeviceContext.IsOperational)
@@ -1621,8 +2078,8 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
                 _commandRuntime.Api,
                 _commandRuntime.DeviceContext,
                 _commandRuntime.ResourceRuntime.Lifetime.Tracker,
-                oldest.TimelineSemaphore,
-                oldest.TimelineValue,
+                oldestSemaphore,
+                oldestTimelineValue,
                 (ulong)timeoutMs * 1_000_000UL);
         }
         long waitEnd = Stopwatch.GetTimestamp();
@@ -1631,13 +2088,33 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
         RuntimeEngine.Rendering.Stats.Vr.RecordOpenXrEyeCompletionWaitTime(waitElapsed);
         RuntimeEngine.Rendering.Stats.Vr.RecordOpenXrEyeFenceForcedWait();
         Interlocked.Increment(ref _forcedWaitCount);
+        lock (_gate)
+            RecordSubmissionValidationForcedWaitNoLock(
+                oldestLedgerIndex,
+                oldestAdmissionSlotIndex,
+                oldestTicketGeneration,
+                oldestSemaphore,
+                oldestTimelineValue,
+                waitStart,
+                waitEnd,
+                waitResult,
+                observationPressureAtCapacity,
+                preWaitCompletionProven,
+                preWaitSettlementCount);
+
+        // The validation cohort delays observation until the real wait returns.
+        // Release even on failure so an operational device can be polled again;
+        // a failed wait itself never authorizes completion or settlement.
+        if (observationPressureAtCapacity)
+            lock (_gate)
+                ReleaseSubmissionValidationHoldNoLock(EOpenXrCompletionObservationHoldReleaseReason.AfterNativeCapacityWait);
 
         if (waitResult != Result.Success && waitResult != Result.Timeout)
         {
             Debug.VulkanWarning(
                 "[OpenXR.Tracker] Recovery wait failed on frame {0} timeline {1}: {2}",
-                oldest.FrameId,
-                oldest.TimelineValue,
+                oldestFrameId,
+                oldestTimelineValue,
                 waitResult);
             return false;
         }
@@ -1653,6 +2130,8 @@ internal sealed class OpenXrVulkanSubmissionTracker : IDisposable
     /// </summary>
     public bool DrainAll(uint timeoutMs = DefaultShutdownDrainTimeoutMs)
     {
+        lock (_gate)
+            ReleaseSubmissionValidationHoldNoLock(EOpenXrCompletionObservationHoldReleaseReason.Teardown);
         long deadline = Stopwatch.GetTimestamp() + (long)(timeoutMs * (Stopwatch.Frequency / 1000.0));
         while (HasInFlightWork)
         {

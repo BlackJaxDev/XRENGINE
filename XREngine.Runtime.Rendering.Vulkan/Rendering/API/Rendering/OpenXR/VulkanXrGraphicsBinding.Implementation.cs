@@ -874,7 +874,8 @@ Target:                 new RenderFrameViewTargetDescriptor(
             bool debugCleared = renderer.OpenXrFrameLoop.TryClearOpenXrSwapchainImage(
                 debugImage,
                 new VkExtent2D(width, height),
-                clearColor);
+                clearColor,
+                CaptureEyeSubmissionIdentity(viewIndex, imageIndex));
 
             return debugCleared;
         }
@@ -929,6 +930,24 @@ Target:                 new RenderFrameViewTargetDescriptor(
 
             VkExtent2D extent = new(width, height);
             VkImage eyeImage = new(images[imageIndex].Image);
+            if (OpenXrVulkanSerialEyeSubmit && !OpenXrVulkanMirrorFbo)
+            {
+                if (!TryCreateDirectEyeRenderRequest(
+                        eyeImage,
+                        (VkFormat)selectedFormat,
+                        extent,
+                        viewIndex,
+                        imageIndex,
+                        out OpenXrEyeSwapchainRenderRequest request))
+                    return false;
+                if (!renderer.OpenXrFrameLoop.TryRenderOpenXrEyeSwapchain(in request))
+                    return false;
+
+                PublishVulkanEyeSwapchain(renderer, eyeImage, (VkFormat)selectedFormat,
+                    extent, viewIndex, imageIndex, width, height);
+                MarkVulkanEyeResourceWarmupComplete(viewIndex);
+                return true;
+            }
             if (!OpenXrVulkanMirrorFbo)
             {
                 // This callback is only the legacy per-eye fallback invoked
@@ -2084,11 +2103,13 @@ Target:                 new RenderFrameViewTargetDescriptor(
             bool leftCleared = renderer.OpenXrFrameLoop.TryClearOpenXrSwapchainImage(
                 new VkImage(leftImages[leftImageIndex].Image),
                 new VkExtent2D(width, height),
-                new ColorF4(1f, 0f, 0f, 1f));
+                new ColorF4(1f, 0f, 0f, 1f),
+                CaptureEyeSubmissionIdentity(0, leftImageIndex));
             bool rightCleared = renderer.OpenXrFrameLoop.TryClearOpenXrSwapchainImage(
                 new VkImage(rightImages[rightImageIndex].Image),
                 new VkExtent2D(width, height),
-                new ColorF4(0f, 1f, 0f, 1f));
+                new ColorF4(0f, 1f, 0f, 1f),
+                CaptureEyeSubmissionIdentity(1, rightImageIndex));
             return leftCleared && rightCleared;
         }
 
@@ -2218,7 +2239,8 @@ Target:                 new RenderFrameViewTargetDescriptor(
                     bool desktopMirrorCopied = renderer.OpenXrFrameLoop.TryCopyOpenXrEyeMirrorTexture(
                         leftMirrorColor,
                         _viewportMirrorColor,
-                        $"desktop mirror eye 0",
+                        "desktop mirror eye 0",
+                        CaptureEyeSubmissionIdentity(0, leftImageIndex),
                         flipY: false);
                     LogVulkanEyeMirrorPublish(
                         leftMirrorColor,
@@ -2247,38 +2269,21 @@ Target:                 new RenderFrameViewTargetDescriptor(
                 return true;
             }
 
-            OpenXrSubmissionMetadata submissionMetadata = new(
-                Context.PendingFrameId,
-                Context.PendingPredictedDisplayTime);
-            var leftRequest = new OpenXrEyeSwapchainRenderRequest(
-                leftImage,
-                (VkFormat)leftFormat,
-                extent,
-                ResourcePlannerStateIndex: 0,
-                OpenXrViewIndex: 0,
-                OpenXrImageIndex: leftImageIndex,
-                Foveation: CreateOpenXrEyeFoveationContext(0),
-                SubmissionMetadata: submissionMetadata,
-                FrameOpEmitter: new OpenXrEyeFrameOpDelegateEmitter(() =>
-                {
-                    ApplyOpenXrEyePoseForRenderThread(0);
-                    leftViewport.Render(null, _openXrFrameWorld, leftCamera, shadowPass: false, forcedMaterial: null);
-                }));
-
-            var rightRequest = new OpenXrEyeSwapchainRenderRequest(
-                rightImage,
-                (VkFormat)rightFormat,
-                extent,
-                ResourcePlannerStateIndex: 1,
-                OpenXrViewIndex: 1,
-                OpenXrImageIndex: rightImageIndex,
-                Foveation: CreateOpenXrEyeFoveationContext(1),
-                SubmissionMetadata: submissionMetadata,
-                FrameOpEmitter: new OpenXrEyeFrameOpDelegateEmitter(() =>
-                {
-                    ApplyOpenXrEyePoseForRenderThread(1);
-                    rightViewport.Render(null, _openXrFrameWorld, rightCamera, shadowPass: false, forcedMaterial: null);
-                }));
+            if (!TryCreateDirectEyeRenderRequest(
+                    leftImage,
+                    (VkFormat)leftFormat,
+                    extent,
+                    0,
+                    leftImageIndex,
+                    out OpenXrEyeSwapchainRenderRequest leftRequest) ||
+                !TryCreateDirectEyeRenderRequest(
+                    rightImage,
+                    (VkFormat)rightFormat,
+                    extent,
+                    1,
+                    rightImageIndex,
+                    out OpenXrEyeSwapchainRenderRequest rightRequest))
+                return false;
 
             bool directRendered;
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.Batch.RenderDirectSwapchains"))
@@ -2311,7 +2316,16 @@ Target:                 new RenderFrameViewTargetDescriptor(
         RuntimeEngine.Rendering.State.PushMirrorPass();
         try
         {
-            viewport.Render(targetFrameBuffer, _openXrFrameWorld, camera, shadowPass: false, forcedMaterial: null);
+            if (!viewport.TryCaptureRenderingBackendReadyFramePackageAuthority(out var packageAuthority) ||
+                !viewport.TryRenderOpenXrFramePackage(
+                    _openXrFrameWorld,
+                    camera,
+                    in packageAuthority,
+                    targetFrameBuffer))
+            {
+                throw new InvalidOperationException(
+                    "OpenXR mirror preparation rejected its published backend-ready frame-package authority.");
+            }
         }
         finally
         {
@@ -2348,6 +2362,12 @@ Target:                 new RenderFrameViewTargetDescriptor(
             _vulkanOpenXrStartupPrewarmFramesRemaining[index]--;
     }
 
+    private OpenXrImageSubmissionIdentity CaptureEyeSubmissionIdentity(uint viewIndex, uint imageIndex)
+        => OpenXrImageSubmissionIdentity.ForEye(
+            new OpenXrSubmissionMetadata(Context.PendingFrameId, Context.PendingPredictedDisplayTime),
+            viewIndex,
+            imageIndex);
+
     private void PublishVulkanEyeMirror(
         VulkanRenderer renderer,
         XRTexture? sourceTexture,
@@ -2367,6 +2387,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
                 sourceTexture,
                 previewTexture,
                 $"preview eye {viewIndex}",
+                CaptureEyeSubmissionIdentity(viewIndex, imageIndex),
                 flipY: false);
         bool copiedDesktopMirror = false;
         if (ShouldCopyVulkanEyeToDesktopMirror(viewIndex))
@@ -2376,6 +2397,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
                 sourceTexture,
                 _viewportMirrorColor,
                 $"desktop mirror eye {viewIndex}",
+                CaptureEyeSubmissionIdentity(viewIndex, imageIndex),
                 flipY: false);
         }
 
@@ -2433,6 +2455,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
                 sourceExtent,
                 previewTexture,
                 $"preview eye {viewIndex}",
+                CaptureEyeSubmissionIdentity(viewIndex, imageIndex),
                 flipY: false);
         bool copiedDesktopMirror = false;
         if (ShouldCopyVulkanEyeToDesktopMirror(viewIndex))
@@ -2444,6 +2467,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
                 sourceExtent,
                 _viewportMirrorColor,
                 $"desktop mirror eye {viewIndex}",
+                CaptureEyeSubmissionIdentity(viewIndex, imageIndex),
                 flipY: false);
         }
 
@@ -2525,7 +2549,8 @@ Target:                 new RenderFrameViewTargetDescriptor(
                     (int)viewIndex,
                     () =>
                     {
-                        eyeViewport.Render(null, _openXrFrameWorld, eyeCamera, shadowPass: false, forcedMaterial: null);
+                        if (eyeViewport.TryCaptureRenderingBackendReadyFramePackageAuthority(out var packageAuthority))
+                            eyeViewport.TryRenderOpenXrFramePackage(_openXrFrameWorld, eyeCamera, in packageAuthority);
                     });
                 return;
             }
@@ -2541,7 +2566,7 @@ Target:                 new RenderFrameViewTargetDescriptor(
                 (int)viewIndex,
                 () =>
                 {
-                    eyeViewport.Render(mirrorFbo, _openXrFrameWorld, eyeCamera, shadowPass: false, forcedMaterial: null);
+                    RenderOpenXrVulkanMirrorViewport(eyeViewport, mirrorFbo, eyeCamera);
                 });
         }
     }

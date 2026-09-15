@@ -92,6 +92,7 @@ internal sealed unsafe partial class VulkanXrGraphicsBinding
             extent,
             leftPreview,
             "strict SPS acquired-image capture left",
+            CaptureEyeSubmissionIdentity(0, leftImageIndex),
             flipY: false);
         bool copiedRight = renderer.OpenXrFrameLoop.TryCopyOpenXrEyeSwapchainImageToTexture(
             rightImage,
@@ -99,6 +100,7 @@ internal sealed unsafe partial class VulkanXrGraphicsBinding
             extent,
             rightPreview,
             "strict SPS acquired-image capture right",
+            CaptureEyeSubmissionIdentity(1, rightImageIndex),
             flipY: false);
         if (!copiedLeft || !copiedRight)
             return;

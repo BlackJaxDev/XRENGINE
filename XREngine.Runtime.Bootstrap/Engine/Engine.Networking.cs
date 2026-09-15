@@ -109,7 +109,17 @@ namespace XREngine
         {
             ShutdownNetworking();
 
+            if (startupSettings.NetworkingType == ENetworkingType.Client
+                && Runtime.Bootstrap.ManagedClientWorldLoader.IsConfigured
+                && !Runtime.Bootstrap.ManagedClientWorldLoader.WasApplied
+                && !startupSettings.IgnoreEnvironmentRealtimeHandoffs)
+            {
+                throw new InvalidOperationException("Managed client configuration was supplied, but its verified world was not loaded before networking startup.");
+            }
+
             if (!_environmentRealtimeHandoffApplied
+                && !Runtime.Bootstrap.ManagedClientWorldLoader.IsConfigured
+                && !startupSettings.IgnoreEnvironmentRealtimeHandoffs
                 && RealtimeJoinHandoff.TryApplyFromEnvironment(startupSettings, out _, out string? handoffSource))
             {
                 _environmentRealtimeHandoffApplied = true;
@@ -128,18 +138,34 @@ namespace XREngine
                     Networking = null;
                     break;
                 case ENetworkingType.Server:
-                    var server = new ServerNetworkingManager();
+                    var server = new ServerNetworkingManager
+                    {
+                        RequireManagedUdpTransport = ServerRequiresManagedUdpTransport,
+                        EnableKinematicCharacterLocomotion = ServerRequiresManagedUdpTransport,
+                    };
+                    server.MaxPlayers = ServerMaximumPlayers ?? int.MaxValue;
                     Networking = server;
                     server.Start(
                         IPAddress.Parse(startupSettings.UdpMulticastGroupIP),
                         startupSettings.UdpMulticastPort,
-                        startupSettings.UdpServerBindPort);
+                        startupSettings.UdpServerBindPort,
+                        ServerBindAddress);
                     break;
                 case ENetworkingType.Client:
                     var client = new ClientNetworkingManager
                     {
                         SessionId = startupSettings.MultiplayerSessionId,
                         SessionToken = startupSettings.MultiplayerSessionToken,
+                        AccountId = startupSettings.MultiplayerAccountId,
+                        ReservationId = startupSettings.MultiplayerReservationId,
+                        AdmissionSecret = startupSettings.MultiplayerAdmissionSecret,
+                        StableClientId = startupSettings.MultiplayerClientId,
+                        WorkerGeneration = startupSettings.MultiplayerWorkerGeneration,
+                        ResumeRequested = startupSettings.MultiplayerResumeRequested,
+                        CredentialEpoch = startupSettings.MultiplayerCredentialEpoch,
+                        Transport = startupSettings.MultiplayerTransport,
+                        TlsServerName = startupSettings.ServerIP,
+                        DevelopmentTlsCertificatePin = Environment.GetEnvironmentVariable("XRE_DEVELOPMENT_TLS_SPKI_SHA256"),
                     };
                     Networking = client;
                     client.Start(

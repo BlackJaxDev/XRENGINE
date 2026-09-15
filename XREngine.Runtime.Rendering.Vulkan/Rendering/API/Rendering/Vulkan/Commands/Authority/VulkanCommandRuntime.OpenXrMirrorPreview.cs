@@ -11,14 +11,16 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal sealed partial class VulkanCommandRuntime
 {
-    internal VulkanQueueOperationLease EnterSerializedOpenXrCommandSection(
+    internal VulkanOpenXrRuntimeQueueLease EnterSerializedOpenXrCommandSection(
         string operation)
     {
         long waitStart = Stopwatch.GetTimestamp();
-        VulkanQueueOperationLease lease = VulkanQueueOperationLease.TryEnter(
+        VulkanOpenXrRuntimeQueueLease lease = VulkanOpenXrRuntimeQueueLease.Enter(
+            CommandBuffers.DeviceQueueAdmissionGate,
             CommandBuffers.OneTimeSubmitGate,
             DeviceContext.StateMachine,
-            FrameTelemetry);
+            FrameTelemetry,
+            operation);
         if (IsOpenXrTraceEnabled)
         {
             Debug.Vulkan(
@@ -242,7 +244,9 @@ internal sealed partial class VulkanCommandRuntime
         }
     }
 
-    internal bool ExecuteOpenXrPreviewCopy(in OpenXrEyePreviewCopyPlan plan)
+    internal bool ExecuteOpenXrPreviewCopy(
+        in OpenXrEyePreviewCopyPlan plan,
+        in OpenXrImageSubmissionIdentity submissionIdentity)
     {
         OpenXrSubmissionTracker.PollCompletions();
         if (!OpenXrSubmissionTracker.TryReserveSubmission(out OpenXrVulkanSubmissionTracker.SubmissionAdmissionTicket? admissionTicket))
@@ -278,7 +282,8 @@ internal sealed partial class VulkanCommandRuntime
                 ref trackerOwnsCommand,
                 commandBuffer,
                 default,
-                XREngine.Rendering.API.Rendering.OpenXR.EOpenXrSubmissionShape.PreviewCopy);
+                XREngine.Rendering.API.Rendering.OpenXR.EOpenXrSubmissionShape.PreviewCopy,
+                in submissionIdentity);
             disposition = result.SubmissionDisposition;
             return result.Succeeded;
         }
@@ -299,6 +304,7 @@ internal sealed partial class VulkanCommandRuntime
     internal bool ExecuteOpenXrMirrorPublish(
         in OpenXrEyeMirrorPublishPlan firstPlan,
         in OpenXrEyeMirrorPublishPlan secondPlan,
+        in OpenXrImageSubmissionIdentity submissionIdentity,
         out bool firstPreviewCopied,
         out bool secondPreviewCopied)
     {
@@ -328,7 +334,8 @@ internal sealed partial class VulkanCommandRuntime
                 ref trackerOwnsCommand,
                 commandBuffer,
                 default,
-                XREngine.Rendering.API.Rendering.OpenXR.EOpenXrSubmissionShape.MirrorPublish);
+                XREngine.Rendering.API.Rendering.OpenXR.EOpenXrSubmissionShape.MirrorPublish,
+                in submissionIdentity);
             disposition = result.SubmissionDisposition;
             return result.Succeeded;
         }
@@ -349,7 +356,8 @@ internal sealed partial class VulkanCommandRuntime
     internal bool ExecuteOpenXrDiagnosticClear(
         Image image,
         Extent2D extent,
-        ColorF4 color)
+        ColorF4 color,
+        in OpenXrImageSubmissionIdentity submissionIdentity)
     {
         OpenXrSubmissionTracker.PollCompletions();
         if (!OpenXrSubmissionTracker.TryReserveSubmission(out OpenXrVulkanSubmissionTracker.SubmissionAdmissionTicket? admissionTicket))
@@ -414,7 +422,8 @@ internal sealed partial class VulkanCommandRuntime
                 ref trackerOwnsCommand,
                 commandBuffer,
                 default,
-                XREngine.Rendering.API.Rendering.OpenXR.EOpenXrSubmissionShape.DiagnosticClear);
+                XREngine.Rendering.API.Rendering.OpenXR.EOpenXrSubmissionShape.DiagnosticClear,
+                in submissionIdentity);
             disposition = result.SubmissionDisposition;
             return result.Succeeded;
         }
@@ -445,7 +454,8 @@ internal sealed partial class VulkanCommandRuntime
         Extent2D destinationExtent,
         ImageLayout destinationOldLayout,
         ImageAspectFlags destinationAspect,
-        bool flipY)
+        bool flipY,
+        in OpenXrImageSubmissionIdentity submissionIdentity)
     {
         OpenXrSubmissionTracker.PollCompletions();
         if (!OpenXrSubmissionTracker.TryReserveSubmission(out OpenXrVulkanSubmissionTracker.SubmissionAdmissionTicket? admissionTicket))
@@ -539,7 +549,8 @@ internal sealed partial class VulkanCommandRuntime
                 ref trackerOwnsCommand,
                 commandBuffer,
                 default,
-                XREngine.Rendering.API.Rendering.OpenXR.EOpenXrSubmissionShape.MirrorTextureCopy);
+                XREngine.Rendering.API.Rendering.OpenXR.EOpenXrSubmissionShape.MirrorTextureCopy,
+                in submissionIdentity);
             disposition = result.SubmissionDisposition;
             return result.Succeeded;
         }
@@ -562,11 +573,17 @@ internal sealed partial class VulkanCommandRuntime
         ref bool trackerOwnsCommand,
         CommandBuffer commandBuffer,
         in VulkanSubmissionDiagnosticContext diagnosticContext,
-        XREngine.Rendering.API.Rendering.OpenXR.EOpenXrSubmissionShape submissionShape)
+        XREngine.Rendering.API.Rendering.OpenXR.EOpenXrSubmissionShape submissionShape,
+        in OpenXrImageSubmissionIdentity submissionIdentity)
     {
         Span<uint> frameSlots = stackalloc uint[0];
         trackerOwnsCommand = OpenXrSubmissionTracker.RegisterSubmission(
-            admissionTicket, 0UL, 0L, 0U, 0U, 0U,
+            admissionTicket,
+            submissionIdentity.Frame.FrameId,
+            submissionIdentity.Frame.PredictedDisplayTime,
+            submissionIdentity.ViewMask,
+            submissionIdentity.FirstEyeImageIndex,
+            submissionIdentity.SecondEyeImageIndex,
             firstRecorded: default, hasFirst: false,
             secondRecorded: default, hasSecond: false,
             firstPrepared: default, hasFirstPrepared: false,

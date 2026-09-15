@@ -14,25 +14,9 @@ namespace XREngine.Rendering.Vulkan;
 
 internal sealed partial class VulkanFrameLoop
 {
-    internal bool TryRenderOpenXrEyeSwapchain(
-        Image image,
-        Format format,
-        Extent2D extent,
-        int resourcePlannerStateIndex,
-        uint openXrViewIndex,
-        uint openXrImageIndex,
-        ViewFoveationContext foveation,
-        Action emitFrameOps)
+    internal bool TryRenderOpenXrEyeSwapchain(in OpenXrEyeSwapchainRenderRequest request)
     {
-        var request = new OpenXrEyeSwapchainRenderRequest(
-            image,
-            format,
-            extent,
-            resourcePlannerStateIndex,
-            openXrViewIndex,
-            openXrImageIndex,
-            foveation,
-            new OpenXrEyeFrameOpDelegateEmitter(emitFrameOps));
+        uint openXrViewIndex = request.OpenXrViewIndex;
 
         if (!_commandRuntime.OpenXrSubmissionTracker.TryReserveSubmission(
                 out OpenXrVulkanSubmissionTracker.SubmissionAdmissionTicket? admissionTicket))
@@ -83,8 +67,8 @@ internal sealed partial class VulkanFrameLoop
                 request.SubmissionMetadata.FrameId,
                 request.SubmissionMetadata.PredictedDisplayTime,
                 1u << (int)recorded.OpenXrViewIndex,
-                recorded.OpenXrImageIndex,
-                0u,
+                recorded.OpenXrViewIndex == 0 ? recorded.OpenXrImageIndex : 0u,
+                recorded.OpenXrViewIndex == 1 ? recorded.OpenXrImageIndex : 0u,
                 in recorded,
                 hasFirst: true,
                 secondRecorded: default,
@@ -498,7 +482,8 @@ internal sealed partial class VulkanFrameLoop
                 {
                     OpenXrEyeFrameOpEmission emission = new(
                         request.OpenXrViewIndex,
-                        request.ResourcePlannerStateIndex);
+                        request.ResourcePlannerStateIndex,
+                        request.PackageAuthority);
                     ops = CloneFrameOpsForPreparedOpenXrEye(
                         CaptureFrameOpsExcludingTextureUploads(
                             request.FrameOpEmitter,
@@ -529,6 +514,12 @@ internal sealed partial class VulkanFrameLoop
                 ResourcePlannerRuntimeState plannerState;
                 using (RuntimeRenderingHostServices.Profiling.StartProfileScope("OpenXR.Vulkan.RecordEye.PlanAndSchedule"))
                 {
+                    // Eye authoring publishes resources under this exact
+                    // pipeline key. Re-enter that owner instead of planning
+                    // a duplicate allocator on the restored outer eye scope.
+                    plannerContext = VulkanFramePlanner.SelectPrimaryPlannerContext(ops);
+                    using PooledExternalResourcePlannerReadbackScope plannerScope =
+                        RentPipelineResourcePlannerScope(in plannerContext);
                     if (TryDescribeRecentResourceAllocationFailure(out string prePlanFailureReason))
                     {
                         Debug.VulkanWarningEvery(
@@ -536,18 +527,6 @@ internal sealed partial class VulkanFrameLoop
                             TimeSpan.FromSeconds(1),
                             "[OpenXR] Deferring Vulkan eye command buffer preparation: {0}",
                             prePlanFailureReason);
-                        return false;
-                    }
-
-                    plannerContext = PrepareResourcePlannerForFrameOps(ops);
-                    plannerState = CaptureResourcePlannerRuntimeState();
-                    if (TryDescribeRecentResourceAllocationFailure(out string postPlanFailureReason))
-                    {
-                        Debug.VulkanWarningEvery(
-                            $"OpenXR.Vulkan.EyeFrameOpPlanFailed.{GetHashCode()}.{targetContext.OpenXrViewIndex}",
-                            TimeSpan.FromSeconds(1),
-                            "[OpenXR] Deferring Vulkan eye command buffer preparation: {0}",
-                            postPlanFailureReason);
                         return false;
                     }
 
@@ -575,7 +554,8 @@ internal sealed partial class VulkanFrameLoop
 
                     int reconciledImageGroupCount =
                         _commandRuntime.ReconcileResourcePlannerImageLayouts(
-                            plannerState.ResourceAllocator);
+                            CaptureResourcePlannerRuntimeState().ResourceAllocator);
+                    plannerState = CaptureResourcePlannerRuntimeState();
                     if (_commandRuntime.IsOpenXrTraceEnabled)
                     {
                         Debug.Vulkan(
@@ -745,8 +725,16 @@ internal sealed partial class VulkanFrameLoop
             unchecked((uint)framePlan.RenderFrameId));
 
         ulong logicalViewId = prepared.LogicalViewId;
+        FrameOpContext logicalPlannerContext = prepared.PlannerContext with
+        {
+            OutputFrameBufferIdentity = 0,
+            OutputFrameBufferName = null,
+            OutputFrameBuffer = null,
+        };
+        VulkanFrameOpPlannerStateKey recordingPlannerKey =
+            VulkanFrameOpSnapshotSignatures.BuildPlannerStateKey(logicalPlannerContext);
         RenderOutputRequest requiredContract = prepared.RequiredOutputContract;
-        if (logicalViewId == 0UL ||
+        if (logicalViewId == 0UL || recordingPlannerKey.LogicalViewId != logicalViewId ||
             prepared.RequiredOutputIndex < 0 ||
             !requiredContract.IsDefined ||
             !framePlan.TryGetExecutableOutputContractForLogicalView(
@@ -769,6 +757,16 @@ internal sealed partial class VulkanFrameLoop
                 TimeSpan.Zero,
                 "The sealed logical OpenXR plan no longer matches the exact non-deferrable eye-submit contract bound before worker publication.");
         }
+
+        ResourcePlannerRuntimeGeneration recordingPlannerGeneration =
+            ResolveOpenXrSealedRecordingPlannerGeneration(in prepared, framePlan, in recordingPlannerKey);
+        VulkanPreparedResourcePlanStamp recordingResourceStamp = prepared.ResourcePlanStamp with
+        {
+            PlanningSnapshot = prepared.ResourcePlanStamp.PlanningSnapshot with
+            {
+                RenderGraphPlan = recordingPlannerGeneration.State.RenderGraphPlan,
+            },
+        };
 
         FrameOperationSequence nativeOperations =
             framePlan.GetNativeStaticOperationsForLogicalView(logicalViewId);
@@ -875,7 +873,7 @@ internal sealed partial class VulkanFrameLoop
             owner.PrimaryCommandPlan,
             recordingTarget,
             default,
-            prepared.ResourcePlanStamp,
+            recordingResourceStamp,
             new VulkanCommandClearStateSnapshot(
                 clearState.ClearColor,
                 clearState.ClearDepth,
@@ -903,10 +901,11 @@ internal sealed partial class VulkanFrameLoop
             ExcludeDesktopSwapchainBarriers: true,
             LogicalViewOperationsOverride: nativeOperations.Stream,
             LogicalViewId: logicalViewId,
-            RecordingStaticOperationSignatureOverride: frameOpsSignature);
+            RecordingStaticOperationSignatureOverride: frameOpsSignature,
+            RecordingPlannerKey: recordingPlannerKey);
         frozen = new OpenXrPreparedEyeRecordWorkerInput(
             commandInput,
-            prepared.PlannerState,
+            recordingPlannerGeneration,
             prepared.FrameContext,
             targetContext.OpenXrViewIndex,
             targetContext.OpenXrImageIndex,
@@ -922,6 +921,73 @@ internal sealed partial class VulkanFrameLoop
             renderLaneId,
             renderFrameSlot);
         return true;
+    }
+
+    /// <summary>
+    /// Adopts the final immutable graph after all eye resources are realized,
+    /// while requiring the original physical owner and resource generation.
+    /// The second eye can cause shared native bindings to refreeze the first
+    /// eye's graph without replacing its allocator or changing its signatures.
+    /// </summary>
+    private static ResourcePlannerRuntimeGeneration ResolveOpenXrSealedRecordingPlannerGeneration(
+        in OpenXrPreparedEyeCommandBufferInput prepared,
+        FramePlan framePlan,
+        in VulkanFrameOpPlannerStateKey recordingPlannerKey)
+        => ResolveOpenXrSealedRecordingPlannerGeneration(
+            prepared.PlannerState,
+            prepared.ResourcePlanStamp,
+            prepared.PlannerRevision,
+            prepared.TargetContext.OpenXrViewIndex,
+            framePlan,
+            in recordingPlannerKey);
+
+    private static ResourcePlannerRuntimeGeneration ResolveOpenXrSealedRecordingPlannerGeneration(
+        in ResourcePlannerRuntimeState original,
+        in VulkanPreparedResourcePlanStamp originalStamp,
+        ulong plannerRevision,
+        uint viewIndex,
+        FramePlan framePlan,
+        in VulkanFrameOpPlannerStateKey recordingPlannerKey)
+    {
+        bool hasSealedGeneration = framePlan.TryGetRecordingPlannerGeneration(
+            in recordingPlannerKey, out ResourcePlannerRuntimeGeneration generation);
+        bool originalIsCoherent =
+            ReferenceEquals(original.RenderGraphPlan, originalStamp.PlanningSnapshot.RenderGraphPlan) &&
+            original.ResourcePlannerRevision == originalStamp.ResourcePlannerRevision &&
+            original.ResourcePlannerRevision == plannerRevision &&
+            original.ResourcePlannerSignature == originalStamp.ResourcePlannerSignature &&
+            original.ResourceAllocationSignature == originalStamp.ResourceAllocationSignature;
+        if (originalIsCoherent &&
+            original.ResourceAllocator is { IsRetired: false } originalAllocator &&
+            originalAllocator.OwnershipId == original.AllocatorOwnershipId &&
+            hasSealedGeneration)
+        {
+            ResourcePlannerRuntimeState sealedState = generation.State;
+            if (ReferenceEquals(originalAllocator, sealedState.ResourceAllocator) &&
+                original.AllocatorOwnershipId == sealedState.AllocatorOwnershipId &&
+                original.ResourcePlannerRevision == sealedState.ResourcePlannerRevision &&
+                original.ResourcePlannerSignature == sealedState.ResourcePlannerSignature &&
+                original.ResourceAllocationSignature == sealedState.ResourceAllocationSignature)
+            {
+                return generation;
+            }
+        }
+
+        throw new VulkanPresentNowReadinessException(
+            framePlan.RenderFrameId,
+            EVulkanPresentNowReadinessStage.FramePlanSeal,
+            $"openxr-eye-{viewIndex}-planner-owner",
+            "OpenXREyeSubmit -> sealed physical planner owner",
+            TimeSpan.Zero,
+            TimeSpan.Zero,
+            $"The sealed eye graph no longer belongs to the prepared allocator and resource generation. " +
+            $"originalCoherent={originalIsCoherent} sealedGeneration={hasSealedGeneration} " +
+            $"originalAllocatorRetired={original.ResourceAllocator?.IsRetired} " +
+            $"originalAllocatorOwner={original.ResourceAllocator?.OwnershipId} originalStateOwner={original.AllocatorOwnershipId} " +
+            $"sealedAllocatorOwner={(hasSealedGeneration ? generation.State.ResourceAllocator?.OwnershipId : null)} " +
+            $"sealedStateOwner={(hasSealedGeneration ? generation.State.AllocatorOwnershipId : 0)} " +
+            $"sameAllocator={hasSealedGeneration && ReferenceEquals(original.ResourceAllocator, generation.State.ResourceAllocator)} " +
+            framePlan.DescribeRecordingPlannerStampMismatch(in recordingPlannerKey, in originalStamp));
     }
 
     /// <summary>
@@ -1119,12 +1185,11 @@ internal sealed partial class VulkanFrameLoop
         out FramePlan plan)
     {
         plan = null!;
-        if (firstEye.Ops.Length == 0 || secondEye.Ops.Length == 0 ||
-            firstEye.PlannerRevision != secondEye.PlannerRevision)
+        if (firstEye.Ops.Length == 0 || secondEye.Ops.Length == 0)
         {
             Debug.VulkanWarningEvery(
                 "OpenXR.Vulkan.PairedLogicalPlanInputs", TimeSpan.FromSeconds(1),
-                "[OpenXR] Paired-plan inputs rejected: operations={0}/{1} plannerRevision={2}/{3}.",
+                "[OpenXR] Paired-plan inputs rejected: operations={0}/{1}; canonical plannerRevision={2}, paired plannerRevision={3}.",
                 firstEye.Ops.Length, secondEye.Ops.Length, firstEye.PlannerRevision, secondEye.PlannerRevision);
             return false;
         }
@@ -1143,8 +1208,8 @@ internal sealed partial class VulkanFrameLoop
         FrameOp[] combined = new FrameOp[firstEye.Ops.Length + secondEye.Ops.Length];
         CopyLogicalOperationsWithoutNativeTargets(firstEye.Ops, combined, 0);
         CopyLogicalOperationsWithoutNativeTargets(secondEye.Ops, combined, firstEye.Ops.Length);
-        ResourcePlannerRuntimeState publishedPlannerState =
-            PublishedResourcePlannerRuntimeState;
+        ResourcePlannerRuntimeState firstPlannerState = firstEye.PlannerState;
+        ResourcePlannerRuntimeState secondPlannerState = secondEye.PlannerState;
         try
         {
             plan = _framePlanner.FramePlanBuilder.BuildAndSeal(
@@ -1156,13 +1221,15 @@ internal sealed partial class VulkanFrameLoop
                 Array.Empty<FrameOp>(),
                 new VulkanFramePlanRenderGraphAuthority(
                     firstEye.ResourcePlanStamp.PlanningSnapshot.RenderGraphPlan,
-                    publishedPlannerState.FrameOpResourcePlannerSwitchingState,
+                    firstPlannerState.FrameOpResourcePlannerSwitchingState,
                     _framePlanner,
-                    _resourceRuntime.BackendObjectContext),
+                    _resourceRuntime.BackendObjectContext,
+                    SecondarySwitchingState:
+                        secondPlannerState.FrameOpResourcePlannerSwitchingState),
                 openXrImagesAcquired: true);
-            ResourcePlannerRuntimeState recordingPlannerState = firstEye.PlannerState;
-            recordingPlannerState.FrameOpResourcePlannerSwitchingState = publishedPlannerState.FrameOpResourcePlannerSwitchingState;
-            plan.PrepareRecordingPlannerGenerations(in recordingPlannerState);
+            plan.PrepareRecordingPlannerGenerations(
+                in firstPlannerState,
+                in secondPlannerState);
             return true;
         }
         catch (Exception ex)
@@ -1280,8 +1347,6 @@ internal sealed partial class VulkanFrameLoop
             // This single-eye path has no later consumer of its producer
             // operations. Strip native framebuffer authority before sealing so
             // it has the same logical/native split as the paired-eye path.
-            ResourcePlannerRuntimeState publishedPlannerState =
-                PublishedResourcePlannerRuntimeState;
             plan = _framePlanner.FramePlanBuilder.BuildAndSeal(
                 frameSlot: 0,
                 eye.PlannerRevision,
@@ -1291,12 +1356,11 @@ internal sealed partial class VulkanFrameLoop
                 Array.Empty<FrameOp>(),
                 new VulkanFramePlanRenderGraphAuthority(
                     eye.ResourcePlanStamp.PlanningSnapshot.RenderGraphPlan,
-                    publishedPlannerState.FrameOpResourcePlannerSwitchingState,
+                    eye.PlannerState.FrameOpResourcePlannerSwitchingState,
                     _framePlanner,
                     _resourceRuntime.BackendObjectContext),
                 openXrImagesAcquired: true);
             ResourcePlannerRuntimeState recordingPlannerState = eye.PlannerState;
-            recordingPlannerState.FrameOpResourcePlannerSwitchingState = publishedPlannerState.FrameOpResourcePlannerSwitchingState;
             plan.PrepareRecordingPlannerGenerations(in recordingPlannerState);
             return true;
         }

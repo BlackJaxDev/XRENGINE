@@ -203,7 +203,7 @@ public sealed class NetworkBandwidthBudget
 public sealed class RealtimeReplicationCoordinator
 {
     private readonly Dictionary<NetworkEntityId, NetworkAuthorityLease> _leases = [];
-    private readonly Dictionary<int, Queue<PlayerInputSnapshot>> _inputBuffers = [];
+    private readonly Dictionary<int, SortedDictionary<uint, PlayerInputSnapshot>> _inputBuffers = [];
     private readonly TimeSpan _inputBufferWindow;
     private long _serverTickId;
     private uint _snapshotSequence;
@@ -217,7 +217,16 @@ public sealed class RealtimeReplicationCoordinator
     public long CurrentServerTickId => _serverTickId;
 
     public long AdvanceServerTick()
-        => ++_serverTickId;
+        => Interlocked.Increment(ref _serverTickId);
+
+    /// <summary>Removes all queued input and authority retained for a departing transport player.</summary>
+    public void ForgetPlayer(Guid sessionId, int playerIndex)
+    {
+        _inputBuffers.Remove(playerIndex);
+        foreach (NetworkEntityId entity in _leases.Where(pair => pair.Value.SessionId == sessionId && pair.Value.OwnerServerPlayerIndex == playerIndex)
+            .Select(static pair => pair.Key).ToArray())
+            _leases.Remove(entity);
+    }
 
     public NetworkAuthorityLease GrantLease(
         NetworkEntityId entityId,
@@ -228,8 +237,44 @@ public sealed class RealtimeReplicationCoordinator
         TimeSpan? duration = null,
         NetworkAuthorityMode authorityMode = NetworkAuthorityMode.ClientPredicted)
     {
+        if (!TryGrantLease(entityId, sessionId, ownerClientId, ownerServerPlayerIndex, nowUtc, out NetworkAuthorityLease? lease, duration, authorityMode))
+            return GetLease(entityId) ?? new NetworkAuthorityLease { EntityId = entityId, AuthorityMode = NetworkAuthorityMode.None, RevocationReason = NetworkAuthorityRevocationReason.InvalidOwner };
+        return lease!;
+    }
+
+    /// <summary>
+    /// Grants an entity lease only when no different active owner holds it.
+    /// Fixed simulation order therefore deterministically selects the first
+    /// accepted contender; callers must revoke before an explicit transfer.
+    /// </summary>
+    public bool TryGrantLease(
+        NetworkEntityId entityId,
+        Guid sessionId,
+        string ownerClientId,
+        int ownerServerPlayerIndex,
+        double nowUtc,
+        out NetworkAuthorityLease? lease,
+        TimeSpan? duration = null,
+        NetworkAuthorityMode authorityMode = NetworkAuthorityMode.ClientPredicted)
+    {
+        lease = null;
+        if (entityId.IsEmpty || sessionId == Guid.Empty || string.IsNullOrWhiteSpace(ownerClientId) || ownerServerPlayerIndex < 0)
+            return false;
+
+        if (_leases.TryGetValue(entityId, out NetworkAuthorityLease? existing) && existing.IsActive(nowUtc))
+        {
+            if (existing.SessionId != sessionId
+                || existing.OwnerServerPlayerIndex != ownerServerPlayerIndex
+                || !string.Equals(existing.OwnerClientId, ownerClientId, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            return TryRenewLease(entityId, sessionId, ownerClientId, ownerServerPlayerIndex, nowUtc, out lease, duration);
+        }
+
         TimeSpan leaseDuration = duration ?? MultiplayerRuntimePolicy.AuthorityLeaseDuration;
-        NetworkAuthorityLease lease = new()
+        NetworkAuthorityLease granted = new()
         {
             EntityId = entityId,
             SessionId = sessionId,
@@ -239,12 +284,40 @@ public sealed class RealtimeReplicationCoordinator
             AuthorityLeaseExpiryUtc = nowUtc + Math.Max(0.0d, leaseDuration.TotalSeconds)
         };
 
-        _leases[entityId] = lease;
-        return lease.Clone();
+        _leases[entityId] = granted;
+        lease = granted.Clone();
+        return true;
+    }
+
+    public bool TryRenewLease(
+        NetworkEntityId entityId,
+        Guid sessionId,
+        string ownerClientId,
+        int ownerServerPlayerIndex,
+        double nowUtc,
+        out NetworkAuthorityLease? lease,
+        TimeSpan? duration = null)
+    {
+        lease = null;
+        if (!_leases.TryGetValue(entityId, out NetworkAuthorityLease? existing)
+            || !existing.IsActive(nowUtc)
+            || existing.SessionId != sessionId
+            || existing.OwnerServerPlayerIndex != ownerServerPlayerIndex
+            || !string.Equals(existing.OwnerClientId, ownerClientId, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        existing.AuthorityLeaseExpiryUtc = nowUtc + Math.Max(0.0d, (duration ?? MultiplayerRuntimePolicy.AuthorityLeaseDuration).TotalSeconds);
+        lease = existing.Clone();
+        return true;
     }
 
     public NetworkAuthorityLease? GetLease(NetworkEntityId entityId)
         => _leases.TryGetValue(entityId, out NetworkAuthorityLease? lease) ? lease.Clone() : null;
+
+    public NetworkAuthorityLease[] GetLeases(Guid sessionId)
+        => _leases.Values.Where(lease => lease.SessionId == sessionId).Select(static lease => lease.Clone()).ToArray();
 
     public NetworkAuthorityLease? RevokeLease(
         NetworkEntityId entityId,
@@ -299,45 +372,86 @@ public sealed class RealtimeReplicationCoordinator
         return true;
     }
 
-    public int BufferInput(PlayerInputSnapshot snapshot, double serverTimeUtc)
+    /// <summary>
+    /// Adds an input only when it can still be simulated. Input sequence zero,
+    /// duplicates, and already processed inputs never enter the bounded queue.
+    /// </summary>
+    public bool TryBufferInput(PlayerInputSnapshot snapshot, double serverTimeUtc, uint lastProcessedSequence, out int depth)
     {
-        if (!_inputBuffers.TryGetValue(snapshot.ServerPlayerIndex, out Queue<PlayerInputSnapshot>? buffer))
+        depth = 0;
+        if (snapshot.InputSequence == 0 || snapshot.InputSequence <= lastProcessedSequence)
+            return false;
+
+        if (!_inputBuffers.TryGetValue(snapshot.ServerPlayerIndex, out SortedDictionary<uint, PlayerInputSnapshot>? buffer))
         {
-            buffer = new Queue<PlayerInputSnapshot>();
+            buffer = [];
             _inputBuffers[snapshot.ServerPlayerIndex] = buffer;
         }
 
-        buffer.Enqueue(snapshot);
+        if (!buffer.TryAdd(snapshot.InputSequence, snapshot))
+            return false;
+
         double oldestAllowed = serverTimeUtc - _inputBufferWindow.TotalSeconds;
-        while (buffer.TryPeek(out PlayerInputSnapshot? oldest)
-            && oldest.ClientSendTimestampUtc > 0.0d
-            && oldest.ClientSendTimestampUtc < oldestAllowed)
-        {
-            buffer.Dequeue();
-        }
+        foreach ((uint sequence, PlayerInputSnapshot buffered) in buffer.ToArray())
+            if (buffered.ClientSendTimestampUtc > 0.0d && buffered.ClientSendTimestampUtc < oldestAllowed)
+                buffer.Remove(sequence);
 
         while (buffer.Count > MultiplayerRuntimePolicy.MaxBufferedInputsPerPlayer)
-            buffer.Dequeue();
+            buffer.Remove(buffer.First().Key);
 
-        return buffer.Count;
+        depth = buffer.Count;
+        return true;
+    }
+
+    /// <summary>Removes the earliest valid command for a fixed simulation tick.</summary>
+    public bool TryConsumeInput(int serverPlayerIndex, uint lastProcessedSequence, double serverTimeUtc, out PlayerInputSnapshot? snapshot, out int depth)
+    {
+        snapshot = null;
+        depth = 0;
+        if (!_inputBuffers.TryGetValue(serverPlayerIndex, out SortedDictionary<uint, PlayerInputSnapshot>? buffer))
+            return false;
+
+        double oldestAllowed = serverTimeUtc - _inputBufferWindow.TotalSeconds;
+        foreach ((uint sequence, PlayerInputSnapshot candidate) in buffer.ToArray())
+        {
+            if (sequence <= lastProcessedSequence
+                || (candidate.ClientSendTimestampUtc > 0.0d && candidate.ClientSendTimestampUtc < oldestAllowed))
+            {
+                buffer.Remove(sequence);
+                continue;
+            }
+
+            buffer.Remove(sequence);
+            snapshot = candidate;
+            depth = buffer.Count;
+            return true;
+        }
+
+        depth = buffer.Count;
+        return false;
     }
 
     public uint LastBufferedInputSequence(int serverPlayerIndex)
     {
-        if (!_inputBuffers.TryGetValue(serverPlayerIndex, out Queue<PlayerInputSnapshot>? buffer) || buffer.Count == 0)
+        if (!_inputBuffers.TryGetValue(serverPlayerIndex, out SortedDictionary<uint, PlayerInputSnapshot>? buffer) || buffer.Count == 0)
             return 0;
+        return buffer.Last().Key;
+    }
 
-        uint last = 0;
-        foreach (PlayerInputSnapshot input in buffer)
-            last = input.InputSequence;
-        return last;
+    public double GetOldestBufferedInputAgeSeconds(double serverTimeUtc)
+    {
+        double oldestTimestamp = double.PositiveInfinity;
+        foreach (SortedDictionary<uint, PlayerInputSnapshot> buffer in _inputBuffers.Values)
+            foreach (PlayerInputSnapshot input in buffer.Values)
+                if (input.ClientSendTimestampUtc > 0.0d)
+                    oldestTimestamp = Math.Min(oldestTimestamp, input.ClientSendTimestampUtc);
+        return double.IsPositiveInfinity(oldestTimestamp) ? 0.0d : Math.Max(0.0d, serverTimeUtc - oldestTimestamp);
     }
 
     public PlayerTransformUpdate StampAuthoritativeTransform(PlayerTransformUpdate transform, double serverTimeUtc)
     {
         transform.ServerTickId = CurrentServerTickId == 0 ? AdvanceServerTick() : CurrentServerTickId;
         transform.ServerTimestampUtc = serverTimeUtc;
-        transform.LastProcessedInputSequence = LastBufferedInputSequence(transform.ServerPlayerIndex);
         transform.AuthorityMode = NetworkAuthorityMode.ServerAuthoritative;
         transform.IsServerCorrection = true;
         return transform;

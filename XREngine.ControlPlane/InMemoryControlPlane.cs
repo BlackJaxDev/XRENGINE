@@ -4,7 +4,7 @@ using XREngine.Networking;
 
 namespace XREngine.ControlPlane;
 
-public sealed partial class InMemoryControlPlane(ControlPlaneOptions? options = null)
+public sealed partial class InMemoryControlPlane(ControlPlaneOptions? options = null) : IManagedInstanceRegistry
 {
     private readonly object _sync = new();
     private readonly ControlPlaneOptions _options = options ?? new ControlPlaneOptions();
@@ -33,7 +33,8 @@ public sealed partial class InMemoryControlPlane(ControlPlaneOptions? options = 
                 MaxInstances = Math.Max(1, registration.MaxInstances),
                 MaxPlayers = Math.Max(1, registration.MaxPlayers),
                 Metadata = CloneDictionary(registration.Metadata),
-            }
+            },
+            LeaseExpiresUtc = DateTimeOffset.UtcNow.AddSeconds(Math.Max(1, _options.HostHeartbeatLeaseSeconds)),
         };
 
         lock (_sync)
@@ -49,7 +50,11 @@ public sealed partial class InMemoryControlPlane(ControlPlaneOptions? options = 
             return [.. _hosts.Values.Select(CreateHostSnapshot)];
     }
 
+    /// <summary>Legacy explicit-development creation path. Managed callers use <see cref="CreateManagedInstance"/>.</summary>
     public ControlPlaneResult<MultiplayerInstanceInfo> CreateInstance(CreateMultiplayerInstanceRequest request)
+        => CreateInstanceCore(request, managed: false);
+
+    private ControlPlaneResult<MultiplayerInstanceInfo> CreateInstanceCore(CreateMultiplayerInstanceRequest request, bool managed)
     {
         ArgumentNullException.ThrowIfNull(request);
 
@@ -60,19 +65,43 @@ public sealed partial class InMemoryControlPlane(ControlPlaneOptions? options = 
                 ControlPlaneFailureReason.InvalidRequest,
                 "A world asset identity or world package manifest is required.");
         }
+        if (request.WorldAsset is not null && request.WorldPackage is not null && !request.WorldAsset.IsSameAssetAs(request.WorldPackage.Asset))
+        {
+            return ControlPlaneResult<MultiplayerInstanceInfo>.Fail(
+                ControlPlaneFailureReason.InvalidRequest,
+                "World asset and package asset identities conflict.");
+        }
+        if (request.WorldAsset is not null && request.WorldPackage is not null
+            && !string.Equals(request.WorldAsset.RequiredBuildVersion, request.WorldPackage.Asset.RequiredBuildVersion, StringComparison.Ordinal))
+        {
+            return ControlPlaneResult<MultiplayerInstanceInfo>.Fail(
+                ControlPlaneFailureReason.BuildVersionMismatch,
+                "World asset and package build requirements conflict.");
+        }
+        if (managed && string.IsNullOrWhiteSpace(request.HostId))
+        {
+            return ControlPlaneResult<MultiplayerInstanceInfo>.Fail(
+                ControlPlaneFailureReason.HostNotFound,
+                "Managed instances require a registered host.");
+        }
 
         int maxPlayers = Math.Max(1, request.MaxPlayers ?? _options.DefaultMaxPlayers);
+        string createFingerprint = CreateRequestFingerprint(request, worldAsset, maxPlayers);
         string instanceId = string.IsNullOrWhiteSpace(request.InstanceId)
             ? Guid.NewGuid().ToString("N")
             : request.InstanceId.Trim();
 
         lock (_sync)
         {
-            if (_instances.ContainsKey(instanceId))
+            if (_instances.TryGetValue(instanceId, out InstanceState? existing))
             {
+                if (!string.IsNullOrWhiteSpace(request.OperationId) && string.Equals(existing.Info.OperationId, request.OperationId.Trim(), StringComparison.Ordinal))
+                    return string.Equals(existing.CreateFingerprint, createFingerprint, StringComparison.Ordinal)
+                        ? ControlPlaneResult<MultiplayerInstanceInfo>.Ok(CloneInstanceInfo(existing.Info, includeToken: true))
+                        : ControlPlaneResult<MultiplayerInstanceInfo>.Fail(ControlPlaneFailureReason.OperationConflict, "Create operation was retried with different parameters.");
                 return ControlPlaneResult<MultiplayerInstanceInfo>.Fail(
-                    ControlPlaneFailureReason.InvalidRequest,
-                    $"Instance '{instanceId}' already exists.");
+                    ControlPlaneFailureReason.OperationConflict,
+                    $"Instance '{instanceId}' already exists for a different operation.");
             }
 
             HostState? host = ResolveHostForCreate(request, maxPlayers, out ControlPlaneFailureReason hostFailureReason, out string? hostFailure);
@@ -96,6 +125,8 @@ public sealed partial class InMemoryControlPlane(ControlPlaneOptions? options = 
 
             var instance = new InstanceState
             {
+                IsManaged = managed,
+                CreateFingerprint = createFingerprint,
                 Info = new MultiplayerInstanceInfo
                 {
                     InstanceId = instanceId,
@@ -110,7 +141,12 @@ public sealed partial class InMemoryControlPlane(ControlPlaneOptions? options = 
                     WorldPackage = request.WorldPackage is null ? null : CloneWorldPackage(request.WorldPackage),
                     MaxPlayers = maxPlayers,
                     CurrentPlayers = 0,
-                    State = MultiplayerInstanceState.Running,
+                    OwnerUserId = request.OwnerUserId.Trim(),
+                    TenantId = request.TenantId,
+                    Visibility = request.Visibility,
+                    OperationId = string.IsNullOrWhiteSpace(request.OperationId) ? Guid.NewGuid().ToString("N") : request.OperationId.Trim(),
+                    WorkerGeneration = Guid.NewGuid(),
+                    State = !managed || request.DevelopmentMode ? MultiplayerInstanceState.Ready : MultiplayerInstanceState.Allocating,
                     CreatedUtc = DateTimeOffset.UtcNow,
                     Metadata = CloneDictionary(request.Metadata),
                 }
@@ -143,7 +179,7 @@ public sealed partial class InMemoryControlPlane(ControlPlaneOptions? options = 
         lock (_sync)
         {
             return _instances.TryGetValue(instanceId.Trim(), out InstanceState? instance)
-                ? ControlPlaneResult<MultiplayerInstanceInfo>.Ok(CloneInstanceInfo(instance.Info, includeToken))
+                ? ControlPlaneResult<MultiplayerInstanceInfo>.Ok(CloneInstanceInfo(instance.Info, includeToken && !instance.IsManaged))
                 : ControlPlaneResult<MultiplayerInstanceInfo>.Fail(ControlPlaneFailureReason.InstanceNotFound, $"Instance '{instanceId}' was not found.");
         }
     }
@@ -172,7 +208,14 @@ public sealed partial class InMemoryControlPlane(ControlPlaneOptions? options = 
                     $"Instance '{request.InstanceId}' was not found.");
             }
 
-            if (instance.Info.State != MultiplayerInstanceState.Running)
+            if (instance.IsManaged)
+            {
+                return ControlPlaneResult<JoinMultiplayerInstanceResult>.Fail(
+                    ControlPlaneFailureReason.InvalidRequest,
+                    "Managed instances require a player-scoped admission reservation.");
+            }
+
+            if (instance.Info.State != MultiplayerInstanceState.Ready)
             {
                 return ControlPlaneResult<JoinMultiplayerInstanceResult>.Fail(
                     ControlPlaneFailureReason.InstanceNotRunning,
@@ -237,6 +280,8 @@ public sealed partial class InMemoryControlPlane(ControlPlaneOptions? options = 
         {
             if (!_instances.TryGetValue(request.InstanceId.Trim(), out InstanceState? instance))
                 return false;
+            if (instance.IsManaged)
+                return false;
 
             bool removed = instance.Players.Remove(request.ClientId.Trim());
             if (removed)
@@ -255,6 +300,8 @@ public sealed partial class InMemoryControlPlane(ControlPlaneOptions? options = 
         {
             if (!_instances.TryGetValue(instanceId.Trim(), out InstanceState? instance))
                 return false;
+            if (instance.IsManaged)
+                return false;
 
             instance.Info.State = MultiplayerInstanceState.Stopped;
             instance.Players.Clear();
@@ -268,7 +315,11 @@ public sealed partial class InMemoryControlPlane(ControlPlaneOptions? options = 
         ControlPlaneResult<MultiplayerInstanceInfo> result = GetInstance(instanceId, includeToken: true);
         if (!result.Success || result.Value is null)
             throw new InvalidOperationException(result.Message ?? $"Instance '{instanceId}' was not found.");
-
+        lock (_sync)
+        {
+            if (_instances.TryGetValue(instanceId.Trim(), out InstanceState? state) && state.IsManaged)
+                throw new InvalidOperationException("Managed instances use ManagedWorkerLaunch rather than legacy server environment handoff.");
+        }
         return new ServerLaunchPlan
         {
             Instance = result.Value,
@@ -351,7 +402,7 @@ public sealed partial class InMemoryControlPlane(ControlPlaneOptions? options = 
                 return null;
             }
 
-            if (!HostHasCapacity(requestedHost, requestedMaxPlayers))
+            if (!IsHostHealthy(requestedHost) || !HostHasCapacity(requestedHost, requestedMaxPlayers))
             {
                 failureReason = ControlPlaneFailureReason.NoHostCapacity;
                 failure = $"Host '{request.HostId}' does not have capacity for the requested instance.";
@@ -364,7 +415,7 @@ public sealed partial class InMemoryControlPlane(ControlPlaneOptions? options = 
         if (request.Endpoint is not null)
             return null;
 
-        HostState? host = _hosts.Values.FirstOrDefault(candidate => HostHasCapacity(candidate, requestedMaxPlayers));
+        HostState? host = _hosts.Values.FirstOrDefault(candidate => IsHostHealthy(candidate) && HostHasCapacity(candidate, requestedMaxPlayers));
         if (host is null && _hosts.Count > 0)
         {
             failureReason = ControlPlaneFailureReason.NoHostCapacity;
@@ -384,7 +435,7 @@ public sealed partial class InMemoryControlPlane(ControlPlaneOptions? options = 
             if (!string.Equals(instance.Info.HostId, host.Registration.HostId, StringComparison.OrdinalIgnoreCase))
                 continue;
 
-            if (instance.Info.State is MultiplayerInstanceState.Stopped)
+            if (instance.Info.State == MultiplayerInstanceState.Stopped || instance.Info.State == MultiplayerInstanceState.Failed && instance.ProcessExitConfirmed)
                 continue;
 
             activeInstances++;
@@ -399,17 +450,25 @@ public sealed partial class InMemoryControlPlane(ControlPlaneOptions? options = 
     {
         int activeInstances = 0;
         int activePlayers = 0;
+        int reservedPlayerSlots = 0;
+        int connectedPlayers = 0;
+        int synchronizedPlayers = 0;
+        int resumeHeldPlayers = 0;
 
         foreach (InstanceState instance in _instances.Values)
         {
             if (!string.Equals(instance.Info.HostId, host.Registration.HostId, StringComparison.OrdinalIgnoreCase))
                 continue;
 
-            if (instance.Info.State is MultiplayerInstanceState.Stopped)
+            if (instance.Info.State == MultiplayerInstanceState.Stopped || instance.Info.State == MultiplayerInstanceState.Failed && instance.ProcessExitConfirmed)
                 continue;
 
             activeInstances++;
-            activePlayers += instance.Players.Count;
+            reservedPlayerSlots += instance.Info.MaxPlayers;
+            activePlayers += Math.Max(instance.Players.Count, instance.Info.ReservedPlayers);
+            connectedPlayers += instance.Info.ConnectedPlayers;
+            synchronizedPlayers += instance.Info.SynchronizedPlayers;
+            resumeHeldPlayers += instance.Info.ResumeHeldPlayers;
         }
 
         return new ControlPlaneHostSnapshot
@@ -421,6 +480,12 @@ public sealed partial class InMemoryControlPlane(ControlPlaneOptions? options = 
             MaxPlayers = host.Registration.MaxPlayers,
             ActiveInstances = activeInstances,
             ActivePlayers = activePlayers,
+            ReservedPlayerSlots = reservedPlayerSlots,
+            ConnectedPlayers = connectedPlayers,
+            SynchronizedPlayers = synchronizedPlayers,
+            ResumeHeldPlayers = resumeHeldPlayers,
+            IsHealthy = IsHostHealthy(host),
+            LeaseExpiresUtc = host.LeaseExpiresUtc,
             Metadata = CloneDictionary(host.Registration.Metadata),
         };
     }
@@ -455,13 +520,16 @@ public sealed partial class InMemoryControlPlane(ControlPlaneOptions? options = 
             Metadata = CloneDictionary(asset.Metadata),
         };
 
-    internal static WorldPackageManifest CloneWorldPackage(WorldPackageManifest manifest)
+    internal static WorldPackageManifest CloneWorldPackage(WorldPackageManifest manifest, bool includeRootPath = true)
         => new()
         {
             SchemaVersion = manifest.SchemaVersion,
             PackageId = manifest.PackageId,
             Asset = CloneWorldAsset(manifest.Asset),
-            RootPath = manifest.RootPath,
+            WorldEntryPoint = manifest.WorldEntryPoint,
+            GameBootstrapId = manifest.GameBootstrapId,
+            BuildVersion = manifest.BuildVersion,
+            RootPath = includeRootPath ? manifest.RootPath : string.Empty,
             TotalBytes = manifest.TotalBytes,
             ManifestHash = manifest.ManifestHash,
             Files = [.. manifest.Files.Select(static file => new WorldPackageFile
@@ -479,14 +547,23 @@ public sealed partial class InMemoryControlPlane(ControlPlaneOptions? options = 
             InstanceId = info.InstanceId,
             DisplayName = info.DisplayName,
             HostId = info.HostId,
+            OwnerUserId = info.OwnerUserId,
+            TenantId = info.TenantId,
+            Visibility = info.Visibility,
+            OperationId = info.OperationId,
+            WorkerGeneration = info.WorkerGeneration,
             Endpoint = CloneEndpoint(info.Endpoint),
             SessionId = info.SessionId,
             SessionToken = includeToken ? info.SessionToken : string.Empty,
             WorldAsset = CloneWorldAsset(info.WorldAsset),
-            WorldPackage = info.WorldPackage is null ? null : CloneWorldPackage(info.WorldPackage),
+            WorldPackage = info.WorldPackage is null ? null : CloneWorldPackage(info.WorldPackage, includeRootPath: false),
             State = info.State,
             MaxPlayers = info.MaxPlayers,
             CurrentPlayers = info.CurrentPlayers,
+            ReservedPlayers = info.ReservedPlayers,
+            ConnectedPlayers = info.ConnectedPlayers,
+            SynchronizedPlayers = info.SynchronizedPlayers,
+            ResumeHeldPlayers = info.ResumeHeldPlayers,
             CreatedUtc = info.CreatedUtc,
             Metadata = CloneDictionary(info.Metadata),
         };
@@ -504,4 +581,10 @@ public sealed partial class InMemoryControlPlane(ControlPlaneOptions? options = 
         => source is null
             ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             : new Dictionary<string, string>(source, StringComparer.OrdinalIgnoreCase);
+
+    private static bool IsHostHealthy(HostState host)
+        => host.LeaseExpiresUtc >= DateTimeOffset.UtcNow;
+
+    private static string CreateRequestFingerprint(CreateMultiplayerInstanceRequest request, WorldAssetIdentity asset, int maxPlayers)
+        => string.Join('|', request.OwnerUserId, request.HostId, request.DisplayName, request.Visibility, maxPlayers, asset.WorldId, asset.RevisionId, asset.ContentHash, asset.RequiredBuildVersion, request.WorldPackage?.ManifestHash);
 }

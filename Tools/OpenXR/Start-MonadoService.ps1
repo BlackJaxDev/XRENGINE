@@ -72,7 +72,15 @@ function Stop-OwnedService {
     }
 
     $processId = [int]$markerData.pid
-    $ownedStart = [DateTimeOffset]::Parse([string]$markerData.startedAtUtc).UtcDateTime
+    # Newer PowerShell versions deserialize ISO timestamps as DateTime. Casting
+    # that value to a culture-formatted string loses its UTC kind and makes a
+    # second parse apply the local offset again, rejecting our own process.
+    $ownedStart = if ($markerData.startedAtUtc -is [DateTime]) {
+        $markerData.startedAtUtc.ToUniversalTime()
+    }
+    else {
+        [DateTimeOffset]::Parse([string]$markerData.startedAtUtc).UtcDateTime
+    }
     $ownedExecutable = [System.IO.Path]::GetFullPath([string]$markerData.serviceExe)
     $stoppedProcessIds = [System.Collections.Generic.List[int]]::new()
 
@@ -84,7 +92,7 @@ function Stop-OwnedService {
     # unrelated, unowned service.
     foreach ($process in @(Get-Process -Name "monado-service" -ErrorAction SilentlyContinue)) {
         $matchesMarkerProcess = $process.Id -eq $processId -and
-            (Test-SameProcessStart -Process $process -StartedAtUtc ([string]$markerData.startedAtUtc))
+            (Test-SameProcessStart -Process $process -StartedAtUtc $ownedStart.ToString('O'))
         $matchesOwnedBootstrap = $false
         try {
             $processExecutable = [System.IO.Path]::GetFullPath([string]$process.Path)

@@ -1,7 +1,7 @@
 # Dependency Inventory
 
-Generated: 2026-08-31T11:13:27-07:00
-Commit: (not a git repo)
+Generated: 2026-09-14T20:49:42-07:00
+Commit: e72ef7ce5fcfb528813b224d7e6a5a6821dd246c
 
 Best-effort inventory of dependencies referenced by the XRENGINE solution: NuGet packages, git submodules, vendored source snapshots, and native/managed binaries that are referenced or shipped.
 
@@ -17,6 +17,7 @@ Notes:
 |---|---|---|---|---|
 | CoACD | Build/Submodules/CoACD | SarahWeiii | [MIT](licenses/submodules/CoACD-MIT.txt) | https://github.com/SarahWeiii/CoACD |
 | Flyleaf | Build/Submodules/Flyleaf | (unknown) | [LGPL-3.0](licenses/submodules/Flyleaf-LGPL-3.0.txt) | (not detected) |
+| MagicPhysX | Build/Submodules/MagicPhysX | (unknown) | [MIT](licenses/submodules/MagicPhysX-MIT.txt) | (not detected) |
 | monado | Build/Submodules/monado | BlackJaxDev | [LICENSE](licenses/submodules/monado-LICENSE.txt) | https://github.com/BlackJaxDev/Monado.git |
 | OpenVR.NET | Build/Submodules/OpenVR.NET | Flutterish + BlackJaxDev (modifications) | [MIT](licenses/submodules/OpenVR.NET-MIT.txt) | https://github.com/BlackJaxDev/OpenVR.NET.git |
 | OscCore-NET9 | Build/Submodules/OscCore-NET9 | stella3d + BlackJaxDev (modifications) | [MIT](licenses/submodules/OscCore-NET9-MIT.txt) | https://github.com/BlackJaxDev/OscCore-NET9.git |
@@ -59,7 +60,6 @@ Notes:
 | MIConvexHull | 1.1.19.1019 | DesignEngrLab | [MIT](licenses/nuget/MIConvexHull-1.1.19.1019-MIT.txt) | XREngine.Modeling.csproj, XREngine.Runtime.Rendering.csproj |
 | Microsoft.Build | 18.8.2 | dotnet | [MIT](licenses/nuget/Microsoft.Build-18.8.2-MIT.txt) | XREngine.Editor.csproj |
 | Microsoft.Build.Framework | 18.8.2 | dotnet | [MIT](licenses/nuget/Microsoft.Build.Framework-18.8.2-MIT.txt) | XREngine.Editor.csproj |
-| Microsoft.Data.Sqlite.Core | 10.0.10 | dotnet | [MIT](licenses/nuget/Microsoft.Data.Sqlite.Core-10.0.10-MIT.txt) | XREngine.Server.csproj |
 | Microsoft.NET.Test.Sdk | 18.8.1 | microsoft | [MIT](licenses/nuget/Microsoft.NET.Test.Sdk-18.8.1-MIT.txt) | XREngine.UnitTests.csproj |
 | Microsoft.Web.WebView2 | 1.0.4129.50 | Microsoft | [LICENSE.txt](licenses/nuget/Microsoft.Web.WebView2-1.0.4129.50-LICENSE.txt.txt) | LocalAgentBroker.Tray.csproj |
 | NAudio | 2.3.0 | naudio | [MIT](licenses/nuget/NAudio-2.3.0-MIT.txt) | XREngine.Audio.csproj, XREngine.Data.csproj |
@@ -142,7 +142,6 @@ Notes:
 | Steamworks.NET | 2024.8.0 | rlabrecque | [MIT](licenses/nuget/Steamworks.NET-2024.8.0-MIT.txt) | XREngine.Editor.csproj, XREngine.Server.csproj |
 | Svg.Skia | 5.1.1 | wieslawsoltes | [MIT](licenses/nuget/Svg.Skia-5.1.1-MIT.txt) | XREngine.Runtime.Rendering.csproj |
 | System.Drawing.Common | 10.0.10 | dotnet | [MIT](licenses/nuget/System.Drawing.Common-10.0.10-MIT.txt) | XREngine.Data.csproj |
-| System.IdentityModel.Tokens.Jwt | 8.22.0 | AzureAD | [MIT](licenses/nuget/System.IdentityModel.Tokens.Jwt-8.22.0-MIT.txt) | XREngine.Server.csproj |
 | System.IO.Hashing | 10.0.10 | dotnet | [MIT](licenses/nuget/System.IO.Hashing-10.0.10-MIT.txt) | XREngine.Data.csproj, XREngine.Runtime.Core.csproj, XREngine.Runtime.ModelAssetPipeline.csproj, XREngine.Runtime.Rendering.csproj |
 | System.Management | 10.0.10 | dotnet | [MIT](licenses/nuget/System.Management-10.0.10-MIT.txt) | XREngine.Runtime.Rendering.csproj |
 | System.Security.Cryptography.ProtectedData | 10.0.10 | dotnet | [MIT](licenses/nuget/System.Security.Cryptography.ProtectedData-10.0.10-MIT.txt) | XREngine.Editor.csproj |
@@ -154,15 +153,7 @@ Notes:
 ## Explicit assembly references (`<Reference>` )
 | Project | Reference | Owner (best-effort) | License (best-effort) | HintPath |
 |---|---|---|---|---|
-| XREngine.Editor.csproj | OpenVR.NET | Flutterish + BlackJaxDev (modifications) | [MIT](licenses/submodules/OpenVR.NET-MIT.txt) | ..\Build\Submodules\OpenVR.NET\OpenVR.NET\bin\$(Configuration)\net6.0\OpenVR.NET.dll |
-| XREngine.Input.csproj | OpenVR.NET | Flutterish + BlackJaxDev (modifications) | [MIT](licenses/submodules/OpenVR.NET-MIT.txt) | ..\Build\Submodules\OpenVR.NET\OpenVR.NET\bin\$(Configuration)\net6.0\OpenVR.NET.dll |
-| XREngine.Runtime.Bootstrap.csproj | OpenVR.NET | Flutterish + BlackJaxDev (modifications) | [MIT](licenses/submodules/OpenVR.NET-MIT.txt) | ..\Build\Submodules\OpenVR.NET\OpenVR.NET\bin\$(Configuration)\net6.0\OpenVR.NET.dll |
-| XREngine.Runtime.InputIntegration.csproj | OpenVR.NET | Flutterish + BlackJaxDev (modifications) | [MIT](licenses/submodules/OpenVR.NET-MIT.txt) | ..\Build\Submodules\OpenVR.NET\OpenVR.NET\bin\$(Configuration)\net6.0\OpenVR.NET.dll |
-| XREngine.Runtime.Rendering.csproj | OpenVR.NET | Flutterish + BlackJaxDev (modifications) | [MIT](licenses/submodules/OpenVR.NET-MIT.txt) | ..\Build\Submodules\OpenVR.NET\OpenVR.NET\bin\$(Configuration)\net6.0\OpenVR.NET.dll |
 | XREngine.Runtime.Rendering.csproj | RiveSharp | Rive (rive-app) | [MIT](licenses/fetched/RiveSharp-MIT.txt) | $(RiveSharpManagedDll) |
-| XREngine.Runtime.Rendering.Vulkan.csproj | OpenVR.NET | Flutterish + BlackJaxDev (modifications) | [MIT](licenses/submodules/OpenVR.NET-MIT.txt) | ..\Build\Submodules\OpenVR.NET\OpenVR.NET\bin\$(Configuration)\net6.0\OpenVR.NET.dll |
-| XREngine.UnitTests.csproj | OpenVR.NET | Flutterish + BlackJaxDev (modifications) | [MIT](licenses/submodules/OpenVR.NET-MIT.txt) | ..\Build\Submodules\OpenVR.NET\OpenVR.NET\bin\$(Configuration)\net6.0\OpenVR.NET.dll |
-| XREngine.VRClient.csproj | OpenVR.NET, Version=0.8.5.0, Culture=neutral, PublicKeyToken=null | Flutterish + BlackJaxDev (modifications) | [MIT](licenses/submodules/OpenVR.NET-MIT.txt) | ..\Build\Submodules\OpenVR.NET\OpenVR.NET\bin\$(Configuration)\net6.0\OpenVR.NET.dll |
 
 ## Referenced binaries via project items (dll/exe)
 | Project | Path/Update | Owner (best-effort) | License (best-effort) | Link | CopyToOutputDirectory |
@@ -183,8 +174,18 @@ Notes:
 ## Checked-in native/managed binaries (filesystem)
 | Path | File | Likely upstream/owner | License (best-effort) |
 |---|---|---|---|
+| XREngine.Audio/runtimes/win-x64/native/phonon.dll | phonon.dll | (unknown) | [(unknown)](licenses/unknown/checked-binary-phonon.dll.txt) |
 | XREngine.Gltf/runtimes/win-x64/native/FastGltfBridge.Native.dll | FastGltfBridge.Native.dll | Sean Apeler (fastgltf) / simdjson authors | [MIT (fastgltf) + Apache-2.0 (simdjson)](licenses/notes/binary-item-XREngine.Gltf.csproj-FastGltfBridge.Native.dll.txt) |
 | XREngine.Runtime.Core/runtimes/win-x64/native/lib_coacd.dll | lib_coacd.dll | SarahWeiii (CoACD) | [MIT (see Build/Submodules/CoACD/LICENSE)](../Build/Submodules/CoACD/LICENSE) |
 | XREngine.Runtime.Core/runtimes/win-x64/native/libmagicphysx.dll | libmagicphysx.dll | Cysharp (MagicPhysX) / NVIDIA (PhysX 5) | [MIT (MagicPhysX) + NVIDIA PhysX 5 license](licenses/fetched/libmagicphysx-MIT (MagicPhysX) + NVIDIA PhysX 5 license.txt) |
 | XREngine.Runtime.Rendering.Vulkan/runtimes/win-x64/native/VulkanMemoryAllocatorBridge.Native.dll | VulkanMemoryAllocatorBridge.Native.dll | Advanced Micro Devices, Inc. (GPUOpen) | [MIT (Vulkan Memory Allocator)](../Build/Native/VulkanMemoryAllocatorBridge/vendor/VulkanMemoryAllocator/LICENSE.txt) |
+| XREngine.Runtime.Rendering/runtimes/win-x64/native/rive.dll | rive.dll | Rive (rive-app) | [MIT](licenses/fetched/rive-MIT.txt) |
 | XREngine.Runtime.Rendering/runtimes/win-x64/native/VulkanMemoryAllocatorBridge.Native.dll | VulkanMemoryAllocatorBridge.Native.dll | Advanced Micro Devices, Inc. (GPUOpen) | [MIT (Vulkan Memory Allocator)](../Build/Native/VulkanMemoryAllocatorBridge/vendor/VulkanMemoryAllocator/LICENSE.txt) |
+| XRENGINE/runtimes/win-x64/native/avcodec.dll | avcodec.dll | FFmpeg project | [(unknown - depends on FFmpeg build config)](licenses/unknown/checked-binary-avcodec.dll.txt) |
+| XRENGINE/runtimes/win-x64/native/avdevice.dll | avdevice.dll | FFmpeg project | [(unknown - depends on FFmpeg build config)](licenses/unknown/checked-binary-avdevice.dll.txt) |
+| XRENGINE/runtimes/win-x64/native/avfilter.dll | avfilter.dll | FFmpeg project | [(unknown - depends on FFmpeg build config)](licenses/unknown/checked-binary-avfilter.dll.txt) |
+| XRENGINE/runtimes/win-x64/native/avformat.dll | avformat.dll | FFmpeg project | [(unknown - depends on FFmpeg build config)](licenses/unknown/checked-binary-avformat.dll.txt) |
+| XRENGINE/runtimes/win-x64/native/avutil.dll | avutil.dll | FFmpeg project | [(unknown - depends on FFmpeg build config)](licenses/unknown/checked-binary-avutil.dll.txt) |
+| XRENGINE/runtimes/win-x64/native/postproc.dll | postproc.dll | FFmpeg project | [(unknown - depends on FFmpeg build config)](licenses/unknown/checked-binary-postproc.dll.txt) |
+| XRENGINE/runtimes/win-x64/native/swresample.dll | swresample.dll | FFmpeg project | [(unknown - depends on FFmpeg build config)](licenses/unknown/checked-binary-swresample.dll.txt) |
+| XRENGINE/runtimes/win-x64/native/swscale.dll | swscale.dll | FFmpeg project | [(unknown - depends on FFmpeg build config)](licenses/unknown/checked-binary-swscale.dll.txt) |

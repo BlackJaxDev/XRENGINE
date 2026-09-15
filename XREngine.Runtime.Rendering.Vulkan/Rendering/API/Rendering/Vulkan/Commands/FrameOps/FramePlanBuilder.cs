@@ -184,9 +184,13 @@ internal sealed class FramePlanBuilder
         RenderOutputRequest? requiredOutputContract = null,
         ERenderOutputReadinessPolicy? desktopReadinessPolicyOverride = null,
         ERenderOutputWorkClass? desktopWorkClassOverride = null,
-        ReadOnlySpan<RenderFrameViewHistoryBackendReservation> historyReservations = default)
+        ReadOnlySpan<RenderFrameViewHistoryBackendReservation> historyReservations = default,
+        RenderFrameViewSetPublicationSnapshot? publicationSnapshot = null,
+        int? logicalFrameSlot = null)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(frameSlot);
+        int publishedFrameSlot = logicalFrameSlot ?? frameSlot;
+        ArgumentOutOfRangeException.ThrowIfNegative(publishedFrameSlot);
         ArgumentNullException.ThrowIfNull(operations);
         ArgumentNullException.ThrowIfNull(dynamicOverlayOperations);
         textureUploadOperations ??= [];
@@ -214,7 +218,7 @@ internal sealed class FramePlanBuilder
         slot.Plan.Reset();
         Array.Clear(slot.SyntheticHistoryOutputs);
         ulong renderFrameId = RuntimeRenderingHostServices.FrameTiming.CurrentRenderFrameId;
-        TryAttachLocatedOpenXrViews(slot.ViewSet);
+        TryAttachLocatedOpenXrViews(slot.ViewSet, publicationSnapshot);
         EVrOutputViewKind? openXrViewKind = ResolveOpenXrViewKind(
             slot.ViewSet,
             openXrViewIndex);
@@ -421,7 +425,7 @@ internal sealed class FramePlanBuilder
         if (generation == 0UL)
             generation = unchecked((ulong)Interlocked.Increment(ref _nextGeneration));
         slot.Plan.Publish(
-            frameSlot,
+            publishedFrameSlot,
             generation,
             renderFrameId,
             plannerRevision,
@@ -593,7 +597,16 @@ internal sealed class FramePlanBuilder
             {
                 if (publications.Count == 8)
                     break;
-                publications.Add(DescribePlannerKey(in key));
+                publications.Add($"primary:{DescribePlannerKey(in key)}");
+            }
+        }
+        if (authority.SecondarySwitchingState is { } secondarySwitchingState)
+        {
+            foreach (VulkanFrameOpPlannerStateKey key in secondarySwitchingState.States.Keys)
+            {
+                if (publications.Count == 8)
+                    break;
+                publications.Add($"secondary:{DescribePlannerKey(in key)}");
             }
         }
 
@@ -1361,9 +1374,16 @@ internal sealed class FramePlanBuilder
         }
     }
 
-    private static void TryAttachLocatedOpenXrViews(ViewSetPlan viewSet)
+    private static void TryAttachLocatedOpenXrViews(
+        ViewSetPlan viewSet,
+        RenderFrameViewSetPublicationSnapshot? publicationSnapshot)
     {
-        if (RenderFrameViewSetPublication.TryGetLatest(out RenderFrameViewSet locatedViews))
+        if (publicationSnapshot is { HasViewSet: true } snapshot)
+        {
+            viewSet.SetLocatedOpenXrViews(snapshot.ViewSet);
+        }
+        else if (!publicationSnapshot.HasValue &&
+                 RenderFrameViewSetPublication.TryGetLatest(out RenderFrameViewSet locatedViews))
         {
             viewSet.SetLocatedOpenXrViews(locatedViews);
         }

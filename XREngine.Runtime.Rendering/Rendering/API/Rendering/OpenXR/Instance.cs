@@ -36,7 +36,7 @@ public unsafe partial class OpenXRAPI
             => new(false, operation, result, failureReason);
     }
 
-    private bool DestroyInstance()
+    private bool DestroyInstance(bool allowRendererOwnedInvalidation)
     {
         if (_instance.Handle == 0)
             return true;
@@ -52,14 +52,17 @@ public unsafe partial class OpenXRAPI
                 return false;
             }
         }
-        else if (Window?.Renderer is AbstractRenderer renderer &&
+        else if (allowRendererOwnedInvalidation &&
+            Window?.Renderer is AbstractRenderer renderer &&
             TryGetOrCreateGraphicsBinding(renderer, out IXrGraphicsBinding? binding) &&
             binding.InvalidateRendererOwnedInstance(renderer, "OpenXR runtime instance teardown"))
         {
-            Debug.VulkanWarning("[OpenXR] Dropped stale renderer-owned XR instance so runtime recovery can create a fresh session instance.");
+            Debug.VulkanWarning("[OpenXR] Released renderer-owned XR instance during authorized renderer device teardown.");
         }
         else
         {
+            Debug.VulkanWarning(
+                "[OpenXR] Retaining renderer-owned XR instance because replacing it requires renderer device teardown.");
             return false;
         }
 
@@ -72,6 +75,26 @@ public unsafe partial class OpenXRAPI
 
         ClearInstanceExtensionState();
         return true;
+    }
+
+    private void DetachRendererOwnedInstanceAssociation()
+    {
+        if (!_instanceOwnedByRenderer)
+            return;
+
+        // The renderer owns this enable2 bootstrap. API disposal can release
+        // its borrowed association only after session children are gone.
+        DestroyValidationLayers();
+        _instance = default;
+        _systemId = 0;
+        _instanceOwnedByRenderer = false;
+        if (_apiOwnedByRenderer)
+        {
+            Api = XR.GetApi();
+            _apiOwnedByRenderer = false;
+        }
+
+        ClearInstanceExtensionState();
     }
 
     private OpenXrInstanceCreationAttempt TryCreateInstance()

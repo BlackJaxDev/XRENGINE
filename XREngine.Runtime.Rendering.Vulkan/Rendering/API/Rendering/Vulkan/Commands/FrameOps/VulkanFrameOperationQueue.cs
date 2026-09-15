@@ -567,6 +567,7 @@ internal sealed class VulkanFrameOperationQueue : IDisposable
     internal FrameOp[] DrainForPrimary(
         out FrameOp[] textureUploadOperations,
         bool drainFrameViewHistory = true,
+        bool excludeOpenXrTargets = false,
         ReadOnlySpan<RenderOutputCompletionBackendReservation>
             acceptedOutputCompletions = default)
     {
@@ -589,6 +590,9 @@ internal sealed class VulkanFrameOperationQueue : IDisposable
             for (int index = 0; index < operationCount; index++)
             {
                 FrameOp operation = Pending[index];
+                if (excludeOpenXrTargets && operation is not TextureUploadFrameOp &&
+                    IsOpenXrTarget(operation))
+                    continue;
                 ulong receiptId = operation.ContextReference.OutputCompletionReceiptId;
                 if (receiptId != 0UL &&
                     !IsOutputCompletionDrainable(
@@ -598,6 +602,8 @@ internal sealed class VulkanFrameOperationQueue : IDisposable
                     continue;
                 if (operation is TextureUploadFrameOp)
                     uploadCount++;
+                else if (excludeOpenXrTargets && IsOpenXrTarget(operation))
+                    continue;
                 else
                     sceneCount++;
             }
@@ -613,6 +619,14 @@ internal sealed class VulkanFrameOperationQueue : IDisposable
             for (int index = 0; index < operationCount; index++)
             {
                 FrameOp operation = Pending[index];
+                if (excludeOpenXrTargets && operation is not TextureUploadFrameOp &&
+                    IsOpenXrTarget(operation))
+                {
+                    FailPendingSubmissionMarkers(MemoryMarshal.CreateReadOnlySpan(ref operation, 1));
+                    VulkanAdvancedVisibilityInputLease.ReleaseOperations(
+                        MemoryMarshal.CreateReadOnlySpan(ref operation, 1));
+                    continue;
+                }
                 ulong receiptId = operation.ContextReference.OutputCompletionReceiptId;
                 if (receiptId != 0UL &&
                     !IsOutputCompletionDrainable(
@@ -640,6 +654,10 @@ internal sealed class VulkanFrameOperationQueue : IDisposable
             return DrainedFrameOpsBuffer;
         }
     }
+
+    private static bool IsOpenXrTarget(FrameOp operation)
+        => operation.ContextReference.ContextKind is
+            EVulkanFrameOpContextKind.OpenXrEye or EVulkanFrameOpContextKind.OpenXrMirror;
 
     private bool IsOutputCompletionDrainable(
         ulong receiptId,

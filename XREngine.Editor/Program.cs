@@ -347,7 +347,13 @@ internal partial class Program
     private static XRWorld GetTargetWorld(EWorldMode mode)
     {
         XRWorld targetWorld;
-        if (mode == EWorldMode.UnitTesting)
+        XRWorld? managedWorld = ManagedClientWorldLoader.TryLoadFromEnvironment(Engine.GameSettings);
+        if (managedWorld is not null)
+        {
+            targetWorld = managedWorld;
+            EngineDebug.Out("Loading verified managed client world...");
+        }
+        else if (mode == EWorldMode.UnitTesting)
         {
             UnitTestingWorldSettings settings = RuntimeBootstrapState.Settings;
             bool setUI = settings.EditorType != UnitTestEditorType.None || settings.RiveUI;

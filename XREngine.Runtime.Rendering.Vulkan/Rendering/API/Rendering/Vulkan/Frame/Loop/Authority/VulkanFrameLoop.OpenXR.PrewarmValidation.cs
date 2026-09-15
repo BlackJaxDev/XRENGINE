@@ -82,6 +82,9 @@ internal sealed partial class VulkanFrameLoop
                     (uint)Math.Max(resourcePlannerStateIndex, 0),
                     "eye swapchain prewarm");
 
+                FrameOpContext plannerContext = VulkanFramePlanner.SelectPrimaryPlannerContext(ops);
+                using PooledExternalResourcePlannerReadbackScope plannerScope =
+                    RentPipelineResourcePlannerScope(in plannerContext);
                 if (TryDescribeRecentResourceAllocationFailure(out string prePlanFailureReason))
                 {
                     Debug.VulkanWarningEvery(
@@ -89,17 +92,6 @@ internal sealed partial class VulkanFrameLoop
                         TimeSpan.FromSeconds(1),
                         "[OpenXR] Deferring Vulkan eye resource prewarm: {0}",
                         prePlanFailureReason);
-                    return;
-                }
-
-                FrameOpContext plannerContext = PrepareResourcePlannerForFrameOps(ops);
-                if (TryDescribeRecentResourceAllocationFailure(out string postPlanFailureReason))
-                {
-                    Debug.VulkanWarningEvery(
-                        $"OpenXR.Vulkan.PrewarmEyePlanFailed.{GetHashCode()}.{resourcePlannerStateIndex}",
-                        TimeSpan.FromSeconds(1),
-                        "[OpenXR] Deferring Vulkan eye resource prewarm: {0}",
-                        postPlanFailureReason);
                     return;
                 }
 
@@ -167,6 +159,10 @@ internal sealed partial class VulkanFrameLoop
             BuildOpenXrExternalSwapchainPlannerTargetIdentity(prewarmViewIndex),
             ResolveOpenXrExternalSwapchainTargetName(prewarmViewIndex),
             openXrViewIndex: prewarmViewIndex);
+        using VulkanOpenXrThreadRenderStateScope renderStateScope =
+            _commandRuntime.OpenXrRecording.EnterThreadRenderStateScope(
+                CreateOpenXrThreadRenderStateData(),
+                CreateOpenXrPrewarmRenderStateTracker(extent));
         OutputRuntime.OpenXrBackend.ExternalSwapchainPrewarmDepth++;
         int openXrFrameDataSlotCount = ResolveOpenXrFrameDataSlotCount(OutputRuntime.Desktop.Images?.Length ?? 0);
         FrameOp[]? capturedOps = null;
@@ -203,6 +199,9 @@ internal sealed partial class VulkanFrameLoop
                     (uint)Math.Max(resourcePlannerStateIndex, 0),
                     "eye mirror prewarm");
 
+                FrameOpContext plannerContext = VulkanFramePlanner.SelectPrimaryPlannerContext(ops);
+                using PooledExternalResourcePlannerReadbackScope plannerScope =
+                    RentPipelineResourcePlannerScope(in plannerContext);
                 if (TryDescribeRecentResourceAllocationFailure(out string prePlanFailureReason))
                 {
                     Debug.VulkanWarningEvery(
@@ -210,17 +209,6 @@ internal sealed partial class VulkanFrameLoop
                         TimeSpan.FromSeconds(1),
                         "[OpenXR] Deferring Vulkan eye mirror resource prewarm: {0}",
                         prePlanFailureReason);
-                    return;
-                }
-
-                FrameOpContext plannerContext = PrepareResourcePlannerForFrameOps(ops);
-                if (TryDescribeRecentResourceAllocationFailure(out string postPlanFailureReason))
-                {
-                    Debug.VulkanWarningEvery(
-                        $"OpenXR.Vulkan.PrewarmEyeMirrorPlanFailed.{GetHashCode()}.{resourcePlannerStateIndex}",
-                        TimeSpan.FromSeconds(1),
-                        "[OpenXR] Deferring Vulkan eye mirror resource prewarm: {0}",
-                        postPlanFailureReason);
                     return;
                 }
 

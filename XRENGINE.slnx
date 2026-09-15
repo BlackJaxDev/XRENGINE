@@ -1,6 +1,7 @@
 <Solution>
   <Project Path="XREngine.Benchmarks/XREngine.Benchmarks.csproj" />
   <Project Path="XREngine.ControlPlane/XREngine.ControlPlane.csproj" />
+  <Project Path="XREngine.ControlPlane.Service/XREngine.ControlPlane.Service.csproj" />
   <Project Path="XREngine.Animation/XREngine.Animation.csproj" />
   <Project Path="XREngine.AgentOrchestration/XREngine.AgentOrchestration.csproj" />
   <Project Path="XREngine.Audio/XREngine.Audio.csproj" />

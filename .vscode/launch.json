@@ -93,7 +93,7 @@
             "request": "launch",
             "preLaunchTask": "Prep-DebugServer-With2Clients",
             "program": "${workspaceFolder}/XREngine.Server/bin/Debug/net10.0-windows10.0.26100.0/XREngine.Server.exe",
-            "args": [],
+            "args": ["--development"],
             "cwd": "${workspaceFolder}/XREngine.Server",
             "console": "integratedTerminal",
             "stopAtEntry": false
@@ -104,7 +104,7 @@
             "request": "launch",
             "preLaunchTask": "Prep-DebugServer-Only",
             "program": "${workspaceFolder}/XREngine.Server/bin/Debug/net10.0-windows10.0.26100.0/XREngine.Server.exe",
-            "args": [],
+            "args": ["--development"],
             "cwd": "${workspaceFolder}/XREngine.Server",
             "console": "integratedTerminal",
             "stopAtEntry": false

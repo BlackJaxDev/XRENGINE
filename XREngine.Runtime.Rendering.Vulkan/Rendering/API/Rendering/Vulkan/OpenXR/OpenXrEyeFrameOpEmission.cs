@@ -1,3 +1,5 @@
+using XREngine.Rendering.Commands;
+
 namespace XREngine.Rendering.Vulkan;
 
 /// <summary>
@@ -7,4 +9,5 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal readonly record struct OpenXrEyeFrameOpEmission(
     uint ViewIndex,
-    int ResourcePlannerStateIndex);
+    int ResourcePlannerStateIndex,
+    BackendReadyFramePackageConsumptionAuthority PackageAuthority);

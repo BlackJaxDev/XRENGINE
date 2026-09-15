@@ -8,4 +8,5 @@ public enum EOpenXrSubmissionValidationScenario : byte
     HoldCompletionObservationUntilCapacity,
     RejectBeforeNativeSubmit,
     FailAcceptedPublication,
+    HoldCompletionObservationUntilRecoveryWait,
 }

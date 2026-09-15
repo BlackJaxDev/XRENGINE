@@ -88,11 +88,10 @@ internal sealed class VulkanOpenXrCommandRecordingService
         OpenXrRecordedEyeCommandBuffer unpublishedRecording = default;
         try
         {
-            ResourcePlannerRuntimeState plannerState = prepared.PlannerState;
             using VulkanPreparedResourcePlannerThreadScope plannerScope = new(
                 commandRuntime.ThreadWorkspace.Current,
                 commandRuntime,
-                in plannerState);
+                prepared.PlannerGeneration);
             VulkanPreparedPrimaryCommandInput commandInput =
                 prepared.CommandInput;
             VulkanPrimaryCommandRecordingResult result =

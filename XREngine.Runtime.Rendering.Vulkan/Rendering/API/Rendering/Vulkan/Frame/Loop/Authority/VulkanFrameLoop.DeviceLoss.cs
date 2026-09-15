@@ -15,22 +15,53 @@ internal sealed partial class VulkanFrameLoop
     /// <summary>
     /// Destructive, opt-in lifetime validation. The injection waits for a real
     /// resident native template so teardown exercises detached table ownership,
-    /// frame-slot uses, and device-loss-aware dependency release together.
+    /// frame-slot uses, and device-loss-aware dependency release together. An
+    /// OpenXR-owned Vulkan bootstrap additionally waits for a live OpenXR
+    /// submission that Vulkan has accepted and still owns.
     /// </summary>
     private void InjectResidentTemplateDeviceLossIfRequested()
     {
         if (!_injectResidentTemplateDeviceLoss ||
-            _resourceRuntime.ResidentDrawTemplates.ResidentCount == 0 ||
-            Interlocked.Exchange(
-                ref _residentTemplateDeviceLossInjected,
-                1) != 0)
+            _resourceRuntime.ResidentDrawTemplates.ResidentCount == 0)
         {
             return;
         }
 
+        int acceptedPendingSubmissionCount = 0;
+        if (UsesOpenXrManagedVulkanBootstrap() &&
+            !TryGetAttachedOpenXrAcceptedSubmissionCount(out acceptedPendingSubmissionCount))
+        {
+            return;
+        }
+
+        if (Interlocked.Exchange(ref _residentTemplateDeviceLossInjected, 1) != 0)
+            return;
+
+        string? reason = acceptedPendingSubmissionCount == 0
+            ? null
+            : $"Injected after observing {acceptedPendingSubmissionCount} accepted native OpenXR submission ownership record(s) pending in OpenXrVulkanSubmissionTracker.";
         throw CreateDeviceLostException(
             "ResidentTemplateLifetimeFaultInjection",
-            Result.ErrorDeviceLost);
+            Result.ErrorDeviceLost,
+            reason);
+    }
+
+    private bool UsesOpenXrManagedVulkanBootstrap()
+        => _deviceContext.InstanceCreatedThroughOpenXr && _deviceContext.CreatedThroughOpenXr;
+
+    private bool TryGetAttachedOpenXrAcceptedSubmissionCount(out int acceptedPendingSubmissionCount)
+    {
+        acceptedPendingSubmissionCount = 0;
+        var api = RuntimeEngine.VRState.OpenXRApi;
+        if (api is null ||
+            !api.IsSessionRunning ||
+            !ReferenceEquals(api.Window?.Renderer, _ownerRenderer))
+        {
+            return false;
+        }
+
+        acceptedPendingSubmissionCount = _commandRuntime.OpenXrSubmissionTracker.AcceptedPendingSubmissionCount;
+        return acceptedPendingSubmissionCount > 0;
     }
 
     internal void MarkDeviceLost(string? reason, string? operation, Result result)
@@ -92,12 +123,15 @@ internal sealed partial class VulkanFrameLoop
         _outputRuntime.Capture.FailPendingScreenshotReadbacksForDeviceLoss(deviceLostReason);
     }
 
-    internal InvalidOperationException CreateDeviceLostException(string operation, Result result)
+    internal InvalidOperationException CreateDeviceLostException(
+        string operation,
+        Result result,
+        string? reason = null)
     {
         DeviceBootstrap.VulkanNativeDeviceFault? nativeFault =
             _deviceContext.FirstNativeDeviceFault;
         MarkDeviceLost(
-            nativeFault is null ? $"{operation} returned {result}" : null,
+            nativeFault is null ? reason ?? $"{operation} returned {result}" : null,
             nativeFault?.Operation ?? operation,
             nativeFault?.Result ?? result);
         return new InvalidOperationException(

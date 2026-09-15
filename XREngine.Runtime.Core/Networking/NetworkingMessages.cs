@@ -27,6 +27,21 @@ namespace XREngine.Networking
         /// Optional opaque token supplied by an external control plane. XRENGINE does not issue it.
         /// </summary>
         public string? SessionToken { get; set; }
+        /// <summary>
+        /// Stable account identity asserted by a per-player admission grant. This is deliberately
+        /// separate from <see cref="ClientId"/>, which identifies one transport client instance.
+        /// </summary>
+        public string? AccountId { get; set; }
+        /// <summary>Control-plane reservation consumed by this admission attempt.</summary>
+        public string? ReservationId { get; set; }
+        /// <summary>
+        /// Opaque, player-scoped admission grant. It is only sent during admission and must never
+        /// be used as a shared session credential.
+        /// </summary>
+        public string? AdmissionSecret { get; set; }
+        public Guid? WorkerGeneration { get; set; }
+        public bool ResumeRequested { get; set; }
+        public long CredentialEpoch { get; set; }
     }
 
     [MemoryPackable]
@@ -38,8 +53,13 @@ namespace XREngine.Networking
         public Guid TransformId { get; set; }
         public WorldSyncDescriptor? World { get; set; }
         public string ClientId { get; set; } = string.Empty;
+        public string? AccountId { get; set; }
+        public string? ReservationId { get; set; }
+        public Guid? WorkerGeneration { get; set; }
         public string? DisplayName { get; set; }
         public Guid SessionId { get; set; }
+        /// <summary>Server-issued per-admission nonce binding replication traffic to this connection.</summary>
+        public Guid ReplicationConnectionGeneration { get; set; }
         public bool IsAuthoritative { get; set; }
         public NetworkAuthorityLease? AuthorityLease { get; set; }
         public long ServerTickId { get; set; }
@@ -48,8 +68,18 @@ namespace XREngine.Networking
 
     [MemoryPackable(GenerateType.NoGenerate)]
     [MemoryPackUnion(0, typeof(CharacterPawnInputSnapshot))]
+    [MemoryPackUnion(1, typeof(GameInputSnapshot))]
     public partial interface IPawnInputSnapshot
     {
+    }
+
+    /// <summary>Bounded, versioned AOT envelope for an explicitly registered game input schema.</summary>
+    [MemoryPackable]
+    public sealed partial class GameInputSnapshot : IPawnInputSnapshot
+    {
+        public ushort SchemaId { get; set; }
+        public ushort SchemaVersion { get; set; }
+        public byte[] Payload { get; set; } = [];
     }
 
     [MemoryPackable]

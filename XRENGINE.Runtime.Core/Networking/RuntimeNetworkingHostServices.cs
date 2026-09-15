@@ -13,7 +13,10 @@ public interface IRuntimeNetworkWorldContext
     XRWorld? TargetWorld { get; }
     GameMode? GameMode { get; set; }
     object WorldInstance { get; }
+    IReplicatedEntityWorld? ReplicatedEntityWorld => null;
     PawnComponent? CreateRemotePawn(int serverPlayerIndex, string? displayName, bool serverOwned);
+    /// <summary>Associates a remote pawn with its single server-authorized humanoid pose stream.</summary>
+    void BindRemotePawn(PawnComponent pawn, Guid sessionId, string clientId, int serverPlayerIndex) { }
     void DestroyPawn(PawnComponent pawn);
 }
 
@@ -24,6 +27,8 @@ public interface IRuntimeNetworkWorldContext
 public interface IRuntimeNetworkingHostServices
 {
     string ProtocolVersion { get; }
+    /// <summary>Serializes world capture/application with engine simulation work.</summary>
+    void EnqueueSimulation(Action action) => RuntimeThreadServices.Current.EnqueueUpdateThread(action);
     IReadOnlyList<IPawnController?> LocalPlayers { get; }
     IPawnController? CreateRemotePlayer(int serverPlayerIndex);
     void AddRemotePlayer(IPawnController player);
@@ -31,6 +36,8 @@ public interface IRuntimeNetworkingHostServices
     IRuntimeNetworkWorldContext? ResolvePrimaryWorld();
     IRuntimeNetworkWorldContext? CreateWorldContext(object worldInstance);
     IRuntimeNetworkWorldContext? EnsureClientWorld(WorldSyncDescriptor descriptor);
+    bool TryGetManagedAdmissionVerifier(PlayerJoinRequest request, out ManagedAdmissionVerifier verifier);
+    bool CommitManagedAdmission(PlayerJoinRequest request, ManagedAdmissionVerifier verifier, Func<ServerJoinAdmissionResult, bool> admit);
     ServerJoinAdmissionResult? ResolveServerJoinAdmission(PlayerJoinRequest request);
     ServerSessionContext? ResolveServerSession(PlayerJoinRequest request);
     void NotifyServerPlayerConnected(ServerSessionPlayerEvent playerEvent);
@@ -54,6 +61,12 @@ public static class RuntimeNetworkingHostServices
         public IRuntimeNetworkWorldContext? ResolvePrimaryWorld() => null;
         public IRuntimeNetworkWorldContext? CreateWorldContext(object worldInstance) => null;
         public IRuntimeNetworkWorldContext? EnsureClientWorld(WorldSyncDescriptor descriptor) => null;
+        public bool TryGetManagedAdmissionVerifier(PlayerJoinRequest request, out ManagedAdmissionVerifier verifier)
+        {
+            verifier = null!;
+            return false;
+        }
+        public bool CommitManagedAdmission(PlayerJoinRequest request, ManagedAdmissionVerifier verifier, Func<ServerJoinAdmissionResult, bool> admit) => false;
         public ServerJoinAdmissionResult? ResolveServerJoinAdmission(PlayerJoinRequest request) => null;
         public ServerSessionContext? ResolveServerSession(PlayerJoinRequest request) => null;
         public void NotifyServerPlayerConnected(ServerSessionPlayerEvent playerEvent) { }

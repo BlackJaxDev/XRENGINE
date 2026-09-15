@@ -16,25 +16,31 @@ owns unfinished foundations and the later performance, promotion and deletion ga
 
 ## Current status
 
-**ARP-I91, ARP-I93, ARP-I94, ARP-I81, ARP-I90 and ARP-I95 are complete. Phase 6 is paused at the user's request.**
+**ARP-I91, ARP-I93, ARP-I94, ARP-I81, ARP-I90 and ARP-I95 are complete. Phase 6 implementation and validation have resumed.**
 Mirror clipping, ownership, cold-output gating, native display and Vulkan primitive
 placement have bounded live evidence. ARP-I95 now shares immutable scene payloads
 across mirror/main outputs with independent globals and completion receipts.
 The full `ARP-V36` profile remains open.
-Final Build35 passes with zero warnings/errors; no editor remains running.
-Start33 verifies accepted paired/preview submissions and eventual terminal drain,
-but its fresh eye captures are black. All 20 Phase 6 validation rows remain open;
-the final publication/receipt fixes need a live rerun.
+The resumed Build63 passed with zero warnings/errors.
+The resumed work fast-forwarded `master` from `51ffc79f8` to `e72ef7ce5`.
+Start38 verifies 6,801 accepted paired/preview submissions, zero publication
+failures and complete retirement after a real session-exit request. Start40
+initially exposed black eye output. Start59 now has inspected, responsive RVC
+eye output with stereo parallax and 17,829 accepted/completed/retired submissions,
+zero publication failures and final normal teardown epoch 1. Start63 now verifies
+visible single-eye output with its own exact package authority and 5,106
+accepted/completed/retired submissions. Resize starvation and lifecycle fault
+checks remain active. Eleven XR Phase 6 validation rows remain open.
 
 | Task kind | Completed | Remaining | Meaning |
 |---|---:|---:|---|
-| Implementation (`I`) | 108 | 5 | The named behavior exists and has its recorded build/compiler evidence. |
+| Implementation (`I`) | 114 | 4 | The named behavior exists and has its recorded build/compiler evidence. |
 | Source/contract audit (`A`) | 9 | 0 | The named inventory is complete; any discovered implementation gap has its own task. |
-| Validation (`V`) | 22 | 67 | 21 checked rows record bounded runtime results; `ARP-V01` is shader compilation only. |
+| Validation (`V`) | 31 | 58 | 30 checked rows record bounded runtime results; `ARP-V01` is shader compilation only. |
 
 The original 12 XR implementation tasks and all nine audits are complete. Phase 6 runtime
 checks exposed follow-up implementation gaps below. Remaining validation
-is split between **20 XR tasks** and **47 Advanced rendering tasks**. Counts are
+is split between **11 XR tasks** and **47 Advanced rendering tasks**. Counts are
 not an effort estimate.
 
 Completed implementation includes XR submission/lifecycle ownership, canonical
@@ -53,31 +59,29 @@ The earlier Build145/failed Start120 pause remains [historical evidence][wrapup]
 
 ## Remaining implementation
 
-No remaining Advanced implementation rows. Phase 6 validation is paused;
+No remaining Advanced implementation rows. Phase 6 validation is active;
 the following discovered XR failures remain open until their fixes have runtime evidence.
-
-- [ ] **XR-I13** — Separate authored graph/profile slots from XR native resource slots, size every slot-indexed owner for the reserved XR capacity, and release exact native publication owners on completion or unsubmitted cancellation. Start30 rejected slot 0 after desktop submission; Start32 then exposed the distinct graph-resource slot contract. [Investigation][mirror-closeout].
 
 - [ ] **XR-I14** — Preserve a usable swapchain generation and resume pacing on pre-detachment deferral; distinguish post-detachment failure and retain parents until child retirement completes. Report per-session teardown epochs and independent XR retirement blockers. Build32 compiles; lifecycle acceptance remains pending. [Investigation][mirror-closeout].
 
 - [ ] **XR-I16** — Serialize normal submission settlement against device-loss abandonment, retain the exact tracker during reentrant abandonment, and define authoritative abandonment for swapchain/input/session parents. Abandonment must never report normal completion, reset pending arenas, or claim a successful normal teardown. [Investigation][mirror-closeout].
 
-- [ ] **XR-I17** — Keep runtime-owned image acquire/release states out of the sealed submission publisher, which supports engine-owned states only. Use the full ownership-aware publication path for those primaries. Start33 submits successfully but reports repeated accepted publication debt; the eligibility correction passes Build35 and awaits a fresh run. [Investigation][mirror-closeout].
+- [ ] **XR-I22** — Reconcile mirror logical submission slots with native compute-slot requirements and exact keyed sealed-graph planning; Build71/72 still expose missing native compute slot-3 resources after three accepted shape-5 submissions. Close with accepted native resources and runtime proof.
 
-- [ ] **XR-I18** — Route the final eye present-shader draw through the active thread-local framebuffer binding. Start33 authors `RenderToWindow_FxaaOutputTexture` but falls back to the desktop/global draw framebuffer, leaving the acquired XR image unwritten. Change the material-operation target lookup to `ActiveBoundDrawFrameBuffer`, then verify the internal FXAA image, acquired image and fresh preview captures. Identified during final review; no code change before the user-requested pause. [Investigation][mirror-closeout].
+- [ ] **XR-I23** — Remove stale desktop/XR queue ownership snapshots by carrying the current submission revision through the snapshot boundary. Source review confirms reset/unleased logical-plan release and Build72 no longer reports the stale immutable-view-set exception, but a healthy cohort exit/restart remains pending.
 
 ## Remaining validation
 
-These **67 unchecked rows** are the complete remaining validation checklist.
+These **58 unchecked rows** are the complete remaining validation checklist.
 Most validate existing implementation. A failed validation gets a specific new
 implementation task; keep the failed validation open. Reuse evidence across
 related fixtures without duplicating the obligation or extending its accepted scope.
 
 Prerequisites and current evidence limits:
 
-- Service fault injection requires an owned Monado service. The September 14
-  run observes existing PID43684 through generic OpenXR and has neither stopped
-  nor adopted it; approval to restart that leftover service is pending.
+- Service fault injection requires an owned Monado service. The resumed run
+  found no existing service and started one with this task's ownership marker.
+  The earlier unowned PID43684 was already gone.
 - Hardware XR and positive vendor-feature cases require the named runtime,
   SDK, driver and device. An unavailable prerequisite remains a blocker.
 - OpenGL RenderDoc inspection is limited by its lack of bindless-texture support;
@@ -93,33 +97,19 @@ the eye/mirror frame-loop callers, `VulkanXrGraphicsBinding`, and
 
 #### Submission ownership and bounded admission
 
-- [ ] **XR-V02** — Run ordinary single-eye submission. Close with exact eye receipt ownership and successful output.
-
-- [ ] **XR-V18** — Run ordinary paired-eye submission. Close with both eyes' exact receipt ownership and successful output.
-
-- [ ] **XR-V03** — Run parallel eye recording. Close with accepted-incomplete ownership retained until completion and no early prepared-input/upload release.
-
 - [ ] **XR-V04** — Run the three-command `[left, right, publish]` path. Close with both eye renders and the publish command present in the accepted receipt and retired once.
 
 - [ ] **XR-V05** — Exercise external-target submission. Close with output captures and exact ownership/settlement for its path from `XR-A01`.
 
-- [ ] **XR-V19** — Exercise preview-only copy submission. Close with a fresh preview capture and completion-driven ownership/settlement.
-
-- [ ] **XR-V06** — Delay completion until tracker capacity is reached. Close with occupancy never exceeding capacity, visible deferral/recovery, and no pending slot/pool/descriptor reuse.
-
-- [ ] **XR-V07** — Exercise rejection and accepted-submit publication/cleanup failure boundaries. Close with every payload settled once and no orphaned accepted work. New automated fault tests require explicit clearance.
-
 #### Swapchain and session lifetime
 
-- [ ] **XR-V08** — Fill the retired-generation budget with delayed GPU completion/runtime release. Close with a bounded count, no lost active generation on deferral, and no child or parent destroyed early.
+- [x] **XR-V08** — Fill the retired-generation budget with delayed GPU completion/runtime release. Build68 reaches generation capacity/high-water 4, records five attempts with one pre-detachment deferral while the held 1120×1080 generation remains live, then releases the hold normally; a later 1152×1080 generation runs, five generations queue/drain, and exit reaches 3,315 accepted/completed/retired submissions with zero ownership. This is real retirement observation, not injected slow-GPU behavior; no Vulkan VUID appears in the log. The configured runtime-refresh exception remains separate under XR-V09. Done 2026-09-14; [investigation][mirror-closeout].
 
 - [ ] **XR-V09** — Change eye resolution during active rendering. Close with safe in-session replacement, dimension read-back, pacing resumed, and no normal device-wide idle; exercise the configured runtime-refresh exception separately.
 
 - [ ] **XR-V10** — Force replacement failure after detachment. Close with eventual rendering/recreation or an explicit safe terminal outcome, no permanent swapchain-less running state, and no leaked partial children.
 
 - [ ] **XR-V11** — Repeat session start/stop/restart. Close with successful new output, zero invalid-handle destruction, and final ownership/retirement counts zero on each cycle.
-
-- [ ] **XR-V12** — Exercise STOPPING with pending work. Close with truthful drain results and no successful-drain report while ownership remains.
 
 - [ ] **XR-V20** — Exercise LOSS_PENDING with pending work. Close with safe session/child retirement and a documented recovery outcome.
 
@@ -128,8 +118,6 @@ the eye/mirror frame-loop callers, `VulkanXrGraphicsBinding`, and
 #### Timing, allocations and hardware acceptance
 
 - [ ] **XR-V13** — Correlate real frame ID/display time, queue-submit interval, completion/forced wait, in-flight age, and independent per-eye image reuse age. Close with a trace matching receipt values and no zero/synthetic provenance.
-
-- [ ] **XR-V14** — Measure warmed tracker registration, polling, and retirement allocations. Close with zero managed-byte deltas and no duplicate polling work; retained storage bounds must be reported.
 
 - [ ] **XR-V15** — Measure pressure recovery waits against the XR deadline. Close with short counted waits only after safe reuse/defer paths, truthful missed/late/reprojected counters, and preserved `xrWaitFrame` pacing.
 
@@ -286,6 +274,14 @@ pressure or mirror output acceptance.
 
 ## Completed work
 
+- [x] **XR-V03** — Start64 parallel recording shows both eye outputs with parallax. Its accepted two-command receipts retain both recorded/prepared owners and slots while completion is unobserved, then release each once with zero early-settlement violations. All 2,592 accepted submissions complete/retire on real exit, with zero pending ownership and normal teardown epoch 1. This fixture has no pending texture uploads; no upload-pressure claim is made. Done 2026-09-14; [investigation][mirror-closeout].
+
+- [x] **XR-I21** — Direct eye authoring captures the exact published command collection/package/collect identity, revalidates it under the collection read scope, and passes its collect authority independently of desktop collection. Strict validation and exact once-only begun-frame cleanup remain in force. Build63 passes with zero warnings/errors; Start63 continues rendering both eyes and drains all accepted work on exit. Done 2026-09-14; [investigation][mirror-closeout].
+
+- [x] **XR-V02** — Start63 ordinary serial submission has inspected red-cube output in both eyes with parallax and matching render/copy frame IDs. Its retained single-command receipts transfer recorded ownership and mapped/data slots, retain them while accepted-incomplete, and settle once on real completion. Exit completes/retires all 5,106 accepted submissions with zero active/reserved/pending ownership, zero publication or EndFrame failures, and normal teardown epoch 1. Done 2026-09-14; [investigation][mirror-closeout].
+
+- [x] **XR-V07** — Start61 rejects exactly one paired submission before the native call: no native receipt or transferred ownership, one cancellation and exact recorded/prepared/slot cleanup. Start62 accepts native work, injects one publication failure, retains ownership while completion is unobserved and retires on actual completion. Real exit drains all ownership in both runs: 1,272 accepted plus one cancelled record in Start61; 3,783 accepted/completed/retired in Start62. No early settlement or orphaned accepted work. Done 2026-09-14; [investigation][mirror-closeout].
+
 Each task appears once. Checked implementation/audit entries summarize the
 completed change and link to its detailed record. Checked validation entries
 retain their observed backend/profile limits. Historical build-by-build narratives
@@ -299,6 +295,16 @@ accepted cohorts, not certification of every material, output profile or backend
 #### OpenXR runtime
 
 - [x] **XR-V01** — Repeat Monado strict SPS after the descriptor fixes. Done 2026-09-06; [clean SPS rerun](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-06-clean-monado-sps-rerun). PID8256 retained 360 frames: 351 strict SPS submissions, nine cold no-layer frames, zero validation/EndFrame failures, zero sequential fallback attempts, and zero final pending retirement. Default/RVC eyes; Advanced stereo and hardware acceptance remain open.
+
+- [x] **XR-V12** — Real Monado session exit traverses STOPPING while retired-generation work remains. Start38 reports one queued/pending generation and `teardownCompleted=false`, then one drained generation, zero pending ownership, normal teardown epoch 1 and `teardownCompleted=true`. All 6,801 accepted submissions are completed/retired; this cohort proves pending generation retirement, not an incomplete GPU submission at STOPPING. Done 2026-09-14; [investigation][mirror-closeout].
+
+- [x] **XR-V06** — Start60 holds observation of real accepted completion until capacity three, records high-water three and one admission deferral, then releases the hold and recovers. Retained receipts keep ownership until actual completion with zero early-settlement violations. Normal exit completes/retires all 5,157 accepted submissions with zero remaining ownership. No forced wait was needed. Done 2026-09-14; [investigation][mirror-closeout].
+
+- [x] **XR-V14** — Start59's warmed tracker measures zero bytes/high-water for 3,203 registrations, 5,339 polls and 3,201 retirements. It performs 5,338 timeline queries across those polls, consistent with the shared-semaphore query deduplication. Storage is bounded to 64 uploads, three commands, three frame slots, 64 swapchain-image records and 32 ledger rows. Done 2026-09-14; [investigation][mirror-closeout].
+
+- [x] **XR-V18** — Start59 exercises ordinary paired-eye submission on Monado with visible RVC output and stereo parallax. The retained cohort includes 11 accepted paired receipts, each releasing two recorded/prepared owners and two frame slots only after real completion; no early-settlement, shape or ownership mismatch. The full run retires all 17,829 submissions on normal exit. Done 2026-09-14; [investigation][mirror-closeout].
+
+- [x] **XR-V19** — Start59 retains 21 per-eye preview-copy receipts, each retiring its one temporary command once after real completion. Viewed left/right captures match their render/copy frame IDs 907/911; a moved-cube capture at frame 4104 changes pixels and position. Done 2026-09-14; [investigation][mirror-closeout].
 
 #### Shader compilation only
 
@@ -389,6 +395,16 @@ at those links rather than being repeated in every summary.
 - [x] **XR-I12** — Resolve parallel-eye teardown's persistent GPU-quiescence deferral. Done 2026-09-06; [native view ownership fix](../../investigations/rendering/vulkan-phase67-implementation.md#2026-09-06-parallel-eye-teardown-native-view-ownership-fixed).
 
 - [x] **XR-I15** — Advance bounded child-retirement accounting during terminal XR teardown when no desktop production frame resets the shared budget. Build33 passes with zero warnings/errors. Start33 submits 5,592 projection frames, then a real session-exit request reaches normal teardown epoch 1, zero active/reserved/pending submissions, and zero pending XR generations (two queued/two drained). Completion and dependency proofs remain mandatory; ordinary polling/resolution budgets are unchanged. Done 2026-09-14; [investigation][mirror-closeout].
+
+- [x] **XR-I13** — Authored graph/profile slots are separate from reserved XR native slots, slot-indexed owners cover that capacity, and native publication owners settle on exact completion or unsubmitted cancellation. Build58 passes with zero warnings/errors; Start59's paired receipt cohort verifies exact slot/owner settlement without early reuse, responsive output and zero final ownership across 17,829 submissions. Single-eye collection authority is separately tracked by XR-I21. Done 2026-09-14; [investigation][mirror-closeout].
+
+- [x] **XR-I18** — RVC eye output uses the active thread-local framebuffer and the exact per-eye planner allocator/map through sealing and recording. Start59's inspected 896×1007 left/right previews show the cube with stereo parallax; moving it changes the later eye capture. Build58 passes with zero warnings/errors. Done 2026-09-14; [investigation][mirror-closeout].
+
+- [x] **XR-I20** — Vulkan begin/end/acquire/release calls share the engine's device-admission and bound graphics-queue gates, in the reviewed order, without healthy-path allocation or GPU waits. Build58 passes with zero warnings/errors; Start59 completes 17,829 submissions and normal session teardown without publication failures or Vulkan validation errors. Hardware acceptance remains XR-V17. Done 2026-09-14; [investigation][mirror-closeout].
+
+- [x] **XR-I17** — Runtime-owned acquire/release states use the full ownership-aware publisher; the sealed publisher admits engine-owned states only. Build38 passes with zero warnings/errors. Start38 observes 6,801 accepted submissions with zero publication failures, 6,801 real completions and retirements, and zero terminal ownership. Start40 confirms another 24,930 accepted submissions without publication debt. Done 2026-09-14; [investigation][mirror-closeout].
+
+- [x] **XR-I19** — Treat OpenXR's maximum Vulkan instance API version as its tested-version ceiling. Keep minimum/version validity, Vulkan 1.4 loader/device/features, runtime device selection and native result checks authoritative. Build45 passes with zero warnings/errors; SteamVR advertises a 1.2 tested maximum but successfully creates a Vulkan 1.4 device, 2688×2688 swapchains and a focused session. Eye output remains separately unaccepted. Done 2026-09-14; [investigation][mirror-closeout].
 
 - [x] **XR-A01** — Publish a complete submit-callsite ownership table: ordinary single/paired, parallel, SPS, external target, preview-only, and render-plus-publish. Done 2026-09-06; [source ownership inventory](../../progress/rendering/openxr-submit-ownership-audit-2026-09-06.md).
 

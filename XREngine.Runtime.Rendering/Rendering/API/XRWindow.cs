@@ -25,6 +25,8 @@ namespace XREngine.Rendering
     [RuntimeOnly]
     public sealed class XRWindow : XRBase, IRuntimeRenderWindowHost, IDisposable
     {
+        private long _completedRenderWindowIntervalSequence;
+        public XRWindowCompletedRenderInterval LastCompletedRenderWindowInterval { get; private set; }
         private static readonly TimeSpan RendererShutdownGpuWaitTimeout = TimeSpan.FromSeconds(5);
 
         /// <summary>
@@ -1978,6 +1980,12 @@ namespace XREngine.Rendering
 
             if (IsOpenXrOwnedVulkanDeviceLoss(lostRenderer))
             {
+                RuntimeEngine.VRState.OpenXRApi?.PrepareRendererDeviceLossAbandonment(
+                    lostRenderer,
+                    reason,
+                    reason.Contains("ResidentTemplateLifetimeFaultInjection", StringComparison.Ordinal)
+                        ? API.Rendering.OpenXR.OpenXrDeviceLossSource.SimulatedStateMachineFault
+                        : API.Rendering.OpenXR.OpenXrDeviceLossSource.ObservedNativeFault);
                 DisableRenderingPermanently(
                     $"OpenXR-owned Vulkan renderer reported device loss and cannot be safely recreated in-place. Restart the editor or OpenXR runtime before launching OpenXR again. Reason: {reason}",
                     exception);
@@ -3469,7 +3477,22 @@ namespace XREngine.Rendering
                 using (var renderWindowSample = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRWindow.Renderer.RenderWindow"))
                 {
                     long presentStart = System.Diagnostics.Stopwatch.GetTimestamp();
-                    frameRenderer.RenderWindow(delta);
+                    bool succeeded = false;
+                    try
+                    {
+                        frameRenderer.RenderWindow(delta);
+                        succeeded = true;
+                    }
+                    finally
+                    {
+                        LastCompletedRenderWindowInterval = new XRWindowCompletedRenderInterval(
+                            Interlocked.Increment(ref _completedRenderWindowIntervalSequence),
+                            renderFrameId,
+                            frameRenderer.BackendGeneration,
+                            presentStart,
+                            System.Diagnostics.Stopwatch.GetTimestamp(),
+                            succeeded);
+                    }
                     RecordWindowFrameOutput(
                         EFrameOutputKind.Present,
                         windowPresentPacing.ViewKind,

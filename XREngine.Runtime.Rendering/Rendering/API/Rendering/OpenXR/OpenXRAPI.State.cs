@@ -32,9 +32,22 @@ public unsafe partial class OpenXRAPI
     // Teardown ownership survives disabled monitoring: native parents remain
     // reachable until the owning render thread has observed child retirement.
     private bool _pendingDestroyInstance;
+    // Renderer-owned enable2 instances select the live Vulkan parent. Only an
+    // authorized renderer device teardown may invalidate that relationship.
+    private bool _pendingRendererOwnedInstanceInvalidation;
+    // A lost renderer-owned XR instance cannot be replaced against the same
+    // Vulkan instance/device. Keep this terminal disposition sticky until the
+    // renderer itself is replaced or explicitly torn down.
+    private AbstractRenderer? _rendererRecreationRequiredOwner;
     // Cleanup may outlive runtime monitoring while deferred Vulkan children
     // drain. The original window remains the renderer authority until done.
     private bool _pendingShutdownCleanup;
+    // Ordinary API disposal detaches a renderer-owned bootstrap after its
+    // session children retire; it must not invalidate the renderer parent.
+    private bool _pendingShutdownPreservesRendererOwnedInstance;
+    // Session exiting is a session-scoped stop request. It may wait for child
+    // retirement, so retain its monitoring disposition until teardown ends.
+    private bool _pendingStopRuntimeMonitoringAfterSessionTeardown;
     private bool _graphicsBackendResourcesDestroyed;
 
     /// <summary>
@@ -429,7 +442,17 @@ public unsafe partial class OpenXRAPI
     private uint _appliedOpenXrCustomEyeResolutionWidth = RuntimeRenderingHostServiceDefaults.OpenXrCustomEyeResolutionWidth;
     private uint _appliedOpenXrCustomEyeResolutionHeight = RuntimeRenderingHostServiceDefaults.OpenXrCustomEyeResolutionHeight;
     private bool _renderSettingsChangedSubscribed;
-    private int _openXrEyeResolutionRecreateQueued;
+    private enum OpenXrEyeResolutionReplacementAdmissionState
+    {
+        Idle = 0,
+        DrainRequested = 1,
+        RetryBackoff = 2,
+    }
+
+    // This request spans render/pacing ownership. It must not be represented by
+    // a render-thread closure because continuous pacing can otherwise starve it.
+    private int _openXrEyeResolutionReplacementAdmissionState;
+    private long _openXrEyeResolutionReplacementRetryTimestamp;
 
     /// <summary>
     /// DirectX swapchain image pointers for each view.

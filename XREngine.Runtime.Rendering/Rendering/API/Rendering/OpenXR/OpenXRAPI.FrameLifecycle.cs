@@ -50,7 +50,11 @@ public unsafe partial class OpenXRAPI
             return;
         }
 
+        _smokePendingFrameTiming.EngineRenderFrameId = RuntimeEngine.Rendering.State.RenderFrameId;
         int frameNo = Volatile.Read(ref _openXrPendingFrameNumber);
+        bool endFrameAttempted = false;
+        try
+        {
         if (OpenXrDebugLifecycle && frameNo != 0 && ShouldLogLifecycle(frameNo))
         {
             double msSinceLocate = MsSince(_openXrPrepareTimestamp);
@@ -70,14 +74,10 @@ public unsafe partial class OpenXRAPI
                 LayerCount = 0,
                 Layers = null
             };
-            var endResult = EndFrameWithTiming(in frameEndInfoNoLayers);
-            DiscardPendingOpenXrViewHistory(frameNo);
+            var endResult = EndFrameWithTiming(in frameEndInfoNoLayers, ref endFrameAttempted);
             if (OpenXrDebugLifecycle && frameNo != 0 && ShouldLogLifecycle(frameNo))
                 Debug.Out($"OpenXR[{frameNo}] Render: EndFrame(no layers) => {endResult}");
 
-            Volatile.Write(ref _pendingXrFrame, 0);
-            Volatile.Write(ref _pendingXrFrameCollected, 0);
-            SignalPacingThreadFrameSubmitted();
             return;
         }
 
@@ -91,14 +91,10 @@ public unsafe partial class OpenXRAPI
                 LayerCount = 0,
                 Layers = null
             };
-            var endResult = EndFrameWithTiming(in frameEndInfoNoLayers);
-            DiscardPendingOpenXrViewHistory(frameNo);
+            var endResult = EndFrameWithTiming(in frameEndInfoNoLayers, ref endFrameAttempted);
             if (OpenXrDebugLifecycle && frameNo != 0 && ShouldLogLifecycle(frameNo))
                 Debug.Out($"OpenXR[{frameNo}] Render: EndFrame(no layers; unsupported view render mode) => {endResult}");
 
-            Volatile.Write(ref _pendingXrFrame, 0);
-            Volatile.Write(ref _pendingXrFrameCollected, 0);
-            SignalPacingThreadFrameSubmitted();
             return;
         }
 
@@ -177,14 +173,10 @@ public unsafe partial class OpenXRAPI
                 LayerCount = 0,
                 Layers = null
             };
-            var endResult = EndFrameWithTiming(in frameEndInfoNoLayers);
-            DiscardPendingOpenXrViewHistory(frameNo);
+            var endResult = EndFrameWithTiming(in frameEndInfoNoLayers, ref endFrameAttempted);
             if (OpenXrDebugLifecycle && frameNo != 0 && ShouldLogLifecycle(frameNo))
                 Debug.Out($"OpenXR[{frameNo}] Render: EndFrame(no layers; eye failure) => {endResult}");
 
-            Volatile.Write(ref _pendingXrFrame, 0);
-            Volatile.Write(ref _pendingXrFrameCollected, 0);
-            SignalPacingThreadFrameSubmitted();
             return;
         }
 
@@ -209,11 +201,9 @@ public unsafe partial class OpenXRAPI
             Layers = layers
         };
 
-        var endFrameResult = EndFrameWithTiming(in frameEndInfo);
+        var endFrameResult = EndFrameWithTiming(in frameEndInfo, ref endFrameAttempted);
         if (endFrameResult == Result.Success && allEyesRendered)
             CommitOpenXrViewHistory(frameNo, frameEndInfo.DisplayTime);
-        else
-            DiscardPendingOpenXrViewHistory(frameNo);
         if (OpenXrDebugLifecycle && frameNo != 0 && ShouldLogLifecycle(frameNo))
             Debug.Out($"OpenXR[{frameNo}] Render: EndFrame(layer) => {endFrameResult}");
         PublishOpenXrRvcFrameProfile(frameNo, endFrameResult);
@@ -222,9 +212,55 @@ public unsafe partial class OpenXRAPI
         double submitMs = (submitEnd - submitStart) * 1000.0 / Stopwatch.Frequency;
         RuntimeEngine.Rendering.Stats.Vr.RecordVrRenderSubmitTime(TimeSpan.FromMilliseconds(submitMs));
 
-        Volatile.Write(ref _pendingXrFrame, 0);
-        Volatile.Write(ref _pendingXrFrameCollected, 0);
-        SignalPacingThreadFrameSubmitted();
+        }
+        catch
+        {
+            if (!endFrameAttempted &&
+                _sessionBegun &&
+                _session.Handle != 0 &&
+                !IsOpenXrRuntimeLossPending() &&
+                Window?.Renderer is { IsDeviceLost: false })
+            {
+                try
+                {
+                    FrameEndInfo cleanupEndInfo = new()
+                    {
+                        Type = StructureType.FrameEndInfo,
+                        DisplayTime = _frameState.PredictedDisplayTime,
+                        EnvironmentBlendMode = EnvironmentBlendMode.Opaque,
+                        LayerCount = 0,
+                        Layers = null,
+                    };
+                    EndFrameWithTiming(in cleanupEndInfo, ref endFrameAttempted);
+                }
+                catch (Exception cleanupException)
+                {
+                    Debug.LogWarning(
+                        $"OpenXR[{frameNo}] Render: cleanup EndFrame failed after an unhandled frame exception: {cleanupException.Message}");
+                }
+            }
+
+            throw;
+        }
+        finally
+        {
+            // Commit clears the pending bit, so this leaves committed history intact.
+            DiscardPendingOpenXrViewHistory(frameNo);
+            Volatile.Write(ref _framePrepared, 0);
+            Volatile.Write(ref _frameSkipRender, 0);
+            Volatile.Write(ref _pendingXrFrameCollected, 0);
+            Volatile.Write(ref _pendingXrFrameUsesTrueSinglePassStereo, 0);
+            if (Window?.Renderer is not { IsDeviceLost: false } ||
+                IsOpenXrRuntimeLossPending())
+            {
+                _sessionBegun = false;
+            }
+
+            // This is the admission publication observed by the pacing owner.
+            // Finish every old-frame write before admitting the next frame.
+            Volatile.Write(ref _pendingXrFrame, 0);
+            SignalPacingThreadFrameSubmitted();
+        }
     }
 
     /// <summary>
@@ -566,6 +602,8 @@ public unsafe partial class OpenXRAPI
             {
                 RenderFrame(null);
             }
+
+            ServiceOpenXrEyeResolutionReplacement();
 
             // Inline prep (pre-desktop-render) is the legacy InRenderCallback path.
             if (OpenXrRenderPacingHandling == OpenXrRenderPacingMode.InRenderCallback)
@@ -1597,8 +1635,20 @@ public unsafe partial class OpenXRAPI
 
         try
         {
+            // A drain request admitted after a prep began allows this one prep
+            // to finish, but prevents a fresh WaitFrame/BeginFrame sequence.
+            if (Volatile.Read(ref _openXrEyeResolutionReplacementAdmissionState) ==
+                (int)OpenXrEyeResolutionReplacementAdmissionState.DrainRequested)
+                return;
+
             // Only one OpenXR frame can be "in flight" between BeginFrame and EndFrame.
             if (Volatile.Read(ref _pendingXrFrame) != 0)
+                return;
+
+            // Recheck after observing admission: the prior frame may have
+            // stopped the session while this owner waited for its token.
+            if (!_sessionBegun || IsOpenXrRuntimeLossPending() ||
+                Window?.Renderer is not { IsDeviceLost: false })
                 return;
 
             // Clear any stale publish flags.
@@ -1606,6 +1656,7 @@ public unsafe partial class OpenXRAPI
             Volatile.Write(ref _pendingXrFrameCollected, 0);
             Volatile.Write(ref _pendingXrFrameUsesTrueSinglePassStereo, 0);
 
+            _smokePendingFrameTiming = new OpenXrSmokeFrameTiming();
             if (!WaitFrame(out _frameState))
                 return;
 
@@ -1616,6 +1667,7 @@ public unsafe partial class OpenXRAPI
                 return;
 
             int frameNo = Interlocked.Increment(ref _openXrLifecycleFrameIndex);
+            _smokePendingFrameTiming.OpenXrLifecycleFrameId = frameNo;
             Volatile.Write(ref _openXrPendingFrameNumber, frameNo);
 
             if (OpenXrDebugLifecycle && ShouldLogLifecycle(frameNo))

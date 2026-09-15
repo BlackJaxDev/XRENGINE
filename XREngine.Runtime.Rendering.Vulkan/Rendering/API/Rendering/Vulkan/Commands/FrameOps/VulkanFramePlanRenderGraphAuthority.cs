@@ -12,16 +12,47 @@ internal readonly record struct VulkanFramePlanRenderGraphAuthority(
     FrameOpResourcePlannerSwitchingState? SwitchingState,
     VulkanFramePlanner? Planner = null,
     VulkanBackendObjectContext? BackendContext = null,
-    bool AllowSynchronousResourceUploads = false)
+    bool AllowSynchronousResourceUploads = false,
+    FrameOpResourcePlannerSwitchingState? SecondarySwitchingState = null)
 {
     internal bool TryResolve(
         in VulkanFrameOpPlannerStateKey key,
         int plannerContextCount,
         out VulkanRenderGraphPlan plan)
     {
-        if (SwitchingState is not null &&
-            SwitchingState.States.TryGetValue(key, out ResourcePlannerRuntimeState state))
+        ResourcePlannerRuntimeState primaryState = default;
+        ResourcePlannerRuntimeState secondaryState = default;
+        bool hasPrimary = SwitchingState is not null &&
+            SwitchingState.States.TryGetValue(key, out primaryState);
+        bool hasSecondary = SecondarySwitchingState is not null &&
+            SecondarySwitchingState.States.TryGetValue(key, out secondaryState);
+        if (SecondarySwitchingState is not null &&
+            (SwitchingState is null || ReferenceEquals(SwitchingState, SecondarySwitchingState)))
         {
+            plan = VulkanRenderGraphPlan.Empty;
+            return false;
+        }
+        if (hasPrimary || hasSecondary)
+        {
+            if (hasPrimary && hasSecondary)
+            {
+                plan = VulkanRenderGraphPlan.Empty;
+                return false;
+            }
+
+            ResourcePlannerRuntimeState state = hasPrimary ? primaryState : secondaryState;
+            FrameOpResourcePlannerSwitchingState selectedSwitchingState = hasPrimary
+                ? SwitchingState!
+                : SecondarySwitchingState!;
+            // Desktop publications shallow-copy historical keyed states. Only
+            // the paired eye contract requires each state to own its exact map.
+            if (SecondarySwitchingState is not null && !ReferenceEquals(
+                    state.FrameOpResourcePlannerSwitchingState,
+                    selectedSwitchingState))
+            {
+                plan = VulkanRenderGraphPlan.Empty;
+                return false;
+            }
             ulong currentBufferRevision = BackendContext?.Resources.NativeBufferBindingRevision ?? 0UL;
             if (state.RenderGraphPlan.Barriers.NativeBufferBindingRevision != currentBufferRevision)
             {
@@ -42,7 +73,7 @@ internal readonly record struct VulkanFramePlanRenderGraphAuthority(
                     return false;
                 }
 
-                SwitchingState.States[key] = state;
+                selectedSwitchingState.States[key] = state;
             }
 
             if (!IsRecordable(state.RenderGraphPlan))
@@ -55,7 +86,7 @@ internal readonly record struct VulkanFramePlanRenderGraphAuthority(
             return true;
         }
 
-        if (plannerContextCount == 1 && IsRecordable(FallbackPlan))
+        if (SecondarySwitchingState is null && plannerContextCount == 1 && IsRecordable(FallbackPlan))
         {
             plan = FallbackPlan;
             return true;

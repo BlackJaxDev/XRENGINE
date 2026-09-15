@@ -13,6 +13,14 @@ public unsafe partial class OpenXRAPI
 {
     internal void EnableRuntimeMonitoring()
     {
+        if (IsRendererRecreationRequiredForCurrentRenderer())
+        {
+            SetRuntimeState(OpenXrRuntimeState.Unavailable);
+            return;
+        }
+
+        _rendererRecreationRequiredOwner = null;
+        _pendingStopRuntimeMonitoringAfterSessionTeardown = false;
         InvalidateOpenXrViewHistory();
         SubscribeOpenXrRenderSettingsChanged();
         RecordAppliedOpenXrEyeResolutionSettings();
@@ -65,19 +73,28 @@ public unsafe partial class OpenXRAPI
         Volatile.Write(ref _frameSkipRender, 0);
 
         bool destroyInstance = binding.DestroysRuntimeInstanceOnRendererTeardown || _instanceOwnedByRenderer;
-        if (!TearDownSessionResourcesOnOwningThread(destroyInstance))
+        if (!TearDownSessionResourcesOnOwningThread(
+                destroyInstance,
+                allowRendererOwnedInstanceInvalidation: true))
         {
             ScheduleProbeRetry(TimeSpan.FromMilliseconds(100));
-            SetRuntimeState(OpenXrRuntimeState.RecreatePending);
+            SetRuntimeState(OpenXrRuntimeState.SessionStopping);
             return false;
         }
 
+        _rendererRecreationRequiredOwner = null;
         ScheduleProbeRetry(GetGraphicsDeviceFailureProbeDelay());
         SetRuntimeState(_runtimeMonitoringEnabled ? OpenXrRuntimeState.RecreatePending : OpenXrRuntimeState.DesktopOnly);
         return true;
     }
     internal void UpdateRuntimeState()
     {
+        if (_deviceLossAbandonment is not null)
+        {
+            if (Window?.Renderer is AbstractRenderer deviceLostRenderer)
+                ServiceRendererDeviceLossAbandonment(deviceLostRenderer, deviceLostRenderer.DeviceLostReason ?? "Vulkan device loss");
+            return;
+        }
         if (_pendingShutdownCleanup)
         {
             if (!RuntimeEngine.IsRenderThread &&
@@ -107,7 +124,21 @@ public unsafe partial class OpenXRAPI
             return;
 
         if (_runtimeState == OpenXrRuntimeState.Unavailable)
-            return;
+        {
+            if (_rendererRecreationRequiredOwner is not null &&
+                Window.Renderer is AbstractRenderer replacementRenderer &&
+                !ReferenceEquals(_rendererRecreationRequiredOwner, replacementRenderer))
+            {
+                _rendererRecreationRequiredOwner = null;
+                ResetOpenXrProbeFailureState();
+                _nextProbeUtc = DateTime.UtcNow;
+                SetRuntimeState(OpenXrRuntimeState.DesktopOnly);
+            }
+            else
+            {
+                return;
+            }
+        }
 
         AbstractRenderer renderer = Window.Renderer;
         if (!RuntimeEngine.IsRenderThread &&
@@ -129,6 +160,9 @@ public unsafe partial class OpenXRAPI
 
         if (_instance.Handle != 0 && _runtimeState != OpenXrRuntimeState.SessionRunning)
             PollEvents();
+
+        if (_runtimeState == OpenXrRuntimeState.SessionRunning)
+            TryInjectSmokeLossPendingAfterLiveWork();
 
         if (_graphicsBinding?.HasPendingDeferredSwapchainRetirement == true)
             _graphicsBinding.PollDeferredSwapchainRetirement(this, renderer);
@@ -179,6 +213,14 @@ public unsafe partial class OpenXRAPI
             case OpenXrRuntimeState.SessionStopping:
                 if (TearDownSessionResourcesOnOwningThread(false))
                 {
+                    if (_pendingStopRuntimeMonitoringAfterSessionTeardown)
+                    {
+                        _pendingStopRuntimeMonitoringAfterSessionTeardown = false;
+                        _runtimeMonitoringEnabled = false;
+                        SetRuntimeState(OpenXrRuntimeState.DesktopOnly);
+                        break;
+                    }
+
                     bool completingDimensionRefresh =
                         _pendingOpenXrRuntimeDimensionRefreshRequirement != OpenXrRuntimeDimensionRefreshRequirement.None;
                     if (!TryCompletePendingOpenXrRuntimeDimensionRefresh(
@@ -215,11 +257,15 @@ public unsafe partial class OpenXRAPI
 
         if (Window?.Renderer is AbstractRenderer renderer && _graphicsBinding is not null)
             _graphicsBinding.PollDeferredSwapchainRetirement(this, renderer);
-        if (!TearDownSessionResourcesOnOwningThread(true))
+        bool preserveRendererOwnedInstance = _pendingShutdownPreservesRendererOwnedInstance;
+        if (!TearDownSessionResourcesOnOwningThread(!preserveRendererOwnedInstance))
         {
             ScheduleProbeRetry(TimeSpan.FromMilliseconds(100));
             return;
         }
+
+        if (preserveRendererOwnedInstance)
+            DetachRendererOwnedInstanceAssociation();
 
         CompleteGraphicsBackendCleanup();
     }
@@ -289,6 +335,9 @@ public unsafe partial class OpenXRAPI
             return;
         }
 
+        if (TryMarkRuntimeLossForResult(result, "xrGetSystem"))
+            return;
+
         HandleSystemProbeFailure(result);
     }
 
@@ -339,6 +388,13 @@ public unsafe partial class OpenXRAPI
                 "[ERROR] OpenXR instance probe failed before the runtime returned an OpenXR Result. " +
                 $"Exception={ex.GetType().FullName}; Reason={ex.Message}; " +
                 "automatic probing is halted until OpenXR is reconfigured or runtime monitoring is restarted.");
+            if (_instanceOwnedByRenderer && RequiresRendererRecreationForInstanceReplacement(out string rendererRecreationReason))
+            {
+                EnterRendererRecreationRequiredTerminal(
+                    OpenXrRuntimeLossReason.RuntimeUnavailable,
+                    $"unexpected instance probe failure: {rendererRecreationReason}");
+                return;
+            }
             if (_instance.Handle != 0)
                 TearDownSessionResourcesOnOwningThread(true);
             SetRuntimeState(OpenXrRuntimeState.Unavailable);
@@ -352,6 +408,13 @@ public unsafe partial class OpenXRAPI
         Debug.VR(
             "[WARN] OpenXR instance probe raised an unexpected managed exception; retry scheduled with exponential backoff. " +
             $"Exception={ex.GetType().FullName}; Attempt={failureCount}; RetryIn={delay.TotalSeconds:0.###}s; Reason={ex.Message}");
+        if (_instanceOwnedByRenderer && RequiresRendererRecreationForInstanceReplacement(out string unexpectedRendererRecreationReason))
+        {
+            EnterRendererRecreationRequiredTerminal(
+                OpenXrRuntimeLossReason.RuntimeUnavailable,
+                $"unexpected instance probe failure: {unexpectedRendererRecreationReason}");
+            return;
+        }
         if (_instance.Handle != 0)
             TearDownSessionResourcesOnOwningThread(true);
         ScheduleProbeRetry(delay);
@@ -384,7 +447,7 @@ public unsafe partial class OpenXRAPI
                 return;
             }
 
-            TearDownSessionResourcesOnOwningThread(true);
+            TearDownSessionResourcesOnOwningThread(_instanceOwnedByRenderer ? false : true);
             SetRuntimeState(OpenXrRuntimeState.RecreatePending);
             return;
         }
@@ -393,7 +456,7 @@ public unsafe partial class OpenXRAPI
             "[ERROR] OpenXR system probe failed with a non-recoverable error. " +
             $"Result={result}; Category={decision.Category}; " +
             "automatic probing is halted until OpenXR is reconfigured or runtime monitoring is restarted.");
-        TearDownSessionResourcesOnOwningThread(true);
+        TearDownSessionResourcesOnOwningThread(_instanceOwnedByRenderer ? false : true);
         SetRuntimeState(OpenXrRuntimeState.Unavailable);
     }
 
@@ -410,6 +473,14 @@ public unsafe partial class OpenXRAPI
         Debug.VR(
             "[WARN] OpenXR system probe raised an unexpected managed exception; the instance will be recreated after backoff. " +
             $"Exception={ex.GetType().FullName}; Attempt={failureCount}; RetryIn={delay.TotalSeconds:0.###}s; Reason={ex.Message}");
+        if (_instanceOwnedByRenderer && RequiresRendererRecreationForInstanceReplacement(out string rendererRecreationReason))
+        {
+            EnterRendererRecreationRequiredTerminal(
+                OpenXrRuntimeLossReason.RuntimeUnavailable,
+                $"unexpected system probe failure: {rendererRecreationReason}");
+            return;
+        }
+
         TearDownSessionResourcesOnOwningThread(true);
         ScheduleProbeRetry(delay);
         SetRuntimeState(OpenXrRuntimeState.RecreatePending);
@@ -426,7 +497,7 @@ public unsafe partial class OpenXRAPI
                 "OpenXR.SessionCreationDeferred.PendingTeardown",
                 TimeSpan.FromSeconds(1),
                 "[OpenXR] Deferring new session creation until the previous session and its swapchain retirement complete.");
-            if (TearDownSessionResourcesOnOwningThread(destroyInstance: true))
+            if (TearDownSessionResourcesOnOwningThread(destroyInstance: false))
             {
                 ScheduleProbeRetry(TimeSpan.FromMilliseconds(100));
                 SetRuntimeState(OpenXrRuntimeState.RecreatePending);
@@ -434,7 +505,7 @@ public unsafe partial class OpenXRAPI
             }
 
             ScheduleProbeRetry(TimeSpan.FromMilliseconds(100));
-            SetRuntimeState(OpenXrRuntimeState.RecreatePending);
+            SetRuntimeState(OpenXrRuntimeState.SessionStopping);
             return;
         }
 
@@ -445,9 +516,7 @@ public unsafe partial class OpenXRAPI
             Debug.LogWarning("OpenXR session init skipped because the active renderer device is lost.");
             RecordSmokeFailureOnce(
                 $"OpenXR session init skipped because the active renderer device is lost. Renderer={renderer.GetType().FullName}; Reason={renderer.DeviceLostReason ?? "<unknown>"}");
-            ScheduleProbeRetry(GetGraphicsDeviceFailureProbeDelay());
-            TearDownSessionResourcesOnOwningThread(true);
-            SetRuntimeState(OpenXrRuntimeState.RecreatePending);
+            RecoverFromSessionCreationFailure(GetGraphicsDeviceFailureProbeDelay());
             return;
         }
 
@@ -455,9 +524,7 @@ public unsafe partial class OpenXRAPI
         {
             Debug.LogWarning("OpenXR: no compatible graphics binding for the active renderer.");
             RecordSmokeFailureOnce($"OpenXR session init skipped because renderer '{renderer.GetType().FullName}' has no compatible graphics binding.");
-            ScheduleProbeRetry(GetGraphicsDeviceFailureProbeDelay());
-            TearDownSessionResourcesOnOwningThread(true);
-            SetRuntimeState(OpenXrRuntimeState.RecreatePending);
+            RecoverFromSessionCreationFailure(GetGraphicsDeviceFailureProbeDelay());
             return;
         }
 
@@ -472,9 +539,7 @@ public unsafe partial class OpenXRAPI
         {
             Debug.LogWarning("OpenXR: no compatible graphics binding for the active renderer.");
             RecordSmokeFailureOnce($"OpenXR session init skipped because graphics binding '{_graphicsBinding?.GetType().FullName ?? "<null>"}' is not compatible with renderer '{renderer.GetType().FullName}'.");
-            ScheduleProbeRetry(GetGraphicsDeviceFailureProbeDelay());
-            TearDownSessionResourcesOnOwningThread(true);
-            SetRuntimeState(OpenXrRuntimeState.RecreatePending);
+            RecoverFromSessionCreationFailure(GetGraphicsDeviceFailureProbeDelay());
             return;
         }
 
@@ -532,9 +597,8 @@ public unsafe partial class OpenXRAPI
                 {
                     Debug.LogWarning($"OpenXR OpenGL session init failed: {ex.Message}");
                     RecordSmokeFailureOnce($"OpenXR OpenGL session init failed: {ex.GetType().Name}: {ex.Message}");
-                    ScheduleProbeRetry(GetSessionFailureRetryDelay(ex));
-                    TearDownSessionResourcesOnOwningThread(true);
-                    SetRuntimeState(OpenXrRuntimeState.RecreatePending);
+                    if (!TryMarkRuntimeLossForSessionCreationException(ex, "OpenXR OpenGL session initialization"))
+                        RecoverFromSessionCreationFailure(GetSessionFailureRetryDelay(ex));
                 }
             };
 
@@ -569,10 +633,41 @@ public unsafe partial class OpenXRAPI
         {
             Debug.LogWarning($"OpenXR session init failed: {ex.Message}");
             RecordSmokeFailureOnce($"OpenXR session init failed: {ex.GetType().Name}: {ex.Message}");
-            ScheduleProbeRetry(GetSessionFailureRetryDelay(ex));
-            TearDownSessionResourcesOnOwningThread(true);
-            SetRuntimeState(OpenXrRuntimeState.RecreatePending);
+            if (!TryMarkRuntimeLossForSessionCreationException(ex, "OpenXR session initialization"))
+                RecoverFromSessionCreationFailure(GetSessionFailureRetryDelay(ex));
         }
+    }
+
+    private void RecoverFromSessionCreationFailure(TimeSpan retryDelay)
+    {
+        ScheduleProbeRetry(retryDelay);
+        SetRuntimeState(TearDownSessionResourcesOnOwningThread(destroyInstance: false)
+            ? OpenXrRuntimeState.RecreatePending
+            : OpenXrRuntimeState.SessionStopping);
+    }
+
+    private bool TryMarkRuntimeLossForSessionCreationException(Exception exception, string operation)
+    {
+        if (exception is not OpenXrGraphicsSessionException { Result: var result })
+            return false;
+
+        return TryMarkRuntimeLossForResult(result, operation);
+    }
+
+    private bool TryMarkRuntimeLossForResult(Result result, string operation)
+    {
+        OpenXrRuntimeLossReason reason = result switch
+        {
+            Result.ErrorSessionLost => OpenXrRuntimeLossReason.SessionLostError,
+            Result.ErrorInstanceLost => OpenXrRuntimeLossReason.InstanceLostError,
+            Result.ErrorRuntimeFailure or Result.ErrorRuntimeUnavailable => OpenXrRuntimeLossReason.RuntimeUnavailable,
+            _ => OpenXrRuntimeLossReason.None,
+        };
+        if (reason == OpenXrRuntimeLossReason.None)
+            return false;
+
+        MarkRuntimeLoss(reason, operation, result);
+        return true;
     }
 
     private bool TryGetOrCreateGraphicsBinding(
@@ -601,24 +696,38 @@ public unsafe partial class OpenXRAPI
 
         bool stopMonitoring = lossReason == OpenXrRuntimeLossReason.SessionExiting
             || lossReason == OpenXrRuntimeLossReason.ShutdownRequested;
+        bool sessionScopedLoss = IsSessionScopedLoss(lossReason) ||
+            lossReason == OpenXrRuntimeLossReason.SessionExiting;
         bool destroyInstance = stopMonitoring
             || lossReason == OpenXrRuntimeLossReason.InstanceLostError
             || lossReason == OpenXrRuntimeLossReason.RuntimeUnavailable;
 
-        bool teardownCompleted = TearDownSessionResourcesOnOwningThread(destroyInstance);
+        if (lossReason is (OpenXrRuntimeLossReason.InstanceLostError or OpenXrRuntimeLossReason.RuntimeUnavailable) &&
+            RequiresRendererRecreationForInstanceReplacement(out string rendererRecreationReason))
+        {
+            EnterRendererRecreationRequiredTerminal(lossReason, rendererRecreationReason);
+            return;
+        }
+
+        bool teardownCompleted = TearDownSessionResourcesOnOwningThread(
+            destroyInstance && !sessionScopedLoss);
         if (!stopMonitoring && teardownCompleted)
             TryEnsureOpenXrRuntimeService($"OpenXR runtime loss: {lossReason}");
 
         if (!teardownCompleted)
         {
+            _pendingStopRuntimeMonitoringAfterSessionTeardown |=
+                stopMonitoring && sessionScopedLoss;
             ScheduleProbeRetry(TimeSpan.FromMilliseconds(100));
-            SetRuntimeState(OpenXrRuntimeState.RecreatePending);
+            _runtimeLossReason = OpenXrRuntimeLossReason.None;
+            SetRuntimeState(OpenXrRuntimeState.SessionStopping);
             return;
         }
 
         if (stopMonitoring)
         {
             _runtimeMonitoringEnabled = false;
+            _pendingStopRuntimeMonitoringAfterSessionTeardown = false;
             SetRuntimeState(OpenXrRuntimeState.DesktopOnly);
             _runtimeLossReason = OpenXrRuntimeLossReason.None;
             return;
@@ -627,6 +736,55 @@ public unsafe partial class OpenXRAPI
         ScheduleProbeRetry();
         SetRuntimeState(destroyInstance ? OpenXrRuntimeState.RecreatePending : OpenXrRuntimeState.DesktopOnly);
         _runtimeLossReason = OpenXrRuntimeLossReason.None;
+    }
+
+    private static bool IsSessionScopedLoss(OpenXrRuntimeLossReason reason)
+        => reason is OpenXrRuntimeLossReason.SessionLossPending or OpenXrRuntimeLossReason.SessionLostError;
+
+    private bool IsRendererRecreationRequiredForCurrentRenderer()
+        => _rendererRecreationRequiredOwner is AbstractRenderer requiredOwner &&
+            ReferenceEquals(requiredOwner, Window?.Renderer);
+
+    private bool RequiresRendererRecreationForInstanceReplacement(out string reason)
+    {
+        if (!_instanceOwnedByRenderer)
+        {
+            reason = string.Empty;
+            return false;
+        }
+
+        if (Window?.Renderer is not AbstractRenderer renderer ||
+            _graphicsBinding is not IXrGraphicsBinding binding ||
+            !binding.IsCompatible(renderer))
+        {
+            reason = "the renderer-owned XrInstance has no compatible attached graphics binding";
+            return true;
+        }
+
+        bool enable2 = binding.UsesOpenXrVulkanEnable2Creation(renderer);
+        reason = enable2
+            ? "the renderer-owned XrInstance created or selected the live Vulkan instance/device through XR_KHR_vulkan_enable2"
+            : "the renderer-owned XrInstance selected the live renderer device";
+        return true;
+    }
+
+    private void EnterRendererRecreationRequiredTerminal(
+        OpenXrRuntimeLossReason lossReason,
+        string reason)
+    {
+        ResetOpenXrFrameStateForRuntimeLoss();
+        _sessionBegun = false;
+        StopOpenXrPacingThread();
+        ClearOpenXrCollectVisiblePrepThread();
+        _rendererRecreationRequiredOwner = Window?.Renderer;
+        _runtimeFailureReason =
+            $"OpenXR renderer recreation required after {lossReason}: {reason}. " +
+            "The retained OpenXR instance cannot be paired with a newly probed runtime while its Vulkan parent remains live.";
+        RecordSmokeFailureOnce(_runtimeFailureReason);
+        Debug.LogWarning($"[OpenXR] {_runtimeFailureReason}");
+        _runtimeLossReason = OpenXrRuntimeLossReason.None;
+        Interlocked.Exchange(ref _runtimeLossPending, 0);
+        SetRuntimeState(OpenXrRuntimeState.Unavailable);
     }
 
     private TimeSpan GetSessionFailureRetryDelay(Exception ex)
@@ -765,12 +923,7 @@ public unsafe partial class OpenXRAPI
 
     private Result CheckResult(Result result, string operation)
     {
-        if (result == Result.ErrorSessionLost)
-            MarkRuntimeLoss(OpenXrRuntimeLossReason.SessionLostError, operation, result);
-        else if (result == Result.ErrorInstanceLost)
-            MarkRuntimeLoss(OpenXrRuntimeLossReason.InstanceLostError, operation, result);
-        else if (result == Result.ErrorRuntimeFailure)
-            MarkRuntimeLoss(OpenXrRuntimeLossReason.RuntimeUnavailable, operation, result);
+        TryMarkRuntimeLossForResult(result, operation);
 
         if (result != Result.Success)
             RecordSmokeFailure($"{operation} returned {result}.");
@@ -778,9 +931,12 @@ public unsafe partial class OpenXRAPI
         return result;
     }
 
-    private bool TearDownSessionResourcesOnOwningThread(bool destroyInstance)
+    private bool TearDownSessionResourcesOnOwningThread(
+        bool destroyInstance,
+        bool allowRendererOwnedInstanceInvalidation = false)
     {
         _pendingDestroyInstance |= destroyInstance;
+        _pendingRendererOwnedInstanceInvalidation |= allowRendererOwnedInstanceInvalidation;
         if (Window?.Renderer is AbstractRenderer renderer &&
             !RuntimeEngine.IsRenderThread &&
             TryGetOrCreateGraphicsBinding(renderer, out IXrGraphicsBinding? binding) &&
@@ -789,21 +945,31 @@ public unsafe partial class OpenXRAPI
             return RuntimeRenderingHostServices.Scheduling.InvokeRenderThreadTask(
                 () =>
                 {
-                    return TearDownSessionResourcesWithCurrentContext(destroyInstance);
+                    return TearDownSessionResourcesWithCurrentContext(
+                        destroyInstance,
+                        allowRendererOwnedInstanceInvalidation);
                 },
                 $"OpenXR.{binding.BackendName}.TeardownSessionResources",
                 RenderThreadJobKind.RequiresGraphicsContext);
         }
 
-        return TearDownSessionResourcesWithCurrentContext(destroyInstance);
+        return TearDownSessionResourcesWithCurrentContext(
+            destroyInstance,
+            allowRendererOwnedInstanceInvalidation);
     }
 
-    private bool TearDownSessionResourcesWithCurrentContext(bool destroyInstance)
-        => TearDownSessionResources(destroyInstance);
+    private bool TearDownSessionResourcesWithCurrentContext(
+        bool destroyInstance,
+        bool allowRendererOwnedInstanceInvalidation)
+        => TearDownSessionResources(destroyInstance, allowRendererOwnedInstanceInvalidation);
 
-    private bool TearDownSessionResources(bool destroyInstance)
+    private bool TearDownSessionResources(bool destroyInstance, bool allowRendererOwnedInstanceInvalidation)
     {
+        if (_deviceLossAbandonment is not null)
+            return false;
+
         destroyInstance |= _pendingDestroyInstance;
+        allowRendererOwnedInstanceInvalidation |= _pendingRendererOwnedInstanceInvalidation;
         if (_deferredOpenGlInit is not null && Window is not null)
         {
             Window.RenderViewportsCallback -= _deferredOpenGlInit;
@@ -861,8 +1027,11 @@ public unsafe partial class OpenXRAPI
 
         if (destroyInstance && _instance.Handle != 0)
         {
+            if (_instanceOwnedByRenderer && !allowRendererOwnedInstanceInvalidation)
+                return false;
+
             DestroyValidationLayers();
-            if (!DestroyInstance())
+            if (!DestroyInstance(allowRendererOwnedInstanceInvalidation))
                 return false;
             _instance = default;
             _systemId = 0;
@@ -871,7 +1040,10 @@ public unsafe partial class OpenXRAPI
         }
 
         if (destroyInstance)
+        {
             _pendingDestroyInstance = false;
+            _pendingRendererOwnedInstanceInvalidation = false;
+        }
 
         RecordSmokeTeardownCompleted();
         return true;

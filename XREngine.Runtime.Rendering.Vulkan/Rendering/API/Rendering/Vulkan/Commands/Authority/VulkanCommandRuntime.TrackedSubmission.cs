@@ -3,6 +3,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Threading;
 using Silk.NET.Vulkan;
+using XREngine.Rendering.API.Rendering.OpenXR;
 using Semaphore = Silk.NET.Vulkan.Semaphore;
 
 namespace XREngine.Rendering.Vulkan;
@@ -307,6 +308,20 @@ internal sealed partial class VulkanCommandRuntime
                 return VulkanSubmissionReceipt.Rejected(Result.ErrorValidationFailedExt);
             }
 
+            if (acceptedSubmissionSink?.TryConsumeValidationFault(
+                    EOpenXrSubmissionValidationScenario.RejectBeforeNativeSubmit) == true)
+            {
+                ResolveSubmissionMarkers(ref submitInfo, false);
+                Synchronization.RecordQueueOperation(
+                    DeviceContext.State,
+                    "submit-rejected-validation",
+                    queue,
+                    Result.ErrorValidationFailedExt,
+                    diagnostics.SubmissionSerial,
+                    caller);
+                return VulkanSubmissionReceipt.Rejected(Result.ErrorValidationFailedExt);
+            }
+
             queueDispatchAttempted = true;
             using (VulkanCpuStageScope stage = new(FrameTelemetry, EVulkanCpuStage.QueueSubmit))
             {
@@ -408,6 +423,10 @@ internal sealed partial class VulkanCommandRuntime
                 RefreshSealedSubmissionImageVersions(
                     ref submitInfo,
                     usedSealedContract ? _sealedSubmissionBatchReceipt : null);
+                if (acceptedSubmissionSink?.TryConsumeValidationFault(
+                        EOpenXrSubmissionValidationScenario.FailAcceptedPublication) == true)
+                    throw new InvalidOperationException(
+                        "Injected OpenXR accepted-publication validation failure.");
                 RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanTrackedSubmissionTiming(
                     RuntimeEngine.Rendering.Stats.Vulkan.TrackedSubmissionTimingStage.ImagePublication,
                     Stopwatch.GetTimestamp() - imagePublicationStarted);

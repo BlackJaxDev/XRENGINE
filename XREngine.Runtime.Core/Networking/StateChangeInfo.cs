@@ -30,6 +30,11 @@ public enum EStateChangeType : byte
     ClockSync,
     ReplicationSnapshot,
     ReplicationDelta,
+    ReplicationBaselineChunk,
+    ReplicationDeltaBatch,
+    ReplicationTransferAck,
+    ReplicationResyncRequest,
+    ReplicationSyncComplete,
 }
 
 [MemoryPackable]

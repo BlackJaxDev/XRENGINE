@@ -1,4 +1,5 @@
 using Silk.NET.Vulkan;
+using XREngine.Rendering.Commands;
 
 namespace XREngine.Rendering.Vulkan;
 
@@ -7,6 +8,7 @@ internal readonly record struct OpenXrEyeSwapchainRenderRequest(
     Format Format,
     Extent2D Extent,
     int ResourcePlannerStateIndex,
+    BackendReadyFramePackageConsumptionAuthority PackageAuthority,
     uint OpenXrViewIndex,
     uint OpenXrImageIndex,
     ViewFoveationContext Foveation,

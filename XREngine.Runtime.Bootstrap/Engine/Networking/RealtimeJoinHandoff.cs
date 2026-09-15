@@ -32,7 +32,7 @@ public static class RealtimeJoinHandoff
         RealtimeEndpointDescriptor endpoint = payload.Endpoint
             ?? throw new InvalidOperationException("Realtime handoff payload is missing endpoint.");
 
-        if (endpoint.Transport != RealtimeTransportKind.NativeUdp)
+        if (endpoint.Transport is not (RealtimeTransportKind.NativeUdp or RealtimeTransportKind.NativeTls))
             throw new NotSupportedException($"Realtime transport '{endpoint.Transport}' is not supported by this runtime.");
 
         if (string.IsNullOrWhiteSpace(endpoint.Host))
@@ -52,6 +52,15 @@ public static class RealtimeJoinHandoff
         settings.MultiplayerSessionToken = string.IsNullOrWhiteSpace(payload.SessionToken)
             ? null
             : payload.SessionToken;
+        settings.MultiplayerAccountId = string.IsNullOrWhiteSpace(payload.AccountId) ? null : payload.AccountId.Trim();
+        settings.MultiplayerClientId = string.IsNullOrWhiteSpace(payload.ClientId) ? null : payload.ClientId.Trim();
+        settings.MultiplayerReservationId = payload.ReservationId;
+        settings.MultiplayerAdmissionSecret = string.IsNullOrWhiteSpace(payload.AdmissionSecret)
+            ? null
+            : payload.AdmissionSecret;
+        settings.MultiplayerWorkerGeneration = payload.WorkerGeneration;
+        settings.MultiplayerResumeRequested = payload.ResumeRequested;
+        settings.MultiplayerCredentialEpoch = payload.CredentialEpoch;
         settings.ExpectedMultiplayerWorldAsset = payload.WorldAsset;
     }
 
@@ -65,7 +74,7 @@ public static class RealtimeJoinHandoff
         if (settings.NetworkingType != ENetworkingType.Client)
             return;
 
-        if (settings.MultiplayerTransport != RealtimeTransportKind.NativeUdp)
+        if (settings.MultiplayerTransport is not (RealtimeTransportKind.NativeUdp or RealtimeTransportKind.NativeTls))
             throw new NotSupportedException($"Realtime transport '{settings.MultiplayerTransport}' is not supported by this runtime.");
 
         if (!IsProtocolCompatible(settings.ExpectedMultiplayerProtocolVersion, currentProtocolVersion))

@@ -15,7 +15,11 @@ namespace XREngine.Rendering.Vulkan;
 
 internal sealed partial class VulkanFrameLoop
 {
-    internal bool TryClearOpenXrSwapchainImage(Image image, Extent2D extent, ColorF4 color)
+    internal bool TryClearOpenXrSwapchainImage(
+        Image image,
+        Extent2D extent,
+        ColorF4 color,
+        in OpenXrImageSubmissionIdentity submissionIdentity)
     {
         if (image.Handle == 0 || extent.Width == 0 || extent.Height == 0)
             return false;
@@ -25,7 +29,8 @@ internal sealed partial class VulkanFrameLoop
             return _commandRuntime.ExecuteOpenXrDiagnosticClear(
                 image,
                 extent,
-                color);
+                color,
+                in submissionIdentity);
         }
         catch (Exception ex)
         {
@@ -318,6 +323,17 @@ internal sealed partial class VulkanFrameLoop
         out bool completionProven)
     {
         completionProven = false;
+        OpenXrVulkanSubmissionTracker tracker = _commandRuntime.OpenXrSubmissionTracker;
+        if (tracker.OwnsRegisteredFrameDataSlot(
+                frameDataImageIndex,
+                _commandRuntime.MappedFrameArena,
+                _commandRuntime.MappedFrameArena?.Generation ?? 0UL,
+                _commandRuntime.ResourceRuntime.FrameDataArena,
+                _commandRuntime.ResourceRuntime.FrameDataArena?.Generation ?? 0UL))
+        {
+            tracker.NotifyRegisteredFrameDataSlotPressure();
+            return false;
+        }
         ulong value;
         Silk.NET.Vulkan.Semaphore timelineSemaphore;
         using (VulkanDesktopFrameRetirementScope retirement =
