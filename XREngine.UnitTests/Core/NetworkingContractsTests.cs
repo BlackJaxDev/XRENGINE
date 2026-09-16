@@ -362,19 +362,21 @@ public sealed class NetworkingContractsTests
     {
         RealtimeReplicationCoordinator coordinator = new(TimeSpan.FromSeconds(0.25d));
 
-        coordinator.BufferInput(new PlayerInputSnapshot
+        coordinator.TryBufferInput(new PlayerInputSnapshot
         {
             ServerPlayerIndex = 2,
             InputSequence = 1,
             ClientSendTimestampUtc = 10.0d
-        }, serverTimeUtc: 10.0d).ShouldBe(1);
+        }, serverTimeUtc: 10.0d, lastProcessedSequence: 0, out int depth1).ShouldBeTrue();
+        depth1.ShouldBe(1);
 
-        coordinator.BufferInput(new PlayerInputSnapshot
+        coordinator.TryBufferInput(new PlayerInputSnapshot
         {
             ServerPlayerIndex = 2,
             InputSequence = 2,
             ClientSendTimestampUtc = 10.3d
-        }, serverTimeUtc: 10.3d).ShouldBe(1);
+        }, serverTimeUtc: 10.3d, lastProcessedSequence: 0, out int depth2).ShouldBeTrue();
+        depth2.ShouldBe(1);
 
         coordinator.LastBufferedInputSequence(2).ShouldBe((uint)2);
     }

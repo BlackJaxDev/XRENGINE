@@ -17,6 +17,7 @@ XRENGINE is a Windows-first C# XR engine and editor. It has not shipped v1, so t
 - Update docs when user-facing behavior, launch flags, env vars, tasks, setup, or workflows change.
 - Fix easy unrelated validation issues when nearby; report larger unrelated failures.
 - Do not hide explicitly requested GPU/accelerated paths behind silent CPU fallbacks; make failures visible with diagnostics unless fallback behavior is explicitly requested.
+- Never include local machine absolute paths or user profile names in comments, code, or documentation. Sanitize paths past the user profile root (e.g. `C:\Users\...`) to repository-relative paths or generic placeholders (e.g., `<repo-root>/...`, `<user-profile>/...`, `<desktop>/...`, `<downloads>/...`).
 - When asked to commit, use simple imperative commit messages.
 - If this file conflicts with an explicit user request, follow the user request and note the deviation.
 
@@ -518,6 +519,13 @@ Work docs are organized by document purpose first, subsystem second:
 - `docs/work/testing/<subsystem>/` - validation plans, reproducible test notes, and hardware/software test matrices.
 
 Do not create top-level subsystem buckets such as `docs/work/rendering/` for investigation or progress notes. For rendering debug loops, use `docs/work/investigations/rendering/`; for rendering implementation status, use `docs/work/progress/rendering/`.
+
+### Path Privacy And Sanitization
+
+Never include local machine absolute paths or user profile names in comments, code docstrings, or documentation:
+- Do not include any part of local machine absolute paths past the user profile directory (e.g. `C:\Users\...`, `/Users/...`, `/home/...`).
+- Never include the user profile name or username in general.
+- In tracked documentation, markdown links, and source comments, use repository-relative paths (e.g., `Build/...`, `docs/...`, or relative markdown links such as `../../XREngine.Editor/...`), or generic placeholders (e.g., `<repo-root>/...`, `<user-profile>/...`, `<desktop>/...`, `<downloads>/...`, `%LOCALAPPDATA%/...`).
 
 ## PR Expectations
 

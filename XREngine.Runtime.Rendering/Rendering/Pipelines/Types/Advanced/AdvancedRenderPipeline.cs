@@ -15,6 +15,7 @@ using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.RenderGraph;
+using XREngine.Rendering.PostProcessing;
 using XREngine.Rendering.Resources;
 using XREngine.Rendering.Vulkan;
 using XREngine.Scene;
@@ -1569,21 +1570,21 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
         && !UseOpenXrVulkanDesktopStartupSafePath
         && (RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline as AdvancedRenderPipeline)?.EnableDeferredMsaa == true;
 
-    private const string TonemappingStageKey = "tonemapping";
-    private const string ColorGradingStageKey = "colorGrading";
-    private const string VignetteStageKey = "vignette";
-    private const string BloomStageKey = "bloom";
-    private const string AmbientOcclusionStageKey = "ambientOcclusion";
+    private const string TonemappingStageKey = CommonPostProcessStages.StageKeys.Tonemapping;
+    private const string ColorGradingStageKey = CommonPostProcessStages.StageKeys.ColorGrading;
+    private const string VignetteStageKey = CommonPostProcessStages.StageKeys.Vignette;
+    private const string BloomStageKey = CommonPostProcessStages.StageKeys.Bloom;
+    private const string AmbientOcclusionStageKey = CommonPostProcessStages.StageKeys.AmbientOcclusion;
     private const int AmbientOcclusionDisabledMode = -1;
-    private const string TemporalAntiAliasingStageKey = "temporalAntiAliasing";
-    private const string MotionBlurStageKey = "motionBlur";
-    private const string DepthOfFieldStageKey = "depthOfField";
-    private const string LensDistortionStageKey = "lensDistortion";
-    private const string ChromaticAberrationStageKey = "chromaticAberration";
-    private const string FogStageKey = "fog";
-    private const string AtmosphericScatteringStageKey = "atmosphericScattering";
-    private const string VolumetricFogStageKey = "volumetricFog";
-    private const string GpuBvhDebugStageKey = "gpuBvhDebug";
+    private const string TemporalAntiAliasingStageKey = CommonPostProcessStages.StageKeys.TemporalAntiAliasing;
+    private const string MotionBlurStageKey = CommonPostProcessStages.StageKeys.MotionBlur;
+    private const string DepthOfFieldStageKey = CommonPostProcessStages.StageKeys.DepthOfField;
+    private const string LensDistortionStageKey = CommonPostProcessStages.StageKeys.LensDistortion;
+    private const string ChromaticAberrationStageKey = CommonPostProcessStages.StageKeys.ChromaticAberration;
+    private const string FogStageKey = CommonPostProcessStages.StageKeys.Fog;
+    private const string AtmosphericScatteringStageKey = CommonPostProcessStages.StageKeys.AtmosphericScattering;
+    private const string VolumetricFogStageKey = CommonPostProcessStages.StageKeys.VolumetricFog;
+    private const string GpuBvhDebugStageKey = CommonPostProcessStages.StageKeys.GpuBvhDebug;
 
     public AdvancedRenderPipeline() : this(false, capabilityResult: null, offscreenProfile: null)
     {

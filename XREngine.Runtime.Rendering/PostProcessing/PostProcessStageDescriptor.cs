@@ -16,6 +16,19 @@ public sealed class PostProcessStageDescriptor(
     public Type? BackingType { get; } = backingType;
     public Func<object>? BackingFactory { get; } = backingFactory;
 
+    /// <summary>
+    /// Optional stage-specific custom drawer that renders specialized UI extensions or parameter controls.
+    /// </summary>
+    public IPostProcessStageCustomDrawer? CustomDrawer { get; init; }
+
+    /// <summary>
+    /// Optional predicate evaluated per camera to determine whether the stage is disabled (e.g. Tonemapping disabled during HDR output).
+    /// </summary>
+    public Func<XRCamera, (bool Disabled, string? Reason)>? StateEvaluator { get; init; }
+
+    public (bool Disabled, string? Reason) EvaluateState(XRCamera camera)
+        => StateEvaluator?.Invoke(camera) ?? (false, null);
+
     public bool TryCreateBacking(out object? backing)
     {
         if (BackingFactory is not null)

@@ -158,6 +158,46 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
     public RenderPipelinePostProcessSchema PostProcessSchema => _postProcessSchema;
 
     /// <summary>
+    /// Optional editor UI provider allowing the pipeline to draw custom header and footer controls
+    /// in the Camera Component post-processing inspector.
+    /// </summary>
+    [Browsable(false)]
+    [YamlIgnore]
+    public virtual IRenderPipelinePostProcessUIProvider? PostProcessUIProvider => null;
+
+    private static readonly string[] DefaultPreferredPreviewTextureNames =
+    [
+        "FinalPostProcessOutputTexture",
+        "PostProcessOutputTexture",
+        "HDRSceneTex",
+        "LightingTexture"
+    ];
+
+    private static readonly string[] DefaultPreferredPreviewFrameBufferNames =
+    [
+        "FinalPostProcessOutputFBO",
+        "PostProcessOutputFBO",
+        "ForwardPassFBO",
+        "LightCombineFBO"
+    ];
+
+    /// <summary>
+    /// Returns the preferred texture names to inspect in the Camera Preview tab,
+    /// in order of priority (e.g. final post-processed output, then HDR scene, then diffuse).
+    /// </summary>
+    [Browsable(false)]
+    [YamlIgnore]
+    public virtual IReadOnlyList<string> PreferredPreviewTextureNames => DefaultPreferredPreviewTextureNames;
+
+    /// <summary>
+    /// Returns the preferred framebuffer names to inspect in the Camera Preview tab,
+    /// in order of priority.
+    /// </summary>
+    [Browsable(false)]
+    [YamlIgnore]
+    public virtual IReadOnlyList<string> PreferredPreviewFrameBufferNames => DefaultPreferredPreviewFrameBufferNames;
+
+    /// <summary>
     /// Human readable identifier for debug output.
     /// Derived pipelines can override this to expose a friendlier label.
     /// </summary>
