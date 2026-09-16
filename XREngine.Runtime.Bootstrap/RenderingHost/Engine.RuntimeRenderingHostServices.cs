@@ -403,6 +403,16 @@ internal sealed class EngineRuntimeRenderingHostServices :
         => Engine.WorkScheduler ?? throw new InvalidOperationException(
             "The engine execution scheduler has not been installed. Initialize the engine before submitting runtime work.");
 
+    public void SubscribeWorldSwapBuffers(Action worldSwap)
+    {
+        Engine.Time.Timer.WorldSwapBuffers += worldSwap;
+    }
+
+    public void UnsubscribeWorldSwapBuffers(Action worldSwap)
+    {
+        Engine.Time.Timer.WorldSwapBuffers -= worldSwap;
+    }
+
     public void SubscribeViewportSwapBuffers(Action swapBuffers)
     {
         Engine.Time.Timer.SwapBuffers += swapBuffers;

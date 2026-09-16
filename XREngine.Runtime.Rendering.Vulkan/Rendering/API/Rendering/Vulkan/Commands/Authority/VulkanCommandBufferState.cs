@@ -127,6 +127,16 @@ internal sealed class VulkanCommandBufferState
             ImageIndices[key] = resolvedImageIndex;
     }
 
+    internal int ResolveImageIndex(CommandBuffer commandBuffer)
+    {
+        if (commandBuffer.Handle == 0)
+            return -1;
+
+        ulong key = unchecked((ulong)commandBuffer.Handle);
+        lock (BindStateGate)
+            return ImageIndices.TryGetValue(key, out int imageIndex) ? imageIndex : -1;
+    }
+
     internal void RemoveBindState(CommandBuffer commandBuffer)
     {
         if (commandBuffer.Handle == 0)

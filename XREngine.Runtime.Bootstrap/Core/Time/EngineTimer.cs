@@ -147,6 +147,11 @@ namespace XREngine.Timers
         /// </summary>
         public XREvent? RenderFrame;
         /// <summary>
+        /// Subscribe to this event to execute world and scene level buffer swapping (e.g. GPUScene.SwapCommandBuffers)
+        /// prior to viewport-level command buffer swapping.
+        /// </summary>
+        public XREvent? WorldSwapBuffers;
+        /// <summary>
         /// Subscribe to this event to swap update and render buffers, on the render thread.
         /// </summary>
         public XREvent? SwapBuffers;
@@ -978,6 +983,7 @@ namespace XREngine.Timers
             {
                 SwapFrameId++;
             }
+            WorldSwapBuffers?.Invoke();
             SwapBuffers?.Invoke();
         }
 

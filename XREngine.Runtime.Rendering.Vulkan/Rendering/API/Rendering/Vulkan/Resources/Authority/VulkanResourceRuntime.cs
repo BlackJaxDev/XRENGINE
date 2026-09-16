@@ -334,6 +334,38 @@ internal sealed partial class VulkanResourceRuntime
         => Lifetime.Tracker.GetPublishedGeneration(
             new VulkanResourceLifetimeKey(type, handle));
 
+    internal ulong ResolveImageViewBackingImageHandle(ImageView imageView)
+    {
+        if (imageView.Handle == 0)
+            return 0;
+
+        lock (Lifetime.Tracker.SyncRoot)
+        {
+            return Lifetime.Tracker.ImageViewBackingImages.TryGetValue(imageView.Handle, out ulong backingImage)
+                ? backingImage
+                : 0;
+        }
+    }
+
+    internal string? ResolveImageViewOwner(ImageView imageView)
+        => imageView.Handle != 0 && Lifetime.ImageViews.LiveHandles.TryGetValue(imageView.Handle, out string? owner)
+            ? owner
+            : null;
+
+    internal string? ResolveImageOwner(ulong imageHandle)
+    {
+        if (imageHandle == 0)
+            return null;
+        lock (Lifetime.Tracker.SyncRoot)
+        {
+            return Lifetime.Tracker.ResourceLifetimes.TryGetValue(
+                new VulkanResourceLifetimeKey(ObjectType.Image, imageHandle),
+                out VulkanResourceLifetimeRecord? record)
+                ? record.Owner
+                : null;
+        }
+    }
+
     /// <summary>
     /// Changes only when native buffer publication identity changes, never for
     /// ordinary buffer uploads or unrelated image/planner revisions.

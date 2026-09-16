@@ -1212,7 +1212,8 @@ internal unsafe partial class VkMeshRenderer
 			imageInfo,
 			resourceSignature,
 			writeMatched,
-			writeSucceeded);
+			writeSucceeded,
+			_program?.Data?.Name ?? _program?.ToString());
 	}
 
 	/// <summary>Resolves one or more buffer descriptors for a binding, duplicating for array bindings.</summary>

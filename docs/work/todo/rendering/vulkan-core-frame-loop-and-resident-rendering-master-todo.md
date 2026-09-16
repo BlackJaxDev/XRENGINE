@@ -54,6 +54,7 @@ The renderer will not be rewritten; rather, the resident data-oriented architect
 10. **Bounded Graph, Streaming, & Tail Work:** Forward+ single normal/depth prepass gating; budgeted cascade updates; asynchronous chunked texture streaming; tombstoned swapchain lifecycle (zero normal `vkDeviceWaitIdle`).
 11. **Asynchronous OpenXR Decoupling:** `OpenXrVulkanSubmissionTracker` eliminating the 70–100 ms eye fence-wait with timeline semaphore / fence-ring completion authorities.
 12. **Advanced Render Pipeline (ARP 06–10):** GPU material classification, native opaque shading, clustered lighting, visibility-driven transparency/post, and complete legacy retirement.
+13. **Decoupled Editor UI Cadence & Overlay Replay:** Support an independent Editor UI update/render cadence (`EditorUiRateHz`: `auto` / match render, 30 Hz, 60 Hz, on-dirty/adaptive). When the editor UI is clean or operating at a lower frequency than 3D scene rendering, replay cached secondary command buffers or blit the latest scene swapchain without re-running full Dear ImGui layout, widget generation, text rasterization, and vertex/index batch generation on the render critical path.
 
 ---
 
@@ -65,6 +66,16 @@ The renderer will not be rewritten; rather, the resident data-oriented architect
 | **120 Hz** (Level B - Promotion Gate) | 8.333 ms | 7.1–7.5 ms |
 | **144 Hz** (Level C - Stretch Gate) | 6.944 ms | 5.9–6.25 ms |
 | **165 Hz / 200 Hz** | 6.061 ms / 5.000 ms | Characterization / Long-term target |
+
+### Subsystem Latency & Stage Budgets
+
+| Subsystem / Stage | Budget (p95) | Constraints & Behavior |
+|---|---:|---|
+| **Inter-Thread Pipelining Gate** (`CollectWaitForRender` / `RenderWaitForCollect`) | $\le 0.50$ ms | Visibility culling of frame $N+1$ must overlap with render execution of frame $N$. Steady-state uncapped or high-refresh rendering must not serialize into lockstep 13–17 ms thread stalls when scene CPU work is trivial. |
+| **Native Command Encoding** (`PrimaryCommandEncoding`) | $\le 1.00$ ms (desktop)<br>$\le 1.50$ ms (laptop) | Measured on Release dense Sponza. Steady command encoding performs zero global command-buffer bind-state discovery, zero shared locks, and zero live `RecordDraw` calls. |
+| **Sealed Submission Fast Path** (`SealedSubmissionContract`) | $\le 0.25$ ms | Clean submissions validated once and dispatched via compact generation checks. |
+| **Editor UI Overhead** (`RecordImGuiOverlay` + layout) | $\le 1.50$ ms (active)<br>$\le 0.10$ ms (cached) | When UI is dirty or updating at rate, layout + record must not exceed 1.5 ms. When UI is clean or decoupled, secondary command buffer replay must be $\le 0.10$ ms. |
+| **Slot Wait** (uncapped GPU headroom) | $\approx 0.00$ ms | Producer/timeline owned; zero recurring slot stalls when GPU headroom exists. |
 
 ### Explicit Non-Fixes and Anti-Patterns
 
@@ -99,6 +110,20 @@ integrated revision. A September 4 352-frame Monado SPS result contained VUIDs
 and is not clean acceptance. Advanced shader compilation is now passing;
 calling the native stages “unexecuted” or the 128-slot classifier “32-slot” is
 obsolete. The active checklist records these distinctions explicitly.
+
+### Immediate Critical-Path Execution Priorities (Empty/Light Scene High-Refresh Unblocking)
+
+Diagnosing the 60–70 Hz frame-rate ceiling on empty/light scenes (Ryzen 9 7950X3D / RTX 3090, uncapped presentation, skybox + grid floor only) demonstrated that the engine was CPU-bound at 14–16 ms per frame due to thread serialization, heavy unsealed command recording, and ImGui observer overhead, compounded by telemetry unit misinterpretation (misreading 16 ms CPU time as 16 Hz). The immediate critical path to unblock 120+ Hz execution consists of three prioritized steps:
+
+1. **Step 1 — Telemetry Metric Clarity & Profiler UI Decoupling:**
+   - Add explicit units to all profiler and HUD telemetry columns (`Rate (Hz)`, `CPU (ms)`, `GPU (ms)`).
+   - Implement `EditorUiRateHz` (`auto`, `30`, `60`, `on-dirty`) to throttle Dear ImGui and profiler panel execution or render it on a dirty-checked cadence, eliminating 3–8+ ms of render-thread observer overhead and establishing a clean uninstrumented baseline.
+2. **Step 2 — Frame Loop Inter-Thread Decoupling:**
+   - Decouple the synchronous lockstep gate between `CollectVisibleThread` and `RenderThread` in `EngineTimer.cs` (`_renderDone`, `_visibilityGenerationGate`).
+   - Allow frame $N+1$ visibility collection to execute concurrently with frame $N$ command encoding and submission, reducing `CollectWaitForRender` / `RenderWaitForCollect` from 13.3–17.5 ms down to $\le 0.5\text{ ms}$.
+3. **Step 3 — Native Recording & Resident Lane Promotion:**
+   - Realize `F3-01` / `F3-03` (CPU-indirect MDI over resident bins) and `RC-V08` / `RC-V09` (sealed descriptor sets and bulk recording manifests).
+   - Collapse the 7.2–8.8 ms primary command buffer recording time to $< 1.0\text{ ms}$ p95.
 
 <a id="foundation-carryovers"></a>
 ### Foundation carryovers from Phases 0–5
@@ -613,9 +638,10 @@ worker policy that wins CPU direct also wins a stable GPU-driven frame.
 | `AllowCpuOversubscription` | `true`, `false` | `false` | Rejects configurations exceeding processor count when false. |
 | `RenderWorkerQos` | `OsDefault`, `High` | `OsDefault` | Windows QoS policy for persistent background render workers; `High` remains diagnostic until measured, with no hard affinity and no production `Eco`. |
 | `ForceMeshSubmissionStrategy` | `<auto>` (nullable), `CpuDirect`, `GpuIndirectZeroReadback`, `GpuIndirectInstrumented`, `GpuMeshletZeroReadback`, `GpuMeshletInstrumented` | `<auto>` | Explicit strategy override through the existing resolver; `Auto` is not an `EMeshSubmissionStrategy` value. |
+| `EditorUiRateHz` | `auto` (match render), `30`, `60`, `on-dirty` | `auto` | Decouples Dear ImGui UI execution frequency from the 3D scene rendering cadence to avoid clamping high-refresh scene rendering to UI layout and overlay recording overhead. |
 | `GpuDiagnosticReadbackCapacity` | bounded startup-only integer | existing generalized ring capacity | Preallocates instrumented slots; saturation drops diagnostics and never changes rendering. |
 
-`RenderWorkerThreadCount`, caps, general-worker settings, oversubscription, and worker QoS are renderer-neutral `RenderExecutionSettings` and are startup/restart scoped. Presentation and strategy settings remain in their existing owners rather than being duplicated into that subtree. Expose effective settings through engine/project/user configuration; environment variables are launch-only diagnostic overrides. Startup must report requested/effective values, their source, processor/reservation budget, lane/thread IDs and QoS, queue capacities, and restart requirements; invalid values and oversubscription are never silently ignored. The existing strategy resolver remains the sole strategy authority—do not add scheduler-specific strategy toggles.
+`RenderWorkerThreadCount`, caps, general-worker settings, oversubscription, and worker QoS are renderer-neutral `RenderExecutionSettings` and are startup/restart scoped. Presentation, editor UI rate, and strategy settings remain in their existing owners rather than being duplicated into that subtree. Expose effective settings through engine/project/user configuration; environment variables are launch-only diagnostic overrides. Startup must report requested/effective values, their source, processor/reservation budget, lane/thread IDs and QoS, queue capacities, and restart requirements; invalid values and oversubscription are never silently ignored. The existing strategy resolver remains the sole strategy authority—do not add scheduler-specific strategy toggles.
 
 ### 4.2 Canonical Invalidation Matrix
 
@@ -645,6 +671,7 @@ worker policy that wins CPU direct also wins a stable GPU-driven frame.
 
 Aggregate metrics must be allocation-free and low-contention in performance builds. Detailed capture uses prewarmed bounded per-thread rings and stable cross-thread IDs; strings, export, and aggregation run off measured threads. Measure clean vs. aggregate vs. targeted-detailed observer overhead against the accepted baseline.
 
+* **Telemetry Presentation & Unit Contract:** All profiler panels, HUDs, and telemetry views must unambiguously present units on all metric values and table columns (e.g. `Rate (Hz)`, `CPU (ms)`, `GPU (ms)`, memory in bytes/MB, latencies in ms or $\mu\text{s}$). Telemetry column headers and summary labels must never omit units, preventing millisecond execution times (e.g. 16 ms CPU time) from being misread as frequencies (16 Hz).
 * **Frame Identity & Outcome:** engine/render/source/accepted frame IDs, accepted epoch, output/view/pass identity, frame slot, resource/output generations, span/parent/cross-thread link, thread/lane, work class, present policy/deadline/fallback, submit serial, presented-source ID, typed terminal stage/outcome, and first fault.
 * **Foreground Plan & Failure:** `AcceptedFrameId`, `AcceptedEpoch`, `OutputGeneration`, `PresentWorkClass`, `ReadinessPolicy`, `FreshSubmitSerial`, `FrameOperationTransactionId`, authored/transferred/settled/discarded operation counts, queued-across-retry count, retry/supersession disposition, stale-ticket disposition, one-shot-consumer settlement, `FramePlanCapacityLane`, `FramePlanCapacityConfigured`, `FramePlanCapacityRequired`, `FramePlanCapacityAccepted`, `FramePlanCapacityRejected`, `ForegroundReserveRequested`, `ForegroundReserveDistinctSlices`, `TerminalStage`, `TerminalFailureKind`.
 * **Device & Context:** device state/loss count, device-fault payload, TDR risk, memory budget, last successful submission breadcrumbs, context/display/internal extent/registry/resource-generation mismatches, and structured frame-rejection reason.
@@ -652,9 +679,9 @@ Aggregate metrics must be allocation-free and low-contention in performance buil
 * **Frame-Slot & Completion:** `FrameSlotWaitMs`, `FrameSlotWaitQueue`, `FrameSlotWaitTargetValue`, `FrameSlotWaitCompletedValue`, `FrameSlotWaitAgeFrames`, `SwapchainImageWaitMs`, `CommandPoolReuseWaitMs`, `DescriptorArenaReuseWaitMs`.
 * **Residency & Templates:** `ResidentDirectHits`, `ResidentColdMisses`, `ResidentReplacements`, `ResidentLocalInvalidations`, `ResidentBroadInvalidations`, `ResidentBroadInvalidationEntries`, `ResidentInvalidationReason`, `CanonicalDirtyOwnerCount`, `CanonicalDirtyRangeBytes`, `LegacyCompatibilityVisits`, canonical counts/capacities/duplicate bytes, topology/data deltas, template creates/rebuilds/generation mismatches/hash collisions/lease failures/evictions/retirements, and compatibility draws by reason.
 * **Submission Gateway:** `SubmitImageContractMs`, `SubmitQueueOwnershipMs`, `SubmitLifetimePinsMs`, `SubmitStateGateWaitMs`, `SubmitQueueGateWaitMs`, `NativeQueueSubmitMs`, `SubmitLifetimePublishMs`, `SubmitImagePublishMs`, `SubmitDiagnosticPublishMs`, `SealedSubmissionHits`, `SealedSubmissionFallbacks`, `SealedSubmissionFallbackReason`.
-* **Scheduler & Memory:** requested/resolved counts, active lanes/peak concurrency/thread IDs/QoS, built/queued/stolen/inline/lane-executed/cancelled items, `WorkerWakeCount`, empty wakes, queue-full fallback, faults/timeouts/quarantine, `WorkerQueueAgeMs`, `WorkerExecuteMs`, overlap/imbalance, `WorkerLockWaitMs`, merge cost, high-water marks, managed allocation by build/dispatch/execute/merge stage, `RenderThreadManagedAllocationBytes`, `GcPauseMs`, `PinnedObjectCount`, `OversubscriptionRejectedCount`.
+* **Scheduler & Memory:** requested/resolved counts, active lanes/peak concurrency/thread IDs/QoS, built/queued/stolen/inline/lane-executed/cancelled items, `WorkerWakeCount`, empty wakes, queue-full fallback, faults/timeouts/quarantine, `WorkerQueueAgeMs`, `WorkerExecuteMs`, overlap/imbalance, `WorkerLockWaitMs`, merge cost, high-water marks, managed allocation by build/dispatch/execute/merge stage, `RenderThreadManagedAllocationBytes`, `GcPauseMs`, `PinnedObjectCount`, `OversubscriptionRejectedCount`, `CollectWaitForRenderMs`, `RenderWaitForCollectMs`.
 * **Uploads & Streaming:** `UploadQueuedJobs`, `UploadOldestJobAgeMs`, `UploadStagingBytes`, `UploadStagingOverflowBytes`, `UploadCpuPrepMs`, `UploadStagingCopyMs`, `UploadVulkanAllocationMs`, `UploadTransferRecordMs`, `UploadTransferGpuMs`, `DescriptorPublicationMs`, `DescriptorPublicationItems`, `RetirementBacklogByClass`, `RetirementOldestAgeFrames`, deferred count, `RetirementDestroyedByClass`, `RetirementUncappedDrainCount`.
-* **Native Command Encoding:** `PrimaryFrameDataManifestMs`, `PrimaryPrewarmMs`, `PrimaryEncodingSetupMs`, `PrimaryOperationLoopMs`, `PrimaryFinalizationMs`, `PrimaryEndCommandBufferMs`, secondary wall/summed-worker/wait/merge/end-publication time, `LiveMeshRecordDrawCalls`, `PreparedMeshEncodeCalls`, `DependencyTrackAttempts`, `UniqueRecordingDependencies`, dependency-attempt ratio, command-bind-state lookups/locks, tracking-batch locks, descriptor-heap bind attempts/native binds/skips, manifest entries, sampled-full-validation results, and native Vulkan command counts by type.
+* **Native Command Encoding:** `PrimaryFrameDataManifestMs`, `PrimaryPrewarmMs`, `PrimaryEncodingSetupMs`, `PrimaryOperationLoopMs`, `PrimaryFinalizationMs`, `PrimaryEndCommandBufferMs`, `RecordImGuiOverlayMs`, `EditorUiTickMs`, secondary wall/summed-worker/wait/merge/end-publication time, `LiveMeshRecordDrawCalls`, `PreparedMeshEncodeCalls`, `DependencyTrackAttempts`, `UniqueRecordingDependencies`, dependency-attempt ratio, command-bind-state lookups/locks, tracking-batch locks, descriptor-heap bind attempts/native binds/skips, manifest entries, sampled-full-validation results, and native Vulkan command counts by type.
 * **Bins, Recording, Render Graph, & GPU:** bin/dirty-bin/membership/manifest/resource counts; indirect buffer bytes/counts and MDI calls; primary/secondary records/reuses/resets/allocations; pipeline/descriptor/vertex/index/draw/submit API counts; `RenderGraphCacheHit`, `RenderGraphRecompiledPassCount`, `BarrierCount`, `BroadBarrierCount`, `OwnershipTransferCount`, `FullResolutionCopyBytes`, occlusion candidate/occluder/test/reject/age costs, `GpuPassP50P95P99`, `GpuFrameP50P95P99`.
 * **Strategy & Diagnostics:** requested/resolved `MeshSubmissionStrategy`, capability/downgrade reason, per-strategy pass/draw/task counts, `GpuReadbackBytes`, `GpuReadbackBufferMaps`, query retrievals, `GpuReadbackWaits`, CPU fallback attempts, `DiagnosticRequestsAccepted`, copy bytes, `DiagnosticRingOccupancy`, completion latency/source generation, `DiagnosticDecodedResults`, generation-mismatch discards, `DiagnosticRingFullDrops`, decoder faults, diagnostic-only records/submits, and dormant overhead.
 * **OpenXR Subsystem:** `OpenXrEyeSubmitMs`, eye completion-wait time, `OpenXrEyeInFlightCount`, tracker capacity/high-water, `OpenXrEyeOldestAgeFrames`, swapchain-image reuse age/release state, `OpenXrEyeForcedWaitMs`, `OpenXrEyeForcedWaitCount`, `OpenXrSwapchainReleaseDeferredCount`, `OpenXrRetiredGenerationCount`, `OpenXrMissedFrameCount`, `OpenXrLateFrameCount`, `OpenXrReprojectedFrameCount`.
@@ -666,7 +693,7 @@ Aggregate metrics must be allocation-free and low-contention in performance buil
 This master program is complete only when:
 
 1. The desktop Vulkan renderer sustains **120 Hz (p99 $< 8.333$ ms, engineering target $\le 7.5$ ms)** across all required desktop performance-promotion scenarios on the target systems, while the separate correctness/lifetime matrix passes.
-2. Actual presentation cadence matches the reported CPU/GPU timing story without hidden burst pacing.
+2. Actual presentation cadence matches the reported CPU/GPU timing story without hidden burst pacing or unpipelined inter-thread lockstep stalls (`CollectWaitForRender` $\le 0.5\text{ ms}$ p95).
 3. Stable frames perform zero managed hot-path allocations, zero live per-draw material/descriptor reconstruction, and zero unnecessary scene-artifact re-recording; any required native recording is coarse and scales with passes, bins, dirty ranges, and ordered exceptions rather than visible objects.
 4. Every authored frame operation settles inside one explicit frame transaction; retries cannot accumulate work into a later accepted plan, transient generation races do not latch renderer-terminal state, and one-shot consumers settle safely when no submitted generation exists.
 5. Local mutations invalidate only exact reverse dependencies without whole-table resident clears.
@@ -678,3 +705,4 @@ This master program is complete only when:
 11. Standard and Synchronization Validation report zero errors/VUIDs, with no unresolved renderer warning or lifetime ambiguity accepted into closeout.
 12. `GPUScene` mirrors, `VulkanPreparedMeshOperationCohort`, obsolete worker arrays, live object-oriented Vulkan CPU-direct encoding, per-command global recording discovery, `DefaultRenderPipeline2`, and the original default pipeline are deleted. A temporary opt-in `LegacyDefaultRenderPipeline` may unblock production cutover for one named consumer, but it keeps this master active until its dated deletion gate is complete.
 13. The former Phase 7R review findings, now owned by the active Phase 6/7 checklist, are closed with executable capability, ownership, shader, and runtime evidence; production readiness and phase completion status reflect those results.
+14. Editor UI execution and Dear ImGui overlay recording are decoupled from scene refresh (`EditorUiRateHz`), ensuring UI traversal and profiler diagnostics cannot clamp high-refresh 3D scene rendering below the promotion targets.

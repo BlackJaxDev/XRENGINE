@@ -161,6 +161,33 @@ internal sealed class VulkanPresentationSourcePublication
         CommandBuffer commandArtifact,
         ulong commandArtifactGeneration,
         out VulkanPresentationSourceTuple source)
+        => TryBindDescriptor(
+            expectedLogicalEpoch,
+            in imageInfo,
+            descriptorSet,
+            descriptorSetGeneration,
+            descriptorSlot,
+            descriptorPublicationGeneration,
+            commandArtifact,
+            commandArtifactGeneration,
+            0,
+            0,
+            0,
+            out source);
+
+    internal bool TryBindDescriptor(
+        ulong expectedLogicalEpoch,
+        in DescriptorImageInfo imageInfo,
+        DescriptorSet descriptorSet,
+        ulong descriptorSetGeneration,
+        int descriptorSlot,
+        ulong descriptorPublicationGeneration,
+        CommandBuffer commandArtifact,
+        ulong commandArtifactGeneration,
+        ulong imageViewGeneration,
+        ulong samplerGeneration,
+        ulong backingImageHandle,
+        out VulkanPresentationSourceTuple source)
     {
         lock (_sync)
         {
@@ -169,29 +196,33 @@ internal sealed class VulkanPresentationSourcePublication
             VulkanPresentationSourceTuple logicalSource = bindsPending
                 ? _pending
                 : _current;
+
+            bool viewMatches = logicalSource.ImageView.Handle == imageInfo.ImageView.Handle ||
+                (backingImageHandle != 0 && logicalSource.Image.Handle == backingImageHandle);
+            bool samplerMatches = logicalSource.Sampler.Handle == imageInfo.Sampler.Handle ||
+                imageInfo.Sampler.Handle != 0;
+
             if (descriptorSlot < 0 ||
                 logicalSource.LogicalEpoch != expectedLogicalEpoch ||
-                logicalSource.ImageView.Handle != imageInfo.ImageView.Handle ||
-                logicalSource.Sampler.Handle != imageInfo.Sampler.Handle)
+                !viewMatches ||
+                !samplerMatches)
             {
-                if (XREnvironment.IsEnabled(
-                        XREngineEnvironmentVariables.VulkanRecordingDiag))
-                {
-                    Debug.VulkanEvery(
-                        $"Vulkan.PresentationSource.BindRejected.{GetHashCode()}",
-                        TimeSpan.FromSeconds(1),
-                        "[Vulkan] Presentation descriptor binding rejected. " +
-                        "expectedEpoch={0} currentEpoch={1} pending={2} slot={3} " +
-                        "view=0x{4:X}->0x{5:X} sampler=0x{6:X}->0x{7:X}.",
-                        expectedLogicalEpoch,
-                        logicalSource.LogicalEpoch,
-                        bindsPending,
-                        descriptorSlot,
-                        logicalSource.ImageView.Handle,
-                        imageInfo.ImageView.Handle,
-                        logicalSource.Sampler.Handle,
-                        imageInfo.Sampler.Handle);
-                }
+                Debug.VulkanWarningEvery(
+                    $"Vulkan.PresentationSource.BindRejected.{GetHashCode()}",
+                    TimeSpan.FromSeconds(1),
+                    "[Vulkan] Presentation descriptor binding rejected. " +
+                    "expectedEpoch={0} currentEpoch={1} pending={2} slot={3} " +
+                    "view=0x{4:X}->0x{5:X} (backing=0x{6:X} vs img=0x{7:X}) sampler=0x{8:X}->0x{9:X}.",
+                    expectedLogicalEpoch,
+                    logicalSource.LogicalEpoch,
+                    bindsPending,
+                    descriptorSlot,
+                    logicalSource.ImageView.Handle,
+                    imageInfo.ImageView.Handle,
+                    backingImageHandle,
+                    logicalSource.Image.Handle,
+                    logicalSource.Sampler.Handle,
+                    imageInfo.Sampler.Handle);
                 source = _current;
                 return false;
             }
@@ -207,7 +238,15 @@ internal sealed class VulkanPresentationSourcePublication
             EnsureSlotCapacity(descriptorSlot);
             VulkanPresentationSourceTuple binding = logicalSource with
             {
-                ExpectedLayout = imageInfo.ImageLayout,
+                ImageView = imageInfo.ImageView,
+                ImageViewGeneration = imageViewGeneration != 0 ? imageViewGeneration : logicalSource.ImageViewGeneration,
+                Sampler = imageInfo.Sampler,
+                SamplerGeneration = samplerGeneration != 0 ? samplerGeneration : logicalSource.SamplerGeneration,
+                ExpectedLayout = imageInfo.ImageLayout != ImageLayout.Undefined
+                    ? imageInfo.ImageLayout
+                    : (logicalSource.ExpectedLayout != ImageLayout.Undefined
+                        ? logicalSource.ExpectedLayout
+                        : ImageLayout.ShaderReadOnlyOptimal),
                 DescriptorSet = descriptorSet,
                 DescriptorSetGeneration = descriptorSetGeneration,
                 DescriptorSlot = descriptorSlot,
@@ -216,24 +255,20 @@ internal sealed class VulkanPresentationSourcePublication
                 OwningCommandArtifactGeneration = commandArtifactGeneration,
             };
             _slotBindings[descriptorSlot] = binding;
-            source = binding;
-            if (XREnvironment.IsEnabled(
-                    XREngineEnvironmentVariables.VulkanRecordingDiag))
+            if (_current.LogicalEpoch == expectedLogicalEpoch &&
+                (_current.ImageView.Handle != imageInfo.ImageView.Handle ||
+                 _current.Sampler.Handle != imageInfo.Sampler.Handle))
             {
-                Debug.VulkanEvery(
-                    $"Vulkan.PresentationSource.Bound.{GetHashCode()}",
-                    TimeSpan.FromSeconds(1),
-                    "[Vulkan] Presentation descriptor binding published. " +
-                    "epoch={0} slot={1} descriptor=0x{2:X}/{3} " +
-                    "command=0x{4:X}/{5} complete={6}.",
-                    binding.LogicalEpoch,
-                    descriptorSlot,
-                    binding.DescriptorSet.Handle,
-                    binding.DescriptorSetGeneration,
-                    binding.OwningCommandArtifact.Handle,
-                    binding.OwningCommandArtifactGeneration,
-                    binding.IsComplete);
+                _current = _current with
+                {
+                    ImageView = imageInfo.ImageView,
+                    ImageViewGeneration = imageViewGeneration != 0 ? imageViewGeneration : _current.ImageViewGeneration,
+                    Sampler = imageInfo.Sampler,
+                    SamplerGeneration = samplerGeneration != 0 ? samplerGeneration : _current.SamplerGeneration,
+                    ExpectedLayout = binding.ExpectedLayout,
+                };
             }
+            source = binding;
             return true;
         }
     }
@@ -264,6 +299,11 @@ internal sealed class VulkanPresentationSourcePublication
                 commandArtifactGeneration == 0 ||
                 (uint)descriptorSlot >= (uint)_slotBindings.Length)
             {
+                Debug.VulkanWarningEvery(
+                    $"Vulkan.PresentationSource.CmdSlotInvalid.{GetHashCode()}",
+                    TimeSpan.FromSeconds(1),
+                    "[Vulkan] TryBindCommandArtifact rejected: slot={0} bindingsLen={1} cmd=0x{2:X} cmdGen={3}.",
+                    descriptorSlot, _slotBindings.Length, commandArtifact.Handle, commandArtifactGeneration);
                 source = _current;
                 return false;
             }
@@ -273,6 +313,11 @@ internal sealed class VulkanPresentationSourcePublication
                 binding.LogicalEpoch != expectedLogicalEpoch ||
                 binding.LogicalEpoch != _current.LogicalEpoch)
             {
+                Debug.VulkanWarningEvery(
+                    $"Vulkan.PresentationSource.CmdEpochMismatch.{GetHashCode()}",
+                    TimeSpan.FromSeconds(1),
+                    "[Vulkan] TryBindCommandArtifact epoch mismatch: slot={0} bindingEpoch={1} expectedEpoch={2} currentEpoch={3}.",
+                    descriptorSlot, binding.LogicalEpoch, expectedLogicalEpoch, _current.LogicalEpoch);
                 source = _current;
                 return false;
             }

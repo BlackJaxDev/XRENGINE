@@ -214,7 +214,7 @@ public sealed class RuntimeWorldHost : IDisposable
         Engine.Time.Timer.UpdateFrame += CoreWorld.Update;
         Engine.Time.Timer.PostUpdateFrame += ProcessDirtyTransforms;
         Engine.Time.Timer.FixedUpdate += CoreWorld.FixedUpdate;
-        Engine.Time.Timer.SwapBuffers += RenderWorld.GlobalSwapBuffers;
+        Engine.Time.Timer.WorldSwapBuffers += RenderWorld.GlobalSwapBuffers;
         Engine.Time.Timer.PreCollectVisible += RenderWorld.GlobalPreCollectVisible;
         Engine.Time.Timer.CollectVisible += RenderWorld.GlobalCollectVisible;
         _timeCallbacksLinked = true;
@@ -228,7 +228,7 @@ public sealed class RuntimeWorldHost : IDisposable
         Engine.Time.Timer.UpdateFrame -= CoreWorld.Update;
         Engine.Time.Timer.PostUpdateFrame -= ProcessDirtyTransforms;
         Engine.Time.Timer.FixedUpdate -= CoreWorld.FixedUpdate;
-        Engine.Time.Timer.SwapBuffers -= RenderWorld.GlobalSwapBuffers;
+        Engine.Time.Timer.WorldSwapBuffers -= RenderWorld.GlobalSwapBuffers;
         Engine.Time.Timer.PreCollectVisible -= RenderWorld.GlobalPreCollectVisible;
         Engine.Time.Timer.CollectVisible -= RenderWorld.GlobalCollectVisible;
         _timeCallbacksLinked = false;

@@ -39,6 +39,17 @@ public interface IRuntimeRenderSchedulingServices
     void UnsubscribePreUpdateFrame(Action callback) { }
 
     /// <summary>
+    /// Subscribes a callback to the host world/scene swap-buffers frame event, which executes
+    /// prior to viewport-level command buffer swapping.
+    /// </summary>
+    void SubscribeWorldSwapBuffers(Action worldSwap);
+
+    /// <summary>
+    /// Unsubscribes a callback from the host world/scene swap-buffers frame event.
+    /// </summary>
+    void UnsubscribeWorldSwapBuffers(Action worldSwap);
+
+    /// <summary>
     /// Subscribes a callback to the host viewport swap-buffers frame event.
     /// </summary>
     void SubscribeViewportSwapBuffers(Action swapBuffers);

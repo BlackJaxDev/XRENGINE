@@ -784,7 +784,7 @@ namespace XREngine.Rendering.Vulkan
             if (!source.IsComplete)
             {
                 failureReason =
-                    $"final presentation source epoch {source.LogicalEpoch} is incomplete";
+                    $"final presentation source epoch {source.LogicalEpoch} is incomplete (hasLogical={source.HasLogicalSource}, img=0x{source.Image.Handle:X}, resEpoch={source.DescriptorResourceEpoch}, imgGen={source.ImageAllocationGeneration}, view=0x{source.ImageView.Handle:X}, viewGen={source.ImageViewGeneration}, sampler=0x{source.Sampler.Handle:X}, samplerGen={source.SamplerGeneration}, layout={source.ExpectedLayout}, w={source.Width}, h={source.Height}, set=0x{source.DescriptorSet.Handle:X}, setGen={source.DescriptorSetGeneration}, slot={source.DescriptorSlot}, pubGen={source.DescriptorPublicationGeneration}, cmd=0x{source.OwningCommandArtifact.Handle:X}, cmdGen={source.OwningCommandArtifactGeneration})";
                 return false;
             }
 

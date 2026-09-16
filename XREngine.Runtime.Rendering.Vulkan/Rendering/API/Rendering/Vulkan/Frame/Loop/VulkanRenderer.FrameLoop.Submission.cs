@@ -425,7 +425,12 @@ namespace XREngine.Rendering.Vulkan
                 }
 
                 WaitForNextDesktopFrameSlotBeforeCollect(ref attempt);
-                ReleaseCollectForDesktopFrame(ref attempt);
+                if (!attempt.CollectReleased && !attempt.InteractiveResize)
+                {
+                    RuntimeRenderingHostServices.Scheduling
+                        .MarkRenderFrameReadyForCollect(DesktopWsiOutput.Window);
+                    attempt.CollectReleased = true;
+                }
 
                 stageStartTimestamp = Stopwatch.GetTimestamp();
                 try

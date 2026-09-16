@@ -95,7 +95,7 @@ internal sealed partial class VulkanFrameLoop
         if (!backendPackage.MatchesScenePublication(in scenePublication))
         {
             failureReason =
-                "The canonical backend package has not caught up to the advanced preparation scene publication.";
+                $"The canonical backend package has not caught up to the advanced preparation scene publication. Backend={backendPackage.CanonicalScenePublication}, Prepared={scenePublication}.";
             return false;
         }
         if (!TryValidateAdvancedVisibilityPackageSources(

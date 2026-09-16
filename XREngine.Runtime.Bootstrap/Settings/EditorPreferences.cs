@@ -41,6 +41,7 @@ namespace XREngine
         }
 
         private EViewportPresentationMode _viewportPresentationMode = EViewportPresentationMode.FullViewportBehindImGuiUI;
+        private int _editorUiRateHz = 0;
         private ESceneDepthModePreference _sceneDepthMode = ESceneDepthModePreference.UseProjectDefault;
         private int _scenePanelResizeDebounceMs = 0;
         private EInteractiveWindowResizeStrategy _interactiveResizeStrategy = EInteractiveWindowResizeStrategy.Win32ModalLoopTimer;
@@ -220,6 +221,26 @@ namespace XREngine
         {
             get => _viewportPresentationMode;
             set => SetField(ref _viewportPresentationMode, value);
+        }
+
+        /// <summary>
+        /// Target refresh frequency for the Dear ImGui Editor UI.
+        /// 0 = Match scene render rate (uncapped). 30 or 60 = Throttle UI updates to free up CPU headroom for high-refresh scene rendering.
+        /// </summary>
+        [Category("Performance")]
+        [DisplayName("Editor UI Refresh Rate (Hz)")]
+        [Description("Target refresh frequency for the Dear ImGui Editor UI. 0 = Match scene render rate (uncapped). 30 or 60 = Throttle UI updates to free up CPU headroom for high-refresh scene rendering.")]
+        public int EditorUiRateHz
+        {
+            get => _editorUiRateHz;
+            set
+            {
+                int sanitized = Math.Max(0, value);
+                if (SetField(ref _editorUiRateHz, sanitized))
+                {
+                    AbstractRenderer.EditorUiRateHz = sanitized;
+                }
+            }
         }
 
         /// <summary>
@@ -983,7 +1004,10 @@ namespace XREngine
         }
 
         public void ApplyRuntimeSideEffects()
-            => Debug.ApplyRuntimeSideEffects();
+        {
+            Debug.ApplyRuntimeSideEffects();
+            AbstractRenderer.EditorUiRateHz = _editorUiRateHz;
+        }
     }
 
     [Serializable]

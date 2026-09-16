@@ -25,9 +25,17 @@ internal sealed partial class VulkanFrameLoop
         XRFrameBuffer? resolvedFrameBuffer = sourceFrameBuffer ?? ResolveWindowPresentFallbackFrameBuffer(colorTexture);
         FrameOpContext context = CaptureFrameOpContextForCurrentPipelineScope();
         VkImageDescriptorSnapshot snapshot = default;
-        bool snapshotReady = colorTexture is not null &&
-            GetOrCreateAPIRenderObject(colorTexture) is IVkImageDescriptorSource source &&
-            source.TryGetDescriptorSnapshot(null, null, "window presentation source publication", false, out snapshot);
+        bool snapshotReady = false;
+        if (colorTexture is not null &&
+            GetOrCreateAPIRenderObject(colorTexture) is IVkImageDescriptorSource source)
+        {
+            snapshotReady = source.TryGetDescriptorSnapshot(
+                source.DescriptorViewType,
+                requestedAspectMask: null,
+                "window presentation source publication",
+                allowSynchronousUpload: true,
+                out snapshot);
+        }
 
         VulkanPresentationSourceTuple published = _windowPresentSource.PublishLogical(
             new VulkanPresentationSourceTuple(
@@ -46,6 +54,16 @@ internal sealed partial class VulkanFrameLoop
                 resolvedFrameBuffer?.Width ?? 0, resolvedFrameBuffer?.Height ?? 0,
                 default, 0, -1, 0, default, 0),
             retainEquivalentCurrentSource: true);
+
+        Debug.VulkanEvery(
+            $"Vulkan.TrackWindowPresentSource.{GetHashCode()}",
+            TimeSpan.FromSeconds(1),
+            "[Vulkan] TrackWindowPresentSource: tex='{0}' fbo='{1}' snapReady={2} img=0x{3:X} view=0x{4:X} sampler=0x{5:X} epoch={6}",
+            colorTexture?.Name ?? "<null>", resolvedFrameBuffer?.Name ?? "<null>", snapshotReady,
+            snapshotReady ? snapshot.Image.Handle : 0,
+            snapshotReady ? snapshot.View.Handle : 0,
+            snapshotReady ? snapshot.Sampler.Handle : 0,
+            published.LogicalEpoch);
 
         // Readback and preview consumers are deliberately outside command
         // selection, but they still need the same retained logical source.

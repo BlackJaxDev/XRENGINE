@@ -341,6 +341,14 @@ internal sealed class UninstalledRuntimeRenderingHostServices : IRuntimeRenderin
 
     #region Scheduling and frame callbacks
 
+    public void SubscribeWorldSwapBuffers(Action worldSwap)
+    {
+    }
+
+    public void UnsubscribeWorldSwapBuffers(Action worldSwap)
+    {
+    }
+
     public void SubscribeViewportSwapBuffers(Action swapBuffers)
     {
     }

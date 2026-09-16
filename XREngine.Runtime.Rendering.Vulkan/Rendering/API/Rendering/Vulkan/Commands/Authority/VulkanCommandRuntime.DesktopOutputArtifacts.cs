@@ -145,6 +145,10 @@ internal sealed partial class VulkanCommandRuntime
             CommandBuffers.RegisterImageIndex(dynamicUiSecondary[index], imageIndex);
             CommandBuffers.RegisterImageIndex(dynamicUiOverlay[index], imageIndex);
             CommandBuffers.RegisterImageIndex(imguiOverlay[index], imageIndex);
+            RegisterCommandBufferImageIndex(primary[index], imageIndex);
+            RegisterCommandBufferImageIndex(dynamicUiSecondary[index], imageIndex);
+            RegisterCommandBufferImageIndex(dynamicUiOverlay[index], imageIndex);
+            RegisterCommandBufferImageIndex(imguiOverlay[index], imageIndex);
             RegisterOutputArtifact(primary[index], "primary");
             RegisterOutputArtifact(dynamicUiSecondary[index], "dynamic-ui-secondary");
             RegisterOutputArtifact(dynamicUiOverlay[index], "dynamic-ui-overlay");
