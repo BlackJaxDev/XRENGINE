@@ -858,6 +858,11 @@
           "$ref": "#/definitions/EVulkanRenderTargetMode",
           "markdownDescription": "Supported values: `Auto`, `DynamicRendering`, `LegacyRenderPass`.",
           "description": "Selects the RenderTargetMode enum value."
+        },
+        "PresentationProfile": {
+          "$ref": "#/definitions/EVulkanPresentationProfile",
+          "markdownDescription": "Supported values: `Stable`, `LowLatency`, `Uncapped`, `FrameGeneration`.",
+          "description": "Selects the PresentationProfile enum value."
         }
       }
     },
@@ -869,6 +874,16 @@
         "LegacyRenderPass"
       ],
       "markdownDescription": "Supported values: `Auto`, `DynamicRendering`, `LegacyRenderPass`."
+    },
+    "EVulkanPresentationProfile": {
+      "type": "string",
+      "enum": [
+        "Stable",
+        "LowLatency",
+        "Uncapped",
+        "FrameGeneration"
+      ],
+      "markdownDescription": "Supported values: `Stable`, `LowLatency`, `Uncapped`, `FrameGeneration`."
     },
     "UnitTestingVrSettings": {
       "type": "object",

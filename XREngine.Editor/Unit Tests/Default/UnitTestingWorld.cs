@@ -121,6 +121,7 @@ public static partial class EditorUnitTests
             s.OpenGLParallelShaderCompileProbeEnabled = linkSettings.DriverParallelProbeEnabled;
             s.OpenGLParallelShaderCompileProbeTimeoutMs = linkSettings.DriverParallelProbeTimeoutMs;
             s.VulkanRenderTargetMode = runtimeSettings.Rendering.Vulkan.RenderTargetMode;
+            s.VulkanPresentationProfile = runtimeSettings.Rendering.Vulkan.PresentationProfile;
             s.Vulkan.Startup.FallbackPolicy = runtimeSettings.Rendering.BackendFallbackPolicy;
         }
         else if (runtimeSettings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.AllowShaderPipelines)))

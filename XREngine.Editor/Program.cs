@@ -1090,6 +1090,7 @@ internal partial class Program
 
         bool appliedUserSessionValues = UnitTestingWorldSettingsStore.ApplyUserSettingsSessionValues(unitTestSettings);
         bool appliedGameSessionValues = UnitTestingWorldSettingsStore.ApplyGameSettingsSessionValues(unitTestSettings);
+        UnitTestingWorldSettingsStore.ApplyStartupOverrides(settings, unitTestSettings);
         WriteBootstrapTrace(
             $"Registered unit-test session settings before engine startup: User={appliedUserSessionValues}, Game={appliedGameSessionValues}.");
 

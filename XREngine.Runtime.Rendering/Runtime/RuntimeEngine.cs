@@ -12,6 +12,11 @@ namespace XREngine;
 
 public static partial class RuntimeEngine
 {
+    static RuntimeEngine()
+    {
+        Debug.IsRenderThreadEvaluator = () => IsRenderThread;
+    }
+
     private static readonly EventList<XRWindow> ActiveWindows = [];
     private static int _renderThreadId;
     private static int _windowThreadId;

@@ -22,8 +22,10 @@ internal static class VulkanPresentationProfileResolver
             throw new NotSupportedException("The desktop surface exposes no Vulkan present modes.");
 
         EVulkanPresentationProfile requested = ResolveRequestedProfile();
-        float targetRefreshHz = ResolveTargetRefreshHz();
-        TimeSpan targetInterval = TimeSpan.FromSeconds(1.0 / targetRefreshHz);
+        float targetRefreshHz = ResolveTargetRefreshHz(requested);
+        TimeSpan targetInterval = targetRefreshHz > 0.0f
+            ? TimeSpan.FromSeconds(1.0 / targetRefreshHz)
+            : TimeSpan.Zero;
         PresentModeKHR nativeMode;
         EVulkanPresentationProfile resolved = requested;
         bool limiterEnabled = false;
@@ -56,7 +58,24 @@ internal static class VulkanPresentationProfileResolver
                 }
                 break;
             case EVulkanPresentationProfile.Uncapped:
-                nativeMode = RequireMode(modes, PresentModeKHR.ImmediateKhr, requested);
+                if (Contains(modes, PresentModeKHR.ImmediateKhr))
+                {
+                    nativeMode = PresentModeKHR.ImmediateKhr;
+                }
+                else if (Contains(modes, PresentModeKHR.MailboxKhr))
+                {
+                    nativeMode = PresentModeKHR.MailboxKhr;
+                    resolved = EVulkanPresentationProfile.LowLatency;
+                    Debug.VulkanWarning(
+                        "[Vulkan][Presentation] Uncapped requested but Immediate is unavailable; resolved Mailbox/LowLatency.");
+                }
+                else
+                {
+                    nativeMode = RequireMode(modes, PresentModeKHR.FifoKhr, requested);
+                    resolved = EVulkanPresentationProfile.Stable;
+                    Debug.VulkanWarning(
+                        "[Vulkan][Presentation] Uncapped requested but Immediate and Mailbox are unavailable; resolved Stable/FIFO.");
+                }
                 maximumFramesAhead = Math.Max(frameSlotCount, 1);
                 break;
             case EVulkanPresentationProfile.FrameGeneration:
@@ -122,7 +141,7 @@ internal static class VulkanPresentationProfileResolver
         return requested;
     }
 
-    private static float ResolveTargetRefreshHz()
+    private static float ResolveTargetRefreshHz(EVulkanPresentationProfile profile)
     {
         float refreshHz = RuntimeRenderingHostServices.Settings
             .VulkanPresentationTargetRefreshHz;
@@ -148,9 +167,10 @@ internal static class VulkanPresentationProfileResolver
             }
         }
 
-        return float.IsFinite(refreshHz) && refreshHz > 0.0f
-            ? Math.Clamp(refreshHz, 1.0f, 1000.0f)
-            : DefaultRefreshHz;
+        if (float.IsFinite(refreshHz) && refreshHz > 0.0f)
+            return Math.Clamp(refreshHz, 1.0f, 1000.0f);
+
+        return profile == EVulkanPresentationProfile.Uncapped ? 0.0f : DefaultRefreshHz;
     }
 
     private static PresentModeKHR RequireMode(

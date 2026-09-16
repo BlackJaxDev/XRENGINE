@@ -1,4 +1,4 @@
-﻿using MemoryPack;
+using MemoryPack;
 using System.ComponentModel;
 using XREngine.Core.Files;
 using XREngine.Data.Core;
@@ -65,7 +65,7 @@ namespace XREngine
         }
 
         private EWindowState _windowState = EWindowState.Windowed;
-        private EVSyncMode _vSyncMode = EVSyncMode.Adaptive;
+        private EVSyncMode _vSyncMode = EVSyncMode.Off;
         private EEngineQuality _textureQuality = EEngineQuality.Highest;
         private EEngineQuality _modelQuality = EEngineQuality.Highest;
         private EEngineQuality _soundQuality = EEngineQuality.Highest;

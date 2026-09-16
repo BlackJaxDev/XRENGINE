@@ -62,7 +62,7 @@ public static class RuntimeRenderingHostServiceDefaults
     public const EVulkanGpuDrivenProfile VulkanGpuDrivenProfile = EVulkanGpuDrivenProfile.Auto;
     public const EVulkanQueueOverlapMode VulkanQueueOverlapMode = EVulkanQueueOverlapMode.Auto;
     public const EVulkanCommandRecordingMode VulkanCommandRecordingMode = EVulkanCommandRecordingMode.Auto;
-    public const EVulkanPresentationProfile VulkanPresentationProfile = EVulkanPresentationProfile.Stable;
+    public const EVulkanPresentationProfile VulkanPresentationProfile = EVulkanPresentationProfile.Uncapped;
     public const float VulkanPresentationTargetRefreshHz = 0.0f;
     public const int VulkanPresentationMaximumFramesAhead = 1;
     public const float VulkanPresentationLimiterSpinThresholdMilliseconds = 0.25f;

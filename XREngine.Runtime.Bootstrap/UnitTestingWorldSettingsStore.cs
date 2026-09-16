@@ -196,6 +196,8 @@ public static class UnitTestingWorldSettingsStore
         {
             startupSettings.RenderBackendFallbackPolicyOverride = new(settings.Rendering.BackendFallbackPolicy, true);
             startupSettings.VulkanRenderTargetModeOverride = new(settings.Rendering.Vulkan.RenderTargetMode, true);
+            startupSettings.VulkanPresentationProfileOverride = new(settings.Rendering.Vulkan.PresentationProfile, true);
+            startupSettings.VulkanPresentationTargetRefreshHzOverride = new(settings.Rendering.Vulkan.TargetRefreshHz, true);
         }
         if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.GPURenderDispatch)))
             startupSettings.GPURenderDispatch = settings.GPURenderDispatch;
@@ -277,6 +279,9 @@ public static class UnitTestingWorldSettingsStore
             Engine.SetSessionSetting(
                 (GameStartupSettings gameSettings) => gameSettings.VulkanRenderTargetModeOverride,
                 new OverrideableSetting<EVulkanRenderTargetMode>(settings.Rendering.Vulkan.RenderTargetMode, true));
+            Engine.SetSessionSetting(
+                (GameStartupSettings gameSettings) => gameSettings.VulkanPresentationProfileOverride,
+                new OverrideableSetting<EVulkanPresentationProfile>(settings.Rendering.Vulkan.PresentationProfile, true));
             applied = true;
         }
 

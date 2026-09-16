@@ -320,8 +320,13 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             phase,
             EAdvancedProfileStageDiagnosticState.BackendEnqueueRejected,
             failureReason);
-        Debug.Out(
-            $"Advanced visibility stage '{Stage}' phase '{phase}' was rejected by the active backend: {failureReason}");
+        Debug.RenderingWarningEvery(
+            $"AdvancedVisibility.PhaseRejection.{Stage}.{phase}",
+            TimeSpan.FromSeconds(5),
+            "[AdvancedPipeline] Advanced visibility stage '{0}' phase '{1}' was rejected by the active backend: {2}",
+            Stage,
+            phase,
+            failureReason);
     }
 
     private void PublishStageDiagnostic(

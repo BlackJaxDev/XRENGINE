@@ -1534,10 +1534,11 @@ namespace XREngine.Rendering
         /// world publishes its swapped resident-scene buffers. This does not
         /// rerun package preparation or alter the frozen output identity.
         /// </summary>
-        public bool TryFinalizePreparedCanonicalFramePackageAfterWorldSwap()
+        public bool TryFinalizePreparedCanonicalFramePackageAfterWorldSwap(
+            RenderCommandCollection? renderCommandsOverride = null)
         {
             RenderCommandCollection commandCollection =
-                MeshRenderCommandsOverride ?? _renderPipeline.MeshRenderCommands;
+                renderCommandsOverride ?? MeshRenderCommandsOverride ?? _renderPipeline.MeshRenderCommands;
             var dimensions = _renderPipeline.ResolveBackendReadyFramePackageDimensions(this);
             return commandCollection.TryFinalizePreparedCanonicalFramePackageAfterWorldSwap(
                 World?.VisualScene?.GPUCommands,
@@ -1706,6 +1707,7 @@ namespace XREngine.Rendering
                 AssociatedPlayer?.LocalPlayerIndex.ToString() ?? "<none>");
 */
             var commandCollection = renderCommandsOverride ?? _renderPipeline.MeshRenderCommands;
+            TryFinalizePreparedCanonicalFramePackageAfterWorldSwap(commandCollection);
             using (RuntimeRenderingHostServices.Profiling.StartProfileScope("XRViewport.SwapBuffers.MeshCommands"))
             {
                 commandCollection.SwapBuffers();
