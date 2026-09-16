@@ -175,6 +175,7 @@ namespace XREngine.Rendering
         internal void EnqueueRender(bool forceNoStereo = true)
         {
             forceNoStereo &= !_useMultiview;
+            FullScreenMesh.EnsureApiRenderObject(forceNoStereo);
             var state = RuntimeEngine.Rendering.State.RenderingPipelineState;
             if (state != null)
             {

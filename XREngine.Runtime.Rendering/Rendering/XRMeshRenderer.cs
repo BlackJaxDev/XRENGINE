@@ -237,7 +237,7 @@ namespace XREngine.Rendering
             set => SetField(ref _forceOvrMultiview, value);
         }
 
-        private BaseVersion GetVersion(bool forceNoStereo = false)
+        public BaseVersion GetVersion(bool forceNoStereo = false)
         {
             bool useMeshDeform = DeformMeshRenderer is not null && _meshDeformInfluences is not null;
 
@@ -983,6 +983,9 @@ namespace XREngine.Rendering
         /// <param name="materialOverride"></param>
         public void Render(Matrix4x4 modelMatrix, Matrix4x4 prevModelMatrix, XRMaterial? materialOverride = null, uint instances = 1u, bool forceNoStereo = false, RenderingParameters? renderOptionsOverride = null, AdvancedGpuSceneDrawIdentitySnapshot canonicalDrawIdentitySnapshot = default)
             => GetVersion(forceNoStereo).Render(modelMatrix, prevModelMatrix, materialOverride, renderOptionsOverride, instances, Material?.BillboardMode ?? EMeshBillboardMode.None, forceNoStereo, canonicalDrawIdentitySnapshot);
+
+        public AbstractRenderAPIObject? EnsureApiRenderObject(bool forceNoStereo = false)
+            => AbstractRenderer.Current?.GetOrCreateAPIRenderObject(GetVersion(forceNoStereo));
 
         public bool TryPrepareForRendering(bool forceNoStereo = false)
         {

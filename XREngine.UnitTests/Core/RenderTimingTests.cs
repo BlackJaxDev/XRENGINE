@@ -16,6 +16,18 @@ public sealed class RenderTimingTests
     }
 
     [Test]
+    public void AbstractRenderer_ShouldSkipImGuiFrame_HonorsEditorUiRateHz()
+    {
+        long freq = System.Diagnostics.Stopwatch.Frequency;
+        long t0 = 1000L;
+        long minPeriod = freq / 60;
+
+        AbstractRenderer.ShouldSkipImGuiFrame(allowMultipleInFrame: false, timestampTicks: t0 + minPeriod / 2, lastTimestampTicks: t0, targetRateHz: 60).ShouldBeTrue();
+        AbstractRenderer.ShouldSkipImGuiFrame(allowMultipleInFrame: false, timestampTicks: t0 + minPeriod + 1, lastTimestampTicks: t0, targetRateHz: 60).ShouldBeFalse();
+        AbstractRenderer.ShouldSkipImGuiFrame(allowMultipleInFrame: false, timestampTicks: t0 + 1, lastTimestampTicks: t0, targetRateHz: 0).ShouldBeFalse();
+    }
+
+    [Test]
     public void BvhGpuProfiler_ShouldResetFrameAccumulator_OnTickChangeOnly()
     {
         BvhGpuProfiler.ShouldResetFrameAccumulator(initializedFrameStamp: false, currentFrameTimestampTicks: 100L, nextFrameTimestampTicks: 101L).ShouldBeFalse();

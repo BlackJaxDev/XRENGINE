@@ -467,7 +467,33 @@ namespace XREngine.Rendering
         private readonly object _imguiRenderLock = new();
 
         internal static bool ShouldSkipImGuiFrame(bool allowMultipleInFrame, long timestampTicks, long lastTimestampTicks)
-            => !allowMultipleInFrame && timestampTicks == lastTimestampTicks;
+            => ShouldSkipImGuiFrame(allowMultipleInFrame, timestampTicks, lastTimestampTicks, EditorUiRateHz);
+
+        /// <summary>
+        /// Gets or sets the target refresh rate for Dear ImGui editor UI rendering in Hz.
+        /// 0 = Uncapped (matches scene render rate). Positive value (e.g. 60 or 30) throttles
+        /// UI layout and widget execution to free up CPU headroom for high-refresh 3D scene rendering.
+        /// </summary>
+        public static int EditorUiRateHz { get; set; } = 0;
+
+        internal static bool ShouldSkipImGuiFrame(bool allowMultipleInFrame, long timestampTicks, long lastTimestampTicks, int targetRateHz)
+        {
+            if (allowMultipleInFrame)
+                return false;
+
+            if (timestampTicks == lastTimestampTicks)
+                return true;
+
+            int effectiveRateHz = targetRateHz > 0 ? targetRateHz : EditorUiRateHz;
+            if (effectiveRateHz > 0 && lastTimestampTicks != long.MinValue)
+            {
+                long minIntervalTicks = Stopwatch.Frequency / effectiveRateHz;
+                if ((timestampTicks - lastTimestampTicks) < minIntervalTicks)
+                    return true;
+            }
+
+            return false;
+        }
 
         protected virtual bool SupportsImGui => false;
 

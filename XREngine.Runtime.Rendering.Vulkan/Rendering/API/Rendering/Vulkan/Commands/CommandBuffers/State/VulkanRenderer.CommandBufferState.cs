@@ -289,7 +289,7 @@ namespace XREngine.Rendering.Vulkan
             }
         }
 
-        private void RegisterCommandBufferImageIndex(CommandBuffer commandBuffer, uint imageIndex)
+        internal void RegisterCommandBufferImageIndex(CommandBuffer commandBuffer, uint imageIndex)
         {
             if (commandBuffer.Handle == 0)
                 return;
@@ -304,6 +304,10 @@ namespace XREngine.Rendering.Vulkan
         {
             if (commandBuffer.Handle == 0)
                 return -1;
+
+            int registered = CommandBuffers.ResolveImageIndex(commandBuffer);
+            if (registered >= 0)
+                return registered;
 
             ulong key = (ulong)commandBuffer.Handle;
             lock (_commandBindStateLock)

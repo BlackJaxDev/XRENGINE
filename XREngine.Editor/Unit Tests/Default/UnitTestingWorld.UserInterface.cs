@@ -235,6 +235,11 @@ public static partial class EditorUnitTests
             string fpsText = builder.ToString();
             t.Text = fpsText;
             t.Color = ResolveFpsOverlayColor(renderMs, cpuFrameMs, gpuCmdMs, vrPassMs, networkingRttMs, fallbackEvents);
+            if ((_tickFpsDiagCount++ & 7) == 0)
+            {
+                var pub = RuntimeEngine.Rendering.Stats.Vulkan.LatestVulkanFrameTelemetry;
+                XREngine.Debug.Log(ELogCategory.Rendering, $"[FpsOverlay] {fpsText.Replace("\n", " | ")} | [Stages] pacing={pub.FramePacing.Elapsed.TotalMilliseconds:F1}ms maint={pub.CompletionMaintenance.Elapsed.TotalMilliseconds:F1}ms resPrep={pub.ResourcePrepare.Elapsed.TotalMilliseconds:F1}ms acq={pub.OutputAcquire.Elapsed.TotalMilliseconds:F1}ms rec={pub.CommandRecord.Elapsed.TotalMilliseconds:F1}ms submit={pub.QueueSubmit.Elapsed.TotalMilliseconds:F1}ms pres={pub.OutputComplete.Elapsed.TotalMilliseconds:F1}ms settle={pub.FrameSettlement.Elapsed.TotalMilliseconds:F1}ms");
+            }
         }
 
         private static string ResolveRenderBackendLabel()

@@ -508,10 +508,10 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
             if (ImGui.BeginTable("ProfilerHierarchy", 6, ImGuiTableFlags.Borders | ImGuiTableFlags.Resizable | ImGuiTableFlags.RowBg | ImGuiTableFlags.ScrollY))
             {
                 ImGui.TableSetupColumn("Name", ImGuiTableColumnFlags.WidthStretch);
-                ImGui.TableSetupColumn("Total", ImGuiTableColumnFlags.WidthFixed, 60f);
-                ImGui.TableSetupColumn("Self", ImGuiTableColumnFlags.WidthFixed, 60f);
-                ImGui.TableSetupColumn("Avg", ImGuiTableColumnFlags.WidthFixed, 56f);
-                ImGui.TableSetupColumn("Peak", ImGuiTableColumnFlags.WidthFixed, 56f);
+                ImGui.TableSetupColumn("Total (ms)", ImGuiTableColumnFlags.WidthFixed, 70f);
+                ImGui.TableSetupColumn("Self (ms)", ImGuiTableColumnFlags.WidthFixed, 65f);
+                ImGui.TableSetupColumn("Avg (ms)", ImGuiTableColumnFlags.WidthFixed, 65f);
+                ImGui.TableSetupColumn("Peak (ms)", ImGuiTableColumnFlags.WidthFixed, 68f);
                 ImGui.TableSetupColumn("Calls", ImGuiTableColumnFlags.WidthFixed, 40f);
                 ImGui.TableHeadersRow();
 
@@ -606,7 +606,7 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
             ImGui.TableSetupColumn("Ref FPS", ImGuiTableColumnFlags.WidthFixed, 60f);
             ImGui.TableSetupColumn("Now FPS", ImGuiTableColumnFlags.WidthFixed, 60f);
             ImGui.TableSetupColumn("Drop FPS", ImGuiTableColumnFlags.WidthFixed | ImGuiTableColumnFlags.DefaultSort | ImGuiTableColumnFlags.PreferSortDescending, 70f);
-            ImGui.TableSetupColumn("Drop", ImGuiTableColumnFlags.WidthFixed, 55f);
+            ImGui.TableSetupColumn("Drop (%)", ImGuiTableColumnFlags.WidthFixed, 65f);
             ImGui.TableSetupColumn("Hot Path", ImGuiTableColumnFlags.WidthStretch);
             ImGui.TableHeadersRow();
 
@@ -703,9 +703,9 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
             ImGui.TableSetupColumn("Output", ImGuiTableColumnFlags.WidthFixed, 110f);
             ImGui.TableSetupColumn("View", ImGuiTableColumnFlags.WidthFixed, 105f);
             ImGui.TableSetupColumn("Mode", ImGuiTableColumnFlags.WidthFixed, 92f);
-            ImGui.TableSetupColumn("Rate", ImGuiTableColumnFlags.WidthFixed, 82f);
-            ImGui.TableSetupColumn("CPU", ImGuiTableColumnFlags.WidthFixed, 70f);
-            ImGui.TableSetupColumn("GPU", ImGuiTableColumnFlags.WidthFixed, 70f);
+            ImGui.TableSetupColumn("Rate (Hz)", ImGuiTableColumnFlags.WidthFixed, 88f);
+            ImGui.TableSetupColumn("CPU (ms)", ImGuiTableColumnFlags.WidthFixed, 78f);
+            ImGui.TableSetupColumn("GPU (ms)", ImGuiTableColumnFlags.WidthFixed, 78f);
             ImGui.TableSetupColumn("Cmds", ImGuiTableColumnFlags.WidthFixed, 62f);
             ImGui.TableSetupColumn("Skips", ImGuiTableColumnFlags.WidthFixed, 70f);
             ImGui.TableSetupColumn("Pipeline", ImGuiTableColumnFlags.WidthStretch);
@@ -731,11 +731,11 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
                 ImGui.TableSetColumnIndex(2);
                 ImGui.TextUnformatted(mode);
                 ImGui.TableSetColumnIndex(3);
-                ImGui.Text($"{row.ConfiguredTargetRateHz:F0}/{row.AchievedRateHz:F0}");
+                ImGui.Text($"{row.ConfiguredTargetRateHz:F0}/{row.AchievedRateHz:F0} Hz");
                 ImGui.TableSetColumnIndex(4);
-                ImGui.Text($"{cpuMs:F2}");
+                ImGui.Text($"{cpuMs:F2} ms");
                 ImGui.TableSetColumnIndex(5);
-                ImGui.Text($"{row.GpuMs:F2}");
+                ImGui.Text($"{row.GpuMs:F2} ms");
                 ImGui.TableSetColumnIndex(6);
                 ImGui.Text($"{row.CommandCount:N0}");
                 ImGui.TableSetColumnIndex(7);

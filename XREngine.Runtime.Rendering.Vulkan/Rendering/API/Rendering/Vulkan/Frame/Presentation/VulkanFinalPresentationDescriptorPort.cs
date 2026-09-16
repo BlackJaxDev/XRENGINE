@@ -24,7 +24,8 @@ internal sealed class VulkanFinalPresentationDescriptorPort(
         in DescriptorImageInfo imageInfo,
         ulong resourceSignature,
         bool writeMatched,
-        bool writeSucceeded)
+        bool writeSucceeded,
+        string? programName = null)
     {
         if (!writeSucceeded ||
             !string.Equals(bindingName, "SourceTexture", StringComparison.Ordinal))
@@ -33,16 +34,37 @@ internal sealed class VulkanFinalPresentationDescriptorPort(
         }
 
         VulkanPresentationSourceTuple current = publication.CaptureLogical();
-        if (!publication.TryBindDescriptor(
+        ulong backingImageHandle = resources.ResolveImageViewBackingImageHandle(imageInfo.ImageView);
+        bool viewMatches = current.ImageView.Handle == imageInfo.ImageView.Handle ||
+            (backingImageHandle != 0 && current.Image.Handle == backingImageHandle);
+        if (!viewMatches)
+            return;
+
+        ulong imageViewGeneration = resources.GetPublishedGeneration(ObjectType.ImageView, imageInfo.ImageView.Handle);
+        ulong samplerGeneration = resources.GetPublishedGeneration(ObjectType.Sampler, imageInfo.Sampler.Handle);
+        int targetSlot = commands.ResolveCommandBufferImageIndex(commandBuffer);
+        if (targetSlot < 0)
+            targetSlot = descriptorSlot;
+
+        bool bound = publication.TryBindDescriptor(
                 current.LogicalEpoch,
                 imageInfo,
                 descriptorSet,
                 resources.GetPublishedGeneration(ObjectType.DescriptorSet, descriptorSet.Handle),
-                descriptorSlot,
+                targetSlot,
                 resourceSignature,
                 commandBuffer,
                 commands.ResolveCommandBufferRecordingGeneration(commandBuffer),
-                out _))
+                imageViewGeneration,
+                samplerGeneration,
+                backingImageHandle,
+                out _);
+        Debug.VulkanEvery(
+            $"Vulkan.FinalPresentationPort.Observe.{GetHashCode()}",
+            TimeSpan.FromSeconds(1),
+            "[Vulkan] FinalPresentationDescriptorPort.Observe: prog='{0}' slot={1} targetSlot={2} bound={3} currentEpoch={4} set=0x{5:X} view=0x{6:X} sampler=0x{7:X} tex='{8}'",
+            programName ?? "<null>", descriptorSlot, targetSlot, bound, current.LogicalEpoch, descriptorSet.Handle, imageInfo.ImageView.Handle, imageInfo.Sampler.Handle, current.ColorTexture?.Name ?? "<null>");
+        if (!bound)
         {
             return;
         }
@@ -56,7 +78,7 @@ internal sealed class VulkanFinalPresentationDescriptorPort(
 
         ledger.ObserveDescriptor(
             activity.FrameNumber,
-            descriptorSlot,
+            targetSlot,
             unchecked((ulong)commandBuffer.Handle),
             descriptorSet.Handle,
             set,

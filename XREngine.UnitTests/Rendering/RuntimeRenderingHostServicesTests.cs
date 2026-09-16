@@ -676,6 +676,10 @@ public sealed class RuntimeRenderingHostServicesTests
 
         public int CreateDefaultRenderPipelineCallCount { get; private set; }
 
+        public int WorldSwapSubscribeCount { get; private set; }
+
+        public int WorldSwapUnsubscribeCount { get; private set; }
+
         public int ViewportSwapSubscribeCount { get; private set; }
 
         public int ViewportSwapUnsubscribeCount { get; private set; }
@@ -1029,6 +1033,12 @@ public sealed class RuntimeRenderingHostServicesTests
             Action<Exception>? error = null,
             CancellationToken cancellationToken = default)
             => throw new InvalidOperationException();
+
+        public void SubscribeWorldSwapBuffers(Action worldSwap)
+            => WorldSwapSubscribeCount++;
+
+        public void UnsubscribeWorldSwapBuffers(Action worldSwap)
+            => WorldSwapUnsubscribeCount++;
 
         public void SubscribeViewportSwapBuffers(Action swapBuffers)
             => ViewportSwapSubscribeCount++;
