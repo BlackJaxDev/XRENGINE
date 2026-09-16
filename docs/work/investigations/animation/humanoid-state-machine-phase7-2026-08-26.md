@@ -143,7 +143,7 @@ outside this task.
   cases. Its generated avatar definition reported all required bones, 39 axis
   mappings, calibrated IK, and 95% profile coverage.
 - The exact `ARYIA.fbx` extracted from
-  `C:\Users\DavidEddy\Downloads\Aryia_By_Mimiiu_V1.3.unitypackage` ran through
+  `<downloads>\Aryia_By_Mimiiu_V1.3.unitypackage` ran through
   the same graph and production path. Its generated avatar definition reported
   all required bones, 39 axis mappings, calibrated IK, and 93% profile coverage.
 - In both avatars, changing a frozen direct child from weight 0 to 0.7 and back

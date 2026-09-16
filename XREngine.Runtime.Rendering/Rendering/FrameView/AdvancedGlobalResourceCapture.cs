@@ -128,40 +128,73 @@ public readonly record struct AdvancedGlobalResourceCapture(
 
     private static void CaptureDirectionalShadows(Lights3DCollection lights, DirectionalLightComponent light, int lightIndex, List<AdvancedShadowCaptureRow> rows)
     {
+        int startCount = rows.Count;
         DirectionalShadowGpuRecord[] records = new DirectionalShadowGpuRecord[8];
         CaptureDirectionalSource(lights, light, lightIndex, rows, records, ShadowRequestSource.Desktop, false);
         CaptureDirectionalSource(lights, light, lightIndex, rows, records, ShadowRequestSource.Hmd, true);
+        if (rows.Count == startCount && light.CastsShadows)
+        {
+            AddMissingShadowRow(lightIndex, EAdvancedShadowType.DirectionalCascade, light.ShadowMapEncoding, 1u, rows);
+        }
     }
 
     private static void CaptureDirectionalSource(Lights3DCollection lights, DirectionalLightComponent light, int lightIndex, List<AdvancedShadowCaptureRow> rows, DirectionalShadowGpuRecord[] records, ShadowRequestSource source, bool hmd)
     {
-            light.CopyPublishedDirectionalShadowRecords(source, true, records, out int count);
-            for (int cascade = 0; cascade < count; ++cascade)
+        light.CopyPublishedDirectionalShadowRecords(source, true, records, out int count);
+        for (int cascade = 0; cascade < count; ++cascade)
+        {
+            if (!lights.TryGetDirectionalCascadeShadowAtlasAllocation(light, source, cascade, out ShadowAtlasAllocation allocation, out _) ||
+                !lights.ShadowAtlas.TryGetPageTexture(EShadowAtlasKind.Directional, light.ShadowMapEncoding, allocation.PageIndex, out XRTexture2DArray texture))
+                continue;
+            ref readonly DirectionalShadowGpuRecord published = ref records[cascade];
+            bool sampleable = published.AtlasPacked0.X != 0;
+            bool resident = allocation.IsResident && allocation.LastRenderedFrame != 0u && sampleable;
+            EAdvancedShadowRecordFlags flags = EAdvancedShadowRecordFlags.DepthZeroToOne |
+                (RenderClipSpacePolicy.FramebufferTextureYDirection(RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend) == ERenderClipSpaceYDirection.YDown ? EAdvancedShadowRecordFlags.FramebufferTextureYDown : EAdvancedShadowRecordFlags.None) |
+                (resident ? EAdvancedShadowRecordFlags.Resident : EAdvancedShadowRecordFlags.None) |
+                (hmd ? EAdvancedShadowRecordFlags.HmdSource : EAdvancedShadowRecordFlags.None) |
+                (allocation.ActiveFallback == ShadowFallbackMode.StaleTile ? EAdvancedShadowRecordFlags.StaleFallback : EAdvancedShadowRecordFlags.None) |
+                (light.ShadowMapEncoding == EShadowMapEncoding.Depth ? EAdvancedShadowRecordFlags.None : EAdvancedShadowRecordFlags.MomentEncoded);
+            rows.Add(new(lightIndex, new AdvancedShadowRecord
             {
-                if (!lights.TryGetDirectionalCascadeShadowAtlasAllocation(light, source, cascade, out ShadowAtlasAllocation allocation, out _) ||
-                    !lights.ShadowAtlas.TryGetPageTexture(EShadowAtlasKind.Directional, light.ShadowMapEncoding, allocation.PageIndex, out XRTexture2DArray texture))
-                    continue;
-                ref readonly DirectionalShadowGpuRecord published = ref records[cascade];
-                bool resident = allocation.IsResident && allocation.LastRenderedFrame != 0u;
-                EAdvancedShadowRecordFlags flags = EAdvancedShadowRecordFlags.DepthZeroToOne |
-                    (RenderClipSpacePolicy.FramebufferTextureYDirection(RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend) == ERenderClipSpaceYDirection.YDown ? EAdvancedShadowRecordFlags.FramebufferTextureYDown : EAdvancedShadowRecordFlags.None) |
-                    (resident ? EAdvancedShadowRecordFlags.Resident : EAdvancedShadowRecordFlags.None) |
-                    (hmd ? EAdvancedShadowRecordFlags.HmdSource : EAdvancedShadowRecordFlags.None) |
-                    (allocation.ActiveFallback == ShadowFallbackMode.StaleTile ? EAdvancedShadowRecordFlags.StaleFallback : EAdvancedShadowRecordFlags.None) |
-                    (light.ShadowMapEncoding == EShadowMapEncoding.Depth ? EAdvancedShadowRecordFlags.None : EAdvancedShadowRecordFlags.MomentEncoded);
-                rows.Add(new(lightIndex, new AdvancedShadowRecord
-                {
-                    Type = EAdvancedShadowType.DirectionalCascade, Flags = flags,
-                    WorldToShadow = published.RenderedWorldToLight,
-                    PreviousWorldToShadow = published.RenderedWorldToLight,
-                    UvScaleBias = allocation.UvScaleBias,
-                    DepthBiasAndFilter = new(published.RenderedSplitBlendBias.Z, published.RenderedSplitBlendBias.W, published.ReceiverOffsetsAge.Y, 1.0f),
-                    MomentParameters = new(light.ShadowMomentMinVariance, light.ShadowMomentLightBleedReduction, light.ShadowMomentPositiveExponent, light.ShadowMomentNegativeExponent),
-                    DepthRangeAndCascade = new(published.AtlasDepthParams.X, published.AtlasDepthParams.Y, published.RenderedSplitBlendBias.X, published.RenderedSplitBlendBias.Y),
-                    TextureLayer = checked((uint)Math.Max(0, allocation.PageIndex)), Encoding = (uint)light.ShadowMapEncoding,
-                    CascadeCount = (uint)count, LastRenderedFrameLo = (uint)allocation.LastRenderedFrame, LastRenderedFrameHi = (uint)(allocation.LastRenderedFrame >> 32),
-                }, texture));
-            }
+                Type = EAdvancedShadowType.DirectionalCascade, Flags = flags,
+                WorldToShadow = published.RenderedWorldToLight,
+                PreviousWorldToShadow = published.RenderedWorldToLight,
+                UvScaleBias = published.AtlasUvScaleBias != Vector4.Zero ? published.AtlasUvScaleBias : allocation.UvScaleBias,
+                DepthBiasAndFilter = new(published.RenderedSplitBlendBias.Z, published.RenderedSplitBlendBias.W, published.ReceiverOffsetsAge.Y, 1.0f),
+                MomentParameters = new(light.ShadowMomentMinVariance, light.ShadowMomentLightBleedReduction, light.ShadowMomentPositiveExponent, light.ShadowMomentNegativeExponent),
+                DepthRangeAndCascade = new(published.AtlasDepthParams.X, published.AtlasDepthParams.Y, published.RenderedSplitBlendBias.X, published.RenderedSplitBlendBias.Y),
+                TextureLayer = checked((uint)Math.Max(0, allocation.PageIndex)), Encoding = (uint)light.ShadowMapEncoding,
+                CascadeCount = (uint)count, LastRenderedFrameLo = (uint)allocation.LastRenderedFrame, LastRenderedFrameHi = (uint)(allocation.LastRenderedFrame >> 32),
+            }, texture));
+        }
+
+        if (count == 0 && source == ShadowRequestSource.Desktop &&
+            lights.TryGetDirectionalPrimaryShadowAtlasAllocation(light, out ShadowAtlasAllocation primaryAlloc, out _) &&
+            lights.ShadowAtlas.TryGetPageTexture(EShadowAtlasKind.Directional, light.ShadowMapEncoding, primaryAlloc.PageIndex, out XRTexture2DArray primaryTexture))
+        {
+            light.CopyPublishedDirectionalShadowRecords(source, false, records, out _);
+            ref readonly DirectionalShadowGpuRecord published = ref records[0];
+            bool sampleable = published.AtlasPacked0.X != 0;
+            bool resident = primaryAlloc.IsResident && primaryAlloc.LastRenderedFrame != 0u && sampleable;
+            EAdvancedShadowRecordFlags flags = EAdvancedShadowRecordFlags.DepthZeroToOne |
+                (RenderClipSpacePolicy.FramebufferTextureYDirection(RuntimeRenderingHostServices.FrameTiming.CurrentRenderBackend) == ERenderClipSpaceYDirection.YDown ? EAdvancedShadowRecordFlags.FramebufferTextureYDown : EAdvancedShadowRecordFlags.None) |
+                (resident ? EAdvancedShadowRecordFlags.Resident : EAdvancedShadowRecordFlags.None) |
+                (primaryAlloc.ActiveFallback == ShadowFallbackMode.StaleTile ? EAdvancedShadowRecordFlags.StaleFallback : EAdvancedShadowRecordFlags.None) |
+                (light.ShadowMapEncoding == EShadowMapEncoding.Depth ? EAdvancedShadowRecordFlags.None : EAdvancedShadowRecordFlags.MomentEncoded);
+            rows.Add(new(lightIndex, new AdvancedShadowRecord
+            {
+                Type = EAdvancedShadowType.DirectionalCascade, Flags = flags,
+                WorldToShadow = published.RenderedWorldToLight,
+                PreviousWorldToShadow = published.RenderedWorldToLight,
+                UvScaleBias = published.AtlasUvScaleBias != Vector4.Zero ? published.AtlasUvScaleBias : primaryAlloc.UvScaleBias,
+                DepthBiasAndFilter = new(published.RenderedSplitBlendBias.Z, published.RenderedSplitBlendBias.W, published.ReceiverOffsetsAge.Y, 1.0f),
+                MomentParameters = new(light.ShadowMomentMinVariance, light.ShadowMomentLightBleedReduction, light.ShadowMomentPositiveExponent, light.ShadowMomentNegativeExponent),
+                DepthRangeAndCascade = new(published.AtlasDepthParams.X, published.AtlasDepthParams.Y, published.RenderedSplitBlendBias.X, published.RenderedSplitBlendBias.Y),
+                TextureLayer = checked((uint)Math.Max(0, primaryAlloc.PageIndex)), Encoding = (uint)light.ShadowMapEncoding,
+                CascadeCount = 1u, LastRenderedFrameLo = (uint)primaryAlloc.LastRenderedFrame, LastRenderedFrameHi = (uint)(primaryAlloc.LastRenderedFrame >> 32),
+            }, primaryTexture));
+        }
     }
 
     private static void CapturePointAtlasShadows(Lights3DCollection lights, PointLightComponent light, int lightIndex, List<AdvancedShadowCaptureRow> rows)

@@ -152,7 +152,16 @@ public sealed class RenderPipelinePostProcessSchemaBuilder(RenderPipeline pipeli
         if (parameters.Count == 0)
             return null;
 
-        return new PostProcessStageDescriptor(definition.Key, definition.DisplayName, parameters, definition.BackingType, definition.BackingFactory);
+        return new PostProcessStageDescriptor(
+            definition.Key,
+            definition.DisplayName,
+            parameters,
+            definition.BackingType,
+            definition.BackingFactory)
+        {
+            CustomDrawer = definition.CustomDrawer,
+            StateEvaluator = definition.StateEvaluator,
+        };
     }
 
     private static bool TryConvert(EShaderVarType? type, out PostProcessParameterKind kind)
@@ -200,6 +209,8 @@ public sealed class RenderPipelinePostProcessSchemaBuilder(RenderPipeline pipeli
         public List<CustomParameterDefinition> CustomParameters { get; } = new();
         public Type? BackingType { get; set; }
         public Func<object>? BackingFactory { get; set; }
+        public IPostProcessStageCustomDrawer? CustomDrawer { get; set; }
+        public Func<XRCamera, (bool Disabled, string? Reason)>? StateEvaluator { get; set; }
 
         public void SetShaderFactory(Func<IEnumerable<XRShader>> factory)
             => _shaderFactory = factory ?? throw new ArgumentNullException(nameof(factory));
@@ -272,6 +283,18 @@ public sealed class RenderPipelinePostProcessSchemaBuilder(RenderPipeline pipeli
             ArgumentNullException.ThrowIfNull(factory);
             _definition.BackingType = settingsType;
             _definition.BackingFactory = factory;
+            return this;
+        }
+
+        public PostProcessStageBuilder WithCustomDrawer(IPostProcessStageCustomDrawer drawer)
+        {
+            _definition.CustomDrawer = drawer;
+            return this;
+        }
+
+        public PostProcessStageBuilder WithStateEvaluator(Func<XRCamera, (bool Disabled, string? Reason)> evaluator)
+        {
+            _definition.StateEvaluator = evaluator;
             return this;
         }
 

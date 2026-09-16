@@ -546,7 +546,7 @@ Resume with these bounded steps:
    render targets and final output path. `rdc doctor` passes with RenderDoc
    1.44; no capture was produced before this pause. The session-only capture
    environment prepared for Start34 was `ENABLE_VULKAN_RENDERDOC_CAPTURE=1`,
-   `VK_IMPLICIT_LAYER_PATH=C:/Users/dnedd/AppData/Local/rdc/renderdoc` and
+   `VK_IMPLICIT_LAYER_PATH=<user-profile>/AppData/Local/rdc/renderdoc` and
    `XRE_VULKAN_RENDERDOC_FRIENDLY=1`.
    Final read-only review located a concrete routing defect: the diagnostic
    reports `sw=None`, `scene=0`, `fboD=12`, `ops=21`. The final

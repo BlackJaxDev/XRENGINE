@@ -32,7 +32,7 @@ the defect and a validation-clean run is not sufficient acceptance evidence.
 ### Evidence
 
 - Dumps:
-  `C:/Users/dnedd/AppData/Local/CrashDumps/XREngine.Editor.exe.42632.dmp`,
+  `<user-profile>/AppData/Local/CrashDumps/XREngine.Editor.exe.42632.dmp`,
   `XREngine.Editor.exe.290928.dmp`, `XREngine.Editor.exe.40820.dmp`, and
   `XREngine.Editor.exe.292620.dmp` in the same directory.
 - Focused test result:

@@ -240,7 +240,7 @@ Evidence: `reports/phase9a-acceptance-sweep.json` and the
 
 ### Reference provenance
 
-The real source asset was found at `C:/Users/DavidEddy/Desktop/misc/Mitsuki.fbx`.
+The real source asset was found at `<desktop>/misc/Mitsuki.fbx`.
 It was copied into an isolated ignored Unity project; the original was not
 modified. Unity `2022.3.22f1` successfully imported it as Humanoid and generated
 fresh references. This replaces the earlier assumption that the historical
