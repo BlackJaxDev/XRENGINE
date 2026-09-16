@@ -98,7 +98,8 @@ public sealed class RenderSettingsApiSeparationTests
               }
             },
             "Vulkan": {
-              "RenderTargetMode": "LegacyRenderPass"
+              "RenderTargetMode": "LegacyRenderPass",
+              "PresentationProfile": "Uncapped"
             }
           }
         }
@@ -110,6 +111,7 @@ public sealed class RenderSettingsApiSeparationTests
         settings.Rendering.OpenGL.AllowProgramPipelines.ShouldBeFalse();
         settings.Rendering.OpenGL.ShaderLinking.Strategy.ShouldBe(EOpenGLShaderLinkStrategy.DriverParallel);
         settings.Rendering.Vulkan.RenderTargetMode.ShouldBe(EVulkanRenderTargetMode.LegacyRenderPass);
+        settings.Rendering.Vulkan.PresentationProfile.ShouldBe(EVulkanPresentationProfile.Uncapped);
 
         var userSettings = new UserSettings();
         UnitTestingWorldSettingsStore.ApplyUserSettingsOverrides(userSettings, settings).ShouldBeTrue();
@@ -122,6 +124,7 @@ public sealed class RenderSettingsApiSeparationTests
         startupSettings.DefaultUserSettings.PreferredRenderBackend.ShouldBe(ERenderLibrary.Vulkan);
         startupSettings.RenderBackendFallbackPolicyOverride.Value.ShouldBe(RenderBackendFallbackPolicy.FallbackWithWarning);
         startupSettings.VulkanRenderTargetModeOverride.Value.ShouldBe(EVulkanRenderTargetMode.LegacyRenderPass);
+        startupSettings.VulkanPresentationProfileOverride.Value.ShouldBe(EVulkanPresentationProfile.Uncapped);
     }
 
     [Test]
@@ -174,7 +177,8 @@ public sealed class RenderSettingsApiSeparationTests
     {
         string effective = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/Engine/Subclasses/Engine.EffectiveSettings.cs");
         string windows = ReadWorkspaceFile("XREngine.Runtime.Bootstrap/RenderingHost/Engine.Windows.cs");
-        string mode = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/VulkanRenderTargetMode.cs");
+        string mode = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Frame/Output/Authority/VulkanOutputRuntime.RenderTargetModePolicy.cs");
+        string bootstrap = ReadWorkspaceFile("XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Bootstrap/Device/VulkanDeviceContext.LogicalDeviceBootstrap.cs");
         string runtimeServices = ReadWorkspaceFile("XREngine.Runtime.Rendering/Runtime/Interfaces/IRuntimeRenderSettingsServices.cs");
 
         effective.ShouldContain("public static ERenderLibrary PreferredRenderBackend");
@@ -194,7 +198,7 @@ public sealed class RenderSettingsApiSeparationTests
 
         mode.ShouldContain("XREngineEnvironmentVariables.VkRenderTargetMode");
         mode.ShouldContain("RuntimeEngine.EffectiveSettings.VulkanRenderTargetMode");
-        mode.ShouldContain("dynamic rendering was explicitly requested");
+        bootstrap.ShouldContain("dynamic rendering was explicitly requested");
 
         runtimeServices.ShouldContain("EVulkanRenderTargetMode VulkanRenderTargetMode");
     }

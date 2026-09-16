@@ -10,7 +10,7 @@ namespace XREngine;
 [MemoryPackable]
 public partial class VulkanPresentationSettings : XRBase
 {
-    private EVulkanPresentationProfile _profile = EVulkanPresentationProfile.Stable;
+    private EVulkanPresentationProfile _profile = EVulkanPresentationProfile.Uncapped;
     private float _targetRefreshHz;
     private int _maximumFramesAhead = 1;
     private float _limiterSpinThresholdMilliseconds = 0.25f;

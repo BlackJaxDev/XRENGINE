@@ -97,10 +97,7 @@ namespace XREngine.Rendering.Vulkan
                     if (requiresExactTerminal &&
                         recordingState.ActualSwapchainWriteCount == 0)
                     {
-                        throw new VulkanPlanPreconditionException(
-                            $"Exact-output frame {recordingState.Policy.SourceFrameId} " +
-                            "recorded no fresh swapchain terminal. Replaying a " +
-                            "previous presentation source is forbidden.");
+                        RecordFreshEmptyRequiredTerminalClear(ref recordingState);
                     }
 
                     bool refreshRequested =

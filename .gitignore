@@ -457,3 +457,4 @@ Assets/
 !XREngine.Runtime.Core/Assets/
 !XREngine.Runtime.Core/Assets/**
 Build/RenderBench/
+*.code-workspace

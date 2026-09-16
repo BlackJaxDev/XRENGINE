@@ -3,6 +3,7 @@ using System.Numerics;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
+using XREngine.Rendering.Vulkan;
 
 namespace XREngine.Runtime.Bootstrap;
 
@@ -85,6 +86,14 @@ public static class BootstrapRenderSettings
             renderSettings.AllowShaderPipelines = settings.Rendering.OpenGL.AllowProgramPipelines;
             renderSettings.VulkanRenderTargetMode = settings.Rendering.Vulkan.RenderTargetMode;
             renderSettings.Vulkan.Startup.FallbackPolicy = settings.Rendering.BackendFallbackPolicy;
+            renderSettings.VulkanPresentationProfile = settings.Rendering.Vulkan.PresentationProfile;
+            renderSettings.VulkanPresentationTargetRefreshHz = settings.Rendering.Vulkan.TargetRefreshHz;
+            Engine.GameSettings.VulkanPresentationProfileOverride = new(
+                settings.Rendering.Vulkan.PresentationProfile,
+                true);
+            Engine.GameSettings.VulkanPresentationTargetRefreshHzOverride = new(
+                settings.Rendering.Vulkan.TargetRefreshHz,
+                true);
         }
         else if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.AllowShaderPipelines)))
         {

@@ -42,6 +42,7 @@ namespace XREngine
         bool LogOutputToFile { get; }
         EOutputVerbosity OutputVerbosity { get; }
         double DebugOutputRecencySeconds { get; }
+        bool IsRenderThread => false;
     }
 
     public static class RuntimeDebugHostServices
@@ -102,6 +103,13 @@ namespace XREngine
         /// </summary>
         public static string? FirstChanceExceptionFilter { get; set; } =
             Environment.GetEnvironmentVariable(XREngineEnvironmentVariables.FirstChanceExceptions);
+
+        /// <summary>
+        /// Optional delegate to evaluate whether the current managed thread is the active engine render thread.
+        /// When true, <see cref="Out(EOutputVerbosity, bool, bool, bool, bool, int, int, string, object[])"/>
+        /// diverts file and console emission off the render thread.
+        /// </summary>
+        public static Func<bool>? IsRenderThreadEvaluator { get; set; }
 
         /// <summary>
         /// Raised when a new log entry is added to the in-engine console buffer.
@@ -874,6 +882,39 @@ namespace XREngine
                 return;
             }
 
+            if (args.Length > 0)
+                message = string.Format(message, args);
+
+            string? capturedStackTrace = printStackTrace
+                ? Environment.NewLine + GetStackTrace(stackTraceIgnoredLineCount, stackTraceIncludedLineCount)
+                : null;
+            DateTime now = DateTime.Now;
+
+            bool isRenderThread = IsCurrentRenderThread();
+            if (isRenderThread)
+            {
+                ThreadPool.QueueUserWorkItem(static state =>
+                {
+                    var (v, dOnly, pDate, pDomain, msg, stack, time) =
+                        ((EOutputVerbosity, bool, bool, bool, string, string?, DateTime))state!;
+                    OutCore(v, dOnly, pDate, pDomain, msg, stack, time);
+                }, (verbosity, debugOnly, printDate, printAppDomain, message, capturedStackTrace, now));
+                return;
+            }
+
+            OutCore(verbosity, debugOnly, printDate, printAppDomain, message, capturedStackTrace, now);
+#endif
+        }
+
+        private static void OutCore(
+            EOutputVerbosity verbosity,
+            bool debugOnly,
+            bool printDate,
+            bool printAppDomain,
+            string message,
+            string? capturedStackTrace,
+            DateTime now)
+        {
             var hostServices = RuntimeDebugHostServices.Current;
 
             if (verbosity > hostServices.OutputVerbosity)
@@ -882,13 +923,8 @@ namespace XREngine
                 return;
             }
 
-            if (args.Length > 0)
-                message = string.Format(message, args);
-
-            if (printStackTrace)
-                message += Environment.NewLine + GetStackTrace(stackTraceIgnoredLineCount, stackTraceIncludedLineCount);
-
-            DateTime now = DateTime.Now;
+            if (!string.IsNullOrEmpty(capturedStackTrace))
+                message += capturedStackTrace;
 
             double recentness = hostServices.DebugOutputRecencySeconds;
             if (recentness > 0.0)
@@ -903,15 +939,9 @@ namespace XREngine
                 removeKeys.ForEach(x => RecentMessageCache.TryRemove(x, out _));
 
                 if (RecentMessageCache.ContainsKey(message))
-                {
-                    //Messages already cleaned above, just return here
-
-                    //TimeSpan span = now - RecentMessages[message];
-                    //if (span.TotalSeconds <= AllowedOutputRecentness)
                     return;
-                }
-                else
-                    RecentMessageCache.TryAdd(message, now);
+
+                RecentMessageCache.TryAdd(message, now);
             }
 
             bool printDomain = printAppDomain/* || Settings.PrintAppDomainInOutput*/;
@@ -925,7 +955,6 @@ namespace XREngine
 
             bool logToFile = hostServices.LogOutputToFile;
             WriteLogMessage(message, logToFile);
-#endif
         }
 
         private static void Suppressed(string message)
@@ -1244,7 +1273,25 @@ namespace XREngine
             return stackTrace;
         }
 
+        private static bool IsCurrentRenderThread()
+            => RuntimeDebugHostServices.Current.IsRenderThread || (IsRenderThreadEvaluator?.Invoke() == true);
+
         private static void WriteLogMessage(string message, bool logToFile, ELogCategory category = ELogCategory.General)
+        {
+            if (IsCurrentRenderThread())
+            {
+                ThreadPool.QueueUserWorkItem(static state =>
+                {
+                    var (msg, toFile, cat) = ((string, bool, ELogCategory))state!;
+                    WriteLogMessageCore(msg, toFile, cat);
+                }, (message, logToFile, category));
+                return;
+            }
+
+            WriteLogMessageCore(message, logToFile, category);
+        }
+
+        private static void WriteLogMessageCore(string message, bool logToFile, ELogCategory category)
         {
             StreamWriter? writer = null;
 
@@ -1295,6 +1342,21 @@ namespace XREngine
             if (string.IsNullOrWhiteSpace(message))
                 return;
 
+            if (IsCurrentRenderThread())
+            {
+                ThreadPool.QueueUserWorkItem(static state =>
+                {
+                    var (fn, msg) = ((string, string))state!;
+                    WriteAuxiliaryLogCore(fn, msg);
+                }, (fileName, message));
+                return;
+            }
+
+            WriteAuxiliaryLogCore(fileName, message);
+        }
+
+        private static void WriteAuxiliaryLogCore(string fileName, string message)
+        {
             lock (LogWriterLock)
             {
                 try
