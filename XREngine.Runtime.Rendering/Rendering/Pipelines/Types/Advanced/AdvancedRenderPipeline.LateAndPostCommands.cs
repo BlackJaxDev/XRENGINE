@@ -379,11 +379,16 @@ public partial class AdvancedRenderPipeline
     private ViewportRenderCommandContainer CreateAdvancedAtmosphereCommands()
     {
         var commands = new ViewportRenderCommandContainer(this);
-        commands.Add<VPRC_RenderQuadToFBO>().SetTargets(AtmosphereHalfDepthQuadFBOName, AtmosphereHalfDepthFBOName, matchDestinationRenderArea: true);
-        commands.Add<VPRC_RenderQuadToFBO>().SetTargets(AtmosphereHalfScatterQuadFBOName, AtmosphereHalfScatterFBOName, matchDestinationRenderArea: true);
+        commands.Add<VPRC_RenderQuadToFBO>().SetTargets(AtmosphereHalfDepthQuadFBOName, AtmosphereHalfDepthFBOName, matchDestinationRenderArea: true)
+            .SetRenderGraphResources(DefaultRenderPipelineQuadDescriptors.HalfResolutionDepth(AtmosphereHalfDepthTextureName));
+        commands.Add<VPRC_RenderQuadToFBO>().SetTargets(AtmosphereHalfScatterQuadFBOName, AtmosphereHalfScatterFBOName, matchDestinationRenderArea: true)
+            .SetRenderGraphResources(DefaultRenderPipelineQuadDescriptors.VolumetricScatter(AtmosphereHalfDepthTextureName, AtmosphereHalfScatterTextureName));
         commands.Add<VPRC_AtmosphereHistoryPass>().Phase = VPRC_AtmosphereHistoryPass.EPhase.Begin;
-        commands.Add<VPRC_RenderQuadToFBO>().SetTargets(AtmosphereReprojectQuadFBOName, AtmosphereReprojectFBOName, matchDestinationRenderArea: true);
-        commands.Add<VPRC_RenderQuadToFBO>().SetTargets(AtmosphereUpscaleQuadFBOName, AtmosphereUpscaleFBOName, matchDestinationRenderArea: true);
+        commands.Add<VPRC_RenderQuadToFBO>().SetTargets(AtmosphereReprojectQuadFBOName, AtmosphereReprojectFBOName, matchDestinationRenderArea: true)
+            .SetRenderGraphResources(DefaultRenderPipelineQuadDescriptors.VolumetricReproject(
+                AtmosphereHalfScatterTextureName, AtmosphereHalfHistoryTextureName, AtmosphereHalfDepthTextureName, AtmosphereHalfTemporalTextureName));
+        commands.Add<VPRC_RenderQuadToFBO>().SetTargets(AtmosphereUpscaleQuadFBOName, AtmosphereUpscaleFBOName, matchDestinationRenderArea: true)
+            .SetRenderGraphResources(DefaultRenderPipelineQuadDescriptors.VolumetricUpscale(AtmosphereHalfTemporalTextureName, AtmosphereHalfDepthTextureName, AtmosphereColorTextureName));
         commands.Add<VPRC_BlitFrameBuffer>().SetOptions(AtmosphereReprojectFBOName, AtmosphereHistoryFBOName, EReadBufferMode.ColorAttachment0, true, false, false, false);
         commands.Add<VPRC_AtmosphereHistoryPass>().Phase = VPRC_AtmosphereHistoryPass.EPhase.Commit;
         return commands;
@@ -392,11 +397,16 @@ public partial class AdvancedRenderPipeline
     private ViewportRenderCommandContainer CreateAdvancedVolumetricFogCommands()
     {
         var commands = new ViewportRenderCommandContainer(this);
-        commands.Add<VPRC_RenderQuadToFBO>().SetTargets(VolumetricFogHalfDepthQuadFBOName, VolumetricFogHalfDepthFBOName, matchDestinationRenderArea: true);
-        commands.Add<VPRC_RenderQuadToFBO>().SetTargets(VolumetricFogHalfScatterQuadFBOName, VolumetricFogHalfScatterFBOName, matchDestinationRenderArea: true);
+        commands.Add<VPRC_RenderQuadToFBO>().SetTargets(VolumetricFogHalfDepthQuadFBOName, VolumetricFogHalfDepthFBOName, matchDestinationRenderArea: true)
+            .SetRenderGraphResources(DefaultRenderPipelineQuadDescriptors.HalfResolutionDepth(VolumetricFogHalfDepthTextureName));
+        commands.Add<VPRC_RenderQuadToFBO>().SetTargets(VolumetricFogHalfScatterQuadFBOName, VolumetricFogHalfScatterFBOName, matchDestinationRenderArea: true)
+            .SetRenderGraphResources(DefaultRenderPipelineQuadDescriptors.VolumetricScatter(VolumetricFogHalfDepthTextureName, VolumetricFogHalfScatterTextureName));
         commands.Add<VPRC_VolumetricFogHistoryPass>().Phase = VPRC_VolumetricFogHistoryPass.EPhase.Begin;
-        commands.Add<VPRC_RenderQuadToFBO>().SetTargets(VolumetricFogReprojectQuadFBOName, VolumetricFogReprojectFBOName, matchDestinationRenderArea: true);
-        commands.Add<VPRC_RenderQuadToFBO>().SetTargets(VolumetricFogUpscaleQuadFBOName, VolumetricFogUpscaleFBOName, matchDestinationRenderArea: true);
+        commands.Add<VPRC_RenderQuadToFBO>().SetTargets(VolumetricFogReprojectQuadFBOName, VolumetricFogReprojectFBOName, matchDestinationRenderArea: true)
+            .SetRenderGraphResources(DefaultRenderPipelineQuadDescriptors.VolumetricReproject(
+                VolumetricFogHalfScatterTextureName, VolumetricFogHalfHistoryTextureName, VolumetricFogHalfDepthTextureName, VolumetricFogHalfTemporalTextureName));
+        commands.Add<VPRC_RenderQuadToFBO>().SetTargets(VolumetricFogUpscaleQuadFBOName, VolumetricFogUpscaleFBOName, matchDestinationRenderArea: true)
+            .SetRenderGraphResources(DefaultRenderPipelineQuadDescriptors.VolumetricUpscale(VolumetricFogHalfTemporalTextureName, VolumetricFogHalfDepthTextureName, VolumetricFogColorTextureName));
         commands.Add<VPRC_BlitFrameBuffer>().SetOptions(VolumetricFogReprojectFBOName, VolumetricFogHistoryFBOName, EReadBufferMode.ColorAttachment0, true, false, false, false);
         commands.Add<VPRC_VolumetricFogHistoryPass>().Phase = VPRC_VolumetricFogHistoryPass.EPhase.Commit;
         return commands;

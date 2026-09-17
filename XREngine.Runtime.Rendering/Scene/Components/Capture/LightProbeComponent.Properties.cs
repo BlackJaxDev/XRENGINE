@@ -152,8 +152,7 @@ namespace XREngine.Components.Capture.Lights
         public bool HasUsableIblTextures
             => IrradianceTexture is not null
             && PrefilterTexture is not null
-            && IblTexturesValid
-            && CaptureVersion > 0u;
+            && TryGetActiveIblOutput(out _);
 
         #endregion
 

@@ -1101,17 +1101,24 @@ public partial class DefaultRenderPipeline
         var c = new ViewportRenderCommandContainer(this);
 
         c.Add<VPRC_RenderQuadToFBO>()
-            .SetTargets(AtmosphereHalfDepthQuadFBOName, AtmosphereHalfDepthFBOName, matchDestinationRenderArea: true);
+            .SetTargets(AtmosphereHalfDepthQuadFBOName, AtmosphereHalfDepthFBOName, matchDestinationRenderArea: true)
+            .SetRenderGraphResources(DefaultRenderPipelineQuadDescriptors.HalfResolutionDepth(AtmosphereHalfDepthTextureName));
 
         c.Add<VPRC_RenderQuadToFBO>()
-            .SetTargets(AtmosphereHalfScatterQuadFBOName, AtmosphereHalfScatterFBOName, matchDestinationRenderArea: true);
+            .SetTargets(AtmosphereHalfScatterQuadFBOName, AtmosphereHalfScatterFBOName, matchDestinationRenderArea: true)
+            .SetRenderGraphResources(DefaultRenderPipelineQuadDescriptors.VolumetricScatter(
+                AtmosphereHalfDepthTextureName, AtmosphereHalfScatterTextureName));
 
         c.Add<VPRC_AtmosphereHistoryPass>().Phase = VPRC_AtmosphereHistoryPass.EPhase.Begin;
         c.Add<VPRC_RenderQuadToFBO>()
-            .SetTargets(AtmosphereReprojectQuadFBOName, AtmosphereReprojectFBOName, matchDestinationRenderArea: true);
+            .SetTargets(AtmosphereReprojectQuadFBOName, AtmosphereReprojectFBOName, matchDestinationRenderArea: true)
+            .SetRenderGraphResources(DefaultRenderPipelineQuadDescriptors.VolumetricReproject(
+                AtmosphereHalfScatterTextureName, AtmosphereHalfHistoryTextureName, AtmosphereHalfDepthTextureName, AtmosphereHalfTemporalTextureName));
 
         c.Add<VPRC_RenderQuadToFBO>()
-            .SetTargets(AtmosphereUpscaleQuadFBOName, AtmosphereUpscaleFBOName, matchDestinationRenderArea: true);
+            .SetTargets(AtmosphereUpscaleQuadFBOName, AtmosphereUpscaleFBOName, matchDestinationRenderArea: true)
+            .SetRenderGraphResources(DefaultRenderPipelineQuadDescriptors.VolumetricUpscale(
+                AtmosphereHalfTemporalTextureName, AtmosphereHalfDepthTextureName, AtmosphereColorTextureName));
 
         c.Add<VPRC_BlitFrameBuffer>().SetOptions(
             AtmosphereReprojectFBOName,
@@ -1151,23 +1158,30 @@ public partial class DefaultRenderPipeline
         // Stage 1: half-resolution depth downsample.
 
         c.Add<VPRC_RenderQuadToFBO>()
-            .SetTargets(VolumetricFogHalfDepthQuadFBOName, VolumetricFogHalfDepthFBOName, matchDestinationRenderArea: true);
+            .SetTargets(VolumetricFogHalfDepthQuadFBOName, VolumetricFogHalfDepthFBOName, matchDestinationRenderArea: true)
+            .SetRenderGraphResources(DefaultRenderPipelineQuadDescriptors.HalfResolutionDepth(VolumetricFogHalfDepthTextureName));
 
         // Stage 2: half-resolution scatter raymarch.
 
         c.Add<VPRC_RenderQuadToFBO>()
-            .SetTargets(VolumetricFogHalfScatterQuadFBOName, VolumetricFogHalfScatterFBOName, matchDestinationRenderArea: true);
+            .SetTargets(VolumetricFogHalfScatterQuadFBOName, VolumetricFogHalfScatterFBOName, matchDestinationRenderArea: true)
+            .SetRenderGraphResources(DefaultRenderPipelineQuadDescriptors.VolumetricScatter(
+                VolumetricFogHalfDepthTextureName, VolumetricFogHalfScatterTextureName));
 
         // Stage 3: half-resolution temporal reprojection.
 
         c.Add<VPRC_VolumetricFogHistoryPass>().Phase = VPRC_VolumetricFogHistoryPass.EPhase.Begin;
         c.Add<VPRC_RenderQuadToFBO>()
-            .SetTargets(VolumetricFogReprojectQuadFBOName, VolumetricFogReprojectFBOName, matchDestinationRenderArea: true);
+            .SetTargets(VolumetricFogReprojectQuadFBOName, VolumetricFogReprojectFBOName, matchDestinationRenderArea: true)
+            .SetRenderGraphResources(DefaultRenderPipelineQuadDescriptors.VolumetricReproject(
+                VolumetricFogHalfScatterTextureName, VolumetricFogHalfHistoryTextureName, VolumetricFogHalfDepthTextureName, VolumetricFogHalfTemporalTextureName));
 
         // Stage 4: full-resolution bilateral upscale.
 
         c.Add<VPRC_RenderQuadToFBO>()
-            .SetTargets(VolumetricFogUpscaleQuadFBOName, VolumetricFogUpscaleFBOName, matchDestinationRenderArea: true);
+            .SetTargets(VolumetricFogUpscaleQuadFBOName, VolumetricFogUpscaleFBOName, matchDestinationRenderArea: true)
+            .SetRenderGraphResources(DefaultRenderPipelineQuadDescriptors.VolumetricUpscale(
+                VolumetricFogHalfTemporalTextureName, VolumetricFogHalfDepthTextureName, VolumetricFogColorTextureName));
 
         c.Add<VPRC_BlitFrameBuffer>().SetOptions(
             VolumetricFogReprojectFBOName,
