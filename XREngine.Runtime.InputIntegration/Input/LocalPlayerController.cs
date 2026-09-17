@@ -107,7 +107,7 @@ namespace XREngine.Runtime.InputIntegration
         {
             if (_viewport is not null)
             {
-                System.Diagnostics.Debug.WriteLine($"[LocalPlayerController] UpdateViewportCamera: VP={_viewport.GetHashCode()} Pawn={_controlledPawn?.Name ?? "<null>"}");
+                System.Diagnostics.Debug.WriteLine($"[LocalPlayerController] UpdateViewportCamera: VP={_viewport.GetHashCode()} Pawn={GetControlledPawnDiagnosticName()}");
                 _viewport.RefreshControlledPawnCamera(_controlledPawn);
                 RefreshViewportInputBinding();
             }
@@ -171,9 +171,14 @@ namespace XREngine.Runtime.InputIntegration
         /// </summary>
         public void RefreshViewportCamera()
         {
-            System.Diagnostics.Debug.WriteLine($"[LocalPlayerController] RefreshViewportCamera called. VP={(Viewport is null ? "NULL" : Viewport.GetHashCode().ToString())} Pawn={ControlledPawn?.Name ?? "<null>"}");
+            System.Diagnostics.Debug.WriteLine($"[LocalPlayerController] RefreshViewportCamera called. VP={(Viewport is null ? "NULL" : Viewport.GetHashCode().ToString())} Pawn={GetControlledPawnDiagnosticName()}");
             UpdateViewportCamera();
         }
+
+        private string GetControlledPawnDiagnosticName()
+            => _controlledPawn is null
+                ? "<none>"
+                : _controlledPawn.Name ?? _controlledPawn.SceneNode?.Name ?? _controlledPawn.GetType().Name;
 
         /// <inheritdoc />
         public override void TickPawnInput(float delta, bool isUIInputCaptured)

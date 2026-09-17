@@ -44,7 +44,12 @@ public partial class AdvancedRenderPipeline
                 LightProbeComponent probe = readyProbes[index];
                 if (!probe.TryGetActiveIblOutput(out LightProbeIblOutputGeneration generation) ||
                     !generation.TryRetainPublication())
-                    throw new InvalidOperationException("A completed probe generation retired before array assembly.");
+                {
+                    DeferProbeResourceRefresh();
+                    Debug.RenderingWarningEvery("Advanced.ProbeArrayRefreshRejected", TimeSpan.FromSeconds(2),
+                        "[Advanced] Probe array refresh deferred; an output generation became unavailable before retention. Keeping the previous publication.");
+                    return;
+                }
                 retained.Add(generation);
                 irradianceSources[index] = generation.Irradiance;
                 prefilterSources[index] = generation.PrefilteredRadiance;

@@ -410,6 +410,10 @@ internal sealed partial class VulkanFramePlanner
             return;
         }
 
+        if (binding.Slot.Equals("stencil", StringComparison.OrdinalIgnoreCase) &&
+            usage.ResourceType == ERenderPassResourceType.StencilAttachment)
+            return;
+
         Debug.VulkanWarningEvery(
             $"VulkanResourcePlanner.MissingFBOSlot.{pass.PassIndex}.{binding.Name}.{binding.Slot}",
             TimeSpan.FromSeconds(2),

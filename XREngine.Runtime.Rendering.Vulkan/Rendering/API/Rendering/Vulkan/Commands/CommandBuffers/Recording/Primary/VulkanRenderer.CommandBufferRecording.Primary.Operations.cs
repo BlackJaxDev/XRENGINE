@@ -885,12 +885,12 @@ internal sealed partial class VulkanCommandRuntime
         CmdEndLabel(state.CommandBuffer);
         ref readonly FrameOpContext context =
             ref state.Ops.GetContext(info.OperationIndex);
-        // XR retains recorded work through its own submission tracker rather
-        // than the desktop accepted-plan receipt. Optional picking must not
-        // turn a valid eye draw into a missing-desktop-authority failure.
-        if (state.AcceptedFramePlan is null && context.ContextKind is
-            RenderGraph.EVulkanFrameOpContextKind.OpenXrEye or
-            RenderGraph.EVulkanFrameOpContextKind.OpenXrMirror)
+        if (state.AcceptedFramePlan is null &&
+            (context.ContextKind is
+                RenderGraph.EVulkanFrameOpContextKind.OpenXrEye or
+                RenderGraph.EVulkanFrameOpContextKind.OpenXrMirror ||
+             !state.Policy.IsPresentNow &&
+             state.Policy.ReadinessPolicy == ERenderOutputReadinessPolicy.AllowDeferral))
             return info.OperationIndex;
         XRRenderPipelineInstance pipeline = context.PipelineInstance ??
             throw new VulkanPlanPreconditionException(

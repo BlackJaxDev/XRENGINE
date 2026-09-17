@@ -1369,6 +1369,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             return;
         }
 
+        CompleteWorldPickDispatch();
         Debug.RenderingWarningEvery(
             "Editor.AdvancedPicking.ReadbackRejected",
             TimeSpan.FromSeconds(2),
@@ -1381,6 +1382,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         in AdvancedPickingResult result,
         bool selectOnCompletion)
     {
+        CompleteWorldPickDispatch();
         _lastAdvancedPickingResult = result;
         SceneNode? node = ResolveAdvancedPickingSceneNode(in result);
         if (node is not null && !ReferenceEquals(node.World, World))
@@ -1472,6 +1474,11 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             Engine.EnqueueMainThreadTask(Select, "EditorFlyingCameraPawnComponent.ClickSelect");
         }
 
+        CompleteWorldPickDispatch();
+    }
+
+    private void CompleteWorldPickDispatch()
+    {
         bool requestFollowUpPick;
         using (_pickDispatchLock.EnterScope())
         {

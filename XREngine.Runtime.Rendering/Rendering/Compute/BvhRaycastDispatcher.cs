@@ -78,7 +78,7 @@ public sealed class BvhRaycastDispatcher : IDisposable
     /// </summary>
     public void ProcessDispatches()
     {
-        if (!_enabled)
+        if (!_enabled || _pendingRequests.IsEmpty)
             return;
 
         var renderer = AbstractRenderer.Current;

@@ -28,6 +28,32 @@ internal static class DefaultRenderPipelineQuadDescriptors
         => new VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor()
             .SampleTexture(DefaultRenderPipeline.HDRSceneTextureName);
 
+    public static VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor HalfResolutionDepth(string output)
+        => new VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor()
+            .SampleTexture(DefaultRenderPipeline.DepthViewTextureName)
+            .UseColorTexture(output);
+
+    public static VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor VolumetricScatter(string depth, string output)
+        => new VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor()
+            .SampleTexture(depth)
+            .UseColorTexture(output);
+
+    public static VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor VolumetricReproject(
+        string scatter, string history, string depth, string output)
+        => new VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor()
+            .SampleTexture(scatter)
+            .SampleTexture(history)
+            .SampleTexture(depth)
+            .UseColorTexture(output);
+
+    public static VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor VolumetricUpscale(
+        string temporal, string depth, string output)
+        => new VPRC_RenderQuadToFBO.RenderGraphResourceDescriptor()
+            .SampleTexture(temporal)
+            .SampleTexture(depth)
+            .SampleTexture(DefaultRenderPipeline.DepthViewTextureName)
+            .UseColorTexture(output);
+
     /// <summary>
     /// Generates the descriptor for the deferred light combine pass.
     /// </summary>
