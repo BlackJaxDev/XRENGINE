@@ -110,8 +110,12 @@ namespace XREngine.Rendering
             => SetUniforms(program, Vector2.Zero);
 
         public void SetUniforms(XRRenderProgram program, Vector2 texelSize)
+            => SetUniforms(program, texelSize, null, 0.0f);
+
+        public void SetUniforms(XRRenderProgram program, Vector2 texelSize, XRCamera? camera, float renderHeightPx = 0.0f)
         {
-            var camera = RuntimeEngine.Rendering.State.RenderingPipelineState?.SceneCamera;
+            camera ??= RenderPipelineCameraResolver.ResolveCurrentSettingsCamera()
+                ?? RuntimeEngine.Rendering.State.RenderingPipelineState?.SceneCamera;
 
             bool usePhysical = _mode == DepthOfFieldControlMode.Physical
                 && camera?.Parameters is XRPhysicalCameraParameters;
@@ -156,9 +160,11 @@ namespace XREngine.Rendering
             float focusDistMm = focusDistM * 1000.0f;
             float fMm = MathF.Max(0.001f, physical.FocalLengthMm);
             float cocRefMm = MathF.Max(0.0001f, _physicalCircleOfConfusionMm);
-            float renderHeightPx = MathF.Max(1.0f, RuntimeEngine.Rendering.State.RenderArea.Height);
+            float effectiveRenderHeight = renderHeightPx > 0.0f
+                ? renderHeightPx
+                : MathF.Max(1.0f, RuntimeEngine.Rendering.State.RenderArea.Height);
             float sensorHeightMm = MathF.Max(0.001f, physical.SensorHeightMm);
-            float pixelsPerMm = renderHeightPx / sensorHeightMm;
+            float pixelsPerMm = effectiveRenderHeight / sensorHeightMm;
 
             program.Uniform("DoFMode", (int)DepthOfFieldControlMode.Physical);
             program.Uniform("Aperture", MathF.Max(0.1f, _aperture));

@@ -860,7 +860,8 @@ public partial class DefaultRenderPipeline
             return;
         }
 
-        settings.SetUniforms(program, texelSize);
+        var camera = ResolveCurrentSettingsCamera();
+        settings.SetUniforms(program, texelSize, camera, height);
     }
 
     private void MotionBlurFBO_SettingUniforms(XRRenderProgram program)

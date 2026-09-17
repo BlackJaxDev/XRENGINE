@@ -106,10 +106,12 @@ public partial class AdvancedRenderPipeline
         CommonPostProcessStages.AddStandardPipelineSchema(builder);
     }
 
+    private static XRCamera? ResolveCurrentSettingsCamera(XRRenderPipelineInstance? pipeline = null)
+        => RenderPipelineCameraResolver.ResolveCurrentSettingsCamera(pipeline);
+
     private static MotionBlurSettings? GetMotionBlurSettings()
     {
-        var renderState = RuntimeEngine.Rendering.State.RenderingPipelineState;
-        var stage = renderState?.SceneCamera?.GetPostProcessStageState<MotionBlurSettings>();
+        var stage = ResolveCurrentSettingsCamera()?.GetPostProcessStageState<MotionBlurSettings>();
         return stage?.TryGetBacking(out MotionBlurSettings? settings) == true ? settings : null;
     }
 
@@ -124,15 +126,13 @@ public partial class AdvancedRenderPipeline
 
     private static DepthOfFieldSettings? GetDepthOfFieldSettings()
     {
-        var renderState = RuntimeEngine.Rendering.State.RenderingPipelineState;
-        var stage = renderState?.SceneCamera?.GetPostProcessStageState<DepthOfFieldSettings>();
+        var stage = ResolveCurrentSettingsCamera()?.GetPostProcessStageState<DepthOfFieldSettings>();
         return stage?.TryGetBacking(out DepthOfFieldSettings? settings) == true ? settings : null;
     }
 
     private static BloomSettings? GetBloomSettings()
     {
-        var renderState = RuntimeEngine.Rendering.State.RenderingPipelineState;
-        var stage = renderState?.SceneCamera?.GetPostProcessStageState<BloomSettings>();
+        var stage = ResolveCurrentSettingsCamera()?.GetPostProcessStageState<BloomSettings>();
         return stage?.TryGetBacking(out BloomSettings? settings) == true ? settings : null;
     }
 
@@ -204,7 +204,7 @@ public partial class AdvancedRenderPipeline
         float aspectRatio = fallbackAspectRatio;
         Vector2 distortionCenterUv = LensDistortionSettings.DefaultDistortionCenterUv;
 
-        var cameraParams = RenderingPipelineState?.SceneCamera?.Parameters;
+        var cameraParams = ResolveCurrentSettingsCamera()?.Parameters;
         switch (cameraParams)
         {
             case XRPerspectiveCameraParameters perspParams:
@@ -258,7 +258,7 @@ public partial class AdvancedRenderPipeline
         materialProgram.Uniform("SelectionOutlineColor", selectionOutlineColor);
         materialProgram.Uniform("EnableEditorOutline", enableEditorOutline);
 
-        var state = RenderingPipelineState?.SceneCamera?.GetActivePostProcessState();
+        var state = ResolveCurrentSettingsCamera()?.GetActivePostProcessState();
         ApplyPostProcessUniforms(state, materialProgram, applyLensDistortion: false);
     }
 
@@ -314,7 +314,7 @@ public partial class AdvancedRenderPipeline
         if (source is not null)
             materialProgram.Sampler(PostProcessOutputTextureName, source, 0);
 
-        var state = RenderingPipelineState?.SceneCamera?.GetActivePostProcessState();
+        var state = ResolveCurrentSettingsCamera()?.GetActivePostProcessState();
         ApplyLensDistortionUniforms(state, materialProgram, enabled: true);
     }
 
@@ -356,7 +356,7 @@ public partial class AdvancedRenderPipeline
         if (source is not null)
             program.Sampler(PostProcessOutputTextureName, source, 0);
 
-        var state = RenderingPipelineState?.SceneCamera?.GetActivePostProcessState();
+        var state = ResolveCurrentSettingsCamera()?.GetActivePostProcessState();
         TemporalResolveSettings temporalSettings = ResolveTemporalSettings(state);
         bool historyReady = false;
         Vector2 currentJitterUv = Vector2.Zero;
@@ -403,7 +403,7 @@ public partial class AdvancedRenderPipeline
 
     private void ApplyBrightPassProgramBindings(XRRenderProgram program)
     {
-        var state = RenderingPipelineState?.SceneCamera?.GetActivePostProcessState();
+        var state = ResolveCurrentSettingsCamera()?.GetActivePostProcessState();
         ApplyBloomBrightPassUniforms(state, program);
     }
 
@@ -427,7 +427,8 @@ public partial class AdvancedRenderPipeline
             return;
         }
 
-        settings.SetUniforms(program, texelSize);
+        var camera = ResolveCurrentSettingsCamera();
+        settings.SetUniforms(program, texelSize, camera, height);
     }
 
     private void ApplyMotionBlurProgramBindings(XRRenderProgram program)
@@ -455,7 +456,7 @@ public partial class AdvancedRenderPipeline
     private void ApplyTemporalAccumulationProgramBindings(XRRenderProgram program)
     {
         BindAdvancedTemporalReactiveMask(program);
-        var state = RenderingPipelineState?.SceneCamera?.GetActivePostProcessState();
+        var state = ResolveCurrentSettingsCamera()?.GetActivePostProcessState();
         TemporalResolveSettings temporalSettings = ResolveTemporalSettings(state);
         bool temporalHistoryAllowed = !DisableHistoryBasedVrEffects();
         if (temporalHistoryAllowed && VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(out var temporalData))
@@ -519,7 +520,7 @@ public partial class AdvancedRenderPipeline
     {
         Atmosphere_SetFragmentCameraUniforms(materialProgram);
 
-        var state = RenderingPipelineState?.SceneCamera?.GetActivePostProcessState();
+        var state = ResolveCurrentSettingsCamera()?.GetActivePostProcessState();
         var atmosphere = GetSettings<AtmosphericScatteringSettings>(state);
         (atmosphere ?? AtmosphericScatteringSettings.Default).SetUniforms(materialProgram);
     }
@@ -528,7 +529,7 @@ public partial class AdvancedRenderPipeline
     {
         Atmosphere_SetFragmentCameraUniforms(materialProgram);
 
-        var state = RenderingPipelineState?.SceneCamera?.GetActivePostProcessState();
+        var state = ResolveCurrentSettingsCamera()?.GetActivePostProcessState();
         var atmosphere = GetSettings<AtmosphericScatteringSettings>(state);
         (atmosphere ?? AtmosphericScatteringSettings.Default).SetUniforms(materialProgram);
     }
@@ -537,7 +538,7 @@ public partial class AdvancedRenderPipeline
     {
         Atmosphere_SetFragmentCameraUniforms(materialProgram);
 
-        var state = RenderingPipelineState?.SceneCamera?.GetActivePostProcessState();
+        var state = ResolveCurrentSettingsCamera()?.GetActivePostProcessState();
         var atmosphere = GetSettings<AtmosphericScatteringSettings>(state);
         float maxDistance = atmosphere is not null && atmosphere.Enabled && atmosphere.AerialPerspective
             ? atmosphere.MaxDistance
@@ -579,7 +580,7 @@ public partial class AdvancedRenderPipeline
     {
         VolumetricFog_SetFragmentCameraUniforms(materialProgram);
 
-        var state = RenderingPipelineState?.SceneCamera?.GetActivePostProcessState();
+        var state = ResolveCurrentSettingsCamera()?.GetActivePostProcessState();
         var volumetricFog = GetSettings<VolumetricFogSettings>(state);
         (volumetricFog ?? new VolumetricFogSettings()).SetUniforms(materialProgram);
         materialProgram.Uniform("GlobalAmbient", new Vector3(0.1f, 0.1f, 0.1f));
@@ -638,7 +639,7 @@ public partial class AdvancedRenderPipeline
     {
         VolumetricFog_SetFragmentCameraUniforms(materialProgram);
 
-        var state = RenderingPipelineState?.SceneCamera?.GetActivePostProcessState();
+        var state = ResolveCurrentSettingsCamera()?.GetActivePostProcessState();
         var volumetricFog = GetSettings<VolumetricFogSettings>(state);
         (volumetricFog ?? new VolumetricFogSettings()).SetUniforms(materialProgram);
     }
@@ -647,7 +648,7 @@ public partial class AdvancedRenderPipeline
     {
         VolumetricFog_SetFragmentCameraUniforms(materialProgram);
 
-        var state = RenderingPipelineState?.SceneCamera?.GetActivePostProcessState();
+        var state = ResolveCurrentSettingsCamera()?.GetActivePostProcessState();
         var volumetricFog = GetSettings<VolumetricFogSettings>(state);
         float maxDistance = volumetricFog is not null && volumetricFog.Enabled && volumetricFog.Intensity > 0.0f
             ? volumetricFog.MaxDistance

@@ -1,4 +1,4 @@
-﻿namespace XREngine.Data.Rendering
+namespace XREngine.Data.Rendering
 {
     public enum EDefaultRenderPass
     {
@@ -58,5 +58,17 @@
         /// Called after all rendering is done.
         /// </summary>
         PostRender,
+        /// <summary>
+        /// Renders after bloom extraction, before motion blur and depth of field.
+        /// </summary>
+        PostBloomForward,
+        /// <summary>
+        /// Renders after motion blur, before depth of field.
+        /// </summary>
+        PostMotionBlurForward,
+        /// <summary>
+        /// Renders after depth of field.
+        /// </summary>
+        PostDepthOfFieldForward,
     }
 }

@@ -20,6 +20,7 @@ public static class XREngineEnvironmentVariables
     public const string AnthropicApiKey = "ANTHROPIC_API_KEY";
     public const string GeminiApiKey = "GEMINI_API_KEY";
     public const string GitHubToken = "GITHUB_TOKEN";
+    public const string TypeSafeApiKey = "TYPESAFE_API_KEY";
 
     public const string XrRuntimeJson = "XR_RUNTIME_JSON";
     public const string MonadoRuntimeJson = "MONADO_RUNTIME_JSON";

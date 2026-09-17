@@ -1223,9 +1223,9 @@ namespace XREngine.Rendering
         /// Returns a normalized X, Y coordinate relative to the camera's origin (center for perspective, bottom-left for orthographic) 
         /// with Z being the normalized depth (0.0f - 1.0f) from NearDepth (0.0f) to FarDepth (1.0f).
         /// </summary>
-        public void WorldToNormalizedViewportCoordinate(Vector3 worldPoint, out Vector2 screenPoint, out float depth)
+        public void WorldToNormalizedViewportCoordinate(Vector3 worldPoint, out Vector2 screenPoint, out float depth, bool useUnjitteredProjection = false)
         {
-            Vector3 xyd = WorldToNormalizedViewportCoordinate(worldPoint);
+            Vector3 xyd = WorldToNormalizedViewportCoordinate(worldPoint, useUnjitteredProjection);
             screenPoint = new Vector2(xyd.X, xyd.Y);
             depth = xyd.Z;
         }
@@ -1233,9 +1233,9 @@ namespace XREngine.Rendering
         /// Returns a normalized X, Y coordinate relative to the camera's origin (center for perspective, bottom-left for orthographic) 
         /// with Z being the normalized depth (0.0f - 1.0f) from NearDepth (0.0f) to FarDepth (1.0f).
         /// </summary>
-        public void WorldToNormalizedViewportCoordinate(Vector3 worldPoint, out float x, out float y, out float depth)
+        public void WorldToNormalizedViewportCoordinate(Vector3 worldPoint, out float x, out float y, out float depth, bool useUnjitteredProjection = false)
         {
-            Vector3 xyd = WorldToNormalizedViewportCoordinate(worldPoint);
+            Vector3 xyd = WorldToNormalizedViewportCoordinate(worldPoint, useUnjitteredProjection);
             x = xyd.X;
             y = xyd.Y;
             depth = xyd.Z;
@@ -1244,9 +1244,17 @@ namespace XREngine.Rendering
         /// Returns a normalized X, Y coordinate relative to the camera's origin (center for perspective, bottom-left for orthographic) 
         /// with Z being the normalized depth (0.0f - 1.0f) from NearDepth (0.0f) to FarDepth (1.0f).
         /// </summary>
-        public Vector3 WorldToNormalizedViewportCoordinate(Vector3 worldPoint)
+        public Vector3 WorldToNormalizedViewportCoordinate(Vector3 worldPoint, bool useUnjitteredProjection = false)
         {
-            Vector3 clip = Vector3.Transform(Vector3.Transform(worldPoint, Transform.InverseWorldMatrix), ProjectionMatrix);
+            Matrix4x4 viewMatrix = Transform?.InverseWorldMatrix ?? Matrix4x4.Identity;
+            Matrix4x4 projMatrix = useUnjitteredProjection ? ProjectionMatrixUnjittered : ProjectionMatrix;
+            Vector4 clip = Vector4.Transform(new Vector4(worldPoint, 1.0f), viewMatrix * projMatrix);
+
+            if (clip.W <= 0.0f)
+                return new Vector3(-1f, -1f, -1f);
+
+            clip /= clip.W;
+
             ERenderClipDepthRange clipDepthRange = RuntimeEngine.Rendering.EffectiveClipDepthRange;
             Vector3 clip01 = new(
                 clip.X * 0.5f + 0.5f,

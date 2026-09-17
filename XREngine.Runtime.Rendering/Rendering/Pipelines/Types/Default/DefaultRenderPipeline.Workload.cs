@@ -40,6 +40,8 @@ public partial class DefaultRenderPipeline
         (int)EDefaultRenderPass.OpaqueForward,
         (int)EDefaultRenderPass.MaskedForward,
         (int)EDefaultRenderPass.WeightedBlendedOitForward,
+        (int)EDefaultRenderPass.TransparentForward,
+        (int)EDefaultRenderPass.OnTopForward,
         (int)EDefaultRenderPass.PerPixelLinkedListForward,
         (int)EDefaultRenderPass.DepthPeelingForward,
     ];

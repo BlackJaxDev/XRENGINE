@@ -1,13 +1,18 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.IO;
 using System.Numerics;
 using XREngine.Data.Colors;
+using XREngine.Data.Core;
+using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Info;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.Pipelines.Commands;
+using XREngine.Scene;
 
 namespace XREngine.Components.Scene.Environment;
 
@@ -19,12 +24,24 @@ namespace XREngine.Components.Scene.Environment;
 [Category("Environment")]
 [DisplayName("Infinite Reference Grid")]
 [Description("Renders independently selectable infinite grids on the XZ, XY, and YZ planes.")]
-public sealed class InfiniteGridFloorComponent : XRComponent, IRenderable
+public sealed class InfiniteGridFloorComponent : XRComponent, IRenderable, IEditorDepthHitProvider
 {
-    private const int XZPlane = 0;
-    private const int XYPlane = 1;
-    private const int YZPlane = 2;
-    private const int PlaneCount = 3;
+    public const int XZPlane = 0;
+    public const int XYPlane = 1;
+    public const int YZPlane = 2;
+    public const int PlaneCount = 3;
+
+    private static readonly List<InfiniteGridFloorComponent> _activeGrids = [];
+    private static readonly object _activeGridsLock = new();
+
+    public static IReadOnlyList<InfiniteGridFloorComponent> ActiveGrids
+    {
+        get
+        {
+            lock (_activeGridsLock)
+                return [.. _activeGrids];
+        }
+    }
 
     private readonly record struct GridBindingState(
         float GridHeight,
@@ -86,9 +103,30 @@ public sealed class InfiniteGridFloorComponent : XRComponent, IRenderable
             => owner.PublishUniforms(materialProgram, gridPlane);
     }
 
+    private sealed class InfiniteGridVelocityBindingPublisher(
+        InfiniteGridFloorComponent owner,
+        int gridPlane) : IRenderBindingPublisher
+    {
+        private ulong _generation = 1;
+        public ERenderBindingFrequency Frequency => ERenderBindingFrequency.Material;
+        public ulong Generation => unchecked(_generation++);
+
+        public void PublishUniforms(
+            XRRenderProgram vertexProgram,
+            XRRenderProgram materialProgram)
+        {
+            owner.PublishUniforms(materialProgram, gridPlane);
+            BindTemporalMatrices(materialProgram);
+        }
+    }
+
     private static XRShader? s_vertexShader;
     private static XRShader? s_stereoVertexShader;
     private static XRShader? s_fragmentShader;
+    private static XRShader? s_motionVectorsFragmentShader;
+    private static XRShader? s_motionVectorsStereoFragmentShader;
+    private static XRShader? s_reactiveMaskFragmentShader;
+    private static XRShader? s_reactiveMaskStereoFragmentShader;
 
     private readonly RenderCommandMesh3D[] _renderCommands;
     private readonly RenderInfo3D[] _renderInfos;
@@ -96,11 +134,16 @@ public sealed class InfiniteGridFloorComponent : XRComponent, IRenderable
     private XRMesh? _mesh;
     private readonly XRMeshRenderer?[] _meshRenderers = new XRMeshRenderer?[PlaneCount];
     private readonly XRMaterial?[] _materials = new XRMaterial?[PlaneCount];
+    private readonly XRMaterial?[] _velocityMaterials = new XRMaterial?[PlaneCount];
+    private readonly XRMaterial?[] _reactiveMaterials = new XRMaterial?[PlaneCount];
+    private readonly Action<XRMaterialBase, XRRenderProgram>[] _velocityUniformHandlers = new Action<XRMaterialBase, XRRenderProgram>[PlaneCount];
+    private readonly Action<XRMaterialBase, XRRenderProgram>[] _reactiveUniformHandlers = new Action<XRMaterialBase, XRRenderProgram>[PlaneCount];
 
     private bool _enabled = true;
     private bool _showXZPlane = true;
     private bool _showXYPlane;
     private bool _showYZPlane;
+    private bool _enableDepthHits = true;
     private float _gridHeight;
     private bool _useTransformY = true;
     private float _cellSize = 1.0f;
@@ -117,9 +160,23 @@ public sealed class InfiniteGridFloorComponent : XRComponent, IRenderable
     private ColorF4 _zAxisColor = new(0.25f, 0.45f, 0.95f, 0.85f);
     private bool _showAxes = true;
     private float _behindPlaneOpacity;
+    private bool _affectedByBloom = true;
+    private bool _affectedByDepthOfField = true;
+    private bool _affectedByMotionBlur = true;
 
     public InfiniteGridFloorComponent()
     {
+        for (int i = 0; i < PlaneCount; i++)
+        {
+            int plane = i;
+            _velocityUniformHandlers[plane] = (mat, prog) =>
+            {
+                PublishUniforms(prog, plane);
+                BindTemporalMatrices(prog);
+            };
+            _reactiveUniformHandlers[plane] = (mat, prog) => PublishUniforms(prog, plane);
+        }
+
         _renderCommands =
         [
             CreateRenderCommand("XZ"),
@@ -189,6 +246,15 @@ public sealed class InfiniteGridFloorComponent : XRComponent, IRenderable
     {
         get => _showYZPlane;
         set => SetField(ref _showYZPlane, value);
+    }
+
+    [Category("Grid")]
+    [DisplayName("Enable Depth Hits")]
+    [Description("When enabled (default), enabled grid planes participate in editor camera depth hits for dragging, zooming, and orbiting.")]
+    public bool EnableDepthHits
+    {
+        get => _enableDepthHits;
+        set => SetField(ref _enableDepthHits, value);
     }
 
     [Category("Grid")]
@@ -335,14 +401,343 @@ public sealed class InfiniteGridFloorComponent : XRComponent, IRenderable
         set => SetField(ref _behindPlaneOpacity, Math.Clamp(value, 0.0f, 1.0f));
     }
 
+    [Category("Grid Post-Processing")]
+    [DisplayName("Affected by Bloom")]
+    [Description("When enabled (default), the grid renders before bloom so its lines contribute to bloom glow.")]
+    public bool AffectedByBloom
+    {
+        get => _affectedByBloom;
+        set
+        {
+            if (SetField(ref _affectedByBloom, value))
+                RebuildMaterials();
+        }
+    }
+
+    [Category("Grid Post-Processing")]
+    [DisplayName("Affected by DoF")]
+    [Description("When enabled (default), the grid renders before depth of field and writes depth so it is realistically blurred by camera focal depth.")]
+    public bool AffectedByDepthOfField
+    {
+        get => _affectedByDepthOfField;
+        set
+        {
+            if (SetField(ref _affectedByDepthOfField, value))
+                RebuildMaterials();
+        }
+    }
+
+    [Category("Grid Post-Processing")]
+    [DisplayName("Affected by Motion Blur")]
+    [Description("When enabled (default), the grid renders before motion blur so camera motion blurs the grid.")]
+    public bool AffectedByMotionBlur
+    {
+        get => _affectedByMotionBlur;
+        set
+        {
+            if (SetField(ref _affectedByMotionBlur, value))
+                RebuildMaterials();
+        }
+    }
+
+    [EditorBrowsable(EditorBrowsableState.Never)]
+    [Browsable(false)]
+    public bool DrawBeforeBloom
+    {
+        get => AffectedByBloom;
+        set => AffectedByBloom = value;
+    }
+
+    [EditorBrowsable(EditorBrowsableState.Never)]
+    [Browsable(false)]
+    public bool DrawBeforeDepthOfField
+    {
+        get => AffectedByDepthOfField;
+        set => AffectedByDepthOfField = value;
+    }
+
+    [EditorBrowsable(EditorBrowsableState.Never)]
+    [Browsable(false)]
+    public bool DrawBeforeMotionBlur
+    {
+        get => AffectedByMotionBlur;
+        set => AffectedByMotionBlur = value;
+    }
+
     #endregion
+
+    public int ResolveEffectiveRenderPass()
+    {
+        // 1. If affected by motion blur, we MUST render before motion blur (TransparentForward).
+        if (_affectedByMotionBlur)
+            return (int)EDefaultRenderPass.TransparentForward;
+
+        // 2. Not affected by motion blur:
+        // If affected by DoF, render after motion blur but before DoF (PostMotionBlurForward).
+        if (_affectedByDepthOfField)
+            return (int)EDefaultRenderPass.PostMotionBlurForward;
+
+        // 3. Not affected by motion blur or DoF:
+        // If affected by bloom, render after DoF but before bloom (PostDepthOfFieldForward).
+        if (_affectedByBloom)
+            return (int)EDefaultRenderPass.PostDepthOfFieldForward;
+
+        // 4. Not affected by motion blur, DoF, or bloom:
+        // Render after bloom (PostBloomForward).
+        return (int)EDefaultRenderPass.PostBloomForward;
+    }
 
     public float ResolvedGridHeight
         => _useTransformY && Transform is not null ? Transform.RenderTranslation.Y : _gridHeight;
 
+    /// <summary>
+    /// Attempts to intersect a ray with any of the enabled grid planes.
+    /// If multiple planes are intersected, the closest valid intersection is returned.
+    /// </summary>
+    public bool TryIntersectRay(
+        Vector3 rayOrigin,
+        Vector3 rayDirection,
+        out Vector3 worldHitPoint,
+        out float distance,
+        out int hitPlane,
+        Vector3? cameraPosition = null,
+        bool checkMaxDistance = true)
+    {
+        worldHitPoint = Vector3.Zero;
+        distance = float.MaxValue;
+        hitPlane = -1;
+
+        if (!Enabled || !EnableDepthHits)
+            return false;
+
+        float dirLen = rayDirection.Length();
+        if (dirLen < 1e-6f)
+            return false;
+
+        Vector3 dir = rayDirection / dirLen;
+        Vector3 camPos = cameraPosition ?? rayOrigin;
+        int mask = EnabledPlaneMask;
+
+        // Test Plane 0: XZ Plane (ground)
+        if (_showXZPlane && (mask & 1) != 0)
+        {
+            float denom = dir.Y;
+            if (MathF.Abs(denom) >= 1e-6f)
+            {
+                float height = ResolvedGridHeight;
+                float t = (height - rayOrigin.Y) / denom;
+                if (t > 0.0f)
+                {
+                    Vector3 hit = rayOrigin + t * dir;
+                    bool withinRange = true;
+                    if (checkMaxDistance && _maxDistance > 0.0f)
+                    {
+                        float camHeight = MathF.Abs(camPos.Y - height);
+                        float effectiveMaxDistance = MathF.Max(_maxDistance, camHeight * _altitudeDistanceScale);
+                        float dist = Vector2.Distance(new Vector2(hit.X, hit.Z), new Vector2(camPos.X, camPos.Z));
+                        withinRange = dist <= effectiveMaxDistance;
+                    }
+
+                    if (withinRange && t < distance)
+                    {
+                        distance = t;
+                        worldHitPoint = hit;
+                        hitPlane = XZPlane;
+                    }
+                }
+            }
+        }
+
+        // Test Plane 1: XY Plane (vertical front)
+        if (_showXYPlane && (mask & 2) != 0)
+        {
+            float denom = dir.Z;
+            if (MathF.Abs(denom) >= 1e-6f)
+            {
+                float t = -rayOrigin.Z / denom;
+                if (t > 0.0f)
+                {
+                    Vector3 hit = rayOrigin + t * dir;
+                    bool withinRange = true;
+                    if (checkMaxDistance && _maxDistance > 0.0f)
+                    {
+                        float camHeight = MathF.Abs(camPos.Z);
+                        float effectiveMaxDistance = MathF.Max(_maxDistance, camHeight * _altitudeDistanceScale);
+                        float dist = Vector2.Distance(new Vector2(hit.X, hit.Y), new Vector2(camPos.X, camPos.Y));
+                        withinRange = dist <= effectiveMaxDistance;
+                    }
+
+                    if (withinRange && t < distance)
+                    {
+                        distance = t;
+                        worldHitPoint = hit;
+                        hitPlane = XYPlane;
+                    }
+                }
+            }
+        }
+
+        // Test Plane 2: YZ Plane (vertical side)
+        if (_showYZPlane && (mask & 4) != 0)
+        {
+            float denom = dir.X;
+            if (MathF.Abs(denom) >= 1e-6f)
+            {
+                float t = -rayOrigin.X / denom;
+                if (t > 0.0f)
+                {
+                    Vector3 hit = rayOrigin + t * dir;
+                    bool withinRange = true;
+                    if (checkMaxDistance && _maxDistance > 0.0f)
+                    {
+                        float camHeight = MathF.Abs(camPos.X);
+                        float effectiveMaxDistance = MathF.Max(_maxDistance, camHeight * _altitudeDistanceScale);
+                        float dist = Vector2.Distance(new Vector2(hit.Y, hit.Z), new Vector2(camPos.Y, camPos.Z));
+                        withinRange = dist <= effectiveMaxDistance;
+                    }
+
+                    if (withinRange && t < distance)
+                    {
+                        distance = t;
+                        worldHitPoint = hit;
+                        hitPlane = YZPlane;
+                    }
+                }
+            }
+        }
+
+        return hitPlane >= 0;
+    }
+
+    /// <summary>
+    /// Attempts to intersect a segment ray with any of the enabled grid planes.
+    /// </summary>
+    public bool TryIntersectRay(
+        Segment ray,
+        out Vector3 worldHitPoint,
+        out float distance,
+        out int hitPlane,
+        Vector3? cameraPosition = null,
+        bool checkMaxDistance = true)
+        => TryIntersectRay(ray.Start, ray.Direction, out worldHitPoint, out distance, out hitPlane, cameraPosition ?? ray.Start, checkMaxDistance);
+
+    /// <summary>
+    /// Calculates an editor camera depth hit on this infinite grid for a normalized viewport point.
+    /// </summary>
+    public bool TryGetDepthHit(
+        XRViewport viewport,
+        Vector2 normalizedViewportPoint,
+        out Vector3 worldHitPoint,
+        out float depth,
+        out int hitPlane)
+    {
+        worldHitPoint = Vector3.Zero;
+        depth = 0.0f;
+        hitPlane = -1;
+
+        if (!Enabled || !EnableDepthHits || (!ShowXZPlane && !ShowXYPlane && !ShowYZPlane))
+            return false;
+
+        var camera = viewport.Camera;
+        if (camera is null)
+            return false;
+
+        Segment ray = viewport.GetWorldSegment(normalizedViewportPoint, useUnjitteredProjection: true);
+        Vector3 camPos = camera.Transform?.WorldTranslation ?? ray.Start;
+
+        if (!TryIntersectRay(ray, out worldHitPoint, out _, out hitPlane, camPos, checkMaxDistance: true))
+            return false;
+
+        Vector3 clip01 = camera.WorldToNormalizedViewportCoordinate(worldHitPoint, useUnjitteredProjection: true);
+        depth = clip01.Z;
+        return depth >= 0.0f && depth <= 1.0f;
+    }
+
+    /// <summary>
+    /// Intersects a ray against all active enabled infinite grid instances in the world.
+    /// </summary>
+    public static bool TryIntersectActiveGrids(
+        Segment ray,
+        out Vector3 worldHitPoint,
+        out float distance,
+        out InfiniteGridFloorComponent? hitGrid,
+        out int hitPlane,
+        Vector3? cameraPosition = null,
+        bool checkMaxDistance = true,
+        IRuntimeWorldContext? worldContext = null)
+    {
+        worldHitPoint = Vector3.Zero;
+        distance = float.MaxValue;
+        hitGrid = null;
+        hitPlane = -1;
+
+        lock (_activeGridsLock)
+        {
+            for (int i = 0; i < _activeGrids.Count; i++)
+            {
+                var grid = _activeGrids[i];
+                if (!grid.Enabled || !grid.EnableDepthHits)
+                    continue;
+
+                if (_activeGrids.Count > 1 && worldContext is not null && grid.SceneNode?.World is not null && grid.SceneNode.World != worldContext)
+                    continue;
+
+                if (grid.TryIntersectRay(ray, out Vector3 hit, out float d, out int plane, cameraPosition, checkMaxDistance))
+                {
+                    if (d < distance)
+                    {
+                        distance = d;
+                        worldHitPoint = hit;
+                        hitGrid = grid;
+                        hitPlane = plane;
+                    }
+                }
+            }
+        }
+
+        return hitGrid is not null;
+    }
+
+    /// <summary>
+    /// Evaluates whether any active infinite grid produces a depth hit for the given viewport coordinate.
+    /// </summary>
+    public static bool TryGetActiveGridDepthHit(
+        XRViewport viewport,
+        Vector2 normalizedViewportPoint,
+        out Vector3 worldHitPoint,
+        out float depth,
+        out InfiniteGridFloorComponent? hitGrid,
+        out int hitPlane)
+    {
+        worldHitPoint = Vector3.Zero;
+        depth = 0.0f;
+        hitGrid = null;
+        hitPlane = -1;
+
+        var camera = viewport.Camera;
+        if (camera is null)
+            return false;
+
+        Segment ray = viewport.GetWorldSegment(normalizedViewportPoint, useUnjitteredProjection: true);
+        Vector3 camPos = camera.Transform?.WorldTranslation ?? ray.Start;
+        IRuntimeWorldContext? world = viewport.CameraComponent?.SceneNode?.World;
+
+        if (!TryIntersectActiveGrids(ray, out worldHitPoint, out _, out hitGrid, out hitPlane, camPos, checkMaxDistance: true, world))
+            return false;
+
+        Vector3 clip01 = camera.WorldToNormalizedViewportCoordinate(worldHitPoint, useUnjitteredProjection: true);
+        depth = clip01.Z;
+        return depth >= 0.0f && depth <= 1.0f;
+    }
+
     protected override void OnComponentActivated()
     {
         base.OnComponentActivated();
+        lock (_activeGridsLock)
+        {
+            if (!_activeGrids.Contains(this))
+                _activeGrids.Add(this);
+        }
         RebuildAll();
         RefreshRegistration();
         UpdateVisibility();
@@ -350,9 +745,18 @@ public sealed class InfiniteGridFloorComponent : XRComponent, IRenderable
 
     protected override void OnComponentDeactivated()
     {
+        lock (_activeGridsLock)
+            _activeGrids.Remove(this);
         Unregister();
         UpdateVisibility();
         base.OnComponentDeactivated();
+    }
+
+    protected override void OnDestroying()
+    {
+        lock (_activeGridsLock)
+            _activeGrids.Remove(this);
+        base.OnDestroying();
     }
 
     protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
@@ -390,6 +794,11 @@ public sealed class InfiniteGridFloorComponent : XRComponent, IRenderable
             case nameof(GridHeight):
             case nameof(UseTransformY):
                 // Handled dynamically via uniform publishing
+                break;
+            case nameof(DrawBeforeBloom):
+            case nameof(DrawBeforeDepthOfField):
+            case nameof(DrawBeforeMotionBlur):
+                RebuildMaterials();
                 break;
         }
     }
@@ -436,7 +845,7 @@ public sealed class InfiniteGridFloorComponent : XRComponent, IRenderable
             _ => false,
         };
 
-    private int EnabledPlaneMask
+    public int EnabledPlaneMask
         => (_showXZPlane ? 1 << XZPlane : 0) |
            (_showXYPlane ? 1 << XYPlane : 0) |
            (_showYZPlane ? 1 << YZPlane : 0);
@@ -475,6 +884,16 @@ public sealed class InfiniteGridFloorComponent : XRComponent, IRenderable
         XRShader vertexShader = GetVertexShader();
         XRShader stereoVertexShader = GetStereoVertexShader();
         XRShader fragmentShader = GetFragmentShader();
+        XRShader? motionVectorsShader = _affectedByMotionBlur ? GetMotionVectorsFragmentShader() : null;
+        XRShader? motionVectorsStereoShader = _affectedByMotionBlur ? GetMotionVectorsStereoFragmentShader() : null;
+        XRShader? reactiveMaskShader = _affectedByMotionBlur ? GetReactiveMaskFragmentShader() : null;
+        XRShader? reactiveMaskStereoShader = _affectedByMotionBlur ? GetReactiveMaskStereoFragmentShader() : null;
+
+        int effectivePass = ResolveEffectiveRenderPass();
+        bool shouldWriteDepth = _affectedByDepthOfField &&
+            effectivePass != (int)EDefaultRenderPass.OnTopForward &&
+            effectivePass != (int)EDefaultRenderPass.PostDepthOfFieldForward &&
+            effectivePass != (int)EDefaultRenderPass.PostBloomForward;
 
         for (int plane = 0; plane < PlaneCount; plane++)
         {
@@ -484,7 +903,7 @@ public sealed class InfiniteGridFloorComponent : XRComponent, IRenderable
                 DepthTest = new DepthTest
                 {
                     Enabled = ERenderParamUsage.Enabled,
-                    UpdateDepth = false,
+                    UpdateDepth = shouldWriteDepth,
                     Function = EComparison.Lequal,
                 },
                 RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.ClipSpacePolicy,
@@ -496,15 +915,95 @@ public sealed class InfiniteGridFloorComponent : XRComponent, IRenderable
             XRMaterial material = new([vertexShader, stereoVertexShader, fragmentShader])
             {
                 Name = $"InfiniteGrid.{planeName}.Material",
-                RenderPass = (int)EDefaultRenderPass.TransparentForward,
+                RenderPass = effectivePass,
                 RenderOptions = renderParams,
                 // The grid blends over native scene depth and is never an opaque surface.
                 // Author its late lane explicitly so Advanced can submit it as well.
                 TransparencyMode = ETransparencyMode.AlphaBlend,
-                AdvancedLatePassMetadata = new(EAdvancedLatePassKind.SortedAlpha, isOrderDependent: true),
             };
             material.BindingPublishers.Add(new InfiniteGridBindingPublisher(this, plane));
             _materials[plane] = material;
+
+            if (_affectedByMotionBlur)
+            {
+                XRMaterial velocityMaterial = new([vertexShader, stereoVertexShader, motionVectorsShader!, motionVectorsStereoShader!])
+                {
+                    Name = $"InfiniteGrid.{planeName}.VelocityMaterial",
+                    RenderPass = effectivePass,
+                    RenderOptions = new RenderingParameters
+                    {
+                        CullMode = ECullMode.None,
+                        DepthTest = new DepthTest
+                        {
+                            Enabled = ERenderParamUsage.Enabled,
+                            UpdateDepth = false,
+                            Function = EComparison.Lequal,
+                        },
+                        RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.ClipSpacePolicy,
+                        ExcludeFromGpuIndirect = true,
+                        BlendModeAllDrawBuffers = BlendMode.Disabled(),
+                    },
+                    TransparencyMode = ETransparencyMode.AlphaBlend,
+                };
+                velocityMaterial.BindingPublishers.Add(new InfiniteGridVelocityBindingPublisher(this, plane));
+                velocityMaterial.SettingUniforms += _velocityUniformHandlers[plane];
+                _velocityMaterials[plane] = velocityMaterial;
+
+                XRMaterial reactiveMaterial = new([vertexShader, stereoVertexShader, reactiveMaskShader!, reactiveMaskStereoShader!])
+                {
+                    Name = $"InfiniteGrid.{planeName}.ReactiveMaskMaterial",
+                    RenderPass = effectivePass,
+                    RenderOptions = new RenderingParameters
+                    {
+                        CullMode = ECullMode.None,
+                        DepthTest = new DepthTest
+                        {
+                            Enabled = ERenderParamUsage.Enabled,
+                            UpdateDepth = false,
+                            Function = EComparison.Lequal,
+                        },
+                        RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.ClipSpacePolicy,
+                        ExcludeFromGpuIndirect = true,
+                        BlendModeAllDrawBuffers = new BlendMode
+                        {
+                            Enabled = ERenderParamUsage.Enabled,
+                            RgbEquation = EBlendEquationMode.Max,
+                            AlphaEquation = EBlendEquationMode.Max,
+                            RgbSrcFactor = EBlendingFactor.One,
+                            RgbDstFactor = EBlendingFactor.One,
+                            AlphaSrcFactor = EBlendingFactor.One,
+                            AlphaDstFactor = EBlendingFactor.One,
+                        },
+                    },
+                    TransparencyMode = ETransparencyMode.AlphaBlend,
+                };
+                reactiveMaterial.BindingPublishers.Add(new InfiniteGridBindingPublisher(this, plane));
+                reactiveMaterial.SettingUniforms += _reactiveUniformHandlers[plane];
+                _reactiveMaterials[plane] = reactiveMaterial;
+
+                material.AdvancedLatePassMetadata = new(
+                    effectivePass == (int)EDefaultRenderPass.OnTopForward
+                        ? EAdvancedLatePassKind.OnTopOverlay
+                        : EAdvancedLatePassKind.SortedAlpha,
+                    participatesInMotionVectors: true,
+                    isOrderDependent: true)
+                {
+                    TemporalVelocityMaterial = velocityMaterial,
+                    TemporalReactiveMaskMaterial = reactiveMaterial,
+                    RequiresRigidTemporalGeometry = false,
+                    TemporalSourceShaderRevision = material.ShaderStateRevision,
+                };
+            }
+            else
+            {
+                _velocityMaterials[plane] = null;
+                _reactiveMaterials[plane] = null;
+                material.AdvancedLatePassMetadata = new(
+                    effectivePass == (int)EDefaultRenderPass.OnTopForward
+                        ? EAdvancedLatePassKind.OnTopOverlay
+                        : EAdvancedLatePassKind.SortedAlpha,
+                    isOrderDependent: true);
+            }
 
             if (_meshRenderers[plane] is null)
                 _meshRenderers[plane] = new XRMeshRenderer(_mesh, material);
@@ -548,7 +1047,7 @@ public sealed class InfiniteGridFloorComponent : XRComponent, IRenderable
 
             _renderCommands[plane].Mesh = _meshRenderers[plane];
             _renderCommands[plane].WorldMatrix = Matrix4x4.Identity;
-            _renderCommands[plane].RenderPass = _materials[plane]?.RenderPass ?? (int)EDefaultRenderPass.TransparentForward;
+            _renderCommands[plane].RenderPass = ResolveEffectiveRenderPass();
             _renderCommands[plane].ForceCpuRendering = true;
         }
     }
@@ -562,6 +1061,8 @@ public sealed class InfiniteGridFloorComponent : XRComponent, IRenderable
         {
             _materials[plane] = null;
             _meshRenderers[plane] = null;
+            _velocityMaterials[plane] = null;
+            _reactiveMaterials[plane] = null;
         }
     }
 
@@ -573,6 +1074,14 @@ public sealed class InfiniteGridFloorComponent : XRComponent, IRenderable
             _materials[XYPlane]!.SettingUniforms -= OnSettingXYUniforms;
         if (_materials[YZPlane] is not null)
             _materials[YZPlane]!.SettingUniforms -= OnSettingYZUniforms;
+
+        for (int plane = 0; plane < PlaneCount; plane++)
+        {
+            if (_velocityMaterials[plane] is not null && _velocityUniformHandlers[plane] is not null)
+                _velocityMaterials[plane]!.SettingUniforms -= _velocityUniformHandlers[plane];
+            if (_reactiveMaterials[plane] is not null && _reactiveUniformHandlers[plane] is not null)
+                _reactiveMaterials[plane]!.SettingUniforms -= _reactiveUniformHandlers[plane];
+        }
     }
 
     private GridBindingState CaptureBindingState()
@@ -655,6 +1164,95 @@ public sealed class InfiniteGridFloorComponent : XRComponent, IRenderable
 
         s_fragmentShader ??= new XRShader(EShaderType.Fragment, FragmentShaderSource);
         return s_fragmentShader;
+    }
+
+    private static XRShader GetMotionVectorsFragmentShader()
+    {
+        if (s_motionVectorsFragmentShader is not null)
+            return s_motionVectorsFragmentShader;
+
+        s_motionVectorsFragmentShader = RuntimeEngine.Assets.LoadEngineAsset<XRShader>(
+            JobPriority.Highest,
+            "Shaders", "Scene3D", "InfiniteGridMotionVectors.fs");
+
+        s_motionVectorsFragmentShader ??= new XRShader(EShaderType.Fragment, MotionVectorsFragmentShaderSource);
+        return s_motionVectorsFragmentShader;
+    }
+
+    private static XRShader GetMotionVectorsStereoFragmentShader()
+    {
+        if (s_motionVectorsStereoFragmentShader is not null)
+            return s_motionVectorsStereoFragmentShader;
+
+        s_motionVectorsStereoFragmentShader = RuntimeEngine.Assets.LoadEngineAsset<XRShader>(
+            JobPriority.Highest,
+            "Shaders", "Scene3D", "InfiniteGridMotionVectorsStereo.fs");
+
+        s_motionVectorsStereoFragmentShader ??= new XRShader(EShaderType.Fragment, MotionVectorsStereoFragmentShaderSource);
+        return s_motionVectorsStereoFragmentShader;
+    }
+
+    private static XRShader GetReactiveMaskFragmentShader()
+    {
+        if (s_reactiveMaskFragmentShader is not null)
+            return s_reactiveMaskFragmentShader;
+
+        s_reactiveMaskFragmentShader = RuntimeEngine.Assets.LoadEngineAsset<XRShader>(
+            JobPriority.Highest,
+            "Shaders", "Scene3D", "InfiniteGridReactiveMask.fs");
+
+        s_reactiveMaskFragmentShader ??= new XRShader(EShaderType.Fragment, ReactiveMaskFragmentShaderSource);
+        return s_reactiveMaskFragmentShader;
+    }
+
+    private static XRShader GetReactiveMaskStereoFragmentShader()
+    {
+        if (s_reactiveMaskStereoFragmentShader is not null)
+            return s_reactiveMaskStereoFragmentShader;
+
+        s_reactiveMaskStereoFragmentShader = RuntimeEngine.Assets.LoadEngineAsset<XRShader>(
+            JobPriority.Highest,
+            "Shaders", "Scene3D", "InfiniteGridReactiveMaskStereo.fs");
+
+        s_reactiveMaskStereoFragmentShader ??= new XRShader(EShaderType.Fragment, ReactiveMaskStereoFragmentShaderSource);
+        return s_reactiveMaskStereoFragmentShader;
+    }
+
+    private static void BindTemporalMatrices(XRRenderProgram program)
+    {
+        if (VPRC_TemporalAccumulationPass.TryGetTemporalUniformData(out var data))
+        {
+            program.Uniform("CurrViewProjection", data.CurrViewProjectionUnjittered);
+            program.Uniform("PrevViewProjection", data.LeftEyeHistoryReady
+                ? data.PrevViewProjectionUnjittered : data.CurrViewProjectionUnjittered);
+            program.Uniform("RightEyeCurrViewProjection", data.RightEyeCurrViewProjectionUnjittered);
+            program.Uniform("RightEyePrevViewProjection", data.RightEyeHistoryReady
+                ? data.RightEyePrevViewProjectionUnjittered : data.RightEyeCurrViewProjectionUnjittered);
+            program.Uniform("LeftEyeHistoryReady", data.LeftEyeHistoryReady);
+            program.Uniform("RightEyeHistoryReady", data.RightEyeHistoryReady);
+        }
+        else
+        {
+            var camera = RuntimeEngine.Rendering.State.RenderingCamera
+                ?? RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.LastRenderingCamera
+                ?? RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.LastSceneCamera;
+            var rightCamera = RuntimeEngine.Rendering.State.RenderingStereoRightEyeCamera;
+
+            Matrix4x4 leftCurrVp = camera?.ViewProjectionMatrixUnjittered ?? camera?.ViewProjectionMatrix ?? Matrix4x4.Identity;
+            bool leftHistoryReady = camera?.HasPreviousViewProjectionMatrix == true;
+            Matrix4x4 leftPrevVp = leftHistoryReady ? camera!.PreviousViewProjectionMatrixUnjittered : leftCurrVp;
+
+            Matrix4x4 rightCurrVp = rightCamera?.ViewProjectionMatrixUnjittered ?? rightCamera?.ViewProjectionMatrix ?? leftCurrVp;
+            bool rightHistoryReady = rightCamera?.HasPreviousViewProjectionMatrix == true;
+            Matrix4x4 rightPrevVp = rightHistoryReady ? rightCamera!.PreviousViewProjectionMatrixUnjittered : rightCurrVp;
+
+            program.Uniform("CurrViewProjection", leftCurrVp);
+            program.Uniform("PrevViewProjection", leftPrevVp);
+            program.Uniform("RightEyeCurrViewProjection", rightCurrVp);
+            program.Uniform("RightEyePrevViewProjection", rightPrevVp);
+            program.Uniform("LeftEyeHistoryReady", leftHistoryReady);
+            program.Uniform("RightEyeHistoryReady", rightHistoryReady);
+        }
     }
 
     #region Shader Sources
@@ -1014,6 +1612,993 @@ void main()
         discard;
 
     OutColor = vec4(gridRgb, finalAlpha);
+}
+""";
+
+    public const string MotionVectorsFragmentShaderSource = """
+#version 450
+
+layout(location = 0) in vec3 NearWorldPos;
+layout(location = 1) in vec3 FarWorldPos;
+layout(location = 2) in vec2 FragClipXY;
+
+layout(location = 0) out vec2 OutVelocity;
+
+uniform mat4 ViewProjectionMatrix;
+uniform mat4 InverseViewMatrix;
+uniform vec3 CameraPosition;
+uniform int DepthMode;
+uniform int ClipDepthRange;
+
+// Grid parameters
+uniform int GridPlane = 0;
+uniform float GridHeight = 0.0;
+uniform float GridCellSize = 1.0;
+uniform float GridSubdivisions = 10.0;
+uniform float GridLineWidth = 1.0;
+uniform float GridLodTargetPixelSpacing = 8.0;
+uniform float GridMaxDistance = 500.0;
+uniform float GridFadeRange = 150.0;
+uniform float GridAltitudeDistanceScale = 8.0;
+uniform vec4 GridMinorColor = vec4(0.45, 0.45, 0.48, 0.35);
+uniform vec4 GridMajorColor = vec4(0.70, 0.70, 0.75, 0.60);
+uniform vec4 GridXAxisColor = vec4(0.90, 0.25, 0.25, 0.85);
+uniform vec4 GridYAxisColor = vec4(0.30, 0.80, 0.35, 0.85);
+uniform vec4 GridZAxisColor = vec4(0.25, 0.45, 0.95, 0.85);
+uniform int GridShowAxes = 1;
+uniform int GridPlaneMask = 1;
+uniform float GridBehindPlaneOpacity = 0.0;
+
+// Temporal matrices
+uniform mat4 CurrViewProjection;
+uniform mat4 PrevViewProjection;
+uniform bool LeftEyeHistoryReady;
+
+float PristineGrid(vec2 coord, vec2 dxy, float cellSize, float lineWidth)
+{
+    vec2 grid = abs(fract(coord / cellSize - 0.5) - 0.5) * cellSize;
+    vec2 antiAlias = max(dxy, vec2(1e-7));
+    vec2 line = clamp((lineWidth * antiAlias * 0.5 - grid) / antiAlias + 0.5, 0.0, 1.0);
+    return max(line.x, line.y);
+}
+
+float SmootherStep(float value)
+{
+    value = clamp(value, 0.0, 1.0);
+    return value * value * value * (value * (value * 6.0 - 15.0) + 10.0);
+}
+
+float IntersectGridPlane(int plane, vec3 rayOrigin, vec3 rayDir)
+{
+    float denominator;
+    float origin;
+    float offset;
+
+    if (plane == 1) // XY
+    {
+        denominator = rayDir.z;
+        origin = rayOrigin.z;
+        offset = 0.0;
+    }
+    else if (plane == 2) // YZ
+    {
+        denominator = rayDir.x;
+        origin = rayOrigin.x;
+        offset = 0.0;
+    }
+    else // XZ
+    {
+        denominator = rayDir.y;
+        origin = rayOrigin.y;
+        offset = GridHeight;
+    }
+
+    if (abs(denominator) < 1e-6)
+        return 1e30;
+
+    float intersection = (offset - origin) / denominator;
+    return intersection > 0.0 ? intersection : 1e30;
+}
+
+float FindNearestOtherGridPlane(int currentPlane, vec3 rayOrigin, vec3 rayDir)
+{
+    float nearest = 1e30;
+    for (int plane = 0; plane < 3; ++plane)
+    {
+        if (plane == currentPlane || (GridPlaneMask & (1 << plane)) == 0)
+            continue;
+
+        nearest = min(nearest, IntersectGridPlane(plane, rayOrigin, rayDir));
+    }
+    return nearest;
+}
+
+void main()
+{
+    vec3 rayOrigin = NearWorldPos;
+    vec3 rayDir = FarWorldPos - NearWorldPos;
+    vec3 cameraPosition = InverseViewMatrix[3].xyz;
+
+    float rayPlaneAxis;
+    float rayOriginPlaneAxis;
+    float planeOffset;
+    float cameraHeight;
+
+    if (GridPlane == 1) // XY
+    {
+        rayPlaneAxis = rayDir.z;
+        rayOriginPlaneAxis = rayOrigin.z;
+        planeOffset = 0.0;
+        cameraHeight = abs(cameraPosition.z);
+    }
+    else if (GridPlane == 2) // YZ
+    {
+        rayPlaneAxis = rayDir.x;
+        rayOriginPlaneAxis = rayOrigin.x;
+        planeOffset = 0.0;
+        cameraHeight = abs(cameraPosition.x);
+    }
+    else // XZ
+    {
+        rayPlaneAxis = rayDir.y;
+        rayOriginPlaneAxis = rayOrigin.y;
+        planeOffset = GridHeight;
+        cameraHeight = abs(cameraPosition.y - GridHeight);
+    }
+
+    if (abs(rayPlaneAxis) < 1e-6)
+        discard;
+
+    float t = (planeOffset - rayOriginPlaneAxis) / rayPlaneAxis;
+    if (t <= 0.0)
+        discard;
+
+    float nearestOtherPlaneT = FindNearestOtherGridPlane(GridPlane, rayOrigin, rayDir);
+    vec3 hitPos = rayOrigin + t * rayDir;
+    vec2 coord;
+    vec2 cameraCoord;
+
+    if (GridPlane == 1) // XY
+    {
+        coord = hitPos.xy;
+        cameraCoord = cameraPosition.xy;
+    }
+    else if (GridPlane == 2) // YZ
+    {
+        coord = hitPos.yz;
+        cameraCoord = cameraPosition.yz;
+    }
+    else // XZ
+    {
+        coord = hitPos.xz;
+        cameraCoord = cameraPosition.xz;
+    }
+
+    // Depth computation
+    vec4 clipHit = ViewProjectionMatrix * vec4(hitPos, 1.0);
+    if (clipHit.w <= 0.0)
+        discard;
+
+    float ndcZ = clipHit.z / clipHit.w;
+    float depth = ClipDepthRange == 1 ? ndcZ * 0.5 + 0.5 : ndcZ;
+    if (depth < 0.0 || depth > 1.0)
+        discard;
+
+    gl_FragDepth = DepthMode == 1 ? (1.0 - depth) : depth;
+
+    // Multi-scale grid coverage
+    vec2 dxy = fwidth(coord);
+    float pixelFootprint = max(dxy.x, dxy.y);
+
+    float baseCell = max(GridCellSize, 1e-4);
+    float lodScale = max(GridSubdivisions, 2.0);
+    float targetSpacing = max(GridLodTargetPixelSpacing, 1.0);
+    float lodLevel = log(max(pixelFootprint * targetSpacing / baseCell, 1.0)) / log(lodScale);
+    float lodFloor = floor(lodLevel);
+    float lodFraction = SmootherStep(lodLevel - lodFloor);
+
+    float scale0 = baseCell * pow(lodScale, lodFloor);
+    float scale1 = scale0 * lodScale;
+    float scale2 = scale1 * lodScale;
+
+    float g0 = PristineGrid(coord, dxy, scale0, GridLineWidth);
+    float g1 = PristineGrid(coord, dxy, scale1, GridLineWidth);
+    float g2 = PristineGrid(coord, dxy, scale2, GridLineWidth);
+
+    float fineAlpha = g0 * (1.0 - lodFraction) * GridMinorColor.a;
+    float middleAlpha = g1 * mix(GridMajorColor.a, GridMinorColor.a, lodFraction);
+    float coarseAlpha = g2 * lodFraction * GridMajorColor.a;
+    float alphaSum = fineAlpha + middleAlpha + coarseAlpha;
+    float gridAlpha = min(alphaSum, 1.0);
+
+    if (GridShowAxes == 1)
+    {
+        float firstAxisMask = clamp((GridLineWidth * 1.5 * dxy.y * 0.5 - abs(coord.y)) / max(dxy.y, 1e-7) + 0.5, 0.0, 1.0);
+        float secondAxisMask = clamp((GridLineWidth * 1.5 * dxy.x * 0.5 - abs(coord.x)) / max(dxy.x, 1e-7) + 0.5, 0.0, 1.0);
+        gridAlpha = max(gridAlpha, max(firstAxisMask * GridXAxisColor.a, secondAxisMask * GridYAxisColor.a));
+    }
+
+    float planeVisibility = 1.0;
+    if (nearestOtherPlaneT < t)
+    {
+        float worldSeparation = (t - nearestOtherPlaneT) * length(rayDir);
+        float transitionWidth = max(baseCell, pixelFootprint * 4.0);
+        float behindAmount = SmootherStep(worldSeparation / transitionWidth);
+        planeVisibility = mix(1.0, clamp(GridBehindPlaneOpacity, 0.0, 1.0), behindAmount);
+    }
+
+    // Distance fade within the selected plane.
+    float dist = length(coord - cameraCoord);
+    float distanceFade = 1.0;
+    if (GridMaxDistance > 0.0)
+    {
+        float effectiveMaxDistance = max(GridMaxDistance, cameraHeight * GridAltitudeDistanceScale);
+        float effectiveFadeRange = max(GridFadeRange, effectiveMaxDistance * 0.2);
+        float startFade = max(0.0, effectiveMaxDistance - effectiveFadeRange);
+        distanceFade = SmootherStep(1.0 - (dist - startFade) / max(effectiveFadeRange, 1e-5));
+    }
+
+    float finalAlpha = gridAlpha * distanceFade * planeVisibility;
+    if (finalAlpha < 0.001)
+        discard;
+
+    if (!LeftEyeHistoryReady)
+    {
+        OutVelocity = vec2(0.0);
+        return;
+    }
+
+    vec4 currClip = CurrViewProjection * vec4(hitPos, 1.0);
+    vec4 prevClip = PrevViewProjection * vec4(hitPos, 1.0);
+
+    if (abs(currClip.w) <= 1e-5 || abs(prevClip.w) <= 1e-5)
+    {
+        OutVelocity = vec2(0.0);
+        return;
+    }
+
+    vec2 currNdc = currClip.xy / currClip.w;
+    vec2 prevNdc = prevClip.xy / prevClip.w;
+    OutVelocity = clamp(currNdc - prevNdc, vec2(-2.0), vec2(2.0));
+}
+""";
+
+    public const string MotionVectorsStereoFragmentShaderSource = """
+#version 450
+#extension GL_OVR_multiview2 : require
+
+layout(num_views = 2) in;
+
+layout(location = 0) in vec3 NearWorldPos;
+layout(location = 1) in vec3 FarWorldPos;
+layout(location = 2) in vec2 FragClipXY;
+
+layout(location = 0) out vec2 OutVelocity;
+
+uniform mat4 LeftEyeViewProjectionMatrix;
+uniform mat4 RightEyeViewProjectionMatrix;
+uniform mat4 LeftEyeInverseViewMatrix;
+uniform mat4 RightEyeInverseViewMatrix;
+uniform vec3 CameraPosition;
+uniform int DepthMode;
+uniform int ClipDepthRange;
+
+// Grid parameters
+uniform int GridPlane = 0;
+uniform float GridHeight = 0.0;
+uniform float GridCellSize = 1.0;
+uniform float GridSubdivisions = 10.0;
+uniform float GridLineWidth = 1.0;
+uniform float GridLodTargetPixelSpacing = 8.0;
+uniform float GridMaxDistance = 500.0;
+uniform float GridFadeRange = 150.0;
+uniform float GridAltitudeDistanceScale = 8.0;
+uniform vec4 GridMinorColor = vec4(0.45, 0.45, 0.48, 0.35);
+uniform vec4 GridMajorColor = vec4(0.70, 0.70, 0.75, 0.60);
+uniform vec4 GridXAxisColor = vec4(0.90, 0.25, 0.25, 0.85);
+uniform vec4 GridYAxisColor = vec4(0.30, 0.80, 0.35, 0.85);
+uniform vec4 GridZAxisColor = vec4(0.25, 0.45, 0.95, 0.85);
+uniform int GridShowAxes = 1;
+uniform int GridPlaneMask = 1;
+uniform float GridBehindPlaneOpacity = 0.0;
+
+// Temporal matrices
+uniform mat4 CurrViewProjection;
+uniform mat4 PrevViewProjection;
+uniform mat4 RightEyeCurrViewProjection;
+uniform mat4 RightEyePrevViewProjection;
+uniform bool LeftEyeHistoryReady;
+uniform bool RightEyeHistoryReady;
+
+mat4 GetViewProjectionMatrix()
+{
+    return gl_ViewID_OVR == 0 ? LeftEyeViewProjectionMatrix : RightEyeViewProjectionMatrix;
+}
+
+vec3 GetCameraPosition()
+{
+    mat4 inverseView = gl_ViewID_OVR == 0 ? LeftEyeInverseViewMatrix : RightEyeInverseViewMatrix;
+    return inverseView[3].xyz;
+}
+
+float PristineGrid(vec2 coord, vec2 dxy, float cellSize, float lineWidth)
+{
+    vec2 grid = abs(fract(coord / cellSize - 0.5) - 0.5) * cellSize;
+    vec2 antiAlias = max(dxy, vec2(1e-7));
+    vec2 line = clamp((lineWidth * antiAlias * 0.5 - grid) / antiAlias + 0.5, 0.0, 1.0);
+    return max(line.x, line.y);
+}
+
+float SmootherStep(float value)
+{
+    value = clamp(value, 0.0, 1.0);
+    return value * value * value * (value * (value * 6.0 - 15.0) + 10.0);
+}
+
+float IntersectGridPlane(int plane, vec3 rayOrigin, vec3 rayDir)
+{
+    float denominator;
+    float origin;
+    float offset;
+
+    if (plane == 1) // XY
+    {
+        denominator = rayDir.z;
+        origin = rayOrigin.z;
+        offset = 0.0;
+    }
+    else if (plane == 2) // YZ
+    {
+        denominator = rayDir.x;
+        origin = rayOrigin.x;
+        offset = 0.0;
+    }
+    else // XZ
+    {
+        denominator = rayDir.y;
+        origin = rayOrigin.y;
+        offset = GridHeight;
+    }
+
+    if (abs(denominator) < 1e-6)
+        return 1e30;
+
+    float intersection = (offset - origin) / denominator;
+    return intersection > 0.0 ? intersection : 1e30;
+}
+
+float FindNearestOtherGridPlane(int currentPlane, vec3 rayOrigin, vec3 rayDir)
+{
+    float nearest = 1e30;
+    for (int plane = 0; plane < 3; ++plane)
+    {
+        if (plane == currentPlane || (GridPlaneMask & (1 << plane)) == 0)
+            continue;
+
+        nearest = min(nearest, IntersectGridPlane(plane, rayOrigin, rayDir));
+    }
+    return nearest;
+}
+
+void main()
+{
+    vec3 rayOrigin = NearWorldPos;
+    vec3 rayDir = FarWorldPos - NearWorldPos;
+    vec3 cameraPosition = GetCameraPosition();
+
+    float rayPlaneAxis;
+    float rayOriginPlaneAxis;
+    float planeOffset;
+    float cameraHeight;
+
+    if (GridPlane == 1) // XY
+    {
+        rayPlaneAxis = rayDir.z;
+        rayOriginPlaneAxis = rayOrigin.z;
+        planeOffset = 0.0;
+        cameraHeight = abs(cameraPosition.z);
+    }
+    else if (GridPlane == 2) // YZ
+    {
+        rayPlaneAxis = rayDir.x;
+        rayOriginPlaneAxis = rayOrigin.x;
+        planeOffset = 0.0;
+        cameraHeight = abs(cameraPosition.x);
+    }
+    else // XZ
+    {
+        rayPlaneAxis = rayDir.y;
+        rayOriginPlaneAxis = rayOrigin.y;
+        planeOffset = GridHeight;
+        cameraHeight = abs(cameraPosition.y - GridHeight);
+    }
+
+    if (abs(rayPlaneAxis) < 1e-6)
+        discard;
+
+    float t = (planeOffset - rayOriginPlaneAxis) / rayPlaneAxis;
+    if (t <= 0.0)
+        discard;
+
+    float nearestOtherPlaneT = FindNearestOtherGridPlane(GridPlane, rayOrigin, rayDir);
+    vec3 hitPos = rayOrigin + t * rayDir;
+    vec2 coord;
+    vec2 cameraCoord;
+
+    if (GridPlane == 1) // XY
+    {
+        coord = hitPos.xy;
+        cameraCoord = cameraPosition.xy;
+    }
+    else if (GridPlane == 2) // YZ
+    {
+        coord = hitPos.yz;
+        cameraCoord = cameraPosition.yz;
+    }
+    else // XZ
+    {
+        coord = hitPos.xz;
+        cameraCoord = cameraPosition.xz;
+    }
+
+    // Depth computation
+    vec4 clipHit = GetViewProjectionMatrix() * vec4(hitPos, 1.0);
+    if (clipHit.w <= 0.0)
+        discard;
+
+    float ndcZ = clipHit.z / clipHit.w;
+    float depth = ClipDepthRange == 1 ? ndcZ * 0.5 + 0.5 : ndcZ;
+    if (depth < 0.0 || depth > 1.0)
+        discard;
+
+    gl_FragDepth = DepthMode == 1 ? (1.0 - depth) : depth;
+
+    // Multi-scale grid coverage
+    vec2 dxy = fwidth(coord);
+    float pixelFootprint = max(dxy.x, dxy.y);
+
+    float baseCell = max(GridCellSize, 1e-4);
+    float lodScale = max(GridSubdivisions, 2.0);
+    float targetSpacing = max(GridLodTargetPixelSpacing, 1.0);
+    float lodLevel = log(max(pixelFootprint * targetSpacing / baseCell, 1.0)) / log(lodScale);
+    float lodFloor = floor(lodLevel);
+    float lodFraction = SmootherStep(lodLevel - lodFloor);
+
+    float scale0 = baseCell * pow(lodScale, lodFloor);
+    float scale1 = scale0 * lodScale;
+    float scale2 = scale1 * lodScale;
+
+    float g0 = PristineGrid(coord, dxy, scale0, GridLineWidth);
+    float g1 = PristineGrid(coord, dxy, scale1, GridLineWidth);
+    float g2 = PristineGrid(coord, dxy, scale2, GridLineWidth);
+
+    float fineAlpha = g0 * (1.0 - lodFraction) * GridMinorColor.a;
+    float middleAlpha = g1 * mix(GridMajorColor.a, GridMinorColor.a, lodFraction);
+    float coarseAlpha = g2 * lodFraction * GridMajorColor.a;
+    float alphaSum = fineAlpha + middleAlpha + coarseAlpha;
+    float gridAlpha = min(alphaSum, 1.0);
+
+    if (GridShowAxes == 1)
+    {
+        float firstAxisMask = clamp((GridLineWidth * 1.5 * dxy.y * 0.5 - abs(coord.y)) / max(dxy.y, 1e-7) + 0.5, 0.0, 1.0);
+        float secondAxisMask = clamp((GridLineWidth * 1.5 * dxy.x * 0.5 - abs(coord.x)) / max(dxy.x, 1e-7) + 0.5, 0.0, 1.0);
+        gridAlpha = max(gridAlpha, max(firstAxisMask * GridXAxisColor.a, secondAxisMask * GridYAxisColor.a));
+    }
+
+    float planeVisibility = 1.0;
+    if (nearestOtherPlaneT < t)
+    {
+        float worldSeparation = (t - nearestOtherPlaneT) * length(rayDir);
+        float transitionWidth = max(baseCell, pixelFootprint * 4.0);
+        float behindAmount = SmootherStep(worldSeparation / transitionWidth);
+        planeVisibility = mix(1.0, clamp(GridBehindPlaneOpacity, 0.0, 1.0), behindAmount);
+    }
+
+    // Distance fade within the selected plane.
+    float dist = length(coord - cameraCoord);
+    float distanceFade = 1.0;
+    if (GridMaxDistance > 0.0)
+    {
+        float effectiveMaxDistance = max(GridMaxDistance, cameraHeight * GridAltitudeDistanceScale);
+        float effectiveFadeRange = max(GridFadeRange, effectiveMaxDistance * 0.2);
+        float startFade = max(0.0, effectiveMaxDistance - effectiveFadeRange);
+        distanceFade = SmootherStep(1.0 - (dist - startFade) / max(effectiveFadeRange, 1e-5));
+    }
+
+    float finalAlpha = gridAlpha * distanceFade * planeVisibility;
+    if (finalAlpha < 0.001)
+        discard;
+
+    bool rightEye = gl_ViewID_OVR > 0;
+    if (!(rightEye ? RightEyeHistoryReady : LeftEyeHistoryReady))
+    {
+        OutVelocity = vec2(0.0);
+        return;
+    }
+
+    mat4 currentViewProjection = rightEye ? RightEyeCurrViewProjection : CurrViewProjection;
+    mat4 previousViewProjection = rightEye ? RightEyePrevViewProjection : PrevViewProjection;
+
+    vec4 currClip = currentViewProjection * vec4(hitPos, 1.0);
+    vec4 prevClip = previousViewProjection * vec4(hitPos, 1.0);
+
+    if (abs(currClip.w) <= 1e-5 || abs(prevClip.w) <= 1e-5)
+    {
+        OutVelocity = vec2(0.0);
+        return;
+    }
+
+    vec2 currNdc = currClip.xy / currClip.w;
+    vec2 prevNdc = prevClip.xy / prevClip.w;
+    OutVelocity = clamp(currNdc - prevNdc, vec2(-2.0), vec2(2.0));
+}
+""";
+
+    public const string ReactiveMaskFragmentShaderSource = """
+#version 450
+
+layout(location = 0) in vec3 NearWorldPos;
+layout(location = 1) in vec3 FarWorldPos;
+layout(location = 2) in vec2 FragClipXY;
+
+layout(location = 0) out float OutReactiveMask;
+
+uniform mat4 ViewProjectionMatrix;
+uniform mat4 InverseViewMatrix;
+uniform vec3 CameraPosition;
+uniform int DepthMode;
+uniform int ClipDepthRange;
+
+// Grid parameters
+uniform int GridPlane = 0;
+uniform float GridHeight = 0.0;
+uniform float GridCellSize = 1.0;
+uniform float GridSubdivisions = 10.0;
+uniform float GridLineWidth = 1.0;
+uniform float GridLodTargetPixelSpacing = 8.0;
+uniform float GridMaxDistance = 500.0;
+uniform float GridFadeRange = 150.0;
+uniform float GridAltitudeDistanceScale = 8.0;
+uniform vec4 GridMinorColor = vec4(0.45, 0.45, 0.48, 0.35);
+uniform vec4 GridMajorColor = vec4(0.70, 0.70, 0.75, 0.60);
+uniform vec4 GridXAxisColor = vec4(0.90, 0.25, 0.25, 0.85);
+uniform vec4 GridYAxisColor = vec4(0.30, 0.80, 0.35, 0.85);
+uniform vec4 GridZAxisColor = vec4(0.25, 0.45, 0.95, 0.85);
+uniform int GridShowAxes = 1;
+uniform int GridPlaneMask = 1;
+uniform float GridBehindPlaneOpacity = 0.0;
+
+float PristineGrid(vec2 coord, vec2 dxy, float cellSize, float lineWidth)
+{
+    vec2 grid = abs(fract(coord / cellSize - 0.5) - 0.5) * cellSize;
+    vec2 antiAlias = max(dxy, vec2(1e-7));
+    vec2 line = clamp((lineWidth * antiAlias * 0.5 - grid) / antiAlias + 0.5, 0.0, 1.0);
+    return max(line.x, line.y);
+}
+
+float SmootherStep(float value)
+{
+    value = clamp(value, 0.0, 1.0);
+    return value * value * value * (value * (value * 6.0 - 15.0) + 10.0);
+}
+
+float IntersectGridPlane(int plane, vec3 rayOrigin, vec3 rayDir)
+{
+    float denominator;
+    float origin;
+    float offset;
+
+    if (plane == 1) // XY
+    {
+        denominator = rayDir.z;
+        origin = rayOrigin.z;
+        offset = 0.0;
+    }
+    else if (plane == 2) // YZ
+    {
+        denominator = rayDir.x;
+        origin = rayOrigin.x;
+        offset = 0.0;
+    }
+    else // XZ
+    {
+        denominator = rayDir.y;
+        origin = rayOrigin.y;
+        offset = GridHeight;
+    }
+
+    if (abs(denominator) < 1e-6)
+        return 1e30;
+
+    float intersection = (offset - origin) / denominator;
+    return intersection > 0.0 ? intersection : 1e30;
+}
+
+float FindNearestOtherGridPlane(int currentPlane, vec3 rayOrigin, vec3 rayDir)
+{
+    float nearest = 1e30;
+    for (int plane = 0; plane < 3; ++plane)
+    {
+        if (plane == currentPlane || (GridPlaneMask & (1 << plane)) == 0)
+            continue;
+
+        nearest = min(nearest, IntersectGridPlane(plane, rayOrigin, rayDir));
+    }
+    return nearest;
+}
+
+void main()
+{
+    vec3 rayOrigin = NearWorldPos;
+    vec3 rayDir = FarWorldPos - NearWorldPos;
+    vec3 cameraPosition = InverseViewMatrix[3].xyz;
+
+    float rayPlaneAxis;
+    float rayOriginPlaneAxis;
+    float planeOffset;
+    float cameraHeight;
+
+    if (GridPlane == 1) // XY
+    {
+        rayPlaneAxis = rayDir.z;
+        rayOriginPlaneAxis = rayOrigin.z;
+        planeOffset = 0.0;
+        cameraHeight = abs(cameraPosition.z);
+    }
+    else if (GridPlane == 2) // YZ
+    {
+        rayPlaneAxis = rayDir.x;
+        rayOriginPlaneAxis = rayOrigin.x;
+        planeOffset = 0.0;
+        cameraHeight = abs(cameraPosition.x);
+    }
+    else // XZ
+    {
+        rayPlaneAxis = rayDir.y;
+        rayOriginPlaneAxis = rayOrigin.y;
+        planeOffset = GridHeight;
+        cameraHeight = abs(cameraPosition.y - GridHeight);
+    }
+
+    if (abs(rayPlaneAxis) < 1e-6)
+        discard;
+
+    float t = (planeOffset - rayOriginPlaneAxis) / rayPlaneAxis;
+    if (t <= 0.0)
+        discard;
+
+    float nearestOtherPlaneT = FindNearestOtherGridPlane(GridPlane, rayOrigin, rayDir);
+    vec3 hitPos = rayOrigin + t * rayDir;
+    vec2 coord;
+    vec2 cameraCoord;
+
+    if (GridPlane == 1) // XY
+    {
+        coord = hitPos.xy;
+        cameraCoord = cameraPosition.xy;
+    }
+    else if (GridPlane == 2) // YZ
+    {
+        coord = hitPos.yz;
+        cameraCoord = cameraPosition.yz;
+    }
+    else // XZ
+    {
+        coord = hitPos.xz;
+        cameraCoord = cameraPosition.xz;
+    }
+
+    // Depth computation
+    vec4 clipHit = ViewProjectionMatrix * vec4(hitPos, 1.0);
+    if (clipHit.w <= 0.0)
+        discard;
+
+    float ndcZ = clipHit.z / clipHit.w;
+    float depth = ClipDepthRange == 1 ? ndcZ * 0.5 + 0.5 : ndcZ;
+    if (depth < 0.0 || depth > 1.0)
+        discard;
+
+    gl_FragDepth = DepthMode == 1 ? (1.0 - depth) : depth;
+
+    // Multi-scale grid coverage
+    vec2 dxy = fwidth(coord);
+    float pixelFootprint = max(dxy.x, dxy.y);
+
+    float baseCell = max(GridCellSize, 1e-4);
+    float lodScale = max(GridSubdivisions, 2.0);
+    float targetSpacing = max(GridLodTargetPixelSpacing, 1.0);
+    float lodLevel = log(max(pixelFootprint * targetSpacing / baseCell, 1.0)) / log(lodScale);
+    float lodFloor = floor(lodLevel);
+    float lodFraction = SmootherStep(lodLevel - lodFloor);
+
+    float scale0 = baseCell * pow(lodScale, lodFloor);
+    float scale1 = scale0 * lodScale;
+    float scale2 = scale1 * lodScale;
+
+    float g0 = PristineGrid(coord, dxy, scale0, GridLineWidth);
+    float g1 = PristineGrid(coord, dxy, scale1, GridLineWidth);
+    float g2 = PristineGrid(coord, dxy, scale2, GridLineWidth);
+
+    float fineAlpha = g0 * (1.0 - lodFraction) * GridMinorColor.a;
+    float middleAlpha = g1 * mix(GridMajorColor.a, GridMinorColor.a, lodFraction);
+    float coarseAlpha = g2 * lodFraction * GridMajorColor.a;
+    float alphaSum = fineAlpha + middleAlpha + coarseAlpha;
+    float gridAlpha = min(alphaSum, 1.0);
+
+    if (GridShowAxes == 1)
+    {
+        float firstAxisMask = clamp((GridLineWidth * 1.5 * dxy.y * 0.5 - abs(coord.y)) / max(dxy.y, 1e-7) + 0.5, 0.0, 1.0);
+        float secondAxisMask = clamp((GridLineWidth * 1.5 * dxy.x * 0.5 - abs(coord.x)) / max(dxy.x, 1e-7) + 0.5, 0.0, 1.0);
+        gridAlpha = max(gridAlpha, max(firstAxisMask * GridXAxisColor.a, secondAxisMask * GridYAxisColor.a));
+    }
+
+    float planeVisibility = 1.0;
+    if (nearestOtherPlaneT < t)
+    {
+        float worldSeparation = (t - nearestOtherPlaneT) * length(rayDir);
+        float transitionWidth = max(baseCell, pixelFootprint * 4.0);
+        float behindAmount = SmootherStep(worldSeparation / transitionWidth);
+        planeVisibility = mix(1.0, clamp(GridBehindPlaneOpacity, 0.0, 1.0), behindAmount);
+    }
+
+    // Distance fade within the selected plane.
+    float dist = length(coord - cameraCoord);
+    float distanceFade = 1.0;
+    if (GridMaxDistance > 0.0)
+    {
+        float effectiveMaxDistance = max(GridMaxDistance, cameraHeight * GridAltitudeDistanceScale);
+        float effectiveFadeRange = max(GridFadeRange, effectiveMaxDistance * 0.2);
+        float startFade = max(0.0, effectiveMaxDistance - effectiveFadeRange);
+        distanceFade = SmootherStep(1.0 - (dist - startFade) / max(effectiveFadeRange, 1e-5));
+    }
+
+    float finalAlpha = gridAlpha * distanceFade * planeVisibility;
+    if (finalAlpha < 0.001)
+        discard;
+
+    OutReactiveMask = finalAlpha;
+}
+""";
+
+    public const string ReactiveMaskStereoFragmentShaderSource = """
+#version 450
+#extension GL_OVR_multiview2 : require
+
+layout(num_views = 2) in;
+
+layout(location = 0) in vec3 NearWorldPos;
+layout(location = 1) in vec3 FarWorldPos;
+layout(location = 2) in vec2 FragClipXY;
+
+layout(location = 0) out float OutReactiveMask;
+
+uniform mat4 LeftEyeViewProjectionMatrix;
+uniform mat4 RightEyeViewProjectionMatrix;
+uniform mat4 LeftEyeInverseViewMatrix;
+uniform mat4 RightEyeInverseViewMatrix;
+uniform vec3 CameraPosition;
+uniform int DepthMode;
+uniform int ClipDepthRange;
+
+// Grid parameters
+uniform int GridPlane = 0;
+uniform float GridHeight = 0.0;
+uniform float GridCellSize = 1.0;
+uniform float GridSubdivisions = 10.0;
+uniform float GridLineWidth = 1.0;
+uniform float GridLodTargetPixelSpacing = 8.0;
+uniform float GridMaxDistance = 500.0;
+uniform float GridFadeRange = 150.0;
+uniform float GridAltitudeDistanceScale = 8.0;
+uniform vec4 GridMinorColor = vec4(0.45, 0.45, 0.48, 0.35);
+uniform vec4 GridMajorColor = vec4(0.70, 0.70, 0.75, 0.60);
+uniform vec4 GridXAxisColor = vec4(0.90, 0.25, 0.25, 0.85);
+uniform vec4 GridYAxisColor = vec4(0.30, 0.80, 0.35, 0.85);
+uniform vec4 GridZAxisColor = vec4(0.25, 0.45, 0.95, 0.85);
+uniform int GridShowAxes = 1;
+uniform int GridPlaneMask = 1;
+uniform float GridBehindPlaneOpacity = 0.0;
+
+mat4 GetViewProjectionMatrix()
+{
+    return gl_ViewID_OVR == 0 ? LeftEyeViewProjectionMatrix : RightEyeViewProjectionMatrix;
+}
+
+vec3 GetCameraPosition()
+{
+    mat4 inverseView = gl_ViewID_OVR == 0 ? LeftEyeInverseViewMatrix : RightEyeInverseViewMatrix;
+    return inverseView[3].xyz;
+}
+
+float PristineGrid(vec2 coord, vec2 dxy, float cellSize, float lineWidth)
+{
+    vec2 grid = abs(fract(coord / cellSize - 0.5) - 0.5) * cellSize;
+    vec2 antiAlias = max(dxy, vec2(1e-7));
+    vec2 line = clamp((lineWidth * antiAlias * 0.5 - grid) / antiAlias + 0.5, 0.0, 1.0);
+    return max(line.x, line.y);
+}
+
+float SmootherStep(float value)
+{
+    value = clamp(value, 0.0, 1.0);
+    return value * value * value * (value * (value * 6.0 - 15.0) + 10.0);
+}
+
+float IntersectGridPlane(int plane, vec3 rayOrigin, vec3 rayDir)
+{
+    float denominator;
+    float origin;
+    float offset;
+
+    if (plane == 1) // XY
+    {
+        denominator = rayDir.z;
+        origin = rayOrigin.z;
+        offset = 0.0;
+    }
+    else if (plane == 2) // YZ
+    {
+        denominator = rayDir.x;
+        origin = rayOrigin.x;
+        offset = 0.0;
+    }
+    else // XZ
+    {
+        denominator = rayDir.y;
+        origin = rayOrigin.y;
+        offset = GridHeight;
+    }
+
+    if (abs(denominator) < 1e-6)
+        return 1e30;
+
+    float intersection = (offset - origin) / denominator;
+    return intersection > 0.0 ? intersection : 1e30;
+}
+
+float FindNearestOtherGridPlane(int currentPlane, vec3 rayOrigin, vec3 rayDir)
+{
+    float nearest = 1e30;
+    for (int plane = 0; plane < 3; ++plane)
+    {
+        if (plane == currentPlane || (GridPlaneMask & (1 << plane)) == 0)
+            continue;
+
+        nearest = min(nearest, IntersectGridPlane(plane, rayOrigin, rayDir));
+    }
+    return nearest;
+}
+
+void main()
+{
+    vec3 rayOrigin = NearWorldPos;
+    vec3 rayDir = FarWorldPos - NearWorldPos;
+    vec3 cameraPosition = GetCameraPosition();
+
+    float rayPlaneAxis;
+    float rayOriginPlaneAxis;
+    float planeOffset;
+    float cameraHeight;
+
+    if (GridPlane == 1) // XY
+    {
+        rayPlaneAxis = rayDir.z;
+        rayOriginPlaneAxis = rayOrigin.z;
+        planeOffset = 0.0;
+        cameraHeight = abs(cameraPosition.z);
+    }
+    else if (GridPlane == 2) // YZ
+    {
+        rayPlaneAxis = rayDir.x;
+        rayOriginPlaneAxis = rayOrigin.x;
+        planeOffset = 0.0;
+        cameraHeight = abs(cameraPosition.x);
+    }
+    else // XZ
+    {
+        rayPlaneAxis = rayDir.y;
+        rayOriginPlaneAxis = rayOrigin.y;
+        planeOffset = GridHeight;
+        cameraHeight = abs(cameraPosition.y - GridHeight);
+    }
+
+    if (abs(rayPlaneAxis) < 1e-6)
+        discard;
+
+    float t = (planeOffset - rayOriginPlaneAxis) / rayPlaneAxis;
+    if (t <= 0.0)
+        discard;
+
+    float nearestOtherPlaneT = FindNearestOtherGridPlane(GridPlane, rayOrigin, rayDir);
+    vec3 hitPos = rayOrigin + t * rayDir;
+    vec2 coord;
+    vec2 cameraCoord;
+
+    if (GridPlane == 1) // XY
+    {
+        coord = hitPos.xy;
+        cameraCoord = cameraPosition.xy;
+    }
+    else if (GridPlane == 2) // YZ
+    {
+        coord = hitPos.yz;
+        cameraCoord = cameraPosition.yz;
+    }
+    else // XZ
+    {
+        coord = hitPos.xz;
+        cameraCoord = cameraPosition.xz;
+    }
+
+    // Depth computation
+    vec4 clipHit = GetViewProjectionMatrix() * vec4(hitPos, 1.0);
+    if (clipHit.w <= 0.0)
+        discard;
+
+    float ndcZ = clipHit.z / clipHit.w;
+    float depth = ClipDepthRange == 1 ? ndcZ * 0.5 + 0.5 : ndcZ;
+    if (depth < 0.0 || depth > 1.0)
+        discard;
+
+    gl_FragDepth = DepthMode == 1 ? (1.0 - depth) : depth;
+
+    // Multi-scale grid coverage
+    vec2 dxy = fwidth(coord);
+    float pixelFootprint = max(dxy.x, dxy.y);
+
+    float baseCell = max(GridCellSize, 1e-4);
+    float lodScale = max(GridSubdivisions, 2.0);
+    float targetSpacing = max(GridLodTargetPixelSpacing, 1.0);
+    float lodLevel = log(max(pixelFootprint * targetSpacing / baseCell, 1.0)) / log(lodScale);
+    float lodFloor = floor(lodLevel);
+    float lodFraction = SmootherStep(lodLevel - lodFloor);
+
+    float scale0 = baseCell * pow(lodScale, lodFloor);
+    float scale1 = scale0 * lodScale;
+    float scale2 = scale1 * lodScale;
+
+    float g0 = PristineGrid(coord, dxy, scale0, GridLineWidth);
+    float g1 = PristineGrid(coord, dxy, scale1, GridLineWidth);
+    float g2 = PristineGrid(coord, dxy, scale2, GridLineWidth);
+
+    float fineAlpha = g0 * (1.0 - lodFraction) * GridMinorColor.a;
+    float middleAlpha = g1 * mix(GridMajorColor.a, GridMinorColor.a, lodFraction);
+    float coarseAlpha = g2 * lodFraction * GridMajorColor.a;
+    float alphaSum = fineAlpha + middleAlpha + coarseAlpha;
+    float gridAlpha = min(alphaSum, 1.0);
+
+    if (GridShowAxes == 1)
+    {
+        float firstAxisMask = clamp((GridLineWidth * 1.5 * dxy.y * 0.5 - abs(coord.y)) / max(dxy.y, 1e-7) + 0.5, 0.0, 1.0);
+        float secondAxisMask = clamp((GridLineWidth * 1.5 * dxy.x * 0.5 - abs(coord.x)) / max(dxy.x, 1e-7) + 0.5, 0.0, 1.0);
+        gridAlpha = max(gridAlpha, max(firstAxisMask * GridXAxisColor.a, secondAxisMask * GridYAxisColor.a));
+    }
+
+    float planeVisibility = 1.0;
+    if (nearestOtherPlaneT < t)
+    {
+        float worldSeparation = (t - nearestOtherPlaneT) * length(rayDir);
+        float transitionWidth = max(baseCell, pixelFootprint * 4.0);
+        float behindAmount = SmootherStep(worldSeparation / transitionWidth);
+        planeVisibility = mix(1.0, clamp(GridBehindPlaneOpacity, 0.0, 1.0), behindAmount);
+    }
+
+    // Distance fade within the selected plane.
+    float dist = length(coord - cameraCoord);
+    float distanceFade = 1.0;
+    if (GridMaxDistance > 0.0)
+    {
+        float effectiveMaxDistance = max(GridMaxDistance, cameraHeight * GridAltitudeDistanceScale);
+        float effectiveFadeRange = max(GridFadeRange, effectiveMaxDistance * 0.2);
+        float startFade = max(0.0, effectiveMaxDistance - effectiveFadeRange);
+        distanceFade = SmootherStep(1.0 - (dist - startFade) / max(effectiveFadeRange, 1e-5));
+    }
+
+    float finalAlpha = gridAlpha * distanceFade * planeVisibility;
+    if (finalAlpha < 0.001)
+        discard;
+
+    OutReactiveMask = finalAlpha;
 }
 """;
 

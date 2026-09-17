@@ -1395,6 +1395,11 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
         // also holds authored material passes, whose sorted-alpha bucket must
         // preserve painter's order instead of the scene's collection order.
         passes[(int)EDefaultRenderPass.TransparentForward] = new FarToNearRenderCommandSorter();
+        passes[(int)EDefaultRenderPass.PostBloomForward] = new FarToNearRenderCommandSorter();
+        passes[(int)EDefaultRenderPass.PostMotionBlurForward] = new FarToNearRenderCommandSorter();
+        passes[(int)EDefaultRenderPass.PostDepthOfFieldForward] = new FarToNearRenderCommandSorter();
+        passes[(int)EDefaultRenderPass.OnTopForward] = null;
+        passes[(int)EDefaultRenderPass.PostRender] = null;
         return passes;
     }
 

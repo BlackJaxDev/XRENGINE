@@ -5,6 +5,7 @@ using System.ComponentModel;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using XREngine.Components;
+using XREngine.Components.Scene.Environment;
 using XREngine.Components.Scene.Mesh;
 using XREngine.Components.Scene.Transforms;
 using XREngine.Components.Scene.Volumes;
@@ -620,6 +621,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     }
 
     private bool _depthQueryRequested = false;
+    private int _depthQueryWaitFrames = 0;
 
     private bool _allowWorldPicking = true;
     /// <summary>
@@ -1921,12 +1923,31 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         try
         {
             float? depth = GetDepth(vp, p);
-            p = vp.NormalizeInternalCoordinate(p);
-            bool validDepth = depth is not null && depth.Value >0.0f && depth.Value <1.0f;
-            if (validDepth)
+            Vector2 normP = vp.NormalizeInternalCoordinate(p);
+            Vector2 clampedNormP = ClampNormalizedViewport(normP);
+            bool validDepth = depth is not null && depth.Value > 0.0f && depth.Value < 1.0f;
+            Vector3? worldPoint = validDepth
+                ? Viewport?.NormalizedViewportToWorldCoordinate(new Vector3(clampedNormP, depth!.Value))
+                : null;
+
+            if (TryResolveGridFloorDepthHit(vp, clampedNormP, out Vector3 gridWorldPoint, out float gridDepth))
             {
-                DepthHitNormalizedViewportPoint = new Vector3(p.X, p.Y, depth!.Value);
-                WorldDragPoint = Viewport?.NormalizedViewportToWorldCoordinate(DepthHitNormalizedViewportPoint!.Value);
+                var camera = vp.Camera;
+                bool gridIsCloser = !validDepth || IsDepthCloser(camera, gridDepth, depth!.Value);
+                if (gridIsCloser)
+                {
+                    validDepth = true;
+                    depth = gridDepth;
+                    worldPoint = gridWorldPoint;
+                }
+            }
+
+            if (validDepth && worldPoint.HasValue)
+            {
+                DepthHitNormalizedViewportPoint = new Vector3(clampedNormP.X, clampedNormP.Y, depth!.Value);
+                WorldDragPoint = worldPoint.Value;
+                if (_rightClickPressed && _arcballRotationPosition is null && !GetAverageSelectionPoint(out _))
+                    _arcballRotationPosition = worldPoint.Value;
             }
             else
             {
@@ -1937,6 +1958,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         finally
         {
             _depthQueryRequested = false;
+            _depthQueryWaitFrames = 0;
         }
     }
 
@@ -2003,12 +2025,26 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
         if (!vp.TryEnterRenderPipelineReadbackScope(out IDisposable? readbackScope))
         {
-            EditorDepthHitReadbackSample invalidSample = new(
-                unflippedCoordinate.X,
-                unflippedCoordinate.Y,
-                1.0f,
-                false,
-                null);
+            EditorDepthHitReadbackSample fallbackSample;
+            if (TryResolveGridFloorDepthHit(vp, clamped, out Vector3 gridWorldPoint, out float gridDepth))
+            {
+                fallbackSample = new EditorDepthHitReadbackSample(
+                    unflippedCoordinate.X,
+                    unflippedCoordinate.Y,
+                    gridDepth,
+                    true,
+                    gridWorldPoint);
+            }
+            else
+            {
+                fallbackSample = new EditorDepthHitReadbackSample(
+                    unflippedCoordinate.X,
+                    unflippedCoordinate.Y,
+                    1.0f,
+                    false,
+                    null);
+            }
+
             return new EditorDepthHitProbeResult(
                 normalizedViewportPoint,
                 clamped,
@@ -2019,9 +2055,9 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
                 clipY,
                 framebufferY,
                 currentPolicyFlipsY,
-                invalidSample,
-                invalidSample,
-                invalidSample,
+                fallbackSample,
+                fallbackSample,
+                fallbackSample,
                 cameraPosition,
                 cameraForward);
         }
@@ -2033,6 +2069,21 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
                 ? unflipped
                 : ReadDepthSample(vp, fbo, clamped, flippedCoordinate);
             EditorDepthHitReadbackSample current = CoordinatesEqual(currentCoordinate, flippedCoordinate) ? flipped : unflipped;
+
+            if (TryResolveGridFloorDepthHit(vp, clamped, out Vector3 gridWorldPoint, out float gridDepth))
+            {
+                var camera = vp.Camera;
+                bool gridIsCloser = !current.ValidDepth || IsDepthCloser(camera, gridDepth, current.Depth);
+                if (gridIsCloser)
+                {
+                    current = new EditorDepthHitReadbackSample(
+                        current.X,
+                        current.Y,
+                        gridDepth,
+                        true,
+                        gridWorldPoint);
+                }
+            }
 
             return new EditorDepthHitProbeResult(
                 normalizedViewportPoint,
@@ -2088,7 +2139,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
                 if (changed)
                 {
                     InvalidateView();
-                    RecalculateCameraWorldMatrix(tfm, forceRenderMatrixNow: !smoothScroll);
+                    RecalculateCameraWorldMatrix(tfm, forceRenderMatrixNow: true);
                 }
 
                 return new EditorDepthHitZoomResult(
@@ -2164,6 +2215,52 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             depth,
             validDepth,
             worldPoint);
+    }
+
+    private static bool IsDepthCloser(XRCamera? camera, float candidateDepth, float baselineDepth)
+    {
+        bool reversed = camera?.IsReversedDepth ?? false;
+        return reversed
+            ? candidateDepth > baselineDepth
+            : candidateDepth < baselineDepth;
+    }
+
+    private bool TryResolveGridFloorDepthHit(
+        XRViewport vp,
+        Vector2 normalizedViewportPoint,
+        out Vector3 worldHitPoint,
+        out float depth)
+    {
+        worldHitPoint = Vector3.Zero;
+        depth = 0.0f;
+
+        // 1. Try active registered grids
+        if (InfiniteGridFloorComponent.TryGetActiveGridDepthHit(
+                vp,
+                normalizedViewportPoint,
+                out worldHitPoint,
+                out depth,
+                out _,
+                out _))
+        {
+            return true;
+        }
+
+        // 2. Fallback: search viewport camera world root nodes if active grid registry was empty
+        if ((vp.CameraComponent?.SceneNode?.World ?? SceneNode?.World) is RuntimeWorld world)
+        {
+            foreach (var root in world.RootNodes)
+            {
+                var grid = root.GetComponentInHierarchy(nameof(InfiniteGridFloorComponent)) as InfiniteGridFloorComponent;
+                if (grid is not null && grid.Enabled)
+                {
+                    if (grid.TryGetDepthHit(vp, normalizedViewportPoint, out worldHitPoint, out depth, out _))
+                        return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     public sealed record EditorDepthHitReadbackSample(
@@ -2289,14 +2386,28 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         if (hasNonScrollInput)
             _scrollSmoothTarget = null;
 
-        // True only when a discrete instant zoom (non-smooth) actually moved the camera this
-        // frame. Instant zoom applies the transform once, so its render matrix must reach the
-        // render thread immediately - if it is left to the deferred double-buffer push it can be
-        // dropped/delayed across a swap boundary, which surfaces as the camera occasionally not
-        // updating after a scroll. Smooth zoom re-pushes every frame, so it self-heals and does
-        // not need this.
+        // Discrete instant zoom applies the transform once, so its render matrix must reach the
+        // render thread immediately. Smooth zoom also forces the matrix update synchronously each frame
+        // (especially the final settling frame) so updates are not lost in the deferred double-buffer push.
         bool instantScrollApplied = false;
         bool waitingForScrollDepthHit = _depthQueryRequested && _pendingScrollDeltas.Count > 0;
+        if (waitingForScrollDepthHit)
+        {
+            _depthQueryWaitFrames++;
+            // Watchdog fallback: if depth query doesn't complete within 2 frames,
+            // don't leave pending scroll deltas trapped indefinitely.
+            if (_depthQueryWaitFrames > 2)
+            {
+                _depthQueryRequested = false;
+                _depthQueryWaitFrames = 0;
+                waitingForScrollDepthHit = false;
+            }
+        }
+        else
+        {
+            _depthQueryWaitFrames = 0;
+        }
+
         if (!waitingForScrollDepthHit)
         {
             while (_pendingScrollDeltas.Count > 0)
@@ -2305,9 +2416,12 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
                 instantScrollApplied |= scrollChanged;
                 transformChanged |= scrollChanged;
             }
-
-            transformChanged |= UpdateScrollSmooth(tfm);
         }
+
+        // Keep smoothly interpolating toward the active smooth target every frame,
+        // even if a subsequent scroll notch is currently probing depth.
+        bool smoothScrollChanged = UpdateScrollSmooth(tfm);
+        transformChanged |= smoothScrollChanged;
 
         if (trans.HasValue && WorldDragPoint.HasValue && DepthHitNormalizedViewportPoint.HasValue)
         {
@@ -2334,7 +2448,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         if (transformChanged)
         {
             InvalidateView();
-            RecalculateCameraWorldMatrix(tfm, forceRenderMatrixNow: instantScrollApplied);
+            RecalculateCameraWorldMatrix(tfm, forceRenderMatrixNow: instantScrollApplied || smoothScrollChanged);
         }
     }
 

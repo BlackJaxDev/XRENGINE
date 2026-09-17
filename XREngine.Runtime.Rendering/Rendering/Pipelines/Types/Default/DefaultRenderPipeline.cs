@@ -1423,6 +1423,9 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
             { (int)EDefaultRenderPass.OpaqueForward, _opaqueStateBucketSorter },
             { (int)EDefaultRenderPass.MaskedForward, _nearToFarSorter },
             { (int)EDefaultRenderPass.TransparentForward, _farToNearSorter },
+            { (int)EDefaultRenderPass.PostBloomForward, _farToNearSorter },
+            { (int)EDefaultRenderPass.PostMotionBlurForward, _farToNearSorter },
+            { (int)EDefaultRenderPass.PostDepthOfFieldForward, _farToNearSorter },
             { (int)EDefaultRenderPass.WeightedBlendedOitForward, null },
             { (int)EDefaultRenderPass.PerPixelLinkedListForward, null },
             { (int)EDefaultRenderPass.DepthPeelingForward, null },
@@ -1920,7 +1923,10 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
         Chain(metadata, EDefaultRenderPass.PerPixelLinkedListForward, EDefaultRenderPass.WeightedBlendedOitForward);
         Chain(metadata, EDefaultRenderPass.DepthPeelingForward, EDefaultRenderPass.PerPixelLinkedListForward);
         Chain(metadata, EDefaultRenderPass.TransparentForward, EDefaultRenderPass.DepthPeelingForward);
-        Chain(metadata, EDefaultRenderPass.OnTopForward, EDefaultRenderPass.TransparentForward);
+        Chain(metadata, EDefaultRenderPass.PostMotionBlurForward, EDefaultRenderPass.TransparentForward);
+        Chain(metadata, EDefaultRenderPass.PostDepthOfFieldForward, EDefaultRenderPass.PostMotionBlurForward);
+        Chain(metadata, EDefaultRenderPass.PostBloomForward, EDefaultRenderPass.PostDepthOfFieldForward);
+        Chain(metadata, EDefaultRenderPass.OnTopForward, EDefaultRenderPass.PostBloomForward);
         Chain(metadata, EDefaultRenderPass.PostRender, EDefaultRenderPass.OnTopForward);
 
         // The terminal command chain crosses FBO attachment and sampled-texture resource
