@@ -454,7 +454,12 @@ namespace XREngine.Scene.Transforms
             => Translation += Vector3.Transform(new Vector3(x, y, z), Matrix4x4.CreateFromQuaternion(Rotation));
 
         public void LookAt(Vector3 worldSpaceTarget)
-            => Rotation = Quaternion.CreateFromRotationMatrix(Matrix4x4.CreateLookAt(Translation, Vector3.Transform(worldSpaceTarget, ParentInverseWorldMatrix), Globals.Up));
+        {
+            Vector3 targetInParent = Vector3.Transform(worldSpaceTarget, ParentInverseWorldMatrix);
+            Matrix4x4 view = Matrix4x4.CreateLookAt(Translation, targetInParent, Globals.Up);
+            if (Matrix4x4.Invert(view, out Matrix4x4 worldOrientation))
+                Rotation = Quaternion.CreateFromRotationMatrix(worldOrientation);
+        }
 
         public override void DeriveLocalMatrix(Matrix4x4 value, bool networkSmoothed = false)
         {

@@ -6498,6 +6498,18 @@ namespace XREngine.Rendering
                     ? temporalData.RightEyePrevViewProjectionUnjittered
                     : rightCurrentViewProjection;
             }
+            else
+            {
+                leftPreviousViewProjection = camera.HasPreviousViewProjectionMatrix
+                    ? camera.PreviousViewProjectionMatrixUnjittered
+                    : leftCurrentViewProjection;
+                if (rightCamera is not null)
+                {
+                    rightPreviousViewProjection = rightCamera.HasPreviousViewProjectionMatrix
+                        ? rightCamera.PreviousViewProjectionMatrixUnjittered
+                        : rightCurrentViewProjection;
+                }
+            }
 
             if (graphicsProgram.HasUniform("LeftEyeCurrViewProjection"))
             {

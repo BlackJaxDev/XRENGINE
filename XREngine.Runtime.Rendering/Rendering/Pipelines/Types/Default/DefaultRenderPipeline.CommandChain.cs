@@ -157,13 +157,15 @@ public partial class DefaultRenderPipeline
             AppendLightingPass(fullSceneCommands);
             AppendForwardPass(fullSceneCommands, enableComputePasses);
             AppendTransparencyPasses(fullSceneCommands);
+            AppendTransparentForwardPass(fullSceneCommands);
             AppendPhysicsWorldDebug(fullSceneCommands);
 
             fullSceneCommands.Add<VPRC_DepthTest>().Enable = false;
             AppendVelocityPassSwitch(fullSceneCommands);
             fullSceneCommands.Add<VPRC_DepthTest>().Enable = false;
-            AppendBloomPass(fullSceneCommands);
             AppendMotionBlurAndDoF(fullSceneCommands);
+            AppendBloomPass(fullSceneCommands);
+            AppendPostBloomForwardPass(fullSceneCommands);
             AppendTemporalAccumulation(fullSceneCommands);
             // Build the GPU BVH so debug overlays (and any zero-readback consumers)
             // have an up-to-date acceleration structure published into pipeline
@@ -694,6 +696,21 @@ public partial class DefaultRenderPipeline
                     (int)EDefaultRenderPass.PerPixelLinkedListForward,
                     (int)EDefaultRenderPass.DepthPeelingForward,
                 ]);
+
+            // Participating transparent motion replay (e.g. infinite grid floor)
+            VPRC_RenderMotionVectorsPass transparentReplay = drawCommands.Add<VPRC_RenderMotionVectorsPass>();
+            transparentReplay.SetOptions(false,
+            [
+                (int)EDefaultRenderPass.WeightedBlendedOitForward,
+                (int)EDefaultRenderPass.TransparentForward,
+                (int)EDefaultRenderPass.OnTopForward,
+                (int)EDefaultRenderPass.PerPixelLinkedListForward,
+                (int)EDefaultRenderPass.DepthPeelingForward,
+            ]);
+            transparentReplay.RequireAdvancedLateMotionParticipation = true;
+            transparentReplay.AdvancedLateTemporalOutput = EAdvancedLateTemporalOutput.Velocity;
+            transparentReplay.UseMotionVectorMaterialVariant = false;
+
             drawCommands.Add<VPRC_DepthWrite>().Allow = true;
             drawChoice.TrueCommands = drawCommands;
         }
@@ -763,9 +780,13 @@ public partial class DefaultRenderPipeline
         motionBlurChoice.ConditionEvaluator = ShouldUseMotionBlur;
         motionBlurChoice.TrueCommands = CreateMotionBlurPassCommands();
 
+        AppendPostMotionBlurForwardPass(c);
+
         var dofChoice = c.Add<VPRC_IfElse>();
         dofChoice.ConditionEvaluator = ShouldUseDepthOfField;
         dofChoice.TrueCommands = CreateDepthOfFieldPassCommands();
+
+        AppendPostDepthOfFieldForwardPass(c);
     }
 
     private void AppendTemporalBegin(ViewportRenderCommandContainer c)
@@ -803,13 +824,56 @@ public partial class DefaultRenderPipeline
         temporalChoice.TrueCommands = temporalCommands;
     }
 
-    private void AppendPostTemporalForwardPasses(ViewportRenderCommandContainer c)
+    private void AppendTransparentForwardPass(ViewportRenderCommandContainer c)
     {
         using (c.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(ForwardPassFBOName, true, false, false, false)))
         {
             c.Add<VPRC_DepthTest>().Enable = true;
             c.Add<VPRC_DepthWrite>().Allow = false;
             c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.TransparentForward, EMeshSubmissionStrategy.CpuDirect);
+            c.Add<VPRC_DepthWrite>().Allow = true;
+        }
+    }
+
+    private void AppendPostBloomForwardPass(ViewportRenderCommandContainer c)
+    {
+        using (c.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(ForwardPassFBOName, true, false, false, false)))
+        {
+            c.Add<VPRC_DepthTest>().Enable = true;
+            c.Add<VPRC_DepthWrite>().Allow = false;
+            c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PostBloomForward, EMeshSubmissionStrategy.CpuDirect);
+            c.Add<VPRC_DepthWrite>().Allow = true;
+        }
+    }
+
+    private void AppendPostMotionBlurForwardPass(ViewportRenderCommandContainer c)
+    {
+        using (c.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(ForwardPassFBOName, true, false, false, false)))
+        {
+            c.Add<VPRC_DepthTest>().Enable = true;
+            c.Add<VPRC_DepthWrite>().Allow = false;
+            c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PostMotionBlurForward, EMeshSubmissionStrategy.CpuDirect);
+            c.Add<VPRC_DepthWrite>().Allow = true;
+        }
+    }
+
+    private void AppendPostDepthOfFieldForwardPass(ViewportRenderCommandContainer c)
+    {
+        using (c.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(ForwardPassFBOName, true, false, false, false)))
+        {
+            c.Add<VPRC_DepthTest>().Enable = true;
+            c.Add<VPRC_DepthWrite>().Allow = false;
+            c.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PostDepthOfFieldForward, EMeshSubmissionStrategy.CpuDirect);
+            c.Add<VPRC_DepthWrite>().Allow = true;
+        }
+    }
+
+    private void AppendPostTemporalForwardPasses(ViewportRenderCommandContainer c)
+    {
+        using (c.AddUsing<VPRC_BindFBOByName>(x => x.SetOptions(ForwardPassFBOName, true, false, false, false)))
+        {
+            c.Add<VPRC_DepthTest>().Enable = true;
+            c.Add<VPRC_DepthWrite>().Allow = false;
             c.Add<VPRC_RenderMeshletDebugDisplay>();
             c.Add<VPRC_DepthFunc>().Comp = EComparison.Always;
             // Keep custom on-top materials outside the generated material-table shader contract.

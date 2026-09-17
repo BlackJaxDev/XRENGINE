@@ -617,6 +617,7 @@ public partial class AdvancedRenderPipeline
                     Enabled = ERenderParamUsage.Disabled,
                 },
                 BlendModeAllDrawBuffers = BlendMode.Disabled(),
+                RequiredEngineUniforms = EUniformRequirements.ClipSpacePolicy,
             }
         };
 
@@ -692,6 +693,7 @@ public partial class AdvancedRenderPipeline
                     Enabled = ERenderParamUsage.Disabled,
                 },
                 BlendModeAllDrawBuffers = BlendMode.Disabled(),
+                RequiredEngineUniforms = EUniformRequirements.ClipSpacePolicy,
             }
         };
 

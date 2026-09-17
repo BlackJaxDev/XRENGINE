@@ -21,9 +21,11 @@ bool IsValidUv(vec2 uv)
     return all(greaterThanEqual(uv, vec2(0.0f))) && all(lessThanEqual(uv, vec2(1.0f)));
 }
 
-float DepthDifference(vec2 uv, float baseDepth)
+bool DepthAccepted(vec2 testUv, float baseDepth)
 {
-    return abs(texture(DepthView, XR_SCENE_FILTER_UV(uv)).r - baseDepth);
+    if (DepthRejectThreshold <= 0.0f)
+        return true;
+    return abs(texture(DepthView, XR_SCENE_FILTER_UV(testUv)).r - baseDepth) <= DepthRejectThreshold;
 }
 
 void main()
@@ -88,14 +90,14 @@ void main()
         vec2 offset = blurVector * t;
 
         vec2 uvPos = uv + offset;
-        if (IsValidUv(uvPos) && DepthDifference(uvPos, depth) <= DepthRejectThreshold)
+        if (IsValidUv(uvPos) && DepthAccepted(uvPos, depth))
         {
             accum += texture(MotionBlur, XR_SCENE_FILTER_UV(uvPos)).rgb * weight;
             totalWeight += weight;
         }
 
         vec2 uvNeg = uv - offset;
-        if (IsValidUv(uvNeg) && DepthDifference(uvNeg, depth) <= DepthRejectThreshold)
+        if (IsValidUv(uvNeg) && DepthAccepted(uvNeg, depth))
         {
             accum += texture(MotionBlur, XR_SCENE_FILTER_UV(uvNeg)).rgb * weight;
             totalWeight += weight;

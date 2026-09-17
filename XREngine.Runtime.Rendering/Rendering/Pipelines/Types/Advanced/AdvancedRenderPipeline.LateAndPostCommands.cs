@@ -64,6 +64,9 @@ public partial class AdvancedRenderPipeline
     private bool HasAnyAdvancedLateConsumers()
         => ShouldRunAdvancedLatePass((int)EDefaultRenderPass.WeightedBlendedOitForward)
         || ShouldRunAdvancedLatePass((int)EDefaultRenderPass.TransparentForward)
+        || ShouldRunAdvancedLatePass((int)EDefaultRenderPass.PostBloomForward)
+        || ShouldRunAdvancedLatePass((int)EDefaultRenderPass.PostMotionBlurForward)
+        || ShouldRunAdvancedLatePass((int)EDefaultRenderPass.PostDepthOfFieldForward)
         || ShouldRunAdvancedLatePass((int)EDefaultRenderPass.OnTopForward)
         || ShouldRunAdvancedLatePass((int)EDefaultRenderPass.PerPixelLinkedListForward)
         || ShouldRunAdvancedLatePass((int)EDefaultRenderPass.DepthPeelingForward);
@@ -141,6 +144,8 @@ public partial class AdvancedRenderPipeline
             _advancedBloomProvider = bloomCommands.Add<VPRC_BloomPass>();
             _advancedBloomProvider.SetTargetFBONames(ForwardPassFBOName, BloomBlurTextureName, Stereo);
             bloom.TrueCommands = bloomCommands;
+
+            AppendAdvancedPostBloomPass(commands);
         }
         else if (_stageFamilyExecutionProfile == EAdvancedStageFamilyExecutionProfile.OpenXrTwoPassEye)
         {
@@ -254,10 +259,59 @@ public partial class AdvancedRenderPipeline
         motionBlur.ConditionEvaluator = () => AllowsBloomAndDepthOfField && ShouldUseMotionBlur();
         motionBlur.TrueCommands = CreateAdvancedSceneFilterCommands(MotionBlurCopyFBOName, MotionBlurFBOName, CreateAdvancedMotionBlurResources());
 
+        AppendAdvancedPostMotionBlurPass(commands);
+
         var depthOfField = commands.Add<VPRC_IfElse>();
         depthOfField.Label = "AdvancedDepthOfFieldActive";
         depthOfField.ConditionEvaluator = () => AllowsBloomAndDepthOfField && ShouldUseDepthOfField();
         depthOfField.TrueCommands = CreateAdvancedSceneFilterCommands(DepthOfFieldCopyFBOName, DepthOfFieldFBOName, CreateAdvancedDepthOfFieldResources());
+
+        AppendAdvancedPostDepthOfFieldPass(commands);
+    }
+
+    private void AppendAdvancedPostMotionBlurPass(ViewportRenderCommandContainer commands)
+    {
+        using (commands.AddUsing<VPRC_BindFBOByName>(x =>
+            x.SetOptions(ForwardPassFBOName, write: true, clearColor: false, clearDepth: false, clearStencil: false)))
+        {
+            commands.Add<VPRC_ColorMask>().Set(true, true, true, true);
+            commands.Add<VPRC_DepthTest>().Enable = true;
+            commands.Add<VPRC_DepthWrite>().Allow = false;
+            VPRC_RenderMeshesPass pass = commands.Add<VPRC_RenderMeshesPass>();
+            pass.SetOptions((int)EDefaultRenderPass.PostMotionBlurForward, EMeshSubmissionStrategy.CpuDirect);
+            pass.EnforceAdvancedLatePassEligibility = true;
+            commands.Add<VPRC_DepthWrite>().Allow = true;
+        }
+    }
+
+    private void AppendAdvancedPostDepthOfFieldPass(ViewportRenderCommandContainer commands)
+    {
+        using (commands.AddUsing<VPRC_BindFBOByName>(x =>
+            x.SetOptions(ForwardPassFBOName, write: true, clearColor: false, clearDepth: false, clearStencil: false)))
+        {
+            commands.Add<VPRC_ColorMask>().Set(true, true, true, true);
+            commands.Add<VPRC_DepthTest>().Enable = true;
+            commands.Add<VPRC_DepthWrite>().Allow = false;
+            VPRC_RenderMeshesPass pass = commands.Add<VPRC_RenderMeshesPass>();
+            pass.SetOptions((int)EDefaultRenderPass.PostDepthOfFieldForward, EMeshSubmissionStrategy.CpuDirect);
+            pass.EnforceAdvancedLatePassEligibility = true;
+            commands.Add<VPRC_DepthWrite>().Allow = true;
+        }
+    }
+
+    private void AppendAdvancedPostBloomPass(ViewportRenderCommandContainer commands)
+    {
+        using (commands.AddUsing<VPRC_BindFBOByName>(x =>
+            x.SetOptions(ForwardPassFBOName, write: true, clearColor: false, clearDepth: false, clearStencil: false)))
+        {
+            commands.Add<VPRC_ColorMask>().Set(true, true, true, true);
+            commands.Add<VPRC_DepthTest>().Enable = true;
+            commands.Add<VPRC_DepthWrite>().Allow = false;
+            VPRC_RenderMeshesPass pass = commands.Add<VPRC_RenderMeshesPass>();
+            pass.SetOptions((int)EDefaultRenderPass.PostBloomForward, EMeshSubmissionStrategy.CpuDirect);
+            pass.EnforceAdvancedLatePassEligibility = true;
+            commands.Add<VPRC_DepthWrite>().Allow = true;
+        }
     }
 
     private ViewportRenderCommandContainer CreateAdvancedSceneFilterCommands(string copyFboName, string filterFboName,
@@ -267,9 +321,11 @@ public partial class AdvancedRenderPipeline
         // A multiview FBO cannot be blitted on OpenGL. The scene-copy quad
         // writes the matching eye layer on both backends without attachment feedback.
         commands.Add<VPRC_RenderQuadToFBO>()
-            .SetTargets(SceneCopyFBOName, copyFboName)
+            .SetTargets(SceneCopyFBOName, copyFboName, matchDestinationRenderArea: true)
             .SetRenderGraphResources(CreateAdvancedSceneCopyResources());
-        commands.Add<VPRC_RenderQuadToFBO>().SetTargets(filterFboName, ForwardPassFBOName).SetRenderGraphResources(resources);
+        commands.Add<VPRC_RenderQuadToFBO>()
+            .SetTargets(filterFboName, ForwardPassFBOName, matchDestinationRenderArea: true)
+            .SetRenderGraphResources(resources);
         return commands;
     }
 
@@ -292,7 +348,7 @@ public partial class AdvancedRenderPipeline
     {
         if (!AllowsBloomAndDepthOfField || Stereo || UseOpenXrVulkanDesktopStartupSafePath)
             return false;
-        var state = RuntimeEngine.Rendering.State.RenderingPipelineState?.SceneCamera?.GetActivePostProcessState();
+        var state = ResolveCurrentSettingsCamera()?.GetActivePostProcessState();
         var settings = GetSettings<AtmosphericScatteringSettings>(state) ?? AtmosphericScatteringSettings.Default;
         return settings.Enabled && (settings.AerialPerspective || settings.DebugMode != AtmosphericScatteringSettings.EDebugMode.Off)
             && settings.MaxDistance > 0.0f && settings.SelectActiveAtmosphere(out var active) && active is { HasAerialPerspective: true };
@@ -302,7 +358,7 @@ public partial class AdvancedRenderPipeline
     {
         if (!AllowsBloomAndDepthOfField || Stereo || UseOpenXrVulkanDesktopStartupSafePath)
             return false;
-        var state = RuntimeEngine.Rendering.State.RenderingPipelineState?.SceneCamera?.GetActivePostProcessState();
+        var state = ResolveCurrentSettingsCamera()?.GetActivePostProcessState();
         var settings = GetSettings<VolumetricFogSettings>(state);
         var world = RuntimeEngine.Rendering.State.RenderingWorld;
         return settings is { Enabled: true } && settings.Intensity > 0.0f && settings.MaxDistance > 0.0f

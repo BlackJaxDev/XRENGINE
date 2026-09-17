@@ -50,11 +50,11 @@ namespace XREngine.Rendering
             set => SetField(ref _velocityThreshold, Math.Clamp(value, 0.0f, 0.5f));
         }
 
-        [Category("Motion Blur"), Description("Depth difference threshold to reject samples that cross discontinuities.")]
+        [Category("Motion Blur"), Description("Depth difference threshold to reject samples that cross discontinuities. Set to 0 to disable depth rejection.")]
         public float DepthRejectThreshold
         {
             get => _depthRejectThreshold;
-            set => SetField(ref _depthRejectThreshold, Math.Clamp(value, 0.0f, 0.05f));
+            set => SetField(ref _depthRejectThreshold, Math.Clamp(value, 0.0f, 1.0f));
         }
 
         [Category("Motion Blur"), Description("Controls exponential falloff applied to farther samples.")]

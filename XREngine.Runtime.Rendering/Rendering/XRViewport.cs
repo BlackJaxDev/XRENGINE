@@ -3283,8 +3283,8 @@ namespace XREngine.Rendering
         /// <param name="worldPoint">The world-space position to project.</param>
         /// <returns>The viewport coordinate where X,Y are normalized screen position and Z is depth.</returns>
         /// <exception cref="InvalidOperationException">Thrown when no camera is set to this viewport.</exception>
-        public Vector3 WorldToNormalizedViewportCoordinate(Vector3 worldPoint)
-            => _camera?.WorldToNormalizedViewportCoordinate(worldPoint)
+        public Vector3 WorldToNormalizedViewportCoordinate(Vector3 worldPoint, bool useUnjitteredProjection = false)
+            => _camera?.WorldToNormalizedViewportCoordinate(worldPoint, useUnjitteredProjection)
                 ?? throw new InvalidOperationException("No camera is set to this viewport.");
 
         #endregion

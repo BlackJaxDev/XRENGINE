@@ -300,7 +300,10 @@ public sealed class VulkanP0ValidationTests
         Chain(metadata, EDefaultRenderPass.PerPixelLinkedListForward, EDefaultRenderPass.WeightedBlendedOitForward);
         Chain(metadata, EDefaultRenderPass.DepthPeelingForward, EDefaultRenderPass.PerPixelLinkedListForward);
         Chain(metadata, EDefaultRenderPass.TransparentForward, EDefaultRenderPass.DepthPeelingForward);
-        Chain(metadata, EDefaultRenderPass.OnTopForward, EDefaultRenderPass.TransparentForward);
+        Chain(metadata, EDefaultRenderPass.PostMotionBlurForward, EDefaultRenderPass.TransparentForward);
+        Chain(metadata, EDefaultRenderPass.PostDepthOfFieldForward, EDefaultRenderPass.PostMotionBlurForward);
+        Chain(metadata, EDefaultRenderPass.PostBloomForward, EDefaultRenderPass.PostDepthOfFieldForward);
+        Chain(metadata, EDefaultRenderPass.OnTopForward, EDefaultRenderPass.PostBloomForward);
         Chain(metadata, EDefaultRenderPass.PostRender, EDefaultRenderPass.OnTopForward);
     }
 

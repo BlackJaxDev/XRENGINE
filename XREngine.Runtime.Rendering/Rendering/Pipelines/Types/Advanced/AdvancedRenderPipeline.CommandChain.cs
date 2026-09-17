@@ -106,6 +106,7 @@ public partial class AdvancedRenderPipeline
 
     private void AppendAdvancedScreenSpaceUi(ViewportRenderCommandContainer commands)
     {
+        commands.Add<VPRC_RenderMeshesPass>().SetOptions((int)EDefaultRenderPass.PostRender, false);
         var ui = commands.Add<VPRC_IfElse>();
         ui.Label = "AdvancedScreenSpaceUiAllowed";
         ui.ConditionEvaluator = () => AllowsScreenSpaceUi;

@@ -113,6 +113,16 @@ public static class AdvancedLatePassEligibilityValidator
                 KindBit(EAdvancedLatePassKind.ParticipatingTransparency) |
                 KindBit(EAdvancedLatePassKind.Refraction) |
                 KindBit(EAdvancedLatePassKind.SpecialEffects),
+            (int)EDefaultRenderPass.PostBloomForward =>
+                KindBit(EAdvancedLatePassKind.SortedAlpha) |
+                KindBit(EAdvancedLatePassKind.OnTopOverlay) |
+                KindBit(EAdvancedLatePassKind.SpecialEffects),
+            (int)EDefaultRenderPass.PostMotionBlurForward =>
+                KindBit(EAdvancedLatePassKind.SortedAlpha) |
+                KindBit(EAdvancedLatePassKind.SpecialEffects),
+            (int)EDefaultRenderPass.PostDepthOfFieldForward =>
+                KindBit(EAdvancedLatePassKind.SortedAlpha) |
+                KindBit(EAdvancedLatePassKind.SpecialEffects),
             (int)EDefaultRenderPass.WeightedBlendedOitForward =>
                 KindBit(EAdvancedLatePassKind.WeightedBlendedOit),
             (int)EDefaultRenderPass.PerPixelLinkedListForward =>

@@ -14,6 +14,7 @@ public static class XREngineEnvironmentVariableCatalog
         nameof(XREngineEnvironmentVariables.AnthropicApiKey),
         nameof(XREngineEnvironmentVariables.GeminiApiKey),
         nameof(XREngineEnvironmentVariables.GitHubToken),
+        nameof(XREngineEnvironmentVariables.TypeSafeApiKey),
         nameof(XREngineEnvironmentVariables.SessionToken),
         nameof(XREngineEnvironmentVariables.RealtimeJoinPayload),
     ];
