@@ -144,7 +144,8 @@ namespace XREngine.Editor.Mcp
                         {
                             if (renderer.ScreenshotRequiresVerticalFlip)
                                 img.Flip();
-                            img.Write(path);
+                            using FileStream output = File.Create(path);
+                            img.Write(output, MagickFormat.Png);
                         }
                         tcs.TrySetResult((path, result));
                     }

@@ -390,6 +390,7 @@ internal sealed partial class VulkanFrameLoop
 
                 if (!TryCapturePreparedPrimaryAuthority(
                         imageIndex,
+                    attempt.FrameSlot,
                         in plannerState,
                         in frozenPlanningSnapshot,
                         preserveSwapchainForOverlay,
@@ -2128,6 +2129,7 @@ internal sealed partial class VulkanFrameLoop
 
     private bool TryCapturePreparedPrimaryAuthority(
         uint imageIndex,
+        int presentationDescriptorSlot,
         in ResourcePlannerRuntimeState plannerState,
         in VulkanFramePlanningSnapshot frozenPlanningSnapshot,
         bool preserveSwapchainForOverlay,
@@ -2211,7 +2213,7 @@ internal sealed partial class VulkanFrameLoop
                 in target,
                 OutputRuntime.Desktop.Generation),
             _windowPresentSource.CaptureForDescriptorSlot(
-                checked((int)imageIndex)),
+                presentationDescriptorSlot),
             resourcePlanStamp,
             new VulkanCommandClearStateSnapshot(
                 clearColor,

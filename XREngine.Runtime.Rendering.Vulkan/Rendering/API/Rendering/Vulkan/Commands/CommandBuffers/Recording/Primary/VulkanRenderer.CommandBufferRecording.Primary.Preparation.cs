@@ -898,6 +898,11 @@ namespace XREngine.Rendering.Vulkan
                 {
                     recordingState.RecordingDeferredReason =
                         $"Advanced visibility operation is Unsupported: stable-bin sealing failed: {binReason}";
+                    if (input.Publication.DeformationArenaAllocationFailureCount != 0u)
+                    {
+                        recordingState.FailureKind =
+                            EVulkanCommandRecordingFailureKind.RetryFrame;
+                    }
                     return false;
                 }
                 if (request.Stage == EAdvancedRenderStage.VisibilityRaster &&

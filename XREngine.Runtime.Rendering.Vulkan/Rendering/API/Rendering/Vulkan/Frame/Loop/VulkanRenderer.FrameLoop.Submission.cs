@@ -69,7 +69,7 @@ namespace XREngine.Rendering.Vulkan
                 if (!TryValidatePresentationSourceForSubmission(
                         attempt.PresentationSource,
                         attempt.SceneCommandBuffer,
-                        attempt.ImageIndex,
+                    attempt.FrameSlot,
                         out string presentationSourceFailure))
                 {
                     _commandRuntime.CommandBuffers.MarkDirty(presentationSourceFailure);

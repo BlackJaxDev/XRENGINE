@@ -250,14 +250,15 @@ namespace XREngine.Rendering.Vulkan
 
                 attempt.ScenePrimaryRecordedThisFrame =
                     _lastEnsureCommandBufferRecordedPrimary;
+                int presentationDescriptorSlot = attempt.FrameSlot;
                 VulkanPresentationSourceTuple presentationSource =
                     _windowPresentSource.CaptureForDescriptorSlot(
-                        checked((int)attempt.ImageIndex));
+                        presentationDescriptorSlot);
                 if (presentationSource.HasLogicalSource)
                 {
                     _ = _windowPresentSource.TryBindCommandArtifact(
                         presentationSource.LogicalEpoch,
-                        checked((int)attempt.ImageIndex),
+                        presentationDescriptorSlot,
                         attempt.SceneCommandBuffer,
                         _commandRuntime.CommandBuffers.ResolveRecordingGeneration(
                             attempt.SceneCommandBuffer),
@@ -654,7 +655,7 @@ namespace XREngine.Rendering.Vulkan
             if (!TryValidatePresentationSourceForSubmission(
                     attempt.PresentationSource,
                     attempt.SceneCommandBuffer,
-                    attempt.ImageIndex,
+                    attempt.FrameSlot,
                     out string presentationSourceFailure))
             {
                 _commandRuntime.CommandBuffers.MarkDirty(presentationSourceFailure);
@@ -756,13 +757,13 @@ namespace XREngine.Rendering.Vulkan
         private bool TryValidatePresentationSourceForSubmission(
             in VulkanPresentationSourceTuple source,
             CommandBuffer sceneCommandBuffer,
-            uint descriptorSlot,
+            int descriptorSlot,
             out string failureReason)
         {
             failureReason = string.Empty;
             VulkanPresentationSourceTuple published =
                 _windowPresentSource.CaptureForDescriptorSlot(
-                    checked((int)descriptorSlot));
+                    descriptorSlot);
             if (!source.MatchesPublication(in published))
             {
                 failureReason =
@@ -795,7 +796,7 @@ namespace XREngine.Rendering.Vulkan
                 return false;
             }
 
-            if (source.DescriptorSlot != checked((int)descriptorSlot))
+            if (source.DescriptorSlot != descriptorSlot)
             {
                 failureReason =
                     $"final presentation source epoch {source.LogicalEpoch} uses descriptor slot {source.DescriptorSlot}, not acquired slot {descriptorSlot}";

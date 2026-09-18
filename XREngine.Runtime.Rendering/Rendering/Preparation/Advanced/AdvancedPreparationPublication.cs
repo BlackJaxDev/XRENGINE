@@ -21,6 +21,7 @@ public readonly record struct AdvancedPreparationPublication(
     uint VisibilityViewCount,
     uint IndirectRangeCount,
     uint VisibleFallbackCount,
+    uint DeformationArenaAllocationFailureCount,
     ulong DeformedVertexCount,
     uint DeformationUploadBytes,
     uint UploadCopyRangeCount,

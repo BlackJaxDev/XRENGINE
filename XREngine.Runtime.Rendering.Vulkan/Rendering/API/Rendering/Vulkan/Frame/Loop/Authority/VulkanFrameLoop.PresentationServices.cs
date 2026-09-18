@@ -350,7 +350,7 @@ internal sealed partial class VulkanFrameLoop
             return;
 
         VulkanPresentationSourceTuple source = _windowPresentSource
-            .CaptureForDescriptorSlot(unchecked((int)attempt.ImageIndex));
+            .CaptureForDescriptorSlot(attempt.FrameSlot);
         bool sourceSnapshotReady = source.ColorTexture is not null &&
             source.Image.Handle != 0 &&
             source.ImageView.Handle != 0 &&
@@ -358,7 +358,7 @@ internal sealed partial class VulkanFrameLoop
             source.DescriptorResourceEpoch != 0;
         VulkanFinalPresentationDescriptorObservation descriptor =
             _frameTelemetry._finalPresentationLedger.CaptureLatestDescriptor(
-                unchecked((int)attempt.ImageIndex),
+                attempt.FrameSlot,
                 attempt.FrameNumber,
                 in source);
 

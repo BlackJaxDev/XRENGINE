@@ -30,6 +30,11 @@
   <Project Path="XREngine.UnitTests/XREngine.UnitTests.csproj" />
   <Project Path="XREngine.VRClient/XREngine.VRClient.csproj" />
   <Project Path="Tools/LocalAgentBroker/LocalAgentBroker.csproj" />
+  <Folder Name="/Build/" />
+  <Folder Name="/Build/Submodules/" />
+  <Folder Name="/Build/Submodules/OpenVR.NET/">
+    <Project Path="Build/Submodules/OpenVR.NET/OpenVR.NET/OpenVR.NET.csproj" />
+  </Folder>
   <Project Path="Tools/LocalAgentBroker.Shared/LocalAgentBroker.Shared.csproj" />
   <Project Path="Tools/LocalAgentBroker.Tray/LocalAgentBroker.Tray.csproj" />
 </Solution>

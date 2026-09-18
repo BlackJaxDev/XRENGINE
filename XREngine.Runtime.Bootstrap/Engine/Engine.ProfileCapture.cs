@@ -487,6 +487,7 @@ public static partial class Engine
                         {
                             FrameOutputWorkloadIdentityHash = currentOutputManifest.WorkloadIdentityHash,
                             OutputInventory = CaptureOutputInventory(currentOutputManifest),
+                            ActiveRenderFeatures = CaptureActiveRenderFeatures(currentOutputManifest),
                         };
                     }
                 }
@@ -655,6 +656,7 @@ public static partial class Engine
             double gpuPipelineMs = RuntimeEngine.Rendering.Stats.GpuPipelineProfiler.GpuRenderPipelineFrameMs;
             bool gpuTimingsReady = RuntimeEngine.Rendering.Stats.GpuPipelineProfiler.GpuRenderPipelineTimingsReady;
             RuntimeEngine.Rendering.Stats.FrameOutputManifestSnapshot frameOutputs = RuntimeEngine.Rendering.Stats.FrameOutputs.LastManifest;
+            ActiveRenderFeaturesMetadata activeRenderFeatures = CaptureActiveRenderFeatures(frameOutputs);
 
             s_lineBuilder.Clear();
             s_lineBuilder.Append('{');
@@ -705,6 +707,10 @@ public static partial class Engine
             AppendStringField(s_lineBuilder, "profile_suitability", metadata.ProfileSuitability, ref first);
             AppendBoolField(s_lineBuilder, "profile_comparison_suitable", metadata.ProfileComparisonSuitable, ref first);
             AppendBoolField(s_lineBuilder, "code_profiler_frame_logging_enabled", Engine.Profiler.EnableFrameLogging, ref first);
+            AppendNumberField(s_lineBuilder, "code_profiler_overflow_discarded_events", Engine.Profiler.OverflowDiscardedEventCount, ref first);
+            AppendNumberField(s_lineBuilder, "code_profiler_pending_completed_discarded_events", Engine.Profiler.PendingCompletedDiscardedEventCount, ref first);
+            AppendNumberField(s_lineBuilder, "code_profiler_pending_completed_count", Engine.Profiler.PendingCompletedCount, ref first);
+            AppendNumberField(s_lineBuilder, "managed_heap_bytes", GC.GetTotalMemory(forceFullCollection: false), ref first);
             AppendBoolField(s_lineBuilder, "profile_promotion_eligible", metadata.ProfilePromotionEligible, ref first);
             AppendBoolField(s_lineBuilder, "profile_intrusive", metadata.ProfileIntrusive, ref first);
             AppendBoolField(s_lineBuilder, "vulkan_command_buffer_labels_enabled", metadata.VulkanCommandBufferLabelsEnabled, ref first);
@@ -720,16 +726,16 @@ public static partial class Engine
             AppendStringField(s_lineBuilder, "xr_runtime", metadata.XrRuntime, ref first);
             AppendStringField(s_lineBuilder, "shader_cache_state", metadata.ShaderCacheState, ref first);
             AppendStringField(s_lineBuilder, "texture_cache_state", metadata.TextureCacheState, ref first);
-            AppendBoolField(s_lineBuilder, "render_feature_state_available", metadata.ActiveRenderFeatures.CameraStateAvailable, ref first);
-            AppendStringField(s_lineBuilder, "anti_aliasing_mode", metadata.ActiveRenderFeatures.AntiAliasingMode, ref first);
-            AppendNumberField(s_lineBuilder, "msaa_sample_count", metadata.ActiveRenderFeatures.MsaaSampleCount, ref first);
-            AppendNumberField(s_lineBuilder, "tsr_render_scale", metadata.ActiveRenderFeatures.TsrRenderScale, ref first);
-            AppendBoolField(s_lineBuilder, "ambient_occlusion_enabled", metadata.ActiveRenderFeatures.AmbientOcclusionEnabled, ref first);
-            AppendStringField(s_lineBuilder, "ambient_occlusion_mode", metadata.ActiveRenderFeatures.AmbientOcclusionMode, ref first);
-            AppendBoolField(s_lineBuilder, "auto_exposure_enabled", metadata.ActiveRenderFeatures.AutoExposureEnabled, ref first);
-            AppendBoolField(s_lineBuilder, "bloom_enabled", metadata.ActiveRenderFeatures.BloomEnabled, ref first);
-            AppendBoolField(s_lineBuilder, "motion_blur_enabled", metadata.ActiveRenderFeatures.MotionBlurEnabled, ref first);
-            AppendBoolField(s_lineBuilder, "motion_vectors_requested", metadata.ActiveRenderFeatures.MotionVectorsRequested, ref first);
+            AppendBoolField(s_lineBuilder, "render_feature_state_available", activeRenderFeatures.CameraStateAvailable, ref first);
+            AppendStringField(s_lineBuilder, "anti_aliasing_mode", activeRenderFeatures.AntiAliasingMode, ref first);
+            AppendNumberField(s_lineBuilder, "msaa_sample_count", activeRenderFeatures.MsaaSampleCount, ref first);
+            AppendNumberField(s_lineBuilder, "tsr_render_scale", activeRenderFeatures.TsrRenderScale, ref first);
+            AppendBoolField(s_lineBuilder, "ambient_occlusion_enabled", activeRenderFeatures.AmbientOcclusionEnabled, ref first);
+            AppendStringField(s_lineBuilder, "ambient_occlusion_mode", activeRenderFeatures.AmbientOcclusionMode, ref first);
+            AppendBoolField(s_lineBuilder, "auto_exposure_enabled", activeRenderFeatures.AutoExposureEnabled, ref first);
+            AppendBoolField(s_lineBuilder, "bloom_enabled", activeRenderFeatures.BloomEnabled, ref first);
+            AppendBoolField(s_lineBuilder, "motion_blur_enabled", activeRenderFeatures.MotionBlurEnabled, ref first);
+            AppendBoolField(s_lineBuilder, "motion_vectors_requested", activeRenderFeatures.MotionVectorsRequested, ref first);
             AppendBoolField(s_lineBuilder, "validation_layers_enabled", RuntimeEngine.Rendering.Stats.RendererState.ValidationLayersEnabled, ref first);
             AppendBoolField(s_lineBuilder, "debug_output_enabled", RuntimeEngine.Rendering.Stats.RendererState.DebugOutputEnabled, ref first);
             AppendNumberField(s_lineBuilder, "deferred_debug_view", global::XREngine.Rendering.RenderDiagnosticsFlags.DeferredDebugView, ref first);
@@ -2573,6 +2579,7 @@ public static partial class Engine
                 pipeline?.LastSceneCamera ??
                 pipeline?.LastRenderingCamera;
             EAntiAliasingMode antiAliasingMode =
+                ResolveProfileSceneOutputAntiAliasingMode(outputManifest) ??
                 camera?.AntiAliasingModeOverride ??
                 Engine.EffectiveSettings.AntiAliasingMode;
             uint msaaSampleCount =
@@ -2617,6 +2624,39 @@ public static partial class Engine
                 DynamicTextOverlayEnabled: HasOutputWork(
                     outputManifest,
                     "DynamicTextOverlay"));
+        }
+
+        private static EAntiAliasingMode? ResolveProfileSceneOutputAntiAliasingMode(
+            RuntimeEngine.Rendering.Stats.FrameOutputManifestSnapshot outputManifest)
+        {
+            RuntimeEngine.Rendering.Stats.FrameOutputEntrySnapshot[] outputs =
+                outputManifest.Outputs ?? [];
+            int selectedPriority = int.MaxValue;
+            EAntiAliasingMode? selectedMode = null;
+            for (int i = 0; i < outputs.Length; i++)
+            {
+                RuntimeEngine.Rendering.Stats.FrameOutputEntrySnapshot output = outputs[i];
+                if (!output.Active || !output.Rendered || !output.SceneRendered ||
+                    !Enum.TryParse(output.AntiAliasingMode, out EAntiAliasingMode mode))
+                {
+                    continue;
+                }
+
+                int priority = output.OutputKind switch
+                {
+                    EFrameOutputKind.DesktopScene => 0,
+                    EFrameOutputKind.EditorScenePanel => 1,
+                    EFrameOutputKind.OpenXREyeSubmit or EFrameOutputKind.OpenVRSubmit => 2,
+                    _ => 3,
+                };
+                if (priority >= selectedPriority)
+                    continue;
+
+                selectedPriority = priority;
+                selectedMode = mode;
+            }
+
+            return selectedMode;
         }
 
         private static TSettings? TryGetPostProcessSettings<TSettings>(

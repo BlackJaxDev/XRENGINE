@@ -1,8 +1,8 @@
 # Vulkan Stall Remediation TODO
 
-Last Updated: 2026-09-17
+Last Updated: 2026-09-18
 Owner: Rendering, with Profiler, Runtime Core, and ImGui Editor owners per item
-Status: S00a Blocked at clean-toggle live proof; S01 Blocked pending baseline and attribution repairs
+Status: S00 Blocked on motion p99 observer overhead; S00a Validated; S01/S02 Blocked
 Execution: One fix at a time, with a mandatory validation gate after each fix
 
 ## Purpose And Ownership
@@ -38,6 +38,18 @@ Keep durable results in the linked investigation and concise gate status here.
   named method's exclusive cost.
 - The resumed probe presented `TsrOutputTexture`. That proves participation in
   the presentation path, not correct history identity or absence of ghosting.
+- The strict Release matrix completed three alternating profiler-off/on pairs
+  with stable workload identity, verified camera motion, admitted images and
+  approximately 10-11 ms average render cost. It did not reproduce the original
+  153-165 ms CPU report. A repaired final matrix reduced median render cost to
+  6.5-7.2 ms and cleared GPU coverage, exact loss, retention, native occupancy,
+  backlog, mean-overhead, stationary-tail, and motion-p95 gates. S00 still fails
+  because profiler-on motion p99 is 15.268 ms versus 10.389 ms off, a 46.96%
+  increase against the predeclared 10.85% disabled-run-spread allowance.
+- Controlled TSR motion produced ready history and finite nonzero velocity, but
+  the viewed path was not discriminating enough to resolve the reported ghosting.
+  Frame-authoritative profiler telemetry now reports the active TSR mode instead
+  of a launch-cached FXAA value; that telemetry fix is not a visual TSR fix.
 - Existing native caches, background compilation, resident-table reuse, family
   leases and transactional resource generations must be audited and reused.
   Unchecked historical backlog entries do not prove those mechanisms are absent.
@@ -123,8 +135,8 @@ gate record. No item is complete merely because this checklist was written.
 
 | ID | Item | Entry dependency | Initial status |
 | --- | --- | --- | --- |
-| S00 | [Comparable baseline and evidence manifest](../../investigations/rendering/2026-09-16-vulkan-last-run-diagnostics.md#s00-gate-record-comparable-baseline-and-evidence-manifest) | None | Blocked (diagnostic pair rejected; readiness and comparison gates open) |
-| S00a | Export existing coarse GPU timing provenance | S00 instrumentation prerequisite | Blocked (clean profiler toggle ordering fixed and built; final on/off live proof pending) |
+| S00 | [Comparable baseline and evidence manifest](../../investigations/rendering/2026-09-16-vulkan-last-run-diagnostics.md#s00-gate-record-comparable-baseline-and-evidence-manifest) | None | Blocked (repaired matrix passes all evidence gates but fails motion p99 observer allowance) |
+| S00a | Export existing coarse GPU timing provenance | S00 instrumentation prerequisite | Validated (GPU identity and symmetric clean profiler toggle proven live) |
 | S01 | [Correct profiler duration/identity reporting](../../investigations/rendering/2026-09-16-vulkan-last-run-diagnostics.md#s01-gate-record-correct-profiler-duration-and-identity-reporting) | S00 | Blocked (partial implementation; test clearance pending) |
 | S02 | Attribute warmed recording and waits | S01 | Pending |
 | S03 | Nonblocking Advanced pipeline readiness | S02, confirmed cold-path trigger | Pending |
@@ -147,26 +159,34 @@ gate record. No item is complete merely because this checklist was written.
 - [x] Preserve the original report separately from the resumed probe. Recover the
   original logs/configuration if available; otherwise label reproduction status
   unknown and never use a different scene to declare the original issue fixed.
-- [ ] Record source revision plus local diff, build configuration, SDK/runtime,
+- [x] Record source revision plus local diff, build configuration, SDK/runtime,
   device/driver, Vulkan validation settings, present mode, profiler/logging mode,
   backend/submission mode, scene content, camera path and viewport dimensions.
-- [ ] Define cold process, persisted-cache warm restart, warmed stationary and
+- [x] Define cold process, persisted-cache warm restart, warmed stationary and
   controlled-motion workloads. Record actual scene readiness, accepted content
   and cache state; elapsed time alone does not prove warm-up is complete.
-- [ ] Capture all-frame counts and CPU/GPU distributions, recording/resource
+- [x] Capture all-frame counts and CPU/GPU distributions, recording/resource
   preparation child timings, queue delay, successful presentations, missing GPU
   samples, stall thresholds and dropped/suppressed diagnostic events.
-- [ ] Use at least three matched runs per performance condition and a warmed
+- [x] Use at least three matched runs per performance condition and a warmed
   window of at least 60 seconds by default. Record any justified alternative
   before comparison. Define stage/tail-latency and retained-memory budgets here.
-- [ ] Compare instrumented and minimal-observer configurations. Do not mix Debug,
+- [x] Compare instrumented and minimal-observer configurations. Do not mix Debug,
   Release, profiler modes or validation-layer settings in one claimed speedup.
 
 Gate: evidence is reproducible and budgets are recorded. If the 153-165 ms
 regression cannot be reproduced, retain that unresolved result while addressing
 independently confirmed mechanisms. Do not delete user caches to force cold runs.
-Status: Blocked; prior validation was unsupported and the new diagnostic pair did
-not establish a comparable warm baseline (see [S00 Gate Record](../../investigations/rendering/2026-09-16-vulkan-last-run-diagnostics.md#s00-gate-record-comparable-baseline-and-evidence-manifest)).
+Status: Blocked. S00a's clean profiler toggle prerequisite is validated, and the
+repaired Release matrix completed three matched 60-second off/on pairs with stable
+scene admission, verified camera motion, and viewed-image admission. All six runs
+now exceed 99% coarse-GPU coverage and pass exact diagnostic-loss, settled
+managed/private-memory, native-resource, descriptor-set, and required-job/retire
+backlog gates. Mean overhead and stationary p95/p99 plus motion p95 pass. Motion
+p99 remains Blocked at 15.268 ms on versus 10.389 ms off, a 46.96% increase
+against the 10.85% disabled-run-spread allowance. Preserve the original CPU
+regression, image corruption, and TSR ghosting as unresolved; do not begin S01 or
+S02 (see [S00 Gate Record](../../investigations/rendering/2026-09-16-vulkan-last-run-diagnostics.md#s00-gate-record-comparable-baseline-and-evidence-manifest)).
 
 ## S01. Correct Profiler Attribution
 
@@ -593,4 +613,4 @@ so cumulative cost shifts are visible.
 
 Final acceptance: all applicable per-item gates and integrated checks pass, any
 remaining exclusions are explicit, and the original report is closed only with
-supporting reproduction/correction evidence and the required user confirmation.
+supporting reproduction/correction evidence and explicit user confirmation.
