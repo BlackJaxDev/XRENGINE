@@ -66,6 +66,8 @@ param(
     [string]$RunLabel = '',
     [ValidateSet('Diagnostics', 'DevelopmentProfile', 'CleanProfile', 'ReleaseBenchmark')]
     [string]$ProfileMode = 'DevelopmentProfile',
+    [ValidateSet('Enabled', 'Disabled')]
+    [string]$CodeProfiler = 'Enabled',
     [string]$OutputDirectory = '',
     [string]$EditorExecutablePath = '',
     [switch]$DisableMcpDiagnostics,
@@ -1127,6 +1129,7 @@ function Measure-Variant {
         'XRE_PROFILER_ENABLED',
         'XRE_PROFILE_CAPTURE',
         'XRE_PROFILE_AUTO_DUMP',
+        'XRE_PROFILE_CODE_PROFILER',
         'XRE_PROFILE_RUN_LABEL',
         'XRE_FORCE_MESH_SUBMISSION_STRATEGY',
         'XRE_ZERO_READBACK_MATERIAL_DRAW_PATH',
@@ -1273,6 +1276,7 @@ function Measure-Variant {
         Set-BenchmarkEnvValue 'XRE_PROFILER_ENABLED' '1' -Boolean
         Set-BenchmarkEnvValue 'XRE_PROFILE_CAPTURE' '1' -Boolean
         Set-BenchmarkEnvValue 'XRE_PROFILE_AUTO_DUMP' '1' -Boolean
+        Set-BenchmarkEnvValue 'XRE_PROFILE_CODE_PROFILER' $(if ($CodeProfiler -eq 'Enabled') { '1' } else { '0' }) -Boolean
         Set-BenchmarkEnvValue 'XRE_PROFILE_MODE' $ProfileMode -AllowedValues @('Diagnostics', 'DevelopmentProfile', 'CleanProfile', 'ReleaseBenchmark')
         Set-EnvValue 'XRE_PROFILE_RUN_LABEL' $runName
         Set-BenchmarkEnvValue 'XRE_FORCE_MESH_SUBMISSION_STRATEGY' $Strategy -AllowedValues $validStrategies
@@ -1968,6 +1972,7 @@ function Measure-Variant {
         ActiveRenderBackend = $activeRenderBackends -join ','
         EffectiveStrategy = $effectiveStrategies -join ','
         UnitTestingWorldSettingsPath = $UnitTestingWorldSettingsPath
+        CodeProfiler = $CodeProfiler
         CacheMode = $CacheMode
         UnitTestVrMode = $UnitTestVrMode
         VulkanRenderTargetMode = $VulkanRenderTargetMode
@@ -2410,6 +2415,7 @@ $results | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $summaryJson -Enco
     "RequestedRenderBackend: $RenderBackend"
     "UnitTestingWorldSettingsPath: $UnitTestingWorldSettingsPath"
     "ProfileMode: $ProfileMode"
+    "CodeProfiler: $CodeProfiler"
     "CacheMode: $CacheMode"
     "ZeroReadbackMaterialDrawPath: $ZeroReadbackMaterialDrawPath"
     "ZeroReadbackValidationScope: $ZeroReadbackValidationScope"

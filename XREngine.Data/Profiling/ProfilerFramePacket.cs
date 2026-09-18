@@ -58,6 +58,8 @@ public sealed partial class ProfilerNodeData
 {
     public string Name { get; set; } = string.Empty;
     public float ElapsedMs { get; set; }
+    /// <summary>Synchronous wall-clock self-time in milliseconds (elapsed minus sum of direct children).</summary>
+    public float SelfMs { get; set; }
     public ProfilerScopeKind ScopeKind { get; set; }
     public ProfilerNodeData[] Children { get; set; } = [];
 }

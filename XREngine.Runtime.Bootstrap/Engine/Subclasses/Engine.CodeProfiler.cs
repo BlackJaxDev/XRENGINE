@@ -200,6 +200,10 @@ namespace XREngine
             private long _lastCompletedRenderFrameTicks;
             private float _lastCompletedRenderThreadTotalMs;
             private float _lastCompletedRenderThreadHotPathMs;
+            private float _lastCompletedRenderThreadHotPathLeafInclusiveMs;
+            private float _lastCompletedRenderThreadHotPathLeafSelfMs;
+            private ProfilerScopeKind _lastCompletedRenderThreadHotPathRootScopeKind = ProfilerScopeKind.Unspecified;
+            private ProfilerScopeKind _lastCompletedRenderThreadHotPathLeafScopeKind = ProfilerScopeKind.Unspecified;
             private string _lastCompletedRenderThreadHotPath = string.Empty;
             private bool _renderStallTrackingActive;
             private long _renderStallBaseTicks;
@@ -648,6 +652,10 @@ namespace XREngine
                 Volatile.Write(ref _lastCompletedRenderFrameTicks, 0L);
                 _lastCompletedRenderThreadTotalMs = 0.0f;
                 _lastCompletedRenderThreadHotPathMs = 0.0f;
+                _lastCompletedRenderThreadHotPathLeafInclusiveMs = 0.0f;
+                _lastCompletedRenderThreadHotPathLeafSelfMs = 0.0f;
+                _lastCompletedRenderThreadHotPathRootScopeKind = ProfilerScopeKind.Unspecified;
+                _lastCompletedRenderThreadHotPathLeafScopeKind = ProfilerScopeKind.Unspecified;
                 _lastCompletedRenderThreadHotPath = string.Empty;
                 ResetRenderStallTracking();
             }
@@ -915,8 +923,18 @@ namespace XREngine
                         continue;
 
                     _lastCompletedRenderThreadTotalMs = thread.TotalTimeMs;
-                    _lastCompletedRenderThreadHotPath = GetHottestPath(thread.RootNodes, out float hotPathMs);
-                    _lastCompletedRenderThreadHotPathMs = hotPathMs;
+                    _lastCompletedRenderThreadHotPath = GetHottestPath(
+                        thread.RootNodes,
+                        out float hotPathRootMs,
+                        out ProfilerScopeKind hotPathRootScopeKind,
+                        out float hotPathLeafInclusiveMs,
+                        out float hotPathLeafSelfMs,
+                        out ProfilerScopeKind hotPathLeafScopeKind);
+                    _lastCompletedRenderThreadHotPathMs = hotPathRootMs;
+                    _lastCompletedRenderThreadHotPathLeafInclusiveMs = hotPathLeafInclusiveMs;
+                    _lastCompletedRenderThreadHotPathLeafSelfMs = hotPathLeafSelfMs;
+                    _lastCompletedRenderThreadHotPathRootScopeKind = hotPathRootScopeKind;
+                    _lastCompletedRenderThreadHotPathLeafScopeKind = hotPathLeafScopeKind;
                     return;
                 }
             }
@@ -1059,7 +1077,11 @@ namespace XREngine
                     if (!string.IsNullOrWhiteSpace(_lastCompletedRenderThreadHotPath))
                     {
                         builder.Append("LastCompletedRenderThreadTotalMs: ").Append(_lastCompletedRenderThreadTotalMs.ToString("F3")).AppendLine();
-                        builder.Append("LastCompletedRenderHotPathMs: ").Append(_lastCompletedRenderThreadHotPathMs.ToString("F3")).AppendLine();
+                        builder.Append("LastCompletedRenderRootMs: ").Append(_lastCompletedRenderThreadHotPathMs.ToString("F3")).AppendLine();
+                        builder.Append("LastCompletedRenderLeafInclusiveMs: ").Append(_lastCompletedRenderThreadHotPathLeafInclusiveMs.ToString("F3")).AppendLine();
+                        builder.Append("LastCompletedRenderLeafSelfMs: ").Append(_lastCompletedRenderThreadHotPathLeafSelfMs.ToString("F3")).AppendLine();
+                        builder.Append("LastCompletedRenderRootScopeKind: ").Append(_lastCompletedRenderThreadHotPathRootScopeKind).AppendLine();
+                        builder.Append("LastCompletedRenderLeafScopeKind: ").Append(_lastCompletedRenderThreadHotPathLeafScopeKind).AppendLine();
                         builder.Append("LastCompletedRenderHotPath: ").Append(_lastCompletedRenderThreadHotPath).AppendLine();
                     }
 
@@ -1092,7 +1114,11 @@ namespace XREngine
                     if (!string.IsNullOrWhiteSpace(_lastCompletedRenderThreadHotPath))
                     {
                         builder.Append("RecoveredRenderThreadTotalMs: ").Append(_lastCompletedRenderThreadTotalMs.ToString("F3")).AppendLine();
-                        builder.Append("RecoveredRenderHotPathMs: ").Append(_lastCompletedRenderThreadHotPathMs.ToString("F3")).AppendLine();
+                        builder.Append("RecoveredRenderRootMs: ").Append(_lastCompletedRenderThreadHotPathMs.ToString("F3")).AppendLine();
+                        builder.Append("RecoveredRenderLeafInclusiveMs: ").Append(_lastCompletedRenderThreadHotPathLeafInclusiveMs.ToString("F3")).AppendLine();
+                        builder.Append("RecoveredRenderLeafSelfMs: ").Append(_lastCompletedRenderThreadHotPathLeafSelfMs.ToString("F3")).AppendLine();
+                        builder.Append("RecoveredRenderRootScopeKind: ").Append(_lastCompletedRenderThreadHotPathRootScopeKind).AppendLine();
+                        builder.Append("RecoveredRenderLeafScopeKind: ").Append(_lastCompletedRenderThreadHotPathLeafScopeKind).AppendLine();
                         builder.Append("RecoveredRenderHotPath: ").Append(_lastCompletedRenderThreadHotPath).AppendLine();
                     }
 
@@ -1205,8 +1231,11 @@ namespace XREngine
 
                 string hotPath = GetHottestPath(
                     worstThread.RootNodes,
-                    out float hotPathMs,
-                    out ProfilerScopeKind hotPathScopeKind);
+                    out float hotPathRootMs,
+                    out ProfilerScopeKind hotPathRootScopeKind,
+                    out float hotPathLeafInclusiveMs,
+                    out float hotPathLeafSelfMs,
+                    out ProfilerScopeKind hotPathLeafScopeKind);
 
                 var builder = new StringBuilder(1024);
                 builder.Append("[").Append(DateTimeOffset.Now.ToString("yyyy-MM-dd HH:mm:ss.fff zzz")).AppendLine("] FPS drop detected");
@@ -1226,21 +1255,33 @@ namespace XREngine
                 builder.Append("DeltaFps: ").Append(worstDeltaFps.ToString("F2")).AppendLine();
                 builder.Append("DropPercent: ").Append((worstDropFraction * 100.0f).ToString("F1")).AppendLine();
                 builder.Append("SuppressedDropsSincePreviousLog: ").Append(suppressedDropCount).AppendLine();
-                builder.Append("HotPathMs: ").Append(hotPathMs.ToString("F3")).AppendLine();
-                builder.Append("HotPathScopeKind: ").Append(hotPathScopeKind).AppendLine();
-                builder.Append("HotPathLoggingPolicy: ").Append(GetScopeLoggingPolicy(hotPathScopeKind)).AppendLine();
+                builder.Append("HotPathRootMs: ").Append(hotPathRootMs.ToString("F3")).AppendLine();
+                builder.Append("HotPathLeafInclusiveMs: ").Append(hotPathLeafInclusiveMs.ToString("F3")).AppendLine();
+                builder.Append("HotPathLeafSelfMs: ").Append(hotPathLeafSelfMs.ToString("F3")).AppendLine();
+                builder.Append("HotPathRootScopeKind: ").Append(hotPathRootScopeKind).AppendLine();
+                builder.Append("HotPathLeafScopeKind: ").Append(hotPathLeafScopeKind).AppendLine();
+                builder.Append("HotPathLoggingPolicy: ").Append(GetScopeLoggingPolicy(hotPathLeafScopeKind)).AppendLine();
                 builder.Append("HotPath: ").Append(hotPath).AppendLine();
 
                 if (hotPath.Contains("WaitForRender", StringComparison.Ordinal)
                     && TryGetLikelyBlockingThread(frame.Threads, worstThread.ThreadId, out var blockingThread))
                 {
-                    string blockingHotPath = GetHottestPath(blockingThread.RootNodes, out float blockingHotPathMs, out ProfilerScopeKind blockingHotPathScopeKind);
+                    string blockingHotPath = GetHottestPath(
+                        blockingThread.RootNodes,
+                        out float blockingHotPathRootMs,
+                        out ProfilerScopeKind blockingHotPathRootScopeKind,
+                        out float blockingHotPathLeafInclusiveMs,
+                        out float blockingHotPathLeafSelfMs,
+                        out ProfilerScopeKind blockingHotPathLeafScopeKind);
                     builder.Append("LikelyBlockingThreadId: ").Append(blockingThread.ThreadId).AppendLine();
                     builder.Append("LikelyBlockingThreadWorkTimeMs: ").Append(blockingThread.TotalTimeMs.ToString("F3")).AppendLine();
                     builder.Append("LikelyBlockingThreadWallTimeMs: ").Append(blockingThread.WallTimeMs.ToString("F3")).AppendLine();
                     builder.Append("LikelyBlockingThreadDownstreamRenderPressureMs: ").Append(blockingThread.DownstreamRenderPressureMs.ToString("F3")).AppendLine();
-                    builder.Append("LikelyBlockingHotPathMs: ").Append(blockingHotPathMs.ToString("F3")).AppendLine();
-                    builder.Append("LikelyBlockingHotPathScopeKind: ").Append(blockingHotPathScopeKind).AppendLine();
+                    builder.Append("LikelyBlockingHotPathRootMs: ").Append(blockingHotPathRootMs.ToString("F3")).AppendLine();
+                    builder.Append("LikelyBlockingHotPathLeafInclusiveMs: ").Append(blockingHotPathLeafInclusiveMs.ToString("F3")).AppendLine();
+                    builder.Append("LikelyBlockingHotPathLeafSelfMs: ").Append(blockingHotPathLeafSelfMs.ToString("F3")).AppendLine();
+                    builder.Append("LikelyBlockingHotPathRootScopeKind: ").Append(blockingHotPathRootScopeKind).AppendLine();
+                    builder.Append("LikelyBlockingHotPathLeafScopeKind: ").Append(blockingHotPathLeafScopeKind).AppendLine();
                     builder.Append("LikelyBlockingHotPath: ").Append(blockingHotPath).AppendLine();
                 }
 
@@ -1293,15 +1334,23 @@ namespace XREngine
                 for (int i = 0; i < count; i++)
                 {
                     ProfilerThreadSnapshot thread = rankedThreads[i];
-                    string hotPath = GetHottestPath(thread.RootNodes, out float hotPathMs, out ProfilerScopeKind hotPathScopeKind);
+                    string hotPath = GetHottestPath(
+                        thread.RootNodes,
+                        out float hotPathRootMs,
+                        out _,
+                        out float hotPathLeafInclusiveMs,
+                        out float hotPathLeafSelfMs,
+                        out ProfilerScopeKind hotPathLeafScopeKind);
                     builder.Append("  ").Append(i + 1).Append(". Thread ").Append(thread.ThreadId);
                     if (thread.ThreadId == currentThreadId)
                         builder.Append(" (current)");
                     builder.Append(" work=").Append(thread.TotalTimeMs.ToString("F3"));
                     builder.Append(" ms wall=").Append(thread.WallTimeMs.ToString("F3"));
                     builder.Append(" ms downstreamRenderPressure=").Append(thread.DownstreamRenderPressureMs.ToString("F3"));
-                    builder.Append(" ms hot=").Append(hotPathMs.ToString("F3")).Append(" ms ");
-                    builder.Append("kind=").Append(hotPathScopeKind).Append(" ");
+                    builder.Append(" ms rootHot=").Append(hotPathRootMs.ToString("F3"));
+                    builder.Append(" ms leafHot=").Append(hotPathLeafInclusiveMs.ToString("F3"));
+                    builder.Append(" ms leafSelf=").Append(hotPathLeafSelfMs.ToString("F3")).Append(" ms ");
+                    builder.Append("kind=").Append(hotPathLeafScopeKind).Append(" ");
                     builder.Append(hotPath).AppendLine();
                 }
             }
@@ -1545,13 +1594,38 @@ namespace XREngine
                     builder.Append(" [").Append(scopeKind).Append(']');
             }
 
+            /// <summary>
+            /// Returns the scope path of the hottest execution branch.
+            /// Out parameter <paramref name="pathMs"/> returns the root-inclusive duration of the hottest root.
+            /// </summary>
             private static string GetHottestPath(IReadOnlyList<ProfilerNodeSnapshot> roots, out float pathMs)
                 => GetHottestPath(roots, out pathMs, out _);
 
+            /// <summary>
+            /// Returns the scope path of the hottest execution branch.
+            /// Out parameter <paramref name="pathMs"/> returns the root-inclusive duration of the hottest root,
+            /// and <paramref name="pathScopeKind"/> returns the leaf node's scope kind.
+            /// </summary>
             private static string GetHottestPath(IReadOnlyList<ProfilerNodeSnapshot> roots, out float pathMs, out ProfilerScopeKind pathScopeKind)
+                => GetHottestPath(roots, out pathMs, out _, out _, out _, out pathScopeKind);
+
+            /// <summary>
+            /// Traverses the hottest execution branch from roots to deepest hot child, cleanly separating
+            /// the root-inclusive duration from the selected leaf node's inclusive duration and synchronous self-time.
+            /// </summary>
+            private static string GetHottestPath(
+                IReadOnlyList<ProfilerNodeSnapshot> roots,
+                out float rootInclusiveMs,
+                out ProfilerScopeKind rootScopeKind,
+                out float leafInclusiveMs,
+                out float leafSelfMs,
+                out ProfilerScopeKind leafScopeKind)
             {
-                pathMs = 0f;
-                pathScopeKind = ProfilerScopeKind.Unspecified;
+                rootInclusiveMs = 0f;
+                rootScopeKind = ProfilerScopeKind.Unspecified;
+                leafInclusiveMs = 0f;
+                leafSelfMs = 0f;
+                leafScopeKind = ProfilerScopeKind.Unspecified;
                 if (roots.Count == 0)
                     return "(no samples)";
 
@@ -1562,8 +1636,12 @@ namespace XREngine
                         hottest = roots[i];
                 }
 
-                pathMs = hottest.ElapsedMs;
-                pathScopeKind = hottest.ScopeKind;
+                rootInclusiveMs = hottest.ElapsedMs;
+                rootScopeKind = hottest.ScopeKind;
+                leafInclusiveMs = hottest.ElapsedMs;
+                leafSelfMs = hottest.SelfMs;
+                leafScopeKind = hottest.ScopeKind;
+
                 var parts = new List<string>(8) { FormatScopeLabel(hottest.Name, hottest.ScopeKind) };
                 ProfilerNodeSnapshot current = hottest;
                 while (current.Children.Count > 0)
@@ -1577,7 +1655,9 @@ namespace XREngine
 
                     parts.Add(FormatScopeLabel(best.Name, best.ScopeKind));
                     current = best;
-                    pathScopeKind = best.ScopeKind;
+                    leafInclusiveMs = best.ElapsedMs;
+                    leafSelfMs = best.SelfMs;
+                    leafScopeKind = best.ScopeKind;
                 }
 
                 return string.Join(" > ", parts);
@@ -1588,11 +1668,17 @@ namespace XREngine
                 var children = timer.Children;
                 int childCount = children.Count;
                 ProfilerNodeSnapshot[] childSnapshots = childCount > 0 ? new ProfilerNodeSnapshot[childCount] : [];
+                long childTicksSum = 0L;
 
                 for (int i = 0; i < childCount; ++i)
+                {
                     childSnapshots[i] = BuildSnapshotFromBuilt(children[i]);
+                    childTicksSum += children[i].ElapsedTicks;
+                }
 
-                return new ProfilerNodeSnapshot(timer.Name, TicksToMilliseconds(timer.ElapsedTicks), timer.ScopeKind, childSnapshots);
+                float elapsedMs = TicksToMilliseconds(timer.ElapsedTicks);
+                float selfMs = TicksToMilliseconds(Math.Max(0L, timer.ElapsedTicks - childTicksSum));
+                return new ProfilerNodeSnapshot(timer.Name, elapsedMs, selfMs, timer.ScopeKind, childSnapshots);
             }
 
             private static float TicksToMilliseconds(long ticks)
@@ -1859,12 +1945,41 @@ namespace XREngine
                 }
             }
 
-            public sealed class ProfilerNodeSnapshot(string name, float elapsedMs, ProfilerScopeKind scopeKind, IReadOnlyList<ProfilerNodeSnapshot> children)
+            public sealed class ProfilerNodeSnapshot
             {
-                public string Name { get; } = name;
-                public float ElapsedMs { get; } = elapsedMs;
-                public ProfilerScopeKind ScopeKind { get; } = scopeKind;
-                public IReadOnlyList<ProfilerNodeSnapshot> Children { get; } = children;
+                public string Name { get; }
+                /// <summary>Inclusive wall-clock duration of this scope in milliseconds.</summary>
+                public float ElapsedMs { get; }
+                /// <summary>Synchronous wall-clock self-time in milliseconds (elapsed minus sum of direct children).</summary>
+                public float SelfMs { get; }
+                public ProfilerScopeKind ScopeKind { get; }
+                public IReadOnlyList<ProfilerNodeSnapshot> Children { get; }
+
+                public ProfilerNodeSnapshot(string name, float elapsedMs, float selfMs, ProfilerScopeKind scopeKind, IReadOnlyList<ProfilerNodeSnapshot> children)
+                {
+                    Name = name;
+                    ElapsedMs = elapsedMs;
+                    SelfMs = selfMs;
+                    ScopeKind = scopeKind;
+                    Children = children;
+                }
+
+                public ProfilerNodeSnapshot(string name, float elapsedMs, ProfilerScopeKind scopeKind, IReadOnlyList<ProfilerNodeSnapshot> children)
+                    : this(name, elapsedMs, CalculateSelfMs(elapsedMs, children), scopeKind, children)
+                {
+                }
+
+                private static float CalculateSelfMs(float elapsedMs, IReadOnlyList<ProfilerNodeSnapshot> children)
+                {
+                    if (children == null || children.Count == 0)
+                        return Math.Max(0.0f, elapsedMs);
+
+                    float childSum = 0f;
+                    for (int i = 0; i < children.Count; i++)
+                        childSum += children[i].ElapsedMs;
+
+                    return Math.Max(0.0f, elapsedMs - childSum);
+                }
             }
 
             public sealed class ProfilerComponentFrameSnapshot(float frameTime, IReadOnlyList<ProfilerComponentTimingSnapshot> components)
@@ -1946,12 +2061,27 @@ namespace XREngine
                 public float DownstreamRenderPressureMs { get; } = 0f;
             }
 
-            public sealed class ProfilerNodeSnapshot(string name, float elapsedMs, ProfilerScopeKind scopeKind, IReadOnlyList<ProfilerNodeSnapshot> children)
+            public sealed class ProfilerNodeSnapshot
             {
-                public string Name { get; } = name;
-                public float ElapsedMs { get; } = elapsedMs;
-                public ProfilerScopeKind ScopeKind { get; } = scopeKind;
-                public IReadOnlyList<ProfilerNodeSnapshot> Children { get; } = children;
+                public string Name { get; }
+                public float ElapsedMs { get; }
+                public float SelfMs { get; }
+                public ProfilerScopeKind ScopeKind { get; }
+                public IReadOnlyList<ProfilerNodeSnapshot> Children { get; }
+
+                public ProfilerNodeSnapshot(string name, float elapsedMs, float selfMs, ProfilerScopeKind scopeKind, IReadOnlyList<ProfilerNodeSnapshot> children)
+                {
+                    Name = name;
+                    ElapsedMs = elapsedMs;
+                    SelfMs = selfMs;
+                    ScopeKind = scopeKind;
+                    Children = children;
+                }
+
+                public ProfilerNodeSnapshot(string name, float elapsedMs, ProfilerScopeKind scopeKind, IReadOnlyList<ProfilerNodeSnapshot> children)
+                    : this(name, elapsedMs, elapsedMs, scopeKind, children)
+                {
+                }
             }
 
             public sealed class ProfilerComponentFrameSnapshot(float frameTime, IReadOnlyList<ProfilerComponentTimingSnapshot> components)

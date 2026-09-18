@@ -485,9 +485,13 @@ function Start-ProcessWithEnvironment(
             FilePath = $FilePath
             ArgumentList = $nativeArguments
             WorkingDirectory = $WorkingDirectory
-            RedirectStandardOutput = $StandardOutputPath
-            RedirectStandardError = $StandardErrorPath
             PassThru = $true
+        }
+        if (-not [string]::IsNullOrWhiteSpace($StandardOutputPath) -and (Test-Path env:XRE_REDIRECT_STDIO)) {
+            $startProcessParameters['RedirectStandardOutput'] = $StandardOutputPath
+        }
+        if (-not [string]::IsNullOrWhiteSpace($StandardErrorPath) -and (Test-Path env:XRE_REDIRECT_STDIO)) {
+            $startProcessParameters['RedirectStandardError'] = $StandardErrorPath
         }
         return Start-Process @startProcessParameters
     }
