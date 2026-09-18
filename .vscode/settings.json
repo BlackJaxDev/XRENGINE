@@ -15,5 +15,6 @@
             ],
             "url": "./.vscode/schemas/render-profile-recipe.schema.json"
         }
-    ]
+    ],
+    "dotnet.defaultSolution": "XRENGINE.slnx"
 }

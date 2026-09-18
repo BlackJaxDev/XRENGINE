@@ -210,9 +210,6 @@ internal partial class Program
             TraceBootstrapStep("BeforeCreateWindows.StartStartupFontPrewarm", StartStartupFontPrewarm);
             TraceBootstrapStep("BeforeCreateWindows.StartStartupTextShaderPrewarm", StartStartupTextShaderPrewarm);
             
-            // Initialize MCP server after last project or sandbox editor preferences are loaded
-            TraceBootstrapStep("BeforeCreateWindows.McpServerHost.Initialize", () => McpServerHost.Initialize(args));
-
             // Assign the target world AFTER all settings have been applied and BEFORE windows are created, 
             // so that the render pipeline and other systems can be properly initialized.
             EWorldMode worldMode = ResolveWorldMode(args);
@@ -226,6 +223,10 @@ internal partial class Program
             // object. Apply unit-test-only choices last so pipeline selection observes them during window creation.
             TraceBootstrapStep("BeforeCreateWindows.UnitTest_Init", UnitTest_Init);
             TraceBootstrapStep("BeforeCreateWindows.ApplyStartupProfilerPreferences", ApplyStartupProfilerPreferences);
+
+            // Initialize MCP after every startup preference mutation so command-line
+            // session overrides remain authoritative through window creation.
+            TraceBootstrapStep("BeforeCreateWindows.McpServerHost.Initialize", () => McpServerHost.Initialize(args));
         }
         Engine.BeforeCreateWindows += BeforeWindowsCreated;
         try

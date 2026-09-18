@@ -28,6 +28,13 @@ param(
     [double]$CameraLookAtX = [double]::NaN,
     [double]$CameraLookAtY = [double]::NaN,
     [double]$CameraLookAtZ = [double]::NaN,
+    [int]$MotionCaptureSec = 0,
+    [double]$MotionCameraPositionX = [double]::NaN,
+    [double]$MotionCameraPositionY = [double]::NaN,
+    [double]$MotionCameraPositionZ = [double]::NaN,
+    [double]$MotionCameraLookAtX = [double]::NaN,
+    [double]$MotionCameraLookAtY = [double]::NaN,
+    [double]$MotionCameraLookAtZ = [double]::NaN,
     [string]$ProfileLights = '',
     [string]$ProfileViewport = '',
     [string]$RenderScale = '',
@@ -58,6 +65,8 @@ param(
     [ValidateSet('FullResourceQuiet', 'OutputScheduling')]
     [string]$StabilityProfile = 'FullResourceQuiet',
     [int]$MinSteadyStateGpuSceneCommandCount = 0,
+    [ValidateRange(2, 4096)]
+    [int]$MinAdmissionScreenshotColorBuckets = 16,
     [switch]$NoStabilityGate,
     [switch]$AllowWorkloadIdentityChanges,
     [int]$ShutdownGraceSec = 20,
@@ -158,8 +167,8 @@ if ($invalidStrategies.Count -gt 0) {
     throw "Invalid render path(s): $($invalidStrategies -join ', '). Allowed: $($validStrategies -join ', ')"
 }
 
-if ($WarmupSec -lt 0 -or $CaptureSec -le 0 -or $Repetitions -le 0 -or $ShutdownGraceSec -lt 1 -or $NoSampleHangSec -lt 0 -or $RetainedRunCount -lt 1 -or $StabilityWindowSec -lt 1 -or $StabilityTimeoutSec -lt 1 -or $MinSteadyStateGpuSceneCommandCount -lt 0 -or $MinSteadyStateCommandBufferCleanReuseRatio -lt 0 -or $MinSteadyStateCommandBufferCleanReuseRatio -gt 1 -or $MaxSteadyStateVulkanLiveResources -lt 1 -or $MaxSteadyStateVulkanDescriptorSets -lt 1 -or $WindowWidth -lt 0 -or $WindowHeight -lt 0) {
-    throw 'WarmupSec must be >= 0, CaptureSec/Repetitions must be > 0, ShutdownGraceSec/StabilityWindowSec/StabilityTimeoutSec must be >= 1, NoSampleHangSec and MinSteadyStateGpuSceneCommandCount must be >= 0, RetainedRunCount must be >= 1, and MinSteadyStateCommandBufferCleanReuseRatio must be between 0 and 1.'
+if ($WarmupSec -lt 0 -or $CaptureSec -le 0 -or $MotionCaptureSec -lt 0 -or $Repetitions -le 0 -or $ShutdownGraceSec -lt 1 -or $NoSampleHangSec -lt 0 -or $RetainedRunCount -lt 1 -or $StabilityWindowSec -lt 1 -or $StabilityTimeoutSec -lt 1 -or $MinSteadyStateGpuSceneCommandCount -lt 0 -or $MinSteadyStateCommandBufferCleanReuseRatio -lt 0 -or $MinSteadyStateCommandBufferCleanReuseRatio -gt 1 -or $MaxSteadyStateVulkanLiveResources -lt 1 -or $MaxSteadyStateVulkanDescriptorSets -lt 1 -or $WindowWidth -lt 0 -or $WindowHeight -lt 0) {
+    throw 'WarmupSec and MotionCaptureSec must be >= 0, CaptureSec/Repetitions must be > 0, ShutdownGraceSec/StabilityWindowSec/StabilityTimeoutSec must be >= 1, NoSampleHangSec and MinSteadyStateGpuSceneCommandCount must be >= 0, RetainedRunCount must be >= 1, and MinSteadyStateCommandBufferCleanReuseRatio must be between 0 and 1.'
 }
 $usesMeshletStrategy = @($Strategies | Where-Object { $_ -in @('GpuMeshletInstrumented', 'GpuMeshletZeroReadback') }).Count -gt 0
 if ($usesMeshletStrategy -and $CacheMode -eq 'Warm' -and [string]::IsNullOrWhiteSpace($MeshletStandaloneCookedCacheRoot)) {
@@ -209,6 +218,37 @@ if ($hasFixedCameraPose -and
     $CameraPositionZ -eq $CameraLookAtZ) {
     throw 'The fixed camera position and look-at target must differ.'
 }
+$motionCameraPoseValues = @(
+    $MotionCameraPositionX,
+    $MotionCameraPositionY,
+    $MotionCameraPositionZ,
+    $MotionCameraLookAtX,
+    $MotionCameraLookAtY,
+    $MotionCameraLookAtZ)
+$specifiedMotionCameraPoseValueCount = @($motionCameraPoseValues | Where-Object { -not [double]::IsNaN($_) }).Count
+$hasCameraMotion = $MotionCaptureSec -gt 0
+if ($specifiedMotionCameraPoseValueCount -ne 0 -and $specifiedMotionCameraPoseValueCount -ne $motionCameraPoseValues.Count) {
+    throw 'Specify all six MotionCameraPosition* and MotionCameraLookAt* values together, or omit all of them.'
+}
+if ($hasCameraMotion -and $specifiedMotionCameraPoseValueCount -ne $motionCameraPoseValues.Count) {
+    throw 'MotionCaptureSec requires all six MotionCameraPosition* and MotionCameraLookAt* values.'
+}
+if (-not $hasCameraMotion -and $specifiedMotionCameraPoseValueCount -gt 0) {
+    throw 'Motion camera endpoint values require MotionCaptureSec greater than zero.'
+}
+if ($hasCameraMotion -and -not $hasFixedCameraPose) {
+    throw 'Controlled motion requires a fixed starting pose; specify all CameraPosition* and CameraLookAt* values.'
+}
+if ($hasCameraMotion -and $DisableMcpDiagnostics) {
+    throw 'Controlled camera motion requires MCP; do not combine MotionCaptureSec with DisableMcpDiagnostics.'
+}
+if ($hasCameraMotion -and
+    $MotionCameraPositionX -eq $MotionCameraLookAtX -and
+    $MotionCameraPositionY -eq $MotionCameraLookAtY -and
+    $MotionCameraPositionZ -eq $MotionCameraLookAtZ) {
+    throw 'The motion camera endpoint and look-at target must differ.'
+}
+$requiresMcpMutation = $hasFixedCameraPose -or $hasCameraMotion
 
 function Get-SpeedProfileRoot {
     Join-Path (Join-Path $repoRoot 'Build\Logs') 'speed-profiles\game-loop-render-pipeline'
@@ -293,6 +333,49 @@ function Invoke-ProfileMcpTool {
     throw "MCP tool '$Name' remained unavailable for $ReadyTimeoutSec seconds."
 }
 
+function Get-ProfileCameraPoseReadback {
+    param(
+        [int]$Port,
+        [hashtable]$Arguments
+    )
+
+    $renderResponse = Invoke-ProfileMcpTool `
+        -Port $Port `
+        -Name 'get_render_state' `
+        -Arguments @{} `
+        -ReadyTimeoutSec 5 `
+        -RetryUnavailableCapabilities
+    $renderState = $renderResponse.result.structuredContent
+    $position = $renderState.viewportCameraWorldPosition
+    $forward = $renderState.viewportCameraWorldForward
+    if ($null -eq $position -or $null -eq $forward) {
+        throw 'The viewport camera pose is unavailable for verification.'
+    }
+
+    $positionError = [Math]::Sqrt(
+        [Math]::Pow([double]$position.x - [double]$Arguments.position_x, 2) +
+        [Math]::Pow([double]$position.y - [double]$Arguments.position_y, 2) +
+        [Math]::Pow([double]$position.z - [double]$Arguments.position_z, 2))
+    $lookX = [double]$Arguments.look_at_x - [double]$Arguments.position_x
+    $lookY = [double]$Arguments.look_at_y - [double]$Arguments.position_y
+    $lookZ = [double]$Arguments.look_at_z - [double]$Arguments.position_z
+    $lookLength = [Math]::Sqrt($lookX * $lookX + $lookY * $lookY + $lookZ * $lookZ)
+    $forwardDot =
+        ([double]$forward.x * $lookX +
+         [double]$forward.y * $lookY +
+         [double]$forward.z * $lookZ) / $lookLength
+    if ($positionError -gt 0.01 -or $forwardDot -lt 0.9999) {
+        throw "Viewport camera readback does not match the requested pose (positionError=$positionError, forwardDot=$forwardDot)."
+    }
+
+    return [pscustomobject]@{
+        Position = $position
+        Forward = $forward
+        PositionError = $positionError
+        ForwardDot = $forwardDot
+    }
+}
+
 function Set-ProfileFixedCameraWhenReady {
     param(
         [int]$Port,
@@ -320,8 +403,9 @@ function Set-ProfileFixedCameraWhenReady {
                 -Arguments $Arguments `
                 -ReadyTimeoutSec 5 `
                 -RetryUnavailableCapabilities | Out-Null
-            Write-Host "[measure] fixed camera accepted after $attempt MCP attempt(s)." -ForegroundColor DarkGray
-            return
+            $readback = Get-ProfileCameraPoseReadback -Port $Port -Arguments $Arguments
+            Write-Host "[measure] fixed camera verified after $attempt MCP attempt(s)." -ForegroundColor DarkGray
+            return $readback
         }
         catch {
             $lastError = $_.Exception.Message
@@ -333,6 +417,168 @@ function Set-ProfileFixedCameraWhenReady {
     } while ([DateTime]::UtcNow -lt $deadline)
 
     throw "Fixed camera did not become ready within ${TimeoutSec}s after $attempt MCP attempt(s). Last error: $lastError"
+}
+
+function Wait-ProfileCameraPose {
+    param(
+        [int]$Port,
+        [System.Diagnostics.Process]$Process,
+        [hashtable]$Arguments,
+        [int]$TimeoutSec = 10
+    )
+
+    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSec)
+    $lastError = 'camera endpoint verification was not attempted'
+    do {
+        if ($Process.HasExited) {
+            throw "Editor exited before the camera reached its motion endpoint. Last camera error: $lastError"
+        }
+
+        try {
+            return Get-ProfileCameraPoseReadback -Port $Port -Arguments $Arguments
+        }
+        catch {
+            $lastError = $_.Exception.Message
+            if ([DateTime]::UtcNow -ge $deadline) {
+                break
+            }
+            Start-Sleep -Milliseconds 100
+        }
+    } while ([DateTime]::UtcNow -lt $deadline)
+
+    throw "Camera did not reach its motion endpoint within ${TimeoutSec}s. Last error: $lastError"
+}
+
+function Test-AdmissionScreenshotContent {
+    param(
+        [string]$Path,
+        [int]$MinimumColorBuckets
+    )
+
+    Add-Type -AssemblyName System.Drawing
+    $bitmap = [System.Drawing.Bitmap]::new($Path)
+    try {
+        $colorBuckets = [System.Collections.Generic.HashSet[int]]::new()
+        $minimumLuminance = 255
+        $maximumLuminance = 0
+        $stepX = [Math]::Max(1, [int]($bitmap.Width / 64))
+        $stepY = [Math]::Max(1, [int]($bitmap.Height / 36))
+        for ($y = 0; $y -lt $bitmap.Height; $y += $stepY) {
+            for ($x = 0; $x -lt $bitmap.Width; $x += $stepX) {
+                $color = $bitmap.GetPixel($x, $y)
+                $bucket = (($color.R -shr 4) -shl 8) -bor
+                    (($color.G -shr 4) -shl 4) -bor
+                    ($color.B -shr 4)
+                $null = $colorBuckets.Add($bucket)
+                $luminance = [int](0.2126 * $color.R + 0.7152 * $color.G + 0.0722 * $color.B)
+                $minimumLuminance = [Math]::Min($minimumLuminance, $luminance)
+                $maximumLuminance = [Math]::Max($maximumLuminance, $luminance)
+            }
+        }
+
+        if ($colorBuckets.Count -lt $MinimumColorBuckets) {
+            throw "Viewport screenshot is visually empty (colorBuckets=$($colorBuckets.Count)/$MinimumColorBuckets, luminanceRange=$($maximumLuminance - $minimumLuminance))."
+        }
+
+        return [pscustomobject]@{
+            ColorBuckets = $colorBuckets.Count
+            LuminanceRange = $maximumLuminance - $minimumLuminance
+        }
+    }
+    finally {
+        $bitmap.Dispose()
+    }
+}
+
+function New-ProfilePublicationReadinessState {
+    return [pscustomobject]@{
+        Identity = ''
+        StableSinceUtc = [datetime]::MinValue
+    }
+}
+
+function Test-ProfilePublicationReadiness {
+    param(
+        [int]$Port,
+        [int]$WindowSec,
+        [object]$State
+    )
+
+    try {
+        $renderResponse = Invoke-ProfileMcpTool `
+            -Port $Port `
+            -Name 'get_render_state' `
+            -Arguments @{} `
+            -ReadyTimeoutSec 5
+    }
+    catch {
+        $State.Identity = ''
+        $State.StableSinceUtc = [datetime]::MinValue
+        return [pscustomobject]@{
+            Ready = $false
+            Reason = "MCP readiness query failed: $($_.Exception.Message)"
+            ContentGeneration = 0
+            ResourceGeneration = ''
+        }
+    }
+
+    $renderState = $renderResponse.result.structuredContent
+    $framePackage = $renderState.canonicalFramePackage
+    $scenePublication = $framePackage.scenePublication
+    $preparation = $renderState.advancedPreparation
+
+    $notReady = New-Object System.Collections.Generic.List[string]
+    if ($null -eq $framePackage -or [string]$framePackage.state -ne 'Published') {
+        $notReady.Add("canonical frame package state=$($framePackage.state)") | Out-Null
+    }
+    if ($null -eq $scenePublication -or
+        [uint64]$scenePublication.databaseEpoch -eq 0 -or
+        [uint64]$scenePublication.sequence -eq 0) {
+        $notReady.Add('canonical scene publication is invalid') | Out-Null
+    }
+    $activeResourceGeneration = [string]$renderState.activeViewportResourceGeneration
+    if ([string]::IsNullOrWhiteSpace($activeResourceGeneration)) {
+        $notReady.Add('active render resource generation is unavailable') | Out-Null
+    }
+    if (-not [string]::IsNullOrWhiteSpace([string]$renderState.pendingViewportResourceGeneration)) {
+        $notReady.Add("render resource generation is pending: $($renderState.pendingViewportResourceGeneration)") | Out-Null
+    }
+    if ($null -eq $preparation -or -not [bool]$preparation.publication.gpuResourcesPublished) {
+        $notReady.Add('Advanced GPU resources are not published') | Out-Null
+    }
+    elseif ([uint64]$preparation.publication.scenePublication.contentGeneration -ne
+            [uint64]$scenePublication.contentGeneration) {
+        $notReady.Add('Advanced preparation does not match the canonical frame package') | Out-Null
+    }
+    if ($null -ne $preparation -and
+        -not [string]::IsNullOrWhiteSpace([string]$preparation.deferralReason) -and
+        [string]$preparation.deferralReason -ne 'Ready') {
+        $notReady.Add("Advanced preparation deferred: $($preparation.deferralReason)") | Out-Null
+    }
+    if ($notReady.Count -gt 0) {
+        $State.Identity = ''
+        $State.StableSinceUtc = [datetime]::MinValue
+        return [pscustomobject]@{
+            Ready = $false
+            Reason = $notReady -join '; '
+            ContentGeneration = if ($null -eq $scenePublication) { 0 } else { [uint64]$scenePublication.contentGeneration }
+            ResourceGeneration = $activeResourceGeneration
+        }
+    }
+
+    $identity = "$($scenePublication.databaseEpoch):$($scenePublication.sequence):$($scenePublication.frameGeneration):$($scenePublication.topologyGeneration):$($scenePublication.contentGeneration):$($scenePublication.lookupGeneration):$activeResourceGeneration"
+    $now = [datetime]::UtcNow
+    if ($State.Identity -ne $identity) {
+        $State.Identity = $identity
+        $State.StableSinceUtc = $now
+    }
+    $stableSeconds = ($now - $State.StableSinceUtc).TotalSeconds
+    return [pscustomobject]@{
+        Ready = $stableSeconds -ge $WindowSec
+        Reason = "publication stable for $([Math]::Round($stableSeconds, 1))/${WindowSec}s"
+        ContentGeneration = [uint64]$scenePublication.contentGeneration
+        ResourceGeneration = $activeResourceGeneration
+    }
 }
 
 function New-SpeedProfileRunDirectory {
@@ -678,6 +924,10 @@ function Get-NumericValues {
 
     $values = New-Object System.Collections.Generic.List[double]
     foreach ($sample in $Samples) {
+        if ($null -eq $sample) {
+            continue
+        }
+
         $prop = $sample.PSObject.Properties[$Property]
         if (-not $prop -or $null -eq $prop.Value) {
             continue
@@ -743,11 +993,99 @@ function Get-NumericStats {
     }
 }
 
+function Get-CoarseGpuTimingSummary {
+    param([System.Collections.IEnumerable]$Samples)
+
+    $sampleArray = @($Samples)
+    $activeBackends = @($sampleArray | ForEach-Object {
+        $value = Get-SamplePropertyValue -Sample $_ -Property 'active_render_backend'
+        if (-not [string]::IsNullOrWhiteSpace([string]$value)) { [string]$value }
+    } | Select-Object -Unique)
+    if ($activeBackends.Count -ne 1 -or $activeBackends[0] -ine 'Vulkan') {
+        $stats = Get-NumericStats -Samples $sampleArray -Property 'gpu_pipeline_frame_ms' -PositiveOnly
+        $readyCount = @($sampleArray | Where-Object { $_.gpu_pipeline_timings_ready -eq $true }).Count
+        return [pscustomobject]@{
+            Source = 'GpuPipelineProfiler'
+            Stats = $stats
+            ReadyCount = $readyCount
+            CoverageDenominator = $sampleArray.Count
+            CoveragePercent = if ($sampleArray.Count -gt 0) { [Math]::Round(100.0 * $readyCount / $sampleArray.Count, 3) } else { 0.0 }
+            DuplicateSourceCount = 0
+            OutOfWindowSourceCount = 0
+            MaxAgeFrames = $null
+        }
+    }
+
+    $capturedFrameIds = [System.Collections.Generic.HashSet[System.UInt64]]::new()
+    foreach ($sample in $sampleArray) {
+        $frameId = Get-SamplePropertyValue -Sample $sample -Property 'vulkan_frame_render_frame_number'
+        if ($null -ne $frameId) {
+            try { $capturedFrameIds.Add([System.UInt64]$frameId) | Out-Null } catch { }
+        }
+    }
+
+    $timingsBySourceFrame = @{}
+    $duplicateSourceCount = 0
+    $outOfWindowSourceCount = 0
+    [System.UInt64]$maxAgeFrames = 0
+    foreach ($sample in $sampleArray) {
+        if ((Get-SamplePropertyValue -Sample $sample -Property 'vulkan_gpu_timing_completed') -ne $true) {
+            continue
+        }
+
+        try {
+            [System.UInt64]$sourceFrameId = Get-SamplePropertyValue -Sample $sample -Property 'vulkan_gpu_timing_source_frame_id'
+            [System.UInt64]$sequence = Get-SamplePropertyValue -Sample $sample -Property 'vulkan_gpu_timing_sequence'
+            [System.UInt64]$elapsedNanoseconds = Get-SamplePropertyValue -Sample $sample -Property 'vulkan_gpu_timing_elapsed_nanoseconds'
+            [System.UInt64]$ageFrames = Get-SamplePropertyValue -Sample $sample -Property 'vulkan_gpu_timing_age_frames'
+        } catch {
+            continue
+        }
+        if ($sourceFrameId -eq 0 -or $sequence -eq 0 -or $elapsedNanoseconds -eq 0) {
+            continue
+        }
+        if (-not $capturedFrameIds.Contains($sourceFrameId)) {
+            $outOfWindowSourceCount++
+            continue
+        }
+
+        $key = [string]$sourceFrameId
+        if ($timingsBySourceFrame.ContainsKey($key)) {
+            $duplicateSourceCount++
+            continue
+        }
+
+        $timingsBySourceFrame[$key] = [pscustomobject]@{
+            Value = [double]$elapsedNanoseconds / 1000000.0
+            Sequence = $sequence
+        }
+        $maxAgeFrames = [Math]::Max($maxAgeFrames, $ageFrames)
+    }
+
+    $timingSamples = @($timingsBySourceFrame.Values)
+    $stats = Get-NumericStats -Samples $timingSamples -Property 'Value' -PositiveOnly
+    $denominator = $capturedFrameIds.Count
+    return [pscustomobject]@{
+        Source = 'VulkanCommandBufferTimestampQuery'
+        Stats = $stats
+        ReadyCount = $timingSamples.Count
+        CoverageDenominator = $denominator
+        CoveragePercent = if ($denominator -gt 0) { [Math]::Round(100.0 * $timingSamples.Count / $denominator, 3) } else { 0.0 }
+        DuplicateSourceCount = $duplicateSourceCount
+        OutOfWindowSourceCount = $outOfWindowSourceCount
+        MaxAgeFrames = $maxAgeFrames
+    }
+}
+
 function Sum-NumericProperty {
     param([System.Collections.IEnumerable]$Samples, [string]$Property)
 
     [double]$sum = 0
     foreach ($sample in $Samples) {
+        if ($null -eq $sample) {
+            continue
+        }
+
         $prop = $sample.PSObject.Properties[$Property]
         if ($prop -and $null -ne $prop.Value) {
             try { $sum += [double]$prop.Value } catch { }
@@ -770,6 +1108,105 @@ function Get-MonotonicCounterDelta {
     }
     catch {
         return 0
+    }
+}
+
+function Get-EndpointComparison {
+    param(
+        [object[]]$Samples,
+        [string]$Property,
+        [double]$AbsoluteTolerance = 0.0,
+        [double]$RelativeTolerance = 0.0,
+        [switch]$GrowthOnly
+    )
+
+    if ($Samples.Count -eq 0) {
+        return [pscustomobject]@{ Available = $false; Start = $null; End = $null; Delta = $null; AllowedDelta = $null; Passed = $false }
+    }
+
+    $startValue = Get-SamplePropertyValue -Sample $Samples[0] -Property $Property
+    $endValue = Get-SamplePropertyValue -Sample $Samples[$Samples.Count - 1] -Property $Property
+    if ($null -eq $startValue -or $null -eq $endValue) {
+        return [pscustomobject]@{ Available = $false; Start = $null; End = $null; Delta = $null; AllowedDelta = $null; Passed = $false }
+    }
+
+    try {
+        [double]$start = $startValue
+        [double]$end = $endValue
+    } catch {
+        return [pscustomobject]@{ Available = $false; Start = $null; End = $null; Delta = $null; AllowedDelta = $null; Passed = $false }
+    }
+
+    $delta = $end - $start
+    $allowedDelta = [Math]::Max($AbsoluteTolerance, [Math]::Abs($start) * $RelativeTolerance)
+    $comparisonDelta = if ($GrowthOnly) { $delta } else { [Math]::Abs($delta) }
+    return [pscustomobject]@{
+        Available = $true
+        Start = $start
+        End = $end
+        Delta = $delta
+        AllowedDelta = $allowedDelta
+        Passed = $comparisonDelta -le $allowedDelta
+    }
+}
+
+function Get-ValueEndpointComparison {
+    param(
+        [object]$StartValue,
+        [object]$EndValue,
+        [double]$AbsoluteTolerance = 0.0,
+        [double]$RelativeTolerance = 0.0,
+        [switch]$GrowthOnly
+    )
+
+    if ($null -eq $StartValue -or $null -eq $EndValue) {
+        return [pscustomobject]@{ Available = $false; Start = $null; End = $null; Delta = $null; AllowedDelta = $null; Passed = $false }
+    }
+
+    try {
+        [double]$start = $StartValue
+        [double]$end = $EndValue
+    } catch {
+        return [pscustomobject]@{ Available = $false; Start = $null; End = $null; Delta = $null; AllowedDelta = $null; Passed = $false }
+    }
+
+    $delta = $end - $start
+    $allowedDelta = [Math]::Max($AbsoluteTolerance, [Math]::Abs($start) * $RelativeTolerance)
+    $comparisonDelta = if ($GrowthOnly) { $delta } else { [Math]::Abs($delta) }
+    return [pscustomobject]@{
+        Available = $true
+        Start = $start
+        End = $end
+        Delta = $delta
+        AllowedDelta = $allowedDelta
+        Passed = $comparisonDelta -le $allowedDelta
+    }
+}
+
+function Get-BacklogEndpointComparison {
+    param([object[]]$Samples, [string]$Property)
+
+    $comparison = Get-EndpointComparison -Samples $Samples -Property $Property -GrowthOnly
+    if (-not $comparison.Available) {
+        return $comparison
+    }
+
+    $comparison.Passed = $comparison.End -le $comparison.Start
+    return $comparison
+}
+
+function Get-ProcessPrivateMemoryBytes {
+    param([System.Diagnostics.Process]$Process)
+
+    if ($null -eq $Process -or $Process.HasExited) {
+        return $null
+    }
+
+    try {
+        $Process.Refresh()
+        return [long]$Process.PrivateMemorySize64
+    } catch {
+        return $null
     }
 }
 
@@ -1000,6 +1437,7 @@ function Test-RenderStatsStability {
         'shader_variants_requested',
         'shader_variants_warming',
         'shader_variants_linked',
+        'vulkan_required_pipeline_pending_count',
         'vulkan_retired_resource_plan_replacements',
         'vulkan_retired_resource_plan_images',
         'vulkan_retired_resource_plan_buffers',
@@ -1062,6 +1500,62 @@ function Max-NumericProperty {
     }
 
     return [Math]::Round(($values | Measure-Object -Maximum).Maximum, 3)
+}
+
+function Get-ProfileIntervalSummary {
+    param(
+        [System.Collections.IEnumerable]$Samples,
+        [datetime]$StartUtc,
+        [datetime]$EndUtc
+    )
+
+    $intervalSamples = @($Samples)
+    $identityHashes = @($intervalSamples | ForEach-Object {
+        $value = Get-SamplePropertyValue -Sample $_ -Property 'frame_output_workload_identity_hash'
+        if ($null -ne $value -and [string]$value -ne '0') { [string]$value }
+    } | Select-Object -Unique)
+
+    $gpuTiming = Get-CoarseGpuTimingSummary -Samples $intervalSamples
+
+    return [pscustomobject]@{
+        StartUtc = $StartUtc.ToString('O')
+        EndUtc = $EndUtc.ToString('O')
+        DurationSec = [Math]::Round(($EndUtc - $StartUtc).TotalSeconds, 3)
+        Samples = $intervalSamples.Count
+        WorkloadIdentityHash = if ($identityHashes.Count -eq 1) { $identityHashes[0] } else { $identityHashes -join ',' }
+        WorkloadIdentityCount = $identityHashes.Count
+        Render = Get-NumericStats -Samples $intervalSamples -Property 'render_dispatch_ms' -PositiveOnly
+        RenderOutsideVulkan = Get-NumericStats -Samples $intervalSamples -Property 'render_outside_vulkan_frame_ms'
+        Update = Get-NumericStats -Samples $intervalSamples -Property 'update_ms' -PositiveOnly
+        CollectVisible = Get-NumericStats -Samples $intervalSamples -Property 'collect_visible_ms' -PositiveOnly
+        CollectWaitForRender = Get-NumericStats -Samples $intervalSamples -Property 'collect_wait_for_render_ms' -PositiveOnly
+        RenderWaitForCollect = Get-NumericStats -Samples $intervalSamples -Property 'render_wait_for_collect_ms' -PositiveOnly
+        Gpu = $gpuTiming.Stats
+        GpuTimingSource = $gpuTiming.Source
+        GpuReadySamples = $gpuTiming.ReadyCount
+        GpuCoverageDenominator = $gpuTiming.CoverageDenominator
+        GpuCoveragePercent = $gpuTiming.CoveragePercent
+        GpuDuplicateSourceCount = $gpuTiming.DuplicateSourceCount
+        GpuOutOfWindowSourceCount = $gpuTiming.OutOfWindowSourceCount
+        GpuMaxAgeFrames = $gpuTiming.MaxAgeFrames
+        VulkanFrame = Get-NumericStats -Samples $intervalSamples -Property 'vulkan_frame_total_ms' -PositiveOnly
+        VulkanWaitFrameSlot = Get-NumericStats -Samples $intervalSamples -Property 'vulkan_frame_wait_fence_ms' -PositiveOnly
+        VulkanWaitSwapchainImage = Get-NumericStats -Samples $intervalSamples -Property 'vulkan_frame_wait_swapchain_image_ms' -PositiveOnly
+        VulkanRecordCommandBuffer = Get-NumericStats -Samples $intervalSamples -Property 'vulkan_frame_record_command_buffer_ms' -PositiveOnly
+        VulkanPreparedMeshHoleMaterialization = Get-NumericStats -Samples $intervalSamples -Property 'vulkan_cpu_prepared_mesh_hole_materialization_ms'
+        VulkanResourcePlanning = Get-NumericStats -Samples $intervalSamples -Property 'vulkan_cpu_resource_planning_ms'
+        VulkanFrameDataRefresh = Get-NumericStats -Samples $intervalSamples -Property 'vulkan_cpu_frame_data_refresh_ms'
+        VulkanPrimaryCommandEncoding = Get-NumericStats -Samples $intervalSamples -Property 'vulkan_cpu_primary_command_encoding_ms'
+        VulkanSubmit = Get-NumericStats -Samples $intervalSamples -Property 'vulkan_frame_submit_ms' -PositiveOnly
+        VulkanQueuePresent = Get-NumericStats -Samples $intervalSamples -Property 'vulkan_frame_present_ms' -PositiveOnly
+        VulkanDescriptorPublicationAllocatedBytesTotal = Sum-NumericProperty -Samples $intervalSamples -Property 'vulkan_cpu_descriptor_publication_allocated_bytes'
+        VulkanSubmissionAllocatedBytesTotal = Sum-NumericProperty -Samples $intervalSamples -Property 'vulkan_cpu_submission_allocated_bytes'
+        VulkanSubmissionRejectionsTotal = Sum-NumericProperty -Samples $intervalSamples -Property 'frame_output_submission_rejection_count'
+        UnapprovedOutputPolicyEventsTotal = Sum-NumericProperty -Samples $intervalSamples -Property 'frame_output_unapproved_policy_event_count'
+        VulkanFailedFrameSamples = @($intervalSamples | Where-Object {
+            $_.active_render_backend -eq 'Vulkan' -and $_.vulkan_frame_outcome -in @('Rejected', 'Failed')
+        }).Count
+    }
 }
 
 function Stop-EditorGracefully {
@@ -1174,6 +1668,12 @@ function Measure-Variant {
     $processStartUtc = $null
     $captureStartUtc = [datetime]::UtcNow
     $captureEndUtc = $captureStartUtc
+    $motionCaptureStartUtc = $captureStartUtc
+    $motionCaptureEndUtc = $captureStartUtc
+    $privateMemoryStartBytes = $null
+    $privateMemoryEndBytes = $null
+    $retentionStartMcpStats = $null
+    $retentionEndMcpStats = $null
     $logDir = $null
     $forcedStop = $false
     $exitedEarly = $false
@@ -1186,14 +1686,29 @@ function Measure-Variant {
     $lastStatsState = ''
     $lastStatsProgressUtc = [datetime]::UtcNow
     $stabilityStatsState = New-RenderStatsStabilityState
+    $publicationReadinessState = New-ProfilePublicationReadinessState
     $stabilityReady = [bool]$NoStabilityGate
     $stabilityTimedOut = $false
     $stabilityWaitSec = 0
     $stabilityReason = if ($NoStabilityGate) { 'disabled by NoStabilityGate' } else { 'not evaluated' }
     $stableWorkloadIdentityHash = ''
+    $stableContentGeneration = 0
+    $stableResourceGeneration = ''
     $mcpPort = Get-FreeMcpPort
     $mcpDiagnosticsSucceeded = $false
     $mcpDiagnosticError = ''
+    $admissionScreenshotCaptured = $false
+    $admissionScreenshotPath = ''
+    $admissionScreenshotColorBuckets = 0
+    $admissionScreenshotLuminanceRange = 0
+    $admissionScreenshotError = if ($DisableMcpDiagnostics) {
+        'Disabled with MCP diagnostics.'
+    } else {
+        'Not attempted.'
+    }
+    $fixedCameraReadback = $null
+    $motionCameraReadback = $null
+    $postScreenshotStabilityWaitSec = 0
 
     try {
         Set-BenchmarkEnvValue 'XRE_WORLD_MODE' 'UnitTesting' -AllowedValues @('UnitTesting')
@@ -1296,7 +1811,7 @@ function Measure-Variant {
         } else {
             Clear-EnvValue 'XRE_PROFILE_WARMUP_SEC'
         }
-        Set-BenchmarkEnvValue 'XRE_PROFILE_CAPTURE_SEC' ([string]$CaptureSec) -PositiveNumber
+        Set-BenchmarkEnvValue 'XRE_PROFILE_CAPTURE_SEC' ([string]($CaptureSec + $MotionCaptureSec)) -PositiveNumber
         Set-EnvValue 'XRE_PROFILE_PHASE' 'startup-warmup-steady-state'
         Set-EnvValue 'XRE_GPU_CLOCK_POLICY' $GpuClockPolicy
         if ($TargetRefreshHz -gt 0) {
@@ -1372,7 +1887,7 @@ function Measure-Variant {
             @(
                 '--mcp',
                 '--mcp-permission-policy',
-                $(if ($hasFixedCameraPose) { 'AllowMutate' } else { 'AllowReadOnly' }),
+                $(if ($requiresMcpMutation) { 'AllowMutate' } else { 'AllowReadOnly' }),
                 '--mcp-port',
                 [string]$mcpPort
             )
@@ -1391,7 +1906,7 @@ function Measure-Variant {
         if ($hasFixedCameraPose) {
             Write-Host "[measure] $runName positioning fixed camera via MCP..."
             try {
-                Set-ProfileFixedCameraWhenReady `
+                $fixedCameraReadback = Set-ProfileFixedCameraWhenReady `
                     -Port $mcpPort `
                     -Process $proc `
                     -Arguments @{
@@ -1442,12 +1957,22 @@ function Measure-Variant {
                     break
                 }
 
+                $publicationReadiness = Test-ProfilePublicationReadiness `
+                    -Port $mcpPort `
+                    -WindowSec $StabilityWindowSec `
+                    -State $publicationReadinessState
                 $stability = Test-RenderStatsStability -LogDir $logDir -WindowSec $StabilityWindowSec -Strategy $strategy -Profile $StabilityProfile -MinimumGpuSceneCommandCount $MinSteadyStateGpuSceneCommandCount -State $stabilityStatsState
-                $stabilityReason = $stability.Reason
+                $stabilityReason = if ($publicationReadiness.Ready) {
+                    $stability.Reason
+                } else {
+                    $publicationReadiness.Reason
+                }
                 $stableWorkloadIdentityHash = $stability.WorkloadIdentityHash
-                if ($stability.Stable) {
+                $stableContentGeneration = $publicationReadiness.ContentGeneration
+                $stableResourceGeneration = $publicationReadiness.ResourceGeneration
+                if ($publicationReadiness.Ready -and $stability.Stable) {
                     $stabilityReady = $true
-                    Write-Host "[measure] $runName stability gate passed after ${stabilityWaitSec}s identity=$stableWorkloadIdentityHash"
+                    Write-Host "[measure] $runName stability gate passed after ${stabilityWaitSec}s identity=$stableWorkloadIdentityHash contentGeneration=$stableContentGeneration"
                     break
                 }
             }
@@ -1458,8 +1983,112 @@ function Measure-Variant {
             }
         }
 
+        if (-not $exitedEarly -and -not $hangDetected -and
+            $stabilityReady -and -not $DisableMcpDiagnostics) {
+            try {
+                if ($hasFixedCameraPose) {
+                    $fixedCameraReadback = Set-ProfileFixedCameraWhenReady `
+                        -Port $mcpPort `
+                        -Process $proc `
+                        -Arguments @{
+                            position_x = $CameraPositionX
+                            position_y = $CameraPositionY
+                            position_z = $CameraPositionZ
+                            look_at_x = $CameraLookAtX
+                            look_at_y = $CameraLookAtY
+                            look_at_z = $CameraLookAtZ
+                            duration = 0.0
+                        } `
+                        -TimeoutSec 10
+                }
+
+                $admissionCaptureDir = Join-Path $profileRunDir "mcp-captures\$runName\admission"
+                New-Item -ItemType Directory -Path $admissionCaptureDir -Force | Out-Null
+                $admissionCapture = Invoke-ProfileMcpTool `
+                    -Port $mcpPort `
+                    -Name 'capture_viewport_screenshot' `
+                    -Arguments @{ output_dir = $admissionCaptureDir } `
+                    -ReadyTimeoutSec 30
+                $admissionScreenshotPath = [string]$admissionCapture.result.structuredContent.path
+                if ([string]::IsNullOrWhiteSpace($admissionScreenshotPath) -or
+                    -not (Test-Path -LiteralPath $admissionScreenshotPath -PathType Leaf) -or
+                    (Get-Item -LiteralPath $admissionScreenshotPath).Length -eq 0) {
+                    throw 'MCP returned no nonempty viewport screenshot.'
+                }
+                $admissionScreenshotContent = Test-AdmissionScreenshotContent `
+                    -Path $admissionScreenshotPath `
+                    -MinimumColorBuckets $MinAdmissionScreenshotColorBuckets
+                $admissionScreenshotColorBuckets = $admissionScreenshotContent.ColorBuckets
+                $admissionScreenshotLuminanceRange = $admissionScreenshotContent.LuminanceRange
+                $admissionScreenshotCaptured = $true
+                $admissionScreenshotError = ''
+                Write-Host "[measure] $runName admission image=$admissionScreenshotPath"
+            }
+            catch {
+                $stabilityReady = $false
+                $admissionScreenshotError = $_.Exception.Message
+                $stabilityReason = "admission screenshot failed: $admissionScreenshotError"
+                Write-Host "[measure] $runName $stabilityReason" -ForegroundColor Yellow
+            }
+
+            if ($admissionScreenshotCaptured -and -not $NoStabilityGate) {
+                $stabilityReady = $false
+                $stabilityStatsState = New-RenderStatsStabilityState
+                $publicationReadinessState = New-ProfilePublicationReadinessState
+                Initialize-RenderStatsStabilityState -LogDir $logDir -State $stabilityStatsState
+                Write-Host "[measure] $runName re-establishing the ${StabilityWindowSec}s quiet window after image capture..."
+                for ($second = 0; $second -lt $StabilityTimeoutSec; $second++) {
+                    Start-Sleep -Seconds 1
+                    $postScreenshotStabilityWaitSec = $second + 1
+                    if ($proc.HasExited) {
+                        $exitedEarly = $true
+                        $exitAt = $second
+                        $exitPhase = 'post-screenshot-stability'
+                        $exitCode = $proc.ExitCode
+                        break
+                    }
+
+                    $publicationReadiness = Test-ProfilePublicationReadiness `
+                        -Port $mcpPort `
+                        -WindowSec $StabilityWindowSec `
+                        -State $publicationReadinessState
+                    $stability = Test-RenderStatsStability -LogDir $logDir -WindowSec $StabilityWindowSec -Strategy $strategy -Profile $StabilityProfile -MinimumGpuSceneCommandCount $MinSteadyStateGpuSceneCommandCount -State $stabilityStatsState
+                    $stabilityReason = if ($publicationReadiness.Ready) {
+                        $stability.Reason
+                    } else {
+                        $publicationReadiness.Reason
+                    }
+                    $stableWorkloadIdentityHash = $stability.WorkloadIdentityHash
+                    $stableContentGeneration = $publicationReadiness.ContentGeneration
+                    $stableResourceGeneration = $publicationReadiness.ResourceGeneration
+                    if ($publicationReadiness.Ready -and $stability.Stable) {
+                        $stabilityReady = $true
+                        Write-Host "[measure] $runName post-image stability gate passed after ${postScreenshotStabilityWaitSec}s identity=$stableWorkloadIdentityHash contentGeneration=$stableContentGeneration"
+                        break
+                    }
+                }
+
+                if (-not $stabilityReady -and -not $exitedEarly -and -not $hangDetected) {
+                    $stabilityTimedOut = $true
+                    Write-Host "[measure] $runName post-image stability gate timed out: $stabilityReason" -ForegroundColor Yellow
+                }
+            }
+        }
+
         if (-not $exitedEarly -and -not $hangDetected -and $stabilityReady) {
             Write-Host "[measure] $runName capture ${CaptureSec}s log=$logDir"
+            if (-not $DisableMcpDiagnostics) {
+                try {
+                    $retentionStartResponse = Invoke-ProfileMcpTool `
+                        -Port $mcpPort `
+                        -Name 'get_render_profiler_stats' `
+                        -Arguments @{}
+                    $retentionStartMcpStats = $retentionStartResponse.result.structuredContent
+                } catch {
+                    Write-Host "[measure] $runName start retention snapshot failed: $($_.Exception.Message)" -ForegroundColor Yellow
+                }
+            }
+            $privateMemoryStartBytes = Get-ProcessPrivateMemoryBytes -Process $proc
             $captureStartUtc = [datetime]::UtcNow
             for ($second = 0; $second -lt $CaptureSec; $second++) {
                 Start-Sleep -Seconds 1
@@ -1488,6 +2117,78 @@ function Measure-Variant {
         } else {
             $captureStartUtc = [datetime]::UtcNow
             $captureEndUtc = $captureStartUtc
+        }
+
+        if (-not $exitedEarly -and -not $hangDetected -and $stabilityReady -and $hasCameraMotion) {
+            $motionArguments = @{
+                position_x = $MotionCameraPositionX
+                position_y = $MotionCameraPositionY
+                position_z = $MotionCameraPositionZ
+                look_at_x = $MotionCameraLookAtX
+                look_at_y = $MotionCameraLookAtY
+                look_at_z = $MotionCameraLookAtZ
+                duration = [double]$MotionCaptureSec
+            }
+            Write-Host "[measure] $runName controlled camera motion ${MotionCaptureSec}s..."
+            try {
+                $motionCaptureStartUtc = [datetime]::UtcNow
+                Invoke-ProfileMcpTool `
+                    -Port $mcpPort `
+                    -Name 'set_editor_camera_view' `
+                    -Arguments $motionArguments `
+                    -ReadyTimeoutSec 10 `
+                    -RetryUnavailableCapabilities | Out-Null
+
+                for ($second = 0; $second -lt $MotionCaptureSec; $second++) {
+                    Start-Sleep -Seconds 1
+                    if ($proc.HasExited) {
+                        $exitedEarly = $true
+                        $exitAt = $second
+                        $exitPhase = 'motion-capture'
+                        $exitCode = $proc.ExitCode
+                        Write-Host "[measure] $runName exited during controlled motion at +${second}s exitCode=0x$([Convert]::ToString($exitCode, 16))" -ForegroundColor Yellow
+                        break
+                    }
+
+                    $logDir = Get-RunLogDir -EditorProcessId $proc.Id
+                    if (Test-RenderStatsHung -LogDir $logDir -LastStatsState ([ref]$lastStatsState) -LastStatsProgressUtc ([ref]$lastStatsProgressUtc) -NoSampleHangSec $NoSampleHangSec) {
+                        $hangDetected = $true
+                        $hangPhase = 'motion-capture'
+                        $hangAt = $second
+                        Write-Host "[measure] $runName no render-stats progress for ${NoSampleHangSec}s during controlled motion; forcing process stop" -ForegroundColor Yellow
+                        Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+                        $proc.WaitForExit(5000) | Out-Null
+                        $forcedStop = $true
+                        break
+                    }
+                }
+
+                $motionCaptureEndUtc = [datetime]::UtcNow
+                if (-not $exitedEarly -and -not $hangDetected) {
+                    $motionCameraReadback = Wait-ProfileCameraPose `
+                        -Port $mcpPort `
+                        -Process $proc `
+                        -Arguments $motionArguments `
+                        -TimeoutSec 10
+                    Write-Host '[measure] controlled camera endpoint verified.' -ForegroundColor DarkGray
+                }
+            }
+            catch {
+                if ($motionCaptureEndUtc -le $motionCaptureStartUtc) {
+                    $motionCaptureEndUtc = [datetime]::UtcNow
+                }
+                if (-not $proc.HasExited) {
+                    Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+                }
+                throw
+            }
+        } else {
+            $motionCaptureStartUtc = $captureEndUtc
+            $motionCaptureEndUtc = $captureEndUtc
+        }
+
+        if (-not $exitedEarly -and -not $hangDetected -and $stabilityReady) {
+            $privateMemoryEndBytes = Get-ProcessPrivateMemoryBytes -Process $proc
         }
 
         if (-not $exitedEarly -and -not $hangDetected) {
@@ -1523,6 +2224,9 @@ function Measure-Variant {
                                 -LiteralPath (Join-Path $logDir $request.ResponseFile) `
                                 -Encoding UTF8
                         }
+                        if ($request.Name -eq 'get_render_profiler_stats') {
+                            $retentionEndMcpStats = $response.result.structuredContent
+                        }
                     }
                     catch {
                         $mcpErrors.Add("$($request.Name): $($_.Exception.Message)") | Out-Null
@@ -1554,6 +2258,80 @@ function Measure-Variant {
 
     $allSamples = @(Read-AllRenderStatsSamples -LogDir $logDir)
     $samples = @(Select-RenderStatsSamples -Samples $allSamples -CaptureStartUtc $captureStartUtc -CaptureEndUtc $captureEndUtc)
+    $motionSamples = if ($hasCameraMotion) {
+        @(Select-RenderStatsSamples -Samples $allSamples -CaptureStartUtc $motionCaptureStartUtc -CaptureEndUtc $motionCaptureEndUtc)
+    } else {
+        @()
+    }
+    $retentionSamples = if ($hasCameraMotion) { @($samples + $motionSamples) } else { @($samples) }
+    $managedHeapEndpoint = Get-EndpointComparison `
+        -Samples $retentionSamples `
+        -Property 'managed_heap_bytes' `
+        -AbsoluteTolerance (16MB) `
+        -RelativeTolerance 0.05 `
+        -GrowthOnly
+    $privateMemoryEndpoint = if ($null -ne $privateMemoryStartBytes -and $null -ne $privateMemoryEndBytes) {
+        [double]$privateStart = $privateMemoryStartBytes
+        [double]$privateEnd = $privateMemoryEndBytes
+        [double]$privateDelta = $privateEnd - $privateStart
+        [double]$privateAllowedDelta = [Math]::Max(16MB, [Math]::Abs($privateStart) * 0.05)
+        [pscustomobject]@{
+            Available = $true
+            Start = $privateStart
+            End = $privateEnd
+            Delta = $privateDelta
+            AllowedDelta = $privateAllowedDelta
+            Passed = $privateDelta -le $privateAllowedDelta
+        }
+    } else {
+        [pscustomobject]@{ Available = $false; Start = $null; End = $null; Delta = $null; AllowedDelta = $null; Passed = $false }
+    }
+    $retentionStartMetering = if ($null -ne $retentionStartMcpStats) { $retentionStartMcpStats.vulkan.retired_resources.metering } else { $null }
+    $retentionEndMetering = if ($null -ne $retentionEndMcpStats) { $retentionEndMcpStats.vulkan.retired_resources.metering } else { $null }
+    $vulkanLiveResourceEndpoint = Get-ValueEndpointComparison `
+        -StartValue $(if ($null -ne $retentionStartMetering) { $retentionStartMetering.liveResourceCount } else { $null }) `
+        -EndValue $(if ($null -ne $retentionEndMetering) { $retentionEndMetering.liveResourceCount } else { $null }) `
+        -RelativeTolerance 0.01
+    $vulkanDescriptorSetEndpoint = Get-ValueEndpointComparison `
+        -StartValue $(if ($null -ne $retentionStartMetering) { $retentionStartMetering.trackedDescriptorSetCount } else { $null }) `
+        -EndValue $(if ($null -ne $retentionEndMetering) { $retentionEndMetering.trackedDescriptorSetCount } else { $null }) `
+        -RelativeTolerance 0.01
+    $requiredBacklogEndpoints = [ordered]@{
+        CodeProfilerPendingCompleted = Get-BacklogEndpointComparison -Samples $retentionSamples -Property 'code_profiler_pending_completed_count'
+        TextureUploadJobs = Get-BacklogEndpointComparison -Samples $retentionSamples -Property 'texture_upload_jobs'
+        ShaderVariantsWarming = Get-BacklogEndpointComparison -Samples $retentionSamples -Property 'shader_variants_warming'
+        VulkanRequiredPipelines = Get-BacklogEndpointComparison -Samples $retentionSamples -Property 'vulkan_required_pipeline_pending_count'
+        VulkanLifetimeRetirements = Get-BacklogEndpointComparison -Samples $retentionSamples -Property 'vulkan_lifetime_pending_retirement_count'
+        VulkanSwapchainRetirements = Get-BacklogEndpointComparison -Samples $retentionSamples -Property 'vulkan_swapchain_retirement_pending_count'
+        VulkanMaterialAllocations = Get-BacklogEndpointComparison -Samples $retentionSamples -Property 'vulkan_material_table_pending_allocations'
+    }
+    $requiredBacklogEvidenceComplete = @($requiredBacklogEndpoints.Values | Where-Object { -not $_.Available }).Count -eq 0
+    $requiredBacklogsReturnedToBaseline = $requiredBacklogEvidenceComplete -and @($requiredBacklogEndpoints.Values | Where-Object { -not $_.Passed }).Count -eq 0
+    $profilerOverflowDiscardedEvents = Max-NumericProperty -Samples $allSamples -Property 'code_profiler_overflow_discarded_events'
+    $profilerPendingCompletedDiscardedEvents = Max-NumericProperty -Samples $allSamples -Property 'code_profiler_pending_completed_discarded_events'
+    $diagnosticLossEvidenceComplete = $allSamples.Count -gt 0 -and
+        $null -ne (Get-SamplePropertyValue -Sample $allSamples[0] -Property 'code_profiler_overflow_discarded_events') -and
+        $null -ne (Get-SamplePropertyValue -Sample $allSamples[0] -Property 'code_profiler_pending_completed_discarded_events')
+    $diagnosticLossPassed = $diagnosticLossEvidenceComplete -and
+        $profilerOverflowDiscardedEvents -eq 0 -and
+        $profilerPendingCompletedDiscardedEvents -eq 0
+    $retentionEvidenceComplete = $managedHeapEndpoint.Available -and
+        $privateMemoryEndpoint.Available -and
+        $vulkanLiveResourceEndpoint.Available -and
+        $vulkanDescriptorSetEndpoint.Available -and
+        $requiredBacklogEvidenceComplete
+    $retentionPassed = $retentionEvidenceComplete -and
+        $managedHeapEndpoint.Passed -and
+        $privateMemoryEndpoint.Passed -and
+        $vulkanLiveResourceEndpoint.Passed -and
+        $vulkanDescriptorSetEndpoint.Passed -and
+        $requiredBacklogsReturnedToBaseline
+    $stationaryInterval = Get-ProfileIntervalSummary -Samples $samples -StartUtc $captureStartUtc -EndUtc $captureEndUtc
+    $motionInterval = if ($hasCameraMotion) {
+        Get-ProfileIntervalSummary -Samples $motionSamples -StartUtc $motionCaptureStartUtc -EndUtc $motionCaptureEndUtc
+    } else {
+        $null
+    }
     $mcpRenderStats = Read-McpRenderStatsPayload -LogDir $logDir
     $mcpMeshletStats = if ($null -ne $mcpRenderStats) { $mcpRenderStats.meshlets } else { $null }
     $mcpVulkanFrameOps = if ($null -ne $mcpRenderStats) { $mcpRenderStats.vulkan.frame_ops } else { $null }
@@ -1563,10 +2341,11 @@ function Measure-Variant {
     $collect = Get-NumericStats -Samples $samples -Property 'collect_visible_ms' -PositiveOnly
     $collectWaitForRender = Get-NumericStats -Samples $samples -Property 'collect_wait_for_render_ms' -PositiveOnly
     $renderWaitForCollect = Get-NumericStats -Samples $samples -Property 'render_wait_for_collect_ms' -PositiveOnly
-    $gpu = Get-NumericStats -Samples $samples -Property 'gpu_pipeline_frame_ms' -PositiveOnly
+    $gpuTiming = Get-CoarseGpuTimingSummary -Samples $samples
+    $gpu = $gpuTiming.Stats
     $vulkanGpuCommandBuffer = Get-NumericStats -Samples $samples -Property 'vulkan_frame_gpu_command_buffer_ms' -PositiveOnly
     $gap = Get-NumericStats -Samples $samples -Property 'render_thread_minus_gpu_ms' -PositiveOnly
-    $gpuReadyCount = @($samples | Where-Object { $_.gpu_pipeline_timings_ready -eq $true }).Count
+    $gpuReadyCount = $gpuTiming.ReadyCount
     $lastSample = if ($allSamples.Count -gt 0) { $allSamples[$allSamples.Count - 1] } else { $null }
     $lastSampleUtc = Format-SampleTimestamp -Sample $lastSample
     $lastRenderFrameId = Get-SamplePropertyValue -Sample $lastSample -Property 'render_frame_id'
@@ -1963,6 +2742,12 @@ function Measure-Variant {
     if ($vulkanValidationVuidCount -gt 0) {
         $noteParts.Add("Vulkan validation VUIDs=$vulkanValidationVuidCount unique=$($vulkanValidationUniqueVuids -join ',')") | Out-Null
     }
+    if (-not $diagnosticLossPassed) {
+        $noteParts.Add("diagnostic loss gate failed complete=$diagnosticLossEvidenceComplete overflowDiscarded=$profilerOverflowDiscardedEvents pendingCompletedDiscarded=$profilerPendingCompletedDiscardedEvents") | Out-Null
+    }
+    if (-not $retentionPassed) {
+        $noteParts.Add("retention gate failed complete=$retentionEvidenceComplete managed=$($managedHeapEndpoint.Passed) private=$($privateMemoryEndpoint.Passed) native=$($vulkanLiveResourceEndpoint.Passed) descriptors=$($vulkanDescriptorSetEndpoint.Passed) backlogs=$requiredBacklogsReturnedToBaseline") | Out-Null
+    }
 
     return [pscustomobject]@{
         Strategy = $Strategy
@@ -1995,6 +2780,17 @@ function Measure-Variant {
         CameraLookAtX = if ($hasFixedCameraPose) { $CameraLookAtX } else { $null }
         CameraLookAtY = if ($hasFixedCameraPose) { $CameraLookAtY } else { $null }
         CameraLookAtZ = if ($hasFixedCameraPose) { $CameraLookAtZ } else { $null }
+        CameraPoseVerified = -not $hasFixedCameraPose -or $null -ne $fixedCameraReadback
+        CameraPoseReadback = $fixedCameraReadback
+        MotionCaptureSec = $MotionCaptureSec
+        MotionCameraPositionX = if ($hasCameraMotion) { $MotionCameraPositionX } else { $null }
+        MotionCameraPositionY = if ($hasCameraMotion) { $MotionCameraPositionY } else { $null }
+        MotionCameraPositionZ = if ($hasCameraMotion) { $MotionCameraPositionZ } else { $null }
+        MotionCameraLookAtX = if ($hasCameraMotion) { $MotionCameraLookAtX } else { $null }
+        MotionCameraLookAtY = if ($hasCameraMotion) { $MotionCameraLookAtY } else { $null }
+        MotionCameraLookAtZ = if ($hasCameraMotion) { $MotionCameraLookAtZ } else { $null }
+        MotionCameraPoseVerified = -not $hasCameraMotion -or $null -ne $motionCameraReadback
+        MotionCameraPoseReadback = $motionCameraReadback
         ProfileLights = $ProfileLights
         ProfileViewport = $ProfileViewport
         RenderScale = $RenderScale
@@ -2020,14 +2816,37 @@ function Measure-Variant {
         StabilityReady = $stabilityReady
         StabilityWaitSec = $stabilityWaitSec
         StabilityReason = $stabilityReason
+        AdmissionScreenshotCaptured = $admissionScreenshotCaptured
+        AdmissionScreenshotPath = $admissionScreenshotPath
+        AdmissionScreenshotColorBuckets = $admissionScreenshotColorBuckets
+        AdmissionScreenshotLuminanceRange = $admissionScreenshotLuminanceRange
+        AdmissionScreenshotError = $admissionScreenshotError
+        PostScreenshotStabilityWaitSec = $postScreenshotStabilityWaitSec
         StableWorkloadIdentityHash = $stableWorkloadIdentityHash
+        StableContentGeneration = $stableContentGeneration
+        StableResourceGeneration = $stableResourceGeneration
         CaptureWorkloadIdentityHash = if ($workloadIdentityHashes.Count -eq 1) { $workloadIdentityHashes[0] } else { $workloadIdentityHashes -join ',' }
         CaptureWorkloadIdentityCount = $workloadIdentityHashes.Count
         StreamingPhase = 'included-in-startup-and-warmup-until asset counters stabilize'
         Samples = $samples.Count
         AllSamples = $allSamples.Count
+        DiagnosticLossEvidenceComplete = $diagnosticLossEvidenceComplete
+        DiagnosticLossPassed = $diagnosticLossPassed
+        CodeProfilerOverflowDiscardedEvents = $profilerOverflowDiscardedEvents
+        CodeProfilerPendingCompletedDiscardedEvents = $profilerPendingCompletedDiscardedEvents
+        RetentionEvidenceComplete = $retentionEvidenceComplete
+        RetentionPassed = $retentionPassed
+        ManagedHeapEndpoint = $managedHeapEndpoint
+        PrivateMemoryEndpoint = $privateMemoryEndpoint
+        VulkanLiveResourceEndpoint = $vulkanLiveResourceEndpoint
+        VulkanDescriptorSetEndpoint = $vulkanDescriptorSetEndpoint
+        RequiredBacklogEvidenceComplete = $requiredBacklogEvidenceComplete
+        RequiredBacklogsReturnedToBaseline = $requiredBacklogsReturnedToBaseline
+        RequiredBacklogEndpoints = $requiredBacklogEndpoints
         CaptureStartUtc = $captureStartUtc.ToString('O')
         CaptureEndUtc = $captureEndUtc.ToString('O')
+        StationaryInterval = $stationaryInterval
+        MotionInterval = $motionInterval
         RenderAvgMs = $render.Avg
         RenderP50Ms = $render.P50
         RenderP90Ms = $render.P90
@@ -2060,6 +2879,12 @@ function Measure-Variant {
         StaleCollectReuseFramesTotal = Sum-NumericProperty -Samples $samples -Property 'stale_collect_reuse_frames'
         GpuSamples = $gpu.Count
         GpuReadySamples = $gpuReadyCount
+        GpuTimingSource = $gpuTiming.Source
+        GpuCoverageDenominator = $gpuTiming.CoverageDenominator
+        GpuCoveragePercent = $gpuTiming.CoveragePercent
+        GpuDuplicateSourceCount = $gpuTiming.DuplicateSourceCount
+        GpuOutOfWindowSourceCount = $gpuTiming.OutOfWindowSourceCount
+        GpuMaxAgeFrames = $gpuTiming.MaxAgeFrames
         GpuP50Ms = $gpu.P50
         GpuP90Ms = $gpu.P90
         GpuP95Ms = $gpu.P95
@@ -2388,6 +3213,8 @@ function Measure-Variant {
     }
 }
 
+$stamp = Get-Date -Format 'yyyy-MM-dd_HH-mm-ss'
+$profileRunDir = New-SpeedProfileRunDirectory -Stamp $stamp
 $results = New-Object System.Collections.Generic.List[object]
 foreach ($strategy in $Strategies) {
     for ($rep = 1; $rep -le $Repetitions; $rep++) {
@@ -2401,8 +3228,6 @@ foreach ($strategy in $Strategies) {
 Write-Host '=== GAME LOOP / DEFAULT RENDER PIPELINE SUMMARY ===' -ForegroundColor Green
 $results | Format-Table -AutoSize Strategy, Repetition, CacheMode, Samples, AllSamples, RenderP50Ms, RenderP95Ms, RenderP99Ms, GpuP50Ms, GpuP95Ms, VulkanFrameP50Ms, VulkanFrameP95Ms, VulkanRecordCommandBufferP95Ms, VulkanRecordCommandBufferAllocatedBytesTotal, VulkanDrainRetiredResourcesP95Ms, VulkanSubmitP95Ms, VulkanQueuePresentP95Ms, VulkanCommandBufferRecordsTotal, VulkanResourcePlanReplacementsTotal, VulkanRetiredImagesTotal, DrawCallsP50, VisibleRenderersP50, SkinnedRenderersP50, TextureBindsTotal, GpuReadbackBytesTotal, AllGpuReadbackBytesTotal, GpuDrivenFullBucketScansTotal, FallbackEventsTotal, AllFallbackEventsTotal, LastRenderMs, GpuTimingDumpFiles, Note
 
-$stamp = Get-Date -Format 'yyyy-MM-dd_HH-mm-ss'
-$profileRunDir = New-SpeedProfileRunDirectory -Stamp $stamp
 $summaryJson = Join-Path $profileRunDir 'summary.json'
 $summaryText = Join-Path $profileRunDir 'summary.txt'
 $runLogDirs = Join-Path $profileRunDir 'run-logdirs.txt'
@@ -2422,6 +3247,7 @@ $results | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $summaryJson -Enco
     "Scene: $ProfileScene"
     "Camera: $ProfileCamera"
     "CameraPose: $(if ($hasFixedCameraPose) { 'position=({0},{1},{2}) lookAt=({3},{4},{5})' -f $CameraPositionX,$CameraPositionY,$CameraPositionZ,$CameraLookAtX,$CameraLookAtY,$CameraLookAtZ } else { 'not fixed by harness' })"
+    "MotionCameraPose: $(if ($hasCameraMotion) { 'duration={0}s position=({1},{2},{3}) lookAt=({4},{5},{6})' -f $MotionCaptureSec,$MotionCameraPositionX,$MotionCameraPositionY,$MotionCameraPositionZ,$MotionCameraLookAtX,$MotionCameraLookAtY,$MotionCameraLookAtZ } else { 'disabled' })"
     "OcclusionCullingMode: $OcclusionCullingMode"
     "VulkanCommandChains: $VulkanCommandChains"
     "VulkanParallelCommandChainRecording: $VulkanParallelCommandChainRecording"
@@ -2536,6 +3362,17 @@ if ($FailOnSteadyStateBindingFallback) {
 
 $invalidCaptureFailures = @($results | Where-Object {
     -not $_.StabilityReady -or
+    -not $_.CameraPoseVerified -or
+    -not $_.MotionCameraPoseVerified -or
+    ($hasCameraMotion -and (
+        [int]$_.MotionInterval.Samples -lt 1 -or
+        [int]$_.MotionInterval.WorkloadIdentityCount -lt 1 -or
+        (-not $AllowWorkloadIdentityChanges -and [int]$_.MotionInterval.WorkloadIdentityCount -ne 1) -or
+        (-not $AllowWorkloadIdentityChanges -and $_.MotionInterval.WorkloadIdentityHash -ne $_.CaptureWorkloadIdentityHash) -or
+        [double]$_.MotionInterval.UnapprovedOutputPolicyEventsTotal -gt 0.0 -or
+        [double]$_.MotionInterval.VulkanSubmissionRejectionsTotal -gt 0.0 -or
+        [int]$_.MotionInterval.VulkanFailedFrameSamples -gt 0)) -or
+    (-not $DisableMcpDiagnostics -and -not $_.AdmissionScreenshotCaptured) -or
     ([int]$_.CaptureWorkloadIdentityCount -lt 1 -or
         (-not $AllowWorkloadIdentityChanges -and [int]$_.CaptureWorkloadIdentityCount -ne 1)) -or
     [double]$_.UnapprovedOutputPolicyEventsTotal -gt 0.0 -or
@@ -2544,7 +3381,7 @@ $invalidCaptureFailures = @($results | Where-Object {
 })
 if ($invalidCaptureFailures.Count -gt 0) {
     $details = $invalidCaptureFailures | ForEach-Object {
-        "$($_.Strategy) r$($_.Repetition): stable=$($_.StabilityReady) identities=$($_.CaptureWorkloadIdentityCount) unapprovedPolicy=$($_.UnapprovedOutputPolicyEventsTotal) rejectedSubmissions=$($_.VulkanSubmissionRejectionsTotal) failedFrames=$($_.VulkanFailedFrameSamples) reason=$($_.StabilityReason)"
+        "$($_.Strategy) r$($_.Repetition): stable=$($_.StabilityReady) admissionImage=$($_.AdmissionScreenshotCaptured) stationaryIdentities=$($_.CaptureWorkloadIdentityCount) motionVerified=$($_.MotionCameraPoseVerified) motionSamples=$($_.MotionInterval.Samples) motionIdentities=$($_.MotionInterval.WorkloadIdentityCount) unapprovedPolicy=$($_.UnapprovedOutputPolicyEventsTotal)/$($_.MotionInterval.UnapprovedOutputPolicyEventsTotal) rejectedSubmissions=$($_.VulkanSubmissionRejectionsTotal)/$($_.MotionInterval.VulkanSubmissionRejectionsTotal) failedFrames=$($_.VulkanFailedFrameSamples)/$($_.MotionInterval.VulkanFailedFrameSamples) reason=$($_.StabilityReason)"
     }
     throw "Invalid render-pipeline performance capture: $($details -join '; ')"
 }

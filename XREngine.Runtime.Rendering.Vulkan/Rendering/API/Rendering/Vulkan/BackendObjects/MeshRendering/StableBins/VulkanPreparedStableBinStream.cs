@@ -303,13 +303,32 @@ internal sealed class VulkanPreparedStableBinStream
                     (ulong)slice.VertexCount * slice.VertexStride <=
                         previousVertices.Length -
                         (ulong)slice.PreviousVertexOffset * slice.VertexStride;
-                if (payload.ForceCpuDiagnostic ||
-                    deformationPublication.JobCount == 0u ||
+                if (deformationPublication.JobCount == 0u ||
                     !slice.Owner.IsValid ||
                     canonicalDraw.Deformation != slice.Owner ||
                     !offsetsFit)
                 {
-                    reason = $"canonical visibility payload {payloadIndex} has no exact GPU deformation output";
+                    ulong currentByteOffset =
+                        (ulong)slice.CurrentVertexOffset * slice.VertexStride;
+                    ulong previousByteOffset =
+                        (ulong)slice.PreviousVertexOffset * slice.VertexStride;
+                    ulong sliceByteLength =
+                        (ulong)slice.VertexCount * slice.VertexStride;
+                    reason =
+                        $"canonical visibility payload {payloadIndex} has no exact GPU deformation output " +
+                        $"(forceCpuDiagnostic={payload.ForceCpuDiagnostic}, " +
+                        $"publishedJobs={deformationPublication.JobCount}, " +
+                        $"drawDeformation={canonicalDraw.Deformation.Index}:{canonicalDraw.Deformation.Generation}, " +
+                        $"sliceOwner={slice.Owner.Index}:{slice.Owner.Generation}, " +
+                        $"stride={slice.VertexStride}/64, " +
+                        $"vertexCount={slice.VertexCount}/{payload.VertexCount}, " +
+                        $"slots={slice.CurrentFrameSlot}:{slice.PreviousFrameSlot}/" +
+                            $"{deformationPublication.CurrentFrameSlot}:{deformationPublication.PreviousFrameSlot}, " +
+                        $"offsets={slice.CurrentVertexOffset}:{slice.PreviousVertexOffset}/" +
+                            $"{payload.GeometryOffsets.VertexOffset}:{payload.GeometryOffsets.PreviousVertexOffset}, " +
+                        $"byteRanges={currentByteOffset}+{sliceByteLength}/{currentVertices.Length}," +
+                            $"{previousByteOffset}+{sliceByteLength}/{previousVertices.Length}, " +
+                        $"offsetsFit={offsetsFit})";
                     ThawForReuse();
                     return false;
                 }

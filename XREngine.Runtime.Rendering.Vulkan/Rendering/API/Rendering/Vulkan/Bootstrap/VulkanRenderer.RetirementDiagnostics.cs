@@ -10,6 +10,8 @@ public sealed partial class VulkanRenderer
     public VulkanRetirementDiagnostic CaptureRetirementDiagnostics()
     {
         VulkanRetirementMeterSnapshot snapshot = _resourceRuntime.GetRetirementMeterSnapshot();
+        VulkanResourceLifetimeSnapshot lifetime = _resourceRuntime.CaptureLifetimeSnapshot(
+            includeExactLiveResourceGenerations: false);
         int count = (int)EVulkanRetirementWorkClass.Callback + 1;
         VulkanRetirementClassDiagnostic[] classes = new VulkanRetirementClassDiagnostic[count];
         for (int index = 0; index < count; index++)
@@ -35,6 +37,8 @@ public sealed partial class VulkanRenderer
             desktop.Maintenance1Enabled, desktop.Generation,
             presentation?.SubmittedCount ?? 0, presentation?.CompletedCount ?? 0,
             presentation?.CapacityDeferrals ?? 0, presentation?.HasUnprovenLegacyPresent ?? false,
-            _frameLoop.DeviceWaitIdleCalls);
+            _frameLoop.DeviceWaitIdleCalls, lifetime.LiveResourceCount,
+            lifetime.TrackedDescriptorSetCount, lifetime.PendingRetirementCount,
+            lifetime.OldestPendingRetirementAgeMilliseconds);
     }
 }

@@ -18,4 +18,8 @@ public sealed record VulkanRetirementDiagnostic(
     long CurrentGenerationPresentsCompleted,
     long CurrentGenerationCapacityDeferrals,
     bool HasUnprovenLegacyPresent,
-    long DeviceWaitIdleCalls);
+    long DeviceWaitIdleCalls,
+    int LiveResourceCount,
+    int TrackedDescriptorSetCount,
+    int PendingRetirementCount,
+    long OldestPendingRetirementAgeMilliseconds);

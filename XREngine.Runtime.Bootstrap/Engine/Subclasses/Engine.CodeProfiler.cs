@@ -170,6 +170,8 @@ namespace XREngine
             private readonly List<ThreadProducerBuffer> _producerDrainScratch = new(8);
             private readonly ConcurrentQueue<CompletedScopeEvent> _overflowCompletedEvents = new();
             private long _lastOverflowWarningTicks;
+            private long _overflowDiscardedEventCount;
+            private long _pendingCompletedDiscardedEventCount;
             private readonly ConcurrentDictionary<int, AsyncPendingTimer> _pendingAsyncTimers = [];
 
             private Thread? _statsThread;
@@ -187,6 +189,10 @@ namespace XREngine
             // Counts completed descendants that are waiting for their still-active parent.
             // The stats thread owns this state, so it needs no interlocked access.
             private int _pendingCompletedCount;
+
+            public long OverflowDiscardedEventCount => Volatile.Read(ref _overflowDiscardedEventCount);
+            public long PendingCompletedDiscardedEventCount => Volatile.Read(ref _pendingCompletedDiscardedEventCount);
+            public int PendingCompletedCount => Volatile.Read(ref _pendingCompletedCount);
             private readonly Dictionary<(string Name, ProfilerScopeKind ScopeKind), long> _lastSlowScopeLogTicks = [];
             private readonly string[] _renderThreadScopeNames = new string[RenderThreadScopeStackCapacity];
             private readonly ProfilerScopeKind[] _renderThreadScopeKinds = new ProfilerScopeKind[RenderThreadScopeStackCapacity];
@@ -720,6 +726,8 @@ namespace XREngine
                     while (_overflowCompletedEvents.TryDequeue(out _))
                         discarded++;
 
+                    Interlocked.Add(ref _overflowDiscardedEventCount, discarded);
+
                     // Rate-limit the warning to at most once per 10 seconds
                     long nowTicks = Environment.TickCount64;
                     if (nowTicks - _lastOverflowWarningTicks >= 10_000)
@@ -785,6 +793,7 @@ namespace XREngine
                 if (_pendingCompletedCount >= MaxOverflowQueueSize)
                 {
                     state.ReturnBuiltRecursive(built);
+                    Interlocked.Increment(ref _pendingCompletedDiscardedEventCount);
                     LogPendingCompletedOverflow();
                     return;
                 }
@@ -2155,6 +2164,10 @@ namespace XREngine
                 get => 0;
                 set { }
             }
+
+            public long OverflowDiscardedEventCount => 0;
+            public long PendingCompletedDiscardedEventCount => 0;
+            public int PendingCompletedCount => 0;
 
             public int ProducerBufferCapacity
             {

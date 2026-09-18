@@ -473,6 +473,8 @@ namespace XREngine.Editor.Mcp
                 pipelineDescriptor = pipeline?.DebugDescriptor,
                 activeResourceGeneration = pipeline?.ActiveGeneration?.Key.ToString(),
                 pendingResourceGeneration = pipeline?.PendingGeneration?.Key.ToString(),
+                activeViewportResourceGeneration = activeViewport?.RenderPipelineInstance.ActiveGeneration?.Key.ToString(),
+                pendingViewportResourceGeneration = activeViewport?.RenderPipelineInstance.PendingGeneration?.Key.ToString(),
                 lastResourceGenerationFailure = pipeline?.LastResourceGenerationFailure,
                 renderGraphPassIndex = RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex,
                 renderStateCameraType = renderState?.SceneCamera?.GetType().FullName,

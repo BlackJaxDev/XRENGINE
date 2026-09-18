@@ -215,7 +215,7 @@ Confirmed chain: [GetAdvancedVisibilityPipelineReadiness](../../../../XREngine.R
 enters a synchronous program-preparation scope and checks early, late, native,
 and raster shader families. [TryGetComputePipelines](../../../../XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Advanced/VulkanAdvancedVisibilityPipelineRuntime.cs#L31)
 creates wrappers and calls `Link(allowAsyncShaderCompile: false)` before requesting
-compute pipelines. [Link](../../../../XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgram.Linking.cs#L23)
+compute pipelines. [Program linking](../../../../XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgram.Linking.cs#L23)
 also forces synchronous behavior inside that preparation scope. Current links do
 have a fast path; this does not prove relinking every frame.
 
@@ -478,11 +478,13 @@ still pending.
 
 ### S00 Gate Record: Comparable Baseline And Evidence Manifest
 
-Review disposition: **Active, reopened**. The historical record below is retained
-as evidence of the attempted gate, not a passing baseline. One run with 69 sparse
-overlay samples does not satisfy three matched runs, all-frame distributions,
-observer comparison, readiness/camera identity or retention budgets. `HEAD` is not
-an immutable source manifest. No S02 work is permitted on this evidence.
+Review disposition: **Blocked**. The historical record below is retained as
+evidence of the attempted gate, not a passing baseline. The later strict Release
+matrix satisfied its run count and scene-admission requirements, but failed the
+predeclared observer-tail and GPU-coverage gates and did not capture complete loss
+or settled-retention evidence. A repaired final matrix now clears GPU coverage,
+loss accounting, settled retention, and every observer check except motion p99.
+S00 therefore remains Blocked, and no S01 or S02 work is permitted on this evidence.
 
 #### S00 Reopened Acceptance Plan
 
@@ -492,8 +494,9 @@ constraint below, not its readiness, sample-count, observer or retention budgets
 Keep profile modes separate in reports. S00a resumes as Active for measurement
 validation; S01 remains Blocked. This approval does not clear test work.
 
-S00a instrumentation child: Blocked at clean-toggle live proof (GPU export
-build/runtime identity passed; performance gate open). The isolated
+S00a instrumentation child: Validated (GPU export build/runtime identity and
+symmetric clean-toggle live proof passed; parent S00 performance gate remains
+open). The isolated
 `s00-baseline-probe-0917`
 build passed with zero warnings/errors and confirmed Vulkan/CpuDirect/Advanced
 TSR at 1920x1080 (internal 1286x723), desktop Edit mode, 393 published draws and
@@ -633,12 +636,12 @@ on these attempts has not yet been received.
 The original settings SHA256 remains
 `2E794B8347C31C641DA2CA72B2DB5447B14D38DF0F91D6ABD0A45DDF5C83F0C9`.
 
-#### Paused Handoff: Clean Profiler Toggle
+#### Clean Profiler Toggle Completion
 
-Work paused on 2026-09-17 at a deliberate validation boundary. All named S00
-editor sessions are Stopped; no editor PID owned by this work remains active.
+Work resumed from revision `034a577a0` on 2026-09-17. All named S00 editor
+sessions are Stopped; no editor PID owned by this work remains active.
 
-Implemented but not yet live-validated end to end:
+Implemented and live-validated end to end:
 
 - `XRE_PROFILE_CODE_PROFILER` is a dedicated launch-capture override; it does not
   reuse `XRE_PROFILER_ENABLED`, whose existing meaning is profiler transport.
@@ -667,26 +670,185 @@ Validation completed for this child:
   before completion and produced no runtime logs. It was explicitly stopped and
   is not validation evidence.
 
-Resume in this order:
+The final symmetric proof reused one freshly built isolated executable:
 
-1. Rebuild one fresh isolated named session from the current source. Run a short
-   `CleanProfile` capture with `XRE_PROFILE_CODE_PROFILER=1`; require every retained
-   row to report `profile_suitability=CleanComparison` and
-   `code_profiler_frame_logging_enabled=true`.
-2. Stop it, reuse that exact isolated binary for the symmetric off state, and
-   require the actual field to be false. Preserve both manifests, binary hashes,
-   row counts and frame continuity. A request/actual mismatch blocks further work.
-3. Only after both directions pass, update the clean baseline collector to set
-   the requested condition and fixed camera before readiness. Require stable
-   accepted content/resource generations, drained required preparation/jobs,
-   and a viewed image before admitting a timing window. Arm capture before the
-   motion interpolation and retain pose progression plus the query-completion tail.
-4. Run three alternating clean off/on pairs with 60-second stationary and motion
-   windows. Enforce the predeclared observer, GPU coverage, tail-latency, diagnostic
-   loss, memory, native-resource and backlog budgets. Keep the earlier ImGui-on
-   diagnostic pair separate and rejected for performance comparison.
-5. Mark S00a/S00 Validated only if those gates pass. Otherwise record the failed
-   condition and remain Blocked. Do not begin S01 implementation or test work.
+- Executable SHA256:
+  `3E77E3C1D984CF16AFCE67C693975CFB305885AEFE8BF91F649E417612AF2E3A`.
+- Build session: `s00a-toggle-proof-0917`; build completed with zero warnings and
+  zero errors. Both launches used the exact same executable without rebuilding.
+- Profiler on: 25 retained rows from 30 total rows. Every retained row reports
+  `profile_suitability=CleanComparison` and
+  `code_profiler_frame_logging_enabled=true`; rows are well-formed and render
+  frame IDs are strictly monotonic from 30 through 270 at the configured
+  10-frame sampling cadence.
+- Profiler off: 24 retained rows from 30 total rows. Every retained row reports
+  `profile_suitability=CleanComparison` and
+  `code_profiler_frame_logging_enabled=false`; rows are well-formed and render
+  frame IDs are strictly monotonic from 20 through 250 at the same cadence.
+- The first immediate five-second attempt retained zero rows because the first
+  completed Vulkan frame arrived after the capture window. It is rejected setup
+  evidence. Both accepted directions used a ten-second warmup and five-second
+  capture window.
+- Evidence root:
+  `Build/_AgentValidation/20260917-183200-s00a-toggle-proof/`. The accepted
+  summaries are under `on-v2/` and `off/`; runtime NDJSON paths are preserved in
+  their `run-logdirs.txt` and `summary.json` manifests.
+
+S00a is Validated. Parent S00 remains Blocked for the reasons recorded below.
+
+#### Strict Release Matrix And S00 Decision
+
+The strict matrix under
+`Build/_AgentValidation/20260918-014700-s00-readiness/release-profiler-matrix/`
+completed three alternating disabled/enabled pairs in `D/E/D/E/D/E` order. Each
+process used Release `CleanProfile`, a 25-second warmup, a 60-second stationary
+window, and a 60-second controlled-motion window. The collector reapplied the
+fixed camera after asynchronous import, verified the exact translated endpoint,
+required stable publication/topology, and rejected visually empty screenshots.
+
+The frozen manifest records revision `034a577a072b16d559b6e4ff84e73f7057e39190`,
+tracked-diff object `ce3ed9005da16ff09f9f422b241255419f16fc22`, and
+tracked-diff SHA256
+`42ADED7304CCFE97D9BA96373508B321629394CF4BC61737677AE454BDF941A5`.
+The executable SHA256 is
+`3E77E3C1D984CF16AFCE67C693975CFB305885AEFE8BF91F649E417612AF2E3A`.
+The Rendering and Vulkan DLL SHA256 values are respectively
+`10BA05BF2146FFCA26435C092FE23C2C235E08FCD2ED71DC060FD24DD3D4F4B8`
+and `8181764205B022F88159AD5588C92E6BC5D056D1C5ABEDF31DF3563F96BC9BC4`.
+All six admitted runs retained workload identity `10991459253885323059`, 105
+GPU-scene commands, camera/motion verification, at least 42 sampled color buckets,
+and zero retained Vulkan submission rejections or failed-frame samples.
+
+Median render results across the three runs per condition are:
+
+| Window / metric | Profiler off ms | Profiler on ms | Delta |
+| --- | ---: | ---: | ---: |
+| Stationary mean | 10.210 | 10.638 | +0.428 (+4.19%) |
+| Stationary p95 | 12.596 | 13.230 | +5.03% |
+| Stationary p99 | 16.005 | 18.081 | +12.97% |
+| Motion mean | 10.323 | 10.590 | +0.267 (+2.59%) |
+| Motion p95 | 12.493 | 13.323 | +6.64% |
+| Motion p99 | 15.419 | 17.709 | +14.85% |
+
+Both mean deltas remain below the predeclared 0.5 ms/frame budget. Stationary
+p95 is below its 15.47% disabled-run spread allowance, while motion p95 and p99
+are below their 10.67% and 37.07% allowances. Stationary p99 exceeds its 6.22%
+allowance and independently fails the observer gate. Median stage deltas were
+small but broad rather than isolated: stationary `RenderOutsideVulkan` +7.45%,
+`CollectVisible` +5.95%, `CollectWaitForRender` +3.72%, `VulkanFrame` +3.51%,
+`VulkanRecordCommandBuffer` +4.35%, `PrimaryCommandEncoding` +3.14%, `Submit`
++0.94%, and `QueuePresent` +7.69%; motion deltas were +7.36%, +2.08%, +2.65%,
++1.41%, +3.54%, +2.09%, +3.78%, and -1.08% in the same order.
+
+The severe reported regression was not reproduced. Current accepted windows
+render near 10-11 ms on average, rather than the earlier sparse 27-43 ms probe or
+the unavailable original 153-165 ms report. This characterizes the current source
+state; it does not prove the original CPU regression fixed or identify its cause.
+
+S00 remains **Blocked** because:
+
+- Every run reports `GpuSamples=0` and `GpuReadySamples=0`, giving 0% coverage
+  against the required 99%. No GPU percentile or GPU-regression conclusion is
+  admissible from this matrix.
+- Stationary p99 exceeds the predeclared profiler observer allowance.
+- The capture does not provide complete cumulative diagnostic-loss accounting or
+  comparable settled managed/private-memory endpoints, native-resource counts,
+  and required-job/retire backlog closure for the retention gate.
+
+Do not rerun the same matrix unchanged. First repair and live-validate the missing
+coarse GPU sample export and bounded loss/retention evidence as measurement work,
+then repeat the affected comparison. S01 and S02 remain blocked. No test work has
+been cleared.
+
+#### Repaired Final Release Matrix
+
+The repaired matrix under
+`Build/_AgentValidation/20260918-004913-s00-instrumentation/reports/final-matrix/`
+completed the required three Release `CleanProfile` pairs in `D/E/D/E/D/E`
+order. Every accepted run used a 25-second warmup, 60-second stationary and
+60-second controlled-motion windows, one-frame capture cadence, Vulkan,
+CpuDirect, Advanced/TSR, 1920x1080 output, the same workload identity
+`10991459253885323059`, and verified stationary and translated camera poses.
+The first pair-1 enabled attempt was rejected at 13/16 screenshot color buckets;
+its raw session is preserved separately and is not included below. Its unchanged
+attempt 2 and each later attempt 2 passed the 16-bucket admission threshold.
+
+Median render results across the three accepted runs per condition are:
+
+| Window / metric | Profiler off ms | Profiler on ms | Delta | Allowance | Result |
+| --- | ---: | ---: | ---: | ---: | --- |
+| Stationary mean | 6.517 | 6.672 | +0.155 | <0.500 ms | Pass |
+| Stationary p95 | 7.573 | 7.699 | +1.66% | 5.49% spread | Pass |
+| Stationary p99 | 10.162 | 10.563 | +3.95% | 7.67% spread | Pass |
+| Motion mean | 7.010 | 7.227 | +0.217 | <0.500 ms | Pass |
+| Motion p95 | 7.784 | 7.815 | +0.40% | 9.98% spread | Pass |
+| Motion p99 | 10.389 | 15.268 | +46.96% | 10.85% spread | **Fail** |
+
+The allowance is the larger of 5% and the disabled-run range divided by its
+median, matching the predeclared rule and prior matrix calculation. The two
+enabled motion p99 values that drive the failure are 15.398 and 15.268 ms,
+versus disabled values of 11.176, 10.049, and 10.389 ms; this is not a single
+isolated maximum. No accepted stationary or motion window exceeded 32.855 ms,
+so all six satisfy the zero unexplained warm-stall requirement at 500 ms.
+
+The repaired evidence capabilities pass in every accepted run:
+
+- Stationary coarse-GPU coverage is 99.946-99.951%; motion coverage is
+  99.855-99.917%. This exceeds the 99% minimum. Median GPU p99 is 3.163 ms off
+  versus 3.123 ms on while stationary, and 3.071 ms off versus 3.277 ms on in
+  motion.
+- Exact profiler overflow and pending-completed discard counters are zero. All
+  summaries report complete diagnostic-loss evidence and pass that gate.
+- Managed heap and private-byte endpoints pass their per-run 16 MiB-or-5%
+  budgets. Exact Vulkan live-resource and descriptor-set deltas are zero in all
+  six runs.
+- Required CodeProfiler, texture-upload, shader-warmup, required-pipeline,
+  lifetime-retirement, swapchain-retirement, and material-allocation backlogs
+  all return to their captured baselines.
+
+All six accepted admission images were viewed. They are non-empty and contain
+the expected subject and camera composition, but three show severe exposure or
+color corruption while the others show the outdoor scene normally. The stable
+workload identity and strict admission rule make the timing comparison usable;
+the images do not establish visual correctness or resolve TSR ghosting.
+
+Final S00 disposition: **Blocked only on motion p99 observer overhead**. The
+repaired measurement work closes the former GPU-coverage, exact-loss, retention,
+native-occupancy, and backlog-evidence blockers. Do not advance to S01 or S02
+until the profiler-on motion-tail regression is explained and brought within the
+predeclared allowance, or the user explicitly changes the gate. Test clearance
+remains absent.
+
+#### TSR Motion Evidence And Telemetry Correction
+
+The temporal investigation confirms active TSR resources and ready history, but
+does not resolve the reported ghosting. One bounded sequence completed 40/40
+frames without drops. A repeated 30-second controlled move completed 30/30,
+recorded camera motion, and captured finite nonzero velocity during motion. This
+rejects a catastrophic always-zero velocity path. The viewed frames did not show
+an obvious persistent trail, but the subject was underexposed and the apparent
+motion was small. Sequence camera metadata also used a transform basis that did
+not match `get_render_state`, so it is not authoritative pose evidence. TSR
+ghosting remains **Unresolved**; no feedback reduction or visual workaround was
+used and no temporal-correctness claim is made.
+
+The investigation exposed a separate telemetry defect: after a live camera TSR
+override, viewport generation used TSR while profile NDJSON continued to report
+launch-cached FXAA. `Engine.ProfileCapture` now resolves active anti-aliasing from
+each frame's rendered output manifest, prioritizing desktop scene, editor panel,
+and XR submit outputs before camera/global fallbacks. It also refreshes cached
+run metadata when the first real output manifest becomes available.
+
+The focused Release Bootstrap build passed. In the stopped owned process PID
+12816, 200 consecutive retained rows from render frames 168659-168858 all report
+Vulkan, `anti_aliasing_mode=Tsr`, `tsr_render_scale=0.67`, motion vectors enabled,
+one workload identity, and no malformed rows. The executable SHA256 matches the
+strict matrix; the rebuilt Bootstrap DLL SHA256 is
+`A4FDA26D667F1FAB13F356EA3DDB7A366BBD4E80914736EF3856EA25F3F12FDD`.
+Older retained process rows report FXAA, preserving the before/after distinction.
+This long-running resized session had different current topology and is telemetry
+proof only, not comparable matrix evidence. The owned session was stopped. No
+tests were added, modified, or run.
 
 Current known source state includes unrelated/pre-existing uncommitted profiler
 and session-manager changes; preserve them. No test clearance has been granted.
@@ -813,5 +975,3 @@ User confirmation / remaining risks / next permitted item:
 Temporary settings and owned session cleanup:
   - Session s01-profiler-validation stopped cleanly via Manage-McpEditorSession.ps1 Stop. Background daemon task terminated.
 ```
-
-

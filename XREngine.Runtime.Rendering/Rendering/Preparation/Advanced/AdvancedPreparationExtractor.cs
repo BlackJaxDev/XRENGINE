@@ -345,6 +345,8 @@ public sealed class AdvancedPreparationExtractor : IDisposable
                 (_hasDeformationUpload
                     ? 0u
                     : checked((uint)jobs.Length))),
+            DeformationArenaAllocationFailureCount:
+                _deformedArena.GetTelemetry().AllocationFailureCount,
             DeformedVertexCount: deformedVertices,
             DeformationUploadBytes:
                 _hasDeformationUpload
@@ -1215,6 +1217,7 @@ public sealed class AdvancedPreparationExtractor : IDisposable
             VisibilityViewCount: 0u,
             IndirectRangeCount: 0u,
             VisibleFallbackCount: visibleFallbackCount,
+            DeformationArenaAllocationFailureCount: 0u,
             DeformedVertexCount: 0UL,
             DeformationUploadBytes: 0u,
             UploadCopyRangeCount: 0u,
