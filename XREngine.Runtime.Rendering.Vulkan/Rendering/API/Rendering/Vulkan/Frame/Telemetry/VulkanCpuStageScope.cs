@@ -89,6 +89,22 @@ internal readonly ref struct VulkanCpuStageScope
             EVulkanCpuStage.PrimaryOperationPreparation or
             EVulkanCpuStage.PrimaryMeshOperation or
             EVulkanCpuStage.PrimaryNonMeshOperation or
+            EVulkanCpuStage.PrimaryAdvancedVisibilityOperation or
+            EVulkanCpuStage.PrimaryComputeOperation or
+            EVulkanCpuStage.PrimaryBlitOperation or
+            EVulkanCpuStage.PrimaryClearOperation or
+            EVulkanCpuStage.PrimaryOtherOperation or
+            EVulkanCpuStage.PrimaryAdvancedPreparationOperation or
+            EVulkanCpuStage.PrimaryAdvancedRasterOperation or
+            EVulkanCpuStage.PrimaryAdvancedLateComputeOperation or
+            EVulkanCpuStage.PrimaryAdvancedLateRasterOperation or
+            EVulkanCpuStage.PrimaryAdvancedClassificationOperation or
+            EVulkanCpuStage.PrimaryAdvancedAmbientOcclusionOperation or
+            EVulkanCpuStage.PrimaryAdvancedNativeShadingOperation or
+            EVulkanCpuStage.PrimaryAdvancedCpuDirectDrawOperation or
+            EVulkanCpuStage.PrimaryAdvancedRasterLoweringOperation or
+            EVulkanCpuStage.PrimaryAdvancedRasterValidationOperation or
+            EVulkanCpuStage.PrimaryAdvancedRasterBindingOperation or
             EVulkanCpuStage.ContextPassTransitions or
             EVulkanCpuStage.BarrierPlanningEmission or
             EVulkanCpuStage.OpDispatch or

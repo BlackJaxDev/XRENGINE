@@ -86,6 +86,10 @@ namespace XREngine.Data.Core
             }
         }
 
+        /// <summary>
+        /// Runs independent, thread-safe listeners concurrently and completes after all listeners finish.
+        /// Persistent calls remain ordered and run after the concurrent listeners.
+        /// </summary>
         public async Task InvokeAsync()
         {
             await WithProfilingAsync("XREvent.InvokeAsync", InvokeAsyncInternal);
@@ -101,9 +105,9 @@ namespace XREngine.Data.Core
             var snapshot = Actions.Count == 0 ? null : Actions.ToArray();
             if (snapshot is not null)
             {
-                object? profilingContext = CaptureLinkedProfilingContext();
                 using (BeginProfiling("XREvent.AsyncActions"))
                 {
+                    object? profilingContext = CaptureLinkedProfilingContext();
                     var tasks = new Task[snapshot.Length];
                     for (int i = 0; i < snapshot.Length; i++)
                     {
@@ -122,6 +126,9 @@ namespace XREngine.Data.Core
             }
         }
 
+        /// <summary>
+        /// Runs independent, thread-safe listeners concurrently and blocks until all listeners finish.
+        /// </summary>
         public void InvokeParallel()
             => InvokeParallel(minParallelListeners: 1);
 
@@ -156,8 +163,8 @@ namespace XREngine.Data.Core
             }
             else
             {
-                object? profilingContext = CaptureLinkedProfilingContext();
                 using var actionsSample = BeginProfiling("XREvent.ParallelActions");
+                object? profilingContext = CaptureLinkedProfilingContext();
                 Parallel.For(0, Actions.Count, i =>
                     InvokeLinkedListener(Actions[i], i, profilingContext, "XREvent.ParallelAction"));
             }
@@ -252,6 +259,10 @@ namespace XREngine.Data.Core
             }
         }
 
+        /// <summary>
+        /// Runs independent, thread-safe listeners concurrently and completes after all listeners finish.
+        /// Persistent calls remain ordered and run after the concurrent listeners.
+        /// </summary>
         public async Task InvokeAsync(T item)
         {
             await WithProfilingAsync("XREvent<T>.InvokeAsync", async () =>
@@ -264,9 +275,9 @@ namespace XREngine.Data.Core
                 var snapshot = Actions.Count == 0 ? null : Actions.ToArray();
                 if (snapshot is not null)
                 {
-                    object? profilingContext = CaptureLinkedProfilingContext();
                     using (BeginProfiling("XREvent<T>.AsyncActions"))
                     {
+                        object? profilingContext = CaptureLinkedProfilingContext();
                         var tasks = new Task[snapshot.Length];
                         for (int i = 0; i < snapshot.Length; i++)
                         {

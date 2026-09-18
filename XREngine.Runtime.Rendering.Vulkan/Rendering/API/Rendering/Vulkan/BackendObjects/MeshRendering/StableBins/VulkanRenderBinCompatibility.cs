@@ -64,7 +64,7 @@ internal readonly struct VulkanRenderBinNativeCompatibility : IEquatable<VulkanR
         }
 
         for (int index = 0; index < _primitiveCount; ++index)
-            if (GetPrimitive(index) != other.GetPrimitive(index))
+            if (!GetPrimitive(index).Matches(other.GetPrimitive(index)))
                 return false;
         for (int index = 0; index < _vertexBufferCount; ++index)
             if (GetVertexBuffer(index).Handle != other.GetVertexBuffer(index).Handle ||

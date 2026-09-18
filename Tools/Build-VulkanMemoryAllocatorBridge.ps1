@@ -1,8 +1,9 @@
 param(
     [ValidateSet("Debug", "Release")]
-    [string]$Configuration = "Debug",
+    [string]$Configuration = "Release",
     [switch]$RestoreVma,
-    [switch]$ForceDownload
+    [switch]$ForceDownload,
+    [switch]$StageRuntime
 )
 
 Set-StrictMode -Version Latest
@@ -41,7 +42,12 @@ $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $projectPath = Join-Path $repoRoot "Build\Native\VulkanMemoryAllocatorBridge\VulkanMemoryAllocatorBridge.vcxproj"
 $headerPath = Join-Path $repoRoot "Build\Native\VulkanMemoryAllocatorBridge\vendor\VulkanMemoryAllocator\include\vk_mem_alloc.h"
 $dependencyScript = Join-Path $repoRoot "Tools\Dependencies\Get-VulkanMemoryAllocator.ps1"
-$nativeOutput = Join-Path $repoRoot "XREngine.Runtime.Rendering.Vulkan\runtimes\win-x64\native\VulkanMemoryAllocatorBridge.Native.dll"
+$nativeOutput = Join-Path $repoRoot "Build\_AgentValidation\00000000-000000-shared\tools\bin\VulkanMemoryAllocatorBridge\$Configuration\VulkanMemoryAllocatorBridge.Native.dll"
+$packagedOutput = Join-Path $repoRoot "XREngine.Runtime.Rendering.Vulkan\runtimes\win-x64\native\VulkanMemoryAllocatorBridge.Native.dll"
+
+if ($StageRuntime -and $Configuration -ne "Release") {
+    throw "Only Release builds may be staged into the runtime package."
+}
 
 if (-not (Test-Path $projectPath)) {
     throw "Native VMA bridge project was not found: $projectPath"
@@ -84,6 +90,12 @@ Invoke-Checked -Command $msbuild -Arguments @(
 
 if (-not (Test-Path $nativeOutput)) {
     throw "Native bridge build completed, but expected DLL was not produced: $nativeOutput"
+}
+
+if ($StageRuntime) {
+    Copy-Item -Path $nativeOutput -Destination $packagedOutput -Force
+    Write-Host "Staged Release bridge into the runtime package" -ForegroundColor Green
+    Write-Host "Package: $packagedOutput"
 }
 
 Write-Host "Built VulkanMemoryAllocatorBridge.Native.dll" -ForegroundColor Green

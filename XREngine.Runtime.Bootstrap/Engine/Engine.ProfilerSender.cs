@@ -45,6 +45,17 @@ public static partial class Engine
         return new ProfilerFramePacket
         {
             FrameTime = snapshot.FrameTime,
+            SessionEpoch = snapshot.SessionEpoch,
+            PublicationId = snapshot.PublicationId,
+            CapturedAtTicks = snapshot.CapturedAtTicks,
+            UpdateFrameId = snapshot.UpdateFrameId,
+            RenderFrameId = snapshot.RenderFrameId,
+            ActiveScopeCount = snapshot.ActiveScopeCount,
+            QueuedCompletedScopeCount = snapshot.QueuedCompletedScopeCount,
+            PendingCompletedScopeCount = snapshot.PendingCompletedScopeCount,
+            UnresolvedLinkedChildCount = snapshot.UnresolvedLinkedChildCount,
+            StaleCompletedScopeCount = snapshot.StaleCompletedScopeCount,
+            ContainsIncompleteScopes = snapshot.ContainsIncompleteScopes,
             Threads = threads,
             ThreadHistory = history ?? [],
             ComponentTimings = ConvertComponentTimings(snapshot.ComponentTimings?.Components),
@@ -62,6 +73,15 @@ public static partial class Engine
             var n = nodes[i];
             result[i] = new ProfilerNodeData
             {
+                ScopeId = n.ScopeId,
+                ParentScopeId = n.ParentScopeId,
+                SessionEpoch = n.SessionEpoch,
+                LogicalThreadId = n.LogicalThreadId,
+                ProducerThreadId = n.ProducerThreadId,
+                StartTicks = n.StartTicks,
+                EndTicks = n.EndTicks,
+                IsComplete = n.IsComplete,
+                IsLinked = n.IsLinked,
                 Name = n.Name,
                 ElapsedMs = n.ElapsedMs,
                 SelfMs = n.SelfMs,

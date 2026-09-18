@@ -52,6 +52,10 @@ internal sealed partial class VulkanCommandRuntime
                                header.OpCode == EVulkanPrimaryPlanNodeKind.MeshDraw
                                    ? EVulkanCpuStage.PrimaryMeshOperation
                                    : EVulkanCpuStage.PrimaryNonMeshOperation))
+                    using (VulkanCpuStageScope operationKindStage =
+                           new(
+                               _frameTelemetry,
+                               GetPrimaryOperationCpuStage(header.OpCode)))
                     {
                         int firstOperationIndex = operationIndex;
                         operationIndex = RecordTypedPrimaryOperation(
@@ -84,6 +88,10 @@ internal sealed partial class VulkanCommandRuntime
                            header.OpCode == EVulkanPrimaryPlanNodeKind.MeshDraw
                                ? EVulkanCpuStage.PrimaryMeshOperation
                                : EVulkanCpuStage.PrimaryNonMeshOperation))
+                using (VulkanCpuStageScope operationKindStage =
+                       new(
+                           _frameTelemetry,
+                           GetPrimaryOperationCpuStage(header.OpCode)))
                 {
                     int firstOperationIndex = operationIndex;
                     operationIndex = RecordTypedPrimaryOperation(
@@ -110,6 +118,24 @@ internal sealed partial class VulkanCommandRuntime
         }
         return true;
     }
+
+    private static EVulkanCpuStage GetPrimaryOperationCpuStage(
+        EVulkanPrimaryPlanNodeKind operationCode)
+        => operationCode switch
+        {
+            EVulkanPrimaryPlanNodeKind.AdvancedVisibility =>
+                EVulkanCpuStage.PrimaryAdvancedVisibilityOperation,
+            EVulkanPrimaryPlanNodeKind.ComputeDispatch or
+            EVulkanPrimaryPlanNodeKind.ComputeDispatchIndirect or
+            EVulkanPrimaryPlanNodeKind.DlssUpscale or
+            EVulkanPrimaryPlanNodeKind.DlssFrameGeneration =>
+                EVulkanCpuStage.PrimaryComputeOperation,
+            EVulkanPrimaryPlanNodeKind.Blit =>
+                EVulkanCpuStage.PrimaryBlitOperation,
+            EVulkanPrimaryPlanNodeKind.Clear =>
+                EVulkanCpuStage.PrimaryClearOperation,
+            _ => EVulkanCpuStage.PrimaryOtherOperation,
+        };
 
     private int RecordTypedPrimaryOperation(scoped ref PrimaryCommandBufferRecordingState state, in VulkanPrimaryPlanNode node, in FrameOperationHeader header, int index, int passIndex = int.MinValue)
     {
@@ -226,7 +252,13 @@ internal sealed partial class VulkanCommandRuntime
         scoped ref PrimaryCommandBufferRecordingState state,
         in VulkanAdvancedVisibilityOperationPayload payload,
         in VulkanPrimaryOperationRecordingInfo info)
-        => (payload.Request.Stage, payload.Request.Phase) switch
+    {
+        using VulkanCpuStageScope stage = new(
+            _frameTelemetry,
+            GetAdvancedVisibilityCpuStage(
+                payload.Request.Stage,
+                payload.Request.Phase));
+        return (payload.Request.Stage, payload.Request.Phase) switch
         {
             (EAdvancedRenderStage.VisibilityPreparation, EAdvancedVisibilityStageBackendPhase.Complete) =>
                 RecordAdvancedVisibilityPreparationPayload(
@@ -248,6 +280,36 @@ internal sealed partial class VulkanCommandRuntime
                 RecordAdvancedNativeComputePayload(ref state, in payload, in info),
             _ => throw new VulkanPlanPreconditionException(
                 $"Advanced visibility stage '{payload.Request.Stage}' phase '{payload.Request.Phase}' is outside the admitted physical family."),
+        };
+    }
+
+    private static EVulkanCpuStage GetAdvancedVisibilityCpuStage(
+        EAdvancedRenderStage stage,
+        EAdvancedVisibilityStageBackendPhase phase)
+        => (stage, phase) switch
+        {
+            (EAdvancedRenderStage.VisibilityPreparation,
+                EAdvancedVisibilityStageBackendPhase.Complete) =>
+                EVulkanCpuStage.PrimaryAdvancedPreparationOperation,
+            (EAdvancedRenderStage.VisibilityRaster,
+                EAdvancedVisibilityStageBackendPhase.Complete) =>
+                EVulkanCpuStage.PrimaryAdvancedRasterOperation,
+            (EAdvancedRenderStage.DepthPyramidAndLateVisibility,
+                EAdvancedVisibilityStageBackendPhase.LateCompute) =>
+                EVulkanCpuStage.PrimaryAdvancedLateComputeOperation,
+            (EAdvancedRenderStage.DepthPyramidAndLateVisibility,
+                EAdvancedVisibilityStageBackendPhase.LateRaster) =>
+                EVulkanCpuStage.PrimaryAdvancedLateRasterOperation,
+            (EAdvancedRenderStage.WorkClassification,
+                EAdvancedVisibilityStageBackendPhase.Complete) =>
+                EVulkanCpuStage.PrimaryAdvancedClassificationOperation,
+            (EAdvancedRenderStage.AmbientOcclusion,
+                EAdvancedVisibilityStageBackendPhase.Complete) =>
+                EVulkanCpuStage.PrimaryAdvancedAmbientOcclusionOperation,
+            (EAdvancedRenderStage.NativeOpaqueShading,
+                EAdvancedVisibilityStageBackendPhase.Complete) =>
+                EVulkanCpuStage.PrimaryAdvancedNativeShadingOperation,
+            _ => EVulkanCpuStage.PrimaryOtherOperation,
         };
 
     private int RecordAdvancedVisibilityPreparationPayload(
@@ -717,27 +779,38 @@ internal sealed partial class VulkanCommandRuntime
                         "Stable visibility raster view segment overflowed the sealed set-1 ABI.");
                 }
             }
-            if (!VulkanStableBinSubmissionLowering.TryLower(
-                    plan,
-                    in header,
-                    in indirectRange,
-                    in visibilityState,
-                    out VulkanStableBinSubmission submission,
-                    out VulkanStableBinSubmissionLoweringFailure lowerFailure))
+            VulkanStableBinSubmission submission;
             {
-                throw new VulkanPlanPreconditionException(
-                    $"Stable visibility bin lowering failed after sealing: {lowerFailure}.");
+                using VulkanCpuStageScope loweringStage = new(
+                    _frameTelemetry,
+                    EVulkanCpuStage.PrimaryAdvancedRasterLoweringOperation);
+                if (!VulkanStableBinSubmissionLowering.TryLower(
+                        plan,
+                        in header,
+                        in indirectRange,
+                        in visibilityState,
+                        out submission,
+                        out VulkanStableBinSubmissionLoweringFailure lowerFailure))
+                {
+                    throw new VulkanPlanPreconditionException(
+                        $"Stable visibility bin lowering failed after sealing: {lowerFailure}.");
+                }
             }
 
-            BindPipelineTracked(
-                state.CommandBuffer,
-                PipelineBindPoint.Graphics,
-                raster.Pipeline);
-            BindAdvancedVisibilityDescriptorSets(
-                state.CommandBuffer,
-                PipelineBindPoint.Graphics,
-                raster.PipelineLayout,
-                in payload);
+            using (VulkanCpuStageScope bindingStage = new(
+                       _frameTelemetry,
+                       EVulkanCpuStage.PrimaryAdvancedRasterBindingOperation))
+            {
+                BindPipelineTracked(
+                    state.CommandBuffer,
+                    PipelineBindPoint.Graphics,
+                    raster.Pipeline);
+                BindAdvancedVisibilityDescriptorSets(
+                    state.CommandBuffer,
+                    PipelineBindPoint.Graphics,
+                    raster.PipelineLayout,
+                    in payload);
+            }
 
             VulkanResidentDrawTemplateNativeState native = header.NativeState;
             ReadOnlySpan<VulkanPreparedStableBinRecord> records =
@@ -756,25 +829,34 @@ internal sealed partial class VulkanCommandRuntime
                 records[0].VisibilityGeometryClosure;
             VulkanAdvancedScenePublicationState sealedSceneState =
                 payload.SceneState;
-            for (int recordIndex = 0; recordIndex < records.Length; ++recordIndex)
+            using (VulkanCpuStageScope validationStage = new(
+                       _frameTelemetry,
+                       EVulkanCpuStage.PrimaryAdvancedRasterValidationOperation))
             {
-                VulkanVisibilityGeometryRecordClosure recordClosure =
-                    records[recordIndex].VisibilityGeometryClosure;
-                string closureReason =
-                    "the geometry range does not share its bin publication";
-                if (recordClosure.PreparedVertexSource !=
-                        geometryClosure.PreparedVertexSource ||
-                    recordClosure.IndexSlice != geometryClosure.IndexSlice ||
-                    !recordClosure.TryValidate(
-                        ResourceRuntime,
-                        in sealedSceneState,
-                        out closureReason))
+                for (int recordIndex = 0; recordIndex < records.Length; ++recordIndex)
                 {
-                    throw new VulkanPlanPreconditionException(closureReason);
+                    VulkanVisibilityGeometryRecordClosure recordClosure =
+                        records[recordIndex].VisibilityGeometryClosure;
+                    string closureReason =
+                        "the geometry range does not share its bin publication";
+                    if (!recordClosure.PreparedVertexSource.Matches(
+                            geometryClosure.PreparedVertexSource) ||
+                        !recordClosure.IndexSlice.Matches(
+                            geometryClosure.IndexSlice) ||
+                        !recordClosure.TryValidate(
+                            ResourceRuntime,
+                            in sealedSceneState,
+                            out closureReason))
+                    {
+                        throw new VulkanPlanPreconditionException(closureReason);
+                    }
                 }
             }
             if (!meshlet)
             {
+                using VulkanCpuStageScope bindingStage = new(
+                    _frameTelemetry,
+                    EVulkanCpuStage.PrimaryAdvancedRasterBindingOperation);
                 for (int bindingIndex = 0;
                      bindingIndex < native.VertexBufferCount;
                      ++bindingIndex)
@@ -794,6 +876,9 @@ internal sealed partial class VulkanCommandRuntime
 
             if (plan.ResolvedStrategy == EMeshSubmissionStrategy.CpuDirect)
             {
+                using VulkanCpuStageScope cpuDirectStage = new(
+                    _frameTelemetry,
+                    EVulkanCpuStage.PrimaryAdvancedCpuDirectDrawOperation);
                 PushConstantsTracked(
                     state.CommandBuffer,
                     raster.PipelineLayout,

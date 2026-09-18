@@ -75,10 +75,10 @@
                     return;
                 }
 
-                object? profilingContext = CaptureLinkedProfilingContext();
                 var tasks = new Task<bool>[snapshot.Length];
                 using (BeginProfiling("XRBoolEvent<T>.AsyncActions"))
                 {
+                    object? profilingContext = CaptureLinkedProfilingContext();
                     for (int i = 0; i < snapshot.Length; i++)
                     {
                         Func<T, bool> listener = snapshot[i];
@@ -118,8 +118,8 @@
                 }
 
                 int allTrue = 1;
-                object? profilingContext = CaptureLinkedProfilingContext();
                 using var actionsSample = BeginProfiling("XRBoolEvent<T>.ParallelActions");
+                object? profilingContext = CaptureLinkedProfilingContext();
                 Parallel.For(0, snapshot.Length, (i, state) =>
                 {
                     if (Volatile.Read(ref allTrue) == 0)
@@ -191,10 +191,10 @@
                     return;
                 }
 
-                object? profilingContext = CaptureLinkedProfilingContext();
                 var tasks = new List<Task<bool>>(snapshot.Length);
                 using (BeginProfiling("XRBoolEvent<T>.AsyncActions"))
                 {
+                    object? profilingContext = CaptureLinkedProfilingContext();
                     for (int i = 0; i < snapshot.Length; i++)
                     {
                         Func<T, bool> listener = snapshot[i];
@@ -240,8 +240,8 @@
                 }
 
                 int anyTrue = 0;
-                object? profilingContext = CaptureLinkedProfilingContext();
                 using var actionsSample = BeginProfiling("XRBoolEvent<T>.ParallelActions");
+                object? profilingContext = CaptureLinkedProfilingContext();
                 Parallel.For(0, snapshot.Length, (i, state) =>
                 {
                     if (Volatile.Read(ref anyTrue) != 0)

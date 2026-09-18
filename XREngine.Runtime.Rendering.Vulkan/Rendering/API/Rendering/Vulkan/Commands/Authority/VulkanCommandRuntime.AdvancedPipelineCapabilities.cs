@@ -429,58 +429,9 @@ internal sealed partial class VulkanCommandRuntime
         }
 
         // Target-specific image/view closure is sealed against the accepted
-        // frame plan. Capability synthesis covers only device/runtime support;
-        // it must not allocate or intern per-frame image views.
-        using VulkanProgramLinkPreparationScope programPreparation =
-            new(ResourceRuntime);
-        VulkanAdvancedVisibilityPipelineRuntime pipelines =
-            ResourceRuntime.AdvancedVisibilityPipelines;
-        VulkanAdvancedVisibilityPipelineReadiness computeReadiness =
-            pipelines.TryGetComputePipelines(out _, out _, out failureReason);
-        if (computeReadiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
-            return computeReadiness;
-
-        VulkanAdvancedVisibilityPipelineReadiness lateComputeReadiness =
-            pipelines.TryGetLateVisibilityComputePipelines(out _, out _, out failureReason);
-        if (lateComputeReadiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
-            return lateComputeReadiness;
-
-        VulkanAdvancedVisibilityPipelineReadiness nativeComputeReadiness =
-            pipelines.TryGetNativeComputePipelines(out _, out failureReason);
-        if (nativeComputeReadiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
-            return nativeComputeReadiness;
-
-        if (!pipelines.TryGetRasterProgram(
-                EAdvancedMaterialCoverageMode.Opaque,
-                meshlet: false,
-                out _,
-                out failureReason) ||
-            !pipelines.TryGetRasterProgram(
-                EAdvancedMaterialCoverageMode.Masked,
-                meshlet: false,
-                out _,
-                out failureReason))
-        {
-            return VulkanAdvancedVisibilityPipelineReadiness.Failed;
-        }
-
-        if (DeviceContext.SupportsMeshTaskIndirectCount &&
-            (!pipelines.TryGetRasterProgram(
-                EAdvancedMaterialCoverageMode.Opaque,
-                meshlet: true,
-                out _,
-                out failureReason) ||
-             !pipelines.TryGetRasterProgram(
-                EAdvancedMaterialCoverageMode.Masked,
-                meshlet: true,
-                out _,
-                out failureReason)))
-        {
-            return VulkanAdvancedVisibilityPipelineReadiness.Failed;
-        }
-
-        failureReason = "Ready";
-        return VulkanAdvancedVisibilityPipelineReadiness.Ready;
+        // frame plan. This poll only schedules or observes the generation-owned
+        // family preparation task; it never links or joins compiler work.
+        return ResourceRuntime.AdvancedVisibilityPipelines.GetReadiness(out failureReason);
     }
 
     internal ERvcDescriptorBackend RvcDescriptorBackend => ResourceRuntime.Descriptors.ActiveDescriptorBackend switch

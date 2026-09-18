@@ -55,7 +55,8 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
     private readonly Dictionary<string, ProfilerRootMethodAggregate> _rootMethodCache = new();
     private float _persistenceSeconds = 5.0f;
     private float _updateIntervalSeconds = 0.5f;
-    private float _lastEnqueuedFrameTime = float.NegativeInfinity;
+    private long _lastEnqueuedSessionEpoch = long.MinValue;
+    private long _lastEnqueuedPublicationId = long.MinValue;
     private DateTime _lastDisplayRefreshUtc = DateTime.MinValue;
 
     // Worst-frame rolling window
@@ -294,10 +295,11 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
 
         if (frame is not null)
         {
-            hasNewFrame = frame!.FrameTime != _lastEnqueuedFrameTime;
+            hasNewFrame = frame!.SessionEpoch != _lastEnqueuedSessionEpoch || frame.PublicationId != _lastEnqueuedPublicationId;
             if (hasNewFrame)
             {
-                _lastEnqueuedFrameTime = frame.FrameTime;
+                _lastEnqueuedSessionEpoch = frame.SessionEpoch;
+                _lastEnqueuedPublicationId = frame.PublicationId;
                 var history = visibility.NeedsThreadTiming ? frame.ThreadHistory ?? [] : [];
 
                 if (hasFrame)

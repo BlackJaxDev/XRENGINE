@@ -2,7 +2,7 @@
 
 Last Updated: 2026-09-18
 Owner: Rendering, with Profiler, Runtime Core, and ImGui Editor owners per item
-Status: S00 Blocked on motion p99 observer overhead; S00a Validated; S01/S02 Blocked
+Status: S00/S00a/S01/S02 Validated; S03 Active with implementation complete and validation partial
 Execution: One fix at a time, with a mandatory validation gate after each fix
 
 ## Purpose And Ownership
@@ -38,14 +38,26 @@ Keep durable results in the linked investigation and concise gate status here.
   named method's exclusive cost.
 - The resumed probe presented `TsrOutputTexture`. That proves participation in
   the presentation path, not correct history identity or absence of ghosting.
-- The strict Release matrix completed three alternating profiler-off/on pairs
-  with stable workload identity, verified camera motion, admitted images and
-  approximately 10-11 ms average render cost. It did not reproduce the original
-  153-165 ms CPU report. A repaired final matrix reduced median render cost to
-  6.5-7.2 ms and cleared GPU coverage, exact loss, retention, native occupancy,
-  backlog, mean-overhead, stationary-tail, and motion-p95 gates. S00 still fails
-  because profiler-on motion p99 is 15.268 ms versus 10.389 ms off, a 46.96%
-  increase against the predeclared 10.85% disabled-run-spread allowance.
+- The historical repaired Release matrix failed motion p99 observer overhead.
+  A superseding current-HEAD matrix at revision `a1f9408e5` completed three
+  alternating profiler-off/on pairs with the same workload identity, verified
+  camera motion, admitted images, 99.625-99.643% motion GPU coverage, zero
+  diagnostic loss, and passing retention/backlog gates. Paired motion p99 deltas
+  were -1.00%, +3.94%, and +6.43%, below the 13.67% disabled-run spread.
+  S00 is Validated; this does not make the measured motion smooth.
+- The current matrix confirms a separate periodic motion hitch with either
+  profiler state: frames above 55 ms recur every 0.282-0.301 seconds median,
+  usually four render frames apart with adjacent-frame bursts. Render time
+  correlates 0.98-1.00 with CPU Vulkan recording and only 0.03-0.10 with GPU
+  time. Slow frames add about 28.5 ms in primary recording, dominated by the
+  primary operation loop, prewarm, packet lowering, and `vkEndCommandBuffer`.
+  This is entry evidence for S02, not observer overhead.
+- S02 localized recurring warmed allocation to generated value equality in the
+  Advanced visibility raster lane. Explicit handle/scalar identity checks removed
+  245,232 bytes from the median Advanced visibility operation (337,176 -> 58,376)
+  while preserving the warmed 393-draw workload. A matched profile-capture A/B
+  reduced primary-recording median from 16.601 to 7.097 ms and p95 from 58.656
+  to 36.934 ms. Rare whole-frame tails and the 18-25 ms GPU workload remain.
 - Controlled TSR motion produced ready history and finite nonzero velocity, but
   the viewed path was not discriminating enough to resolve the reported ghosting.
   Frame-authoritative profiler telemetry now reports the active TSR mode instead
@@ -135,11 +147,11 @@ gate record. No item is complete merely because this checklist was written.
 
 | ID | Item | Entry dependency | Initial status |
 | --- | --- | --- | --- |
-| S00 | [Comparable baseline and evidence manifest](../../investigations/rendering/2026-09-16-vulkan-last-run-diagnostics.md#s00-gate-record-comparable-baseline-and-evidence-manifest) | None | Blocked (repaired matrix passes all evidence gates but fails motion p99 observer allowance) |
+| S00 | [Comparable baseline and evidence manifest](../../investigations/rendering/2026-09-16-vulkan-last-run-diagnostics.md#s00-gate-record-comparable-baseline-and-evidence-manifest) | None | Validated (current-HEAD three-pair matrix passes observer, coverage, loss, retention, and backlog gates) |
 | S00a | Export existing coarse GPU timing provenance | S00 instrumentation prerequisite | Validated (GPU identity and symmetric clean profiler toggle proven live) |
-| S01 | [Correct profiler duration/identity reporting](../../investigations/rendering/2026-09-16-vulkan-last-run-diagnostics.md#s01-gate-record-correct-profiler-duration-and-identity-reporting) | S00 | Blocked (partial implementation; test clearance pending) |
-| S02 | Attribute warmed recording and waits | S01 | Pending |
-| S03 | Nonblocking Advanced pipeline readiness | S02, confirmed cold-path trigger | Pending |
+| S01 | [Correct profiler duration/identity reporting](../../investigations/rendering/2026-09-16-vulkan-last-run-diagnostics.md#s01-gate-record-correct-profiler-duration-and-identity-reporting) | S00 | Validated (normal, linked async/parallel, and lifecycle identity proven) |
+| S02 | Attribute warmed recording and waits | S01 | Validated (boxed stable-bin identity comparisons identified and removed; matched live A/B passed) |
+| S03 | Nonblocking Advanced pipeline readiness | S02, confirmed cold-path trigger | Active (implementation complete; timing and unavailable-capability gates remain) |
 | S04 | Dependency-scoped compile invalidation | S03, lifetime design review | Pending |
 | S05 | Cache publication and foreground native creation | S04, measured remaining cost | Pending |
 | S06 | Bounded initial resource materialization | S02; default after S05 disposition | Pending |
@@ -177,64 +189,92 @@ gate record. No item is complete merely because this checklist was written.
 Gate: evidence is reproducible and budgets are recorded. If the 153-165 ms
 regression cannot be reproduced, retain that unresolved result while addressing
 independently confirmed mechanisms. Do not delete user caches to force cold runs.
-Status: Blocked. S00a's clean profiler toggle prerequisite is validated, and the
-repaired Release matrix completed three matched 60-second off/on pairs with stable
-scene admission, verified camera motion, and viewed-image admission. All six runs
-now exceed 99% coarse-GPU coverage and pass exact diagnostic-loss, settled
-managed/private-memory, native-resource, descriptor-set, and required-job/retire
-backlog gates. Mean overhead and stationary p95/p99 plus motion p95 pass. Motion
-p99 remains Blocked at 15.268 ms on versus 10.389 ms off, a 46.96% increase
-against the 10.85% disabled-run-spread allowance. Preserve the original CPU
-regression, image corruption, and TSR ghosting as unresolved; do not begin S01 or
-S02 (see [S00 Gate Record](../../investigations/rendering/2026-09-16-vulkan-last-run-diagnostics.md#s00-gate-record-comparable-baseline-and-evidence-manifest)).
+Status: Validated. S00a's clean profiler toggle prerequisite and the superseding
+current-HEAD Release matrix pass. Three matched 60-second off/on pairs retained
+one workload identity, verified camera motion, exceeded 99% coarse-GPU coverage,
+and passed exact diagnostic-loss, settled managed/private-memory, native-resource,
+descriptor-set, and required-job/retire backlog gates. Paired motion p99 changes
+of -1.00%, +3.94%, and +6.43% remain within the 13.67% disabled-run spread;
+positive paired mean changes are at most +0.116 ms. Preserve the original CPU
+regression, image corruption, TSR ghosting, and newly quantified periodic
+recording hitch as unresolved. S01 may proceed; S02 remains blocked on S01 (see
+[S00 Gate Record](../../investigations/rendering/2026-09-16-vulkan-last-run-diagnostics.md#s00-gate-record-comparable-baseline-and-evidence-manifest)).
 
 ## S01. Correct Profiler Attribution
 
 Anchor: [Engine.CodeProfiler.cs](../../../../XREngine.Runtime.Bootstrap/Engine/Subclasses/Engine.CodeProfiler.cs#L1551).
 
-- [ ] Define root-inclusive, selected-child-inclusive, synchronous self-time and
+- [x] Define root-inclusive, selected-child-inclusive, synchronous self-time and
   active-scope elapsed fields with matching name, kind, frame/thread and timestamp.
-- [ ] Keep wall-clock self-time distinct from on-CPU execution. Treat overlapping
+- [x] Keep wall-clock self-time distinct from on-CPU execution. Treat overlapping
   cross-thread spans, incomplete roots and stale snapshots explicitly.
-- [ ] Update affected log/export/UI consumers so a new leaf duration cannot be
+- [x] Update affected log/export/UI consumers so a new leaf duration cannot be
   misread as the old root field. Reuse the shared telemetry contract and document
   changed field meanings; avoid an unrelated profiler rewrite.
-- [ ] Validate a captured completed hierarchy with a larger parent and smaller
+- [x] Validate a captured completed hierarchy with a larger parent and smaller
   child, sibling work, explicit waiting, and an active/incomplete scope. Recompute
   the expected fields from captured spans rather than trusting the formatted log.
-- [ ] Validate concurrent thread/frame identity and enabled/disabled profiling;
+- [x] Validate concurrent thread/frame identity and enabled/disabled profiling;
   confirm no new per-frame allocations or unacceptable observer overhead.
 
 Gate: labels and values describe the same scope, self-time accounting is coherent,
 and historical root-only values remain clearly identified. Do not add a new test
 method or synthetic test suite before test clearance; use captured runtime spans.
-Status: Blocked; partial implementation retained, baseline and attribution repairs required (see [S01 Gate Record](../../investigations/rendering/2026-09-16-vulkan-last-run-diagnostics.md#s01-gate-record-correct-profiler-duration-and-identity-reporting); test clearance pending).
+Status: Validated. Explicit scope, parent,
+producer-thread, logical-thread, session-epoch, publication and frame identity are
+implemented and propagated through dumps, packets and UI. A 1,395-node live dump
+had no duplicate IDs, missing parents, hierarchy mismatches, logical-thread
+mismatches, invalid intervals, children outside parent intervals or incomplete
+published nodes. A profiler off/on cycle advanced epochs 2 -> 3 -> 4 and surfaced
+13 then 24 rejected stale completions without attaching them to the new session.
+Focused `InvokeAsync` and `InvokeParallel` validation now proves linked listener
+parentage, logical/producer thread identity, timestamp containment, completion,
+publication deferral and synchronous self-time exclusion. These APIs remain
+explicit opt-ins for independent, thread-safe listeners; no existing engine
+event has a sufficiently broad thread-safety contract for automatic conversion.
+See the
+[S01 Gate Record](../../investigations/rendering/2026-09-16-vulkan-last-run-diagnostics.md#s01-gate-record-correct-profiler-duration-and-identity-reporting).
 
 ## S02. Attribute The Actual Warmed Bottleneck
 
 Anchors: [primary recording](../../../../XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Commands/CommandBuffers/Recording/Primary/VulkanRenderer.CommandBufferRecording.Primary.Operations.cs)
 and the [profiler guide](../../../developer-guides/diagnostics/profiler.md).
 
-- [ ] Capture a completed warmed long frame, with coarse recording children and
+- [x] Capture a completed warmed long frame, with coarse recording children and
   operation kind/count/bytes. Add only the missing bounded instrumentation and
   validate that instrumentation as its own change before optimization.
-- [ ] Correlate lock/worker waits, native calls, allocation/GC pauses, JIT,
+- [x] Correlate lock/worker waits, native calls, allocation/GC pauses, JIT,
   scheduling, queue pressure and frame/output/generation identities.
-- [ ] Use managed wait/contention/GC evidence and, when needed, Windows ETW native
+- [x] Use managed wait/contention/GC evidence and, when needed, Windows ETW native
   stacks/context switches. EventPipe stack sampling alone is not on-CPU evidence.
   Check installed tool versions; operator-run elevation may be required for ETW.
-- [ ] Identify the critical-path owner rather than summing overlapping CPU/GPU
+- [x] Identify the critical-path owner rather than summing overlapping CPU/GPU
   intervals or assigning downstream `WaitForRender` time to useful update work.
-- [ ] For detailed captures, satisfy the existing hardening contract: account for
+- [x] For detailed captures, satisfy the existing hardening contract: account for
   at least 99% of the root interval and expose unattributed gaps of 50 us or more.
   If collection cannot support that, retain an explicit attribution blocker.
-- [ ] Select the next measured fix and record whether it affects startup, reload,
+- [x] Select the next measured fix and record whether it affects startup, reload,
   warm recording, GPU work, or multiple regimes. Separate the warmed 18-25 ms GPU
   workload from CPU remedies; do not promise 60 Hz from a CPU-only change.
 
 Gate: enough correctly attributed evidence exists to choose a bounded change.
 If waiting/GC dominates, reject an unsupported algorithmic optimization and route
 the next item to that owner with the same one-by-one protocol.
+Status: Validated. Sparse and dense managed-allocation captures first separated
+profile-row observer cost from render-thread work. Operation-family and raster
+substage counters then identified deterministic 528-byte closure-validation and
+96-byte stable-bin-lowering allocations for each of 393 records. Both came from
+generated record-struct equality traversing nested Silk.NET Vulkan handle values;
+explicit scalar/handle comparisons preserve the same identities without boxing.
+The final detailed window had zero bytes in validation, lowering, binding and
+CPU-direct draw substages, at least 99.942% frame attribution, and no unattributed
+gap above 7 us. The matched labels-off/profiler-off CleanProfile capture improved
+CPU recording and GC distributions without changing CpuDirect workload identity.
+This closes attribution and the bounded warm-recording correction, not the
+original unreproduced 153-165 ms report, rare whole-frame tails, TSR correctness,
+or the independent GPU budget. S03 remains Pending because no recurring cold
+pipeline-readiness trigger was observed. See the
+[S02 Gate Record](../../investigations/rendering/2026-09-16-vulkan-last-run-diagnostics.md#s02-gate-record-warmed-recording-allocation-attribution).
 
 ## S03. Make Advanced Readiness Nonblocking
 
@@ -244,14 +284,14 @@ and [program linking](../../../../XREngine.Runtime.Rendering.Vulkan/Rendering/AP
 
 - [ ] Measure source compilation, linking, native pipeline work and foreground
   joins separately during the first required Advanced family and after reload.
-- [ ] Inventory the complete required family: early/late/native compute, opaque/
+- [x] Inventory the complete required family: early/late/native compute, opaque/
   masked raster and supported view/mesh variants. Establish preparation ownership
   outside readiness polling, reusing existing queues and prewarm records.
-- [ ] Implement explicit Missing/Pending/Ready/Failed transitions. Polling must
+- [x] Implement explicit Missing/Pending/Ready/Failed transitions. Polling must
   not synchronously link, compile or wait, and repeated polls must not duplicate
   requests or reset progress. Avoid changing only the async boolean while the
   enclosing synchronous-preparation scope still overrides it.
-- [ ] Publish only a complete compatible family. Preserve previous output only
+- [x] Publish only a complete compatible family. Preserve previous output only
   where its contract permits; otherwise report pending/loading. Never silently
   omit required draws or substitute a CPU/backend fallback.
 - [ ] Validate cold miss, warm hit, delayed completion, unavailable capability,
@@ -262,6 +302,19 @@ and [program linking](../../../../XREngine.Runtime.Rendering.Vulkan/Rendering/AP
 Gate: readiness does no foreground compilation/join, outcomes remain correct,
 target stalls improve within budget, and missing/failed work remains visible.
 Split preparation and admission changes into child gates if independently staged.
+
+Status: Active. The generation-owned family preparation task, explicit readiness
+states, nonblocking shader artifact polling, complete-family publication, reload
+identity handling, failed-revision recovery, superseded-task draining, and
+idempotent shutdown are implemented. Cold, warm, delayed double-reload, injected
+compile failure, same-process recovery, exact admission, repeated polling, and
+shutdown passed in isolated Vulkan editor sessions. The remaining closure work is
+to record separate source/link/native/foreground-join timings for cold and reload
+paths and exercise a genuinely unavailable device capability. Target-specific
+native graphics pipeline creation remains S05; global invalidation maintenance
+and mutation-scope localization remain S04. The independent canonical texture
+`SourceMismatch` still prevents a visual-quality pass and is not an S03 readiness
+failure. See [S03 Gate Record](../../investigations/rendering/2026-09-16-vulkan-last-run-diagnostics.md#s03-gate-record-nonblocking-advanced-readiness).
 
 ## S04. Localize Compile Invalidation Safely
 
