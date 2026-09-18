@@ -411,14 +411,7 @@ internal static class ProfilerDiagnosticDumps
     }
 
     private static float CalculateSelfMs(Engine.CodeProfiler.ProfilerNodeSnapshot node)
-    {
-        float childTotal = 0.0f;
-        IReadOnlyList<Engine.CodeProfiler.ProfilerNodeSnapshot> children = node.Children;
-        for (int i = 0; i < children.Count; i++)
-            childTotal += children[i].ElapsedMs;
-
-        return Math.Max(0.0f, node.ElapsedMs - childTotal);
-    }
+        => node.SelfMs;
 
     private static float CalculateClassifiedTotalMs(Engine.CodeProfiler.ProfilerNodeSnapshot node)
         => Math.Max(0.0f, node.ElapsedMs - CalculateDownstreamRenderPressureMs(node));

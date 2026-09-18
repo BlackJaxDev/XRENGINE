@@ -704,6 +704,7 @@ public static partial class Engine
             AppendStringField(s_lineBuilder, "profile_mode", metadata.ProfileMode, ref first);
             AppendStringField(s_lineBuilder, "profile_suitability", metadata.ProfileSuitability, ref first);
             AppendBoolField(s_lineBuilder, "profile_comparison_suitable", metadata.ProfileComparisonSuitable, ref first);
+            AppendBoolField(s_lineBuilder, "code_profiler_frame_logging_enabled", Engine.Profiler.EnableFrameLogging, ref first);
             AppendBoolField(s_lineBuilder, "profile_promotion_eligible", metadata.ProfilePromotionEligible, ref first);
             AppendBoolField(s_lineBuilder, "profile_intrusive", metadata.ProfileIntrusive, ref first);
             AppendBoolField(s_lineBuilder, "vulkan_command_buffer_labels_enabled", metadata.VulkanCommandBufferLabelsEnabled, ref first);
@@ -1145,6 +1146,15 @@ public static partial class Engine
 #endif
             AppendNumberField(s_lineBuilder, "vulkan_frame_total_ms", vulkanFrame.TotalElapsed.TotalMilliseconds, ref first);
             AppendNumberField(s_lineBuilder, "vulkan_frame_gpu_command_buffer_ms", RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameGpuCommandBufferMs, ref first);
+            VulkanGpuCommandBufferTimingSnapshot gpuCommandBufferTiming = RuntimeEngine.Rendering.Stats.Vulkan.VulkanFrameGpuCommandBufferTimingSnapshot;
+            AppendNumberField(s_lineBuilder, "vulkan_gpu_timing_current_availability", (int)gpuCommandBufferTiming.Current.Availability, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_gpu_timing_current_source_frame_id", gpuCommandBufferTiming.Current.SourceRenderFrameId, ref first);
+            AppendBoolField(s_lineBuilder, "vulkan_gpu_timing_completed", gpuCommandBufferTiming.LastCompleted.IsCompleted, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_gpu_timing_source_frame_id", gpuCommandBufferTiming.LastCompleted.SourceRenderFrameId, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_gpu_timing_age_frames", gpuCommandBufferTiming.LastCompleted.AgeFrames, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_gpu_timing_sequence", gpuCommandBufferTiming.LastCompleted.Sequence, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_gpu_timing_image_slot", gpuCommandBufferTiming.LastCompleted.ImageSlot, ref first);
+            AppendNumberField(s_lineBuilder, "vulkan_gpu_timing_elapsed_nanoseconds", gpuCommandBufferTiming.LastCompleted.ElapsedNanoseconds, ref first);
             AppendStringField(s_lineBuilder, "vulkan_presentation_profile_requested", vulkanFrame.PresentationProfile.RequestedProfile.ToString(), ref first);
             AppendStringField(s_lineBuilder, "vulkan_presentation_profile_resolved", vulkanFrame.PresentationProfile.ResolvedProfile.ToString(), ref first);
             AppendStringField(s_lineBuilder, "vulkan_present_mode", vulkanFrame.PresentationProfile.PresentMode.ToString(), ref first);
@@ -2281,6 +2291,7 @@ public static partial class Engine
             ValidateEnvFlag(errors, XREngineEnvironmentVariables.ProfilerEnabled);
             ValidateEnvFlag(errors, XREngineEnvironmentVariables.ProfileCapture);
             ValidateEnvFlag(errors, XREngineEnvironmentVariables.ProfileAutoDump);
+            ValidateEnvFlag(errors, XREngineEnvironmentVariables.ProfileCodeProfiler);
             ValidateEnvFlag(errors, XREngineEnvironmentVariables.P3Logging);
             ValidateEnvFlag(errors, XREngineEnvironmentVariables.BucketLoopDryRun);
             ValidateEnvFlag(errors, XREngineEnvironmentVariables.SkipCommandSwapIfClean);

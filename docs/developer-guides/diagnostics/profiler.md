@@ -286,6 +286,18 @@ instrumentation takes the uncontended `TryEnter` fast path without reading the
 clock; only contended intervals of at least 0.1 ms are retained in the bounded
 per-frame payload.
 
+Coarse Vulkan GPU samples include `vulkan_gpu_timing_completed`,
+`vulkan_gpu_timing_source_frame_id`, `vulkan_gpu_timing_sequence`,
+`vulkan_gpu_timing_age_frames`, `vulkan_gpu_timing_image_slot`, and
+`vulkan_gpu_timing_elapsed_nanoseconds`. These describe the retained completed
+query, not necessarily the CPU frame on that row. Deduplicate by sequence and
+correlate by source frame before computing distributions; count missing queries
+explicitly. `vulkan_gpu_timing_current_availability` and
+`vulkan_gpu_timing_current_source_frame_id` describe the separate live query.
+The availability value is the numeric `EVulkanGpuTimingAvailability` enum.
+The legacy `vulkan_frame_gpu_command_buffer_ms` remains a frame-swapped scalar
+and must not be used as proof of a new completed query.
+
 The in-process and UDP profiler sources materialize the same diagnostic tree
 only when a profiler packet is requested; the renderer's aggregate publication
 remains allocation-free. The ImGui profiler presents a collapsible root with
@@ -528,6 +540,12 @@ process-local normal-verbosity, validation-off, command-label-off, P3-off, GPU
 indirect diagnostic-logging-off, Vulkan diagnostic-trace-off, and ImGui-off
 overrides before renderer creation without changing persisted user or game
 settings.
+
+Launch-time frame capture enables CodeProfiler by default. Set
+`XRE_PROFILE_CODE_PROFILER=0`, or pass `-CodeProfiler Disabled` to
+`Measure-GameLoopRenderPipeline.ps1`, to retain render statistics and frame
+capture while disabling CodeProfiler for observer-overhead comparisons. This
+override is process-local and does not change editor preferences.
 
 Warmup covers shader/pipeline and texture residency. Capture begins only after
 the existing stability window reports a stable workload and no streaming or

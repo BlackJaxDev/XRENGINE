@@ -202,8 +202,6 @@ internal partial class Program
             // Unsubscribe self to ensure this only runs once, before the first window creation during engine startup
             Engine.BeforeCreateWindows -= BeforeWindowsCreated;
 
-            TraceBootstrapStep("BeforeCreateWindows.ApplyStartupProfilerPreferences", ApplyStartupProfilerPreferences);
-
             // Unit-test values were registered before Engine.Run. Loading project or
             // sandbox assets republishes the detached effective projections automatically.
             WriteBootstrapTrace($"Unit-test session settings active: Render={XREngine.Engine.EffectiveSettings.PreferredRenderBackend}, Physics={XREngine.Engine.EffectiveSettings.PhysicsLibrary}");
@@ -227,6 +225,7 @@ internal partial class Program
             // MCP and profiler startup may persist editor preferences, which recomputes the effective preference
             // object. Apply unit-test-only choices last so pipeline selection observes them during window creation.
             TraceBootstrapStep("BeforeCreateWindows.UnitTest_Init", UnitTest_Init);
+            TraceBootstrapStep("BeforeCreateWindows.ApplyStartupProfilerPreferences", ApplyStartupProfilerPreferences);
         }
         Engine.BeforeCreateWindows += BeforeWindowsCreated;
         try
@@ -696,9 +695,11 @@ internal partial class Program
             return;
         }
 
+        bool enableCodeProfiler = ResolveOptionalEnvironmentFlag(
+            XREngineEnvironmentVariables.ProfileCodeProfiler) ?? true;
         Engine.SetSessionSetting<EditorPreferences, bool>(
             preferences => preferences.Debug.EnableProfilerFrameLogging,
-            true);
+            enableCodeProfiler);
         Engine.SetSessionSetting<EditorPreferences, bool>(
             preferences => preferences.Debug.EnableRenderStatisticsTracking,
             true);
@@ -706,8 +707,21 @@ internal partial class Program
             preferences => preferences.Debug.EnableGpuRenderPipelineProfiling,
             true);
 
+        Engine.Profiler.EnableFrameLogging = enableCodeProfiler;
         RuntimeEngine.Rendering.Stats.EnableTracking = true;
         WriteBootstrapTrace("Enabled profiler capture session overrides.");
+    }
+
+    private static bool? ResolveOptionalEnvironmentFlag(string name)
+    {
+        string? value = Environment.GetEnvironmentVariable(name);
+        if (value is null)
+            return null;
+
+        return value == "1"
+            || value.Equals("true", StringComparison.OrdinalIgnoreCase)
+            || value.Equals("yes", StringComparison.OrdinalIgnoreCase)
+            || value.Equals("on", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsEnabledEnvironmentFlag(string name)

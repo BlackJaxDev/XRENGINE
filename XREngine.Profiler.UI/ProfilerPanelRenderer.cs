@@ -3720,8 +3720,19 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
     }
 
     private static string GetHottestPath(ProfilerNodeData[]? roots, out float pathMs)
+        => GetHottestPath(roots, out pathMs, out _, out _, out _);
+
+    private static string GetHottestPath(
+        ProfilerNodeData[]? roots,
+        out float rootInclusiveMs,
+        out float leafInclusiveMs,
+        out float leafSelfMs,
+        out ProfilerScopeKind leafScopeKind)
     {
-        pathMs = 0f;
+        rootInclusiveMs = 0f;
+        leafInclusiveMs = 0f;
+        leafSelfMs = 0f;
+        leafScopeKind = ProfilerScopeKind.Unspecified;
         if (roots is null || roots.Length == 0) return "(no samples)";
 
         var hottest = roots[0];
@@ -3732,7 +3743,11 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
         }
         if (hottest is null) return "(no samples)";
 
-        pathMs = hottest.ElapsedMs;
+        rootInclusiveMs = hottest.ElapsedMs;
+        leafInclusiveMs = hottest.ElapsedMs;
+        leafSelfMs = hottest.SelfMs;
+        leafScopeKind = hottest.ScopeKind;
+
         var parts = new List<string>(8) { FormatProfilerNodeLabel(hottest.Name, hottest.ScopeKind) };
         var current = hottest;
 
@@ -3747,6 +3762,9 @@ public sealed class ProfilerPanelRenderer(IProfilerDataSource source)
             if (best is null) break;
             parts.Add(FormatProfilerNodeLabel(best.Name, best.ScopeKind));
             current = best;
+            leafInclusiveMs = best.ElapsedMs;
+            leafSelfMs = best.SelfMs;
+            leafScopeKind = best.ScopeKind;
         }
 
         return string.Join(" > ", parts);

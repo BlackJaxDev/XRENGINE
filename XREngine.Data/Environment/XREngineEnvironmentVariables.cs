@@ -121,6 +121,7 @@ public static class XREngineEnvironmentVariables
     public const string DotNetGcConcurrent = "DOTNET_gcConcurrent";
     public const string ProfileCapture = "XRE_PROFILE_CAPTURE";
     public const string ProfileAutoDump = "XRE_PROFILE_AUTO_DUMP";
+    public const string ProfileCodeProfiler = "XRE_PROFILE_CODE_PROFILER";
     public const string ProfileRunLabel = "XRE_PROFILE_RUN_LABEL";
     public const string ProfileMode = "XRE_PROFILE_MODE";
     public const string TargetRefreshHz = "XRE_TARGET_REFRESH_HZ";
