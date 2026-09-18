@@ -155,7 +155,7 @@ missing, `Tools/Dependencies/Install-LatestVulkanSdk.ps1` downloads and verifies
 the official installer before opening its interactive setup. Reopen the shell
 after installation so native builds and validation runs see the new SDK.
 
-The Vulkan Memory Allocator header is retrieved by the `Deps` installer path, and the native bridge is built automatically by the runtime rendering project. If you need to run those pieces manually:
+The Vulkan Memory Allocator header is retrieved by the `Deps` installer path, and the native bridge is built automatically into ignored, configuration-specific output by the Vulkan runtime rendering project. If you need to run those pieces manually:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\Tools\Dependencies\Get-VulkanMemoryAllocator.ps1

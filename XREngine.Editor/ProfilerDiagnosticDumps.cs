@@ -178,6 +178,17 @@ internal static class ProfilerDiagnosticDumps
         sb.Append("File: ").AppendLine(fileName);
         sb.Append("Process: ").Append(Environment.ProcessId.ToString(CultureInfo.InvariantCulture)).AppendLine();
         sb.Append("FrameTimeSeconds: ").AppendLine(FormatMs(snapshot.FrameTime));
+        sb.Append("SessionEpoch: ").AppendLine(snapshot.SessionEpoch.ToString(CultureInfo.InvariantCulture));
+        sb.Append("PublicationId: ").AppendLine(snapshot.PublicationId.ToString(CultureInfo.InvariantCulture));
+        sb.Append("CapturedAtTicks: ").AppendLine(snapshot.CapturedAtTicks.ToString(CultureInfo.InvariantCulture));
+        sb.Append("UpdateFrameId: ").AppendLine(snapshot.UpdateFrameId.ToString(CultureInfo.InvariantCulture));
+        sb.Append("RenderFrameId: ").AppendLine(snapshot.RenderFrameId.ToString(CultureInfo.InvariantCulture));
+        sb.Append("ContainsIncompleteScopes: ").AppendLine(snapshot.ContainsIncompleteScopes.ToString(CultureInfo.InvariantCulture));
+        sb.Append("ActiveScopeCount: ").AppendLine(snapshot.ActiveScopeCount.ToString(CultureInfo.InvariantCulture));
+        sb.Append("QueuedCompletedScopeCount: ").AppendLine(snapshot.QueuedCompletedScopeCount.ToString(CultureInfo.InvariantCulture));
+        sb.Append("PendingCompletedScopeCount: ").AppendLine(snapshot.PendingCompletedScopeCount.ToString(CultureInfo.InvariantCulture));
+        sb.Append("UnresolvedLinkedChildCount: ").AppendLine(snapshot.UnresolvedLinkedChildCount.ToString(CultureInfo.InvariantCulture));
+        sb.Append("StaleCompletedScopeCount: ").AppendLine(snapshot.StaleCompletedScopeCount.ToString(CultureInfo.InvariantCulture));
         sb.Append("ThreadCount: ").AppendLine(orderedThreads.Length.ToString(CultureInfo.InvariantCulture));
         sb.Append("TotalThreadMs: ").AppendLine(FormatMs(totalThreadMs));
         sb.Append("TotalThreadWallMs: ").AppendLine(FormatMs(totalThreadWallMs));
@@ -389,7 +400,23 @@ internal static class ProfilerDiagnosticDumps
             .Append(" ms self=")
             .Append(FormatMs(CalculateSelfMs(node)))
             .Append(" ms children=")
-            .Append(node.Children.Count.ToString(CultureInfo.InvariantCulture));
+            .Append(node.Children.Count.ToString(CultureInfo.InvariantCulture))
+            .Append(" scopeId=")
+            .Append(node.ScopeId.ToString(CultureInfo.InvariantCulture))
+            .Append(" parentScopeId=")
+            .Append(node.ParentScopeId.ToString(CultureInfo.InvariantCulture))
+            .Append(" logicalThread=")
+            .Append(node.LogicalThreadId.ToString(CultureInfo.InvariantCulture))
+            .Append(" producerThread=")
+            .Append(node.ProducerThreadId.ToString(CultureInfo.InvariantCulture))
+            .Append(" ticks=")
+            .Append(node.StartTicks.ToString(CultureInfo.InvariantCulture))
+            .Append("..")
+            .Append(node.EndTicks.ToString(CultureInfo.InvariantCulture))
+            .Append(" complete=")
+            .Append(node.IsComplete.ToString(CultureInfo.InvariantCulture))
+            .Append(" linked=")
+            .Append(node.IsLinked.ToString(CultureInfo.InvariantCulture));
 
         float downstreamRenderPressureMs = CalculateDownstreamRenderPressureMs(node);
         if (downstreamRenderPressureMs > 0.0f)
@@ -417,14 +444,9 @@ internal static class ProfilerDiagnosticDumps
         => Math.Max(0.0f, node.ElapsedMs - CalculateDownstreamRenderPressureMs(node));
 
     private static float CalculateClassifiedSelfMs(Engine.CodeProfiler.ProfilerNodeSnapshot node)
-    {
-        float classifiedChildTotal = 0.0f;
-        IReadOnlyList<Engine.CodeProfiler.ProfilerNodeSnapshot> children = node.Children;
-        for (int i = 0; i < children.Count; i++)
-            classifiedChildTotal += CalculateClassifiedTotalMs(children[i]);
-
-        return Math.Max(0.0f, CalculateClassifiedTotalMs(node) - classifiedChildTotal);
-    }
+        => string.Equals(node.Name, "EngineTimer.CollectVisibleThread.WaitForRender", StringComparison.Ordinal)
+            ? 0.0f
+            : node.SelfMs;
 
     private static float CalculateDownstreamRenderPressureMs(Engine.CodeProfiler.ProfilerNodeSnapshot node)
     {

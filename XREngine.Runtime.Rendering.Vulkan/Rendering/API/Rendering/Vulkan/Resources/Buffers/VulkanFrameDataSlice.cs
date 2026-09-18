@@ -21,4 +21,18 @@ internal readonly record struct VulkanFrameDataSlice(
     internal bool IsValid => ArenaIdentity != 0 && BufferIdentity != 0 && MemoryIdentity != 0 &&
         ChunkIndex >= 0 && FrameSlot >= 0 && Length != 0 && Alignment != 0 && Generation != 0 &&
         Buffer.Handle == BufferIdentity && Memory.Handle == MemoryIdentity;
+
+    internal bool Matches(VulkanFrameDataSlice other)
+        => ArenaIdentity == other.ArenaIdentity &&
+           BufferIdentity == other.BufferIdentity &&
+           MemoryIdentity == other.MemoryIdentity &&
+           Lane == other.Lane &&
+           ChunkIndex == other.ChunkIndex &&
+           FrameSlot == other.FrameSlot &&
+           Offset == other.Offset &&
+           Length == other.Length &&
+           Alignment == other.Alignment &&
+           Generation == other.Generation &&
+           Buffer.Handle == other.Buffer.Handle &&
+           Memory.Handle == other.Memory.Handle;
 }

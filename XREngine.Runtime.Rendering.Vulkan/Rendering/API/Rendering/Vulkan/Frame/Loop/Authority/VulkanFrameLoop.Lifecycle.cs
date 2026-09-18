@@ -23,6 +23,7 @@ internal sealed partial class VulkanFrameLoop
         _resourceRuntime.Uploads.QuiescePreparationForRetirement(
             "Vulkan renderer retirement before GPU idle",
             TimeSpan.FromSeconds(6));
+        _resourceRuntime.StopAdvancedVisibilityPipelinePreparation();
         _resourceRuntime.PipelineManager.DrainPipelineCompileQueueForShutdown();
         _commandRuntime.CommandBuffers.ReadbackTasks.WaitForPendingTasksOrThrow(TimeSpan.FromSeconds(6));
     }
@@ -276,6 +277,7 @@ internal sealed partial class VulkanFrameLoop
         RunCleanupStep("queued texture uploads", () => _resourceRuntime.Uploads.CancelAllQueuedWork(_commandRuntime, shutdownReason), failures);
         RunCleanupStep("imported texture upload frame operations", () => CancelPendingImportedTextureUploadFrameOps(shutdownReason), failures);
         RunCleanupStep("recorded texture upload publications", () => _commandRuntime.CancelRecordedTextureUploadPublications(shutdownReason), failures);
+        RunCleanupStep("advanced pipeline preparation", _resourceRuntime.StopAdvancedVisibilityPipelinePreparation, failures);
         RunCleanupStep("pipeline compile queue", _resourceRuntime.PipelineManager.DrainPipelineCompileQueueForShutdown, failures);
         RunCleanupStep(
             "accepted frame plans",

@@ -24,11 +24,33 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
     private XRRenderProgram? _maskedMultiviewRasterProgram;
     private XRRenderProgram? _opaqueMultiviewMeshRasterProgram;
     private XRRenderProgram? _maskedMultiviewMeshRasterProgram;
+    private readonly List<GeneratedShaderSource> _generatedShaderSources = [];
 
     internal VulkanAdvancedVisibilityPipelineRuntime(VulkanResourceRuntime resources)
         => _resources = resources;
 
     internal VulkanAdvancedVisibilityPipelineReadiness TryGetComputePipelines(
+        out VkRenderProgram earlyVisibility,
+        out VkRenderProgram buildIndirect,
+        out string reason)
+    {
+        earlyVisibility = null!;
+        buildIndirect = null!;
+        VulkanAdvancedVisibilityPipelineReadiness readiness = GetReadiness(out reason);
+        if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
+            return readiness;
+        if (_resources.WrapperLookup.GetOrCreate(_earlyVisibilityProgram!, generateNow: false) is not VkRenderProgram early ||
+            _resources.WrapperLookup.GetOrCreate(_buildIndirectProgram!, generateNow: false) is not VkRenderProgram indirect)
+        {
+            reason = "Prepared visibility compute wrappers are unavailable.";
+            return VulkanAdvancedVisibilityPipelineReadiness.Failed;
+        }
+        earlyVisibility = early;
+        buildIndirect = indirect;
+        return VulkanAdvancedVisibilityPipelineReadiness.Ready;
+    }
+
+    private VulkanAdvancedVisibilityPipelineReadiness PrepareComputePipelines(
         out VkRenderProgram earlyVisibility,
         out VkRenderProgram buildIndirect,
         out string reason)
@@ -52,26 +74,20 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
                 AdvancedVisibilityShaderLibrary.BuildIndirectCompute,
                 "VulkanAdvancedBuildVisibilityIndirect");
 
-            if (_resources.WrapperLookup.GetOrCreate(
-                    _earlyVisibilityProgram,
-                    generateNow: true) is not VkRenderProgram early ||
-                !early.Link(allowAsyncShaderCompile: false) ||
-                !early.IsLinked || early.PipelineLayout.Handle == 0)
-            {
-                reason = DescribeProgramFailure(
-                    _earlyVisibilityProgram,
-                    "early visibility compute program did not link a Vulkan pipeline layout");
-                return VulkanAdvancedVisibilityPipelineReadiness.Failed;
-            }
-            if (_resources.WrapperLookup.GetOrCreate(
-                    _buildIndirectProgram,
-                    generateNow: true) is not VkRenderProgram indirect ||
-                !indirect.Link(allowAsyncShaderCompile: false) ||
-                !indirect.IsLinked || indirect.PipelineLayout.Handle == 0)
-            {
-                reason = "visibility indirect compute program did not link a Vulkan pipeline layout";
-                return VulkanAdvancedVisibilityPipelineReadiness.Failed;
-            }
+            VulkanAdvancedVisibilityPipelineReadiness linkReadiness = TryPrepareProgram(
+                _earlyVisibilityProgram,
+                out VkRenderProgram early,
+                out reason,
+                "early visibility compute program did not link a Vulkan pipeline layout");
+            if (linkReadiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
+                return linkReadiness;
+            linkReadiness = TryPrepareProgram(
+                _buildIndirectProgram,
+                out VkRenderProgram indirect,
+                out reason,
+                "visibility indirect compute program did not link a Vulkan pipeline layout");
+            if (linkReadiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
+                return linkReadiness;
 
             VulkanComputePipelineReadiness earlyReadiness = early.TryGetOrRequestComputePipeline(
                 int.MinValue, null, out _, out string earlyReason);
@@ -106,6 +122,27 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
     {
         buildDepthPyramid = null!;
         lateVisibility = null!;
+        VulkanAdvancedVisibilityPipelineReadiness readiness = GetReadiness(out reason);
+        if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
+            return readiness;
+        if (_resources.WrapperLookup.GetOrCreate(_buildDepthPyramidProgram!, generateNow: false) is not VkRenderProgram depth ||
+            _resources.WrapperLookup.GetOrCreate(_lateVisibilityProgram!, generateNow: false) is not VkRenderProgram late)
+        {
+            reason = "Prepared late-visibility compute wrappers are unavailable.";
+            return VulkanAdvancedVisibilityPipelineReadiness.Failed;
+        }
+        buildDepthPyramid = depth;
+        lateVisibility = late;
+        return VulkanAdvancedVisibilityPipelineReadiness.Ready;
+    }
+
+    private VulkanAdvancedVisibilityPipelineReadiness PrepareLateVisibilityComputePipelines(
+        out VkRenderProgram buildDepthPyramid,
+        out VkRenderProgram lateVisibility,
+        out string reason)
+    {
+        buildDepthPyramid = null!;
+        lateVisibility = null!;
         reason = "Ready";
         VulkanAdvancedSceneResourceRuntime scene = _resources.AdvancedSceneResources;
         if (!scene.IsReady || !_resources.AdvancedVisibilityResources.IsReady)
@@ -125,24 +162,20 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
                 AdvancedVisibilityShaderLibrary.LateVisibilityCompute,
                 "VulkanAdvancedLateVisibility");
 
-            if (_resources.WrapperLookup.GetOrCreate(
-                    _buildDepthPyramidProgram,
-                    generateNow: true) is not VkRenderProgram depth ||
-                !depth.Link(allowAsyncShaderCompile: false) || !depth.IsLinked ||
-                depth.PipelineLayout.Handle == 0)
-            {
-                reason = "depth-pyramid compute program did not link a Vulkan pipeline layout";
-                return VulkanAdvancedVisibilityPipelineReadiness.Failed;
-            }
-            if (_resources.WrapperLookup.GetOrCreate(
-                    _lateVisibilityProgram,
-                    generateNow: true) is not VkRenderProgram late ||
-                !late.Link(allowAsyncShaderCompile: false) || !late.IsLinked ||
-                late.PipelineLayout.Handle == 0)
-            {
-                reason = "late-visibility compute program did not link a Vulkan pipeline layout";
-                return VulkanAdvancedVisibilityPipelineReadiness.Failed;
-            }
+            VulkanAdvancedVisibilityPipelineReadiness linkReadiness = TryPrepareProgram(
+                _buildDepthPyramidProgram,
+                out VkRenderProgram depth,
+                out reason,
+                "depth-pyramid compute program did not link a Vulkan pipeline layout");
+            if (linkReadiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
+                return linkReadiness;
+            linkReadiness = TryPrepareProgram(
+                _lateVisibilityProgram,
+                out VkRenderProgram late,
+                out reason,
+                "late-visibility compute program did not link a Vulkan pipeline layout");
+            if (linkReadiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
+                return linkReadiness;
             VulkanComputePipelineReadiness depthReadiness = depth.TryGetOrRequestComputePipeline(
                 int.MinValue, null, out _, out string depthReason);
             if (depthReadiness != VulkanComputePipelineReadiness.Ready)
@@ -170,7 +203,29 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
     /// are never substituted for an ordinary material program on a resident
     /// template.
     /// </summary>
-    internal bool TryGetRasterProgram(
+    internal VulkanAdvancedVisibilityPipelineReadiness TryGetRasterProgram(
+        EAdvancedMaterialCoverageMode coverage,
+        bool meshlet,
+        out VkRenderProgram program,
+        out string reason,
+        bool multiview = false)
+    {
+        program = null!;
+        VulkanAdvancedVisibilityPipelineReadiness readiness = GetReadiness(out reason);
+        if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
+            return readiness;
+        XRRenderProgram? source = GetRasterProgramSlot(coverage, meshlet, multiview);
+        if (source is null ||
+            _resources.WrapperLookup.GetOrCreate(source, generateNow: false) is not VkRenderProgram raster)
+        {
+            reason = "Prepared visibility raster wrapper is unavailable.";
+            return VulkanAdvancedVisibilityPipelineReadiness.Failed;
+        }
+        program = raster;
+        return VulkanAdvancedVisibilityPipelineReadiness.Ready;
+    }
+
+    private VulkanAdvancedVisibilityPipelineReadiness PrepareRasterProgram(
         EAdvancedMaterialCoverageMode coverage,
         bool meshlet,
         out VkRenderProgram program,
@@ -183,7 +238,7 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
             !_resources.AdvancedVisibilityResources.SupportsMultiviewMeshRaster)
         {
             reason = "The Vulkan device did not enable multiview mesh shaders for this stereo mesh submission.";
-            return false;
+            return VulkanAdvancedVisibilityPipelineReadiness.Failed;
         }
         if (!_resources.AdvancedSceneResources.IsReady ||
             !_resources.AdvancedVisibilityResources.IsReady)
@@ -191,14 +246,14 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
             reason = !_resources.AdvancedSceneResources.IsReady
                 ? _resources.AdvancedSceneResources.AvailabilityReason
                 : _resources.AdvancedVisibilityResources.AvailabilityReason;
-            return false;
+            return VulkanAdvancedVisibilityPipelineReadiness.Missing;
         }
         if (coverage is not (
                 EAdvancedMaterialCoverageMode.Opaque or
                 EAdvancedMaterialCoverageMode.Masked))
         {
             reason = $"Visibility raster coverage '{coverage}' has no production program.";
-            return false;
+            return VulkanAdvancedVisibilityPipelineReadiness.Failed;
         }
 
         try
@@ -224,23 +279,21 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
                     ? "VulkanAdvancedVisibilityOpaque"
                     : "VulkanAdvancedVisibilityMasked",
                 multiview);
-            if (_resources.WrapperLookup.GetOrCreate(
-                    retainedProgram,
-                    generateNow: true) is not VkRenderProgram raster ||
-                !raster.Link(allowAsyncShaderCompile: false) ||
-                !raster.IsLinked || raster.PipelineLayout.Handle == 0)
-            {
-                reason = "visibility raster program did not link a Vulkan pipeline layout";
-                return false;
-            }
+            VulkanAdvancedVisibilityPipelineReadiness linkReadiness = TryPrepareProgram(
+                retainedProgram,
+                out VkRenderProgram raster,
+                out reason,
+                "visibility raster program did not link a Vulkan pipeline layout");
+            if (linkReadiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
+                return linkReadiness;
 
             program = raster;
-            return true;
+            return VulkanAdvancedVisibilityPipelineReadiness.Ready;
         }
         catch (Exception exception)
         {
             reason = exception.Message;
-            return false;
+            return VulkanAdvancedVisibilityPipelineReadiness.Failed;
         }
     }
 
@@ -269,23 +322,12 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
     private XRRenderProgram CreateComputeProgram(string assetPath, string name, string additionalPreamble = "")
     {
         XRShader asset = XRShader.EngineShader(assetPath, EShaderType.Compute);
-        string source = asset.Source.Text ?? throw new InvalidOperationException(
-            $"Advanced visibility shader asset '{assetPath}' did not provide source text.");
         string preamble = additionalPreamble + VulkanAdvancedSceneProgramBindingContract.BuildShaderPreamble(
             _resources.AdvancedSceneResources);
-        TextFile sourceWithPreamble = new(asset.Source.FilePath ?? assetPath)
-        {
-            // Preserve the original asset path: relative advanced includes are
-            // resolved from it after the Vulkan preamble is inserted.
-            Text = InsertPreambleAfterVersion(source, preamble),
-        };
         XRRenderProgram program = new(
             linkNow: false,
             separable: false,
-            new XRShader(EShaderType.Compute, sourceWithPreamble)
-            {
-                Name = name + ".comp",
-            })
+            CreateShaderWithPreamble(asset, preamble, name + ".comp"))
         {
             Name = name,
             // Advanced visibility prepares compute pipelines asynchronously before
@@ -295,7 +337,6 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
             ExternallyOwnedDescriptorSetMask =
                 VulkanAdvancedSceneProgramBindingContract.ExternallyOwnedSetMask,
         };
-        program.AllowLink();
         return program;
     }
 
@@ -321,7 +362,6 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
             ExternallyOwnedDescriptorSetMask =
                 VulkanAdvancedSceneProgramBindingContract.ExternallyOwnedSetMask,
         };
-        program.AllowLink();
         return program;
     }
 
@@ -347,22 +387,53 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
             ExternallyOwnedDescriptorSetMask =
                 VulkanAdvancedSceneProgramBindingContract.ExternallyOwnedSetMask,
         };
-        program.AllowLink();
         return program;
     }
 
-    private static XRShader CreateShaderWithPreamble(
+    private XRShader CreateShaderWithPreamble(
         XRShader asset,
         string preamble,
         string name)
     {
+        XRShader generated = new(asset.Type, CreateSourceWithPreamble(asset, preamble, name))
+        {
+            Name = name,
+        };
+        lock (_preparationGate)
+            _generatedShaderSources.Add(new(asset, generated, preamble));
+        return generated;
+    }
+
+    private static TextFile CreateSourceWithPreamble(
+        XRShader asset,
+        string preamble,
+        string fallbackPath)
+    {
         string source = asset.Source.Text ?? throw new InvalidOperationException(
             $"Advanced visibility shader asset '{asset.Source.FilePath}' did not provide source text.");
-        TextFile sourceWithPreamble = new(asset.Source.FilePath ?? name)
+        return new TextFile(asset.Source.FilePath ?? fallbackPath)
         {
+            // Preserve the original asset path so relative includes retain their
+            // dependency identity after the Vulkan preamble is inserted.
             Text = InsertPreambleAfterVersion(source, preamble),
         };
-        return new XRShader(asset.Type, sourceWithPreamble) { Name = name };
+    }
+
+    private void RefreshGeneratedShaderSources()
+    {
+        for (int i = 0; i < _generatedShaderSources.Count; i++)
+        {
+            GeneratedShaderSource binding = _generatedShaderSources[i];
+            long revision = binding.Asset.SourceRevision;
+            if (revision == binding.AssetRevision)
+                continue;
+
+            binding.Generated.Source = CreateSourceWithPreamble(
+                binding.Asset,
+                binding.Preamble,
+                binding.Generated.Name ?? "AdvancedShader");
+            binding.AssetRevision = revision;
+        }
     }
 
     private static string InsertPreambleAfterVersion(string source, string preamble)
@@ -392,6 +463,42 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
         return $"{fallback}: {status.FailureReason ?? "no backend failure reason"} ({status.Detail ?? "no backend detail"})";
     }
 
+    private VulkanAdvancedVisibilityPipelineReadiness TryPrepareProgram(
+        XRRenderProgram source,
+        out VkRenderProgram program,
+        out string reason,
+        string failure)
+    {
+        program = null!;
+        source.AllowLink();
+        VkRenderProgram? wrapper =
+            _resources.WrapperLookup.GetOrCreate(source, generateNow: false) as VkRenderProgram ??
+            _resources.CreateAPIRenderObject(source) as VkRenderProgram;
+        if (wrapper is null)
+        {
+            reason = $"{failure}: Vulkan wrapper creation was not published";
+            return VulkanAdvancedVisibilityPipelineReadiness.Failed;
+        }
+        VulkanProgramLinkReadiness linkReadiness =
+            wrapper.TryPrepareLinkNonblocking(out string linkReason);
+        if (linkReadiness != VulkanProgramLinkReadiness.Ready ||
+            !wrapper.IsLinked || wrapper.PipelineLayout.Handle == 0)
+        {
+            XRRenderProgram.EShaderProgramBackendStage stage = source.ShaderMetadata.Backend.Stage;
+            reason = $"{failure}: {linkReason}";
+            return linkReadiness == VulkanProgramLinkReadiness.Failed ||
+                stage is XRRenderProgram.EShaderProgramBackendStage.Failed or
+                XRRenderProgram.EShaderProgramBackendStage.BinaryUploadFailed or
+                XRRenderProgram.EShaderProgramBackendStage.Abandoned
+                    ? VulkanAdvancedVisibilityPipelineReadiness.Failed
+                    : VulkanAdvancedVisibilityPipelineReadiness.Pending;
+        }
+
+        program = wrapper;
+        reason = "Ready";
+        return VulkanAdvancedVisibilityPipelineReadiness.Ready;
+    }
+
     private static VulkanAdvancedVisibilityPipelineReadiness DescribeComputePipelineReadiness(
         VulkanComputePipelineReadiness readiness,
         string pipelineName,
@@ -402,5 +509,16 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
         return readiness == VulkanComputePipelineReadiness.Pending
             ? VulkanAdvancedVisibilityPipelineReadiness.Pending
             : VulkanAdvancedVisibilityPipelineReadiness.Failed;
+    }
+
+    private sealed class GeneratedShaderSource(
+        XRShader asset,
+        XRShader generated,
+        string preamble)
+    {
+        internal XRShader Asset { get; } = asset;
+        internal XRShader Generated { get; } = generated;
+        internal string Preamble { get; } = preamble;
+        internal long AssetRevision { get; set; } = asset.SourceRevision;
     }
 }

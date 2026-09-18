@@ -478,13 +478,11 @@ still pending.
 
 ### S00 Gate Record: Comparable Baseline And Evidence Manifest
 
-Review disposition: **Blocked**. The historical record below is retained as
-evidence of the attempted gate, not a passing baseline. The later strict Release
-matrix satisfied its run count and scene-admission requirements, but failed the
-predeclared observer-tail and GPU-coverage gates and did not capture complete loss
-or settled-retention evidence. A repaired final matrix now clears GPU coverage,
-loss accounting, settled retention, and every observer check except motion p99.
-S00 therefore remains Blocked, and no S01 or S02 work is permitted on this evidence.
+Review disposition: **Validated at current HEAD**. The historical records below
+remain evidence of earlier failed attempts. The superseding revision `a1f9408e5`
+matrix clears observer overhead, GPU coverage, loss accounting, settled retention,
+native occupancy, and required-backlog gates. S01 may proceed. The separately
+confirmed periodic command-recording hitch remains unresolved S02 evidence.
 
 #### S00 Reopened Acceptance Plan
 
@@ -819,6 +817,43 @@ until the profiler-on motion-tail regression is explained and brought within the
 predeclared allowance, or the user explicitly changes the gate. Test clearance
 remains absent.
 
+#### Current-HEAD Motion Recheck And S00 Closure
+
+Revision `a1f9408e5` changed the Vulkan motion regime, so the historical absolute
+timings above could not decide current observer overhead. The superseding matrix
+under `Build/_AgentValidation/20260918-s00-motion-recheck/` used the same Release
+`CleanProfile`, Vulkan/CpuDirect, Advanced/TSR, 1920x1080, uncapped presentation,
+fixed camera, controlled endpoint, readiness, admission, and one-frame sampling
+contract. It completed three alternating pairs in `D/E`, `E/D`, `D/E` order.
+All runs retained workload identity `10991459253885323059`, 816-840 motion
+samples, 99.625-99.643% motion GPU coverage, zero profiler discard counters,
+and passing loss, retention, native-resource, descriptor, and backlog gates.
+
+| Pair | Motion p99 off ms | Motion p99 on ms | Delta | Motion mean delta ms |
+| ---: | ---: | ---: | ---: | ---: |
+| 1 | 83.034 | 82.201 | -1.00% | -1.147 |
+| 2 | 73.046 | 75.925 | +3.94% | +0.116 |
+| 3 | 74.857 | 79.669 | +6.43% | +0.084 |
+
+The disabled motion-p99 run spread is 13.67%, so every paired increase is below
+the predeclared larger-of-5%-or-spread allowance. Motion-p95's 12.27% disabled
+spread likewise covers the worst +6.04% paired increase. Positive mean overhead
+is at most +0.116 ms/frame, below 0.5 ms. Stationary tail changes are also within
+their larger disabled-run spread. S00 is therefore **Validated** and S01 becomes
+the active item. This supersedes the historical blocked disposition without
+reclassifying the old evidence as passing.
+
+The matrix also validates the user's report of periodic microstalls. Across the
+three retained raw motion streams, render frames above 55 ms recur every
+0.282-0.301 seconds median, usually four render frames apart, with adjacent-frame
+bursts. Render duration correlates 0.98-1.00 with CPU Vulkan frame/recording time
+and only 0.03-0.10 with GPU time. Comparing pair-3 enabled frames below 25 ms to
+frames at or above 55 ms attributes +28.520 ms to primary recording: +16.547 ms
+primary operation loop, +5.970 ms primary prewarm, +4.126 ms command-chain packet
+lowering, and +2.523 ms command-buffer finalization. Command-chain worker time is
+zero. The desktop `PresentNow` path currently requests fresh serial recording;
+causality and a safe reuse/publication correction remain S02 work after S01.
+
 #### TSR Motion Evidence And Telemetry Correction
 
 The temporal investigation confirms active TSR resources and ready history, but
@@ -905,15 +940,49 @@ Temporary settings and owned session cleanup:
 
 ### S01 Gate Record: Correct Profiler Duration and Identity Reporting
 
-Review disposition: **Blocked, partial implementation**. Root/leaf log labels and
-SelfMs export wiring exist; 2,163 nodes in the saved dump balance within displayed
-rounding precision. This does not validate overlapping linked workers, exact
-scope/frame identity, active/stale snapshots, the UI or observer overhead. The
-cited run has no FPS-drop/stall logs and only one history sample per thread. Its
-8.378 ms update root selects PreUpdate and ForwardFrameAdvanced (0.034 ms), not
-RuntimeWorld.Update (0.096 ms). The render section is not a completed frame root.
-Prior passing assertions below are superseded. Existing changes are preserved;
-test work remains uncleared and further implementation waits for S00's gate.
+Review disposition: **Validated**. The
+current implementation now carries explicit scope, parent, logical-thread,
+producer-thread, session-epoch, publication and update/render frame identities.
+Tree reconstruction uses parent IDs, linked children defer parent publication,
+synchronous self-time excludes linked/cross-producer spans, stale completions are
+rejected across epochs, and packet, in-process collector, dump and UI consumers
+carry the new contract.
+
+Current live validation used isolated session `s01-profiler-identity`, PID 13724.
+The settled epoch-2 dump contained 1,395 nodes with zero duplicate scope IDs,
+missing parent IDs, hierarchy/parent mismatches, logical-thread mismatches,
+invalid timestamps, children outside parent intervals, or incomplete published
+nodes. Five display-level self-time differences had a maximum error of 0.012 ms;
+these arose from summing many values rounded independently to three decimal
+places, while implementation accounting remains tick-based. The dump reported
+zero stale completions before the lifecycle exercise.
+
+The profiler was then disabled and re-enabled through the session-only editor
+preference `Debug.EnableProfilerFrameLogging`. Snapshot epochs advanced 2 -> 3
+-> 4. Epoch-3 and epoch-4 snapshots reported 13 and 24 stale completions,
+respectively, proving that late completions were rejected and surfaced rather
+than attached to the new session. Publication IDs continued monotonically from
+7009 to 7076 and 7382. Normal steady-state snapshots retain active/pending work
+and correctly mark `ContainsIncompleteScopes`; published nodes themselves remain
+complete.
+
+Edit mode, play-mode transition and steady play produced no linked nodes. A
+repository-wide call-site check found no consumers of `XREvent.InvokeParallel`
+or `XREvent.InvokeAsync` outside their declarations, and no existing engine event
+has listener contracts broad enough to permit speculative parallel conversion.
+The user subsequently requested these validations, clearing focused test work.
+`XREventLinkedProfilingTests` exercises both methods with four concurrent
+listeners and verifies the complete parent chain, worker producer identity,
+caller logical identity, interval containment, complete publication, zero
+unresolved linked children and linked-time exclusion from synchronous `SelfMs`.
+The validation exposed and corrected two defects: profiler timestamps used the
+game-loop stopwatch, which does not advance in a headless process, and linked
+context was captured before the action-container scope, making worker listeners
+siblings instead of children. The generic and boolean concurrent event variants
+received the same parent-capture correction. Final focused result: 2 discovered,
+2 passed, 0 failed, 0 skipped. Editor and `XRE_PUBLISHED` Bootstrap builds both
+completed with 0 errors and 0 warnings. S01 is Validated; S02 may proceed. The
+historical attempted validation below remains superseded.
 
 ```text
 Item / owner / status: S01 / Diagnostics & Rendering / Historical attempted validation, superseded by review
@@ -975,3 +1044,132 @@ User confirmation / remaining risks / next permitted item:
 Temporary settings and owned session cleanup:
   - Session s01-profiler-validation stopped cleanly via Manage-McpEditorSession.ps1 Stop. Background daemon task terminated.
 ```
+
+### S02 Gate Record: Warmed Recording Allocation Attribution
+
+Disposition: **Validated** for attribution and one bounded warmed-recording
+correction. This does not declare the original 153-165 ms report, TSR ghosting,
+the independent 18-25 ms GPU workload, or every rare whole-frame tail fixed.
+
+The Release Vulkan desktop workload remained CpuDirect, Advanced/TSR, uncapped,
+1920x1080, validation-off, and stable at 393 admitted draws. Dense capture was
+first treated as an observer rather than trusted as a production profile: the
+capture thread owned 86.65% of process allocation and one profile row allocated
+about 143 KB. An interval-10 capture still measured about 3.89 MB of render-thread
+allocation per frame, proving that capture output was not the only owner.
+
+Bounded stage counters narrowed the recurring work without changing recording
+authority. Before the fix, a warmed diagnostic sample reported 795,056 bytes
+median for primary recording and 529,336 bytes for its operation loop.
+`AdvancedVisibility` owned 337,176 bytes. The phase split localized that to
+VisibilityRaster: 273,872 bytes in early raster and 28,616 bytes in late raster;
+preparation and compute phases were negligible. The 393 CPU-direct native draws
+allocated zero bytes, as did tracked pipeline, descriptor, vertex and index
+binding. Per-record substage capture then found exactly 207,504 bytes in closure
+validation (393 x 528) and 37,728 bytes in stable-bin lowering (393 x 96).
+
+The fixed byte counts came from generated record-struct equality traversing
+nested Silk.NET `Pipeline`, `Buffer`, and `DeviceMemory` values. The correction
+adds explicit scalar, reference and native-handle identity checks to
+[VulkanFrameDataSlice](../../../../XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Buffers/VulkanFrameDataSlice.cs),
+[VulkanNativeBufferRange](../../../../XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Advanced/VulkanNativeBufferRange.cs),
+[VulkanVisibilityPreparedVertexSource](../../../../XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/StableBins/VulkanVisibilityPreparedVertexSource.cs),
+and [VulkanPreparedMeshPrimitive](../../../../XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/MeshRendering/VulkanPreparedMeshPrimitive.cs).
+The hot validation and native-compatibility comparisons consume those methods;
+no resource ownership, pipeline selection, draw order or submission strategy
+changed.
+
+The final 24-row detailed motion window retained 393 draws. Validation,
+lowering, tracked binding and CPU-direct draw substages each allocated zero bytes
+in every row. Median `AdvancedVisibility` allocation fell 337,176 -> 58,376
+bytes (-80.8%), operation-loop allocation fell 529,336 -> 246,904 bytes
+(-53.4%), and primary-recording allocation fell 795,056 -> 392,992 bytes
+(-50.6%). Frame attribution coverage was 99.942-99.991%; unattributed time was
+4-7 us, below the 50 us hardening threshold.
+
+The matched 20-second labels-off, profiler-frame-logging-off CleanProfile capture
+remains profile-capture intrusive, so it is directional A/B evidence rather than
+a promotion baseline. It nevertheless preserved the same strategy and scene
+identity and improved materially:
+
+| Metric | Before | After | Change |
+| --- | ---: | ---: | ---: |
+| Captured render frames | 169 | 457 | +170.4% |
+| Vulkan frame median | 23.083 ms | 17.797 ms | -22.9% |
+| Vulkan frame p95 | 95.445 ms | 65.440 ms | -31.4% |
+| Primary recording median | 16.601 ms | 7.097 ms | -57.2% |
+| Primary recording p95 | 58.656 ms | 36.934 ms | -37.0% |
+| Managed allocation per render frame | 4.724 MB | 1.726 MB | -63.5% |
+| GC pause per render frame | 6.675 ms | 0.955 ms | -85.7% |
+| GC pause rate | 56.055 ms/s | 21.757 ms/s | -61.2% |
+
+Process allocation rate changed only 39.672 -> 39.330 MB/s because serializing
+one large profile row for every rendered frame remains the dominant observer.
+The after window's whole-frame p99 was 234.003 ms versus 232.852 ms before, with
+one 444.231 ms maximum, so rare non-recording tails remain explicitly open.
+Recurring pipeline construction was disconfirmed: the warmed owner was raster
+identity validation/lowering, not `VulkanCanonicalVisibilityPipelineFactory`
+cache misses. ETW was therefore not required to choose this correction; managed
+allocation deltas were deterministic, phase-local, proportional to record count,
+and collapsed to zero after the fix.
+
+Evidence is retained under
+`Build/_AgentValidation/20260918-130043-s02-primary-attribution/logs/`:
+`operation-owner-motion.ndjson`, `raster-split-motion.ndjson`,
+`equality-complete-motion.ndjson`, `clean-gc-motion.ndjson`, and
+`clean-after-motion.ndjson`. All named editor sessions were stopped. The final
+Release editor build completed with zero errors and zero warnings. No tests were
+added, modified or run because test clearance was not granted for this rendering
+regression. S03 subsequently established its cold-readiness entry condition and
+moved to Active; see the gate record below.
+
+## S03 Gate Record: Nonblocking Advanced Readiness
+
+Status: Active, implementation complete and validation partial.
+
+The former readiness query synchronously linked the full Advanced shader family
+and could foreground-complete compute pipeline jobs. It now observes one
+generation-owned preparation task through explicit `Missing`, `Pending`, `Ready`,
+and `Failed` snapshots. The task reuses existing shader and pipeline queues,
+publishes only after the complete supported compute/raster family is ready, and
+is canceled and drained before pipeline-queue teardown. Polling neither joins a
+compile nor duplicates the current identity's request.
+
+Reload handling now binds compiled and failed shader state to source revision,
+retains superseded CPU artifact tasks until completion, refreshes generated
+preambled Advanced sources from their engine assets, and requires a `Ready`
+snapshot to match its completed preparation identity. Raster preparation
+preserves transient readiness as `RetryFrame`; structural/native failures remain
+visible failures. Runtime dependency invalidation no longer marks unchanged
+shader assets dirty, so manual reload does not create false unsaved-file prompts.
+
+Live evidence:
+
+- Cold PID 46584 emitted a bounded 17-notice `ShaderCompilePending` burst, then
+  advanced beyond readiness without a pipeline readiness failure.
+- Warm/reload PID 39016 admitted and bound Advanced execution. Frame 1643 retained
+  396 GPU commands and 393 cooked payloads with zero frame-package, queue,
+  draw-not-ready, CPU/forbidden-fallback, or dropped-operation counts.
+- Final-gates PID 34396 used a 1.5-second delayed compile and two immediate shader
+  invalidations. It reported `PendingResources`, retained the 396/393 identity,
+  then converged to `Admitted` with zero rejected, dropped, or fallback work.
+- Injected Vulkan shader compilation failure became visible as `Unsupported` with
+  the exact failure diagnostic. Clearing injection and advancing source revision
+  recovered first to `PendingResources` and then to `Admitted` in the same
+  renderer generation.
+- All named S03 sessions stopped cleanly; no aggregate, disposal, preparation,
+  compile-queue, unhandled, or fatal teardown error was found.
+- Non-incremental Vulkan Release and isolated editor builds passed with zero
+  warnings and errors. Existing shader dependency hot-reload tests passed 10/10.
+
+Remaining closure gates:
+
+- Capture separate cold and reload durations for source compilation, program
+  linking, native pipeline work, and any foreground join. The observed manual
+  all-shader reload included a separate global maintenance stall owned by S04.
+- Exercise a genuinely unavailable Vulkan capability and confirm the requested
+  family reports a visible unavailable/failed result without fallback.
+- The viewport remains visually invalid because canonical texture publication
+  reports `SourceMismatch` after texture dimensions change. That defect is
+  independent of pipeline readiness and must be resolved before claiming an
+  integrated Advanced visual-quality pass.

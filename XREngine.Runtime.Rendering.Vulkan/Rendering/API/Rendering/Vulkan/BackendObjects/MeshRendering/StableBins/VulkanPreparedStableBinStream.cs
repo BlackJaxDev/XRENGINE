@@ -1410,7 +1410,7 @@ internal sealed class VulkanPreparedStableBinStream
     /// must share one indexed geometry binding; mismatches reject the family
     /// before command recording begins.
     /// </summary>
-    internal bool TryPrepareVisibilityRasterPipelines(
+    internal VulkanAdvancedVisibilityPipelineReadiness TryPrepareVisibilityRasterPipelines(
         VulkanAdvancedVisibilityPipelineRuntime visibilityPipelines,
         ReadOnlySpan<AdvancedVisibilityPayload> payloads,
         in VulkanAdvancedVisibilityTargetClosure target,
@@ -1421,7 +1421,7 @@ internal sealed class VulkanPreparedStableBinStream
             _retainedTemplateCount != _recordCount)
         {
             reason = "stable submission plans, target closure, or resident-template leases are unavailable";
-            return false;
+            return VulkanAdvancedVisibilityPipelineReadiness.Failed;
         }
 
         for (int headerIndex = 0; headerIndex < _headerCount; ++headerIndex)
@@ -1434,14 +1434,14 @@ internal sealed class VulkanPreparedStableBinStream
                 if (header.RasterPipeline.TargetClosure != target)
                 {
                     reason = "one accepted stable-bin stream cannot target multiple visibility framebuffer closures";
-                    return false;
+                    return VulkanAdvancedVisibilityPipelineReadiness.Failed;
                 }
                 continue;
             }
             if (header.RecordCount <= 0)
             {
                 reason = "a sealed visibility range has no geometry records";
-                return false;
+                return VulkanAdvancedVisibilityPipelineReadiness.Failed;
             }
 
             bool canonicalAtlas =
@@ -1456,14 +1456,16 @@ internal sealed class VulkanPreparedStableBinStream
                 (!native.Primitive0.Indexed || native.Primitive0.IndexBuffer.Handle == 0)))
             {
                 reason = "visibility raster requires one exact triangle-list primitive per range";
-                return false;
+                return VulkanAdvancedVisibilityPipelineReadiness.Failed;
             }
-            if (!visibilityPipelines.TryGetRasterProgram(
+            VulkanAdvancedVisibilityPipelineReadiness rasterReadiness =
+                visibilityPipelines.TryGetRasterProgram(
                     header.IndirectRange.Key.Coverage,
                     meshlet,
                     out VkRenderProgram program,
                     out reason,
-                    multiview: target.DynamicRenderingFormats.ViewMask != 0u) ||
+                    multiview: target.DynamicRenderingFormats.ViewMask != 0u);
+            if (rasterReadiness != VulkanAdvancedVisibilityPipelineReadiness.Ready ||
                 !VulkanCanonicalVisibilityPipelineFactory.TryPrepare(
                     program,
                     header.IndirectRange.Key.Coverage,
@@ -1473,7 +1475,9 @@ internal sealed class VulkanPreparedStableBinStream
                     out VulkanVisibilityRasterPipeline raster,
                     out reason))
             {
-                return false;
+                return rasterReadiness != VulkanAdvancedVisibilityPipelineReadiness.Ready
+                    ? rasterReadiness
+                    : VulkanAdvancedVisibilityPipelineReadiness.Failed;
             }
 
             int recordEnd = header.RecordOffset + header.RecordCount;
@@ -1501,7 +1505,7 @@ internal sealed class VulkanPreparedStableBinStream
                         native.VertexBindingSignature)
                 {
                     reason = "a visibility range spans incompatible native geometry bindings";
-                    return false;
+                    return VulkanAdvancedVisibilityPipelineReadiness.Failed;
                 }
             }
 
@@ -1534,7 +1538,7 @@ internal sealed class VulkanPreparedStableBinStream
         }
 
         reason = "Ready";
-        return true;
+        return VulkanAdvancedVisibilityPipelineReadiness.Ready;
     }
 
     private bool TryResolveExactRange(

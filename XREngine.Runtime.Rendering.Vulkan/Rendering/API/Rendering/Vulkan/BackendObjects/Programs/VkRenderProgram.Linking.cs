@@ -37,6 +37,74 @@ internal unsafe partial class VkRenderProgram
             return LinkAfterAcquiringInterfaceLock(allowAsyncShaderCompile);
     }
 
+    internal VulkanProgramLinkReadiness TryPrepareLinkNonblocking(out string reason)
+    {
+        reason = "Ready";
+        if (IsLinkConfigurationCurrent())
+            return VulkanProgramLinkReadiness.Ready;
+        if (!BackendContext.IsDeviceOperational)
+        {
+            reason = "The Vulkan device is not operational.";
+            return VulkanProgramLinkReadiness.Failed;
+        }
+        if (!BackendContext.IsLogicalDeviceReady)
+        {
+            BackendContext.Resources.PipelineManager.QueueProgramLinkUntilDeviceReady(this);
+            reason = "The Vulkan logical device is not ready.";
+            return VulkanProgramLinkReadiness.Pending;
+        }
+        if (!IsActive)
+            Generate();
+        if (!IsActive || !Data.LinkReady)
+        {
+            reason = "The Vulkan program wrapper is not ready for linking.";
+            return VulkanProgramLinkReadiness.Pending;
+        }
+
+        bool pending = false;
+        EShaderType? vulkanClipDepthRemapStage = ResolveVulkanClipDepthRemapStage();
+        foreach (VkShader shader in _shaderCache.Values)
+        {
+            bool shaderUsesVulkanClipDepthRemap =
+                vulkanClipDepthRemapStage.HasValue &&
+                shader.Data.Type == vulkanClipDepthRemapStage.Value;
+            if (shader.TryGenerateFromAsyncCompile(shaderUsesVulkanClipDepthRemap, out string shaderReason))
+                continue;
+            if (shader.CompileStatus.HasFailure)
+            {
+                reason = $"{shader.StageDebugLabel}: {shader.CompileStatus.FailureReason ?? shaderReason}";
+                return VulkanProgramLinkReadiness.Failed;
+            }
+
+            pending = true;
+            reason = $"{shader.StageDebugLabel}: {shaderReason}";
+        }
+        if (pending)
+            return VulkanProgramLinkReadiness.Pending;
+
+        using VulkanPipelineCompilationMutationLease mutationLease =
+            ProgramCreationPort.AcquirePipelineCompilationMutationLease("program link");
+        lock (_linkLock)
+        {
+            if (LinkAfterAcquiringInterfaceLock(allowAsyncShaderCompile: true))
+                return VulkanProgramLinkReadiness.Ready;
+        }
+
+        XRRenderProgram.ShaderProgramBackendStatus status = Data.ShaderMetadata.Backend;
+        reason = status.FailureReason ?? status.Detail ?? "Vulkan program interface publication is pending.";
+        return status.Stage is XRRenderProgram.EShaderProgramBackendStage.Failed or
+            XRRenderProgram.EShaderProgramBackendStage.BinaryUploadFailed or
+            XRRenderProgram.EShaderProgramBackendStage.Abandoned
+                ? VulkanProgramLinkReadiness.Failed
+                : VulkanProgramLinkReadiness.Pending;
+    }
+
+    internal void WaitForPendingShaderCompiles()
+    {
+        foreach (VkShader shader in _shaderCache.Values)
+            shader.WaitForPendingAsyncCompile();
+    }
+
     internal bool IsLinkConfigurationCurrent()
     {
         if (!IsLinked)

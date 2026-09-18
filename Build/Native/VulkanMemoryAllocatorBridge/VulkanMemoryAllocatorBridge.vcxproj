@@ -43,8 +43,7 @@
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup>
     <RepoRoot>$(MSBuildThisFileDirectory)..\..\..\</RepoRoot>
-    <ManagedRuntimeDir>$(RepoRoot)XREngine.Runtime.Rendering.Vulkan\runtimes\win-x64\native\</ManagedRuntimeDir>
-    <OutDir>$(ManagedRuntimeDir)</OutDir>
+    <OutDir>$(RepoRoot)Build\_AgentValidation\00000000-000000-shared\tools\bin\VulkanMemoryAllocatorBridge\$(Configuration)\</OutDir>
     <IntDir>$(RepoRoot)Build\_AgentValidation\00000000-000000-shared\tools\obj\VulkanMemoryAllocatorBridge\$(Configuration)\</IntDir>
     <TargetName>VulkanMemoryAllocatorBridge.Native</TargetName>
     <VmaIncludeDir>$(MSBuildThisFileDirectory)vendor\VulkanMemoryAllocator\include</VmaIncludeDir>
@@ -52,6 +51,14 @@
     <VulkanSdkLibDir>$(VULKAN_SDK)\Lib</VulkanSdkLibDir>
     <VmaBridgeDefines>WIN32_LEAN_AND_MEAN;NOMINMAX;_CRT_SECURE_NO_WARNINGS;</VmaBridgeDefines>
   </PropertyGroup>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <AdditionalOptions>/Brepro %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <Link>
+      <AdditionalOptions>/Brepro %(AdditionalOptions)</AdditionalOptions>
+    </Link>
+  </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
       <WarningLevel>Level3</WarningLevel>

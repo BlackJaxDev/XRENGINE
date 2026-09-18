@@ -81,7 +81,7 @@ public static partial class Engine
         private const string ManifestFileName = "profiler-capture-manifest.json";
         private const string SummaryFileName = "profiler-capture-summary.json";
         private const string RuntimeCaptureDirectoryName = "speed-profiles";
-        private const int ProfileCaptureSchemaVersion = 9;
+        private const int ProfileCaptureSchemaVersion = 11;
         private const int RuntimeCaptureRetentionCount = 3;
         private const int FlushIntervalMilliseconds = 1000;
         private const int MaxBufferedCharacters = 256 * 1024;
@@ -633,7 +633,7 @@ public static partial class Engine
             var manifest = new
             {
                 capture_file = FrameStatsFileName,
-                schema = "xrengine.profile_capture.render_stats.v9",
+                schema = "xrengine.profile_capture.render_stats.v11",
                 schema_version = ProfileCaptureSchemaVersion,
                 fields_note = metadata.SampleIntervalFrames == 1
                     ? "One JSON object per render loop frame, including rejected or failed Vulkan attempts. CPU frame timings are wall-clock thread loop durations; GPU pipeline timings are backend timestamp-query snapshots when ready."
@@ -711,6 +711,16 @@ public static partial class Engine
             AppendNumberField(s_lineBuilder, "code_profiler_pending_completed_discarded_events", Engine.Profiler.PendingCompletedDiscardedEventCount, ref first);
             AppendNumberField(s_lineBuilder, "code_profiler_pending_completed_count", Engine.Profiler.PendingCompletedCount, ref first);
             AppendNumberField(s_lineBuilder, "managed_heap_bytes", GC.GetTotalMemory(forceFullCollection: false), ref first);
+            AppendNumberField(s_lineBuilder, "managed_total_allocated_bytes", GC.GetTotalAllocatedBytes(precise: false), ref first);
+            AppendNumberField(s_lineBuilder, "managed_capture_thread_allocated_bytes", GC.GetAllocatedBytesForCurrentThread(), ref first);
+            AppendNumberField(s_lineBuilder, "managed_gc_pause_total_ms", GC.GetTotalPauseDuration().TotalMilliseconds, ref first);
+            AppendNumberField(s_lineBuilder, "managed_gc_gen0_collections", GC.CollectionCount(0), ref first);
+            AppendNumberField(s_lineBuilder, "managed_gc_gen1_collections", GC.CollectionCount(1), ref first);
+            AppendNumberField(s_lineBuilder, "managed_gc_gen2_collections", GC.CollectionCount(2), ref first);
+            AppendNumberField(s_lineBuilder, "managed_monitor_lock_contentions", Monitor.LockContentionCount, ref first);
+            AppendNumberField(s_lineBuilder, "managed_thread_pool_thread_count", ThreadPool.ThreadCount, ref first);
+            AppendNumberField(s_lineBuilder, "managed_thread_pool_pending_work_items", ThreadPool.PendingWorkItemCount, ref first);
+            AppendNumberField(s_lineBuilder, "managed_thread_pool_completed_work_items", ThreadPool.CompletedWorkItemCount, ref first);
             AppendBoolField(s_lineBuilder, "profile_promotion_eligible", metadata.ProfilePromotionEligible, ref first);
             AppendBoolField(s_lineBuilder, "profile_intrusive", metadata.ProfileIntrusive, ref first);
             AppendBoolField(s_lineBuilder, "vulkan_command_buffer_labels_enabled", metadata.VulkanCommandBufferLabelsEnabled, ref first);
@@ -1472,6 +1482,22 @@ public static partial class Engine
             AppendVulkanCpuStageFields(s_lineBuilder, "primary_operation_preparation", EVulkanCpuStage.PrimaryOperationPreparation, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "primary_mesh_operation", EVulkanCpuStage.PrimaryMeshOperation, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "primary_non_mesh_operation", EVulkanCpuStage.PrimaryNonMeshOperation, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "primary_advanced_visibility_operation", EVulkanCpuStage.PrimaryAdvancedVisibilityOperation, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "primary_compute_operation", EVulkanCpuStage.PrimaryComputeOperation, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "primary_blit_operation", EVulkanCpuStage.PrimaryBlitOperation, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "primary_clear_operation", EVulkanCpuStage.PrimaryClearOperation, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "primary_other_operation", EVulkanCpuStage.PrimaryOtherOperation, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "primary_advanced_preparation_operation", EVulkanCpuStage.PrimaryAdvancedPreparationOperation, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "primary_advanced_raster_operation", EVulkanCpuStage.PrimaryAdvancedRasterOperation, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "primary_advanced_late_compute_operation", EVulkanCpuStage.PrimaryAdvancedLateComputeOperation, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "primary_advanced_late_raster_operation", EVulkanCpuStage.PrimaryAdvancedLateRasterOperation, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "primary_advanced_classification_operation", EVulkanCpuStage.PrimaryAdvancedClassificationOperation, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "primary_advanced_ambient_occlusion_operation", EVulkanCpuStage.PrimaryAdvancedAmbientOcclusionOperation, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "primary_advanced_native_shading_operation", EVulkanCpuStage.PrimaryAdvancedNativeShadingOperation, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "primary_advanced_cpu_direct_draw_operation", EVulkanCpuStage.PrimaryAdvancedCpuDirectDrawOperation, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "primary_advanced_raster_lowering_operation", EVulkanCpuStage.PrimaryAdvancedRasterLoweringOperation, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "primary_advanced_raster_validation_operation", EVulkanCpuStage.PrimaryAdvancedRasterValidationOperation, ref first);
+            AppendVulkanCpuStageFields(s_lineBuilder, "primary_advanced_raster_binding_operation", EVulkanCpuStage.PrimaryAdvancedRasterBindingOperation, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "primary_finalization", EVulkanCpuStage.PrimaryFinalization, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "primary_end_command_buffer", EVulkanCpuStage.PrimaryEndCommandBuffer, ref first);
             AppendVulkanCpuStageFields(s_lineBuilder, "primary_frame_data_manifest", EVulkanCpuStage.PrimaryFrameDataManifest, ref first);

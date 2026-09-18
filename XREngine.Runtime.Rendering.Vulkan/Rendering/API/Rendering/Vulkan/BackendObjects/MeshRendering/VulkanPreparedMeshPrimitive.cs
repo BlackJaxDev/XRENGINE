@@ -13,4 +13,13 @@ internal readonly record struct VulkanPreparedMeshPrimitive(
     VkBufferHandle IndexBuffer,
     IndexType IndexType,
     uint ElementCount,
-    bool Indexed);
+    bool Indexed)
+{
+    internal bool Matches(VulkanPreparedMeshPrimitive other)
+        => Pipeline.Handle == other.Pipeline.Handle &&
+           Topology == other.Topology &&
+           IndexBuffer.Handle == other.IndexBuffer.Handle &&
+           IndexType == other.IndexType &&
+           ElementCount == other.ElementCount &&
+           Indexed == other.Indexed;
+}

@@ -31,6 +31,11 @@ internal readonly record struct VulkanVisibilityPreparedVertexSource(
     internal ulong Generation
         => UsesNativeRange ? NativeRange.NativeGeneration : CanonicalSlice.Generation;
 
+    internal bool Matches(VulkanVisibilityPreparedVertexSource other)
+        => ElementStride == other.ElementStride &&
+           CanonicalSlice.Matches(other.CanonicalSlice) &&
+           NativeRange.Matches(other.NativeRange);
+
     internal bool TryValidate(
         VulkanResourceRuntime resources,
         out string reason)

@@ -86,7 +86,8 @@ VMA is not retrieved from upstream as a prebuilt DLL. GPUOpen VMA is a header-on
 
 - Native project: `Build/Native/VulkanMemoryAllocatorBridge/VulkanMemoryAllocatorBridge.vcxproj`
 - Runtime DLL: `VulkanMemoryAllocatorBridge.Native.dll`
-- Managed staging location: `XREngine.Runtime.Rendering/runtimes/win-x64/native`
+- Packaged runtime location: `XREngine.Runtime.Rendering.Vulkan/runtimes/win-x64/native`
+- Generated build location: `Build/_AgentValidation/00000000-000000-shared/tools/bin/VulkanMemoryAllocatorBridge/<Configuration>`
 - Vendored source snapshot: `Build/Native/VulkanMemoryAllocatorBridge/vendor/VulkanMemoryAllocator` (VMA v3.3.0, MIT)
 - Fetch script: `Tools/Dependencies/Get-VulkanMemoryAllocator.ps1`
 - Direct build script: `Tools/Build-VulkanMemoryAllocatorBridge.ps1`
@@ -107,7 +108,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Tools\Dependencies\Get-Vul
 dotnet build .\XREngine.Runtime.Rendering\XREngine.Runtime.Rendering.csproj
 ```
 
-The managed project builds the native bridge automatically on Windows before preparing build output. The native DLL is generated under `XREngine.Runtime.Rendering/runtimes/win-x64/native`, then copied beside the managed output as `VulkanMemoryAllocatorBridge.Native.dll` for P/Invoke loading.
+The managed project builds the native bridge automatically on Windows before preparing build output. Debug and Release outputs stay in separate ignored build directories and are copied beside the managed output as `VulkanMemoryAllocatorBridge.Native.dll` for P/Invoke loading. Normal managed builds do not modify the packaged runtime DLL.
 
 If you are changing the native bridge and want to rebuild it directly:
 
@@ -120,13 +121,15 @@ VS Code tasks are also available:
 - `Install-VulkanMemoryAllocator`
 - `Build-VulkanMemoryAllocatorBridge`
 
+`Build-VulkanMemoryAllocatorBridge` builds a reproducible Release DLL and stages it into the packaged runtime location. Run it only when intentionally updating the checked-in bridge. The generated `.lib`, `.exp`, and `.pdb` files remain local build outputs and are not packaged.
+
 `ExecTool --bootstrap` runs the VMA fetch script with the other dependency installers. The normal editor/runtime build then compiles and stages the wrapper.
 
 To intentionally update the VMA version, fetch the new tag, rebuild, and regenerate dependency docs:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\Tools\Dependencies\Get-VulkanMemoryAllocator.ps1 -Version vX.Y.Z -ForceDownload
-powershell -NoProfile -ExecutionPolicy Bypass -File .\Tools\Build-VulkanMemoryAllocatorBridge.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Tools\Build-VulkanMemoryAllocatorBridge.ps1 -StageRuntime
 powershell -NoProfile -ExecutionPolicy Bypass -File .\Tools\Reports\Generate-Dependencies.ps1
 ```
 

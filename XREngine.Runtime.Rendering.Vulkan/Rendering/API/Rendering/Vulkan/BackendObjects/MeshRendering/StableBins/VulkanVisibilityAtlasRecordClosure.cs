@@ -45,8 +45,8 @@ internal readonly record struct VulkanVisibilityGeometryRecordClosure(
             return false;
         }
         if (!scene.IsValid || scene.NativeGeneration != SceneNativeGeneration ||
-            scene.StaticVertices != CanonicalVertexSlice ||
-            scene.Indices != IndexSlice)
+            !scene.StaticVertices.Matches(CanonicalVertexSlice) ||
+            !scene.Indices.Matches(IndexSlice))
         {
             reason = "the canonical geometry publication changed after visibility-plan sealing";
             return false;
@@ -66,7 +66,8 @@ internal readonly record struct VulkanVisibilityGeometryRecordClosure(
         if (!PreparedVertexSource.TryValidate(resources, out reason))
             return false;
         if (!PreparedVertexSource.UsesNativeRange &&
-            (PreparedVertexSource.CanonicalSlice != CanonicalVertexSlice ||
+              (!PreparedVertexSource.CanonicalSlice.Matches(
+                  CanonicalVertexSlice) ||
              PreparedVertexBase != CanonicalGeometry.VertexBase))
         {
             reason = "a static visibility draw no longer addresses its canonical vertex range";

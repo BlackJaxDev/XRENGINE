@@ -222,7 +222,6 @@ namespace XREngine.Rendering
         {
             InvalidateResolvedSourceCache();
             Interlocked.Increment(ref _sourceRevision);
-            MarkDirty();
             RuntimeShaderServices.Current?.LogWarning(
                 $"Shader dependency changed for '{Name ?? FilePath ?? "UnnamedShader"}': {reason}");
             SourceChanged?.Invoke(this);

@@ -24,6 +24,18 @@ public sealed partial class ProfilerFramePacket
     /// <summary>Engine time at which this snapshot was captured.</summary>
     public float FrameTime { get; set; }
 
+    public long SessionEpoch { get; set; }
+    public long PublicationId { get; set; }
+    public long CapturedAtTicks { get; set; }
+    public ulong UpdateFrameId { get; set; }
+    public ulong RenderFrameId { get; set; }
+    public int ActiveScopeCount { get; set; }
+    public int QueuedCompletedScopeCount { get; set; }
+    public int PendingCompletedScopeCount { get; set; }
+    public int UnresolvedLinkedChildCount { get; set; }
+    public long StaleCompletedScopeCount { get; set; }
+    public bool ContainsIncompleteScopes { get; set; }
+
     /// <summary>Per-thread profiler data.</summary>
     public ProfilerThreadData[] Threads { get; set; } = [];
 
@@ -40,6 +52,7 @@ public sealed partial class ProfilerFramePacket
 [MemoryPackable]
 public sealed partial class ProfilerThreadData
 {
+    /// <summary>Logical thread to which linked work is attributed.</summary>
     public int ThreadId { get; set; }
     /// <summary>Classified work time, excluding waits attributed to another thread.</summary>
     public float TotalTimeMs { get; set; }
@@ -56,9 +69,18 @@ public sealed partial class ProfilerThreadData
 [MemoryPackable]
 public sealed partial class ProfilerNodeData
 {
+    public long ScopeId { get; set; }
+    public long ParentScopeId { get; set; }
+    public long SessionEpoch { get; set; }
+    public int LogicalThreadId { get; set; }
+    public int ProducerThreadId { get; set; }
+    public long StartTicks { get; set; }
+    public long EndTicks { get; set; }
+    public bool IsComplete { get; set; }
+    public bool IsLinked { get; set; }
     public string Name { get; set; } = string.Empty;
     public float ElapsedMs { get; set; }
-    /// <summary>Synchronous wall-clock self-time in milliseconds (elapsed minus sum of direct children).</summary>
+    /// <summary>Synchronous self-time in milliseconds, excluding direct children recorded on the same producer thread.</summary>
     public float SelfMs { get; set; }
     public ProfilerScopeKind ScopeKind { get; set; }
     public ProfilerNodeData[] Children { get; set; } = [];

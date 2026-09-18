@@ -15,4 +15,14 @@ internal readonly record struct VulkanNativeBufferRange(
 {
     internal bool IsValid => Owner is not null && Buffer.Handle != 0u &&
         Length != 0u && LifetimeSlot.IsValid && NativeGeneration != 0u;
+
+    internal bool Matches(VulkanNativeBufferRange other)
+        => ReferenceEquals(Owner, other.Owner) &&
+           Buffer.Handle == other.Buffer.Handle &&
+           Offset == other.Offset &&
+           Length == other.Length &&
+           LifetimeSlot.Index == other.LifetimeSlot.Index &&
+           LifetimeSlot.Generation == other.LifetimeSlot.Generation &&
+           NativeGeneration == other.NativeGeneration &&
+           Usage == other.Usage;
 }

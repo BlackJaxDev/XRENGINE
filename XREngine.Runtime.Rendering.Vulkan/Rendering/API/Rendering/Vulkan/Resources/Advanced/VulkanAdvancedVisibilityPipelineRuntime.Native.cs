@@ -10,6 +10,16 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
         out VulkanAdvancedNativeComputePipelines pipelines, out string reason)
     {
         pipelines = default;
+        VulkanAdvancedVisibilityPipelineReadiness readiness = GetReadiness(out reason);
+        if (readiness == VulkanAdvancedVisibilityPipelineReadiness.Ready)
+            pipelines = _preparedNativeComputePipelines;
+        return readiness;
+    }
+
+    private VulkanAdvancedVisibilityPipelineReadiness PrepareNativeComputePipelines(
+        out VulkanAdvancedNativeComputePipelines pipelines, out string reason)
+    {
+        pipelines = default;
         VulkanAdvancedVisibilityPipelineReadiness readiness = TryGetNativeComputePipeline(0,
             "Advanced/Classification/ClassifyTiles.comp", out VulkanAdvancedComputePipeline classify, out reason);
         if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready) return readiness;
@@ -45,12 +55,13 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
                 path, path, index == 0 ? ResolveClassificationPreamble() : addressRoot
                     ? $"#extension GL_EXT_buffer_reference : require\n#define XR_ADV_SHADING_ADDRESS_ROOT_VERSION {VulkanNativeShadingRootPolicy.AbiVersion}\n"
                     : string.Empty);
-            if (_resources.WrapperLookup.GetOrCreate(source, generateNow: true) is not VkRenderProgram program ||
-                !program.Link(allowAsyncShaderCompile: false) || !program.IsLinked || program.PipelineLayout.Handle == 0)
-            {
-                reason = DescribeProgramFailure(source, path);
-                return VulkanAdvancedVisibilityPipelineReadiness.Failed;
-            }
+            VulkanAdvancedVisibilityPipelineReadiness linkReadiness = TryPrepareProgram(
+                source,
+                out VkRenderProgram program,
+                out reason,
+                path);
+            if (linkReadiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
+                return linkReadiness;
             VulkanComputePipelineReadiness readiness = program.TryGetOrRequestComputePipeline(
                 int.MinValue, null, out Pipeline pipeline, out string detail);
             if (readiness != VulkanComputePipelineReadiness.Ready)

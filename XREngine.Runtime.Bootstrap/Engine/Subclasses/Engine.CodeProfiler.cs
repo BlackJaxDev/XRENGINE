@@ -39,7 +39,10 @@ namespace XREngine
                     if (value)
                         StartStatsThread();
                     else
+                    {
+                        Interlocked.Increment(ref _sessionEpoch);
                         StopStatsThread(waitForExit: true);
+                    }
                 }
             }
 
@@ -172,7 +175,15 @@ namespace XREngine
             private long _lastOverflowWarningTicks;
             private long _overflowDiscardedEventCount;
             private long _pendingCompletedDiscardedEventCount;
-            private readonly ConcurrentDictionary<int, AsyncPendingTimer> _pendingAsyncTimers = [];
+            private long _staleCompletedDiscardedEventCount;
+            private long _nextScopeId;
+            private long _sessionEpoch = 1L;
+            private long _nextPublicationId;
+            private int _activeScopeCount;
+            private int _queuedCompletedScopeCount;
+            private int _unresolvedLinkedChildCount;
+            private readonly ConcurrentDictionary<Guid, AsyncPendingTimer> _pendingAsyncTimers = [];
+            private readonly ConcurrentDictionary<long, int> _unresolvedLinkedChildrenByParentScopeId = [];
 
             private Thread? _statsThread;
             private CancellationTokenSource? _statsThreadCts;
@@ -192,7 +203,12 @@ namespace XREngine
 
             public long OverflowDiscardedEventCount => Volatile.Read(ref _overflowDiscardedEventCount);
             public long PendingCompletedDiscardedEventCount => Volatile.Read(ref _pendingCompletedDiscardedEventCount);
+            public long StaleCompletedDiscardedEventCount => Volatile.Read(ref _staleCompletedDiscardedEventCount);
             public int PendingCompletedCount => Volatile.Read(ref _pendingCompletedCount);
+            public int ActiveScopeCount => Volatile.Read(ref _activeScopeCount);
+            public int QueuedCompletedScopeCount => Volatile.Read(ref _queuedCompletedScopeCount);
+            public int UnresolvedLinkedChildCount => Volatile.Read(ref _unresolvedLinkedChildCount);
+            public long SessionEpoch => Volatile.Read(ref _sessionEpoch);
             private readonly Dictionary<(string Name, ProfilerScopeKind ScopeKind), long> _lastSlowScopeLogTicks = [];
             private readonly string[] _renderThreadScopeNames = new string[RenderThreadScopeStackCapacity];
             private readonly ProfilerScopeKind[] _renderThreadScopeKinds = new ProfilerScopeKind[RenderThreadScopeStackCapacity];
@@ -226,38 +242,61 @@ namespace XREngine
             public delegate void DelTimerCallback(string? methodName, float elapsedMs);
 
             internal readonly record struct CompletedScopeEvent(
-                int ThreadId,
+                long ScopeId,
+                long ParentScopeId,
+                long SessionEpoch,
+                int LogicalThreadId,
+                int ProducerThreadId,
                 int Depth,
                 long StartTicks,
                 long ElapsedTicks,
                 string? MethodName,
                 ProfilerScopeKind ScopeKind,
-                bool IsAsyncRoot);
+                bool IsAsyncRoot,
+                bool IsLinked);
 
             internal sealed class ThreadProducerState(int threadId, ThreadProducerBuffer buffer)
             {
                 public int ThreadId { get; } = threadId;
                 public ThreadProducerBuffer Buffer { get; } = buffer;
+                public long SessionEpoch;
+                public long CurrentScopeId;
                 public int Depth;
+
+                public void PrepareForSession(long sessionEpoch)
+                {
+                    if (SessionEpoch == sessionEpoch)
+                        return;
+
+                    SessionEpoch = sessionEpoch;
+                    CurrentScopeId = 0L;
+                    Depth = 0;
+                }
             }
 
-            internal sealed class LinkedThreadProducerState(int threadId, int depth)
+            internal sealed class LinkedThreadProducerState(int threadId, int depth, long currentScopeId, long sessionEpoch)
             {
                 public int ThreadId { get; } = threadId;
+                public long SessionEpoch { get; } = sessionEpoch;
+                public long CurrentScopeId = currentScopeId;
                 public int Depth = depth;
             }
 
             public readonly struct LinkedScopeContext
             {
-                internal LinkedScopeContext(int threadId, int parentDepth)
+                internal LinkedScopeContext(int threadId, int parentDepth, long parentScopeId, long sessionEpoch)
                 {
                     ThreadId = threadId;
                     ParentDepth = parentDepth;
+                    ParentScopeId = parentScopeId;
+                    SessionEpoch = sessionEpoch;
                 }
 
                 internal int ThreadId { get; }
                 internal int ParentDepth { get; }
-                internal bool IsValid => ThreadId != 0 && ParentDepth >= 0;
+                internal long ParentScopeId { get; }
+                internal long SessionEpoch { get; }
+                internal bool IsValid => ThreadId != 0 && ParentDepth >= 0 && SessionEpoch > 0L;
             }
 
             internal sealed class ThreadProducerBuffer(int threadId, int capacity)
@@ -314,6 +353,12 @@ namespace XREngine
                     }
                 }
 
+                public void Clear()
+                {
+                    lock (_resizeLock)
+                        Volatile.Write(ref _readSequence, Volatile.Read(ref _writeSequence));
+                }
+
                 [MethodImpl(MethodImplOptions.NoInlining)]
                 private bool TryGrow(int write, int read)
                 {
@@ -353,10 +398,13 @@ namespace XREngine
                 }
             }
 
-            private sealed class AsyncPendingTimer(long startTicks, int threadId, string? methodName, ProfilerScopeKind scopeKind)
+            private sealed class AsyncPendingTimer(long scopeId, long sessionEpoch, long startTicks, int logicalThreadId, int producerThreadId, string? methodName, ProfilerScopeKind scopeKind)
             {
+                public long ScopeId { get; } = scopeId;
+                public long SessionEpoch { get; } = sessionEpoch;
                 public long StartTicks { get; } = startTicks;
-                public int ThreadId { get; } = threadId;
+                public int LogicalThreadId { get; } = logicalThreadId;
+                public int ProducerThreadId { get; } = producerThreadId;
                 public string? MethodName { get; } = methodName;
                 public ProfilerScopeKind ScopeKind { get; } = scopeKind;
             }
@@ -369,11 +417,15 @@ namespace XREngine
                 private readonly LinkedThreadProducerState? _previousLinkedState;
                 private readonly string? _methodName;
                 private readonly long _startTicks;
+                private readonly long _scopeId;
+                private readonly long _parentScopeId;
+                private readonly long _sessionEpoch;
+                private readonly int _producerThreadId;
                 private readonly int _depth;
                 private readonly ProfilerScopeKind _scopeKind;
                 private readonly bool _restoreLinkedStateOnDispose;
 
-                internal ProfilerScope(CodeProfiler profiler, ThreadProducerState state, long startTicks, int depth, string? methodName, ProfilerScopeKind scopeKind)
+                internal ProfilerScope(CodeProfiler profiler, ThreadProducerState state, long startTicks, long scopeId, long parentScopeId, long sessionEpoch, int producerThreadId, int depth, string? methodName, ProfilerScopeKind scopeKind)
                 {
                     _profiler = profiler;
                     _state = state;
@@ -381,6 +433,10 @@ namespace XREngine
                     _previousLinkedState = null;
                     _methodName = methodName;
                     _startTicks = startTicks;
+                    _scopeId = scopeId;
+                    _parentScopeId = parentScopeId;
+                    _sessionEpoch = sessionEpoch;
+                    _producerThreadId = producerThreadId;
                     _depth = depth;
                     _scopeKind = scopeKind;
                     _restoreLinkedStateOnDispose = false;
@@ -392,6 +448,10 @@ namespace XREngine
                     LinkedThreadProducerState? previousLinkedState,
                     bool restoreLinkedStateOnDispose,
                     long startTicks,
+                    long scopeId,
+                    long parentScopeId,
+                    long sessionEpoch,
+                    int producerThreadId,
                     int depth,
                     string? methodName,
                     ProfilerScopeKind scopeKind)
@@ -402,6 +462,10 @@ namespace XREngine
                     _previousLinkedState = previousLinkedState;
                     _methodName = methodName;
                     _startTicks = startTicks;
+                    _scopeId = scopeId;
+                    _parentScopeId = parentScopeId;
+                    _sessionEpoch = sessionEpoch;
+                    _producerThreadId = producerThreadId;
                     _depth = depth;
                     _scopeKind = scopeKind;
                     _restoreLinkedStateOnDispose = restoreLinkedStateOnDispose;
@@ -415,26 +479,38 @@ namespace XREngine
 
                     if (_linkedState is not null)
                     {
-                        int linkedDepth = _linkedState.Depth;
-                        int newLinkedDepth = linkedDepth > 0 ? linkedDepth - 1 : 0;
-                        _linkedState.Depth = newLinkedDepth;
+                        bool currentSession = _sessionEpoch == _profiler.SessionEpoch;
+                        if (currentSession && _linkedState.CurrentScopeId == _scopeId)
+                        {
+                            _linkedState.Depth = _depth > 0 ? _depth - 1 : 0;
+                            _linkedState.CurrentScopeId = _parentScopeId;
+                        }
 
-                        long linkedEndTicks = Time.Timer.TimeTicks();
-                        if (_profiler._enableFrameLogging)
+                        long linkedEndTicks = Stopwatch.GetTimestamp();
+                        if (_profiler._enableFrameLogging && currentSession)
                         {
                             long linkedElapsedTicks = linkedEndTicks - _startTicks;
                             if (linkedElapsedTicks < 0L)
                                 linkedElapsedTicks = 0L;
 
                             _profiler._overflowCompletedEvents.Enqueue(new CompletedScopeEvent(
+                                _scopeId,
+                                _parentScopeId,
+                                _sessionEpoch,
                                 _linkedState.ThreadId,
+                                _producerThreadId,
                                 _depth,
                                 _startTicks,
                                 linkedElapsedTicks,
                                 _methodName,
                                 _scopeKind,
-                                IsAsyncRoot: false));
+                                IsAsyncRoot: false,
+                                IsLinked: _restoreLinkedStateOnDispose));
+                            Interlocked.Increment(ref _profiler._queuedCompletedScopeCount);
+                            Interlocked.Decrement(ref _profiler._activeScopeCount);
                         }
+                        else if (!currentSession)
+                            Interlocked.Increment(ref _profiler._staleCompletedDiscardedEventCount);
 
                         if (_restoreLinkedStateOnDispose)
                             _tlsLinkedProducerState = _previousLinkedState;
@@ -445,29 +521,44 @@ namespace XREngine
                     if (_state is null)
                         return;
 
-                    int depth = _state.Depth;
-                    int newDepth = depth > 0 ? depth - 1 : 0;
-                    _state.Depth = newDepth;
+                    bool currentProducerSession = _sessionEpoch == _profiler.SessionEpoch;
+                    int newDepth = _depth > 0 ? _depth - 1 : 0;
+                    if (currentProducerSession && _state.CurrentScopeId == _scopeId)
+                    {
+                        _state.Depth = newDepth;
+                        _state.CurrentScopeId = _parentScopeId;
+                    }
 
-                    long endTicks = Time.Timer.TimeTicks();
-                    if (_state.ThreadId == RuntimeEngine.RenderThreadId)
+                    long endTicks = Stopwatch.GetTimestamp();
+                    if (currentProducerSession && _state.ThreadId == RuntimeEngine.RenderThreadId)
                         _profiler.RecordRenderThreadScopeExit(newDepth, endTicks, _methodName, _scopeKind);
 
-                    if (!_profiler._enableFrameLogging)
+                    if (!_profiler._enableFrameLogging || !currentProducerSession)
+                    {
+                        if (!currentProducerSession)
+                            Interlocked.Increment(ref _profiler._staleCompletedDiscardedEventCount);
                         return;
+                    }
 
                     long elapsedTicks = endTicks - _startTicks;
                     if (elapsedTicks < 0L)
                         elapsedTicks = 0L;
 
                     var completedEvent = new CompletedScopeEvent(
+                        _scopeId,
+                        _parentScopeId,
+                        _sessionEpoch,
                         _state.ThreadId,
+                        _producerThreadId,
                         _depth,
                         _startTicks,
                         elapsedTicks,
                         _methodName,
                         _scopeKind,
-                        IsAsyncRoot: false);
+                        IsAsyncRoot: false,
+                        IsLinked: false);
+                    Interlocked.Increment(ref _profiler._queuedCompletedScopeCount);
+                    Interlocked.Decrement(ref _profiler._activeScopeCount);
 
                     if (!_state.Buffer.TryWrite(completedEvent))
                         _profiler._overflowCompletedEvents.Enqueue(completedEvent);
@@ -477,26 +568,40 @@ namespace XREngine
             private sealed class BuiltTimer
             {
                 public string Name = string.Empty;
+                public long ScopeId;
+                public long ParentScopeId;
+                public long SessionEpoch;
+                public int LogicalThreadId;
+                public int ProducerThreadId;
+                public long StartTicks;
                 public long ElapsedTicks;
                 public int Depth;
                 public ProfilerScopeKind ScopeKind;
+                public bool IsLinked;
                 public List<BuiltTimer> Children = new(4);
 
                 public void Reset()
                 {
                     Name = string.Empty;
+                    ScopeId = 0L;
+                    ParentScopeId = 0L;
+                    SessionEpoch = 0L;
+                    LogicalThreadId = 0;
+                    ProducerThreadId = 0;
+                    StartTicks = 0L;
                     ElapsedTicks = 0L;
                     Depth = 0;
                     ScopeKind = ProfilerScopeKind.Unspecified;
+                    IsLinked = false;
                     Children.Clear();
                 }
             }
 
             private sealed class ThreadBuildState
             {
-                public Stack<BuiltTimer> PendingCompleted = new(32);
+                public Dictionary<long, List<BuiltTimer>> PendingChildrenByParentScopeId = new(32);
+                public Dictionary<long, BuiltTimer> CompletedByScopeId = new(64);
                 public Queue<BuiltTimer> BuiltTimerPool = new(64);
-                public List<BuiltTimer> ChildScratch = new(16);
 
                 public BuiltTimer RentBuilt()
                     => BuiltTimerPool.Count > 0 ? BuiltTimerPool.Dequeue() : new BuiltTimer();
@@ -624,32 +729,54 @@ namespace XREngine
 
             private void StopStatsThread(bool waitForExit)
             {
-                Thread? threadToJoin = null;
                 lock (_statsThreadLock)
                 {
                     if (_statsThread is null)
                         return;
 
                     _statsThreadCts?.Cancel();
-                    threadToJoin = _statsThread;
+                    if (!waitForExit)
+                        return;
+
+                    _statsThread.Join();
                     _statsThread = null;
+                    _statsThreadCts?.Dispose();
+                    _statsThreadCts = null;
                 }
 
-                if (waitForExit && threadToJoin is not null)
-                    threadToJoin.Join(TimeSpan.FromMilliseconds(250));
-
                 while (_overflowCompletedEvents.TryDequeue(out _)) { }
+                lock (_producerRegistrationLock)
+                {
+                    for (int i = 0; i < _producerBuffers.Count; i++)
+                        _producerBuffers[i].Clear();
+                }
                 _pendingAsyncTimers.Clear();
+                _unresolvedLinkedChildrenByParentScopeId.Clear();
 
                 // Clear stale tree-build state so a restart doesn't process orphaned data
                 foreach (var state in _threadBuildStates.Values)
                 {
-                    state.PendingCompleted.Clear();
-                    state.ChildScratch.Clear();
+                    foreach (var pendingChildren in state.PendingChildrenByParentScopeId.Values)
+                    {
+                        for (int i = 0; i < pendingChildren.Count; i++)
+                            state.ReturnBuiltRecursive(pendingChildren[i]);
+                    }
+                    state.PendingChildrenByParentScopeId.Clear();
+                    state.CompletedByScopeId.Clear();
                 }
                 _pendingCompletedCount = 0;
-                foreach (var roots in _accumulatedRoots.Values)
+                Volatile.Write(ref _activeScopeCount, 0);
+                Volatile.Write(ref _queuedCompletedScopeCount, 0);
+                Volatile.Write(ref _unresolvedLinkedChildCount, 0);
+                foreach (var (threadId, roots) in _accumulatedRoots)
+                {
+                    if (_threadBuildStates.TryGetValue(threadId, out var state))
+                    {
+                        for (int i = 0; i < roots.Count; i++)
+                            state.ReturnBuiltRecursive(roots[i]);
+                    }
                     roots.Clear();
+                }
                 _threadFrameHistory.Clear();
                 _lastSlowScopeLogTicks.Clear();
                 _readySnapshot = null;
@@ -677,7 +804,7 @@ namespace XREngine
                     {
                         int scopesProcessed = DrainCompletedScopes();
 
-                        long nowTicks = Time.Timer.TimeTicks();
+                        long nowTicks = Stopwatch.GetTimestamp();
                         if (_lastSnapshotTicks < 0L || nowTicks - _lastSnapshotTicks >= SnapshotIntervalTicks)
                         {
                             BuildFrameSnapshot(nowTicks);
@@ -723,8 +850,13 @@ namespace XREngine
                 if (_overflowCompletedEvents.Count > MaxOverflowQueueSize)
                 {
                     int discarded = 0;
-                    while (_overflowCompletedEvents.TryDequeue(out _))
+                    while (_overflowCompletedEvents.TryDequeue(out var discardedEvent))
+                    {
+                        Interlocked.Decrement(ref _queuedCompletedScopeCount);
+                        if (discardedEvent.IsLinked)
+                            ResolveLinkedChild(discardedEvent.ParentScopeId);
                         discarded++;
+                    }
 
                     Interlocked.Add(ref _overflowDiscardedEventCount, discarded);
 
@@ -742,43 +874,84 @@ namespace XREngine
 
             private void ProcessCompletedScopeEvent(in CompletedScopeEvent completedEvent)
             {
+                Interlocked.Decrement(ref _queuedCompletedScopeCount);
+                if (completedEvent.SessionEpoch != SessionEpoch)
+                {
+                    Interlocked.Increment(ref _staleCompletedDiscardedEventCount);
+                    return;
+                }
+
                 LogSlowScopeByKind(completedEvent);
 
-                if (!_threadBuildStates.TryGetValue(completedEvent.ThreadId, out var state))
+                if (!_threadBuildStates.TryGetValue(completedEvent.LogicalThreadId, out var state))
                 {
                     state = new ThreadBuildState();
-                    _threadBuildStates[completedEvent.ThreadId] = state;
+                    _threadBuildStates[completedEvent.LogicalThreadId] = state;
                 }
 
                 var built = state.RentBuilt();
                 built.Name = completedEvent.MethodName ?? string.Empty;
+                built.ScopeId = completedEvent.ScopeId;
+                built.ParentScopeId = completedEvent.ParentScopeId;
+                built.SessionEpoch = completedEvent.SessionEpoch;
+                built.LogicalThreadId = completedEvent.LogicalThreadId;
+                built.ProducerThreadId = completedEvent.ProducerThreadId;
+                built.StartTicks = completedEvent.StartTicks;
                 built.ElapsedTicks = completedEvent.ElapsedTicks;
                 built.Depth = completedEvent.Depth;
                 built.ScopeKind = completedEvent.ScopeKind;
+                built.IsLinked = completedEvent.IsLinked;
 
-                while (state.PendingCompleted.Count > 0 && state.PendingCompleted.Peek().Depth > completedEvent.Depth)
+                if (state.PendingChildrenByParentScopeId.Remove(completedEvent.ScopeId, out var pendingChildren))
                 {
-                    state.ChildScratch.Add(state.PendingCompleted.Pop());
-                    _pendingCompletedCount--;
+                    for (int i = 0; i < pendingChildren.Count; i++)
+                        built.Children.Add(pendingChildren[i]);
+                    _pendingCompletedCount -= pendingChildren.Count;
                 }
 
-                for (int i = state.ChildScratch.Count - 1; i >= 0; i--)
-                    built.Children.Add(state.ChildScratch[i]);
-                state.ChildScratch.Clear();
+                state.CompletedByScopeId[completedEvent.ScopeId] = built;
 
-                if (completedEvent.IsAsyncRoot || completedEvent.Depth <= 1)
+                if (!completedEvent.IsAsyncRoot && completedEvent.ParentScopeId != 0L)
                 {
-                    if (!_accumulatedRoots.TryGetValue(completedEvent.ThreadId, out var roots))
+                    if (state.CompletedByScopeId.TryGetValue(completedEvent.ParentScopeId, out var completedParent))
+                        completedParent.Children.Add(built);
+                    else
+                        RetainPendingCompleted(state, built);
+
+                    if (completedEvent.IsLinked)
+                        ResolveLinkedChild(completedEvent.ParentScopeId);
+                    return;
+                }
+
+                if (!_accumulatedRoots.TryGetValue(completedEvent.LogicalThreadId, out var roots))
+                {
+                    roots = new List<BuiltTimer>(32);
+                    _accumulatedRoots[completedEvent.LogicalThreadId] = roots;
+                }
+
+                roots.Add(built);
+            }
+
+            private void ResolveLinkedChild(long parentScopeId)
+            {
+                if (parentScopeId == 0L)
+                    return;
+
+                while (_unresolvedLinkedChildrenByParentScopeId.TryGetValue(parentScopeId, out int count))
+                {
+                    if (count <= 1)
                     {
-                        roots = new List<BuiltTimer>(32);
-                        _accumulatedRoots[completedEvent.ThreadId] = roots;
+                        if (_unresolvedLinkedChildrenByParentScopeId.TryRemove(parentScopeId, out _))
+                        {
+                            Interlocked.Decrement(ref _unresolvedLinkedChildCount);
+                            return;
+                        }
                     }
-
-                    roots.Add(built);
-                }
-                else
-                {
-                    RetainPendingCompleted(state, built);
+                    else if (_unresolvedLinkedChildrenByParentScopeId.TryUpdate(parentScopeId, count - 1, count))
+                    {
+                        Interlocked.Decrement(ref _unresolvedLinkedChildCount);
+                        return;
+                    }
                 }
             }
 
@@ -792,13 +965,20 @@ namespace XREngine
             {
                 if (_pendingCompletedCount >= MaxOverflowQueueSize)
                 {
+                    RemoveCompletedScopeMappings(state, built);
                     state.ReturnBuiltRecursive(built);
                     Interlocked.Increment(ref _pendingCompletedDiscardedEventCount);
                     LogPendingCompletedOverflow();
                     return;
                 }
 
-                state.PendingCompleted.Push(built);
+                if (!state.PendingChildrenByParentScopeId.TryGetValue(built.ParentScopeId, out var siblings))
+                {
+                    siblings = new List<BuiltTimer>(2);
+                    state.PendingChildrenByParentScopeId[built.ParentScopeId] = siblings;
+                }
+
+                siblings.Add(built);
                 _pendingCompletedCount++;
             }
 
@@ -825,7 +1005,7 @@ namespace XREngine
                 string name = string.IsNullOrWhiteSpace(completedEvent.MethodName)
                     ? "<unnamed>"
                     : completedEvent.MethodName!;
-                long nowTicks = Time.Timer.TimeTicks();
+                long nowTicks = Stopwatch.GetTimestamp();
                 var key = (name, scopeKind);
                 if (_lastSlowScopeLogTicks.TryGetValue(key, out long lastLogTicks)
                     && nowTicks - lastLogTicks < SlowScopeLogCooldownTicks)
@@ -846,7 +1026,11 @@ namespace XREngine
                     builder.Append("ScopeKind: ").Append(scopeKind).AppendLine();
                     builder.Append("LoggingPolicy: ").Append(GetScopeLoggingPolicy(scopeKind)).AppendLine();
                     builder.Append("ScopeName: ").Append(name).AppendLine();
-                    builder.Append("ThreadId: ").Append(completedEvent.ThreadId).AppendLine();
+                    builder.Append("ScopeId: ").Append(completedEvent.ScopeId).AppendLine();
+                    builder.Append("ParentScopeId: ").Append(completedEvent.ParentScopeId).AppendLine();
+                    builder.Append("SessionEpoch: ").Append(completedEvent.SessionEpoch).AppendLine();
+                    builder.Append("LogicalThreadId: ").Append(completedEvent.LogicalThreadId).AppendLine();
+                    builder.Append("ProducerThreadId: ").Append(completedEvent.ProducerThreadId).AppendLine();
                     builder.Append("Depth: ").Append(completedEvent.Depth).AppendLine();
                     builder.Append("ElapsedMs: ").Append(elapsedMs.ToString("F3")).AppendLine();
                     builder.Append("IsAsyncRoot: ").Append(completedEvent.IsAsyncRoot).AppendLine();
@@ -869,23 +1053,50 @@ namespace XREngine
                     if (roots.Count == 0)
                         continue;
 
-                    var rootSnapshots = new ProfilerNodeSnapshot[roots.Count];
+                    var rootSnapshots = new List<ProfilerNodeSnapshot>(roots.Count);
+                    int retainedRootCount = 0;
                     for (int i = 0; i < roots.Count; i++)
                     {
-                        rootSnapshots[i] = BuildSnapshotFromBuilt(roots[i]);
+                        BuiltTimer root = roots[i];
+                        if (HasUnresolvedLinkedDescendant(root))
+                        {
+                            roots[retainedRootCount++] = root;
+                            continue;
+                        }
+
+                        rootSnapshots.Add(BuildSnapshotFromBuilt(root));
                         if (_threadBuildStates.TryGetValue(threadId, out var state))
-                            state.ReturnBuiltRecursive(roots[i]);
+                        {
+                            RemoveCompletedScopeMappings(state, root);
+                            state.ReturnBuiltRecursive(root);
+                        }
                     }
 
-                    roots.Clear();
-                    _threadSnapshotsBuffer.Add(new ProfilerThreadSnapshot(threadId, rootSnapshots));
+                    if (retainedRootCount < roots.Count)
+                        roots.RemoveRange(retainedRootCount, roots.Count - retainedRootCount);
+
+                    if (rootSnapshots.Count > 0)
+                        _threadSnapshotsBuffer.Add(new ProfilerThreadSnapshot(threadId, rootSnapshots.ToArray()));
                 }
 
                 ProfilerFrameSnapshot? frameSnapshot = null;
                 if (_threadSnapshotsBuffer.Count > 0)
                 {
-                    float frameTime = EngineTimer.TicksToSeconds(frameTicks);
-                    frameSnapshot = new ProfilerFrameSnapshot(frameTime, _threadSnapshotsBuffer.ToArray(), _readyComponentTimingSnapshot);
+                    float frameTime = Time.Timer.Time();
+                    frameSnapshot = new ProfilerFrameSnapshot(
+                        frameTime,
+                        SessionEpoch,
+                        Interlocked.Increment(ref _nextPublicationId),
+                        frameTicks,
+                        Time.Timer.UpdateFrameId,
+                        RuntimeEngine.Rendering.State.RenderFrameId,
+                        ActiveScopeCount,
+                        QueuedCompletedScopeCount,
+                        PendingCompletedCount,
+                        UnresolvedLinkedChildCount,
+                        StaleCompletedDiscardedEventCount,
+                        _threadSnapshotsBuffer.ToArray(),
+                        _readyComponentTimingSnapshot);
                 }
 
                 if (frameSnapshot is not null)
@@ -1675,6 +1886,7 @@ namespace XREngine
             private static ProfilerNodeSnapshot BuildSnapshotFromBuilt(BuiltTimer timer)
             {
                 var children = timer.Children;
+                children.Sort(static (left, right) => left.StartTicks.CompareTo(right.StartTicks));
                 int childCount = children.Count;
                 ProfilerNodeSnapshot[] childSnapshots = childCount > 0 ? new ProfilerNodeSnapshot[childCount] : [];
                 long childTicksSum = 0L;
@@ -1682,12 +1894,47 @@ namespace XREngine
                 for (int i = 0; i < childCount; ++i)
                 {
                     childSnapshots[i] = BuildSnapshotFromBuilt(children[i]);
-                    childTicksSum += children[i].ElapsedTicks;
+                    if (!children[i].IsLinked && children[i].ProducerThreadId == timer.ProducerThreadId)
+                        childTicksSum += children[i].ElapsedTicks;
                 }
 
                 float elapsedMs = TicksToMilliseconds(timer.ElapsedTicks);
                 float selfMs = TicksToMilliseconds(Math.Max(0L, timer.ElapsedTicks - childTicksSum));
-                return new ProfilerNodeSnapshot(timer.Name, elapsedMs, selfMs, timer.ScopeKind, childSnapshots);
+                return new ProfilerNodeSnapshot(
+                    timer.ScopeId,
+                    timer.ParentScopeId,
+                    timer.SessionEpoch,
+                    timer.LogicalThreadId,
+                    timer.ProducerThreadId,
+                    timer.StartTicks,
+                    timer.StartTicks + timer.ElapsedTicks,
+                    timer.IsLinked,
+                    timer.Name,
+                    elapsedMs,
+                    selfMs,
+                    timer.ScopeKind,
+                    childSnapshots);
+            }
+
+            private static void RemoveCompletedScopeMappings(ThreadBuildState state, BuiltTimer timer)
+            {
+                state.CompletedByScopeId.Remove(timer.ScopeId);
+                for (int i = 0; i < timer.Children.Count; i++)
+                    RemoveCompletedScopeMappings(state, timer.Children[i]);
+            }
+
+            private bool HasUnresolvedLinkedDescendant(BuiltTimer timer)
+            {
+                if (_unresolvedLinkedChildrenByParentScopeId.ContainsKey(timer.ScopeId))
+                    return true;
+
+                for (int i = 0; i < timer.Children.Count; i++)
+                {
+                    if (HasUnresolvedLinkedDescendant(timer.Children[i]))
+                        return true;
+                }
+
+                return false;
             }
 
             private static float TicksToMilliseconds(long ticks)
@@ -1760,27 +2007,45 @@ namespace XREngine
 
                 if (_tlsLinkedProducerState is { } linkedState)
                 {
+                    long sessionEpoch = SessionEpoch;
+                    if (linkedState.SessionEpoch != sessionEpoch)
+                        return default;
+
                     int linkedDepth = linkedState.Depth + 1;
                     linkedState.Depth = linkedDepth;
-                    long linkedStartTicks = Time.Timer.TimeTicks();
+                    long linkedParentScopeId = linkedState.CurrentScopeId;
+                    long linkedScopeId = Interlocked.Increment(ref _nextScopeId);
+                    linkedState.CurrentScopeId = linkedScopeId;
+                    Interlocked.Increment(ref _activeScopeCount);
+                    long linkedStartTicks = Stopwatch.GetTimestamp();
                     return new ProfilerScope(
                         this,
                         linkedState,
                         null,
                         false,
                         linkedStartTicks,
+                        linkedScopeId,
+                        linkedParentScopeId,
+                        sessionEpoch,
+                        Environment.CurrentManagedThreadId,
                         linkedDepth,
                         methodName,
                         scopeKind);
                 }
 
                 var state = GetOrCreateThreadProducerState();
+                long currentSessionEpoch = SessionEpoch;
+                state.PrepareForSession(currentSessionEpoch);
                 int depth = state.Depth + 1;
                 state.Depth = depth;
-                long startTicks = Time.Timer.TimeTicks();
+                long parentScopeId = state.CurrentScopeId;
+                long scopeId = Interlocked.Increment(ref _nextScopeId);
+                state.CurrentScopeId = scopeId;
+                Interlocked.Increment(ref _activeScopeCount);
+                long startTicks = Stopwatch.GetTimestamp();
                 if (state.ThreadId == RuntimeEngine.RenderThreadId)
                     RecordRenderThreadScopeEntry(depth, startTicks, methodName, scopeKind);
-                return new ProfilerScope(this, state, startTicks, depth, methodName, scopeKind);
+                return new ProfilerScope(this, state, startTicks, scopeId, parentScopeId, currentSessionEpoch, Environment.CurrentManagedThreadId, depth, methodName, scopeKind);
             }
 
             public LinkedScopeContext CaptureLinkedChildContext()
@@ -1789,10 +2054,12 @@ namespace XREngine
                     return default;
 
                 if (_tlsLinkedProducerState is { } linkedState)
-                    return new LinkedScopeContext(linkedState.ThreadId, linkedState.Depth);
+                    return new LinkedScopeContext(linkedState.ThreadId, linkedState.Depth, linkedState.CurrentScopeId, linkedState.SessionEpoch);
 
                 var state = GetOrCreateThreadProducerState();
-                return new LinkedScopeContext(state.ThreadId, state.Depth);
+                long sessionEpoch = SessionEpoch;
+                state.PrepareForSession(sessionEpoch);
+                return new LinkedScopeContext(state.ThreadId, state.Depth, state.CurrentScopeId, sessionEpoch);
             }
 
             public ProfilerScope StartLinkedChild(
@@ -1800,21 +2067,37 @@ namespace XREngine
                 string? methodName,
                 ProfilerScopeKind scopeKind = ProfilerScopeKind.OneOffInvoke)
             {
-                if (!_enableFrameLogging || !context.IsValid)
+                long sessionEpoch = SessionEpoch;
+                if (!_enableFrameLogging || !context.IsValid || context.SessionEpoch != sessionEpoch)
+                {
+                    if (context.IsValid && context.SessionEpoch != sessionEpoch)
+                        Interlocked.Increment(ref _staleCompletedDiscardedEventCount);
                     return default;
+                }
 
                 int childDepth = context.ParentDepth + 1;
                 var previousLinkedState = _tlsLinkedProducerState;
-                var linkedState = new LinkedThreadProducerState(context.ThreadId, childDepth);
+                long scopeId = Interlocked.Increment(ref _nextScopeId);
+                var linkedState = new LinkedThreadProducerState(context.ThreadId, childDepth, scopeId, sessionEpoch);
                 _tlsLinkedProducerState = linkedState;
+                Interlocked.Increment(ref _activeScopeCount);
+                if (context.ParentScopeId != 0L)
+                {
+                    _unresolvedLinkedChildrenByParentScopeId.AddOrUpdate(context.ParentScopeId, 1, static (_, count) => count + 1);
+                    Interlocked.Increment(ref _unresolvedLinkedChildCount);
+                }
 
-                long startTicks = Time.Timer.TimeTicks();
+                long startTicks = Stopwatch.GetTimestamp();
                 return new ProfilerScope(
                     this,
                     linkedState,
                     previousLinkedState,
                     true,
                     startTicks,
+                    scopeId,
+                    context.ParentScopeId,
+                    sessionEpoch,
+                    Environment.CurrentManagedThreadId,
                     childDepth,
                     methodName,
                     scopeKind);
@@ -1851,32 +2134,45 @@ namespace XREngine
                     return id;
 
                 var state = GetOrCreateThreadProducerState();
-                int correlationId = id.GetHashCode();
-                _pendingAsyncTimers[correlationId] = new AsyncPendingTimer(Time.Timer.TimeTicks(), state.ThreadId, methodName, scopeKind);
+                long sessionEpoch = SessionEpoch;
+                state.PrepareForSession(sessionEpoch);
+                long scopeId = Interlocked.Increment(ref _nextScopeId);
+                _pendingAsyncTimers[id] = new AsyncPendingTimer(scopeId, sessionEpoch, Stopwatch.GetTimestamp(), state.ThreadId, Environment.CurrentManagedThreadId, methodName, scopeKind);
+                Interlocked.Increment(ref _activeScopeCount);
                 return id;
             }
 
             public float StopAsync(Guid id, out string? methodName)
             {
                 methodName = string.Empty;
-                int correlationId = id.GetHashCode();
-                if (!_pendingAsyncTimers.TryRemove(correlationId, out var pending))
+                if (!_pendingAsyncTimers.TryRemove(id, out var pending))
                     return 0.0f;
 
                 methodName = pending.MethodName;
-                if (!EnableFrameLogging)
+                if (!EnableFrameLogging || pending.SessionEpoch != SessionEpoch)
+                {
+                    if (pending.SessionEpoch != SessionEpoch)
+                        Interlocked.Increment(ref _staleCompletedDiscardedEventCount);
                     return 0.0f;
+                }
 
-                long endTicks = Time.Timer.TimeTicks();
+                long endTicks = Stopwatch.GetTimestamp();
                 long elapsedTicks = Math.Max(0L, endTicks - pending.StartTicks);
                 _overflowCompletedEvents.Enqueue(new CompletedScopeEvent(
-                    pending.ThreadId,
+                    pending.ScopeId,
+                    ParentScopeId: 0L,
+                    pending.SessionEpoch,
+                    pending.LogicalThreadId,
+                    pending.ProducerThreadId,
                     Depth: 1,
                     pending.StartTicks,
                     elapsedTicks,
                     pending.MethodName,
                     pending.ScopeKind,
-                    IsAsyncRoot: true));
+                    IsAsyncRoot: true,
+                    IsLinked: false));
+                Interlocked.Increment(ref _queuedCompletedScopeCount);
+                Interlocked.Decrement(ref _activeScopeCount);
 
                 return TicksToMilliseconds(elapsedTicks);
             }
@@ -1925,9 +2221,33 @@ namespace XREngine
                 return new ProfilerComponentFrameSnapshot(frameTime, snapshots.ToArray());
             }
 
-            public sealed class ProfilerFrameSnapshot(float frameTime, IReadOnlyList<ProfilerThreadSnapshot> threads, ProfilerComponentFrameSnapshot? componentTimings)
+            public sealed class ProfilerFrameSnapshot(
+                float frameTime,
+                long sessionEpoch,
+                long publicationId,
+                long capturedAtTicks,
+                ulong updateFrameId,
+                ulong renderFrameId,
+                int activeScopeCount,
+                int queuedCompletedScopeCount,
+                int pendingCompletedScopeCount,
+                int unresolvedLinkedChildCount,
+                long staleCompletedScopeCount,
+                IReadOnlyList<ProfilerThreadSnapshot> threads,
+                ProfilerComponentFrameSnapshot? componentTimings)
             {
                 public float FrameTime { get; } = frameTime;
+                public long SessionEpoch { get; } = sessionEpoch;
+                public long PublicationId { get; } = publicationId;
+                public long CapturedAtTicks { get; } = capturedAtTicks;
+                public ulong UpdateFrameId { get; } = updateFrameId;
+                public ulong RenderFrameId { get; } = renderFrameId;
+                public int ActiveScopeCount { get; } = activeScopeCount;
+                public int QueuedCompletedScopeCount { get; } = queuedCompletedScopeCount;
+                public int PendingCompletedScopeCount { get; } = pendingCompletedScopeCount;
+                public int UnresolvedLinkedChildCount { get; } = unresolvedLinkedChildCount;
+                public long StaleCompletedScopeCount { get; } = staleCompletedScopeCount;
+                public bool ContainsIncompleteScopes => ActiveScopeCount > 0 || QueuedCompletedScopeCount > 0 || PendingCompletedScopeCount > 0 || UnresolvedLinkedChildCount > 0;
                 public IReadOnlyList<ProfilerThreadSnapshot> Threads { get; } = threads;
                 public ProfilerComponentFrameSnapshot? ComponentTimings { get; } = componentTimings;
             }
@@ -1956,6 +2276,15 @@ namespace XREngine
 
             public sealed class ProfilerNodeSnapshot
             {
+                public long ScopeId { get; }
+                public long ParentScopeId { get; }
+                public long SessionEpoch { get; }
+                public int LogicalThreadId { get; }
+                public int ProducerThreadId { get; }
+                public long StartTicks { get; }
+                public long EndTicks { get; }
+                public bool IsComplete => true;
+                public bool IsLinked { get; }
                 public string Name { get; }
                 /// <summary>Inclusive wall-clock duration of this scope in milliseconds.</summary>
                 public float ElapsedMs { get; }
@@ -1964,8 +2293,29 @@ namespace XREngine
                 public ProfilerScopeKind ScopeKind { get; }
                 public IReadOnlyList<ProfilerNodeSnapshot> Children { get; }
 
-                public ProfilerNodeSnapshot(string name, float elapsedMs, float selfMs, ProfilerScopeKind scopeKind, IReadOnlyList<ProfilerNodeSnapshot> children)
+                public ProfilerNodeSnapshot(
+                    long scopeId,
+                    long parentScopeId,
+                    long sessionEpoch,
+                    int logicalThreadId,
+                    int producerThreadId,
+                    long startTicks,
+                    long endTicks,
+                    bool isLinked,
+                    string name,
+                    float elapsedMs,
+                    float selfMs,
+                    ProfilerScopeKind scopeKind,
+                    IReadOnlyList<ProfilerNodeSnapshot> children)
                 {
+                    ScopeId = scopeId;
+                    ParentScopeId = parentScopeId;
+                    SessionEpoch = sessionEpoch;
+                    LogicalThreadId = logicalThreadId;
+                    ProducerThreadId = producerThreadId;
+                    StartTicks = startTicks;
+                    EndTicks = endTicks;
+                    IsLinked = isLinked;
                     Name = name;
                     ElapsedMs = elapsedMs;
                     SelfMs = selfMs;
@@ -1974,7 +2324,7 @@ namespace XREngine
                 }
 
                 public ProfilerNodeSnapshot(string name, float elapsedMs, ProfilerScopeKind scopeKind, IReadOnlyList<ProfilerNodeSnapshot> children)
-                    : this(name, elapsedMs, CalculateSelfMs(elapsedMs, children), scopeKind, children)
+                    : this(0L, 0L, 0L, 0, 0, 0L, 0L, false, name, elapsedMs, CalculateSelfMs(elapsedMs, children), scopeKind, children)
                 {
                 }
 
@@ -2054,9 +2404,33 @@ namespace XREngine
                 }
             }
 
-            public sealed class ProfilerFrameSnapshot(float frameTime, IReadOnlyList<ProfilerThreadSnapshot> threads, ProfilerComponentFrameSnapshot? componentTimings)
+            public sealed class ProfilerFrameSnapshot(
+                float frameTime,
+                long sessionEpoch,
+                long publicationId,
+                long capturedAtTicks,
+                ulong updateFrameId,
+                ulong renderFrameId,
+                int activeScopeCount,
+                int queuedCompletedScopeCount,
+                int pendingCompletedScopeCount,
+                int unresolvedLinkedChildCount,
+                long staleCompletedScopeCount,
+                IReadOnlyList<ProfilerThreadSnapshot> threads,
+                ProfilerComponentFrameSnapshot? componentTimings)
             {
                 public float FrameTime { get; } = frameTime;
+                public long SessionEpoch { get; } = sessionEpoch;
+                public long PublicationId { get; } = publicationId;
+                public long CapturedAtTicks { get; } = capturedAtTicks;
+                public ulong UpdateFrameId { get; } = updateFrameId;
+                public ulong RenderFrameId { get; } = renderFrameId;
+                public int ActiveScopeCount { get; } = activeScopeCount;
+                public int QueuedCompletedScopeCount { get; } = queuedCompletedScopeCount;
+                public int PendingCompletedScopeCount { get; } = pendingCompletedScopeCount;
+                public int UnresolvedLinkedChildCount { get; } = unresolvedLinkedChildCount;
+                public long StaleCompletedScopeCount { get; } = staleCompletedScopeCount;
+                public bool ContainsIncompleteScopes => ActiveScopeCount > 0 || QueuedCompletedScopeCount > 0 || PendingCompletedScopeCount > 0 || UnresolvedLinkedChildCount > 0;
                 public IReadOnlyList<ProfilerThreadSnapshot> Threads { get; } = threads;
                 public ProfilerComponentFrameSnapshot? ComponentTimings { get; } = componentTimings;
             }
@@ -2072,6 +2446,15 @@ namespace XREngine
 
             public sealed class ProfilerNodeSnapshot
             {
+                public long ScopeId { get; }
+                public long ParentScopeId { get; }
+                public long SessionEpoch { get; }
+                public int LogicalThreadId { get; }
+                public int ProducerThreadId { get; }
+                public long StartTicks { get; }
+                public long EndTicks { get; }
+                public bool IsComplete => true;
+                public bool IsLinked => false;
                 public string Name { get; }
                 public float ElapsedMs { get; }
                 public float SelfMs { get; }
@@ -2080,6 +2463,13 @@ namespace XREngine
 
                 public ProfilerNodeSnapshot(string name, float elapsedMs, float selfMs, ProfilerScopeKind scopeKind, IReadOnlyList<ProfilerNodeSnapshot> children)
                 {
+                    ScopeId = 0L;
+                    ParentScopeId = 0L;
+                    SessionEpoch = 0L;
+                    LogicalThreadId = 0;
+                    ProducerThreadId = 0;
+                    StartTicks = 0L;
+                    EndTicks = 0L;
                     Name = name;
                     ElapsedMs = elapsedMs;
                     SelfMs = selfMs;
@@ -2167,7 +2557,12 @@ namespace XREngine
 
             public long OverflowDiscardedEventCount => 0;
             public long PendingCompletedDiscardedEventCount => 0;
+            public long StaleCompletedDiscardedEventCount => 0;
             public int PendingCompletedCount => 0;
+            public int ActiveScopeCount => 0;
+            public int QueuedCompletedScopeCount => 0;
+            public int UnresolvedLinkedChildCount => 0;
+            public long SessionEpoch => 0;
 
             public int ProducerBufferCapacity
             {

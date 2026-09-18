@@ -915,16 +915,22 @@ namespace XREngine.Rendering.Vulkan
                     return false;
                 }
                 if (request.Stage == EAdvancedRenderStage.VisibilityRaster &&
-                    !familyBins.TryPrepareVisibilityRasterPipelines(
+                    familyBins.TryPrepareVisibilityRasterPipelines(
                         ResourceRuntime.AdvancedVisibilityPipelines,
                         input.Payloads,
                         in targetClosure,
-                        out string rasterPipelineReason))
+                        out string rasterPipelineReason) is not
+                            VulkanAdvancedVisibilityPipelineReadiness.Ready and var rasterPipelineReadiness)
                 {
-                    recordingState.RecordingDeferredReason =
-                        $"Advanced visibility operation is Unsupported: raster closure failed: {rasterPipelineReason}";
-                    recordingState.FailureKind = EVulkanCommandRecordingFailureKind
-                        .RecoverAfterStateChange;
+                    bool pending = rasterPipelineReadiness is
+                        VulkanAdvancedVisibilityPipelineReadiness.Pending or
+                        VulkanAdvancedVisibilityPipelineReadiness.Missing;
+                    recordingState.RecordingDeferredReason = pending
+                        ? $"Advanced visibility operation is waiting for raster closure: {rasterPipelineReason}"
+                        : $"Advanced visibility operation is Unsupported: raster closure failed: {rasterPipelineReason}";
+                    recordingState.FailureKind = pending
+                        ? EVulkanCommandRecordingFailureKind.RetryFrame
+                        : EVulkanCommandRecordingFailureKind.RecoverAfterStateChange;
                     return false;
                 }
                 if (requiresGraphicsTargetClosure &&

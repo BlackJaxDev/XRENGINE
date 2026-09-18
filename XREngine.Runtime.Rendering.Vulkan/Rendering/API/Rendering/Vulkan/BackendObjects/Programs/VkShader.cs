@@ -30,12 +30,15 @@ internal sealed unsafe partial class VkShader(
         private VulkanTransformFeedbackCompilePlan? _transformFeedbackPlan;
         private readonly object _asyncCompileLock = new();
         private Task<VulkanShaderArtifact>? _asyncCompileTask;
+        private readonly List<Task<VulkanShaderArtifact>> _asyncCompileTasks = [];
         private int _asyncCompileShaderConfigVersion = -1;
         private bool _asyncCompileUsesVulkanClipDepthRemap;
         private long _asyncCompileSourceRevision = -1;
         private string _asyncCompileTransformFeedbackPlanIdentity = string.Empty;
+        private long _compiledSourceRevision = -1;
         private int _failedShaderConfigVersion = -1;
         private bool _failedUsesVulkanClipDepthRemap;
+        private long _failedSourceRevision = -1;
         private string _failedTransformFeedbackPlanIdentity = string.Empty;
 
         /// <summary>
@@ -86,6 +89,7 @@ internal sealed unsafe partial class VkShader(
             _vertexInputLocations = null;
             int shaderConfigVersion = RuntimeEngine.Rendering.Settings.ShaderConfigVersion;
             bool usesVulkanClipDepthRemap = UsesVulkanClipDepthRemap();
+            long sourceRevision = Data.SourceRevision;
             string? artifactIdentity = null;
             string? rewrittenSource = null;
             IsCompilePending = true;
@@ -102,7 +106,7 @@ internal sealed unsafe partial class VkShader(
                 artifactIdentity = artifact.Identity;
                 rewrittenSource = artifact.RewrittenSource;
                 failureKind = EShaderCompileFailureKind.ShaderModuleCreation;
-                ApplyCompiledArtifact(artifact);
+                ApplyCompiledArtifact(artifact, sourceRevision);
                 RuntimeEngine.Rendering.Stats.RecordShaderVariant(
                     linked: true,
                     loadedFromDiskCache: artifact.LoadedFromDiskCache,
@@ -110,7 +114,7 @@ internal sealed unsafe partial class VkShader(
             }
             catch (Exception ex)
             {
-                SetCompileFailure(ex, failureKind, shaderConfigVersion, usesVulkanClipDepthRemap, artifactIdentity, rewrittenSource ?? _rewrittenSource);
+                SetCompileFailure(ex, failureKind, shaderConfigVersion, usesVulkanClipDepthRemap, sourceRevision, artifactIdentity, rewrittenSource ?? _rewrittenSource);
                 Debug.VulkanException(ex, $"Vulkan shader '{Data.Name ?? "UnnamedShader"}' failed to compile.");
                 throw;
             }
@@ -122,7 +126,8 @@ internal sealed unsafe partial class VkShader(
 
             SetVulkanClipDepthRemapEnabled(enableVulkanClipDepthRemap);
             EnsureCompilePolicyCurrent();
-            if (IsGenerated && IsCompiled)
+            if (IsGenerated && IsCompiled &&
+                _compiledSourceRevision == Data.SourceRevision)
                 return true;
 
             int shaderConfigVersion = RuntimeEngine.Rendering.Settings.ShaderConfigVersion;
@@ -131,6 +136,7 @@ internal sealed unsafe partial class VkShader(
             if (LastCompileFailure is not null &&
                 _failedShaderConfigVersion == shaderConfigVersion &&
                 _failedUsesVulkanClipDepthRemap == usesVulkanClipDepthRemap &&
+                _failedSourceRevision == sourceRevision &&
                 string.Equals(_failedTransformFeedbackPlanIdentity, CurrentTransformFeedbackPlanIdentity, StringComparison.Ordinal))
             {
                 reason = "ShaderCompileFailed";
@@ -158,6 +164,12 @@ internal sealed unsafe partial class VkShader(
                     LastCompileFailure = null;
                     LastArtifact = null;
                     _asyncCompileTask = Task.Run(() => BuildCpuArtifact(shaderConfigVersion, usesVulkanClipDepthRemap, transformFeedbackPlan));
+                    _asyncCompileTasks.Add(_asyncCompileTask);
+                    _ = _asyncCompileTask.ContinueWith(
+                        OnAsyncCompileCompleted,
+                        CancellationToken.None,
+                        TaskContinuationOptions.ExecuteSynchronously,
+                        TaskScheduler.Default);
                 }
 
                 task = _asyncCompileTask;
@@ -181,6 +193,7 @@ internal sealed unsafe partial class VkShader(
                     EShaderCompileFailureKind.SpirvCompilation,
                     shaderConfigVersion,
                     usesVulkanClipDepthRemap,
+                    sourceRevision,
                     null,
                     _rewrittenSource);
                 reason = "ShaderCompileFailed";
@@ -209,7 +222,7 @@ internal sealed unsafe partial class VkShader(
                     PreGenerated();
 
                 DestroyShaderResources();
-                ApplyCompiledArtifact(artifact);
+                ApplyCompiledArtifact(artifact, sourceRevision);
 
                 if (!wasActive)
                 {
@@ -230,6 +243,7 @@ internal sealed unsafe partial class VkShader(
                     EShaderCompileFailureKind.ShaderModuleCreation,
                     shaderConfigVersion,
                     usesVulkanClipDepthRemap,
+                    sourceRevision,
                     artifact.Identity,
                     artifact.RewrittenSource);
                 reason = "ShaderModuleCreateFailed";
@@ -237,11 +251,44 @@ internal sealed unsafe partial class VkShader(
             }
         }
 
+        internal void WaitForPendingAsyncCompile()
+        {
+            Task<VulkanShaderArtifact>[] tasks;
+            lock (_asyncCompileLock)
+                tasks = [.. _asyncCompileTasks];
+            if (tasks.Length == 0)
+                return;
+
+            for (int i = 0; i < tasks.Length; i++)
+            {
+                try
+                {
+                    tasks[i].GetAwaiter().GetResult();
+                }
+                catch
+                {
+                    // The owning preparation poll publishes current compile failures.
+                }
+            }
+        }
+
+        private void OnAsyncCompileCompleted(Task<VulkanShaderArtifact> task)
+        {
+            _ = task.Exception;
+            lock (_asyncCompileLock)
+                _asyncCompileTasks.Remove(task);
+        }
+
         private VulkanShaderArtifact BuildCpuArtifact(
             int shaderConfigVersion,
             bool usesVulkanClipDepthRemap,
             VulkanTransformFeedbackCompilePlan? transformFeedbackPlan)
         {
+            RendererReloadFailureInjection.ThrowIfEnabled(
+                RendererReloadInjectedFailure.ShaderCompile,
+                "Vulkan shader compilation");
+            RendererReloadFailureInjection.DelayIfEnabled(
+                RendererReloadInjectedFailure.DelayedCompletion);
             if (Data.SourceLanguage == ShaderSourceLanguage.Slang)
                 return BuildSlangArtifact(shaderConfigVersion, usesVulkanClipDepthRemap, transformFeedbackPlan);
             if (Data.SourceLanguage != ShaderSourceLanguage.Glsl || Data.EntryPoint != "main")
@@ -303,7 +350,9 @@ internal sealed unsafe partial class VkShader(
             return artifact;
         }
 
-        private void ApplyCompiledArtifact(VulkanShaderArtifact artifact)
+        private void ApplyCompiledArtifact(
+            VulkanShaderArtifact artifact,
+            long sourceRevision)
         {
             BackendContext.Resources.PipelineManager.RecordShaderArtifactIdentity(artifact.Identity);
             _entryPoint = artifact.EntryPoint;
@@ -340,9 +389,11 @@ internal sealed unsafe partial class VkShader(
 
             _compiledShaderConfigVersion = artifact.ShaderConfigVersion;
             _compiledUsesVulkanClipDepthRemap = artifact.UsesVulkanClipDepthRemap;
+            _compiledSourceRevision = sourceRevision;
             _compiledTransformFeedbackPlanIdentity = artifact.TransformFeedbackPlanIdentity;
             _failedShaderConfigVersion = -1;
             _failedUsesVulkanClipDepthRemap = false;
+            _failedSourceRevision = -1;
             _failedTransformFeedbackPlanIdentity = string.Empty;
             IsCompiled = true;
             IsCompilePending = false;
@@ -393,6 +444,7 @@ internal sealed unsafe partial class VkShader(
             EShaderCompileFailureKind failureKind,
             int shaderConfigVersion,
             bool usesVulkanClipDepthRemap,
+            long sourceRevision,
             string? artifactIdentity,
             string? rewrittenSource)
         {
@@ -408,6 +460,7 @@ internal sealed unsafe partial class VkShader(
             IsCompiled = false;
             _failedShaderConfigVersion = shaderConfigVersion;
             _failedUsesVulkanClipDepthRemap = usesVulkanClipDepthRemap;
+            _failedSourceRevision = sourceRevision;
             _failedTransformFeedbackPlanIdentity = CurrentTransformFeedbackPlanIdentity;
             LastCompileFailure = new VulkanShaderCompileFailure(
                 artifactIdentity,
@@ -623,11 +676,6 @@ internal sealed unsafe partial class VkShader(
 
         protected override void LinkData()
         {
-            RendererReloadFailureInjection.ThrowIfEnabled(
-                RendererReloadInjectedFailure.ShaderCompile,
-                "Vulkan shader compilation");
-            RendererReloadFailureInjection.DelayIfEnabled(
-                RendererReloadInjectedFailure.DelayedCompletion);
             Data.SourceChanged += OnShaderSourceChanged;
         }
 
@@ -650,6 +698,7 @@ internal sealed unsafe partial class VkShader(
             string transformFeedbackPlanIdentity = CurrentTransformFeedbackPlanIdentity;
             if (_compiledShaderConfigVersion == shaderConfigVersion &&
                 _compiledUsesVulkanClipDepthRemap == usesVulkanClipDepthRemap &&
+                _compiledSourceRevision == Data.SourceRevision &&
                 string.Equals(_compiledTransformFeedbackPlanIdentity, transformFeedbackPlanIdentity, StringComparison.Ordinal))
                 return;
 
@@ -713,9 +762,11 @@ internal sealed unsafe partial class VkShader(
             _rewrittenSource = null;
             _compiledShaderConfigVersion = -1;
             _compiledUsesVulkanClipDepthRemap = false;
+            _compiledSourceRevision = -1;
             _compiledTransformFeedbackPlanIdentity = string.Empty;
             _failedShaderConfigVersion = -1;
             _failedUsesVulkanClipDepthRemap = false;
+            _failedSourceRevision = -1;
             _failedTransformFeedbackPlanIdentity = string.Empty;
             IsCompiled = false;
             IsCompilePending = false;
