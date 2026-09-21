@@ -107,6 +107,9 @@ public partial class XRMesh : XRAsset
             if (!SetField(ref _vertexCount, value))
                 return;
             AdvanceGeometryRevision();
+            // Cached indices were validated against the previous vertex range.
+            // Retire ready buffers and pending tickets before the new revision is prepared.
+            InvalidateIndexBufferCache();
         }
     }
 
