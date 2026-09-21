@@ -12,7 +12,7 @@ namespace XREngine.Rendering.Compute;
 /// <summary>
 /// GPU triangle BVH owned by a single renderable mesh instance.
 /// </summary>
-public sealed class GpuMeshBvh : IDisposable, IGpuBvhProvider
+public sealed partial class GpuMeshBvh : IDisposable, IGpuBvhProvider
 {
     private const string TriangleAabbShaderPath = "Scene3D/RenderPipeline/mesh_triangle_aabbs.comp";
     private const string PackedTriangleShaderPath = "Scene3D/RenderPipeline/mesh_bvh_pack_triangles.comp";
@@ -34,9 +34,13 @@ public sealed class GpuMeshBvh : IDisposable, IGpuBvhProvider
     private XRRenderProgram? _triangleAabbProgram;
     private XRRenderProgram? _packedTriangleProgram;
     private TriangleGpuIndex[]? _triangleIndices;
+    private XRMesh? _triangleIndexSourceMesh;
+    private long _triangleIndexGeometryRevision = long.MinValue;
+    private int _triangleIndexCount = -1;
     private TriangleAabb[]? _staticAabbs;
     private XRDataBuffer? _staticGeometrySource;
     private ulong _staticGeometryRevision;
+    private long _staticMeshGeometryRevision = long.MinValue;
 
     private XRMesh? _sourceMesh;
     private XRMeshRenderer? _sourceRenderer;
@@ -60,6 +64,137 @@ public sealed class GpuMeshBvh : IDisposable, IGpuBvhProvider
         _packedTriangleBuffer.ElementCount >= _triangleCount;
     public Matrix4x4 LocalToWorldMatrix { get; private set; } = Matrix4x4.Identity;
     public bool LastUpdateUsedGpuSkinning { get; private set; }
+
+    /// <summary>
+    /// Resolves GPU-readable mesh data for a world-space aggregate consumer.
+    /// Static sources are exposed through persistent storage views; skinned
+    /// sources are returned only after the skinning prepass has produced the
+    /// current GPU output. No CPU position extraction is performed.
+    /// </summary>
+    public bool TryGetGeometrySources(RenderableMesh renderable, out GpuMeshBvhGeometrySources sources)
+    {
+        sources = default;
+        if (renderable is null || !RuntimeEngine.IsRenderThread || AbstractRenderer.Current is null)
+            return false;
+
+        XRMeshRenderer? renderer = renderable.CurrentLODRenderer;
+        XRMesh? mesh = renderer?.Mesh;
+        if (renderer is null || mesh?.Triangles is not { Count: > 0 } triangles)
+            return false;
+
+        uint triangleCount = (uint)triangles.Count;
+        if (!MatchesSource(renderer))
+            ResetForSource(mesh, renderer, triangleCount);
+
+        EnsureTriangleIndexBuffer(mesh, triangles);
+        if (_triangleIndexBuffer is null)
+            return false;
+
+        if (mesh.BlendshapeCount > 0 && RuntimeEngine.Rendering.Settings.AllowBlendshapes)
+            renderer.EnsureBlendshapeBuffers(logWarnings: false);
+
+        // A compute-deformed source must be generated in the current frame. Static
+        // mesh storage would omit active blendshapes even when the mesh has no skin.
+        bool usesGpuDeformedPositions = renderable.IsSkinned ||
+            (RuntimeEngine.Rendering.Settings.AllowBlendshapes && renderer.HasActiveBlendshapes);
+        if (usesGpuDeformedPositions)
+        {
+            bool forceBlendshapeOutput = !renderable.IsSkinned && renderer.HasActiveBlendshapes;
+            if (!SkinningPrepassDispatcher.Instance.TryRunForGpuMeshBvh(
+                renderer,
+                forceBlendshapeOutput,
+                out var skinned,
+                out string? diagnostic))
+            {
+                sources = GpuMeshBvhGeometrySources.PendingGpuDeformation(
+                    renderer,
+                    mesh,
+                    triangleCount,
+                    _triangleIndexBuffer,
+                    renderable.IsSkinned,
+                    diagnostic);
+                return false;
+            }
+
+            XRDataBuffer? source = skinned.positions ?? skinned.interleaved;
+            if (source is null)
+            {
+                sources = GpuMeshBvhGeometrySources.PendingGpuDeformation(
+                    renderer,
+                    mesh,
+                    triangleCount,
+                    _triangleIndexBuffer,
+                    renderable.IsSkinned,
+                    "The GPU deformation prepass completed without a position buffer.");
+                return false;
+            }
+
+            // Skinning palette output is world-space. Blendshape-only output remains
+            // mesh-local because its compute pass applies deltas without a transform.
+            Matrix4x4 localToWorld = renderable.IsSkinned
+                ? Matrix4x4.Identity
+                : renderable.Component.Transform.RenderMatrix;
+
+            sources = new GpuMeshBvhGeometrySources(
+                renderer,
+                mesh,
+                skinned.positions,
+                skinned.interleaved,
+                _triangleIndexBuffer,
+                triangleCount,
+                mesh.GeometryRevision,
+                skinned.interleaved is not null,
+                mesh.InterleavedStride,
+                mesh.PositionOffset,
+                skinned.positions?.ComponentCount ?? 0u,
+                localToWorld,
+                renderable.IsSkinned,
+                false,
+                true,
+                null);
+            sources = WithMaterialAttributes(sources);
+            return true;
+        }
+
+        InvalidateStaticGeometryIfChanged(mesh);
+
+        XRDataBuffer? positions = mesh.Interleaved
+            ? null
+            : GetOrCreateStorageView(
+                mesh.PositionsBuffer,
+                "GpuMeshBvh_Positions_Storage",
+                ref _storagePositionSource,
+                ref _storagePositionBuffer);
+        XRDataBuffer? interleaved = mesh.Interleaved
+            ? GetOrCreateStorageView(
+                mesh.InterleavedVertexBuffer,
+                "GpuMeshBvh_Interleaved_Storage",
+                ref _storageInterleavedSource,
+                ref _storageInterleavedBuffer)
+            : null;
+        if (positions is null && interleaved is null)
+            return false;
+
+        sources = new GpuMeshBvhGeometrySources(
+            renderer,
+            mesh,
+            positions,
+            interleaved,
+            _triangleIndexBuffer,
+            triangleCount,
+            mesh.GeometryRevision,
+            interleaved is not null,
+            mesh.InterleavedStride,
+            mesh.PositionOffset,
+            positions?.ComponentCount ?? 0u,
+            renderable.Component.Transform.RenderMatrix,
+            false,
+            false,
+            false,
+            null);
+        sources = WithMaterialAttributes(sources);
+        return true;
+    }
 
     public bool MatchesSource(XRMeshRenderer? renderer)
     {
@@ -162,6 +297,7 @@ public sealed class GpuMeshBvh : IDisposable, IGpuBvhProvider
 
     private void ResetForSource(XRMesh mesh, XRMeshRenderer renderer, uint triangleCount)
     {
+        ReleaseMaterialAttributeViews();
         _sourceMesh = mesh;
         _sourceRenderer = renderer;
         _triangleCount = triangleCount;
@@ -177,11 +313,13 @@ public sealed class GpuMeshBvh : IDisposable, IGpuBvhProvider
     {
         XRDataBuffer? source = mesh.Interleaved ? mesh.InterleavedVertexBuffer : mesh.PositionsBuffer;
         ulong revision = source?.Revision ?? 0u;
-        if (ReferenceEquals(_staticGeometrySource, source) && _staticGeometryRevision == revision)
+        if (ReferenceEquals(_staticGeometrySource, source) && _staticGeometryRevision == revision &&
+            _staticMeshGeometryRevision == mesh.GeometryRevision)
             return;
 
         _staticGeometrySource = source;
         _staticGeometryRevision = revision;
+        _staticMeshGeometryRevision = mesh.GeometryRevision;
         _staticAabbsUploaded = false;
         _packedTrianglesUploaded = false;
         _built = false;
@@ -197,8 +335,15 @@ public sealed class GpuMeshBvh : IDisposable, IGpuBvhProvider
 
     private void EnsureTriangleIndexBuffer(XRMesh mesh, List<IndexTriangle> triangles)
     {
-        if (_triangleIndexBuffer is not null && _triangleIndexBuffer.ElementCount >= (uint)triangles.Count && !_tree.IsDirty)
+        long geometryRevision = mesh.GeometryRevision;
+        if (_triangleIndexBuffer is not null &&
+            _triangleIndexBuffer.ElementCount >= (uint)triangles.Count &&
+            ReferenceEquals(_triangleIndexSourceMesh, mesh) &&
+            _triangleIndexGeometryRevision == geometryRevision &&
+            _triangleIndexCount == triangles.Count)
+        {
             return;
+        }
 
         if (_triangleIndices is null || _triangleIndices.Length < triangles.Count)
             _triangleIndices = new TriangleGpuIndex[triangles.Count];
@@ -206,10 +351,14 @@ public sealed class GpuMeshBvh : IDisposable, IGpuBvhProvider
         for (int i = 0; i < triangles.Count; i++)
         {
             IndexTriangle tri = triangles[i];
+            if ((uint)tri.Point0 >= (uint)mesh.VertexCount ||
+                (uint)tri.Point1 >= (uint)mesh.VertexCount ||
+                (uint)tri.Point2 >= (uint)mesh.VertexCount)
+                throw new InvalidOperationException("GPU BVH geometry contains a triangle index outside the mesh vertex range.");
             _triangleIndices[i] = new TriangleGpuIndex(
-                (uint)Math.Max(0, tri.Point0),
-                (uint)Math.Max(0, tri.Point1),
-                (uint)Math.Max(0, tri.Point2),
+                (uint)tri.Point0,
+                (uint)tri.Point1,
+                (uint)tri.Point2,
                 0u);
         }
 
@@ -234,6 +383,9 @@ public sealed class GpuMeshBvh : IDisposable, IGpuBvhProvider
 
         _triangleIndexBuffer.SetDataRaw(new ReadOnlySpan<TriangleGpuIndex>(_triangleIndices, 0, triangles.Count));
         _triangleIndexBuffer.PushData();
+        _triangleIndexSourceMesh = mesh;
+        _triangleIndexGeometryRevision = geometryRevision;
+        _triangleIndexCount = triangles.Count;
     }
 
     private void EnsureAabbBuffer(uint triangleCount)
@@ -270,8 +422,16 @@ public sealed class GpuMeshBvh : IDisposable, IGpuBvhProvider
         out XRDataBuffer? positions,
         out XRDataBuffer? interleaved)
     {
-        SkinningPrepassDispatcher.Instance.RunForGpuMeshBvh(renderer);
-        var resolvedBuffers = SkinningPrepassDispatcher.Instance.GetSkinnedBuffers(renderer);
+        if (!SkinningPrepassDispatcher.Instance.TryRunForGpuMeshBvh(
+            renderer,
+            forceBlendshapeOutput: false,
+            out var resolvedBuffers,
+            out _))
+        {
+            positions = null;
+            interleaved = null;
+            return false;
+        }
         positions = resolvedBuffers.positions;
         interleaved = resolvedBuffers.interleaved;
         XRDataBuffer? source = positions ?? interleaved;
@@ -523,15 +683,15 @@ public sealed class GpuMeshBvh : IDisposable, IGpuBvhProvider
 
     public void Dispose()
     {
+        ReleaseMaterialAttributeViews();
         _tree.Dispose();
         ReleaseStaticStorageViews();
         _aabbBuffer?.Dispose();
         _triangleIndexBuffer?.Dispose();
         _packedTriangleBuffer?.Dispose();
         _triangleAabbProgram?.Destroy();
-        _triangleAabbShader?.Destroy();
         _packedTriangleProgram?.Destroy();
-        _packedTriangleShader?.Destroy();
+        // ShaderHelper owns the shared shader assets across BVH instances.
         _aabbBuffer = null;
         _triangleIndexBuffer = null;
         _packedTriangleBuffer = null;

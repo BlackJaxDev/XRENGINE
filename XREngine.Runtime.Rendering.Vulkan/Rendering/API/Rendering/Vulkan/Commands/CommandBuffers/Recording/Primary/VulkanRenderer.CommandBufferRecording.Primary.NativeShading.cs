@@ -40,6 +40,7 @@ internal sealed partial class VulkanCommandRuntime
             (payload.Request.RequireNativeOutput ? 2u : 0u) |
             (payload.Request.EnableBuiltInAmbientOcclusion ? 4u : 0u) |
             (payload.Request.EnableLightProbesAndIbl ? 8u : 0u) |
+            (payload.Request.EnableDdgi ? 16u : 0u) |
             (((uint)payload.Request.ShadingDebugView & 0xFFu) << 8), depthSlices,
             checked((uint)(closure.LightIndices.NativeSize / sizeof(uint))),
             payload.SceneState.Lights.Length / 128u,
@@ -102,6 +103,7 @@ internal sealed partial class VulkanCommandRuntime
         TransitionNativeOutput(state.CommandBuffer, closure.Velocity, closure.ViewIndex);
         TransitionNativeOutput(state.CommandBuffer, closure.Reactive, closure.ViewIndex);
         TransitionNativeOutput(state.CommandBuffer, closure.ShadingDiagnostics, closure.ViewIndex);
+        TransitionNativeDdgiOutputs(state.CommandBuffer, in closure);
         FillNativeCounters(state.CommandBuffer, closure.LightingCounters);
         RecordNativeDispatch(state.CommandBuffer, in payload, payload.NativeComputePipelines.BuildFroxels,
             in push, DivideRoundUp(tilesX, 8), DivideRoundUp(tilesY, 8), DivideRoundUp(depthSlices, 4), "Advanced.BuildFroxels", NativeFroxelGpuProfilerPath);
@@ -137,6 +139,7 @@ internal sealed partial class VulkanCommandRuntime
             TransitionNativeOutput(state.CommandBuffer, closure.Velocity, closure.ViewIndex);
             TransitionNativeOutput(state.CommandBuffer, closure.Reactive, closure.ViewIndex);
             TransitionNativeOutput(state.CommandBuffer, closure.ShadingDiagnostics, closure.ViewIndex);
+            TransitionNativeDdgiOutputs(state.CommandBuffer, in closure);
         }
         VulkanAdvancedComputePipeline shade = payload.NativeComputePipelines.Shade;
         ulong parameterAddress = shade.UsesAddressRoot
@@ -203,6 +206,16 @@ internal sealed partial class VulkanCommandRuntime
         }
         PushConstantsTracked(commandBuffer, pipeline.Program.PipelineLayout,
             VulkanMeshRenderingConventions.GetCommonPushConstantStageFlags(DeviceContext), 0, push);
+    }
+
+    private void TransitionNativeDdgiOutputs(CommandBuffer commandBuffer, in VulkanAdvancedNativeComputeClosure closure)
+    {
+        if (!closure.DdgiSurface.Enabled)
+            return;
+        TransitionNativeOutput(commandBuffer, closure.DdgiSurface.Emission, closure.ViewIndex);
+        TransitionNativeOutput(commandBuffer, closure.DdgiSurface.Albedo, closure.ViewIndex);
+        TransitionNativeOutput(commandBuffer, closure.DdgiSurface.Normal, closure.ViewIndex);
+        TransitionNativeOutput(commandBuffer, closure.DdgiSurface.Rmse, closure.ViewIndex);
     }
 
     private void TransitionNativeInput(CommandBuffer commandBuffer, VulkanPhysicalImageGroup group, uint view)

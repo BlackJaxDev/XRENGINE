@@ -16,6 +16,7 @@ public partial class DefaultRenderPipeline
         bool AmbientOcclusionMultiBounce,
         bool SpecularOcclusionEnabled,
         bool UsesLightProbeGi,
+        bool UsesDdgi,
         bool ProbeGiSamplingSuppressed,
         bool ProbeBindingResourcesEnabled,
         bool ProbeBindingUseGrid,
@@ -25,6 +26,7 @@ public partial class DefaultRenderPipeline
         float ProbeGridCellSize,
         IVector3 ProbeGridDimensions,
         XRTexture? BrdfTexture,
+        XRTexture? EmissionTexture,
         XRTexture2DArray? ProbeIrradianceArray,
         XRTexture2DArray? ProbePrefilterArray,
         XRDataBuffer? ProbePositionBuffer,
@@ -88,22 +90,34 @@ public partial class DefaultRenderPipeline
         public void PublishResources(
             XRRenderProgram vertexProgram,
             XRRenderProgram materialProgram)
-            => owner.BindPbrLightingResources(
-                materialProgram,
-                deferredProbeBufferBindings: true);
+        {
+            owner.BindPbrLightingResources(materialProgram, deferredProbeBufferBindings: true);
+            XRTexture? emission = GetTexture<XRTexture>(
+                RuntimeEnableMsaaDeferred ? MsaaEmissionColorTextureName : EmissionColorTextureName);
+            if (emission is not null)
+                materialProgram.Sampler(EmissionColorTextureName, emission, 9);
+        }
     }
 
     private LightCombineBindingState CaptureLightCombineBindingState()
     {
+        XRRenderPipelineInstance? instance = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
+        bool ownsCurrentInstance = instance is not null && ReferenceEquals(instance.Pipeline, this);
+        ForwardLightProbeInstanceResources? probeState = ownsCurrentInstance &&
+            ForwardLightProbeInstanceResources.TryGet(instance, out ForwardLightProbeInstanceResources? existingState)
+                ? existingState
+                : null;
         XRTexture? brdfTexture = GetTexture<XRTexture>(BRDFTextureName);
         bool probeGiSamplingSuppressed =
             IsProbeGiSamplingSuppressedForCurrentPass();
         ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
-        if (UsesLightProbeGI &&
+        if ((UsesLightProbeGI || UsesDDGI) &&
             !probeGiSamplingSuppressed &&
-            _probeBindingStateFrameId != frameId)
+            ownsCurrentInstance &&
+            probeState?.BindingStateFrameId != frameId)
         {
             SyncPbrLightingResourcesForFrame(brdfTexture);
+            ForwardLightProbeInstanceResources.TryGet(instance, out probeState);
         }
 
         bool useAmbientOcclusion = ShouldUseAmbientOcclusion();
@@ -127,8 +141,7 @@ public partial class DefaultRenderPipeline
 
         bool renderProbeTetrahedra =
             RuntimeEngine.EditorPreferences.Debug.RenderLightProbeTetrahedra &&
-            _probeBindingResourcesEnabled &&
-            _probeBindingTetraCount > 0;
+            probeState is { BindingResourcesEnabled: true, BindingTetraCount: > 0 };
         return new LightCombineBindingState(
             ResolveDeferredDebugMode(),
             ResolveGlobalAmbient(),
@@ -137,26 +150,27 @@ public partial class DefaultRenderPipeline
             ambientOcclusionMultiBounce,
             specularOcclusionEnabled,
             UsesLightProbeGI,
+            UsesDDGI,
             probeGiSamplingSuppressed,
-            _probeBindingResourcesEnabled,
-            _probeBindingUseGrid,
-            _probeBindingProbeCount,
-            _probeBindingTetraCount,
-            _probeGridOrigin,
-            _probeGridCellSize,
-            _probeGridDims,
+            probeState?.BindingResourcesEnabled ?? false,
+            probeState?.BindingUseGrid ?? false,
+            probeState?.BindingProbeCount ?? 0,
+            probeState?.BindingTetraCount ?? 0,
+            probeState?.GridOrigin ?? Vector3.Zero,
+            probeState?.GridCellSize ?? 0.0f,
+            probeState?.GridDimensions ?? IVector3.Zero,
             brdfTexture,
-            _probeIrradianceArray,
-            _probePrefilterArray,
-            _probePositionBuffer,
-            _probeParamBuffer,
-            _probeTetraBuffer,
-            _probeGridCellBuffer,
-            _probeGridIndexBuffer,
+            GetTexture<XRTexture>(RuntimeEnableMsaaDeferred ? MsaaEmissionColorTextureName : EmissionColorTextureName),
+            probeState?.IrradianceArray,
+            probeState?.PrefilterArray,
+            probeState?.PositionBuffer,
+            probeState?.ParamBuffer,
+            probeState?.TetraBuffer,
+            probeState?.GridCellBuffer,
+            probeState?.GridIndexBuffer,
             Lights3DCollection.DummyShadowMap,
             Lights3DCollection.DummyPbrTextureArray,
             renderProbeTetrahedra ? frameId : 0UL,
-            RuntimeEngine.Rendering.State.CurrentRenderingPipeline
-                ?.ResourceGeneration ?? 0);
+            ownsCurrentInstance ? instance!.ResourceGeneration : 0);
     }
 }

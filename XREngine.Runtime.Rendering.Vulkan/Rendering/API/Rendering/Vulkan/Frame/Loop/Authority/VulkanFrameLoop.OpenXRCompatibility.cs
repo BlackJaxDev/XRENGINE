@@ -25,7 +25,7 @@ internal sealed partial class VulkanFrameLoop
         => _commandRuntime.DescriptorFrameSlotFrameCount;
 
     private bool DescriptorTraceEnabled
-        => _commandRuntime.IsOpenXrTraceEnabled;
+        => VulkanMeshRenderingConventions.DescriptorTraceEnabled;
 
     private bool HasObservedDesktopFrameTick => HasObservedTick;
 

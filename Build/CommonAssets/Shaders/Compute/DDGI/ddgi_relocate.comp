@@ -1,0 +1,250 @@
+#version 450
+#pragma snippet "DDGIBindings"
+#define DDGI_MATERIAL_BINDING 4
+#define DDGI_ATTRIBUTE_BINDING 5
+#define DDGI_MATERIAL_TEXTURE_BINDING 0
+
+layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
+
+struct DDGIProbeGPU
+{
+    vec4 position;          // xyz = base world pos, w = active/sleeping/inactive state
+    vec4 relocationOffset; // xyz = dynamic relocation offset, w = confidence/distance
+};
+
+struct DDGIRayInput
+{
+    vec4 origin;    // .w = tMin
+    vec4 direction; // .w = tMax
+    vec4 params;    // x = probeIndex, y = rayIndex, z = frameIndex, w = flags
+};
+
+struct HitRecord
+{
+    float t;
+    uint objectId;
+    uint faceIndex;
+    uint triangleIndex;
+    vec3 barycentric;
+    float padding;
+};
+
+struct PackedTriangle
+{
+    vec4 v0;
+    vec4 v1;
+    vec4 v2;
+    uvec4 extra; // x = object id, y = face index, z/w reserved
+};
+
+#pragma snippet "DDGIMaterials"
+
+layout(std430, XR_DDGI_STORAGE_BINDING(0)) buffer ProbeBuffer
+{
+    DDGIProbeGPU gProbes[];
+};
+
+layout(std430, XR_DDGI_STORAGE_BINDING(1)) readonly buffer Rays
+{
+    DDGIRayInput gRays[];
+};
+
+layout(std430, XR_DDGI_STORAGE_BINDING(2)) readonly buffer Hits
+{
+    HitRecord gHits[];
+};
+
+layout(std430, XR_DDGI_STORAGE_BINDING(3)) readonly buffer Triangles
+{
+    PackedTriangle gTriangles[];
+};
+
+// uProbeBaseOffset addresses this cascade in the shared SSBO. uProbeOffset is
+// intentionally only the local round-robin offset within this cascade.
+uniform uint uProbeBaseOffset;
+uniform uint uProbeOffset;
+uniform uint uScheduledProbeCount;
+uniform uint uProbeCount;
+uniform uint uRaysPerProbe;
+uniform vec3 uProbeSpacing;
+uniform float uMinDistance;
+uniform float uRelocationStep;
+uniform float uBackfaceThreshold;
+uniform uint uRelocationEnabled;
+uniform uint uClassificationEnabled;
+uniform uint uNodeCount;
+uniform uint uTriangleCount;
+uniform uint uRootIndex;
+
+#pragma snippet "DDGIShadows"
+
+bool DDGIFindBlockingHit(DDGIRayInput ray, inout HitRecord hit)
+{
+    vec3 throughput = vec3(1.0);
+    for (uint layer = 0u; layer < XR_DDGI_TRANSMISSION_LAYERS; layer++)
+    {
+        if (hit.t <= 0.0 || hit.t >= ray.direction.w ||
+            hit.triangleIndex >= min(uTriangleCount, uint(gTriangles.length())))
+            return false;
+        PackedTriangle triangle = gTriangles[hit.triangleIndex];
+        if (triangle.extra.x >= min(uMaterialCount, uint(gMaterials.length())))
+            return false;
+        DDGIMaterial material = gMaterials[triangle.extra.x];
+        vec4 uv01 = DDGIHitUvs(triangle, hit.barycentric);
+        throughput *= DDGITransmission(material, uv01, DDGICoverage(material, uv01));
+        if (max(max(throughput.r, throughput.g), throughput.b) < 0.5 ||
+            layer + 1u == XR_DDGI_TRANSMISSION_LAYERS)
+            return true;
+        // Keep the original origin so the blocking distance remains comparable
+        // to probe spacing after walking through transparent surfaces.
+        float nextMin = hit.t + max(0.001, abs(hit.t) * 1e-5);
+        hit = DDGITraceSurface(ray.origin.xyz, ray.direction.xyz, nextMin, ray.direction.w, false);
+    }
+    return false;
+}
+
+void main()
+{
+    uint scheduledIndex = gl_GlobalInvocationID.x;
+    if (scheduledIndex >= uScheduledProbeCount)
+        return;
+
+    uint localProbeIndex = (uProbeOffset + scheduledIndex) % max(1u, uProbeCount);
+    uint probeIndex = uProbeBaseOffset + localProbeIndex;
+    uint rayOffset = scheduledIndex * uRaysPerProbe;
+
+    vec3 currentOffset = gProbes[probeIndex].relocationOffset.xyz;
+    vec3 halfSpacing = 0.5 * abs(uProbeSpacing);
+    float smallestPositiveSpacing = 1e20;
+    if (abs(uProbeSpacing.x) > 1e-6)
+        smallestPositiveSpacing = min(smallestPositiveSpacing, abs(uProbeSpacing.x));
+    if (abs(uProbeSpacing.y) > 1e-6)
+        smallestPositiveSpacing = min(smallestPositiveSpacing, abs(uProbeSpacing.y));
+    if (abs(uProbeSpacing.z) > 1e-6)
+        smallestPositiveSpacing = min(smallestPositiveSpacing, abs(uProbeSpacing.z));
+    // A collapsed cascade axis must not freeze relocation on the remaining axes.
+    if (smallestPositiveSpacing >= 1e19)
+        smallestPositiveSpacing = 1.0;
+
+    uint backfaceHits = 0u;
+    uint surfaceHits = 0u;
+    bool hasBackfaceEscape = false;
+    float closestBackfaceDistance = 1e20;
+    float shortestBackfaceTargetDelta = 1e20;
+    vec3 backfaceEscapeDelta = vec3(0.0);
+    vec3 frontfaceClearance = vec3(0.0);
+    float maxFrontfacePenetration = 0.0;
+    float minHitDist = 1e20;
+
+    float minDistance = uMinDistance > 0.0 ? uMinDistance : (smallestPositiveSpacing * 0.2);
+    float relocationStep = uRelocationStep > 0.0 ? uRelocationStep : 0.1;
+    float backfaceThreshold = uBackfaceThreshold > 0.0 ? uBackfaceThreshold : 0.85;
+    float escapeEpsilon = max(1e-4, minDistance * 1e-3);
+
+    for (uint r = 0u; r < uRaysPerProbe; ++r)
+    {
+        DDGIRayInput ray = gRays[rayOffset + r];
+        HitRecord hit = gHits[rayOffset + r];
+
+        if (DDGIFindBlockingHit(ray, hit))
+        {
+            PackedTriangle tri = gTriangles[hit.triangleIndex];
+
+            vec3 e1 = tri.v1.xyz - tri.v0.xyz;
+            vec3 e2 = tri.v2.xyz - tri.v0.xyz;
+            vec3 normal = cross(e1, e2);
+            float normalLen = length(normal);
+            if (normalLen <= 1e-6)
+                continue;
+            vec3 rayDirection = ray.direction.xyz;
+            float rayDirectionLength = length(rayDirection);
+            if (rayDirectionLength <= 1e-6)
+                continue;
+            normal /= normalLen;
+            rayDirection /= rayDirectionLength;
+            surfaceHits++;
+            minHitDist = min(minHitDist, hit.t);
+
+            bool isBackface = dot(normal, -rayDirection) < 0.0;
+            if (isBackface)
+            {
+                backfaceHits++;
+                // Clamp the proposed escape first; an unclamped escape can be
+                // invalid once it reaches this probe's dual-grid cell boundary.
+                vec3 hitOffset = currentOffset + rayDirection * hit.t;
+                vec3 target = clamp(hitOffset + normal * minDistance, -halfSpacing, halfSpacing);
+                vec3 targetDelta = target - currentOffset;
+                float targetDeltaLength = length(targetDelta);
+                if (dot(target - hitOffset, normal) > escapeEpsilon &&
+                    (hit.t < closestBackfaceDistance ||
+                     (hit.t == closestBackfaceDistance && targetDeltaLength < shortestBackfaceTargetDelta)))
+                {
+                    hasBackfaceEscape = true;
+                    closestBackfaceDistance = hit.t;
+                    shortestBackfaceTargetDelta = targetDeltaLength;
+                    backfaceEscapeDelta = targetDelta;
+                }
+            }
+            else
+            {
+                if (hit.t < minDistance)
+                {
+                    float penetration = minDistance - hit.t;
+                    frontfaceClearance += normal * penetration;
+                    maxFrontfacePenetration = max(maxFrontfacePenetration, penetration);
+                }
+            }
+        }
+    }
+
+    vec3 finalOffset = currentOffset;
+    // Backface classification intentionally uses pre-move rays. A relocated
+    // probe remains inactive until a later scheduled sample proves otherwise.
+    bool embedded = float(backfaceHits) / float(max(1u, uRaysPerProbe)) > backfaceThreshold;
+
+    if (uRelocationEnabled != 0u)
+    {
+        vec3 desiredDelta = vec3(0.0);
+        if (embedded)
+        {
+            if (hasBackfaceEscape)
+                desiredDelta = backfaceEscapeDelta;
+        }
+        else if (maxFrontfacePenetration > 0.0)
+        {
+            float clearanceLength = length(frontfaceClearance);
+            if (clearanceLength > 1e-6)
+                desiredDelta = frontfaceClearance / clearanceLength * maxFrontfacePenetration;
+        }
+
+        float deltaLength = length(desiredDelta);
+        if (deltaLength > 1e-6)
+        {
+            float scaledStep = deltaLength * clamp(relocationStep, 0.01, 1.0);
+            // Embedded probes receive a small guaranteed escape step; ordinary
+            // frontface clearance remains proportional to its measured depth.
+            if (embedded)
+                scaledStep = max(scaledStep, min(deltaLength, escapeEpsilon));
+            float stepLength = min(deltaLength, min(smallestPositiveSpacing * 0.25, scaledStep));
+            finalOffset += desiredDelta / deltaLength * stepLength;
+        }
+        // Strictly enforce dual-grid bounds [-0.5 * spacing, +0.5 * spacing]
+        finalOffset = clamp(finalOffset, -halfSpacing, halfSpacing);
+    }
+
+    // 0.0 = Active, 1.0 = Inactive (embedded in geometry), 2.0 = Sleeping.
+    float probeState = 0.0;
+    if (uClassificationEnabled != 0u)
+    {
+        if (embedded)
+            probeState = 1.0;
+        else if (surfaceHits == 0u)
+            probeState = 2.0;
+        else
+            probeState = 0.0;
+    }
+
+    // Write updated state to probe buffer
+    gProbes[probeIndex].position.w = probeState;
+    gProbes[probeIndex].relocationOffset = vec4(finalOffset, minHitDist < 1e19 ? minHitDist : 0.0);
+}

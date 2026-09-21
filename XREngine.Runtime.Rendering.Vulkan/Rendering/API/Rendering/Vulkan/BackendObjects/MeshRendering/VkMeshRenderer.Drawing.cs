@@ -9,6 +9,7 @@
 using System;
 using System.Buffers;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using System.Threading;
 
 using Silk.NET.Vulkan;
@@ -1823,13 +1824,39 @@ internal unsafe partial class VkMeshRenderer
 		string programName = _program.Data?.Name ?? "UnnamedProgram";
 		string materialName = material.Name ?? "UnnamedMaterial";
 		int imageIndex = Math.Max(frameDataImageIndex, 0);
+		bool traceWindowPresentation = VulkanMeshRenderingConventions.DescriptorTraceEnabled &&
+			draw.WindowPresentationSourceMarker.HasSource;
+		if (traceWindowPresentation)
+		{
+			Debug.VulkanEvery(
+				$"Vulkan.FinalPresentation.BindDescriptors.Enter.{BindingId}.{programName}",
+				TimeSpan.FromSeconds(1),
+				"[VulkanDescriptor] final presentation BindDescriptorsIfAvailable entered mesh='{0}' prog='{1}' image={2} drawSlot={3} markerTexture={4} markerFbo={5}.",
+				meshName, programName, imageIndex, drawUniformSlot,
+				RuntimeHelpers.GetHashCode(draw.WindowPresentationSourceMarker.SourceTexture!),
+				draw.WindowPresentationSourceMarker.SourceFrameBuffer is null ? 0 : RuntimeHelpers.GetHashCode(draw.WindowPresentationSourceMarker.SourceFrameBuffer));
+		}
 
 		bool requiresDescriptors = _program.DescriptorSetLayouts.Count > 0 && _program.DescriptorBindings.Count > 0;
 		if (!requiresDescriptors)
+		{
+			if (traceWindowPresentation)
+				Debug.VulkanEvery(
+					$"Vulkan.FinalPresentation.BindDescriptors.NoDescriptors.{BindingId}.{programName}",
+					TimeSpan.FromSeconds(1),
+					"[VulkanDescriptor] final presentation BindDescriptorsIfAvailable result=true because program has no descriptor bindings mesh='{0}' prog='{1}'.",
+					meshName, programName);
 			return true;
+		}
 
 		if (!EnsureDescriptorSets(material, drawUniformSlot, imageIndex, draw.ProgramBindingSnapshot))
 		{
+			if (traceWindowPresentation)
+				Debug.VulkanEvery(
+					$"Vulkan.FinalPresentation.BindDescriptors.EnsureFailed.{BindingId}.{programName}",
+					TimeSpan.FromSeconds(1),
+					"[VulkanDescriptor] final presentation BindDescriptorsIfAvailable result=false because descriptor-set preparation failed mesh='{0}' prog='{1}' image={2} drawSlot={3}.",
+					meshName, programName, imageIndex, drawUniformSlot);
 			WarnOnce($"[DescFail] mesh={meshName} prog={programName} mat={materialName} reason=EnsureDescriptorSets returned false");
 			RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorBindingFailure(
 				programName,
@@ -1843,8 +1870,14 @@ internal unsafe partial class VkMeshRenderer
 			return false;
 		}
 
-		if (!TryRefreshFrameSourceDescriptorSetsForDraw(imageIndex, drawUniformSlot, material, draw.ProgramBindingSnapshot, commandBuffer, out string frameSourceDescriptorReason))
+		if (!TryRefreshFrameSourceDescriptorSetsForDraw(imageIndex, drawUniformSlot, material, draw.ProgramBindingSnapshot, commandBuffer, draw.WindowPresentationSourceMarker, out string frameSourceDescriptorReason))
 		{
+			if (traceWindowPresentation)
+				Debug.VulkanEvery(
+					$"Vulkan.FinalPresentation.BindDescriptors.FrameSourceFailed.{BindingId}.{programName}",
+					TimeSpan.FromSeconds(1),
+					"[VulkanDescriptor] final presentation BindDescriptorsIfAvailable result=false during frame-source refresh mesh='{0}' prog='{1}' reason='{2}'.",
+					meshName, programName, frameSourceDescriptorReason);
 			WarnOnce($"[DescFail] mesh={meshName} prog={programName} mat={materialName} reason={frameSourceDescriptorReason}");
 			RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanDescriptorBindingFailure(
 				programName,
@@ -1951,16 +1984,29 @@ internal unsafe partial class VkMeshRenderer
 				return false;
 			}
 
+			if (traceWindowPresentation)
+				Debug.VulkanEvery(
+					$"Vulkan.FinalPresentation.BindDescriptors.Heap.{BindingId}.{programName}",
+					TimeSpan.FromSeconds(1),
+					"[VulkanDescriptor] final presentation BindDescriptorsIfAvailable result=true through descriptor heap mesh='{0}' prog='{1}' image={2}.",
+					meshName, programName, imageIndex);
 			return true;
 		}
 
-		return BindMeshDescriptorSets(
+		bool bound = BindMeshDescriptorSets(
 			commandBuffer,
 			_program,
 			_program.PipelineLayout,
 			sets,
 			imageIndex,
 			drawUniformSlot);
+		if (traceWindowPresentation)
+			Debug.VulkanEvery(
+				$"Vulkan.FinalPresentation.BindDescriptors.Result.{BindingId}.{programName}.{bound}",
+				TimeSpan.FromSeconds(1),
+				"[VulkanDescriptor] final presentation BindDescriptorsIfAvailable result={0} mesh='{1}' prog='{2}' image={3} drawSlot={4}.",
+				bound, meshName, programName, imageIndex, drawUniformSlot);
+		return bound;
 	}
 
 	private bool BindMeshDescriptorSets(
@@ -2295,6 +2341,7 @@ internal unsafe partial class VkMeshRenderer
 				material,
 				draw.ProgramBindingSnapshot,
 				default,
+				draw.WindowPresentationSourceMarker,
 				out string frameSourceReason))
 		{
 			reason = $"frame-source descriptors pending: {frameSourceReason}";
@@ -2357,6 +2404,7 @@ internal unsafe partial class VkMeshRenderer
 				material,
 				draw.ProgramBindingSnapshot,
 				default,
+				draw.WindowPresentationSourceMarker,
 				out string frameSourceReason))
 		{
 			reason =
@@ -2715,6 +2763,37 @@ internal unsafe partial class VkMeshRenderer
 				allowPlanOwnedFrameSourceSamplers: false);
 	}
 
+	/// <summary>Identifies draws whose physical frame source must be published for every active descriptor slot.</summary>
+	internal bool RequiresPerDrawFrameSourceDescriptorRefresh(in PendingMeshDraw draw)
+	{
+		lock (_recordDrawSync)
+			return RequiresPerDrawFrameSourceDescriptorRefreshNoLock(draw);
+	}
+
+	private bool RequiresPerDrawFrameSourceDescriptorRefreshNoLock(in PendingMeshDraw draw)
+	{
+		if (draw.ProgramBindingSnapshot?.HasMutableFrameSourceSamplerBindings == true)
+			return true;
+
+		// A captured binding snapshot may precede the source's first publication.
+		// Reflection still establishes that the draw needs slot-specific descriptor
+		// observation, even when the snapshot has no ready source to classify yet.
+		VkRenderProgram? program = draw.PreparedProgram ?? _program;
+		if (program is null)
+			return false;
+
+		IReadOnlyList<DescriptorBindingInfo> bindings = program.DescriptorBindings;
+		for (int index = 0; index < bindings.Count; index++)
+		{
+			DescriptorBindingInfo binding = bindings[index];
+			if (IsImageDescriptorBinding(binding.DescriptorType) &&
+				!program.IsDescriptorSetExternallyOwned(binding.Set) &&
+				VulkanMeshRenderingConventions.IsFrameSourceSamplerName(binding.Name))
+				return true;
+		}
+		return false;
+	}
+
 	internal bool SupportsOwnerOnlyReusableFrameDataRefresh(
 		in PendingMeshDraw draw,
 		bool allowPlanOwnedFrameSourceSamplers)
@@ -2770,7 +2849,7 @@ internal unsafe partial class VkMeshRenderer
 			!bindingSnapshot.HasPublishedBindingLayoutSignatures)
 			return "prepared binding signatures are unpublished";
 		if (!allowPlanOwnedFrameSourceSamplers &&
-			draw.ProgramBindingSnapshot?.HasMutableFrameSourceSamplerBindings == true)
+			RequiresPerDrawFrameSourceDescriptorRefreshNoLock(draw))
 		{
 			// Owner-only refresh intentionally visits frequency-owned UBO work and
 			// skips the draw's descriptor publication. Frame sources such as the
@@ -2966,10 +3045,11 @@ internal unsafe partial class VkMeshRenderer
             bool frameSourceDescriptorsReady = TryRefreshFrameSourceDescriptorSetsForDraw(
                 frameIndex,
                 drawUniformSlot,
-                material,
-                draw.ProgramBindingSnapshot,
+				material,
+				draw.ProgramBindingSnapshot,
 				recordedSecondaryCommandBuffer,
-                out string frameSourceDescriptorReason);
+				draw.WindowPresentationSourceMarker,
+				out string frameSourceDescriptorReason);
             if (!frameSourceDescriptorsReady)
             {
                 reason = $"descriptors {frameSourceDescriptorReason}; snapshot={(draw.ProgramBindingSnapshot is null ? "none" : "captured")} program='{_program?.Data?.Name ?? "<unnamed program>"}'";

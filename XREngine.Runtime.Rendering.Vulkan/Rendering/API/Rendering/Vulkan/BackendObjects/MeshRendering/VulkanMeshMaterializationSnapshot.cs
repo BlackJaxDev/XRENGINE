@@ -4,6 +4,7 @@ namespace XREngine.Rendering.Vulkan;
 
 /// <summary>Frozen planner/resource facts supplied by FrameLoop for one mesh materialization.</summary>
 internal readonly record struct VulkanMeshMaterializationSnapshot(
+    ResourcePlannerRuntimeGeneration PlannerGeneration,
     FrameOpContext? ActiveFrameOpContext,
     int DescriptorViewFamilyIdentity,
     bool AvoidSynchronousImageAllocationForOpenXr,

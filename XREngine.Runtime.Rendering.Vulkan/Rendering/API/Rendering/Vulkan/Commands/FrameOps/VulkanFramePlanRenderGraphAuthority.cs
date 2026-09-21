@@ -18,7 +18,8 @@ internal readonly record struct VulkanFramePlanRenderGraphAuthority(
     internal bool TryResolve(
         in VulkanFrameOpPlannerStateKey key,
         int plannerContextCount,
-        out VulkanRenderGraphPlan plan)
+        out VulkanRenderGraphPlan plan,
+        out string failureReason)
     {
         ResourcePlannerRuntimeState primaryState = default;
         ResourcePlannerRuntimeState secondaryState = default;
@@ -30,6 +31,7 @@ internal readonly record struct VulkanFramePlanRenderGraphAuthority(
             (SwitchingState is null || ReferenceEquals(SwitchingState, SecondarySwitchingState)))
         {
             plan = VulkanRenderGraphPlan.Empty;
+            failureReason = "Primary and secondary planner publications do not have distinct switching-state owners.";
             return false;
         }
         if (hasPrimary || hasSecondary)
@@ -37,6 +39,7 @@ internal readonly record struct VulkanFramePlanRenderGraphAuthority(
             if (hasPrimary && hasSecondary)
             {
                 plan = VulkanRenderGraphPlan.Empty;
+                failureReason = "The keyed planner publication exists in both primary and secondary switching states.";
                 return false;
             }
 
@@ -51,6 +54,7 @@ internal readonly record struct VulkanFramePlanRenderGraphAuthority(
                     selectedSwitchingState))
             {
                 plan = VulkanRenderGraphPlan.Empty;
+                failureReason = "The keyed paired-eye publication does not own its selected switching-state map.";
                 return false;
             }
             ulong currentBufferRevision = BackendContext?.Resources.NativeBufferBindingRevision ?? 0UL;
@@ -70,6 +74,7 @@ internal readonly record struct VulkanFramePlanRenderGraphAuthority(
                     if (nativeBindingsSuperseded)
                         throw new VulkanNativeBufferBindingSupersededException(reason);
                     plan = VulkanRenderGraphPlan.Empty;
+                    failureReason = $"The keyed publication could not refreeze native barriers: {reason}";
                     return false;
                 }
 
@@ -79,21 +84,36 @@ internal readonly record struct VulkanFramePlanRenderGraphAuthority(
             if (!IsRecordable(state.RenderGraphPlan))
             {
                 plan = VulkanRenderGraphPlan.Empty;
+                failureReason = DescribeNonRecordablePlan(state);
                 return false;
             }
 
             plan = state.RenderGraphPlan;
+            failureReason = string.Empty;
             return true;
         }
 
         if (SecondarySwitchingState is null && plannerContextCount == 1 && IsRecordable(FallbackPlan))
         {
             plan = FallbackPlan;
+            failureReason = string.Empty;
             return true;
         }
 
         plan = VulkanRenderGraphPlan.Empty;
+        failureReason = $"No exact keyed publication exists (primary={SwitchingState?.States.Count ?? 0}, " +
+            $"secondary={SecondarySwitchingState?.States.Count ?? 0}); fallbackEligible={SecondarySwitchingState is null && plannerContextCount == 1}, " +
+            $"fallbackRecordable={IsRecordable(FallbackPlan)}.";
         return false;
+    }
+
+    private static string DescribeNonRecordablePlan(in ResourcePlannerRuntimeState state)
+    {
+        VulkanRenderGraphPlan? plan = state.RenderGraphPlan;
+        return $"The exact keyed publication is not recordable: allocatorRetired={state.ResourceAllocator.IsRetired}, " +
+            $"planNull={plan is null}, planEmpty={ReferenceEquals(plan, VulkanRenderGraphPlan.Empty)}, " +
+            $"completeNativeBindings={plan?.Barriers.HasCompleteNativeBindings ?? false}, " +
+            $"nativeBufferRevision={plan?.Barriers.NativeBufferBindingRevision ?? 0}.";
     }
 
     private static bool IsRecordable(VulkanRenderGraphPlan? plan)

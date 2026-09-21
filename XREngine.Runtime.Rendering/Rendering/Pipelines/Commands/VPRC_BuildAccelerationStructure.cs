@@ -26,6 +26,7 @@ public sealed class VPRC_BuildAccelerationStructure : ViewportRenderCommand
     public string NodeBufferVariableName { get; set; } = "AccelerationStructureNodes";
     public string RangeBufferVariableName { get; set; } = "AccelerationStructureRanges";
     public string MortonBufferVariableName { get; set; } = "AccelerationStructureMorton";
+    public string TriangleBufferVariableName { get; set; } = "AccelerationStructureTriangles";
     /// <summary>
     /// Executes the command to build or refresh the acceleration structure (BVH) for the current scene. 
     /// It checks if the scene is available, 
@@ -122,6 +123,9 @@ public sealed class VPRC_BuildAccelerationStructure : ViewportRenderCommand
             variables.SetBuffer(MortonBufferVariableName, provider.BvhMortonBuffer);
         else
             variables.Remove(MortonBufferVariableName);
+
+        // This BVH contains draw commands. Triangle consumers publish their own geometry.
+        variables.Remove(TriangleBufferVariableName);
     }
 
     private static EMeshSubmissionStrategy ResolveEffectiveMeshSubmissionStrategy()
@@ -179,6 +183,7 @@ public sealed class VPRC_BuildAccelerationStructure : ViewportRenderCommand
         builder.ReadWriteBuffer(NodeBufferVariableName);
         builder.ReadWriteBuffer(RangeBufferVariableName);
         builder.ReadWriteBuffer(MortonBufferVariableName);
+        builder.ReadWriteBuffer(TriangleBufferVariableName);
     }
 
     /// <summary>
@@ -194,5 +199,6 @@ public sealed class VPRC_BuildAccelerationStructure : ViewportRenderCommand
         variables.Remove(NodeBufferVariableName);
         variables.Remove(RangeBufferVariableName);
         variables.Remove(MortonBufferVariableName);
+        variables.Remove(TriangleBufferVariableName);
     }
 }

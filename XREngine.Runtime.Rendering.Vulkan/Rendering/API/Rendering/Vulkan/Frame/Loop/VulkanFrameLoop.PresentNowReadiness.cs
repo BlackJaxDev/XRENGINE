@@ -259,8 +259,16 @@ internal sealed partial class VulkanFrameLoop
         }
 
         CapturePresentNowAuthoredOperations(acceptedPlan, in openXrPublication);
-        VulkanFramePlanningSnapshot planningSnapshot =
-            _framePlanner.CaptureSnapshot();
+        // Keep target preparation, barrier freezing, and plan sealing on one
+        // immutable generation. A later publication is retried as a new
+        // PresentNow attempt rather than mixed into this accepted cohort.
+        ResourcePlannerRuntimeGeneration plannerGeneration =
+            _framePlanner.GetPublishedResourcePlannerGeneration();
+        ResourcePlannerRuntimeState plannerState = plannerGeneration.State;
+        VulkanFramePlanningSnapshot planningSnapshot = new(
+            plannerState.RenderGraphPlan,
+            _framePlanner.FrozenResourcePlanRevision,
+            _framePlanner.IsResourcePlanFrozen);
         VulkanSwapchainContextCoalescer.Coalesce(
             acceptedPlan.AuthoredOperations,
             _preparedMeshIngress);
@@ -368,8 +376,6 @@ internal sealed partial class VulkanFrameLoop
                 disposition: EVulkanPresentNowFailureDisposition.RecoverAfterStateChange);
         }
 
-        ResourcePlannerRuntimeState plannerState =
-            CaptureResourcePlannerRuntimeState();
         if (planningSnapshot.RenderGraphPlan.Revision !=
             plannerState.ResourcePlannerRevision)
         {
@@ -383,14 +389,17 @@ internal sealed partial class VulkanFrameLoop
             return false;
         }
         if (!TryPrepareFrameOperationTargets(
+                plannerGeneration,
                 staticOperations,
                 allowSynchronousResourceUploads: true,
                 out string targetFailure) ||
             !TryPrepareFrameOperationTargets(
+                plannerGeneration,
                 dynamicUiOperations,
                 allowSynchronousResourceUploads: true,
                 out targetFailure) ||
             !TryPreparePreparedMeshIngressTargets(
+                plannerGeneration,
                 _preparedMeshIngress,
                 allowSynchronousResourceUploads: true,
                 out targetFailure))

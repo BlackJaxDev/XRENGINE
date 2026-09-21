@@ -32,4 +32,5 @@ internal readonly record struct VulkanMeshRenderRequest(
     EMeshBillboardMode BillboardMode,
     bool ForceNoStereo,
     AdvancedGpuSceneDrawIdentitySnapshot CanonicalDrawIdentitySnapshot,
-    VulkanResidentDrawTemplateHandle ResidentTemplateHandle);
+    VulkanResidentDrawTemplateHandle ResidentTemplateHandle,
+    WindowPresentationSourceMarker WindowPresentationSourceMarker);

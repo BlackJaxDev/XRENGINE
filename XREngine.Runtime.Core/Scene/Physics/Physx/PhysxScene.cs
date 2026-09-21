@@ -66,6 +66,11 @@ namespace XREngine.Scene.Physics.Physx
         public PxScene* ScenePtr => _scene;
         public PxCpuDispatcher* DispatcherPtr => _dispatcher;
 
+        /// <summary>
+        /// Indicates whether this wrapper currently owns a live native PhysX scene.
+        /// </summary>
+        public bool HasNativeScene => _scene is not null;
+
         public override Vector3 Gravity
         {
             get
@@ -587,7 +592,13 @@ namespace XREngine.Scene.Physics.Physx
             => _scene->FetchResultsParticleSystemMut();
 
         public uint Timestamp
-            => _scene->GetTimestamp();
+        {
+            get
+            {
+                PxScene* scene = _scene;
+                return scene is null ? 0u : scene->GetTimestamp();
+            }
+        }
 
         public PxBroadPhaseCallback* BroadPhaseCallbackPtr
         {

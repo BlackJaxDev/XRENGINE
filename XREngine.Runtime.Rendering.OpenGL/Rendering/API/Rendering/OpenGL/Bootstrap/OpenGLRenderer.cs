@@ -119,8 +119,14 @@ public partial class OpenGLRenderer : AbstractRenderer<GL>, ISparseTextureStream
     }
 
     protected override AbstractRenderAPIObject CreateAPIRenderObject(GenericRenderObject renderObject)
-        => renderObject switch
+    {
+        bool recordMeshPublication = renderObject is XRDataBuffer { IsMeshOwnedBuffer: true };
+        long publicationStart = recordMeshPublication ? Stopwatch.GetTimestamp() : 0L;
+        bool succeeded = false;
+        try
         {
+            AbstractRenderAPIObject result = renderObject switch
+            {
             //Materials
             XRMaterial data => new GLMaterial(this, data),
             XRShader s => new GLShader(this, s),
@@ -168,8 +174,22 @@ public partial class OpenGLRenderer : AbstractRenderer<GL>, ISparseTextureStream
             XRRenderQuery data => new GLRenderQuery(this, data),
             XRTransformFeedback data => new GLTransformFeedback(this, data),
 
-            _ => throw new InvalidOperationException($"Render object type {renderObject.GetType()} is not supported.")
-        };
+                _ => throw new InvalidOperationException($"Render object type {renderObject.GetType()} is not supported.")
+            };
+            succeeded = true;
+            return result;
+        }
+        finally
+        {
+            if (recordMeshPublication)
+            {
+                XRMeshCpuPreparationTelemetry.RecordWrapperCreation(
+                    EMeshWrapperBackend.OpenGL,
+                    Stopwatch.GetTimestamp() - publicationStart,
+                    succeeded);
+            }
+        }
+    }
 
     protected override GL GetAPI()
     {
@@ -242,6 +262,7 @@ public partial class OpenGLRenderer : AbstractRenderer<GL>, ISparseTextureStream
         _luminanceComputeInitialized = false;
         DisposeAdvancedRuntimeForShutdown(orphanGLHandles);
         DisposeLayeredBlitFramebuffers(orphanGLHandles);
+        RetireGpuFences(orphanGLHandles);
         DisposeNativeApi();
     }
 

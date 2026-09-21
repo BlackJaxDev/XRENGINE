@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using XREngine.Rendering;
+using XREngine.Rendering.GI.DDGI;
 using XREngine.Rendering.RenderGraph;
 
 namespace XREngine.Rendering.Pipelines.Commands
@@ -143,6 +144,9 @@ namespace XREngine.Rendering.Pipelines.Commands
                     "[ExposureUpdate] Holding auto exposure while the viewport requested exposure stability.");
                 return;
             }
+
+            if (DDGIFrameContext.IsDiagnosticPresentationFrame(ActivePipelineInstance))
+                return;
 
             grading.MarkGpuAutoExposureReady(false);
 

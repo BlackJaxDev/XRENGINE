@@ -52,10 +52,6 @@ public partial class OpenGLRenderer
 
     private unsafe static void SetupDebug(GL api)
     {
-        // Be defensive here: some drivers (or non-debug contexts) can report GL_INVALID_OPERATION
-        // for DebugMessageControl even though the process otherwise supports OpenGL.
-        // We still try to enable the callback; we just skip driver-level filtering when unsupported.
-
         bool supportsDebugOutput = true;
         string[]? extensions = RuntimeEngine.Rendering.State.OpenGLExtensions;
         if (extensions is { Length: > 0 })
@@ -94,7 +90,9 @@ public partial class OpenGLRenderer
         if (!isDebugContext)
             return;
 
-        // Disable known-noisy messages at the driver level to avoid spamming logs.
+        // ID filtering requires an explicit source and type. Limit the driver
+        // filter to API performance messages; the callback filters other known
+        // non-error notifications and always preserves actual API errors.
         if (_ignoredMessageIds.Length == 0)
             return;
 
@@ -102,7 +100,7 @@ public partial class OpenGLRenderer
         {
             uint[] ids = Array.ConvertAll(_ignoredMessageIds, static x => unchecked((uint)x));
             fixed (uint* ptr = ids)
-                api.DebugMessageControl(GLEnum.DontCare, GLEnum.DontCare, GLEnum.DontCare, (uint)ids.Length, ptr, false);
+                api.DebugMessageControl(GLEnum.DebugSourceApi, GLEnum.DebugTypePerformance, GLEnum.DontCare, (uint)ids.Length, ptr, false);
         }
         catch
         {

@@ -330,9 +330,12 @@ internal sealed partial class VulkanFramePlanner
             return false;
         }
 
-        if (backendContext.GetOrCreateAPIRenderObject(
-                dataBuffer,
-                generateNow: allowSynchronousResourceUploads) is not VkDataBuffer vkBuffer)
+        // Plan sealing is the explicit cold-use boundary for registry buffers.
+        // Owner-first CPU publication deliberately leaves them without wrappers,
+        // so resolve through the factory-owned cold composition rather than the
+        // context's lookup-only compatibility surface.
+        AbstractRenderAPIObject wrapper = backendContext.Resources.CreateAPIRenderObject(dataBuffer);
+        if (wrapper is not VkDataBuffer vkBuffer)
         {
             nativeBuffer = default;
             nativeSize = 0;
@@ -341,8 +344,7 @@ internal sealed partial class VulkanFramePlanner
             return false;
         }
 
-        if (allowSynchronousResourceUploads)
-            _ = vkBuffer.TryEnsureReadyForRendering(allowSynchronousUpload: true);
+        _ = vkBuffer.TryEnsureReadyForRendering(allowSynchronousResourceUploads);
         // A logical buffer may have grown since the retained native allocation
         // was published. Lookup-only preparation must not inflate a barrier to
         // that new CPU size or consume storage whose upload is still pending.

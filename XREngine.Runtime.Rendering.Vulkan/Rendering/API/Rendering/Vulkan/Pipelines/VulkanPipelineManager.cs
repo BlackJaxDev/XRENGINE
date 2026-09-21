@@ -83,8 +83,51 @@ internal sealed unsafe partial class VulkanPipelineManager
     private long _computePipelineCreateCount;
     private long _workerPipelineCreateCount;
     private long _foregroundPipelineWaitCount;
+    private long _foregroundPipelineWaitTicks;
     private long _asyncQueueCount;
     private long _renderThreadShaderCompileCount;
+    private long _additiveProgramLinkCount;
+    private long _dependencyMutationCount;
+    private long _scopedDependencyMutationCount;
+    private long _globalDependencyInvalidationCount;
+    private long _drainedGraphicsPipelineJobCount;
+    private long _drainedComputePipelineJobCount;
+    private long _mutationPublicationWaitCount;
+    private long _mutationPublicationWaitTicks;
+    private long _staleCompletionCount;
+    private long _stalePipelineDisposalCount;
+    private long _foregroundNativePipelineCreateCount;
+    private long _foregroundNativePipelineCreateTicks;
+    private long _foregroundNativePipelineCreateMaxTicks;
+    private long _backgroundNativePipelineCreateCount;
+    private long _backgroundNativePipelineCreateTicks;
+    private long _backgroundNativePipelineCreateMaxTicks;
+    private long _foregroundPipelineCacheHostWaitCount;
+    private long _foregroundPipelineCacheHostWaitTicks;
+    private long _foregroundPipelineCacheHostWaitMaxTicks;
+    private long _backgroundPipelineCacheHostWaitCount;
+    private long _backgroundPipelineCacheHostWaitTicks;
+    private long _backgroundPipelineCacheHostWaitMaxTicks;
+    private long _pipelineCacheProbeCount;
+    private long _pipelineCacheProbeHitCount;
+    private long _pipelineCacheProbeMissCount;
+    private long _pipelineCacheProbeFailureCount;
+    private long _pipelineCacheInitialDataRejectedCount;
+    private long _pipelineCacheRecoveryCount;
+    private long _pipelineCacheMergeCount;
+    private long _pipelineCacheMergeTicks;
+    private long _pipelineCacheMergeMaxTicks;
+    private long _pipelineCacheCaptureCount;
+    private long _pipelineCacheCaptureTicks;
+    private long _pipelineCacheCaptureMaxTicks;
+    private long _pipelineCacheCaptureBytes;
+    private long _pipelineCacheWriteCount;
+    private long _pipelineCacheWriteTicks;
+    private long _pipelineCacheWriteMaxTicks;
+    private long _pipelineCacheWriteBytes;
+    private string _lastMutationReason = string.Empty;
+    private string _lastMutationScope = string.Empty;
+    private int _lastMutationAffectedOwnerCount;
     private readonly Lock _shaderArtifactIdentityLock = new();
     private readonly HashSet<string> _shaderArtifactIdentities = new(StringComparer.Ordinal);
 
@@ -144,11 +187,66 @@ internal sealed unsafe partial class VulkanPipelineManager
             ComputePipelineCreateCount = Volatile.Read(ref _computePipelineCreateCount),
             WorkerPipelineCreateCount = Volatile.Read(ref _workerPipelineCreateCount),
             ForegroundPipelineWaitCount = Volatile.Read(ref _foregroundPipelineWaitCount),
+            ForegroundPipelineWaitMilliseconds = Volatile.Read(ref _foregroundPipelineWaitTicks) * 1000.0 / Stopwatch.Frequency,
             AsyncQueueCount = Volatile.Read(ref _asyncQueueCount),
             RenderThreadShaderCompileCount = Volatile.Read(ref _renderThreadShaderCompileCount),
             PendingGraphicsPipelineCount = CountActiveVulkanGraphicsPipelineCompileJobs(),
             PendingComputePipelineCount = CountActiveVulkanComputePipelineCompileJobs(),
+            AdditiveProgramLinkCount = Volatile.Read(ref _additiveProgramLinkCount),
+            DependencyMutationCount = Volatile.Read(ref _dependencyMutationCount),
+            ScopedDependencyMutationCount = Volatile.Read(ref _scopedDependencyMutationCount),
+            GlobalDependencyInvalidationCount = Volatile.Read(ref _globalDependencyInvalidationCount),
+            DrainedGraphicsPipelineJobCount = Volatile.Read(ref _drainedGraphicsPipelineJobCount),
+            DrainedComputePipelineJobCount = Volatile.Read(ref _drainedComputePipelineJobCount),
+            MutationPublicationWaitCount = Volatile.Read(ref _mutationPublicationWaitCount),
+            MutationPublicationWaitMilliseconds = Volatile.Read(ref _mutationPublicationWaitTicks) * 1000.0 / Stopwatch.Frequency,
+            StaleCompletionCount = Volatile.Read(ref _staleCompletionCount),
+            StalePipelineDisposalCount = Volatile.Read(ref _stalePipelineDisposalCount),
+            ForegroundNativePipelineCreateCount = Volatile.Read(ref _foregroundNativePipelineCreateCount),
+            ForegroundNativePipelineCreateMilliseconds = TicksToMilliseconds(Volatile.Read(ref _foregroundNativePipelineCreateTicks)),
+            ForegroundNativePipelineCreateMaxMilliseconds = TicksToMilliseconds(Volatile.Read(ref _foregroundNativePipelineCreateMaxTicks)),
+            BackgroundNativePipelineCreateCount = Volatile.Read(ref _backgroundNativePipelineCreateCount),
+            BackgroundNativePipelineCreateMilliseconds = TicksToMilliseconds(Volatile.Read(ref _backgroundNativePipelineCreateTicks)),
+            BackgroundNativePipelineCreateMaxMilliseconds = TicksToMilliseconds(Volatile.Read(ref _backgroundNativePipelineCreateMaxTicks)),
+            ForegroundPipelineCacheHostWaitCount = Volatile.Read(ref _foregroundPipelineCacheHostWaitCount),
+            ForegroundPipelineCacheHostWaitMilliseconds = TicksToMilliseconds(Volatile.Read(ref _foregroundPipelineCacheHostWaitTicks)),
+            ForegroundPipelineCacheHostWaitMaxMilliseconds = TicksToMilliseconds(Volatile.Read(ref _foregroundPipelineCacheHostWaitMaxTicks)),
+            BackgroundPipelineCacheHostWaitCount = Volatile.Read(ref _backgroundPipelineCacheHostWaitCount),
+            BackgroundPipelineCacheHostWaitMilliseconds = TicksToMilliseconds(Volatile.Read(ref _backgroundPipelineCacheHostWaitTicks)),
+            BackgroundPipelineCacheHostWaitMaxMilliseconds = TicksToMilliseconds(Volatile.Read(ref _backgroundPipelineCacheHostWaitMaxTicks)),
+            PipelineCacheProbeCount = Volatile.Read(ref _pipelineCacheProbeCount),
+            PipelineCacheProbeHitCount = Volatile.Read(ref _pipelineCacheProbeHitCount),
+            PipelineCacheProbeMissCount = Volatile.Read(ref _pipelineCacheProbeMissCount),
+            PipelineCacheProbeFailureCount = Volatile.Read(ref _pipelineCacheProbeFailureCount),
+            PipelineCacheInitialDataRejectedCount = Volatile.Read(ref _pipelineCacheInitialDataRejectedCount),
+            PipelineCacheRecoveryCount = Volatile.Read(ref _pipelineCacheRecoveryCount),
+            PipelineCacheMergeCount = Volatile.Read(ref _pipelineCacheMergeCount),
+            PipelineCacheMergeMilliseconds = TicksToMilliseconds(Volatile.Read(ref _pipelineCacheMergeTicks)),
+            PipelineCacheMergeMaxMilliseconds = TicksToMilliseconds(Volatile.Read(ref _pipelineCacheMergeMaxTicks)),
+            PipelineCacheCaptureCount = Volatile.Read(ref _pipelineCacheCaptureCount),
+            PipelineCacheCaptureMilliseconds = TicksToMilliseconds(Volatile.Read(ref _pipelineCacheCaptureTicks)),
+            PipelineCacheCaptureMaxMilliseconds = TicksToMilliseconds(Volatile.Read(ref _pipelineCacheCaptureMaxTicks)),
+            PipelineCacheCaptureBytes = Volatile.Read(ref _pipelineCacheCaptureBytes),
+            PipelineCacheWriteCount = Volatile.Read(ref _pipelineCacheWriteCount),
+            PipelineCacheWriteMilliseconds = TicksToMilliseconds(Volatile.Read(ref _pipelineCacheWriteTicks)),
+            PipelineCacheWriteMaxMilliseconds = TicksToMilliseconds(Volatile.Read(ref _pipelineCacheWriteMaxTicks)),
+            PipelineCacheWriteBytes = Volatile.Read(ref _pipelineCacheWriteBytes),
+            LastMutationReason = Volatile.Read(ref _lastMutationReason),
+            LastMutationScope = Volatile.Read(ref _lastMutationScope),
+            LastMutationAffectedOwnerCount = Volatile.Read(ref _lastMutationAffectedOwnerCount),
         };
+
+    private static double TicksToMilliseconds(long ticks)
+        => ticks * 1000.0 / Stopwatch.Frequency;
+
+    internal void RecordAdditiveProgramLink()
+        => Interlocked.Increment(ref _additiveProgramLinkCount);
+
+    internal void RecordStalePipelineDisposal()
+    {
+        Interlocked.Increment(ref _staleCompletionCount);
+        Interlocked.Increment(ref _stalePipelineDisposalCount);
+    }
 
     internal void RecordRenderThreadShaderCompile()
         => Interlocked.Increment(ref _renderThreadShaderCompileCount);
@@ -194,6 +292,7 @@ internal sealed unsafe partial class VulkanPipelineManager
             CacheRootOverride = VulkanPipelineCacheStorage.GetRootOverride(),
             NativePipelineCachePath = _pipelineCacheFilePath ?? string.Empty,
             NativePipelineCacheInitialBytes = _pipelineCacheInitialDataBytes,
+            PipelineCreationCacheControlEnabled = _supportsPipelineCreationCacheControl,
             PrewarmDatabasePath = _prewarmDatabaseFilePath ?? string.Empty,
             PrewarmEntryCount = _prewarmDatabase?.EntryCount ?? 0,
             PrewarmCaptureEnabled = _prewarmCaptureEnabled,
@@ -645,7 +744,8 @@ internal sealed unsafe partial class VulkanPipelineManager
                         default,
                         completedJob.Task.Exception?.GetBaseException().Message ??
                             "graphics pipeline compile task faulted",
-                        0.0));
+                        0.0,
+                        Owner: completedJob.Request.Program));
             }
 
             _vulkanGraphicsPipelineCompileJobs.TryRemove(
@@ -670,6 +770,19 @@ internal sealed unsafe partial class VulkanPipelineManager
         long start = Stopwatch.GetTimestamp();
         try
         {
+            if (!request.Program.OwnsPipelineCompilationDependencies(
+                    request.PipelineLayout,
+                    request.GraphicsStages) ||
+                !request.Program.OwnsPipelineCompilationDependencies(
+                    request.PipelineLayout,
+                    request.PreRasterStages) ||
+                !request.Program.OwnsPipelineCompilationDependencies(
+                    request.PipelineLayout,
+                    request.FragmentStages))
+            {
+                throw new VulkanPipelineCompilationDeferredException(
+                    "Graphics pipeline request became stale before worker creation.");
+            }
             Pipeline pipeline = CreateGraphicsPipelineFromRequest(
                 request,
                 backgroundPipelineCache,
@@ -696,7 +809,12 @@ internal sealed unsafe partial class VulkanPipelineManager
                 request.Key.CullMode,
                 pipeline.Handle);
             }
-            return new VulkanGraphicsPipelineCompileResult(true, pipeline, null, elapsedMs);
+            return new VulkanGraphicsPipelineCompileResult(
+                true,
+                pipeline,
+                null,
+                elapsedMs,
+                Owner: request.Program);
         }
         catch (VulkanPipelineCompilationDeferredException ex)
         {
@@ -706,12 +824,18 @@ internal sealed unsafe partial class VulkanPipelineManager
                 default,
                 ex.Message,
                 elapsedMs,
-                Retryable: true);
+                Retryable: true,
+                Owner: request.Program);
         }
         catch (Exception ex)
         {
             double elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
-            return new VulkanGraphicsPipelineCompileResult(false, default, ex.Message, elapsedMs);
+            return new VulkanGraphicsPipelineCompileResult(
+                false,
+                default,
+                ex.Message,
+                elapsedMs,
+                Owner: request.Program);
         }
     }
 

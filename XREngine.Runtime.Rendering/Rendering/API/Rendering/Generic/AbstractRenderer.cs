@@ -35,6 +35,13 @@ namespace XREngine.Rendering
         void Commit();
     }
 
+    internal enum ERenderResourceGenerationPreparationStatus
+    {
+        Ready,
+        Pending,
+        Failed,
+    }
+
     internal interface IRenderResourceGenerationBackend
     {
         bool TryPrepareRenderResourceGeneration(
@@ -43,6 +50,21 @@ namespace XREngine.Rendering
             XRViewport? viewport,
             out IRenderResourceGenerationTransaction? transaction,
             out string? failureReason);
+
+        ERenderResourceGenerationPreparationStatus PrepareRenderResourceGeneration(
+            XRRenderPipelineInstance pipeline,
+            RenderResourceGeneration generation,
+            XRViewport? viewport,
+            out IRenderResourceGenerationTransaction? transaction,
+            out string? failureReason)
+            => TryPrepareRenderResourceGeneration(
+                pipeline,
+                generation,
+                viewport,
+                out transaction,
+                out failureReason)
+                ? ERenderResourceGenerationPreparationStatus.Ready
+                : ERenderResourceGenerationPreparationStatus.Failed;
     }
 
     /// <summary>
@@ -223,6 +245,9 @@ namespace XREngine.Rendering
         /// code should use <see cref="HostContext"/> instead.
         /// </summary>
         public IWindow Window => XRWindow.Window;
+
+        /// <summary>Exact backend generation that owns wrappers created by this renderer.</summary>
+        public virtual IRenderApiWrapperOwner ApiWrapperIdentityOwner => this;
 
         public string RenderApiWrapperOwnerName
         {
@@ -412,6 +437,21 @@ namespace XREngine.Rendering
             return true;
         }
 
+        internal virtual ERenderResourceGenerationPreparationStatus PrepareRenderResourceGeneration(
+            XRRenderPipelineInstance pipeline,
+            RenderResourceGeneration generation,
+            XRViewport? viewport,
+            out IRenderResourceGenerationTransaction? transaction,
+            out string? failureReason)
+            => TryPrepareRenderResourceGeneration(
+                pipeline,
+                generation,
+                viewport,
+                out transaction,
+                out failureReason)
+                ? ERenderResourceGenerationPreparationStatus.Ready
+                : ERenderResourceGenerationPreparationStatus.Failed;
+
         bool IRenderResourceGenerationBackend.TryPrepareRenderResourceGeneration(
             XRRenderPipelineInstance pipeline,
             RenderResourceGeneration generation,
@@ -419,6 +459,14 @@ namespace XREngine.Rendering
             out IRenderResourceGenerationTransaction? transaction,
             out string? failureReason)
             => TryPrepareRenderResourceGeneration(pipeline, generation, viewport, out transaction, out failureReason);
+
+        ERenderResourceGenerationPreparationStatus IRenderResourceGenerationBackend.PrepareRenderResourceGeneration(
+            XRRenderPipelineInstance pipeline,
+            RenderResourceGeneration generation,
+            XRViewport? viewport,
+            out IRenderResourceGenerationTransaction? transaction,
+            out string? failureReason)
+            => PrepareRenderResourceGeneration(pipeline, generation, viewport, out transaction, out failureReason);
 
         protected bool _frameBufferInvalidated = false;
         #endregion
@@ -810,24 +858,40 @@ namespace XREngine.Rendering
         {
             if (renderObject is null)
                 return null;
+            if (renderObject is XRDataBuffer buffer)
+                buffer.EnsureOwnerFirstConstructionCompleted();
+            if (!renderObject.IsApiWrapperPublicationReady)
+                throw new InvalidOperationException(
+                    $"Render object '{renderObject.GetType().Name}' cannot be wrapped before CPU construction is published.");
 
             AbstractRenderAPIObject? obj;
+            bool recordMeshWait = renderObject is XRDataBuffer { IsMeshOwnedBuffer: true };
+            long lockWaitStart = recordMeshWait ? Stopwatch.GetTimestamp() : 0L;
             using (_roCacheLock.EnterScope())
             {
+                if (recordMeshWait)
+                    XRMeshCpuPreparationTelemetry.RecordWrapperLockWait(Stopwatch.GetTimestamp() - lockWaitStart);
                 if (_renderObjectCache.TryGetValue(renderObject, out obj))
                 {
-                    if (generateNow && !obj.IsGenerated)
+                    if (obj.IsRetired)
                     {
-                        if (!AcceptsBackendWork)
+                        _renderObjectCache.TryRemove(renderObject, out _);
+                    }
+                    else
+                    {
+                        if (generateNow && !obj.IsGenerated)
                         {
-                            throw new InvalidOperationException(
-                                $"Renderer '{GetType().Name}' generation {BackendGeneration} is retired and cannot generate API wrappers.");
+                            if (!AcceptsBackendWork)
+                            {
+                                throw new InvalidOperationException(
+                                    $"Renderer '{GetType().Name}' generation {BackendGeneration} is retired and cannot generate API wrappers.");
+                            }
+
+                            obj.Generate();
                         }
 
-                        obj.Generate();
+                        return obj;
                     }
-
-                    return obj;
                 }
 
                 if (!AcceptsBackendWork)
@@ -840,6 +904,13 @@ namespace XREngine.Rendering
                     renderObject,
                     static (key, renderer) => renderer.CreateAPIRenderObject(key),
                     this);
+                if (obj.IsRetired || renderObject.IsDestroyed || !renderObject.IsApiWrapperPublicationReady)
+                {
+                    _renderObjectCache.TryRemove(renderObject, out _);
+                    obj.Retire();
+                    throw new InvalidOperationException(
+                        $"Render object '{renderObject.GetType().Name}' was destroyed while its API wrapper was being published.");
+                }
                 if (generateNow && !obj.IsGenerated)
                     obj.Generate();
             }
@@ -870,6 +941,14 @@ namespace XREngine.Rendering
 
             using (_roCacheLock.EnterScope())
                 _renderObjectCache.TryRemove(renderObject, out _);
+        }
+
+        /// <summary>
+        /// Releases backend-owned references to API objects after GPU work has
+        /// quiesced and before cached wrappers are retired. This must not create wrappers.
+        /// </summary>
+        public virtual void PrepareForApiObjectTeardown()
+        {
         }
 
         public void DestroyCachedAPIRenderObjects()
@@ -1775,6 +1854,14 @@ namespace XREngine.Rendering
 
         /// <inheritdoc />
         public virtual AdvancedOutputReservationDiagnosticsSnapshot? CaptureAdvancedOutputReservationDiagnostics()
+            => null;
+
+        /// <inheritdoc />
+        public virtual AdvancedVisibilityPreparationDiagnosticsSnapshot? CaptureAdvancedVisibilityPreparationDiagnostics()
+            => null;
+
+        /// <inheritdoc />
+        public virtual object? CapturePipelineCompilationDiagnostics()
             => null;
 
         /// <summary>

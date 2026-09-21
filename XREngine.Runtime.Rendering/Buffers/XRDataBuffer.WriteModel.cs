@@ -536,8 +536,7 @@ public partial class XRDataBuffer
                 continue;
 
             hasDirtyBytes = true;
-            uint end = range.OffsetBytes + range.LengthBytes;
-            if (range.OffsetBytes > capacity || end > capacity)
+            if (range.OffsetBytes > capacity || range.LengthBytes > capacity - range.OffsetBytes)
                 throw new InvalidOperationException($"Buffer '{AttributeName}' dirty range {range.OffsetBytes}+{range.LengthBytes} exceeds allocated capacity {capacity}.");
         }
 
@@ -582,10 +581,7 @@ public partial class XRDataBuffer
             {
                 XRBufferDirtyRange range = rangesToUpload[i];
                 XRBufferWriteTelemetry.RecordUpload(_lastResolvedRoute, range.LengthBytes);
-                if (range.OffsetBytes == 0u && range.LengthBytes >= Length)
-                    PushData();
-                else
-                    PushSubData(checked((int)range.OffsetBytes), range.LengthBytes);
+                PublishCommittedCpuBytes(range);
             }
         }
         finally
@@ -593,6 +589,32 @@ public partial class XRDataBuffer
             if (rentedRanges is not null)
                 ArrayPool<XRBufferDirtyRange>.Shared.Return(rentedRanges);
         }
+    }
+
+    /// <summary>
+    /// Publishes an authored CPU write to existing owners without requiring a
+    /// render-thread context or creating wrappers on the committing thread.
+    /// A future owner's initial upload reads the current retained CPU image.
+    /// </summary>
+    private void PublishCommittedCpuBytes(XRBufferDirtyRange range)
+    {
+        CompleteOwnerFirstConstruction();
+        bool fullUpload = range.OffsetBytes == 0u && range.LengthBytes >= Length;
+        ReadOnlySpan<AbstractRenderAPIObject> wrappers = ApiWrapperSnapshot;
+        for (int i = 0; i < wrappers.Length; i++)
+        {
+            AbstractRenderAPIObject wrapper = wrappers[i];
+            if (IsDestroyed || wrapper.IsRetired || wrapper is not IApiDataBuffer buffer)
+                continue;
+            if (fullUpload)
+                buffer.PushData();
+            else
+                buffer.PushSubData(checked((int)range.OffsetBytes), range.LengthBytes);
+        }
+        if (fullUpload)
+            PushDataRequested?.Invoke();
+        else
+            PushSubDataRequested?.Invoke(checked((int)range.OffsetBytes), range.LengthBytes);
     }
 
     private void AddDirtyRangeLocked(XRBufferDirtyRange range, uint capacity)

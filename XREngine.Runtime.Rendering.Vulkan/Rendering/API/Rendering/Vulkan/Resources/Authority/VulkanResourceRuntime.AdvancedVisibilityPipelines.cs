@@ -32,4 +32,10 @@ internal sealed partial class VulkanResourceRuntime
         }
         pipelines?.StopPreparation();
     }
+
+    internal AdvancedVisibilityPreparationDiagnosticsSnapshot CaptureAdvancedVisibilityPreparationDiagnostics()
+    {
+        lock (_advancedVisibilityPipelinesGate)
+            return _advancedVisibilityPipelines?.CapturePreparationDiagnostics() ?? default;
+    }
 }

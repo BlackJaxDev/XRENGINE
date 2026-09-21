@@ -28,6 +28,18 @@ public partial class OpenGLRenderer
     private OpenGLAdvancedVisibilityAtlasVao? _advancedAtlasVao;
     private uint _advancedNativeSampler;
 
+    /// <summary>Releases submitted bindless leases before texture wrappers are retired.</summary>
+    public override void PrepareForApiObjectTeardown()
+    {
+        if (ShouldOrphanGLHandlesForShutdown)
+            return;
+
+        _advancedOutputRegistry?.Dispose();
+        _advancedOutputRegistry = null;
+        _advancedSceneUploader = null;
+        DisposeAdvancedBindlessResidency();
+    }
+
     /// <summary>Releases the complete native Advanced runtime while the GL context is
     /// still valid. The orphan path deliberately drops managed references only because
     /// the shutdown policy has already abandoned the context's asynchronous work.</summary>
@@ -89,7 +101,10 @@ public partial class OpenGLRenderer
     }
 
     private void DestroyAdvancedProgram(XRRenderProgram? program)
-        => GenericToAPI<GLRenderProgram>(program)?.Destroy();
+    {
+        if (program is not null && TryGetAPIRenderObject(program, out AbstractRenderAPIObject? wrapper))
+            wrapper?.Destroy();
+    }
 
     private bool TryEnsureAdvancedRuntime(out string reason)
     {

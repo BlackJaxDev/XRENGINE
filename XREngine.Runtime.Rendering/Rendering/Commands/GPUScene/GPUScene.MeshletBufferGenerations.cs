@@ -202,7 +202,7 @@ namespace XREngine.Rendering.Commands
             EnsureSceneBufferCapacity(buffer, requiredCount, MinMeshDataEntries);
             for (uint index = 0; index < buffer.ElementCount; ++index)
                 buffer.SetDataRawAtIndex(index, _meshletRangesByMeshId.GetValueOrDefault(index));
-            buffer.PushSubData();
+            buffer.CommitDirtyBytes(0u, buffer.Length);
             return buffer;
         }
 
@@ -212,7 +212,7 @@ namespace XREngine.Rendering.Commands
             EnsureSceneBufferCapacity(buffer, ((uint)descriptors.Count).ClampMin(MinMeshletDescriptorEntries), MinMeshletDescriptorEntries);
             for (int index = 0; index < descriptors.Count; ++index)
                 buffer.SetDataRawAtIndex((uint)index, descriptors[index]);
-            buffer.PushSubData();
+            buffer.CommitDirtyBytes(0u, buffer.Length);
             return buffer;
         }
 
@@ -222,7 +222,7 @@ namespace XREngine.Rendering.Commands
             EnsureSceneBufferCapacity(buffer, ((uint)indices.Count).ClampMin(MinMeshletIndexEntries), MinMeshletIndexEntries);
             for (int index = 0; index < indices.Count; ++index)
                 buffer.SetDataRawAtIndex((uint)index, indices[index]);
-            buffer.PushSubData();
+            buffer.CommitDirtyBytes(0u, buffer.Length);
             return buffer;
         }
 
@@ -232,7 +232,7 @@ namespace XREngine.Rendering.Commands
             EnsureSceneBufferCapacity(buffer, ((uint)indices.Count).ClampMin(MinMeshletIndexEntries), MinMeshletIndexEntries);
             for (int index = 0; index < indices.Count; ++index)
                 buffer.SetDataRawAtIndex((uint)index, indices[index]);
-            buffer.PushSubData();
+            buffer.CommitDirtyBytes(0u, buffer.Length);
             return buffer;
         }
 

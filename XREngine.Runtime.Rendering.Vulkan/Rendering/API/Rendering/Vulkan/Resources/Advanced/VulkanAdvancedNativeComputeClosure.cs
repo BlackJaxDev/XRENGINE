@@ -52,9 +52,10 @@ internal readonly record struct VulkanAdvancedNativeComputeClosure(
     uint ViewIndex)
 {
     internal VulkanAdvancedNativeShadingRootBinding ShadingAddressRoot { get; init; }
+    internal VulkanAdvancedDdgiSurfaceClosure DdgiSurface { get; init; }
 
     internal bool IsValid
-        => GraphRevision != 0u &&
+        => GraphRevision != 0u && DdgiSurface.IsValid &&
            Identity is { IsAllocated: true } &&
            Metadata is { IsAllocated: true } &&
            Depth is { IsAllocated: true } &&

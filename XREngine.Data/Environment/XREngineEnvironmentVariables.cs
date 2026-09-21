@@ -6,6 +6,7 @@ namespace XREngine;
 /// </summary>
 public static class XREngineEnvironmentVariables
 {
+    public const string VulkanAdvancedValidationForceUnavailable = "XRE_VK_ADVANCED_FORCE_UNAVAILABLE";
     public const string Path = "PATH";
     public const string ContinuousIntegration = "CI";
     public const string MsBuildSdksPath = "MSBuildSDKsPath";
@@ -230,6 +231,8 @@ public static class XREngineEnvironmentVariables
     /// per-user and repository cache locations.
     /// </summary>
     public const string VulkanPipelineCacheRoot = "XRE_VULKAN_PIPELINE_CACHE_ROOT";
+    /// <summary>Validation-only override for the unsupported pipeline-cache-control path.</summary>
+    public const string VulkanPipelineCacheControlForceUnavailable = "XRE_VK_PIPELINE_CACHE_CONTROL_FORCE_UNAVAILABLE";
     public const string VkCapabilityTier = "XRE_VK_CAPABILITY_TIER";
     public const string VkDescriptorBackend = "XRE_VK_DESCRIPTOR_BACKEND";
     public const string VkProgramBindingBackend = "XRE_VK_PROGRAM_BINDING_BACKEND";

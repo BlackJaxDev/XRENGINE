@@ -82,6 +82,15 @@ namespace XREngine
                 EAdvancedRenderPipelineMode mode,
                 in AdvancedRenderPipelineCapabilities capabilities)
             {
+                // A plain offscreen capture deliberately has no Advanced output
+                // intent. Global Required policy applies to opted-in outputs, not
+                // utility captures such as editor thumbnails and readbacks.
+                if (request.Purpose == ERenderPipelinePurpose.OffscreenCapture &&
+                    !request.OffscreenIntent.HasValue)
+                {
+                    return new DefaultRenderPipeline(request.Stereo);
+                }
+
                 // Desktop cameras are configured before a physical output exists.
                 // Make Advanced the source asset for the normal Available/Required
                 // policy and bind its output-local capability reservation later.
@@ -203,11 +212,20 @@ namespace XREngine
                         out AdvancedVisibilityFamilyReservation reservation,
                         out string reservationFailureReason);
 
+                bool reservationCurrent = reservation.IsValid &&
+                    reservation.OutputId == request.OutputId &&
+                    renderer?.IsAdvancedVisibilityFamilyReservationCurrent(in reservation) == true;
+                if (selection.SelectsAdvanced && !reservationCurrent &&
+                    string.Equals(reservationFailureReason, "Ready", StringComparison.Ordinal))
+                {
+                    reservationFailureReason =
+                        "The Advanced output reservation was not current for the selected viewport.";
+                }
                 EAdvancedRenderPipelineOutputBindingState state = admission.State switch
                 {
                     EAdvancedProductionExecutionState.PendingResources =>
                         EAdvancedRenderPipelineOutputBindingState.PendingResources,
-                    _ when selection.SelectsAdvanced =>
+                    _ when selection.SelectsAdvanced && reservationCurrent =>
                         EAdvancedRenderPipelineOutputBindingState.Bound,
                     _ => EAdvancedRenderPipelineOutputBindingState.Rejected,
                 };
@@ -223,8 +241,6 @@ namespace XREngine
                     reservation,
                     state,
                     failureReason);
-                bool reservationCurrent = binding.IsBound &&
-                    renderer?.IsAdvancedVisibilityFamilyReservationCurrent(in reservation) == true;
                 AdvancedProductionCutoverStatus cutover =
                     AdvancedProductionCutoverContract.EvaluateStatus(
                         (AdvancedRenderPipeline)pipeline,
@@ -237,10 +253,15 @@ namespace XREngine
                     // A backend reservation only admits the executable family. A configured
                     // provider that cannot participate in native shading must not leave an
                     // otherwise-bound output silently executing without its requested feature.
-                    binding = binding with { State = EAdvancedRenderPipelineOutputBindingState.Rejected };
+                    binding = binding with
+                    {
+                        State = EAdvancedRenderPipelineOutputBindingState.Rejected,
+                        FailureReason = cutover.Diagnostic,
+                    };
                 }
                 if (cutover.ExecutionState == EAdvancedProductionExecutionState.Unsupported &&
-                    mode == EAdvancedRenderPipelineMode.Required)
+                    mode == EAdvancedRenderPipelineMode.Required &&
+                    !ShouldDeferExplicitAdvancedOffscreenBinding(request))
                 {
                     Debug.RenderingError("[AdvancedPipeline] Required output unsupported. Output={0} Reason={1}",
                         request.OutputId, cutover.Diagnostic);
@@ -251,7 +272,7 @@ namespace XREngine
                     CutoverStatus = cutover,
                     FailureReason = binding.State == EAdvancedRenderPipelineOutputBindingState.Bound
                         ? null
-                        : cutover.Diagnostic,
+                        : binding.FailureReason ?? cutover.Diagnostic,
                 };
                 viewport.RenderPipelineInstance.ApplyAdvancedOutputBinding(in binding, renderer);
             }
@@ -302,6 +323,15 @@ namespace XREngine
                     throw;
                 }
 
+                bool reservationCurrent = reservation.IsValid &&
+                    reservation.OutputId == request.OutputId &&
+                    renderer?.IsAdvancedVisibilityFamilyReservationCurrent(in reservation) == true;
+                if (selection.SelectsAdvanced && !reservationCurrent &&
+                    string.Equals(reservationFailureReason, "Ready", StringComparison.Ordinal))
+                {
+                    reservationFailureReason =
+                        "The Advanced OpenXR eye reservation was not current for the selected output.";
+                }
                 EAdvancedRenderPipelineOutputBindingState state = mode switch
                 {
                     EAdvancedRenderPipelineMode.Disabled =>
@@ -310,7 +340,7 @@ namespace XREngine
                         EAdvancedRenderPipelineOutputBindingState.DiagnosticOnly,
                     _ when admission.State == EAdvancedProductionExecutionState.PendingResources =>
                         EAdvancedRenderPipelineOutputBindingState.PendingResources,
-                    _ when selection.SelectsAdvanced =>
+                    _ when selection.SelectsAdvanced && reservationCurrent =>
                         EAdvancedRenderPipelineOutputBindingState.Bound,
                     _ => EAdvancedRenderPipelineOutputBindingState.Rejected,
                 };
@@ -330,8 +360,6 @@ namespace XREngine
                     reservation,
                     state,
                     failureReason);
-                bool reservationCurrent = binding.IsBound &&
-                    renderer?.IsAdvancedVisibilityFamilyReservationCurrent(in reservation) == true;
                 AdvancedProductionCutoverStatus cutover =
                     AdvancedProductionCutoverContract.EvaluateStatus(
                         pipeline,
@@ -344,6 +372,7 @@ namespace XREngine
                     binding = binding with
                     {
                         State = EAdvancedRenderPipelineOutputBindingState.Rejected,
+                        FailureReason = cutover.Diagnostic,
                     };
                 }
                 if (cutover.ExecutionState == EAdvancedProductionExecutionState.Unsupported &&
@@ -363,16 +392,13 @@ namespace XREngine
                     CutoverStatus = cutover,
                     FailureReason = binding.State == EAdvancedRenderPipelineOutputBindingState.Bound
                         ? null
-                        : cutover.Diagnostic,
+                        : binding.FailureReason ?? cutover.Diagnostic,
                 };
                 bool useAdvancedFamily = binding.State ==
                     EAdvancedRenderPipelineOutputBindingState.Bound &&
                     cutover.ExecutionState == EAdvancedProductionExecutionState.Admitted;
                 pipeline.ConfigureAdvancedTwoPassEyeFamily(useAdvancedFamily);
-                if (useAdvancedFamily)
-                    viewport.RenderPipelineInstance.ApplyAdvancedOutputBinding(in binding, renderer);
-                else
-                    viewport.RenderPipelineInstance.ClearAdvancedOutputBinding();
+                viewport.RenderPipelineInstance.ApplyAdvancedOutputBinding(in binding, renderer);
             }
 
             private static EAdvancedRenderPipelineMode ResolveAdvancedRenderPipelineMode()
@@ -410,41 +436,55 @@ namespace XREngine
                 out string reservationFailureReason)
             {
                 reservation = default;
-                // The public snapshot deliberately stays fail-closed: it has no
-                // output identity. Only this selection boundary may turn a live,
-                // sticky reservation into the promoted shader-family capability.
-                AdvancedRenderPipelineCapabilities effectiveCapabilities = capabilities;
+                // Global backend capabilities cannot select an Advanced output:
+                // the visibility family exists only after this exact physical
+                // output has a current reservation.
+                AdvancedRenderPipelineCapabilities effectiveCapabilities = capabilities with
+                {
+                    ShaderFamily = EAdvancedShaderFamily.None,
+                };
                 reservationFailureReason = "Reservation was not requested for this output.";
-                if ((mode == EAdvancedRenderPipelineMode.Available ||
+                bool reservationRequested =
+                    (mode == EAdvancedRenderPipelineMode.Available ||
                      mode == EAdvancedRenderPipelineMode.Required) &&
                     admission.IsAdmitted &&
                     (request.Purpose == ERenderPipelinePurpose.DesktopScene ||
                      request.Purpose == ERenderPipelinePurpose.OpenXrEye ||
                      request.Purpose == ERenderPipelinePurpose.OffscreenCapture && request.OffscreenIntent.HasValue) &&
-                    (!request.Stereo || capabilities.SupportsStereoArrayResources) && request.OutputId != 0 &&
-                    reservationRenderer is not null &&
-                    reservationRenderer.TryReserveAdvancedVisibilityFamily(
+                    (!request.Stereo || capabilities.SupportsStereoArrayResources) &&
+                    request.OutputId != 0 &&
+                    reservationRenderer is not null;
+                bool reservationSucceeded = reservationRequested &&
+                    reservationRenderer!.TryReserveAdvancedVisibilityFamily(
                         request.OutputId,
                         out reservation,
-                        out reservationFailureReason))
+                        out reservationFailureReason) &&
+                    reservation.IsValid &&
+                    reservation.OutputId == request.OutputId &&
+                    reservationRenderer!.IsAdvancedVisibilityFamilyReservationCurrent(
+                        in reservation);
+                if (reservationSucceeded)
                 {
                     effectiveCapabilities = capabilities with
                     {
                         ShaderFamily = EAdvancedShaderFamily.VisibilityBuffer,
                     };
                 }
-                if ((mode == EAdvancedRenderPipelineMode.Available ||
-                     mode == EAdvancedRenderPipelineMode.Required) &&
-                    admission.State == EAdvancedProductionExecutionState.PendingResources &&
-                    (request.Purpose == ERenderPipelinePurpose.DesktopScene ||
-                     request.Purpose == ERenderPipelinePurpose.OpenXrEye ||
-                     request.Purpose == ERenderPipelinePurpose.OffscreenCapture && request.OffscreenIntent.HasValue) &&
-                    (!request.Stereo || capabilities.SupportsStereoArrayResources))
+                else if (reservationRequested &&
+                         string.Equals(reservationFailureReason, "Ready", StringComparison.Ordinal))
                 {
-                    // Keep the configured Advanced source selected while native resources warm.
-                    // This is admission policy only; status remains PendingResources.
-                    effectiveCapabilities = capabilities with { ShaderFamily = EAdvancedShaderFamily.VisibilityBuffer };
-                    reservationFailureReason = admission.Reason;
+                    reservationFailureReason =
+                        "The renderer returned an invalid Advanced reservation for the requested output.";
+                }
+                if (!reservationRequested &&
+                    (mode == EAdvancedRenderPipelineMode.Available ||
+                     mode == EAdvancedRenderPipelineMode.Required))
+                {
+                    reservationFailureReason = admission.State ==
+                        EAdvancedProductionExecutionState.PendingResources
+                        ? admission.Reason
+                        : $"Advanced output reservation is not eligible for purpose={request.Purpose}, " +
+                          $"output={request.OutputId}, offscreenIntent={request.OffscreenIntent?.ToString() ?? "<none>"}.";
                 }
                 AdvancedRenderPipelineSelectionResult selection =
                     AdvancedRenderPipelineSelectionResolver.Resolve(mode, effectiveCapabilities, request.Stereo);
@@ -454,7 +494,9 @@ namespace XREngine
 
                 RuntimeEngine.Rendering.Stats.RendererState.UpdateAdvancedPipelineContext(selection);
 
-                if (selection.RequiresFailure)
+                if (selection.RequiresFailure &&
+                    admission.State != EAdvancedProductionExecutionState.PendingResources &&
+                    !ShouldDeferExplicitAdvancedOffscreenBinding(request))
                 {
                     Debug.RenderingError(
                         "[AdvancedPipeline] Required output reservation failed. Output={0} Reason={1}",
@@ -494,6 +536,11 @@ namespace XREngine
 
                 return selection;
             }
+
+            private static bool ShouldDeferExplicitAdvancedOffscreenBinding(
+                in RenderPipelineRequest request)
+                => request.Purpose == ERenderPipelinePurpose.OffscreenCapture &&
+                   request.OffscreenIntent.HasValue;
 
             private static RvcRenderPipeline NewRvcRenderPipeline(
                 bool stereo,

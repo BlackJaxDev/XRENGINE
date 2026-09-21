@@ -8,6 +8,13 @@ namespace XREngine.Rendering.Pipelines.Commands;
 /// </summary>
 public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
 {
+    /// <summary>Frozen command-chain feature state used when describing native DDGI surface writes.</summary>
+    public bool EnableDdgi
+    {
+        get => _enableDdgi;
+        set => SetField(ref _enableDdgi, value);
+    }
+    private bool _enableDdgi;
     internal const string LateVisibilityRasterPassName =
         "Advanced.LateVisibilityRaster";
 
@@ -98,12 +105,15 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
         }
         IAdvancedGlobalIlluminationProvider? globalIlluminationProvider = pipeline.GlobalIlluminationProvider;
         bool enableLightProbesAndIbl = !isMinimalVisibilityOutput &&
-            pipeline.GlobalIlluminationMode == EGlobalIlluminationMode.LightProbesAndIbl &&
+            (pipeline.GlobalIlluminationMode == EGlobalIlluminationMode.LightProbesAndIbl ||
+             pipeline.GlobalIlluminationMode == EGlobalIlluminationMode.DDGI) &&
+            globalIlluminationProvider is { IsSupported: true } &&
+            globalIlluminationProvider.ActiveMode == pipeline.GlobalIlluminationMode &&
             AdvancedGlobalIlluminationContract.IsNativeProvider(globalIlluminationProvider);
         if (requiresNativeOpaqueShading && !isMinimalVisibilityOutput &&
             pipeline.GlobalIlluminationMode != EGlobalIlluminationMode.None &&
-            (pipeline.GlobalIlluminationMode != EGlobalIlluminationMode.LightProbesAndIbl ||
-             (globalIlluminationProvider is not null && !enableLightProbesAndIbl)))
+            (pipeline.GlobalIlluminationMode is not (EGlobalIlluminationMode.LightProbesAndIbl or EGlobalIlluminationMode.DDGI) ||
+             !enableLightProbesAndIbl))
         {
             string name = globalIlluminationProvider?.ProviderName ?? "none";
             ReportAdmissionRejection($"Global illumination mode '{pipeline.GlobalIlluminationMode}' and provider '{name}' have no native Advanced implementation.");
@@ -181,7 +191,8 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             binding.Request.OffscreenIntent.HasValue,
             enableBuiltInAmbientOcclusion,
             enableLightProbesAndIbl,
-            isMinimalVisibilityOutput,
+            EnableDdgi: EnableDdgi,
+            IsMinimalVisibilityOutput: isMinimalVisibilityOutput,
             SceneDatabase: world.GpuScene.AdvancedSharedDatabase);
 
         // The rendering command collection swaps this only at the frame
@@ -351,7 +362,7 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             descriptor.RenderGraphStage);
 
         builder.UseEngineDescriptors();
-        DescribeVisibilityResources(builder, descriptor.Stage);
+        DescribeVisibilityResources(builder, descriptor.Stage, EnableDdgi);
 
         int stageIndex = (int)descriptor.Stage;
         if (descriptor.Stage == EAdvancedRenderStage.DepthPyramidAndLateVisibility)
@@ -423,7 +434,8 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
 
     private static void DescribeVisibilityResources(
         RenderPassBuilder builder,
-        EAdvancedRenderStage stage)
+        EAdvancedRenderStage stage,
+        bool enableDdgi)
     {
         switch (stage)
         {
@@ -544,6 +556,13 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
                     .ReadWriteTexture(Tex(AdvancedRenderPipeline.VelocityTextureName))
                     .ReadWriteTexture(Tex(AdvancedTemporalHistoryContract.ReactiveMaskResourceName))
                     .ReadWriteTexture(Tex(AdvancedShadingResourceNames.ShadingDiagnostics));
+                if (enableDdgi)
+                {
+                    builder.WriteTexture(Tex(AdvancedRenderPipeline.NormalTextureName))
+                        .WriteTexture(Tex(AdvancedRenderPipeline.AlbedoOpacityTextureName))
+                        .WriteTexture(Tex(AdvancedRenderPipeline.RMSETextureName))
+                        .WriteTexture(Tex(AdvancedRenderPipeline.EmissionColorTextureName));
+                }
                 for (uint slot = 0; slot < AdvancedFrameSlotContract.DefaultSlotCount; ++slot)
                     builder.ReadBuffer(AdvancedClassificationResourceNames.ActiveTiles(slot))
                         .ReadBuffer(AdvancedClassificationResourceNames.KernelTiles(slot))

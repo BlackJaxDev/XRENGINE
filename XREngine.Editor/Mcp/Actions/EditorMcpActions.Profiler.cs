@@ -109,6 +109,8 @@ namespace XREngine.Editor.Mcp
                     ? OcclusionGpuElapsedTiming.Instance.CaptureRingDiagnostic(activeVulkanRenderer)
                     : default;
             RvcFrameProfileSnapshot rvcFrameProfile = RuntimeEngine.Rendering.Stats.Rvc.FrameProfile;
+            XRMeshCpuPreparationTelemetrySnapshot meshCpuPreparation =
+                XRMeshCpuPreparationTelemetry.CaptureSnapshot();
             var gpuScene = context.RenderWorld.VisualScene.GPUCommands;
             GpuMeshletEligibilitySnapshot meshletEligibility =
                 gpuScene.CaptureMeshletEligibilitySnapshot((int)EDefaultRenderPass.OpaqueDeferred);
@@ -116,6 +118,45 @@ namespace XREngine.Editor.Mcp
                 "Retrieved render profiler stats.",
                 new
                 {
+                    mesh_cpu_preparation = new
+                    {
+                        completed_meshes = meshCpuPreparation.CompletedMeshCount,
+                        failed_meshes = meshCpuPreparation.FailedMeshCount,
+                        vertices = meshCpuPreparation.PreparedVertexCount,
+                        buffers = meshCpuPreparation.PreparedBufferCount,
+                        buffer_bytes = meshCpuPreparation.PreparedBufferBytes,
+                        peak_mesh_vertices = meshCpuPreparation.PeakMeshVertexCount,
+                        peak_mesh_buffer_bytes = meshCpuPreparation.PeakMeshBufferBytes,
+                        allocation_count = meshCpuPreparation.AllocationCount,
+                        allocation_bytes = meshCpuPreparation.AllocationBytes,
+                        allocation_ms = meshCpuPreparation.AllocationTicks * 1000.0 / Stopwatch.Frequency,
+                        zero_fill_count = meshCpuPreparation.ZeroFillCount,
+                        zero_fill_bytes = meshCpuPreparation.ZeroFillBytes,
+                        zero_fill_ms = meshCpuPreparation.ZeroFillTicks * 1000.0 / Stopwatch.Frequency,
+                        buffer_callback_count = meshCpuPreparation.BufferCallbackCount,
+                        buffer_callback_ms = meshCpuPreparation.BufferCallbackTicks * 1000.0 / Stopwatch.Frequency,
+                        vertex_population_count = meshCpuPreparation.VertexPopulationCount,
+                        vertex_population_vertices = meshCpuPreparation.VertexPopulationVertexCount,
+                        vertex_population_ms = meshCpuPreparation.VertexPopulationTicks * 1000.0 / Stopwatch.Frequency,
+                        cache_publication_batches = meshCpuPreparation.CachePublicationBatchCount,
+                        cache_publication_objects = meshCpuPreparation.CachePublicationObjectCount,
+                        cache_publication_ms = meshCpuPreparation.CachePublicationTicks * 1000.0 / Stopwatch.Frequency,
+                        wrapper_lock_wait_count = meshCpuPreparation.WrapperLockWaitCount,
+                        wrapper_lock_wait_ms = meshCpuPreparation.WrapperLockWaitTicks * 1000.0 / Stopwatch.Frequency,
+                        wrapper_lock_wait_peak_ms = meshCpuPreparation.WrapperLockWaitPeakTicks * 1000.0 / Stopwatch.Frequency,
+                        opengl_wrapper_creations = meshCpuPreparation.OpenGlWrapperCreationCount,
+                        opengl_wrapper_failures = meshCpuPreparation.OpenGlWrapperCreationFailureCount,
+                        opengl_wrapper_creation_ms = meshCpuPreparation.OpenGlWrapperCreationTicks * 1000.0 / Stopwatch.Frequency,
+                        vulkan_wrapper_creations = meshCpuPreparation.VulkanWrapperCreationCount,
+                        vulkan_wrapper_failures = meshCpuPreparation.VulkanWrapperCreationFailureCount,
+                        vulkan_wrapper_creation_ms = meshCpuPreparation.VulkanWrapperCreationTicks * 1000.0 / Stopwatch.Frequency,
+                        wrappers_created_during_cpu_preparation = meshCpuPreparation.WrapperCreationDuringCpuPreparationCount,
+                        wrappers_created_off_owner_thread = meshCpuPreparation.WrapperCreationOffOwnerThreadCount,
+                        active_preparations = meshCpuPreparation.ActivePreparationCount,
+                        last_preparation_thread = meshCpuPreparation.LastPreparationThreadId,
+                        last_cache_publication_thread = meshCpuPreparation.LastCachePublicationThreadId,
+                        last_wrapper_creation_thread = meshCpuPreparation.LastWrapperCreationThreadId,
+                    },
                     work_scheduler = new
                     {
                         installed = workScheduler is not null,

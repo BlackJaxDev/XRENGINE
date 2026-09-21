@@ -13,9 +13,11 @@ public sealed class RenderResourceGeneration(
     ResourceGenerationKey key,
     RenderPipelineResourceLayout layout,
     RenderPipeline? ownerPipeline = null,
-    ulong pipelineRevision = 0) : IDisposable
+    ulong pipelineRevision = 0,
+    bool isInitialBuild = false) : IDisposable
 {
     private readonly List<string> _diagnostics = [];
+    private readonly Dictionary<string, IIncrementalFrameBufferFactory> _incrementalFrameBufferFactories = new(StringComparer.Ordinal);
     private readonly Stopwatch _buildTimer = new();
     private XRGpuFence? _retirementFence;
     private int _failedRetirementFenceRetryCount;
@@ -33,6 +35,10 @@ public sealed class RenderResourceGeneration(
     /// Gets the viewport-instance-local pipeline revision that created this generation.
     /// </summary>
     public ulong PipelineRevision { get; } = pipelineRevision;
+    /// <summary>
+    /// Gets whether this generation was requested before an active generation existed.
+    /// </summary>
+    public bool IsInitialBuild { get; } = isInitialBuild;
     /// <summary>
     /// The layout of the render pipeline resources.
     /// </summary>
@@ -73,6 +79,34 @@ public sealed class RenderResourceGeneration(
     /// The count of materialized specifications for the resource generation.
     /// </summary>
     public int MaterializedSpecCount { get; internal set; }
+    /// <summary>
+    /// Gets the number of owner-thread materialization slices executed for this generation.
+    /// </summary>
+    public int MaterializationSliceCount { get; private set; }
+    /// <summary>
+    /// Gets the cumulative owner-thread time spent materializing this generation.
+    /// </summary>
+    public TimeSpan MaterializationWorkDuration { get; private set; }
+    /// <summary>
+    /// Gets the duration of the most recent materialization slice.
+    /// </summary>
+    public TimeSpan LastMaterializationSliceDuration { get; private set; }
+    /// <summary>
+    /// Gets the longest materialization slice observed for this generation.
+    /// </summary>
+    public TimeSpan WorstMaterializationSliceDuration { get; private set; }
+    /// <summary>
+    /// Gets the longest individual resource-spec materialization duration.
+    /// </summary>
+    public TimeSpan WorstMaterializationSpecDuration { get; private set; }
+    /// <summary>
+    /// Gets the name of the longest individual resource spec.
+    /// </summary>
+    public string? WorstMaterializationSpecName { get; private set; }
+    /// <summary>
+    /// Gets the kind of the longest individual resource spec.
+    /// </summary>
+    public RenderPipelineResourceKind? WorstMaterializationSpecKind { get; private set; }
 
     /// <summary>
     /// The count of textures in the resource generation.
@@ -122,6 +156,46 @@ public sealed class RenderResourceGeneration(
         _buildTimer.Stop();
         BuildDuration = _buildTimer.Elapsed;
         Status = RenderResourceGenerationStatus.Ready;
+    }
+
+    internal void RecordMaterializationSlice(TimeSpan duration)
+    {
+        MaterializationSliceCount++;
+        MaterializationWorkDuration += duration;
+        LastMaterializationSliceDuration = duration;
+        if (duration > WorstMaterializationSliceDuration)
+            WorstMaterializationSliceDuration = duration;
+    }
+
+    internal void RecordMaterializationSpec(RenderPipelineResourceSpec spec, TimeSpan duration)
+    {
+        if (duration <= WorstMaterializationSpecDuration)
+            return;
+
+        WorstMaterializationSpecDuration = duration;
+        WorstMaterializationSpecName = spec.Name;
+        WorstMaterializationSpecKind = spec.Kind;
+    }
+
+    internal IIncrementalFrameBufferFactory GetOrCreateIncrementalFrameBufferFactory(
+        string resourceName,
+        Func<IIncrementalFrameBufferFactory> factory)
+    {
+        if (_incrementalFrameBufferFactories.TryGetValue(resourceName, out IIncrementalFrameBufferFactory? existing))
+            return existing;
+
+        IIncrementalFrameBufferFactory created = factory();
+        _incrementalFrameBufferFactories.Add(resourceName, created);
+        return created;
+    }
+
+    internal void TransferIncrementalFrameBufferFactoryOwnership(string resourceName)
+    {
+        if (!_incrementalFrameBufferFactories.Remove(resourceName))
+        {
+            throw new InvalidOperationException(
+                $"Incremental framebuffer factory '{resourceName}' was not retained by generation '{Key}'.");
+        }
     }
 
     /// <summary>
@@ -213,6 +287,19 @@ public sealed class RenderResourceGeneration(
             firstFailure = ex;
         }
         _retirementFence = null;
+
+        foreach (IIncrementalFrameBufferFactory factory in _incrementalFrameBufferFactories.Values)
+        {
+            try
+            {
+                factory.Dispose();
+            }
+            catch (Exception ex)
+            {
+                firstFailure ??= ex;
+            }
+        }
+        _incrementalFrameBufferFactories.Clear();
 
         try
         {

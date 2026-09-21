@@ -1,0 +1,114 @@
+#version 460 core
+
+#pragma snippet "DDGIBindings"
+#pragma snippet "DDGIAttributeAddress"
+
+layout(local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
+
+layout(std430, XR_DDGI_STORAGE_BINDING(0)) readonly buffer PositionsInBuffer { uint PositionScalars[]; };
+layout(std430, XR_DDGI_STORAGE_BINDING(1)) readonly buffer InterleavedPositionsBuffer { uint InterleavedPositions[]; };
+layout(std430, XR_DDGI_STORAGE_BINDING(2)) readonly buffer TriangleIndexBuffer { uvec4 TriangleIndices[]; };
+struct PackedTriangle { vec4 v0; vec4 v1; vec4 v2; uvec4 extra; };
+struct DDGITriangleAttributes { vec4 n0; vec4 n1; vec4 n2; vec4 uv01_0; vec4 uv01_1; vec4 uv01_2; };
+layout(std430, XR_DDGI_STORAGE_BINDING(3)) writeonly buffer AttributeBuffer { DDGITriangleAttributes Attributes[]; };
+layout(std430, XR_DDGI_STORAGE_BINDING(4)) writeonly buffer PackedTriangleBuffer { PackedTriangle PackedTriangles[]; };
+layout(std430, XR_DDGI_STORAGE_BINDING(5)) readonly buffer NormalsIn { uint NormalScalars[]; };
+layout(std430, XR_DDGI_STORAGE_BINDING(6)) readonly buffer Uv0In { uint Uv0Scalars[]; };
+layout(std430, XR_DDGI_STORAGE_BINDING(7)) readonly buffer Uv1In { uint Uv1Scalars[]; };
+
+uniform uint uAggregateTriangleCount;
+uniform uint uEntryTriangleCount;
+uniform uint uAggregateOffset;
+uniform uint uMaterialIndex;
+uniform uint uTriangleFlags;
+uniform uint uObjectId;
+uniform uint uUseInterleaved;
+uniform uint uInterleavedStrideBytes;
+uniform uint uPositionOffsetBytes;
+uniform uint uPositionStrideScalars;
+uniform mat4 uLocalToWorld;
+uniform mat4 uNormalToWorld;
+uniform uint uHasNormals;
+uniform uint uNormalsInterleaved;
+uniform uint uNormalOffsetBytes;
+uniform uint uNormalStrideScalars;
+uniform uint uTexCoordsInterleaved;
+uniform uint uTexCoordCount;
+uniform uint uTexCoordOffsetBytes;
+uniform uint uUv0StrideScalars;
+uniform uint uUv1StrideScalars;
+
+vec4 loadNormal(uint vertexIndex)
+{
+    if (uHasNormals == 0u)
+        return vec4(0.0);
+    vec3 normal;
+    if (uNormalsInterleaved != 0u)
+    {
+        uint word;
+        if (!DDGIAttributeAddress(vertexIndex, uInterleavedStrideBytes >> 2u, uNormalOffsetBytes >> 2u, 3u, uint(InterleavedPositions.length()), word))
+            return vec4(0.0);
+        normal = vec3(uintBitsToFloat(InterleavedPositions[word]), uintBitsToFloat(InterleavedPositions[word + 1u]), uintBitsToFloat(InterleavedPositions[word + 2u]));
+    }
+    else
+    {
+        uint word;
+        if (!DDGIAttributeAddress(vertexIndex, max(uNormalStrideScalars, 3u), 0u, 3u, uint(NormalScalars.length()), word))
+            return vec4(0.0);
+        normal = vec3(uintBitsToFloat(NormalScalars[word]), uintBitsToFloat(NormalScalars[word + 1u]), uintBitsToFloat(NormalScalars[word + 2u]));
+    }
+    normal = mat3(uNormalToWorld) * normal;
+    float lengthSquared = dot(normal, normal);
+    return lengthSquared > 1e-12 ? vec4(normal * inversesqrt(lengthSquared), 1.0) : vec4(0.0);
+}
+
+vec2 loadUv(uint vertexIndex, uint uvSet)
+{
+    if (uvSet >= uTexCoordCount)
+        return vec2(0.0);
+    uint stride = uTexCoordsInterleaved != 0u ? uInterleavedStrideBytes >> 2u
+        : max(uvSet == 0u ? uUv0StrideScalars : uUv1StrideScalars, 2u);
+    uint offset = uTexCoordsInterleaved != 0u ? (uTexCoordOffsetBytes >> 2u) + uvSet * 2u : 0u;
+    uint word;
+    if (!DDGIAttributeAddress(vertexIndex, stride, offset, 2u, uint(uvSet == 0u ? Uv0Scalars.length() : Uv1Scalars.length()), word))
+        return vec2(0.0);
+    return uvSet == 0u
+        ? vec2(uintBitsToFloat(Uv0Scalars[word]), uintBitsToFloat(Uv0Scalars[word + 1u]))
+        : vec2(uintBitsToFloat(Uv1Scalars[word]), uintBitsToFloat(Uv1Scalars[word + 1u]));
+}
+
+vec3 loadPosition(uint vertexIndex)
+{
+    if (uUseInterleaved != 0u)
+    {
+        uint word;
+        if (!DDGIAttributeAddress(vertexIndex, uInterleavedStrideBytes >> 2u, uPositionOffsetBytes >> 2u, 3u, uint(InterleavedPositions.length()), word))
+            return vec3(0.0);
+        return vec3(uintBitsToFloat(InterleavedPositions[word]), uintBitsToFloat(InterleavedPositions[word + 1u]), uintBitsToFloat(InterleavedPositions[word + 2u]));
+    }
+    uint word;
+    if (!DDGIAttributeAddress(vertexIndex, max(uPositionStrideScalars, 3u), 0u, 3u, uint(PositionScalars.length()), word))
+        return vec3(0.0);
+    return vec3(uintBitsToFloat(PositionScalars[word]), uintBitsToFloat(PositionScalars[word + 1u]), uintBitsToFloat(PositionScalars[word + 2u]));
+}
+
+void main()
+{
+    uint localIndex = gl_GlobalInvocationID.x;
+    uint outputCount = min(uAggregateTriangleCount, min(uint(PackedTriangles.length()), uint(Attributes.length())));
+    if (localIndex >= min(uEntryTriangleCount, uint(TriangleIndices.length())) ||
+        uAggregateOffset >= outputCount || localIndex >= outputCount - uAggregateOffset)
+        return;
+    uint sortedIndex = uAggregateOffset + localIndex;
+    uvec4 indices = TriangleIndices[localIndex];
+    PackedTriangles[sortedIndex].v0 = vec4((uLocalToWorld * vec4(loadPosition(indices.x), 1.0)).xyz, 1.0);
+    PackedTriangles[sortedIndex].v1 = vec4((uLocalToWorld * vec4(loadPosition(indices.y), 1.0)).xyz, 1.0);
+    PackedTriangles[sortedIndex].v2 = vec4((uLocalToWorld * vec4(loadPosition(indices.z), 1.0)).xyz, 1.0);
+    PackedTriangles[sortedIndex].extra = uvec4(uMaterialIndex, uTriangleFlags, uObjectId, sortedIndex);
+    Attributes[sortedIndex].n0 = loadNormal(indices.x);
+    Attributes[sortedIndex].n1 = loadNormal(indices.y);
+    Attributes[sortedIndex].n2 = loadNormal(indices.z);
+    Attributes[sortedIndex].uv01_0 = vec4(loadUv(indices.x, 0u), loadUv(indices.x, 1u));
+    Attributes[sortedIndex].uv01_1 = vec4(loadUv(indices.y, 0u), loadUv(indices.y, 1u));
+    Attributes[sortedIndex].uv01_2 = vec4(loadUv(indices.z, 0u), loadUv(indices.z, 1u));
+}

@@ -6,6 +6,7 @@ public sealed record VulkanPipelineCacheDiagnostic
     public string? CacheRootOverride { get; init; }
     public string NativePipelineCachePath { get; init; } = string.Empty;
     public long NativePipelineCacheInitialBytes { get; init; }
+    public bool PipelineCreationCacheControlEnabled { get; init; }
     public string PrewarmDatabasePath { get; init; } = string.Empty;
     public int PrewarmEntryCount { get; init; }
     public bool PrewarmCaptureEnabled { get; init; }

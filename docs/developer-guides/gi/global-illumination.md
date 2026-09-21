@@ -10,6 +10,7 @@ XREngine provides multiple global illumination (GI) strategies to simulate reali
 | [Light Volumes](light-volumes.md) | Baked | ⭐⭐⭐⭐⭐ | ⭐⭐⭐ | Large open areas |
 | [Radiance Cascades](radiance-cascades.md) | Baked | ⭐⭐⭐⭐ | ⭐⭐⭐⭐ | High-quality static GI |
 | [Surfel GI](surfel-gi.md) | Real-time | ⭐⭐⭐ | ⭐⭐⭐⭐ | Dynamic scenes |
+| [DDGI](ddgi.md) | Real-time | ⭐⭐⭐ | ⭐⭐⭐⭐⭐ | Dynamic scenes, multi-bounce GI |
 | [ReSTIR GI](restir-gi.md) | Real-time | ⭐⭐ | ⭐⭐⭐⭐⭐ | Ray tracing capable hardware |
 | [Voxel Cone Tracing](voxel-cone-tracing.md) | Hybrid | ⭐⭐⭐ | ⭐⭐⭐⭐ | Medium-scale dynamic scenes |
 
@@ -53,6 +54,12 @@ A cascaded 3D radiance volume system with multiple resolution levels. Higher-res
 A GIBS-inspired dynamic GI system using GPU-accelerated surfels (surface elements). Surfels are spawned from the G-Buffer, organized in a spatial hash grid, and used to accumulate and shade indirect lighting in real-time.
 
 **Render Pass:** <xref:XREngine.Rendering.Pipelines.Commands.VPRC_SurfelGIPass>
+
+### DDGI (Dynamic Diffuse Global Illumination)
+A dynamic probe grid system based on Majercik et al. Probes trace rays against GPU BVH structures, accumulate irradiance and visibility octahedral maps via temporal hysteresis, and dynamically relocate probes away from surface interiors.
+
+**Components:** <xref:XREngine.Components.Lights.DDGIVolumeComponent>  
+**Render Pass:** <xref:XREngine.Rendering.Pipelines.Commands.VPRC_DDGICompositePass>
 
 ### ReSTIR GI
 Hardware ray-traced GI using NVIDIA's ReSTIR algorithm for efficient light path sampling. Provides the highest quality results but requires RTX-capable hardware and Vulkan rendering.
@@ -118,6 +125,8 @@ cascades.TemporalBlendFactor = 0.85f; // Higher = more stable, more ghosting
 
 ## See Also
 
+- [DDGI](ddgi.md) - Dynamic Diffuse Global Illumination with probe cascades and Chebyshev visibility
+- [DDGI Baking Workflow](ddgi-baking-workflow.md) - Precomputing and baking static DDGI assets
 - [Light Probes](light-probes.md) - Detailed light probe documentation
 - [Light Volumes](light-volumes.md) - Light volume configuration
 - [Radiance Cascades](radiance-cascades.md) - Cascaded radiance volumes

@@ -253,7 +253,7 @@ internal sealed partial class VulkanFrameLoop
                 context,
                 out IDisposable openXrScope))
         {
-            scope = openXrScope;
+            scope = TrackAcceptedPipelineReadbackScope(openXrScope);
             return true;
         }
 
@@ -266,7 +266,7 @@ internal sealed partial class VulkanFrameLoop
                 context,
                 out IDisposable desktopScope))
         {
-            scope = desktopScope;
+            scope = TrackAcceptedPipelineReadbackScope(desktopScope);
             return true;
         }
 
@@ -341,7 +341,7 @@ internal sealed partial class VulkanFrameLoop
             : RentPipelineResourcePlannerScope(context);
     }
 
-    internal bool TryPrepareRenderResourceGeneration(
+    internal ERenderResourceGenerationPreparationStatus PrepareRenderResourceGeneration(
         XRRenderPipelineInstance pipeline,
         RenderResourceGeneration generation,
         XRViewport? viewport,
@@ -353,14 +353,23 @@ internal sealed partial class VulkanFrameLoop
         if (!_deviceContext.IsOperational)
         {
             failureReason = "Vulkan device is not operational.";
-            return false;
+            return ERenderResourceGenerationPreparationStatus.Failed;
         }
 
         if (generation.Registry.TextureRecords.Count == 0 &&
             generation.Registry.BufferRecords.Count == 0 &&
             generation.Registry.FrameBufferRecords.Count == 0)
         {
-            return true;
+            return ERenderResourceGenerationPreparationStatus.Ready;
+        }
+
+        bool allowSynchronousResourceUploads = AllowSynchronousResourceUploads;
+        if (!allowSynchronousResourceUploads)
+        {
+            ERenderResourceGenerationPreparationStatus bufferStatus =
+                PrepareGenerationBufferWrappersForAsyncUpload(generation, out failureReason);
+            if (bufferStatus != ERenderResourceGenerationPreparationStatus.Ready)
+                return bufferStatus;
         }
 
         ResourcePlannerRuntimeState previousState = CaptureResourcePlannerRuntimeState();
@@ -394,7 +403,7 @@ internal sealed partial class VulkanFrameLoop
                         BackendObjectContext,
                         exceptImageGroups: pendingState.ResourceAllocator.CapturePendingReusedImageGroups(),
                         immediate: true);
-                    return false;
+                    return ERenderResourceGenerationPreparationStatus.Failed;
                 }
 
                 // History preparation can initialize a freshly allocated target
@@ -426,7 +435,7 @@ internal sealed partial class VulkanFrameLoop
                         BackendObjectContext,
                         exceptImageGroups: pendingState.ResourceAllocator.CapturePendingReusedImageGroups(),
                         immediate: true);
-                    return false;
+                    return ERenderResourceGenerationPreparationStatus.Failed;
                 }
 
                 pendingState = scope.CaptureCurrent(CaptureResourcePlannerRuntimeState(), ActiveFrameOpResourcePlannerSwitchingState);
@@ -438,8 +447,9 @@ internal sealed partial class VulkanFrameLoop
                     previousState,
                     pendingState,
                     VulkanFramePlanner.BuildFrameOpPlannerStateKey(context),
-                    preparedManifest!);
-                return true;
+                    preparedManifest!,
+                    allowSynchronousResourceUploads);
+                return ERenderResourceGenerationPreparationStatus.Ready;
             }
             catch (Exception ex)
             {
@@ -451,9 +461,61 @@ internal sealed partial class VulkanFrameLoop
                         exceptImageGroups: pendingState.ResourceAllocator.CapturePendingReusedImageGroups(),
                         immediate: true);
                 failureReason = $"Vulkan generation preparation failed: {ex.Message}";
-                return false;
+                return ERenderResourceGenerationPreparationStatus.Failed;
             }
         }
+    }
+
+    /// <summary>
+    /// Publishes registry-buffer wrapper identities and queues their owner uploads
+    /// before allocator/plan construction. External-swapchain paths cannot upload
+    /// synchronously, so the exact pending generation must survive until these
+    /// uploads complete and a later preparation attempt can seal native bindings.
+    /// </summary>
+    private ERenderResourceGenerationPreparationStatus PrepareGenerationBufferWrappersForAsyncUpload(
+        RenderResourceGeneration generation,
+        out string? failureReason)
+    {
+        string? firstPendingBuffer = null;
+        int pendingBufferCount = 0;
+        try
+        {
+            foreach ((string name, RenderBufferResource record) in generation.Registry.BufferRecords)
+            {
+                XRDataBuffer? dataBuffer = record.Instance;
+                if (dataBuffer is null)
+                    continue;
+
+                AbstractRenderAPIObject wrapper = ResourceRuntime.CreateAPIRenderObject(dataBuffer);
+                if (wrapper is not VkDataBuffer vkBuffer)
+                {
+                    failureReason = $"Vulkan registry buffer '{name}' has no Vulkan data-buffer wrapper.";
+                    return ERenderResourceGenerationPreparationStatus.Failed;
+                }
+
+                bool ready = vkBuffer.TryEnsureReadyForRendering(allowSynchronousUpload: false);
+                if (ready && vkBuffer.AllocatedByteSize >= dataBuffer.Length)
+                    continue;
+
+                firstPendingBuffer ??= name;
+                pendingBufferCount++;
+            }
+        }
+        catch (Exception ex)
+        {
+            failureReason = $"Vulkan registry-buffer preparation failed: {ex.Message}";
+            return ERenderResourceGenerationPreparationStatus.Failed;
+        }
+
+        if (pendingBufferCount == 0)
+        {
+            failureReason = null;
+            return ERenderResourceGenerationPreparationStatus.Ready;
+        }
+
+        failureReason =
+            $"Waiting for {pendingBufferCount} queued Vulkan registry-buffer upload(s); first pending buffer is '{firstPendingBuffer}'.";
+        return ERenderResourceGenerationPreparationStatus.Pending;
     }
 
     private static bool ValidatePreparedResourceAllocator(

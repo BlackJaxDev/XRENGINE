@@ -94,8 +94,17 @@ internal sealed partial class VkTexture2DArray(VulkanBackendObjectContext backen
                         TransitionImageLayout(oldLayout, ImageLayout.TransferDstOptimal);
                     uploadedAny = true;
                 }
-                Extent3D extent = new(Math.Max(mip.Width, 1u), Math.Max(mip.Height, 1u), 1);
-                _ = UploadStagingDataToImage(mip.Data, level, layer, 1, extent);
+                DataSource? uploadData = VkFormatConversions.CreateNormalizedUploadData2D(mip, ResolvedFormat, out bool ownsUploadData);
+                try
+                {
+                    Extent3D extent = new(Math.Max(mip.Width, 1u), Math.Max(mip.Height, 1u), 1);
+                    _ = UploadStagingDataToImage(uploadData, level, layer, 1, extent);
+                }
+                finally
+                {
+                    if (ownsUploadData)
+                        uploadData?.Dispose();
+                }
             }
         }
 

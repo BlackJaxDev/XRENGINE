@@ -495,7 +495,7 @@ namespace XREngine.Rendering.OpenGL
                     ETextureTarget.TextureBuffer => GLEnum.TextureBuffer,
 
                     ETextureTarget.TextureBindingCubeMap => GLEnum.TextureBindingCubeMap,
-                    ETextureTarget.TextureCubeMapArray => GLEnum.TextureBindingCubeMapArray,
+                    ETextureTarget.TextureCubeMapArray => GLEnum.TextureCubeMapArray,
                     ETextureTarget.TextureCubeMapPositiveX => GLEnum.TextureCubeMapPositiveX,
                     ETextureTarget.TextureCubeMapNegativeX => GLEnum.TextureCubeMapNegativeX,
                     ETextureTarget.TextureCubeMapPositiveY => GLEnum.TextureCubeMapPositiveY,

@@ -17,9 +17,18 @@ namespace XREngine.Rendering.OpenGL
                 ArgumentNullException.ThrowIfNull(data);
 
                 _data = data;
-                _data.AddWrapper(this);
-                LinkData();
-                _dataLinked = true;
+                try
+                {
+                    LinkData();
+                    _dataLinked = true;
+                    _data.AddWrapper(this);
+                }
+                catch
+                {
+                    try { UnlinkData(); } catch { }
+                    _dataLinked = false;
+                    throw;
+                }
             }
 
             protected override GenericRenderObject Data_Internal => Data;
@@ -49,9 +58,18 @@ namespace XREngine.Rendering.OpenGL
 
                     if (_data is not null)
                     {
-                        _data.AddWrapper(this);
-                        LinkData();
-                        _dataLinked = true;
+                        try
+                        {
+                            LinkData();
+                            _dataLinked = true;
+                            _data.AddWrapper(this);
+                        }
+                        catch
+                        {
+                            try { UnlinkData(); } catch { }
+                            _dataLinked = false;
+                            throw;
+                        }
                     }
                 }
             }
@@ -59,16 +77,18 @@ namespace XREngine.Rendering.OpenGL
             protected abstract void UnlinkData();
             protected abstract void LinkData();
 
-            protected internal override void Retire()
+            protected override void OnRetiring()
             {
-                if (_dataLinked)
+                try
                 {
-                    UnlinkData();
-                    _dataLinked = false;
+                    if (_dataLinked)
+                        UnlinkData();
                 }
-
-                _data.RemoveWrapper(this);
-                Destroy();
+                finally
+                {
+                    _dataLinked = false;
+                    _data.RemoveWrapper(this);
+                }
             }
 
             protected override uint CreateObject()

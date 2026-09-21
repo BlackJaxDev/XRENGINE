@@ -1,0 +1,80 @@
+#version 450
+
+layout(local_size_x = 6, local_size_y = 6, local_size_z = 1) in;
+
+#pragma snippet "OctahedralMapping"
+#pragma snippet "DDGIBindings"
+
+struct DDGIRayInput
+{
+    vec4 origin;    // .w = tMin
+    vec4 direction; // .w = tMax
+    vec4 params;    // x = probeIndex, y = rayIndex, z = frameIndex, w = flags
+};
+
+layout(std430, XR_DDGI_STORAGE_BINDING(0)) readonly buffer Rays
+{
+    DDGIRayInput gRays[];
+};
+
+layout(std430, XR_DDGI_STORAGE_BINDING(1)) readonly buffer RayRadianceBuffer
+{
+    vec4 gRayRadiance[]; // xyz = radiance, w = hit distance
+};
+
+layout(r11f_g11f_b10f, XR_DDGI_IMAGE_BINDING(0)) uniform image2DArray uIrradianceAtlas;
+
+uniform uint uProbeCount;
+uniform uint uRaysPerProbe;
+uniform uint uProbeCountX;
+uniform float uHysteresis;
+uniform uint uProbeOffset;
+uniform uint uScheduledProbeCount;
+uniform int uCascadeIndex;
+
+void main()
+{
+    uint scheduledIndex = gl_WorkGroupID.x;
+    if (uScheduledProbeCount > 0u && scheduledIndex >= uScheduledProbeCount)
+        return;
+
+    uint probeIndex = (uProbeOffset + scheduledIndex) % max(1u, uProbeCount);
+
+    ivec2 localId = ivec2(gl_LocalInvocationID.xy);
+
+    // Only update interior 4x4 texels; outer 1-pixel border is copied by ddgi_border_copy
+    if (localId.x == 0 || localId.x == 5 || localId.y == 0 || localId.y == 5)
+        return;
+
+    // Decode octahedral direction from interior texel (1..4 mapped to [0, 1])
+    vec2 octUV = (vec2(localId) - vec2(0.5)) / 4.0;
+    vec3 probeDir = XRENGINE_DecodeOcta(octUV);
+
+    uint rayOffset = scheduledIndex * uRaysPerProbe;
+    vec3 accumRadiance = vec3(0.0);
+    float totalWeight = 0.0;
+
+    for (uint r = 0u; r < uRaysPerProbe; ++r)
+    {
+        vec3 rayDir = gRays[rayOffset + r].direction.xyz;
+        float weight = max(0.0, dot(probeDir, rayDir));
+        if (weight > 0.0)
+        {
+            vec3 rad = gRayRadiance[rayOffset + r].xyz;
+            accumRadiance += weight * rad;
+            totalWeight += weight;
+        }
+    }
+
+    vec3 newIrradiance = totalWeight > 1e-5 ? (accumRadiance / totalWeight) : vec3(0.0);
+
+    // Compute pixel coordinate in irradiance atlas
+    uint countX = max(1u, uProbeCountX);
+    ivec2 tileCoord = ivec2(int(probeIndex % countX), int(probeIndex / countX));
+    ivec3 atlasCoord = ivec3(tileCoord * 6 + localId, uCascadeIndex);
+
+    vec3 oldIrradiance = imageLoad(uIrradianceAtlas, atlasCoord).rgb;
+    vec3 blended = mix(newIrradiance, oldIrradiance, clamp(uHysteresis, 0.0, 1.0));
+
+    imageStore(uIrradianceAtlas, atlasCoord, vec4(blended, 1.0));
+}

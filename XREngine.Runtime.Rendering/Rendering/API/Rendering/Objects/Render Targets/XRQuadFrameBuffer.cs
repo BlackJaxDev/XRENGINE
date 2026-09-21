@@ -15,6 +15,8 @@ namespace XREngine.Rendering
         /// </summary>
         private DelSetUniforms? _settingUniforms;
         private readonly bool _useMultiview;
+        private bool _initialRenderingPrepared;
+        private XRMeshRenderer.BaseVersion? _initialRenderingVersion;
 
         public event DelSetUniforms? SettingUniforms
         {
@@ -75,7 +77,12 @@ namespace XREngine.Rendering
         /// Renders a material to the screen using a fullscreen orthographic quad.
         /// </summary>
         /// <param name="mat">The material containing textures to render to this fullscreen quad.</param>
-        public XRQuadFrameBuffer(XRMaterial mat, bool useTriangle = true, bool deriveRenderTargetsFromMaterial = true, bool useMultiview = false)
+        public XRQuadFrameBuffer(
+            XRMaterial mat,
+            bool useTriangle = true,
+            bool deriveRenderTargetsFromMaterial = true,
+            bool useMultiview = false,
+            bool prepareForInitialRendering = true)
             : base(mat, deriveRenderTargetsFromMaterial)
         {
             mat.RenderOptions.CullMode = ECullMode.None;
@@ -108,27 +115,41 @@ namespace XREngine.Rendering
             FullScreenMesh.CaptureUniformsOnRender = true;
             FullScreenMesh.GenerationPriority = EMeshGenerationPriority.RenderPipeline;
             FullScreenMesh.SetShaderPipelinesAllowedForAllVersions(false);
-            FullScreenMesh.EnsureRenderPipelineVersionsCreated();
-            string diagName = $"FullscreenQuad:{mat.Name ?? "Material"}";
+            if (prepareForInitialRendering)
+                PrepareForInitialRendering();
+        }
 
-            // Force simple program linking for fullscreen blits; shader pipelines may skip rendering
-            // if no separable program is present on the material (common for utility shaders).
-            var defaultVer = _useMultiview ? FullScreenMesh.GetOVRMultiViewVersion() : FullScreenMesh.GetDefaultVersion();
+        internal void PrepareForInitialRendering()
+        {
+            if (_initialRenderingPrepared)
+                return;
 
-            defaultVer.AllowShaderPipelines = false;
-            defaultVer.Name = diagName;
+            PrepareInitialRenderingVersion();
 
-            // Pre-generate GL resources immediately when on the render thread to avoid
-            // inline-generate fallback stalls on the first frame these quads are drawn.
             if (RuntimeEngine.IsRenderThread)
-                defaultVer.Generate();
+                _initialRenderingVersion!.Generate();
+
+            _initialRenderingPrepared = true;
+        }
+
+        internal void PrepareInitialRenderingVersion()
+        {
+            if (_initialRenderingPrepared || _initialRenderingVersion is not null)
+                return;
+
+            FullScreenMesh.EnsureRenderPipelineVersionsCreated();
+            _initialRenderingVersion = _useMultiview
+                ? FullScreenMesh.GetOVRMultiViewVersion()
+                : FullScreenMesh.GetDefaultVersion();
+            _initialRenderingVersion.AllowShaderPipelines = false;
+            _initialRenderingVersion.Name = $"FullscreenQuad:{Material?.Name ?? "Material"}";
         }
 
         public XRQuadFrameBuffer(
             XRMaterial material,
             bool useTriangle,
             params (IFrameBufferAttachement Target, EFrameBufferAttachment Attachment, int MipLevel, int LayerIndex)[]? targets)
-            : this(material, useTriangle, true, targets)
+            : this(material, useTriangle, true, false, targets)
         {
         }
 
@@ -137,7 +158,21 @@ namespace XREngine.Rendering
             bool useTriangle,
             bool deriveRenderTargetsFromMaterial,
             params (IFrameBufferAttachement Target, EFrameBufferAttachment Attachment, int MipLevel, int LayerIndex)[]? targets)
-            : this(material, useTriangle, deriveRenderTargetsFromMaterial) => SetRenderTargets(targets);
+            : this(material, useTriangle, deriveRenderTargetsFromMaterial, false, targets)
+        {
+        }
+
+        /// <summary>
+        /// Creates a target-backed fullscreen framebuffer. Set <paramref name="useMultiviewTargets"/> only when
+        /// the material contains a fragment shader that requires <c>GL_OVR_multiview2</c>.
+        /// </summary>
+        public XRQuadFrameBuffer(
+            XRMaterial material,
+            bool useTriangle,
+            bool deriveRenderTargetsFromMaterial,
+            bool useMultiviewTargets,
+            params (IFrameBufferAttachement Target, EFrameBufferAttachment Attachment, int MipLevel, int LayerIndex)[]? targets)
+            : this(material, useTriangle, deriveRenderTargetsFromMaterial, useMultiviewTargets) => SetRenderTargets(targets);
 
         private void SetUniforms(XRRenderProgram vertexProgram, XRRenderProgram materialProgram)
             => _settingUniforms?.Invoke(materialProgram);
@@ -145,7 +180,20 @@ namespace XREngine.Rendering
         // Explicit OVR fullscreen passes retain screen-space positioning while
         // selecting the vertex declaration that broadcasts into both array layers.
         public bool TryPrepareForRendering(bool forceNoStereo = true)
-            => FullScreenMesh.TryPrepareForRendering(forceNoStereo && !_useMultiview);
+        {
+            PrepareForInitialRendering();
+            bool prepareWithoutStereo = forceNoStereo && !_useMultiview;
+            if (!RenderDiagnosticsFlags.VkTraceDraw)
+                return FullScreenMesh.TryPrepareForRendering(prepareWithoutStereo);
+
+            bool prepared = FullScreenMesh.TryPrepareForRendering(out string reason, prepareWithoutStereo);
+            Debug.RenderingEvery(
+                $"Quad.Prepare.{GetHashCode()}", TimeSpan.FromSeconds(3),
+                "[QuadPrepare] name={0} pipeline={1} multiview={2} forceNoStereo={3} prepared={4} reason={5} detail={6}",
+                FullScreenMesh.Name ?? "<unnamed>", RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.InstanceId ?? 0,
+                _useMultiview, prepareWithoutStereo, prepared, reason, FullScreenMesh.GetLastPrepareDetail(prepareWithoutStereo));
+            return prepared;
+        }
 
         /// <summary>
         /// Renders the FBO to the entire region set by RuntimeEngine.Rendering.State.PushRenderArea().
@@ -175,6 +223,12 @@ namespace XREngine.Rendering
         internal void EnqueueRender(bool forceNoStereo = true)
         {
             forceNoStereo &= !_useMultiview;
+            if (RenderDiagnosticsFlags.VkTraceDraw)
+                Debug.RenderingEvery(
+                    $"Quad.Enqueue.{GetHashCode()}", TimeSpan.FromSeconds(3),
+                    "[QuadEnqueue] name={0} pipeline={1} multiview={2} forceNoStereo={3}",
+                    FullScreenMesh.Name ?? "<unnamed>", RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.InstanceId ?? 0,
+                    _useMultiview, forceNoStereo);
             FullScreenMesh.EnsureApiRenderObject(forceNoStereo);
             var state = RuntimeEngine.Rendering.State.RenderingPipelineState;
             if (state != null)

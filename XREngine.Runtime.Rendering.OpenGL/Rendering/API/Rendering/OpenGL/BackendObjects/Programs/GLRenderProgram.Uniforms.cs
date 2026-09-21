@@ -105,12 +105,7 @@ namespace XREngine.Rendering.OpenGL
                     return;
 
                 // int uniforms are also used for samplers, so accept Int, Bool, and all sampler types
-                if (!ValidateUniformType(location, GLEnum.Int, GLEnum.Bool, GLEnum.Sampler2D, GLEnum.Sampler3D, GLEnum.SamplerCube, 
-                    GLEnum.Sampler2DShadow, GLEnum.Sampler2DArray, GLEnum.SamplerCubeShadow, GLEnum.IntSampler2D, GLEnum.IntSampler3D,
-                    GLEnum.UnsignedIntSampler2D, GLEnum.UnsignedIntSampler3D, GLEnum.Sampler2DRect, GLEnum.Sampler2DRectShadow,
-                    GLEnum.Sampler1D, GLEnum.Sampler1DShadow, GLEnum.Sampler1DArray, GLEnum.Sampler1DArrayShadow, GLEnum.Sampler2DArrayShadow,
-                    GLEnum.SamplerBuffer, GLEnum.Sampler2DMultisample, GLEnum.Sampler2DMultisampleArray, GLEnum.IntSampler2DArray,
-                    GLEnum.Image2D, GLEnum.Image3D, GLEnum.ImageCube, GLEnum.Image2DArray))
+                if (!ValidateUniformType(location, IntegerUploadTypes))
                     return;
 
                 Api.ProgramUniform1(BindingId, location, p);
@@ -190,7 +185,7 @@ namespace XREngine.Rendering.OpenGL
                 if (!MarkUniformBinding(location))
                     return;
 
-                if (!ValidateUniformType(location, GLEnum.Bool, GLEnum.Int))
+                if (!ValidateUniformType(location, BooleanUploadTypes))
                     return;
 
                 Api.ProgramUniform1(BindingId, location, p ? 1 : 0);
@@ -377,7 +372,7 @@ namespace XREngine.Rendering.OpenGL
                 if (!MarkUniformBinding(location))
                     return;
 
-                if (!ValidateUniformArrayType(location, p.Length, GLEnum.Int, GLEnum.Bool))
+                if (!ValidateUniformArrayType(location, p.Length, BooleanUploadTypes))
                     return;
 
                 fixed (int* ptr = p)
@@ -497,7 +492,7 @@ namespace XREngine.Rendering.OpenGL
                 if (!MarkUniformBinding(location))
                     return;
 
-                if (!ValidateUniformArrayType(location, p.Length, GLEnum.Bool, GLEnum.Int))
+                if (!ValidateUniformArrayType(location, p.Length, BooleanUploadTypes))
                     return;
 
                 int[] conv = new int[p.Length];
@@ -515,7 +510,7 @@ namespace XREngine.Rendering.OpenGL
                 if (!MarkUniformBinding(location))
                     return;
 
-                if (!ValidateUniformType(location, GLEnum.BoolVec2, GLEnum.IntVec2))
+                if (!ValidateUniformType(location, BooleanVector2UploadTypes))
                     return;
 
                 Api.ProgramUniform2(BindingId, location, p.X ? 1 : 0, p.Y ? 1 : 0);
@@ -525,7 +520,7 @@ namespace XREngine.Rendering.OpenGL
                 if (!MarkUniformBinding(location))
                     return;
 
-                if (!ValidateUniformType(location, GLEnum.BoolVec3, GLEnum.IntVec3))
+                if (!ValidateUniformType(location, BooleanVector3UploadTypes))
                     return;
 
                 Api.ProgramUniform3(BindingId, location, p.X ? 1 : 0, p.Y ? 1 : 0, p.Z ? 1 : 0);
@@ -535,7 +530,7 @@ namespace XREngine.Rendering.OpenGL
                 if (!MarkUniformBinding(location))
                     return;
 
-                if (!ValidateUniformType(location, GLEnum.BoolVec4, GLEnum.IntVec4))
+                if (!ValidateUniformType(location, BooleanVector4UploadTypes))
                     return;
 
                 Api.ProgramUniform4(BindingId, location, p.X ? 1 : 0, p.Y ? 1 : 0, p.Z ? 1 : 0, p.W ? 1 : 0);
@@ -546,7 +541,7 @@ namespace XREngine.Rendering.OpenGL
                 if (!MarkUniformBinding(location))
                     return;
 
-                if (!ValidateUniformArrayType(location, p.Length, GLEnum.BoolVec2, GLEnum.IntVec2))
+                if (!ValidateUniformArrayType(location, p.Length, BooleanVector2UploadTypes))
                     return;
 
                 int[] conv = new int[p.Length * 2];
@@ -565,7 +560,7 @@ namespace XREngine.Rendering.OpenGL
                 if (!MarkUniformBinding(location))
                     return;
 
-                if (!ValidateUniformArrayType(location, p.Length, GLEnum.BoolVec3, GLEnum.IntVec3))
+                if (!ValidateUniformArrayType(location, p.Length, BooleanVector3UploadTypes))
                     return;
 
                 int[] conv = new int[p.Length * 3];
@@ -586,7 +581,7 @@ namespace XREngine.Rendering.OpenGL
                 if (!MarkUniformBinding(location))
                     return;
 
-                if (!ValidateUniformArrayType(location, p.Length, GLEnum.BoolVec4, GLEnum.IntVec4))
+                if (!ValidateUniformArrayType(location, p.Length, BooleanVector4UploadTypes))
                     return;
 
                 int[] conv = new int[p.Length * 4];

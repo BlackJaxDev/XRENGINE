@@ -69,6 +69,14 @@ public static class BootstrapRenderSettings
             EngineRenderingSettingsApplication.ApplyAntiAliasingPreference();
         }
 
+        if (settings.GlobalIlluminationMode.HasValue)
+        {
+            Engine.GameSettings.GlobalIlluminationModeOverride = new OverrideableSetting<EGlobalIlluminationMode>(
+                settings.GlobalIlluminationMode.Value,
+                hasOverride: true);
+            EngineRenderingSettingsApplication.ApplyGlobalIlluminationModePreference();
+        }
+
         bool requiresIndependentDesktopWindow = settings.VRPawn && (settings.AllowEditingInVR || settings.PreviewVRStereoViews);
         bool usesRuntimeDesktopCamera = settings.VRPawn && !settings.AllowEditingInVR;
         if (settings.IsJsonPropertySpecified(nameof(UnitTestingWorldSettings.RenderWindowsWhileInVR)) ||
@@ -155,12 +163,11 @@ public static class BootstrapRenderSettings
     public static RenderPipeline CreateSceneRenderPipeline(bool stereo = false)
     {
         UnitTestingWorldSettings settings = RuntimeBootstrapState.Settings;
-        if (!settings.IsJsonPropertyPathSpecified(
+        RenderPipeline pipeline = !settings.IsJsonPropertyPathSpecified(
                 nameof(UnitTestingWorldSettings.Rendering),
-                nameof(UnitTestingRenderSettings.RenderPipeline)))
-            return RuntimeEngine.Rendering.NewRenderPipeline(stereo);
-
-        return settings.Rendering.RenderPipeline switch
+                nameof(UnitTestingRenderSettings.RenderPipeline))
+            ? RuntimeEngine.Rendering.NewRenderPipeline(stereo)
+            : settings.Rendering.RenderPipeline switch
         {
             UnitTestingRenderPipeline.DefaultRenderPipeline => new DefaultRenderPipeline(stereo),
             UnitTestingRenderPipeline.AdvancedRenderPipeline => new AdvancedRenderPipeline(stereo),
@@ -170,6 +177,9 @@ public static class BootstrapRenderSettings
                 $"{settings.Rendering.RenderPipeline} does not support stereo bootstrap cameras."),
             _ => throw new InvalidOperationException($"Unsupported configured render pipeline '{settings.Rendering.RenderPipeline}'."),
         };
+        if (settings.GlobalIlluminationMode is { } mode && pipeline is IGlobalIlluminationPipelineProvider gi)
+            gi.GlobalIlluminationMode = mode;
+        return pipeline;
     }
 
     private static CustomRenderPipeline CreateCustomRenderPipeline(string? scriptPath)

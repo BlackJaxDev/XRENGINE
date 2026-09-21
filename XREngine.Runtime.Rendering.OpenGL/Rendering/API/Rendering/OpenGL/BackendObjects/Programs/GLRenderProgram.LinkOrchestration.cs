@@ -160,7 +160,10 @@ namespace XREngine.Rendering.OpenGL
                 if (!glBuf.IsReadyForRendering)
                     glBuf.EnsureStorageAllocatedForGpuCopy();
 
-                Api.BindBufferBase(GLEnum.ShaderStorageBuffer, index, glBuf.BindingId);
+                GLEnum target = buffer.Target == EBufferTarget.UniformBuffer
+                    ? GLEnum.UniformBuffer
+                    : GLEnum.ShaderStorageBuffer;
+                Api.BindBufferBase(target, index, glBuf.BindingId);
             }
 
             private void BindReadOnlyStorage(ReadOnlyStorageBinding binding)
@@ -171,9 +174,10 @@ namespace XREngine.Rendering.OpenGL
                 if (texture is not XRTexture xrTexture)
                     return;
 
-                var glObj = Renderer.GetOrCreateAPIRenderObject(xrTexture);
+                var glObj = Renderer.GetOrCreateAPIRenderObject(xrTexture, generateNow: true);
                 if (glObj is not IGLTexture glTex)
                     return;
+                glTex.EnsureStorageForImageBinding();
                 Api.BindImageTexture(unit, glTex.BindingId, level, layered, layer, ToGLEnum(access), ToGLEnum(format));
             }
 
@@ -191,6 +195,7 @@ namespace XREngine.Rendering.OpenGL
                 EImageFormat.RGB16 => GLEnum.Rgb16,
                 EImageFormat.RGB16F => GLEnum.Rgb16f,
                 EImageFormat.RGB32F => GLEnum.Rgb32f,
+                EImageFormat.R11G11B10F => GLEnum.R11fG11fB10f,
                 EImageFormat.RGBA8 => GLEnum.Rgba8,
                 EImageFormat.RGBA16 => GLEnum.Rgba16,
                 EImageFormat.RGBA16F => GLEnum.Rgba16f,
@@ -429,6 +434,12 @@ namespace XREngine.Rendering.OpenGL
                     return true;
                 }
 
+                return LinkPendingProgram(force, nonBlocking);
+            }
+
+            // Keep asynchronous link closures out of the already-linked hot path.
+            private bool LinkPendingProgram(bool force, bool nonBlocking)
+            {
                 if (RendererReloadFailureInjection.IsEnabled(
                         RendererReloadInjectedFailure.ProgramLink))
                 {

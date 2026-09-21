@@ -5,6 +5,18 @@ namespace XREngine.Rendering;
 public interface IRenderApiWrapperOwner
 {
     string RenderApiWrapperOwnerName { get; }
+
+    /// <summary>
+    /// Gets the generation-local identity stored on wrappers created through this
+    /// authority. Most owners are their own identity; renderer facades may delegate
+    /// wrapper ownership to an exact backend-generation context.
+    /// </summary>
+    IRenderApiWrapperOwner ApiWrapperIdentityOwner => this;
+
+    /// <summary>Returns whether <paramref name="wrapper"/> belongs to this exact owner generation.</summary>
+    bool OwnsApiWrapper(AbstractRenderAPIObject wrapper)
+        => ReferenceEquals(wrapper.Owner, ApiWrapperIdentityOwner);
+
     AbstractRenderAPIObject? GetOrCreateAPIRenderObject(GenericRenderObject renderObject, bool generateNow = false);
 
     /// <summary>

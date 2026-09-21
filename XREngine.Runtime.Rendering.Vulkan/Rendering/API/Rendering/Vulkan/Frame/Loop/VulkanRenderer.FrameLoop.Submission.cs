@@ -66,10 +66,11 @@ namespace XREngine.Rendering.Vulkan
                             reason,
                             recoveryOverlaySnapshot: null);
                 }
-                if (!TryValidatePresentationSourceForSubmission(
+                if (attempt.HasWindowPresentationSourceOwner &&
+                    !TryValidatePresentationSourceForSubmission(
                         attempt.PresentationSource,
                         attempt.SceneCommandBuffer,
-                    attempt.FrameSlot,
+                        attempt.FrameSlot,
                         out string presentationSourceFailure))
                 {
                     _commandRuntime.CommandBuffers.MarkDirty(presentationSourceFailure);

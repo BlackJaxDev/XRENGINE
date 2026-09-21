@@ -1,5 +1,6 @@
 using System;
 using System.Numerics;
+using XREngine.Data.Core;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
@@ -8,33 +9,178 @@ namespace XREngine.Rendering;
 
 public partial class XRMesh
 {
+    private static readonly string[] BlendshapeBufferKeys =
+    [
+        ECommonBufferType.BlendshapeCount.ToString(),
+        $"{ECommonBufferType.BlendshapeIndices}Buffer",
+        $"{ECommonBufferType.BlendshapeDeltas}Buffer",
+        $"{ECommonBufferType.BlendshapeSparseShapeRanges}Buffer",
+        $"{ECommonBufferType.BlendshapeSparseRecords}Buffer",
+        $"{ECommonBufferType.BlendshapeQuantizedDeltas}Buffer",
+        $"{ECommonBufferType.BlendshapeQuantizationMetadata}Buffer",
+    ];
+
     public void RebuildBlendshapeBuffersFromVertices()
     {
-        Buffers.RemoveBuffer(ECommonBufferType.BlendshapeCount.ToString());
-        Buffers.RemoveBuffer($"{ECommonBufferType.BlendshapeIndices}Buffer");
-        Buffers.RemoveBuffer($"{ECommonBufferType.BlendshapeDeltas}Buffer");
-        Buffers.RemoveBuffer($"{ECommonBufferType.BlendshapeSparseShapeRanges}Buffer");
-        Buffers.RemoveBuffer($"{ECommonBufferType.BlendshapeSparseRecords}Buffer");
-        Buffers.RemoveBuffer($"{ECommonBufferType.BlendshapeQuantizedDeltas}Buffer");
-        Buffers.RemoveBuffer($"{ECommonBufferType.BlendshapeQuantizationMetadata}Buffer");
+        lock (_blendshapeBufferPreparationLock)
+        {
+        BufferCollection targetBuffers = Buffers;
+        BufferCollection.PreparedBufferTicket preparationTicket =
+            targetBuffers.CapturePreparationTicket(BlendshapeBufferKeys, includeGeometryRevision: true);
+        XRMeshBlendshapeBufferState previous = CaptureBlendshapeBufferState();
+        XRMeshBlendshapeBufferState prepared = EmptyBlendshapeBufferState();
+        BufferCollection.PreparedBufferBatch? swap = null;
+        XRMesh? staging = null;
+        try
+        {
+            if (Vertices is { Length: > 0 } sourceVertices && HasBlendshapes)
+            {
+                staging = new XRMesh(deferObjectCachePublication: true)
+                {
+                    BlendshapeNames = BlendshapeNames,
+                };
+                using RenderObjectPublicationScope publication = GenericRenderObject.BeginDeferredPublication();
+                staging.PopulateBlendshapeBuffers(sourceVertices);
+                prepared = staging.CaptureBlendshapeBufferState();
+                KeyValuePair<string, XRDataBuffer>[] replacements = CreateBlendshapeBufferReplacements(prepared);
+                publication.Complete(
+                    () => swap = CommitBlendshapeBufferState(
+                        prepared,
+                        replacements,
+                        previous,
+                        targetBuffers,
+                        preparationTicket),
+                    () => RollbackBlendshapeBufferState(previous, swap, targetBuffers),
+                    () => DisposeReplacedBlendshapeBuffers(swap, targetBuffers));
+            }
+            else
+            {
+                using RenderObjectPublicationScope publication = GenericRenderObject.BeginDeferredPublication();
+                publication.Complete(
+                    () => swap = CommitBlendshapeBufferState(
+                        prepared,
+                        [],
+                        previous,
+                        targetBuffers,
+                        preparationTicket),
+                    () => RollbackBlendshapeBufferState(previous, swap, targetBuffers),
+                    () => DisposeReplacedBlendshapeBuffers(swap, targetBuffers));
+            }
+        }
+        finally
+        {
+            if (staging is not null)
+            {
+                staging.ApplyBlendshapeBufferState(EmptyBlendshapeBufferState());
+                staging.AbortMeshConstruction();
+            }
+        }
+        }
+    }
 
-        BlendshapeCounts = null;
-        BlendshapeIndices = null;
-        BlendshapeDeltas = null;
-        BlendshapeSparseShapeRanges = null;
-        BlendshapeSparseRecords = null;
-        BlendshapeQuantizedDeltas = null;
-        BlendshapeQuantizationMetadata = null;
-        BlendshapeAffectedVertexCount = 0;
-        BlendshapeSparseRecordCount = 0;
-        BlendshapeDeltaStorageMode = BlendshapeDeltaStorageMode.DensePerVertex;
-        BlendshapeDeltaEncoding = BlendshapeDeltaEncoding.Float32;
-        BlendshapeShaderVariant = BlendshapeShaderVariant.None;
+    private BufferCollection.PreparedBufferBatch CommitBlendshapeBufferState(
+        XRMeshBlendshapeBufferState prepared,
+        KeyValuePair<string, XRDataBuffer>[] replacements,
+        XRMeshBlendshapeBufferState previous,
+        BufferCollection targetBuffers,
+        BufferCollection.PreparedBufferTicket preparationTicket)
+        => targetBuffers.SwapPreparedBatch(
+            replacements,
+            BlendshapeBufferKeys,
+            expectedTicket: preparationTicket,
+            installState: () => ApplyBlendshapeBufferState(prepared),
+            restoreStateOnFailure: () => ApplyBlendshapeBufferState(previous));
 
-        if (Vertices is not { Length: > 0 } || !HasBlendshapes)
-            return;
+    private void RollbackBlendshapeBufferState(
+        XRMeshBlendshapeBufferState previous,
+        BufferCollection.PreparedBufferBatch? swap,
+        BufferCollection targetBuffers)
+    {
+        if (swap is not null)
+            targetBuffers.RestorePreparedBatch(
+                swap,
+                () => ApplyBlendshapeBufferState(previous));
+    }
 
-        PopulateBlendshapeBuffers(Vertices);
+    private static void DisposeReplacedBlendshapeBuffers(
+        BufferCollection.PreparedBufferBatch? swap,
+        BufferCollection targetBuffers)
+    {
+        if (swap is not null)
+            targetBuffers.DisposeReplacedBuffers(swap);
+    }
+
+    /// <summary>
+    /// Captures one immutable, coherent blendshape-buffer generation for a compound consumer.
+    /// </summary>
+    public XRMeshBlendshapeBufferState GetBlendshapeBufferStateSnapshot()
+        => Volatile.Read(ref _blendshapeBufferState);
+
+    private XRMeshBlendshapeBufferState CaptureBlendshapeBufferState()
+    {
+        XRMeshBlendshapeBufferState buffers = GetBlendshapeBufferStateSnapshot();
+        return buffers with
+        {
+            ShaderVariant = BlendshapeShaderVariant,
+            StorageMode = BlendshapeDeltaStorageMode,
+            Encoding = BlendshapeDeltaEncoding,
+            AffectedVertexCount = BlendshapeAffectedVertexCount,
+            SparseRecordCount = BlendshapeSparseRecordCount,
+        };
+    }
+
+    private void ApplyBlendshapeBufferState(XRMeshBlendshapeBufferState state)
+    {
+        // The buffer collection's single ReplaceContents notification is the
+        // coherent publication boundary for this state group. Suppressing the
+        // individual metadata notifications prevents observers from vetoing or
+        // observing a half-installed group, and makes rollback non-vetoable.
+        using (XRBase.SuppressPropertyNotifications())
+        {
+            BlendshapeShaderVariant = state.ShaderVariant;
+            BlendshapeDeltaStorageMode = state.StorageMode;
+            BlendshapeDeltaEncoding = state.Encoding;
+            BlendshapeAffectedVertexCount = state.AffectedVertexCount;
+            BlendshapeSparseRecordCount = state.SparseRecordCount;
+        }
+        Volatile.Write(ref _blendshapeBufferState, state);
+    }
+
+    private static XRMeshBlendshapeBufferState EmptyBlendshapeBufferState()
+        => new(
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            BlendshapeShaderVariant.None,
+            BlendshapeDeltaStorageMode.DensePerVertex,
+            BlendshapeDeltaEncoding.Float32,
+            0,
+            0);
+
+    private static KeyValuePair<string, XRDataBuffer>[] CreateBlendshapeBufferReplacements(
+        XRMeshBlendshapeBufferState state)
+    {
+        List<KeyValuePair<string, XRDataBuffer>> replacements = new(7);
+        AddBlendshapeBufferReplacement(replacements, state.Counts);
+        AddBlendshapeBufferReplacement(replacements, state.Indices);
+        AddBlendshapeBufferReplacement(replacements, state.Deltas);
+        AddBlendshapeBufferReplacement(replacements, state.SparseShapeRanges);
+        AddBlendshapeBufferReplacement(replacements, state.SparseRecords);
+        AddBlendshapeBufferReplacement(replacements, state.QuantizedDeltas);
+        AddBlendshapeBufferReplacement(replacements, state.QuantizationMetadata);
+        return [.. replacements];
+    }
+
+    private static void AddBlendshapeBufferReplacement(
+        List<KeyValuePair<string, XRDataBuffer>> replacements,
+        XRDataBuffer? buffer)
+    {
+        if (buffer is not null)
+            replacements.Add(new KeyValuePair<string, XRDataBuffer>(buffer.AttributeName, buffer));
     }
 
     private unsafe void PopulateBlendshapeBuffers(Vertex[] sourceList)
@@ -46,7 +192,6 @@ public partial class XRMesh
 
         BlendshapeCounts = new XRDataBuffer(ECommonBufferType.BlendshapeCount.ToString(), EBufferTarget.ArrayBuffer, (uint)sourceList.Length,
             intVarType ? EComponentType.Int : EComponentType.Float, 2, false, intVarType);
-        Buffers.Add(BlendshapeCounts.AttributeName, BlendshapeCounts);
 
         List<Vector3> deltas = [Vector3.Zero];
         List<IVector4> blendshapeIndices = [];
@@ -147,7 +292,6 @@ public partial class XRMesh
 
         BlendshapeIndices = new XRDataBuffer($"{ECommonBufferType.BlendshapeIndices}Buffer", EBufferTarget.ShaderStorageBuffer,
             (uint)blendshapeIndices.Count, intVarType ? EComponentType.Int : EComponentType.Float, 4, false, intVarType);
-        Buffers.Add(BlendshapeIndices.AttributeName, BlendshapeIndices);
 
         int[]? deltaRemap = remapDeltas
             ? PopulateRemappedBlendshapeDeltas(intVarType, deltas, blendshapeIndices)
@@ -210,7 +354,6 @@ public partial class XRMesh
 
         BlendshapeDeltas = new XRDataBuffer($"{ECommonBufferType.BlendshapeDeltas}Buffer", EBufferTarget.ShaderStorageBuffer,
             (uint)deltas.Count, EComponentType.Float, 4, false, false);
-        Buffers.Add(BlendshapeDeltas.AttributeName, BlendshapeDeltas);
 
         float* deltaData = (float*)BlendshapeDeltas.Address;
         for (int i = 0; i < deltas.Count; i++)
@@ -259,7 +402,6 @@ public partial class XRMesh
         deltaRemap.Remap(deltas, null);
         BlendshapeDeltas = new XRDataBuffer($"{ECommonBufferType.BlendshapeDeltas}Buffer", EBufferTarget.ShaderStorageBuffer,
             deltaRemap.ImplementationLength, EComponentType.Float, 4, false, false);
-        Buffers.Add(BlendshapeDeltas.AttributeName, BlendshapeDeltas);
 
         float* deltaData = (float*)BlendshapeDeltas.Address;
         for (int i = 0; i < deltaRemap.ImplementationLength; i++)
@@ -321,7 +463,6 @@ public partial class XRMesh
             4,
             false,
             intVarType);
-        Buffers.Add(BlendshapeSparseShapeRanges.AttributeName, BlendshapeSparseShapeRanges);
 
         BlendshapeSparseRecords = new XRDataBuffer(
             $"{ECommonBufferType.BlendshapeSparseRecords}Buffer",
@@ -331,7 +472,6 @@ public partial class XRMesh
             4,
             false,
             intVarType);
-        Buffers.Add(BlendshapeSparseRecords.AttributeName, BlendshapeSparseRecords);
 
         if (intVarType)
             PopulateSparseBlendshapeBuffersInt(sparseRecordsByShape, deltaRemap);
@@ -426,7 +566,6 @@ public partial class XRMesh
             4,
             false,
             false);
-        Buffers.Add(BlendshapeQuantizationMetadata.AttributeName, BlendshapeQuantizationMetadata);
 
         List<(uint x, uint y)> packedDeltas = [(0u, 0u)];
         List<IVector4>?[] quantizedRecordsByShape = new List<IVector4>?[shapeCount];
@@ -467,7 +606,6 @@ public partial class XRMesh
             2,
             false,
             true);
-        Buffers.Add(BlendshapeQuantizedDeltas.AttributeName, BlendshapeQuantizedDeltas);
 
         uint* quantized = (uint*)BlendshapeQuantizedDeltas.Address;
         for (int i = 0; i < packedDeltas.Count; i++)

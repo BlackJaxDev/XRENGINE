@@ -26,6 +26,14 @@ internal readonly record struct OpenGLAdvancedVisibilityOutputClosure(
     uint ReactiveMaskId,
     XRTexture? ShadingDiagnostics,
     uint ShadingDiagnosticsId,
+    XRTexture? EmissionColor,
+    uint EmissionColorId,
+    XRTexture? AlbedoOpacity,
+    uint AlbedoOpacityId,
+    XRTexture? Normal,
+    uint NormalId,
+    XRTexture? Rmse,
+    uint RmseId,
     uint Width,
     uint Height,
     uint LayerCount,
@@ -38,5 +46,6 @@ internal readonly record struct OpenGLAdvancedVisibilityOutputClosure(
 
     internal bool HasNativeComputeOutputs
         => AmbientOcclusionId != 0u && HdrId != 0u && VelocityId != 0u &&
-           ReactiveMaskId != 0u && ShadingDiagnosticsId != 0u;
+           ReactiveMaskId != 0u && ShadingDiagnosticsId != 0u &&
+           EmissionColorId != 0u && AlbedoOpacityId != 0u && NormalId != 0u && RmseId != 0u;
 }

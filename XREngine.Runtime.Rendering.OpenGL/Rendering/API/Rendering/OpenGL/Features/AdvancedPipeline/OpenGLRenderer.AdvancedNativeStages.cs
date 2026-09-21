@@ -16,20 +16,23 @@ public partial class OpenGLRenderer
         OpenGLAdvancedNativeBufferStorage buffers = slot.NativeBuffers ??= new OpenGLAdvancedNativeBufferStorage(this);
         uint views = checked((uint)request.Views.ViewCount), depthSlices = Math.Max(1u, request.FroxelDepthSlices);
         buffers.Bind();
-        if (buffers.PreparedRenderFrame != request.RenderFrameId || buffers.PreparedPublication != request.Publication.PublicationGeneration)
+        if (buffers.PreparedRenderFrame != request.RenderFrameId || buffers.PreparedPublication != request.Publication.PublicationGeneration ||
+            buffers.PreparedDdgiSurfaceExports != request.EnableDdgi)
         {
             buffers.EnsureCapacity(closure.Width, closure.Height, views, depthSlices);
             buffers.UploadPushConstants(closure.Width, closure.Height, views, depthSlices, _advancedSceneUploader?.LightCount ?? 0u,
-                request.RequireNativeOutput, request.EnableBuiltInAmbientOcclusion, request.EnableLightProbesAndIbl, request.ShadingDebugView);
+                request.RequireNativeOutput, request.EnableBuiltInAmbientOcclusion, request.EnableLightProbesAndIbl, request.EnableDdgi,
+                request.ShadingDebugView);
             buffers.PreparedRenderFrame = request.RenderFrameId;
             buffers.PreparedPublication = request.Publication.PublicationGeneration;
+            buffers.PreparedDdgiSurfaceExports = request.EnableDdgi;
         }
         Span<uint> priorSamplers = stackalloc uint[5];
         if (!TryBindAdvancedNativeSamplers(0u, priorSamplers, out reason))
             return false;
         try
         {
-            BindNativeResources(in closure);
+            BindNativeResources(in closure, request.Stage == EAdvancedRenderStage.NativeOpaqueShading);
             uint tilesX = DivideRoundUp(closure.Width, 16u), tilesY = DivideRoundUp(closure.Height, 16u), view = request.NativeViewIndex;
             return request.Stage switch
             {
@@ -42,7 +45,7 @@ public partial class OpenGLRenderer
         finally { RestoreAdvancedNativeSamplers(0u, priorSamplers); }
     }
 
-    private void BindNativeResources(in OpenGLAdvancedVisibilityOutputClosure closure)
+    private void BindNativeResources(in OpenGLAdvancedVisibilityOutputClosure closure, bool nativeOpaqueShading)
     {
         RawGL.BindTextureUnit(0u, closure.IdentityId); RawGL.BindTextureUnit(1u, closure.MetadataId);
         RawGL.BindTextureUnit(2u, closure.DepthId); RawGL.BindTextureUnit(3u, closure.AmbientOcclusionId);
@@ -50,7 +53,17 @@ public partial class OpenGLRenderer
         RawGL.BindImageTexture(1u, closure.VelocityId, 0, true, 0, BufferAccessARB.WriteOnly, InternalFormat.RG16f);
         RawGL.BindImageTexture(2u, closure.ReactiveMaskId, 0, true, 0, BufferAccessARB.WriteOnly, InternalFormat.R8);
         RawGL.BindImageTexture(3u, closure.ShadingDiagnosticsId, 0, true, 0, BufferAccessARB.WriteOnly, InternalFormat.R32ui);
-        RawGL.BindImageTexture(4u, closure.AmbientOcclusionId, 0, true, 0, BufferAccessARB.WriteOnly, InternalFormat.R8);
+        if (!nativeOpaqueShading)
+        {
+            // GTAO exclusively owns image 4 outside native opaque shading.
+            RawGL.BindImageTexture(4u, closure.AmbientOcclusionId, 0, true, 0, BufferAccessARB.WriteOnly, InternalFormat.R8);
+            return;
+        }
+
+        RawGL.BindImageTexture(4u, closure.EmissionColorId, 0, true, 0, BufferAccessARB.WriteOnly, InternalFormat.Rgba16f);
+        RawGL.BindImageTexture(5u, closure.AlbedoOpacityId, 0, true, 0, BufferAccessARB.WriteOnly, InternalFormat.Rgba16f);
+        RawGL.BindImageTexture(6u, closure.NormalId, 0, true, 0, BufferAccessARB.WriteOnly, InternalFormat.Rgba16f);
+        RawGL.BindImageTexture(7u, closure.RmseId, 0, true, 0, BufferAccessARB.WriteOnly, InternalFormat.Rgba16f);
     }
 
     private bool DispatchAmbientOcclusion(OpenGLAdvancedNativeBufferStorage buffers, uint view, uint tilesX, uint tilesY, out string reason)

@@ -56,16 +56,16 @@ internal abstract class VkObject<T> : VkObjectBase
         if (_dataLinked)
             return;
 
-        _data.AddWrapper(this);
         try
         {
             LinkData();
             _dataLinked = true;
+            _data.AddWrapper(this);
         }
         catch
         {
             try { UnlinkData(); }
-            finally { _data.RemoveWrapper(this); }
+            finally { _dataLinked = false; }
             throw;
         }
     }
@@ -96,9 +96,18 @@ internal abstract class VkObject<T> : VkObjectBase
 
             if (_data is not null)
             {
-                _data.AddWrapper(this);
-                LinkData();
-                _dataLinked = true;
+                try
+                {
+                    LinkData();
+                    _dataLinked = true;
+                    _data.AddWrapper(this);
+                }
+                catch
+                {
+                    try { UnlinkData(); }
+                    finally { _dataLinked = false; }
+                    throw;
+                }
             }
         }
     }
@@ -106,16 +115,18 @@ internal abstract class VkObject<T> : VkObjectBase
     protected abstract void UnlinkData();
     protected abstract void LinkData();
 
-    protected internal override void Retire()
+    protected override void OnRetiring()
     {
-        if (_dataLinked)
+        try
         {
-            UnlinkData();
-            _dataLinked = false;
+            if (_dataLinked)
+                UnlinkData();
         }
-
-        _data.RemoveWrapper(this);
-        Destroy();
+        finally
+        {
+            _dataLinked = false;
+            _data.RemoveWrapper(this);
+        }
     }
 
     protected internal override void PostGenerated()

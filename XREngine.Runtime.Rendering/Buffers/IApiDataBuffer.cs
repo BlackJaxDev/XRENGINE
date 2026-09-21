@@ -21,12 +21,15 @@ namespace XREngine.Rendering
         void PushData();
         void PushSubData();
         void PushSubData(int offset, uint length);
+        void MapBufferData();
+        void UnmapBufferData();
         void Flush();
         void FlushRange(int offset, uint length);
         void SetUniformBlockName(XRRenderProgram program, string blockName);
         void SetBlockIndex(uint blockIndex);
         void Bind();
         void Unbind();
+        void BindSSBO(XRRenderProgram program, uint? bindingIndexOverride = null);
         /// <summary>Reads mapped bytes without allowing the native address to escape the mapping scope.</summary>
         bool TryReadMapped(DataBufferMappedReadCallback callback);
 

@@ -4,6 +4,7 @@ using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Diagnostics;
 using XREngine.Data;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
@@ -16,6 +17,20 @@ namespace XREngine.Rendering
     [MemoryPackable]
     public partial class XRDataBuffer : GenericRenderObject, IDisposable
     {
+        private bool _isMeshOwnedBuffer;
+
+        /// <summary>
+        /// True when this buffer is owned by a mesh buffer collection and participates
+        /// in owner-first mesh publication telemetry.
+        /// </summary>
+        [MemoryPackIgnore]
+        [YamlIgnore]
+        public bool IsMeshOwnedBuffer
+        {
+            get => _isMeshOwnedBuffer;
+            internal set => SetField(ref _isMeshOwnedBuffer, value);
+        }
+
         public enum EBufferCompressionCodec : byte
         {
             None = 0,
@@ -42,7 +57,10 @@ namespace XREngine.Rendering
         public event DelBindSSBO? BindSSBORequested;
 
         [MemoryPackConstructor]
-        public XRDataBuffer() { }
+        public XRDataBuffer()
+            : base(deferObjectCachePublication: true)
+        {
+        }
         public XRDataBuffer(
             string bindingName,
             EBufferTarget target,
@@ -51,40 +69,100 @@ namespace XREngine.Rendering
             uint componentCount,
             bool normalize,
             bool integral,
-            bool alignClientSourceToPowerOf2 = false)
+            bool alignClientSourceToPowerOf2 = false,
+            bool allocateClientSideSource = true)
+            : base(deferObjectCachePublication: true)
         {
-            AttributeName = bindingName;
-            Target = target;
+            try
+            {
+                AttributeName = bindingName;
+                Target = target;
 
-            _componentType = componentType;
-            _componentCount = componentCount;
-            _elementCount = elementCount;
-            _normalize = normalize;
-            _integral = integral;
+                _componentType = componentType;
+                _componentCount = componentCount;
+                _elementCount = elementCount;
+                _normalize = normalize;
+                _integral = integral;
 
-            if (alignClientSourceToPowerOf2)
-                _clientSideSource = DataSource.Allocate(XRMath.NextPowerOfTwo(_elementCount) * ElementSize);
-            else
-                _clientSideSource = DataSource.Allocate(Length);
+                if (allocateClientSideSource)
+                {
+                    uint allocationLength = alignClientSourceToPowerOf2
+                        ? XRMath.NextPowerOfTwo(_elementCount) * ElementSize
+                        : Length;
+                    long allocationStart = Stopwatch.GetTimestamp();
+                    _clientSideSource = DataSource.Allocate(allocationLength);
+                    if (XRMeshCpuPreparationTelemetry.IsPreparationActive)
+                        XRMeshCpuPreparationTelemetry.RecordAllocation(allocationLength, Stopwatch.GetTimestamp() - allocationStart);
+                }
+
+            }
+            catch
+            {
+                AbortBufferConstruction();
+                throw;
+            }
         }
 
         public XRDataBuffer(
             string bindingName,
             EBufferTarget target,
             bool integral)
+            : base(deferObjectCachePublication: true)
         {
-            AttributeName = bindingName;
-            Target = target;
-            _integral = integral;
+            try
+            {
+                AttributeName = bindingName;
+                Target = target;
+                _integral = integral;
+            }
+            catch
+            {
+                AbortBufferConstruction();
+                throw;
+            }
         }
 
         public XRDataBuffer(
             EBufferTarget target,
             bool integral)
+            : base(deferObjectCachePublication: true)
         {
-            Target = target;
-            _integral = integral;
+            try
+            {
+                Target = target;
+                _integral = integral;
+            }
+            catch
+            {
+                AbortBufferConstruction();
+                throw;
+            }
         }
+
+        private void AbortBufferConstruction()
+        {
+            try
+            {
+                AbortFailedConstruction();
+            }
+            catch (Exception ex)
+            {
+                Trace.TraceError("XRDataBuffer construction cleanup failed: {0}", ex);
+            }
+
+            try
+            {
+                Dispose(disposing: true);
+            }
+            catch (Exception ex)
+            {
+                Trace.TraceError("XRDataBuffer allocation cleanup failed: {0}", ex);
+            }
+        }
+
+        /// <summary>Publishes a fully prepared owner-first buffer at its first install or backend use.</summary>
+        internal void EnsureOwnerFirstConstructionCompleted()
+            => CompleteOwnerFirstConstruction();
 
         /// <summary>
         /// The current mapping state of this buffer.
@@ -95,12 +173,14 @@ namespace XREngine.Rendering
         public List<IApiDataBuffer> ActivelyMapping { get; } = [];
 
         /// <summary>
-        /// Returns true if this buffer is currently mapped by any API wrapper.
-        /// Use this instead of directly checking API-specific wrappers like GLDataBuffer.
+        /// Returns true if this buffer is currently mapped by the selected render owner.
+        /// A mapping owned by another window or renderer is deliberately ignored.
         /// </summary>
         [YamlIgnore]
-        public bool IsMapped => ActivelyMapping.Count > 0;
-        
+        public bool IsMapped
+            => TryGetApiBufferForCurrentOwner(out IApiDataBuffer? apiBuffer) &&
+               apiBuffer.BackendIsPersistentlyMapped;
+
         private bool _padEndingToVec4 = true;
         public bool PadEndingToVec4
         {
@@ -125,47 +205,39 @@ namespace XREngine.Rendering
         }
 
         /// <summary>
-        /// Reads the first active backend mapping while its address is valid. The callback must not retain the span.
+        /// Reads the selected owner's backend mapping while its address is valid. The callback must not retain the span.
         /// </summary>
         public bool TryReadMapped(DataBufferMappedReadCallback callback)
         {
             ArgumentNullException.ThrowIfNull(callback);
-            for (int i = 0; i < ActivelyMapping.Count; i++)
-                if (ActivelyMapping[i].TryReadMapped(callback))
-                    return true;
-            return false;
+            return TryGetApiBufferForCurrentOwner(out IApiDataBuffer? apiBuffer) &&
+                   apiBuffer.TryReadMapped(callback);
         }
 
         /// <summary>
-        /// Writes the first active backend mapping while its address is valid. The callback must not retain the span.
+        /// Writes the selected owner's backend mapping while its address is valid. The callback must not retain the span.
         /// </summary>
         public bool TryWriteMapped(DataBufferMappedWriteCallback callback)
         {
             ArgumentNullException.ThrowIfNull(callback);
-            for (int i = 0; i < ActivelyMapping.Count; i++)
-                if (ActivelyMapping[i].TryWriteMapped(callback))
-                    return true;
-            return false;
+            return TryGetApiBufferForCurrentOwner(out IApiDataBuffer? apiBuffer) &&
+                   apiBuffer.TryWriteMapped(callback);
         }
 
         public bool TryReadMapped<TState>(ref TState state, DataBufferMappedReadCallback<TState> callback)
             where TState : allows ref struct
         {
             ArgumentNullException.ThrowIfNull(callback);
-            for (int i = 0; i < ActivelyMapping.Count; i++)
-                if (ActivelyMapping[i].TryReadMapped(ref state, callback))
-                    return true;
-            return false;
+            return TryGetApiBufferForCurrentOwner(out IApiDataBuffer? apiBuffer) &&
+                   apiBuffer.TryReadMapped(ref state, callback);
         }
 
         public bool TryWriteMapped<TState>(ref TState state, DataBufferMappedWriteCallback<TState> callback)
             where TState : allows ref struct
         {
             ArgumentNullException.ThrowIfNull(callback);
-            for (int i = 0; i < ActivelyMapping.Count; i++)
-                if (ActivelyMapping[i].TryWriteMapped(ref state, callback))
-                    return true;
-            return false;
+            return TryGetApiBufferForCurrentOwner(out IApiDataBuffer? apiBuffer) &&
+                   apiBuffer.TryWriteMapped(ref state, callback);
         }
 
         // Defaults: no implicit bits. Callers set exactly what they need.
@@ -181,7 +253,7 @@ namespace XREngine.Rendering
         }
 
         private EBufferMapRangeFlags _rangeFlags = 0;
-        public EBufferMapRangeFlags RangeFlags 
+        public EBufferMapRangeFlags RangeFlags
         {
             get => _rangeFlags;
             set
@@ -214,6 +286,16 @@ namespace XREngine.Rendering
                 if (SetField(ref _usage, value))
                     ReconcileDefaultMemoryPolicyFromLegacyHints();
             }
+        }
+
+        private bool _gpuProduced;
+        /// <summary>
+        /// Gets or sets whether GPU work produces this buffer's contents without an initial CPU upload.
+        /// </summary>
+        public bool GpuProduced
+        {
+            get => _gpuProduced;
+            set => SetField(ref _gpuProduced, value);
         }
 
         private EComponentType _componentType;
@@ -418,7 +500,9 @@ namespace XREngine.Rendering
         /// </summary>
         public void PushData()
         {
+            IApiDataBuffer apiBuffer = GetApiBufferForOwnerFirstUse();
             XRBufferWriteTelemetry.RecordUpload(XRBufferResolvedRoute.CompatibilityPush, Length);
+            apiBuffer.PushData();
             PushDataRequested?.Invoke();
         }
 
@@ -433,29 +517,84 @@ namespace XREngine.Rendering
         /// </summary>
         public void PushSubData(int offset, uint length)
         {
+            IApiDataBuffer apiBuffer = GetApiBufferForOwnerFirstUse();
             XRBufferWriteTelemetry.RecordUpload(XRBufferResolvedRoute.CompatibilityPush, length);
+            apiBuffer.PushSubData(offset, length);
             PushSubDataRequested?.Invoke(offset, length);
         }
 
         public void MapBufferData()
-            => MapBufferDataRequested?.Invoke();
+        {
+            GetApiBufferForOwnerFirstUse().MapBufferData();
+            MapBufferDataRequested?.Invoke();
+        }
         public void UnmapBufferData()
-            => UnmapBufferDataRequested?.Invoke();
+        {
+            GetApiBufferForOwnerFirstUse().UnmapBufferData();
+            UnmapBufferDataRequested?.Invoke();
+        }
 
         public void SetBlockName(XRRenderProgram program, string blockName)
-            => SetBlockNameRequested?.Invoke(program, blockName);
+        {
+            GetApiBufferForOwnerFirstUse().SetUniformBlockName(program, blockName);
+            SetBlockNameRequested?.Invoke(program, blockName);
+        }
         public void SetBlockIndex(uint blockIndex)
-            => SetBlockIndexRequested?.Invoke(blockIndex);
+        {
+            GetApiBufferForOwnerFirstUse().SetBlockIndex(blockIndex);
+            SetBlockIndexRequested?.Invoke(blockIndex);
+        }
 
         public void Bind()
-            => BindRequested?.Invoke();
+        {
+            GetApiBufferForOwnerFirstUse().Bind();
+            BindRequested?.Invoke();
+        }
         public void Unbind()
-            => UnbindRequested?.Invoke();
+        {
+            GetApiBufferForOwnerFirstUse().Unbind();
+            UnbindRequested?.Invoke();
+        }
 
         public void FlushRange(int offset, uint length)
-            => FlushRangeRequested?.Invoke(offset, length);
+        {
+            GetApiBufferForOwnerFirstUse().FlushRange(offset, length);
+            FlushRangeRequested?.Invoke(offset, length);
+        }
         public void Flush()
-            => FlushRequested?.Invoke();
+        {
+            GetApiBufferForOwnerFirstUse().Flush();
+            FlushRequested?.Invoke();
+        }
+
+        private IApiDataBuffer GetApiBufferForOwnerFirstUse()
+            => EnsureApiWrapperForOwnerFirstUse() as IApiDataBuffer ??
+                throw new InvalidOperationException($"Render owner created an incompatible buffer wrapper for '{Name ?? AttributeName}'.");
+
+        /// <summary>
+        /// Publishes the current owner's wrapper before a program records this buffer.
+        /// Native storage preparation remains the backend's responsibility.
+        /// </summary>
+        internal void PrepareForProgramBinding()
+            => _ = GetApiBufferForOwnerFirstUse();
+
+        /// <summary>
+        /// Resolves the selected render owner's existing buffer wrapper without
+        /// creating a wrapper for another owner.
+        /// </summary>
+        internal bool TryGetApiBufferForCurrentOwner(
+            [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out IApiDataBuffer? apiBuffer)
+        {
+            if (TryGetApiWrapperForCurrentOwner(out AbstractRenderAPIObject? wrapper) &&
+                wrapper is IApiDataBuffer selected)
+            {
+                apiBuffer = selected;
+                return true;
+            }
+
+            apiBuffer = null;
+            return false;
+        }
 
         /// <summary>
         /// Reads the struct value at the given offset into the buffer.
@@ -480,7 +619,7 @@ namespace XREngine.Rendering
             if (_clientSideSource != null)
                 WriteStructValue(_clientSideSource.Address[index, ElementSize], value);
         }
-        
+
         public void SetByOffset<T>(uint offset, T value) where T : unmanaged
         {
             if (_clientSideSource != null)
@@ -538,7 +677,16 @@ namespace XREngine.Rendering
                 return;
 
             _clientSideSource?.Dispose();
-            _clientSideSource = DataSource.Allocate(byteLength, zeroMemory: true);
+            long allocationStart = Stopwatch.GetTimestamp();
+            _clientSideSource = DataSource.Allocate(byteLength);
+            bool recordMeshPreparation = XRMeshCpuPreparationTelemetry.IsPreparationActive || IsMeshOwnedBuffer;
+            if (recordMeshPreparation)
+                XRMeshCpuPreparationTelemetry.RecordAllocation(byteLength, Stopwatch.GetTimestamp() - allocationStart);
+
+            long zeroFillStart = Stopwatch.GetTimestamp();
+            Memory.Fill(_clientSideSource.Address, byteLength, 0);
+            if (recordMeshPreparation)
+                XRMeshCpuPreparationTelemetry.RecordZeroFill(byteLength, Stopwatch.GetTimestamp() - zeroFillStart);
         }
 
         private static unsafe void WriteStructValue<T>(VoidPtr address, in T value) where T : unmanaged
@@ -759,7 +907,7 @@ namespace XREngine.Rendering
                 throw new InvalidOperationException($"Cannot set data at index {index}: client-side buffer has not been allocated.");
             WriteStructValue(_clientSideSource.Address[index, ElementSize], data);
         }
-        
+
         public T GetDataRawAtIndex<T>(uint index) where T : unmanaged
         {
             if (_clientSideSource is null)
@@ -1058,14 +1206,14 @@ namespace XREngine.Rendering
             uint tSize = (uint)Marshal.SizeOf<T>();
             uint totalBytes = _elementCount * ElementSize;
             uint count = totalBytes / tSize;
-            
+
             array = new T[count];
             if (!TryReadContiguousStructSpan(_clientSideSource!.Address, tSize, array))
             {
                 for (uint i = 0; i < count; ++i)
                     array[i] = ReadStructValue<T>(_clientSideSource.Address + (i * tSize));
             }
-            
+
             if (!remap)
                 return null;
 
@@ -1077,6 +1225,10 @@ namespace XREngine.Rendering
         ~XRDataBuffer() { Dispose(false); }
         public void Dispose()
         {
+            Destroy(now: true);
+            if (!IsDestroyed)
+                return;
+
             Dispose(true);
             GC.SuppressFinalize(this);
         }
@@ -1103,6 +1255,7 @@ namespace XREngine.Rendering
 
         public XRDataBuffer Clone(bool cloneBuffer, EBufferTarget target)
         {
+            using RenderObjectPublicationScope publication = GenericRenderObject.BeginDeferredPublication();
             XRDataBuffer clone = new(target, _integral)
             {
                 _attributeName = _attributeName,
@@ -1130,6 +1283,7 @@ namespace XREngine.Rendering
                 clone.GpuCompressedDecodedLength = GpuCompressedDecodedLength;
             }
 
+            publication.Complete();
             return clone;
         }
 
@@ -1154,7 +1308,7 @@ namespace XREngine.Rendering
 
             if (alignClientSourceToPowerOf2)
                 newLength = XRMath.NextPowerOfTwo(newLength);
-            
+
             if (_clientSideSource?.Length == newLength)
                 return false;
 
@@ -1221,7 +1375,10 @@ namespace XREngine.Rendering
         }
 
         public void BindTo(XRRenderProgram program, uint index)
-            => BindSSBORequested?.Invoke(program, index);
+        {
+            GetApiBufferForOwnerFirstUse().BindSSBO(program, index);
+            BindSSBORequested?.Invoke(program, index);
+        }
 
         public static implicit operator VoidPtr(XRDataBuffer b) => b.Address;
     }

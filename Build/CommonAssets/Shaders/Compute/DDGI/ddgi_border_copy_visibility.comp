@@ -1,0 +1,39 @@
+#version 450
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+#pragma snippet "OctahedralBorderCopy"
+#pragma snippet "DDGIBindings"
+
+layout(rg16f, XR_DDGI_IMAGE_BINDING(0)) uniform image2DArray uVisibilityAtlas;
+
+uniform uint uProbeCount;
+uniform uint uProbeCountX;
+uniform int uProbeSize; // 16 for visibility
+uniform uint uProbeOffset;
+uniform uint uScheduledProbeCount;
+uniform int uCascadeIndex;
+
+void main()
+{
+    uint scheduledIndex = gl_WorkGroupID.x;
+    if (uScheduledProbeCount > 0u && scheduledIndex >= uScheduledProbeCount)
+        return;
+
+    uint probeIndex = (uProbeOffset + scheduledIndex) % max(1u, uProbeCount);
+
+    int probeSize = uProbeSize > 0 ? uProbeSize : 16;
+    int borderCount = 4 * (probeSize - 1);
+    int t = int(gl_LocalInvocationID.x);
+    if (t >= borderCount)
+        return;
+
+    ivec2 borderCoord = GetBorderLocalCoord(t, probeSize);
+    ivec2 interiorCoord = MapBorderToInterior(borderCoord, probeSize);
+
+    uint countX = max(1u, uProbeCountX);
+    ivec2 tileOrigin = ivec2(int(probeIndex % countX), int(probeIndex / countX)) * probeSize;
+
+    vec4 val = imageLoad(uVisibilityAtlas, ivec3(tileOrigin + interiorCoord, uCascadeIndex));
+    imageStore(uVisibilityAtlas, ivec3(tileOrigin + borderCoord, uCascadeIndex), val);
+}

@@ -45,8 +45,14 @@ public static class XRAssetGraphUtility
 
     private static readonly Type XRAssetType = typeof(XRAsset);
 
-    internal static bool ShouldRefreshForPropertyChange(Type ownerType, string? propertyName, object? previousValue, object? newValue)
+    internal static bool ShouldRefreshForPropertyChange<T>(Type ownerType, string? propertyName, T previousValue, T newValue)
     {
+        // Scalar render state cannot own assets. Keep its notification path
+        // generic so changing a flag does not box the old and new values.
+        // Value-type collections still need the existing candidate traversal.
+        if (typeof(T).IsValueType && !typeof(IEnumerable).IsAssignableFrom(typeof(T)))
+            return false;
+
         if (!string.IsNullOrWhiteSpace(propertyName) && !ShouldRefreshSerializedMember(ownerType, propertyName))
             return false;
 

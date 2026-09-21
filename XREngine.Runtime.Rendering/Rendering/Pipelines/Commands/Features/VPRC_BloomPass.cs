@@ -507,8 +507,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 throw new ArgumentOutOfRangeException(nameof(name), name, "Unknown declared bloom framebuffer.");
             }
 
-            var frameBuffer = new XRQuadFrameBuffer(material, useMultiview: Stereo &&
-                instance.Pipeline is IAdvancedRenderStageFamilyHost) { Name = name };
+            var frameBuffer = new XRQuadFrameBuffer(material, useMultiview: Stereo) { Name = name };
             frameBuffer.SetRenderTargets((outputAttach, EFrameBufferAttachment.ColorAttachment0, targetMip, -1));
             frameBuffer.FullScreenMesh.BindingPublishers.Add(
                 new BloomBindingPublisher(this, bindingPublication));

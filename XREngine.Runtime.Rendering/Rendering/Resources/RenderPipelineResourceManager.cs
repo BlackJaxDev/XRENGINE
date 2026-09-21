@@ -7,6 +7,13 @@ namespace XREngine.Rendering.Resources;
 
 public sealed class RenderPipelineResourceManager
 {
+    private const string MaterializationFailureEnvironmentVariable =
+        "XRE_RENDER_RESOURCE_MATERIALIZATION_FAIL_ONCE";
+    private static readonly string? s_materializationFailureRequest =
+        Environment.GetEnvironmentVariable(MaterializationFailureEnvironmentVariable);
+    private static int s_materializationFailureAttempt;
+    private static int s_materializationFailureTriggered;
+
     public bool Materialize(XRRenderPipelineInstance instance, RenderResourceGeneration generation)
         => MaterializeIncremental(instance, generation, TimeSpan.MaxValue, int.MaxValue, out bool completed) && completed;
 
@@ -29,9 +36,9 @@ public sealed class RenderPipelineResourceManager
             return generation.IsReady;
         }
 
+        long startTimestamp = Stopwatch.GetTimestamp();
         try
         {
-            long startTimestamp = Stopwatch.GetTimestamp();
             int materializedThisSlice = 0;
             IReadOnlyList<RenderPipelineResourceSpec> specs = generation.Layout.OrderedSpecs;
 
@@ -39,7 +46,24 @@ public sealed class RenderPipelineResourceManager
             {
                 while (generation.MaterializedSpecCount < specs.Count)
                 {
-                    MaterializeSpec(instance, generation, specs[generation.MaterializedSpecCount]);
+                    RenderPipelineResourceSpec spec = specs[generation.MaterializedSpecCount];
+                    long specStartTimestamp = Stopwatch.GetTimestamp();
+                    bool specCompleted;
+                    try
+                    {
+                        ThrowValidationMaterializationFailureIfRequested(instance, spec);
+                        specCompleted = MaterializeSpec(instance, generation, spec);
+                    }
+                    finally
+                    {
+                        generation.RecordMaterializationSpec(
+                            spec,
+                            Stopwatch.GetElapsedTime(specStartTimestamp));
+                    }
+
+                    if (!specCompleted)
+                        return true;
+
                     generation.MaterializedSpecCount++;
                     materializedThisSlice++;
 
@@ -100,6 +124,10 @@ public sealed class RenderPipelineResourceManager
                 instance.ActiveGeneration?.Key.ToString() ?? "<none>");
             return false;
         }
+        finally
+        {
+            generation.RecordMaterializationSlice(Stopwatch.GetElapsedTime(startTimestamp));
+        }
     }
 
     private static string DescribeMaterializationFailure(
@@ -120,6 +148,39 @@ public sealed class RenderPipelineResourceManager
         }
 
         return $"{stage} threw {exception.GetType().Name}: {exception.Message}";
+    }
+
+    private static void ThrowValidationMaterializationFailureIfRequested(
+        XRRenderPipelineInstance instance,
+        RenderPipelineResourceSpec spec)
+    {
+        if (instance.ActiveGeneration is null ||
+            Volatile.Read(ref s_materializationFailureTriggered) != 0)
+            return;
+
+        string? request = s_materializationFailureRequest;
+        if (string.IsNullOrWhiteSpace(request))
+            return;
+
+        string[] parts = request.Split(':', 2, StringSplitOptions.TrimEntries);
+        if (!string.Equals(parts[0], spec.Name, StringComparison.Ordinal))
+            return;
+
+        int requestedAttempt = parts.Length == 2 &&
+            int.TryParse(parts[1], out int parsedAttempt)
+                ? Math.Max(1, parsedAttempt)
+                : 1;
+        int currentAttempt = Interlocked.Increment(
+            ref s_materializationFailureAttempt);
+        if (currentAttempt != requestedAttempt ||
+            Interlocked.CompareExchange(
+                ref s_materializationFailureTriggered,
+                1,
+                0) != 0)
+            return;
+
+        throw new InvalidOperationException(
+            $"Validation-only one-shot materialization failure for '{spec.Name}' attempt {currentAttempt}.");
     }
 
     private static bool IsExpectedBackendImageAllocationDeferral(Exception exception)
@@ -145,7 +206,7 @@ public sealed class RenderPipelineResourceManager
         return Stopwatch.GetElapsedTime(startTimestamp) >= maxDuration;
     }
 
-    private static void MaterializeSpec(
+    private static bool MaterializeSpec(
         XRRenderPipelineInstance instance,
         RenderResourceGeneration generation,
         RenderPipelineResourceSpec spec)
@@ -154,24 +215,22 @@ public sealed class RenderPipelineResourceManager
         {
             case TextureSpec textureSpec:
                 MaterializeTexture(instance, generation, textureSpec);
-                break;
+                return true;
             case TextureViewSpec viewSpec:
                 MaterializeTextureView(instance, generation, viewSpec);
-                break;
+                return true;
             case RenderBufferSpec renderBufferSpec:
                 MaterializeRenderBuffer(instance, generation, renderBufferSpec);
-                break;
+                return true;
             case BufferSpec bufferSpec:
                 MaterializeBuffer(instance, generation, bufferSpec);
-                break;
+                return true;
             case FrameBufferSpec frameBufferSpec:
-                MaterializeFrameBuffer(instance, generation, frameBufferSpec);
-                break;
+                return MaterializeFrameBuffer(instance, generation, frameBufferSpec);
             case QuadMaterialSpec quadMaterialSpec:
-                MaterializeQuadMaterial(instance, generation, quadMaterialSpec);
-                break;
-            case ExternalResourceSpec:
-                break;
+                return MaterializeQuadMaterial(instance, generation, quadMaterialSpec);
+            default:
+                return true;
         }
     }
 
@@ -288,7 +347,7 @@ public sealed class RenderPipelineResourceManager
         instance.SetBuffer(buffer, descriptor);
     }
 
-    private static void MaterializeFrameBuffer(
+    private static bool MaterializeFrameBuffer(
         XRRenderPipelineInstance instance,
         RenderResourceGeneration generation,
         FrameBufferSpec spec)
@@ -297,24 +356,41 @@ public sealed class RenderPipelineResourceManager
         generation.Registry.RegisterFrameBufferDescriptor(descriptor);
 
         if (generation.Registry.TryGetFrameBuffer(spec.Name, out _))
-            return;
+            return true;
 
         ValidateFrameBufferAttachmentDependencies(generation, spec);
 
-        if (spec.Factory is null)
+        XRFrameBuffer? frameBuffer;
+        if (spec.IncrementalFactory is not null)
+        {
+            IIncrementalFrameBufferFactory incrementalFactory = generation.GetOrCreateIncrementalFrameBufferFactory(
+                spec.Name,
+                spec.IncrementalFactory);
+            if (!incrementalFactory.MoveNext(out frameBuffer))
+                return false;
+
+            generation.TransferIncrementalFrameBufferFactoryOwnership(spec.Name);
+            if (frameBuffer is null)
+                throw new InvalidOperationException($"Incremental framebuffer factory '{spec.Name}' completed without a framebuffer.");
+        }
+        else if (spec.Factory is not null)
+        {
+            frameBuffer = spec.Factory();
+        }
+        else
         {
             if (spec.Required && !CanCommitWithoutInstance(generation, spec))
                 throw new InvalidOperationException($"Framebuffer '{spec.Name}' has no factory and no concrete instance.");
-            return;
+            return true;
         }
 
-        XRFrameBuffer frameBuffer = spec.Factory();
         frameBuffer.Name = spec.Name;
         ValidateFrameBufferInstance(generation, spec, frameBuffer);
         instance.SetFBO(frameBuffer, descriptor);
+        return true;
     }
 
-    private static void MaterializeQuadMaterial(
+    private static bool MaterializeQuadMaterial(
         XRRenderPipelineInstance instance,
         RenderResourceGeneration generation,
         QuadMaterialSpec spec)
@@ -327,21 +403,38 @@ public sealed class RenderPipelineResourceManager
         generation.Registry.RegisterFrameBufferDescriptor(descriptor);
 
         if (generation.Registry.TryGetFrameBuffer(spec.Name, out _))
-            return;
+            return true;
 
-        if (spec.Factory is null)
+        XRFrameBuffer? frameBuffer;
+        if (spec.IncrementalFactory is not null)
+        {
+            IIncrementalFrameBufferFactory incrementalFactory = generation.GetOrCreateIncrementalFrameBufferFactory(
+                spec.Name,
+                spec.IncrementalFactory);
+            if (!incrementalFactory.MoveNext(out frameBuffer))
+                return false;
+
+            generation.TransferIncrementalFrameBufferFactoryOwnership(spec.Name);
+            if (frameBuffer is null)
+                throw new InvalidOperationException($"Incremental quad material factory '{spec.Name}' completed without a framebuffer.");
+        }
+        else if (spec.Factory is not null)
+        {
+            frameBuffer = spec.Factory();
+        }
+        else
         {
             if (spec.Required)
                 throw new InvalidOperationException($"Quad material '{spec.Name}' has no factory.");
-            return;
+            return true;
         }
 
-        XRFrameBuffer frameBuffer = spec.Factory();
         if (frameBuffer is not XRQuadFrameBuffer)
             throw new InvalidOperationException($"Quad material '{spec.Name}' factory must produce an XRQuadFrameBuffer.");
 
         frameBuffer.Name = spec.Name;
         instance.SetFBO(frameBuffer, descriptor);
+        return true;
     }
 
     private static void ValidateRequiredResources(RenderResourceGeneration generation)

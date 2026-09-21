@@ -406,19 +406,19 @@ namespace XREngine
                             return;
 
                         Interlocked.Increment(ref _barrierCalls);
-                        if (mask.HasFlag(EMemoryBarrierMask.All))
+                        if ((mask & EMemoryBarrierMask.All) == EMemoryBarrierMask.All)
                             Interlocked.Increment(ref _barrierAll);
-                        if (mask.HasFlag(EMemoryBarrierMask.Command))
+                        if ((mask & EMemoryBarrierMask.Command) == EMemoryBarrierMask.Command)
                             Interlocked.Increment(ref _barrierCommand);
-                        if (mask.HasFlag(EMemoryBarrierMask.BufferUpdate))
+                        if ((mask & EMemoryBarrierMask.BufferUpdate) == EMemoryBarrierMask.BufferUpdate)
                             Interlocked.Increment(ref _barrierBufferUpdate);
-                        if (mask.HasFlag(EMemoryBarrierMask.ShaderStorage))
+                        if ((mask & EMemoryBarrierMask.ShaderStorage) == EMemoryBarrierMask.ShaderStorage)
                             Interlocked.Increment(ref _barrierShaderStorage);
-                        if (mask.HasFlag(EMemoryBarrierMask.TextureFetch))
+                        if ((mask & EMemoryBarrierMask.TextureFetch) == EMemoryBarrierMask.TextureFetch)
                             Interlocked.Increment(ref _barrierTextureFetch);
-                        if (mask.HasFlag(EMemoryBarrierMask.TextureUpdate))
+                        if ((mask & EMemoryBarrierMask.TextureUpdate) == EMemoryBarrierMask.TextureUpdate)
                             Interlocked.Increment(ref _barrierTextureUpdate);
-                        if (mask.HasFlag(EMemoryBarrierMask.Framebuffer))
+                        if ((mask & EMemoryBarrierMask.Framebuffer) == EMemoryBarrierMask.Framebuffer)
                             Interlocked.Increment(ref _barrierFramebuffer);
                     }
 

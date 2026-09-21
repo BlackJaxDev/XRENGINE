@@ -85,9 +85,21 @@ namespace XREngine.Rendering.OpenGL
         private int _bindlessParametersFrozen;
         private int _bindlessParametersDirty;
         private int _activeAdvancedBindlessPairHandleCount;
+        private static int s_bindlessMutationTraceCount;
 
         private void QueuePropertyUpdate(string? propertyName)
         {
+            // Asset graph ownership and binding labels do not change GL storage
+            // or sampler state. In particular, packing borrowed probe images into
+            // an array updates SourceAsset; recreating them would erase their
+            // GPU-authored contents when the last bindless lease is released.
+            if (propertyName is nameof(XRTexture.SourceAsset) or nameof(XRTexture.Name)
+                or nameof(XRTexture.SamplerName) or nameof(XRTexture.FrameBufferAttachment)
+                or nameof(XRTexture.IsGpuWritable))
+            {
+                return;
+            }
+
             TexturePropertyUpdateMask mask = propertyName switch
             {
                 null => TexturePropertyUpdateMask.All,
@@ -101,14 +113,14 @@ namespace XREngine.Rendering.OpenGL
             };
 
             // ARB_bindless_texture freezes a texture's sampler state as soon as a
-            // handle is obtained. Treat every XR texture mutation as potentially
+            // handle is obtained. Treat remaining XR texture mutations as potentially
             // native-state-affecting here: derived wrappers own extra filter, wrap,
             // comparison, storage, and mip-range parameters that this base class
             // cannot enumerate safely.
             if (Volatile.Read(ref _bindlessParametersFrozen) != 0 ||
                 Volatile.Read(ref _activeAdvancedBindlessPairHandleCount) != 0)
             {
-                Volatile.Write(ref _bindlessParametersDirty, 1);
+                MarkBindlessParametersDirty(propertyName ?? "AllProperties");
                 return;
             }
 
@@ -156,7 +168,7 @@ namespace XREngine.Rendering.OpenGL
 
             if (Volatile.Read(ref _bindlessParametersFrozen) != 0)
             {
-                Volatile.Write(ref _bindlessParametersDirty, 1);
+                MarkBindlessParametersDirty(nameof(FlushPropertyUpdates));
                 return;
             }
 
@@ -207,8 +219,10 @@ namespace XREngine.Rendering.OpenGL
         public Vector3 WidthHeightDepth
             => Data.WidthHeightDepth;
 
+        private Action? _setParametersAction;
+
         protected virtual void SetParameters()
-            => RuntimeEngine.InvokeOnMainThread(SetParametersInternal, "GLTexture.SetParameters", true);
+            => RuntimeEngine.InvokeOnMainThread(_setParametersAction ??= SetParametersInternal, "GLTexture.SetParameters", true);
 
         private void SetParametersInternal()
         {
@@ -242,8 +256,11 @@ namespace XREngine.Rendering.OpenGL
             if (ReferenceEquals(Renderer.GetBoundTexture(TextureTarget), this))
                 return false;
 
+            if (PreBind is not { } preBind)
+                return true;
+
             PreBindCallback callback = new();
-            PreBind?.Invoke(callback);
+            preBind.Invoke(callback);
             return callback.ShouldBind;
         }
 
@@ -360,7 +377,7 @@ namespace XREngine.Rendering.OpenGL
             if (Volatile.Read(ref _bindlessParametersFrozen) == 0)
                 return false;
 
-            Volatile.Write(ref _bindlessParametersDirty, 1);
+            MarkBindlessParametersDirty(nameof(DeferBindlessParameterUpdateIfFrozen));
             return true;
         }
 
@@ -375,7 +392,7 @@ namespace XREngine.Rendering.OpenGL
             if (Volatile.Read(ref _bindlessParametersFrozen) == 0)
                 return true;
 
-            Volatile.Write(ref _bindlessParametersDirty, 1);
+            MarkBindlessParametersDirty(nameof(EnsureBindlessParametersMutable));
             PrepareForBindlessHandle();
             return Volatile.Read(ref _bindlessParametersFrozen) == 0;
         }
@@ -411,7 +428,7 @@ namespace XREngine.Rendering.OpenGL
                 throw new InvalidOperationException("An OpenGL advanced bindless texture/sampler lease was released more than once.");
             }
 
-            if (remaining == 0 && Volatile.Read(ref _bindlessParametersDirty) != 0)
+            if (remaining == 0 && Renderer.AcceptsBackendWork && Volatile.Read(ref _bindlessParametersDirty) != 0)
                 PrepareForBindlessHandle();
         }
 
@@ -421,6 +438,26 @@ namespace XREngine.Rendering.OpenGL
         /// </summary>
         protected virtual bool IsReadyForBindlessHandle()
             => true;
+
+        private void MarkBindlessParametersDirty(string reason)
+        {
+            if (Interlocked.Exchange(ref _bindlessParametersDirty, 1) != 0)
+                return;
+
+            TraceBindlessMutation("deferred", reason);
+        }
+
+        private void TraceBindlessMutation(string stage, string reason)
+        {
+            if (!RenderDiagnosticsFlags.GLDebug || Interlocked.Increment(ref s_bindlessMutationTraceCount) > 128)
+                return;
+
+            TryGetBindingId(out uint id);
+            Debug.OpenGL(
+                $"[GLBindlessMutation] Stage={stage} Reason={reason} Texture={Data.Name} Id={id} " +
+                $"GpuWritable={Data.IsGpuWritable} Frozen={Volatile.Read(ref _bindlessParametersFrozen)} " +
+                $"Leases={Volatile.Read(ref _activeAdvancedBindlessPairHandleCount)}");
+        }
 
         internal void PrepareForBindlessHandle()
         {
@@ -440,6 +477,7 @@ namespace XREngine.Rendering.OpenGL
             }
 
             ulong handle = _bindlessHandle;
+            TraceBindlessMutation("recreate", nameof(PrepareForBindlessHandle));
             _bindlessHandle = 0ul;
             Volatile.Write(ref _bindlessParametersDirty, 0);
             Volatile.Write(ref _bindlessParametersFrozen, 0);
@@ -522,7 +560,7 @@ namespace XREngine.Rendering.OpenGL
         }
 
         protected override uint CreateObject()
-            => Api.GenTexture();
+            => Api.CreateTexture(ToGLEnum(TextureTarget));
 
         protected internal override void PostGenerated()
             => Invalidate();
@@ -580,6 +618,14 @@ namespace XREngine.Rendering.OpenGL
         protected virtual void EnsureStorageAllocatedForFBOAttach()
         {
         }
+
+        /// <summary>
+        /// Invokes the target's framebuffer storage hook before image attachment.
+        /// Mutable textures and targets without a hook still require their ordinary upload path.
+        /// </summary>
+        public void EnsureStorageForImageBinding()
+            => EnsureStorageAllocatedForFBOAttach();
+
         public virtual void DetachFromFBO(XRFrameBuffer fbo, EFrameBufferAttachment attachment, int mipLevel = 0)
         {
             if (TryResolveAttachIds(fbo, attachment, mipLevel, requireTexture: false, out uint fboId, out _))

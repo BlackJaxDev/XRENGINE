@@ -15,4 +15,5 @@ public readonly record struct ResourceGenerationSettingsSnapshot(
     RenderPipelineExternalTargetKind ExternalTargetKind,
     ulong Revision,
     XREngine.Data.Rendering.EPixelInternalFormat OutputColorFormat,
-    XREngine.Data.Rendering.EPixelInternalFormat OutputDepthFormat);
+    XREngine.Data.Rendering.EPixelInternalFormat OutputDepthFormat,
+    RenderPipelineResourceVariant ResourceVariant = default);

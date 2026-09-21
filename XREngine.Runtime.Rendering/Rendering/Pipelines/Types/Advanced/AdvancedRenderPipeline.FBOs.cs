@@ -4,6 +4,7 @@ using XREngine.Data.Colors;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.Pipelines.Commands;
+using XREngine.Rendering.Resources;
 
 namespace XREngine.Rendering;
 
@@ -47,51 +48,128 @@ public partial class AdvancedRenderPipeline
     //    return uiFBO;
     //}
 
-    private XRFrameBuffer CreatePostProcessFBO()
+    private IIncrementalFrameBufferFactory CreatePostProcessFBOIncrementally()
+        => new PostProcessFrameBufferFactory(this);
+
+    private sealed class PostProcessFrameBufferFactory(AdvancedRenderPipeline owner) : IIncrementalFrameBufferFactory
     {
-        // Texture array order must match the shader's sampler declaration order in PostProcess.fs,
-        // because Vulkan binds by index (binding N → Textures[N]), not by name.
-        // Atmospheric and volumetric bindings are mono-only; stereo PostProcessStereo.fs
-        // does not declare those samplers and omits the slots to keep Vulkan binding indices aligned.
-        XRTexture[] postProcessRefs = Stereo
-            ?
-            [
-                RequirePostProcessTexture(HDRSceneTextureName),       // binding 0: sampler2DArray HDRSceneTex
-                RequirePostProcessTexture(BloomBlurTextureName),      // binding 1: sampler2DArray BloomBlurTexture
-                RequirePostProcessTexture(DepthViewTextureName),      // binding 2: sampler2DArray DepthView
-                RequirePostProcessTexture(StencilViewTextureName),    // binding 3: usampler2DArray StencilView
-                RequirePostProcessTexture(AutoExposureTextureName),   // binding 4: sampler2D AutoExposureTex
-                RequirePostProcessTexture(AdvancedVisibilityResourceNames.Metadata), // binding 5: usampler2DArray AdvancedVisibilityMetadata
-            ]
-            :
-            [
-                RequirePostProcessTexture(HDRSceneTextureName),       // binding 0: sampler2D HDRSceneTex
-                RequirePostProcessTexture(BloomBlurTextureName),      // binding 1: sampler2D BloomBlurTexture
-                RequirePostProcessTexture(DepthViewTextureName),      // binding 2: sampler2D DepthView
-                RequirePostProcessTexture(StencilViewTextureName),    // binding 3: usampler2D StencilView
-                RequirePostProcessTexture(AutoExposureTextureName),   // binding 4: sampler2D AutoExposureTex
-                RequirePostProcessTexture(AtmosphereColorTextureName), // binding 5: sampler2D AtmosphereColor
-                RequirePostProcessTexture(VolumetricFogColorTextureName), // binding 6: sampler2D VolumetricFogColor
-                RequirePostProcessTexture(AdvancedVisibilityResourceNames.Metadata), // binding 7: usampler2D AdvancedVisibilityMetadata
-            ];
-        XRShader postProcessShader = CreateAdvancedPostProcessShader(PostProcessShaderName());
-        XRMaterial postProcessMat = new(postProcessRefs, postProcessShader)
+        private int _stage;
+        private XRTexture[]? _textureReferences;
+        private XRShader? _shader;
+        private XRMaterial? _material;
+        private XRQuadFrameBuffer? _frameBuffer;
+        private bool _transferred;
+
+        public bool MoveNext(out XRFrameBuffer? frameBuffer)
         {
-            RenderOptions = new RenderingParameters()
+            frameBuffer = null;
+            switch (_stage)
             {
-                DepthTest = new DepthTest()
-                {
-                    Enabled = ERenderParamUsage.Disabled,
-                    Function = EComparison.Always,
-                    UpdateDepth = false,
-                },
-                BlendModeAllDrawBuffers = BlendMode.Disabled(),
-                RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.Lights | EUniformRequirements.RenderTime | EUniformRequirements.ViewportDimensions | EUniformRequirements.ClipSpacePolicy,
+                case 0:
+                    PrepareTexturesAndShader();
+                    _stage++;
+                    return false;
+                case 1:
+                    CreateMaterial();
+                    _stage++;
+                    return false;
+                case 2:
+                    _frameBuffer = new XRQuadFrameBuffer(
+                        _material ?? throw new InvalidOperationException("Post-process material was not prepared."),
+                        deriveRenderTargetsFromMaterial: false,
+                        useMultiview: owner.Stereo,
+                        prepareForInitialRendering: false);
+                    _stage++;
+                    return false;
+                case 3:
+                    _frameBuffer!.PrepareInitialRenderingVersion();
+                    _stage++;
+                    return false;
+                case 4:
+                    CompleteFrameBuffer();
+                    frameBuffer = _frameBuffer;
+                    _frameBuffer = null;
+                    _material = null;
+                    _shader = null;
+                    _textureReferences = null;
+                    _transferred = true;
+                    _stage++;
+                    return true;
+                default:
+                    throw new InvalidOperationException("Post-process framebuffer factory was advanced after completion.");
             }
-        };
-        var PostProcessFBO = new XRQuadFrameBuffer(postProcessMat, deriveRenderTargetsFromMaterial: false, useMultiview: Stereo);
-        PostProcessFBO.SettingUniforms += program => ApplyPostProcessProgramBindings(postProcessMat, program);
-        return PostProcessFBO;
+        }
+
+        private void PrepareTexturesAndShader()
+        {
+            _textureReferences = owner.Stereo
+                ?
+                [
+                    owner.RequirePostProcessTexture(HDRSceneTextureName),
+                    owner.RequirePostProcessTexture(BloomBlurTextureName),
+                    owner.RequirePostProcessTexture(DepthViewTextureName),
+                    owner.RequirePostProcessTexture(StencilViewTextureName),
+                    owner.RequirePostProcessTexture(AutoExposureTextureName),
+                    owner.RequirePostProcessTexture(AdvancedVisibilityResourceNames.Metadata),
+                ]
+                :
+                [
+                    owner.RequirePostProcessTexture(HDRSceneTextureName),
+                    owner.RequirePostProcessTexture(BloomBlurTextureName),
+                    owner.RequirePostProcessTexture(DepthViewTextureName),
+                    owner.RequirePostProcessTexture(StencilViewTextureName),
+                    owner.RequirePostProcessTexture(AutoExposureTextureName),
+                    owner.RequirePostProcessTexture(AtmosphereColorTextureName),
+                    owner.RequirePostProcessTexture(VolumetricFogColorTextureName),
+                    owner.RequirePostProcessTexture(AdvancedVisibilityResourceNames.Metadata),
+                ];
+            _shader = CreateAdvancedPostProcessShader(owner.PostProcessShaderName());
+        }
+
+        private void CreateMaterial()
+        {
+            _material = new XRMaterial(
+                _textureReferences ?? throw new InvalidOperationException("Post-process textures were not prepared."),
+                _shader ?? throw new InvalidOperationException("Post-process shader was not prepared."))
+            {
+                Name = PostProcessFBOName,
+                RenderOptions = new RenderingParameters
+                {
+                    DepthTest = new DepthTest
+                    {
+                        Enabled = ERenderParamUsage.Disabled,
+                        Function = EComparison.Always,
+                        UpdateDepth = false,
+                    },
+                    BlendModeAllDrawBuffers = BlendMode.Disabled(),
+                    RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.Lights | EUniformRequirements.RenderTime | EUniformRequirements.ViewportDimensions | EUniformRequirements.ClipSpacePolicy,
+                }
+            };
+        }
+
+        private void CompleteFrameBuffer()
+        {
+            XRQuadFrameBuffer frameBuffer = _frameBuffer
+                ?? throw new InvalidOperationException("Post-process framebuffer was not constructed.");
+            XRMaterial material = _material
+                ?? throw new InvalidOperationException("Post-process material was not constructed.");
+            frameBuffer.PrepareForInitialRendering();
+            frameBuffer.SettingUniforms += program => owner.ApplyPostProcessProgramBindings(material, program);
+        }
+
+        public void Dispose()
+        {
+            if (_transferred)
+                return;
+
+            _frameBuffer?.FullScreenMesh.Destroy();
+            _frameBuffer?.Destroy();
+            _material?.Destroy();
+            _frameBuffer = null;
+            _material = null;
+            _shader = null;
+            _textureReferences = null;
+        }
     }
 
     private static XRShader CreateAdvancedPostProcessShader(string fileName)
@@ -376,46 +454,130 @@ public partial class AdvancedRenderPipeline
     /// Reads the internal-resolution final post-process result plus temporal inputs and writes
     /// the reconstructed full-resolution output to <see cref="TsrOutputTextureName"/>.
     /// </summary>
-    private XRFrameBuffer CreateTsrUpscaleFBO()
-    {
-        XRTexture sourceTexture = GetTexture<XRTexture>(FinalPostProcessOutputTextureName)!;
-        XRTexture velocityTexture = GetTexture<XRTexture>(VelocityTextureName)!;
-        XRTexture depthTexture = GetTexture<XRTexture>(DepthViewTextureName)!;
-        XRTexture historyDepthTexture = GetTexture<XRTexture>(HistoryDepthViewTextureName)!;
-        XRTexture historyColorTexture = GetTexture<XRTexture>(TsrHistoryColorTextureName)!;
-        XRTexture stencilTexture = GetTexture<XRTexture>(StencilViewTextureName)!;
-        XRTexture outputTexture = GetTexture<XRTexture>(TsrOutputTextureName)!;
-        XRTexture reactiveTexture = GetTexture<XRTexture>(AdvancedTemporalHistoryContract.ReactiveMaskResourceName)!;
-        XRShader upscaleShader = CreateAdvancedTemporalShader(Stereo ? "TemporalSuperResolutionStereo.fs" : "TemporalSuperResolution.fs");
-        XRMaterial upscaleMaterial = new([sourceTexture, velocityTexture, depthTexture, historyDepthTexture, historyColorTexture, stencilTexture, reactiveTexture], upscaleShader)
-        {
-            RenderOptions = new RenderingParameters()
-            {
-                DepthTest = new DepthTest()
-                {
-                    Enabled = ERenderParamUsage.Disabled,
-                    Function = EComparison.Always,
-                    UpdateDepth = false,
-                },
-                StencilTest = new StencilTest()
-                {
-                    Enabled = ERenderParamUsage.Disabled,
-                },
-                BlendModeAllDrawBuffers = BlendMode.Disabled(),
-                RequiredEngineUniforms = EUniformRequirements.ClipSpacePolicy
-                    | EUniformRequirements.ViewportDimensions,
-            }
-        };
-        var fbo = new XRQuadFrameBuffer(upscaleMaterial, deriveRenderTargetsFromMaterial: false, useMultiview: Stereo)
-        {
-            Name = TsrUpscaleFBOName
-        };
-        if (outputTexture is not IFrameBufferAttachement outputAttach)
-            throw new InvalidOperationException("TSR upscale output texture is not an FBO-attachable texture.");
+    private IIncrementalFrameBufferFactory CreateTsrUpscaleFBOIncrementally()
+        => new TsrUpscaleFrameBufferFactory(this);
 
-        fbo.SetRenderTargets((outputAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1));
-        fbo.SettingUniforms += ApplyTsrUpscaleProgramBindings;
-        return fbo;
+    private sealed class TsrUpscaleFrameBufferFactory(AdvancedRenderPipeline owner) : IIncrementalFrameBufferFactory
+    {
+        private int _stage;
+        private XRTexture[]? _textureReferences;
+        private XRTexture? _outputTexture;
+        private XRShader? _shader;
+        private XRMaterial? _material;
+        private XRQuadFrameBuffer? _frameBuffer;
+        private bool _transferred;
+
+        public bool MoveNext(out XRFrameBuffer? frameBuffer)
+        {
+            frameBuffer = null;
+            switch (_stage)
+            {
+                case 0:
+                    PrepareTexturesAndShader();
+                    _stage++;
+                    return false;
+                case 1:
+                    CreateMaterial();
+                    _stage++;
+                    return false;
+                case 2:
+                    _frameBuffer = new XRQuadFrameBuffer(
+                        _material ?? throw new InvalidOperationException("TSR upscale material was not prepared."),
+                        deriveRenderTargetsFromMaterial: false,
+                        useMultiview: owner.Stereo,
+                        prepareForInitialRendering: false)
+                    {
+                        Name = TsrUpscaleFBOName
+                    };
+                    _stage++;
+                    return false;
+                case 3:
+                    _frameBuffer!.PrepareInitialRenderingVersion();
+                    _stage++;
+                    return false;
+                case 4:
+                    CompleteFrameBuffer();
+                    frameBuffer = _frameBuffer;
+                    _frameBuffer = null;
+                    _material = null;
+                    _shader = null;
+                    _textureReferences = null;
+                    _outputTexture = null;
+                    _transferred = true;
+                    _stage++;
+                    return true;
+                default:
+                    throw new InvalidOperationException("TSR upscale framebuffer factory was advanced after completion.");
+            }
+        }
+
+        private void PrepareTexturesAndShader()
+        {
+            _textureReferences =
+            [
+                GetTexture<XRTexture>(FinalPostProcessOutputTextureName)!,
+                GetTexture<XRTexture>(VelocityTextureName)!,
+                GetTexture<XRTexture>(DepthViewTextureName)!,
+                GetTexture<XRTexture>(HistoryDepthViewTextureName)!,
+                GetTexture<XRTexture>(TsrHistoryColorTextureName)!,
+                GetTexture<XRTexture>(StencilViewTextureName)!,
+                GetTexture<XRTexture>(AdvancedTemporalHistoryContract.ReactiveMaskResourceName)!,
+            ];
+            _outputTexture = GetTexture<XRTexture>(TsrOutputTextureName)!;
+            _shader = CreateAdvancedTemporalShader(
+                owner.Stereo ? "TemporalSuperResolutionStereo.fs" : "TemporalSuperResolution.fs");
+        }
+
+        private void CreateMaterial()
+        {
+            _material = new XRMaterial(
+                _textureReferences ?? throw new InvalidOperationException("TSR upscale textures were not prepared."),
+                _shader ?? throw new InvalidOperationException("TSR upscale shader was not prepared."))
+            {
+                RenderOptions = new RenderingParameters
+                {
+                    DepthTest = new DepthTest
+                    {
+                        Enabled = ERenderParamUsage.Disabled,
+                        Function = EComparison.Always,
+                        UpdateDepth = false,
+                    },
+                    StencilTest = new StencilTest
+                    {
+                        Enabled = ERenderParamUsage.Disabled,
+                    },
+                    BlendModeAllDrawBuffers = BlendMode.Disabled(),
+                    RequiredEngineUniforms = EUniformRequirements.ClipSpacePolicy
+                        | EUniformRequirements.ViewportDimensions,
+                }
+            };
+        }
+
+        private void CompleteFrameBuffer()
+        {
+            XRQuadFrameBuffer frameBuffer = _frameBuffer
+                ?? throw new InvalidOperationException("TSR upscale framebuffer was not constructed.");
+            frameBuffer.PrepareForInitialRendering();
+            if (_outputTexture is not IFrameBufferAttachement outputAttachment)
+                throw new InvalidOperationException("TSR upscale output texture is not an FBO-attachable texture.");
+
+            frameBuffer.SetRenderTargets((outputAttachment, EFrameBufferAttachment.ColorAttachment0, 0, -1));
+            frameBuffer.SettingUniforms += owner.ApplyTsrUpscaleProgramBindings;
+        }
+
+        public void Dispose()
+        {
+            if (_transferred)
+                return;
+
+            _frameBuffer?.Destroy();
+            _material?.Destroy();
+            _frameBuffer = null;
+            _material = null;
+            _shader = null;
+            _textureReferences = null;
+            _outputTexture = null;
+        }
     }
 
     private XRFrameBuffer CreateTsrHistoryColorFBO()
@@ -672,41 +834,104 @@ public partial class AdvancedRenderPipeline
         program.Uniform("OverlayOpacity", Math.Clamp(overlayOpacity, 0.0f, 1.0f));
     }
 
-    private XRFrameBuffer CreateForwardPassFBO()
+    private IIncrementalFrameBufferFactory CreateForwardPassFBOIncrementally()
+        => new ForwardPassFrameBufferFactory(this);
+
+    private sealed class ForwardPassFrameBufferFactory(AdvancedRenderPipeline owner) : IIncrementalFrameBufferFactory
     {
-        XRTexture hdrSceneTex = (XRTexture)EnsureTextureAttachment(HDRSceneTextureName, CreateHDRSceneTexture);
+        private int _stage;
+        private XRTexture? _hdrSceneTexture;
+        private XRMaterial? _material;
+        private XRQuadFrameBuffer? _frameBuffer;
+        private bool _transferred;
 
-        XRMaterial sceneCopyMat = new(
-            [hdrSceneTex],
-            XRShader.EngineShader(Path.Combine(SceneShaderPath, SceneCopyShaderName()), EShaderType.Fragment))
+        public bool MoveNext(out XRFrameBuffer? frameBuffer)
         {
-            RenderOptions = new RenderingParameters()
+            frameBuffer = null;
+            switch (_stage)
             {
-                DepthTest = new()
-                {
-                    Enabled = ERenderParamUsage.Disabled,
-                    Function = EComparison.Always,
-                    UpdateDepth = false,
-                },
-                StencilTest = new()
-                {
-                    Enabled = ERenderParamUsage.Disabled,
-                },
-                BlendModeAllDrawBuffers = BlendMode.Disabled(),
-                RequiredEngineUniforms = EUniformRequirements.ClipSpacePolicy,
+                case 0:
+                    CreateMaterial();
+                    _stage++;
+                    return false;
+                case 1:
+                    _frameBuffer = new XRQuadFrameBuffer(
+                        _material ?? throw new InvalidOperationException("Forward-pass material was not prepared."),
+                        useTriangle: false,
+                        deriveRenderTargetsFromMaterial: false,
+                        useMultiview: owner.Stereo,
+                        prepareForInitialRendering: false);
+                    _stage++;
+                    return false;
+                case 2:
+                    _frameBuffer!.PrepareInitialRenderingVersion();
+                    _stage++;
+                    return false;
+                case 3:
+                    CompleteFrameBuffer();
+                    frameBuffer = _frameBuffer;
+                    _frameBuffer = null;
+                    _material = null;
+                    _hdrSceneTexture = null;
+                    _transferred = true;
+                    _stage++;
+                    return true;
+                default:
+                    throw new InvalidOperationException("Forward-pass framebuffer factory was advanced after completion.");
             }
-        };
+        }
 
-        var fbo = new XRQuadFrameBuffer(sceneCopyMat, useTriangle: false, deriveRenderTargetsFromMaterial: false, useMultiview: Stereo);
+        private void CreateMaterial()
+        {
+            _hdrSceneTexture = (XRTexture)owner.EnsureTextureAttachment(HDRSceneTextureName, owner.CreateHDRSceneTexture);
+            XRShader sceneCopyShader = XRShader.EngineShader(
+                Path.Combine(SceneShaderPath, owner.SceneCopyShaderName()),
+                EShaderType.Fragment);
+            _material = new XRMaterial([_hdrSceneTexture], sceneCopyShader)
+            {
+                Name = ForwardPassFBOName,
+                RenderOptions = new RenderingParameters
+                {
+                    DepthTest = new DepthTest
+                    {
+                        Enabled = ERenderParamUsage.Disabled,
+                        Function = EComparison.Always,
+                        UpdateDepth = false,
+                    },
+                    StencilTest = new StencilTest
+                    {
+                        Enabled = ERenderParamUsage.Disabled,
+                    },
+                    BlendModeAllDrawBuffers = BlendMode.Disabled(),
+                    RequiredEngineUniforms = EUniformRequirements.ClipSpacePolicy,
+                }
+            };
+        }
 
-        IFrameBufferAttachement hdrAttach = (IFrameBufferAttachement)hdrSceneTex;
-        IFrameBufferAttachement dsAttach = RequireVisibilityAttachment(AdvancedVisibilityResourceNames.DepthStencil);
+        private void CompleteFrameBuffer()
+        {
+            XRQuadFrameBuffer frameBuffer = _frameBuffer
+                ?? throw new InvalidOperationException("Forward-pass framebuffer was not constructed.");
+            XRTexture hdrSceneTexture = _hdrSceneTexture
+                ?? throw new InvalidOperationException("Forward-pass HDR texture was not prepared.");
+            frameBuffer.PrepareForInitialRendering();
+            frameBuffer.SetRenderTargets(
+                ((IFrameBufferAttachement)hdrSceneTexture, EFrameBufferAttachment.ColorAttachment0, 0, -1),
+                (RequireVisibilityAttachment(AdvancedVisibilityResourceNames.DepthStencil), EFrameBufferAttachment.DepthStencilAttachment, 0, -1));
+        }
 
-        fbo.SetRenderTargets(
-            (hdrAttach, EFrameBufferAttachment.ColorAttachment0, 0, -1),
-            (dsAttach, EFrameBufferAttachment.DepthStencilAttachment, 0, -1));
+        public void Dispose()
+        {
+            if (_transferred)
+                return;
 
-        return fbo;
+            _frameBuffer?.FullScreenMesh.Destroy();
+            _frameBuffer?.Destroy();
+            _material?.Destroy();
+            _frameBuffer = null;
+            _material = null;
+            _hdrSceneTexture = null;
+        }
     }
 
     private XRFrameBuffer CreateForwardPassMsaaFBO()
@@ -744,6 +969,7 @@ public partial class AdvancedRenderPipeline
         IFrameBufferAttachement normalAttach = EnsureTextureAttachment(NormalTextureName, CreateNormalTexture);
         IFrameBufferAttachement rmseAttach = EnsureTextureAttachment(RMSETextureName, CreateRMSETexture);
         IFrameBufferAttachement transformIdAttach = EnsureTextureAttachment(TransformIdTextureName, CreateTransformIdTexture);
+        IFrameBufferAttachement emissionAttach = EnsureTextureAttachment(EmissionColorTextureName, CreateEmissionColorTexture);
         IFrameBufferAttachement depthStencilAttach = EnsureTextureAttachment(DepthStencilTextureName, CreateDepthStencilTexture);
 
         return new XRFrameBuffer(
@@ -751,6 +977,7 @@ public partial class AdvancedRenderPipeline
             (normalAttach, EFrameBufferAttachment.ColorAttachment1, 0, -1),
             (rmseAttach, EFrameBufferAttachment.ColorAttachment2, 0, -1),
             (transformIdAttach, EFrameBufferAttachment.ColorAttachment3, 0, -1),
+            (emissionAttach, EFrameBufferAttachment.ColorAttachment4, 0, -1),
             (depthStencilAttach, EFrameBufferAttachment.DepthStencilAttachment, 0, -1))
         {
             ForceOvrMultiview = Stereo,
@@ -942,31 +1169,113 @@ public partial class AdvancedRenderPipeline
         };
     }
 
-    private XRFrameBuffer CreateMotionBlurFBO()
+    private IIncrementalFrameBufferFactory CreateMotionBlurFBOIncrementally()
+        => new MotionBlurFrameBufferFactory(this);
+
+    private sealed class MotionBlurFrameBufferFactory(AdvancedRenderPipeline owner) : IIncrementalFrameBufferFactory
     {
-        XRTexture motionBlurCopy = GetTexture<XRTexture>(MotionBlurTextureName)!;
-        XRTexture velocityTex = GetTexture<XRTexture>(VelocityTextureName)!;
-        XRTexture depthTex = GetTexture<XRTexture>(DepthViewTextureName)!;
+        private int _stage;
+        private XRTexture[]? _textureReferences;
+        private XRShader? _shader;
+        private XRMaterial? _material;
+        private XRQuadFrameBuffer? _frameBuffer;
+        private bool _transferred;
 
-        XRMaterial material = new(
-            [motionBlurCopy, velocityTex, depthTex],
-            XRShader.EngineShader(Path.Combine(SceneShaderPath, Stereo ? "MotionBlurStereo.fs" : "MotionBlur.fs"), EShaderType.Fragment))
+        public bool MoveNext(out XRFrameBuffer? frameBuffer)
         {
-            RenderOptions = new RenderingParameters()
+            frameBuffer = null;
+            switch (_stage)
             {
-                DepthTest = new()
-                {
-                    Enabled = ERenderParamUsage.Disabled,
-                    Function = EComparison.Always,
-                    UpdateDepth = false,
-                },
-                RequiredEngineUniforms = EUniformRequirements.ViewportDimensions | EUniformRequirements.ClipSpacePolicy
+                case 0:
+                    _textureReferences =
+                    [
+                        GetTexture<XRTexture>(MotionBlurTextureName)!,
+                        GetTexture<XRTexture>(VelocityTextureName)!,
+                        GetTexture<XRTexture>(DepthViewTextureName)!,
+                    ];
+                    _stage++;
+                    return false;
+                case 1:
+                    _shader = XRShader.EngineShader(
+                        Path.Combine(SceneShaderPath, owner.Stereo ? "MotionBlurStereo.fs" : "MotionBlur.fs"),
+                        EShaderType.Fragment);
+                    _stage++;
+                    return false;
+                case 2:
+                    CreateMaterial();
+                    _stage++;
+                    return false;
+                case 3:
+                    _frameBuffer = new XRQuadFrameBuffer(
+                        _material ?? throw new InvalidOperationException("Motion-blur material was not prepared."),
+                        deriveRenderTargetsFromMaterial: false,
+                        useMultiview: owner.Stereo,
+                        prepareForInitialRendering: false)
+                    {
+                        Name = MotionBlurFBOName
+                    };
+                    _stage++;
+                    return false;
+                case 4:
+                    _frameBuffer!.PrepareInitialRenderingVersion();
+                    _stage++;
+                    return false;
+                case 5:
+                    CompleteFrameBuffer();
+                    frameBuffer = _frameBuffer;
+                    _frameBuffer = null;
+                    _material = null;
+                    _shader = null;
+                    _textureReferences = null;
+                    _transferred = true;
+                    _stage++;
+                    return true;
+                default:
+                    throw new InvalidOperationException("Motion-blur framebuffer factory was advanced after completion.");
             }
-        };
+        }
 
-        var fbo = new XRQuadFrameBuffer(material, deriveRenderTargetsFromMaterial: false, useMultiview: Stereo) { Name = MotionBlurFBOName };
-        fbo.SettingUniforms += ApplyMotionBlurProgramBindings;
-        return fbo;
+        private void CreateMaterial()
+        {
+            _material = new XRMaterial(
+                _textureReferences ?? throw new InvalidOperationException("Motion-blur textures were not prepared."),
+                _shader ?? throw new InvalidOperationException("Motion-blur shader was not prepared."))
+            {
+                Name = MotionBlurFBOName,
+                RenderOptions = new RenderingParameters
+                {
+                    DepthTest = new DepthTest
+                    {
+                        Enabled = ERenderParamUsage.Disabled,
+                        Function = EComparison.Always,
+                        UpdateDepth = false,
+                    },
+                    RequiredEngineUniforms = EUniformRequirements.ViewportDimensions | EUniformRequirements.ClipSpacePolicy,
+                }
+            };
+        }
+
+        private void CompleteFrameBuffer()
+        {
+            XRQuadFrameBuffer frameBuffer = _frameBuffer
+                ?? throw new InvalidOperationException("Motion-blur framebuffer was not constructed.");
+            frameBuffer.PrepareForInitialRendering();
+            frameBuffer.SettingUniforms += owner.ApplyMotionBlurProgramBindings;
+        }
+
+        public void Dispose()
+        {
+            if (_transferred)
+                return;
+
+            _frameBuffer?.FullScreenMesh.Destroy();
+            _frameBuffer?.Destroy();
+            _material?.Destroy();
+            _frameBuffer = null;
+            _material = null;
+            _shader = null;
+            _textureReferences = null;
+        }
     }
 
     private XRFrameBuffer CreateDepthOfFieldCopyFBO()
@@ -980,30 +1289,103 @@ public partial class AdvancedRenderPipeline
         };
     }
 
-    private XRFrameBuffer CreateDepthOfFieldFBO()
+    private IIncrementalFrameBufferFactory CreateDepthOfFieldFBOIncrementally()
+        => new DepthOfFieldFrameBufferFactory(this);
+
+    private sealed class DepthOfFieldFrameBufferFactory(AdvancedRenderPipeline owner) : IIncrementalFrameBufferFactory
     {
-        XRTexture dofSource = GetTexture<XRTexture>(DepthOfFieldTextureName)!;
-        XRTexture depthTex = GetTexture<XRTexture>(DepthViewTextureName)!;
+        private int _stage;
+        private XRTexture[]? _textureReferences;
+        private XRShader? _shader;
+        private XRMaterial? _material;
+        private XRQuadFrameBuffer? _frameBuffer;
+        private bool _transferred;
 
-        XRMaterial material = new(
-            [dofSource, depthTex],
-            XRShader.EngineShader(Path.Combine(SceneShaderPath, Stereo ? "DepthOfFieldStereo.fs" : "DepthOfField.fs"), EShaderType.Fragment))
+        public bool MoveNext(out XRFrameBuffer? frameBuffer)
         {
-            RenderOptions = new RenderingParameters()
+            frameBuffer = null;
+            switch (_stage)
             {
-                DepthTest = new()
-                {
-                    Enabled = ERenderParamUsage.Disabled,
-                    Function = EComparison.Always,
-                    UpdateDepth = false,
-                },
-                RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.ViewportDimensions | EUniformRequirements.ClipSpacePolicy
+                case 0:
+                    _textureReferences =
+                    [
+                        GetTexture<XRTexture>(DepthOfFieldTextureName)!,
+                        GetTexture<XRTexture>(DepthViewTextureName)!,
+                    ];
+                    _shader = XRShader.EngineShader(
+                        Path.Combine(SceneShaderPath, owner.Stereo ? "DepthOfFieldStereo.fs" : "DepthOfField.fs"),
+                        EShaderType.Fragment);
+                    _stage++;
+                    return false;
+                case 1:
+                    CreateMaterial();
+                    _stage++;
+                    return false;
+                case 2:
+                    _frameBuffer = new XRQuadFrameBuffer(
+                        _material ?? throw new InvalidOperationException("Depth-of-field material was not prepared."),
+                        deriveRenderTargetsFromMaterial: false,
+                        useMultiview: owner.Stereo,
+                        prepareForInitialRendering: false)
+                    {
+                        Name = DepthOfFieldFBOName
+                    };
+                    _stage++;
+                    return false;
+                case 3:
+                    _frameBuffer!.PrepareInitialRenderingVersion();
+                    _stage++;
+                    return false;
+                case 4:
+                    XRQuadFrameBuffer completed = _frameBuffer
+                        ?? throw new InvalidOperationException("Depth-of-field framebuffer was not constructed.");
+                    completed.PrepareForInitialRendering();
+                    completed.SettingUniforms += owner.ApplyDepthOfFieldProgramBindings;
+                    frameBuffer = completed;
+                    _frameBuffer = null;
+                    _material = null;
+                    _shader = null;
+                    _textureReferences = null;
+                    _transferred = true;
+                    _stage++;
+                    return true;
+                default:
+                    throw new InvalidOperationException("Depth-of-field framebuffer factory was advanced after completion.");
             }
-        };
+        }
 
-        var fbo = new XRQuadFrameBuffer(material, deriveRenderTargetsFromMaterial: false, useMultiview: Stereo) { Name = DepthOfFieldFBOName };
-        fbo.SettingUniforms += ApplyDepthOfFieldProgramBindings;
-        return fbo;
+        private void CreateMaterial()
+        {
+            _material = new XRMaterial(
+                _textureReferences ?? throw new InvalidOperationException("Depth-of-field textures were not prepared."),
+                _shader ?? throw new InvalidOperationException("Depth-of-field shader was not prepared."))
+            {
+                RenderOptions = new RenderingParameters()
+                {
+                    DepthTest = new()
+                    {
+                        Enabled = ERenderParamUsage.Disabled,
+                        Function = EComparison.Always,
+                        UpdateDepth = false,
+                    },
+                    RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.ViewportDimensions | EUniformRequirements.ClipSpacePolicy
+                }
+            };
+        }
+
+        public void Dispose()
+        {
+            if (_transferred)
+                return;
+
+            _frameBuffer?.FullScreenMesh.Destroy();
+            _frameBuffer?.Destroy();
+            _material?.Destroy();
+            _frameBuffer = null;
+            _material = null;
+            _shader = null;
+            _textureReferences = null;
+        }
     }
 
     private XRFrameBuffer CreateHistoryExposureFBO()
@@ -1133,6 +1515,7 @@ public partial class AdvancedRenderPipeline
             GetTexture<XRTexture>(DepthViewTextureName)!,
             lightingAccumTexture,
             GetTexture<XRTexture>(BRDFTextureName)!,
+            GetTexture<XRTexture>(EmissionColorTextureName)!,
         ];
         XRShader lightCombineShader = XRShader.EngineShader(Path.Combine(SceneShaderPath, DeferredLightCombineShaderName()), EShaderType.Fragment);
         XRMaterial lightCombineMat = new(lightCombineTextures, lightCombineShader)
@@ -1233,6 +1616,49 @@ public partial class AdvancedRenderPipeline
         return new XRQuadFrameBuffer(material, useMultiview: Stereo) { Name = SurfelGICompositeFBOName };
     }
 
+    private XRFrameBuffer CreateDDGICompositeFBO()
+    {
+        XRTexture giTexture = GetTexture<XRTexture>(DDGITextureName)!;
+        XRShader compositeShader = XRShader.EngineShader(
+            Path.Combine(SceneShaderPath, Stereo ? "DDGICompositeStereo.fs" : "DDGIComposite.fs"),
+            EShaderType.Fragment);
+        BlendMode additiveBlend = new()
+        {
+            Enabled = ERenderParamUsage.Enabled,
+            RgbSrcFactor = EBlendingFactor.One,
+            AlphaSrcFactor = EBlendingFactor.One,
+            RgbDstFactor = EBlendingFactor.One,
+            AlphaDstFactor = EBlendingFactor.One,
+            RgbEquation = EBlendEquationMode.FuncAdd,
+            AlphaEquation = EBlendEquationMode.FuncAdd
+        };
+
+        XRMaterial material = new([giTexture], compositeShader)
+        {
+            RenderOptions = new RenderingParameters()
+            {
+                DepthTest = new DepthTest()
+                {
+                    Enabled = ERenderParamUsage.Disabled,
+                    Function = EComparison.Always,
+                    UpdateDepth = false,
+                },
+                BlendModeAllDrawBuffers = additiveBlend
+            }
+        };
+
+        var fbo = new XRQuadFrameBuffer(material, useMultiview: Stereo) { Name = DDGICompositeFBOName };
+        fbo.SettingUniforms += DDGICompositeFBO_SettingUniforms;
+        return fbo;
+    }
+
+    private void DDGICompositeFBO_SettingUniforms(XRRenderProgram program)
+    {
+        var region = RuntimeEngine.Rendering.State.RenderingPipelineState?.CurrentRenderRegion;
+        program.Uniform("ScreenWidth", region?.Width > 0 ? (float)region.Value.Width : InternalWidth);
+        program.Uniform("ScreenHeight", region?.Height > 0 ? (float)region.Value.Height : InternalHeight);
+    }
+
     private XRFrameBuffer CreateLightVolumeCompositeFBO()
     {
         XRTexture giTexture = GetTexture<XRTexture>(LightVolumeGITextureName)!;
@@ -1325,6 +1751,7 @@ public partial class AdvancedRenderPipeline
         IFrameBufferAttachement normalAttach = EnsureTextureAttachment(MsaaNormalTextureName, CreateMsaaNormalTexture);
         IFrameBufferAttachement rmseAttach = EnsureTextureAttachment(MsaaRMSETextureName, CreateMsaaRMSETexture);
         IFrameBufferAttachement transformIdAttach = EnsureTextureAttachment(MsaaTransformIdTextureName, CreateMsaaTransformIdTexture);
+        IFrameBufferAttachement emissionAttach = EnsureTextureAttachment(MsaaEmissionColorTextureName, CreateMsaaEmissionColorTexture);
         IFrameBufferAttachement depthStencilAttach = EnsureTextureAttachment(MsaaDepthStencilTextureName, CreateMsaaDepthStencilTexture);
 
         return new XRFrameBuffer(
@@ -1332,6 +1759,7 @@ public partial class AdvancedRenderPipeline
             (normalAttach, EFrameBufferAttachment.ColorAttachment1, 0, -1),
             (rmseAttach, EFrameBufferAttachment.ColorAttachment2, 0, -1),
             (transformIdAttach, EFrameBufferAttachment.ColorAttachment3, 0, -1),
+            (emissionAttach, EFrameBufferAttachment.ColorAttachment4, 0, -1),
             (depthStencilAttach, EFrameBufferAttachment.DepthStencilAttachment, 0, -1))
         {
             ForceOvrMultiview = Stereo,
@@ -1375,6 +1803,7 @@ public partial class AdvancedRenderPipeline
             GetTexture<XRTexture>(MsaaDepthViewTextureName)!,
             msaaLightingTexture,
             GetTexture<XRTexture>(BRDFTextureName)!,
+            GetTexture<XRTexture>(MsaaEmissionColorTextureName)!,
         ];
 
         XRShader baseShader = XRShader.EngineShader(

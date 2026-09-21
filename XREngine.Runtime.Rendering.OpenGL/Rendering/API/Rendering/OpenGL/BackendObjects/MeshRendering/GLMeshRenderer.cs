@@ -18,7 +18,7 @@ namespace XREngine.Rendering.OpenGL
         /// <summary>
         /// OpenGL-backed mesh renderer responsible for VAO setup, shader selection, and draw dispatch.
         /// </summary>
-        public partial class GLMeshRenderer(OpenGLRenderer renderer, XRMeshRenderer.BaseVersion mesh) : GLObject<XRMeshRenderer.BaseVersion>(renderer, mesh), IRenderPreparationState
+        public partial class GLMeshRenderer(OpenGLRenderer renderer, XRMeshRenderer.BaseVersion mesh) : GLObject<XRMeshRenderer.BaseVersion>(renderer, mesh), IRenderPreparationState, IApiMeshRenderer
         {
             static GLMeshRenderer()
                 => XREnvironment.VariableChanged += HandleEnvironmentVariableChanged;
@@ -223,6 +223,9 @@ namespace XREngine.Rendering.OpenGL
                     || string.Equals(meshRenderer?.Mesh?.Name, "UIBatchTextQuadMesh", StringComparison.Ordinal);
             }
 
+            internal bool ShouldLogBatchedTextDraw()
+                => s_batchedTextDrawDiagCount < 80 && IsBatchedTextDiagnosticMesh();
+
             internal void LogBatchedTextDraw(string phase, uint instances, string? detail = null)
             {
                 if (!IsBatchedTextDiagnosticMesh() || s_batchedTextDrawDiagCount++ >= 80)
@@ -305,6 +308,9 @@ namespace XREngine.Rendering.OpenGL
 
                 return false;
             }
+
+            internal bool ShouldLogModelDrawDiagnostic()
+                => s_modelDrawDiagCount < ModelDrawDiagMaxLogs && IsModelDrawDiagnosticMesh();
 
             private static void HandleEnvironmentVariableChanged(RuntimeEnvironmentVariableChange change)
             {
@@ -484,9 +490,10 @@ namespace XREngine.Rendering.OpenGL
                     return _combinedProgram;
 
                 if (UseShaderPipelinesForThisRenderer() &&
-                    (Material?.SeparableProgram?.Data.GetShaderTypeMask().HasFlag(EProgramStageMask.VertexShaderBit) ?? false))
+                    Material?.SeparableProgram is { } materialProgram &&
+                    (materialProgram.Data.GetShaderTypeMask() & EProgramStageMask.VertexShaderBit) != 0)
                 {
-                    return Material.SeparableProgram!;
+                    return materialProgram;
                 }
 
                 return _separatedVertexProgram!;
@@ -547,8 +554,7 @@ namespace XREngine.Rendering.OpenGL
                     mask |= materialProgram.Data.GetShaderTypeMask();
 
                 bool hasTessellationStages =
-                    mask.HasFlag(EProgramStageMask.TessControlShaderBit) ||
-                    mask.HasFlag(EProgramStageMask.TessEvaluationShaderBit);
+                    (mask & (EProgramStageMask.TessControlShaderBit | EProgramStageMask.TessEvaluationShaderBit)) != 0;
 
                 UsesPatchTopology = hasTessellationStages && TriangleIndicesBuffer is not null;
                 PatchVertexCount = 3;
@@ -719,8 +725,10 @@ namespace XREngine.Rendering.OpenGL
                 && triBuffer.TryGetBindingId(out uint triEbo) && triEbo != 0)
             {
                 Api.VertexArrayElementBuffer(ActiveMeshRenderer.BindingId, triEbo);
-                ActiveMeshRenderer.LogBatchedTextDraw("DrawElementsInstanced triangles", instances, $"ebo={triEbo}");
-                ActiveMeshRenderer.LogModelDrawDiagnostic("DrawElementsInstanced triangles", instances, $"ebo={triEbo}");
+                if (ActiveMeshRenderer.ShouldLogBatchedTextDraw())
+                    ActiveMeshRenderer.LogBatchedTextDraw("DrawElementsInstanced triangles", instances, $"ebo={triEbo}");
+                if (ActiveMeshRenderer.ShouldLogModelDrawDiagnostic())
+                    ActiveMeshRenderer.LogModelDrawDiagnostic("DrawElementsInstanced triangles", instances, $"ebo={triEbo}");
                 GLRenderQuery? samplesProbe = ActiveMeshRenderer.BeginBatchedTextSamplesProbe();
                 Api.DrawElementsInstanced(GLEnum.Triangles, triangles, ToGLEnum(ActiveMeshRenderer.TrianglesElementType), null, instances);
                 RecordActiveDrawCoverage(indirect: false, instances);

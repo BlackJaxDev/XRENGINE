@@ -26,7 +26,9 @@ public sealed partial class GPUPhysicsChainDispatcher
             uint elementCount = Math.Max(binding.BoneMatrixElementCount, 1u);
             if (!binding.DrivesCompleteBonePalette)
             {
-                XRDataBuffer? source = binding.Renderer.SkinPaletteBuffer;
+                XRMeshRenderer.BoneResourceSnapshot rendererResources =
+                    binding.Renderer.CaptureBoneResources();
+                XRDataBuffer? source = rendererResources.SkinPalette;
                 uint copyElementCount = Math.Min(elementCount, source?.ElementCount ?? 0u);
                 if (copyElementCount > 0u)
                 {

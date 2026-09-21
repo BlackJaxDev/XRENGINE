@@ -24,9 +24,15 @@ internal sealed partial class VulkanFramePlanner
         if (!stereoEnabled)
             return false;
 
-        string pipelineTypeName = context.PipelineInstance?.AssignedPipeline?.GetType().Name ?? string.Empty;
-        return pipelineTypeName.Contains("MultiView", StringComparison.OrdinalIgnoreCase) ||
-            pipelineTypeName.Contains("Multiview", StringComparison.OrdinalIgnoreCase);
+        if (context.OutputFrameBuffer?.ForceOvrMultiview == true)
+            return true;
+
+        // Pipeline types support both mono and stereo invocations. The output
+        // contract, rather than its class name, identifies a layered view family.
+        uint viewMask = context.OutputSchedulingRequest.IsDefined
+            ? context.OutputSchedulingRequest.Target.ViewMask
+            : 0u;
+        return viewMask != 0u && (viewMask & (viewMask - 1u)) != 0u;
     }
 
     internal static VulkanFrameOpPlannerStateKey BuildFrameOpPlannerStateKey(in FrameOpContext context)
@@ -122,33 +128,10 @@ internal sealed partial class VulkanFramePlanner
         => unchecked((ulong)(uint)ComputeResourceRegistrySignature(registry));
 
     internal static FrameOpContext RefreshFrameOpContextRecordingFingerprint(in FrameOpContext context)
-        => context with { RecordingFingerprint = ComputeFrameOpContextRecordingFingerprint(context) };
+        => VulkanFrameOpSnapshotSignatures.RefreshRecordingFingerprint(context);
 
     internal static ulong ComputeFrameOpContextRecordingFingerprint(in FrameOpContext context)
-    {
-        FrameOpSignatureHasher hash = new();
-        hash.Add(0x46524D4F50435458UL);
-        hash.Add((int)context.ContextKind);
-        hash.Add(context.PipelineIdentity);
-        hash.Add(context.ViewportIdentity);
-        hash.Add(context.AdvancedVisibilityOutputIdentity);
-        hash.Add(context.OutputFrameBufferIdentity);
-        hash.Add(context.OutputTargetIdentity);
-        hash.Add(context.LogicalViewId);
-        hash.Add(context.OutputTargetName);
-        hash.Add(context.DisplayWidth);
-        hash.Add(context.DisplayHeight);
-        hash.Add(context.InternalWidth);
-        hash.Add(context.InternalHeight);
-        hash.Add(context.StereoEnabled);
-        hash.Add(context.MultiviewEnabled);
-        hash.Add(ResolveFrameOpContextResourceRegistrySignature(context));
-        hash.Add(ComputePassMetadataSignature(context.PassMetadata));
-        hash.Add(context.ResourceGeneration);
-        hash.Add(context.DescriptorGeneration);
-        hash.Add(context.SubmissionQueueFamily);
-        return hash.ToHash();
-    }
+        => VulkanFrameOpSnapshotSignatures.ComputeRecordingFingerprint(context);
 
 
     internal static FrameOpContext SelectPrimaryPlannerContext(FrameOp[] ops)

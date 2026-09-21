@@ -26,7 +26,8 @@ namespace XREngine.Editor.Mcp
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
             Converters =
             {
-                new McpColorF4JsonConverter(),
+                new McpColorF3JsonConverter(), new McpColorF4JsonConverter(),
+                new McpIVector3JsonConverter(),
                 new McpNumericsJsonConverter<System.Numerics.Vector2>(),
                 new McpNumericsJsonConverter<System.Numerics.Vector3>(),
                 new McpNumericsJsonConverter<System.Numerics.Vector4>(),

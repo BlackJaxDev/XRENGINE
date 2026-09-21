@@ -1,4 +1,5 @@
 using System;
+using System.Buffers.Binary;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -9,6 +10,8 @@ namespace XREngine.Rendering.Vulkan;
 internal sealed unsafe partial class VulkanPipelineManager
 {
     private const int VulkanPipelineCacheSchemaVersion = 3;
+    private const int VulkanPipelineCacheHeaderSize = 32;
+    private const uint VulkanPipelineCacheHeaderVersionOne = 1;
     private const int VulkanPipelineCompileRequiredResult = 1000297000;
     private const uint VulkanPipelineFailOnCompileRequiredFlag = 0x00000100;
     // Persist during normal editor startup rather than relying on orderly process
@@ -53,6 +56,14 @@ internal sealed unsafe partial class VulkanPipelineManager
                 initialData = File.ReadAllBytes(_pipelineCacheFilePath);
                 if (initialData.Length == 0)
                     initialData = null;
+                else if (!IsPipelineCacheDataCompatible(initialData, in properties, out string rejectionReason))
+                {
+                    Debug.VulkanWarning(
+                        "[Vulkan] Rejected persisted pipeline cache data ({0}); recreating empty caches.",
+                        rejectionReason);
+                    initialData = null;
+                    Interlocked.Increment(ref _pipelineCacheInitialDataRejectedCount);
+                }
             }
             catch (Exception ex)
             {
@@ -60,37 +71,46 @@ internal sealed unsafe partial class VulkanPipelineManager
             }
         }
 
-        fixed (byte* initialDataPtr = initialData)
+        bool recoveringRejectedData = Volatile.Read(ref _pipelineCacheInitialDataRejectedCount) > 0;
+        Result result = CreateNativePipelineCache(initialData, out _pipelineCache);
+        if (result != Result.Success && initialData is not null)
         {
-            PipelineCacheCreateInfo info = new()
-            {
-                SType = StructureType.PipelineCacheCreateInfo,
-                InitialDataSize = initialData is null ? 0u : (nuint)initialData.Length,
-                PInitialData = initialDataPtr,
-            };
-
-            Result result = RequireApi().CreatePipelineCache(RequireDeviceContext().Device, ref info, null, out _pipelineCache);
-            if (result != Result.Success)
-            {
-                _pipelineCache = default;
-                Debug.VulkanWarning($"[Vulkan] Failed to create pipeline cache ({result}); continuing without persistent cache.");
-                return;
-            }
-
-            Result backgroundResult = RequireApi().CreatePipelineCache(
-                RequireDeviceContext().Device,
-                ref info,
-                null,
-                out _backgroundPipelineCache);
-            if (backgroundResult != Result.Success)
-            {
-                _backgroundPipelineCache = default;
-                Debug.VulkanWarning(
-                    "[Vulkan] Failed to create isolated background pipeline cache ({0}); " +
-                    "background compiles will use no cache rather than serialize foreground creation.",
-                    backgroundResult);
-            }
+            Debug.VulkanWarning(
+                "[Vulkan] Driver rejected persisted pipeline cache data ({0}); recreating empty caches.",
+                result);
+            Interlocked.Increment(ref _pipelineCacheInitialDataRejectedCount);
+            initialData = null;
+            recoveringRejectedData = true;
+            result = CreateNativePipelineCache(initialData, out _pipelineCache);
         }
+        if (result != Result.Success)
+        {
+            _pipelineCache = default;
+            Debug.VulkanWarning($"[Vulkan] Failed to create empty pipeline cache ({result}); continuing without persistent cache.");
+            return;
+        }
+
+        Result backgroundResult = CreateNativePipelineCache(initialData, out _backgroundPipelineCache);
+        if (backgroundResult != Result.Success && initialData is not null)
+        {
+            Debug.VulkanWarning(
+                "[Vulkan] Driver rejected persisted data for the isolated background pipeline cache ({0}); recreating it empty.",
+                backgroundResult);
+            Interlocked.Increment(ref _pipelineCacheInitialDataRejectedCount);
+            recoveringRejectedData = true;
+            backgroundResult = CreateNativePipelineCache(initialData: null, out _backgroundPipelineCache);
+        }
+        if (backgroundResult != Result.Success)
+        {
+            _backgroundPipelineCache = default;
+            Debug.VulkanWarning(
+                "[Vulkan] Failed to create isolated background pipeline cache ({0}); " +
+                "background compiles will use no cache rather than serialize foreground creation.",
+                backgroundResult);
+        }
+
+        if (recoveringRejectedData)
+            Interlocked.Increment(ref _pipelineCacheRecoveryCount);
 
         _pipelineCacheInitialDataBytes = initialData?.Length ?? 0;
 
@@ -104,30 +124,77 @@ internal sealed unsafe partial class VulkanPipelineManager
             properties.ApiVersion);
     }
 
+    private Result CreateNativePipelineCache(byte[]? initialData, out PipelineCache pipelineCache)
+    {
+        fixed (byte* initialDataPtr = initialData)
+        {
+            PipelineCacheCreateInfo info = new()
+            {
+                SType = StructureType.PipelineCacheCreateInfo,
+                InitialDataSize = initialData is null ? 0u : (nuint)initialData.Length,
+                PInitialData = initialDataPtr,
+            };
+            return RequireApi().CreatePipelineCache(
+                RequireDeviceContext().Device,
+                ref info,
+                null,
+                out pipelineCache);
+        }
+    }
+
+    private static bool IsPipelineCacheDataCompatible(
+        ReadOnlySpan<byte> data,
+        in PhysicalDeviceProperties properties,
+        out string reason)
+    {
+        if (data.Length < VulkanPipelineCacheHeaderSize)
+        {
+            reason = $"header is truncated ({data.Length} < {VulkanPipelineCacheHeaderSize} bytes)";
+            return false;
+        }
+
+        uint headerSize = BinaryPrimitives.ReadUInt32LittleEndian(data);
+        uint headerVersion = BinaryPrimitives.ReadUInt32LittleEndian(data[4..]);
+        uint vendorId = BinaryPrimitives.ReadUInt32LittleEndian(data[8..]);
+        uint deviceId = BinaryPrimitives.ReadUInt32LittleEndian(data[12..]);
+        if (headerSize < VulkanPipelineCacheHeaderSize || headerSize > data.Length)
+        {
+            reason = $"header size {headerSize} is outside the payload bounds";
+            return false;
+        }
+        if (headerVersion != VulkanPipelineCacheHeaderVersionOne)
+        {
+            reason = $"header version {headerVersion} is unsupported";
+            return false;
+        }
+        if (vendorId != properties.VendorID || deviceId != properties.DeviceID)
+        {
+            reason = $"device identity 0x{vendorId:X8}:0x{deviceId:X8} does not match 0x{properties.VendorID:X8}:0x{properties.DeviceID:X8}";
+            return false;
+        }
+
+        fixed (byte* expectedUuid = properties.PipelineCacheUuid)
+        {
+            for (int index = 0; index < 16; index++)
+            {
+                if (data[16 + index] == expectedUuid[index])
+                    continue;
+                reason = "pipeline cache UUID does not match the selected device";
+                return false;
+            }
+        }
+
+        reason = string.Empty;
+        return true;
+    }
+
     /// <summary>
     /// Publishes pipeline-cache entries produced by the isolated compiler cache
     /// into the foreground persistent cache after a native compile returns.
     /// </summary>
     internal void PublishBackgroundPipelineCache(double compileMilliseconds)
     {
-        Result mergeResult;
-        using (VulkanFrameLockScope.Enter(
-                   _pipelineCacheHostAccessLock,
-                   EVulkanFrameWaitReason.PipelineCompilerLock))
-            using (VulkanFrameLockScope.Enter(
-                       _backgroundPipelineCacheHostAccessLock,
-                       EVulkanFrameWaitReason.PipelineCompilerLock))
-            {
-                if (_pipelineCache.Handle == 0 || _backgroundPipelineCache.Handle == 0)
-                    return;
-
-                PipelineCache source = _backgroundPipelineCache;
-                mergeResult = RequireApi().MergePipelineCaches(
-                    RequireDeviceContext().Device,
-                    _pipelineCache,
-                    1,
-                    &source);
-            }
+        Result mergeResult = MergeBackgroundPipelineCache();
 
         if (mergeResult != Result.Success)
         {
@@ -167,12 +234,15 @@ internal sealed unsafe partial class VulkanPipelineManager
             if ((int)result == VulkanPipelineCompileRequiredResult)
             {
                 compileRequired = true;
+                RecordPipelineCacheProbe(miss: true, failure: false);
                 RuntimeEngine.Rendering.Stats.Vulkan.RecordVulkanPipelineTelemetry(
                     EVulkanPipelineTelemetryEvent.CompileRequired,
                     EVulkanDriverPipelineCacheOutcome.Miss,
                     backgroundCompile: true);
                 result = CreateGraphicsPipelinesSynchronized(pipelineCache, ref pipelineInfo, out pipeline);
             }
+            else
+                RecordPipelineCacheProbe(miss: false, failure: result != Result.Success);
         }
         else
         {
@@ -212,15 +282,38 @@ internal sealed unsafe partial class VulkanPipelineManager
         out Pipeline pipeline)
     {
         Interlocked.Increment(ref _graphicsPipelineCreateCount);
-        if (pipelineCache.Handle == _backgroundPipelineCache.Handle && pipelineCache.Handle != 0)
+        bool background = pipelineCache.Handle == _backgroundPipelineCache.Handle && pipelineCache.Handle != 0;
+        if (background)
             Interlocked.Increment(ref _workerPipelineCreateCount);
         if (pipelineCache.Handle == 0)
-            return RequireApi().CreateGraphicsPipelines(RequireDeviceContext().Device, pipelineCache, 1, ref pipelineInfo, null, out pipeline);
+        {
+            long nativeStart = global::System.Diagnostics.Stopwatch.GetTimestamp();
+            try
+            {
+                return RequireApi().CreateGraphicsPipelines(RequireDeviceContext().Device, pipelineCache, 1, ref pipelineInfo, null, out pipeline);
+            }
+            finally
+            {
+                RecordNativePipelineCreate(background, global::System.Diagnostics.Stopwatch.GetTimestamp() - nativeStart);
+            }
+        }
 
+        long waitStart = global::System.Diagnostics.Stopwatch.GetTimestamp();
         using (VulkanFrameLockScope.Enter(
                    GetVulkanPipelineCacheHostAccessLock(pipelineCache),
                    EVulkanFrameWaitReason.PipelineCompilerLock))
-            return RequireApi().CreateGraphicsPipelines(RequireDeviceContext().Device, pipelineCache, 1, ref pipelineInfo, null, out pipeline);
+        {
+            RecordPipelineCacheHostWait(background, global::System.Diagnostics.Stopwatch.GetTimestamp() - waitStart);
+            long nativeStart = global::System.Diagnostics.Stopwatch.GetTimestamp();
+            try
+            {
+                return RequireApi().CreateGraphicsPipelines(RequireDeviceContext().Device, pipelineCache, 1, ref pipelineInfo, null, out pipeline);
+            }
+            finally
+            {
+                RecordNativePipelineCreate(background, global::System.Diagnostics.Stopwatch.GetTimestamp() - nativeStart);
+            }
+        }
     }
 
     /// <summary>
@@ -232,15 +325,38 @@ internal sealed unsafe partial class VulkanPipelineManager
         out Pipeline pipeline)
     {
         Interlocked.Increment(ref _computePipelineCreateCount);
-        if (pipelineCache.Handle == _backgroundPipelineCache.Handle && pipelineCache.Handle != 0)
+        bool background = pipelineCache.Handle == _backgroundPipelineCache.Handle && pipelineCache.Handle != 0;
+        if (background)
             Interlocked.Increment(ref _workerPipelineCreateCount);
         if (pipelineCache.Handle == 0)
-            return RequireApi().CreateComputePipelines(RequireDeviceContext().Device, pipelineCache, 1, ref pipelineInfo, null, out pipeline);
+        {
+            long nativeStart = global::System.Diagnostics.Stopwatch.GetTimestamp();
+            try
+            {
+                return RequireApi().CreateComputePipelines(RequireDeviceContext().Device, pipelineCache, 1, ref pipelineInfo, null, out pipeline);
+            }
+            finally
+            {
+                RecordNativePipelineCreate(background, global::System.Diagnostics.Stopwatch.GetTimestamp() - nativeStart);
+            }
+        }
 
+        long waitStart = global::System.Diagnostics.Stopwatch.GetTimestamp();
         using (VulkanFrameLockScope.Enter(
                    GetVulkanPipelineCacheHostAccessLock(pipelineCache),
                    EVulkanFrameWaitReason.PipelineCompilerLock))
-            return RequireApi().CreateComputePipelines(RequireDeviceContext().Device, pipelineCache, 1, ref pipelineInfo, null, out pipeline);
+        {
+            RecordPipelineCacheHostWait(background, global::System.Diagnostics.Stopwatch.GetTimestamp() - waitStart);
+            long nativeStart = global::System.Diagnostics.Stopwatch.GetTimestamp();
+            try
+            {
+                return RequireApi().CreateComputePipelines(RequireDeviceContext().Device, pipelineCache, 1, ref pipelineInfo, null, out pipeline);
+            }
+            finally
+            {
+                RecordNativePipelineCreate(background, global::System.Diagnostics.Stopwatch.GetTimestamp() - nativeStart);
+            }
+        }
     }
 
     private Lock GetVulkanPipelineCacheHostAccessLock(PipelineCache pipelineCache)
@@ -248,8 +364,53 @@ internal sealed unsafe partial class VulkanPipelineManager
             ? _backgroundPipelineCacheHostAccessLock
             : _pipelineCacheHostAccessLock;
 
+    private void RecordNativePipelineCreate(bool background, long elapsedTicks)
+    {
+        ref long count = ref background ? ref _backgroundNativePipelineCreateCount : ref _foregroundNativePipelineCreateCount;
+        ref long total = ref background ? ref _backgroundNativePipelineCreateTicks : ref _foregroundNativePipelineCreateTicks;
+        ref long maximum = ref background ? ref _backgroundNativePipelineCreateMaxTicks : ref _foregroundNativePipelineCreateMaxTicks;
+        Interlocked.Increment(ref count);
+        Interlocked.Add(ref total, elapsedTicks);
+        RecordMaximum(ref maximum, elapsedTicks);
+    }
+
+    private void RecordPipelineCacheHostWait(bool background, long elapsedTicks)
+    {
+        ref long count = ref background ? ref _backgroundPipelineCacheHostWaitCount : ref _foregroundPipelineCacheHostWaitCount;
+        ref long total = ref background ? ref _backgroundPipelineCacheHostWaitTicks : ref _foregroundPipelineCacheHostWaitTicks;
+        ref long maximum = ref background ? ref _backgroundPipelineCacheHostWaitMaxTicks : ref _foregroundPipelineCacheHostWaitMaxTicks;
+        Interlocked.Increment(ref count);
+        Interlocked.Add(ref total, elapsedTicks);
+        RecordMaximum(ref maximum, elapsedTicks);
+    }
+
+    private void RecordPipelineCacheProbe(bool miss, bool failure)
+    {
+        Interlocked.Increment(ref _pipelineCacheProbeCount);
+        if (failure)
+            Interlocked.Increment(ref _pipelineCacheProbeFailureCount);
+        else if (miss)
+            Interlocked.Increment(ref _pipelineCacheProbeMissCount);
+        else
+            Interlocked.Increment(ref _pipelineCacheProbeHitCount);
+    }
+
+    private static void RecordMaximum(ref long target, long value)
+    {
+        long current = Volatile.Read(ref target);
+        while (value > current)
+        {
+            long observed = Interlocked.CompareExchange(ref target, value, current);
+            if (observed == current)
+                return;
+            current = observed;
+        }
+    }
+
     private bool TryCaptureVulkanPipelineCacheData(out string path, out byte[] cacheBytes)
     {
+        long captureStart = global::System.Diagnostics.Stopwatch.GetTimestamp();
+        bool captured = false;
         path = string.Empty;
         cacheBytes = [];
         if (_pipelineCache.Handle == 0 || string.IsNullOrWhiteSpace(_pipelineCacheFilePath))
@@ -257,10 +418,12 @@ internal sealed unsafe partial class VulkanPipelineManager
 
         try
         {
+            long waitStart = global::System.Diagnostics.Stopwatch.GetTimestamp();
             using (VulkanFrameLockScope.Enter(
                        _pipelineCacheHostAccessLock,
                        EVulkanFrameWaitReason.PipelineCompilerLock))
             {
+                RecordPipelineCacheHostWait(background: false, global::System.Diagnostics.Stopwatch.GetTimestamp() - waitStart);
                 if (_pipelineCache.Handle == 0)
                     return false;
                 nuint cacheSize = 0;
@@ -290,6 +453,7 @@ internal sealed unsafe partial class VulkanPipelineManager
             }
 
             path = _pipelineCacheFilePath!;
+            captured = true;
             return true;
         }
         catch (Exception ex)
@@ -297,10 +461,18 @@ internal sealed unsafe partial class VulkanPipelineManager
             Debug.VulkanWarning($"[Vulkan] Failed to capture pipeline cache data '{_pipelineCacheFilePath}': {ex.Message}");
             return false;
         }
+        finally
+        {
+            RecordPipelineCacheCapture(
+                global::System.Diagnostics.Stopwatch.GetTimestamp() - captureStart,
+                captured ? cacheBytes.LongLength : 0L);
+        }
     }
 
     private bool WriteVulkanPipelineCacheFile(string path, byte[] cacheBytes, long generation, bool skipIfStale)
     {
+        long writeStart = global::System.Diagnostics.Stopwatch.GetTimestamp();
+        bool written = false;
         try
         {
             global::System.Diagnostics.Stopwatch saveWatch = global::System.Diagnostics.Stopwatch.StartNew();
@@ -323,12 +495,19 @@ internal sealed unsafe partial class VulkanPipelineManager
 
             saveWatch.Stop();
             Debug.Vulkan("[Vulkan] Pipeline cache saved (path={0}, bytes={1}, elapsedMs={2:F2}).", path, cacheBytes.Length, saveWatch.Elapsed.TotalMilliseconds);
+            written = true;
             return true;
         }
         catch (Exception ex)
         {
             Debug.VulkanWarning($"[Vulkan] Failed to save pipeline cache '{path}': {ex.Message}");
             return false;
+        }
+        finally
+        {
+            RecordPipelineCacheWrite(
+                global::System.Diagnostics.Stopwatch.GetTimestamp() - writeStart,
+                written ? cacheBytes.LongLength : 0L);
         }
     }
 
@@ -391,27 +570,13 @@ internal sealed unsafe partial class VulkanPipelineManager
     {
         SavePipelinePrewarmDatabase();
 
-        using (VulkanFrameLockScope.Enter(
-                   _pipelineCacheHostAccessLock,
-                   EVulkanFrameWaitReason.PipelineCompilerLock))
-            using (VulkanFrameLockScope.Enter(
-                       _backgroundPipelineCacheHostAccessLock,
-                       EVulkanFrameWaitReason.PipelineCompilerLock))
-                if (_pipelineCache.Handle != 0 && _backgroundPipelineCache.Handle != 0)
-                {
-                    PipelineCache source = _backgroundPipelineCache;
-                    Result mergeResult = RequireApi().MergePipelineCaches(
-                        RequireDeviceContext().Device,
-                        _pipelineCache,
-                        1,
-                        &source);
-                    if (mergeResult != Result.Success)
-                    {
-                        Debug.VulkanWarning(
-                            "[Vulkan] Final background pipeline cache merge failed ({0}).",
-                            mergeResult);
-                    }
-                }
+        Result mergeResult = MergeBackgroundPipelineCache();
+        if (mergeResult != Result.Success)
+        {
+            Debug.VulkanWarning(
+                "[Vulkan] Final background pipeline cache merge failed ({0}).",
+                mergeResult);
+        }
 
         using (VulkanFrameLockScope.Enter(
                    _backgroundPipelineCacheHostAccessLock,
@@ -435,5 +600,68 @@ internal sealed unsafe partial class VulkanPipelineManager
         }
 
         _pipelineCacheInitialDataBytes = 0;
+    }
+
+    private Result MergeBackgroundPipelineCache()
+    {
+        long foregroundWaitStart = global::System.Diagnostics.Stopwatch.GetTimestamp();
+        using (VulkanFrameLockScope.Enter(
+                   _pipelineCacheHostAccessLock,
+                   EVulkanFrameWaitReason.PipelineCompilerLock))
+        {
+            RecordPipelineCacheHostWait(
+                background: false,
+                global::System.Diagnostics.Stopwatch.GetTimestamp() - foregroundWaitStart);
+            long backgroundWaitStart = global::System.Diagnostics.Stopwatch.GetTimestamp();
+            using (VulkanFrameLockScope.Enter(
+                       _backgroundPipelineCacheHostAccessLock,
+                       EVulkanFrameWaitReason.PipelineCompilerLock))
+            {
+                RecordPipelineCacheHostWait(
+                    background: true,
+                    global::System.Diagnostics.Stopwatch.GetTimestamp() - backgroundWaitStart);
+                if (_pipelineCache.Handle == 0 || _backgroundPipelineCache.Handle == 0)
+                    return Result.Success;
+
+                PipelineCache source = _backgroundPipelineCache;
+                long mergeStart = global::System.Diagnostics.Stopwatch.GetTimestamp();
+                try
+                {
+                    return RequireApi().MergePipelineCaches(
+                        RequireDeviceContext().Device,
+                        _pipelineCache,
+                        1,
+                        &source);
+                }
+                finally
+                {
+                    RecordPipelineCacheMerge(
+                        global::System.Diagnostics.Stopwatch.GetTimestamp() - mergeStart);
+                }
+            }
+        }
+    }
+
+    private void RecordPipelineCacheMerge(long elapsedTicks)
+    {
+        Interlocked.Increment(ref _pipelineCacheMergeCount);
+        Interlocked.Add(ref _pipelineCacheMergeTicks, elapsedTicks);
+        RecordMaximum(ref _pipelineCacheMergeMaxTicks, elapsedTicks);
+    }
+
+    private void RecordPipelineCacheCapture(long elapsedTicks, long capturedBytes)
+    {
+        Interlocked.Increment(ref _pipelineCacheCaptureCount);
+        Interlocked.Add(ref _pipelineCacheCaptureTicks, elapsedTicks);
+        Interlocked.Add(ref _pipelineCacheCaptureBytes, capturedBytes);
+        RecordMaximum(ref _pipelineCacheCaptureMaxTicks, elapsedTicks);
+    }
+
+    private void RecordPipelineCacheWrite(long elapsedTicks, long writtenBytes)
+    {
+        Interlocked.Increment(ref _pipelineCacheWriteCount);
+        Interlocked.Add(ref _pipelineCacheWriteTicks, elapsedTicks);
+        Interlocked.Add(ref _pipelineCacheWriteBytes, writtenBytes);
+        RecordMaximum(ref _pipelineCacheWriteMaxTicks, elapsedTicks);
     }
 }

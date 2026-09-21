@@ -20,9 +20,15 @@ namespace XREngine.Components.Capture.Lights
         // Keep an explicit owner alive for deferred draws, including static probes
         // which never create a capture viewport.
         private XRRenderPipelineInstance? _iblRenderPipeline;
+        // IBL output wrappers are renderer-owned. A retry must resume under the
+        // renderer that authored the previous attempt rather than whichever
+        // window happens to be active when the timer callback is dispatched.
+        private AbstractRenderer? _iblRetryRenderer;
         private Func<bool>? _requiredIblProducer;
         private bool _iblDestroyQueued;
         private bool _staticIblInitializationQueued;
+        private int _iblRetryCoroutineGeneration;
+        private int _iblRetryQueuedCoroutineGeneration = -1;
         protected override bool HasPendingCaptureConsumer => _pendingIblOutput is not null;
 
         protected override XRTextureCube CreateEnvironmentColorCubemap(uint resolution)
@@ -564,6 +570,7 @@ namespace XREngine.Components.Capture.Lights
 
             AbstractRenderer renderer = AbstractRenderer.Current
                 ?? throw new InvalidOperationException("IBL convolution requires an active renderer.");
+            _iblRetryRenderer = renderer;
             bool success = renderer.TryExecuteRequiredGpuProducerBatch(
                 _requiredIblProducer ??= GenerateRequiredIblOutputs,
                 out XRGpuFence? retentionFence,
@@ -756,21 +763,15 @@ namespace XREngine.Components.Capture.Lights
             _iblRetryTimer.Cancel();
             _iblRetryAttempts = 0;
             _releaseTransientEnvironmentTexturesOnIblRetrySuccess = false;
+            unchecked { ++_iblRetryCoroutineGeneration; }
+            _iblRetryRenderer = null;
         }
 
         private void RetryPendingIblGeneration()
         {
-            if (!RuntimeEngine.IsRenderThread)
+            if (!RuntimeEngine.IsRenderThread || !IsIblRetryRendererActive())
             {
-                if (_iblRetryQueuedOnRenderThread)
-                    return;
-
-                _iblRetryQueuedOnRenderThread = true;
-                RuntimeEngine.EnqueueMainThreadTask(() =>
-                {
-                    _iblRetryQueuedOnRenderThread = false;
-                    RetryPendingIblGeneration();
-                }, "LightProbe.RetryPendingIblGeneration");
+                QueueIblGenerationRetryOnActiveRenderer();
                 return;
             }
 
@@ -798,6 +799,59 @@ namespace XREngine.Components.Capture.Lights
             {
                 RuntimeEngine.Rendering.State.IsLightProbePass = false;
             }
+        }
+
+        private void QueueIblGenerationRetryOnActiveRenderer()
+        {
+            int coroutineGeneration = _iblRetryCoroutineGeneration;
+            if (_iblRetryQueuedOnRenderThread && _iblRetryQueuedCoroutineGeneration == coroutineGeneration)
+                return;
+
+            _iblRetryQueuedOnRenderThread = true;
+            _iblRetryQueuedCoroutineGeneration = coroutineGeneration;
+            RuntimeEngine.AddRenderThreadCoroutine(
+                () => ResumeIblGenerationRetryOnActiveRenderer(coroutineGeneration),
+                "LightProbe.RetryPendingIblGeneration",
+                RenderThreadJobKind.RenderPipelineResource);
+        }
+
+        private bool ResumeIblGenerationRetryOnActiveRenderer(int coroutineGeneration)
+        {
+            // The timer cancels itself immediately after delivering its final
+            // callback. The generation is the cancellation authority here so
+            // that final retry is not lost while its render owner is pending.
+            if (coroutineGeneration != _iblRetryCoroutineGeneration)
+            {
+                if (_iblRetryQueuedCoroutineGeneration == coroutineGeneration)
+                    _iblRetryQueuedOnRenderThread = false;
+                return true;
+            }
+
+            if (!IsActiveInHierarchy || !HasIblGenerationRetryResources())
+            {
+                if (_iblRetryQueuedCoroutineGeneration == coroutineGeneration)
+                    _iblRetryQueuedOnRenderThread = false;
+                CancelPendingIblGenerationRetry();
+                return true;
+            }
+
+            if (!IsIblRetryRendererActive())
+                return false;
+
+            if (_iblRetryQueuedCoroutineGeneration == coroutineGeneration)
+                _iblRetryQueuedOnRenderThread = false;
+            RetryPendingIblGeneration();
+            return true;
+        }
+
+        private bool IsIblRetryRendererActive()
+        {
+            AbstractRenderer? renderer = AbstractRenderer.Current;
+            return renderer is not null &&
+                renderer.Active &&
+                renderer.AcceptsBackendWork &&
+                !renderer.IsDeviceLost &&
+                (_iblRetryRenderer is null || ReferenceEquals(_iblRetryRenderer, renderer));
         }
 
         private static bool TryPrepareProbePass(XRMeshRenderer mesh, string? name)

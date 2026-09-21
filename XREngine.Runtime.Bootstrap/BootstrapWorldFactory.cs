@@ -122,6 +122,9 @@ public static class BootstrapWorldFactory
         if (settings.InitializeAtmosphericScattering)
             AddAtmosphericScattering(rootNode, settings, sunDirectionalLight);
 
+        if (settings.InitializeDDGIVolume || settings.GlobalIlluminationMode == EGlobalIlluminationMode.DDGI)
+            BootstrapLightingBuilder.AddConfiguredDDGIVolume(rootNode);
+
         if (settings.DynamicWaterQuad)
             BootstrapWaterBuilder.AddDynamicWaterPreview(rootNode);
 

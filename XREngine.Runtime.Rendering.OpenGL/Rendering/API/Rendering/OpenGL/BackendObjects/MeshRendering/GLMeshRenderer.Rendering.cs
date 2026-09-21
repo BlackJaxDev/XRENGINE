@@ -342,6 +342,18 @@ namespace XREngine.Rendering.OpenGL
             /// - Model and previous model matrices are applied to both the vertex and material programs when available.
             /// - The VR mode flag and billboard mode are assigned to the vertex program.
             /// </remarks>
+            void IApiMeshRenderer.Render(
+                Matrix4x4 modelMatrix,
+                Matrix4x4 previousModelMatrix,
+                XRMaterial? materialOverride,
+                RenderingParameters? renderOptionsOverride,
+                uint instances,
+                EMeshBillboardMode billboardMode,
+                bool forceNoStereo,
+                in XREngine.Rendering.Commands.AdvancedGpuSceneDrawIdentitySnapshot canonicalDrawIdentitySnapshot)
+                => Render(modelMatrix, previousModelMatrix, materialOverride, renderOptionsOverride,
+                    instances, billboardMode, forceNoStereo);
+
             public void Render(
                 Matrix4x4 modelMatrix,
                 Matrix4x4 prevModelMatrix,
@@ -351,15 +363,22 @@ namespace XREngine.Rendering.OpenGL
                 EMeshBillboardMode billboardMode,
                 bool forceNoStereo)
             {
-                Dbg($"Render request (instances={instances}, billboard={billboardMode})", "Render");
-                LogBatchedTextDraw("Render request", instances, $"billboard={billboardMode}");
-                LogModelDrawDiagnostic("Render request", instances, $"billboard={billboardMode}");
+                if (IsDebugCategoryEnabled("Render"))
+                    Dbg($"Render request (instances={instances}, billboard={billboardMode})", "Render");
+                ObjectDisposedException.ThrowIf(IsRetired || Data.IsDestroyed, this);
+                ValidateOwnerGeneration();
+                if (ShouldLogBatchedTextDraw())
+                    LogBatchedTextDraw("Render request", instances, $"billboard={billboardMode}");
+                if (ShouldLogModelDrawDiagnostic())
+                    LogModelDrawDiagnostic("Render request", instances, $"billboard={billboardMode}");
 
                 if (Data is null || !Renderer.Active)
                 {
                     Dbg("Render early-out: Data null or renderer inactive", "Render");
-                    LogBatchedTextDraw("Render inactive", instances, $"dataNull={Data is null}, rendererActive={Renderer.Active}");
-                    LogModelDrawDiagnostic("Render inactive", instances, $"dataNull={Data is null}, rendererActive={Renderer.Active}");
+                    if (ShouldLogBatchedTextDraw())
+                        LogBatchedTextDraw("Render inactive", instances, $"dataNull={Data is null}, rendererActive={Renderer.Active}");
+                    if (ShouldLogModelDrawDiagnostic())
+                        LogModelDrawDiagnostic("Render inactive", instances, $"dataNull={Data is null}, rendererActive={Renderer.Active}");
                     return;
                 }
 
@@ -384,8 +403,10 @@ namespace XREngine.Rendering.OpenGL
                             : throttleInlineGeneration
                                 ? "Not generated yet - startup throttling queued render-pipeline generation"
                                 : "Not generated yet - queued for deferred generation", "Render");
-                        LogBatchedTextDraw("Render queued-generation", instances, $"shadow={shadowPass}, priority={MeshRenderer.GenerationPriority}, queue={Renderer.MeshGenerationQueue.Enabled}");
-                        LogModelDrawDiagnostic("Render queued-generation", instances, $"shadow={shadowPass}, priority={MeshRenderer.GenerationPriority}, queue={Renderer.MeshGenerationQueue.Enabled}");
+                        if (ShouldLogBatchedTextDraw())
+                            LogBatchedTextDraw("Render queued-generation", instances, $"shadow={shadowPass}, priority={MeshRenderer.GenerationPriority}, queue={Renderer.MeshGenerationQueue.Enabled}");
+                        if (ShouldLogModelDrawDiagnostic())
+                            LogModelDrawDiagnostic("Render queued-generation", instances, $"shadow={shadowPass}, priority={MeshRenderer.GenerationPriority}, queue={Renderer.MeshGenerationQueue.Enabled}");
                         return; // Skip rendering until generated
                     }
 
@@ -417,8 +438,10 @@ namespace XREngine.Rendering.OpenGL
                     {
                         Renderer.MeshGenerationQueue.EnqueueGeneration(this);
                         Dbg("Generated but not render-ready - queued for deferred preparation while continuing direct draw attempt", "Render");
-                        LogBatchedTextDraw("Render queued-preparation", instances, $"priority={MeshRenderer.GenerationPriority}, queue={Renderer.MeshGenerationQueue.Enabled}, continueDirect=True");
-                        LogModelDrawDiagnostic("Render queued-preparation", instances, $"priority={MeshRenderer.GenerationPriority}, queue={Renderer.MeshGenerationQueue.Enabled}, continueDirect=True");
+                        if (ShouldLogBatchedTextDraw())
+                            LogBatchedTextDraw("Render queued-preparation", instances, $"priority={MeshRenderer.GenerationPriority}, queue={Renderer.MeshGenerationQueue.Enabled}, continueDirect=True");
+                        if (ShouldLogModelDrawDiagnostic())
+                            LogModelDrawDiagnostic("Render queued-preparation", instances, $"priority={MeshRenderer.GenerationPriority}, queue={Renderer.MeshGenerationQueue.Enabled}, continueDirect=True");
                     }
                 }
 
@@ -570,8 +593,10 @@ namespace XREngine.Rendering.OpenGL
                 {
                     using (RuntimeEngine.Profiler.Start("GLMeshRenderer.Render.Draw", ProfilerScopeKind.AlwaysOnHotPathLoop))
                     {
-                        LogBatchedTextDraw("Render draw-submit", drawInstances, $"program='{materialProgram.Data.Name}', material='{bindingMaterial.Data.Name}'");
-                        LogModelDrawDiagnostic("Render draw-submit", drawInstances, $"program='{materialProgram.Data.Name}', material='{bindingMaterial.Data.Name}'");
+                        if (ShouldLogBatchedTextDraw())
+                            LogBatchedTextDraw("Render draw-submit", drawInstances, $"program='{materialProgram.Data.Name}', material='{bindingMaterial.Data.Name}'");
+                        if (ShouldLogModelDrawDiagnostic())
+                            LogModelDrawDiagnostic("Render draw-submit", drawInstances, $"program='{materialProgram.Data.Name}', material='{bindingMaterial.Data.Name}'");
                         RecordSceneAssetCost(bindingMaterial.Data, drawInstances);
                         Renderer.RenderMesh(this, false, drawInstances);
                     }
@@ -684,19 +709,23 @@ namespace XREngine.Rendering.OpenGL
 
                 if (mesh is not null && mesh.BlendshapeCount > 0)
                 {
+                    XRMeshBlendshapeBufferState meshBlendshapeState =
+                        mesh.GetBlendshapeBufferStateSnapshot();
+                    XRMeshRenderer.BlendshapeResourceSnapshot rendererBlendshapeState =
+                        MeshRenderer.CaptureBlendshapeResources();
                     long blendshapeDeltaBytes =
-                        (mesh.BlendshapeDeltas?.Length ?? 0u) +
-                        (mesh.BlendshapeSparseRecords?.Length ?? 0u) +
-                        (mesh.BlendshapeQuantizedDeltas?.Length ?? 0u);
+                        (meshBlendshapeState.Deltas?.Length ?? 0u) +
+                        (meshBlendshapeState.SparseRecords?.Length ?? 0u) +
+                        (meshBlendshapeState.QuantizedDeltas?.Length ?? 0u);
                     RuntimeEngine.Rendering.Stats.RecordSkinningUpload(
                         0L,
                         0L,
                         blendshapeDeltaBytes: blendshapeDeltaBytes,
                         blendshapeAuthoredShapeCount: (int)mesh.BlendshapeCount,
-                        blendshapeActiveShapeCount: MeshRenderer.ActiveBlendshapeCount,
+                        blendshapeActiveShapeCount: rendererBlendshapeState.ActiveCount,
                         blendshapeAffectedVertexCount: mesh.BlendshapeAffectedVertexCount,
-                        compactedActiveBlendshapeCount: MeshRenderer.ActiveBlendshapeCount,
-                        liveBlendshapeShaderPermutations: mesh.BlendshapeShaderVariant == BlendshapeShaderVariant.None ? 0 : 1);
+                        compactedActiveBlendshapeCount: rendererBlendshapeState.ActiveCount,
+                        liveBlendshapeShaderPermutations: meshBlendshapeState.ShaderVariant == BlendshapeShaderVariant.None ? 0 : 1);
                 }
             }
 

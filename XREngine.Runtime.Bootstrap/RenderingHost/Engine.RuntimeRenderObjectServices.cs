@@ -7,8 +7,14 @@ internal sealed class EngineRuntimeRenderObjectServices : IRuntimeRenderObjectSe
 {
     public AbstractRenderAPIObject?[] CreateObjectsForAllOwners(GenericRenderObject renderObject)
     {
+        XRWindow[] windows;
         lock (RuntimeEngine.Windows)
-            return [.. RuntimeEngine.Windows.Select(window => window.Renderer.GetOrCreateAPIRenderObject(renderObject))];
+            windows = [.. RuntimeEngine.Windows];
+
+        AbstractRenderAPIObject?[] wrappers = new AbstractRenderAPIObject?[windows.Length];
+        for (int index = 0; index < windows.Length; index++)
+            wrappers[index] = windows[index].Renderer.GetOrCreateAPIRenderObject(renderObject);
+        return wrappers;
     }
 
     public ConcurrentDictionary<GenericRenderObject, AbstractRenderAPIObject> CreateObjectsForOwner(IRenderApiWrapperOwner owner)
@@ -16,21 +22,25 @@ internal sealed class EngineRuntimeRenderObjectServices : IRuntimeRenderObjectSe
         if (owner is not AbstractRenderer renderer)
             return [];
 
-        ConcurrentDictionary<GenericRenderObject, AbstractRenderAPIObject> wrappers = [];
+        List<GenericRenderObject> renderObjects = [];
         lock (GenericRenderObject.RenderObjectCache)
         {
             foreach (var pair in GenericRenderObject.RenderObjectCache)
-            {
                 foreach (GenericRenderObject renderObject in pair.Value)
-                {
-                    AbstractRenderAPIObject? wrapper = renderer.GetOrCreateAPIRenderObject(renderObject);
-                    if (wrapper is null)
-                        continue;
+                    if (renderObject.IsApiWrapperPublicationReady && !renderObject.PublishWrappersOnOwnerFirstUse)
+                        renderObjects.Add(renderObject);
+        }
 
-                    wrappers.TryAdd(renderObject, wrapper);
-                    renderObject.AddWrapper(wrapper);
-                }
-            }
+        ConcurrentDictionary<GenericRenderObject, AbstractRenderAPIObject> wrappers = [];
+        for (int index = 0; index < renderObjects.Count; index++)
+        {
+            GenericRenderObject renderObject = renderObjects[index];
+            AbstractRenderAPIObject? wrapper = renderer.GetOrCreateAPIRenderObject(renderObject);
+            if (wrapper is null)
+                continue;
+
+            wrappers.TryAdd(renderObject, wrapper);
+            renderObject.AddWrapper(wrapper);
         }
 
         return wrappers;
@@ -38,35 +48,36 @@ internal sealed class EngineRuntimeRenderObjectServices : IRuntimeRenderObjectSe
 
     public void DestroyObjectsForOwner(IRenderApiWrapperOwner owner)
     {
-        if (owner is not AbstractRenderer renderer)
+        if (owner is not AbstractRenderer)
             return;
 
-        List<Exception>? failures = null;
+        List<GenericRenderObject> renderObjects = [];
         lock (GenericRenderObject.RenderObjectCache)
         {
             foreach (var pair in GenericRenderObject.RenderObjectCache)
-            {
                 foreach (GenericRenderObject renderObject in pair.Value)
+                    renderObjects.Add(renderObject);
+        }
+
+        List<Exception>? failures = null;
+        for (int index = 0; index < renderObjects.Count; index++)
+        {
+            GenericRenderObject renderObject = renderObjects[index];
+            List<AbstractRenderAPIObject> wrappers =
+            [
+                .. renderObject.APIWrappers.Where(
+                    owner.OwnsApiWrapper)
+            ];
+
+            foreach (AbstractRenderAPIObject wrapper in wrappers)
+            {
+                try
                 {
-                    List<AbstractRenderAPIObject> wrappers =
-                    [
-                        .. renderObject.APIWrappers.Where(
-                            wrapper => ReferenceEquals(wrapper.Owner, renderer))
-                    ];
-
-                    foreach (AbstractRenderAPIObject wrapper in wrappers)
-                    {
-                        try
-                        {
-                            wrapper.Destroy();
-                        }
-                        catch (Exception ex)
-                        {
-                            (failures ??= []).Add(ex);
-                        }
-
-                        renderObject.RemoveWrapper(wrapper);
-                    }
+                    wrapper.Retire();
+                }
+                catch (Exception ex)
+                {
+                    (failures ??= []).Add(ex);
                 }
             }
         }

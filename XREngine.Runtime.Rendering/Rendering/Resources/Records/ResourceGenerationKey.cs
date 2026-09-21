@@ -34,7 +34,8 @@ public readonly record struct ResourceGenerationKey(
     ulong SettingsRevision = 0,
     XREngine.Data.Rendering.EPixelInternalFormat OutputColorFormat = XREngine.Data.Rendering.EPixelInternalFormat.Rgba8,
     XREngine.Data.Rendering.EPixelInternalFormat OutputDepthFormat = XREngine.Data.Rendering.EPixelInternalFormat.Depth24Stencil8,
-    ulong PipelineRevision = 0)
+    ulong PipelineRevision = 0,
+    RenderPipelineResourceVariant ResourceVariant = default)
 {
     /// <summary>
     /// Converts this resource generation key into a render pipeline resource profile that can be used to configure the render pipeline.
@@ -55,7 +56,8 @@ public readonly record struct ResourceGenerationKey(
             Math.Max(1u, ReservedViewCount),
             ReservedEyeIndex,
             OutputColorFormat,
-            OutputDepthFormat);
+            OutputDepthFormat,
+            ResourceVariant);
 
     /// <summary>
     /// Returns a string representation of the resource generation key, including pipeline name, display and internal dimensions, HDR output, anti-aliasing settings, stereo rendering, feature mask, reserved view count, and reserved eye index.

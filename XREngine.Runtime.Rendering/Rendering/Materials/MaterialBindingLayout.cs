@@ -443,6 +443,27 @@ namespace XREngine.Rendering.Materials
             GPUMaterialEntry entry,
             Span<uint> destination,
             out string error)
+            => TryWriteOpaqueDeferred(
+                layout,
+                entry,
+                Vector4.Zero,
+                0.0f,
+                Vector4.Zero,
+                new Vector4(1.0f, 1.0f, 0.0f, 0.0f),
+                0.0f,
+                destination,
+                out error);
+
+        public static bool TryWriteOpaqueDeferred(
+            MaterialBindingLayout layout,
+            GPUMaterialEntry entry,
+            Vector4 emissionColor,
+            float emissionStrength,
+            Vector4 emissionTextureMetadata,
+            Vector4 emissionUvScaleOffset,
+            float emissionUvRotation,
+            Span<uint> destination,
+            out string error)
         {
             EnsureDestinationSize(layout, destination);
             destination[..(int)layout.RowWordCount].Clear();
@@ -453,6 +474,11 @@ namespace XREngine.Rendering.Materials
                 !TryWriteUInt(layout, destination, "Flags", entry.Flags, out error) ||
                 !TryWriteVector4(layout, destination, "BaseColorOpacity", entry.BaseColorOpacity, out error) ||
                 !TryWriteVector4(layout, destination, "RMSE", entry.RMSE, out error) ||
+                !TryWriteVector4(layout, destination, "EmissionColor", emissionColor, out error) ||
+                !TryWriteFloat(layout, destination, "EmissionStrength", emissionStrength, out error) ||
+                !TryWriteVector4(layout, destination, "EmissionTextureMetadata", emissionTextureMetadata, out error) ||
+                !TryWriteVector4(layout, destination, "EmissionUvScaleOffset", emissionUvScaleOffset, out error) ||
+                !TryWriteFloat(layout, destination, "EmissionUvRotation", emissionUvRotation, out error) ||
                 !TryWriteFloat(layout, destination, "AlphaCutoff", entry.AlphaCutoff, out error))
             {
                 return false;
@@ -619,16 +645,23 @@ namespace XREngine.Rendering.Materials
                 new("Normal", 1, "vec2"),
                 new("RMSE", 2, "vec4"),
                 new("TransformId", 3, "uint"),
+                new("EmissionColor", 4, "vec4"),
             ],
             [
                 new("BaseColorOpacity", "vec4", "baseColorOpacity", "vec4(1.0, 1.0, 1.0, 1.0)"),
                 new("RMSE", "vec4", "roughnessMetallicSpecularEmission", "vec4(1.0, 0.0, 1.0, 0.0)"),
+                new("EmissionColor", "vec4", "emissionColor", "vec4(0.0)"),
+                new("EmissionStrength", "float", "emissionStrength", "0.0"),
+                new("EmissionTextureMetadata", "vec4", "emissionTextureMetadata", "vec4(0.0)"),
+                new("EmissionUvScaleOffset", "vec4", "emissionUvScaleOffset", "vec4(1.0, 1.0, 0.0, 0.0)"),
+                new("EmissionUvRotation", "float", "emissionUvRotation", "0.0"),
                 new("AlphaCutoff", "float", "alphaCutoff", "0.5"),
             ],
             [
                 new("Albedo", "albedo", "2D"),
                 new("Normal", "normal", "2D"),
                 new("RM", "metallicRoughness", "2D"),
+                new("Emissive", "emissive", "2D"),
             ],
             supportsGeneratedMaterialTableDispatch: true);
 
@@ -641,12 +674,18 @@ namespace XREngine.Rendering.Materials
             [
                 new("BaseColorOpacity", "vec4", "baseColorOpacity", "vec4(1.0, 1.0, 1.0, 1.0)"),
                 new("RMSE", "vec4", "roughnessMetallicSpecularEmission", "vec4(1.0, 0.0, 1.0, 0.0)"),
+                new("EmissionColor", "vec4", "emissionColor", "vec4(0.0)"),
+                new("EmissionStrength", "float", "emissionStrength", "0.0"),
+                new("EmissionTextureMetadata", "vec4", "emissionTextureMetadata", "vec4(0.0)"),
+                new("EmissionUvScaleOffset", "vec4", "emissionUvScaleOffset", "vec4(1.0, 1.0, 0.0, 0.0)"),
+                new("EmissionUvRotation", "float", "emissionUvRotation", "0.0"),
                 new("AlphaCutoff", "float", "alphaCutoff", "0.5"),
             ],
             [
                 new("Albedo", "albedo", "2D"),
                 new("Normal", "normal", "2D"),
                 new("RM", "metallicRoughness", "2D"),
+                new("Emissive", "emissive", "2D"),
             ],
             supportsGeneratedMaterialTableDispatch: true);
 
@@ -659,12 +698,18 @@ namespace XREngine.Rendering.Materials
             [
                 new("BaseColorOpacity", "vec4", "baseColorOpacity", "vec4(1.0, 1.0, 1.0, 1.0)"),
                 new("RMSE", "vec4", "roughnessMetallicSpecularEmission", "vec4(1.0, 0.0, 1.0, 0.0)"),
+                new("EmissionColor", "vec4", "emissionColor", "vec4(0.0)"),
+                new("EmissionStrength", "float", "emissionStrength", "0.0"),
+                new("EmissionTextureMetadata", "vec4", "emissionTextureMetadata", "vec4(0.0)"),
+                new("EmissionUvScaleOffset", "vec4", "emissionUvScaleOffset", "vec4(1.0, 1.0, 0.0, 0.0)"),
+                new("EmissionUvRotation", "float", "emissionUvRotation", "0.0"),
                 new("AlphaCutoff", "float", "alphaCutoff", "0.5"),
             ],
             [
                 new("Albedo", "albedo", "2D"),
                 new("Normal", "normal", "2D"),
                 new("RM", "metallicRoughness", "2D"),
+                new("Emissive", "emissive", "2D"),
             ],
             supportsGeneratedMaterialTableDispatch: true);
 

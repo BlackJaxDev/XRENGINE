@@ -661,6 +661,30 @@ public sealed partial class XRRenderPipelineInstance
         }
     }
 
+    private void NotifyCommandChainExecutionAborted()
+    {
+        Action? handlers = CommandChainExecutionAborted;
+        if (handlers is null)
+            return;
+
+        // Failure cleanup must not mask the original command-chain failure or
+        // prevent unrelated owners from withdrawing their per-frame state.
+        foreach (Delegate callback in handlers.GetInvocationList())
+        {
+            try
+            {
+                ((Action)callback)();
+            }
+            catch (Exception ex)
+            {
+                Debug.RenderingWarning(
+                    "[RenderResources] Command-chain abort callback failed and was isolated. Pipeline={0} Error={1}",
+                    ProfilerKey,
+                    ex.Message);
+            }
+        }
+    }
+
     private void RunResourceCleanupStep(
         string step,
         Action cleanup,

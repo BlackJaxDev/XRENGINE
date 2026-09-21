@@ -10,6 +10,19 @@ The light probe system in XREngine uses cubemap captures that are processed into
 
 Probes can be baked offline or updated in real-time, and multiple probes are automatically interpolated using Delaunay triangulation.
 
+Capture pipeline selection is explicit. A probe with
+`UseAdvancedCapturePipeline = false` uses the Default offscreen capture pipeline,
+including when the main viewport requires Advanced. Enabling that property
+requests an Advanced offscreen profile and requires a current reservation for
+that output. A temporary binding failure defers the capture with its diagnostic;
+it does not substitute another pipeline. Unsupported Advanced capture capabilities
+are rejected when the profile is created.
+
+DDGI supplies diffuse indirect light independently of these reflection captures.
+Specular coexistence and capture/cache recovery are still undergoing acceptance
+across the four backend/pipeline combinations; see the
+[DDGI progress matrix](../../work/todo/rendering/global-illumination/ddgi-implementation-todo.md).
+
 ## Components
 
 ### LightProbeComponent

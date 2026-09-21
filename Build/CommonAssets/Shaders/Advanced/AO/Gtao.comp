@@ -123,7 +123,9 @@ float XR_ADV_AO_Noise(ivec2 p) { return fract(52.9829189 * fract(dot(vec2(p), ve
 
 void main()
 {
-    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy); uint viewIndex = gl_GlobalInvocationID.z;
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    // Each backend dispatches one eye at a time; z is always zero within it.
+    uint viewIndex = u_Push.viewIndex;
     if (viewIndex >= u_Push.viewCount || any(greaterThanEqual(uvec2(pixel), u_Push.screenExtent))) return;
     XRAdvancedViewRecord view = XR_ADV_LoadView(viewIndex);
     if ((u_Push.flags & XR_ADV_AO_ENABLED) == 0u) { imageStore(AmbientOcclusionOutput, XR_ADV_AO_PIXEL(pixel, viewIndex), vec4(1.0)); return; }

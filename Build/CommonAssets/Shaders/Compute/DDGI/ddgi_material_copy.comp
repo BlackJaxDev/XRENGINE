@@ -1,0 +1,22 @@
+#version 450
+#pragma snippet "DDGIBindings"
+
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(XR_DDGI_SAMPLER_BINDING(0)) uniform sampler2D uSource;
+layout(rgba16f, XR_DDGI_IMAGE_BINDING(0)) writeonly uniform image2DArray uDestination;
+uniform int uLayer;
+
+void main()
+{
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    ivec3 size = imageSize(uDestination);
+    if (any(greaterThanEqual(pixel, size.xy)) || uLayer < 0 || uLayer >= size.z)
+        return;
+    vec2 uv = (vec2(pixel) + 0.5) / vec2(size.xy);
+    // Explicit LOD also supports textures with a single authored mip. The source
+    // sampler performs format-level sRGB decoding; binding-level decoding is later.
+    vec4 value = textureLod(uSource, uv, 0.0);
+    if (any(isnan(value)) || any(isinf(value)))
+        value = vec4(0.0);
+    imageStore(uDestination, ivec3(pixel, uLayer), value);
+}

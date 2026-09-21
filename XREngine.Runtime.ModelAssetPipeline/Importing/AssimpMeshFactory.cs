@@ -25,6 +25,7 @@ internal static class AssimpMeshFactory
         List<object?> primitives = BuildPrimitives(mesh, vertices, dataTransform);
         (TransformBase tfm, Matrix4x4 invBindWorldMtx)[] utilizedBones = AssignBoneWeights(mesh, nodeCache, vertices);
 
+        using RenderObjectPublicationScope publication = GenericRenderObject.BeginDeferredPublication();
         XRMesh result = new(primitives)
         {
             SkinningShaderConvention = ESkinningShaderConvention.LegacyImplicitTranspose,
@@ -46,6 +47,7 @@ internal static class AssimpMeshFactory
             result.RebuildBlendshapeBuffersFromVertices();
         }
 
+        publication.Complete();
         return result;
     }
 

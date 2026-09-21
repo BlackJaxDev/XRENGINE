@@ -198,7 +198,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                     RequireTexture(instance, RawIntensityTextureName),
                     RequireTexture(instance, DepthViewTextureName),
                     RequireTexture(instance, NormalTextureName)], blurShader) { RenderOptions = renderParams };
-                XRQuadFrameBuffer frameBuffer = new(material, true,
+                XRQuadFrameBuffer frameBuffer = new(material, true, true, Stereo,
                     (RequireAttachment(instance, RawIntensityTextureName), EFrameBufferAttachment.ColorAttachment0, 0, -1))
                 {
                     Name = BlurFBOName
@@ -213,7 +213,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                     RequireTexture(instance, IntermediateIntensityTextureName),
                     RequireTexture(instance, DepthViewTextureName),
                     RequireTexture(instance, NormalTextureName)], blurShader) { RenderOptions = renderParams };
-                XRQuadFrameBuffer frameBuffer = new(material, true,
+                XRQuadFrameBuffer frameBuffer = new(material, true, true, Stereo,
                     (RequireAttachment(instance, IntermediateIntensityTextureName), EFrameBufferAttachment.ColorAttachment0, 0, -1))
                 {
                     Name = BlurIntermediateFBOName
@@ -229,7 +229,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             XRMaterial genMaterial = new([
                 RequireTexture(instance, NormalTextureName),
                 RequireTexture(instance, DepthViewTextureName)], genShader) { RenderOptions = renderParams };
-            XRQuadFrameBuffer genFbo = new(genMaterial, true,
+            XRQuadFrameBuffer genFbo = new(genMaterial, true, true, Stereo,
                 (RequireAttachment(instance, AlbedoTextureName), EFrameBufferAttachment.ColorAttachment0, 0, -1),
                 (RequireAttachment(instance, NormalTextureName), EFrameBufferAttachment.ColorAttachment1, 0, -1),
                 (RequireAttachment(instance, RMSETextureName), EFrameBufferAttachment.ColorAttachment2, 0, -1),

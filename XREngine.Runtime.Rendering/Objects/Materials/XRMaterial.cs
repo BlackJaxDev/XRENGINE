@@ -1574,6 +1574,10 @@ namespace XREngine.Rendering
             material.RenderPass = deferred
                 ? (int)EDefaultRenderPass.OpaqueDeferred
                 : (int)EDefaultRenderPass.OpaqueForward;
+            material.SurfaceTextureBindings =
+            [
+                new Materials.MaterialSurfaceTextureBinding(Materials.EMaterialTextureSemantic.BaseColor, texture, IsSrgb: true),
+            ];
 
             return material;
         }

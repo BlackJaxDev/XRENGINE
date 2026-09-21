@@ -103,6 +103,10 @@ internal const uint VisibilityDepthPyramidStorageBinding = 43u;
     // Set-1 visibility storage occupies 20..48. Keep AO above that ABI.
     internal const uint NativeAmbientOcclusionStorageBinding = 49u;
     internal const uint NativeAmbientOcclusionSampledBinding = 50u;
+    internal const uint NativeDdgiEmissionBinding = 51u;
+    internal const uint NativeDdgiAlbedoBinding = 52u;
+    internal const uint NativeDdgiNormalBinding = 53u;
+    internal const uint NativeDdgiRmseBinding = 54u;
     internal const uint ExternallyOwnedSetMask =
         (1u << (int)GlobalSetIndex) |
         (1u << (int)VisibilitySetIndex) |
@@ -331,5 +335,7 @@ internal const uint VisibilityDepthPyramidStorageBinding = 43u;
 
     private static bool ContainsNativeStorageImageBinding(uint binding)
         => binding is NativeHdrBinding or NativeVelocityBinding or NativeReactiveBinding or
-            NativeShadingDiagnosticsBinding or NativeAmbientOcclusionStorageBinding;
+            NativeShadingDiagnosticsBinding or NativeAmbientOcclusionStorageBinding or
+            NativeDdgiEmissionBinding or NativeDdgiAlbedoBinding or
+            NativeDdgiNormalBinding or NativeDdgiRmseBinding;
 }

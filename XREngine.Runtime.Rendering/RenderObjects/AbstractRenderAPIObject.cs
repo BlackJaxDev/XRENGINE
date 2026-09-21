@@ -21,6 +21,9 @@ public abstract class AbstractRenderAPIObject : XRBase, IDisposable
     public long OwnerGeneration { get; }
 
     private bool disposedValue;
+    private int _retired;
+
+    public bool IsRetired => Volatile.Read(ref _retired) != 0;
 
     public abstract bool IsGenerated { get; }
     public abstract void Generate();
@@ -31,8 +34,23 @@ public abstract class AbstractRenderAPIObject : XRBase, IDisposable
     /// generation is retired. Unlike <see cref="Destroy"/>, retirement must also remove
     /// managed event subscriptions for wrappers that never generated a native handle.
     /// </summary>
-    protected internal virtual void Retire()
-        => Destroy();
+    protected internal void Retire()
+    {
+        if (Interlocked.Exchange(ref _retired, 1) != 0)
+            return;
+
+        try
+        {
+            OnRetiring();
+        }
+        finally
+        {
+            Destroy();
+        }
+    }
+
+    /// <summary>Releases managed links before terminal native retirement.</summary>
+    protected virtual void OnRetiring() { }
 
     protected virtual void Dispose(bool disposing)
     {
@@ -43,7 +61,7 @@ public abstract class AbstractRenderAPIObject : XRBase, IDisposable
                 // TODO: dispose managed state (managed objects)
             }
 
-            Destroy();
+            Retire();
             disposedValue = true;
         }
     }

@@ -146,6 +146,8 @@ namespace XREngine.Components.Scene.Mesh
         private XRMeshRenderer? _meshRenderer;
         private XRMaterial? _material;
         private XRMesh? _mesh;
+        private IRuntimeRenderWorld? _registeredWorld;
+        private ulong _environmentRevision = 1;
 
         private bool _debugHooksAttached;
         private bool _loggedActivated;
@@ -740,13 +742,39 @@ namespace XREngine.Components.Scene.Mesh
         /// </summary>
         public XRMaterial? Material => _material;
 
+        /// <summary>Monotonically changes when the authored DDGI environment representation must be refreshed.</summary>
+        internal ulong EnvironmentRevision => _environmentRevision;
+
+        /// <summary>Returns the authored source texture used by texture skybox modes.</summary>
+        internal XRTexture? EnvironmentTexture => _texture;
+
+        /// <summary>Returns the fragment shader that evaluates this skybox into an octahedral DDGI environment target.</summary>
+        internal XRShader? GetEnvironmentRadianceShader()
+            => _mode switch
+            {
+                ESkyboxMode.Texture => GetFragmentShaderForProjection(_projection),
+                ESkyboxMode.DynamicProcedural => GetDynamicShader(),
+                _ => GetGradientShader(),
+            };
+
+        /// <summary>Publishes the same authored sky parameters used by the visible skybox draw.</summary>
+        internal void BindEnvironmentUniforms(XRRenderProgram program)
+            => PublishUniforms(program);
+
         public RenderInfo[] RenderedObjects { get; }
 
         protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
         {
             base.OnPropertyChanged(propName, prev, field);
+            unchecked { _environmentRevision++; }
+            if (_environmentRevision == 0)
+                _environmentRevision = 1;
             switch (propName)
             {
+                case nameof(World):
+                case nameof(IsActive):
+                    RefreshEnvironmentRegistration();
+                    break;
                 case nameof(Mode):
                 case nameof(Projection):
                 case nameof(Texture):
@@ -776,6 +804,7 @@ namespace XREngine.Components.Scene.Mesh
         protected override void OnComponentActivated()
         {
             base.OnComponentActivated();
+            RefreshEnvironmentRegistration();
             AttachDebugHooks();
             RegisterTick(ETickGroup.Normal, ETickOrder.Scene, TickSky);
 
@@ -790,9 +819,10 @@ namespace XREngine.Components.Scene.Mesh
 
         protected override void OnComponentDeactivated()
         {
+            UnregisterEnvironment();
             base.OnComponentDeactivated();
             UnregisterTick(ETickGroup.Normal, ETickOrder.Scene, TickSky);
-            CleanupResources();
+            DetachDebugHooks();
         }
 
         private void TickSky()
@@ -805,6 +835,9 @@ namespace XREngine.Components.Scene.Mesh
                 float dt = Math.Max(0.0f, RuntimeEngine.Time.Timer.Update.Delta);
                 float dayLength = Math.Max(1.0f, _dayLengthSeconds);
                 _timeOfDay = (_timeOfDay + dt / dayLength) % 1.0f;
+                unchecked { _environmentRevision++; }
+                if (_environmentRevision == 0)
+                    _environmentRevision = 1;
             }
 
             DirectionalLightComponent? sun = _syncDirectionalLightWithSun ? ResolveSunLight() : null;
@@ -1137,7 +1170,8 @@ namespace XREngine.Components.Scene.Mesh
         /// </summary>
         private void RebuildMesh()
         {
-            _mesh?.Destroy();
+            if (_mesh is not null)
+                return;
 
             // Create a fullscreen triangle that overdraws past the screen bounds
             // This is more efficient than a quad (one triangle vs two) and avoids seams
@@ -1386,14 +1420,96 @@ namespace XREngine.Components.Scene.Mesh
             _renderCommand.WorldMatrix = Matrix4x4.Identity;
         }
 
-        private void CleanupResources()
+        private void DestroyResources()
         {
             DetachDebugHooks();
 
+            // Ordinary deactivation can overlap a frozen backend draw. Keep this
+            // immutable fullscreen mesh alive until final component destruction.
+            if (_renderCommand is not null)
+                _renderCommand.Mesh = null;
             _mesh?.Destroy();
             _mesh = null;
             _material = null;
             _meshRenderer = null;
+        }
+
+        protected override void OnDestroying()
+        {
+            UnregisterEnvironment();
+            UnregisterTick(ETickGroup.Normal, ETickOrder.Scene, TickSky);
+            DestroyResources();
+            base.OnDestroying();
+        }
+
+        private void RefreshEnvironmentRegistration()
+        {
+            IRuntimeRenderWorld? world = World.GetRenderWorld();
+            bool shouldRegister = world is not null && IsActiveInHierarchy;
+            if (_registeredWorld is not null && (!shouldRegister || !ReferenceEquals(_registeredWorld, world)))
+                UnregisterEnvironment();
+            if (shouldRegister && _registeredWorld is null && world is not null)
+            {
+                Registry.Register(world, this);
+                _registeredWorld = world;
+            }
+        }
+
+        private void UnregisterEnvironment()
+        {
+            if (_registeredWorld is null)
+                return;
+            Registry.Unregister(_registeredWorld, this);
+            _registeredWorld = null;
+        }
+
+        /// <summary>Tracks active skyboxes per render world for GPU environment consumers.</summary>
+        internal static class Registry
+        {
+            private static readonly Dictionary<IRuntimeRenderWorld, List<SkyboxComponent>> s_perWorld = new();
+            private static readonly object s_lock = new();
+
+            public static void Register(IRuntimeRenderWorld world, SkyboxComponent component)
+            {
+                lock (s_lock)
+                {
+                    if (!s_perWorld.TryGetValue(world, out List<SkyboxComponent>? components))
+                        s_perWorld.Add(world, components = []);
+                    if (!components.Contains(component))
+                        components.Add(component);
+                }
+            }
+
+            public static void Unregister(IRuntimeRenderWorld world, SkyboxComponent component)
+            {
+                lock (s_lock)
+                {
+                    if (!s_perWorld.TryGetValue(world, out List<SkyboxComponent>? components))
+                        return;
+                    components.Remove(component);
+                    if (components.Count == 0)
+                        s_perWorld.Remove(world);
+                }
+            }
+
+            public static bool TryGetFirstActive(IRuntimeRenderWorld world, out SkyboxComponent? component)
+            {
+                lock (s_lock)
+                {
+                    if (s_perWorld.TryGetValue(world, out List<SkyboxComponent>? components))
+                        for (int i = 0; i < components.Count; i++)
+                        {
+                            SkyboxComponent candidate = components[i];
+                            if (candidate.IsActiveInHierarchy)
+                            {
+                                component = candidate;
+                                return true;
+                            }
+                        }
+                }
+                component = null;
+                return false;
+            }
         }
 
         private static XRShader? GetFragmentShaderForProjection(ESkyboxProjection projection)

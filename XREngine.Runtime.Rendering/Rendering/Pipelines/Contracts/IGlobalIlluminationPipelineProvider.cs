@@ -14,6 +14,7 @@ public interface IGlobalIlluminationPipelineProvider
     bool UsesLightProbeGI { get; }
     bool UsesRadianceCascades { get; }
     bool UsesSurfelGI { get; }
+    bool UsesDDGI { get; }
 
     XRMaterial GetVoxelConeTracingVoxelizationMaterial();
 }

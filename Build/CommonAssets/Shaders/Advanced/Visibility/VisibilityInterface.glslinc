@@ -22,6 +22,7 @@
 #define XR_ADV_VIS_VIEW_SHIFT 8u
 #define XR_ADV_VIS_VERSION_SHIFT 16u
 #define XR_ADV_VIS_SELECTION_VALID_SHIFT 24u
+#define XR_ADV_VERTEX_HAS_TEXCOORD1 0x00000001u
 
 bool XR_ADV_IsSupportedVisibilityProducer(uint producer)
 {

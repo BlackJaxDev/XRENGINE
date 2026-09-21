@@ -30,6 +30,10 @@ internal unsafe partial class VkRenderProgram
     internal VulkanComputeDescriptorScratchBuilder.Telemetry ComputeDescriptorPublicationTelemetry
         => _computeDescriptorScratch.GetTelemetry();
     internal Pipeline ComputePipeline => _computePipeline;
+    internal double LastComputePipelineCompileMilliseconds
+        => Volatile.Read(ref _lastComputePipelineCompileMilliseconds);
+
+    private double _lastComputePipelineCompileMilliseconds;
 
     private DescriptorHeapPushDataPayload AcquireComputeDescriptorHeapPayload()
     {
@@ -319,10 +323,12 @@ internal unsafe partial class VkRenderProgram
             !manager.IsCompilationDependencyGenerationCurrent(key.DependencyGeneration))
         {
             ProgramCreationPort.DestroyPipelineImmediate(completed.Pipeline);
+            manager.RecordStalePipelineDisposal();
             return false;
         }
 
         _computePipeline = completed.Pipeline;
+        Volatile.Write(ref _lastComputePipelineCompileMilliseconds, completed.CompileMilliseconds);
         pipeline = _computePipeline;
         return true;
     }

@@ -20,7 +20,8 @@ internal sealed record VulkanShaderArtifact(
     bool UsesVulkanClipDepthRemap,
     bool LoadedFromDiskCache = false,
     string TransformFeedbackPlanIdentity = "",
-    IReadOnlyList<AutoUniformBlockInfo>? FrequencyOwnedAutoUniformBlocks = null)
+    IReadOnlyList<AutoUniformBlockInfo>? FrequencyOwnedAutoUniformBlocks = null,
+    double CompilationMilliseconds = 0.0)
 {
     internal IReadOnlyList<AutoUniformBlockInfo> AutoUniformBlocks
         => FrequencyOwnedAutoUniformBlocks is { Count: > 0 } blocks

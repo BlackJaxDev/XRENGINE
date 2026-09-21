@@ -337,6 +337,16 @@ public sealed partial class AdvancedGpuScenePublisher
         }
         if (material is AdvancedProjectiveMirrorMaterial && command.RenderPass == (uint)EDefaultRenderPass.OpaqueDeferred)
             layout = MaterialBindingLayouts.ProjectiveMirror;
+        // Deferred alpha-cutout materials intentionally retain OpaqueDeferred as
+        // their legacy pass so the default G-buffer path can write coverage.
+        // Their GPU state is nevertheless AlphaTested, which must select the
+        // canonical masked row and visibility shader instead of being rejected
+        // as an opaque-layout/state mismatch.
+        if (ReferenceEquals(layout, MaterialBindingLayouts.OpaqueDeferred) &&
+            command.StateClassID == (uint)EGpuMaterialStateClass.AlphaTested)
+        {
+            layout = MaterialBindingLayouts.MaskedForward;
+        }
         if (!AdvancedGpuMaterialPublisher.TryTranslateLayout(
                 layout,
                 out AdvancedMaterialLayoutTranslation translation,
@@ -412,7 +422,15 @@ public sealed partial class AdvancedGpuScenePublisher
             if (material is null)
                 MaterialBindingRowPacker.WriteDefaultRow(layout, constantWords);
             else if (!MaterialBindingRowPacker.TryWriteOpaqueDeferred(
-                         layout, sourceSnapshot.Entry, constantWords, out reason))
+                         layout,
+                         sourceSnapshot.Entry,
+                         sourceSnapshot.EmissionColor,
+                         sourceSnapshot.EmissionStrength,
+                         sourceSnapshot.EmissionTextureMetadata,
+                         sourceSnapshot.EmissionUvScaleOffset,
+                         sourceSnapshot.EmissionUvRotation,
+                         constantWords,
+                         out reason))
             {
                 fatal = true;
                 return false;
@@ -498,6 +516,7 @@ public sealed partial class AdvancedGpuScenePublisher
         bool headerChanged = existing && !resourcesChanged &&
             !_materialPublisher.HeaderMatches(
                 existingHandle,
+                material,
                 layout,
                 translation.RequiredCoverage,
                 state,
@@ -537,10 +556,10 @@ public sealed partial class AdvancedGpuScenePublisher
         out EAdvancedCanonicalCompatibilityReason compatibilityReason,
         out string reason)
     {
-        if (destination.Length != 3)
+        if (destination.Length != 4)
         {
             compatibilityReason = EAdvancedCanonicalCompatibilityReason.UnsupportedResourceBinding;
-            reason = "The bounded material bridge requires exactly three texture slots.";
+            reason = "The bounded material bridge requires exactly four texture slots.";
             return false;
         }
         if (!AdvancedGpuResourceSourceEncoder.TryEncode(
@@ -559,6 +578,12 @@ public sealed partial class AdvancedGpuScenePublisher
                 snapshot.RM,
                 EAdvancedResourceFallback.White,
                 out destination[2],
+                out compatibilityReason,
+                out reason) ||
+            !AdvancedGpuResourceSourceEncoder.TryEncode(
+                snapshot.Emissive,
+                EAdvancedResourceFallback.Black,
+                out destination[3],
                 out compatibilityReason,
                 out reason))
         {

@@ -30,7 +30,7 @@ namespace XREngine.Rendering.OpenGL;
 
 public partial class OpenGLRenderer
 {
-    private sealed record BoundTextureDebugState(IGLTexture Texture, string Name, uint BindingId);
+    private readonly record struct BoundTextureDebugState(IGLTexture Texture, string Name, uint BindingId);
 
     /// <summary>
     /// Tracks the currently active texture unit for accurate per-unit binding optimization.
@@ -94,8 +94,6 @@ public partial class OpenGLRenderer
             if (_boundTexturesPerUnitTarget.TryGetValue(ActiveTextureUnit, out var unitBindings))
             {
                 unitBindings.Remove(target);
-                if (unitBindings.Count == 0)
-                    _boundTexturesPerUnitTarget.Remove(ActiveTextureUnit);
             }
 
             return;
@@ -123,28 +121,24 @@ public partial class OpenGLRenderer
         if (!_boundTexturesPerUnitTarget.TryGetValue(ActiveTextureUnit, out var unitBindings))
             return;
 
-        // Collect targets to remove (can't modify dictionary while iterating).
-        List<ETextureTarget>? toRemove = null;
+        // Texture targets per unit are bounded by the GL target set. Retain the
+        // per-unit dictionary and collect its keys without allocating on rebinding.
+        Span<ETextureTarget> toRemove = stackalloc ETextureTarget[unitBindings.Count];
+        int removeCount = 0;
         foreach (var kvp in unitBindings)
         {
             if (kvp.Key == keepTarget)
                 continue;
 
-            toRemove ??= [];
-            toRemove.Add(kvp.Key);
+            toRemove[removeCount++] = kvp.Key;
         }
 
-        if (toRemove is null)
-            return;
-
-        foreach (var staleTarget in toRemove)
+        foreach (ETextureTarget staleTarget in toRemove[..removeCount])
         {
             Api.BindTexture(GLObjectBase.ToGLEnum(staleTarget), 0);
             unitBindings.Remove(staleTarget);
         }
 
-        if (unitBindings.Count == 0)
-            _boundTexturesPerUnitTarget.Remove(ActiveTextureUnit);
     }
 
     public void SetDrawDebugContext(GLRenderProgram? coverageVertexProgram, GLRenderProgram? coverageMaterialProgram, string? programName, string? materialName, string? meshName, IReadOnlyCollection<int>? textureUnits)

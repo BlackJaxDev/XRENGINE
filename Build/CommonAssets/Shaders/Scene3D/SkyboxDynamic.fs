@@ -1,5 +1,7 @@
 #version 450
 
+#pragma snippet "DDGIEnvironmentCapture"
+
 layout (location = 0) out vec3 OutColor;
 layout (location = 1) in vec3 FragWorldDir;
 
@@ -240,7 +242,7 @@ vec3 ShadeMoon(vec3 dir, vec3 moonDir, vec3 sunDir, float nightFactor)
 
 void main()
 {
-    vec3 dir = SafeNormalize3(FragWorldDir);
+    vec3 dir = XRENGINE_DDGIEnvironmentDirection(FragWorldDir);
 
     // --- Celestial orbits ---
     float angle = SkyTimeOfDay * TAU;

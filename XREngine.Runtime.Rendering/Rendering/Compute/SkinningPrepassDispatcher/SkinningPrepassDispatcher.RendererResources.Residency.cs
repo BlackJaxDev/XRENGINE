@@ -78,6 +78,11 @@ internal sealed partial class SkinningPrepassDispatcher
             bool doBlendshapes,
             bool useGlobalBlendWeights)
         {
+            XRMeshSkinningBufferState skinningState = mesh.GetSkinningBufferStateSnapshot();
+            XRMeshBlendshapeBufferState blendshapeState = mesh.GetBlendshapeBufferStateSnapshot();
+            XRMeshRenderer.BlendshapeResourceSnapshot rendererBlendshapeState =
+                _renderer.CaptureBlendshapeResources();
+
             if (isInterleaved)
             {
                 if (!IsBufferNaturallyResident(mesh.InterleavedVertexBuffer))
@@ -93,22 +98,22 @@ internal sealed partial class SkinningPrepassDispatcher
 
             if (doSkinning)
             {
-                if (!IsBufferNaturallyResident(mesh.BoneInfluenceCoreIndices)
-                    || !IsBufferNaturallyResident(mesh.BoneInfluenceCoreWeights))
+                if (!IsBufferNaturallyResident(skinningState.CoreIndices)
+                    || !IsBufferNaturallyResident(skinningState.CoreWeights))
                     return false;
-                if (mesh.HasSpillInfluences
-                    && (!IsBufferNaturallyResident(mesh.BoneInfluenceSpillHeaders)
-                        || !IsBufferNaturallyResident(mesh.BoneInfluenceSpillEntries)))
+                if (skinningState.HasSpillInfluences
+                    && (!IsBufferNaturallyResident(skinningState.SpillHeaders)
+                        || !IsBufferNaturallyResident(skinningState.SpillEntries)))
                     return false;
             }
 
             if (doBlendshapes)
             {
-                if (!IsBufferNaturallyResident(_renderer.BlendshapeActiveWeights)
-                    || !IsBufferNaturallyResident(mesh.BlendshapeSparseShapeRanges)
-                    || !IsBufferNaturallyResident(mesh.BlendshapeSparseRecords)
-                    || !IsBufferNaturallyResident(mesh.BlendshapeQuantizedDeltas)
-                    || !IsBufferNaturallyResident(mesh.BlendshapeQuantizationMetadata))
+                if (!IsBufferNaturallyResident(rendererBlendshapeState.ActiveWeights)
+                    || !IsBufferNaturallyResident(blendshapeState.SparseShapeRanges)
+                    || !IsBufferNaturallyResident(blendshapeState.SparseRecords)
+                    || !IsBufferNaturallyResident(blendshapeState.QuantizedDeltas)
+                    || !IsBufferNaturallyResident(blendshapeState.QuantizationMetadata))
                     return false;
             }
 
@@ -123,12 +128,9 @@ internal sealed partial class SkinningPrepassDispatcher
         {
             if (buffer is null)
                 return true;
-            foreach (var wrapper in buffer.APIWrappers)
-            {
-                if (wrapper is IApiDataBuffer apiBuffer && !apiBuffer.BackendIsReadyForGpuUse)
-                    return false;
-            }
-            return true;
+
+            return !buffer.TryGetApiBufferForCurrentOwner(
+                out IApiDataBuffer? apiBuffer) || apiBuffer.BackendIsReadyForGpuUse;
         }
 
         private bool _residencyLogged;
@@ -150,6 +152,11 @@ internal sealed partial class SkinningPrepassDispatcher
             bool useGlobalBlendWeights,
             bool usePrecombinedBlendshapes)
         {
+            XRMeshSkinningBufferState skinningState = mesh.GetSkinningBufferStateSnapshot();
+            XRMeshBlendshapeBufferState blendshapeState = mesh.GetBlendshapeBufferStateSnapshot();
+            XRMeshRenderer.BlendshapeResourceSnapshot rendererBlendshapeState =
+                _renderer.CaptureBlendshapeResources();
+
             // Source vertex data (read-only inputs).
             if (isInterleaved)
                 EnsureBufferResident(mesh.InterleavedVertexBuffer);
@@ -163,12 +170,12 @@ internal sealed partial class SkinningPrepassDispatcher
             if (doSkinning)
             {
                 EnsureBufferResident(skinPalette);
-                EnsureBufferResident(mesh.BoneInfluenceCoreIndices);
-                EnsureBufferResident(mesh.BoneInfluenceCoreWeights);
-                if (mesh.HasSpillInfluences)
+                EnsureBufferResident(skinningState.CoreIndices);
+                EnsureBufferResident(skinningState.CoreWeights);
+                if (skinningState.HasSpillInfluences)
                 {
-                    EnsureBufferResident(mesh.BoneInfluenceSpillHeaders);
-                    EnsureBufferResident(mesh.BoneInfluenceSpillEntries);
+                    EnsureBufferResident(skinningState.SpillHeaders);
+                    EnsureBufferResident(skinningState.SpillEntries);
                 }
             }
 
@@ -176,17 +183,17 @@ internal sealed partial class SkinningPrepassDispatcher
             {
                 if (usePrecombinedBlendshapes)
                 {
-                    EnsureBufferResident(_renderer.PrecombinedBlendshapePositionsBuffer);
-                    EnsureBufferResident(_renderer.PrecombinedBlendshapeNormalsBuffer);
-                    EnsureBufferResident(_renderer.PrecombinedBlendshapeTangentsBuffer);
+                    EnsureBufferResident(rendererBlendshapeState.PrecombinedPositions);
+                    EnsureBufferResident(rendererBlendshapeState.PrecombinedNormals);
+                    EnsureBufferResident(rendererBlendshapeState.PrecombinedTangents);
                 }
                 else
                 {
-                    EnsureBufferResident(_renderer.BlendshapeActiveWeights);
-                    EnsureBufferResident(mesh.BlendshapeSparseShapeRanges);
-                    EnsureBufferResident(mesh.BlendshapeSparseRecords);
-                    EnsureBufferResident(mesh.BlendshapeQuantizedDeltas);
-                    EnsureBufferResident(mesh.BlendshapeQuantizationMetadata);
+                    EnsureBufferResident(rendererBlendshapeState.ActiveWeights);
+                    EnsureBufferResident(blendshapeState.SparseShapeRanges);
+                    EnsureBufferResident(blendshapeState.SparseRecords);
+                    EnsureBufferResident(blendshapeState.QuantizedDeltas);
+                    EnsureBufferResident(blendshapeState.QuantizationMetadata);
                 }
             }
 
@@ -207,13 +214,15 @@ internal sealed partial class SkinningPrepassDispatcher
             if (!doSkinning)
                 return;
 
+            XRMeshRenderer.SkinnedOutputResourceSnapshot outputState =
+                _renderer.CaptureSkinnedOutputResources();
             if (isInterleaved)
-                EnsureBufferResident(_renderer.SkinnedInterleavedBuffer);
+                EnsureBufferResident(outputState.Interleaved);
             else
             {
-                EnsureBufferResident(_renderer.SkinnedPositionsBuffer);
-                EnsureBufferResident(_renderer.SkinnedNormalsBuffer);
-                EnsureBufferResident(_renderer.SkinnedTangentsBuffer);
+                EnsureBufferResident(outputState.Positions);
+                EnsureBufferResident(outputState.Normals);
+                EnsureBufferResident(outputState.Tangents);
             }
         }
 
@@ -226,10 +235,12 @@ internal sealed partial class SkinningPrepassDispatcher
         {
             if (buffer is null)
                 return;
-            foreach (var wrapper in buffer.APIWrappers)
+
+            if (buffer.TryGetApiBufferForCurrentOwner(
+                    out IApiDataBuffer? apiBuffer) &&
+                !apiBuffer.BackendIsReadyForGpuUse)
             {
-                if (wrapper is IApiDataBuffer apiBuffer && !apiBuffer.BackendIsReadyForGpuUse)
-                    apiBuffer.EnsureStorageAllocatedForGpuUse();
+                apiBuffer.EnsureStorageAllocatedForGpuUse();
             }
         }
 
@@ -244,13 +255,14 @@ internal sealed partial class SkinningPrepassDispatcher
                 return;
             _residencyLogged = true;
 
+            XRMeshSkinningBufferState skinningState = mesh.GetSkinningBufferStateSnapshot();
             XRDataBuffer? positions = isInterleaved ? mesh.InterleavedVertexBuffer : mesh.PositionsBuffer;
             Debug.LogWarning(
                 $"[SkinResidency] Mesh='{mesh.Name ?? "<null>"}' verts={mesh.VertexCount} " +
-                $"palette={ResidencyState(skinPalette)} coreIdx={ResidencyState(mesh.BoneInfluenceCoreIndices)} " +
-                $"coreWt={ResidencyState(mesh.BoneInfluenceCoreWeights)} pos={ResidencyState(positions)} " +
-                $"spillHdr={ResidencyState(mesh.BoneInfluenceSpillHeaders)} spillEnt={ResidencyState(mesh.BoneInfluenceSpillEntries)} " +
-                $"hasSpill={mesh.HasSpillInfluences}");
+                $"palette={ResidencyState(skinPalette)} coreIdx={ResidencyState(skinningState.CoreIndices)} " +
+                $"coreWt={ResidencyState(skinningState.CoreWeights)} pos={ResidencyState(positions)} " +
+                $"spillHdr={ResidencyState(skinningState.SpillHeaders)} spillEnt={ResidencyState(skinningState.SpillEntries)} " +
+                $"hasSpill={skinningState.HasSpillInfluences}");
         }
 
         private static string ResidencyState(XRDataBuffer? buffer)

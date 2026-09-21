@@ -148,7 +148,7 @@ public static class AdvancedProductionCutoverContract
             return null;
 
         IAdvancedGlobalIlluminationProvider? gi = pipeline.GlobalIlluminationProvider;
-        if (pipeline.GlobalIlluminationMode is not EGlobalIlluminationMode.None and not EGlobalIlluminationMode.LightProbesAndIbl)
+        if (pipeline.GlobalIlluminationMode != EGlobalIlluminationMode.None)
         {
             if (gi is null)
                 return $"Global illumination mode '{pipeline.GlobalIlluminationMode}' is requested but no Advanced GI provider is configured.";
@@ -156,14 +156,8 @@ public static class AdvancedProductionCutoverContract
                 return $"Advanced GI provider '{gi.ProviderName}' is unsupported.";
             if (gi.ActiveMode != pipeline.GlobalIlluminationMode)
                 return $"Advanced GI provider '{gi.ProviderName}' does not implement requested mode '{pipeline.GlobalIlluminationMode}'.";
-            return $"Advanced GI provider '{gi.ProviderName}' is configured but is not integrated into native shading.";
-        }
-
-        if (pipeline.GlobalIlluminationMode == EGlobalIlluminationMode.LightProbesAndIbl &&
-            gi is not null && !AdvancedGlobalIlluminationContract.IsNativeProvider(gi))
-        {
-            string providerName = gi?.ProviderName ?? "none";
-            return $"Light probe/IBL native shading requires provider '{AdvancedLightProbesAndIblProvider.Instance.ProviderName}' (actual: '{providerName}').";
+            if (!AdvancedGlobalIlluminationContract.IsNativeProvider(gi))
+                return $"Advanced GI provider '{gi.ProviderName}' is configured but is not integrated into native shading.";
         }
 
         IAdvancedAmbientOcclusionProvider? ao = pipeline.AmbientOcclusionProvider;

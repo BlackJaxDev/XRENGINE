@@ -151,7 +151,8 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             if (string.Equals(name, BlurFBOName, StringComparison.Ordinal))
             {
-                return new XRQuadFrameBuffer(material, true, (RequireAttachment(aoTexture, IntensityTextureName), EFrameBufferAttachment.ColorAttachment0, 0, -1))
+                return new XRQuadFrameBuffer(material, true, true, Stereo,
+                    (RequireAttachment(aoTexture, IntensityTextureName), EFrameBufferAttachment.ColorAttachment0, 0, -1))
                 {
                     Name = BlurFBOName
                 };
@@ -160,7 +161,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             if (!string.Equals(name, GenerationFBOName, StringComparison.Ordinal))
                 throw new InvalidOperationException($"Unsupported disabled AO framebuffer '{name}'.");
 
-            return new XRQuadFrameBuffer(material, true,
+            return new XRQuadFrameBuffer(material, true, true, Stereo,
                 (RequireAttachment(instance, AlbedoTextureName), EFrameBufferAttachment.ColorAttachment0, 0, -1),
                 (RequireAttachment(instance, NormalTextureName), EFrameBufferAttachment.ColorAttachment1, 0, -1),
                 (RequireAttachment(instance, RMSETextureName), EFrameBufferAttachment.ColorAttachment2, 0, -1),

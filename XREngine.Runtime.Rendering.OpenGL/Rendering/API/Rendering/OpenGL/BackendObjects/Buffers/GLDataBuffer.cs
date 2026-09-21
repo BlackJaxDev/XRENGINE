@@ -55,37 +55,13 @@ namespace XREngine.Rendering.OpenGL
                     BackendResolvedRoute,
                     BackendIsReadyForGpuUse);
 
-            protected override void UnlinkData()
-            {
-                Data.PushDataRequested -= PushData;
-                Data.PushSubDataRequested -= PushSubData;
-                Data.FlushRequested -= Flush;
-                Data.FlushRangeRequested -= FlushRange;
-                Data.SetBlockNameRequested -= SetUniformBlockName;
-                Data.SetBlockIndexRequested -= SetBlockIndex;
-                Data.BindRequested -= Bind;
-                Data.UnbindRequested -= Unbind;
-                Data.MapBufferDataRequested -= MapBufferData;
-                Data.UnmapBufferDataRequested -= UnmapBufferData;
-                Data.BindSSBORequested -= BindSSBO;
-            }
+            // XRDataBuffer dispatches backend operations directly to its exact render owner.
+            // Its public request events remain observer notifications, not backend fan-out.
+            protected override void UnlinkData() { }
             private static bool IsGpuBufferLoggingEnabled()
                 => RuntimeEngine.EffectiveSettings.EnableGpuIndirectDebugLogging;
 
-            protected override void LinkData()
-            {
-                Data.PushDataRequested += PushData;
-                Data.PushSubDataRequested += PushSubData;
-                Data.FlushRequested += Flush;
-                Data.FlushRangeRequested += FlushRange;
-                Data.SetBlockNameRequested += SetUniformBlockName;
-                Data.SetBlockIndexRequested += SetBlockIndex;
-                Data.BindRequested += Bind;
-                Data.UnbindRequested += Unbind;
-                Data.MapBufferDataRequested += MapBufferData;
-                Data.UnmapBufferDataRequested += UnmapBufferData;
-                Data.BindSSBORequested += BindSSBO;
-            }
+            protected override void LinkData() { }
 
             public override EGLObjectType Type => EGLObjectType.Buffer;
 
@@ -349,7 +325,7 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             public void PushData()
             {
-                if (Data.IsDestroyed)
+                if (IsRetired || Data.IsDestroyed)
                     return;
 
                 if (HasBlockingActiveMapping())
@@ -369,6 +345,8 @@ namespace XREngine.Rendering.OpenGL
                 if (RuntimeEngine.InvokeOnMainThread(PushData, "GLDataBuffer.PushData"))
                     return;
 
+                if (IsRetired || Data.IsDestroyed)
+                    return;
                 PushDataImmediate();
             }
 
@@ -380,7 +358,7 @@ namespace XREngine.Rendering.OpenGL
             {
                 using var scope = RuntimeEngine.Profiler.Start("OpenGL.GLDataBuffer.PushDataQueued");
 
-                if (Data.IsDestroyed)
+                if (IsRetired || Data.IsDestroyed)
                     return;
 
                 uint dataLength = Data.Length;
@@ -849,21 +827,29 @@ namespace XREngine.Rendering.OpenGL
             public void PushSubData()
                 => PushSubData(0, Data.Length);
 
+            // Keep the capturing delegate off the render-thread path. The
+            // queued call owns its range until the render thread executes it.
+            private void QueuePushSubData(int offset, uint length)
+                => RuntimeEngine.EnqueueMainThreadTask(() => PushSubData(offset, length), "GLDataBuffer.PushSubData");
+
             /// <summary>
             /// Pushes the a portion of the buffer to the GPU. Assumes the buffer has already been allocated using PushData.
             /// </summary>
             public void PushSubData(int offset, uint length)
             {
-                if (Data.IsDestroyed || length == 0)
+                if (IsRetired || Data.IsDestroyed || length == 0)
                     return;
 
                 if (HasBlockingActiveMapping())
                     return;
 
-                if (RuntimeEngine.InvokeOnMainThread(() => PushSubData(offset, length), "GLDataBuffer.PushSubData"))
+                if (!RuntimeEngine.IsRenderThread)
+                {
+                    QueuePushSubData(offset, length);
                     return;
+                }
 
-                if (Data.IsDestroyed)
+                if (IsRetired || Data.IsDestroyed)
                     return;
 
                 if (_pushSubDataBreakdownEnabled)

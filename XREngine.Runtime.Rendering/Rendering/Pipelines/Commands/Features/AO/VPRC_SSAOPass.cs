@@ -301,7 +301,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                     RenderOptions = renderParams
                 };
 
-                XRQuadFrameBuffer ssaoGenFbo = new(ssaoGenMaterial, true,
+                XRQuadFrameBuffer ssaoGenFbo = new(ssaoGenMaterial, true, true, Stereo,
                     (RequireAttachment(instance, AlbedoTextureName), EFrameBufferAttachment.ColorAttachment0, 0, -1),
                     (RequireAttachment(instance, NormalTextureName), EFrameBufferAttachment.ColorAttachment1, 0, -1),
                     (RequireAttachment(instance, RMSETextureName), EFrameBufferAttachment.ColorAttachment2, 0, -1),
@@ -320,6 +320,8 @@ namespace XREngine.Rendering.Pipelines.Commands
                 XRQuadFrameBuffer ssaoBlurFbo = new(
                     ssaoBlurMaterial,
                     true,
+                    true,
+                    Stereo,
                     (RequireAttachment(rawAoTexture, SSAORawTextureName), EFrameBufferAttachment.ColorAttachment0, 0, -1))
                 {
                     Name = SSAOBlurFBOName

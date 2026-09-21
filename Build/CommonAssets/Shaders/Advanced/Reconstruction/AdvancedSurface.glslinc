@@ -52,6 +52,7 @@
 #define XR_ADV_RECONSTRUCTION_NON_FINITE 12u
 #define XR_ADV_RECONSTRUCTION_CURRENT_GEOMETRY_MISSING 13u
 #define XR_ADV_RECONSTRUCTION_PREVIOUS_GEOMETRY_MISSING 14u
+#define XR_ADV_RECONSTRUCTION_TEXCOORD1_MISSING 15u
 
 struct XRAdvancedSurface
 {
@@ -78,6 +79,8 @@ struct XRAdvancedSurface
     vec3 barycentricDy;
     vec2 texCoord0Dx;
     vec2 texCoord0Dy;
+    vec2 texCoord1Dx;
+    vec2 texCoord1Dy;
     vec4 currentUnjitteredClip;
     vec4 previousUnjitteredClip;
     vec2 motionNdc;
@@ -115,6 +118,8 @@ XRAdvancedSurface XR_ADV_InvalidSurface(
     surface.barycentricDy = vec3(0.0);
     surface.texCoord0Dx = vec2(0.0);
     surface.texCoord0Dy = vec2(0.0);
+    surface.texCoord1Dx = vec2(0.0);
+    surface.texCoord1Dy = vec2(0.0);
     surface.currentUnjitteredClip = vec4(0.0);
     surface.previousUnjitteredClip = vec4(0.0);
     surface.motionNdc = vec2(0.0);

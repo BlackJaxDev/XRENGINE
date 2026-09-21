@@ -1,4 +1,5 @@
 using System.Numerics;
+using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
 
 namespace XREngine.Rendering.Materials
@@ -10,16 +11,26 @@ namespace XREngine.Rendering.Materials
     public static class MaterialBindingSourceEncoder
     {
         /// <summary>
-        /// Captures the numeric material values and the first albedo, normal, and roughness/metallic source textures.
+        /// Captures material values and source textures through their surface semantics.
         /// </summary>
         public static MaterialBindingSourceSnapshot Encode(XRMaterial? material)
         {
             if (material is null)
                 return default;
 
-            XRTexture? albedo = material.Textures.Count > 0 ? material.Textures[0] : null;
-            XRTexture? normal = material.Textures.Count > 1 ? material.Textures[1] : null;
-            XRTexture? rm = material.Textures.Count > 2 ? material.Textures[2] : null;
+            bool hasSurfaceBindings = material.SurfaceTextureBindings.Length != 0;
+            XRTexture? albedo = material.GetSurfaceTexture(EMaterialTextureSemantic.BaseColor)?.Texture;
+            XRTexture? normal = material.GetSurfaceTexture(EMaterialTextureSemantic.Normal)?.Texture;
+            XRTexture? rm = material.GetSurfaceTexture(EMaterialTextureSemantic.Metallic)?.Texture ??
+                material.GetSurfaceTexture(EMaterialTextureSemantic.Roughness)?.Texture;
+            MaterialSurfaceTextureBinding? emissiveBinding = material.GetSurfaceTexture(EMaterialTextureSemantic.Emissive);
+            XRTexture? emissive = emissiveBinding?.Texture;
+            if (!hasSurfaceBindings)
+            {
+                albedo = material.Textures.Count > 0 ? material.Textures[0] : null;
+                normal = material.Textures.Count > 1 ? material.Textures[1] : null;
+                rm = material.Textures.Count > 2 ? material.Textures[2] : null;
+            }
             uint flags = 0u;
 
             if (albedo is not null)
@@ -41,7 +52,13 @@ namespace XREngine.Rendering.Materials
                 },
                 albedo,
                 normal,
-                rm);
+                rm,
+                emissive,
+                ResolveEmissionColor(material),
+                ResolveEmissionStrength(material),
+                ResolveEmissionTextureMetadata(emissiveBinding),
+                emissiveBinding?.UvScaleOffset ?? new Vector4(1.0f, 1.0f, 0.0f, 0.0f),
+                emissiveBinding?.UvRotation ?? 0.0f);
         }
 
         private static Vector4 ResolveBaseColorOpacity(XRMaterial material)
@@ -71,20 +88,29 @@ namespace XREngine.Rendering.Materials
                 material.Parameter<ShaderFloat>("Metallic")?.Value ?? 0.0f,
                 material.Parameter<ShaderFloat>("Specular")?.Value ?? 1.0f,
                 material.Parameter<ShaderFloat>("Emission")?.Value ?? 0.0f);
+
+        private static Vector4 ResolveEmissionColor(XRMaterial material)
+        {
+            Vector3 color = material.EmissiveColor ?? Vector3.Zero;
+            return new Vector4(color, material.EmissiveColor.HasValue ? 1.0f : 0.0f);
+        }
+
+        private static float ResolveEmissionStrength(XRMaterial material)
+            => material.EmissionStrength ?? material.Parameter<ShaderFloat>("Emission")?.Value ?? 0.0f;
+
+        private static Vector4 ResolveEmissionTextureMetadata(MaterialSurfaceTextureBinding? binding)
+        {
+            if (binding is null)
+                return Vector4.Zero;
+
+            bool sourceFormatDecodesSrgb = binding.Texture is XRTexture2D texture &&
+                texture.SizedInternalFormat is ESizedInternalFormat.Srgb8 or ESizedInternalFormat.Srgb8Alpha8;
+            return new Vector4(
+                binding.TexCoordSet,
+                binding.IsSrgb && !sourceFormatDecodesSrgb ? 1.0f : 0.0f,
+                0.0f,
+                0.0f);
+        }
     }
 
-    /// <summary>
-    /// Renderer-neutral material row and its three texture sources.
-    /// </summary>
-    public readonly struct MaterialBindingSourceSnapshot(
-        GPUMaterialEntry entry,
-        XRTexture? albedo,
-        XRTexture? normal,
-        XRTexture? rm)
-    {
-        public GPUMaterialEntry Entry { get; } = entry;
-        public XRTexture? Albedo { get; } = albedo;
-        public XRTexture? Normal { get; } = normal;
-        public XRTexture? RM { get; } = rm;
-    }
 }

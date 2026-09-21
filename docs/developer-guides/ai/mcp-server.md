@@ -674,6 +674,9 @@ pwsh Tools/Reports/generate_mcp_docs.ps1
 | `list_local_players` | List local player controllers, viewports, and input presence. |
 | `list_prefabs` | List loaded prefab assets. |
 | `list_render_pipeline_resources` | List live render-pipeline textures and framebuffers for the selected viewport. |
+| `clear_render_pipeline_cache` | Clear exactly the selected viewport pipeline instance on its owning render thread and report cache metadata; invalid or conflicting selectors fail. |
+| `arm_ddgi_visibility_interruption` | Development-only DDGI recovery diagnostic: interrupt 1–120 visibility-stage updates on one exact viewport pipeline/resource generation. |
+| `get_ddgi_visibility_interruption` | Read durable skipped-cycle, abort-receipt, unexpected-publication and recovery evidence for the selected pipeline's diagnostic request. |
 | `list_scenes` | List scenes in the active world. |
 | `list_scene_nodes` | List scene nodes in the active world/scene. |
 | `list_tags` | List tags on a node or across the active world. |

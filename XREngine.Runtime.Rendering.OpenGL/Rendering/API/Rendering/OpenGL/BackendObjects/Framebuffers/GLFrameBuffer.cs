@@ -110,8 +110,20 @@ namespace XREngine.Rendering.OpenGL
             if (!RuntimeEngine.IsRenderThread)
                 return;
 
-            if (cache is not null && cache.Length > 0)
-                Data.DetachTargets(cache);
+            // Deletion may run after this renderer has stopped accepting new
+            // wrappers. Detach this native FBO directly: the logical event path
+            // can recreate wrappers and also reaches other renderer owners.
+            if (cache is not null && _bindingId is uint id && id != InvalidBindingId)
+            {
+                for (int i = 0; i < cache.Length; i++)
+                {
+                    var target = cache[i];
+                    if (target.Target is XRRenderBuffer)
+                        Api.NamedFramebufferRenderbuffer(id, ToGLEnum(target.Attachment), GLEnum.Renderbuffer, 0);
+                    else
+                        Api.NamedFramebufferTexture(id, ToGLEnum(target.Attachment), 0, 0);
+                }
+            }
 
             _attachedTargetsCache = null;
             _invalidated = true;

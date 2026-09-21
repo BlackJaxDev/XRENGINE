@@ -119,7 +119,21 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
     public EGlobalIlluminationMode GlobalIlluminationMode
     {
         get => _globalIlluminationMode;
-        set => SetField(ref _globalIlluminationMode, value);
+        set
+        {
+            if (!SetField(ref _globalIlluminationMode, value))
+                return;
+
+            if (_globalIlluminationProvider is null ||
+                _globalIlluminationProvider is AdvancedLightProbesAndIblProvider or AdvancedDdgiProvider)
+                GlobalIlluminationProvider = value == EGlobalIlluminationMode.DDGI
+                    ? AdvancedDdgiProvider.Instance
+                    : AdvancedLightProbesAndIblProvider.Instance;
+            // Construction initializes the chain after all stage settings and
+            // lazy materials exist; later mode changes replace its frozen flags.
+            if (CommandChain.Count != 0)
+                RebuildCommandChain();
+        }
     }
 
     public bool UsesRestirGI => _globalIlluminationMode == EGlobalIlluminationMode.PathTracing;
@@ -128,11 +142,14 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
     public bool UsesLightProbeGI => _globalIlluminationMode == EGlobalIlluminationMode.LightProbesAndIbl;
     public bool UsesRadianceCascades => _globalIlluminationMode == EGlobalIlluminationMode.RadianceCascades;
     public bool UsesSurfelGI => _globalIlluminationMode == EGlobalIlluminationMode.SurfelGI;
+    public bool UsesDDGI => _globalIlluminationMode == EGlobalIlluminationMode.DDGI;
 
     // Light probe debug accessors (for editor/state panels)
-    public XRTexture2DArray? ProbeIrradianceArray => _probeIrradianceArray;
-    public XRTexture2DArray? ProbePrefilterArray => _probePrefilterArray;
-    public int ProbeCount => _probePositionBuffer is null ? 0 : (int)_probePositionBuffer.ElementCount;
+    public XRTexture2DArray? ProbeIrradianceArray => CurrentProbeResources?.IrradianceArray;
+    public XRTexture2DArray? ProbePrefilterArray => CurrentProbeResources?.PrefilterArray;
+    public int ProbeCount => CurrentProbeResources?.PositionBuffer is { } positions
+        ? (int)positions.ElementCount
+        : 0;
 
     protected static bool GPURenderDispatch
         => RuntimeEngine.Rendering.ResolveGpuRenderDispatchPreference(RuntimeEngine.EffectiveSettings.GPURenderDispatch);
@@ -551,7 +568,7 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
             return true;
 
         var textures = material.Textures;
-        if (textures.Count != 7)
+        if (textures.Count != 8)
             return true;
 
         if (!ReferenceEquals(textures[0], GetTexture<XRTexture>(MsaaAlbedoOpacityTextureName))
@@ -560,7 +577,8 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
             || !ReferenceEquals(textures[3], GetTexture<XRTexture>(AmbientOcclusionIntensityTextureName))
             || !ReferenceEquals(textures[4], GetTexture<XRTexture>(MsaaDepthViewTextureName))
             || !ReferenceEquals(textures[5], GetTexture<XRTexture>(MsaaLightingTextureName))
-            || !ReferenceEquals(textures[6], GetTexture<XRTexture>(BRDFTextureName)))
+            || !ReferenceEquals(textures[6], GetTexture<XRTexture>(BRDFTextureName))
+            || !ReferenceEquals(textures[7], GetTexture<XRTexture>(MsaaEmissionColorTextureName)))
             return true;
 
         var fragmentShaders = material.FragmentShaders;
@@ -596,7 +614,7 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
             return true;
 
         var textures = material.Textures;
-        if (textures.Count != 7)
+        if (textures.Count != 8)
             return true;
 
         if (!ReferenceEquals(textures[0], GetTexture<XRTexture>(AlbedoOpacityTextureName))
@@ -605,7 +623,8 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
             || !ReferenceEquals(textures[3], GetTexture<XRTexture>(AmbientOcclusionIntensityTextureName))
             || !ReferenceEquals(textures[4], GetTexture<XRTexture>(DepthViewTextureName))
             || !ReferenceEquals(textures[5], GetTexture<XRTexture>(LightingAccumTextureName))
-            || !ReferenceEquals(textures[6], GetTexture<XRTexture>(BRDFTextureName)))
+            || !ReferenceEquals(textures[6], GetTexture<XRTexture>(BRDFTextureName))
+            || !ReferenceEquals(textures[7], GetTexture<XRTexture>(EmissionColorTextureName)))
             return true;
 
         var fragmentShaders = material.FragmentShaders;
@@ -686,14 +705,15 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
 
     private bool HasMsaaGBufferTargets(XRFrameBuffer fbo)
     {
-        if (fbo.Targets is not { Length: 5 } targets)
+        if (fbo.Targets is not { Length: 6 } targets)
             return false;
 
         return HasTextureAttachment(targets[0], MsaaAlbedoOpacityTextureName, EFrameBufferAttachment.ColorAttachment0)
             && HasTextureAttachment(targets[1], MsaaNormalTextureName, EFrameBufferAttachment.ColorAttachment1)
             && HasTextureAttachment(targets[2], MsaaRMSETextureName, EFrameBufferAttachment.ColorAttachment2)
             && HasTextureAttachment(targets[3], MsaaTransformIdTextureName, EFrameBufferAttachment.ColorAttachment3)
-            && HasTextureAttachment(targets[4], MsaaDepthStencilTextureName, EFrameBufferAttachment.DepthStencilAttachment);
+            && HasTextureAttachment(targets[4], MsaaEmissionColorTextureName, EFrameBufferAttachment.ColorAttachment4)
+            && HasTextureAttachment(targets[5], MsaaDepthStencilTextureName, EFrameBufferAttachment.DepthStencilAttachment);
     }
 
     private bool HasMsaaLightingTargets(XRFrameBuffer fbo)
@@ -1324,13 +1344,14 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
             return true;
 
         var targets = fbo.Targets;
-        if (targets is null || targets.Length != 5)
+        if (targets is null || targets.Length != 6)
             return true;
 
         XRTexture? albedo = GetTexture<XRTexture>(AlbedoOpacityTextureName);
         XRTexture? normal = GetTexture<XRTexture>(NormalTextureName);
         XRTexture? rmse = GetTexture<XRTexture>(RMSETextureName);
         XRTexture? transformId = GetTexture<XRTexture>(TransformIdTextureName);
+        XRTexture? emission = GetTexture<XRTexture>(EmissionColorTextureName);
         XRTexture? depthStencil = GetTexture<XRTexture>(DepthStencilTextureName);
 
         return !ReferenceEquals(targets[0].Target, albedo)
@@ -1341,8 +1362,10 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
             || targets[2].Attachment != EFrameBufferAttachment.ColorAttachment2
             || !ReferenceEquals(targets[3].Target, transformId)
             || targets[3].Attachment != EFrameBufferAttachment.ColorAttachment3
-            || !ReferenceEquals(targets[4].Target, depthStencil)
-            || targets[4].Attachment != EFrameBufferAttachment.DepthStencilAttachment;
+            || !ReferenceEquals(targets[4].Target, emission)
+            || targets[4].Attachment != EFrameBufferAttachment.ColorAttachment4
+            || !ReferenceEquals(targets[5].Target, depthStencil)
+            || targets[5].Attachment != EFrameBufferAttachment.DepthStencilAttachment;
     }
 
     /// <summary>
@@ -1496,6 +1519,7 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
     public const string TsrHistoryColorFBOName = "TsrHistoryColorFBO";
     public const string RadianceCascadeCompositeFBOName = "RadianceCascadeCompositeFBO";
     public const string SurfelGICompositeFBOName = "SurfelGICompositeFBO";
+    public const string DDGICompositeFBOName = "DDGICompositeFBO";
     public const string TsrUpscaleFBOName = "TsrUpscaleFBO";
 
     //Textures
@@ -1516,6 +1540,7 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
     public const string AlbedoOpacityTextureName = "AlbedoOpacity";
     public const string RMSETextureName = "RMSE";
     public const string TransformIdTextureName = "TransformId";
+    public const string EmissionColorTextureName = "EmissionColor";
     public const string DepthStencilTextureName = "DepthStencil";
     public const string ForwardPrePassDepthStencilTextureName = "ForwardPrePassDepthStencil";
     public const string ForwardContactDepthStencilTextureName = "ForwardContactDepthStencil";
@@ -1549,11 +1574,19 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
     public const string TsrHistoryColorTextureName = "TsrHistoryColor";
     public const string RadianceCascadeGITextureName = "RadianceCascadeGI";
     public const string SurfelGITextureName = "SurfelGITexture";
+    public const string DDGITextureName = "DDGITexture";
+    public const string DDGIIrradianceAtlasTextureName = "DDGIIrradianceAtlas";
+    public const string DDGIVisibilityAtlasTextureName = "DDGIVisibilityAtlas";
+    public const string DDGIProbeStateBufferName = "DDGIProbeStateBuffer";
+    public const string DDGIRayBufferName = "DDGIRayBuffer";
+    public const string DDGIHitBufferName = "DDGIHitBuffer";
+    public const string DDGIRayRadianceBufferName = "DDGIRayRadianceBuffer";
 
     // MSAA deferred GBuffer texture names
     public const string MsaaAlbedoOpacityTextureName = "MsaaAlbedoOpacity";
     public const string MsaaNormalTextureName = "MsaaNormal";
     public const string MsaaRMSETextureName = "MsaaRMSE";
+    public const string MsaaEmissionColorTextureName = "MsaaEmissionColor";
     public const string MsaaDepthStencilTextureName = "MsaaDepthStencil";
     public const string MsaaDepthViewTextureName = "MsaaDepthView";
     public const string MsaaTransformIdTextureName = "MsaaTransformId";
@@ -1717,7 +1750,8 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
     {
         RuntimeEngine.Rendering.SettingsChanged -= HandleRenderingSettingsChanged;
         RuntimeEngine.Rendering.AntiAliasingSettingsChanged -= HandleAntiAliasingSettingsChanged;
-        ClearProbeResources();
+        foreach (XRRenderPipelineInstance instance in Instances)
+            ForwardLightProbeInstanceResources.DestroyCache(instance, this);
         base.OnDestroying();
     }
 
@@ -1865,13 +1899,6 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
 
     #region Setting Uniforms
 
-    private XRTexture2DArray? _probeIrradianceArray;
-    private XRTexture2DArray? _probePrefilterArray;
-    private XRDataBuffer? _probePositionBuffer;
-    private XRDataBuffer? _probeTetraBuffer;
-    private XRDataBuffer? _probeParamBuffer;
-    private XRDataBuffer? _probeGridCellBuffer;
-    private XRDataBuffer? _probeGridIndexBuffer;
     private const string LightProbePositionBufferName = "LightProbePositions";
     private const string LightProbeParamBufferName = "LightProbeParameters";
     private const string LightProbeTetraBufferName = "LightProbeTetrahedra";
@@ -1884,30 +1911,7 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
     private const uint LightProbeParamBufferBinding = 22u;
     private const uint LightProbeGridCellBufferBinding = 23u;
     private const uint LightProbeGridIndexBufferBinding = 24u;
-    private Vector3 _probeGridOrigin;
-    private float _probeGridCellSize;
-    private IVector3 _probeGridDims;
     private bool _useProbeGridAcceleration = true;
-    private int _lastProbeCount = 0;
-    private readonly Dictionary<Guid, Vector3> _cachedProbePositions = new();
-    private readonly Dictionary<Guid, (XRTexture2D Irradiance, XRTexture2D Prefilter)> _cachedProbeTextures = new();
-    private readonly Dictionary<Guid, uint> _observedProbeCaptureVersions = new();
-    private ProbePositionData[] _cachedProbePositionData = [];
-    private ProbeParamData[] _cachedProbeParamData = [];
-    private volatile bool _pendingProbeRefresh;
-    private bool _pendingProbeRefreshDeferredByBatchCapture;
-    private int _observedLightProbeBatchCompletedVersion;
-    private ulong _probeRefreshEarliestFrameId;
-    private readonly List<LightProbeComponent> _cachedReadyProbes = new();
-    private ulong _probeBindingStateFrameId = ulong.MaxValue;
-    private ulong _probeTetrahedraDebugRenderFrameId = ulong.MaxValue;
-    private bool _probeBindingResourcesEnabled;
-    private bool _probeBindingUseGrid;
-    private int _probeBindingProbeCount;
-    private int _probeBindingTetraCount;
-    private Job? _probeTessellationJob;
-    private volatile int _probeTessellationGeneration;
-    private int _probeTetraProbeCount;
 
     public bool UseProbeGridAcceleration
     {
@@ -1915,30 +1919,16 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
         set => SetField(ref _useProbeGridAcceleration, value);
     }
 
-    internal struct ProbePositionData
+    private ForwardLightProbeInstanceResources? CurrentProbeResources
     {
-        public Vector4 Position;
-    }
-
-    private struct ProbeParamData
-    {
-        public Vector4 InfluenceInner;       // xyz inner extents or inner radius
-        public Vector4 InfluenceOuter;       // xyz outer extents or outer radius
-        public Vector4 InfluenceOffsetShape; // xyz offset, w shape (0 sphere, 1 box)
-        public Vector4 ProxyCenterEnable;    // xyz center offset, w enable (1/0)
-        public Vector4 ProxyHalfExtents;     // xyz half extents, w normalization scale
-        public Vector4 ProxyRotation;        // xyzw quaternion
-    }
-
-    private struct ProbeGridCell
-    {
-        public IVector4 OffsetCount;
-        public IVector4 FallbackIndices;
-    }
-
-    private struct ProbeTetraData
-    {
-        public Vector4 Indices;
+        get
+        {
+            XRRenderPipelineInstance? instance = CurrentRenderingPipeline;
+            return instance is not null && ReferenceEquals(instance.Pipeline, this) &&
+                ForwardLightProbeInstanceResources.TryGet(instance, out ForwardLightProbeInstanceResources? state)
+                    ? state
+                    : null;
+        }
     }
 
     private static Vector3 ResolveGlobalAmbient()
@@ -1979,6 +1969,12 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
         program.Uniform("AmbientOcclusionPower", aoPower);
         program.Uniform("AmbientOcclusionMultiBounce", multiBounce);
         program.Uniform("SpecularOcclusionEnabled", specularOcclusion);
+        program.Uniform("UsesDDGI", UsesDDGI);
+
+        XRTexture? emission = GetTexture<XRTexture>(
+            RuntimeEnableMsaaDeferred ? MsaaEmissionColorTextureName : EmissionColorTextureName);
+        if (emission is not null)
+            program.Sampler(EmissionColorTextureName, emission, 9);
 
         BindPbrLightingResources(program, deferredProbeBufferBindings: true);
     }
@@ -2001,7 +1997,7 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
         else
             program.Sampler("BRDF", Lights3DCollection.DummyShadowMap, 6);
 
-        if (!UsesLightProbeGI)
+        if (!UsesLightProbeGI && !UsesDDGI)
         {
             BindDisabledPbrResources();
             program.Uniform("ForwardPbrResourcesEnabled", false);
@@ -2021,11 +2017,23 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
             return false;
         }
 
-        if (_probeBindingStateFrameId != RuntimeEngine.Rendering.State.RenderFrameId)
+        XRRenderPipelineInstance? instance = CurrentRenderingPipeline;
+        if (instance is null || !ReferenceEquals(instance.Pipeline, this))
+        {
+            BindDisabledPbrResources();
+            program.Uniform("ForwardPbrResourcesEnabled", false);
+            program.Uniform("ProbeCount", 0);
+            program.Uniform("TetraCount", 0);
+            program.Uniform("UseProbeGrid", false);
+            return false;
+        }
+
+        ForwardLightProbeInstanceResources state = ForwardLightProbeInstanceResources.Get(instance);
+        if (state.BindingStateFrameId != RuntimeEngine.Rendering.State.RenderFrameId)
             SyncPbrLightingResourcesForFrame(brdfTexture);
 
-        program.Uniform("ForwardPbrResourcesEnabled", _probeBindingResourcesEnabled);
-        if (!_probeBindingResourcesEnabled)
+        program.Uniform("ForwardPbrResourcesEnabled", state.BindingResourcesEnabled);
+        if (!state.BindingResourcesEnabled)
         {
             BindDisabledPbrResources();
             program.Uniform("ProbeCount", 0);
@@ -2034,43 +2042,43 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
             return false;
         }
 
-        program.Sampler("IrradianceArray", _probeIrradianceArray!, 7);
-        program.Sampler("PrefilterArray", _probePrefilterArray!, 8);
+        program.Sampler("IrradianceArray", state.IrradianceArray!, 7);
+        program.Sampler("PrefilterArray", state.PrefilterArray!, 8);
 
-        program.Uniform("ProbeCount", _probeBindingProbeCount);
+        program.Uniform("ProbeCount", state.BindingProbeCount);
         if (deferredProbeBufferBindings)
         {
-            _probePositionBuffer!.BindTo(program, LightProbePositionBufferBinding);
-            _probeParamBuffer!.BindTo(program, LightProbeParamBufferBinding);
+            state.PositionBuffer!.BindTo(program, LightProbePositionBufferBinding);
+            state.ParamBuffer!.BindTo(program, LightProbeParamBufferBinding);
         }
 
-        program.Uniform("UseProbeGrid", _probeBindingUseGrid);
+        program.Uniform("UseProbeGrid", state.BindingUseGrid);
 
-        if (_probeBindingUseGrid)
+        if (state.BindingUseGrid)
         {
             if (deferredProbeBufferBindings)
             {
-                _probeGridCellBuffer!.BindTo(program, LightProbeGridCellBufferBinding);
-                _probeGridIndexBuffer!.BindTo(program, LightProbeGridIndexBufferBinding);
+                state.GridCellBuffer!.BindTo(program, LightProbeGridCellBufferBinding);
+                state.GridIndexBuffer!.BindTo(program, LightProbeGridIndexBufferBinding);
             }
 
-            program.Uniform("ProbeGridOrigin", _probeGridOrigin);
-            program.Uniform("ProbeGridCellSize", _probeGridCellSize);
-            program.Uniform("ProbeGridDims", _probeGridDims);
+            program.Uniform("ProbeGridOrigin", state.GridOrigin);
+            program.Uniform("ProbeGridCellSize", state.GridCellSize);
+            program.Uniform("ProbeGridDims", state.GridDimensions);
         }
 
-        program.Uniform("TetraCount", _probeBindingTetraCount);
-        if (_probeBindingTetraCount > 0)
+        program.Uniform("TetraCount", state.BindingTetraCount);
+        if (state.BindingTetraCount > 0)
         {
             if (deferredProbeBufferBindings)
-                _probeTetraBuffer!.BindTo(program, LightProbeTetraBufferBinding);
+                state.TetraBuffer!.BindTo(program, LightProbeTetraBufferBinding);
 
             ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
             if (RuntimeEngine.EditorPreferences.Debug.RenderLightProbeTetrahedra
-                && _probeTetrahedraDebugRenderFrameId != frameId)
+                && state.TetrahedraDebugRenderFrameId != frameId)
             {
-                RenderProbeTetrahedra(_cachedReadyProbes, _probeBindingTetraCount);
-                _probeTetrahedraDebugRenderFrameId = frameId;
+                RenderProbeTetrahedra(state, state.BindingTetraCount);
+                state.TetrahedraDebugRenderFrameId = frameId;
             }
         }
 
@@ -2082,19 +2090,24 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
 
     private void SyncPbrLightingResourcesForFrame(XRTexture? brdfTexture)
     {
+        XRRenderPipelineInstance? instance = CurrentRenderingPipeline;
+        if (instance is null || !ReferenceEquals(instance.Pipeline, this))
+            return;
+
+        ForwardLightProbeInstanceResources state = ForwardLightProbeInstanceResources.Get(instance);
         if (IsProbeGiSamplingSuppressedForCurrentPass())
             return;
 
         ulong frameId = RuntimeEngine.Rendering.State.RenderFrameId;
-        if (_probeBindingStateFrameId == frameId)
+        if (state.BindingStateFrameId == frameId)
             return;
 
-        _probeBindingStateFrameId = frameId;
-        _probeTetrahedraDebugRenderFrameId = ulong.MaxValue;
-        _probeBindingResourcesEnabled = false;
-        _probeBindingUseGrid = false;
-        _probeBindingProbeCount = 0;
-        _probeBindingTetraCount = 0;
+        state.BindingStateFrameId = frameId;
+        state.TetrahedraDebugRenderFrameId = ulong.MaxValue;
+        state.BindingResourcesEnabled = false;
+        state.BindingUseGrid = false;
+        state.BindingProbeCount = 0;
+        state.BindingTetraCount = 0;
 
         var world = RenderingWorld;
         if (world is null)
@@ -2105,54 +2118,66 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
         bool batchCompletedSinceLastSync = false;
         if (!batchCaptureActive)
         {
-            batchCompletedSinceLastSync = batchCompletedVersion != _observedLightProbeBatchCompletedVersion;
-            _observedLightProbeBatchCompletedVersion = batchCompletedVersion;
+            batchCompletedSinceLastSync = batchCompletedVersion != state.ObservedLightProbeBatchCompletedVersion;
+            state.ObservedLightProbeBatchCompletedVersion = batchCompletedVersion;
         }
 
         IReadOnlyList<LightProbeComponent> probes = world.Lights.LightProbes;
-        var readyProbes = GetReadyProbes(probes, _cachedReadyProbes);
+        List<LightProbeComponent> readyProbes = GetReadyProbes(
+            probes,
+            state.CachedReadyProbes,
+            state.CachedReadyProbeSourceIndices);
         if (readyProbes.Count == 0)
         {
             ReportNoReadyProbeResources(probes, batchCompletedSinceLastSync);
-            ClearProbeResources();
+            state.ClearResources();
+            state.BindingStateFrameId = frameId;
             return;
         }
 
         if (batchCompletedSinceLastSync)
         {
-            BuildProbeResources(readyProbes, deferredByBatchCapture: true);
+            BuildProbeResources(state, readyProbes, state.CachedReadyProbeSourceIndices, world, deferredByBatchCapture: true);
         }
-        else switch (ProbeConfigurationChanged(readyProbes, batchCaptureActive))
+        else switch (ProbeConfigurationChanged(state, readyProbes, state.CachedReadyProbeSourceIndices, world, batchCaptureActive))
         {
             case EProbeRefreshKind.Immediate:
-                BuildProbeResources(readyProbes);
+                BuildProbeResources(state, readyProbes, state.CachedReadyProbeSourceIndices, world);
                 break;
         }
 
-        if (_pendingProbeRefresh && frameId >= _probeRefreshEarliestFrameId)
+        if (state.PendingProbeRefresh && frameId >= state.ProbeRefreshEarliestFrameId)
         {
-            if (!(_pendingProbeRefreshDeferredByBatchCapture && batchCaptureActive))
+            if (!(state.PendingProbeRefreshDeferredByBatchCapture && batchCaptureActive))
             {
-                bool deferredByBatchCapture = _pendingProbeRefreshDeferredByBatchCapture;
-                _pendingProbeRefreshDeferredByBatchCapture = false;
+                bool deferredByBatchCapture = state.PendingProbeRefreshDeferredByBatchCapture;
+                state.PendingProbeRefreshDeferredByBatchCapture = false;
 
-                BuildProbeResources(readyProbes, deferredByBatchCapture);
+                BuildProbeResources(state, readyProbes, state.CachedReadyProbeSourceIndices, world, deferredByBatchCapture);
             }
         }
 
-        _probeBindingResourcesEnabled = brdfTexture is not null
-            && _probeIrradianceArray is not null
-            && _probePrefilterArray is not null
-            && _probePositionBuffer is not null
-            && _probeParamBuffer is not null;
+        ConsumePendingProbeTopology(state, world);
 
-        if (!_probeBindingResourcesEnabled)
+        AbstractRenderer? renderer = AbstractRenderer.Current;
+        state.BindingResourcesEnabled = renderer is not null
+            && brdfTexture is not null
+            && BrdfIntegrationResources.IsAvailable(instance, brdfTexture)
+            && ReferenceEquals(state.ApiWrapperIdentityOwner, renderer.ApiWrapperIdentityOwner)
+            && ReferenceEquals(state.WorldIdentity, world)
+            && state.PublicationResourceGeneration == instance.ResourceGeneration
+            && state.IrradianceArray is not null
+            && state.PrefilterArray is not null
+            && state.PositionBuffer is not null
+            && state.ParamBuffer is not null;
+
+        if (!state.BindingResourcesEnabled)
             return;
 
-        _probeBindingProbeCount = (int)_probePositionBuffer!.ElementCount;
-        _probeBindingUseGrid = _useProbeGridAcceleration && _probeGridCellBuffer is not null && _probeGridIndexBuffer is not null;
-        _probeBindingTetraCount = _probeTetraBuffer != null && _probeTetraProbeCount == readyProbes.Count
-            ? (int)_probeTetraBuffer.ElementCount
+        state.BindingProbeCount = (int)state.PositionBuffer!.ElementCount;
+        state.BindingUseGrid = _useProbeGridAcceleration && state.GridCellBuffer is not null && state.GridIndexBuffer is not null;
+        state.BindingTetraCount = state.TetraBuffer is not null && state.TetraProbeCount == state.BindingProbeCount
+            ? (int)state.TetraBuffer.ElementCount
             : 0;
     }
 
@@ -2200,17 +2225,17 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
         return settings;
     }
 
-    private void RenderProbeTetrahedra(List<LightProbeComponent> readyProbes, int tetraCount)
+    private static void RenderProbeTetrahedra(ForwardLightProbeInstanceResources state, int tetraCount)
     {
         for (uint i = 0; i < tetraCount; ++i)
         {
-            var tetraData = _probeTetraBuffer!.GetDataRawAtIndex<ProbeTetraData>(i);
+            ProbeTetraData tetraData = state.TetraBuffer!.GetDataRawAtIndex<ProbeTetraData>(i);
             var indices = tetraData.Indices;
             int index0 = (int)indices.X;
             int index1 = (int)indices.Y;
             int index2 = (int)indices.Z;
             int index3 = (int)indices.W;
-            int probeCount = readyProbes.Count;
+            int probeCount = state.CachedProbePositionData.Length;
 
             if ((uint)index0 >= probeCount ||
                 (uint)index1 >= probeCount ||
@@ -2221,10 +2246,14 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
                 continue;
             }
 
-            Vector3 p0 = readyProbes[index0].Transform.RenderTranslation;
-            Vector3 p1 = readyProbes[index1].Transform.RenderTranslation;
-            Vector3 p2 = readyProbes[index2].Transform.RenderTranslation;
-            Vector3 p3 = readyProbes[index3].Transform.RenderTranslation;
+            Vector4 position0 = state.CachedProbePositionData[index0].Position;
+            Vector4 position1 = state.CachedProbePositionData[index1].Position;
+            Vector4 position2 = state.CachedProbePositionData[index2].Position;
+            Vector4 position3 = state.CachedProbePositionData[index3].Position;
+            Vector3 p0 = new(position0.X, position0.Y, position0.Z);
+            Vector3 p1 = new(position1.X, position1.Y, position1.Z);
+            Vector3 p2 = new(position2.X, position2.Y, position2.Z);
+            Vector3 p3 = new(position3.X, position3.Y, position3.Z);
             RuntimeEngine.Rendering.Debug.RenderLine(p0, p1, ColorF4.Cyan);
             RuntimeEngine.Rendering.Debug.RenderLine(p0, p2, ColorF4.Cyan);
             RuntimeEngine.Rendering.Debug.RenderLine(p0, p3, ColorF4.Cyan);
@@ -2234,267 +2263,21 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
         }
     }
 
-    private void BuildProbeGrid(IReadOnlyList<ProbePositionData> positions, IReadOnlyList<ProbeParamData> parameters, IReadOnlyList<ProbeTetraData>? tetraData = null)
-    {
-        RemoveProbeBufferResource(LightProbeGridCellBufferName);
-        RemoveProbeBufferResource(LightProbeGridIndexBufferName);
-        DestroyProbeBuffer(ref _probeGridCellBuffer);
-        DestroyProbeBuffer(ref _probeGridIndexBuffer);
-        _probeGridOrigin = Vector3.Zero;
-        _probeGridCellSize = 0f;
-        _probeGridDims = IVector3.Zero;
-
-        if (positions.Count == 0)
-            return;
-
-        Vector3 min = new(float.MaxValue);
-        Vector3 max = new(float.MinValue);
-        for (int i = 0; i < positions.Count; ++i)
-        {
-            GetProbeInfluenceBounds(positions[i], parameters[i], out Vector3 probeMin, out Vector3 probeMax);
-            min = Vector3.Min(min, probeMin);
-            max = Vector3.Max(max, probeMax);
-        }
-
-        Vector3 extents = max - min;
-        float maxExtent = Math.Max(extents.X, Math.Max(extents.Y, extents.Z));
-        if (maxExtent <= 0.0001f)
-            maxExtent = 1.0f;
-
-        const int targetCellsPerAxis = 16;
-        _probeGridCellSize = maxExtent / targetCellsPerAxis;
-        _probeGridOrigin = min;
-        Vector3 dimsF = extents / _probeGridCellSize + Vector3.One;
-        IVector3 dimsI = new(
-            Math.Max(1, (int)Math.Ceiling(dimsF.X)),
-            Math.Max(1, (int)Math.Ceiling(dimsF.Y)),
-            Math.Max(1, (int)Math.Ceiling(dimsF.Z)));
-        dimsI = IVector3.Min(dimsI, new IVector3(64, 64, 64));
-        _probeGridDims = dimsI;
-
-        int cellCount = dimsI.X * dimsI.Y * dimsI.Z;
-        var cellLists = new List<int>[cellCount];
-        for (int i = 0; i < cellCount; ++i)
-            cellLists[i] = new List<int>(4);
-
-        if (tetraData is { Count: > 0 })
-        {
-            float cellPadding = _probeGridCellSize * 0.5f;
-            Vector3 tetraPadding = new(cellPadding);
-
-            for (int tetraIndex = 0; tetraIndex < tetraData.Count; ++tetraIndex)
-            {
-                if (!TryGetTetraBounds(tetraData[tetraIndex], positions, out Vector3 tetraMin, out Vector3 tetraMax))
-                    continue;
-
-                GetProbeGridCellRange(tetraMin - tetraPadding, tetraMax + tetraPadding, dimsI, out IVector3 minCell, out IVector3 maxCell);
-                for (int z = minCell.Z; z <= maxCell.Z; ++z)
-                {
-                    for (int y = minCell.Y; y <= maxCell.Y; ++y)
-                    {
-                        for (int x = minCell.X; x <= maxCell.X; ++x)
-                        {
-                            int flat = x + y * dimsI.X + z * dimsI.X * dimsI.Y;
-                            cellLists[flat].Add(tetraIndex);
-                        }
-                    }
-                }
-            }
-        }
-
-        var offsets = new List<ProbeGridCell>(cellCount);
-        var indices = new List<int>();
-        for (int c = 0; c < cellCount; ++c)
-        {
-            var list = cellLists[c];
-            int offset = indices.Count;
-            indices.AddRange(list);
-
-            int cellX = c % dimsI.X;
-            int cellY = (c / dimsI.X) % dimsI.Y;
-            int cellZ = c / (dimsI.X * dimsI.Y);
-            Vector3 cellCenter = _probeGridOrigin + new Vector3(cellX + 0.5f, cellY + 0.5f, cellZ + 0.5f) * _probeGridCellSize;
-            List<int>? preferredIndices = CollectPreferredProbeIndices(list, tetraData, positions.Count);
-            IVector4 fallbackIndices = ComputeProbeGridFallbackIndices(cellCenter, positions, preferredIndices);
-
-            offsets.Add(new ProbeGridCell
-            {
-                OffsetCount = new IVector4(offset, list.Count, 0, 0),
-                FallbackIndices = fallbackIndices,
-            });
-        }
-
-        _probeGridCellBuffer = new XRDataBuffer(LightProbeGridCellBufferName, EBufferTarget.ShaderStorageBuffer, (uint)offsets.Count, EComponentType.Struct, (uint)Marshal.SizeOf<ProbeGridCell>(), false, false)
-        {
-            BindingIndexOverride = 3,
-        };
-        _probeGridCellBuffer.SetDataRaw(offsets);
-        _probeGridCellBuffer.PushData();
-        RegisterProbeBuffer(_probeGridCellBuffer);
-
-        _probeGridIndexBuffer = new XRDataBuffer(LightProbeGridIndexBufferName, EBufferTarget.ShaderStorageBuffer, (uint)indices.Count, EComponentType.Int, sizeof(int), false, false)
-        {
-            BindingIndexOverride = 4,
-        };
-        _probeGridIndexBuffer.SetDataRaw(indices);
-        _probeGridIndexBuffer.PushData();
-        RegisterProbeBuffer(_probeGridIndexBuffer);
-    }
-
-    private static void GetProbeInfluenceBounds(ProbePositionData position, ProbeParamData parameters, out Vector3 min, out Vector3 max)
-    {
-        Vector4 pos4 = position.Position;
-        Vector4 offset4 = parameters.InfluenceOffsetShape;
-        Vector3 center = new(pos4.X + offset4.X, pos4.Y + offset4.Y, pos4.Z + offset4.Z);
-        Vector4 outer4 = parameters.InfluenceOuter;
-        Vector3 outerExtents = offset4.W >= 0.5f
-            ? new Vector3(
-                MathF.Max(outer4.X, 0.0001f),
-                MathF.Max(outer4.Y, 0.0001f),
-                MathF.Max(outer4.Z, 0.0001f))
-            : new Vector3(MathF.Max(outer4.W, 0.0001f));
-        min = center - outerExtents;
-        max = center + outerExtents;
-    }
-
-    private void GetProbeGridCellRange(ProbePositionData position, ProbeParamData parameters, IVector3 dims, out IVector3 minCell, out IVector3 maxCell)
-    {
-        GetProbeInfluenceBounds(position, parameters, out Vector3 minWorld, out Vector3 maxWorld);
-        GetProbeGridCellRange(minWorld, maxWorld, dims, out minCell, out maxCell);
-    }
-
-    private void GetProbeGridCellRange(Vector3 minWorld, Vector3 maxWorld, IVector3 dims, out IVector3 minCell, out IVector3 maxCell)
-    {
-        Vector3 minRel = (minWorld - _probeGridOrigin) / _probeGridCellSize;
-        Vector3 maxRel = (maxWorld - _probeGridOrigin) / _probeGridCellSize;
-        minCell = new IVector3(
-            Math.Clamp((int)MathF.Floor(minRel.X), 0, dims.X - 1),
-            Math.Clamp((int)MathF.Floor(minRel.Y), 0, dims.Y - 1),
-            Math.Clamp((int)MathF.Floor(minRel.Z), 0, dims.Z - 1));
-        maxCell = new IVector3(
-            Math.Clamp((int)MathF.Floor(maxRel.X), 0, dims.X - 1),
-            Math.Clamp((int)MathF.Floor(maxRel.Y), 0, dims.Y - 1),
-            Math.Clamp((int)MathF.Floor(maxRel.Z), 0, dims.Z - 1));
-    }
-
-    private static bool TryGetTetraBounds(ProbeTetraData tetra, IReadOnlyList<ProbePositionData> positions, out Vector3 min, out Vector3 max)
-    {
-        Vector4 indices = tetra.Indices;
-        int index0 = (int)indices.X;
-        int index1 = (int)indices.Y;
-        int index2 = (int)indices.Z;
-        int index3 = (int)indices.W;
-        if ((uint)index0 >= positions.Count ||
-            (uint)index1 >= positions.Count ||
-            (uint)index2 >= positions.Count ||
-            (uint)index3 >= positions.Count)
-        {
-            min = Vector3.Zero;
-            max = Vector3.Zero;
-            return false;
-        }
-
-        Vector4 position0 = positions[index0].Position;
-        Vector4 position1 = positions[index1].Position;
-        Vector4 position2 = positions[index2].Position;
-        Vector4 position3 = positions[index3].Position;
-
-        Vector3 p0 = new(position0.X, position0.Y, position0.Z);
-        Vector3 p1 = new(position1.X, position1.Y, position1.Z);
-        Vector3 p2 = new(position2.X, position2.Y, position2.Z);
-        Vector3 p3 = new(position3.X, position3.Y, position3.Z);
-
-        min = Vector3.Min(Vector3.Min(p0, p1), Vector3.Min(p2, p3));
-        max = Vector3.Max(Vector3.Max(p0, p1), Vector3.Max(p2, p3));
-        return true;
-    }
-
-    private static List<int>? CollectPreferredProbeIndices(List<int> tetraIndices, IReadOnlyList<ProbeTetraData>? tetraData, int probeCount)
-    {
-        if (tetraData is null || tetraIndices.Count == 0 || probeCount <= 0)
-            return null;
-
-        var preferred = new List<int>(Math.Min(probeCount, tetraIndices.Count * 4));
-        var seen = new HashSet<int>();
-        foreach (int tetraIndex in tetraIndices)
-        {
-            if ((uint)tetraIndex >= tetraData.Count)
-                continue;
-
-            Vector4 probeIndices = tetraData[tetraIndex].Indices;
-            AddPreferredProbeIndex((int)probeIndices.X, probeCount, seen, preferred);
-            AddPreferredProbeIndex((int)probeIndices.Y, probeCount, seen, preferred);
-            AddPreferredProbeIndex((int)probeIndices.Z, probeCount, seen, preferred);
-            AddPreferredProbeIndex((int)probeIndices.W, probeCount, seen, preferred);
-        }
-
-        return preferred.Count > 0 ? preferred : null;
-    }
-
-    private static void AddPreferredProbeIndex(int probeIndex, int probeCount, HashSet<int> seen, List<int> preferred)
-    {
-        if ((uint)probeIndex >= probeCount || !seen.Add(probeIndex))
-            return;
-
-        preferred.Add(probeIndex);
-    }
-
-    internal static IVector4 ComputeProbeGridFallbackIndices(Vector3 cellCenter, IReadOnlyList<ProbePositionData> positions, List<int>? preferredIndices)
-    {
-        Span<float> bestDistances = stackalloc float[4] { float.MaxValue, float.MaxValue, float.MaxValue, float.MaxValue };
-        Span<int> bestIndices = stackalloc int[4] { -1, -1, -1, -1 };
-
-        if (preferredIndices is not null && preferredIndices.Count > 0)
-        {
-            foreach (int probeIndex in preferredIndices)
-                ConsiderProbe(probeIndex, cellCenter, positions, bestDistances, bestIndices);
-        }
-        else
-        {
-            for (int probeIndex = 0; probeIndex < positions.Count; ++probeIndex)
-                ConsiderProbe(probeIndex, cellCenter, positions, bestDistances, bestIndices);
-        }
-
-        return new IVector4(bestIndices[0], bestIndices[1], bestIndices[2], bestIndices[3]);
-    }
-
-    private static void ConsiderProbe(int probeIndex, Vector3 cellCenter, IReadOnlyList<ProbePositionData> positions, Span<float> bestDistances, Span<int> bestIndices)
-    {
-        if ((uint)probeIndex >= positions.Count)
-            return;
-
-        for (int existing = 0; existing < 4; ++existing)
-        {
-            if (bestIndices[existing] == probeIndex)
-                return;
-        }
-
-        Vector4 pos4 = positions[probeIndex].Position;
-        float distance = Vector3.Distance(cellCenter, new Vector3(pos4.X, pos4.Y, pos4.Z));
-        for (int slot = 0; slot < 4; ++slot)
-        {
-            if (distance >= bestDistances[slot])
-                continue;
-
-            for (int shift = 3; shift > slot; --shift)
-            {
-                bestDistances[shift] = bestDistances[shift - 1];
-                bestIndices[shift] = bestIndices[shift - 1];
-            }
-
-            bestDistances[slot] = distance;
-            bestIndices[slot] = probeIndex;
-            break;
-        }
-    }
-
-    private static List<LightProbeComponent> GetReadyProbes(IReadOnlyList<LightProbeComponent> probes, List<LightProbeComponent> target)
+    private static List<LightProbeComponent> GetReadyProbes(
+        IReadOnlyList<LightProbeComponent> probes,
+        List<LightProbeComponent> target,
+        List<int> sourceIndices)
     {
         target.Clear();
-        foreach (var probe in probes)
+        sourceIndices.Clear();
+        for (int sourceIndex = 0; sourceIndex < probes.Count; sourceIndex++)
         {
-            if (probe.HasUsableIblTextures)
-                target.Add(probe);
+            LightProbeComponent probe = probes[sourceIndex];
+            if (!probe.HasUsableIblTextures)
+                continue;
+
+            target.Add(probe);
+            sourceIndices.Add(sourceIndex);
         }
 
         return target;
@@ -2511,166 +2294,110 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
         Immediate,
     }
 
-    private void ScheduleDeferredStructuralProbeRefreshForBatchCapture()
+    private static void ScheduleDeferredStructuralProbeRefreshForBatchCapture(
+        ForwardLightProbeInstanceResources state)
     {
-        _pendingProbeRefresh = true;
-        _pendingProbeRefreshDeferredByBatchCapture = true;
+        state.PendingProbeRefresh = true;
+        state.PendingProbeRefreshDeferredByBatchCapture = true;
 
         ulong earliestFrameId = RuntimeEngine.Rendering.State.RenderFrameId + 1;
-        if (_probeRefreshEarliestFrameId < earliestFrameId)
-            _probeRefreshEarliestFrameId = earliestFrameId;
+        if (state.ProbeRefreshEarliestFrameId < earliestFrameId)
+            state.ProbeRefreshEarliestFrameId = earliestFrameId;
     }
 
-    private EProbeRefreshKind ResolveStructuralProbeRefresh(bool batchCaptureActive)
+    private static EProbeRefreshKind ResolveStructuralProbeRefresh(
+        ForwardLightProbeInstanceResources state,
+        bool batchCaptureActive)
     {
         if (batchCaptureActive)
         {
-            ScheduleDeferredStructuralProbeRefreshForBatchCapture();
+            ScheduleDeferredStructuralProbeRefreshForBatchCapture(state);
             return EProbeRefreshKind.None;
         }
 
         return EProbeRefreshKind.Immediate;
     }
 
-    private bool AreProbeBindingResourcesMissing()
-        => _probeIrradianceArray is null
-        || _probePrefilterArray is null
-        || _probePositionBuffer is null
-        || _probeParamBuffer is null;
+    private static bool AreProbeBindingResourcesMissing(ForwardLightProbeInstanceResources state)
+        => state.IrradianceArray is null
+        || state.PrefilterArray is null
+        || state.PositionBuffer is null
+        || state.ParamBuffer is null;
 
-    private EProbeRefreshKind ProbeConfigurationChanged(IReadOnlyList<LightProbeComponent> readyProbes, bool batchCaptureActive)
+    private EProbeRefreshKind ProbeConfigurationChanged(
+        ForwardLightProbeInstanceResources state,
+        IReadOnlyList<LightProbeComponent> readyProbes,
+        IReadOnlyList<int> sourceIndices,
+        object worldIdentity,
+        bool batchCaptureActive)
     {
-        if (AreProbeBindingResourcesMissing())
-            return ResolveStructuralProbeRefresh(batchCaptureActive);
-
-        if (_lastProbeCount != readyProbes.Count)
+        AbstractRenderer? renderer = AbstractRenderer.Current;
+        if (renderer is null ||
+            !ReferenceEquals(state.ApiWrapperIdentityOwner, renderer.ApiWrapperIdentityOwner) ||
+            !ReferenceEquals(state.WorldIdentity, worldIdentity) ||
+            state.PublicationResourceGeneration != state.Owner.ResourceGeneration ||
+            AreProbeBindingResourcesMissing(state))
         {
-            return ResolveStructuralProbeRefresh(batchCaptureActive);
+            return ResolveStructuralProbeRefresh(state, batchCaptureActive);
         }
 
-        if (_cachedProbePositions.Count != readyProbes.Count || _cachedProbeTextures.Count != readyProbes.Count)
+        if (state.LastProbeCount != readyProbes.Count ||
+            state.CachedProbeIds.Length != readyProbes.Count ||
+            state.CachedProbeSourceIndices.Length != readyProbes.Count ||
+            state.CachedProbePositionData.Length != readyProbes.Count ||
+            state.CachedProbeParamData.Length != readyProbes.Count ||
+            state.CachedProbePositions.Count != readyProbes.Count ||
+            state.CachedProbeTextures.Count != readyProbes.Count)
         {
-            return ResolveStructuralProbeRefresh(batchCaptureActive);
+            return ResolveStructuralProbeRefresh(state, batchCaptureActive);
         }
 
-        bool captureVersionChanged = false;
-
-        foreach (var probe in readyProbes)
+        for (int index = 0; index < readyProbes.Count; index++)
         {
-            var position = probe.Transform.RenderTranslation;
-            if (!_cachedProbePositions.TryGetValue(probe.ID, out var cachedPos) || cachedPos != position)
+            LightProbeComponent probe = readyProbes[index];
+            Vector3 position = probe.Transform.RenderTranslation;
+            if (state.CachedProbeIds[index] != probe.ID ||
+                state.CachedProbeSourceIndices[index] != sourceIndices[index] ||
+                !state.CachedProbePositions.TryGetValue(probe.ID, out Vector3 cachedPosition) ||
+                cachedPosition != position)
             {
-                return ResolveStructuralProbeRefresh(batchCaptureActive);
+                return ResolveStructuralProbeRefresh(state, batchCaptureActive);
             }
 
-            if (!_cachedProbeTextures.TryGetValue(probe.ID, out var cachedTex)
-                || cachedTex.Irradiance != probe.IrradianceTexture
-                || cachedTex.Prefilter != probe.PrefilterTexture)
+            if (!state.CachedProbeTextures.TryGetValue(probe.ID, out var cachedTextures) ||
+                cachedTextures.Irradiance != probe.IrradianceTexture ||
+                cachedTextures.Prefilter != probe.PrefilterTexture)
             {
-                return ResolveStructuralProbeRefresh(batchCaptureActive);
+                return ResolveStructuralProbeRefresh(state, batchCaptureActive);
             }
 
-            if (!_observedProbeCaptureVersions.TryGetValue(probe.ID, out var observedVersion)
-                || observedVersion != probe.CaptureVersion)
+            if (!state.ObservedProbeCaptureVersions.TryGetValue(probe.ID, out uint observedVersion) ||
+                observedVersion != probe.CaptureVersion ||
+                !state.CachedProbeParamData[index].Equals(CreateProbeParamData(probe)))
             {
-                _observedProbeCaptureVersions[probe.ID] = probe.CaptureVersion;
-                captureVersionChanged = true;
+                return ResolveStructuralProbeRefresh(state, batchCaptureActive);
             }
         }
 
-        // Captures can mutate the existing XRTexture2D objects while the shader samples copied
-        // texture-array resources. Rebuild the arrays so GI observes the new capture immediately.
-        return captureVersionChanged ? ResolveStructuralProbeRefresh(batchCaptureActive) : EProbeRefreshKind.None;
+        return EProbeRefreshKind.None;
     }
 
-    private void ClearProbeResources()
-    {
-        RemoveProbeTextureResource(LightProbeIrradianceArrayName);
-        RemoveProbeTextureResource(LightProbePrefilterArrayName);
-        RemoveProbeBufferResource(LightProbePositionBufferName);
-        RemoveProbeBufferResource(LightProbeParamBufferName);
-        RemoveProbeBufferResource(LightProbeTetraBufferName);
-        RemoveProbeBufferResource(LightProbeGridCellBufferName);
-        RemoveProbeBufferResource(LightProbeGridIndexBufferName);
-
-        // Imported bindings do not own their instances. The pipeline owns these
-        // arrays and must retire them even when unbinding succeeds.
-        _probeIrradianceArray?.Destroy();
-        _probeIrradianceArray = null;
-        _probePrefilterArray?.Destroy();
-        _probePrefilterArray = null;
-        DestroyProbeBuffer(ref _probePositionBuffer);
-        DestroyProbeBuffer(ref _probeParamBuffer);
-        DestroyProbeBuffer(ref _probeTetraBuffer);
-        DestroyProbeBuffer(ref _probeGridCellBuffer);
-        DestroyProbeBuffer(ref _probeGridIndexBuffer);
-        _probeGridOrigin = Vector3.Zero;
-        _probeGridCellSize = 0f;
-        _probeGridDims = IVector3.Zero;
-        _probeTessellationJob?.Cancel();
-        _probeTessellationJob = null;
-        unchecked { _probeTessellationGeneration++; }
-        _probeTetraProbeCount = 0;
-        _cachedProbePositions.Clear();
-        _cachedProbeTextures.Clear();
-        _observedProbeCaptureVersions.Clear();
-        _cachedProbePositionData = [];
-        _cachedProbeParamData = [];
-        _lastProbeCount = 0;
-        _pendingProbeRefresh = false;
-        _pendingProbeRefreshDeferredByBatchCapture = false;
-        _probeRefreshEarliestFrameId = 0;
-        _probeBindingStateFrameId = ulong.MaxValue;
-        _probeTetrahedraDebugRenderFrameId = ulong.MaxValue;
-        _probeBindingResourcesEnabled = false;
-        _probeBindingUseGrid = false;
-        _probeBindingProbeCount = 0;
-        _probeBindingTetraCount = 0;
-    }
-
-    private void RegisterProbeTextureArrays()
-    {
-        XRRenderPipelineInstance? pipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
-        if (pipeline is null)
-            return;
-
-        if (_probeIrradianceArray is not null)
-            pipeline.BindImportedTexture(_probeIrradianceArray);
-        if (_probePrefilterArray is not null)
-            pipeline.BindImportedTexture(_probePrefilterArray);
-    }
-
-    private static void RegisterProbeBuffer(XRDataBuffer? buffer)
-    {
-        if (buffer is null)
-            return;
-
-        RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.BindImportedBuffer(buffer);
-    }
-
-    private static bool RemoveProbeBufferResource(string name)
-    {
-        XRRenderPipelineInstance? pipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
-        return pipeline?.UnbindImportedBuffer(name) == true;
-    }
-
-    private static bool RemoveProbeTextureResource(string name)
-    {
-        XRRenderPipelineInstance? pipeline = RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
-        return pipeline?.UnbindImportedTexture(name) == true;
-    }
-
-    private static void DestroyProbeBuffer(ref XRDataBuffer? buffer)
-    {
-        XRDataBuffer? oldBuffer = buffer;
-        buffer = null;
-
-        if (oldBuffer is null)
-            return;
-
-        oldBuffer.Destroy(true);
-        oldBuffer.Dispose();
-    }
+    private static ProbeParamData CreateProbeParamData(LightProbeComponent probe)
+        => new()
+        {
+            InfluenceInner = new Vector4(probe.InfluenceBoxInnerExtents, probe.InfluenceSphereInnerRadius),
+            InfluenceOuter = new Vector4(probe.InfluenceBoxOuterExtents, probe.InfluenceSphereOuterRadius),
+            InfluenceOffsetShape = new Vector4(
+                probe.InfluenceOffset,
+                probe.InfluenceShape == LightProbeComponent.EInfluenceShape.Box ? 1.0f : 0.0f),
+            ProxyCenterEnable = new Vector4(probe.ProxyBoxCenterOffset, probe.ParallaxCorrectionEnabled ? 1.0f : 0.0f),
+            ProxyHalfExtents = new Vector4(probe.ProxyBoxHalfExtents, probe.NormalizationScale),
+            ProxyRotation = new Vector4(
+                probe.ProxyBoxRotation.X,
+                probe.ProxyBoxRotation.Y,
+                probe.ProxyBoxRotation.Z,
+                probe.ProxyBoxRotation.W),
+        };
 
     private void ReportProbeResourceRefresh(bool structuralRefresh, int readyProbeCount, TimeSpan elapsed, bool deferredByBatchCapture)
     {
@@ -2679,7 +2406,6 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
             return;
 
         lights.RecordLightProbeResourceRefresh(structuralRefresh, elapsed);
-
         if (!lights.LightProbeBatchCaptureActive && !deferredByBatchCapture)
             return;
 
@@ -2706,9 +2432,9 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
         int withPrefilter = 0;
         int validIbl = 0;
         int captured = 0;
-        for (int i = 0; i < probes.Count; ++i)
+        for (int index = 0; index < probes.Count; index++)
         {
-            LightProbeComponent probe = probes[i];
+            LightProbeComponent probe = probes[index];
             if (probe.IrradianceTexture is not null)
                 withIrradiance++;
             if (probe.PrefilterTexture is not null)
@@ -2723,121 +2449,152 @@ public partial class AdvancedRenderPipeline : RenderPipeline, ISceneRenderPipeli
             $"[ProbeGI] Batch completed but no usable probes are available. Total={probes.Count}, WithIrradiance={withIrradiance}, WithPrefilter={withPrefilter}, ValidIbl={validIbl}, Captured={captured}");
     }
 
-    private void StartTetrahedralizationJob(IList<LightProbeComponent> probes)
+    private static void StartTetrahedralizationJob(
+        ForwardLightProbeInstanceResources state,
+        IRenderApiWrapperOwner apiWrapperIdentityOwner,
+        object worldIdentity)
     {
-        _probeTessellationJob?.Cancel();
-        int generation = _probeTessellationGeneration;
-        int probeCount = probes.Count;
-        _probeTessellationJob = RuntimeRenderingHostServices.Work.GeneralJobs.Schedule(
-            () => RunTetrahedralization(probes, generation, probeCount));
+        ProbeTopologySnapshot snapshot = state.BeginTopologyRequest(apiWrapperIdentityOwner, worldIdentity);
+        var mailbox = new WeakReference<ForwardLightProbeInstanceResources>(state);
+        Job job = RuntimeRenderingHostServices.Work.GeneralJobs.Schedule(
+            () => RunTetrahedralization(mailbox, snapshot));
+        state.AttachTopologyJob(snapshot.RequestToken, job);
     }
 
-    private IEnumerable RunTetrahedralization(IList<LightProbeComponent> probes, int generation, int probeCount)
+    private static IEnumerable RunTetrahedralization(
+        WeakReference<ForwardLightProbeInstanceResources> mailbox,
+        ProbeTopologySnapshot snapshot)
     {
-        var probeIndices = new Dictionary<LightProbeComponent, int>(probes.Count);
-        for (int i = 0; i < probes.Count; ++i)
-            probeIndices[probes[i]] = i;
-
-        // If we don't have enough probes for a tetrahedralization, create a minimal fallback so shaders still have data.
-        if (probes.Count is > 0 and < 5)
-        {
-            UploadTetrahedralization(BuildFallbackTetraData(probeIndices), generation, probeCount);
-            yield break;
-        }
-
-        if (!Lights3DCollection.TryCreateDelaunay(probes, out var triangulation))
-        {
-            Debug.LightingWarning("Probe tetrahedralization failed; skipping tetra buffer upload.");
-            UploadTetrahedralization([], generation, probeCount);
-            yield break;
-        }
-
-        if (triangulation is null)
-        {
-            Debug.LightingWarning("Probe tetrahedralization returned null data; skipping tetra buffer upload.");
-            UploadTetrahedralization([], generation, probeCount);
-            yield break;
-        }
-
-        var cells = triangulation.Cells?.ToList();
-        if (cells is null || cells.Count == 0)
-        {
-            Debug.LightingWarning("Probe tetrahedralization produced no cells; skipping tetra buffer upload.");
-            UploadTetrahedralization([], generation, probeCount);
-            yield break;
-        }
-
-        var tetraData = new List<ProbeTetraData>(cells.Count);
-        foreach (var cell in cells)
-        {
-            var v = cell.Vertices;
-            if (v.Length >= 4)
-            {
-                tetraData.Add(new ProbeTetraData
-                {
-                    Indices = new Vector4(
-                        probeIndices[v[0]],
-                        probeIndices[v[1]],
-                        probeIndices[v[2]],
-                        probeIndices[v[3]])
-                });
-            }
-        }
-
-        UploadTetrahedralization(tetraData, generation, probeCount);
+        ProbeTopologyResult result = ForwardLightProbeTopologyBuilder.Build(snapshot);
+        if (mailbox.TryGetTarget(out ForwardLightProbeInstanceResources? state))
+            state.PublishTopologyResult(result);
         yield break;
     }
 
-    private static List<ProbeTetraData> BuildFallbackTetraData(Dictionary<LightProbeComponent, int> indices)
+    private void ConsumePendingProbeTopology(
+        ForwardLightProbeInstanceResources state,
+        object worldIdentity)
     {
-        int count = indices.Count;
-        var list = new List<ProbeTetraData>(1);
-
-        int a = indices.Values.ElementAt(0);
-        int b = count >= 2 ? indices.Values.ElementAt(1) : a;
-        int c = count >= 3 ? indices.Values.ElementAt(2) : b;
-        int d = count >= 4 ? indices.Values.ElementAt(3) : c;
-
-        // Build one degenerate tetra that repeats available probes; shaders can treat this as a single-sample approximation.
-        list.Add(new ProbeTetraData
-        {
-            Indices = new Vector4(a, b, c, d)
-        });
-
-        return list;
-    }
-
-    private void UploadTetrahedralization(IReadOnlyList<ProbeTetraData> tetraData, int generation, int probeCount)
-    {
-        if (generation != _probeTessellationGeneration)
+        if (!state.TryPeekTopologyResult(out ProbeTopologyResult? result) || result is null)
             return;
 
-        RemoveProbeBufferResource(LightProbeTetraBufferName);
-        DestroyProbeBuffer(ref _probeTetraBuffer);
-        if (tetraData.Count == 0)
+        AbstractRenderer? renderer = AbstractRenderer.Current;
+        if (!IsTopologyResultStructurallyCurrent(state, result, renderer, worldIdentity))
         {
-            _probeTetraProbeCount = 0;
-            if (_useProbeGridAcceleration && _cachedProbePositionData.Length == probeCount && _cachedProbeParamData.Length == probeCount)
-                BuildProbeGrid(_cachedProbePositionData, _cachedProbeParamData, null);
+            state.DropTopologyResult(result.RequestToken);
             return;
         }
 
-        List<ProbeTetraData> tetraList = tetraData as List<ProbeTetraData> ?? [.. tetraData];
-
-        _probeTetraBuffer = new XRDataBuffer(LightProbeTetraBufferName, EBufferTarget.ShaderStorageBuffer, (uint)tetraList.Count, EComponentType.Struct, (uint)Marshal.SizeOf<ProbeTetraData>(), false, false)
+        if (!RuntimeEngine.IsRenderThread ||
+            !ReferenceEquals(CurrentRenderingPipeline, state.Owner) ||
+            renderer is null)
         {
-            BindingIndexOverride = 1,
-        };
-        _probeTetraBuffer.SetDataRaw(tetraList);
-        _probeTetraBuffer.PushData();
-        RegisterProbeBuffer(_probeTetraBuffer);
-        _probeTetraProbeCount = probeCount;
+            return;
+        }
 
-        if (_useProbeGridAcceleration && _cachedProbePositionData.Length == probeCount && _cachedProbeParamData.Length == probeCount)
-            BuildProbeGrid(_cachedProbePositionData, _cachedProbeParamData, tetraList);
+        XRDataBuffer? tetrahedronBuffer = null;
+        ProbeGridResourceCandidate? grid = null;
+        try
+        {
+            if (result.Tetrahedra.Length > 0)
+            {
+                tetrahedronBuffer = new XRDataBuffer(
+                    LightProbeTetraBufferName,
+                    EBufferTarget.ShaderStorageBuffer,
+                    (uint)result.Tetrahedra.Length,
+                    EComponentType.Struct,
+                    (uint)Marshal.SizeOf<ProbeTetraData>(),
+                    false,
+                    false)
+                {
+                    BindingIndexOverride = 1,
+                };
+                tetrahedronBuffer.SetDataRaw(result.Tetrahedra);
+                tetrahedronBuffer.PushData();
+            }
+
+            if (_useProbeGridAcceleration)
+            {
+                grid = ForwardLightProbeGridBuilder.Build(
+                    state.CachedProbePositionData,
+                    state.CachedProbeParamData,
+                    result.Tetrahedra,
+                    LightProbeGridCellBufferName,
+                    LightProbeGridIndexBufferName);
+            }
+
+            if (!IsTopologyResultStructurallyCurrent(state, result, renderer, worldIdentity))
+            {
+                state.DropTopologyResult(result.RequestToken);
+                return;
+            }
+
+            state.Owner.UnbindImportedBuffer(LightProbeTetraBufferName);
+            state.Owner.UnbindImportedBuffer(LightProbeGridCellBufferName);
+            state.Owner.UnbindImportedBuffer(LightProbeGridIndexBufferName);
+            ForwardLightProbeInstanceResources.DestroyBuffer(ref state.TetraBuffer);
+            ForwardLightProbeInstanceResources.DestroyBuffer(ref state.GridCellBuffer);
+            ForwardLightProbeInstanceResources.DestroyBuffer(ref state.GridIndexBuffer);
+
+            state.TetraBuffer = tetrahedronBuffer;
+            tetrahedronBuffer = null;
+            if (state.TetraBuffer is not null)
+                state.Owner.BindImportedBuffer(state.TetraBuffer);
+
+            if (grid is not null)
+            {
+                grid.RelinquishBuffers(out state.GridCellBuffer, out state.GridIndexBuffer);
+                state.GridOrigin = grid.Origin;
+                state.GridCellSize = grid.CellSize;
+                state.GridDimensions = grid.Dimensions;
+                if (state.GridCellBuffer is not null)
+                    state.Owner.BindImportedBuffer(state.GridCellBuffer);
+                if (state.GridIndexBuffer is not null)
+                    state.Owner.BindImportedBuffer(state.GridIndexBuffer);
+            }
+            else
+            {
+                state.GridOrigin = Vector3.Zero;
+                state.GridCellSize = 0.0f;
+                state.GridDimensions = IVector3.Zero;
+            }
+
+            state.TetraProbeCount = result.ProbeCount;
+            state.CompleteTopologyResult(result.RequestToken);
+            Debug.Lighting(
+                $"[ProbeGI] Topology published. Pipeline=Advanced Instance={state.Owner.InstanceId} ResourceGeneration={result.ResourceGeneration} RequestToken={result.RequestToken} ApiOwner={renderer.ApiWrapperIdentityOwner.GetType().Name} Probes={result.ProbeCount} Tetrahedra={result.Tetrahedra.Length} Grid={state.GridCellBuffer is not null}");
+        }
+        catch (Exception exception)
+        {
+            Debug.RenderingWarningEvery(
+                "Advanced.ProbeTopologyApplyDeferred",
+                TimeSpan.FromSeconds(2),
+                "[Advanced] Probe topology publication will retry on the render thread: {0}",
+                exception.Message);
+        }
+        finally
+        {
+            ForwardLightProbeInstanceResources.DestroyBuffer(ref tetrahedronBuffer);
+            grid?.Destroy();
+        }
     }
 
-
+    private static bool IsTopologyResultStructurallyCurrent(
+        ForwardLightProbeInstanceResources state,
+        ProbeTopologyResult result,
+        AbstractRenderer? renderer,
+        object worldIdentity)
+        => renderer is not null
+        && result.PipelineInstanceId == state.Owner.InstanceId
+        && result.ResourceGeneration == state.Owner.ResourceGeneration
+        && result.ResourceGeneration == state.PublicationResourceGeneration
+        && result.LayoutSignature == state.CachedProbeLayoutSignature
+        && result.ProbeCount == state.CachedProbePositionData.Length
+        && result.ProbeIds.AsSpan().SequenceEqual(state.CachedProbeIds)
+        && result.SourceIndices.AsSpan().SequenceEqual(state.CachedProbeSourceIndices)
+        && ReferenceEquals(state.ApiWrapperIdentityOwner, renderer.ApiWrapperIdentityOwner)
+        && ReferenceEquals(state.WorldIdentity, worldIdentity)
+        && state.IsTopologyResultCurrent(result, renderer.ApiWrapperIdentityOwner, worldIdentity);
     private void ApplyRestirCompositeProgramBindings(XRRenderProgram program)
     {
     var region = RenderingPipelineState?.CurrentRenderRegion;

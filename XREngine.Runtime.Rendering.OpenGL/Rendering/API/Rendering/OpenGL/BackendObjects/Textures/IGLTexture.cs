@@ -10,6 +10,7 @@ namespace XREngine.Rendering.OpenGL
         ETextureTarget TextureTarget { get; }
         bool IsInvalidated { get; }
         void Bind();
+        void EnsureStorageForImageBinding();
         void Clear(ColorF4 color, int level = 0);
         void Invalidate();
         void PostSampling();

@@ -254,7 +254,18 @@ namespace XREngine.Rendering.Vulkan
                 VulkanPresentationSourceTuple presentationSource =
                     _windowPresentSource.CaptureForDescriptorSlot(
                         presentationDescriptorSlot);
-                if (presentationSource.HasLogicalSource)
+                attempt.HasWindowPresentationSourceOwner =
+                    presentationSource.HasLogicalSource &&
+                    PlanContainsWindowPresentationOwner(in attempt, presentationSource);
+                if (DescriptorTraceEnabled)
+                    Debug.VulkanEvery(
+                        $"Vulkan.PresentationSource.PlanOwner.{GetHashCode()}",
+                        TimeSpan.FromSeconds(1),
+                        "[VulkanDescriptor] Window presentation plan owner: slot={0} epoch={1} pipeline={2} viewport={3} schedulingOwner={4} matches={5}.",
+                        presentationDescriptorSlot, presentationSource.LogicalEpoch,
+                        presentationSource.Context.PipelineIdentity, presentationSource.Context.ViewportIdentity,
+                        presentationSource.Context.OutputSchedulingInstanceIdentity, attempt.HasWindowPresentationSourceOwner);
+                if (attempt.HasWindowPresentationSourceOwner)
                 {
                     _ = _windowPresentSource.TryBindCommandArtifact(
                         presentationSource.LogicalEpoch,
@@ -264,6 +275,10 @@ namespace XREngine.Rendering.Vulkan
                             attempt.SceneCommandBuffer),
                         out presentationSource);
                 }
+                // Retain the resource identity for resize/recovery replay even
+                // when this cohort does not own its descriptor or draw. The
+                // explicit owner flag gates artifact binding and validation;
+                // fresh-output requirements remain enforced by the sealed plan.
                 attempt.PresentationSource = presentationSource;
                 if (RecordDesktopImGuiOverlay(
                         ref attempt,
@@ -652,7 +667,8 @@ namespace XREngine.Rendering.Vulkan
         private EDesktopFrameFlow ValidateDesktopRecording(
             ref VulkanFrameAttempt attempt)
         {
-            if (!TryValidatePresentationSourceForSubmission(
+            if (attempt.HasWindowPresentationSourceOwner &&
+                !TryValidatePresentationSourceForSubmission(
                     attempt.PresentationSource,
                     attempt.SceneCommandBuffer,
                     attempt.FrameSlot,
@@ -752,6 +768,62 @@ namespace XREngine.Rendering.Vulkan
 
             attempt.AdvanceTo(EDesktopFramePhase.Validated);
             return EDesktopFrameFlow.Continue;
+        }
+
+        private static bool PlanContainsWindowPresentationOwner(
+            in VulkanFrameAttempt attempt,
+            in VulkanPresentationSourceTuple source)
+        {
+            FramePlan? plan = attempt.OutputExecutionPlan;
+            if (plan is null && attempt.AcceptedFramePlan is { IsSealed: true } accepted)
+                plan = accepted.LogicalPlan;
+            if (plan is not { IsSealed: true })
+            {
+                if (VulkanMeshRenderingConventions.DescriptorTraceEnabled)
+                    Debug.VulkanEvery("Vulkan.PresentationSource.MissingPlan", TimeSpan.FromSeconds(1),
+                        "[VulkanDescriptor] Window presentation owner lacks sealed plan: outputPlan={0} acceptedPlan={1}.",
+                        attempt.OutputExecutionPlan?.IsSealed, attempt.AcceptedFramePlan?.IsSealed);
+                return true; // Missing plan evidence never exempts an owning draw from validation.
+            }
+
+            FrameOperationSequence operations = plan.GetNativeStaticOperationsForRecording();
+            for (int index = operations.Length - 1; index >= 0; index--)
+            {
+                if (operations.GetTarget(index) is not null ||
+                    !operations.TryGetMeshDraw(index, out MeshDrawPayload payload))
+                {
+                    continue;
+                }
+
+                PendingMeshDraw draw = payload.Draw;
+                WindowPresentationSourceMarker marker = draw.WindowPresentationSourceMarker;
+                if (!marker.HasSource ||
+                    !ReferenceEquals(marker.SourceTexture, source.ColorTexture) ||
+                    (marker.SourceFrameBuffer is not null &&
+                     !ReferenceEquals(marker.SourceFrameBuffer, source.FrameBuffer)) ||
+                    !marker.HasDeferredAuthority ||
+                    !ReferenceEquals(marker.Publisher, source.PresentationPublisher) ||
+                    marker.PublicationToken != source.PresentationPublicationToken ||
+                    draw.ProgramBindingSnapshot?.TryGetSamplerTexture(
+                        "SourceTexture",
+                        out XRTexture? samplerTexture) != true ||
+                    !ReferenceEquals(marker.SourceTexture, samplerTexture))
+                {
+                    continue;
+                }
+
+                if (VulkanMeshRenderingConventions.DescriptorTraceEnabled)
+                    Debug.VulkanEvery("Vulkan.PresentationSource.OwnerOperation", TimeSpan.FromSeconds(1),
+                        "[VulkanDescriptor] Window presentation owner operation: index={0}/{1} target='<window>' pipeline={2} viewport={3} output={4}.",
+                        index, operations.Length, source.Context.PipelineIdentity,
+                        source.Context.ViewportIdentity, source.Context.OutputTargetIdentity);
+                return true;
+            }
+
+            // Generation and physical target-slot changes do not change the
+            // owner. An obsolete generation from this same owner must still
+            // fail the exact publication/resource checks below.
+            return false;
         }
 
         private bool TryValidatePresentationSourceForSubmission(

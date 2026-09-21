@@ -76,7 +76,7 @@ public partial class DefaultRenderPipeline
                 RequiredEngineUniforms = EUniformRequirements.Camera | EUniformRequirements.Lights | EUniformRequirements.RenderTime | EUniformRequirements.ViewportDimensions | EUniformRequirements.ClipSpacePolicy,
             }
         };
-        var PostProcessFBO = new XRQuadFrameBuffer(postProcessMat, deriveRenderTargetsFromMaterial: false);
+        var PostProcessFBO = new XRQuadFrameBuffer(postProcessMat, deriveRenderTargetsFromMaterial: false, useMultiview: Stereo);
         PostProcessFBO.FullScreenMesh.BindingPublishers.Add(
             new PostProcessBindingPublisher(
                 this,
@@ -113,7 +113,7 @@ public partial class DefaultRenderPipeline
             }
         };
 
-        XRQuadFrameBuffer fbo = new(material, deriveRenderTargetsFromMaterial: false)
+        XRQuadFrameBuffer fbo = new(material, deriveRenderTargetsFromMaterial: false, useMultiview: Stereo)
         {
             Name = FinalPostProcessFBOName
         };
@@ -623,7 +623,7 @@ public partial class DefaultRenderPipeline
             }
         };
         upscaleMaterial.SettingUniforms += (_, program) => TsrUpscaleFBO_SettingUniforms(program);
-        var fbo = new XRQuadFrameBuffer(upscaleMaterial, deriveRenderTargetsFromMaterial: false)
+        var fbo = new XRQuadFrameBuffer(upscaleMaterial, deriveRenderTargetsFromMaterial: false, useMultiview: Stereo)
         {
             Name = TsrUpscaleFBOName
         };
@@ -804,7 +804,7 @@ public partial class DefaultRenderPipeline
             }
         };
 
-        var fbo = new XRQuadFrameBuffer(material, deriveRenderTargetsFromMaterial: false) { Name = DeferredTransparencyBlurFBOName };
+        var fbo = new XRQuadFrameBuffer(material, deriveRenderTargetsFromMaterial: false, useMultiview: Stereo) { Name = DeferredTransparencyBlurFBOName };
         var hdrAttachment = EnsureTextureAttachment(HDRSceneTextureName, CreateHDRSceneTexture);
         fbo.SetRenderTargets((hdrAttachment, EFrameBufferAttachment.ColorAttachment0, 0, -1));
         return fbo;
@@ -854,7 +854,7 @@ public partial class DefaultRenderPipeline
             }
         };
 
-        var fbo = new XRQuadFrameBuffer(material, deriveRenderTargetsFromMaterial: false) { Name = TransparentResolveFBOName };
+        var fbo = new XRQuadFrameBuffer(material, deriveRenderTargetsFromMaterial: false, useMultiview: Stereo) { Name = TransparentResolveFBOName };
         fbo.SettingUniforms += TransparentResolveFBO_SettingUniforms;
 
         var hdrAttachment = EnsureTextureAttachment(HDRSceneTextureName, CreateHDRSceneTexture);
@@ -950,7 +950,7 @@ public partial class DefaultRenderPipeline
             }
         };
 
-        return new XRQuadFrameBuffer(material) { Name = SceneCopyFBOName };
+        return new XRQuadFrameBuffer(material, useMultiview: Stereo) { Name = SceneCopyFBOName };
     }
 
     private XRFrameBuffer CreateTransparencyDebugFBO(
@@ -974,7 +974,7 @@ public partial class DefaultRenderPipeline
             }
         };
 
-        var fbo = new XRQuadFrameBuffer(material) { Name = name };
+        var fbo = new XRQuadFrameBuffer(material, useMultiview: Stereo) { Name = name };
         fbo.SettingUniforms += setUniforms;
         return fbo;
     }
@@ -1112,6 +1112,7 @@ public partial class DefaultRenderPipeline
         IFrameBufferAttachement normalAttach = EnsureTextureAttachment(NormalTextureName, CreateNormalTexture);
         IFrameBufferAttachement rmseAttach = EnsureTextureAttachment(RMSETextureName, CreateRMSETexture);
         IFrameBufferAttachement transformIdAttach = EnsureTextureAttachment(TransformIdTextureName, CreateTransformIdTexture);
+        IFrameBufferAttachement emissionAttach = EnsureTextureAttachment(EmissionColorTextureName, CreateEmissionColorTexture);
         IFrameBufferAttachement depthStencilAttach = EnsureTextureAttachment(DepthStencilTextureName, CreateDepthStencilTexture);
 
         return new XRFrameBuffer(
@@ -1119,6 +1120,7 @@ public partial class DefaultRenderPipeline
             (normalAttach, EFrameBufferAttachment.ColorAttachment1, 0, -1),
             (rmseAttach, EFrameBufferAttachment.ColorAttachment2, 0, -1),
             (transformIdAttach, EFrameBufferAttachment.ColorAttachment3, 0, -1),
+            (emissionAttach, EFrameBufferAttachment.ColorAttachment4, 0, -1),
             (depthStencilAttach, EFrameBufferAttachment.DepthStencilAttachment, 0, -1))
         {
             Name = DeferredGBufferFBOName
@@ -1285,7 +1287,7 @@ public partial class DefaultRenderPipeline
             }
         };
 
-        var fbo = new XRQuadFrameBuffer(material) { Name = TemporalAccumulationFBOName };
+        var fbo = new XRQuadFrameBuffer(material, useMultiview: Stereo) { Name = TemporalAccumulationFBOName };
 
         var filteredAttachment = EnsureTextureAttachment(HDRSceneTextureName, CreateHDRSceneTexture);
         var exposureAttachment = EnsureTextureAttachment(TemporalExposureVarianceTextureName, CreateTemporalExposureVarianceTexture);
@@ -1459,6 +1461,12 @@ public partial class DefaultRenderPipeline
             GetTexture<XRTexture>(DepthViewTextureName)!,
             lightingAccumTexture,
             GetTexture<XRTexture>(BRDFTextureName)!,
+            // Keep positional material slots aligned with DeferredLightCombine:
+            // bindings 7/8 are probe texture arrays and binding 9 is emission.
+            // The publisher replaces these neutral arrays with live probe resources.
+            Lights3DCollection.DummyPbrTextureArray,
+            Lights3DCollection.DummyPbrTextureArray,
+            GetTexture<XRTexture>(EmissionColorTextureName)!,
         ];
         XRShader lightCombineShader = XRShader.EngineShader(Path.Combine(SceneShaderPath, DeferredLightCombineShaderName()), EShaderType.Fragment);
         XRMaterial lightCombineMat = new(lightCombineTextures, lightCombineShader)
@@ -1486,7 +1494,7 @@ public partial class DefaultRenderPipeline
         lightCombineMat.BindingPublishers.Add(
             new LightCombineBindingPublisher(this));
 
-        var lightCombineFBO = new XRQuadFrameBuffer(lightCombineMat, useTriangle: true, deriveRenderTargetsFromMaterial: false) { Name = LightCombineFBOName };
+        var lightCombineFBO = new XRQuadFrameBuffer(lightCombineMat, useTriangle: true, deriveRenderTargetsFromMaterial: false, useMultiview: Stereo) { Name = LightCombineFBOName };
 
         if (diffuseTexture is not IFrameBufferAttachement attach)
             throw new InvalidOperationException($"Declared texture '{DiffuseTextureName}' is not FBO-attachable.");
@@ -1571,6 +1579,42 @@ public partial class DefaultRenderPipeline
 
         var fbo = new XRQuadFrameBuffer(material) { Name = SurfelGICompositeFBOName };
         fbo.SettingUniforms += SurfelGICompositeFBO_SettingUniforms;
+        return fbo;
+    }
+
+    private XRFrameBuffer CreateDDGICompositeFBO()
+    {
+        XRTexture giTexture = GetTexture<XRTexture>(DDGITextureName)!;
+        XRShader compositeShader = XRShader.EngineShader(
+            Path.Combine(SceneShaderPath, Stereo ? "DDGICompositeStereo.fs" : "DDGIComposite.fs"),
+            EShaderType.Fragment);
+        BlendMode additiveBlend = new()
+        {
+            Enabled = ERenderParamUsage.Enabled,
+            RgbSrcFactor = EBlendingFactor.One,
+            AlphaSrcFactor = EBlendingFactor.One,
+            RgbDstFactor = EBlendingFactor.One,
+            AlphaDstFactor = EBlendingFactor.One,
+            RgbEquation = EBlendEquationMode.FuncAdd,
+            AlphaEquation = EBlendEquationMode.FuncAdd
+        };
+
+        XRMaterial material = new([giTexture], compositeShader)
+        {
+            RenderOptions = new RenderingParameters()
+            {
+                DepthTest = new DepthTest()
+                {
+                    Enabled = ERenderParamUsage.Disabled,
+                    Function = EComparison.Always,
+                    UpdateDepth = false,
+                },
+                BlendModeAllDrawBuffers = additiveBlend
+            }
+        };
+
+        var fbo = new XRQuadFrameBuffer(material, useMultiview: Stereo) { Name = DDGICompositeFBOName };
+        fbo.SettingUniforms += DDGICompositeFBO_SettingUniforms;
         return fbo;
     }
 
@@ -1670,6 +1714,7 @@ public partial class DefaultRenderPipeline
         IFrameBufferAttachement normalAttach = EnsureTextureAttachment(MsaaNormalTextureName, CreateMsaaNormalTexture);
         IFrameBufferAttachement rmseAttach = EnsureTextureAttachment(MsaaRMSETextureName, CreateMsaaRMSETexture);
         IFrameBufferAttachement transformIdAttach = EnsureTextureAttachment(MsaaTransformIdTextureName, CreateMsaaTransformIdTexture);
+        IFrameBufferAttachement emissionAttach = EnsureTextureAttachment(MsaaEmissionColorTextureName, CreateMsaaEmissionColorTexture);
         IFrameBufferAttachement depthStencilAttach = EnsureTextureAttachment(MsaaDepthStencilTextureName, CreateMsaaDepthStencilTexture);
 
         return new XRFrameBuffer(
@@ -1677,6 +1722,7 @@ public partial class DefaultRenderPipeline
             (normalAttach, EFrameBufferAttachment.ColorAttachment1, 0, -1),
             (rmseAttach, EFrameBufferAttachment.ColorAttachment2, 0, -1),
             (transformIdAttach, EFrameBufferAttachment.ColorAttachment3, 0, -1),
+            (emissionAttach, EFrameBufferAttachment.ColorAttachment4, 0, -1),
             (depthStencilAttach, EFrameBufferAttachment.DepthStencilAttachment, 0, -1))
         {
             Name = MsaaGBufferFBOName
@@ -1718,6 +1764,10 @@ public partial class DefaultRenderPipeline
             GetTexture<XRTexture>(MsaaDepthViewTextureName)!,
             msaaLightingTexture,
             GetTexture<XRTexture>(BRDFTextureName)!,
+            // Preserve the shader's bindings 7/8 for the named live probe arrays.
+            Lights3DCollection.DummyPbrTextureArray,
+            Lights3DCollection.DummyPbrTextureArray,
+            GetTexture<XRTexture>(MsaaEmissionColorTextureName)!,
         ];
 
         XRShader baseShader = XRShader.EngineShader(
@@ -1753,7 +1803,7 @@ public partial class DefaultRenderPipeline
         mat.BindingPublishers.Add(
             new LightCombineBindingPublisher(this));
 
-        var fbo = new XRQuadFrameBuffer(mat, true, false) { Name = MsaaLightCombineFBOName };
+        var fbo = new XRQuadFrameBuffer(mat, useTriangle: true, deriveRenderTargetsFromMaterial: false, useMultiview: Stereo) { Name = MsaaLightCombineFBOName };
         return fbo;
     }
 }

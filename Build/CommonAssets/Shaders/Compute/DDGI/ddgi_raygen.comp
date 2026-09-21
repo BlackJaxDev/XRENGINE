@@ -1,0 +1,91 @@
+#version 450
+
+layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
+
+// Golden ratio angle constant: 2.0 * PI * (1.0 - 1.0 / phi) ~ 2.399963229728653
+const float GOLDEN_ANGLE = 2.39996322972865332;
+
+uniform uint uRayCount;
+uniform uint uRaysPerProbe;
+uniform uint uFrameIndex;
+// uProbeBaseOffset addresses this cascade in the shared SSBO. uProbeOffset is
+// intentionally only the local round-robin offset within this cascade.
+uniform uint uProbeBaseOffset;
+uniform uint uProbeCount;
+uniform uint uProbeOffset;
+uniform uint uScheduledProbeCount;
+uniform vec3 uGridMin;
+uniform vec3 uProbeSpacing;
+uniform ivec3 uProbeCounts;
+uniform mat4 uRandomRotation;
+
+struct DDGIProbeGPU
+{
+    vec4 position;          // xyz = base world pos, w = active/sleeping state
+    vec4 relocationOffset; // xyz = relocation offset, w = confidence
+};
+
+struct DDGIRayInput
+{
+    vec4 origin;    // .w = tMin
+    vec4 direction; // .w = tMax
+    vec4 params;    // x = probeIndex, y = rayIndex, z = frameIndex, w = flags
+};
+
+layout(std430, binding = 0) readonly buffer ProbeBuffer
+{
+    DDGIProbeGPU gProbes[];
+};
+
+layout(std430, binding = 1) writeonly buffer RayBuffer
+{
+    DDGIRayInput gRays[];
+};
+
+// Spherical Fibonacci distribution on the unit sphere
+vec3 SphericalFibonacci(uint i, uint numSamples)
+{
+    float phi = float(i) * GOLDEN_ANGLE;
+    float cosTheta = 1.0 - (2.0 * float(i) + 1.0) / float(numSamples);
+    float sinTheta = sqrt(max(0.0, 1.0 - cosTheta * cosTheta));
+    return vec3(cos(phi) * sinTheta, sin(phi) * sinTheta, cosTheta);
+}
+
+void main()
+{
+    uint rayIndex = gl_GlobalInvocationID.x;
+    if (rayIndex >= uRayCount)
+        return;
+
+    uint raysPerProbe = max(1u, uRaysPerProbe);
+    uint scheduledIndex = rayIndex / raysPerProbe;
+    if (uScheduledProbeCount > 0u && scheduledIndex >= uScheduledProbeCount)
+        return;
+
+    uint localProbeIndex = (uProbeOffset + scheduledIndex) % max(1u, uProbeCount);
+    uint probeIndex = uProbeBaseOffset + localProbeIndex;
+    uint raySubIndex = rayIndex % raysPerProbe;
+
+    uint gridXY = uint(max(uProbeCounts.x, 1) * max(uProbeCounts.y, 1));
+    uvec3 gridIndex = uvec3(
+        localProbeIndex % uint(max(uProbeCounts.x, 1)),
+        (localProbeIndex / uint(max(uProbeCounts.x, 1))) % uint(max(uProbeCounts.y, 1)),
+        localProbeIndex / gridXY);
+
+    // Dynamic buffers do not require pre-populated base positions. Derive the
+    // authored grid position and apply only the stored relocation offset.
+    vec3 basePos = uGridMin + vec3(gridIndex) * uProbeSpacing;
+    vec3 offset = gProbes[probeIndex].relocationOffset.xyz;
+    vec3 rayOrigin = basePos + offset;
+
+    // Generate stratified ray direction with per-frame rotation
+    vec3 localDir = SphericalFibonacci(raySubIndex, raysPerProbe);
+    vec3 rayDir = normalize(mat3(uRandomRotation) * localDir);
+
+    float tMin = 0.001;
+    float tMax = 1e20;
+
+    gRays[rayIndex].origin = vec4(rayOrigin, tMin);
+    gRays[rayIndex].direction = vec4(rayDir, tMax);
+    gRays[rayIndex].params = vec4(float(probeIndex), float(raySubIndex), float(uFrameIndex), 0.0);
+}

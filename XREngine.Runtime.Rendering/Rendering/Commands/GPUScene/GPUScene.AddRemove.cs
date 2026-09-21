@@ -200,7 +200,7 @@ namespace XREngine.Rendering.Commands
                     // Pushing the full buffer can hitch when high-detail meshes/submeshes stream in later.
                     uint addedCount = UpdatingCommandCount - startCommandCount;
                     FlushDrawIndexedSoARange(startCommandCount, addedCount);
-                    LodTransitionBuffer.PushSubData((int)(startCommandCount * LodTransitionBuffer.ElementSize), addedCount * LodTransitionBuffer.ElementSize);
+                    LodTransitionBuffer.CommitDirtyBytes(startCommandCount * LodTransitionBuffer.ElementSize, addedCount * LodTransitionBuffer.ElementSize);
                     MarkUpdatingCommandsDirty();
                     SceneLog($"GPUScene.Add: Added commands, total now {UpdatingCommandCount} in draw-indexed streams");
 
@@ -479,7 +479,7 @@ namespace XREngine.Rendering.Commands
         private readonly Dictionary<XRMesh, uint> _meshToIndexRemap = []; // retained for future reverse lookups (unused by atlas sizing)
         private bool _meshDataDirty = false; // tracks pending GPU upload for mesh metadata
         // Dirty-range tracker for MeshDataBuffer. Updated by MarkMeshDataDirty and drained by
-        // FlushMeshDataDirtyRange so the full-buffer PushSubData() pattern collapses to a
+        // FlushMeshDataDirtyRange so the full-buffer publication pattern collapses to a
         // single contiguous range upload (extends O-11 tail-append to scattered Set sites).
         private uint _meshDataDirtyMinIndex = uint.MaxValue;
         private uint _meshDataDirtyMaxIndexExclusive = 0u;
@@ -509,14 +509,14 @@ namespace XREngine.Rendering.Commands
                     if (min < maxExclusive)
                     {
                         uint elementSize = buffer.ElementSize;
-                        buffer.PushSubData((int)(min * elementSize), (maxExclusive - min) * elementSize);
+                        buffer.CommitDirtyBytes(min * elementSize, (maxExclusive - min) * elementSize);
                     }
                 }
                 else if (count > 0)
                 {
                     // Range was never narrowed (e.g. atlas-wide rebuild path). Fall back to full push
                     // so callers that flipped `_meshDataDirty` without populating a range still upload.
-                    buffer.PushSubData();
+                    buffer.CommitDirtyBytes(0u, buffer.Length);
                 }
 
                 _meshDataDirtyMinIndex = uint.MaxValue;
@@ -558,7 +558,7 @@ namespace XREngine.Rendering.Commands
                 return;
 
             uint elementSize = buffer.ElementSize;
-            buffer.PushSubData((int)(startIndex * elementSize), count * elementSize);
+            buffer.CommitDirtyBytes(startIndex * elementSize, count * elementSize);
         }
 
         private void FlushMeshletRangeDirtyRange()
@@ -1020,7 +1020,7 @@ namespace XREngine.Rendering.Commands
 
             uint byteOffset = startIndex * elementSize;
             uint byteCount = count * elementSize;
-            UpdatingDrawMetadataBuffer.PushSubData((int)byteOffset, byteCount);
+            UpdatingDrawMetadataBuffer.CommitDirtyBytes(byteOffset, byteCount);
             MarkUpdatingCommandsDirty();
 
             if (IsGpuSceneLoggingEnabled())
@@ -1033,7 +1033,7 @@ namespace XREngine.Rendering.Commands
                 return;
 
             static void Flush(XRDataBuffer buffer, uint start, uint length)
-                => buffer.PushSubData((int)(start * buffer.ElementSize), length * buffer.ElementSize);
+                => buffer.CommitDirtyBytes(start * buffer.ElementSize, length * buffer.ElementSize);
 
             Flush(UpdatingDrawMetadataBuffer, startIndex, count);
             Flush(UpdatingBoundsBuffer, startIndex, count);
@@ -1057,7 +1057,7 @@ namespace XREngine.Rendering.Commands
 
             uint byteOffset = startIndex * elementSize;
             uint byteCount = count * elementSize;
-            UpdatingTransparencyMetadataBuffer.PushSubData((int)byteOffset, byteCount);
+            UpdatingTransparencyMetadataBuffer.CommitDirtyBytes(byteOffset, byteCount);
             MarkUpdatingCommandsDirty();
         }
 
@@ -1097,7 +1097,7 @@ namespace XREngine.Rendering.Commands
 
             uint byteOffset = startIndex * elementSize;
             uint byteCount = count * elementSize;
-            DrawMetadataBuffer.PushSubData((int)byteOffset, byteCount);
+            DrawMetadataBuffer.CommitDirtyBytes(byteOffset, byteCount);
 
             if (IsGpuSceneLoggingEnabled())
                 SceneLog($"Zeroed published draw metadata range [{startIndex}, {end}) ({byteCount} bytes)");
@@ -1119,7 +1119,7 @@ namespace XREngine.Rendering.Commands
 
             uint byteOffset = startIndex * elementSize;
             uint byteCount = count * elementSize;
-            AllLoadedTransparencyMetadataBuffer.PushSubData((int)byteOffset, byteCount);
+            AllLoadedTransparencyMetadataBuffer.CommitDirtyBytes(byteOffset, byteCount);
         }
 
         private void ZeroLodTransitionRange(uint startIndex, uint count)
@@ -1138,7 +1138,7 @@ namespace XREngine.Rendering.Commands
 
             uint byteOffset = startIndex * elementSize;
             uint byteCount = count * elementSize;
-            LodTransitionBuffer.PushSubData((int)byteOffset, byteCount);
+            LodTransitionBuffer.CommitDirtyBytes(byteOffset, byteCount);
         }
 
     }

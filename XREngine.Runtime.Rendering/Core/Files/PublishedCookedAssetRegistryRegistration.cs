@@ -8,7 +8,9 @@ public static class RenderingPublishedCookedAssetRegistration
     public static IDisposable Install()
         => RegistrationLeaseGroup.Create(static leases =>
         {
-            leases.Add(RuntimeCookedBinarySerializer.RegisterRuntimeFactory(typeof(XRMesh), static () => new XRMesh()));
+            leases.Add(RuntimeCookedBinarySerializer.RegisterRuntimeFactory(
+                typeof(XRMesh),
+                static () => XRMesh.CreateDeferredForDeserialization()));
             leases.Add(RuntimeCookedBinarySerializer.RegisterRuntimeFactory(typeof(XRTexture2D), static () => new XRTexture2D()));
             leases.Add(PublishedCookedAssetRegistry.Register(
                 typeof(XRMesh),

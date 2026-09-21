@@ -424,7 +424,7 @@ namespace XREngine.Rendering.Commands
         private static void InitializeLodTransitionBuffer(XRDataBuffer buffer)
         {
             // Generate() -> PostGenerated() already allocates GL storage and runs the initial
-            // PushData() for resizable buffers, so an explicit PushSubData() here is a redundant
+            // initial upload for resizable buffers, so an explicit dirty-byte publication here is redundant
             // second upload. MapBufferData() is lazy-called by SyncLodTransitionBufferFromGpu()
             // the first time a CPU read is needed, so eager mapping just forces a driver sync on
             // the persistent-coherent allocation. Both were responsible for the multi-second
@@ -498,7 +498,7 @@ namespace XREngine.Rendering.Commands
             for (int i = 0; i < _lodTransitionCpuDirtyIndices.Count; ++i)
             {
                 uint index = _lodTransitionCpuDirtyIndices[i];
-                _lodTransitionBuffer.PushSubData((int)(index * elementSize), elementSize);
+                _lodTransitionBuffer.CommitDirtyBytes(index * elementSize, elementSize);
             }
 
             _lodTransitionCpuDirtyIndices.Clear();
@@ -922,7 +922,7 @@ namespace XREngine.Rendering.Commands
         /// Bumped wherever the updating buffer's bytes are mutated. Compared against
         /// <see cref="_lastSwappedCommandsContentVersion"/> inside <see cref="SwapCommandBuffers"/>
         /// when <c>XRE_SKIP_COMMAND_SWAP_IF_CLEAN=1</c> to short-circuit the Memory.Move +
-        /// PushSubData when content has not changed since the last swap.
+        /// dirty-byte publication when content has not changed since the last swap.
         /// Reserved for the O-6 implementation phase; for now the env-var gates it.
         /// </summary>
         private long _updatingCommandsContentVersion = 0;

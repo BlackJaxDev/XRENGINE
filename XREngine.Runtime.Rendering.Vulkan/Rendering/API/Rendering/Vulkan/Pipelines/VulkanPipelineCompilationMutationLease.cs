@@ -6,8 +6,9 @@ namespace XREngine.Rendering.Vulkan;
 /// </summary>
 internal readonly ref struct VulkanPipelineCompilationMutationLease(
     VulkanPipelineManager manager,
-    bool outermost)
+    bool outermost,
+    bool deviceWide)
 {
     public void Dispose()
-        => manager.ReleaseCompilationMutationLease(outermost);
+        => manager.ReleaseCompilationMutationLease(outermost, deviceWide);
 }

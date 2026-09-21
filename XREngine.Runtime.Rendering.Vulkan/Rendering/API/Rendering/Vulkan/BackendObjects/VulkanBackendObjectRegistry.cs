@@ -6,6 +6,7 @@ namespace XREngine.Rendering.Vulkan;
 internal sealed class VulkanBackendObjectRegistry
 {
     private readonly Lock _bucketsLock = new();
+    internal Lock IdentityCreationLock { get; } = new();
     private readonly Dictionary<Type, IVulkanBackendObjectBucket> _buckets = [];
     private readonly System.Collections.Concurrent.ConcurrentDictionary<GenericRenderObject, VkObjectBase> _byData = new();
     public VulkanBindingAllocator BindingAllocator { get; } = new();
@@ -39,7 +40,16 @@ internal sealed class VulkanBackendObjectRegistry
     }
 
     public VkObjectBase? Get(GenericRenderObject data)
-        => _byData.TryGetValue(data, out VkObjectBase? wrapper) ? wrapper : null;
+    {
+        if (!_byData.TryGetValue(data, out VkObjectBase? wrapper))
+            return null;
+        if (!wrapper.IsRetired && !data.IsDestroyed && data.IsApiWrapperPublicationReady)
+            return wrapper;
+
+        if (_byData.TryGetValue(data, out VkObjectBase? current) && ReferenceEquals(current, wrapper))
+            _byData.TryRemove(data, out _);
+        return null;
+    }
 
     /// <summary>
     /// Publishes wrapper identity before native generation so other wrappers can
@@ -75,35 +85,16 @@ internal sealed class VulkanBackendObjectRegistry
     /// <summary>Best-effort destruction of every cached wrapper during logical-device teardown.</summary>
     internal void DestroyDanglingWrappers()
     {
-        DestroyCachedWrappers(Snapshot<XRMaterial>(), "material");
-        DestroyCachedWrappers(Snapshot<XRMeshRenderer.BaseVersion>(), "mesh renderer");
-        DestroyCachedWrappers(Snapshot<XRRenderProgramPipeline>(), "render program pipeline");
-        DestroyCachedWrappers(Snapshot<XRRenderProgram>(), "render program");
-        DestroyCachedWrappers(Snapshot<XRDataBuffer>(), "data buffer");
-        DestroyCachedWrappers(Snapshot<XRFrameBuffer>(), "framebuffer");
-        DestroyCachedWrappers(Snapshot<XRRenderBuffer>(), "renderbuffer");
-        DestroyCachedWrappers(Snapshot<XRTexture1D>(), "texture1D");
-        DestroyCachedWrappers(Snapshot<XRTexture1DArray>(), "texture1DArray");
-        DestroyCachedWrappers(Snapshot<XRTexture2D>(), "texture2D");
-        DestroyCachedWrappers(Snapshot<XRTexture2DArray>(), "texture2DArray");
-        DestroyCachedWrappers(Snapshot<XRTexture3D>(), "texture3D");
-        DestroyCachedWrappers(Snapshot<XRTextureCube>(), "textureCube");
-        DestroyCachedWrappers(Snapshot<XRTextureCubeArray>(), "textureCubeArray");
-        DestroyCachedWrappers(Snapshot<XRTextureRectangle>(), "textureRectangle");
-        DestroyCachedWrappers(Snapshot<XRTextureBuffer>(), "textureBuffer");
-        DestroyCachedWrappers(Snapshot<XRTextureViewBase>(), "textureView");
-        DestroyCachedWrappers(Snapshot<XRSampler>(), "sampler");
-    }
-
-    private static void DestroyCachedWrappers<T>(VkObject<T>[] wrappers, string label)
-        where T : GenericRenderObject
-    {
-        foreach (VkObject<T>? wrapper in wrappers)
-            try { wrapper?.Destroy(); }
+        // Identity-only wrappers have not generated a typed binding ID yet, so
+        // typed bucket snapshots cannot see them. The data registry covers both
+        // generated and ungenerated identities for this exact backend generation.
+        VkObjectBase[] wrappers = [.. _byData.Values];
+        foreach (VkObjectBase wrapper in wrappers)
+            try { wrapper.Retire(); }
             catch (Exception ex)
             {
-                Debug.VulkanWarning("[Vulkan] Failed to destroy cached {0} wrapper '{1}'. {2}",
-                    label, wrapper?.GetType().Name ?? "<null>", ex.Message);
+                Debug.VulkanWarning("[Vulkan] Failed to destroy cached wrapper '{0}'. {1}",
+                    wrapper.GetType().Name, ex.Message);
             }
     }
 

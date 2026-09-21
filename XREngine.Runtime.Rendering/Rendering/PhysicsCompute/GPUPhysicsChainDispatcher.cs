@@ -2054,8 +2054,10 @@ public sealed partial class GPUPhysicsChainDispatcher
             if (!_gpuDrivenPaletteSlicesSeeded.Add(baseElement))
                 continue;
 
-            CopySkinPaletteRange(binding.Renderer.SkinPaletteBuffer, _gpuDrivenSkinPalette, baseElement, elementCount);
-            CopyMatrixRange(binding.Renderer.BoneInvBindMatricesBuffer, _gpuDrivenBoneInvBindMatrices, baseElement, elementCount);
+            XRMeshRenderer.BoneResourceSnapshot rendererResources =
+                binding.Renderer.CaptureBoneResources();
+            CopySkinPaletteRange(rendererResources.SkinPalette, _gpuDrivenSkinPalette, baseElement, elementCount);
+            CopyMatrixRange(rendererResources.InverseBindMatrices, _gpuDrivenBoneInvBindMatrices, baseElement, elementCount);
 
             for (int mappingIndex = 0; mappingIndex < binding.Mappings.Length; ++mappingIndex)
             {

@@ -10,6 +10,7 @@ public sealed partial class RenderPipelineResourceLayoutBuilder
     public sealed class QuadMaterialSpecBuilder : SpecBuilder<QuadMaterialSpecBuilder>
     {
         private Func<XRFrameBuffer>? _factory;
+        private Func<IIncrementalFrameBufferFactory>? _incrementalFactory;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="QuadMaterialSpecBuilder"/> class.
@@ -27,6 +28,17 @@ public sealed partial class RenderPipelineResourceLayoutBuilder
         public QuadMaterialSpecBuilder Factory(Func<XRFrameBuffer> factory)
         {
             _factory = factory;
+            _incrementalFactory = null;
+            return this;
+        }
+
+        /// <summary>
+        /// Sets a factory that prepares the fullscreen helper across bounded owner-thread steps.
+        /// </summary>
+        public QuadMaterialSpecBuilder IncrementalFactory(Func<IIncrementalFrameBufferFactory> factory)
+        {
+            _factory = null;
+            _incrementalFactory = factory;
             return this;
         }
 
@@ -42,6 +54,7 @@ public sealed partial class RenderPipelineResourceLayoutBuilder
                 PredicateValue,
                 DebugLabelValue,
                 RequiredValue,
-                _factory));
+                _factory,
+                _incrementalFactory));
     }
 }

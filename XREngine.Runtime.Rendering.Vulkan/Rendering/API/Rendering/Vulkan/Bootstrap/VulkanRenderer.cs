@@ -42,6 +42,13 @@ public sealed partial class VulkanRenderer :
     IGpuBufferContentReuseCapability{
     internal override bool AdvancedPickingSourceRequiresSubmissionAcceptance => true;
 
+    /// <summary>
+    /// Vulkan wrappers belong to this renderer's immutable backend-generation
+    /// context, while the renderer remains their public creation authority.
+    /// </summary>
+    public override IRenderApiWrapperOwner ApiWrapperIdentityOwner
+        => (IRenderApiWrapperOwner?)_resourceRuntime.BackendObjectContext ?? this;
+
     private const int DesktopFramesInFlight = 2;
     private readonly VulkanDeviceContext _deviceContext;
     private readonly VulkanOutputRuntime _outputRuntime;
@@ -466,6 +473,8 @@ public sealed partial class VulkanRenderer :
         => _commandRuntime.ReleaseAdvancedVisibilityFamilyOwner(in reservation);
     public override AdvancedOutputReservationDiagnosticsSnapshot CaptureAdvancedOutputReservationDiagnostics()
         => _commandRuntime.CaptureAdvancedOutputReservationDiagnostics();
+    public override AdvancedVisibilityPreparationDiagnosticsSnapshot? CaptureAdvancedVisibilityPreparationDiagnostics()
+        => _resourceRuntime.CaptureAdvancedVisibilityPreparationDiagnostics();
     public VulkanNativeShadingRootDiagnosticSnapshot CaptureNativeShadingRootDiagnostics()
         => _commandRuntime.CaptureNativeShadingRootDiagnostics();
     public bool TryBeginOrderedComputeBatch() => _frameLoop.TryBeginOrderedComputeBatch();
@@ -581,7 +590,10 @@ public sealed partial class VulkanRenderer :
     public bool TryEnterPipelineResourcePlannerReadbackScope(XRRenderPipelineInstance pipeline, XRViewport? viewport, out IDisposable? scope) => _frameLoop.TryEnterPipelineResourcePlannerReadbackScope(pipeline, viewport, out scope);
     public IDisposable EnterPipelineResourcePlannerReadbackScope(XRRenderPipelineInstance pipeline, XRViewport? viewport) => _frameLoop.EnterPipelineResourcePlannerReadbackScope(pipeline, viewport);
     internal override IDisposable? EnterRenderPipelineFrameResourceScope(XRRenderPipelineInstance pipeline, XRViewport? viewport) => _frameLoop.EnterRenderPipelineFrameResourceScope(pipeline, viewport);
-    internal override bool TryPrepareRenderResourceGeneration(XRRenderPipelineInstance pipeline, RenderResourceGeneration generation, XRViewport? viewport, out IRenderResourceGenerationTransaction? transaction, out string? failureReason) => _frameLoop.TryPrepareRenderResourceGeneration(pipeline, generation, viewport, out transaction, out failureReason);
+    internal override bool TryPrepareRenderResourceGeneration(XRRenderPipelineInstance pipeline, RenderResourceGeneration generation, XRViewport? viewport, out IRenderResourceGenerationTransaction? transaction, out string? failureReason)
+        => _frameLoop.PrepareRenderResourceGeneration(pipeline, generation, viewport, out transaction, out failureReason) == ERenderResourceGenerationPreparationStatus.Ready;
+    internal override ERenderResourceGenerationPreparationStatus PrepareRenderResourceGeneration(XRRenderPipelineInstance pipeline, RenderResourceGeneration generation, XRViewport? viewport, out IRenderResourceGenerationTransaction? transaction, out string? failureReason)
+        => _frameLoop.PrepareRenderResourceGeneration(pipeline, generation, viewport, out transaction, out failureReason);
 
     internal bool CanUseNvIndirectBufferCopyUploads => _commandRuntime.CanUseNvIndirectBufferCopyUploads;
     internal ulong GetBufferDeviceAddress(Buffer buffer) => _commandRuntime.GetBufferDeviceAddress(buffer);

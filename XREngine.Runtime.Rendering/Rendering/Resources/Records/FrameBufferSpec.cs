@@ -14,6 +14,7 @@ namespace XREngine.Rendering.Resources;
 /// <param name="Required">Indicates whether the framebuffer resource is required.</param>
 /// <param name="Attachments">The attachments of the framebuffer resource.</param>
 /// <param name="Factory">The factory function for creating the framebuffer resource.</param>
+/// <param name="IncrementalFactory">Creates generation-owned state for bounded framebuffer preparation.</param>
 public sealed record FrameBufferSpec(
     string Name,
     RenderResourceLifetime Lifetime,
@@ -25,7 +26,8 @@ public sealed record FrameBufferSpec(
     string? DebugLabel,
     bool Required,
     IReadOnlyList<FrameBufferAttachmentDescriptor> Attachments,
-    Func<XRFrameBuffer>? Factory)
+    Func<XRFrameBuffer>? Factory,
+    Func<IIncrementalFrameBufferFactory>? IncrementalFactory)
     : RenderPipelineResourceSpec(
         Name,
         RenderPipelineResourceKind.FrameBuffer,

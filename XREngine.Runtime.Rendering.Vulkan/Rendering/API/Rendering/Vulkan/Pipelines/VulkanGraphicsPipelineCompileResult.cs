@@ -7,4 +7,5 @@ internal readonly record struct VulkanGraphicsPipelineCompileResult(
     Pipeline Pipeline,
     string? ErrorMessage,
     double CompileMilliseconds,
-    bool Retryable = false);
+    bool Retryable = false,
+    VkRenderProgram? Owner = null);

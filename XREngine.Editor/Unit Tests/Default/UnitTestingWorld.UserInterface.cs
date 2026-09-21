@@ -1014,17 +1014,6 @@ public static partial class EditorUnitTests
                 return;
             }
 
-            _vrStereoPreviewRoot.IsActiveSelf = true;
-            if (!_vrStereoPreviewWasActive)
-            {
-                _vrStereoPreviewWasActive = true;
-                _vrStereoPreviewForceLayoutRefresh = true;
-                _vrStereoPreviewLastBindingRefreshTicks = 0L;
-            }
-
-            if (ShouldSkipVRStereoPreviewBindingRefresh())
-                return;
-
             if (!TryResolveVRStereoPreviewTextures(out XRTexture? leftTex, out XRTexture? rightTex, out bool isArray))
             {
                 if (_vrStereoPreviewWasActive &&
@@ -1043,6 +1032,29 @@ public static partial class EditorUnitTests
                 SetVRStereoPreviewChildrenActive(false);
                 return;
             }
+
+            AbstractRenderer? renderer = AbstractRenderer.Current;
+            if (renderer is null ||
+                !renderer.GetTextureShaderSamplingState(leftTex).IsReady ||
+                !renderer.GetTextureShaderSamplingState(rightTex).IsReady)
+            {
+                // A Vulkan preview texture can be resolved before its image view and descriptor
+                // are published. Do not expose either eye until both can be sampled.
+                SetVRStereoPreviewChildrenActive(false);
+                HideVRStereoPreviewOverlay();
+                return;
+            }
+
+            _vrStereoPreviewRoot.IsActiveSelf = true;
+            if (!_vrStereoPreviewWasActive)
+            {
+                _vrStereoPreviewWasActive = true;
+                _vrStereoPreviewForceLayoutRefresh = true;
+                _vrStereoPreviewLastBindingRefreshTicks = 0L;
+            }
+
+            if (ShouldSkipVRStereoPreviewBindingRefresh())
+                return;
 
             _vrStereoPreviewTextureMissFrames = 0;
             bool flipVerticalUv = ShouldFlipOpenXrVulkanStereoPreviewUv();

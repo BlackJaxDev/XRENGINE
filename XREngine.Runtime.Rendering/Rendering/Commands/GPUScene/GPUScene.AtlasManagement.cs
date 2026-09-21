@@ -227,7 +227,7 @@ namespace XREngine.Rendering.Commands
             buffer.Resize(newCapacity);
             for (uint index = oldCount; index < newCapacity; index++)
                 buffer.SetDataRawAtIndex(index, 0u);
-            buffer.PushSubData((int)(oldCount * sizeof(uint)), (newCapacity - oldCount) * sizeof(uint));
+            buffer.CommitDirtyBytes(oldCount * sizeof(uint), (newCapacity - oldCount) * sizeof(uint));
         }
 
         private void UpdateLogicalMeshTableEntry(LogicalMeshState state)
@@ -235,14 +235,12 @@ namespace XREngine.Rendering.Commands
             EnsureLodTableCapacity(state.LogicalMeshId + 1);
             EnsureLodRequestCapacity(state.LogicalMeshId + 1);
             LODTableBuffer.SetDataRawAtIndex(state.LogicalMeshId, state.ToEntry());
-            // Push only the single touched entry, not the whole buffer.
+            // Publish only the single touched entry, not the whole buffer.
             // LodTableBuffer is touched once per logical-mesh-state update; pushing the
-            // entire buffer here was the post-O-11 dominant PushSubData offender
+            // entire buffer here was the post-O-11 dominant upload offender
             // (450 calls/sec Ã— full 3072-byte upload = ~1.4 MB/sec of redundant traffic).
-            // GLDataBuffer.PushSubData falls back to a full PushData when the buffer
-            // just grew, so this is safe after EnsureLodTableCapacity.
             uint elementSize = LODTableBuffer.ElementSize;
-            LODTableBuffer.PushSubData((int)(state.LogicalMeshId * elementSize), elementSize);
+            LODTableBuffer.CommitDirtyBytes(state.LogicalMeshId * elementSize, elementSize);
         }
 
         private bool TryGetLogicalMeshState(uint logicalMeshId, int lodLevel, out LogicalMeshState? state, out string? failureReason)
@@ -645,7 +643,7 @@ namespace XREngine.Rendering.Commands
             state.IndexCount = firstIndex + indexCountAdded;
             state.MeshOffsets[mesh] = new AtlasAllocation(firstVertex, firstIndex, positions.Length, indexCountAdded, positions.Length, indexCountAdded);
             _activeAtlasTiers[mesh] = tier;
-            MarkAtlasDirty(tier); // we've written client-side; PushSubData below in rebuild
+            MarkAtlasDirty(tier); // we've written client-side; dirty bytes are published below in rebuild
             SyncLegacyDynamicAtlasState();
             return true;
         }
@@ -921,12 +919,10 @@ namespace XREngine.Rendering.Commands
                 FirstVertex = (uint)_streamingAtlases[_streamingRenderSlot].MeshOffsets[mesh].FirstVertex,
                 Flags = ComposeMeshDataFlags(EAtlasTier.Streaming)
             });
-            // Push only the single touched entry. Full-buffer push here was a
-            // streaming-residency-rate PushSubData offender post-O-11.
-            // GLDataBuffer.PushSubData falls back to a full PushData when the
-            // buffer just grew, so this is safe after EnsureMeshDataCapacity.
+            // Publish only the single touched entry. Full-buffer publication here was a
+            // streaming-residency-rate offender post-O-11.
             uint mdbEntrySize = MeshDataBuffer.ElementSize;
-            MeshDataBuffer.PushSubData((int)(meshID * mdbEntrySize), mdbEntrySize);
+            MeshDataBuffer.CommitDirtyBytes(meshID * mdbEntrySize, mdbEntrySize);
             SetEmptyMeshletRange(meshID, 0UL);
             FlushMeshletRangeDirtyRange();
             return true;
@@ -955,7 +951,7 @@ namespace XREngine.Rendering.Commands
             MeshDataBuffer.Set(meshID, default(MeshDataEntry));
             // Push only the single touched entry; see note in UpdateStreamingMesh.
             uint mdbEntrySizeU = MeshDataBuffer.ElementSize;
-            MeshDataBuffer.PushSubData((int)(meshID * mdbEntrySizeU), mdbEntrySizeU);
+            MeshDataBuffer.CommitDirtyBytes(meshID * mdbEntrySizeU, mdbEntrySizeU);
             ClearMeshletRange(meshID);
             FlushMeshletRangeDirtyRange();
             return true;
@@ -1051,10 +1047,8 @@ namespace XREngine.Rendering.Commands
                 grew = true;
             }
 
-            // A Resize invalidates GPU-side storage on next push (PushSubData will
-            // fall back to a full PushData when dataLength > _lastPushedLength).
-            // Force a full re-upload by resetting our high-water mark so the next
-            // rebuild pushes the full appended range and the GPU PushData covers it.
+            // Reset the high-water mark after a resize so the next rebuild republishes
+            // the full populated range.
             if (grew)
                 state.LastUploadedVertexCount = 0;
         }
@@ -1064,13 +1058,9 @@ namespace XREngine.Rendering.Commands
             if (newVertexCount <= firstVertex)
                 return;
             uint elemSize = buffer.ElementSize;
-            int offset = firstVertex * (int)elemSize;
+            uint offset = checked((uint)firstVertex * elemSize);
             uint length = (uint)(newVertexCount - firstVertex) * elemSize;
-            // When firstVertex == 0 and the buffer grew, GLDataBuffer.PushSubData
-            // detects dataLength > _lastPushedLength and falls back to a full PushData,
-            // which is the correct realloc+upload. For subsequent stable-capacity
-            // rebuilds, NamedBufferSubData uploads only the appended tail.
-            buffer.PushSubData(offset, length);
+            buffer.CommitDirtyBytes(offset, length);
         }
 
         private static bool TryPrepareAtlasIndexBuffer(AtlasTierState state, int requiredIndices)
@@ -1126,21 +1116,18 @@ namespace XREngine.Rendering.Commands
 
             // Grow buffers to required counts using power-of-two capacity so that
             // routine append (next submesh added to atlas) does NOT re-grow every
-            // frame. Resizing to an exact count would invalidate GPU storage on
-            // every append (PushSubData falls back to a full PushData when
-            // dataLength > _lastPushedLength), turning the per-frame appended-tail
-            // upload into a per-frame full-atlas re-upload â€” the root cause of the
-            // PushSubData flood identified in Â§5.5 of the perf-debug plan.
+            // frame. Resizing to an exact count would force a full populated-range
+            // publication every append, turning the per-frame appended-tail upload
+            // into a per-frame full-atlas upload.
             // VerifyBufferLengths/EnsureAtlasBuffers already use NextPowerOfTwo;
             // this path must agree with them.
             VerifyBufferLengths(state, state.VertexCount);
             if (state.Positions is null || state.Normals is null || state.Tangents is null || state.UV0 is null)
                 return;
 
-            // Push only the appended vertex range. Per-attribute subrange push:
+            // Publish only the appended vertex range. Per-attribute subrange publication:
             //   offset = lastUploaded * elementSize, length = (newCount - lastUploaded) * elementSize
-            // After a grow, lastUploaded was reset to 0 so the full buffer is pushed
-            // (which inside GLDataBuffer becomes a single full PushData realloc + upload).
+            // After a grow, lastUploaded is reset to 0 so the full populated range is published.
             int lastV = state.LastUploadedVertexCount;
             int newV = state.VertexCount;
             if (newV > lastV)
@@ -1204,12 +1191,12 @@ namespace XREngine.Rendering.Commands
 
                     state.IndexCount = (int)writeIndex;
 
-                    // Push only the appended index range. After a grow, lastIdxCount==0
-                    // and PushSubData(0, byteLength) becomes a full PushData (correct).
+                    // Publish only the appended index range. After a grow, lastIdxCount is zero,
+                    // so the full populated range is published.
                     uint pushOffset = (uint)lastIdxCount * (uint)sizeof(uint);
                     uint pushLength = (writeIndex - (uint)lastIdxCount) * (uint)sizeof(uint);
                     if (pushLength > 0)
-                        state.Indices.PushSubData((int)pushOffset, pushLength);
+                        state.Indices.CommitDirtyBytes(pushOffset, pushLength);
 
                     if (!overflow)
                         state.LastUploadedIndexCount = (int)writeIndex;
@@ -1218,7 +1205,6 @@ namespace XREngine.Rendering.Commands
                 {
                     state.IndexCount = 0;
                     state.LastUploadedIndexCount = 0;
-                    state.Indices.PushSubData(0, 0);
                 }
             }
 

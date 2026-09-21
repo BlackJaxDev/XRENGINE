@@ -349,33 +349,88 @@ public partial class XRMesh : XRAsset
     [MemoryPackIgnore]
     public XRDataBuffer? InterleavedVertexBuffer { get; private set; }
 
+    // Bone influence buffers. The state references are published atomically so a renderer
+    // never combines buffers from different preparation generations.
+    private XRMeshSkinningBufferState _skinningBufferState = new(
+        null, null, null, null, [], ESkinningShaderConvention.ExplicitRowMajorRowVector,
+        SkinningInfluenceEncoding.None, SkinningCoreIndexFormat.None, false, 0, 0);
+    private XRMeshBlendshapeBufferState _blendshapeBufferState = new(
+        null, null, null, null, null, null, null, BlendshapeShaderVariant.None,
+        BlendshapeDeltaStorageMode.DensePerVertex, BlendshapeDeltaEncoding.Float32, 0, 0);
+    private readonly Lock _skinningBufferPreparationLock = new();
+    private readonly Lock _blendshapeBufferPreparationLock = new();
+
     // Bone influence buffers
     [MemoryPackIgnore]
-    public XRDataBuffer? BoneInfluenceCoreIndices { get; private set; }
+    public XRDataBuffer? BoneInfluenceCoreIndices
+    {
+        get => Volatile.Read(ref _skinningBufferState).CoreIndices;
+        private set => Volatile.Write(ref _skinningBufferState, Volatile.Read(ref _skinningBufferState) with { CoreIndices = value });
+    }
     [MemoryPackIgnore]
-    public XRDataBuffer? BoneInfluenceCoreWeights { get; private set; }
+    public XRDataBuffer? BoneInfluenceCoreWeights
+    {
+        get => Volatile.Read(ref _skinningBufferState).CoreWeights;
+        private set => Volatile.Write(ref _skinningBufferState, Volatile.Read(ref _skinningBufferState) with { CoreWeights = value });
+    }
     [MemoryPackIgnore]
-    public XRDataBuffer? BoneInfluenceSpillHeaders { get; private set; }
+    public XRDataBuffer? BoneInfluenceSpillHeaders
+    {
+        get => Volatile.Read(ref _skinningBufferState).SpillHeaders;
+        private set => Volatile.Write(ref _skinningBufferState, Volatile.Read(ref _skinningBufferState) with { SpillHeaders = value });
+    }
     [MemoryPackIgnore]
-    public XRDataBuffer? BoneInfluenceSpillEntries { get; private set; }
+    public XRDataBuffer? BoneInfluenceSpillEntries
+    {
+        get => Volatile.Read(ref _skinningBufferState).SpillEntries;
+        private set => Volatile.Write(ref _skinningBufferState, Volatile.Read(ref _skinningBufferState) with { SpillEntries = value });
+    }
 
     // Blendshape indirection
     [MemoryPackIgnore]
-    public XRDataBuffer? BlendshapeCounts { get; private set; }
+    public XRDataBuffer? BlendshapeCounts
+    {
+        get => Volatile.Read(ref _blendshapeBufferState).Counts;
+        private set => Volatile.Write(ref _blendshapeBufferState, Volatile.Read(ref _blendshapeBufferState) with { Counts = value });
+    }
 
     // Non-per-vertex (skinning / blendshape)
     [MemoryPackIgnore]
-    public XRDataBuffer? BlendshapeDeltas { get; private set; }
+    public XRDataBuffer? BlendshapeDeltas
+    {
+        get => Volatile.Read(ref _blendshapeBufferState).Deltas;
+        private set => Volatile.Write(ref _blendshapeBufferState, Volatile.Read(ref _blendshapeBufferState) with { Deltas = value });
+    }
     [MemoryPackIgnore]
-    public XRDataBuffer? BlendshapeIndices { get; private set; }
+    public XRDataBuffer? BlendshapeIndices
+    {
+        get => Volatile.Read(ref _blendshapeBufferState).Indices;
+        private set => Volatile.Write(ref _blendshapeBufferState, Volatile.Read(ref _blendshapeBufferState) with { Indices = value });
+    }
     [MemoryPackIgnore]
-    public XRDataBuffer? BlendshapeSparseShapeRanges { get; private set; }
+    public XRDataBuffer? BlendshapeSparseShapeRanges
+    {
+        get => Volatile.Read(ref _blendshapeBufferState).SparseShapeRanges;
+        private set => Volatile.Write(ref _blendshapeBufferState, Volatile.Read(ref _blendshapeBufferState) with { SparseShapeRanges = value });
+    }
     [MemoryPackIgnore]
-    public XRDataBuffer? BlendshapeSparseRecords { get; private set; }
+    public XRDataBuffer? BlendshapeSparseRecords
+    {
+        get => Volatile.Read(ref _blendshapeBufferState).SparseRecords;
+        private set => Volatile.Write(ref _blendshapeBufferState, Volatile.Read(ref _blendshapeBufferState) with { SparseRecords = value });
+    }
     [MemoryPackIgnore]
-    public XRDataBuffer? BlendshapeQuantizedDeltas { get; private set; }
+    public XRDataBuffer? BlendshapeQuantizedDeltas
+    {
+        get => Volatile.Read(ref _blendshapeBufferState).QuantizedDeltas;
+        private set => Volatile.Write(ref _blendshapeBufferState, Volatile.Read(ref _blendshapeBufferState) with { QuantizedDeltas = value });
+    }
     [MemoryPackIgnore]
-    public XRDataBuffer? BlendshapeQuantizationMetadata { get; private set; }
+    public XRDataBuffer? BlendshapeQuantizationMetadata
+    {
+        get => Volatile.Read(ref _blendshapeBufferState).QuantizationMetadata;
+        private set => Volatile.Write(ref _blendshapeBufferState, Volatile.Read(ref _blendshapeBufferState) with { QuantizationMetadata = value });
+    }
 
     [MemoryPackIgnore]
     private BufferCollection _buffers = [];
@@ -416,7 +471,28 @@ public partial class XRMesh : XRAsset
     private readonly Lock _boundsLock = new();
 
     public XRMesh()
+        : base(deferObjectCachePublication: true)
+    {
+        try
+        {
+            using RenderObjectPublicationScope publication = GenericRenderObject.BeginDeferredPublication();
+            JoinDeferredObjectCachePublication();
+            AttachGeometryBufferRevisionTracking(_buffers);
+            publication.Complete();
+        }
+        catch
+        {
+            AbortMeshConstruction();
+            throw;
+        }
+    }
+
+    private XRMesh(bool deferObjectCachePublication)
+        : base(deferObjectCachePublication)
         => AttachGeometryBufferRevisionTracking(_buffers);
+
+    internal static XRMesh CreateDeferredForDeserialization()
+        => new(deferObjectCachePublication: true);
 
     protected override void OnPropertyChanged<T>(string? propName, T prev, T field)
     {
@@ -434,10 +510,46 @@ public partial class XRMesh : XRAsset
         }
     }
 
+    public override void Destroy(bool now = false)
+    {
+        if (!now || IsDestroyed)
+        {
+            base.Destroy(now);
+            return;
+        }
+
+        BufferCollection buffers = Buffers;
+        if (buffers.IsPublicationLeaseHeldByCurrentThread)
+        {
+            // A synchronous collection observer requested teardown from inside
+            // publication. Queue it so the transaction can restore its prior
+            // generation before terminal destruction runs.
+            base.Destroy(now: false);
+            return;
+        }
+
+        buffers.BeginOwnerDestruction(this);
+        try
+        {
+            base.Destroy(now: true);
+        }
+        finally
+        {
+            // Destroying observers can veto teardown.
+            if (!IsDestroyed)
+                buffers.CancelOwnerDestruction(this);
+        }
+    }
+
     protected override void OnDestroying()
     {
-        DetachGeometryBufferRevisionTracking(Buffers);
-        Buffers?.DisposeOwnedBuffers();
+        InvalidateIndexBufferCache();
+        // Retirement takes the same gate held from staged swap through root
+        // publication, so teardown cannot split an apply/rollback transaction.
+        BufferCollection buffers = Buffers;
+        buffers.RetireAndDisposeOwnedBuffers();
+        DetachGeometryBufferRevisionTracking(buffers);
+        base.OnDestroying();
     }
 
     private void OnBuffersAssigned()
@@ -473,21 +585,29 @@ public partial class XRMesh : XRAsset
 
         if (HasSkinning)
         {
-            BoneInfluenceCoreIndices = Buffers.GetValueOrDefault(ECommonBufferType.BoneInfluenceCoreIndices.ToString());
-            BoneInfluenceCoreWeights = Buffers.GetValueOrDefault(ECommonBufferType.BoneInfluenceCoreWeights.ToString());
-            BoneInfluenceSpillHeaders = Buffers.GetValueOrDefault(ECommonBufferType.BoneInfluenceSpillHeaders.ToString());
-            BoneInfluenceSpillEntries = Buffers.GetValueOrDefault(ECommonBufferType.BoneInfluenceSpillEntries.ToString());
+            XRMeshSkinningBufferState state = CaptureSkinningBufferState() with
+            {
+                CoreIndices = Buffers.GetValueOrDefault(ECommonBufferType.BoneInfluenceCoreIndices.ToString()),
+                CoreWeights = Buffers.GetValueOrDefault(ECommonBufferType.BoneInfluenceCoreWeights.ToString()),
+                SpillHeaders = Buffers.GetValueOrDefault(ECommonBufferType.BoneInfluenceSpillHeaders.ToString()),
+                SpillEntries = Buffers.GetValueOrDefault(ECommonBufferType.BoneInfluenceSpillEntries.ToString()),
+            };
+            ApplySkinningBufferState(state);
         }
 
         if (HasBlendshapes)
         {
-            BlendshapeCounts = Buffers.GetValueOrDefault(ECommonBufferType.BlendshapeCount.ToString());
-            BlendshapeIndices = Buffers.GetValueOrDefault($"{ECommonBufferType.BlendshapeIndices}Buffer");
-            BlendshapeDeltas = Buffers.GetValueOrDefault($"{ECommonBufferType.BlendshapeDeltas}Buffer");
-            BlendshapeSparseShapeRanges = Buffers.GetValueOrDefault($"{ECommonBufferType.BlendshapeSparseShapeRanges}Buffer");
-            BlendshapeSparseRecords = Buffers.GetValueOrDefault($"{ECommonBufferType.BlendshapeSparseRecords}Buffer");
-            BlendshapeQuantizedDeltas = Buffers.GetValueOrDefault($"{ECommonBufferType.BlendshapeQuantizedDeltas}Buffer");
-            BlendshapeQuantizationMetadata = Buffers.GetValueOrDefault($"{ECommonBufferType.BlendshapeQuantizationMetadata}Buffer");
+            XRMeshBlendshapeBufferState state = CaptureBlendshapeBufferState() with
+            {
+                Counts = Buffers.GetValueOrDefault(ECommonBufferType.BlendshapeCount.ToString()),
+                Indices = Buffers.GetValueOrDefault($"{ECommonBufferType.BlendshapeIndices}Buffer"),
+                Deltas = Buffers.GetValueOrDefault($"{ECommonBufferType.BlendshapeDeltas}Buffer"),
+                SparseShapeRanges = Buffers.GetValueOrDefault($"{ECommonBufferType.BlendshapeSparseShapeRanges}Buffer"),
+                SparseRecords = Buffers.GetValueOrDefault($"{ECommonBufferType.BlendshapeSparseRecords}Buffer"),
+                QuantizedDeltas = Buffers.GetValueOrDefault($"{ECommonBufferType.BlendshapeQuantizedDeltas}Buffer"),
+                QuantizationMetadata = Buffers.GetValueOrDefault($"{ECommonBufferType.BlendshapeQuantizationMetadata}Buffer"),
+            };
+            ApplyBlendshapeBufferState(state);
         }
 
         // Rebuild Vertices from buffers if they weren't loaded (we omit them from YAML to reduce file size).
@@ -562,6 +682,7 @@ public partial class XRMesh : XRAsset
 
     private void AttachGeometryBufferRevisionTracking(BufferCollection buffers)
     {
+        buffers.AttachOwner(this);
         buffers.Added += OnGeometryBufferAdded;
         buffers.Removed += OnGeometryBufferRemoved;
         buffers.Set += OnGeometryBufferReplaced;
@@ -571,6 +692,7 @@ public partial class XRMesh : XRAsset
 
     private void DetachGeometryBufferRevisionTracking(BufferCollection buffers)
     {
+        buffers.DetachOwner(this);
         buffers.Added -= OnGeometryBufferAdded;
         buffers.Removed -= OnGeometryBufferRemoved;
         buffers.Set -= OnGeometryBufferReplaced;
@@ -585,6 +707,7 @@ public partial class XRMesh : XRAsset
     private void OnGeometryBufferAdded(string key, XRDataBuffer buffer)
     {
         TrackGeometryBuffer(key, buffer);
+        RefreshConvenienceBufferReference(key);
         if (IsGeometryBufferKey(key))
             AdvanceGeometryRevision();
     }
@@ -596,16 +719,82 @@ public partial class XRMesh : XRAsset
             UntrackGeometryBufferIfUnused(buffer);
             AdvanceGeometryRevision();
         }
+        RefreshConvenienceBufferReference(key);
     }
 
     private void OnGeometryBufferReplaced(string key, XRDataBuffer previous, XRDataBuffer current)
     {
-        if (!IsGeometryBufferKey(key))
-            return;
+        if (IsGeometryBufferKey(key))
+        {
+            UntrackGeometryBufferIfUnused(previous);
+            TrackGeometryBuffer(key, current);
+            AdvanceGeometryRevision();
+        }
+        RefreshConvenienceBufferReference(key);
+    }
 
-        UntrackGeometryBufferIfUnused(previous);
-        TrackGeometryBuffer(key, current);
-        AdvanceGeometryRevision();
+    /// <summary>
+    /// Keeps the strongly named buffer references aligned with transactional collection
+    /// changes without rebuilding vertex data for every individual callback.
+    /// </summary>
+    private void RefreshConvenienceBufferReference(string key)
+    {
+        Buffers.TryGetValue(key, out XRDataBuffer? buffer);
+        if (key == ECommonBufferType.Position.ToString())
+            PositionsBuffer = buffer;
+        else if (key == ECommonBufferType.Normal.ToString())
+            NormalsBuffer = buffer;
+        else if (key == ECommonBufferType.Tangent.ToString())
+            TangentsBuffer = buffer;
+        else if (key == ECommonBufferType.InterleavedVertex.ToString())
+            InterleavedVertexBuffer = buffer;
+        else if (key == ECommonBufferType.BoneInfluenceCoreIndices.ToString())
+            BoneInfluenceCoreIndices = buffer;
+        else if (key == ECommonBufferType.BoneInfluenceCoreWeights.ToString())
+            BoneInfluenceCoreWeights = buffer;
+        else if (key == ECommonBufferType.BoneInfluenceSpillHeaders.ToString())
+            BoneInfluenceSpillHeaders = buffer;
+        else if (key == ECommonBufferType.BoneInfluenceSpillEntries.ToString())
+            BoneInfluenceSpillEntries = buffer;
+        else if (key == ECommonBufferType.BlendshapeCount.ToString())
+            BlendshapeCounts = buffer;
+        else if (key == $"{ECommonBufferType.BlendshapeIndices}Buffer")
+            BlendshapeIndices = buffer;
+        else if (key == $"{ECommonBufferType.BlendshapeDeltas}Buffer")
+            BlendshapeDeltas = buffer;
+        else if (key == $"{ECommonBufferType.BlendshapeSparseShapeRanges}Buffer")
+            BlendshapeSparseShapeRanges = buffer;
+        else if (key == $"{ECommonBufferType.BlendshapeSparseRecords}Buffer")
+            BlendshapeSparseRecords = buffer;
+        else if (key == $"{ECommonBufferType.BlendshapeQuantizedDeltas}Buffer")
+            BlendshapeQuantizedDeltas = buffer;
+        else if (key == $"{ECommonBufferType.BlendshapeQuantizationMetadata}Buffer")
+            BlendshapeQuantizationMetadata = buffer;
+        else if (TryGetBufferChannelIndex(key, ECommonBufferType.Color.ToString(), ColorCount, out int colorIndex))
+        {
+            XRDataBuffer?[]? colorBuffers = ColorBuffers;
+            if (colorBuffers is null || (uint)colorBuffers.Length < ColorCount)
+                Array.Resize(ref colorBuffers, (int)ColorCount);
+            colorBuffers![colorIndex] = buffer;
+            ColorBuffers = colorBuffers;
+        }
+        else if (TryGetBufferChannelIndex(key, ECommonBufferType.TexCoord.ToString(), TexCoordCount, out int texCoordIndex))
+        {
+            XRDataBuffer?[]? texCoordBuffers = TexCoordBuffers;
+            if (texCoordBuffers is null || (uint)texCoordBuffers.Length < TexCoordCount)
+                Array.Resize(ref texCoordBuffers, (int)TexCoordCount);
+            texCoordBuffers![texCoordIndex] = buffer;
+            TexCoordBuffers = texCoordBuffers;
+        }
+    }
+
+    private static bool TryGetBufferChannelIndex(string key, string prefix, uint channelCount, out int index)
+    {
+        index = -1;
+        return key.StartsWith(prefix, StringComparison.Ordinal)
+            && int.TryParse(key.AsSpan(prefix.Length), out index)
+            && index >= 0
+            && (uint)index < channelCount;
     }
 
     private void TrackGeometryBuffer(string key, XRDataBuffer buffer)

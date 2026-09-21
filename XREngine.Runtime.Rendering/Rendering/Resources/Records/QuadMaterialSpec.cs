@@ -10,6 +10,7 @@ namespace XREngine.Rendering.Resources;
 /// <param name="DebugLabel">The debug label of the quad material resource.</param>
 /// <param name="Required">Indicates whether the quad material resource is required.</param>
 /// <param name="Factory">Creates the fullscreen-quad framebuffer helper.</param>
+/// <param name="IncrementalFactory">Creates generation-owned state for bounded fullscreen-quad preparation.</param>
 public sealed record QuadMaterialSpec(
     string Name,
     RenderResourceLifetime Lifetime,
@@ -17,7 +18,8 @@ public sealed record QuadMaterialSpec(
     RenderPipelineResourcePredicate? Predicate,
     string? DebugLabel,
     bool Required,
-    Func<XRFrameBuffer>? Factory)
+    Func<XRFrameBuffer>? Factory,
+    Func<IIncrementalFrameBufferFactory>? IncrementalFactory)
     : RenderPipelineResourceSpec(
         Name,
         RenderPipelineResourceKind.QuadMaterial,

@@ -67,6 +67,10 @@
   items:
     - name: Ambient Occlusion
       href: gi/ambient-occlusion.md
+    - name: DDGI
+      href: gi/ddgi.md
+    - name: DDGI Baking Workflow
+      href: gi/ddgi-baking-workflow.md
     - name: Light Probes
       href: gi/light-probes.md
     - name: Light Volumes

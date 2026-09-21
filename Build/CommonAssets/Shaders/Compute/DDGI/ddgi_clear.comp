@@ -1,0 +1,26 @@
+#version 450
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+#pragma snippet "DDGIBindings"
+struct Probe { vec4 position; vec4 relocationOffset; };
+layout(std430, XR_DDGI_STORAGE_BINDING(0)) buffer Probes { Probe gProbes[]; };
+layout(r11f_g11f_b10f, XR_DDGI_IMAGE_BINDING(0)) uniform writeonly image2DArray uIrradiance;
+layout(rg16f, XR_DDGI_IMAGE_BINDING(1)) uniform writeonly image2DArray uVisibility;
+uniform uint uProbeCount;
+void main()
+{
+    ivec3 p = ivec3(gl_GlobalInvocationID);
+    ivec3 irrSize = imageSize(uIrradiance);
+    ivec3 visSize = imageSize(uVisibility);
+    if (all(lessThan(p, irrSize)))
+        imageStore(uIrradiance, p, vec4(0.0));
+    if (all(lessThan(p, visSize)))
+        imageStore(uVisibility, p, vec4(0.0));
+    uvec3 extent = gl_NumWorkGroups * gl_WorkGroupSize;
+    uint index = gl_GlobalInvocationID.x + extent.x * (gl_GlobalInvocationID.y + extent.y * gl_GlobalInvocationID.z);
+    if (index < uProbeCount)
+    {
+        // Empty history is inactive until that probe has actually been traced.
+        gProbes[index].position = vec4(0.0, 0.0, 0.0, 1.0);
+        gProbes[index].relocationOffset = vec4(0.0);
+    }
+}

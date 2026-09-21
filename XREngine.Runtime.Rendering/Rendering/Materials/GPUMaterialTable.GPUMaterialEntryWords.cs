@@ -10,7 +10,7 @@ public partial class GPUMaterialTable
         {
             // XR_MaterialRecord contains vec4 fields, so std430 rounds its array
             // stride up to four words. Keep this CPU upload struct at that stride.
-            public const int WordCount = 16;
+            public const int WordCount = 32;
 
             public uint AlbedoHandleIndex;
             public uint NormalHandleIndex;
@@ -24,10 +24,26 @@ public partial class GPUMaterialTable
             public uint Metallic;
             public uint Specular;
             public uint Emission;
-            public uint AlphaCutoff;
+            public uint EmissionColorX;
+            public uint EmissionColorY;
+            public uint EmissionColorZ;
+            public uint EmissionColorMode;
+            public uint EmissionStrength;
             public uint Padding0;
             public uint Padding1;
             public uint Padding2;
+            public uint EmissionTexCoordSet;
+            public uint EmissionTextureIsSrgb;
+            public uint EmissionMetadataPadding0;
+            public uint EmissionMetadataPadding1;
+            public uint EmissionUvScaleX;
+            public uint EmissionUvScaleY;
+            public uint EmissionUvOffsetX;
+            public uint EmissionUvOffsetY;
+            public uint EmissionUvRotation;
+            public uint AlphaCutoff;
+            public uint Padding3;
+            public uint Padding4;
         }
     }
 }

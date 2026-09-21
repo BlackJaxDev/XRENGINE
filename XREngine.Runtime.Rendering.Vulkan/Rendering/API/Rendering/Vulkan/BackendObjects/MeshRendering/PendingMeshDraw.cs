@@ -45,7 +45,8 @@ internal readonly record struct PendingMeshDraw(
     string? PreparedProgramIdentity,
     ulong PreparedProgramLinkGeneration,
     ComputeDispatchSnapshot? ProgramBindingSnapshot,
-    AdvancedGpuSceneDrawIdentitySnapshot CanonicalDrawIdentitySnapshot)
+    AdvancedGpuSceneDrawIdentitySnapshot CanonicalDrawIdentitySnapshot,
+    WindowPresentationSourceMarker WindowPresentationSourceMarker)
 {
     internal AdvancedGpuSceneDrawIdentity CanonicalDrawIdentity
         => CanonicalDrawIdentitySnapshot.Primary;

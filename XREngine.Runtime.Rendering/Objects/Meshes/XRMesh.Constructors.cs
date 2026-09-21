@@ -28,171 +28,247 @@ public partial class XRMesh
         => new(positions.Select(x => new Vertex(x)));
 
     public XRMesh(IEnumerable<Vertex> vertices, List<ushort> triangleIndices)
+        : this(deferObjectCachePublication: true)
     {
-        using var _ = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRMesh Triangles Constructor");
-
-        vertices.TryGetNonEnumeratedCount(out int vertexCountHint);
-        List<Vertex> triVertices = vertexCountHint > 0 ? new(vertexCountHint) : [];
-
-        int maxColorCount = 0;
-        int maxTexCoordCount = 0;
-        AABB? bounds = null;
-        Matrix4x4? dataTransform = null;
-
-        bool hasNormalAction = false, hasTangentAction = false, hasTexCoordAction = false, hasColorAction = false;
-
-        foreach (var v in vertices)
+        try
         {
-            bounds = bounds?.ExpandedToInclude(v.Position) ?? new AABB(v.Position, v.Position);
-            AddVertex(triVertices, v, ref maxTexCoordCount, ref maxColorCount,
-                ref hasNormalAction, ref hasTangentAction, ref hasTexCoordAction, ref hasColorAction);
-        }
-
-        _bounds = bounds ?? new AABB(Vector3.Zero, Vector3.Zero);
-        _triangles = new List<IndexTriangle>(triangleIndices.Count / 3);
-        for (int i = 0; i + 2 < triangleIndices.Count; i += 3)
-            _triangles.Add(new IndexTriangle(triangleIndices[i], triangleIndices[i + 1], triangleIndices[i + 2]));
-        _type = EPrimitiveType.Triangles;
-        VertexCount = triVertices.Count;
-
-        DelVertexAction[] vertexActions = CreateVertexActions(
-            hasNormalAction,
-            hasTangentAction,
-            hasTexCoordAction,
-            hasColorAction,
-            includePositions: true,
-            updateBounds: false);
-
-        InitMeshBuffers(hasNormalAction, hasTangentAction, maxColorCount, maxTexCoordCount);
-
-        Vertex[] sourceVertices = [.. triVertices];
-
-        PopulateVertexData(vertexActions, sourceVertices, VertexCount, dataTransform,
-            RuntimeRenderingHostServices.Settings.PopulateVertexDataInParallel);
-
-        Vertices = sourceVertices;
-    }
-
-    public XRMesh(IEnumerable<object?> primitives) : this()
-    {
-        using var _ = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRMesh Constructor");
-
-        List<Vertex> points = [];
-        List<Vertex> lines = [];
-        List<Vertex> triangles = [];
-
-        int maxColorCount = 0, maxTexCoordCount = 0;
-        AABB? bounds = null;
-        Matrix4x4? dataTransform = null;
-        bool hasNormalAction = false, hasTangentAction = false, hasTexCoordAction = false, hasColorAction = false;
-
-        foreach (var prim in primitives)
-        {
-            switch (prim)
+            using (RenderObjectPublicationScope publication = GenericRenderObject.BeginDeferredPublication())
             {
-                case Vertex v:
+                JoinDeferredObjectCachePublication();
+                XRMeshCpuPreparationTelemetry.EnterPreparation();
+                bool preparationSucceeded = false;
+                try
+                {
+                    using var _ = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRMesh Triangles Constructor");
+
+                vertices.TryGetNonEnumeratedCount(out int vertexCountHint);
+                List<Vertex> triVertices = vertexCountHint > 0 ? new(vertexCountHint) : [];
+
+                int maxColorCount = 0;
+                int maxTexCoordCount = 0;
+                AABB? bounds = null;
+                Matrix4x4? dataTransform = null;
+
+                bool hasNormalAction = false, hasTangentAction = false, hasTexCoordAction = false, hasColorAction = false;
+
+                foreach (var v in vertices)
+                {
                     bounds = bounds?.ExpandedToInclude(v.Position) ?? new AABB(v.Position, v.Position);
-                    AddVertex(points, v, ref maxTexCoordCount, ref maxColorCount,
+                    AddVertex(triVertices, v, ref maxTexCoordCount, ref maxColorCount,
                         ref hasNormalAction, ref hasTangentAction, ref hasTexCoordAction, ref hasColorAction);
-                    break;
-                case VertexLinePrimitive lp:
-                    foreach (var line in lp.ToLines())
-                        foreach (var vtx in line.Vertices)
-                        {
-                            bounds = bounds?.ExpandedToInclude(vtx.Position) ?? new AABB(vtx.Position, vtx.Position);
-                            AddVertex(lines, vtx, ref maxTexCoordCount, ref maxColorCount,
-                                ref hasNormalAction, ref hasTangentAction, ref hasTexCoordAction, ref hasColorAction);
-                        }
-                    break;
-                case VertexLine line:
-                    foreach (var vtx in line.Vertices)
-                    {
-                        bounds = bounds?.ExpandedToInclude(vtx.Position) ?? new AABB(vtx.Position, vtx.Position);
-                        AddVertex(lines, vtx, ref maxTexCoordCount, ref maxColorCount,
-                            ref hasNormalAction, ref hasTangentAction, ref hasTexCoordAction, ref hasColorAction);
-                    }
-                    break;
-                case VertexPolygon poly:
-                    foreach (var tri in poly.ToTriangles())
-                        foreach (var vtx in tri.Vertices)
-                        {
-                            bounds = bounds?.ExpandedToInclude(vtx.Position) ?? new AABB(vtx.Position, vtx.Position);
-                            AddVertex(triangles, vtx, ref maxTexCoordCount, ref maxColorCount,
-                                ref hasNormalAction, ref hasTangentAction, ref hasTexCoordAction, ref hasColorAction);
-                        }
-                    break;
-                case null:
-                    break;
-                default:
-                    throw new ArgumentException($"Unsupported mesh primitive type '{prim.GetType().FullName}'.", nameof(primitives));
+                }
+
+                _bounds = bounds ?? new AABB(Vector3.Zero, Vector3.Zero);
+                _triangles = new List<IndexTriangle>(triangleIndices.Count / 3);
+                for (int i = 0; i + 2 < triangleIndices.Count; i += 3)
+                    _triangles.Add(new IndexTriangle(triangleIndices[i], triangleIndices[i + 1], triangleIndices[i + 2]));
+                _type = EPrimitiveType.Triangles;
+                VertexCount = triVertices.Count;
+
+                DelVertexAction[] vertexActions = CreateVertexActions(
+                    hasNormalAction,
+                    hasTangentAction,
+                    hasTexCoordAction,
+                    hasColorAction,
+                    includePositions: true,
+                    updateBounds: false);
+
+                InitMeshBuffers(hasNormalAction, hasTangentAction, maxColorCount, maxTexCoordCount);
+
+                Vertex[] sourceVertices = [.. triVertices];
+
+                PopulateVertexData(vertexActions, sourceVertices, VertexCount, dataTransform,
+                    RuntimeRenderingHostServices.Settings.PopulateVertexDataInParallel);
+
+                    Vertices = sourceVertices;
+                    publication.Complete();
+                    preparationSucceeded = true;
+                }
+                finally
+                {
+                    XRMeshCpuPreparationTelemetry.ExitPreparation(
+                        preparationSucceeded,
+                        VertexCount,
+                        Buffers.Count,
+                        GetPreparedBufferByteCount());
+                }
             }
         }
-
-        _bounds = bounds ?? new AABB(Vector3.Zero, Vector3.Zero);
-
-        int count;
-        Remapper? remapper;
-        Vertex[] sourceList;
-        if (triangles.Count > lines.Count && triangles.Count > points.Count)
+        catch
         {
-            _type = EPrimitiveType.Triangles;
-            count = triangles.Count;
-            sourceList = [.. triangles];
-            remapper = SetTriangleIndices(sourceList);
+            AbortMeshConstruction();
+            throw;
         }
-        else if (lines.Count > triangles.Count && lines.Count > points.Count)
+    }
+
+    public XRMesh(IEnumerable<object?> primitives)
+        : this(deferObjectCachePublication: true)
+    {
+        try
         {
-            _type = EPrimitiveType.Lines;
-            count = lines.Count;
-            sourceList = [.. lines];
-            remapper = SetLineIndices(sourceList);
+            using (RenderObjectPublicationScope publication = GenericRenderObject.BeginDeferredPublication())
+            {
+                JoinDeferredObjectCachePublication();
+                XRMeshCpuPreparationTelemetry.EnterPreparation();
+                bool preparationSucceeded = false;
+                try
+                {
+                    using var _ = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRMesh Constructor");
+
+                List<Vertex> points = [];
+                List<Vertex> lines = [];
+                List<Vertex> triangles = [];
+
+                int maxColorCount = 0, maxTexCoordCount = 0;
+                AABB? bounds = null;
+                Matrix4x4? dataTransform = null;
+                bool hasNormalAction = false, hasTangentAction = false, hasTexCoordAction = false, hasColorAction = false;
+
+                foreach (var prim in primitives)
+                {
+                    switch (prim)
+                    {
+                        case Vertex v:
+                            bounds = bounds?.ExpandedToInclude(v.Position) ?? new AABB(v.Position, v.Position);
+                            AddVertex(points, v, ref maxTexCoordCount, ref maxColorCount,
+                                ref hasNormalAction, ref hasTangentAction, ref hasTexCoordAction, ref hasColorAction);
+                            break;
+                        case VertexLinePrimitive lp:
+                            foreach (var line in lp.ToLines())
+                                foreach (var vtx in line.Vertices)
+                                {
+                                    bounds = bounds?.ExpandedToInclude(vtx.Position) ?? new AABB(vtx.Position, vtx.Position);
+                                    AddVertex(lines, vtx, ref maxTexCoordCount, ref maxColorCount,
+                                        ref hasNormalAction, ref hasTangentAction, ref hasTexCoordAction, ref hasColorAction);
+                                }
+                            break;
+                        case VertexLine line:
+                            foreach (var vtx in line.Vertices)
+                            {
+                                bounds = bounds?.ExpandedToInclude(vtx.Position) ?? new AABB(vtx.Position, vtx.Position);
+                                AddVertex(lines, vtx, ref maxTexCoordCount, ref maxColorCount,
+                                    ref hasNormalAction, ref hasTangentAction, ref hasTexCoordAction, ref hasColorAction);
+                            }
+                            break;
+                        case VertexPolygon poly:
+                            foreach (var tri in poly.ToTriangles())
+                                foreach (var vtx in tri.Vertices)
+                                {
+                                    bounds = bounds?.ExpandedToInclude(vtx.Position) ?? new AABB(vtx.Position, vtx.Position);
+                                    AddVertex(triangles, vtx, ref maxTexCoordCount, ref maxColorCount,
+                                        ref hasNormalAction, ref hasTangentAction, ref hasTexCoordAction, ref hasColorAction);
+                                }
+                            break;
+                        case null:
+                            break;
+                        default:
+                            throw new ArgumentException($"Unsupported mesh primitive type '{prim.GetType().FullName}'.", nameof(primitives));
+                    }
+                }
+
+                _bounds = bounds ?? new AABB(Vector3.Zero, Vector3.Zero);
+
+                int count;
+                Remapper? remapper;
+                Vertex[] sourceList;
+                if (triangles.Count > lines.Count && triangles.Count > points.Count)
+                {
+                    _type = EPrimitiveType.Triangles;
+                    count = triangles.Count;
+                    sourceList = [.. triangles];
+                    remapper = SetTriangleIndices(sourceList);
+                }
+                else if (lines.Count > triangles.Count && lines.Count > points.Count)
+                {
+                    _type = EPrimitiveType.Lines;
+                    count = lines.Count;
+                    sourceList = [.. lines];
+                    remapper = SetLineIndices(sourceList);
+                }
+                else
+                {
+                    _type = EPrimitiveType.Points;
+                    count = points.Count;
+                    sourceList = [.. points];
+                    remapper = SetPointIndices(sourceList);
+                }
+
+                DelVertexAction[] vertexActions = CreateVertexActions(
+                    hasNormalAction,
+                    hasTangentAction,
+                    hasTexCoordAction,
+                    hasColorAction,
+                    includePositions: true,
+                    updateBounds: false);
+
+                int[] firstAppearanceArray;
+                if (remapper?.ImplementationTable is null)
+                {
+                    firstAppearanceArray = new int[count];
+                    firstAppearanceArray.Fill(x => x);
+                }
+                else
+                    firstAppearanceArray = remapper.ImplementationTable!;
+                VertexCount = firstAppearanceArray.Length;
+
+                InitMeshBuffers(hasNormalAction, hasTangentAction, maxColorCount, maxTexCoordCount);
+
+                PopulateVertexData(
+                    vertexActions,
+                    sourceList,
+                    firstAppearanceArray,
+                    dataTransform,
+                    RuntimeRenderingHostServices.Settings.PopulateVertexDataInParallel);
+
+                if (remapper?.ImplementationTable is null)
+                {
+                    Vertices = sourceList;
+                }
+                else
+                {
+                    Vertex[] compactVertices = new Vertex[firstAppearanceArray.Length];
+                    for (int i = 0; i < firstAppearanceArray.Length; i++)
+                        compactVertices[i] = sourceList[firstAppearanceArray[i]];
+
+                    Vertices = compactVertices;
+                }
+                    publication.Complete();
+                    preparationSucceeded = true;
+                }
+                finally
+                {
+                    XRMeshCpuPreparationTelemetry.ExitPreparation(
+                        preparationSucceeded,
+                        VertexCount,
+                        Buffers.Count,
+                        GetPreparedBufferByteCount());
+                }
+            }
         }
-        else
+        catch
         {
-            _type = EPrimitiveType.Points;
-            count = points.Count;
-            sourceList = [.. points];
-            remapper = SetPointIndices(sourceList);
+            AbortMeshConstruction();
+            throw;
         }
+    }
 
-        DelVertexAction[] vertexActions = CreateVertexActions(
-            hasNormalAction,
-            hasTangentAction,
-            hasTexCoordAction,
-            hasColorAction,
-            includePositions: true,
-            updateBounds: false);
-
-        int[] firstAppearanceArray;
-        if (remapper?.ImplementationTable is null)
+    private void AbortMeshConstruction()
+    {
+        try
         {
-            firstAppearanceArray = new int[count];
-            firstAppearanceArray.Fill(x => x);
+            AbortFailedConstruction();
         }
-        else
-            firstAppearanceArray = remapper.ImplementationTable!;
-        VertexCount = firstAppearanceArray.Length;
-
-        InitMeshBuffers(hasNormalAction, hasTangentAction, maxColorCount, maxTexCoordCount);
-
-        PopulateVertexData(
-            vertexActions,
-            sourceList,
-            firstAppearanceArray,
-            dataTransform,
-            RuntimeRenderingHostServices.Settings.PopulateVertexDataInParallel);
-
-        if (remapper?.ImplementationTable is null)
+        catch (Exception ex)
         {
-            Vertices = sourceList;
+            RuntimeRenderingHostServices.Diagnostics.LogException(ex);
         }
-        else
-        {
-            Vertex[] compactVertices = new Vertex[firstAppearanceArray.Length];
-            for (int i = 0; i < firstAppearanceArray.Length; i++)
-                compactVertices[i] = sourceList[firstAppearanceArray[i]];
+    }
 
-            Vertices = compactVertices;
-        }
+    private long GetPreparedBufferByteCount()
+    {
+        long byteCount = 0;
+        foreach (KeyValuePair<string, XRDataBuffer> entry in Buffers)
+            byteCount += entry.Value.Length;
+        return byteCount;
     }
 }

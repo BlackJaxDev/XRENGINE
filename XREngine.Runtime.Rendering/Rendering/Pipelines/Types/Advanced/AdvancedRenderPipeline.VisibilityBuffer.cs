@@ -660,9 +660,11 @@ public partial class AdvancedRenderPipeline
             EComponentType.Struct,
             Math.Max(1u, stride),
             normalize: false,
-            integral: true)
+            integral: true,
+            allocateClientSideSource: false)
         {
             Usage = usage,
+            GpuProduced = true,
         };
 
     private static uint DivideRoundUp(uint value, uint divisor)

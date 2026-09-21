@@ -99,7 +99,9 @@ public static class MeshGeometryLayoutSignatureBuilder
             }
         }
 
-        bool hasPrecombinedBlendshapeDeltas = renderer?.HasValidPrecombinedBlendshapeDeltas == true;
+        bool hasPrecombinedBlendshapeDeltas = mesh is not null
+            && renderer is not null
+            && renderer.CaptureBlendshapeResources().IsPrecombinedValidFor(mesh);
         Add(ref hash, hasPrecombinedBlendshapeDeltas);
 
         string summary = BuildSummary(
