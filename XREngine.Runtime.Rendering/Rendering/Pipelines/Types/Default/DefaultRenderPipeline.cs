@@ -13,6 +13,8 @@ using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
 using XREngine.Rendering.Commands;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.GI.Contracts;
+using XREngine.Rendering.GI.Integration;
 using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.RenderGraph;
 using XREngine.Rendering.PostProcessing;
@@ -56,7 +58,6 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
     private readonly OpaqueStateBucketRenderCommandSorter _opaqueStateBucketSorter = new();
     private readonly FarToNearRenderCommandSorter _farToNearSorter = new();
 
-    private readonly Lazy<XRMaterial> _voxelConeTracingVoxelizationMaterial;
     private readonly Lazy<XRMaterial> _motionVectorsMaterial;
     private readonly Lazy<XRMaterial> _depthNormalPrePassMaterial;
     private readonly Lazy<XRMaterial> _fullOverdrawCountMaterial;
@@ -106,19 +107,28 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
     private const float TemporalConfidencePower = 0.55f;
 
     private EGlobalIlluminationMode _globalIlluminationMode = EGlobalIlluminationMode.LightProbesAndIbl;
+    private GlobalIlluminationPlan _globalIlluminationPlan = GlobalIlluminationProviderRegistry.Resolve(
+        EGlobalIlluminationMode.LightProbesAndIbl,
+        DefaultGlobalIlluminationHostAdapter.Instance);
+
+    /// <summary>Immutable registry-resolved GI selection for this host.</summary>
+    public GlobalIlluminationPlan GlobalIlluminationPlan => _globalIlluminationPlan;
+
     public EGlobalIlluminationMode GlobalIlluminationMode
     {
         get => _globalIlluminationMode;
-        set => SetField(ref _globalIlluminationMode, value);
+        set
+        {
+            if (!SetField(ref _globalIlluminationMode, value))
+                return;
+            RefreshGlobalIlluminationPlan();
+        }
     }
 
-    public bool UsesRestirGI => _globalIlluminationMode == EGlobalIlluminationMode.PathTracing;
-    public bool UsesVoxelConeTracing => _globalIlluminationMode == EGlobalIlluminationMode.VoxelConeTracing;
-    public bool UsesLightVolumes => _globalIlluminationMode == EGlobalIlluminationMode.LightVolumes;
-    public bool UsesLightProbeGI => _globalIlluminationMode == EGlobalIlluminationMode.LightProbesAndIbl;
-    public bool UsesRadianceCascades => _globalIlluminationMode == EGlobalIlluminationMode.RadianceCascades;
-    public bool UsesSurfelGI => _globalIlluminationMode == EGlobalIlluminationMode.SurfelGI;
-    public bool UsesDDGI => _globalIlluminationMode == EGlobalIlluminationMode.DDGI;
+    private void RefreshGlobalIlluminationPlan()
+        => _globalIlluminationPlan = GlobalIlluminationProviderRegistry.Resolve(
+            _globalIlluminationMode,
+            DefaultGlobalIlluminationHostAdapter.Instance);
 
     // Light probe debug accessors (for editor/state panels)
     public XRTexture2DArray? ProbeIrradianceArray => CurrentProbeResources?.IrradianceArray;
@@ -1509,8 +1519,6 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
     public const string TransformIdDebugQuadFBOName = "TransformIdDebugQuadFBO";
     public const string TransformIdDebugOutputTextureName = "TransformIdDebugOutputTexture";
     public const string TransformIdDebugOutputFBOName = "TransformIdDebugOutputFBO";
-    public const string RestirCompositeFBOName = "RestirCompositeFBO";
-    public const string LightVolumeCompositeFBOName = "LightVolumeCompositeFBO";
     public const string VelocityFBOName = "VelocityFBO";
     public const string HistoryCaptureFBOName = "HistoryCaptureFBO";
     public const string TemporalInputFBOName = "TemporalInputFBO";
@@ -1533,9 +1541,6 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
     public const string TsrMonoReferenceLeftTextureViewName = "TsrMonoReferenceLeftTextureView";
     public const string TsrMonoReferenceRightTextureViewName = "TsrMonoReferenceRightTextureView";
     public const string TsrHistoryColorFBOName = "TsrHistoryColorFBO";
-    public const string RadianceCascadeCompositeFBOName = "RadianceCascadeCompositeFBO";
-    public const string SurfelGICompositeFBOName = "SurfelGICompositeFBO";
-    public const string DDGICompositeFBOName = "DDGICompositeFBO";
     public const string TsrUpscaleFBOName = "TsrUpscaleFBO";
     public const string TsrMonoReferenceLeftFBOName = "TsrMonoReferenceLeftFBO";
     public const string TsrMonoReferenceRightFBOName = "TsrMonoReferenceRightFBO";
@@ -1573,9 +1578,6 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
     public const string BloomBlurTextureName = "BloomBlurTexture";
     public const string UserInterfaceTextureName = "HUDTex";
     public const string BRDFTextureName = EngineShaderBindingNames.Samplers.BRDF;
-    public const string RestirGITextureName = "RestirGITexture";
-    public const string LightVolumeGITextureName = "LightVolumeGITexture";
-    public const string VoxelConeTracingVolumeTextureName = "VoxelConeTracingVolume";
     public const string VelocityTextureName = "Velocity";
     public const string HistoryColorTextureName = "HistoryColor";
     public const string HistoryDepthStencilTextureName = "HistoryDepthStencil";
@@ -1586,15 +1588,6 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
     public const string MotionBlurTextureName = "MotionBlur";
     public const string DepthOfFieldTextureName = "DepthOfField";
     public const string TsrHistoryColorTextureName = "TsrHistoryColor";
-    public const string RadianceCascadeGITextureName = "RadianceCascadeGI";
-    public const string SurfelGITextureName = "SurfelGITexture";
-    public const string DDGITextureName = "DDGITexture";
-    public const string DDGIIrradianceAtlasTextureName = "DDGIIrradianceAtlas";
-    public const string DDGIVisibilityAtlasTextureName = "DDGIVisibilityAtlas";
-    public const string DDGIProbeStateBufferName = "DDGIProbeStateBuffer";
-    public const string DDGIRayBufferName = "DDGIRayBuffer";
-    public const string DDGIHitBufferName = "DDGIHitBuffer";
-    public const string DDGIRayRadianceBufferName = "DDGIRayRadianceBuffer";
 
     // MSAA deferred GBuffer texture names
     public const string MsaaAlbedoOpacityTextureName = "MsaaAlbedoOpacity";
@@ -1662,7 +1655,6 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
         GlobalIlluminationMode = RuntimeEngine.UserSettings.GlobalIlluminationMode;
         WarmDeferredLightingShaders();
         WarmFirstRenderShaders();
-        _voxelConeTracingVoxelizationMaterial = new Lazy<XRMaterial>(CreateVoxelConeTracingVoxelizationMaterial, LazyThreadSafetyMode.PublicationOnly);
         _motionVectorsMaterial = new Lazy<XRMaterial>(CreateMotionVectorsMaterial, LazyThreadSafetyMode.PublicationOnly);
         _depthNormalPrePassMaterial = new Lazy<XRMaterial>(CreateDepthNormalPrePassMaterial, LazyThreadSafetyMode.PublicationOnly);
         _fullOverdrawCountMaterial = new Lazy<XRMaterial>(CreateFullOverdrawCountMaterial, LazyThreadSafetyMode.PublicationOnly);
@@ -1779,7 +1771,11 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
                 return;
 
             ApplyAntiAliasingResolutionHint();
-            RebuildCommandChain();
+            EGlobalIlluminationMode mode = RuntimeEngine.UserSettings.GlobalIlluminationMode;
+            if (GlobalIlluminationMode != mode)
+                GlobalIlluminationMode = mode;
+            else
+                RebuildCommandChain();
 
             foreach (var window in RuntimeEngine.Windows)
             {
@@ -1880,9 +1876,6 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
         scale = 1.0f;
         return false;
     }
-
-    public XRMaterial GetVoxelConeTracingVoxelizationMaterial()
-        => _voxelConeTracingVoxelizationMaterial.Value;
 
     public XRMaterial GetMotionVectorsMaterial()
         => _motionVectorsMaterial.Value;
@@ -2653,7 +2646,8 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
         program.Uniform("AmbientOcclusionPower", aoPower);
         program.Uniform("AmbientOcclusionMultiBounce", multiBounce);
         program.Uniform("SpecularOcclusionEnabled", specularOcclusion);
-        program.Uniform("UsesDDGI", UsesDDGI);
+        program.Uniform("SuppressProbeDiffuse", GlobalIlluminationCompositionState.ShouldSuppressBaselineDiffuse(
+            RuntimeEngine.Rendering.State.CurrentRenderingPipeline, GlobalIlluminationPlan));
     }
 
     public bool BindPbrLightingResources(XRRenderProgram program, bool deferredProbeBufferBindings = false)
@@ -2674,10 +2668,10 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
         else
             program.Sampler("BRDF", Lights3DCollection.DummyShadowMap, 6);
 
-        if (!UsesLightProbeGI && !UsesDDGI)
+        if (!GlobalIlluminationPlan.RequiresNativeProbeIblBindings)
         {
             Debug.LightingEvery("ProbeGI.Disabled", TimeSpan.FromSeconds(5),
-                "[ProbeGI] GI mode disabled (UsesLightProbeGI=false, UsesDDGI=false)");
+                "[ProbeGI] Selected GI plan does not require probe/IBL bindings.");
             BindDisabledPbrResources();
             program.Uniform("ForwardPbrResourcesEnabled", false);
             program.Uniform("ProbeCount", 0);
@@ -3572,42 +3566,6 @@ public partial class DefaultRenderPipeline : RenderPipeline, ISceneRenderPipelin
         && ReferenceEquals(state.ApiWrapperIdentityOwner, renderer.ApiWrapperIdentityOwner)
         && ReferenceEquals(state.WorldIdentity, worldIdentity)
         && state.IsTopologyResultCurrent(result, renderer.ApiWrapperIdentityOwner, worldIdentity);
-    private void RestirCompositeFBO_SettingUniforms(XRRenderProgram program)
-    {
-    var region = RenderingPipelineState?.CurrentRenderRegion;
-        float width = region?.Width > 0 ? region.Value.Width : InternalWidth;
-        float height = region?.Height > 0 ? region.Value.Height : InternalHeight;
-        program.Uniform("ScreenWidth", width);
-        program.Uniform("ScreenHeight", height);
-    }
-
-    private void SurfelGICompositeFBO_SettingUniforms(XRRenderProgram program)
-    {
-        var region = RenderingPipelineState?.CurrentRenderRegion;
-        float width = region?.Width > 0 ? region.Value.Width : InternalWidth;
-        float height = region?.Height > 0 ? region.Value.Height : InternalHeight;
-        program.Uniform("ScreenWidth", width);
-        program.Uniform("ScreenHeight", height);
-    }
-
-    private void DDGICompositeFBO_SettingUniforms(XRRenderProgram program)
-    {
-        var region = RenderingPipelineState?.CurrentRenderRegion;
-        float width = region?.Width > 0 ? region.Value.Width : InternalWidth;
-        float height = region?.Height > 0 ? region.Value.Height : InternalHeight;
-        program.Uniform("ScreenWidth", width);
-        program.Uniform("ScreenHeight", height);
-    }
-
-    private void LightVolumeCompositeFBO_SettingUniforms(XRRenderProgram program)
-    {
-        var region = RenderingPipelineState?.CurrentRenderRegion;
-        float width = region?.Width > 0 ? region.Value.Width : InternalWidth;
-        float height = region?.Height > 0 ? region.Value.Height : InternalHeight;
-        program.Uniform("ScreenWidth", width);
-        program.Uniform("ScreenHeight", height);
-    }
-
     #endregion
 
     #region Highlighting

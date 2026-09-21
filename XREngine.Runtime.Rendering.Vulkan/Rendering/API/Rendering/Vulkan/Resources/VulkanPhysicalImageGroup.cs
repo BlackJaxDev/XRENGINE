@@ -18,6 +18,7 @@ internal sealed class VulkanPhysicalImageGroup
     private Image _image;
     private DeviceMemory _memory;
     private bool _allocated;
+    private bool _ownsImageAllocation = true;
     private ImageLayout _lastKnownLayout = ImageLayout.Undefined;
     private readonly Dictionary<SubresourceLayoutKey, ImageLayout> _subresourceLayouts = new();
 
@@ -57,6 +58,7 @@ internal sealed class VulkanPhysicalImageGroup
     public bool IsAllocated => _allocated;
     public Image Image => _image;
     public DeviceMemory Memory => _memory;
+    public bool IsBorrowedExternal => _allocated && !_ownsImageAllocation;
 
     /// The last layout this image was transitioned to via a pipeline barrier or
     /// render pass. Used to provide the correct <c>oldLayout</c> in blit and
@@ -219,7 +221,9 @@ internal sealed class VulkanPhysicalImageGroup
     }
 
     internal bool CanReusePhysicalAllocationFrom(VulkanPhysicalImageGroup previousGroup)
-        => previousGroup.IsAllocated &&
+        => _ownsImageAllocation &&
+           previousGroup._ownsImageAllocation &&
+           previousGroup.IsAllocated &&
            !_allocated &&
            Key.Equals(previousGroup.Key) &&
            AllowsAliasing == previousGroup.AllowsAliasing &&
@@ -245,6 +249,23 @@ internal sealed class VulkanPhysicalImageGroup
         LastKnownLayout = ImageLayout.Undefined;
     }
 
+    /// <summary>
+    /// Publishes a caller-owned image through the same immutable physical-resource
+    /// identity used by barrier planning. The group tracks layouts but never
+    /// destroys or retires the borrowed native allocation.
+    /// </summary>
+    internal void BindBorrowedExternal(Image image, DeviceMemory memory, ImageLayout trackedLayout)
+    {
+        if (image.Handle == 0)
+            throw new ArgumentException("A borrowed external image must have a native handle.", nameof(image));
+
+        _image = image;
+        _memory = memory;
+        _allocated = true;
+        _ownsImageAllocation = false;
+        LastKnownLayout = trackedLayout;
+    }
+
     internal bool TryEnsureAllocated(VulkanBackendObjectContext context, out string failureReason)
     {
         failureReason = string.Empty;
@@ -263,6 +284,12 @@ internal sealed class VulkanPhysicalImageGroup
         if (!_allocated)
             return;
 
+        if (!_ownsImageAllocation)
+        {
+            ClearBorrowedExternal();
+            return;
+        }
+
         context.Resources.Images.RetireOwnedResources(
             new RetiredImageResources(_image, _memory, default, [], default, 0),
             $"ResourcePlanner.{Key}");
@@ -277,6 +304,12 @@ internal sealed class VulkanPhysicalImageGroup
         if (!_allocated)
             return;
 
+        if (!_ownsImageAllocation)
+        {
+            ClearBorrowedExternal();
+            return;
+        }
+
         bool hasAllocation = context.Resources.Allocations.Images.Allocations.TryRemove(_image.Handle, out VulkanMemoryAllocation allocation);
         context.Resources.Images.DestroyUnpublishedOwnedImage(context, _image, $"ResourcePlanner.{Key}");
         if (hasAllocation)
@@ -284,6 +317,15 @@ internal sealed class VulkanPhysicalImageGroup
         _image = default;
         _memory = default;
         _allocated = false;
+        LastKnownLayout = ImageLayout.Undefined;
+    }
+
+    private void ClearBorrowedExternal()
+    {
+        _image = default;
+        _memory = default;
+        _allocated = false;
+        _ownsImageAllocation = true;
         LastKnownLayout = ImageLayout.Undefined;
     }
 

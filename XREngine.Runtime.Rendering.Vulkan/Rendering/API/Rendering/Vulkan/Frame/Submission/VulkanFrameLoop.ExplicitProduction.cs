@@ -182,6 +182,7 @@ internal sealed partial class VulkanFrameLoop
             long nativeBindingValidationStart = Stopwatch.GetTimestamp();
             try
             {
+                ValidateExplicitProductionLogicalPlanNativeImageBindings(acceptedPlan);
                 ValidateExplicitProductionLogicalPlanNativeBufferBindings(acceptedPlan);
             }
             catch (VulkanNativeBufferBindingSupersededException exception)

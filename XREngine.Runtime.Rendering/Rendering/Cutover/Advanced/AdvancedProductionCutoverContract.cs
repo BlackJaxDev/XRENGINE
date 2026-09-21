@@ -1,3 +1,5 @@
+using XREngine.Rendering.GI.Contracts;
+
 namespace XREngine.Rendering;
 
 /// <summary>
@@ -147,18 +149,9 @@ public static class AdvancedProductionCutoverContract
         if (pipeline.IsMinimalVisibilityOutput)
             return null;
 
-        IAdvancedGlobalIlluminationProvider? gi = pipeline.GlobalIlluminationProvider;
-        if (pipeline.GlobalIlluminationMode != EGlobalIlluminationMode.None)
-        {
-            if (gi is null)
-                return $"Global illumination mode '{pipeline.GlobalIlluminationMode}' is requested but no Advanced GI provider is configured.";
-            if (!gi.IsSupported)
-                return $"Advanced GI provider '{gi.ProviderName}' is unsupported.";
-            if (gi.ActiveMode != pipeline.GlobalIlluminationMode)
-                return $"Advanced GI provider '{gi.ProviderName}' does not implement requested mode '{pipeline.GlobalIlluminationMode}'.";
-            if (!AdvancedGlobalIlluminationContract.IsNativeProvider(gi))
-                return $"Advanced GI provider '{gi.ProviderName}' is configured but is not integrated into native shading.";
-        }
+        GlobalIlluminationPlan giPlan = pipeline.GlobalIlluminationPlan;
+        if (!giPlan.IsDisabled && !giPlan.IsSupported)
+            return giPlan.Support.Diagnostic;
 
         IAdvancedAmbientOcclusionProvider? ao = pipeline.AmbientOcclusionProvider;
         if (ao is null)

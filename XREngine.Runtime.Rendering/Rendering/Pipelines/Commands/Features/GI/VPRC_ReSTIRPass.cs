@@ -5,6 +5,7 @@ using XREngine;
 using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
 using XREngine.Rendering.GI;
+using XREngine.Rendering.GI.Contracts;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.RenderGraph;
 
@@ -42,20 +43,18 @@ namespace XREngine.Rendering.Pipelines.Commands
 
         public string DepthTextureName { get; set; } = DefaultRenderPipeline.DepthViewTextureName;
         public string NormalTextureName { get; set; } = DefaultRenderPipeline.NormalTextureName;
-        public string RestirOutputTextureName { get; set; } = DefaultRenderPipeline.RestirGITextureName;
-        public string CompositeQuadFBOName { get; set; } = DefaultRenderPipeline.RestirCompositeFBOName;
+        public string RestirOutputTextureName { get; set; } = "RestirGITexture";
+        public string CompositeQuadFBOName { get; set; } = "RestirCompositeFBO";
         public string ForwardFBOName { get; set; } = DefaultRenderPipeline.ForwardPassFBOName;
 
         protected override bool ShouldExecuteThisFrame()
-            => RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline is
-                IGlobalIlluminationPipelineProvider { UsesRestirGI: true };
+            => GlobalIlluminationPlanSelection.IsSelectedAndSupported(
+                RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline,
+                EGlobalIlluminationMode.PathTracing);
 
         protected override void Execute()
         {
-            bool usesRestirGI =
-                ActivePipelineInstance.Pipeline is
-                    IGlobalIlluminationPipelineProvider { UsesRestirGI: true };
-            if (!usesRestirGI)
+            if (!GlobalIlluminationPlanSelection.IsSelectedAndSupported(ActivePipelineInstance.Pipeline, EGlobalIlluminationMode.PathTracing))
                 return;
 
             var camera = ActivePipelineInstance.RenderState.SceneCamera;

@@ -1725,7 +1725,7 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
         uint frameSlot,
         uint viewIndex,
         string ambientOcclusionTargetName,
-        bool enableDdgi,
+        bool requireMaterialSurfaceExports,
         VulkanAdvancedNativeComputeClosureStorage storage,
         out VulkanAdvancedNativeComputeClosure closure,
         out string reason)
@@ -1840,7 +1840,7 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
             }
 
             if (!TryCaptureDdgiSurfaceClosure(context, generation.State.ResourceAllocator, storage,
-                    enableDdgi, viewIndex, hdr, hdrResource,
+                    requireMaterialSurfaceExports, viewIndex, hdr, hdrResource,
                     out VulkanAdvancedDdgiSurfaceClosure ddgiSurface, out reason))
             {
                 return false;

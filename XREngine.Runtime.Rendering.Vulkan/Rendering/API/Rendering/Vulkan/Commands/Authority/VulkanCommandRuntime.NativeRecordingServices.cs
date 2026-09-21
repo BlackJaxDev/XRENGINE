@@ -1393,7 +1393,9 @@ internal sealed partial class VulkanCommandRuntime
     internal unsafe void CmdPipelineBarrier2Tracked(
         CommandBuffer commandBuffer,
         in DependencyInfo dependencyInfo,
-        ReadOnlySpan<VulkanFrozenBufferBarrier> frozenBufferBarriers = default)
+        ReadOnlySpan<VulkanFrozenBufferBarrier> frozenBufferBarriers = default,
+        ReadOnlySpan<VulkanFrozenImageBarrier> frozenImageBarriers = default,
+        ulong excludedFrozenImageHandle = 0UL)
     {
         if (!frozenBufferBarriers.IsEmpty &&
             frozenBufferBarriers.Length != dependencyInfo.BufferMemoryBarrierCount)
@@ -1423,12 +1425,35 @@ internal sealed partial class VulkanCommandRuntime
                 frozen.LogicalResourceName,
                 frozen.NativeGeneration);
         }
+        int frozenImageIndex = 0;
         for (uint index = 0; index < dependencyInfo.ImageMemoryBarrierCount; index++)
         {
-            PrimaryCommandEncoder.Track(
+            ImageMemoryBarrier2 barrier = dependencyInfo.PImageMemoryBarriers[index];
+            if (frozenImageBarriers.IsEmpty)
+            {
+                PrimaryCommandEncoder.Track(commandBuffer, ObjectType.Image, barrier.Image.Handle);
+                continue;
+            }
+
+            while (frozenImageIndex < frozenImageBarriers.Length &&
+                   frozenImageBarriers[frozenImageIndex].NativeImage.Handle == excludedFrozenImageHandle)
+                frozenImageIndex++;
+            if (frozenImageIndex >= frozenImageBarriers.Length)
+                throw new VulkanPlanPreconditionException("Frozen image barrier stamps do not match the native dependency batch.");
+
+            VulkanFrozenImageBarrier frozen = frozenImageBarriers[frozenImageIndex++];
+            if (frozen.NativeImage.Handle == 0 || frozen.NativeGeneration == 0UL ||
+                frozen.NativeImage.Handle != barrier.Image.Handle)
+            {
+                throw new VulkanPlanPreconditionException(
+                    $"Frozen image barrier resource id={frozen.ResourceId.Value} does not match native dependency image 0x{barrier.Image.Handle:X}.");
+            }
+
+            TrackCommandBufferResource(
                 commandBuffer,
-                ObjectType.Image,
-                dependencyInfo.PImageMemoryBarriers[index].Image.Handle);
+                new VulkanResourceLifetimeKey(ObjectType.Image, frozen.NativeImage.Handle),
+                $"RenderGraphResource#{frozen.ResourceId.Value}",
+                frozen.NativeGeneration);
         }
 
         if (DeviceContext.InstanceApiVersion >= Vk.Version13)
@@ -1445,10 +1470,25 @@ internal sealed partial class VulkanCommandRuntime
         // preceding layout. Descriptor preparation, dynamic-rendering attachment
         // setup, and blit setup could therefore record a duplicate transition in
         // the same primary command buffer with an invalid oldLayout.
+        frozenImageIndex = 0;
         for (uint index = 0; index < dependencyInfo.ImageMemoryBarrierCount; index++)
         {
             ref ImageMemoryBarrier2 barrier =
                 ref dependencyInfo.PImageMemoryBarriers[index];
+            ulong resourceGeneration;
+            if (frozenImageBarriers.IsEmpty)
+            {
+                resourceGeneration = ResourceRuntime.GetPublishedGeneration(
+                    ObjectType.Image,
+                    barrier.Image.Handle);
+            }
+            else
+            {
+                while (frozenImageIndex < frozenImageBarriers.Length &&
+                       frozenImageBarriers[frozenImageIndex].NativeImage.Handle == excludedFrozenImageHandle)
+                    frozenImageIndex++;
+                resourceGeneration = frozenImageBarriers[frozenImageIndex++].NativeGeneration;
+            }
             VulkanImageAccessState next =
                 VulkanCommandSynchronizationState.ResolveVulkanImageAccessState(
                     barrier.NewLayout,
@@ -1457,9 +1497,7 @@ internal sealed partial class VulkanCommandRuntime
                     StageMask = barrier.DstStageMask,
                     AccessMask = barrier.DstAccessMask,
                     QueueFamilyIndex = barrier.DstQueueFamilyIndex,
-                    ResourceGeneration = ResourceRuntime.GetPublishedGeneration(
-                        ObjectType.Image,
-                        barrier.Image.Handle),
+                    ResourceGeneration = resourceGeneration,
                 };
             PrimaryCommandEncoder.RecordImageAccess(
                 commandBuffer,

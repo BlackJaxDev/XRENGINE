@@ -5,13 +5,16 @@ using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
 using XREngine.Rendering;
+using XREngine.Rendering.GI.Contracts;
+using XREngine.Rendering.GI.RadianceCascades;
 using XREngine.Rendering.RenderGraph;
 
 namespace XREngine.Rendering.Pipelines.Commands
 {
     /// <summary>
     /// Samples cascaded 3D radiance volumes into a screen-space GI texture and composites the result into the forward target.
-    /// Implementation is fully native to XRENGINE.
+    /// This pass resolves already-authored radiance volumes; cascade injection,
+    /// propagation, and live volume updates are not implemented here.
     /// Features:
     /// - Priority-based cascade selection (prefers higher resolution cascades)
     /// - Normal-based sampling offset to reduce light leaking
@@ -23,8 +26,8 @@ namespace XREngine.Rendering.Pipelines.Commands
     public class VPRC_RadianceCascadesPass : ViewportRenderCommand
     {
         private const uint GroupSize = 16u;
-        public const string HistoryTextureAName = "RadianceCascadeHistoryA";
-        public const string HistoryTextureBName = "RadianceCascadeHistoryB";
+        public string HistoryTextureAName { get; set; } = RadianceCascadeResourceNames.HistoryA;
+        public string HistoryTextureBName { get; set; } = RadianceCascadeResourceNames.HistoryB;
         private const string MonoShaderPath = "Compute/GI/RadianceCascades/RadianceCascades.comp";
         private const string StereoShaderPath = "Compute/GI/RadianceCascades/RadianceCascadesStereo.comp";
 
@@ -38,31 +41,23 @@ namespace XREngine.Rendering.Pipelines.Commands
         private bool _useHistoryA = true;
         private uint _frameIndex;
 
-        public string DepthTextureName { get; set; } = DefaultRenderPipeline.DepthViewTextureName;
-        public string NormalTextureName { get; set; } = DefaultRenderPipeline.NormalTextureName;
-        public string OutputTextureName { get; set; } = DefaultRenderPipeline.RadianceCascadeGITextureName;
-        public string CompositeQuadFBOName { get; set; } = DefaultRenderPipeline.RadianceCascadeCompositeFBOName;
-        public string ForwardFBOName { get; set; } = DefaultRenderPipeline.ForwardPassFBOName;
+        public string DepthTextureName { get; set; } = string.Empty;
+        public string NormalTextureName { get; set; } = string.Empty;
+        public string AlbedoTextureName { get; set; } = string.Empty;
+        public string RmseTextureName { get; set; } = string.Empty;
+        public string OutputTextureName { get; set; } = RadianceCascadeResourceNames.ScreenDiffuse;
 
         protected override bool ShouldExecuteThisFrame()
-            => RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline is
-                IGlobalIlluminationPipelineProvider
-                {
-                    UsesRadianceCascades: true,
-                };
+            => GlobalIlluminationPlanSelection.IsSelectedAndSupported(
+                RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline,
+                EGlobalIlluminationMode.RadianceCascades);
 
         protected override void Execute()
         {
-            bool usesRadianceCascades =
-                ActivePipelineInstance.Pipeline is
-                    IGlobalIlluminationPipelineProvider
-                    {
-                        UsesRadianceCascades: true,
-                    };
             bool stereo =
                 ActivePipelineInstance.Pipeline is
                     ISceneRenderPipelineFeatureProvider { Stereo: true };
-            if (!usesRadianceCascades)
+            if (!GlobalIlluminationPlanSelection.IsSelectedAndSupported(ActivePipelineInstance.Pipeline, EGlobalIlluminationMode.RadianceCascades))
                 return;
 
             var camera = ActivePipelineInstance.RenderState.SceneCamera;
@@ -79,14 +74,11 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             var depthTexture = ActivePipelineInstance.GetTexture<XRTexture>(DepthTextureName);
             var normalTexture = ActivePipelineInstance.GetTexture<XRTexture>(NormalTextureName);
+            var albedoTexture = ActivePipelineInstance.GetTexture<XRTexture>(AlbedoTextureName);
+            var rmseTexture = ActivePipelineInstance.GetTexture<XRTexture>(RmseTextureName);
             var outputTexture = ActivePipelineInstance.GetTexture<XRTexture>(OutputTextureName);
 
-            if (depthTexture is null || normalTexture is null || outputTexture is null)
-                return;
-
-            XRQuadFrameBuffer? compositeFbo = ActivePipelineInstance.GetFBO<XRQuadFrameBuffer>(CompositeQuadFBOName);
-            XRFrameBuffer? forwardFbo = ActivePipelineInstance.GetFBO<XRFrameBuffer>(ForwardFBOName);
-            if (compositeFbo is null || forwardFbo is null)
+            if (depthTexture is null || normalTexture is null || albedoTexture is null || rmseTexture is null || outputTexture is null)
                 return;
 
             if (!RadianceCascadeComponent.Registry.TryGetFirstActive(world, out RadianceCascadeComponent? cascadeComponent) || cascadeComponent is null)
@@ -116,6 +108,8 @@ namespace XREngine.Rendering.Pipelines.Commands
             {
                 if (depthTexture is not XRTexture2DArray depthArray ||
                     normalTexture is not XRTexture2DArray normalArray ||
+                    albedoTexture is not XRTexture2DArray albedoArray ||
+                    rmseTexture is not XRTexture2DArray rmseArray ||
                     outputTexture is not XRTexture2DArray outputArray)
                 {
                     outputTexture.Clear(ColorF4.Transparent);
@@ -124,12 +118,14 @@ namespace XREngine.Rendering.Pipelines.Commands
 
                 if (!RefreshDeclaredHistoryTextures(stereo: true))
                     return;
-                DispatchComputeStereo(camera, region, depthArray, normalArray, outputArray, cascades, cascadeComponent, worldToLocal, renderWidth, renderHeight);
+                DispatchComputeStereo(camera, region, depthArray, normalArray, albedoArray, rmseArray, outputArray, cascades, cascadeComponent, worldToLocal, renderWidth, renderHeight);
             }
             else
             {
                 if (depthTexture is not XRTexture2D depthTex ||
                     normalTexture is not XRTexture2D normalTex ||
+                    albedoTexture is not XRTexture2D albedoTex ||
+                    rmseTexture is not XRTexture2D rmseTex ||
                     outputTexture is not XRTexture2D outputTex)
                 {
                     outputTexture.Clear(ColorF4.Transparent);
@@ -138,12 +134,16 @@ namespace XREngine.Rendering.Pipelines.Commands
 
                 if (!RefreshDeclaredHistoryTextures(stereo: false))
                     return;
-                DispatchCompute(camera, region, depthTex, normalTex, outputTex, cascades, cascadeComponent, worldToLocal, renderWidth, renderHeight);
+                DispatchCompute(camera, region, depthTex, normalTex, albedoTex, rmseTex, outputTex, cascades, cascadeComponent, worldToLocal, renderWidth, renderHeight);
             }
 
-            compositeFbo.Render(forwardFbo);
             SwapHistoryBuffers();
             _frameIndex++;
+            GlobalIlluminationCompositionState.Prepare(ActivePipelineInstance,
+                replaceDestination: cascadeComponent.DebugMode != ERadianceCascadeDebugMode.Off,
+                isDiagnostic: cascadeComponent.DebugMode != ERadianceCascadeDebugMode.Off);
+            if (cascadeComponent.DebugMode == ERadianceCascadeDebugMode.Off)
+                GlobalIlluminationCompositionState.MarkOpaqueReplacementAvailable(ActivePipelineInstance);
         }
 
         private bool RefreshDeclaredHistoryTextures(bool stereo)
@@ -246,7 +246,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             }
         }
 
-        private void DispatchCompute(XRCamera camera, BoundingRectangle region, XRTexture2D depthTex, XRTexture2D normalTex, XRTexture2D outputTex,
+        private void DispatchCompute(XRCamera camera, BoundingRectangle region, XRTexture2D depthTex, XRTexture2D normalTex, XRTexture2D albedoTex, XRTexture2D rmseTex, XRTexture2D outputTex,
             IReadOnlyList<RadianceCascadeLevel> cascades, RadianceCascadeComponent component, Matrix4x4 worldToLocal, int renderWidth, int renderHeight)
         {
             if (_computeProgram is null)
@@ -261,6 +261,8 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             _computeProgram.Sampler("gDepth", depthTex, 0);
             _computeProgram.Sampler("gNormal", normalTex, 1);
+            _computeProgram.Sampler("gAlbedo", albedoTex, 9);
+            _computeProgram.Sampler("gRMSE", rmseTex, 10);
             _computeProgram.BindImageTexture(2u, outputTex, 0, false, 0, XRRenderProgram.EImageAccess.ReadWrite, XRRenderProgram.EImageFormat.RGBA16F);
             XRTexture2D? currentHistory = GetCurrentHistoryTexture();
             if (currentHistory is null)
@@ -292,7 +294,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             _computeProgram.DispatchCompute(groupX, groupY, 1u, EMemoryBarrierMask.ShaderImageAccess | EMemoryBarrierMask.TextureFetch);
         }
 
-        private void DispatchComputeStereo(XRCamera leftCamera, BoundingRectangle region, XRTexture2DArray depthTex, XRTexture2DArray normalTex, XRTexture2DArray outputTex,
+        private void DispatchComputeStereo(XRCamera leftCamera, BoundingRectangle region, XRTexture2DArray depthTex, XRTexture2DArray normalTex, XRTexture2DArray albedoTex, XRTexture2DArray rmseTex, XRTexture2DArray outputTex,
             IReadOnlyList<RadianceCascadeLevel> cascades, RadianceCascadeComponent component, Matrix4x4 worldToLocal, int renderWidth, int renderHeight)
         {
             if (_computeProgramStereo is null)
@@ -314,6 +316,8 @@ namespace XREngine.Rendering.Pipelines.Commands
 
             _computeProgramStereo.Sampler("gDepth", depthTex, 0);
             _computeProgramStereo.Sampler("gNormal", normalTex, 1);
+            _computeProgramStereo.Sampler("gAlbedo", albedoTex, 9);
+            _computeProgramStereo.Sampler("gRMSE", rmseTex, 10);
             _computeProgramStereo.BindImageTexture(2u, outputTex, 0, true, 0, XRRenderProgram.EImageAccess.ReadWrite, XRRenderProgram.EImageFormat.RGBA16F);
             XRTexture2DArray? currentHistory = GetCurrentHistoryTextureStereo();
             if (currentHistory is null)
@@ -352,12 +356,14 @@ namespace XREngine.Rendering.Pipelines.Commands
         {
             base.DescribeRenderPass(context);
 
-            var builder = context.GetOrCreateSyntheticPass(nameof(VPRC_RadianceCascadesPass), ERenderGraphPassStage.Graphics);
+            var builder = context.GetOrCreateSyntheticPass(nameof(VPRC_RadianceCascadesPass), ERenderGraphPassStage.Compute);
             builder.SampleTexture(MakeTextureResource(DepthTextureName));
             builder.SampleTexture(MakeTextureResource(NormalTextureName));
-            builder.ReadWriteTexture(MakeTextureResource(OutputTextureName));
-            builder.SampleTexture(MakeTextureResource(OutputTextureName));
-            builder.UseColorAttachment(MakeFboColorResource(ForwardFBOName));
+            builder.SampleTexture(MakeTextureResource(AlbedoTextureName));
+            builder.SampleTexture(MakeTextureResource(RmseTextureName));
+            builder.WriteTexture(MakeTextureResource(OutputTextureName));
+            builder.ReadWriteTexture(MakeTextureResource(HistoryTextureAName));
+            builder.ReadWriteTexture(MakeTextureResource(HistoryTextureBName));
         }
     }
 }

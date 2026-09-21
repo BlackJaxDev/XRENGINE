@@ -935,6 +935,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         RenderResourceGeneration? activeGeneration = ActiveGeneration;
         RenderResourceRegistry? activeRegistry = activeGeneration?.Registry;
         int descriptorGeneration = activeRegistry?.DescriptorRevision ?? 0;
+        int instanceRevision = activeRegistry?.InstanceRevision ?? 0;
         int renderGraphGeneration =
             Pipeline?.PassMetadata is RenderPassMetadataSnapshot snapshot
                 ? snapshot.RevisionStamp
@@ -959,6 +960,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             Pipeline?.CommandGeneration ?? 0UL,
             ResourceGeneration,
             descriptorGeneration,
+            instanceRevision,
             renderGraphGeneration,
             dimensions.DisplayWidth,
             dimensions.DisplayHeight,
@@ -973,14 +975,16 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                 TimeSpan.FromMilliseconds(250)))
         {
             Debug.RenderingWarning(
-                "[RenderFramePackage] Validation mismatch. Instance={0} Pipeline={1} Package=(Resource={2}, Descriptor={3}, Collect={4}) Live=(Resource={5}, Descriptor={6}, Registry={7}, ConsumedCollect={8}, RequiredCollect={9}) RegistryMutation=(Revision={10}, Operation={11}, Resource={12}) Failure={13}",
+                "[RenderFramePackage] Validation mismatch. Instance={0} Pipeline={1} Package=(Resource={2}, Descriptor={3}, InstanceRevision={4}, Collect={5}) Live=(Resource={6}, Descriptor={7}, InstanceRevision={8}, Registry={9}, ConsumedCollect={10}, RequiredCollect={11}) RegistryMutation=(Revision={12}, Operation={13}, Resource={14}) Failure={15}",
                 InstanceId,
                 ProfilerKey,
                 identity.ResourceGeneration,
                 identity.DescriptorGeneration,
+                identity.ResourceInstanceRevision,
                 identity.CollectGeneration,
                 ResourceGeneration,
                 descriptorGeneration,
+                instanceRevision,
                 activeRegistry is null ? 0 : RuntimeHelpers.GetHashCode(activeRegistry),
                 context.ConsumedCollectGeneration,
                 requiredGeneration,
@@ -2028,6 +2032,8 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         if (pending is null || !pending.IsReady)
             return false;
 
+        int importedResourceRevision = PublishStagedImportedResources(pending);
+
         if (TryBuildCurrentViewportGenerationKey(out ResourceGenerationKey currentKey) &&
             pending.Key != currentKey)
         {
@@ -2079,6 +2085,18 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                 DisposeGeneration(pending, failure);
                 return false;
             }
+        }
+
+        if (ImportedResourceStagingRevision != importedResourceRevision)
+        {
+            backendTransaction?.Dispose();
+            Debug.RenderingEvery(
+                $"RenderResources.ImportedPublicationChanged.{ProfilerKey}",
+                TimeSpan.FromMilliseconds(250),
+                "[RenderResources] Pending generation import publication changed during backend preparation. Pipeline={0} Pending={1}; retrying.",
+                ProfilerKey,
+                pending.Key);
+            return false;
         }
 
         using (backendTransaction)
@@ -2805,68 +2823,6 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         Resources.BindBuffer(buffer, descriptor);
         if (bindingChanged)
             NotifyRenderResourcesChanged(changeKind);
-    }
-
-    internal void BindImportedTexture(XRTexture texture)
-    {
-        ArgumentNullException.ThrowIfNull(texture);
-        string name = texture.Name ?? throw new InvalidOperationException("Imported texture name must be set before binding.");
-        RenderResourceRegistry registry = GetImportedResourceRegistry(name, ExternalRenderResourceKind.Texture);
-
-        registry.TryGetTexture(name, out XRTexture? existingTexture);
-        TextureResourceDescriptor descriptor = RenderResourceDescriptorFactory.FromTexture(texture) with
-        {
-            Name = name,
-            Lifetime = RenderResourceLifetime.External,
-        };
-        RenderResourceChangeKind changeKind = ClassifyTextureBindingChange(registry, name, descriptor, existingTexture);
-        registry.BindTexture(texture, descriptor, ownsInstance: false);
-        if (!ReferenceEquals(existingTexture, texture))
-            NotifyRenderResourcesChanged(changeKind);
-    }
-
-    internal void BindImportedBuffer(XRDataBuffer buffer)
-    {
-        ArgumentNullException.ThrowIfNull(buffer);
-        string name = buffer.AttributeName;
-        if (string.IsNullOrWhiteSpace(name))
-            throw new InvalidOperationException("Imported buffer attribute name must be set before binding.");
-
-        RenderResourceRegistry registry = GetImportedResourceRegistry(name, ExternalRenderResourceKind.Buffer);
-        registry.TryGetBuffer(name, out XRDataBuffer? existingBuffer);
-        BufferResourceDescriptor descriptor = RenderResourceDescriptorFactory.FromBuffer(buffer) with
-        {
-            Name = name,
-            Lifetime = RenderResourceLifetime.External,
-        };
-        RenderResourceChangeKind changeKind = ClassifyBufferBindingChange(registry, name, descriptor, existingBuffer);
-        registry.BindBuffer(buffer, descriptor, ownsInstance: false);
-        if (!ReferenceEquals(existingBuffer, buffer))
-            NotifyRenderResourcesChanged(changeKind);
-    }
-
-    internal bool UnbindImportedTexture(string name)
-    {
-        if (!TryGetImportedResourceRegistry(name, ExternalRenderResourceKind.Texture, out RenderResourceRegistry? registry))
-            return false;
-        if (!registry.TryGetTexture(name, out _))
-            return false;
-
-        registry.RemoveTexture(name);
-        NotifyRenderResourcesChanged();
-        return true;
-    }
-
-    internal bool UnbindImportedBuffer(string name)
-    {
-        if (!TryGetImportedResourceRegistry(name, ExternalRenderResourceKind.Buffer, out RenderResourceRegistry? registry))
-            return false;
-        if (!registry.TryGetBuffer(name, out _))
-            return false;
-
-        registry.RemoveBuffer(name);
-        NotifyRenderResourcesChanged();
-        return true;
     }
 
     private RenderResourceRegistry GetImportedResourceRegistry(string name, ExternalRenderResourceKind expectedKind)

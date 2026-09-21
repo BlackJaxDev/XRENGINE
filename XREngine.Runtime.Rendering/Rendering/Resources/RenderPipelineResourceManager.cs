@@ -74,6 +74,7 @@ public sealed class RenderPipelineResourceManager
                     }
                 }
 
+                instance.PublishStagedImportedResources(generation);
                 ValidateRequiredResources(generation);
                 ValidateDescriptorLayoutParity(generation);
             }

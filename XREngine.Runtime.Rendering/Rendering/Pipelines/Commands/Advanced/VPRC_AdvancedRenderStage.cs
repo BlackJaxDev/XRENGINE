@@ -1,3 +1,4 @@
+using XREngine.Rendering.GI.Contracts;
 using XREngine.Rendering.RenderGraph;
 
 namespace XREngine.Rendering.Pipelines.Commands;
@@ -8,13 +9,13 @@ namespace XREngine.Rendering.Pipelines.Commands;
 /// </summary>
 public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
 {
-    /// <summary>Frozen command-chain feature state used when describing native DDGI surface writes.</summary>
-    public bool EnableDdgi
+    /// <summary>Frozen registry-resolved GI selection for this native stage family.</summary>
+    public GlobalIlluminationPlan? GlobalIlluminationPlan
     {
-        get => _enableDdgi;
-        set => SetField(ref _enableDdgi, value);
+        get => _globalIlluminationPlan;
+        set => SetField(ref _globalIlluminationPlan, value);
     }
-    private bool _enableDdgi;
+    private GlobalIlluminationPlan? _globalIlluminationPlan;
     internal const string LateVisibilityRasterPassName =
         "Advanced.LateVisibilityRaster";
 
@@ -103,20 +104,13 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             ReportAdmissionRejection($"Ambient occlusion provider '{ambientOcclusionProvider.ProviderName}' has no native Advanced compute implementation.");
             return;
         }
-        IAdvancedGlobalIlluminationProvider? globalIlluminationProvider = pipeline.GlobalIlluminationProvider;
-        bool enableLightProbesAndIbl = !isMinimalVisibilityOutput &&
-            (pipeline.GlobalIlluminationMode == EGlobalIlluminationMode.LightProbesAndIbl ||
-             pipeline.GlobalIlluminationMode == EGlobalIlluminationMode.DDGI) &&
-            globalIlluminationProvider is { IsSupported: true } &&
-            globalIlluminationProvider.ActiveMode == pipeline.GlobalIlluminationMode &&
-            AdvancedGlobalIlluminationContract.IsNativeProvider(globalIlluminationProvider);
+        GlobalIlluminationPlan giPlan = GlobalIlluminationPlan ?? pipeline.GlobalIlluminationPlan;
+        bool enableLightProbesAndIbl = !isMinimalVisibilityOutput && giPlan.RequiresNativeProbeIblBindings;
+        bool requiresMaterialSurfaceExports = !isMinimalVisibilityOutput && giPlan.RequiresNativeMaterialSurfaceExports;
         if (requiresNativeOpaqueShading && !isMinimalVisibilityOutput &&
-            pipeline.GlobalIlluminationMode != EGlobalIlluminationMode.None &&
-            (pipeline.GlobalIlluminationMode is not (EGlobalIlluminationMode.LightProbesAndIbl or EGlobalIlluminationMode.DDGI) ||
-             !enableLightProbesAndIbl))
+            !giPlan.IsDisabled && !giPlan.IsSupported)
         {
-            string name = globalIlluminationProvider?.ProviderName ?? "none";
-            ReportAdmissionRejection($"Global illumination mode '{pipeline.GlobalIlluminationMode}' and provider '{name}' have no native Advanced implementation.");
+            ReportAdmissionRejection(giPlan.Support.Diagnostic);
             return;
         }
 
@@ -191,7 +185,7 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             binding.Request.OffscreenIntent.HasValue,
             enableBuiltInAmbientOcclusion,
             enableLightProbesAndIbl,
-            EnableDdgi: EnableDdgi,
+            RequiresMaterialSurfaceExports: requiresMaterialSurfaceExports,
             IsMinimalVisibilityOutput: isMinimalVisibilityOutput,
             SceneDatabase: world.GpuScene.AdvancedSharedDatabase);
 
@@ -362,7 +356,7 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
             descriptor.RenderGraphStage);
 
         builder.UseEngineDescriptors();
-        DescribeVisibilityResources(builder, descriptor.Stage, EnableDdgi);
+        DescribeVisibilityResources(builder, descriptor.Stage, GlobalIlluminationPlan?.RequiresNativeMaterialSurfaceExports == true);
 
         int stageIndex = (int)descriptor.Stage;
         if (descriptor.Stage == EAdvancedRenderStage.DepthPyramidAndLateVisibility)
@@ -435,7 +429,7 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
     private static void DescribeVisibilityResources(
         RenderPassBuilder builder,
         EAdvancedRenderStage stage,
-        bool enableDdgi)
+        bool requiresMaterialSurfaceExports)
     {
         switch (stage)
         {
@@ -556,7 +550,7 @@ public sealed class VPRC_AdvancedRenderStage : ViewportRenderCommand
                     .ReadWriteTexture(Tex(AdvancedRenderPipeline.VelocityTextureName))
                     .ReadWriteTexture(Tex(AdvancedTemporalHistoryContract.ReactiveMaskResourceName))
                     .ReadWriteTexture(Tex(AdvancedShadingResourceNames.ShadingDiagnostics));
-                if (enableDdgi)
+                if (requiresMaterialSurfaceExports)
                 {
                     builder.WriteTexture(Tex(AdvancedRenderPipeline.NormalTextureName))
                         .WriteTexture(Tex(AdvancedRenderPipeline.AlbedoOpacityTextureName))

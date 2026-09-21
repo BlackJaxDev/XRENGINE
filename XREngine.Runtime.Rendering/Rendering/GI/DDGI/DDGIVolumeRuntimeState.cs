@@ -606,28 +606,28 @@ namespace XREngine.Rendering.GI.DDGI
 
         public static XRDataBuffer CreateDeclaredProbeBuffer(uint elementCount = DefaultMaxProbes)
             => CreateDeclaredBuffer<DDGIProbeGPU>(
-                DefaultRenderPipeline.DDGIProbeStateBufferName,
+                DDGIResourceNames.ProbeStateBuffer,
                 elementCount,
                 bindingIndex: 0u,
                 padEndingToVec4: false);
 
         public static XRDataBuffer CreateDeclaredRayBuffer(uint elementCount = DefaultMaxRays)
             => CreateDeclaredBuffer<DDGIRayGPU>(
-                DefaultRenderPipeline.DDGIRayBufferName,
+                DDGIResourceNames.RayBuffer,
                 elementCount,
                 bindingIndex: 1u,
                 padEndingToVec4: false);
 
         public static XRDataBuffer CreateDeclaredHitBuffer(uint elementCount = DefaultMaxRays)
             => CreateDeclaredBuffer<DDGIHitGPU>(
-                DefaultRenderPipeline.DDGIHitBufferName,
+                DDGIResourceNames.HitBuffer,
                 elementCount,
                 bindingIndex: 2u,
                 padEndingToVec4: false);
 
         public static XRDataBuffer CreateDeclaredRayRadianceBuffer(uint elementCount = DefaultMaxRays)
             => CreateDeclaredBuffer<DDGIRayRadianceGPU>(
-                DefaultRenderPipeline.DDGIRayRadianceBufferName,
+                DDGIResourceNames.RayRadianceBuffer,
                 elementCount,
                 bindingIndex: 3u,
                 padEndingToVec4: false);
@@ -661,8 +661,8 @@ namespace XREngine.Rendering.GI.DDGI
             t.MagFilter = ETexMagFilter.Linear;
             t.UWrap = ETexWrapMode.ClampToEdge;
             t.VWrap = ETexWrapMode.ClampToEdge;
-            t.SamplerName = DefaultRenderPipeline.DDGIIrradianceAtlasTextureName;
-            t.Name = DefaultRenderPipeline.DDGIIrradianceAtlasTextureName;
+            t.SamplerName = DDGIResourceNames.IrradianceAtlas;
+            t.Name = DDGIResourceNames.IrradianceAtlas;
             return t;
         }
 
@@ -681,8 +681,8 @@ namespace XREngine.Rendering.GI.DDGI
             t.MagFilter = ETexMagFilter.Linear;
             t.UWrap = ETexWrapMode.ClampToEdge;
             t.VWrap = ETexWrapMode.ClampToEdge;
-            t.SamplerName = DefaultRenderPipeline.DDGIVisibilityAtlasTextureName;
-            t.Name = DefaultRenderPipeline.DDGIVisibilityAtlasTextureName;
+            t.SamplerName = DDGIResourceNames.VisibilityAtlas;
+            t.Name = DDGIResourceNames.VisibilityAtlas;
             return t;
         }
 
@@ -707,8 +707,8 @@ namespace XREngine.Rendering.GI.DDGI
             t.MagFilter = ETexMagFilter.Linear;
             t.UWrap = ETexWrapMode.ClampToEdge;
             t.VWrap = ETexWrapMode.ClampToEdge;
-            t.SamplerName = DefaultRenderPipeline.DDGIIrradianceAtlasTextureName;
-            t.Name = DefaultRenderPipeline.DDGIIrradianceAtlasTextureName;
+            t.SamplerName = DDGIResourceNames.IrradianceAtlas;
+            t.Name = DDGIResourceNames.IrradianceAtlas;
             return t;
         }
 
@@ -733,8 +733,8 @@ namespace XREngine.Rendering.GI.DDGI
             t.MagFilter = ETexMagFilter.Linear;
             t.UWrap = ETexWrapMode.ClampToEdge;
             t.VWrap = ETexWrapMode.ClampToEdge;
-            t.SamplerName = DefaultRenderPipeline.DDGIVisibilityAtlasTextureName;
-            t.Name = DefaultRenderPipeline.DDGIVisibilityAtlasTextureName;
+            t.SamplerName = DDGIResourceNames.VisibilityAtlas;
+            t.Name = DDGIResourceNames.VisibilityAtlas;
             return t;
         }
 

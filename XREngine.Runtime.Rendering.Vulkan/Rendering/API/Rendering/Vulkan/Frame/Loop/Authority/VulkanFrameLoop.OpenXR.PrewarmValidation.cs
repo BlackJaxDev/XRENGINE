@@ -517,6 +517,7 @@ internal sealed partial class VulkanFrameLoop
                 ResourceGeneration = unchecked((ulong)Math.Max(pipeline.ResourceGeneration, 0)),
                 DescriptorGeneration = ResolveFrameOpContextDescriptorGeneration(activeRegistry),
                 ResourceRegistrySignatureSnapshot = VulkanFramePlanner.ComputeResourceRegistrySignature(activeRegistry),
+                ResourceRegistryInstanceRevisionSnapshot = activeRegistry.InstanceRevision,
             };
             context = RefreshFrameOpContextRecordingFingerprint(context);
             capturedOp.Context = context;

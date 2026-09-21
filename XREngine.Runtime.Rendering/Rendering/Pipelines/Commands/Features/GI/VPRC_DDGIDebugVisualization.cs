@@ -2,6 +2,7 @@ using System;
 using System.Runtime.CompilerServices;
 using XREngine.Components.Lights;
 using XREngine.Data.Core;
+using XREngine.Rendering.GI.Contracts;
 using XREngine.Rendering.GI.DDGI;
 using XREngine.Rendering.RenderGraph;
 
@@ -20,24 +21,27 @@ public sealed class VPRC_DDGIDebugVisualization : ViewportRenderCommand
     public EDDGIDebugMode DebugMode { get; set; } = EDDGIDebugMode.None;
     public string ReadyVariableName { get; set; } = "DDGIGeometryReady";
     public string NodeCountVariableName { get; set; } = "DDGIGeometryNodeCount";
-    public string ProbeStateBufferName { get; set; } = DefaultRenderPipeline.DDGIProbeStateBufferName;
-    public string ForwardFBOName { get; set; } = DefaultRenderPipeline.ForwardPassFBOName;
+    public string ProbeStateBufferName { get; set; } = DDGIResourceNames.ProbeStateBuffer;
+    public string ForwardFBOName { get; set; } = string.Empty;
     public string? RenderGraphPassName { get; set; }
 
     /// <summary>Billboard radius relative to camera distance.</summary>
     public float ProbeSize { get; set; } = 0.0125f;
 
     protected override bool ShouldExecuteThisFrame()
-        => RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline is IGlobalIlluminationPipelineProvider { UsesDDGI: true };
+        => GlobalIlluminationPlanSelection.IsSelectedAndSupported(
+            RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline,
+            EGlobalIlluminationMode.DDGI);
 
     protected override void Execute()
     {
         if (RuntimeEngine.Rendering.State.IsLightProbePass || RuntimeEngine.Rendering.State.IsShadowPass ||
-            ActivePipelineInstance.Pipeline is not IGlobalIlluminationPipelineProvider { UsesDDGI: true })
+            !GlobalIlluminationPlanSelection.IsSelectedAndSupported(ActivePipelineInstance.Pipeline, EGlobalIlluminationMode.DDGI))
             return;
 
         var world = ActivePipelineInstance.RenderState.WindowViewport?.World ?? RuntimeEngine.Rendering.State.RenderingWorld;
-        if (world is null || !DDGIVolumeComponent.Registry.TryGetFirstActive(world, out DDGIVolumeComponent? volume) || volume is null)
+        DDGIFrameContext frameContext = DDGIFrameContext.Get(ActivePipelineInstance);
+        if (world is null || !frameContext.TryGetSelectedVolume(world, out DDGIVolumeComponent? volume) || volume is null)
             return;
 
         if (!Enabled && !volume.DebugDrawProbes)
@@ -53,7 +57,6 @@ public sealed class VPRC_DDGIDebugVisualization : ViewportRenderCommand
         if (!RuntimeEngine.Rendering.State.DebugInstanceRenderingAvailable)
             return;
 
-        DDGIFrameContext frameContext = DDGIFrameContext.Get(instance);
         if (!frameContext.BindResources(instance) || !frameContext.HasInitializedResources)
             return;
         DDGIVolumeRuntimeState state = frameContext.State;

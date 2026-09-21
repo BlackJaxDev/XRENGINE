@@ -44,7 +44,7 @@ internal readonly record struct VulkanFrozenImageBarrier(
     int PassIndex, VulkanResourceId ResourceId, VulkanBarrierPlanner.ResolvedImageSubresourceRange Range,
     VulkanBarrierPlanner.PlannedImageState Previous, VulkanBarrierPlanner.PlannedImageState Next,
     uint SrcQueueFamilyIndex, uint DstQueueFamilyIndex, Silk.NET.Vulkan.Image NativeImage,
-    Silk.NET.Vulkan.Format NativeFormat, bool IsBloomDiagnostic);
+    Silk.NET.Vulkan.Format NativeFormat, ulong NativeGeneration, bool IsBloomDiagnostic);
 internal readonly record struct VulkanFrozenBufferBarrier(
     int PassIndex, VulkanResourceId ResourceId, string LogicalResourceName, VulkanBarrierPlanner.PlannedBufferState Previous,
     VulkanBarrierPlanner.PlannedBufferState Next, uint SrcQueueFamilyIndex, uint DstQueueFamilyIndex,
@@ -155,7 +155,7 @@ internal sealed class VulkanBarrierPlan
         IReadOnlyList<VulkanBarrierPlanner.PlannedSwapchainBarrier> plannerSwapchains,
         VulkanRenderGraphResourceIds resourceIds)
     {
-        VulkanFrozenImageBarrier[] images = plannerImages.Select(barrier => new VulkanFrozenImageBarrier(barrier.PassIndex, resourceIds.GetOrAdd(barrier.ResourceName), barrier.Range, barrier.Previous, barrier.Next, barrier.SrcQueueFamilyIndex, barrier.DstQueueFamilyIndex, barrier.NativeImage, barrier.NativeFormat, IsBloomName(barrier.ResourceName))).ToArray();
+        VulkanFrozenImageBarrier[] images = plannerImages.Select(barrier => new VulkanFrozenImageBarrier(barrier.PassIndex, resourceIds.GetOrAdd(barrier.ResourceName), barrier.Range, barrier.Previous, barrier.Next, barrier.SrcQueueFamilyIndex, barrier.DstQueueFamilyIndex, barrier.NativeImage, barrier.NativeFormat, barrier.NativeGeneration, IsBloomName(barrier.ResourceName))).ToArray();
         VulkanFrozenBufferBarrier[] buffers = plannerBuffers.Select(barrier => new VulkanFrozenBufferBarrier(barrier.PassIndex, resourceIds.GetOrAdd(barrier.ResourceName), barrier.ResourceName, barrier.Previous, barrier.Next, barrier.SrcQueueFamilyIndex, barrier.DstQueueFamilyIndex, barrier.NativeBuffer, barrier.NativeOffset, barrier.NativeSize, barrier.NativeGeneration)).ToArray();
         VulkanFrozenSwapchainBarrier[] swapchains = plannerSwapchains.Select(barrier => new VulkanFrozenSwapchainBarrier(barrier.PassIndex, resourceIds.GetOrAdd(barrier.ResourceName), barrier.ResourceType, barrier.Previous, barrier.Next, barrier.SrcQueueFamilyIndex, barrier.DstQueueFamilyIndex)).ToArray();
         return new VulkanBarrierPlan(generation, nativeBufferBindingRevision, images, buffers, swapchains);
@@ -258,6 +258,7 @@ internal sealed class VulkanBarrierPlan
            left.DstQueueFamilyIndex == right.DstQueueFamilyIndex &&
            left.NativeImage.Handle == right.NativeImage.Handle &&
            left.NativeFormat == right.NativeFormat &&
+           left.NativeGeneration == right.NativeGeneration &&
            left.IsBloomDiagnostic == right.IsBloomDiagnostic;
 
     private static int CompareForCoalescing(
@@ -341,7 +342,7 @@ internal sealed class VulkanBarrierPlan
         VulkanFrozenImageBarrier[] imageBarriers, VulkanFrozenBufferBarrier[] bufferBarriers)
     {
         for (int index = 0; index < imageBarriers.Length; index++)
-            if (imageBarriers[index].NativeImage.Handle == 0)
+            if (imageBarriers[index].NativeImage.Handle == 0 || imageBarriers[index].NativeGeneration == 0)
                 return false;
         for (int index = 0; index < bufferBarriers.Length; index++)
             if (bufferBarriers[index].NativeBuffer.Handle == 0 || bufferBarriers[index].NativeSize == 0 || bufferBarriers[index].NativeGeneration == 0)

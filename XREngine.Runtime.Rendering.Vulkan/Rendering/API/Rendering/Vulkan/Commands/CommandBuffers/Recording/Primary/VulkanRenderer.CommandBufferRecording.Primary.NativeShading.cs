@@ -40,7 +40,7 @@ internal sealed partial class VulkanCommandRuntime
             (payload.Request.RequireNativeOutput ? 2u : 0u) |
             (payload.Request.EnableBuiltInAmbientOcclusion ? 4u : 0u) |
             (payload.Request.EnableLightProbesAndIbl ? 8u : 0u) |
-            (payload.Request.EnableDdgi ? 16u : 0u) |
+            (payload.Request.RequiresMaterialSurfaceExports ? 16u : 0u) |
             (((uint)payload.Request.ShadingDebugView & 0xFFu) << 8), depthSlices,
             checked((uint)(closure.LightIndices.NativeSize / sizeof(uint))),
             payload.SceneState.Lights.Length / 128u,
