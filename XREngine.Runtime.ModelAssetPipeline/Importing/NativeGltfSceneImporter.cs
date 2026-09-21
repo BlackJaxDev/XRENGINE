@@ -13,6 +13,7 @@ using XREngine.Rendering;
 using XREngine.Rendering.Models;
 using XREngine.Rendering.Models.Caching;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.Materials;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
 using Matrix4x4 = System.Numerics.Matrix4x4;
@@ -40,7 +41,8 @@ internal static class NativeGltfSceneImporter
         XRTexture2D? BaseColorTexture,
         bool HasMetallicTexture,
         bool HasRoughnessTexture,
-        bool HasEmissiveTexture);
+        bool HasEmissiveTexture,
+        MaterialSurfaceTextureBinding[] SurfaceTextureBindings);
 
     private sealed record PrimitiveChunk(IReadOnlyList<Vertex> Vertices, List<ushort> Indices, int ChunkIndex);
 
@@ -181,7 +183,6 @@ internal static class NativeGltfSceneImporter
         }
     }
 
-    private static readonly ConcurrentDictionary<string, byte> s_textureTransformWarnings = [];
     private static readonly HashSet<string> s_supportedRequiredExtensions = new(StringComparer.Ordinal)
     {
         "KHR_materials_unlit",
@@ -848,7 +849,7 @@ internal static class NativeGltfSceneImporter
         else
         {
             material = importer.MakeMaterialAction([], [], "DefaultMaterial");
-            ApplyMaterialOverrides(material, null, new MaterialTexturePayload([], [], null, false, false, false));
+            ApplyMaterialOverrides(material, null, new MaterialTexturePayload([], [], null, false, false, false, []));
         }
 
         materialCache[cacheKey] = material;
@@ -870,6 +871,7 @@ internal static class NativeGltfSceneImporter
         bool hasMetallicTexture = false;
         bool hasRoughnessTexture = false;
         bool hasEmissiveTexture = false;
+        List<MaterialSurfaceTextureBinding> surfaceTextureBindings = [];
 
         string alphaMode = NormalizeAlphaMode(material.AlphaMode);
 
@@ -881,12 +883,7 @@ internal static class NativeGltfSceneImporter
                 baseColorTexture = binding.Texture;
                 textures.Add(binding.Texture);
                 textureSlots.Add(binding.Slot);
-
-                if (alphaMode == "MASK")
-                {
-                    textureSlots.Add(new TextureSlot(binding.Slot.FilePath, TextureType.Opacity, 0, default, binding.Slot.UVIndex, 1.0f, default, binding.Slot.WrapModeU, binding.Slot.WrapModeV, 0));
-                    textures.Add(binding.Texture);
-                }
+                surfaceTextureBindings.Add(CreateSurfaceTextureBinding(EMaterialTextureSemantic.BaseColor, binding, baseColorInfo, channel: 0, isSrgb: true));
             }
         }
 
@@ -897,6 +894,7 @@ internal static class NativeGltfSceneImporter
             {
                 textures.Add(binding.Texture);
                 textureSlots.Add(binding.Slot);
+                surfaceTextureBindings.Add(CreateSurfaceTextureBinding(EMaterialTextureSemantic.Normal, binding, normalInfo, channel: 0, isSrgb: false));
             }
         }
 
@@ -907,6 +905,7 @@ internal static class NativeGltfSceneImporter
             {
                 textures.Add(metallicBinding.Texture);
                 textureSlots.Add(metallicBinding.Slot);
+                surfaceTextureBindings.Add(CreateSurfaceTextureBinding(EMaterialTextureSemantic.Metallic, metallicBinding, metallicRoughnessInfo, channel: 2, isSrgb: false));
                 hasMetallicTexture = true;
             }
 
@@ -915,6 +914,7 @@ internal static class NativeGltfSceneImporter
             {
                 textures.Add(roughnessBinding.Texture);
                 textureSlots.Add(roughnessBinding.Slot);
+                surfaceTextureBindings.Add(CreateSurfaceTextureBinding(EMaterialTextureSemantic.Roughness, roughnessBinding, metallicRoughnessInfo, channel: 1, isSrgb: false));
                 hasRoughnessTexture = true;
             }
         }
@@ -926,6 +926,7 @@ internal static class NativeGltfSceneImporter
             {
                 textures.Add(binding.Texture);
                 textureSlots.Add(binding.Slot);
+                surfaceTextureBindings.Add(CreateSurfaceTextureBinding(EMaterialTextureSemantic.Emissive, binding, emissiveInfo, channel: 0, isSrgb: true));
                 hasEmissiveTexture = true;
             }
         }
@@ -935,7 +936,43 @@ internal static class NativeGltfSceneImporter
             ResolveTextureBinding(sourceFilePath, document, occlusionInfo, importOptions, textureCache, TextureType.Unknown, "occlusion", 0);
         }
 
-        return new MaterialTexturePayload([.. textures], textureSlots, baseColorTexture, hasMetallicTexture, hasRoughnessTexture, hasEmissiveTexture);
+        if (TryGetTransmissionTextureInfo(material, out GltfTextureInfo? transmissionInfo) && transmissionInfo is not null)
+        {
+            ResolvedTextureBinding? binding = ResolveTextureBinding(sourceFilePath, document, transmissionInfo, importOptions, textureCache, TextureType.Unknown, "transmission", 0);
+            if (binding is not null)
+                surfaceTextureBindings.Add(CreateSurfaceTextureBinding(EMaterialTextureSemantic.Transmission, binding, transmissionInfo, channel: 0, isSrgb: false));
+        }
+
+        return new MaterialTexturePayload([.. textures], textureSlots, baseColorTexture, hasMetallicTexture, hasRoughnessTexture, hasEmissiveTexture, [.. surfaceTextureBindings]);
+    }
+
+    private static MaterialSurfaceTextureBinding CreateSurfaceTextureBinding(EMaterialTextureSemantic semantic, ResolvedTextureBinding binding, GltfTextureInfo textureInfo, int channel, bool isSrgb)
+    {
+        (int texCoordSet, Vector4 uvScaleOffset, float uvRotation) = ResolveTextureTransform(textureInfo);
+        return new MaterialSurfaceTextureBinding(
+            semantic,
+            binding.Texture,
+            texCoordSet,
+            channel,
+            isSrgb,
+            binding.Texture.UWrap,
+            binding.Texture.VWrap,
+            uvScaleOffset,
+            uvRotation);
+    }
+
+    private static bool TryGetTransmissionTextureInfo(GltfMaterial material, out GltfTextureInfo? textureInfo)
+    {
+        textureInfo = null;
+        if (material.Extensions is null ||
+            !material.Extensions.TryGetValue("KHR_materials_transmission", out JsonElement extension) ||
+            extension.ValueKind != JsonValueKind.Object ||
+            !extension.TryGetProperty("transmissionTexture", out JsonElement texture) ||
+            texture.ValueKind != JsonValueKind.Object)
+            return false;
+
+        textureInfo = texture.Deserialize<GltfTextureInfo>();
+        return textureInfo is not null;
     }
 
     private static ResolvedTextureBinding? ResolveTextureBinding(
@@ -1152,22 +1189,42 @@ internal static class NativeGltfSceneImporter
 
     private static int ResolveTextureCoordinateSet(GltfTextureInfo textureInfo, string textureKey)
     {
-        int uvIndex = textureInfo.TexCoord;
-        if (textureInfo.Extensions is null || !textureInfo.Extensions.TryGetValue("KHR_texture_transform", out JsonElement transformExtension) || transformExtension.ValueKind != JsonValueKind.Object)
-            return uvIndex;
+        _ = textureKey;
+        return ResolveTextureTransform(textureInfo).TexCoordSet;
+    }
 
-        if (transformExtension.TryGetProperty("texCoord", out JsonElement texCoordValue) && texCoordValue.ValueKind == JsonValueKind.Number && texCoordValue.TryGetInt32(out int overrideUvIndex))
-            uvIndex = overrideUvIndex;
+    private static (int TexCoordSet, Vector4 UvScaleOffset, float UvRotation) ResolveTextureTransform(GltfTextureInfo textureInfo)
+    {
+        int texCoordSet = textureInfo.TexCoord;
+        Vector4 uvScaleOffset = new(1.0f, 1.0f, 0.0f, 0.0f);
+        float uvRotation = 0.0f;
+        if (textureInfo.Extensions is null || !textureInfo.Extensions.TryGetValue("KHR_texture_transform", out JsonElement transform) || transform.ValueKind != JsonValueKind.Object)
+            return (texCoordSet, uvScaleOffset, uvRotation);
 
-        bool hasUnsupportedTransform =
-            (transformExtension.TryGetProperty("offset", out JsonElement offset) && offset.ValueKind == JsonValueKind.Array)
-            || (transformExtension.TryGetProperty("scale", out JsonElement scale) && scale.ValueKind == JsonValueKind.Array)
-            || (transformExtension.TryGetProperty("rotation", out JsonElement rotation) && rotation.ValueKind == JsonValueKind.Number && Math.Abs(rotation.GetDouble()) > double.Epsilon);
+        if (transform.TryGetProperty("texCoord", out JsonElement texCoord) && texCoord.TryGetInt32(out int value))
+            texCoordSet = value;
+        if (TryGetVector2(transform, "scale", out Vector2 scale))
+            uvScaleOffset = new Vector4(scale, uvScaleOffset.Z, uvScaleOffset.W);
+        if (TryGetVector2(transform, "offset", out Vector2 offset))
+            uvScaleOffset = new Vector4(uvScaleOffset.X, uvScaleOffset.Y, offset.X, offset.Y);
+        if (transform.TryGetProperty("rotation", out JsonElement rotation) && rotation.TryGetSingle(out float rotationValue))
+            uvRotation = rotationValue;
 
-        if (hasUnsupportedTransform && s_textureTransformWarnings.TryAdd(textureKey, 0))
-            Debug.MeshesWarning($"[NativeGltfImporter] KHR_texture_transform offset/scale/rotation is not yet applied for texture '{textureKey}'. The importer will still honor the texCoord override.");
+        return (texCoordSet, uvScaleOffset, uvRotation);
+    }
 
-        return uvIndex;
+    private static bool TryGetVector2(JsonElement parent, string propertyName, out Vector2 value)
+    {
+        value = default;
+        if (!parent.TryGetProperty(propertyName, out JsonElement property) || property.ValueKind != JsonValueKind.Array)
+            return false;
+
+        float[]? components = property.Deserialize<float[]>();
+        if (components is not { Length: >= 2 })
+            return false;
+
+        value = new Vector2(components[0], components[1]);
+        return true;
     }
 
     private static ETexWrapMode ResolveWrapMode(int? wrapMode)
@@ -1237,17 +1294,46 @@ internal static class NativeGltfSceneImporter
         material.SetFloat("Metallic", gltfMaterial.PbrMetallicRoughness?.MetallicFactor ?? (texturePayload.HasMetallicTexture ? 1.0f : 0.0f));
         material.SetFloat("Roughness", gltfMaterial.PbrMetallicRoughness?.RoughnessFactor ?? 1.0f);
 
-        float emission = 0.0f;
-        if (gltfMaterial.EmissiveFactor is { Length: >= 3 } emissiveFactor)
-            emission = Math.Max(emissiveFactor[0], Math.Max(emissiveFactor[1], emissiveFactor[2]));
-        else if (texturePayload.HasEmissiveTexture)
-            emission = 1.0f;
-        material.SetFloat("Emission", emission);
+        Vector3 emissiveColor = gltfMaterial.EmissiveFactor is { Length: >= 3 } emissiveFactor
+            ? new Vector3(emissiveFactor[0], emissiveFactor[1], emissiveFactor[2])
+            : Vector3.Zero;
+        float emissionStrength = GetExtensionFloat(gltfMaterial, "KHR_materials_emissive_strength", "emissiveStrength", 1.0f);
+        material.EmissiveColor = emissiveColor;
+        material.EmissionStrength = emissionStrength;
+        material.SetFloat("Emission", Math.Max(emissiveColor.X, Math.Max(emissiveColor.Y, emissiveColor.Z)) * emissionStrength);
+        material.SurfaceTextureBindings = texturePayload.SurfaceTextureBindings;
+        material.NormalScale = gltfMaterial.NormalTexture?.Scale ?? 1.0f;
+        material.Transmission = GetExtensionFloat(gltfMaterial, "KHR_materials_transmission", "transmissionFactor", 0.0f);
+        material.TransmissionColor = GetExtensionColor(gltfMaterial, "KHR_materials_volume", "attenuationColor", Vector3.One);
 
         if (gltfMaterial.DoubleSided == true)
             material.RenderOptions.CullMode = ECullMode.None;
 
         ApplyAlphaMode(material, gltfMaterial, texturePayload.BaseColorTexture?.HasAlphaChannel ?? false, alpha, forceForward: false);
+    }
+
+    private static float GetExtensionFloat(GltfMaterial material, string extensionName, string propertyName, float defaultValue)
+    {
+        if (material.Extensions is null ||
+            !material.Extensions.TryGetValue(extensionName, out JsonElement extension) ||
+            extension.ValueKind != JsonValueKind.Object ||
+            !extension.TryGetProperty(propertyName, out JsonElement value) ||
+            !value.TryGetSingle(out float result))
+            return defaultValue;
+
+        return result;
+    }
+
+    private static Vector3 GetExtensionColor(GltfMaterial material, string extensionName, string propertyName, Vector3 defaultValue)
+    {
+        if (material.Extensions is null ||
+            !material.Extensions.TryGetValue(extensionName, out JsonElement extension) ||
+            extension.ValueKind != JsonValueKind.Object ||
+            !extension.TryGetProperty(propertyName, out JsonElement value) ||
+            value.Deserialize<float[]>() is not { Length: >= 3 } components)
+            return defaultValue;
+
+        return new Vector3(components[0], components[1], components[2]);
     }
 
     private static void ApplyAlphaMode(XRMaterial material, GltfMaterial materialDefinition, bool hasAlphaTexture, float baseColorAlpha, bool forceForward)

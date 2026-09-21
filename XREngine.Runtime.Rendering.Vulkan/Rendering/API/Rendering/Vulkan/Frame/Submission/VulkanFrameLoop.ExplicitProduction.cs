@@ -621,10 +621,15 @@ internal sealed partial class VulkanFrameLoop
         }
         watchdog.RecordProgress();
 
-        ResourcePlannerRuntimeState plannerState =
-            PublishedResourcePlannerRuntimeState;
-        VulkanFramePlanningSnapshot planningSnapshot =
-            _framePlanner.CaptureSnapshot();
+        // Explicit output admission owns one planner generation through target
+        // preparation and barrier freezing; a new publication is a new attempt.
+        ResourcePlannerRuntimeGeneration plannerGeneration =
+            _framePlanner.GetPublishedResourcePlannerGeneration();
+        ResourcePlannerRuntimeState plannerState = plannerGeneration.State;
+        VulkanFramePlanningSnapshot planningSnapshot = new(
+            plannerState.RenderGraphPlan,
+            _framePlanner.FrozenResourcePlanRevision,
+            _framePlanner.IsResourcePlanFrozen);
         if (planningSnapshot.RenderGraphPlan.Revision !=
             plannerState.ResourcePlannerRevision)
         {
@@ -635,10 +640,12 @@ internal sealed partial class VulkanFrameLoop
                 $"Graph={planningSnapshot.RenderGraphPlan.Revision}.");
         }
         if (!TryPrepareFrameOperationTargets(
+                plannerGeneration,
                 drainedOperations,
                 allowSynchronousResourceUploads: true,
                 out string targetFailure) ||
             !TryPreparePreparedMeshIngressTargets(
+                plannerGeneration,
                 _preparedMeshIngress,
                 allowSynchronousResourceUploads: true,
                 out targetFailure))

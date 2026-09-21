@@ -22,6 +22,10 @@ namespace XREngine.Rendering;
 /// </summary>
 public interface IRuntimeRenderProfilingServices
 {
+    /// <summary>
+    /// Gets whether optional managed-allocation diagnostics may sample render hot paths.
+    /// </summary>
+    bool EnableThreadAllocationTracking => false;
 
     /// <summary>
     /// Starts a host profiler scope. Returning <see langword="null"/> is the expected no-op fast path.

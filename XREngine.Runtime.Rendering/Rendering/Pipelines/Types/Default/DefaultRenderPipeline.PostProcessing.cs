@@ -7,6 +7,7 @@ using System.Threading;
 using XREngine;
 using XREngine.Data.Colors;
 using XREngine.Rendering.PostProcessing;
+using XREngine.Rendering.GI.DDGI;
 using XREngine.Rendering.RenderGraph;
 using XREngine.Scene;
 using XREngine.Rendering.Pipelines.Commands;
@@ -453,6 +454,11 @@ public partial class DefaultRenderPipeline
 
         var state = ResolveCurrentSettingsCamera()?.GetActivePostProcessState();
         ApplyPostProcessUniforms(state, materialProgram, applyLensDistortion: false);
+        if (CurrentRenderingPipeline is { } pipeline && DDGIFrameContext.IsDiagnosticPresentationFrame(pipeline))
+        {
+            materialProgram.Uniform($"{ColorGradingSettings.ColorGradeUniformName}.{nameof(ColorGradingSettings.Exposure)}", 1.0f);
+            materialProgram.Uniform("UseGpuAutoExposure", false);
+        }
 
         if (RenderDiagnosticsFlags.DiagPostProcess)
             LogPostProcessUniformDiagnostics(state, ResolveOutputHDR(), hoverOutlineColor, selectionOutlineColor, enableEditorOutline);

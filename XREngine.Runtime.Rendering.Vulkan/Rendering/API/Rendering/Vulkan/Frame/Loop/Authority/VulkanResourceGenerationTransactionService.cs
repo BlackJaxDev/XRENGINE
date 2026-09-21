@@ -32,14 +32,16 @@ internal sealed class VulkanResourceGenerationTransactionService
         in ResourcePlannerRuntimeState previousState,
         in ResourcePlannerRuntimeState pendingState,
         in VulkanFrameOpPlannerStateKey pendingKey,
-        VulkanPreparedResourceGenerationManifest preparedManifest)
+        VulkanPreparedResourceGenerationManifest preparedManifest,
+        bool allowSynchronousResourceUploads)
         => new Transaction(
             this,
             backendContext,
             previousState,
             pendingState,
             pendingKey,
-            preparedManifest);
+            preparedManifest,
+            allowSynchronousResourceUploads);
 
     private bool TryValidateManifest(
         VulkanBackendObjectContext backendContext,
@@ -102,7 +104,8 @@ internal sealed class VulkanResourceGenerationTransactionService
         VulkanBackendObjectContext backendContext,
         ref ResourcePlannerRuntimeState state,
         in VulkanFrameOpPlannerStateKey key,
-        VulkanPreparedResourceGenerationManifest manifest)
+        VulkanPreparedResourceGenerationManifest manifest,
+        bool allowSynchronousResourceUploads)
     {
         if (!_device.IsOperational)
         {
@@ -113,7 +116,7 @@ internal sealed class VulkanResourceGenerationTransactionService
         if (!_planner.TryFreezeResourcePlannerRenderGraphPlan(
                 ref state,
                 backendContext,
-                backendContext.Resources.AllowSynchronousResourceUploads,
+                allowSynchronousResourceUploads,
                 out string freezeFailureReason))
         {
             throw new InvalidOperationException(
@@ -242,7 +245,8 @@ internal sealed class VulkanResourceGenerationTransactionService
         ResourcePlannerRuntimeState previousState,
         ResourcePlannerRuntimeState pendingState,
         VulkanFrameOpPlannerStateKey pendingKey,
-        VulkanPreparedResourceGenerationManifest manifest) : IRenderResourceGenerationTransaction
+        VulkanPreparedResourceGenerationManifest manifest,
+        bool allowSynchronousResourceUploads) : IRenderResourceGenerationTransaction
     {
         private bool _committed;
 
@@ -267,7 +271,12 @@ internal sealed class VulkanResourceGenerationTransactionService
             }
 
             FrameOpResourcePlannerSwitchingState switchingState =
-                owner.Publish(backendContext, ref pendingState, pendingKey, manifest);
+                owner.Publish(
+                    backendContext,
+                    ref pendingState,
+                    pendingKey,
+                    manifest,
+                    allowSynchronousResourceUploads);
             _committed = true;
             try
             {

@@ -112,14 +112,31 @@ internal unsafe sealed class VulkanProgramCreationPort(VulkanBackendObjectContex
     /// Drains compilation and holds the mutation gate. Acquire this before any
     /// program interface lock so shader invalidation and linking use one order.
     /// </summary>
-    internal VulkanPipelineCompilationMutationLease AcquirePipelineCompilationMutationLease(string reason)
-        => context.Resources.PipelineManager.AcquireCompilationMutationLease(reason);
+    internal VulkanPipelineCompilationMutationLease AcquirePipelineCompilationMutationLease(
+        VkRenderProgram program,
+        string reason)
+        => context.Resources.PipelineManager.AcquireCompilationMutationLease(
+            reason,
+            VulkanPipelineCompilationMutationScope.ForProgram(program));
 
-    internal void ExecuteWithPipelineCompilationQuiesced(Action mutation, string reason)
+    internal void ExecuteWithPipelineCompilationQuiesced(
+        Action mutation,
+        ShaderModule shaderModule,
+        string reason)
     {
         ArgumentNullException.ThrowIfNull(mutation);
+        if (shaderModule.Handle == 0)
+        {
+            using VulkanPipelineCompilationDependencyLease dependencyLease =
+                context.Resources.PipelineManager.AcquireCompilationDependencyLease();
+            mutation();
+            return;
+        }
+
         using VulkanPipelineCompilationMutationLease lease =
-            AcquirePipelineCompilationMutationLease(reason);
+            context.Resources.PipelineManager.AcquireCompilationMutationLease(
+                reason,
+                VulkanPipelineCompilationMutationScope.ForShader(shaderModule));
         mutation();
     }
 

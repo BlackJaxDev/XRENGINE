@@ -15,6 +15,7 @@ internal sealed partial class SkinningPrepassDispatcher
     private sealed partial class RendererResources(XRMeshRenderer renderer)
     {
         private readonly XRMeshRenderer _renderer = renderer;
+        private int _disposed;
         private bool _seededFromRenderState;
         private bool _seedInputsSettled;
         private bool _settleLogged;
@@ -56,6 +57,9 @@ internal sealed partial class SkinningPrepassDispatcher
         /// </summary>
         public XRDataBuffer? SkinnedInterleaved => _renderer.SkinnedInterleavedBuffer;
 
+        public XRMeshRenderer.SkinnedOutputResourceSnapshot CaptureSkinnedOutputResources()
+            => _renderer.CaptureSkinnedOutputResources();
+
         public XRDataBuffer? SkinnedBounds => _skinnedBounds;
         public bool HasValidSkinnedBounds => _hasValidSkinnedBounds && _skinnedBounds is not null;
         public uint SkinnedBoundsVec4Offset => _skinnedBoundsVec4Offset;
@@ -63,13 +67,22 @@ internal sealed partial class SkinningPrepassDispatcher
 
         public bool Validate(XRMesh mesh, bool doSkinning, bool doBlendshapes, bool isInterleaved, bool usePrecombinedBlendshapes)
         {
+            XRMeshSkinningBufferState skinningState = mesh.GetSkinningBufferStateSnapshot();
+            XRMeshBlendshapeBufferState blendshapeState = mesh.GetBlendshapeBufferStateSnapshot();
+            XRMeshRenderer.BoneResourceSnapshot boneState = _renderer.CaptureBoneResources();
+            XRMeshRenderer.BlendshapeResourceSnapshot rendererBlendshapeState =
+                _renderer.CaptureBlendshapeResources();
+
             // Validate read-side prerequisites first; output buffers are allocated only after
             // the mesh proves it can actually participate in the selected compute path.
             if (doSkinning)
             {
-                if (_renderer.ActiveSkinPaletteBuffer is null)
+                XRDataBuffer? activePalette = _renderer.HasExternalSkinPaletteSource
+                    ? _renderer.ActiveSkinPaletteBuffer
+                    : boneState.SkinPalette;
+                if (activePalette is null)
                     return false;
-                if (!mesh.SupportsComputeSkinning)
+                if (skinningState.CoreIndices is null || skinningState.CoreWeights is null)
                     return false;
             }
 
@@ -77,22 +90,22 @@ internal sealed partial class SkinningPrepassDispatcher
             {
                 if (usePrecombinedBlendshapes)
                 {
-                    if (!_renderer.HasValidPrecombinedBlendshapeDeltas
-                        || _renderer.PrecombinedBlendshapePositionsBuffer is null
-                        || (mesh.HasNormals && _renderer.PrecombinedBlendshapeNormalsBuffer is null)
-                        || (mesh.HasTangents && _renderer.PrecombinedBlendshapeTangentsBuffer is null))
+                    if (!rendererBlendshapeState.IsPrecombinedValidFor(mesh)
+                        || rendererBlendshapeState.PrecombinedPositions is null
+                        || (mesh.HasNormals && rendererBlendshapeState.PrecombinedNormals is null)
+                        || (mesh.HasTangents && rendererBlendshapeState.PrecombinedTangents is null))
                     {
                         return false;
                     }
                 }
                 else
                 {
-                    if (mesh.BlendshapeSparseShapeRanges is null
-                        || mesh.BlendshapeSparseRecords is null
-                        || mesh.BlendshapeQuantizedDeltas is null
-                        || mesh.BlendshapeQuantizationMetadata is null)
+                    if (blendshapeState.SparseShapeRanges is null
+                        || blendshapeState.SparseRecords is null
+                        || blendshapeState.QuantizedDeltas is null
+                        || blendshapeState.QuantizationMetadata is null)
                         return false;
-                    if (_renderer.BlendshapeActiveWeights is null)
+                    if (rendererBlendshapeState.ActiveWeights is null)
                         return false;
                 }
             }
@@ -145,15 +158,15 @@ internal sealed partial class SkinningPrepassDispatcher
             return doSkinning || doBlendshapes;
         }
 
-        public void MarkOutputValid(bool doSkinning, bool doBlendshapes, bool usePrecombinedBlendshapes)
+        public void MarkOutputValid(bool doSkinning, bool doBlendshapes, bool usePrecombinedBlendshapes, ulong dispatchedVersion)
         {
             _hasValidOutput = true;
             _lastDidSkinning = doSkinning;
             _lastDidBlendshapes = doBlendshapes;
             _lastUsedPrecombinedBlendshapes = usePrecombinedBlendshapes;
-            _lastOutputVersion = _renderer.SkinnedOutputVersion;
+            _lastOutputVersion = dispatchedVersion;
             _lastDispatchedPoseHash = doSkinning ? _renderer.ComputeCurrentBonePoseHash() : 0;
-            _renderer.MarkSkinnedOutputClean();
+            _renderer.MarkSkinnedOutputClean(dispatchedVersion);
         }
 
         public XRDataBuffer? ResetSkinnedBoundsBuffer(XRMesh mesh)
@@ -195,9 +208,11 @@ internal sealed partial class SkinningPrepassDispatcher
 
         public bool ResetSkinnedBoundsInOutput(XRMesh mesh, bool isInterleaved)
         {
+            XRMeshRenderer.SkinnedOutputResourceSnapshot outputState =
+                _renderer.CaptureSkinnedOutputResources();
             XRDataBuffer? output = isInterleaved
-                ? _renderer.SkinnedInterleavedBuffer
-                : _renderer.SkinnedPositionsBuffer;
+                ? outputState.Interleaved
+                : outputState.Positions;
             if (output is null)
                 return false;
 
@@ -273,34 +288,44 @@ internal sealed partial class SkinningPrepassDispatcher
 
         public void Dispose()
         {
-            _renderer.SkinnedPositionsBuffer?.Destroy();
-            _renderer.SkinnedNormalsBuffer?.Destroy();
-            _renderer.SkinnedTangentsBuffer?.Destroy();
-            _renderer.SkinnedInterleavedBuffer?.Destroy();
-            if (_ownsSkinnedBoundsBuffer)
-                _skinnedBounds?.Destroy();
-            _renderer.SkinnedPositionsBuffer = null;
-            _renderer.SkinnedNormalsBuffer = null;
-            _renderer.SkinnedTangentsBuffer = null;
-            _renderer.SkinnedInterleavedBuffer = null;
-            _skinnedBounds = null;
-            _ownsSkinnedBoundsBuffer = false;
-            _hasValidSkinnedBounds = false;
-            _skinnedBoundsVec4Offset = 0u;
-            _skinnedBoundsWordOffset = 0u;
-            _lastVertexCount = 0;
-            _lastWasInterleaved = false;
-            _lastMesh = null;
-            _hasValidOutput = false;
-            _seededFromRenderState = false;
-            _seedInputsSettled = false;
-            _settleLogged = false;
-            _renderer.ResetSkinPaletteSeedState();
-            _lastDidSkinning = false;
-            _lastDidBlendshapes = false;
-            _lastUsedPrecombinedBlendshapes = false;
-            _lastOutputVersion = 0;
-            _lastDispatchedPoseHash = 0;
+            if (Interlocked.Exchange(ref _disposed, 1) != 0)
+                return;
+
+            _renderer.EnterResourceTeardownGate();
+            try
+            {
+                XRMeshRenderer.SkinnedOutputResourceSnapshot outputResources =
+                    _renderer.CaptureSkinnedOutputResources();
+                outputResources.Positions?.Destroy();
+                outputResources.Normals?.Destroy();
+                outputResources.Tangents?.Destroy();
+                outputResources.Interleaved?.Destroy();
+                if (_ownsSkinnedBoundsBuffer)
+                    _skinnedBounds?.Destroy();
+                _renderer.InstallSkinnedOutputResources(null, null, null, null);
+                _skinnedBounds = null;
+                _ownsSkinnedBoundsBuffer = false;
+                _hasValidSkinnedBounds = false;
+                _skinnedBoundsVec4Offset = 0u;
+                _skinnedBoundsWordOffset = 0u;
+                _lastVertexCount = 0;
+                _lastWasInterleaved = false;
+                _lastMesh = null;
+                _hasValidOutput = false;
+                _seededFromRenderState = false;
+                _seedInputsSettled = false;
+                _settleLogged = false;
+                _renderer.ResetSkinPaletteSeedState();
+                _lastDidSkinning = false;
+                _lastDidBlendshapes = false;
+                _lastUsedPrecombinedBlendshapes = false;
+                _lastOutputVersion = 0;
+                _lastDispatchedPoseHash = 0;
+            }
+            finally
+            {
+                _renderer.ExitResourceTeardownGate();
+            }
         }
 
         private static readonly PackedUInt4 PositiveInfinityPacked = PackedUInt4.FromVector(new Vector4(float.PositiveInfinity, float.PositiveInfinity, float.PositiveInfinity, 1f));

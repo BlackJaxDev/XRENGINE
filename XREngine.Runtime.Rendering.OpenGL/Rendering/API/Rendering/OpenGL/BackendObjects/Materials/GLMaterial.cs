@@ -272,10 +272,10 @@ namespace XREngine.Rendering.OpenGL
                 // Light/AO bindings include samplers. Each material draw starts a new
                 // binding batch, so they must be rebound even when scalar uniforms were
                 // already cached for the current frame/context.
-                if (requiredRequirements.HasFlag(EUniformRequirements.Lights))
+                if ((requiredRequirements & EUniformRequirements.Lights) == EUniformRequirements.Lights)
                     return true;
 
-                if (requiredRequirements.HasFlag(EUniformRequirements.AmbientOcclusion))
+                if ((requiredRequirements & EUniformRequirements.AmbientOcclusion) == EUniformRequirements.AmbientOcclusion)
                     return true;
 
                 return program.GetMissingEngineUniformRequirements(requiredRequirements) != EUniformRequirements.None;
@@ -287,19 +287,19 @@ namespace XREngine.Rendering.OpenGL
                     return;
 
                 EUniformRequirements missingProgramRequirements = program.GetMissingEngineUniformRequirements(reqs);
-                if (reqs.HasFlag(EUniformRequirements.Lights))
+                if ((reqs & EUniformRequirements.Lights) == EUniformRequirements.Lights)
                     missingProgramRequirements |= EUniformRequirements.Lights;
-                if (reqs.HasFlag(EUniformRequirements.AmbientOcclusion))
+                if ((reqs & EUniformRequirements.AmbientOcclusion) == EUniformRequirements.AmbientOcclusion)
                     missingProgramRequirements |= EUniformRequirements.AmbientOcclusion;
 
-                if (missingProgramRequirements.HasFlag(EUniformRequirements.Camera))
+                if ((missingProgramRequirements & EUniformRequirements.Camera) == EUniformRequirements.Camera)
                 {
                     RuntimeEngine.Rendering.State.RenderingCamera?.SetUniforms(program.Data, true);
                     RuntimeEngine.Rendering.State.RenderingStereoRightEyeCamera?.SetUniforms(program.Data, false);
                 }
 
                 bool lightingUniformsBound = false;
-                if (missingProgramRequirements.HasFlag(EUniformRequirements.Lights))
+                if ((missingProgramRequirements & EUniformRequirements.Lights) == EUniformRequirements.Lights)
                 {
                     var world = RuntimeEngine.Rendering.State.RenderingWorld;
                     var lights = world?.Lights;
@@ -312,17 +312,17 @@ namespace XREngine.Rendering.OpenGL
                         Debug.OpenGL($"[ForwardLighting] Skipped: RenderingWorld={world != null}, Lights={lights != null}");
                 }
 
-                if (missingProgramRequirements.HasFlag(EUniformRequirements.AmbientOcclusion) && !lightingUniformsBound)
+                if ((missingProgramRequirements & EUniformRequirements.AmbientOcclusion) == EUniformRequirements.AmbientOcclusion && !lightingUniformsBound)
                     Lights3DCollection.SetForwardAmbientOcclusionUniforms(program.Data);
 
-                if (missingProgramRequirements.HasFlag(EUniformRequirements.RenderTime))
+                if ((missingProgramRequirements & EUniformRequirements.RenderTime) == EUniformRequirements.RenderTime)
                 {
                     program.Uniform(EEngineUniform.RenderTime.ToStringFast(), RuntimeEngine.ElapsedTime);
                     program.Uniform(EEngineUniform.EngineTime.ToStringFast(), RuntimeEngine.ElapsedTime);
                     program.Uniform(EEngineUniform.DeltaTime.ToStringFast(), RuntimeEngine.Time.Timer.Render.Delta);
                 }
                 
-                if (missingProgramRequirements.HasFlag(EUniformRequirements.ViewportDimensions))
+                if ((missingProgramRequirements & EUniformRequirements.ViewportDimensions) == EUniformRequirements.ViewportDimensions)
                 {
                     var area = RuntimeEngine.Rendering.State.RenderArea;
                     program.Uniform(EEngineUniform.ScreenWidth.ToStringFast(), (float)area.Width);
@@ -330,14 +330,14 @@ namespace XREngine.Rendering.OpenGL
                     program.Uniform(EEngineUniform.ScreenOrigin.ToStringFast(), new Vector2(area.X, area.Y));
                 }
 
-                if (missingProgramRequirements.HasFlag(EUniformRequirements.ClipSpacePolicy))
+                if ((missingProgramRequirements & EUniformRequirements.ClipSpacePolicy) == EUniformRequirements.ClipSpacePolicy)
                 {
                     program.Uniform(EEngineUniform.ClipSpaceYDirection.ToStringFast(), (int)RuntimeEngine.Rendering.Settings.ClipSpaceYDirection);
                     program.Uniform(EEngineUniform.ClipDepthRange.ToStringFast(), (int)RuntimeEngine.Rendering.EffectiveClipDepthRange);
                     program.Uniform(EEngineUniform.FramebufferTextureYDirection.ToStringFast(), (int)RenderClipSpacePolicy.FramebufferTextureYDirection(RuntimeGraphicsApiKind.OpenGL));
                 }
 
-                if (missingProgramRequirements.HasFlag(EUniformRequirements.MousePosition))
+                if ((missingProgramRequirements & EUniformRequirements.MousePosition) == EUniformRequirements.MousePosition)
                 {
                     //Program?.Uniform(nameof(EUniformRequirements.MousePosition), mousePosition);
                 }

@@ -298,6 +298,9 @@ namespace XREngine.Rendering.OpenGL
             EnsureStorage(Data.SizedInternalFormat, width, height, depth, levels);
         }
 
+        protected override void EnsureStorageAllocatedForFBOAttach()
+            => EnsureFramebufferStorage();
+
         private uint ResolveTargetLevels(XRTexture2D? firstSource, uint width, uint height)
         {
             if (firstSource is not null)
@@ -487,6 +490,15 @@ namespace XREngine.Rendering.OpenGL
                         continue;
                     }
 
+                    // Float atlas payloads are already CPU upload data. Copying from
+                    // a separately bound 2D child can copy empty storage while that
+                    // child's progressive upload is still pending.
+                    if (!Data.CopyGpuLayerSources && TryUploadFloatLayer(tex, layer, targetLevels, out uint uploadedLevels))
+                    {
+                        copiedEveryAllocatedMip &= uploadedLevels >= targetLevels;
+                        continue;
+                    }
+
                     // Get the GL object for the source texture so we can copy from GPU to GPU
                     var glSourceTex = Renderer.GetOrCreateAPIRenderObject(tex) as GLTexture2D;
                     if (glSourceTex is null)
@@ -618,6 +630,58 @@ namespace XREngine.Rendering.OpenGL
                 IsPushing = false;
                 Unbind();
             }
+        }
+
+        private unsafe bool TryUploadFloatLayer(XRTexture2D source, int layer, uint targetLevels, out uint uploadedLevels)
+        {
+            uploadedLevels = 0;
+            if (Data.MultiSample)
+                return false;
+            Mipmap2D[]? mipmaps = source.Mipmaps;
+            if (mipmaps is not { Length: > 0 })
+                return false;
+            uint count = Math.Min((uint)mipmaps.Length, targetLevels);
+            if (!_storageSet || (uint)layer >= _allocatedDepth || count > _allocatedLevels)
+                throw new InvalidOperationException("Texture array float upload requires allocated layer and mip storage.");
+            for (int level = 0; level < count; level++)
+            {
+                Mipmap2D mip = mipmaps[level];
+                if (mip.Data is not { Length: > 0 } data || mip.PixelType is not (EPixelType.Float or EPixelType.HalfFloat))
+                    return false;
+                int channels = mip.PixelFormat switch
+                {
+                    EPixelFormat.Red => 1,
+                    EPixelFormat.Rg => 2,
+                    EPixelFormat.Rgb => 3,
+                    EPixelFormat.Rgba => 4,
+                    _ => 0,
+                };
+                if (channels == 0)
+                    return false;
+                uint bytesPerChannel = mip.PixelType == EPixelType.Float ? 4u : 2u;
+                ulong expectedBytes = (ulong)mip.Width * mip.Height * (uint)channels * bytesPerChannel;
+                if (data.Length != expectedBytes || source.SizedInternalFormat != Data.SizedInternalFormat ||
+                    mip.Width != Math.Max(1u, _allocatedWidth >> level) || mip.Height != Math.Max(1u, _allocatedHeight >> level))
+                    throw new InvalidOperationException($"Texture array layer {layer}, mip {level} has an incompatible float upload payload.");
+            }
+
+            Api.BindBuffer(GLEnum.PixelUnpackBuffer, 0);
+            Api.PixelStore(PixelStoreParameter.UnpackAlignment, 1);
+            Api.PixelStore(PixelStoreParameter.UnpackRowLength, 0);
+            Api.PixelStore((PixelStoreParameter)0x0CF3, 0); // UNPACK_SKIP_ROWS
+            Api.PixelStore((PixelStoreParameter)0x0CF4, 0); // UNPACK_SKIP_PIXELS
+            Api.PixelStore((PixelStoreParameter)0x806D, 0); // UNPACK_SKIP_IMAGES
+            Api.PixelStore((PixelStoreParameter)0x806E, 0); // UNPACK_IMAGE_HEIGHT
+            Api.PixelStore((PixelStoreParameter)0x0CF0, 0); // UNPACK_SWAP_BYTES
+            Api.PixelStore((PixelStoreParameter)0x0CF1, 0); // UNPACK_LSB_FIRST
+            for (int level = 0; level < count; level++)
+            {
+                Mipmap2D mip = mipmaps[level];
+                Api.TextureSubImage3D(BindingId, level, 0, 0, layer, mip.Width, mip.Height, 1,
+                    ToGLEnum(mip.PixelFormat), ToGLEnum(mip.PixelType), mip.Data!.Address.Pointer);
+            }
+            uploadedLevels = count;
+            return true;
         }
     }
 }

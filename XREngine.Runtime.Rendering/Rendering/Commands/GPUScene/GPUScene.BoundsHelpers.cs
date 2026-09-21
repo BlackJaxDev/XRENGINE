@@ -183,7 +183,7 @@ namespace XREngine.Rendering.Commands
             buffer.SetDataRawAtIndex(commandIndex, entry);
             if (uploadImmediately)
             {
-                buffer.PushSubData(checked((int)(commandIndex * CommandAabbStrideBytes)), CommandAabbStrideBytes);
+                buffer.CommitDirtyBytes(commandIndex * CommandAabbStrideBytes, CommandAabbStrideBytes);
                 _pendingCommandAabbUploadBytes += CommandAabbStrideBytes;
             }
             else
@@ -235,7 +235,7 @@ namespace XREngine.Rendering.Commands
                 if (maxExclusive > min)
                 {
                     uint bytes = (maxExclusive - min) * CommandAabbStrideBytes;
-                    _commandAabbBuffer.PushSubData(checked((int)(min * CommandAabbStrideBytes)), bytes);
+                    _commandAabbBuffer.CommitDirtyBytes(min * CommandAabbStrideBytes, bytes);
                     _pendingCommandAabbUploadBytes += bytes;
                 }
             }

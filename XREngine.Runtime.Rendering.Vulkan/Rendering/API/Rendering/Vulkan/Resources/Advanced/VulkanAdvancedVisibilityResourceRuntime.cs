@@ -145,6 +145,9 @@ internal sealed partial class VulkanAdvancedVisibilityResourceRuntime
                 return true;
             }
 
+            if (!TryValidateSet1StorageImageLimits(device, out reason))
+                return SetUnavailable(reason, out reason);
+
             if (_resources.FrameDataArena is not { IsActive: true } arena ||
                 !_resources.TryEnsureAdvancedVisibilityStorage(
                     arena,
@@ -759,7 +762,11 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
             VulkanAdvancedSceneProgramBindingContract.NativeVelocityBinding,
             VulkanAdvancedSceneProgramBindingContract.NativeReactiveBinding,
             VulkanAdvancedSceneProgramBindingContract.NativeShadingDiagnosticsBinding,
-            VulkanAdvancedSceneProgramBindingContract.NativeAmbientOcclusionStorageBinding];
+            VulkanAdvancedSceneProgramBindingContract.NativeAmbientOcclusionStorageBinding,
+            VulkanAdvancedSceneProgramBindingContract.NativeDdgiEmissionBinding,
+            VulkanAdvancedSceneProgramBindingContract.NativeDdgiAlbedoBinding,
+            VulkanAdvancedSceneProgramBindingContract.NativeDdgiNormalBinding,
+            VulkanAdvancedSceneProgramBindingContract.NativeDdgiRmseBinding];
         const int imageBindingCount = 2;
         DescriptorSetLayoutBinding* bindings = stackalloc DescriptorSetLayoutBinding[
             storageBindingNumbers.Length + imageBindingCount +
@@ -1454,13 +1461,13 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
         in VulkanAdvancedNativeComputeClosure closure,
         out string reason)
     {
-        VulkanFrozenBufferBarrier[] buffers =
-        {
+        ReadOnlySpan<VulkanFrozenBufferBarrier> buffers =
+        [
             closure.ActiveTiles, closure.KernelTiles, closure.ClassificationCounters,
             closure.DispatchArguments, closure.KernelCounts, closure.FroxelGrid,
             closure.LightIndices, closure.LightingCounters, closure.FroxelDecalGrid,
             closure.DecalIndices,
-        };
+        ];
         ReadOnlySpan<uint> bufferBindings = [
             VulkanAdvancedSceneProgramBindingContract.NativeActiveTilesBinding,
             VulkanAdvancedSceneProgramBindingContract.NativeKernelTilesBinding,
@@ -1473,13 +1480,15 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
             VulkanAdvancedSceneProgramBindingContract.NativeFroxelDecalGridBinding,
             VulkanAdvancedSceneProgramBindingContract.NativeDecalIndicesBinding];
         DescriptorBufferInfo* bufferInfos = stackalloc DescriptorBufferInfo[buffers.Length];
-        const int imageCount = 9;
+        const int imageCount = 13;
         DescriptorImageInfo* imageInfos = stackalloc DescriptorImageInfo[imageCount]
         {
             closure.IdentityDescriptor, closure.MetadataDescriptor, closure.DepthDescriptor,
             closure.HdrDescriptor, closure.VelocityDescriptor, closure.ReactiveDescriptor,
             closure.ShadingDiagnosticsDescriptor, closure.AmbientOcclusionStorageDescriptor,
             closure.AmbientOcclusionSampledDescriptor,
+            closure.DdgiSurface.EmissionDescriptor, closure.DdgiSurface.AlbedoDescriptor,
+            closure.DdgiSurface.NormalDescriptor, closure.DdgiSurface.RmseDescriptor,
         };
         WriteDescriptorSet* writes = stackalloc WriteDescriptorSet[buffers.Length + imageCount];
         for (int index = 0; index < buffers.Length; ++index)
@@ -1513,7 +1522,11 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
             VulkanAdvancedSceneProgramBindingContract.NativeReactiveBinding,
             VulkanAdvancedSceneProgramBindingContract.NativeShadingDiagnosticsBinding,
             VulkanAdvancedSceneProgramBindingContract.NativeAmbientOcclusionStorageBinding,
-            VulkanAdvancedSceneProgramBindingContract.NativeAmbientOcclusionSampledBinding];
+            VulkanAdvancedSceneProgramBindingContract.NativeAmbientOcclusionSampledBinding,
+            VulkanAdvancedSceneProgramBindingContract.NativeDdgiEmissionBinding,
+            VulkanAdvancedSceneProgramBindingContract.NativeDdgiAlbedoBinding,
+            VulkanAdvancedSceneProgramBindingContract.NativeDdgiNormalBinding,
+            VulkanAdvancedSceneProgramBindingContract.NativeDdgiRmseBinding];
         for (int index = 0; index < imageCount; ++index)
         {
             DescriptorImageInfo image = imageInfos[index];
@@ -1712,6 +1725,7 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
         uint frameSlot,
         uint viewIndex,
         string ambientOcclusionTargetName,
+        bool enableDdgi,
         VulkanAdvancedNativeComputeClosureStorage storage,
         out VulkanAdvancedNativeComputeClosure closure,
         out string reason)
@@ -1825,6 +1839,13 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
                 return false;
             }
 
+            if (!TryCaptureDdgiSurfaceClosure(context, generation.State.ResourceAllocator, storage,
+                    enableDdgi, viewIndex, hdr, hdrResource,
+                    out VulkanAdvancedDdgiSurfaceClosure ddgiSurface, out reason))
+            {
+                return false;
+            }
+
             closure = new VulkanAdvancedNativeComputeClosure(
                 graphPlan.Revision, identity, metadata, depth, hdr, velocity, reactive, shadingDiagnostics, ambientOcclusion,
                 identityResource, metadataResource, depthResource, hdrResource, velocityResource, reactiveResource,
@@ -1840,7 +1861,10 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
                 new DescriptorImageInfo { ImageView = shadingDiagnosticsView, ImageLayout = ImageLayout.General },
                 new DescriptorImageInfo { ImageView = ambientOcclusionView, ImageLayout = ImageLayout.General },
                 new DescriptorImageInfo { Sampler = sampler, ImageView = ambientOcclusionView, ImageLayout = ImageLayout.ShaderReadOnlyOptimal },
-                viewIndex);
+                viewIndex)
+            {
+                DdgiSurface = ddgiSurface,
+            };
             captured = closure.IsValid;
             reason = captured ? "Ready" : "The advanced native compute closure is incomplete.";
             return captured;

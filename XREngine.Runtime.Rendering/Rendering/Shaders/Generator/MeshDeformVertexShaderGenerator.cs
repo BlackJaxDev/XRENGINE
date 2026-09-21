@@ -155,11 +155,11 @@ namespace XREngine.Rendering.Shaders.Generator
             OutputVars.Add(FragPosName, (0, EShaderVarType._vec3));
             OutputVars.Add(FragNormName, (1, EShaderVarType._vec3));
 
-            if (_useTangents)
-            {
-                OutputVars.Add(FragTanName, (2, EShaderVarType._vec3));
-                OutputVars.Add(FragBinormName, (3, EShaderVarType._vec3));
-            }
+            // Match the standard generated vertex interface. A zero TBN lets
+            // normal-map fragments reconstruct a basis from position and UVs
+            // when the deformed mesh has no authored tangent stream.
+            OutputVars.Add(FragTanName, (2, EShaderVarType._vec3));
+            OutputVars.Add(FragBinormName, (3, EShaderVarType._vec3));
 
             int uvOutputs = Math.Max(4, _texCoordsUsed.ClampMax(8));
             for (int i = 0; i < uvOutputs; ++i)
@@ -347,6 +347,12 @@ namespace XREngine.Rendering.Shaders.Generator
 
             if (!_useNormals)
                 Line($"{FragNormName} = vec3(0.0f, 0.0f, 1.0f);");
+
+            if (!_useTangents)
+            {
+                Line($"{FragTanName} = vec3(0.0f);");
+                Line($"{FragBinormName} = vec3(0.0f);");
+            }
 
             if (_colorsUsed != 0)
                 for (int i = 0; i < _colorsUsed.ClampMax(8); ++i)

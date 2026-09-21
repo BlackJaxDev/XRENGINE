@@ -61,22 +61,25 @@ public sealed partial class GpuBvhTree
             PadEndingToVec4 = true,
             ShouldMap = false,
             // Allow temporary mapping for GPU→CPU readback of the overflow flag.
+            // Immutable OpenGL storage must carry this bit as well as the map range flag.
+            StorageFlags = EBufferMapStorageFlags.Read,
             RangeFlags = EBufferMapRangeFlags.Read
         };
-        _overflowFlagBuffer.SetBlockIndex(Bindings.OverflowFlag);
         _overflowFlagBuffer.SetDataRaw(new uint[] { 0u }, 1);
-        _overflowFlagBuffer.Generate();
+        // Defer wrapper creation until the compute program binds this SSBO on
+        // its render owner. Commit retains the initial flag without requiring one.
+        _overflowFlagBuffer.CommitDirtyBytes(0u, _overflowFlagBuffer.Length);
     }
 
     /// <summary>
-    /// Ensures the overflow buffer has a stable GPU allocation before compute
-    /// snapshots are captured. The Morton shader resets the flag in-band so a
-    /// CPU sub-upload cannot recreate the buffer between binding and dispatch.
+    /// Ensures the overflow buffer exists before compute snapshots are captured.
+    /// The first program binding allocates it for the active render owner; the
+    /// Morton shader resets the flag in-band thereafter.
     /// </summary>
     private bool IsOverflowFlagBufferReady()
     {
         EnsureOverflowFlagBuffer();
-        return _overflowFlagBuffer?.IsReadyForGpuUse == true;
+        return _overflowFlagBuffer is not null;
     }
 
     /// <summary>

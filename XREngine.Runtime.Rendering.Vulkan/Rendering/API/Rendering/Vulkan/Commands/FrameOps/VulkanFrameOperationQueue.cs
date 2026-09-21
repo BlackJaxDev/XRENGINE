@@ -94,6 +94,28 @@ internal sealed class VulkanFrameOperationQueue : IDisposable
                 entry = default;
                 return;
             }
+
+            for (int candidateIndex = 0; candidateIndex < _outputCompletions.Length; candidateIndex++)
+            {
+                if (candidateIndex == index)
+                    continue;
+                ref OutputCompletionEntry candidate = ref _outputCompletions[candidateIndex];
+                if (candidate.State != EOutputCompletionState.Ready ||
+                    candidate.Reservation.Output.OutputId != reservation.Output.OutputId)
+                    continue;
+
+                if (candidate.Reservation.ReceiptId > reservation.ReceiptId)
+                {
+                    DiscardPendingOutputCompletionOperationsNoLock(entry.Reservation.ReceiptId);
+                    FailOutputCompletionFence(entry.Reservation.Fence);
+                    entry = default;
+                    return;
+                }
+
+                DiscardPendingOutputCompletionOperationsNoLock(candidate.Reservation.ReceiptId);
+                FailOutputCompletionFence(candidate.Reservation.Fence);
+                candidate = default;
+            }
             entry.State = EOutputCompletionState.Ready;
         }
     }
@@ -224,9 +246,36 @@ internal sealed class VulkanFrameOperationQueue : IDisposable
                 entry = default;
                 return;
             }
+
+            for (int candidateIndex = 0; candidateIndex < _frameViewHistory.Length; candidateIndex++)
+            {
+                if (candidateIndex == index)
+                    continue;
+                ref FrameViewHistoryEntry candidate = ref _frameViewHistory[candidateIndex];
+                if (candidate.State != EFrameViewHistoryState.Ready ||
+                    candidate.Reservation.Output.OutputId != reservation.Output.OutputId)
+                    continue;
+
+                if (IsNewerHistoryCandidate(candidate.Reservation.Candidate, reservation.Candidate))
+                {
+                    entry.Reservation.Candidate.Discard();
+                    entry = default;
+                    return;
+                }
+
+                candidate.Reservation.Candidate.Discard();
+                candidate = default;
+            }
             entry.State = EFrameViewHistoryState.Ready;
         }
     }
+
+    private static bool IsNewerHistoryCandidate(
+        in RenderFrameViewHistoryCandidateToken candidate,
+        in RenderFrameViewHistoryCandidateToken reference)
+        => candidate.SourceFrame > reference.SourceFrame ||
+           (candidate.SourceFrame == reference.SourceFrame &&
+            candidate.Sequence > reference.Sequence);
 
     /// <summary>
     /// Gets the reusable workspace scoped to the calling recording thread.

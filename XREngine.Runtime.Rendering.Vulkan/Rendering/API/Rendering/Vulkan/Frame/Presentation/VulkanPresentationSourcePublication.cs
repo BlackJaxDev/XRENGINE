@@ -57,6 +57,76 @@ internal sealed class VulkanPresentationSourcePublication
         }
     }
 
+    /// <summary>
+    /// Selects the source carried by the accepted final presentation draw. This
+    /// deliberately resolves an opposing eager pending publication instead of
+    /// letting a non-selected pipeline retain descriptor authority.
+    /// </summary>
+    internal VulkanPresentationSourceTuple SelectLogical(
+        in VulkanPresentationSourceTuple source)
+    {
+        lock (_sync)
+        {
+            // The accepted final draw selects ownership before descriptor writes
+            // resolve its physical image/view. It must replace an eager source
+            // with the same wrappers, because that eager native backing can be
+            // for another output slot or frame generation.
+            if (source.HasLogicalSource && source.Image.Handle == 0)
+            {
+                if (_pending.LogicalEpoch != 0 &&
+                    _pending.Image.Handle == 0 &&
+                    CanRetainCurrentLogicalSource(_pending, source))
+                {
+                    return _pending;
+                }
+
+                if (_current.Image.Handle == 0 &&
+                    CanRetainCurrentLogicalSource(_current, source))
+                {
+                    _pending = default;
+                    return _current;
+                }
+
+                ulong unresolvedEpoch = ++_nextEpoch;
+                if (unresolvedEpoch == 0)
+                    unresolvedEpoch = ++_nextEpoch;
+
+                _pending = default;
+                _current = source with { LogicalEpoch = unresolvedEpoch };
+                Array.Clear(_slotBindings);
+                return _current;
+            }
+
+            if (_pending.LogicalEpoch != 0 &&
+                CanRetainCurrentLogicalSource(_pending, source))
+            {
+                return _pending;
+            }
+
+            if (CanRetainCurrentLogicalSource(_current, source))
+            {
+                _pending = default;
+                return _current;
+            }
+
+            ulong epoch = ++_nextEpoch;
+            if (epoch == 0)
+                epoch = ++_nextEpoch;
+
+            VulkanPresentationSourceTuple candidate = source with { LogicalEpoch = epoch };
+            if (HasCompleteBindingForCurrentSource() && candidate.HasLogicalSource)
+            {
+                _pending = candidate;
+                return _pending;
+            }
+
+            _pending = default;
+            _current = candidate;
+            Array.Clear(_slotBindings);
+            return _current;
+        }
+    }
+
     private static bool CanRetainCurrentLogicalSource(
         in VulkanPresentationSourceTuple current,
         in VulkanPresentationSourceTuple candidate)
@@ -64,6 +134,8 @@ internal sealed class VulkanPresentationSourcePublication
         if (!candidate.HasLogicalSource ||
             !ReferenceEquals(current.ColorTexture, candidate.ColorTexture) ||
             !ReferenceEquals(current.FrameBuffer, candidate.FrameBuffer) ||
+            !ReferenceEquals(current.PresentationPublisher, candidate.PresentationPublisher) ||
+            current.PresentationPublicationToken != candidate.PresentationPublicationToken ||
             current.Width != candidate.Width ||
             current.Height != candidate.Height)
         {
@@ -173,6 +245,7 @@ internal sealed class VulkanPresentationSourcePublication
             0,
             0,
             0,
+            0,
             out source);
 
     internal bool TryBindDescriptor(
@@ -187,6 +260,7 @@ internal sealed class VulkanPresentationSourcePublication
         ulong imageViewGeneration,
         ulong samplerGeneration,
         ulong backingImageHandle,
+        ulong backingImageGeneration,
         out VulkanPresentationSourceTuple source)
     {
         lock (_sync)
@@ -197,10 +271,17 @@ internal sealed class VulkanPresentationSourcePublication
                 ? _pending
                 : _current;
 
-            bool viewMatches = logicalSource.ImageView.Handle == imageInfo.ImageView.Handle ||
-                (backingImageHandle != 0 && logicalSource.Image.Handle == backingImageHandle);
-            bool samplerMatches = logicalSource.Sampler.Handle == imageInfo.Sampler.Handle ||
-                imageInfo.Sampler.Handle != 0;
+            bool nativeAuthorityUnresolved = logicalSource.Image.Handle == 0 &&
+                logicalSource.ImageView.Handle == 0 &&
+                logicalSource.Sampler.Handle == 0;
+            bool viewMatches = nativeAuthorityUnresolved
+                ? backingImageHandle != 0 && imageInfo.ImageView.Handle != 0
+                : logicalSource.ImageView.Handle == imageInfo.ImageView.Handle ||
+                  (backingImageHandle != 0 && logicalSource.Image.Handle == backingImageHandle);
+            bool samplerMatches = nativeAuthorityUnresolved
+                ? imageInfo.Sampler.Handle != 0
+                : logicalSource.Sampler.Handle == imageInfo.Sampler.Handle ||
+                  imageInfo.Sampler.Handle != 0;
 
             if (descriptorSlot < 0 ||
                 logicalSource.LogicalEpoch != expectedLogicalEpoch ||
@@ -236,8 +317,22 @@ internal sealed class VulkanPresentationSourcePublication
             }
 
             EnsureSlotCapacity(descriptorSlot);
+            Image resolvedImage = backingImageHandle != 0
+                ? new Image { Handle = backingImageHandle }
+                : logicalSource.Image;
+            ulong resolvedDescriptorResourceEpoch =
+                logicalSource.DescriptorResourceEpoch != 0
+                    ? logicalSource.DescriptorResourceEpoch
+                    : imageViewGeneration != 0
+                        ? imageViewGeneration
+                        : backingImageGeneration;
             VulkanPresentationSourceTuple binding = logicalSource with
             {
+                DescriptorResourceEpoch = resolvedDescriptorResourceEpoch,
+                Image = resolvedImage,
+                ImageAllocationGeneration = backingImageGeneration != 0
+                    ? backingImageGeneration
+                    : logicalSource.ImageAllocationGeneration,
                 ImageView = imageInfo.ImageView,
                 ImageViewGeneration = imageViewGeneration != 0 ? imageViewGeneration : logicalSource.ImageViewGeneration,
                 Sampler = imageInfo.Sampler,
@@ -256,11 +351,17 @@ internal sealed class VulkanPresentationSourcePublication
             };
             _slotBindings[descriptorSlot] = binding;
             if (_current.LogicalEpoch == expectedLogicalEpoch &&
-                (_current.ImageView.Handle != imageInfo.ImageView.Handle ||
+                (_current.Image.Handle != resolvedImage.Handle ||
+                 _current.ImageView.Handle != imageInfo.ImageView.Handle ||
                  _current.Sampler.Handle != imageInfo.Sampler.Handle))
             {
                 _current = _current with
                 {
+                    DescriptorResourceEpoch = resolvedDescriptorResourceEpoch,
+                    Image = resolvedImage,
+                    ImageAllocationGeneration = backingImageGeneration != 0
+                        ? backingImageGeneration
+                        : _current.ImageAllocationGeneration,
                     ImageView = imageInfo.ImageView,
                     ImageViewGeneration = imageViewGeneration != 0 ? imageViewGeneration : _current.ImageViewGeneration,
                     Sampler = imageInfo.Sampler,

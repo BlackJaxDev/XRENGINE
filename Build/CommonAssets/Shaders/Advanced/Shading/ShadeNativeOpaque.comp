@@ -7,6 +7,7 @@
 #include "Advanced/Shading/StandardIbl.glslinc"
 #include "StandardShadow.glslinc"
 #include "AdvancedDecalModifier.glslinc"
+#pragma snippet "NormalEncoding"
 layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 #if defined(XR_ADV_VISIBILITY_ARRAY)
 XR_ADV_SHADING_LAYOUT(0) uniform usampler2DArray VisibilityIdentity;
@@ -17,6 +18,10 @@ XR_ADV_SHADING_IMAGE(rgba16f, 15) writeonly uniform image2DArray HDRSceneColor;
 XR_ADV_SHADING_IMAGE(rg16f, 16) writeonly uniform image2DArray Velocity;
 XR_ADV_SHADING_IMAGE(r8, 17) writeonly uniform image2DArray ReactiveMask;
 XR_ADV_SHADING_IMAGE(r32ui, 18) writeonly uniform uimage2DArray ShadingDiagnostics;
+XR_ADV_SHADING_IMAGE(rgba16f, 51) writeonly uniform image2DArray EmissionColor;
+XR_ADV_SHADING_IMAGE(rgba16f, 52) writeonly uniform image2DArray AlbedoOpacity;
+XR_ADV_SHADING_IMAGE(rgba16f, 53) writeonly uniform image2DArray Normal;
+XR_ADV_SHADING_IMAGE(rgba16f, 54) writeonly uniform image2DArray RMSE;
 #define XR_ADV_PIXEL(pixel, view) ivec3(pixel, view)
 #else
 XR_ADV_SHADING_LAYOUT(0) uniform usampler2D VisibilityIdentity;
@@ -27,6 +32,10 @@ XR_ADV_SHADING_IMAGE(rgba16f, 15) writeonly uniform image2D HDRSceneColor;
 XR_ADV_SHADING_IMAGE(rg16f, 16) writeonly uniform image2D Velocity;
 XR_ADV_SHADING_IMAGE(r8, 17) writeonly uniform image2D ReactiveMask;
 XR_ADV_SHADING_IMAGE(r32ui, 18) writeonly uniform uimage2D ShadingDiagnostics;
+XR_ADV_SHADING_IMAGE(rgba16f, 51) writeonly uniform image2D EmissionColor;
+XR_ADV_SHADING_IMAGE(rgba16f, 52) writeonly uniform image2D AlbedoOpacity;
+XR_ADV_SHADING_IMAGE(rgba16f, 53) writeonly uniform image2D Normal;
+XR_ADV_SHADING_IMAGE(rgba16f, 54) writeonly uniform image2D RMSE;
 #define XR_ADV_PIXEL(pixel, view) ivec2(pixel)
 #endif
 
@@ -34,6 +43,40 @@ uint shadowReason = XR_ADV_SHADOW_OK;
 float shadowVisibility = 1.0;
 vec3 directDiffuse = vec3(0.0);
 vec3 directSpecular = vec3(0.0);
+
+bool XR_ADV_ExportsDdgiSurfaceInputs()
+{
+    return (u_Push.flags & 16u) != 0u;
+}
+
+void XR_ADV_StoreNeutralDdgiSurfaceInputs(uvec2 pixel, uint viewIndex)
+{
+    if (!XR_ADV_ExportsDdgiSurfaceInputs()) return;
+#if defined(XR_ADV_VISIBILITY_ARRAY)
+    ivec3 target = XR_ADV_PIXEL(pixel, viewIndex);
+#else
+    ivec2 target = XR_ADV_PIXEL(pixel, viewIndex);
+#endif
+    imageStore(EmissionColor, target, vec4(0.0));
+    imageStore(AlbedoOpacity, target, vec4(0.0));
+    imageStore(Normal, target, vec4(XRENGINE_EncodeNormal(vec3(0.0, 0.0, 1.0)), 0.0, 1.0));
+    imageStore(RMSE, target, vec4(1.0, 0.0, 0.0, 0.0));
+}
+
+void XR_ADV_StoreDdgiSurfaceInputs(uvec2 pixel, uint viewIndex, vec3 emittedRadiance,
+    vec4 base, vec3 normal, float roughness, float metallic, vec4 rmse, bool unlit)
+{
+    if (!XR_ADV_ExportsDdgiSurfaceInputs()) return;
+#if defined(XR_ADV_VISIBILITY_ARRAY)
+    ivec3 target = XR_ADV_PIXEL(pixel, viewIndex);
+#else
+    ivec2 target = XR_ADV_PIXEL(pixel, viewIndex);
+#endif
+    imageStore(EmissionColor, target, vec4(max(emittedRadiance, vec3(0.0)), 1.0));
+    imageStore(AlbedoOpacity, target, vec4(unlit ? vec3(0.0) : max(base.rgb, vec3(0.0)), base.a));
+    imageStore(Normal, target, vec4(XRENGINE_EncodeNormal(normalize(normal)), 0.0, 1.0));
+    imageStore(RMSE, target, vec4(roughness, metallic, rmse.zw));
+}
 
 void XR_ADV_EvaluateProbeIbl(uint viewIndex, vec3 worldPosition, vec3 N, vec3 V, vec3 albedo, float roughness, float metallic,
     out vec3 diffuseIndirect, out vec3 specularIndirect)
@@ -150,6 +193,7 @@ void main()
         pixel = uvec2(tile.packedTileCoord & 0xFFFFu, tile.packedTileCoord >> 16u) * 16u + gl_LocalInvocationID.xy;
     }
     if (any(greaterThanEqual(pixel, u_Push.screenExtent)) || viewIndex >= u_Push.viewCount) return;
+    XR_ADV_StoreNeutralDdgiSurfaceInputs(pixel, viewIndex);
     uvec2 identity = texelFetch(VisibilityIdentity, XR_ADV_PIXEL(pixel, viewIndex), 0).rg;
     if (identity.x == 0u || identity.x == XR_ADV_VIS_INVALID) return;
     uint metadata = texelFetch(VisibilityMetadata, XR_ADV_PIXEL(pixel, viewIndex), 0).r;
@@ -215,6 +259,15 @@ void main()
     vec4 rmse = XR_ADV_StandardVector(material, XR_ADV_STANDARD_RMSE_WORD);
     if ((materialFlags & 1u) != 0u)
         base *= XR_ADV_StandardTexture(material, 0u, surface.texCoord0, surface.texCoord0Dx, surface.texCoord0Dy, vec4(1.0));
+    vec3 emittedRadiance = XR_ADV_ResolveStandardEmission(material,
+        surface.texCoord0,
+        surface.texCoord0Dx,
+        surface.texCoord0Dy,
+        surface.texCoord1,
+        surface.texCoord1Dx,
+        surface.texCoord1Dy,
+        base.rgb,
+        rmse.w);
     if ((materialFlags & 4u) != 0u)
         rmse.xy *= XR_ADV_StandardTexture(material, 2u, surface.texCoord0, surface.texCoord0Dx, surface.texCoord0Dy, vec4(1.0)).rg;
     vec3 N = normalize(surface.shadingNormal);
@@ -243,7 +296,7 @@ void main()
             if (decalIndex != XR_ADV_FROXEL_OVERFLOW) XR_ADV_ApplyDecalToSurface(decalIndex, surface, base.rgb, N, roughness, metallic);
         }
     }
-    vec3 color = base.rgb * max(rmse.w, 0.0);
+    vec3 color = emittedRadiance;
     if ((material.eligibilityFlags & 16u) != 0u) color += base.rgb;
     else
     {
@@ -284,14 +337,14 @@ void main()
             vec3 diffuseIndirect, specularIndirect;
             XR_ADV_EvaluateProbeIbl(viewIndex, surface.worldPosition, N, V, base.rgb, roughness, metallic,
                 diffuseIndirect, specularIndirect);
-            color += diffuseIndirect * ambientOcclusion +
+            color += ((u_Push.flags & 16u) != 0u ? vec3(0.0) : diffuseIndirect * ambientOcclusion) +
                 specularIndirect * XR_ADV_SpecularOcclusion(max(dot(N, V), 0.0), ambientOcclusion, roughness);
         }
     }
     uint debugView = (u_Push.flags >> 8u) & 255u;
     if (debugView == 1u) color = directDiffuse;
     else if (debugView == 2u) color = directSpecular;
-    else if (debugView == 3u) color = base.rgb * max(rmse.w, 0.0);
+    else if (debugView == 3u) color = emittedRadiance;
     else if (debugView == 4u)
     {
         float linearDepth = -XR_ADV_TransformRowVector(vec4(surface.worldPosition, 1.0), view.view).z;
@@ -321,4 +374,6 @@ void main()
     imageStore(Velocity, XR_ADV_PIXEL(pixel, viewIndex), vec4(surface.motionNdc, 0.0, 0.0));
     imageStore(ReactiveMask, XR_ADV_PIXEL(pixel, viewIndex), vec4((surface.flags &
         (XR_ADV_SURFACE_REACTIVE | XR_ADV_SURFACE_MASKED_EDGE)) != 0u ? 1.0 : 0.0));
+    XR_ADV_StoreDdgiSurfaceInputs(pixel, viewIndex, emittedRadiance, base, N, roughness, metallic, rmse,
+        (material.eligibilityFlags & 16u) != 0u);
 }

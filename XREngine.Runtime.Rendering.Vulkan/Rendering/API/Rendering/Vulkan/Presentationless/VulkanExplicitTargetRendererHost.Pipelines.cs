@@ -8,4 +8,8 @@ public sealed unsafe partial class VulkanExplicitTargetRendererHost
         ObjectDisposedException.ThrowIf(_disposed, this);
         return _renderer.CapturePipelineCacheDiagnostic();
     }
+
+    /// <inheritdoc />
+    public object CapturePipelineCompilationDiagnostics()
+        => CapturePipelineCacheDiagnostic();
 }

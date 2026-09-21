@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Numerics;
 using System.Threading;
 using Silk.NET.Vulkan;
 using XREngine.Data.Colors;
@@ -315,8 +316,15 @@ internal sealed partial class VulkanFrameLoop
             for (int replanAttempt = 0; replanAttempt < recordingAttemptLimit; replanAttempt++)
             {
                 nativeBarrierBindingsSuperseded = false;
+                // Every target in this recording attempt shares one root. A retry
+                // intentionally recaptures so a superseded native binding can use
+                // the replacement planner generation coherently.
+                ResourcePlannerRuntimeGeneration? targetPreparationGeneration =
+                    acceptedPlan is null
+                        ? _framePlanner.GetPublishedResourcePlannerGeneration()
+                        : null;
                 ResourcePlannerRuntimeState plannerState = acceptedPlan is null
-                    ? CaptureResourcePlannerRuntimeState()
+                    ? targetPreparationGeneration!.State
                     : acceptedPlan.PlannerState;
                 planningSnapshot = acceptedPlan is null
                     ? new VulkanFramePlanningSnapshot(
@@ -345,14 +353,17 @@ internal sealed partial class VulkanFrameLoop
                 }
                 if (acceptedPlan is null &&
                     (!TryPrepareFrameOperationTargets(
+                        targetPreparationGeneration!,
                         staticOperations,
                         allowSynchronousResourceUploads,
                         out string targetPreparationFailure) ||
                     !TryPrepareFrameOperationTargets(
+                        targetPreparationGeneration!,
                         dynamicUiOperations,
                         allowSynchronousResourceUploads,
                         out targetPreparationFailure) ||
                     !TryPreparePreparedMeshIngressTargets(
+                        targetPreparationGeneration!,
                         preparedMeshIngress,
                         allowSynchronousResourceUploads,
                         out targetPreparationFailure)))
@@ -468,6 +479,8 @@ internal sealed partial class VulkanFrameLoop
                     return CreateDesktopRecordingReadinessFailure(ref attempt, "The accepted plan has no frozen physical-resource generation.");
                 FrameOperationSequence preparedOperations =
                     framePlan.GetNativeStaticOperationsForRecording();
+                SelectWindowPresentationSourceFromAcceptedOperations(
+                    preparedOperations);
                 if (!TryPrepareReadOnlyStorage(
                         framePlan,
                         CurrentFrameSlot,
@@ -658,20 +671,33 @@ internal sealed partial class VulkanFrameLoop
     /// must not be the first consumers to request their backend identity.
     /// </summary>
     private bool TryPrepareFrameOperationTargets(
+        ResourcePlannerRuntimeGeneration plannerGeneration,
         FrameOp[] operations,
         bool allowSynchronousResourceUploads,
         out string reason)
     {
         for (int index = 0; index < operations.Length; index++)
         {
-            XRFrameBuffer? target = operations[index].Target;
-            if (target is null)
-                continue;
-            if (!TryPrepareFrameOperationTarget(
+            FrameOp operation = operations[index];
+            XRFrameBuffer? target = operation.Target;
+            uint viewMask = 0;
+            if (target is not null)
+            {
+                if (!TryPrepareFrameOperationTarget(
                     target,
+                    operation.Context,
+                    plannerGeneration,
                     allowSynchronousResourceUploads,
+                    out VulkanRecordedRenderTargetSnapshot targetSnapshot,
                     out reason))
+                    return false;
+                viewMask = targetSnapshot.ViewMask;
+            }
+            if (operation is MeshDrawOp mesh && !TryValidatePreparedMeshTargetTopology(
+                    mesh.Context, mesh.PassIndex, mesh.DrawRef, target, viewMask, out reason))
+            {
                 return false;
+            }
         }
 
         reason = string.Empty;
@@ -679,20 +705,47 @@ internal sealed partial class VulkanFrameLoop
     }
 
     private bool TryPreparePreparedMeshIngressTargets(
+        ResourcePlannerRuntimeGeneration plannerGeneration,
         VulkanPreparedMeshIngress ingress,
         bool allowSynchronousResourceUploads,
         out string reason)
     {
         for (int index = 0; index < ingress.Count; index++)
         {
-            XRFrameBuffer? target = ingress.GetEntry(index).Target;
+            ref readonly VulkanPreparedMeshIngressEntry entry = ref ingress.GetEntry(index);
+            XRFrameBuffer? target = entry.Target;
             if (target is null)
+            {
+                if (!TryValidatePreparedMeshTargetTopology(
+                        entry.Context,
+                        entry.PassIndex,
+                        entry.Draw,
+                        target,
+                        viewMask: 0u,
+                        out reason))
+                {
+                    return false;
+                }
                 continue;
+            }
             if (!TryPrepareFrameOperationTarget(
                     target,
+                    entry.Context,
+                    plannerGeneration,
                     allowSynchronousResourceUploads,
+                    out VulkanRecordedRenderTargetSnapshot targetSnapshot,
                     out reason))
                 return false;
+            if (!TryValidatePreparedMeshTargetTopology(
+                    entry.Context,
+                    entry.PassIndex,
+                    entry.Draw,
+                    target,
+                    targetSnapshot.ViewMask,
+                    out reason))
+            {
+                return false;
+            }
         }
 
         reason = string.Empty;
@@ -701,9 +754,39 @@ internal sealed partial class VulkanFrameLoop
 
     private bool TryPrepareFrameOperationTarget(
         XRFrameBuffer target,
+        in FrameOpContext context,
+        ResourcePlannerRuntimeGeneration plannerGeneration,
         bool allowSynchronousResourceUploads,
+        out VulkanRecordedRenderTargetSnapshot targetSnapshot,
         out string reason)
     {
+        targetSnapshot = default;
+        if (!_resourcePlannerSessions.TryEnterQueuedMeshPlannerGeneration(
+                plannerGeneration,
+                context,
+                out VulkanPreparedResourcePlannerThreadScope plannerScope,
+                out reason))
+        {
+            return false;
+        }
+
+        using (plannerScope)
+        {
+            return TryPrepareFrameOperationTargetCore(
+                target,
+                allowSynchronousResourceUploads,
+                out targetSnapshot,
+                out reason);
+        }
+    }
+
+    private bool TryPrepareFrameOperationTargetCore(
+        XRFrameBuffer target,
+        bool allowSynchronousResourceUploads,
+        out VulkanRecordedRenderTargetSnapshot targetSnapshot,
+        out string reason)
+    {
+        targetSnapshot = default;
         VkFrameBuffer? wrapper =
             _resourceRuntime.CreateAPIRenderObject(target) as VkFrameBuffer;
         if (wrapper is null)
@@ -757,8 +840,50 @@ internal sealed partial class VulkanFrameLoop
             return false;
         }
 
+        if (!wrapper.TryCaptureRecordedRenderTargetSnapshot(out targetSnapshot))
+        {
+            reason =
+                $"Vulkan framebuffer target '{target.GetDescribingName()}' did not publish a native attachment snapshot after preparation.";
+            return false;
+        }
+
         reason = string.Empty;
         return true;
+    }
+
+    private static bool TryValidatePreparedMeshTargetTopology(
+        in FrameOpContext context,
+        int passIndex,
+        in PendingMeshDraw draw,
+        XRFrameBuffer? target,
+        uint viewMask,
+        out string reason)
+    {
+        if (target is null)
+        {
+            if (context.OutputFrameBuffer is { } authoredOutput)
+            {
+                reason = $"Prepared mesh lost its authored output framebuffer binding: " +
+                    $"pass={passIndex}; output='{authoredOutput.Name ?? "<unnamed>"}'.";
+                return false;
+            }
+            viewMask = context.OutputSchedulingRequest.IsDefined
+                ? context.OutputSchedulingRequest.Target.ViewMask
+                : 0u;
+        }
+        bool targetIsMultiview = BitOperations.PopCount(viewMask) > 1;
+        if (context.MultiviewEnabled == targetIsMultiview)
+        {
+            reason = string.Empty;
+            return true;
+        }
+
+        reason =
+            $"Prepared mesh target topology mismatch: renderer='{draw.Renderer.MeshRenderer.Name ?? "<unnamed>"}'; " +
+            $"pass={passIndex}; target='{target?.GetDescribingName() ?? "<null>"}'; " +
+            $"pipeline={context.PipelineIdentity}; viewport={context.ViewportIdentity}; " +
+            $"contextMultiview={context.MultiviewEnabled}; targetViewMask=0x{viewMask:X}.";
+        return false;
     }
 
     /// <summary>
@@ -868,8 +993,12 @@ internal sealed partial class VulkanFrameLoop
         int startRequestIndex = requireCompleteCohort
             ? 0
             : _meshOperationPreparationCursor % requestCount;
-        ResourcePlannerRuntimeState plannerState =
-            PublishedResourcePlannerRuntimeState;
+        // One queue cohort must use one immutable planner publication. A later
+        // resource commit may be valid for the next frame, but mixing it into
+        // this cohort can resolve a stereo request through a mono allocator.
+        ResourcePlannerRuntimeGeneration plannerGeneration =
+            _framePlanner.GetPublishedResourcePlannerGeneration();
+        ResourcePlannerRuntimeState plannerState = plannerGeneration.State;
         FrameOpContext? activeFrameOpContext =
             plannerState.LastActiveFrameOpContext;
         int descriptorViewFamilyIdentity =
@@ -879,6 +1008,7 @@ internal sealed partial class VulkanFrameLoop
                     ? activeContext.OutputTargetIdentity
                     : activeContext.ViewportIdentity;
         VulkanMeshMaterializationSnapshot materializationSnapshot = new(
+            plannerGeneration,
             activeFrameOpContext,
             descriptorViewFamilyIdentity,
             _resourceRuntime.ShouldAvoidSynchronousImageAllocationForOpenXr(
@@ -1015,6 +1145,7 @@ internal sealed partial class VulkanFrameLoop
                     : Stopwatch.GetTimestamp();
                 bool materialized;
                 VulkanMeshOperationRequest operationRequest;
+                string plannerGenerationDetail;
                 do
                 {
                     materialized = TryMaterializeQueuedMeshRenderRequest(
@@ -1022,7 +1153,8 @@ internal sealed partial class VulkanFrameLoop
                         pipeline,
                         in materializationSnapshot,
                         prewarmDescriptorAllocation: !previouslyMaterialized,
-                        out operationRequest);
+                        out operationRequest,
+                        out plannerGenerationDetail);
                     if (materialized || !foregroundRequired)
                         break;
 
@@ -1035,7 +1167,7 @@ internal sealed partial class VulkanFrameLoop
                             $"PresentNow mesh readiness watchdog expired for frame={sourceFrameId} " +
                             $"request={requestIndex}/{requestCount} " +
                             $"mesh='{request.Renderer.Mesh?.Name ?? "<unnamed>"}' " +
-                            $"detail='{request.Renderer.LastPrepareDetail}'.";
+                            $"detail='{(string.IsNullOrEmpty(plannerGenerationDetail) ? request.Renderer.LastPrepareDetail : plannerGenerationDetail)}'.";
                         break;
                     }
 
@@ -1057,6 +1189,8 @@ internal sealed partial class VulkanFrameLoop
                     cohortMaterializationComplete = false;
                     if (resumeRequestIndex < 0)
                         resumeRequestIndex = requestIndex;
+                    if (deferredReason.Length == 0 && !string.IsNullOrEmpty(plannerGenerationDetail))
+                        deferredReason = plannerGenerationDetail;
                     if (foregroundRequired &&
                         HasMeshReadinessExpired(
                             trackPresentNowProgress,
@@ -1426,6 +1560,7 @@ internal sealed partial class VulkanFrameLoop
                         _meshOperationWarmPreparationSignatures.Contains(
                             request.PreparationCompatibilitySignature);
                     bool holeMaterialized;
+                    string plannerGenerationDetail;
                     using (VulkanCpuStageScope holeMaterializationStage = new(
                                _telemetry,
                                EVulkanCpuStage.PreparedMeshHoleMaterialization))
@@ -1435,12 +1570,15 @@ internal sealed partial class VulkanFrameLoop
                             pipeline,
                             in materializationSnapshot,
                             prewarmDescriptorAllocation: !previouslyMaterialized,
-                            out operation);
+                            out operation,
+                            out plannerGenerationDetail);
                     }
                     if (!holeMaterialized)
                     {
                         _preparedMeshOperationCohort.Invalidate();
-                        deferredReason = "Prepared mesh-operation cohort legacy hole could not be materialized.";
+                        deferredReason = string.IsNullOrEmpty(plannerGenerationDetail)
+                            ? "Prepared mesh-operation cohort legacy hole could not be materialized."
+                            : plannerGenerationDetail;
                         return false;
                     }
 
@@ -1811,7 +1949,8 @@ internal sealed partial class VulkanFrameLoop
         XRRenderPipelineInstance pipeline,
         in VulkanMeshMaterializationSnapshot materializationSnapshot,
         bool prewarmDescriptorAllocation,
-        out VulkanMeshOperationRequest operationRequest)
+        out VulkanMeshOperationRequest operationRequest,
+        out string plannerGenerationDetail)
     {
         FrameOpContext requestContext = request.Context;
         VulkanMeshProducerSnapshot producer = request.Producer;
@@ -1825,12 +1964,25 @@ internal sealed partial class VulkanFrameLoop
                 ActiveFrameOpContext = requestContext,
                 DescriptorViewFamilyIdentity = descriptorViewFamilyIdentity,
             };
-        return request.Renderer.TryMaterializeQueuedRenderRequest(
-            in request,
-            in producer,
-            in requestMaterializationSnapshot,
-            prewarmDescriptorAllocation,
-            out operationRequest);
+        if (!_resourcePlannerSessions.TryEnterQueuedMeshPlannerGeneration(
+                materializationSnapshot.PlannerGeneration,
+                requestContext,
+                out VulkanPreparedResourcePlannerThreadScope plannerScope,
+                out plannerGenerationDetail))
+        {
+            operationRequest = default;
+            return false;
+        }
+
+        using (plannerScope)
+        {
+            return request.Renderer.TryMaterializeQueuedRenderRequest(
+                in request,
+                in producer,
+                in requestMaterializationSnapshot,
+                prewarmDescriptorAllocation,
+                out operationRequest);
+        }
     }
 
     private static bool IsQueuedDynamicUiOverlayRequest(

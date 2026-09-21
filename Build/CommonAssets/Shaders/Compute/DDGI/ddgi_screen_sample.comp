@@ -1,0 +1,125 @@
+#version 450
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+#pragma snippet "DDGISampling"
+#pragma snippet "NormalEncoding"
+#pragma snippet "DepthUtils"
+#pragma snippet "PBRFunctions"
+#pragma snippet "DDGIBindings"
+
+layout(XR_DDGI_SAMPLER_BINDING(0)) uniform sampler2D gDepth;
+layout(XR_DDGI_SAMPLER_BINDING(1)) uniform sampler2D gNormal;
+layout(XR_DDGI_SAMPLER_BINDING(2)) uniform sampler2D gAlbedo;
+layout(XR_DDGI_SAMPLER_BINDING(5)) uniform sampler2D uAOTexture;
+layout(XR_DDGI_SAMPLER_BINDING(6)) uniform sampler2D gRMSE;
+
+layout(rgba16f, XR_DDGI_IMAGE_BINDING(0)) uniform writeonly image2D uDDGITexture;
+
+uniform mat4 invProjMatrix;
+uniform mat4 cameraToWorldMatrix;
+uniform vec3 cameraPos;
+uniform ivec2 resolution;
+uniform int uDebugMode;
+uniform bool uUseAO = false;
+
+void main()
+{
+    ivec2 pixelCoord = ivec2(gl_GlobalInvocationID.xy);
+    if (pixelCoord.x >= resolution.x || pixelCoord.y >= resolution.y)
+        return;
+
+    vec2 uv = (vec2(pixelCoord) + 0.5) / vec2(resolution);
+    float depth = textureLod(gDepth, uv, 0.0).r;
+
+    // Resolve reverse-Z before testing the canonical far-plane background.
+    if (XRENGINE_ResolveDepth(depth) >= 1.0 - 1e-6)
+    {
+        imageStore(uDDGITexture, pixelCoord, vec4(0.0));
+        return;
+    }
+
+    vec3 normal = XRENGINE_ReadNormal(gNormal, uv);
+    if (dot(normal, normal) < 1e-4)
+    {
+        imageStore(uDDGITexture, pixelCoord, vec4(0.0));
+        return;
+    }
+    normal = normalize(normal);
+
+    // The inverse projection already contains the camera's depth convention.
+    vec3 worldPos = XRENGINE_WorldPosFromDepthRaw(depth, uv, invProjMatrix, cameraToWorldMatrix);
+
+    vec3 viewDir = normalize(cameraPos - worldPos);
+    vec4 albedo = textureLod(gAlbedo, uv, 0.0);
+    vec4 rmse = textureLod(gRMSE, uv, 0.0);
+
+    // Debug Mode 2: Probe Neighborhood grid cell visualization
+    if (uDebugMode == 2)
+    {
+        vec3 spacing = max(uProbeSpacing, vec3(0.001));
+        vec3 gridCoord = (worldPos - uGridMin) / spacing;
+        vec3 probeFrac = clamp(fract(gridCoord), 0.0, 1.0);
+        imageStore(uDDGITexture, pixelCoord, vec4(probeFrac, 1.0));
+        return;
+    }
+
+    // Debug Mode 3: Cascade Coverage visualization (Green = Cascade 0, Amber = Cascade 1, Blue = Cascade 2)
+    if (uDebugMode == 3)
+    {
+        vec3 cascadeColors[4] = vec3[4](
+            vec3(0.1, 0.9, 0.2),   // Cascade 0: Vibrant Green
+            vec3(0.95, 0.7, 0.1),  // Cascade 1: Warm Amber
+            vec3(0.15, 0.5, 0.95), // Cascade 2: Cool Blue
+            vec3(0.8, 0.2, 0.8)    // Cascade 3: Magenta
+        );
+
+        vec3 debugColor = vec3(0.15); // Dark grey if out of bounds
+        float blendMargin = clamp(uCascadeBlendMargin, 0.01, 0.5);
+        float blendStart = 1.0 - blendMargin;
+
+        for (int k = 0; k < uCascadeCount; ++k)
+        {
+            bvec3 hasExtent = greaterThan(uCascadeProbeCounts[k], ivec3(1));
+            vec3 axisExtent = vec3(hasExtent.x ? 1.0 : 0.0, hasExtent.y ? 1.0 : 0.0, hasExtent.z ? 1.0 : 0.0);
+            vec3 center = uCascadeGridMin[k] + uCascadeHalfExtents[k] * axisExtent;
+            vec3 normDist = abs(worldPos - center) / max(uCascadeHalfExtents[k], vec3(1e-4));
+            float maxDist = max(normDist.x, max(normDist.y, normDist.z));
+
+            if (maxDist <= 1.0)
+            {
+                if (maxDist > blendStart && k < uCascadeCount - 1)
+                {
+                    float alpha = smoothstep(blendStart, 1.0, maxDist);
+                    debugColor = mix(cascadeColors[k], cascadeColors[k + 1], alpha);
+                }
+                else
+                {
+                    debugColor = cascadeColors[k];
+                }
+                break;
+            }
+        }
+
+        imageStore(uDDGITexture, pixelCoord, vec4(debugColor, 1.0));
+        return;
+    }
+
+    // Sample irradiance from DDGI volume with normal and view bias
+    vec3 irradiance = sampleDDGI(worldPos, normal, viewDir);
+    float roughness = rmse.x;
+    float metallic = rmse.y;
+    float specularIntensity = rmse.z;
+    float NoV = max(dot(normal, viewDir), 0.0);
+    vec3 F0 = mix(vec3(0.04), albedo.rgb, metallic);
+    vec3 kS = XRENGINE_F_SchlickRoughnessFast(NoV, F0, roughness) * specularIntensity;
+    vec3 kD = (vec3(1.0) - kS) * (1.0 - metallic);
+    float ao = 1.0;
+    if (uUseAO)
+    {
+        ao = textureLod(uAOTexture, uv, 0.0).r;
+    }
+    vec3 diffuseGI = irradiance * albedo.rgb * kD * ao;
+
+    imageStore(uDDGITexture, pixelCoord, vec4(diffuseGI, 1.0));
+}

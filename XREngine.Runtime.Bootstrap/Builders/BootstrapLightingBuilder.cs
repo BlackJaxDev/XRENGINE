@@ -48,6 +48,27 @@ public static partial class BootstrapLightingBuilder
         }
     }
 
+    public static DDGIVolumeComponent? AddConfiguredDDGIVolume(SceneNode rootNode)
+    {
+        var settings = RuntimeBootstrapState.Settings;
+        if (!settings.InitializeDDGIVolume && settings.GlobalIlluminationMode != EGlobalIlluminationMode.DDGI)
+            return null;
+
+        var ddgiNode = new SceneNode("DDGIVolume");
+        var ddgiVolume = ddgiNode.AddComponent<DDGIVolumeComponent>()!;
+        ddgiVolume.Name = "DDGIVolume";
+        ddgiVolume.HalfExtents = ToVector3(settings.DDGIVolumeHalfExtents);
+        ddgiVolume.ProbeCounts = new IVector3(
+            Math.Max(1, settings.DDGIVolumeProbeCounts.X),
+            Math.Max(1, settings.DDGIVolumeProbeCounts.Y),
+            Math.Max(1, settings.DDGIVolumeProbeCounts.Z));
+        ddgiVolume.RaysPerProbe = settings.DDGIRaysPerProbe;
+        ddgiVolume.DebugDrawProbes = settings.DDGIDebugDrawProbes;
+        // Parent once, after configuring the component, so activation sees the final volume settings.
+        ddgiNode.Transform.Parent = rootNode.Transform;
+        return ddgiVolume;
+    }
+
     public static LightProbeGridSpawnerComponent AddInteractiveLightProbeGrid(SceneNode rootNode, int widthCount, int heightCount, int depthCount, Vector3 spacing, Vector3 center, bool usePlacementBoundsModels, LightProbeCaptureMode? captureModeOverride = null)
     {
         var settings = RuntimeBootstrapState.Settings;

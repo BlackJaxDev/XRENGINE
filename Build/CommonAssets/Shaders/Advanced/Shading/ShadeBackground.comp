@@ -1,5 +1,6 @@
 #version 450
 #include "AdvancedShadingInterface.glslinc"
+#pragma snippet "NormalEncoding"
 layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 #if defined(XR_ADV_VISIBILITY_ARRAY)
 XR_ADV_SHADING_LAYOUT(0) uniform usampler2DArray VisibilityIdentity;
@@ -7,6 +8,10 @@ XR_ADV_SHADING_IMAGE(rgba16f, 15) writeonly uniform image2DArray HDRSceneColor;
 XR_ADV_SHADING_IMAGE(rg16f, 16) writeonly uniform image2DArray Velocity;
 XR_ADV_SHADING_IMAGE(r8, 17) writeonly uniform image2DArray ReactiveMask;
 XR_ADV_SHADING_IMAGE(r32ui, 18) writeonly uniform uimage2DArray ShadingDiagnostics;
+XR_ADV_SHADING_IMAGE(rgba16f, 51) writeonly uniform image2DArray EmissionColor;
+XR_ADV_SHADING_IMAGE(rgba16f, 52) writeonly uniform image2DArray AlbedoOpacity;
+XR_ADV_SHADING_IMAGE(rgba16f, 53) writeonly uniform image2DArray Normal;
+XR_ADV_SHADING_IMAGE(rgba16f, 54) writeonly uniform image2DArray RMSE;
 #define XR_ADV_PIXEL(pixel) ivec3(pixel, u_Push.viewIndex)
 #else
 XR_ADV_SHADING_LAYOUT(0) uniform usampler2D VisibilityIdentity;
@@ -14,6 +19,10 @@ XR_ADV_SHADING_IMAGE(rgba16f, 15) writeonly uniform image2D HDRSceneColor;
 XR_ADV_SHADING_IMAGE(rg16f, 16) writeonly uniform image2D Velocity;
 XR_ADV_SHADING_IMAGE(r8, 17) writeonly uniform image2D ReactiveMask;
 XR_ADV_SHADING_IMAGE(r32ui, 18) writeonly uniform uimage2D ShadingDiagnostics;
+XR_ADV_SHADING_IMAGE(rgba16f, 51) writeonly uniform image2D EmissionColor;
+XR_ADV_SHADING_IMAGE(rgba16f, 52) writeonly uniform image2D AlbedoOpacity;
+XR_ADV_SHADING_IMAGE(rgba16f, 53) writeonly uniform image2D Normal;
+XR_ADV_SHADING_IMAGE(rgba16f, 54) writeonly uniform image2D RMSE;
 #define XR_ADV_PIXEL(pixel) ivec2(pixel)
 #endif
 void main()
@@ -28,4 +37,11 @@ void main()
     imageStore(ShadingDiagnostics, XR_ADV_PIXEL(pixel), uvec4(background ? 255u << 8u : 1u << 16u));
     imageStore(Velocity, XR_ADV_PIXEL(pixel), vec4(0.0));
     imageStore(ReactiveMask, XR_ADV_PIXEL(pixel), vec4(background ? 0.0 : 1.0));
+    if ((u_Push.flags & 16u) != 0u)
+    {
+        imageStore(EmissionColor, XR_ADV_PIXEL(pixel), vec4(0.0));
+        imageStore(AlbedoOpacity, XR_ADV_PIXEL(pixel), vec4(0.0));
+        imageStore(Normal, XR_ADV_PIXEL(pixel), vec4(XRENGINE_EncodeNormal(vec3(0.0, 0.0, 1.0)), 0.0, 1.0));
+        imageStore(RMSE, XR_ADV_PIXEL(pixel), vec4(1.0, 0.0, 0.0, 0.0));
+    }
 }

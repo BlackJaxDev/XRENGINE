@@ -1425,7 +1425,9 @@ internal static class NativeFbxSceneImporter
         material.SetFloat("Opacity", opacity);
         material.SetFloat("Roughness", roughness);
         material.SetFloat("Metallic", metallic);
-        material.SetFloat("Emission", emissive.LengthSquared() > 0.0f ? 1.0f : 0.0f);
+        material.EmissiveColor = emissive;
+        material.EmissionStrength = 1.0f;
+        material.SetFloat("Emission", Math.Max(emissive.X, Math.Max(emissive.Y, emissive.Z)));
     }
 
     private static bool ShouldUseTransparentBlend(FbxSceneObject? materialObject)

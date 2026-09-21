@@ -552,12 +552,16 @@ internal sealed class FramePlanBuilder
         for (int keyIndex = 0; keyIndex < keyCount; keyIndex++)
         {
             VulkanFrameOpPlannerStateKey key = slot.StaticPlannerContextKeys[keyIndex];
-            if (!authority.TryResolve(key, keyCount, out VulkanRenderGraphPlan plan))
+            if (!authority.TryResolve(
+                    key,
+                    keyCount,
+                    out VulkanRenderGraphPlan plan,
+                    out string failureReason))
             {
                 throw new VulkanPlanPreconditionException(
                     $"Frame plan has no frozen render-graph publication for context " +
                     $"kind={key.ContextKind} pipe={key.PipelineIdentity} viewport={key.ViewportIdentity} " +
-                    $"resourceGeneration={key.ResourceGeneration}. " +
+                    $"resourceGeneration={key.ResourceGeneration}. Reason={failureReason} " +
                     DescribeMissingPlannerPublication(slot, in key, in authority));
             }
 

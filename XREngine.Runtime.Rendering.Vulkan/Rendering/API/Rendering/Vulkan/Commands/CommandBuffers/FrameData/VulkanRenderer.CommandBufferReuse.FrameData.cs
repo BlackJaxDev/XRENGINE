@@ -776,26 +776,64 @@ namespace XREngine.Rendering.Vulkan
                         request.Kind is
                             (EVulkanReusableFrameDataRefreshKind.Mesh or
                              EVulkanReusableFrameDataRefreshKind.IndirectMesh) &&
-                        request.MeshRenderer is { } planOwnedMeshRenderer &&
-                        planOwnedMeshRenderer
-                            .SupportsOwnerOnlyReusableFrameDataRefresh(
-                                request.Draw,
-                                allowPlanOwnedFrameSourceSamplers: true))
+                        request.MeshRenderer is { } planOwnedMeshRenderer)
                     {
-                        // Cached secondary authority includes the exact frame
-                        // resource plan and descriptor publication identities.
-                        // A resize/replan invalidates that authority, so stable
-                        // post-process sources do not need a second per-draw
-                        // descriptor fingerprint walk on every reuse frame.
-                        continue;
+                        bool requiresFrameSourceRefresh =
+                            planOwnedMeshRenderer.RequiresPerDrawFrameSourceDescriptorRefresh(request.Draw);
+                        bool supportsOwnerOnlyRefresh = !requiresFrameSourceRefresh &&
+                            planOwnedMeshRenderer
+                                .SupportsOwnerOnlyReusableFrameDataRefresh(
+                                    request.Draw,
+                                    allowPlanOwnedFrameSourceSamplers: true);
+                        if (supportsOwnerOnlyRefresh)
+                        {
+                            if (VulkanMeshRenderingConventions.DescriptorTraceEnabled &&
+                                request.Draw.WindowPresentationSourceMarker.HasSource)
+                            {
+                                Debug.VulkanEvery(
+                                    $"Vulkan.FinalPresentation.Reuse.Skip.{GetHashCode()}.{request.SourceOpIndex}",
+                                    TimeSpan.FromSeconds(1),
+                                    "[VulkanDescriptor] final presentation reuse skipped fallback op={0}/{1} image={2} requiresFrameSourceRefresh={3} ownerOnly={4}.",
+                                    request.SourceOpIndex, request.SourceOpCount, imageIndex,
+                                    requiresFrameSourceRefresh, supportsOwnerOnlyRefresh);
+                            }
+
+                            // Cached secondary authority includes the exact frame
+                            // resource plan and descriptor publication identities.
+                            // Mutable frame-source samplers are excluded: each active
+                            // slot must visit the fallback refresh so final-presentation
+                            // descriptor observation follows its physical source image.
+                            continue;
+                        }
+
+                        if (VulkanMeshRenderingConventions.DescriptorTraceEnabled &&
+                            request.Draw.WindowPresentationSourceMarker.HasSource)
+                        {
+                            Debug.VulkanEvery(
+                                $"Vulkan.FinalPresentation.Reuse.Invoke.{GetHashCode()}.{request.SourceOpIndex}",
+                                TimeSpan.FromSeconds(1),
+                                "[VulkanDescriptor] final presentation reuse invokes fallback op={0}/{1} image={2} requiresFrameSourceRefresh={3} ownerOnly={4}.",
+                                request.SourceOpIndex, request.SourceOpCount, imageIndex,
+                                requiresFrameSourceRefresh, supportsOwnerOnlyRefresh);
+                        }
                     }
 
-                    if (!TryRefreshReusableFallbackMeshRequest(
+                    bool fallbackRefreshed = TryRefreshReusableFallbackMeshRequest(
                             imageIndex,
                             request,
                             dynamicUi,
                             refreshMaterialUniforms,
-                            descriptorResourcesCapturedByFrameSignature))
+                            descriptorResourcesCapturedByFrameSignature);
+                    if (VulkanMeshRenderingConventions.DescriptorTraceEnabled &&
+                        request.Draw.WindowPresentationSourceMarker.HasSource)
+                    {
+                        Debug.VulkanEvery(
+                            $"Vulkan.FinalPresentation.Reuse.Result.{GetHashCode()}.{request.SourceOpIndex}.{fallbackRefreshed}",
+                            TimeSpan.FromSeconds(1),
+                            "[VulkanDescriptor] final presentation reuse fallback result op={0}/{1} image={2} refreshed={3}.",
+                            request.SourceOpIndex, request.SourceOpCount, imageIndex, fallbackRefreshed);
+                    }
+                    if (!fallbackRefreshed)
                     {
                         refreshState.Invalidate();
                         return false;

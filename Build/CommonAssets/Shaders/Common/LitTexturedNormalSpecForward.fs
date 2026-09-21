@@ -78,15 +78,15 @@ layout (location = 4) in vec2 FragUV0;
 
 vec3 getNormalFromMap()
 {
-    return XRENGINE_GetSurfaceDetailNormal(FragUV0, FragTan, FragBinorm, FragNorm);
+    return XRENGINE_GetSurfaceDetailNormal(FragUV0, FragPos, FragTan, FragBinorm, FragNorm);
 }
 
 void main()
 {
+    vec3 normal = getNormalFromMap();
 #ifndef XRENGINE_DEPTH_NORMAL_PREPASS
     XRENGINE_BeginForwardFragmentOutput();
 #endif
-    vec3 normal = getNormalFromMap();
 
 #ifdef XRENGINE_DEPTH_NORMAL_PREPASS
     Normal = XRENGINE_EncodeNormal(normal);

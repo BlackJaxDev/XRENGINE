@@ -13,6 +13,20 @@ namespace XREngine.Rendering.OpenGL
     {
         public partial class GLRenderProgram
         {
+            private static readonly GLEnum[] IntegerUploadTypes =
+            [
+                GLEnum.Int, GLEnum.Bool, GLEnum.Sampler2D, GLEnum.Sampler3D, GLEnum.SamplerCube,
+                GLEnum.Sampler2DShadow, GLEnum.Sampler2DArray, GLEnum.SamplerCubeShadow, GLEnum.IntSampler2D, GLEnum.IntSampler3D,
+                GLEnum.UnsignedIntSampler2D, GLEnum.UnsignedIntSampler3D, GLEnum.Sampler2DRect, GLEnum.Sampler2DRectShadow,
+                GLEnum.Sampler1D, GLEnum.Sampler1DShadow, GLEnum.Sampler1DArray, GLEnum.Sampler1DArrayShadow, GLEnum.Sampler2DArrayShadow,
+                GLEnum.SamplerBuffer, GLEnum.Sampler2DMultisample, GLEnum.Sampler2DMultisampleArray, GLEnum.IntSampler2DArray,
+                GLEnum.Image2D, GLEnum.Image3D, GLEnum.ImageCube, GLEnum.Image2DArray,
+            ];
+            private static readonly GLEnum[] BooleanUploadTypes = [GLEnum.Bool, GLEnum.Int];
+            private static readonly GLEnum[] BooleanVector2UploadTypes = [GLEnum.BoolVec2, GLEnum.IntVec2];
+            private static readonly GLEnum[] BooleanVector3UploadTypes = [GLEnum.BoolVec3, GLEnum.IntVec3];
+            private static readonly GLEnum[] BooleanVector4UploadTypes = [GLEnum.BoolVec4, GLEnum.IntVec4];
+
             private void CacheActiveUniforms()
             {
                 if (!IsLinked)
@@ -505,7 +519,10 @@ namespace XREngine.Rendering.OpenGL
                 && _engineUniformClipSpaceYDirection == clipSpaceYDirection
                 && _engineUniformClipDepthRange == clipDepthRange;
 
-            private bool ValidateUniformType(int location, params GLEnum[] expectedTypes)
+            private bool ValidateUniformType(int location, GLEnum expectedType)
+                => ValidateUniformType(location, new ReadOnlySpan<GLEnum>(in expectedType));
+
+            private bool ValidateUniformType(int location, ReadOnlySpan<GLEnum> expectedTypes)
             {
                 if (location < 0)
                     return false;
@@ -522,7 +539,7 @@ namespace XREngine.Rendering.OpenGL
                     string key = $"location:{location}";
                     if (_loggedUniformMismatches.TryAdd(key, 0))
                     {
-                        string expectedDesc = string.Join(", ", expectedTypes);
+                        string expectedDesc = FormatExpectedTypes(expectedTypes);
                         string programName = Data?.Name ?? BindingId.ToString();
                         Debug.OpenGLWarning($"Uniform location {location} in program '{programName}' has no reflected active uniform while receiving upload for {expectedDesc}. Skipping to avoid GL_INVALID_OPERATION.");
                     }
@@ -530,7 +547,10 @@ namespace XREngine.Rendering.OpenGL
                 return false;
             }
 
-            private bool ValidateUniformArrayType(int location, int uploadCount, params GLEnum[] expectedTypes)
+            private bool ValidateUniformArrayType(int location, int uploadCount, GLEnum expectedType)
+                => ValidateUniformArrayType(location, uploadCount, new ReadOnlySpan<GLEnum>(in expectedType));
+
+            private bool ValidateUniformArrayType(int location, int uploadCount, ReadOnlySpan<GLEnum> expectedTypes)
             {
                 if (!ValidateUniformType(location, expectedTypes))
                     return false;
@@ -549,7 +569,7 @@ namespace XREngine.Rendering.OpenGL
                     ValidateUniformArrayLength(name, location, uploadCount);
             }
 
-            private bool ValidateUniformType(string name, int? location, params GLEnum[] expectedTypes)
+            private bool ValidateUniformType(string name, int? location, ReadOnlySpan<GLEnum> expectedTypes)
             {
                 if (location.HasValue &&
                     RenderDiagnosticsFlags.GLDebug &&
@@ -568,7 +588,7 @@ namespace XREngine.Rendering.OpenGL
                             string key = $"metadata:{name}";
                             if (_loggedUniformMismatches.TryAdd(key, 0))
                             {
-                                string expectedDesc = string.Join(", ", expectedTypes);
+                                string expectedDesc = FormatExpectedTypes(expectedTypes);
                                 string locDesc = location.HasValue ? location.Value.ToString() : "unknown";
                                 string programName = Data?.Name ?? BindingId.ToString();
                                 Debug.OpenGLWarning($"Uniform '{name}' (location {locDesc}) in program '{programName}' has no reflected active uniform metadata while receiving upload for {expectedDesc}. Skipping to avoid GL_INVALID_OPERATION.");
@@ -584,12 +604,29 @@ namespace XREngine.Rendering.OpenGL
 
                 if (_loggedUniformMismatches.TryAdd(name, 0))
                 {
-                    string expectedDesc = string.Join(", ", expectedTypes);
+                    string expectedDesc = FormatExpectedTypes(expectedTypes);
                     string locDesc = location.HasValue ? location.Value.ToString() : "unknown";
                     string programName = Data?.Name ?? BindingId.ToString();
                     Debug.LogWarning($"Uniform '{name}' (location {locDesc}) in program '{programName}' is declared as GL type {meta.Type} (size {meta.Size}) but received upload for {expectedDesc}. Skipping to avoid GL_INVALID_OPERATION.");
                 }
                 return false;
+            }
+
+            private static string FormatExpectedTypes(ReadOnlySpan<GLEnum> expectedTypes)
+            {
+                if (expectedTypes.Length == 0)
+                    return string.Empty;
+                if (expectedTypes.Length == 1)
+                    return expectedTypes[0].ToString();
+
+                var builder = new StringBuilder();
+                for (int i = 0; i < expectedTypes.Length; i++)
+                {
+                    if (i > 0)
+                        builder.Append(", ");
+                    builder.Append(expectedTypes[i]);
+                }
+                return builder.ToString();
             }
 
             private bool ValidateUniformArrayLength(string name, int location, int uploadCount)

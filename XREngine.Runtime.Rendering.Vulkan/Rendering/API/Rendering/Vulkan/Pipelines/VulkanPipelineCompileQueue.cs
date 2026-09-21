@@ -148,6 +148,13 @@ internal sealed unsafe partial class VulkanPipelineManager
                 rejectReason = "shader or pipeline-layout dependencies are being replaced";
                 return false;
             }
+            if (!request.Program.OwnsPipelineCompilationDependencies(
+                    request.PipelineLayout,
+                    request.ComputeStage))
+            {
+                rejectReason = "compute pipeline build request captured replaced program dependencies";
+                return false;
+            }
             if (_vulkanComputePipelineCompileJobs.ContainsKey(request.Key))
                 return true;
             VulkanPipelineCompileTask task = EnsureVulkanPipelineCompileTask();
@@ -174,6 +181,9 @@ internal sealed unsafe partial class VulkanPipelineManager
         out VulkanComputePipelineCompileResult result,
         out string reason)
     {
+        long waitStart = Stopwatch.GetTimestamp();
+        try
+        {
         Interlocked.Increment(ref _foregroundPipelineWaitCount);
         result = default;
         reason = string.Empty;
@@ -211,6 +221,13 @@ internal sealed unsafe partial class VulkanPipelineManager
 
         reason = result.ErrorMessage ?? "compute pipeline compilation failed";
         return false;
+        }
+        finally
+        {
+            long elapsedTicks = Stopwatch.GetTimestamp() - waitStart;
+            Interlocked.Add(ref _foregroundPipelineWaitTicks, elapsedTicks);
+            VulkanPipelineForegroundWaitObservationScope.RecordCurrent(elapsedTicks);
+        }
     }
 
     /// <summary>Waits for an admission-critical compile and publishes its result.</summary>
@@ -221,6 +238,9 @@ internal sealed unsafe partial class VulkanPipelineManager
         out string reason,
         out bool retryable)
     {
+        long waitStart = Stopwatch.GetTimestamp();
+        try
+        {
         Interlocked.Increment(ref _foregroundPipelineWaitCount);
         result = default;
         reason = string.Empty;
@@ -284,6 +304,13 @@ internal sealed unsafe partial class VulkanPipelineManager
         }
 
         return true;
+        }
+        finally
+        {
+            long elapsedTicks = Stopwatch.GetTimestamp() - waitStart;
+            Interlocked.Add(ref _foregroundPipelineWaitTicks, elapsedTicks);
+            VulkanPipelineForegroundWaitObservationScope.RecordCurrent(elapsedTicks);
+        }
     }
 
     internal bool TryEnqueueGraphicsPipelineCompile(
@@ -329,6 +356,21 @@ internal sealed unsafe partial class VulkanPipelineManager
                 Volatile.Read(ref _vulkanPipelineCompileDependencyGeneration))
             {
                 rejectReason = "pipeline build request captured a retired shader or pipeline-layout generation";
+                retryable = true;
+                return false;
+            }
+
+            if (!request.Program.OwnsPipelineCompilationDependencies(
+                    request.PipelineLayout,
+                    request.GraphicsStages) ||
+                !request.Program.OwnsPipelineCompilationDependencies(
+                    request.PipelineLayout,
+                    request.PreRasterStages) ||
+                !request.Program.OwnsPipelineCompilationDependencies(
+                    request.PipelineLayout,
+                    request.FragmentStages))
+            {
+                rejectReason = "graphics pipeline build request captured replaced program dependencies";
                 retryable = true;
                 return false;
             }
@@ -475,6 +517,13 @@ internal sealed unsafe partial class VulkanPipelineManager
         long start = Stopwatch.GetTimestamp();
         try
         {
+            if (!request.Program.OwnsPipelineCompilationDependencies(
+                    request.PipelineLayout,
+                    request.ComputeStage))
+            {
+                throw new VulkanPipelineCompilationDeferredException(
+                    "Compute pipeline request became stale before worker creation.");
+            }
             Pipeline pipeline = request.Program.CreateComputePipelineFromRequest(request, backgroundPipelineCache);
             double elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
             PublishBackgroundPipelineCache(elapsedMs);
@@ -622,7 +671,8 @@ internal sealed unsafe partial class VulkanPipelineManager
     }
 
     internal VulkanPipelineCompilationMutationLease AcquireCompilationMutationLease(
-        string reason)
+        string reason,
+        VulkanPipelineCompilationMutationScope scope)
     {
         Monitor.Enter(_vulkanPipelineCompileDependencyMutationLock);
         bool outermostMutation =
@@ -631,6 +681,14 @@ internal sealed unsafe partial class VulkanPipelineManager
         {
             if (outermostMutation)
             {
+                Interlocked.Increment(ref _dependencyMutationCount);
+                if (scope.IsDeviceWide)
+                    Interlocked.Increment(ref _globalDependencyInvalidationCount);
+                else
+                    Interlocked.Increment(ref _scopedDependencyMutationCount);
+                Volatile.Write(ref _lastMutationReason, reason);
+                Volatile.Write(ref _lastMutationScope, scope.Description);
+
                 VulkanGraphicsPipelineCompileJob[] jobs;
                 VulkanComputePipelineCompileJob[] computeJobs;
                 using (VulkanFrameLockScope.Enter(
@@ -640,31 +698,52 @@ internal sealed unsafe partial class VulkanPipelineManager
                     Volatile.Write(
                         ref _vulkanPipelineCompileDependencyMutationActive,
                         1);
-                    Interlocked.Increment(
-                        ref _vulkanPipelineCompileDependencyGeneration);
-                    _vulkanGraphicsPipelineCompletedResults.Clear();
-                    _vulkanGraphicsPipelinePermanentFailures.Clear();
-                    _vulkanComputePipelineCompletedResults.Clear();
-                    jobs = [.. _vulkanGraphicsPipelineCompileJobs.Values];
-                    computeJobs = [.. _vulkanComputePipelineCompileJobs.Values];
+                    if (scope.IsDeviceWide)
+                    {
+                        Interlocked.Increment(
+                            ref _vulkanPipelineCompileDependencyGeneration);
+                        _vulkanGraphicsPipelineCompletedResults.Clear();
+                        _vulkanGraphicsPipelinePermanentFailures.Clear();
+                        _vulkanComputePipelineCompletedResults.Clear();
+                    }
+                    jobs = [.. _vulkanGraphicsPipelineCompileJobs.Values
+                        .Where(job => scope.Matches(job.Request))];
+                    computeJobs = [.. _vulkanComputePipelineCompileJobs.Values
+                        .Where(job => scope.Matches(job.Request))];
                 }
+
+                HashSet<VkRenderProgram> affectedOwners = [];
+                if (scope.Program is not null)
+                    affectedOwners.Add(scope.Program);
+                foreach (VulkanGraphicsPipelineCompileJob job in jobs)
+                    affectedOwners.Add(job.Request.Program);
+                foreach (VulkanComputePipelineCompileJob job in computeJobs)
+                    affectedOwners.Add(job.Request.Program);
+                Volatile.Write(ref _lastMutationAffectedOwnerCount, affectedOwners.Count);
+                Interlocked.Add(ref _drainedGraphicsPipelineJobCount, jobs.Length);
+                Interlocked.Add(ref _drainedComputePipelineJobCount, computeJobs.Length);
 
                 DrainPipelineCompileJobs(jobs, reason);
                 DrainComputePipelineCompileJobs(computeJobs, reason);
+                if (!scope.IsDeviceWide)
+                    RemoveScopedCompletedPipelineResults(scope);
             }
 
             return new VulkanPipelineCompilationMutationLease(
                 this,
-                outermostMutation);
+                outermostMutation,
+                scope.IsDeviceWide);
         }
         catch
         {
-            ReleaseCompilationMutationLease(outermostMutation);
+            ReleaseCompilationMutationLease(outermostMutation, scope.IsDeviceWide);
             throw;
         }
     }
 
-    internal void ReleaseCompilationMutationLease(bool outermostMutation)
+    internal void ReleaseCompilationMutationLease(
+        bool outermostMutation,
+        bool deviceWide)
     {
         _vulkanPipelineCompileDependencyMutationDepth--;
         if (outermostMutation)
@@ -673,8 +752,9 @@ internal sealed unsafe partial class VulkanPipelineManager
                        _vulkanGraphicsPipelineCompileJobsLock,
                        EVulkanFrameWaitReason.PipelineCompilerLock))
             {
-                Interlocked.Increment(
-                    ref _vulkanPipelineCompileDependencyGeneration);
+                if (deviceWide)
+                    Interlocked.Increment(
+                        ref _vulkanPipelineCompileDependencyGeneration);
                 Volatile.Write(
                     ref _vulkanPipelineCompileDependencyMutationActive,
                     0);
@@ -720,6 +800,8 @@ internal sealed unsafe partial class VulkanPipelineManager
     {
         foreach (VulkanGraphicsPipelineCompileJob job in jobs)
         {
+            bool waitedForPublication = !job.Task.IsCompleted || !job.PublicationTask.IsCompleted;
+            long waitStart = waitedForPublication ? Stopwatch.GetTimestamp() : 0;
             try
             {
                 job.Task.Wait();
@@ -750,6 +832,86 @@ internal sealed unsafe partial class VulkanPipelineManager
                     ex.GetType().Name,
                     ex.Message);
             }
+            finally
+            {
+                if (waitedForPublication)
+                {
+                    Interlocked.Increment(ref _mutationPublicationWaitCount);
+                    Interlocked.Add(
+                        ref _mutationPublicationWaitTicks,
+                        Stopwatch.GetTimestamp() - waitStart);
+                }
+            }
+        }
+    }
+
+    private void RemoveScopedCompletedPipelineResults(
+        VulkanPipelineCompilationMutationScope scope)
+    {
+        List<Pipeline> staleComputePipelines = [];
+        HashSet<ulong> staleGraphicsPipelineHandles = [];
+        using (VulkanFrameLockScope.Enter(
+                   _vulkanGraphicsPipelineCompileJobsLock,
+                   EVulkanFrameWaitReason.PipelineCompilerLock))
+        {
+            VulkanGraphicsPipelineCompileCompletionKey[] graphicsKeys =
+                [.. _vulkanGraphicsPipelineCompletedResults
+                    .Where(pair => pair.Value.Owner is not null && scope.Matches(pair.Value.Owner))
+                    .Select(pair => pair.Key)];
+            foreach (VulkanGraphicsPipelineCompileCompletionKey key in graphicsKeys)
+            {
+                VulkanGraphicsPipelineCompileResult result =
+                    _vulkanGraphicsPipelineCompletedResults[key];
+                _vulkanGraphicsPipelineCompletedResults.Remove(key);
+                _vulkanGraphicsPipelinePermanentFailures.Remove(key);
+                Interlocked.Increment(ref _staleCompletionCount);
+                if (result.Pipeline.Handle != 0)
+                    staleGraphicsPipelineHandles.Add(result.Pipeline.Handle);
+            }
+
+            VulkanComputePipelineCompileKey[] computeKeys =
+                [.. _vulkanComputePipelineCompletedResults
+                    .Where(pair => pair.Value.Owner is not null && scope.Matches(pair.Value.Owner))
+                    .Select(pair => pair.Key)];
+            foreach (VulkanComputePipelineCompileKey key in computeKeys)
+            {
+                VulkanComputePipelineCompileResult result =
+                    _vulkanComputePipelineCompletedResults[key];
+                _vulkanComputePipelineCompletedResults.Remove(key);
+                Interlocked.Increment(ref _staleCompletionCount);
+                if (result.Pipeline.Handle != 0 &&
+                    result.Owner?.ComputePipeline.Handle != result.Pipeline.Handle)
+                {
+                    staleComputePipelines.Add(result.Pipeline);
+                }
+            }
+        }
+
+        if (staleGraphicsPipelineHandles.Count > 0)
+        {
+            HashSet<ulong> retiredHandles = [];
+            lock (_sharedGraphicsPipelineLock)
+            {
+                VulkanGraphicsPipelineKey[] staleKeys =
+                    [.. _sharedGraphicsPipelines
+                        .Where(pair => staleGraphicsPipelineHandles.Contains(pair.Value.Handle))
+                        .Select(pair => pair.Key)];
+                foreach (VulkanGraphicsPipelineKey key in staleKeys)
+                {
+                    Pipeline pipeline = _sharedGraphicsPipelines[key];
+                    _sharedGraphicsPipelines.Remove(key);
+                    if (retiredHandles.Add(pipeline.Handle))
+                        _supersededSharedGraphicsPipelines.Enqueue(pipeline);
+                }
+            }
+            Interlocked.Add(ref _stalePipelineDisposalCount, retiredHandles.Count);
+        }
+
+        VulkanProgramCreationPort services = RequireProgramServices();
+        foreach (Pipeline pipeline in staleComputePipelines)
+        {
+            services.DestroyPipelineImmediate(pipeline);
+            Interlocked.Increment(ref _stalePipelineDisposalCount);
         }
     }
 

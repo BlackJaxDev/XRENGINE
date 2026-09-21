@@ -214,6 +214,22 @@ with a camera, VR, or non-default window/viewport selector.
 `list_render_pipeline_resources` and `get_advanced_profile_diagnostics` accept
 the same owner selector, including minimal depth/visibility profiles.
 
+`clear_render_pipeline_cache` rebuilds resources for one selected viewport's
+pipeline instance. Select it with `camera_node_id`, `vr_eye`, or window/viewport
+indices; invalid or conflicting selectors fail without changing resources.
+The action runs on the owning renderer, returns the cache metadata before and
+after clearing, and leaves the scene and pipeline asset in place. Wait for a
+new resource generation and inspect its output before accepting recovery.
+
+Development builds expose `arm_ddgi_visibility_interruption` for a controlled
+DDGI recovery check. Use the same exact viewport selectors and `skip_count`
+between 1 and 120 to interrupt updates immediately after the visibility stage.
+`get_ddgi_visibility_interruption` reads the request token, pipeline generation,
+skipped updates, matched abort receipts, unexpected publications and recovery
+markers. Clearing the pipeline cache cancels the request. These controls are
+unavailable in published builds; the four-backend/pipeline live acceptance of
+this diagnostic remains pending.
+
 `MirrorCaptureComponent.GetMirrorCaptureDiagnostics` exposes capture version,
 authoring attempts/disposition, writer/package state, consumer-fence count,
 retirement/quarantine state and the current viewport/texture identity. It reads

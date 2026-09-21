@@ -1,3 +1,7 @@
+#ifndef XR_BVH_STORAGE_BINDING
+#define XR_BVH_STORAGE_BINDING(slot) binding = slot
+#endif
+
 #ifndef XR_BVH_STACK_MAX
 #define XR_BVH_STACK_MAX 64u
 #endif
@@ -27,11 +31,13 @@ const uint XR_BVH_LEAF_FLAG = 1u;
 const uint XR_BVH_LEAF_BIT = XR_BVH_LEAF_FLAG;
 const uint XR_BVH_INVALID_INDEX = 0xFFFFFFFFu;
 
+#ifndef XR_CUSTOM_RAY_INPUT
 struct RayInput
 {
     vec4 origin;    // .w = tMin
     vec4 direction; // .w = tMax
 };
+#endif
 
 struct Ray
 {
@@ -73,15 +79,17 @@ struct HitRecord
     float padding;
 };
 
-layout(std430, binding = 0) readonly buffer Rays
+#ifndef XR_CUSTOM_RAY_INPUT
+layout(std430, XR_BVH_STORAGE_BINDING(0)) readonly buffer Rays
 {
     RayInput gRays[];
 };
+#endif
 
 // The node SSBO is the raw GpuBvhTree buffer: a 4-scalar header precedes the
 // node array. Declaring the header here keeps gNodes[] correctly aligned to the
 // first real node and exposes the build-provided root index.
-layout(std430, binding = 1) readonly buffer Nodes
+layout(std430, XR_BVH_STORAGE_BINDING(1)) readonly buffer Nodes
 {
     uint gNodeCount;
     uint gRootIndex;
@@ -90,24 +98,27 @@ layout(std430, binding = 1) readonly buffer Nodes
     BvhNode gNodes[];
 };
 
-layout(std430, binding = 2) readonly buffer Triangles
+layout(std430, XR_BVH_STORAGE_BINDING(2)) readonly buffer Triangles
 {
     PackedTriangle gTriangles[];
 };
 
-layout(std430, binding = 3) writeonly buffer Hits
+layout(std430, XR_BVH_STORAGE_BINDING(3)) writeonly buffer Hits
 {
     HitRecord gHits[];
 };
 
-layout(std430, binding = 4) buffer RayTraversalDiagnostics
+#ifndef XR_BVH_DISABLE_DIAGNOSTICS
+layout(std430, XR_BVH_STORAGE_BINDING(4)) buffer RayTraversalDiagnostics
 {
     uint gRayTraceCount;
     uint gRayMaxStackOccupancy;
     uint gRayStackOverflows;
     uint gRayConservativeRecoveries;
 };
+#endif
 
+#ifndef XR_CUSTOM_RAY_INPUT
 Ray DecodeRay(RayInput rayInput)
 {
     Ray r;
@@ -117,6 +128,7 @@ Ray DecodeRay(RayInput rayInput)
     r.tMax = rayInput.direction.w;
     return r;
 }
+#endif
 
 bool IntersectAabb(in Ray ray, in vec3 invDir, in BvhNode node, out float tEnter)
 {
@@ -175,6 +187,10 @@ HitRecord MakeMiss(in Ray ray)
     return miss;
 }
 
+#ifdef XR_CUSTOM_ACCEPT_HIT
+bool AcceptRayHit(in Ray ray, in PackedTriangle triangle, in vec3 barycentric);
+#endif
+
 bool TracePrimitiveRange(
     in Ray ray,
     uint first,
@@ -195,6 +211,10 @@ bool TracePrimitiveRange(
         if (!IntersectTriangle(ray, tri, triT, bary) || triT >= hit.t || triT < ray.tMin)
             continue;
 
+#ifdef XR_CUSTOM_ACCEPT_HIT
+        if (!AcceptRayHit(ray, tri, bary))
+            continue;
+#endif
         hit.t = triT;
         hit.objectId = tri.extra.x;
         hit.faceIndex = tri.extra.y;
@@ -222,11 +242,13 @@ HitRecord TraceRay(in Ray ray, uint rootIndex, uint maxStackDepth, bool anyHit)
     uint stack[XR_BVH_STACK_MAX];
     uint stackPtr = 0u;
     stack[stackPtr++] = start;
+#ifndef XR_BVH_DISABLE_DIAGNOSTICS
     if (uDiagnosticsEnabled != 0u)
     {
         atomicAdd(gRayTraceCount, 1u);
         atomicMax(gRayMaxStackOccupancy, stackPtr);
     }
+#endif
 
     while (stackPtr > 0u)
     {
@@ -273,16 +295,20 @@ HitRecord TraceRay(in Ray ray, uint rootIndex, uint maxStackDepth, bool anyHit)
                 else if (hitRight)
                     stack[stackPtr++] = right;
 
+#ifndef XR_BVH_DISABLE_DIAGNOSTICS
                 if (uDiagnosticsEnabled != 0u)
                     atomicMax(gRayMaxStackOccupancy, stackPtr);
+#endif
             }
             else
             {
+#ifndef XR_BVH_DISABLE_DIAGNOSTICS
                 if (uDiagnosticsEnabled != 0u)
                 {
                     atomicAdd(gRayStackOverflows, 1u);
                     atomicAdd(gRayConservativeRecoveries, 1u);
                 }
+#endif
                 if (TracePrimitiveRange(ray, node.primitiveRange.x, node.primitiveRange.y, triCount, anyHit, hit))
                     return hit;
             }

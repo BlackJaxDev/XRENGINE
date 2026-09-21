@@ -1,6 +1,7 @@
 using Newtonsoft.Json;
 using XREngine.Audio;
 using XREngine.Components.Animation;
+using XREngine.Data.Core;
 using XREngine.Rendering.UI;
 
 namespace XREngine.Runtime.Bootstrap;
@@ -83,6 +84,13 @@ public partial class UnitTestingWorldSettings
     public TranslationXYZ LightProbeGridSpacing { get; set; } = new() { X = 10.0f, Y = 10.0f, Z = 10.0f };
     public TranslationXYZ LightProbeGridCenter { get; set; } = new() { X = 0.0f, Y = 50.0f, Z = 0.0f };
     public TranslationXYZ LightProbeSinglePosition { get; set; } = new() { X = 0.0f, Y = 1.25f, Z = -7.5f };
+
+    public EGlobalIlluminationMode? GlobalIlluminationMode { get; set; }
+    public bool InitializeDDGIVolume = false;
+    public TranslationXYZ DDGIVolumeHalfExtents { get; set; } = new() { X = 10.0f, Y = 6.0f, Z = 10.0f };
+    public ProbeGridCounts DDGIVolumeProbeCounts { get; set; } = new() { X = 16, Y = 8, Z = 16 };
+    public int DDGIRaysPerProbe { get; set; } = 128;
+    public bool DDGIDebugDrawProbes { get; set; } = false;
 
     [JsonIgnore]
     public bool VRPawn = false;

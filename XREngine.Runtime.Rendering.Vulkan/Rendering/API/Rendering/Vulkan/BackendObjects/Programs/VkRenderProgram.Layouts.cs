@@ -21,11 +21,9 @@ namespace XREngine.Rendering.Vulkan;
 internal unsafe partial class VkRenderProgram
 {
     private void BuildProgramInterface()
-        => ProgramCreationPort.ExecuteWithPipelineCompilationQuiesced(
-            BuildProgramInterfaceAfterPipelineCompileDrain,
-            $"program interface rebuild for '{Data.Name ?? "<unnamed program>"}'");
+        => BuildProgramInterfaceWithCompilationProtection();
 
-    private void BuildProgramInterfaceAfterPipelineCompileDrain()
+    private void BuildProgramInterfaceWithCompilationProtection()
     {
         BuildStageLookup();
         DestroyLayoutsAfterPipelineCompileDrain();
@@ -267,7 +265,9 @@ internal unsafe partial class VkRenderProgram
     private void DestroyLayouts()
     {
         using VulkanPipelineCompilationMutationLease mutationLease =
-            ProgramCreationPort.AcquirePipelineCompilationMutationLease("program layout destruction");
+            ProgramCreationPort.AcquirePipelineCompilationMutationLease(
+                this,
+                "program layout destruction");
         lock (_linkLock)
             DestroyLayoutsAfterPipelineCompileDrain();
     }

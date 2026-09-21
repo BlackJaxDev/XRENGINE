@@ -23,14 +23,14 @@ namespace XREngine.Rendering.Pipelines.Commands
         /// <summary>
         /// Number of color attachments to resolve (CA0 through CA(N-1)).
         /// </summary>
-        public int ColorAttachmentCount { get; set; } = 4;
+        public int ColorAttachmentCount { get; set; } = 5;
 
         public bool ResolveDepthStencil { get; set; } = true;
 
         public VPRC_ResolveMsaaGBuffer SetOptions(
             string sourceMsaaFBO,
             string destinationFBO,
-            int colorAttachmentCount = 4,
+            int colorAttachmentCount = 5,
             bool resolveDepthStencil = true,
             string? depthViewTextureName = null)
         {
@@ -49,6 +49,7 @@ namespace XREngine.Rendering.Pipelines.Commands
             EReadBufferMode.ColorAttachment1,
             EReadBufferMode.ColorAttachment2,
             EReadBufferMode.ColorAttachment3,
+            EReadBufferMode.ColorAttachment4,
         ];
 
         internal override void AllocateContainerResources(XRRenderPipelineInstance instance)

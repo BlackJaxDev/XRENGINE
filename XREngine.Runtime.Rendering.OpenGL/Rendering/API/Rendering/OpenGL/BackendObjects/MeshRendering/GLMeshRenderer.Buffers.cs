@@ -152,9 +152,10 @@ namespace XREngine.Rendering.OpenGL
                     AddCollectedBuffer(pair.Key, pair.Value);
 
                 XRMesh? mesh = Mesh;
+                XRMeshSkinningBufferState? skinningState = mesh?.GetSkinningBufferStateSnapshot();
                 bool allowSkinning = RuntimeEngine.Rendering.Settings.AllowSkinning;
                 bool allowBlendshapes = RuntimeEngine.Rendering.Settings.AllowBlendshapes;
-                bool hasSkinning = mesh?.HasSkinning == true;
+                bool hasSkinning = skinningState?.UtilizedBones.Length > 0;
                 bool hasBlendshapes = mesh?.BlendshapeCount > 0;
                 bool useComputeSkinning = hasSkinning
                     && allowSkinning
@@ -175,11 +176,11 @@ namespace XREngine.Rendering.OpenGL
                     RemoveCollectedBuffer($"{ECommonBufferType.BoneInvBindMatrices}Buffer");
                     RemoveCollectedBuffer($"{ECommonBufferType.SkinPalette}Buffer");
                 }
-                else if (mesh?.SkinningInfluenceEncoding is SkinningInfluenceEncoding.Core4Spill or SkinningInfluenceEncoding.Core4NoSpill)
+                else if (skinningState?.InfluenceEncoding is SkinningInfluenceEncoding.Core4Spill or SkinningInfluenceEncoding.Core4NoSpill)
                 {
                     RemoveCollectedBuffer($"{ECommonBufferType.BoneMatrices}Buffer");
                     RemoveCollectedBuffer($"{ECommonBufferType.BoneInvBindMatrices}Buffer");
-                    if (!mesh.HasSpillInfluences)
+                    if (!skinningState.HasSpillInfluences)
                     {
                         RemoveCollectedBuffer(ECommonBufferType.BoneInfluenceSpillHeaders.ToString());
                         RemoveCollectedBuffer(ECommonBufferType.BoneInfluenceSpillEntries.ToString());
@@ -291,15 +292,13 @@ namespace XREngine.Rendering.OpenGL
             /// </summary>
             private void DestroySkinnedBuffers()
             {
-                MeshRenderer.SkinnedInterleavedBuffer?.Destroy();
-                MeshRenderer.SkinnedPositionsBuffer?.Destroy();
-                MeshRenderer.SkinnedNormalsBuffer?.Destroy();
-                MeshRenderer.SkinnedTangentsBuffer?.Destroy();
-
-                MeshRenderer.SkinnedInterleavedBuffer = null;
-                MeshRenderer.SkinnedPositionsBuffer = null;
-                MeshRenderer.SkinnedNormalsBuffer = null;
-                MeshRenderer.SkinnedTangentsBuffer = null;
+                XRMeshRenderer.SkinnedOutputResourceSnapshot outputResources =
+                    MeshRenderer.CaptureSkinnedOutputResources();
+                MeshRenderer.InstallSkinnedOutputResources(null, null, null, null);
+                outputResources.Interleaved?.Destroy();
+                outputResources.Positions?.Destroy();
+                outputResources.Normals?.Destroy();
+                outputResources.Tangents?.Destroy();
 
                 ClearSkinnedVertexBufferBindings();
             }
@@ -339,16 +338,18 @@ namespace XREngine.Rendering.OpenGL
                     return;
                 }
 
-                var skinnedInterleaved = MeshRenderer.SkinnedInterleavedBuffer;
+                XRMeshRenderer.SkinnedOutputResourceSnapshot outputState =
+                    MeshRenderer.CaptureSkinnedOutputResources();
+                var skinnedInterleaved = outputState.Interleaved;
                 if (skinnedInterleaved is not null)
                 {
                     BindSkinnedInterleavedBuffer(vertexProgram, skinnedInterleaved);
                     return;
                 }
 
-                var skinnedPos = MeshRenderer.SkinnedPositionsBuffer;
-                var skinnedNorm = MeshRenderer.SkinnedNormalsBuffer;
-                var skinnedTan = MeshRenderer.SkinnedTangentsBuffer;
+                var skinnedPos = outputState.Positions;
+                var skinnedNorm = outputState.Normals;
+                var skinnedTan = outputState.Tangents;
 
                 if (skinnedPos is null && skinnedNorm is null && skinnedTan is null)
                 {
@@ -419,44 +420,51 @@ namespace XREngine.Rendering.OpenGL
                 if (!directBlendshapePath)
                     return;
 
+                XRMeshRenderer.BlendshapeResourceSnapshot blendshapeState =
+                    MeshRenderer.CaptureBlendshapeResources();
                 if (!RuntimeEngine.Rendering.Settings.EnableBlendshapePrecombinePass
-                    || !MeshRenderer.HasValidPrecombinedBlendshapeDeltas)
+                    || mesh is null
+                    || !blendshapeState.IsPrecombinedValidFor(mesh))
                 {
                     ClearPrecombinedBlendshapeBindings();
                     return;
                 }
 
-                BindStorageBufferAtBinding(MeshRenderer.PrecombinedBlendshapePositionsBuffer, PrecombinedBlendshapePositionBinding);
+                BindStorageBufferAtBinding(blendshapeState.PrecombinedPositions, PrecombinedBlendshapePositionBinding);
                 if (mesh?.HasNormals == true)
-                    BindStorageBufferAtBinding(MeshRenderer.PrecombinedBlendshapeNormalsBuffer, PrecombinedBlendshapeNormalBinding);
+                    BindStorageBufferAtBinding(blendshapeState.PrecombinedNormals, PrecombinedBlendshapeNormalBinding);
                 else
                     Api.BindBufferBase(GLEnum.ShaderStorageBuffer, PrecombinedBlendshapeNormalBinding, 0);
 
                 if (mesh?.HasTangents == true)
-                    BindStorageBufferAtBinding(MeshRenderer.PrecombinedBlendshapeTangentsBuffer, PrecombinedBlendshapeTangentBinding);
+                    BindStorageBufferAtBinding(blendshapeState.PrecombinedTangents, PrecombinedBlendshapeTangentBinding);
                 else
                     Api.BindBufferBase(GLEnum.ShaderStorageBuffer, PrecombinedBlendshapeTangentBinding, 0);
             }
 
             private void BindMeshDeformSourceBuffers()
             {
-                if (MeshRenderer.DeformerPositionsBuffer is null || MeshRenderer.DeformMeshRenderer is null || MeshRenderer.MeshDeformInfluences is null)
+                XRMeshRenderer.MeshDeformResourceSnapshot meshDeformState =
+                    MeshRenderer.CaptureMeshDeformResources();
+                if (meshDeformState.Positions is null || MeshRenderer.DeformMeshRenderer is null || MeshRenderer.MeshDeformInfluences is null)
                     return;
 
                 var deformerRenderer = MeshRenderer.DeformMeshRenderer;
-                if (deformerRenderer.SkinnedInterleavedBuffer is not null)
+                XRMeshRenderer.SkinnedOutputResourceSnapshot deformerOutputState =
+                    deformerRenderer.CaptureSkinnedOutputResources();
+                if (deformerOutputState.Interleaved is not null)
                 {
                     Dbg("Mesh deform compute-source aliasing skipped for interleaved deformer output; CPU mirror path remains active.", "Buffers");
                     return;
                 }
 
-                BindStorageBufferAtBinding(deformerRenderer.SkinnedPositionsBuffer, 0u);
+                BindStorageBufferAtBinding(deformerOutputState.Positions, 0u);
 
                 uint nextBinding = 2u;
-                if (MeshRenderer.DeformerNormalsBuffer is not null)
-                    BindStorageBufferAtBinding(deformerRenderer.SkinnedNormalsBuffer, nextBinding++);
-                if (MeshRenderer.DeformerTangentsBuffer is not null)
-                    BindStorageBufferAtBinding(deformerRenderer.SkinnedTangentsBuffer, nextBinding);
+                if (meshDeformState.Normals is not null)
+                    BindStorageBufferAtBinding(deformerOutputState.Normals, nextBinding++);
+                if (meshDeformState.Tangents is not null)
+                    BindStorageBufferAtBinding(deformerOutputState.Tangents, nextBinding);
             }
 
             private void BindStorageBufferAtBinding(XRDataBuffer? buffer, uint binding)

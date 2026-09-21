@@ -38,30 +38,59 @@ bool XRENGINE_IsFiniteVec3(vec3 value)
     return !any(isnan(value)) && !any(isinf(value));
 }
 
-vec3 XRENGINE_GetSurfaceDetailNormal(vec2 uv, vec3 tangentWS, vec3 bitangentWS, vec3 normalWS)
+bool XRENGINE_TryBuildDerivativeTbn(vec3 positionWS, vec2 uv, vec3 normalWS, out mat3 tbn)
+{
+    vec3 positionDx = dFdx(positionWS);
+    vec3 positionDy = dFdy(positionWS);
+    vec2 uvDx = dFdx(uv);
+    vec2 uvDy = dFdy(uv);
+    float determinant = uvDx.x * uvDy.y - uvDx.y * uvDy.x;
+    if (abs(determinant) < 1e-10)
+        return false;
+
+    vec3 N = normalize(normalWS);
+    vec3 tangent = (positionDx * uvDy.y - positionDy * uvDx.y) / determinant;
+    vec3 bitangent = (positionDy * uvDx.x - positionDx * uvDy.x) / determinant;
+    tangent -= N * dot(N, tangent);
+    if (!XRENGINE_IsFiniteVec3(tangent) || !XRENGINE_IsFiniteVec3(bitangent) || dot(tangent, tangent) < 1e-10)
+        return false;
+
+    tangent = normalize(tangent);
+    float handedness = dot(cross(N, tangent), bitangent) < 0.0 ? -1.0 : 1.0;
+    tbn = mat3(tangent, normalize(cross(N, tangent)) * handedness, N);
+    return true;
+}
+
+vec3 XRENGINE_GetSurfaceDetailNormal(vec2 uv, vec3 positionWS, vec3 tangentWS, vec3 bitangentWS, vec3 normalWS)
 {
     vec3 N = normalize(normalWS);
     if (!XRENGINE_IsFiniteVec3(N) || dot(N, N) <= 0.0)
         return vec3(0.0, 0.0, 1.0);
 
-    // Guard against degenerate tangent/bitangent (e.g., mesh has no tangent data
-    // and the fragment inputs are zero/undefined). normalize(vec3(0)) is NaN on
-    // most GPUs, which poisons the entire TBN matrix and produces black lighting.
     float tangentLengthSq = dot(tangentWS, tangentWS);
     float bitangentLengthSq = dot(bitangentWS, bitangentWS);
+    mat3 tbn;
     if (tangentLengthSq < 1e-10 || bitangentLengthSq < 1e-10)
-        return N;
+    {
+        // Generated vertex shaders use a zero TBN sentinel for meshes without
+        // authored tangents. Reconstruct from world-position and UV derivatives
+        // so tangent-space maps retain their source orientation.
+        if (!XRENGINE_TryBuildDerivativeTbn(positionWS, uv, N, tbn))
+            return N;
+    }
+    else
+    {
+        vec3 T = tangentWS - N * dot(N, tangentWS);
+        vec3 B = bitangentWS - N * dot(N, bitangentWS);
+        if (dot(T, T) < 1e-10 || dot(B, B) < 1e-10)
+            return N;
 
-    vec3 T = tangentWS - N * dot(N, tangentWS);
-    vec3 B = bitangentWS - N * dot(N, bitangentWS);
-    if (dot(T, T) < 1e-10 || dot(B, B) < 1e-10)
-        return N;
-
-    T = normalize(T);
-    B = normalize(B);
-    if (!XRENGINE_IsFiniteVec3(T) || !XRENGINE_IsFiniteVec3(B))
-        return N;
-    mat3 tbn = mat3(T, B, N);
+        T = normalize(T);
+        B = normalize(B);
+        if (!XRENGINE_IsFiniteVec3(T) || !XRENGINE_IsFiniteVec3(B))
+            return N;
+        tbn = mat3(T, B, N);
+    }
 
     vec3 tangentNormal;
 #ifdef XRENGINE_HEIGHTMAP_MODE

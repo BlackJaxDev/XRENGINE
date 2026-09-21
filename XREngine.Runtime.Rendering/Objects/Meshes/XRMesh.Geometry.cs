@@ -29,21 +29,28 @@ public partial class XRMesh
     /// </summary>
     public void InvalidateIndexBufferCache(EPrimitiveType? type = null)
     {
+        HashSet<XRDataBuffer> removedBuffers = new(ReferenceEqualityComparer.Instance);
         lock (_indexBufferLock)
         {
             if (type.HasValue)
             {
-                _indexBufferCache.Remove(type.Value);
+                if (_indexBufferCache.Remove(type.Value, out var removed))
+                    removedBuffers.Add(removed.buffer);
                 InvalidateBuildTicketNoLock(type.Value);
             }
             else
             {
+                foreach (var cached in _indexBufferCache.Values)
+                    removedBuffers.Add(cached.buffer);
                 _indexBufferCache.Clear();
                 foreach (IndexBufferBuildTicket ticket in _indexBufferBuildTickets.Values)
                     ticket.Fail(new IndexBufferBuildInvalidatedException());
                 _indexBufferBuildTickets.Clear();
             }
         }
+
+        foreach (XRDataBuffer buffer in removedBuffers)
+            DisposeIndexBuffer(buffer);
     }
 
     /// <summary>
@@ -452,8 +459,27 @@ public partial class XRMesh
 
         try
         {
+            using RenderObjectPublicationScope publication = GenericRenderObject.BeginDeferredPublication();
             buffer = BuildIndexBuffer(type, EBufferTarget.ElementArrayBuffer, out elementSize) ??
                 throw new InvalidOperationException($"Mesh has no {type} index data to build.");
+
+            lock (_indexBufferLock)
+            {
+                if (!_indexBufferBuildTickets.TryGetValue(type, out IndexBufferBuildTicket? current) ||
+                    !ReferenceEquals(current, ticket) ||
+                    ticket.GeometryRevision != GeometryRevision)
+                {
+                    if (ReferenceEquals(current, ticket))
+                        _indexBufferBuildTickets.Remove(type);
+                    ticket.Fail(new IndexBufferBuildInvalidatedException());
+                    return;
+                }
+
+                publication.Complete();
+                _indexBufferCache[type] = (buffer, elementSize);
+                ticket.Completion.TrySetResult((buffer, elementSize));
+                return;
+            }
         }
         catch (Exception ex)
         {
@@ -462,28 +488,10 @@ public partial class XRMesh
 
         lock (_indexBufferLock)
         {
-            if (!_indexBufferBuildTickets.TryGetValue(type, out IndexBufferBuildTicket? current) ||
-                !ReferenceEquals(current, ticket) ||
-                ticket.GeometryRevision != GeometryRevision)
-            {
-                if (ReferenceEquals(current, ticket))
-                    _indexBufferBuildTickets.Remove(type);
-                ticket.Fail(new IndexBufferBuildInvalidatedException());
-                return;
-            }
-
-            if (error is null)
-            {
-                _indexBufferCache[type] = (buffer!, elementSize);
-                ticket.Completion.TrySetResult((buffer!, elementSize));
-                return;
-            }
-
-            ticket.Fail(error);
+            ticket.Fail(error!);
         }
 
-        if (error is not null)
-            RuntimeRenderingHostServices.Diagnostics.LogException(error);
+        RuntimeRenderingHostServices.Diagnostics.LogException(error!);
 
     }
 
@@ -497,6 +505,7 @@ public partial class XRMesh
 
     private XRDataBuffer? BuildIndexBuffer(EPrimitiveType type, EBufferTarget target, out IndexSize elementSize)
     {
+        using RenderObjectPublicationScope publication = GenericRenderObject.BeginDeferredPublication();
         elementSize = IndexSize.TwoBytes;
 
         var indices = GetIndices(type);
@@ -521,7 +530,14 @@ public partial class XRMesh
             buf.SetDataRaw(indices);
         }
 
+        publication.Complete();
         return buf;
+    }
+
+    private static void DisposeIndexBuffer(XRDataBuffer buffer)
+    {
+        buffer.Destroy(now: true);
+        buffer.Dispose();
     }
 
     public bool PopulateIndexBuffer(EPrimitiveType type, XRDataBuffer buffer, IndexSize elementSize)

@@ -231,7 +231,7 @@ namespace XREngine.Rendering
             IncrementBindingResourceVersion();
         }
 
-        private void IncrementBindingLayoutVersion()
+        protected void IncrementBindingLayoutVersion()
         {
             unchecked
             {
@@ -263,7 +263,7 @@ namespace XREngine.Rendering
         private void ParameterValueChanged(ShaderVar _)
             => IncrementBindingValueVersion();
 
-        private void IncrementBindingValueVersion()
+        protected void IncrementBindingValueVersion()
         {
             unchecked
             {
@@ -272,7 +272,7 @@ namespace XREngine.Rendering
             }
         }
 
-        private void IncrementBindingResourceVersion()
+        protected void IncrementBindingResourceVersion()
         {
             unchecked
             {

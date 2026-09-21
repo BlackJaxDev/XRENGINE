@@ -69,7 +69,7 @@ uniform float FarPlaneDist;
 #endif
 
 uniform sampler2D Texture0; // Albedo (diffuse)
-uniform sampler2D Texture1; // Alpha mask (R channel)
+uniform sampler2D Texture1; // Optional opacity mask (R channel)
 
 layout (location = 0) in vec3 FragPos;
 layout (location = 1) in vec3 FragNorm;
@@ -85,7 +85,8 @@ void main()
 #if !defined(XRENGINE_DEPTH_NORMAL_PREPASS) && !defined(XRENGINE_SHADOW_CASTER_PASS) && !defined(XRENGINE_POINT_SHADOW_CASTER_PASS)
     XRENGINE_BeginForwardFragmentOutput();
 #endif
-    float alphaMask = texture(Texture1, FragUV0).r;
+    vec4 texColor = texture(Texture0, FragUV0);
+    float alphaMask = texColor.a * texture(Texture1, FragUV0).r;
     if (alphaMask < AlphaCutoff)
         discard;
 
@@ -99,12 +100,11 @@ void main()
 #if defined(XRENGINE_DEPTH_NORMAL_PREPASS)
     Normal = XRENGINE_EncodeNormal(normal);
 #else
-    vec4 texColor = texture(Texture0, FragUV0);
     float AmbientOcclusion = XRENGINE_SampleAmbientOcclusion();
 
     vec3 totalLight = XRENGINE_CalculateForwardLighting(normal, FragPos, texColor.rgb, MatSpecularIntensity, AmbientOcclusion);
 
-    XRENGINE_WriteForwardFragment(vec4(totalLight, texColor.a * alphaMask));
+    XRENGINE_WriteForwardFragment(vec4(totalLight, alphaMask));
 #endif
 #endif
 }

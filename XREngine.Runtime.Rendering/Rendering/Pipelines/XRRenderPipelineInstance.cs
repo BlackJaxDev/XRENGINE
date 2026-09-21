@@ -62,6 +62,13 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
     /// </summary>
     internal event Action? CacheClearing;
 
+    /// <summary>
+    /// Raised when a command chain authored GPU work but its frame cannot be accepted.
+    /// Command-owned state uses this to withdraw publications that would otherwise
+    /// describe a partially authored frame.
+    /// </summary>
+    internal event Action? CommandChainExecutionAborted;
+
     private OcclusionViewOwnership _occlusionViewOwnership;
 
     public OcclusionViewOwnership OcclusionViewOwnership
@@ -829,13 +836,22 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                         this,
                         Pipeline,
                         targetFBO);
-                    Pipeline.CommandChain.Execute();
+                    try
+                    {
+                        Pipeline.CommandChain.Execute();
+                    }
+                    catch
+                    {
+                        NotifyCommandChainExecutionAborted();
+                        throw;
+                    }
                     RuntimeEngine.Rendering.Stats.FrameLifecycle.RecordFramePackageConsumption(
                         System.Diagnostics.Stopwatch.GetTimestamp() - consumptionStarted);
                 }
 
                 if (RenderState.HasRequiredOffscreenAuthoringFailure)
                 {
+                    NotifyCommandChainExecutionAborted();
                     Debug.RenderingWarningEvery(
                         $"XRRenderPipelineInstance.RequiredOffscreenAuthoringFailure.{ProfilerKey}",
                         TimeSpan.FromSeconds(1),
@@ -1185,6 +1201,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
            oldKey.MsaaSampleCount == newKey.MsaaSampleCount &&
            oldKey.Stereo == newKey.Stereo &&
            oldKey.FeatureMask == newKey.FeatureMask &&
+           oldKey.ResourceVariant == newKey.ResourceVariant &&
            oldKey.SettingsRevision == newKey.SettingsRevision &&
            oldKey.ReservedViewCount == newKey.ReservedViewCount &&
            oldKey.ReservedEyeIndex == newKey.ReservedEyeIndex &&
@@ -1451,7 +1468,8 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             key,
             layout,
             pipeline,
-            _appliedPipelineRevision);
+            _appliedPipelineRevision,
+            isInitialBuild: ActiveGeneration is null);
         ConfigurePendingGenerationDebounce(key, reason);
         Debug.Rendering(
             "[RenderResources] Pending generation requested. Pipeline={0} Reason={1} Active={2} Target={3} Delta={4} Resources={5} DebounceMs={6:F0}",
@@ -1653,6 +1671,8 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             deltas.Add($"stereo:{old.Stereo}->{newKey.Stereo}");
         if (old.FeatureMask != newKey.FeatureMask)
             deltas.Add($"features:0x{old.FeatureMask:X}->0x{newKey.FeatureMask:X}");
+        if (old.ResourceVariant != newKey.ResourceVariant)
+            deltas.Add($"resource-variant:{old.ResourceVariant}->{newKey.ResourceVariant}");
         if (old.SettingsRevision != newKey.SettingsRevision)
             deltas.Add($"settings-revision:{old.SettingsRevision}->{newKey.SettingsRevision}");
         if (old.ReservedViewCount != newKey.ReservedViewCount)
@@ -1725,7 +1745,8 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             settings.Revision,
             settings.OutputColorFormat,
             settings.OutputDepthFormat,
-            _appliedPipelineRevision);
+            _appliedPipelineRevision,
+            settings.ResourceVariant);
     }
 
     private ResourceGenerationSettingsSnapshot CaptureResourceGenerationSettingsSnapshot(
@@ -1768,7 +1789,8 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             0UL,
             FinalOutput?.Properties.ColorFormat ??
                 (outputHdr ? EPixelInternalFormat.Rgba16f : EPixelInternalFormat.Rgba8),
-            FinalOutput?.Properties.DepthFormat ?? EPixelInternalFormat.Depth24Stencil8);
+            FinalOutput?.Properties.DepthFormat ?? EPixelInternalFormat.Depth24Stencil8,
+            pipeline?.BuildResourceVariantForGenerationKey(this, viewport) ?? default);
 
         lock (_resourceSettingsSnapshotLock)
         {
@@ -1850,15 +1872,10 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             return false;
         }
 
-        bool immediate = ActiveGeneration is null;
-        TimeSpan maxDuration = immediate
-            ? TimeSpan.MaxValue
-            : forceDue
+        TimeSpan maxDuration = forceDue
                 ? catchUpMaxDuration
                 : TimeSpan.FromMilliseconds(IncrementalGenerationSliceMilliseconds);
-        int maxSpecsPerSlice = immediate
-            ? int.MaxValue
-            : forceDue
+        int maxSpecsPerSlice = forceDue
                 ? catchUpMaxSpecsPerSlice
                 : IncrementalGenerationMaxSpecsPerSlice;
 
@@ -1879,12 +1896,17 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             Debug.RenderingEvery(
                 $"RenderResources.PendingIncremental.{ProfilerKey}",
                 TimeSpan.FromMilliseconds(250),
-                "[RenderResources] Pending generation incremental build. Pipeline={0} Reason={1} Progress={2}/{3} Target={4}",
+                "[RenderResources] Pending generation incremental build. Pipeline={0} Reason={1} Progress={2}/{3} Target={4} Slices={5} LastSliceMs={6:F2} WorkMs={7:F2} WorstSpec={8} WorstSpecMs={9:F2}",
                 ProfilerKey,
                 reason,
                 pending.MaterializedSpecCount,
                 pending.Layout.OrderedSpecs.Count,
-                pending.Key);
+                pending.Key,
+                pending.MaterializationSliceCount,
+                pending.LastMaterializationSliceDuration.TotalMilliseconds,
+                pending.MaterializationWorkDuration.TotalMilliseconds,
+                pending.WorstMaterializationSpecName ?? "<none>",
+                pending.WorstMaterializationSpecDuration.TotalMilliseconds);
             return false;
         }
 
@@ -2023,48 +2045,64 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
         XRViewport? viewport = RenderState.WindowViewport ?? LastWindowViewport;
         IRenderResourceGenerationBackend? backend = ResourceGenerationBackendOverride ?? AbstractRenderer.Current;
         IRenderResourceGenerationTransaction? backendTransaction = null;
-        if (backend is not null &&
-            !backend.TryPrepareRenderResourceGeneration(
+        if (backend is not null)
+        {
+            ERenderResourceGenerationPreparationStatus preparationStatus =
+                backend.PrepareRenderResourceGeneration(
                 this,
                 pending,
                 viewport,
                 out backendTransaction,
-                out string? backendFailureReason))
-        {
-            string failure = string.IsNullOrWhiteSpace(backendFailureReason)
-                ? "Backend resource generation preparation failed."
-                : backendFailureReason;
-            RegisterPendingGenerationFailure(pending.Key, failure);
-            PendingGeneration = null;
-            ClearPendingGenerationDebounce();
-            pending.MarkFailed(failure);
-            DisposeGeneration(pending, failure);
-            return false;
+                out string? backendFailureReason);
+            if (preparationStatus == ERenderResourceGenerationPreparationStatus.Pending)
+            {
+                backendTransaction?.Dispose();
+                Debug.RenderingEvery(
+                    $"RenderResources.BackendPreparationPending.{ProfilerKey}",
+                    TimeSpan.FromMilliseconds(250),
+                    "[RenderResources] Pending generation is waiting for backend preparation. Pipeline={0} Pending={1} Reason={2}",
+                    ProfilerKey,
+                    pending.Key,
+                    string.IsNullOrWhiteSpace(backendFailureReason) ? "Backend work is pending." : backendFailureReason);
+                return false;
+            }
+
+            if (preparationStatus == ERenderResourceGenerationPreparationStatus.Failed)
+            {
+                string failure = string.IsNullOrWhiteSpace(backendFailureReason)
+                    ? "Backend resource generation preparation failed."
+                    : backendFailureReason;
+                RegisterPendingGenerationFailure(pending.Key, failure);
+                PendingGeneration = null;
+                ClearPendingGenerationDebounce();
+                pending.MarkFailed(failure);
+                DisposeGeneration(pending, failure);
+                return false;
+            }
         }
 
         using (backendTransaction)
         {
             RenderResourceGeneration? old = ActiveGeneration;
-            ActiveGeneration = pending;
-            PendingGeneration = null;
-            ActiveGeneration.MarkActive(reason);
-            ResourceGeneration++;
-
             try
             {
                 backendTransaction?.Commit();
             }
             catch (Exception ex)
             {
-                ResourceGeneration--;
-                ActiveGeneration = old;
                 string failure = $"Backend resource generation commit failed: {ex.Message}";
                 RegisterPendingGenerationFailure(pending.Key, failure);
+                PendingGeneration = null;
                 ClearPendingGenerationDebounce();
                 pending.MarkFailed(failure);
                 DisposeGeneration(pending, failure);
                 return false;
             }
+
+            ActiveGeneration = pending;
+            PendingGeneration = null;
+            ActiveGeneration.MarkActive(reason);
+            ResourceGeneration++;
 
             ClearPendingGenerationDebounce();
             ClearFailedGenerationBackoff(ActiveGeneration.Key);
@@ -2078,7 +2116,7 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
             NotifyRenderResourcesChanged();
 
             Debug.Rendering(
-                "[RenderResources] Pending generation committed. Pipeline={0} Reason={1} Previous={2} Active={3} Delta={4} Textures={5} FBOs={6} Buffers={7} RenderBuffers={8} BuildMs={9:F2}",
+                "[RenderResources] Pending generation committed. Pipeline={0} Reason={1} Previous={2} Active={3} Delta={4} Textures={5} FBOs={6} Buffers={7} RenderBuffers={8} Initial={9} BuildMs={10:F2} WorkMs={11:F2} Slices={12} WorstSliceMs={13:F2} WorstSpec={14} WorstSpecKind={15} WorstSpecMs={16:F2}",
                 ProfilerKey,
                 reason,
                 old?.Key.ToString() ?? "<none>",
@@ -2088,7 +2126,14 @@ public sealed partial class XRRenderPipelineInstance : XRBase, IRuntimeRenderPip
                 ActiveGeneration.FrameBufferCount,
                 ActiveGeneration.BufferCount,
                 ActiveGeneration.RenderBufferCount,
-                ActiveGeneration.BuildDuration.TotalMilliseconds);
+                ActiveGeneration.IsInitialBuild,
+                ActiveGeneration.BuildDuration.TotalMilliseconds,
+                ActiveGeneration.MaterializationWorkDuration.TotalMilliseconds,
+                ActiveGeneration.MaterializationSliceCount,
+                ActiveGeneration.WorstMaterializationSliceDuration.TotalMilliseconds,
+                ActiveGeneration.WorstMaterializationSpecName ?? "<none>",
+                ActiveGeneration.WorstMaterializationSpecKind?.ToString() ?? "<none>",
+                ActiveGeneration.WorstMaterializationSpecDuration.TotalMilliseconds);
         }
 
         return true;

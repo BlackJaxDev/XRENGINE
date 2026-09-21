@@ -230,6 +230,8 @@ internal ref struct VulkanFrameAttempt
     /// which contains information about the presentation surface and swapchain used for presenting the rendered content.
     /// </summary>
     public VulkanPresentationSourceTuple PresentationSource;
+    /// <summary>True only when the sealed command plan contains the retained window source's output owner.</summary>
+    public bool HasWindowPresentationSourceOwner;
     /// <summary>
     /// Immutable output-DAG manifest that admitted and ordered the command
     /// buffers owned by this attempt.

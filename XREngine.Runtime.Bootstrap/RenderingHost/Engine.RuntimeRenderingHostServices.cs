@@ -94,6 +94,9 @@ internal sealed class EngineRuntimeRenderingHostServices :
             string.IsNullOrWhiteSpace(scopeName) ? "<unnamed>" : scopeName);
     }
 
+    public bool EnableThreadAllocationTracking
+        => Engine.EditorPreferences.Debug.EnableThreadAllocationTracking;
+
     public bool AllowShaderPipelines => RuntimeEngine.Rendering.Settings.AllowShaderPipelines;
     public bool EnableExactTransparencyTechniques => Engine.EditorPreferences.Debug.EnableExactTransparencyTechniques;
     public bool UseInterleavedMeshBuffer => RuntimeEngine.Rendering.Settings.UseInterleavedMeshBuffer;

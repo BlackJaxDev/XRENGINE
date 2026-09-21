@@ -41,14 +41,12 @@ internal unsafe partial class VkMeshRenderer
 			var meshBuffers = Mesh?.Buffers as IEventDictionary<string, XRDataBuffer>;
 			if (meshBuffers is not null)
 				foreach (var pair in meshBuffers)
-					if (WrapperLookup.GetOrCreate(pair.Value) is VkDataBuffer vkBuffer)
-						_bufferCache[pair.Key] = vkBuffer;
+					_bufferCache[pair.Key] = ProgramCreationPort.GetOrCreateBuffer(pair.Value, generateNow: false);
 
 			var rendererBuffers = MeshRenderer.Buffers as IEventDictionary<string, XRDataBuffer>;
 			if (rendererBuffers is not null)
 				foreach (var pair in rendererBuffers)
-					if (WrapperLookup.GetOrCreate(pair.Value) is VkDataBuffer vkBuffer)
-						_bufferCache[pair.Key] = vkBuffer;
+					_bufferCache[pair.Key] = ProgramCreationPort.GetOrCreateBuffer(pair.Value, generateNow: false);
 
 			FilterRuntimeDeformationSourceBuffers();
 			OverrideCollectedSkinPaletteWithActiveSource();
@@ -91,7 +89,7 @@ internal unsafe partial class VkMeshRenderer
 	private BufferStructuralIdentity CaptureBufferStructuralIdentity(XRDataBuffer? buffer)
 		=> buffer is null
 			? default
-			: CaptureBufferStructuralIdentity(WrapperLookup.GetOrCreate(buffer) as VkDataBuffer);
+			: CaptureBufferStructuralIdentity(ProgramCreationPort.GetOrCreateBuffer(buffer, generateNow: false));
 
 	private bool UpdateBufferStructuralIdentitySnapshot()
 	{
@@ -112,9 +110,10 @@ internal unsafe partial class VkMeshRenderer
 	private void FilterRuntimeDeformationSourceBuffers()
 	{
 		XRMesh? mesh = Mesh;
+		XRMeshSkinningBufferState? skinningState = mesh?.GetSkinningBufferStateSnapshot();
 		bool allowSkinning = RuntimeEngine.Rendering.Settings.AllowSkinning;
 		bool allowBlendshapes = RuntimeEngine.Rendering.Settings.AllowBlendshapes;
-		bool hasSkinning = mesh?.HasSkinning == true;
+		bool hasSkinning = skinningState?.UtilizedBones.Length > 0;
 		bool hasBlendshapes = mesh?.BlendshapeCount > 0;
 		bool useComputeSkinning = hasSkinning
 			&& allowSkinning
@@ -137,11 +136,11 @@ internal unsafe partial class VkMeshRenderer
 			RemoveCollectedBuffer($"{ECommonBufferType.BoneInvBindMatrices}Buffer");
 			RemoveCollectedBuffer($"{ECommonBufferType.SkinPalette}Buffer");
 		}
-		else if (mesh?.SkinningInfluenceEncoding is SkinningInfluenceEncoding.Core4Spill or SkinningInfluenceEncoding.Core4NoSpill)
+		else if (skinningState?.InfluenceEncoding is SkinningInfluenceEncoding.Core4Spill or SkinningInfluenceEncoding.Core4NoSpill)
 		{
 			RemoveCollectedBuffer($"{ECommonBufferType.BoneMatrices}Buffer");
 			RemoveCollectedBuffer($"{ECommonBufferType.BoneInvBindMatrices}Buffer");
-			if (!mesh.HasSpillInfluences)
+			if (!skinningState.HasSpillInfluences)
 			{
 				RemoveCollectedBuffer(ECommonBufferType.BoneInfluenceSpillHeaders.ToString());
 				RemoveCollectedBuffer(ECommonBufferType.BoneInfluenceSpillEntries.ToString());
@@ -177,13 +176,16 @@ internal unsafe partial class VkMeshRenderer
 			|| MeshRenderer.ActiveSkinPaletteBuffer is not { } activeSkinPalette)
 			return;
 
-		if (WrapperLookup.GetOrCreate(activeSkinPalette) is VkDataBuffer vkBuffer)
-			_bufferCache[shaderName] = vkBuffer;
+		_bufferCache[shaderName] = ProgramCreationPort.GetOrCreateBuffer(activeSkinPalette, generateNow: false);
 	}
 
 	private void AddRuntimeDeformationBuffers()
 	{
 		XRMesh? mesh = MeshRenderer.Mesh;
+		XRMeshRenderer.SkinnedOutputResourceSnapshot outputState =
+			MeshRenderer.CaptureSkinnedOutputResources();
+		XRMeshRenderer.BlendshapeResourceSnapshot blendshapeState =
+			MeshRenderer.CaptureBlendshapeResources();
 		bool useComputeSkinning = mesh?.HasSkinning == true
 			&& RuntimeEngine.Rendering.Settings.AllowSkinning
 			&& RuntimeEngine.Rendering.Settings.CalculateSkinningInComputeShader
@@ -195,10 +197,10 @@ internal unsafe partial class VkMeshRenderer
 
 		if (useComputeSkinning || useComputeBlendshapes)
 		{
-			AddRuntimeBuffer(ComputeInterleavedBufferName, MeshRenderer.SkinnedInterleavedBuffer, ComputeInterleavedBinding);
-			AddRuntimeBuffer(ComputePositionBufferName, MeshRenderer.SkinnedPositionsBuffer, ComputePositionBinding);
-			AddRuntimeBuffer(ComputeNormalBufferName, MeshRenderer.SkinnedNormalsBuffer, ComputeNormalBinding);
-			AddRuntimeBuffer(ComputeTangentBufferName, MeshRenderer.SkinnedTangentsBuffer, ComputeTangentBinding);
+			AddRuntimeBuffer(ComputeInterleavedBufferName, outputState.Interleaved, ComputeInterleavedBinding);
+			AddRuntimeBuffer(ComputePositionBufferName, outputState.Positions, ComputePositionBinding);
+			AddRuntimeBuffer(ComputeNormalBufferName, outputState.Normals, ComputeNormalBinding);
+			AddRuntimeBuffer(ComputeTangentBufferName, outputState.Tangents, ComputeTangentBinding);
 			AddMeshDeformSourceBuffers();
 		}
 
@@ -208,23 +210,28 @@ internal unsafe partial class VkMeshRenderer
 		if (directBlendshapePath
 			&& RuntimeEngine.Rendering.Settings.EnableBlendshapePrecombinePass
 			&& !RuntimeEngine.Rendering.State.IsVulkan
-			&& MeshRenderer.HasValidPrecombinedBlendshapeDeltas)
+			&& mesh is not null
+			&& blendshapeState.IsPrecombinedValidFor(mesh))
 		{
-			AddRuntimeBuffer(PrecombinedBlendshapePositionBufferName, MeshRenderer.PrecombinedBlendshapePositionsBuffer, PrecombinedBlendshapePositionBinding);
+			AddRuntimeBuffer(PrecombinedBlendshapePositionBufferName, blendshapeState.PrecombinedPositions, PrecombinedBlendshapePositionBinding);
 			if (mesh?.HasNormals == true)
-				AddRuntimeBuffer(PrecombinedBlendshapeNormalBufferName, MeshRenderer.PrecombinedBlendshapeNormalsBuffer, PrecombinedBlendshapeNormalBinding);
+				AddRuntimeBuffer(PrecombinedBlendshapeNormalBufferName, blendshapeState.PrecombinedNormals, PrecombinedBlendshapeNormalBinding);
 			if (mesh?.HasTangents == true)
-				AddRuntimeBuffer(PrecombinedBlendshapeTangentBufferName, MeshRenderer.PrecombinedBlendshapeTangentsBuffer, PrecombinedBlendshapeTangentBinding);
+				AddRuntimeBuffer(PrecombinedBlendshapeTangentBufferName, blendshapeState.PrecombinedTangents, PrecombinedBlendshapeTangentBinding);
 		}
 	}
 
 	private void AddMeshDeformSourceBuffers()
 	{
-		if (MeshRenderer.DeformerPositionsBuffer is null || MeshRenderer.DeformMeshRenderer is null || MeshRenderer.MeshDeformInfluences is null)
+		XRMeshRenderer.MeshDeformResourceSnapshot meshDeformState =
+			MeshRenderer.CaptureMeshDeformResources();
+		if (meshDeformState.Positions is null || MeshRenderer.DeformMeshRenderer is null || MeshRenderer.MeshDeformInfluences is null)
 			return;
 
 		XRMeshRenderer deformerRenderer = MeshRenderer.DeformMeshRenderer;
-		if (deformerRenderer.SkinnedInterleavedBuffer is not null)
+		XRMeshRenderer.SkinnedOutputResourceSnapshot deformerOutputState =
+			deformerRenderer.CaptureSkinnedOutputResources();
+		if (deformerOutputState.Interleaved is not null)
 		{
 			Debug.VulkanWarningEvery(
 				$"Vulkan.MeshDeform.InterleavedSourceAlias.{MeshRenderer.Name ?? "UnnamedRenderer"}",
@@ -234,13 +241,13 @@ internal unsafe partial class VkMeshRenderer
 			return;
 		}
 
-		AddRuntimeBuffer("DeformerPositionsBuffer", deformerRenderer.SkinnedPositionsBuffer, 0u, assignBindingOverride: false);
+		AddRuntimeBuffer("DeformerPositionsBuffer", deformerOutputState.Positions, 0u, assignBindingOverride: false);
 
 		uint nextBinding = 2u;
-		if (MeshRenderer.DeformerNormalsBuffer is not null)
-			AddRuntimeBuffer("DeformerNormalsBuffer", deformerRenderer.SkinnedNormalsBuffer, nextBinding++, assignBindingOverride: false);
-		if (MeshRenderer.DeformerTangentsBuffer is not null)
-			AddRuntimeBuffer("DeformerTangentsBuffer", deformerRenderer.SkinnedTangentsBuffer, nextBinding, assignBindingOverride: false);
+		if (meshDeformState.Normals is not null)
+			AddRuntimeBuffer("DeformerNormalsBuffer", deformerOutputState.Normals, nextBinding++, assignBindingOverride: false);
+		if (meshDeformState.Tangents is not null)
+			AddRuntimeBuffer("DeformerTangentsBuffer", deformerOutputState.Tangents, nextBinding, assignBindingOverride: false);
 	}
 
 	private void AddRuntimeBuffer(string shaderName, XRDataBuffer? dataBuffer, uint binding, bool assignBindingOverride = true)
@@ -250,35 +257,47 @@ internal unsafe partial class VkMeshRenderer
 
 		if (assignBindingOverride)
 			dataBuffer.BindingIndexOverride = binding;
-		if (WrapperLookup.GetOrCreate(dataBuffer) is VkDataBuffer vkBuffer)
-			_bufferCache[shaderName] = vkBuffer;
+		_bufferCache[shaderName] = ProgramCreationPort.GetOrCreateBuffer(dataBuffer, generateNow: false);
 	}
 
 	private void CaptureRuntimeDeformationBufferReferences()
 	{
+		XRMeshRenderer.SkinnedOutputResourceSnapshot outputState =
+			MeshRenderer.CaptureSkinnedOutputResources();
+		XRMeshRenderer.BlendshapeResourceSnapshot blendshapeState =
+			MeshRenderer.CaptureBlendshapeResources();
 		_cachedActiveSkinPaletteBuffer = MeshRenderer.ActiveSkinPaletteBuffer;
 		_cachedActiveSkinPaletteIdentity = CaptureBufferStructuralIdentity(_cachedActiveSkinPaletteBuffer);
-		_cachedHasValidPrecombinedBlendshapeDeltas = MeshRenderer.HasValidPrecombinedBlendshapeDeltas;
-		_cachedSkinnedPositionsIdentity = CaptureBufferStructuralIdentity(MeshRenderer.SkinnedPositionsBuffer);
-		_cachedSkinnedNormalsIdentity = CaptureBufferStructuralIdentity(MeshRenderer.SkinnedNormalsBuffer);
-		_cachedSkinnedTangentsIdentity = CaptureBufferStructuralIdentity(MeshRenderer.SkinnedTangentsBuffer);
-		_cachedSkinnedInterleavedIdentity = CaptureBufferStructuralIdentity(MeshRenderer.SkinnedInterleavedBuffer);
-		_cachedPrecombinedBlendshapePositionsIdentity = CaptureBufferStructuralIdentity(MeshRenderer.PrecombinedBlendshapePositionsBuffer);
-		_cachedPrecombinedBlendshapeNormalsIdentity = CaptureBufferStructuralIdentity(MeshRenderer.PrecombinedBlendshapeNormalsBuffer);
-		_cachedPrecombinedBlendshapeTangentsIdentity = CaptureBufferStructuralIdentity(MeshRenderer.PrecombinedBlendshapeTangentsBuffer);
+		_cachedHasValidPrecombinedBlendshapeDeltas =
+			MeshRenderer.Mesh is { } mesh && blendshapeState.IsPrecombinedValidFor(mesh);
+		_cachedSkinnedPositionsIdentity = CaptureBufferStructuralIdentity(outputState.Positions);
+		_cachedSkinnedNormalsIdentity = CaptureBufferStructuralIdentity(outputState.Normals);
+		_cachedSkinnedTangentsIdentity = CaptureBufferStructuralIdentity(outputState.Tangents);
+		_cachedSkinnedInterleavedIdentity = CaptureBufferStructuralIdentity(outputState.Interleaved);
+		_cachedPrecombinedBlendshapePositionsIdentity = CaptureBufferStructuralIdentity(blendshapeState.PrecombinedPositions);
+		_cachedPrecombinedBlendshapeNormalsIdentity = CaptureBufferStructuralIdentity(blendshapeState.PrecombinedNormals);
+		_cachedPrecombinedBlendshapeTangentsIdentity = CaptureBufferStructuralIdentity(blendshapeState.PrecombinedTangents);
 	}
 
 	private bool RuntimeDeformationBufferReferencesChanged()
-		=> !ReferenceEquals(_cachedActiveSkinPaletteBuffer, MeshRenderer.ActiveSkinPaletteBuffer)
-		|| _cachedActiveSkinPaletteIdentity != CaptureBufferStructuralIdentity(MeshRenderer.ActiveSkinPaletteBuffer)
-		|| _cachedSkinnedPositionsIdentity != CaptureBufferStructuralIdentity(MeshRenderer.SkinnedPositionsBuffer)
-		|| _cachedSkinnedNormalsIdentity != CaptureBufferStructuralIdentity(MeshRenderer.SkinnedNormalsBuffer)
-		|| _cachedSkinnedTangentsIdentity != CaptureBufferStructuralIdentity(MeshRenderer.SkinnedTangentsBuffer)
-		|| _cachedSkinnedInterleavedIdentity != CaptureBufferStructuralIdentity(MeshRenderer.SkinnedInterleavedBuffer)
-		|| _cachedPrecombinedBlendshapePositionsIdentity != CaptureBufferStructuralIdentity(MeshRenderer.PrecombinedBlendshapePositionsBuffer)
-		|| _cachedPrecombinedBlendshapeNormalsIdentity != CaptureBufferStructuralIdentity(MeshRenderer.PrecombinedBlendshapeNormalsBuffer)
-		|| _cachedPrecombinedBlendshapeTangentsIdentity != CaptureBufferStructuralIdentity(MeshRenderer.PrecombinedBlendshapeTangentsBuffer)
-		|| _cachedHasValidPrecombinedBlendshapeDeltas != MeshRenderer.HasValidPrecombinedBlendshapeDeltas;
+	{
+		XRMeshRenderer.SkinnedOutputResourceSnapshot outputState =
+			MeshRenderer.CaptureSkinnedOutputResources();
+		XRMeshRenderer.BlendshapeResourceSnapshot blendshapeState =
+			MeshRenderer.CaptureBlendshapeResources();
+		XRDataBuffer? activeSkinPalette = MeshRenderer.ActiveSkinPaletteBuffer;
+		return !ReferenceEquals(_cachedActiveSkinPaletteBuffer, activeSkinPalette)
+			|| _cachedActiveSkinPaletteIdentity != CaptureBufferStructuralIdentity(activeSkinPalette)
+			|| _cachedSkinnedPositionsIdentity != CaptureBufferStructuralIdentity(outputState.Positions)
+			|| _cachedSkinnedNormalsIdentity != CaptureBufferStructuralIdentity(outputState.Normals)
+			|| _cachedSkinnedTangentsIdentity != CaptureBufferStructuralIdentity(outputState.Tangents)
+			|| _cachedSkinnedInterleavedIdentity != CaptureBufferStructuralIdentity(outputState.Interleaved)
+			|| _cachedPrecombinedBlendshapePositionsIdentity != CaptureBufferStructuralIdentity(blendshapeState.PrecombinedPositions)
+			|| _cachedPrecombinedBlendshapeNormalsIdentity != CaptureBufferStructuralIdentity(blendshapeState.PrecombinedNormals)
+			|| _cachedPrecombinedBlendshapeTangentsIdentity != CaptureBufferStructuralIdentity(blendshapeState.PrecombinedTangents)
+			|| _cachedHasValidPrecombinedBlendshapeDeltas !=
+				(MeshRenderer.Mesh is { } mesh && blendshapeState.IsPrecombinedValidFor(mesh));
+	}
 
 	private void EnsureRuntimeDeformationBuffersCurrent()
 	{

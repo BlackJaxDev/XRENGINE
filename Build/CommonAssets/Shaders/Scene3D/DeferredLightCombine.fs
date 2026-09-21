@@ -37,6 +37,11 @@ layout(binding = 6) uniform sampler2D BRDF; // XRENGINE_FREQUENCY(Pass)
 
 layout(binding = 7) uniform sampler2DArray IrradianceArray; // XRENGINE_FREQUENCY(Pass)
 layout(binding = 8) uniform sampler2DArray PrefilterArray; // XRENGINE_FREQUENCY(Pass)
+#ifdef XRENGINE_MSAA_DEFERRED
+layout(binding = 9) uniform sampler2DMS EmissionColor; // XRENGINE_FREQUENCY(Pass)
+#else
+layout(binding = 9) uniform sampler2D EmissionColor; // XRENGINE_FREQUENCY(Pass)
+#endif
 
 layout(std430, binding = 20) buffer LightProbePositions
 {
@@ -91,6 +96,7 @@ uniform float AmbientOcclusionPower = 1.0f; // XRENGINE_FREQUENCY(Pass)
 uniform bool AmbientOcclusionMultiBounce = false; // XRENGINE_FREQUENCY(Pass)
 uniform bool SpecularOcclusionEnabled = false; // XRENGINE_FREQUENCY(Pass)
 uniform vec3 GlobalAmbient = vec3(0.03f); // XRENGINE_FREQUENCY(Pass)
+uniform bool UsesDDGI = false; // XRENGINE_FREQUENCY(Pass)
 
 // Debug: set via XRE_DEFERRED_DEBUG env var.
 // 0 = normal, 1 = raw albedo, 2 = InLo, 3 = RMSE, 4 = normal, 5 = depth,
@@ -357,10 +363,12 @@ void main()
         vec4 albedoOpacity = texelFetch(AlbedoOpacity, coord, gl_SampleID);
         vec3 normal = XRENGINE_ReadNormalMS(Normal, coord, gl_SampleID);
         vec4 rmse = texelFetch(RMSE, coord, gl_SampleID);
+        vec4 emissionColor = texelFetch(EmissionColor, coord, gl_SampleID);
 #else
         vec4 albedoOpacity = texture(AlbedoOpacity, uv);
         vec3 normal = XRENGINE_ReadNormal(Normal, uv);
         vec4 rmse = texture(RMSE, uv);
+        vec4 emissionColor = texture(EmissionColor, uv);
 #endif
         vec3 albedoColor = albedoOpacity.rgb;
 #ifdef XRENGINE_MSAA_DEFERRED
@@ -472,6 +480,11 @@ void main()
                 probeAmbient = irradianceColor;
         } 
 
+        if (UsesDDGI)
+        {
+                probeAmbient = vec3(0.0f);
+        }
+
         vec3 diffuse = GlobalAmbient * probeAmbient * albedoColor;
         vec3 specular = prefilteredColor * (kS * brdfValue.x + brdfValue.y);
 
@@ -480,5 +493,8 @@ void main()
         float specOcclusion = SpecularOcclusionEnabled ? GTSpecularOcclusion(NoV, ao, roughness) : ao;
         vec3 ambient = kD * diffuse * diffuseAO + specular * specOcclusion;
 
-        OutLo = vec4(ambient + InLo + emissiveIntensity * albedoColor, albedoOpacity.a);
+        vec3 emittedRadiance = emissionColor.a > 0.5
+                ? emissionColor.rgb
+                : emissiveIntensity * albedoColor;
+        OutLo = vec4(ambient + InLo + emittedRadiance, albedoOpacity.a);
 }

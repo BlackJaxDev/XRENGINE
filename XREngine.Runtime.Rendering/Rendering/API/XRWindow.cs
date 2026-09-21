@@ -1818,12 +1818,30 @@ namespace XREngine.Rendering
                 }
             }
 
+            // Waiting can itself abandon native work. Recheck the policy before
+            // releasing resources that the abandoned context may still reference.
+            if (renderer.ShouldSkipNativeWindowDisposeForShutdown)
+            {
+                renderer.AbandonShutdownTeardown();
+                Debug.RenderingWarning(
+                    "[XRWindow] Renderer teardown abandoned during GPU drain. Window={0} RendererType={1} Reason={2}",
+                    GetHashCode(), renderer.GetType().Name, reason);
+                return false;
+            }
+
             // Query pairs are renderer-owned and must be destroyed while this renderer still owns its context.
             TryRendererCleanupStep(
                 renderer,
                 reason,
                 "CleanupOcclusionGpuElapsedTiming",
                 () => OcclusionGpuElapsedTiming.Instance.CleanupRenderer(renderer));
+
+            if (!TryRendererCleanupStep(renderer, reason,
+                    "PrepareForApiObjectTeardown", renderer.PrepareForApiObjectTeardown))
+            {
+                renderer.AbandonShutdownTeardown();
+                return false;
+            }
 
             bool wrappersDestroyed = TryRendererCleanupStep(
                 renderer,

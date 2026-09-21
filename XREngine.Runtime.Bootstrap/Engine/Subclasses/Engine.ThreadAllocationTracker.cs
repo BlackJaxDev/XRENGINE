@@ -161,6 +161,7 @@ public static partial class Engine
                     return new AllocationRingSnapshot(_last, avg, _max, _count, _values.Length);
                 }
             }
+
         }
 
         private sealed class AllocationScopeRing

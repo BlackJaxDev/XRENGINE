@@ -46,7 +46,10 @@ internal sealed partial class VulkanResourcePlannerSessionService(
     }
 
     internal void ReleaseReadbackScopes()
-        => _freeReadbackScopes.Clear();
+    {
+        _freeReadbackScopes.Clear();
+        ClearQueuedMeshPlannerGenerations();
+    }
 
     internal RuntimeStateScope EnterRuntimeStateScope(in ResourcePlannerRuntimeState state)
     {

@@ -13,6 +13,7 @@ namespace XREngine.Rendering.OpenGL
         public partial class GLMeshRenderer
         {
             private const double SlowTryPrepareLogThresholdMs = 50.0;
+            private ulong _lastPreparationDetailStateKey = ulong.MaxValue;
 
             /// <summary>
             /// Rebuild shader programs and attribute bindings when material or settings change.
@@ -401,7 +402,12 @@ namespace XREngine.Rendering.OpenGL
                     ? "Ready"
                     : (buffersBound ? "BuffersNotReady" : "BuffersPending");
                 _lastPrepareResult = prepareResult;
-                _lastPrepareDetail = BuildPreparationDetail(material, buffersBound, buffersReady);
+                ulong detailStateKey = ComputePreparationDetailStateKey(material, buffersBound, buffersReady);
+                if (_lastPreparationDetailStateKey != detailStateKey)
+                {
+                    _lastPreparationDetailStateKey = detailStateKey;
+                    _lastPrepareDetail = BuildPreparationDetail(material, buffersBound, buffersReady);
+                }
                 LogSlowTryPrepare(
                     prepareResult,
                     ElapsedMilliseconds(methodStart),
@@ -428,6 +434,14 @@ namespace XREngine.Rendering.OpenGL
                    "; buffersBound=" + buffersBound +
                    "; layout=" + _geometryLayoutSignature.DebugSummary;
 
+            private ulong ComputePreparationDetailStateKey(GLMaterial material, bool buffersBound, bool buffersReady)
+            {
+                ulong key = ComputeOpenGLPipelineStateKey(material);
+                key ^= buffersBound ? 0x9E3779B97F4A7C15UL : 0UL;
+                key ^= buffersReady ? 0xC2B2AE3D27D4EB4FUL : 0UL;
+                return key;
+            }
+
             private ulong ComputeOpenGLPipelineStateKey(GLMaterial material)
             {
                 HashCode hash = new();
@@ -440,6 +454,9 @@ namespace XREngine.Rendering.OpenGL
                 hash.Add(material.Data.RenderOptions?.GetHashCode() ?? 0);
                 hash.Add((int)(Mesh?.Type ?? EPrimitiveType.Triangles));
                 hash.Add(_geometryLayoutSignature.StableHash);
+                hash.Add(RuntimeEngine.Rendering.State.CurrentRenderingPipeline is { } pipeline
+                    ? RuntimeHelpers.GetHashCode(pipeline)
+                    : 0);
                 hash.Add(RuntimeEngine.Rendering.State.RenderingPipelineState?.ShadowPass ?? false);
                 hash.Add(RuntimeEngine.Rendering.State.RenderingPipelineState?.UseDepthNormalMaterialVariants ?? false);
                 hash.Add(RuntimeEngine.Rendering.Settings.ShaderConfigVersion);
@@ -624,7 +641,7 @@ namespace XREngine.Rendering.OpenGL
                     return true;
 
                 EProgramStageMask mask = materialProgram?.Data?.GetShaderTypeMask() ?? EProgramStageMask.None;
-                if (mask.HasFlag(EProgramStageMask.VertexShaderBit))
+                if ((mask & EProgramStageMask.VertexShaderBit) != 0)
                     return false;
 
                 bool pointLightShadowPass = renderState.GlobalMaterialOverride is XRMaterial globalMaterialOverride
@@ -744,7 +761,7 @@ namespace XREngine.Rendering.OpenGL
 
                 materialProgram = material.SeparableProgram;
                 var mask = materialProgram?.Data?.GetShaderTypeMask() ?? EProgramStageMask.None;
-                bool includesVertexShader = mask.HasFlag(EProgramStageMask.VertexShaderBit);
+                bool includesVertexShader = (mask & EProgramStageMask.VertexShaderBit) != 0;
 
                 bool result = includesVertexShader
                     ? UseSuppliedVertexShader(out vertexProgram, materialProgram, mask)

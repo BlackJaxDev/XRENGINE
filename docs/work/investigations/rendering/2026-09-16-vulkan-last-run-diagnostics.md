@@ -1125,7 +1125,7 @@ moved to Active; see the gate record below.
 
 ## S03 Gate Record: Nonblocking Advanced Readiness
 
-Status: Active, implementation complete and validation partial.
+Status: Validated.
 
 The former readiness query synchronously linked the full Advanced shader family
 and could foreground-complete compute pipeline jobs. It now observes one
@@ -1161,15 +1161,333 @@ Live evidence:
   compile-queue, unhandled, or fatal teardown error was found.
 - Non-incremental Vulkan Release and isolated editor builds passed with zero
   warnings and errors. Existing shader dependency hot-reload tests passed 10/10.
+- Closure timing session `20260918-174638-s03-closeout-timing2` first observed
+  `PendingResources` at 1,190.12 ms with zero foreground joins, then reached
+  `Admitted`/`Bound` and a published frame package. Cold preparation measured
+  3,904.05 ms wall, 724.83 ms preparation CPU, 1,562.59 ms summed source
+  compilation, 10.23 ms program linking, 3.17 ms native compute pipeline work,
+  and exactly zero S03-attributed foreground joins. Source time is summed across
+  parallel artifacts and therefore is not expected to equal wall time.
+- The same session's all-shader reload produced a new preparation generation and
+  returned to `Admitted` in 1,664.39 ms wall, with 18.40 ms preparation CPU,
+  2,169.78 ms summed source compilation, 9.55 ms linking, 0.99 ms native work,
+  and zero attributed foreground joins. The separate global reload maintenance
+  stall remains owned by S04.
+- Session `20260918-174906-s03-closeout-unavailable` launched with the explicit
+  validation-only `XRE_VK_ADVANCED_FORCE_UNAVAILABLE=1` renderer-restart override.
+  Admission was `Unsupported`, binding was `Rejected`, execution was not admitted,
+  the exact reason propagated through all three surfaces, preparation remained
+  unrequested, and submission reported `downgraded=false`.
+- Both closure sessions stopped cleanly. Their final logs contain no fatal or
+  unhandled exception, disposal/compile-queue/preparation failure, canceled
+  preparation, or Vulkan validation error. The final Release editor build passed.
 
-Remaining closure gates:
+Residual work outside S03:
 
-- Capture separate cold and reload durations for source compilation, program
-  linking, native pipeline work, and any foreground join. The observed manual
-  all-shader reload included a separate global maintenance stall owned by S04.
-- Exercise a genuinely unavailable Vulkan capability and confirm the requested
-  family reports a visible unavailable/failed result without fallback.
 - The viewport remains visually invalid because canonical texture publication
   reports `SourceMismatch` after texture dimensions change. That defect is
   independent of pipeline readiness and must be resolved before claiming an
   integrated Advanced visual-quality pass.
+
+## S04 Gate Record: Dependency-Scoped Compile Invalidation
+
+Status: Validated.
+
+The former mutation path advanced one device-wide generation, cleared every
+terminal completion cache and synchronously drained all graphics, compute and
+publication work whenever a program linked or a shader changed. The replacement
+classifies mutations by lifetime and dependency:
+
+- Additive program links and first shader-module creation hold the existing
+  compilation dependency lease. They cannot overlap destructive mutation, but
+  do not invalidate unrelated work.
+- Program/interface replacement and layout destruction match the owning
+  `VkRenderProgram` and pipeline layout. Shader replacement matches the exact
+  shader-module handle. Renderer shutdown retains the existing device-wide path.
+- Requests retain immutable program, layout and shader-stage dependencies while
+  native compilation runs. Scoped mutation first excludes new captures, then
+  finds matching jobs under queue ownership and drains those native jobs before
+  their pointers can be destroyed. Publication waits remain separately metered.
+- Enqueue and worker entry verify that captured program, layout and shader
+  handles are still current. Matching terminal results are removed after the
+  drain: unadopted compute pipelines are destroyed once, while shared graphics
+  pipelines enter the existing deferred GPU retirement queue.
+
+The lock order is dependency/mutation exclusion, queue ownership for matching
+and removal, native-job completion outside queue ownership, then scoped terminal
+cleanup and native retirement. Device-wide generation publication occurs only
+when releasing a device-wide mutation lease. A scoped lease deliberately leaves
+that generation unchanged, so exact live dependency checks, rather than the
+global generation alone, reject a request captured immediately before a scoped
+replacement.
+
+Telemetry exposed through `get_advanced_profile_diagnostics` records additive
+links, scoped and global mutation counts, reason/scope/affected owners, graphics
+and compute drains, publication wait count/time, stale completions and exact stale
+pipeline disposal. This instrumentation found and corrected an early
+classification error: zero-handle first shader creation initially appeared as
+232 global invalidations. Treating that additive operation as a dependency lease
+reduced the authoritative startup count to zero.
+
+Live evidence:
+
+- Authoritative cold startup recorded 38 additive program links, 62 scoped
+  mutations, zero global invalidations, zero graphics/compute drains, zero
+  publication waits, 22 stale completions and 13 stale pipeline disposals.
+- The first shader reload reached 304 scoped mutations; three further reloads
+  reached 857. Both compile queues returned to zero after every cycle, with no
+  global invalidation or publication wait. The longer observed run reached 948
+  scoped mutations, one affected compute drain, 84 stale completions and 54
+  stale disposals while remaining admitted.
+- Immediately after reload, the existing retirement meter observed the expected
+  transient backlog of 10 pipelines and 21 pipeline layouts at about 55 ms old.
+  A final isolated run advanced 12 successfully captured frames. Both class
+  backlogs, total pending retirement, and both compile queues then measured zero;
+  quarantined failures and `vkDeviceWaitIdle` calls also remained zero.
+- Four repeated reload cycles completed and the post-reload viewport rendered
+  the expected interior scene. The final owned session stopped cleanly; its logs
+  contained zero matching watchdog, compile/quiesce, Vulkan validation, fatal,
+  unhandled, disposal, deadlock or double-destroy signatures.
+- Vulkan and editor builds passed before the settlement run. No tests were added,
+  modified or run because live feature validation precedes test work and test
+  clearance was not granted.
+
+S05 owns any remaining cache-lock and foreground native-creation budgeting. The
+canonical texture `SourceMismatch` and TSR visual-quality investigation remain
+independent of S04.
+
+## S05 Gate Record: Bounded Cache And Native-Creation Work
+
+Status: Validated.
+
+The pipeline manager now reports device-lifetime foreground and background native
+creation count/total/maximum, foreground and background cache-host wait
+count/total/maximum, cache-only probe hits/misses/failures, merge
+count/total/maximum, and cache capture/write count/bytes/total/maximum through the
+existing `pipelineCompilationDiagnostics` MCP surface. This includes direct
+graphics and compute creation calls that bypass the graphics cache-policy helper.
+
+Measurement did not support adding a new foreground preparation path or changing
+publication scheduling. The initial isolated cold cohort used a fresh cache root:
+
+- 51 native creates ran on the worker cache in 188.6536 ms total; the longest
+  cold driver call was 121.7055 ms, but foreground native creation was zero.
+- Foreground cache-host wait totaled 0.0085 ms across 45 acquisitions. Background
+  wait totaled 0.1132 ms. Forty-five merges totaled 0.4984 ms.
+- All 33 graphics fail-on-compile-required probes hit the runtime cache, both
+  compile queues settled to zero, and no foreground join was introduced.
+
+One reload added 24 worker creations in 3.5228 ms, 14/14 runtime cache hits,
+0.0024 ms foreground and 0.0086 ms background host wait, and 24 merges in
+0.0846 ms. Queues again settled to zero without a global invalidation or
+publication wait. Cold shutdown persisted a 1,222,067-byte native cache in
+0.80 ms and a 238,110-byte prewarm database. Restart consumed the native cache
+and 112 prewarm entries; it needed six background compute creates totaling
+1.54 ms, zero foreground creates, and 0.0011 ms foreground host wait.
+
+The remaining stress/recovery cohort deliberately replaced only the isolated
+cache with a Vulkan version-one header carrying the wrong vendor/device identity.
+The engine now validates persisted header size/version, selected vendor/device,
+and pipeline-cache UUID before passing bytes to the driver. Engine- or
+driver-rejected data retries empty foreground and background cache creation rather
+than disabling cache use for the process. The fixed run reported `initialBytes=0`,
+one rejection, one recovery, valid worker-cache creation and settled queues.
+
+Three subsequent reloads exercised publication and autosave:
+
+- 256 background native creates totaled 121.9562 ms with a 23.6821 ms maximum.
+  Five foreground creates totaled 3.85 ms, averaged 0.77 ms, and had a 3.042 ms
+  maximum. This did not meet the evidence threshold for another foreground queue.
+- 196/196 cache-only probes hit. Foreground host waits totaled 0.0336 ms with a
+  0.001 ms maximum; background waits totaled 0.1745 ms.
+- 250 merges totaled 1.1972 ms with a 0.1936 ms maximum. The 927,965-byte
+  autosave captured in 0.393 ms and wrote in 0.5293 ms. Neither path justified
+  scheduling or batching changes.
+- All 24 bounded viewport captures completed without readback failures. The
+  existing canonical texture/visual defect remained visible but did not prevent
+  pipeline execution. Both compile queues, global invalidations and mutation
+  publication waits finished at zero.
+
+`XRE_VK_PIPELINE_CACHE_CONTROL_FORCE_UNAVAILABLE=1` is a validation-only
+logical-device override. Its isolated cohort reported cache control disabled and
+zero probes while retaining eight background creates totaling 4.5444 ms, normal
+merge publication, zero foreground native creates and settled queues. This proves
+the unsupported path does not depend on fail-on-compile-required behavior.
+
+Every owned session stopped cleanly. Final logs recorded rejection, empty-cache
+recovery and replacement persistence, with no matching Vulkan validation,
+watchdog, compile/quiesce, fatal, unhandled, disposal, deadlock or double-destroy
+failure. The conservative worker count and cache storage format remain unchanged.
+No tests were added, modified or run because live feature validation precedes test
+work and test clearance was not granted.
+
+S06 owns initial render-pipeline resource materialization. The canonical texture
+`SourceMismatch` and TSR visual-quality work remain independent of S05.
+
+## S06 Gate Record: Bounded Initial Resource Materialization
+
+Status: Validated.
+
+The unlimited first-generation bypass was the confirmed trigger. Initial and
+replacement generations now use the same owner-thread incremental materializer.
+Ordinary work is bounded to 2 ms or four completed specs per slice; resize
+catch-up is bounded to 8 ms or 16 completed specs. Commit remains atomic, pending
+registries remain unpublished, stale keys and superseded generations are
+discarded, and imported resources retain external ownership. Active generations
+retire separately behind completion fences.
+
+Materialization diagnostics now report initial/replacement identity, elapsed
+build time, cumulative work, slice count, most recent/worst slice, and worst spec
+name/kind/duration. Generation-owned incremental framebuffer factories split the
+measured renderer-affine Advanced fullscreen paths into bounded setup stages.
+This was applied only to the factories that exceeded the 16.67 ms indivisible
+stage limit; publication and ownership remain on the render owner thread. The
+backend transaction commits before `ActiveGeneration` publication, so neither
+pipeline nor backend state can expose a partially committed generation.
+
+The final post-review exact-source cold Vulkan cohort was the isolated editor
+process ending in `pid37468` under
+`Build/_AgentValidation/00000000-000000-shared/mcp-sessions/20260918-191458-s06-initial-materialization/`:
+
+- The 1920x1080 Advanced generation materialized 198 specs in 81 slices. Build
+  duration was 854.49 ms and actual owner-thread work was 188.00 ms. Worst slice
+  was 16.50 ms; the worst stage was `VolumetricFogReprojectQuadFBO` at 16.28 ms.
+  Both remained below the 16.67 ms indivisible-stage limit after Motion Blur
+  texture-reference capture and shader acquisition were separated.
+- The generation stayed unpublished until all required resources validated. Its
+  first active-generation frame package appeared 157 ms after commit. The full
+  initial request-to-package interval was 2.335 seconds, including startup and
+  world-readiness work outside resource materialization in the earlier
+  `pid46676` acceptance cohort.
+- A tight 1484x811 -> 1284x691 -> 1384x751 resize superseded the intermediate
+  pending keys and published generation 3 at exactly 1384x751. The replacement
+  used 33 slices and 9.78 ms work; worst slice was 1.98 ms and worst stage was
+  `PostProcessFBO` at 0.48 ms. The old generation was retained after an initial
+  failed fence poll and disposed only after a later `Signaled` result.
+- The cohort had no GPU-produced-buffer upload warnings, mixed Advanced-family
+  plan failure, desktop-frame failure, or pending-generation failure.
+
+The failure/recovery cohort ending in `pid12928` used the validation-only launch
+override `XRE_RENDER_RESOURCE_MATERIALIZATION_FAIL_ONCE=PostProcessFBO:3`.
+The cached override is inert when omitted. It failed replacement spec 146/198
+after the staged factory had begun, left the active 1920x1080 generation
+published, disposed the failed generation and its still-owned incremental
+factory, and armed a one-second retry backoff. Automatic retry then committed
+the exact 1484x811 generation with a 4.98 ms worst slice and 2.61 ms worst stage;
+the old active generation retired and was disposed after a signaled fence.
+
+Recovered MCP diagnostics reported generation 3, 1484x811 internal/display
+extent, execution admitted and no blocker. The non-consecutive sequence under
+`Build/_AgentValidation/20260918-191458-s06-initial-materialization/mcp-captures/`
+completed 12/12 Vulkan readbacks at frame stride three with no failures or drops;
+render IDs advanced exactly from 3816 through 3849. Its contact sheet showed a
+stable stationary view, while the manifest proves frame advancement. Stable log
+snapshots outside capture reported 15.19-16.86 ms render intervals; sequence
+timing is retained as intrusive diagnostic evidence, not a promotion benchmark.
+
+Each owned session stopped through `Manage-McpEditorSession.ps1`. Teardown scans
+found only the deliberately injected first-chance exception and no VUID, device
+loss, access violation, timeout, upload warning, Vulkan plan failure, desktop
+frame failure, or disposal failure. The final exact-source isolated editor build
+passed with zero warnings and errors, and the final Release editor build passed.
+No tests were added, modified or run because live validation preceded test work
+and test clearance was not granted.
+
+S07 owns any measured mesh CPU-preparation and wrapper-publication work. S06 does
+not begin that work. The canonical texture `SourceMismatch` and TSR visual-quality
+investigations remain independent.
+
+## S07 Gate Record: Separate Mesh CPU Data And Wrapper Publication
+
+Status: Validated.
+
+Mesh construction now has a thread-affine, nestable publication transaction that
+keeps object-cache and render-object-cache entries hidden until the root scope
+commits. The importer owns the outer scope, so mesh construction, skinning and
+blend-shape buffer rebuilding share one immutable completion boundary. Render
+state becomes ready before commit callbacks run, which lets subscribers create an
+owner-thread wrapper without exposing the object to unrelated cache consumers.
+Any constructor, buffer callback, cache callback or wrapper-registration failure
+aborts the transaction and destroys unpublished resources in reverse order.
+
+The final hardening pass extended that boundary beyond individual cache entries.
+Mesh buffer batches now use per-key publication tickets, revision checks and
+leases; every rollback path restores both the authoritative collection and its
+convenience references before releasing bookkeeping. Renderer mesh/configuration,
+skinning outputs, bone inputs, blend-shape/precombine state and mesh-deformation
+inputs are published as immutable aggregate generations, and all GL/Vulkan,
+compute, shader-generation and physics consumers capture one generation per use.
+Nested shader-version first use is keyed to the root publication transaction, so
+same-root callers share an unpublished candidate, competing roots wait for commit,
+and an outer abort wakes retrying callers without leaking the rejected candidate.
+
+`XRMesh` buffer replacement is likewise transactional. Preparation builds a
+hidden owned buffer, validates the mesh revision, publishes it through the normal
+collection events and disposes the displaced buffer only after a successful
+commit. A stale revision or callback failure restores the prior collection and
+convenience-buffer references. Constructor initialization and existing serial
+vertex population remain intact; no constructor fast path or nested
+`Parallel.For` was introduced. Renderer startup no longer pulls deferred objects
+onto the startup thread, so wrappers remain owner-first. Vulkan cold buffer use
+inside an acquired frame schedules the required upload as render maintenance
+instead of allocating or synchronously joining in-frame.
+
+Backend wrapper identity is canonicalized through the wrapper owner rather than
+through an incidental managed view. Vulkan resource-generation preparation uses
+explicit ready/pending/failed outcomes: a cold external/OpenXR generation remains
+pending while owner-thread work is queued and can only publish after the exact
+generation is complete. Fixed-point root commit also enlists publication work
+created by callbacks before making any participant discoverable.
+
+New diagnostics separate mesh count and vertex count from buffer count and bytes,
+native allocation, explicit zero fill, buffer callbacks, vertex population,
+cache publication, wrapper creation and wrapper-lock waits. They also report
+wrapper failures, wrappers created during CPU preparation, off-owner creation and
+currently active preparations. The final live cohorts were:
+
+| Backend / scene | Mesh CPU preparation | Wrapper publication | Outcome |
+| --- | --- | --- | --- |
+| Vulkan / small helpers | 35 meshes, 200 vertices, 47 buffers, 4,976 bytes; allocation 0.3129 ms, zero fill 0.4349 ms, callbacks 2.0392 ms, vertex population 1.0497 ms | 39 wrappers in 1.1797 ms; 47 lock waits totaling 0.0045 ms | Completed; no binding, skipped-draw or validation failure |
+| OpenGL / small helpers | 34 meshes, 818 vertices, 50 buffers, 24,928 bytes; allocation 0.2372 ms, zero fill 0.5492 ms, callbacks 1.3564 ms, vertex population 0.9212 ms | 45 wrappers in 1.0416 ms | Scene rendered; no wrapper or OpenGL failure |
+| Vulkan / Sponza | 62 meshes, 209,613 vertices, 149 buffers, 10,056,976 bytes; allocation 0.9275 ms, zero fill 3.9210 ms, callbacks 2.5688 ms, vertex population 175.2684 ms, cache publication 2.5258 ms | 24 wrappers in 0.2838 ms; 24 lock waits totaling 0.0041 ms | Advanced frame rendered 27 scene commands; no binding, skipped-draw, pipeline-pending or validation failure |
+| OpenGL / Sponza | 65 meshes, 210,864 vertices, 160 buffers, 10,097,120 bytes; allocation 1.2890 ms, zero fill 3.0656 ms, callbacks 2.1616 ms, vertex population 46.5732 ms, cache publication 2.6272 ms | 134 wrappers in 0.9813 ms; 268 lock waits totaling 0.0305 ms | Default frame rendered 27 scene commands; no wrapper-creation failure |
+
+Every cohort ended with zero wrapper-creation failures, zero wrappers created
+during CPU preparation, zero off-owner wrapper creates and zero active
+preparations. The Sponza viewport was inspected from both backends and visibly
+changed with the camera; Vulkan used `AdvancedRenderPipeline` and OpenGL used
+`DefaultRenderPipeline` for the backend-neutral wrapper gate. The independent
+Corvette stress import also prepared 3,376,594 vertices and 162,040,704 buffer
+bytes without early or off-owner wrappers; its later Advanced visibility
+rejection was the existing explicit compact-image capacity guard, not an S07
+publication failure.
+
+A disposable validation harness under
+`Build/_AgentValidation/20260920-200656-vulkan-s07/scratch/` passed nested hidden
+publication, pre-publication failure/disposal, geometry/topology/bounds/attribute
+coherence, owned-buffer replacement, revision-during-preparation rejection,
+callback rollback, post-publication material mutation, two-consumer retirement,
+same-root shader-version reuse, a competing caller waiting for commit and retry
+after an outer abort. The harness exposed and drove the fixes for stale
+convenience-buffer references after replacement, compensation after callback
+failure and early root abort. Live iteration also exposed and resolved missing
+first-add collection events, premature derived-renderer buffer publication and a
+Vulkan cold-upload scheduling gap.
+
+The rendering, OpenGL, Vulkan and isolated editor builds passed with zero warnings
+and errors. Final Vulkan telemetry reported a rendered, unskipped scene with zero
+validation messages, binding failures, skipped draws/dispatches, dropped frame
+operations, required-pipeline pending work or render-thread shader compilation.
+Final OpenGL telemetry reported the same S07 publication invariants and a rendered,
+unskipped scene. Two camera-dependent screenshots from each backend were inspected.
+The Vulkan images retain the separately tracked canonical texture `SourceMismatch`;
+OpenGL logs retain a fallback-material diagnostic for an absent
+`SurfaceEmissionTexture`. Neither diagnostic is a mesh/wrapper publication failure,
+and neither was hidden as S07 success. RenderDoc environment checks passed, but a
+capture was unnecessary because the MCP screenshots, telemetry and logs localized
+the relevant boundary. No tests were added, modified or run: repository policy
+requires live feature validation before test work, and test clearance was not
+granted.
+
+S08 is now unblocked. The canonical texture/exposure visual-quality work remains
+independent of S07.

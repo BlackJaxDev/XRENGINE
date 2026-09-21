@@ -239,6 +239,7 @@ public sealed partial class AdvancedGpuDeformationResources :
             return false;
         }
 
+        XRMeshSkinningBufferState skinningState = mesh.GetSkinningBufferStateSnapshot();
         uint vertexCount = checked((uint)mesh.VertexCount);
         if (vertexCount == 0u ||
             !CanReadCanonicalVertices(mesh))
@@ -248,8 +249,8 @@ public sealed partial class AdvancedGpuDeformationResources :
             return false;
         }
 
-        uint spillCount = mesh.HasSpillInfluences
-            ? mesh.BoneInfluenceSpillEntries?.ElementCount ?? 0u
+        uint spillCount = skinningState.HasSpillInfluences
+            ? skinningState.SpillEntries?.ElementCount ?? 0u
             : 0u;
         CountBlendshapePayload(
             mesh,
@@ -291,8 +292,8 @@ public sealed partial class AdvancedGpuDeformationResources :
         uint spillBase = _spillInfluenceCount;
         uint rangeBase = _blendshapeRangeCount;
         PackCanonicalVertices(mesh, sourceBase);
-        PackSpillInfluences(mesh, spillBase, spillCount);
-        PackSkinInfluences(mesh, influenceBase, spillBase);
+        PackSpillInfluences(skinningState, spillBase, spillCount);
+        PackSkinInfluences(mesh, skinningState, influenceBase, spillBase);
         PackBlendshapePayload(mesh, rangeBase);
 
         _sourceVertexCount = requiredSource;
@@ -339,11 +340,20 @@ public sealed partial class AdvancedGpuDeformationResources :
             renderer.SyncDirtyBoneMatricesToClientBuffer();
         }
 
-        XRDataBuffer? paletteSource = renderer.ActiveSkinPaletteBuffer;
-        uint paletteCount = renderer.ActiveSkinPaletteCount;
+        XRMeshRenderer.BoneResourceSnapshot boneState = renderer.CaptureBoneResources();
+        XRMeshRenderer.BlendshapeResourceSnapshot blendshapeState =
+            renderer.CaptureBlendshapeResources();
+        bool hasExternalPalette = renderer.HasExternalSkinPaletteSource;
+        XRDataBuffer? paletteSource = hasExternalPalette
+            ? renderer.ActiveSkinPaletteBuffer
+            : boneState.SkinPalette;
+        uint paletteBase = hasExternalPalette ? renderer.ActiveSkinPaletteBase : 0u;
+        uint paletteCount = hasExternalPalette
+            ? renderer.ActiveSkinPaletteCount
+            : checked((uint)mesh.GetSkinningBufferStateSnapshot().UtilizedBones.Length + 1u);
         if (paletteSource is null ||
             paletteCount == 0u ||
-            renderer.ActiveSkinPaletteBase + paletteCount >
+            paletteBase + paletteCount >
                 paletteSource.ElementCount)
         {
             slice = default;
@@ -352,7 +362,7 @@ public sealed partial class AdvancedGpuDeformationResources :
 
         uint activeCount = checked((uint)Math.Max(
             0,
-            renderer.ActiveBlendshapeCount));
+            blendshapeState.ActiveCount));
         uint requiredPalette = checked(_paletteCount + paletteCount);
         uint requiredActive =
             checked(_activeBlendshapeCount + activeCount);
@@ -360,12 +370,12 @@ public sealed partial class AdvancedGpuDeformationResources :
 
         CopyPalette(
             paletteSource,
-            renderer.ActiveSkinPaletteBase,
+            paletteBase,
             _paletteScratch,
             _paletteCount,
             paletteCount);
         CopyActiveBlendshapes(
-            renderer.BlendshapeActiveWeights,
+            blendshapeState.ActiveWeights,
             _activeBlendshapeScratch,
             _activeBlendshapeCount,
             activeCount);
@@ -376,7 +386,7 @@ public sealed partial class AdvancedGpuDeformationResources :
             _activeBlendshapeCount,
             activeCount,
             renderer.SkinnedOutputVersion,
-            renderer.BlendshapeWeightsVersion);
+            blendshapeState.WeightsVersion);
         _paletteCount = requiredPalette;
         _activeBlendshapeCount = requiredActive;
         _poseEntries[renderer] =
@@ -837,7 +847,9 @@ public sealed partial class AdvancedGpuDeformationResources :
                     uv1,
                     color0,
                     color1,
-                    destinationBase + vertexIndex);
+                    destinationBase + vertexIndex,
+                    mesh.TexCoordBuffers is { Length: > 1 } &&
+                    mesh.TexCoordBuffers[1] is XRDataBuffer);
             }
 
             _sourceVertices[destinationBase + vertexIndex] = packed;
@@ -846,21 +858,22 @@ public sealed partial class AdvancedGpuDeformationResources :
 
     private unsafe void PackSkinInfluences(
         XRMesh mesh,
+        XRMeshSkinningBufferState skinningState,
         uint destinationBase,
         uint globalSpillBase)
     {
         XRDataBuffer indices =
-            mesh.BoneInfluenceCoreIndices ??
+            skinningState.CoreIndices ??
             throw new InvalidOperationException(
                 "Canonical skinning indices are unavailable.");
         XRDataBuffer weights =
-            mesh.BoneInfluenceCoreWeights ??
+            skinningState.CoreWeights ??
             throw new InvalidOperationException(
                 "Canonical skinning weights are unavailable.");
         byte* weightBytes = (byte*)weights.Address.Pointer;
         byte* indexBytes = (byte*)indices.Address.Pointer;
         uint* spillHeaders =
-            mesh.BoneInfluenceSpillHeaders is XRDataBuffer headers
+            skinningState.SpillHeaders is XRDataBuffer headers
                 ? (uint*)headers.Address.Pointer
                 : null;
 
@@ -915,7 +928,7 @@ public sealed partial class AdvancedGpuDeformationResources :
     }
 
     private unsafe void PackSpillInfluences(
-        XRMesh mesh,
+        XRMeshSkinningBufferState skinningState,
         uint destinationBase,
         uint count)
     {
@@ -923,7 +936,7 @@ public sealed partial class AdvancedGpuDeformationResources :
             return;
 
         XRDataBuffer sourceBuffer =
-            mesh.BoneInfluenceSpillEntries ??
+            skinningState.SpillEntries ??
             throw new InvalidOperationException(
                 "Canonical spill influences are unavailable.");
         uint* source = (uint*)sourceBuffer.Address.Pointer;

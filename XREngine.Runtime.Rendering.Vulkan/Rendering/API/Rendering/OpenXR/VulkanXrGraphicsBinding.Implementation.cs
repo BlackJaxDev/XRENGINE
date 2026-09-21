@@ -1128,7 +1128,8 @@ Target:                 new RenderFrameViewTargetDescriptor(
             (color, EFrameBufferAttachment.ColorAttachment0, 0, -1),
             (depth, EFrameBufferAttachment.DepthAttachment, 0, -1))
         {
-            Name = "OpenXRVulkanStereoFBO"
+            Name = "OpenXRVulkanStereoFBO",
+            ForceOvrMultiview = true,
         };
 
         _vulkanStereoColorArray = color;

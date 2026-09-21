@@ -21,7 +21,15 @@ internal sealed class VulkanBackendObjectFactory
         bool generateNow = false)
     {
         ArgumentNullException.ThrowIfNull(renderObject);
-        AbstractRenderAPIObject wrapper = context.Resources.BackendObjects.Get(renderObject) ?? Create(context, renderObject, binding);
+        if (renderObject is XRDataBuffer buffer)
+            buffer.EnsureOwnerFirstConstructionCompleted();
+        if (!renderObject.IsApiWrapperPublicationReady)
+            throw new InvalidOperationException(
+                $"Render object '{renderObject.GetType().Name}' cannot be wrapped before CPU construction is published.");
+        AbstractRenderAPIObject wrapper;
+        VulkanBackendObjectRegistry registry = context.Resources.BackendObjects;
+        lock (registry.IdentityCreationLock)
+            wrapper = registry.Get(renderObject) ?? Create(context, renderObject, binding);
         if (generateNow && !wrapper.IsGenerated)
             wrapper.Generate();
         return wrapper;
@@ -85,19 +93,44 @@ internal sealed class VulkanBackendObjectFactory
         GenericRenderObject renderObject,
         VulkanWrapperPortBinding binding)
     {
-        AbstractRenderAPIObject wrapper = context.CreateIdentityWrapper(renderObject);
-        VkObjectBase vulkanWrapper = (VkObjectBase)wrapper;
-        vulkanWrapper.BindDeferredPorts(binding);
-        context.Resources.BackendObjects.PublishIdentity(renderObject, vulkanWrapper);
+        bool recordMeshPublication = renderObject is XRDataBuffer { IsMeshOwnedBuffer: true };
+        long publicationStart = recordMeshPublication ? System.Diagnostics.Stopwatch.GetTimestamp() : 0L;
+        bool succeeded = false;
         try
         {
-            vulkanWrapper.CompleteConstruction();
+            AbstractRenderAPIObject wrapper = context.CreateIdentityWrapper(renderObject);
+            VkObjectBase vulkanWrapper = (VkObjectBase)wrapper;
+            vulkanWrapper.BindDeferredPorts(binding);
+            try
+            {
+                vulkanWrapper.CompleteConstruction();
+                context.Resources.BackendObjects.PublishIdentity(renderObject, vulkanWrapper);
+                if (vulkanWrapper.IsRetired || renderObject.IsDestroyed || !renderObject.IsApiWrapperPublicationReady)
+                {
+                    context.Resources.BackendObjects.RemoveIdentity(renderObject, vulkanWrapper);
+                    vulkanWrapper.Retire();
+                    throw new InvalidOperationException(
+                        $"Render object '{renderObject.GetType().Name}' was destroyed while its Vulkan wrapper was being published.");
+                }
+            }
+            catch
+            {
+                context.Resources.BackendObjects.RemoveIdentity(renderObject, vulkanWrapper);
+                vulkanWrapper.Retire();
+                throw;
+            }
+            succeeded = true;
+            return wrapper;
         }
-        catch
+        finally
         {
-            context.Resources.BackendObjects.RemoveIdentity(renderObject, vulkanWrapper);
-            throw;
+            if (recordMeshPublication)
+            {
+                XRMeshCpuPreparationTelemetry.RecordWrapperCreation(
+                    EMeshWrapperBackend.Vulkan,
+                    System.Diagnostics.Stopwatch.GetTimestamp() - publicationStart,
+                    succeeded);
+            }
         }
-        return wrapper;
     }
 }

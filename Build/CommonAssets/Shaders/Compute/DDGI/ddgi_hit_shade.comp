@@ -1,0 +1,107 @@
+#version 450
+#pragma snippet "DDGIBindings"
+#define DDGI_IRRADIANCE_BINDING 0
+#define DDGI_VISIBILITY_BINDING 1
+
+layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
+
+struct DDGIRayInput { vec4 origin; vec4 direction; vec4 params; };
+struct HitRecord
+{
+    float t;
+    uint objectId;
+    uint faceIndex;
+    uint triangleIndex;
+    vec3 barycentric;
+    float padding;
+};
+struct PackedTriangle { vec4 v0; vec4 v1; vec4 v2; uvec4 extra; };
+
+layout(std430, XR_DDGI_STORAGE_BINDING(0)) readonly buffer Rays { DDGIRayInput gRays[]; };
+layout(std430, XR_DDGI_STORAGE_BINDING(1)) readonly buffer Hits { HitRecord gHits[]; };
+layout(std430, XR_DDGI_STORAGE_BINDING(2)) readonly buffer Triangles { PackedTriangle gTriangles[]; };
+layout(std430, XR_DDGI_STORAGE_BINDING(3)) writeonly buffer RayRadianceBuffer { vec4 gRayRadiance[]; };
+
+uniform uint uNodeCount;
+uniform uint uTriangleCount;
+uniform uint uRootIndex;
+uniform uint uRayCount;
+
+#pragma snippet "DDGIMaterials"
+#pragma snippet "DDGISampling"
+#pragma snippet "DDGIShadows"
+#pragma snippet "DDGILights"
+#pragma snippet "DDGIEnvironment"
+
+const float DDGI_PI = 3.14159265358979323846;
+
+vec3 DDGIShadeSurface(PackedTriangle triangle, HitRecord hit, vec3 rayOrigin, vec3 rayDirection, out vec3 transmitted)
+{
+    DDGIMaterial material = gMaterials[hit.objectId];
+    vec4 uv01 = DDGIHitUvs(triangle, hit.barycentric);
+    vec4 baseTexel = DDGISampleMap(material.baseColorMap, uv01, vec4(1.0));
+    vec3 baseColor = max(material.baseColorOpacity.rgb * baseTexel.rgb, vec3(0.0));
+    float metallic = clamp(material.emissiveMetallic.w * DDGISampleScalar(material.metallicMap, uv01), 0.0, 1.0);
+    vec3 emissive = max(material.emissiveMetallic.rgb * DDGISampleMap(material.emissiveMap, uv01, vec4(1.0)).rgb, vec3(0.0));
+    if (material.emissionOptions.x > 0.5)
+        emissive *= baseTexel.rgb;
+    float coverage = DDGICoverage(material, uv01);
+    transmitted = DDGITransmission(material, uv01, coverage);
+    float transmission = clamp(material.transmission.a * DDGISampleScalar(material.transmissionMap, uv01), 0.0, 1.0);
+    vec3 normal = DDGIShadingNormal(triangle, hit.barycentric, material, uv01, rayDirection);
+    vec3 position = rayOrigin + hit.t * rayDirection;
+    vec3 directIrradiance = DDGIEvaluateDirectLighting(position, normal);
+    // Probe texels contain irradiance / PI. Presentation tint/intensity never
+    // multiply transported energy, preventing artificial gain at each bounce.
+    vec3 indirectDiffuse = sampleDDGIUntinted(position, normal, -rayDirection);
+    vec3 diffuse = baseColor * (1.0 - metallic) * (1.0 - transmission);
+    return coverage * (emissive + diffuse * (directIrradiance / DDGI_PI + indirectDiffuse));
+}
+
+void main()
+{
+    uint rayIndex = gl_GlobalInvocationID.x;
+    if (rayIndex >= uRayCount)
+        return;
+    DDGIRayInput ray = gRays[rayIndex];
+    float directionLength = length(ray.direction.xyz);
+    if (directionLength <= 1e-6)
+    {
+        gRayRadiance[rayIndex] = vec4(0.0, 0.0, 0.0, 1e20);
+        return;
+    }
+    vec3 direction = ray.direction.xyz / directionLength;
+    vec3 throughput = vec3(1.0);
+    vec3 radiance = vec3(0.0);
+    float visibilityDistance = 1e20;
+    HitRecord hit = gHits[rayIndex];
+    for (uint layer = 0u; layer < XR_DDGI_TRANSMISSION_LAYERS; layer++)
+    {
+        if (hit.triangleIndex == XR_DDGI_INVALID_INDEX || hit.t >= 1e20)
+        {
+            radiance += throughput * DDGISampleEnvironment(direction);
+            break;
+        }
+        if (hit.triangleIndex >= min(uTriangleCount, uint(gTriangles.length())) ||
+            hit.objectId >= min(uMaterialCount, uint(gMaterials.length())))
+            break;
+        PackedTriangle triangle = gTriangles[hit.triangleIndex];
+        if (triangle.extra.x != hit.objectId)
+            break;
+        vec3 transmitted;
+        radiance += throughput * DDGIShadeSurface(triangle, hit, ray.origin.xyz, direction, transmitted);
+        // Low-opacity sheets transmit both energy and useful visibility. Opaque
+        // surfaces determine the visibility moment after transparent layers.
+        throughput *= transmitted;
+        if (visibilityDistance >= 1e20 &&
+            (max(max(throughput.r, throughput.g), throughput.b) < 0.5 || layer + 1u == XR_DDGI_TRANSMISSION_LAYERS))
+            visibilityDistance = hit.t;
+        if (max(max(throughput.r, throughput.g), throughput.b) < 0.001)
+            break;
+        float nextMin = hit.t + max(0.001, abs(hit.t) * 1e-5);
+        hit = DDGITraceSurface(ray.origin.xyz, direction, nextMin, ray.direction.w, false);
+    }
+    if (any(isnan(radiance)) || any(isinf(radiance)))
+        radiance = vec3(0.0);
+    gRayRadiance[rayIndex] = vec4(max(radiance, vec3(0.0)), visibilityDistance);
+}

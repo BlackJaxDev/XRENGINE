@@ -71,16 +71,16 @@ public sealed partial class GpuBvhTree
         uint radixBlockCount = Math.Max(1u, ComputeGroups(primitiveCount, 256u));
         uint radixOffsetScalars = NextPowerOfTwo((radixBlockCount * 256u) + 256u);
 
-        _bufferReallocationCount += EnsureBuffer(ref _nodeBuffer, _nodeBufferName, nodeScalars, 6) ? 1u : 0u;
-        _bufferReallocationCount += EnsureBuffer(ref _mortonBuffer, _mortonBufferName, mortonScalars, null) ? 1u : 0u;
-        _bufferReallocationCount += EnsureBuffer(ref _counterBuffer, _counterBufferName, internalCapacity, 11) ? 1u : 0u;
-        _bufferReallocationCount += EnsureBuffer(ref _radixScratchBuffer, _radixScratchBufferName, mortonScalars, null) ? 1u : 0u;
-        _bufferReallocationCount += EnsureBuffer(ref _radixOffsetsBuffer, _radixOffsetsBufferName, radixOffsetScalars, null) ? 1u : 0u;
-        _bufferReallocationCount += EnsureBuffer(ref _qualityDiagnosticsBuffer, _qualityDiagnosticsBufferName, 128u, Bindings.QualityDiagnostics) ? 1u : 0u;
+        _bufferReallocationCount += EnsureBuffer(ref _nodeBuffer, _nodeBufferName, nodeScalars) ? 1u : 0u;
+        _bufferReallocationCount += EnsureBuffer(ref _mortonBuffer, _mortonBufferName, mortonScalars) ? 1u : 0u;
+        _bufferReallocationCount += EnsureBuffer(ref _counterBuffer, _counterBufferName, internalCapacity) ? 1u : 0u;
+        _bufferReallocationCount += EnsureBuffer(ref _radixScratchBuffer, _radixScratchBufferName, mortonScalars) ? 1u : 0u;
+        _bufferReallocationCount += EnsureBuffer(ref _radixOffsetsBuffer, _radixOffsetsBufferName, radixOffsetScalars) ? 1u : 0u;
+        _bufferReallocationCount += EnsureBuffer(ref _qualityDiagnosticsBuffer, _qualityDiagnosticsBufferName, 128u) ? 1u : 0u;
         EnsureOverflowFlagBuffer();
     }
 
-    private static bool EnsureBuffer(ref XRDataBuffer? buffer, string name, uint scalarCount, uint? bindingIndex)
+    private static bool EnsureBuffer(ref XRDataBuffer? buffer, string name, uint scalarCount)
     {
         if (buffer is null)
         {
@@ -92,16 +92,16 @@ public sealed partial class GpuBvhTree
                 PadEndingToVec4 = true,
                 ShouldMap = false
             };
-            if (bindingIndex.HasValue)
-                buffer.SetBlockIndex(bindingIndex.Value);
-            buffer.Generate();
+            // Keep construction CPU-only. The first program bind creates the current
+            // render owner's wrapper and uploads this committed initial image.
+            buffer.CommitDirtyBytes(0u, buffer.Length);
             return true;
         }
         else if (buffer.ElementCount < scalarCount)
         {
             if (buffer.Resize(scalarCount, false, true))
             {
-                buffer.PushData();
+                buffer.CommitDirtyBytes(0u, buffer.Length);
                 return true;
             }
         }

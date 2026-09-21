@@ -923,7 +923,16 @@ internal sealed unsafe partial class VulkanDeviceContext
         }
         bool enablePipelineCreationCacheControlFeature =
             pipelineCreationCacheControlAvailable &&
-            supportedPipelineCreationCacheControlFeatures.PipelineCreationCacheControl;
+            supportedPipelineCreationCacheControlFeatures.PipelineCreationCacheControl &&
+            !XREnvironment.IsEnabled(XREngineEnvironmentVariables.VulkanPipelineCacheControlForceUnavailable);
+        if (pipelineCreationCacheControlAvailable &&
+            supportedPipelineCreationCacheControlFeatures.PipelineCreationCacheControl &&
+            !enablePipelineCreationCacheControlFeature)
+        {
+            Debug.VulkanWarning(
+                "[Vulkan] Pipeline creation cache control was disabled by validation override {0}=1.",
+                XREngineEnvironmentVariables.VulkanPipelineCacheControlForceUnavailable);
+        }
         ResourceRuntime.PipelineManager._supportsPipelineCreationCacheControl = enablePipelineCreationCacheControlFeature;
 
         bool transformFeedbackExtensionEnabled = extensionsArray.Contains(ExtTransformFeedback.ExtensionName);

@@ -15,19 +15,18 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
     #region Buffer-to-Image Transfer
 
     /// <summary>
-    /// Copies pixel data from <paramref name="buffer"/> into a specific mip level and array
+    /// Copies tightly packed staging data into a specific mip level and array
     /// layer range of the image. Prefers NV indirect copy when available; otherwise falls
     /// back to <c>vkCmdCopyBufferToImage</c>, using a dedicated transfer queue with
     /// queue-family ownership barriers when the device exposes one.
     /// </summary>
-    /// <param name="buffer">Staging buffer containing the pixel data.</param>
+    /// <param name="stagingSlice">Validated frame-data staging range containing exactly the target pixel payload.</param>
+    /// <param name="arenaLease">Keeps the staging arena alive until the copy has been recorded.</param>
     /// <param name="mipLevel">Target mip level.</param>
     /// <param name="baseArrayLayer">First array layer to write.</param>
     /// <param name="layerCount">Number of array layers to write.</param>
     /// <param name="extent">Pixel extent of the target mip level.</param>
-    /// <param name="stagingBufferSize">Size in bytes of the staging buffer. When non-zero,
-    /// the method validates that the buffer is large enough for the target image format
-    /// and logs an error (skipping the copy) if there is a mismatch.</param>
+    /// <exception cref="InvalidOperationException">Thrown when the tightly packed staging byte count differs from the target region.</exception>
     protected void CopyBufferToImage(
         in VulkanFrameDataSlice stagingSlice,
         in VulkanSynchronousFrameDataArenaLease arenaLease,
@@ -45,22 +44,17 @@ internal unsafe abstract partial class VkImageBackedTexture<TTexture> : VkTextur
             return;
 
         // Validate staging buffer size against what the GPU will actually read.
-        if (stagingSlice.Length > 0)
+        uint bpt = VkFormatConversions.GetBytesPerTexel(ResolvedFormat);
+        if (bpt > 0)
         {
-            uint bpt = VkFormatConversions.GetBytesPerTexel(ResolvedFormat);
-            if (bpt > 0)
+            ulong requiredBytes = (ulong)extent.Width * extent.Height * extent.Depth * layerCount * bpt;
+            if (stagingSlice.Length != requiredBytes)
             {
-                ulong requiredBytes = (ulong)extent.Width * extent.Height * extent.Depth * layerCount * bpt;
-                if (stagingSlice.Length < requiredBytes)
-                {
-                    Debug.LogError(
-                        $"[Vulkan] Staging buffer size mismatch for '{Data.Name ?? GetDescribingName()}': " +
-                        $"buffer={stagingSlice.Length} bytes but image format {ResolvedFormat} requires " +
-                        $"{requiredBytes} bytes ({extent.Width}x{extent.Height}x{extent.Depth} * {layerCount} layers * {bpt} bpp). " +
-                        $"Skipping CopyBufferToImage to avoid GPU out-of-bounds read. " +
-                        $"Check that the texture's SizedInternalFormat matches its pixel data.");
-                    return;
-                }
+                throw new InvalidOperationException(
+                    $"Vulkan staging buffer size mismatch for '{Data.Name ?? GetDescribingName()}': " +
+                    $"buffer={stagingSlice.Length} bytes but image format {ResolvedFormat} requires " +
+                    $"{requiredBytes} bytes ({extent.Width}x{extent.Height}x{extent.Depth} * {layerCount} layers * {bpt} bpp). " +
+                    "The upload was rejected to prevent publishing incomplete texture data.");
             }
         }
 

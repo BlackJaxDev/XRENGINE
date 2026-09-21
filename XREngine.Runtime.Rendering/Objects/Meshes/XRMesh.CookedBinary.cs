@@ -56,9 +56,12 @@ public partial class XRMesh : ICookedBinarySerializable
     [RequiresDynamicCode(CookedBinarySerializer.ReflectionWarningMessage)]
     void ICookedBinarySerializable.ReadCookedBinary(CookedBinaryReader reader)
     {
+        using RenderObjectPublicationScope publication = GenericRenderObject.BeginDeferredPublication();
+        JoinDeferredObjectCachePublication();
         reader.ReadBaseObject<XRAsset>(this);
         _meshPayloadPlan = null;
         ReadMeshPayload(reader);
+        publication.Complete();
     }
 
     [RequiresUnreferencedCode(CookedBinarySerializer.ReflectionWarningMessage)]
@@ -222,6 +225,7 @@ public partial class XRMesh : ICookedBinarySerializable
 
         ReadSkinningData(reader);
         ReadBlendshapeData(reader);
+        RegisterCookedDynamicBuffers();
         MeshletPayload? cookedMeshletPayload = reader.Remaining > 0 ? ReadMeshletPayload(reader) : null;
         if (cookedMeshletPayload is not null)
             AttachValidatedCookedMeshletPayload(cookedMeshletPayload);
@@ -1060,7 +1064,6 @@ public partial class XRMesh : ICookedBinarySerializable
             {
                 PadEndingToVec4 = metadata.PadEndingToVec4
             };
-            RegisterBuffer(buffer);
         }
         else if (allowMetadata && buffer is null)
         {
@@ -1079,32 +1082,83 @@ public partial class XRMesh : ICookedBinarySerializable
                 CopyReaderToBuffer(reader, buffer, decodedLength);
             else
                 reader.SkipBytes((int)decodedLength);
-            return buffer;
         }
-
-        uint encodedLength = reader.ReadUInt32();
-        bool useLongLength = reader.ReadBoolean();
-        byte[] encoded = reader.ReadBytes((int)encodedLength);
-
-        if (buffer is null)
-            return null;
-
-        switch (encoding)
+        else
         {
-            case MeshBufferEncoding.Snorm16:
-                DecodeSnorm16(encoded, buffer);
-                break;
-            case MeshBufferEncoding.Lzma:
-                DecodeLzma(encoded, buffer, decodedLength, useLongLength);
-                break;
-            case MeshBufferEncoding.GDeflate:
-                buffer.SetGpuCompressedPayload(XRDataBuffer.EBufferCompressionCodec.GDeflate, encoded, decodedLength);
-                break;
-            default:
-                throw new NotSupportedException($"Unsupported mesh buffer encoding '{encoding}'.");
+            uint encodedLength = reader.ReadUInt32();
+            bool useLongLength = reader.ReadBoolean();
+            byte[] encoded = reader.ReadBytes((int)encodedLength);
+
+            if (buffer is not null)
+            {
+                switch (encoding)
+                {
+                    case MeshBufferEncoding.Snorm16:
+                        DecodeSnorm16(encoded, buffer);
+                        break;
+                    case MeshBufferEncoding.Lzma:
+                        DecodeLzma(encoded, buffer, decodedLength, useLongLength);
+                        break;
+                    case MeshBufferEncoding.GDeflate:
+                        buffer.SetGpuCompressedPayload(XRDataBuffer.EBufferCompressionCodec.GDeflate, encoded, decodedLength);
+                        break;
+                    default:
+                        throw new NotSupportedException($"Unsupported mesh buffer encoding '{encoding}'.");
+                }
+            }
         }
 
         return buffer;
+    }
+
+    private void RegisterCookedDynamicBuffers()
+    {
+        BufferCollection targetBuffers = Buffers;
+        string[] keys = [.. SkinningBufferKeys, .. BlendshapeBufferKeys];
+        BufferCollection.PreparedBufferTicket preparationTicket =
+            targetBuffers.CapturePreparationTicket(keys, includeGeometryRevision: true);
+        List<KeyValuePair<string, XRDataBuffer>> replacements = [];
+
+        void Add(XRDataBuffer? value)
+        {
+            if (value is null)
+                return;
+            string key = string.IsNullOrWhiteSpace(value.AttributeName)
+                ? value.Target.ToString()
+                : value.AttributeName;
+            value.AttributeName = key;
+            replacements.Add(new KeyValuePair<string, XRDataBuffer>(key, value));
+        }
+
+        Add(BoneInfluenceCoreIndices);
+        Add(BoneInfluenceCoreWeights);
+        Add(BoneInfluenceSpillHeaders);
+        Add(BoneInfluenceSpillEntries);
+        Add(BlendshapeCounts);
+        Add(BlendshapeIndices);
+        Add(BlendshapeDeltas);
+        Add(BlendshapeSparseShapeRanges);
+        Add(BlendshapeSparseRecords);
+        Add(BlendshapeQuantizedDeltas);
+        Add(BlendshapeQuantizationMetadata);
+
+        using RenderObjectPublicationScope publication = GenericRenderObject.BeginDeferredPublication();
+        BufferCollection.PreparedBufferBatch? publicationBatch = null;
+        publication.Complete(
+            () => publicationBatch = targetBuffers.SwapPreparedBatch(
+                replacements,
+                keys,
+                expectedTicket: preparationTicket),
+            () =>
+            {
+                if (publicationBatch is not null)
+                    targetBuffers.RestorePreparedBatch(publicationBatch);
+            },
+            () =>
+            {
+                if (publicationBatch is not null)
+                    targetBuffers.DisposeReplacedBuffers(publicationBatch);
+            });
     }
 
     private void WriteSkinningData(CookedBinaryWriter writer, SkinningPlan plan)
@@ -1892,7 +1946,7 @@ public partial class XRMesh : ICookedBinarySerializable
 
         buffer.AttributeName = key;
         if (Buffers.ContainsKey(key))
-            Buffers.Remove(key);
+            Buffers.RemoveBuffer(key);
 
         Buffers.Add(key, buffer);
     }

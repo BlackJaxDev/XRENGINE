@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Runtime.CompilerServices;
@@ -284,13 +285,17 @@ internal sealed unsafe partial class VkShader(
             bool usesVulkanClipDepthRemap,
             VulkanTransformFeedbackCompilePlan? transformFeedbackPlan)
         {
+            long compilationStart = Stopwatch.GetTimestamp();
             RendererReloadFailureInjection.ThrowIfEnabled(
                 RendererReloadInjectedFailure.ShaderCompile,
                 "Vulkan shader compilation");
             RendererReloadFailureInjection.DelayIfEnabled(
                 RendererReloadInjectedFailure.DelayedCompletion);
             if (Data.SourceLanguage == ShaderSourceLanguage.Slang)
-                return BuildSlangArtifact(shaderConfigVersion, usesVulkanClipDepthRemap, transformFeedbackPlan);
+                return BuildSlangArtifact(shaderConfigVersion, usesVulkanClipDepthRemap, transformFeedbackPlan) with
+                {
+                    CompilationMilliseconds = Stopwatch.GetElapsedTime(compilationStart).TotalMilliseconds,
+                };
             if (Data.SourceLanguage != ShaderSourceLanguage.Glsl || Data.EntryPoint != "main")
                 throw new NotSupportedException("The legacy Vulkan asset frontend requires GLSL with entry point main.");
             string transformFeedbackPlanIdentity = transformFeedbackPlan?.Identity ?? string.Empty;
@@ -314,7 +319,10 @@ internal sealed unsafe partial class VkShader(
                 out VulkanShaderArtifact cachedArtifact))
             {
                 RuntimeEngine.Rendering.Stats.RecordShaderVariant(warming: true, loadedFromDiskCache: true);
-                return cachedArtifact;
+                return cachedArtifact with
+                {
+                    CompilationMilliseconds = Stopwatch.GetElapsedTime(compilationStart).TotalMilliseconds,
+                };
             }
 
             if (RuntimeEngine.IsRenderThread)
@@ -344,6 +352,10 @@ internal sealed unsafe partial class VkShader(
                 FrequencyOwnedAutoUniformBlocks:
                     prepared.AutoUniformBlocks);
             artifact = artifact with { TransformFeedbackPlanIdentity = transformFeedbackPlanIdentity };
+            artifact = artifact with
+            {
+                CompilationMilliseconds = Stopwatch.GetElapsedTime(compilationStart).TotalMilliseconds,
+            };
 
             VulkanShaderArtifactCache.QueueWrite(artifact);
             Debug.Vulkan("[VulkanShaderCache] MISS key={0} stage={1} bytes={2}.", artifactIdentity, Data.Type, spirv.Length);
@@ -650,6 +662,7 @@ internal sealed unsafe partial class VkShader(
         private void DestroyShaderResources()
             => ProgramCreationPort.ExecuteWithPipelineCompilationQuiesced(
                 DestroyShaderResourcesAfterPipelineCompileDrain,
+                _shaderModule,
                 $"shader module mutation for '{SourceLabel}'");
 
         private void DestroyShaderResourcesAfterPipelineCompileDrain()
@@ -748,6 +761,7 @@ internal sealed unsafe partial class VkShader(
 
             ProgramCreationPort.ExecuteWithPipelineCompilationQuiesced(
                 InvalidateAfterPipelineCompileDrain,
+                _shaderModule,
                 $"shader invalidation for '{SourceLabel}'");
         }
 

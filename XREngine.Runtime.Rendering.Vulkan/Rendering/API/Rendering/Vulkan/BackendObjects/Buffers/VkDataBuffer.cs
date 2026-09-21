@@ -13,9 +13,9 @@ namespace XREngine.Rendering.Vulkan
         /// <summary>
         /// Vulkan data buffer with best practices: staging, synchronization, descriptor integration, lifetime, mapping, error handling, and multi-frame support.
         /// </summary>
-    internal unsafe partial class VkDataBuffer(
-        VulkanBackendObjectContext backendContext,
-        XRDataBuffer buffer) : VkObject<XRDataBuffer>(backendContext, buffer), IApiDataBuffer
+        internal unsafe partial class VkDataBuffer(
+            VulkanBackendObjectContext backendContext,
+            XRDataBuffer buffer) : VkObject<XRDataBuffer>(backendContext, buffer), IApiDataBuffer
         {
             private const ulong IndirectCopyDeviceAddressThresholdBytes = 256UL * 1024UL;
             private const ulong DeviceLocalStaticUploadMinimumBytes = 64UL * 1024UL;
@@ -52,36 +52,10 @@ namespace XREngine.Rendering.Vulkan
             private uint _queuedSubUploadStart;
             private uint _queuedSubUploadEnd;
             private string? _renderThreadUploadJobLabel;
-
-            // --- Event wiring ---
-            protected override void UnlinkData()
-            {
-                Data.PushDataRequested -= PushData;
-                Data.PushSubDataRequested -= PushSubData;
-                Data.FlushRequested -= Flush;
-                Data.FlushRangeRequested -= FlushRange;
-                Data.SetBlockNameRequested -= SetUniformBlockName;
-                Data.SetBlockIndexRequested -= SetBlockIndex;
-                Data.BindRequested -= Bind;
-                Data.UnbindRequested -= Unbind;
-                Data.MapBufferDataRequested -= MapBufferData;
-                Data.UnmapBufferDataRequested -= UnmapBufferData;
-                Data.BindSSBORequested -= BindSSBO;
-            }
-            protected override void LinkData()
-            {
-                Data.PushDataRequested += PushData;
-                Data.PushSubDataRequested += PushSubData;
-                Data.FlushRequested += Flush;
-                Data.FlushRangeRequested += FlushRange;
-                Data.SetBlockNameRequested += SetUniformBlockName;
-                Data.SetBlockIndexRequested += SetBlockIndex;
-                Data.BindRequested += Bind;
-                Data.UnbindRequested += Unbind;
-                Data.MapBufferDataRequested += MapBufferData;
-                Data.UnmapBufferDataRequested += UnmapBufferData;
-                Data.BindSSBORequested += BindSSBO;
-            }
+            // XRDataBuffer dispatches backend operations directly to its exact render owner.
+            // Its public request events remain observer notifications, not backend fan-out.
+            protected override void UnlinkData() { }
+            protected override void LinkData() { }
 
             public override VkObjectType Type => VkObjectType.Buffer;
 
@@ -128,11 +102,15 @@ namespace XREngine.Rendering.Vulkan
 
             internal bool TryEnsureReadyForRendering(bool allowSynchronousUpload)
             {
+                if (IsRetired || Data.IsDestroyed)
+                    return false;
+
                 bool canUploadNow = CanUploadFromRenderReadinessCheck(allowSynchronousUpload);
                 if (!IsActive)
                 {
                     if (!canUploadNow)
                     {
+                        QueueDeferredOwnerUpload("TryEnsureReady.Generate");
                         if (allowSynchronousUpload)
                             TraceDeferredRenderThreadUpload("TryEnsureReady.Generate");
                         return IsReadyForRendering;
@@ -147,6 +125,7 @@ namespace XREngine.Rendering.Vulkan
 
                 if (!canUploadNow)
                 {
+                    QueueDeferredOwnerUpload("TryEnsureReady.PushData");
                     if (allowSynchronousUpload)
                         TraceDeferredRenderThreadUpload("TryEnsureReady.PushData");
                     return false;
@@ -226,7 +205,7 @@ namespace XREngine.Rendering.Vulkan
             {
                 // A deferred upload can outlive the data owner. Never regenerate
                 // its wrapper after the owner has retired and disposed its payload.
-                if (Data.IsDestroyed)
+                if (IsRetired || Data.IsDestroyed)
                     return;
                 if (SkipUploadBecauseDeviceLost("PushData"))
                     return;
@@ -316,7 +295,7 @@ namespace XREngine.Rendering.Vulkan
                     }
 
                     _bufferSize = requestedAllocationBytes;
-                    bool uploadedContent = requiredByteSize == 0;
+                    bool uploadedContent = requiredByteSize == 0 || Data.GpuProduced;
                     _lastUsageFlags = usage;
                     _lastMemProps = memProps;
                     _lastDeviceAddressEnabled = enableDeviceAddress;
@@ -355,7 +334,7 @@ namespace XREngine.Rendering.Vulkan
                         }
                         // Ordinary CPU data uses the persistent frame-slot arena. GPU-compressed
                         // payloads retain their device-address staging requirement above.
-                        else if (requiredByteSize > 0 && TryGetUploadSlice(0, (uint)requiredByteSize, out VoidPtr sourceSlice))
+                        else if (!Data.GpuProduced && requiredByteSize > 0 && TryGetUploadSlice(0, (uint)requiredByteSize, out VoidPtr sourceSlice))
                         {
                             uploadedContent = UploadDeviceLocalRangeFromFrameDataArena(
                                 sourceSlice,
@@ -382,7 +361,7 @@ namespace XREngine.Rendering.Vulkan
                     {
                         // Host-visible buffer for dynamic/stream
                         _lastUploadRoute = ResolveHostVisibleUploadRoute(memProps);
-                        VoidPtr initialData = _bufferSize == requiredByteSize && Data.TryGetAddress(out var address)
+                        VoidPtr initialData = !Data.GpuProduced && _bufferSize == requiredByteSize && Data.TryGetAddress(out var address)
                             ? address
                             : VoidPtr.Zero;
                         (_vkBuffer, _vkMemory) = BackendContext.Resources.Buffers.Create(
@@ -393,9 +372,9 @@ namespace XREngine.Rendering.Vulkan
                             initialData,
                             enableDeviceAddress,
                             GetDescribingName());
-                        if (requiredByteSize > 0 && initialData == VoidPtr.Zero)
+                        if (!Data.GpuProduced && requiredByteSize > 0 && initialData == VoidPtr.Zero)
                             PushSubData(0, checked((uint)requiredByteSize));
-                        uploadedContent = requiredByteSize == 0 || initialData != VoidPtr.Zero || _uploadedByteCount >= requiredByteSize;
+                        uploadedContent = Data.GpuProduced || requiredByteSize == 0 || initialData != VoidPtr.Zero || _uploadedByteCount >= requiredByteSize;
                     }
 
                     RefreshDeviceAddress();
@@ -409,7 +388,8 @@ namespace XREngine.Rendering.Vulkan
                 else
                 {
                     // Reuse the existing allocation and upload fresh data even when size/usage are unchanged.
-                    PushSubData(0, Data.Length);
+                    if (!Data.GpuProduced)
+                        PushSubData(0, Data.Length);
                     if (ShouldDisposeAfterUpload())
                         Data.Dispose();
                     return;
@@ -468,6 +448,8 @@ namespace XREngine.Rendering.Vulkan
             /// </summary>
             public void PushSubData(int offset, uint length)
             {
+                if (IsRetired || Data.IsDestroyed)
+                    return;
                 if (SkipUploadBecauseDeviceLost("PushSubData"))
                     return;
                 if (HasBlockingActiveMapping())
@@ -595,11 +577,30 @@ namespace XREngine.Rendering.Vulkan
             private string RenderThreadUploadJobLabel
                 => _renderThreadUploadJobLabel ??= $"VkDataBuffer.Upload:{GetDescribingName()}";
 
-            private void EnqueueRenderThreadUpload(bool fullUpload, int offset, uint length, string reason)
+            private void QueueDeferredOwnerUpload(string reason)
+                => EnqueueRenderThreadUpload(
+                    fullUpload: true,
+                    offset: 0,
+                    length: Data.Length,
+                    reason,
+                    deferWhenAlreadyOnRenderThread: true);
+
+            private void EnqueueRenderThreadUpload(
+                bool fullUpload,
+                int offset,
+                uint length,
+                string reason,
+                bool deferWhenAlreadyOnRenderThread = false)
             {
+                if (IsRetired || Data.IsDestroyed)
+                    return;
+
                 bool shouldQueue = false;
                 lock (_queuedUploadSync)
                 {
+                    if (IsRetired || Data.IsDestroyed)
+                        return;
+
                     _hasPendingUpload = true;
 
                     if (fullUpload)
@@ -641,6 +642,19 @@ namespace XREngine.Rendering.Vulkan
                 if (!shouldQueue)
                     return;
 
+                // Cold owner-first publication can discover a buffer while a swapchain
+                // frame is already being prepared. Queue its native allocation for the
+                // next render-thread maintenance drain instead of allocating inside that
+                // acquired-frame boundary.
+                if (deferWhenAlreadyOnRenderThread && RuntimeEngine.IsRenderThread)
+                {
+                    RuntimeEngine.EnqueueMainThreadTask(
+                        DrainQueuedRenderThreadUpload,
+                        RenderThreadUploadJobLabel,
+                        RenderThreadJobKind.BufferUpload);
+                    return;
+                }
+
                 if (!RuntimeEngine.InvokeOnMainThread(DrainQueuedRenderThreadUpload, RenderThreadUploadJobLabel))
                     DrainQueuedRenderThreadUpload();
             }
@@ -651,9 +665,11 @@ namespace XREngine.Rendering.Vulkan
                 bool subUpload;
                 uint subStart;
                 uint subEnd;
+                bool cancelled;
 
                 lock (_queuedUploadSync)
                 {
+                    cancelled = IsRetired || Data.IsDestroyed;
                     fullUpload = _queuedUploadIsFull;
                     subUpload = _queuedSubUpload;
                     subStart = _queuedSubUploadStart;
@@ -664,6 +680,12 @@ namespace XREngine.Rendering.Vulkan
                     _queuedSubUpload = false;
                     _queuedSubUploadStart = 0u;
                     _queuedSubUploadEnd = 0u;
+                }
+
+                if (cancelled)
+                {
+                    _hasPendingUpload = false;
+                    return;
                 }
 
                 if (fullUpload)
@@ -1428,6 +1450,29 @@ namespace XREngine.Rendering.Vulkan
                 // but we must return a valid non-zero ID so that IsActive becomes true
                 // and subsequent Generate() calls short-circuit correctly.
                 return CacheObject(this);
+            }
+
+            public override void Generate()
+            {
+                if (IsRetired || Data.IsDestroyed)
+                    return;
+
+                base.Generate();
+            }
+
+            protected override void OnRetiring()
+            {
+                lock (_queuedUploadSync)
+                {
+                    _queuedRenderThreadUpload = false;
+                    _queuedUploadIsFull = false;
+                    _queuedSubUpload = false;
+                    _queuedSubUploadStart = 0u;
+                    _queuedSubUploadEnd = 0u;
+                }
+
+                _hasPendingUpload = false;
+                base.OnRetiring();
             }
 
             protected override void DeleteObjectInternal()

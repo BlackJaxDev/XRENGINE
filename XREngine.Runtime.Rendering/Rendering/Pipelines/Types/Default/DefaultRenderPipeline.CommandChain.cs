@@ -30,6 +30,7 @@ public partial class DefaultRenderPipeline
     protected override ViewportRenderCommandContainer GenerateCommandChain()
     {
         ViewportRenderCommandContainer c = new(this);
+        c.Add<VPRC_PrecomputeBRDF>();
         var ifElse = c.Add<VPRC_IfElse>();
         ifElse.ConditionEvaluator = ShouldUseViewportTargetCommands;
         ifElse.TrueCommands = CreateViewportTargetCommands();
@@ -397,7 +398,7 @@ public partial class DefaultRenderPipeline
                 msaaGeomCmds.Add<VPRC_ResolveMsaaGBuffer>().SetOptions(
                     MsaaGBufferFBOName,
                     DeferredGBufferFBOName,
-                    colorAttachmentCount: 4,
+                    colorAttachmentCount: 5,
                     resolveDepthStencil: true);
                 msaaGBufferBranch.TrueCommands = msaaGeomCmds;
             }
@@ -406,6 +407,7 @@ public partial class DefaultRenderPipeline
         AppendDiagnosticTextureCapture(c, "01_AlbedoOpacity", AlbedoOpacityTextureName);
         AppendDiagnosticTextureCapture(c, "02_Normal", NormalTextureName);
         AppendDiagnosticTextureCapture(c, "03_RMSE", RMSETextureName);
+        AppendDiagnosticTextureCapture(c, "04_EmissionColor", EmissionColorTextureName);
     }
 
     private void AppendForwardDepthPrePass(ViewportRenderCommandContainer c)
@@ -608,6 +610,18 @@ public partial class DefaultRenderPipeline
                 c.Add<VPRC_LightVolumesPass>();
                 c.Add<VPRC_RadianceCascadesPass>();
                 c.Add<VPRC_SurfelGIPass>();
+                c.Add<VPRC_BuildAccelerationStructure>();
+                c.Add<VPRC_DDGIEnvironmentPass>();
+                c.Add<VPRC_DDGIPrepareGeometryPass>();
+                c.Add<VPRC_DDGIRaygenPass>();
+                c.Add<VPRC_DDGITracePass>();
+                c.Add<VPRC_DDGIHitShadePass>();
+                c.Add<VPRC_DDGIRelocatePass>();
+                c.Add<VPRC_DDGIUpdateIrradiancePass>();
+                c.Add<VPRC_DDGIUpdateVisibilityPass>();
+                c.Add<VPRC_DDGIBorderCopyPass>();
+                c.Add<VPRC_DDGICompositePass>();
+                c.Add<VPRC_DDGIDebugVisualization>();
             }
 
             if (enableComputePasses)

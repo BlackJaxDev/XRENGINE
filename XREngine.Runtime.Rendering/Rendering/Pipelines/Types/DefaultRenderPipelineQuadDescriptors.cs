@@ -63,6 +63,7 @@ internal static class DefaultRenderPipelineQuadDescriptors
             .SampleTexture(DefaultRenderPipeline.AlbedoOpacityTextureName)
             .SampleTexture(DefaultRenderPipeline.NormalTextureName)
             .SampleTexture(DefaultRenderPipeline.RMSETextureName)
+            .SampleTexture(DefaultRenderPipeline.EmissionColorTextureName)
             .SampleTexture(DefaultRenderPipeline.AmbientOcclusionIntensityTextureName)
             .SampleTexture(DefaultRenderPipeline.DepthViewTextureName)
             .SampleTexture(DefaultRenderPipeline.LightingAccumTextureName)

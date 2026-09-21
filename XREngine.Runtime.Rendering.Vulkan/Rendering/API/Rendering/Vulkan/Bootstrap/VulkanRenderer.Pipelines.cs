@@ -10,4 +10,8 @@ public sealed partial class VulkanRenderer
         => _resourceRuntime.PipelineManager.CaptureCacheDiagnostic(
             RequestedRenderTargetMode.ToString(),
             EffectiveRenderTargetMode.ToString());
+
+    /// <inheritdoc />
+    public override object CapturePipelineCompilationDiagnostics()
+        => CapturePipelineCacheDiagnostic();
 }

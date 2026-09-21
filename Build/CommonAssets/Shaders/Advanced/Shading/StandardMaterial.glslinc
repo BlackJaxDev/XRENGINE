@@ -33,6 +33,55 @@ vec4 XR_ADV_StandardTexture(XRAdvancedMaterialRecord material, uint slot,
     return XR_ADV_SampleTexture2DGrad(textureReference, uv, dx, dy);
 }
 
+vec3 XR_ADV_ResolveStandardEmission(
+    XRAdvancedMaterialRecord material,
+    vec2 uv0,
+    vec2 uv0Dx,
+    vec2 uv0Dy,
+    vec2 uv1,
+    vec2 uv1Dx,
+    vec2 uv1Dy,
+    vec3 legacyBaseColor,
+    float legacyEmission)
+{
+    vec4 emissionColor = XR_ADV_StandardVector(material, XR_ADV_STANDARD_EMISSION_COLOR_WORD);
+    if (emissionColor.a < 0.5)
+        return legacyBaseColor * max(legacyEmission, 0.0);
+
+    float strength = uintBitsToFloat(XR_ADV_LoadMaterialConstant(material,
+        XR_ADV_STANDARD_EMISSION_STRENGTH_WORD));
+    vec3 emission = emissionColor.rgb * max(strength, 0.0);
+    if ((material.featureFlags & (1u << 3u)) != 0u)
+    {
+        vec4 metadata = XR_ADV_StandardVector(material,
+            XR_ADV_STANDARD_EMISSION_TEXTURE_METADATA_WORD);
+        vec4 scaleOffset = XR_ADV_StandardVector(material,
+            XR_ADV_STANDARD_EMISSION_UV_SCALE_OFFSET_WORD);
+        float rotationAngle = uintBitsToFloat(XR_ADV_LoadMaterialConstant(material,
+            XR_ADV_STANDARD_EMISSION_UV_ROTATION_WORD));
+        bool useUv1 = metadata.x > 0.5;
+        vec2 uv = useUv1 ? uv1 : uv0;
+        vec2 dx = useUv1 ? uv1Dx : uv0Dx;
+        vec2 dy = useUv1 ? uv1Dy : uv0Dy;
+        float sine = sin(rotationAngle);
+        float cosine = cos(rotationAngle);
+        mat2 rotation = mat2(cosine, sine, -sine, cosine);
+        uv = rotation * (uv * scaleOffset.xy) + scaleOffset.zw;
+        dx = rotation * (dx * scaleOffset.xy);
+        dy = rotation * (dy * scaleOffset.xy);
+        vec3 sampled = XR_ADV_StandardTexture(material, 3u, uv, dx, dy, vec4(0.0)).rgb;
+        if (metadata.y > 0.5)
+        {
+            vec3 safeSampled = max(sampled, vec3(0.0));
+            sampled = mix(safeSampled / 12.92,
+                pow((safeSampled + 0.055) / 1.055, vec3(2.4)),
+                step(vec3(0.04045), safeSampled));
+        }
+        emission *= sampled;
+    }
+    return emission;
+}
+
 bool XR_ADV_IsProjectiveMirrorMaterial(XRAdvancedMaterialRecord material)
 {
     return material.constantWordCount >= XR_ADV_PROJECTIVE_MIRROR_WORD_COUNT &&

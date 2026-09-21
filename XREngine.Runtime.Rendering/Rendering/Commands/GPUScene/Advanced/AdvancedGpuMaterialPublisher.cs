@@ -116,6 +116,8 @@ public sealed class AdvancedGpuMaterialPublisher
             reason = "The requested coverage mode is incompatible with the selected canonical material layout.";
             return false;
         }
+        if (!HasSupportedEmissiveTexCoord(material, out reason))
+            return false;
         if (constantWords.Length > _database.MaximumConstantWordsPerMaterial || textureBindings.Length > _database.MaximumTextureBindingsPerMaterial)
         {
             reason = "The material payload exceeds the configured fixed logical-slot stride.";
@@ -177,6 +179,8 @@ public sealed class AdvancedGpuMaterialPublisher
                 reason = "The requested coverage mode is incompatible with the selected canonical material layout.";
                 return false;
             }
+            if (!HasSupportedEmissiveTexCoord(request.Material, out reason))
+                return false;
             if (request.State is <= EAdvancedMaterialRenderStateClass.Invalid or > EAdvancedMaterialRenderStateClass.Refractive)
             {
                 reason = "The requested render-state class is not a canonical material state.";
@@ -397,6 +401,7 @@ public sealed class AdvancedGpuMaterialPublisher
 
     internal bool HeaderMatches(
         AdvancedGpuHandle materialHandle,
+        XRMaterial? material,
         MaterialBindingLayout layout,
         EAdvancedMaterialCoverageMode coverage,
         EAdvancedMaterialRenderStateClass state,
@@ -405,7 +410,7 @@ public sealed class AdvancedGpuMaterialPublisher
         if (!_database.Materials.TryGet(materialHandle, out AdvancedMaterialRecord current))
             return false;
         AdvancedMaterialRecord expected =
-            CreateMaterialRecord(layout, coverage, state, textureBindings);
+            CreateMaterialRecord(material, layout, coverage, state, textureBindings);
         return current.RenderStateClass == expected.RenderStateClass &&
             current.CoverageMode == expected.CoverageMode &&
             current.RequiredAttributeMask == expected.RequiredAttributeMask &&
@@ -441,7 +446,7 @@ public sealed class AdvancedGpuMaterialPublisher
         AdvancedMaterialLayoutRecord layoutRecord = CreateLayoutRecord(layout, members, out int memberCount);
         AdvancedShadingKernelRecord kernelRecord = CreateKernelRecord(layout, coverage, state);
         AdvancedMaterialRecord materialRecord =
-            CreateMaterialRecord(layout, coverage, state, textureBindings);
+            CreateMaterialRecord(material, layout, coverage, state, textureBindings);
         if (!_database.TryAddMaterialWithInternedSchema(
                 layoutRecord,
                 members[..memberCount],
@@ -510,7 +515,7 @@ public sealed class AdvancedGpuMaterialPublisher
             return false;
         }
         AdvancedMaterialRecord record =
-            CreateMaterialRecord(layout, coverage, state, textureBindings);
+            CreateMaterialRecord(entry.MaterialReference, layout, coverage, state, textureBindings);
         if (!_database.TryReplaceMaterial(materialHandle, layoutHandle, kernelHandle, record, ReadOnlySpan<AdvancedMaterialValueDescriptor>.Empty, constantWords, textureBindings))
         {
             reason = "Canonical material replacement failed validation.";
@@ -623,7 +628,7 @@ public sealed class AdvancedGpuMaterialPublisher
         return new AdvancedShadingKernelRecord
         {
             MaterialLayoutHash = Hash(layout.LayoutHash),
-            RequiredAttributeMask = GetRequiredAttributes(layout),
+            RequiredAttributeMask = GetKernelRequiredAttributes(layout),
             SupportedCoverageMask = coverageMask,
             SupportedEligibility = isProjectiveMirror
                 ? EAdvancedMaterialEligibilityFlags.NativeOpaque | EAdvancedMaterialEligibilityFlags.Unlit
@@ -637,6 +642,7 @@ public sealed class AdvancedGpuMaterialPublisher
     }
 
     private static AdvancedMaterialRecord CreateMaterialRecord(
+        XRMaterial? material,
         MaterialBindingLayout layout,
         EAdvancedMaterialCoverageMode coverage,
         EAdvancedMaterialRenderStateClass state,
@@ -652,6 +658,8 @@ public sealed class AdvancedGpuMaterialPublisher
                 features |= EAdvancedMaterialFeatureFlags.NormalTexture;
             if (textureBindings.Length > 2 && textureBindings[2].Texture.Handle.IsValid)
                 features |= EAdvancedMaterialFeatureFlags.MetallicRoughnessTexture;
+            if (material?.GetSurfaceTexture(EMaterialTextureSemantic.Emissive) is not null)
+                features |= EAdvancedMaterialFeatureFlags.Emissive;
         }
         if (state is EAdvancedMaterialRenderStateClass.OpaqueDoubleSided or
             EAdvancedMaterialRenderStateClass.MaskedDoubleSided)
@@ -673,11 +681,18 @@ public sealed class AdvancedGpuMaterialPublisher
                     EAdvancedMaterialEligibilityFlags.LateRefractive,
                 _ => EAdvancedMaterialEligibilityFlags.Unsupported,
             };
+        EAdvancedMaterialRequiredAttributeMask requiredAttributes = GetRequiredAttributes(layout);
+        if (!isProjectiveMirror &&
+            material?.GetSurfaceTexture(EMaterialTextureSemantic.Emissive) is { TexCoordSet: 1 })
+        {
+            requiredAttributes |= EAdvancedMaterialRequiredAttributeMask.TexCoord1;
+        }
+
         return new AdvancedMaterialRecord
         {
             RenderStateClass = state,
             CoverageMode = coverage,
-            RequiredAttributeMask = GetRequiredAttributes(layout),
+            RequiredAttributeMask = requiredAttributes,
             FeatureFlags = features,
             EligibilityFlags = eligibility,
         };
@@ -690,6 +705,24 @@ public sealed class AdvancedGpuMaterialPublisher
         => IsProjectiveMirrorLayout(layout)
             ? ProjectiveMirrorRequiredAttributes
             : StandardRequiredAttributes;
+
+    private static EAdvancedMaterialRequiredAttributeMask GetKernelRequiredAttributes(MaterialBindingLayout layout)
+        => IsProjectiveMirrorLayout(layout)
+            ? ProjectiveMirrorRequiredAttributes
+            : StandardRequiredAttributes | EAdvancedMaterialRequiredAttributeMask.TexCoord1;
+
+    private static bool HasSupportedEmissiveTexCoord(XRMaterial? material, out string reason)
+    {
+        int? texCoordSet = material?.GetSurfaceTexture(EMaterialTextureSemantic.Emissive)?.TexCoordSet;
+        if (texCoordSet is null or 0 or 1)
+        {
+            reason = string.Empty;
+            return true;
+        }
+
+        reason = $"The canonical advanced emissive binding supports texture-coordinate sets 0 and 1, not {texCoordSet.Value}.";
+        return false;
+    }
 
     private int FindVariant(XRMaterial? material, ulong layoutHash, EAdvancedMaterialCoverageMode coverage, EAdvancedMaterialRenderStateClass state)
     {

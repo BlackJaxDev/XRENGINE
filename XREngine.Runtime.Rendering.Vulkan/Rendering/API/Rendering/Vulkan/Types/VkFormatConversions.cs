@@ -217,8 +217,10 @@ internal unsafe static class VkFormatConversions
 
             // 3 bytes
             Format.R8G8B8Unorm or Format.R8G8B8SNorm or Format.R8G8B8Uint or Format.R8G8B8Sint
-                or Format.R8G8B8Srgb or Format.B8G8R8Unorm or Format.B8G8R8Srgb
-                or Format.R16G16B16Unorm or Format.R16G16B16SNorm => 6, // 3×16-bit = 6 bytes
+                or Format.R8G8B8Srgb or Format.B8G8R8Unorm or Format.B8G8R8Srgb => 3,
+
+            // 6 bytes
+            Format.R16G16B16Unorm or Format.R16G16B16SNorm => 6,
 
             // 4 bytes
             Format.R8G8B8A8Unorm or Format.R8G8B8A8SNorm or Format.R8G8B8A8Uint or Format.R8G8B8A8Sint
@@ -258,6 +260,18 @@ internal unsafe static class VkFormatConversions
         DataSource? sourceData = mipmap.Data;
         if (sourceData is null || sourceData.Length == 0)
             return sourceData;
+
+        if (destinationFormat == Format.B10G11R11UfloatPack32 &&
+            mipmap.PixelFormat == EPixelFormat.Rgb && mipmap.PixelType == EPixelType.Float)
+            return CreateRgbFloatToB10G11R11Upload(mipmap, sourceData, out ownsData);
+
+        if (destinationFormat == Format.R16Sfloat &&
+            mipmap.PixelFormat == EPixelFormat.Red && mipmap.PixelType == EPixelType.Float)
+            return CreateFloatTo16BitUpload(mipmap, sourceData, normalizedDepth: false, out ownsData);
+
+        if (destinationFormat == Format.D16Unorm &&
+            mipmap.PixelFormat == EPixelFormat.DepthComponent && mipmap.PixelType == EPixelType.Float)
+            return CreateFloatTo16BitUpload(mipmap, sourceData, normalizedDepth: true, out ownsData);
 
         if (!TryGetDestinationByteColorLayout(destinationFormat, out ByteColorDestination destination))
             return sourceData;
@@ -329,6 +343,91 @@ internal unsafe static class VkFormatConversions
 
         ownsData = true;
         return repacked;
+    }
+
+    private static unsafe DataSource? CreateRgbFloatToB10G11R11Upload(Mipmap2D mipmap, DataSource sourceData, out bool ownsData)
+    {
+        ownsData = false;
+        ulong texels = (ulong)mipmap.Width * mipmap.Height;
+        ulong sourceBytes = texels * 12UL;
+        ulong destinationBytes = texels * 4UL;
+        if (texels == 0 || sourceData.Length != sourceBytes ||
+            sourceBytes > int.MaxValue || destinationBytes > int.MaxValue)
+            return sourceData;
+
+        DataSource packed = new((uint)destinationBytes);
+        ReadOnlySpan<byte> source = new((byte*)sourceData.Address.Pointer, checked((int)sourceBytes));
+        ReadOnlySpan<float> sourceFloats = System.Runtime.InteropServices.MemoryMarshal.Cast<byte, float>(source);
+        Span<uint> destination = new((uint*)packed.Address.Pointer, checked((int)texels));
+        for (int index = 0; index < destination.Length; index++)
+        {
+            int sourceIndex = index * 3;
+            destination[index] = PackUnsignedFloat(sourceFloats[sourceIndex], 6) |
+                (PackUnsignedFloat(sourceFloats[sourceIndex + 1], 6) << 11) |
+                (PackUnsignedFloat(sourceFloats[sourceIndex + 2], 5) << 22);
+        }
+        ownsData = true;
+        return packed;
+    }
+
+    private static unsafe DataSource? CreateFloatTo16BitUpload(Mipmap2D mipmap, DataSource sourceData, bool normalizedDepth, out bool ownsData)
+    {
+        ownsData = false;
+        ulong texels = (ulong)mipmap.Width * mipmap.Height;
+        ulong sourceBytes = texels * sizeof(float);
+        ulong destinationBytes = texels * sizeof(ushort);
+        if (texels == 0 || sourceData.Length != sourceBytes ||
+            sourceBytes > int.MaxValue || destinationBytes > int.MaxValue)
+        {
+            return sourceData;
+        }
+
+        DataSource packed = new((uint)destinationBytes);
+        ReadOnlySpan<byte> source = new((byte*)sourceData.Address.Pointer, checked((int)sourceBytes));
+        ReadOnlySpan<float> sourceFloats = System.Runtime.InteropServices.MemoryMarshal.Cast<byte, float>(source);
+        Span<ushort> destination = new((ushort*)packed.Address.Pointer, checked((int)texels));
+        for (int index = 0; index < destination.Length; index++)
+        {
+            float value = sourceFloats[index];
+            // Vulkan buffer-to-image copies consume native bits; unlike GL they
+            // do not convert authored float depth into normalized integer pixels.
+            if (normalizedDepth)
+            {
+                float clamped = value > 0.0f ? MathF.Min(value, 1.0f) : 0.0f;
+                destination[index] = (ushort)MathF.Round(clamped * ushort.MaxValue, MidpointRounding.ToEven);
+            }
+            else
+                destination[index] = BitConverter.HalfToUInt16Bits((Half)value);
+        }
+
+        ownsData = true;
+        return packed;
+    }
+
+    // R11G11B10 uses unsigned mini-floats: exponent bias 15, with 6/6/5 mantissa bits.
+    // Negative, NaN and negative infinity become zero; positive infinity and finite overflow saturate.
+    private static uint PackUnsignedFloat(float value, int mantissaBits)
+    {
+        if (!(value > 0.0f))
+            return 0u;
+        uint maxMantissa = (1u << mantissaBits) - 1u;
+        if (float.IsPositiveInfinity(value) || value >= MathF.ScaleB(2.0f - 1.0f / (1u << mantissaBits), 15))
+            return (30u << mantissaBits) | maxMantissa;
+        const float minNormal = 6.103515625e-5f;
+        if (value < minNormal)
+            return (uint)Math.Clamp((int)MathF.Round(value / minNormal * (1u << mantissaBits), MidpointRounding.ToEven), 0, 1 << mantissaBits);
+
+        int exponent = Math.ILogB(value);
+        float fraction = MathF.ScaleB(value, -exponent) - 1.0f;
+        uint mantissa = (uint)MathF.Round(fraction * (1u << mantissaBits), MidpointRounding.ToEven);
+        if (mantissa > maxMantissa)
+        {
+            mantissa = 0u;
+            exponent++;
+        }
+        if (exponent + 15 >= 31)
+            return (30u << mantissaBits) | maxMantissa;
+        return (uint)(exponent + 15) << mantissaBits | mantissa;
     }
 
     private static byte ReadSourceChannel(ReadOnlySpan<byte> srcTexel, int channelIndex, byte fallback)

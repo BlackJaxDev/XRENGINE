@@ -22,6 +22,16 @@ generation-owned descriptors; OpenGL creates concrete objects through the
 existing factories, while Vulkan stages a pending physical resource plan before
 swapping it into active renderer state.
 
+Initial generations use the same bounded owner-thread materializer as
+replacements; they must not bypass slice limits merely because no active
+generation exists. Ordinary slices stop at 2 ms or four completed specs, while
+resize catch-up stops at 8 ms or 16 completed specs. A factory stage is
+indivisible, so measured fullscreen-quad factories separate mesh-version setup,
+renderer generation and final framebuffer publication. Incremental factory
+state belongs to the pending generation and must be disposed on failure or
+supersession. No registry or staged factory may escape before transactional
+commit.
+
 Compatibility cache commands still exist for dynamic or branch-local resources
 such as bloom chains, atmosphere/fog half-resolution chains, SMAA,
 exact-transparency scratch resources, AO-dependent deferred light-combine

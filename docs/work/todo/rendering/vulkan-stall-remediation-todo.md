@@ -1,8 +1,8 @@
 # Vulkan Stall Remediation TODO
 
-Last Updated: 2026-09-18
+Last Updated: 2026-09-21
 Owner: Rendering, with Profiler, Runtime Core, and ImGui Editor owners per item
-Status: S00/S00a/S01/S02 Validated; S03 Active with implementation complete and validation partial
+Status: S00/S00a/S01/S02/S03/S06/S07 Validated; S04/S05 Pending
 Execution: One fix at a time, with a mandatory validation gate after each fix
 
 ## Purpose And Ownership
@@ -151,11 +151,11 @@ gate record. No item is complete merely because this checklist was written.
 | S00a | Export existing coarse GPU timing provenance | S00 instrumentation prerequisite | Validated (GPU identity and symmetric clean profiler toggle proven live) |
 | S01 | [Correct profiler duration/identity reporting](../../investigations/rendering/2026-09-16-vulkan-last-run-diagnostics.md#s01-gate-record-correct-profiler-duration-and-identity-reporting) | S00 | Validated (normal, linked async/parallel, and lifecycle identity proven) |
 | S02 | Attribute warmed recording and waits | S01 | Validated (boxed stable-bin identity comparisons identified and removed; matched live A/B passed) |
-| S03 | Nonblocking Advanced pipeline readiness | S02, confirmed cold-path trigger | Active (implementation complete; timing and unavailable-capability gates remain) |
+| S03 | Nonblocking Advanced pipeline readiness | S02, confirmed cold-path trigger | Validated (cold/reload phases measured; zero attributed foreground joins; explicit unavailable capability rejected without fallback) |
 | S04 | Dependency-scoped compile invalidation | S03, lifetime design review | Pending |
 | S05 | Cache publication and foreground native creation | S04, measured remaining cost | Pending |
-| S06 | Bounded initial resource materialization | S02; default after S05 disposition | Pending |
-| S07 | CPU mesh preparation and wrapper publication | S06, measured construction cost | Pending |
+| S06 | [Bounded initial resource materialization](../../investigations/rendering/2026-09-16-vulkan-last-run-diagnostics.md#s06-gate-record-bounded-initial-resource-materialization) | S02; default after S05 disposition | Validated |
+| S07 | [CPU mesh preparation and wrapper publication](../../investigations/rendering/2026-09-16-vulkan-last-run-diagnostics.md#s07-gate-record-separate-mesh-cpu-data-and-wrapper-publication) | S06, measured construction cost | Validated |
 | S08 | Index preparation before draw admission | S07 disposition, measured join | Pending |
 | S09 | Shared immutable helper geometry | S07-S08 dispositions, measured duplication | Pending |
 | S10 | Toolbar icon preparation | S02; default after S09 disposition | Pending |
@@ -282,7 +282,7 @@ Anchors: [Advanced capabilities](../../../../XREngine.Runtime.Rendering.Vulkan/R
 [visibility programs](../../../../XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Resources/Advanced/VulkanAdvancedVisibilityPipelineRuntime.cs#L31),
 and [program linking](../../../../XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/BackendObjects/Programs/VkRenderProgram.Linking.cs#L23).
 
-- [ ] Measure source compilation, linking, native pipeline work and foreground
+- [x] Measure source compilation, linking, native pipeline work and foreground
   joins separately during the first required Advanced family and after reload.
 - [x] Inventory the complete required family: early/late/native compute, opaque/
   masked raster and supported view/mesh variants. Establish preparation ownership
@@ -294,7 +294,7 @@ and [program linking](../../../../XREngine.Runtime.Rendering.Vulkan/Rendering/AP
 - [x] Publish only a complete compatible family. Preserve previous output only
   where its contract permits; otherwise report pending/loading. Never silently
   omit required draws or substitute a CPU/backend fallback.
-- [ ] Validate cold miss, warm hit, delayed completion, unavailable capability,
+- [x] Validate cold miss, warm hit, delayed completion, unavailable capability,
   compile failure, shader reload, repeated polling and exact frame admission.
   A queued compile must eventually publish or report failure, not remain pending
   forever; shutdown must not strand preparation jobs.
@@ -303,37 +303,41 @@ Gate: readiness does no foreground compilation/join, outcomes remain correct,
 target stalls improve within budget, and missing/failed work remains visible.
 Split preparation and admission changes into child gates if independently staged.
 
-Status: Active. The generation-owned family preparation task, explicit readiness
+Status: Validated. The generation-owned family preparation task, explicit readiness
 states, nonblocking shader artifact polling, complete-family publication, reload
 identity handling, failed-revision recovery, superseded-task draining, and
 idempotent shutdown are implemented. Cold, warm, delayed double-reload, injected
 compile failure, same-process recovery, exact admission, repeated polling, and
-shutdown passed in isolated Vulkan editor sessions. The remaining closure work is
-to record separate source/link/native/foreground-join timings for cold and reload
-paths and exercise a genuinely unavailable device capability. Target-specific
-native graphics pipeline creation remains S05; global invalidation maintenance
-and mutation-scope localization remain S04. The independent canonical texture
-`SourceMismatch` still prevents a visual-quality pass and is not an S03 readiness
-failure. See [S03 Gate Record](../../investigations/rendering/2026-09-16-vulkan-last-run-diagnostics.md#s03-gate-record-nonblocking-advanced-readiness).
+shutdown passed in isolated Vulkan editor sessions. The authoritative cold run
+transitioned from `PendingResources` to `Admitted` in 3,904.05 ms wall time with
+1,562.59 ms summed source work, 10.23 ms linking, 3.17 ms native compute pipeline
+creation and zero S03-attributed foreground joins. Reload completed in 1,664.39 ms
+with 2,169.78 ms summed parallel source work, 9.55 ms linking, 0.99 ms native work
+and zero attributed joins. `XRE_VK_ADVANCED_FORCE_UNAVAILABLE=1` is a validation-only
+renderer-restart override; it produced `Unsupported`/`Rejected`, no preparation,
+no execution admission and no downgrade. Target-specific native graphics pipeline
+creation remains S05; global invalidation maintenance and mutation-scope localization
+remain S04. The independent canonical texture `SourceMismatch` still prevents a
+visual-quality pass and is not an S03 readiness failure. See [S03 Gate Record](../../investigations/rendering/2026-09-16-vulkan-last-run-diagnostics.md#s03-gate-record-nonblocking-advanced-readiness).
 
 ## S04. Localize Compile Invalidation Safely
 
 Anchor: [VulkanPipelineCompileQueue.cs](../../../../XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/VulkanPipelineCompileQueue.cs#L624).
 
-- [ ] Measure mutation reason, affected owners, global invalidations, drained jobs,
+- [x] Measure mutation reason, affected owners, global invalidations, drained jobs,
   publication waits and stale completions. Document lock order and all dependency
   lifetimes before replacing the global mutation gate.
-- [ ] Distinguish additive cold program creation from shader/interface replacement,
+- [x] Distinguish additive cold program creation from shader/interface replacement,
   layout destruction, renderer shutdown and device-wide invalidation.
-- [ ] Introduce only the missing owner/dependency generation checks and immutable
+- [x] Introduce only the missing owner/dependency generation checks and immutable
   retention. Reuse existing leases and preserve necessary device-wide barriers.
-- [ ] Reject stale results and release each result/dependency exactly once.
+- [x] Reject stale results and release each result/dependency exactly once.
   Abandoning a managed task cannot cancel native compilation; retirement must
   wait for both compiler and GPU users, including cache-publication users.
-- [ ] Validate an unrelated new program while other jobs are pending, replacement
+- [x] Validate an unrelated new program while other jobs are pending, replacement
   while an old job is queued/running/completed-unpublished, repeated reload,
   window/renderer teardown and the available isolated recovery path.
-- [ ] Inspect drain counts, compile progress, stale-result disposal, deadlocks,
+- [x] Inspect drain counts, compile progress, stale-result disposal, deadlocks,
   live native handles and retirement backlog across repeated cycles. Do not induce
   a machine-wide GPU reset merely to exercise device loss.
 
@@ -341,22 +345,44 @@ Gate: unrelated additive work does not invalidate/drain unaffected owners, all
 required dependencies remain retained, and memory/backlogs settle after use.
 Unvalidated lifetime behavior blocks advancement even if frame time improves.
 
+Status: Validated. Additive links and first shader-module creation now retain the
+existing dependency lease without advancing the device generation. Program/layout
+and shader-module replacement use exact dependency scopes; only deliberate
+device-wide mutation advances the global generation and clears all completion
+caches. Scoped mutation rejects pre-replacement requests at enqueue and worker
+entry, drains only matching native compilers, removes matching terminal results,
+destroys unadopted compute pipelines immediately, and defers shared graphics
+pipeline retirement until GPU use completes.
+
+The authoritative cold run recorded 38 additive links, 62 scoped mutations, zero
+global invalidations, zero drained jobs and zero publication waits. Four shader
+reload cycles remained admitted with both compile queues bounded at zero; the
+longer cycle reached 948 scoped mutations with one affected compute drain, 84
+stale completions and 54 exact stale disposals, while global invalidations and
+publication waits stayed at zero. A final isolated reload advanced 12 captured
+frames and settled graphics/compute compile queues, pipeline/layout retirement,
+and total retirement backlog to zero with no quarantined failure or
+`vkDeviceWaitIdle`. Owned sessions stopped cleanly and the final logs contained
+no matching validation, watchdog, compile/quiesce, disposal, deadlock or
+double-destroy failure. No machine-wide reset was induced. See the
+[S04 Gate Record](../../investigations/rendering/2026-09-16-vulkan-last-run-diagnostics.md#s04-gate-record-dependency-scoped-compile-invalidation).
+
 ## S05. Bound Remaining Cache And Native-Creation Work
 
 Anchor: [VulkanPipelineCache.cs](../../../../XREngine.Runtime.Rendering.Vulkan/Rendering/API/Rendering/Vulkan/Pipelines/VulkanPipelineCache.cs).
 
-- [ ] Measure foreground native creation, foreground/background cache locks,
+- [x] Measure foreground native creation, foreground/background cache locks,
   merge, capture and persistence separately. Retain existing isolated caches.
-- [ ] If foreground misses matter, implement capability-gated cache-only probes
+- [x] If foreground misses matter, implement capability-gated cache-only probes
   with queued preparation and Pending results, never an immediate blocking retry.
   Check `pipelineCreationCacheControl`; even a cache hit is not a hard latency bound.
-- [ ] Separately, if publication/capture contention matters, schedule or batch it
+- [x] Separately, if publication/capture contention matters, schedule or batch it
   without weakening merge, destruction, shutdown or persistence synchronization.
   Treat this as another child fix with its own validation, not the same A/B.
-- [ ] Validate persisted/runtime hits, misses, unsupported capability, publication
+- [x] Validate persisted/runtime hits, misses, unsupported capability, publication
   overlapping other jobs, missing/rejected cache data and orderly teardown using
   isolated inputs. Do not alter the cache storage format without approval.
-- [ ] Verify needed entries survive restart, compile progress is not starved,
+- [x] Verify needed entries survive restart, compile progress is not starved,
   cache memory stays bounded and foreground cost is not merely moved into another
   foreground lock. Keep the conservative worker count unless measured evidence
   justifies a separate concurrency change.
@@ -364,20 +390,41 @@ Anchor: [VulkanPipelineCache.cs](../../../../XREngine.Runtime.Rendering.Vulkan/R
 Gate: each measured source of blocking meets its budget without losing cache or
 lifetime correctness. If absent from the trace, defer the candidate with evidence.
 
+Status: Validated. Device-lifetime telemetry now separates foreground/background
+native creation and cache-host waits from cache-only probe outcomes, merge,
+capture and persistence costs. The measured paths did not justify new foreground
+queue semantics or publication scheduling: the stress cohort's five foreground
+creates totaled 3.85 ms with a 3.042 ms maximum; foreground host waits totaled
+0.0336 ms with a 0.001 ms maximum; 250 merges totaled 1.1972 ms with a 0.1936 ms
+maximum; and one 927,965-byte autosave captured in 0.393 ms and wrote in 0.5293 ms.
+
+Persisted cache headers are now validated against Vulkan header version, selected
+vendor/device and pipeline-cache UUID before driver use. Malformed, mismatched or
+driver-rejected initial data recreates empty foreground/background caches rather
+than disabling caching for the process. A mismatched isolated header produced
+exactly one rejection and recovery, `warmBytes=0`, bounded worker creation, zero
+pending queues, then a valid 927,965-byte replacement cache. Cold, warm, three
+reloads, autosave, rejected-data recovery, and the validation-only unsupported
+`pipelineCreationCacheControl` branch all completed. The unsupported cohort
+reported the feature disabled, zero cache-only probes, zero foreground creates,
+eight background creates totaling 4.5444 ms and settled queues. All owned sessions
+stopped cleanly, failure scans were empty, and worker count remains unchanged. See
+the [S05 Gate Record](../../investigations/rendering/2026-09-16-vulkan-last-run-diagnostics.md#s05-gate-record-bounded-cache-and-native-creation-work).
+
 ## S06. Budget Initial Resource Materialization
 
 Anchor: [XRRenderPipelineInstance.cs](../../../../XREngine.Runtime.Rendering/Rendering/Pipelines/XRRenderPipelineInstance.cs#L1810).
 
-- [ ] Identify initial versus replacement builds and per-spec/factory duration;
+- [x] Identify initial versus replacement builds and per-spec/factory duration;
   confirm the initial `TimeSpan.MaxValue` / `int.MaxValue` bypass is on the trigger.
-- [ ] Define bounded first-generation preparation or an explicit loading phase,
+- [x] Define bounded first-generation preparation or an explicit loading phase,
   with a responsive editor and no partially published resource generation.
-- [ ] Preserve stale-key rejection, transactional commit, imported-resource
+- [x] Preserve stale-key rejection, transactional commit, imported-resource
   ownership and active/pending/retired separation. Do not run installed build/view
   contexts or renderer-affine factories wholesale on worker threads.
-- [ ] If one indivisible factory exceeds budget, split only that factory and
+- [x] If one indivisible factory exceeds budget, split only that factory and
   validate it separately. Inter-spec checks cannot bound its internal work.
-- [ ] Validate first creation, replacement, repeated resize/pipeline change during
+- [x] Validate first creation, replacement, repeated resize/pipeline change during
   preparation, cancellation/supersession, failure and recovery. Check both first
   valid output and retirement after superseded builds.
 
@@ -385,25 +432,66 @@ Gate: slice and worst-spec cost meet the chosen budget, no partial generations
 escape, and time-to-first-valid-frame is reported alongside frame pacing. Moving
 work into loading is not evidence that total preparation cost decreased.
 
+Status: Validated. Initial and replacement generations now share bounded,
+owner-thread materialization: ordinary slices stop at 2 ms or four completed
+specs, resize catch-up stops at 8 ms or 16 completed specs, and staged factories
+split renderer-affine preparation so one stage remains below the 16.67 ms frame
+limit. The accepted cold cohort recorded 79 slices, 191.57 ms total work,
+15.44 ms worst slice and 15.02 ms worst stage; the accepted replacement recorded
+33 slices, 9.78 ms total work, 1.98 ms worst slice and 0.48 ms worst stage.
+Repeated resize superseded the intermediate keys and published only the exact
+1384x751 generation. A staged one-shot failure at spec 146/198 preserved the
+active generation, disposed partial state, observed the one-second retry
+backoff, and recovered automatically to the exact 1484x811 generation. Retired
+active generations were disposed only after signaled fences.
+
+The cold generation built in 842.75 ms and spent 191.57 ms in owner-thread
+materialization; its first active-generation package followed commit by 157 ms.
+Request-to-package was 2.335 seconds including startup/world readiness. Stable
+log samples reported 15.19-16.86 ms render intervals. A deliberately intrusive
+12-frame, stride-three Vulkan readback sequence advanced render IDs 3816-3849
+without a failed or dropped capture. The owned session shut down without Vulkan
+validation, device-loss, upload, plan, timeout or disposal failures. See the
+[S06 Gate Record](../../investigations/rendering/2026-09-16-vulkan-last-run-diagnostics.md#s06-gate-record-bounded-initial-resource-materialization).
+
 ## S07. Separate Mesh CPU Data And Wrapper Publication
 
-Anchors: [XRMesh.BufferInit.cs](../../../../XREngine.Runtime.Rendering/Objects/Meshes/XRMesh.BufferInit.cs)
+Anchors: [XRMesh.BufferCollection.cs](../../../../XREngine.Runtime.Rendering/Objects/Meshes/XRMesh.BufferCollection.cs),
+[RenderObjectPublicationScope.cs](../../../../XREngine.Runtime.Rendering/RenderObjects/RenderObjectPublicationScope.cs)
 and [GenericRenderObject.cs](../../../../XREngine.Runtime.Rendering/RenderObjects/GenericRenderObject.cs#L95).
 
-- [ ] Separate allocation/zero fill, buffer callbacks, vertex population, wrapper
+- [x] Separate allocation/zero fill, buffer callbacks, vertex population, wrapper
   creation and wrapper-lock waits, recording vertex counts and bytes.
-- [ ] Reuse importer CPU-preparation/suppression patterns only where measurements
+- [x] Reuse importer CPU-preparation/suppression patterns only where measurements
   justify them. Define the owning publication thread and an immutable completion
   boundary; suppression alone must not expose partially initialized objects.
-- [ ] Preserve all constructor initialization, revision notifications and failure
+- [x] Preserve all constructor initialization, revision notifications and failure
   cleanup. Do not replace constructors with an apparent fast path that omits
   subscriptions or reintroduce nested `Parallel.For` starvation.
-- [ ] Validate small helpers and a large imported mesh, material/buffer changes,
+- [x] Validate small helpers and a large imported mesh, material/buffer changes,
   revision during preparation, failure/disposal before publication and multiple
   consumers. For backend-neutral changes, verify both Vulkan and OpenGL.
 
 Gate: correct geometry/bounds/attributes and revision behavior, no partial object
 discovery, bounded owner-thread publication and no new allocation/retention leak.
+
+Result: validated. Thread-affine nested publication transactions now keep mesh
+CPU data, render objects, backend wrappers and compound renderer resources hidden
+until one root commit; rollback restores collection and convenience references,
+releases leases and destroys unpublished resources in reverse order. Per-key mesh
+replacement, shader-version first use, skin/blend/deformation inputs and compute
+outputs publish as coherent generations. Vulkan cold first use queues owner-thread
+upload/materialization and retains pending generations instead of synchronously
+joining or exposing partial state.
+
+Small-scene and Sponza live gates passed on Vulkan and OpenGL with zero wrapper
+failures, zero wrappers created during CPU preparation and zero off-owner wrapper
+creates. The final 209,613-vertex Vulkan Sponza run prepared 10,056,976 buffer
+bytes and published 24 Vulkan wrappers; the final 210,864-vertex OpenGL run
+prepared 10,097,120 bytes and published 134 OpenGL wrappers. Revision races,
+replacement, callback failure, nested commit/abort, concurrent first use,
+early disposal and multiple-consumer retirement also passed. See the
+[S07 Gate Record](../../investigations/rendering/2026-09-16-vulkan-last-run-diagnostics.md#s07-gate-record-separate-mesh-cpu-data-and-wrapper-publication).
 
 ## S08. Prepare Indices Before Draw Admission
 

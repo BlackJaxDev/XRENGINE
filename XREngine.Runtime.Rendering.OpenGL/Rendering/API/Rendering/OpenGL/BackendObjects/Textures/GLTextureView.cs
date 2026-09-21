@@ -15,6 +15,10 @@ namespace XREngine.Rendering.OpenGL
 
         public override ETextureTarget TextureTarget => Data.TextureTarget;
 
+        // glTextureView requires a generated name that has never been bound or assigned a target.
+        protected override uint CreateObject()
+            => Api.GenTexture();
+
         private IGLTexture? GetViewedTexture()
             => Renderer.GetOrCreateAPIRenderObject(Data.GetViewedTexture()) is IGLTexture apiViewed ? apiViewed : null;
 

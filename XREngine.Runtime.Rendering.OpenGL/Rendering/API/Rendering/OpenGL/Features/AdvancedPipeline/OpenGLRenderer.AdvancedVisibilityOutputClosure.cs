@@ -36,18 +36,46 @@ public partial class OpenGLRenderer
 
         bool requireNative = request.Stage is EAdvancedRenderStage.WorkClassification or EAdvancedRenderStage.AmbientOcclusion or EAdvancedRenderStage.NativeOpaqueShading;
         XRTexture? ambientOcclusion = null, hdr = null, velocity = null, reactive = null, diagnostics = null;
+        XRTexture? emissionColor = null, albedoOpacity = null, normal = null, rmse = null;
         uint ambientOcclusionId = 0u, hdrId = 0u, velocityId = 0u, reactiveId = 0u, diagnosticsId = 0u;
+        uint emissionColorId = 0u, albedoOpacityId = 0u, normalId = 0u, rmseId = 0u;
+        uint aoLayers = 0u, hdrLayers = 0u, velocityLayers = 0u, reactiveLayers = 0u, diagnosticsLayers = 0u;
         if (requireNative &&
-            (!TryGetLayeredTexture(pipeline, request.AmbientOcclusionTargetName, ESizedInternalFormat.R8, generation, aliases, out ambientOcclusion, out ambientOcclusionId, out uint aoLayers, out reason) ||
-             !TryGetLayeredTexture(pipeline, AdvancedRenderPipeline.HDRSceneTextureName, ESizedInternalFormat.Rgba16f, generation, aliases, out hdr, out hdrId, out uint hdrLayers, out reason) ||
-             !TryGetLayeredTexture(pipeline, AdvancedRenderPipeline.VelocityTextureName, ESizedInternalFormat.Rg16f, generation, aliases, out velocity, out velocityId, out uint velocityLayers, out reason) ||
-             !TryGetLayeredTexture(pipeline, AdvancedTemporalHistoryContract.ReactiveMaskResourceName, ESizedInternalFormat.R8, generation, aliases, out reactive, out reactiveId, out uint reactiveLayers, out reason) ||
-             !TryGetLayeredTexture(pipeline, AdvancedShadingResourceNames.ShadingDiagnostics, ESizedInternalFormat.R32ui, generation, aliases, out diagnostics, out diagnosticsId, out uint diagnosticsLayers, out reason) ||
-             !ValidateNativeOutputExtents(identity!, layers, ambientOcclusion!, aoLayers, hdr!, hdrLayers, velocity!, velocityLayers, reactive!, reactiveLayers, diagnostics!, diagnosticsLayers, out reason)))
+            (!TryGetLayeredTexture(pipeline, request.AmbientOcclusionTargetName, ESizedInternalFormat.R8, generation, aliases, out ambientOcclusion, out ambientOcclusionId, out aoLayers, out reason) ||
+             !TryGetLayeredTexture(pipeline, AdvancedRenderPipeline.HDRSceneTextureName, ESizedInternalFormat.Rgba16f, generation, aliases, out hdr, out hdrId, out hdrLayers, out reason) ||
+             !TryGetLayeredTexture(pipeline, AdvancedRenderPipeline.VelocityTextureName, ESizedInternalFormat.Rg16f, generation, aliases, out velocity, out velocityId, out velocityLayers, out reason) ||
+             !TryGetLayeredTexture(pipeline, AdvancedTemporalHistoryContract.ReactiveMaskResourceName, ESizedInternalFormat.R8, generation, aliases, out reactive, out reactiveId, out reactiveLayers, out reason) ||
+             !TryGetLayeredTexture(pipeline, AdvancedShadingResourceNames.ShadingDiagnostics, ESizedInternalFormat.R32ui, generation, aliases, out diagnostics, out diagnosticsId, out diagnosticsLayers, out reason) ||
+             !ValidateNativeCoreOutputExtents(identity!, layers, ambientOcclusion!, aoLayers, hdr!, hdrLayers, velocity!, velocityLayers,
+                 reactive!, reactiveLayers, diagnostics!, diagnosticsLayers, out reason)))
             return false;
+
+        if (requireNative && request.EnableDdgi &&
+            (!TryGetLayeredTexture(pipeline, DefaultRenderPipeline.EmissionColorTextureName, ESizedInternalFormat.Rgba16f, generation, aliases, out emissionColor, out emissionColorId, out uint emissionLayers, out reason) ||
+             !TryGetLayeredTexture(pipeline, DefaultRenderPipeline.AlbedoOpacityTextureName, ESizedInternalFormat.Rgba16f, generation, aliases, out albedoOpacity, out albedoOpacityId, out uint albedoLayers, out reason) ||
+             !TryGetLayeredTexture(pipeline, DefaultRenderPipeline.NormalTextureName, ESizedInternalFormat.Rgba16f, generation, aliases, out normal, out normalId, out uint normalLayers, out reason) ||
+             !TryGetLayeredTexture(pipeline, DefaultRenderPipeline.RMSETextureName, ESizedInternalFormat.Rgba16f, generation, aliases, out rmse, out rmseId, out uint rmseLayers, out reason) ||
+             !ValidateNativeOutputExtents(identity!, layers, ambientOcclusion!, aoLayers, hdr!, hdrLayers, velocity!, velocityLayers, reactive!, reactiveLayers, diagnostics!, diagnosticsLayers,
+                 emissionColor!, emissionLayers, albedoOpacity!, albedoLayers, normal!, normalLayers, rmse!, rmseLayers, out reason)))
+            return false;
+
+        if (requireNative && !request.EnableDdgi)
+        {
+            // Native opaque always declares the export images. When DDGI is inactive, bind HDR
+            // to those slots so the program remains valid without acquiring dormant G-buffer resources.
+            emissionColor = hdr;
+            albedoOpacity = hdr;
+            normal = hdr;
+            rmse = hdr;
+            emissionColorId = hdrId;
+            albedoOpacityId = hdrId;
+            normalId = hdrId;
+            rmseId = hdrId;
+        }
 
         closure = new(identity!, identityId, metadata!, metadataId, selection!, selectionId, depth!, depthId, depthPyramid!, depthPyramidId,
             ambientOcclusion, ambientOcclusionId, hdr, hdrId, velocity, velocityId, reactive, reactiveId, diagnostics, diagnosticsId,
+            emissionColor, emissionColorId, albedoOpacity, albedoOpacityId, normal, normalId, rmse, rmseId,
             GetWidth(identity!), GetHeight(identity!), layers, request.NativeViewIndex);
         if (!closure.IsValid || (requireNative && !closure.HasNativeComputeOutputs))
         {
@@ -115,7 +143,27 @@ public partial class OpenGLRenderer
     }
 
     private static bool ValidateNativeOutputExtents(XRTexture identity, uint layers, XRTexture ao, uint aoLayers, XRTexture hdr, uint hdrLayers,
-        XRTexture velocity, uint velocityLayers, XRTexture reactive, uint reactiveLayers, XRTexture diagnostics, uint diagnosticsLayers, out string reason)
+        XRTexture velocity, uint velocityLayers, XRTexture reactive, uint reactiveLayers, XRTexture diagnostics, uint diagnosticsLayers,
+        XRTexture emissionColor, uint emissionLayers, XRTexture albedoOpacity, uint albedoLayers, XRTexture normal, uint normalLayers,
+        XRTexture rmse, uint rmseLayers, out string reason)
+    {
+        if (aoLayers != layers || hdrLayers != layers || velocityLayers != layers || reactiveLayers != layers || diagnosticsLayers != layers ||
+            emissionLayers != layers || albedoLayers != layers || normalLayers != layers || rmseLayers != layers ||
+            GetWidth(ao) != GetWidth(identity) || GetHeight(ao) != GetHeight(identity) || GetWidth(hdr) != GetWidth(identity) || GetHeight(hdr) != GetHeight(identity) ||
+            GetWidth(velocity) != GetWidth(identity) || GetHeight(velocity) != GetHeight(identity) || GetWidth(reactive) != GetWidth(identity) || GetHeight(reactive) != GetHeight(identity) ||
+            GetWidth(diagnostics) != GetWidth(identity) || GetHeight(diagnostics) != GetHeight(identity) ||
+            GetWidth(emissionColor) != GetWidth(identity) || GetHeight(emissionColor) != GetHeight(identity) ||
+            GetWidth(albedoOpacity) != GetWidth(identity) || GetHeight(albedoOpacity) != GetHeight(identity) ||
+            GetWidth(normal) != GetWidth(identity) || GetHeight(normal) != GetHeight(identity) ||
+            GetWidth(rmse) != GetWidth(identity) || GetHeight(rmse) != GetHeight(identity))
+        { reason = "The frozen OpenGL native Advanced outputs do not match the visibility extent and layer count."; return false; }
+        reason = "Ready";
+        return true;
+    }
+
+    private static bool ValidateNativeCoreOutputExtents(XRTexture identity, uint layers, XRTexture ao, uint aoLayers, XRTexture hdr, uint hdrLayers,
+        XRTexture velocity, uint velocityLayers, XRTexture reactive, uint reactiveLayers, XRTexture diagnostics, uint diagnosticsLayers,
+        out string reason)
     {
         if (aoLayers != layers || hdrLayers != layers || velocityLayers != layers || reactiveLayers != layers || diagnosticsLayers != layers ||
             GetWidth(ao) != GetWidth(identity) || GetHeight(ao) != GetHeight(identity) || GetWidth(hdr) != GetWidth(identity) || GetHeight(hdr) != GetHeight(identity) ||

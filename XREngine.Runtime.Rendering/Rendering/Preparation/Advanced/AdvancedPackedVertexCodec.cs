@@ -8,6 +8,8 @@ namespace XREngine.Rendering;
 /// </summary>
 public static class AdvancedPackedVertexCodec
 {
+    /// <summary>Source vertex contains an authored second texture-coordinate set.</summary>
+    public const uint HasTexCoord1Flag = 1u << 0;
     private const float Snorm16Scale = 32767.0f;
     private const float Snorm15Scale = 16383.0f;
 
@@ -26,7 +28,8 @@ public static class AdvancedPackedVertexCodec
             GetOrDefault(vertex.TextureCoordinateSets, 1),
             GetOrDefault(vertex.ColorSets, 0, Vector4.One),
             GetOrDefault(vertex.ColorSets, 1, Vector4.One),
-            sourceVertex);
+            sourceVertex,
+            vertex.TextureCoordinateSets is { Count: > 1 });
     }
 
     public static AdvancedDeformedVertex Pack(
@@ -38,7 +41,8 @@ public static class AdvancedPackedVertexCodec
         Vector2 texCoord1,
         Vector4 color0,
         Vector4 color1,
-        uint sourceVertex)
+        uint sourceVertex,
+        bool hasTexCoord1 = false)
         => new()
         {
             Position = position,
@@ -51,6 +55,7 @@ public static class AdvancedPackedVertexCodec
             Color0Rgba8 = PackRgba8(color0),
             Color1Rgba8 = PackRgba8(color1),
             SourceVertex = sourceVertex,
+            Flags = hasTexCoord1 ? HasTexCoord1Flag : 0u,
         };
 
     public static uint EncodeOct(Vector3 value)

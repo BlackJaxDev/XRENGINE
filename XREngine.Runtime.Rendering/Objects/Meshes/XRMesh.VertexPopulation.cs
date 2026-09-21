@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Numerics;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
+using System.Diagnostics;
 
 namespace XREngine.Rendering;
 
@@ -54,13 +55,21 @@ public partial class XRMesh
         int count = firstAppearanceArray?.Length ?? sourceList.Length;
         using var _s = RuntimeRenderingHostServices.Profiling.StartProfileScope("PopulateVertexData (remapped)");
         var actions = vertexActions as DelVertexAction[] ?? [.. vertexActions];
+        long populationStart = Stopwatch.GetTimestamp();
 
-        for (int i = 0; i < count; i++)
+        try
         {
-            int x = firstAppearanceArray?[i] ?? i;
-            var vtx = sourceList[x];
-            for (int j = 0; j < actions.Length; j++)
-                actions[j](this, i, x, vtx, dataTransform);
+            for (int i = 0; i < count; i++)
+            {
+                int x = firstAppearanceArray?[i] ?? i;
+                var vtx = sourceList[x];
+                for (int j = 0; j < actions.Length; j++)
+                    actions[j](this, i, x, vtx, dataTransform);
+            }
+        }
+        finally
+        {
+            XRMeshCpuPreparationTelemetry.RecordVertexPopulation(count, Stopwatch.GetTimestamp() - populationStart);
         }
     }
 
@@ -69,12 +78,20 @@ public partial class XRMesh
         _ = parallel;
         using var _s = RuntimeRenderingHostServices.Profiling.StartProfileScope("PopulateVertexData");
         var actions = vertexActions as DelVertexAction[] ?? [.. vertexActions];
+        long populationStart = Stopwatch.GetTimestamp();
 
-        for (int i = 0; i < count; i++)
+        try
         {
-            var vtx = sourceList[i];
-            for (int j = 0; j < actions.Length; j++)
-                actions[j](this, i, i, vtx, dataTransform);
+            for (int i = 0; i < count; i++)
+            {
+                var vtx = sourceList[i];
+                for (int j = 0; j < actions.Length; j++)
+                    actions[j](this, i, i, vtx, dataTransform);
+            }
+        }
+        finally
+        {
+            XRMeshCpuPreparationTelemetry.RecordVertexPopulation(count, Stopwatch.GetTimestamp() - populationStart);
         }
     }
 

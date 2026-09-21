@@ -1,0 +1,50 @@
+#version 460 core
+
+#pragma snippet "DDGIAttributeAddress"
+
+layout(local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
+
+layout(std430, binding = 0) readonly buffer PositionsInBuffer { uint PositionScalars[]; };
+layout(std430, binding = 1) readonly buffer InterleavedPositionsBuffer { uint InterleavedPositions[]; };
+layout(std430, binding = 2) readonly buffer TriangleIndexBuffer { uvec4 TriangleIndices[]; };
+
+struct Aabb { vec4 minBounds; vec4 maxBounds; };
+layout(std430, binding = 3) writeonly buffer AabbBuffer { Aabb AabbsOut[]; };
+
+uniform uint uEntryTriangleCount;
+uniform uint uAggregateOffset;
+uniform uint uUseInterleaved;
+uniform uint uInterleavedStrideBytes;
+uniform uint uPositionOffsetBytes;
+uniform uint uPositionStrideScalars;
+uniform mat4 uLocalToWorld;
+
+vec3 loadPosition(uint vertexIndex)
+{
+    if (uUseInterleaved != 0u)
+    {
+        uint word;
+        if (!DDGIAttributeAddress(vertexIndex, uInterleavedStrideBytes >> 2u, uPositionOffsetBytes >> 2u, 3u, uint(InterleavedPositions.length()), word))
+            return vec3(0.0);
+        return vec3(uintBitsToFloat(InterleavedPositions[word]), uintBitsToFloat(InterleavedPositions[word + 1u]), uintBitsToFloat(InterleavedPositions[word + 2u]));
+    }
+    uint word;
+    if (!DDGIAttributeAddress(vertexIndex, max(uPositionStrideScalars, 3u), 0u, 3u, uint(PositionScalars.length()), word))
+        return vec3(0.0);
+    return vec3(uintBitsToFloat(PositionScalars[word]), uintBitsToFloat(PositionScalars[word + 1u]), uintBitsToFloat(PositionScalars[word + 2u]));
+}
+
+void main()
+{
+    uint localIndex = gl_GlobalInvocationID.x;
+    uint outputCount = uint(AabbsOut.length());
+    if (localIndex >= min(uEntryTriangleCount, uint(TriangleIndices.length())) ||
+        uAggregateOffset >= outputCount || localIndex >= outputCount - uAggregateOffset)
+        return;
+    uvec4 indices = TriangleIndices[localIndex];
+    vec3 p0 = (uLocalToWorld * vec4(loadPosition(indices.x), 1.0)).xyz;
+    vec3 p1 = (uLocalToWorld * vec4(loadPosition(indices.y), 1.0)).xyz;
+    vec3 p2 = (uLocalToWorld * vec4(loadPosition(indices.z), 1.0)).xyz;
+    AabbsOut[uAggregateOffset + localIndex].minBounds = vec4(min(p0, min(p1, p2)), 0.0);
+    AabbsOut[uAggregateOffset + localIndex].maxBounds = vec4(max(p0, max(p1, p2)), 0.0);
+}

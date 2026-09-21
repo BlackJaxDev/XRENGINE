@@ -21,6 +21,13 @@ internal sealed partial class VulkanCommandRuntime
         TrackAdvancedNativeImageClosure(commandBuffer, closure.ReactiveResource);
         TrackAdvancedNativeImageClosure(commandBuffer, closure.ShadingDiagnosticsResource);
         TrackAdvancedNativeImageClosure(commandBuffer, closure.AmbientOcclusionResource);
+        if (closure.DdgiSurface.Enabled)
+        {
+            TrackAdvancedNativeImageClosure(commandBuffer, closure.DdgiSurface.EmissionResource);
+            TrackAdvancedNativeImageClosure(commandBuffer, closure.DdgiSurface.AlbedoResource);
+            TrackAdvancedNativeImageClosure(commandBuffer, closure.DdgiSurface.NormalResource);
+            TrackAdvancedNativeImageClosure(commandBuffer, closure.DdgiSurface.RmseResource);
+        }
         TrackCommandBufferResource(commandBuffer, new(ObjectType.Sampler, closure.Sampler.Handle),
             "AdvancedNativeShade.Sampler", closure.SamplerGeneration);
         TrackAdvancedNativeBufferClosure(commandBuffer, closure.ActiveTiles);

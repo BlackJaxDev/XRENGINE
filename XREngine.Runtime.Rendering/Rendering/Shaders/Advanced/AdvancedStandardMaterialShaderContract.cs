@@ -15,6 +15,11 @@ internal static class AdvancedStandardMaterialShaderContract
         MaterialBindingLayout layout = MaterialBindingLayouts.OpaqueDeferred;
         AppendMember(source, layout, "BaseColorOpacity", "XR_ADV_STANDARD_BASE_COLOR_WORD");
         AppendMember(source, layout, "RMSE", "XR_ADV_STANDARD_RMSE_WORD");
+        AppendMember(source, layout, "EmissionColor", "XR_ADV_STANDARD_EMISSION_COLOR_WORD");
+        AppendMember(source, layout, "EmissionStrength", "XR_ADV_STANDARD_EMISSION_STRENGTH_WORD");
+        AppendMember(source, layout, "EmissionTextureMetadata", "XR_ADV_STANDARD_EMISSION_TEXTURE_METADATA_WORD");
+        AppendMember(source, layout, "EmissionUvScaleOffset", "XR_ADV_STANDARD_EMISSION_UV_SCALE_OFFSET_WORD");
+        AppendMember(source, layout, "EmissionUvRotation", "XR_ADV_STANDARD_EMISSION_UV_ROTATION_WORD");
         AppendMember(source, layout, "AlphaCutoff", "XR_ADV_STANDARD_ALPHA_CUTOFF_WORD");
         AppendMember(source, layout, "Flags", "XR_ADV_STANDARD_FLAGS_WORD");
         Append(source, "XR_ADV_STANDARD_WORD_COUNT", layout.RowWordCount);

@@ -14,7 +14,7 @@ namespace XREngine.Rendering.Compute;
 // the lifetime of the GpuBvhTree.
 public sealed partial class GpuBvhTree
 {
-    // Shaders. Owned; freed in DisposeProgramsCore.
+    // Shared assets borrowed from ShaderHelper; tree teardown releases references.
     private XRShader? _buildShader;
     private XRShader? _refitShader;
     private XRShader? _mortonShader;
@@ -80,8 +80,8 @@ public sealed partial class GpuBvhTree
     }
 
     /// <summary>
-    /// Destroys every shader and program so the next <see cref="EnsurePrograms"/>
-    /// call rebuilds them. Currently unreferenced; retained because the
+    /// Destroys owned programs and releases shared shader references so the next
+    /// <see cref="EnsurePrograms"/> call rebuilds the programs. Currently unreferenced; retained because the
     /// <see cref="BuildMode"/> / <see cref="MaxLeafPrimitives"/> setters used to
     /// invalidate cached programs when those values were specialization
     /// constants. They are now plain uniforms, so a reset is no longer required.
@@ -96,15 +96,6 @@ public sealed partial class GpuBvhTree
         _radixPrefixProgram?.Destroy();
         _radixScatterProgram?.Destroy();
         _qualityProgram?.Destroy();
-
-        _buildShader?.Destroy();
-        _refitShader?.Destroy();
-        _mortonShader?.Destroy();
-        _smallSortShader?.Destroy();
-        _radixHistogramShader?.Destroy();
-        _radixPrefixShader?.Destroy();
-        _radixScatterShader?.Destroy();
-        _qualityShader?.Destroy();
 
         _buildProgram = null;
         _refitProgram = null;
@@ -154,23 +145,5 @@ public sealed partial class GpuBvhTree
     }
 
     private void DisposeProgramsCore()
-    {
-        _buildShader?.Destroy();
-        _refitShader?.Destroy();
-        _mortonShader?.Destroy();
-        _smallSortShader?.Destroy();
-        _radixHistogramShader?.Destroy();
-        _radixPrefixShader?.Destroy();
-        _radixScatterShader?.Destroy();
-        _qualityShader?.Destroy();
-
-        _buildProgram?.Destroy();
-        _refitProgram?.Destroy();
-        _mortonProgram?.Destroy();
-        _smallSortProgram?.Destroy();
-        _radixHistogramProgram?.Destroy();
-        _radixPrefixProgram?.Destroy();
-        _radixScatterProgram?.Destroy();
-        _qualityProgram?.Destroy();
-    }
+        => ResetPrograms();
 }

@@ -789,8 +789,9 @@ namespace XREngine.Rendering
         public EProgramStageMask GetShaderTypeMask()
         {
             EProgramStageMask mask = EProgramStageMask.None;
-            foreach (var shader in Shaders)
+            for (int i = 0; i < Shaders.Count; i++)
             {
+                XRShader shader = Shaders[i];
                 switch (shader.Type)
                 {
                     case EShaderType.Vertex:
@@ -1231,6 +1232,7 @@ namespace XREngine.Rendering
             RGB16,
             RGB16F,
             RGB32F,
+            R11G11B10F,
             RGBA8,
             RGBA16,
             RGBA16F,
@@ -1262,7 +1264,11 @@ namespace XREngine.Rendering
         }
 
         public void BindImageTexture(uint unit, IRenderTextureResource texture, int level, bool layered, int layer, EImageAccess access, EImageFormat format)
-            => BindImageTextureRequested?.Invoke(unit, texture, level, layered, layer, access, format);
+        {
+            if (access != EImageAccess.ReadOnly && texture is XRTexture writable)
+                writable.MarkGpuWritable();
+            BindImageTextureRequested?.Invoke(unit, texture, level, layered, layer, access, format);
+        }
 
         /// <summary>
         /// Dispatch the program for compute.
@@ -1310,6 +1316,10 @@ namespace XREngine.Rendering
         {
             if (buffer is null)
                 throw new ArgumentNullException(nameof(buffer), "Cannot bind a null buffer to the shader program.");
+            // Backend snapshots use lookup-only wrapper access. Establish the
+            // current render owner's wrapper at this explicit binding boundary.
+            if (RuntimeEngine.IsRenderThread && AbstractRenderer.Current is not null)
+                buffer.PrepareForProgramBinding();
             BindBufferRequested?.Invoke(location, buffer);
         }
 

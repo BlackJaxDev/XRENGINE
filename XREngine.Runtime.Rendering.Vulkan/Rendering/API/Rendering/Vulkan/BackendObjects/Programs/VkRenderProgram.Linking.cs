@@ -29,12 +29,7 @@ internal unsafe partial class VkRenderProgram
             return true;
 
         allowAsyncShaderCompile &= !VulkanProgramLinkPreparationScope.RequiresSynchronousLink(BackendContext.Resources);
-        // Shader invalidation holds this gate while notifying program owners.
-        // Taking the interface lock first would deadlock against that callback.
-        using VulkanPipelineCompilationMutationLease mutationLease =
-            ProgramCreationPort.AcquirePipelineCompilationMutationLease("program link");
-        lock (_linkLock)
-            return LinkAfterAcquiringInterfaceLock(allowAsyncShaderCompile);
+        return LinkWithPipelineCompilationProtection(allowAsyncShaderCompile);
     }
 
     internal VulkanProgramLinkReadiness TryPrepareLinkNonblocking(out string reason)
@@ -82,13 +77,8 @@ internal unsafe partial class VkRenderProgram
         if (pending)
             return VulkanProgramLinkReadiness.Pending;
 
-        using VulkanPipelineCompilationMutationLease mutationLease =
-            ProgramCreationPort.AcquirePipelineCompilationMutationLease("program link");
-        lock (_linkLock)
-        {
-            if (LinkAfterAcquiringInterfaceLock(allowAsyncShaderCompile: true))
-                return VulkanProgramLinkReadiness.Ready;
-        }
+        if (LinkWithPipelineCompilationProtection(allowAsyncShaderCompile: true))
+            return VulkanProgramLinkReadiness.Ready;
 
         XRRenderProgram.ShaderProgramBackendStatus status = Data.ShaderMetadata.Backend;
         reason = status.FailureReason ?? status.Detail ?? "Vulkan program interface publication is pending.";
@@ -120,6 +110,35 @@ internal unsafe partial class VkRenderProgram
         // racing this read cannot be mistaken for a current interface.
         return current && IsLinked;
     }
+
+    private bool LinkWithPipelineCompilationProtection(bool allowAsyncShaderCompile)
+    {
+        // Shader invalidation takes the mutation gate before notifying program
+        // owners, so compilation protection must remain outside the interface lock.
+        if (HasPublishedPipelineCompilationDependencies())
+        {
+            using VulkanPipelineCompilationMutationLease mutationLease =
+                ProgramCreationPort.AcquirePipelineCompilationMutationLease(
+                    this,
+                    "program link replacement");
+            lock (_linkLock)
+                return LinkAfterAcquiringInterfaceLock(allowAsyncShaderCompile);
+        }
+
+        // A first link owns only unpublished native state. Pin device-wide mutation
+        // without advancing the dependency generation or draining unrelated jobs.
+        BackendContext.Resources.PipelineManager.RecordAdditiveProgramLink();
+        using VulkanPipelineCompilationDependencyLease dependencyLease =
+            BackendContext.Resources.PipelineManager.AcquireCompilationDependencyLease();
+        lock (_linkLock)
+            return LinkAfterAcquiringInterfaceLock(allowAsyncShaderCompile);
+    }
+
+    private bool HasPublishedPipelineCompilationDependencies()
+        => IsLinked ||
+           _pipelineLayout.Handle != 0 ||
+           _descriptorSetLayouts.Length != 0 ||
+           _computePipeline.Handle != 0;
 
     private bool LinkAfterAcquiringInterfaceLock(
         bool allowAsyncShaderCompile)

@@ -132,6 +132,43 @@ internal unsafe partial class VkRenderProgram(
             _externallyOwnedDescriptorSetMask,
             setIndex);
 
+    internal bool UsesShaderModule(ulong shaderModuleHandle)
+    {
+        foreach (VkShader shader in _shaderCache.Values)
+            if (shader.ShaderStageCreateInfo.Module.Handle == shaderModuleHandle)
+                return true;
+        return false;
+    }
+
+    internal bool OwnsPipelineCompilationDependencies(
+        PipelineLayout pipelineLayout,
+        PipelineShaderStageCreateInfo[] stages)
+    {
+        if (!IsLinked ||
+            pipelineLayout.Handle == 0 ||
+            _pipelineLayout.Handle != pipelineLayout.Handle)
+        {
+            return false;
+        }
+
+        for (int stageIndex = 0; stageIndex < stages.Length; stageIndex++)
+            if (stages[stageIndex].Module.Handle == 0 ||
+                !UsesShaderModule(stages[stageIndex].Module.Handle))
+            {
+                return false;
+            }
+        return true;
+    }
+
+    internal bool OwnsPipelineCompilationDependencies(
+        PipelineLayout pipelineLayout,
+        in PipelineShaderStageCreateInfo stage)
+        => IsLinked &&
+           pipelineLayout.Handle != 0 &&
+           _pipelineLayout.Handle == pipelineLayout.Handle &&
+           stage.Module.Handle != 0 &&
+           UsesShaderModule(stage.Module.Handle);
+
     protected override uint CreateObjectInternal() => CacheObject(this);
 
     protected override void DeleteObjectInternal()
@@ -299,7 +336,6 @@ internal unsafe partial class VkRenderProgram(
         if (_shaderCache.Remove(shader, out VkShader? vkShader) && vkShader is not null)
         {
             vkShader.ShaderInvalidated -= OnShaderInvalidated;
-            vkShader.Destroy();
         }
 
         IsLinked = false;

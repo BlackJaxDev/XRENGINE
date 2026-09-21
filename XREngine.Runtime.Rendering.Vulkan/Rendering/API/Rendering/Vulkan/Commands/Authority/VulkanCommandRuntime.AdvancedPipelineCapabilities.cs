@@ -407,11 +407,18 @@ internal sealed partial class VulkanCommandRuntime
     internal VulkanAdvancedVisibilityPipelineReadiness GetAdvancedVisibilityPipelineReadiness(
         out string failureReason)
     {
+        if (XREnvironment.IsEnabled(XREngineEnvironmentVariables.VulkanAdvancedValidationForceUnavailable))
+        {
+            failureReason = $"Advanced visibility is unavailable because {XREngineEnvironmentVariables.VulkanAdvancedValidationForceUnavailable}=1 was requested for validation.";
+            return VulkanAdvancedVisibilityPipelineReadiness.Failed;
+        }
         if (!DeviceContext.IsOperational)
         {
             failureReason = "The Vulkan device is not operational.";
             return VulkanAdvancedVisibilityPipelineReadiness.Failed;
         }
+        if (!VulkanAdvancedVisibilityResourceRuntime.TryValidateSet1StorageImageLimits(DeviceContext, out failureReason))
+            return VulkanAdvancedVisibilityPipelineReadiness.Failed;
         if (!DeviceContext.Capabilities.Supports(EVulkanDeviceCapability.DrawIndirectCount))
         {
             failureReason = "The Vulkan device does not support indirect-count draws.";

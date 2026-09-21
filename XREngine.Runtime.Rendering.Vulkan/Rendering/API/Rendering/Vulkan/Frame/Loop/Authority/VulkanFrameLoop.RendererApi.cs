@@ -1,4 +1,5 @@
 using System.Threading;
+using System.Runtime.CompilerServices;
 using Silk.NET.Vulkan;
 using XREngine.Data.Geometry;
 using XREngine.Data.Rendering;
@@ -22,11 +23,42 @@ internal sealed partial class VulkanFrameLoop
 
     internal void TrackWindowPresentSource(XRTexture? colorTexture, XRFrameBuffer? sourceFrameBuffer)
     {
-        XRFrameBuffer? resolvedFrameBuffer = sourceFrameBuffer ?? ResolveWindowPresentFallbackFrameBuffer(colorTexture);
         FrameOpContext context = CaptureFrameOpContextForCurrentPipelineScope();
+        VulkanPresentationSourceTuple source = CreateWindowPresentationSourceTuple(
+            colorTexture,
+            sourceFrameBuffer,
+            in context);
+        VulkanPresentationSourceTuple published = _windowPresentSource.PublishLogical(
+            in source,
+            retainEquivalentCurrentSource: true);
+
+        PublishPresentationSourceCompatibilityFields(in published);
+        if (DescriptorTraceEnabled)
+            Debug.VulkanEvery(
+                $"Vulkan.TrackWindowPresentSource.{GetHashCode()}",
+                TimeSpan.FromSeconds(1),
+                "[Vulkan] TrackWindowPresentSource: tex='{0}' fbo='{1}' snapReady={2} img=0x{3:X} view=0x{4:X} sampler=0x{5:X} epoch={6} pipeline={7} viewport={8} output={9}",
+                colorTexture?.Name ?? "<null>", published.FrameBuffer?.Name ?? "<null>",
+                published.Image.Handle != 0,
+                published.Image.Handle,
+                published.ImageView.Handle,
+                published.Sampler.Handle,
+                published.LogicalEpoch, context.PipelineIdentity, context.ViewportIdentity, context.OutputTargetIdentity);
+    }
+
+    private VulkanPresentationSourceTuple CreateWindowPresentationSourceTuple(
+        XRTexture? colorTexture,
+        XRFrameBuffer? sourceFrameBuffer,
+        in FrameOpContext context,
+        bool resolveNativeSource = true,
+        IWindowPresentationBindingPublisher? presentationPublisher = null,
+        ulong presentationPublicationToken = 0)
+    {
+        XRFrameBuffer? resolvedFrameBuffer = sourceFrameBuffer ?? ResolveWindowPresentFallbackFrameBuffer(colorTexture);
         VkImageDescriptorSnapshot snapshot = default;
         bool snapshotReady = false;
-        if (colorTexture is not null &&
+        if (resolveNativeSource &&
+            colorTexture is not null &&
             GetOrCreateAPIRenderObject(colorTexture) is IVkImageDescriptorSource source)
         {
             snapshotReady = source.TryGetDescriptorSnapshot(
@@ -37,41 +69,105 @@ internal sealed partial class VulkanFrameLoop
                 out snapshot);
         }
 
-        VulkanPresentationSourceTuple published = _windowPresentSource.PublishLogical(
-            new VulkanPresentationSourceTuple(
-                0, colorTexture, resolvedFrameBuffer, context,
-                snapshotReady ? snapshot.Generation : 0,
-                snapshotReady ? snapshot.Image : default,
-                snapshotReady ? _commandRuntime.GetResourceGeneration(ObjectType.Image, snapshot.Image.Handle) : 0,
-                snapshotReady ? snapshot.View : default,
-                snapshotReady ? _commandRuntime.GetResourceGeneration(ObjectType.ImageView, snapshot.View.Handle) : 0,
-                snapshotReady ? snapshot.Sampler : default,
-                snapshotReady ? _commandRuntime.GetResourceGeneration(ObjectType.Sampler, snapshot.Sampler.Handle) : 0,
-                snapshotReady ? snapshot.Format : default,
-                snapshotReady ? snapshot.Aspect : default,
-                snapshotReady ? snapshot.Samples : default,
-                snapshotReady ? snapshot.TrackedLayout : ImageLayout.Undefined,
-                resolvedFrameBuffer?.Width ?? 0, resolvedFrameBuffer?.Height ?? 0,
-                default, 0, -1, 0, default, 0),
-            retainEquivalentCurrentSource: true);
+        return new VulkanPresentationSourceTuple(
+            0, colorTexture, resolvedFrameBuffer, presentationPublisher,
+            presentationPublicationToken, context,
+            snapshotReady ? snapshot.Generation : 0,
+            snapshotReady ? snapshot.Image : default,
+            snapshotReady ? _commandRuntime.GetResourceGeneration(ObjectType.Image, snapshot.Image.Handle) : 0,
+            snapshotReady ? snapshot.View : default,
+            snapshotReady ? _commandRuntime.GetResourceGeneration(ObjectType.ImageView, snapshot.View.Handle) : 0,
+            snapshotReady ? snapshot.Sampler : default,
+            snapshotReady ? _commandRuntime.GetResourceGeneration(ObjectType.Sampler, snapshot.Sampler.Handle) : 0,
+            snapshotReady ? snapshot.Format : default,
+            snapshotReady ? snapshot.Aspect : default,
+            snapshotReady ? snapshot.Samples : default,
+            snapshotReady ? snapshot.TrackedLayout : ImageLayout.Undefined,
+            resolvedFrameBuffer?.Width ?? 0, resolvedFrameBuffer?.Height ?? 0,
+            default, 0, -1, 0, default, 0);
+    }
 
-        Debug.VulkanEvery(
-            $"Vulkan.TrackWindowPresentSource.{GetHashCode()}",
-            TimeSpan.FromSeconds(1),
-            "[Vulkan] TrackWindowPresentSource: tex='{0}' fbo='{1}' snapReady={2} img=0x{3:X} view=0x{4:X} sampler=0x{5:X} epoch={6}",
-            colorTexture?.Name ?? "<null>", resolvedFrameBuffer?.Name ?? "<null>", snapshotReady,
-            snapshotReady ? snapshot.Image.Handle : 0,
-            snapshotReady ? snapshot.View.Handle : 0,
-            snapshotReady ? snapshot.Sampler.Handle : 0,
-            published.LogicalEpoch);
-
+    private void PublishPresentationSourceCompatibilityFields(
+        in VulkanPresentationSourceTuple published)
+    {
         // Readback and preview consumers are deliberately outside command
         // selection, but they still need the same retained logical source.
-        // Publish the tuple first so these compatibility fields cannot expose a
-        // source that the presentation authority rejected or superseded.
         _outputRuntime.PresentationSource.ColorTexture = published.ColorTexture;
         _outputRuntime.PresentationSource.FrameBuffer = published.FrameBuffer;
         _outputRuntime.PresentationSource.FrameOpContext = published.Context;
+    }
+
+    /// <summary>
+    /// Gives descriptor authority to the last accepted desktop presentation draw.
+    /// Eager compatibility publication can observe commands that the sealed plan
+    /// rejects, so it must never decide the source used for native presentation.
+    /// </summary>
+    private void SelectWindowPresentationSourceFromAcceptedOperations(
+        FrameOperationSequence operations)
+    {
+        for (int index = operations.Length - 1; index >= 0; index--)
+        {
+            if (operations.GetTarget(index) is not null ||
+                !operations.TryGetMeshDraw(index, out MeshDrawPayload payload))
+            {
+                continue;
+            }
+
+            PendingMeshDraw draw = payload.Draw;
+            WindowPresentationSourceMarker marker = draw.WindowPresentationSourceMarker;
+            XRTexture? samplerTexture = null;
+            bool hasFrozenSourceTexture = draw.ProgramBindingSnapshot?.TryGetSamplerTexture(
+                "SourceTexture",
+                out samplerTexture) == true;
+            bool candidateSelected = marker.HasSource && marker.HasDeferredAuthority &&
+                hasFrozenSourceTexture &&
+                ReferenceEquals(marker.SourceTexture, samplerTexture);
+            int passIndex = operations.GetHeader(index).PassIndex;
+            if (VulkanMeshRenderingConventions.DescriptorTraceEnabled &&
+                (passIndex == 100072 || marker.HasSource || hasFrozenSourceTexture))
+            {
+                FrameOpContext traceContext = operations.GetContext(index);
+                string selectionReason = candidateSelected
+                    ? "selected"
+                    : !marker.HasSource
+                        ? "no-marker"
+                        : !marker.HasDeferredAuthority
+                            ? "deferred-authority-missing"
+                        : !hasFrozenSourceTexture
+                            ? "frozen-source-missing"
+                            : "texture-mismatch";
+                Debug.VulkanEvery(
+                    $"Vulkan.FinalPresentation.Select.{index}.{traceContext.PipelineIdentity}.{traceContext.ViewportIdentity}.{traceContext.OutputTargetIdentity}.{marker.HasSource}.{candidateSelected}",
+                    TimeSpan.FromSeconds(1),
+                    "[VulkanDescriptor] final-source candidate op={0}/{1} pass={2} pipeline={3} viewport={4} output={5} marker={6} markerTexture={7} markerFbo={8} frozenSource={9} frozenTexture={10} selected={11} reason={12}.",
+                    index, operations.Length, passIndex,
+                    traceContext.PipelineIdentity, traceContext.ViewportIdentity,
+                    traceContext.OutputTargetIdentity, marker.HasSource,
+                    marker.SourceTexture is null ? 0 : RuntimeHelpers.GetHashCode(marker.SourceTexture),
+                    marker.SourceFrameBuffer is null ? 0 : RuntimeHelpers.GetHashCode(marker.SourceFrameBuffer),
+                    hasFrozenSourceTexture,
+                    samplerTexture is null ? 0 : RuntimeHelpers.GetHashCode(samplerTexture),
+                    candidateSelected, selectionReason);
+            }
+            if (!candidateSelected)
+            {
+                continue;
+            }
+
+            FrameOpContext context = operations.GetContext(index);
+            VulkanPresentationSourceTuple candidate =
+                CreateWindowPresentationSourceTuple(
+                    marker.SourceTexture,
+                    marker.SourceFrameBuffer,
+                    in context,
+                    resolveNativeSource: false,
+                    presentationPublisher: marker.Publisher,
+                    presentationPublicationToken: marker.PublicationToken);
+            VulkanPresentationSourceTuple selected = _windowPresentSource.SelectLogical(
+                in candidate);
+            PublishPresentationSourceCompatibilityFields(in selected);
+            return;
+        }
     }
 
     internal RenderTextureSamplingState GetTextureShaderSamplingState(XRTexture? texture)

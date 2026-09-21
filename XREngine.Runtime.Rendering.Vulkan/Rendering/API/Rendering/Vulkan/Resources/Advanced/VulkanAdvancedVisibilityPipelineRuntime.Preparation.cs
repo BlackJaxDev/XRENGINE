@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Threading;
 
 namespace XREngine.Rendering.Vulkan;
@@ -13,22 +14,98 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
     private int _completedPreparationIdentity;
     private bool _preparationStopped;
     private VulkanAdvancedNativeComputePipelines _preparedNativeComputePipelines;
+    private long _foregroundPollTicks;
+    private long _foregroundPollCount;
+    private long _preparationAttemptTicks;
+    private int _preparationAttemptCount;
+    private long _preparationStartedTimestamp;
+    private long _preparationCompletedTimestamp;
+    private readonly VulkanPipelineForegroundWaitObserver _foregroundWaitObserver = new();
 
     internal VulkanAdvancedVisibilityPipelineReadiness GetReadiness(out string reason)
     {
-        if (!_resources.AdvancedSceneResources.IsReady ||
-            !_resources.AdvancedVisibilityResources.IsReady)
+        long pollStart = Stopwatch.GetTimestamp();
+        try
         {
-            reason = !_resources.AdvancedSceneResources.IsReady
-                ? _resources.AdvancedSceneResources.AvailabilityReason
-                : _resources.AdvancedVisibilityResources.AvailabilityReason;
-            return VulkanAdvancedVisibilityPipelineReadiness.Missing;
-        }
+            if (!_resources.AdvancedSceneResources.IsReady ||
+                !_resources.AdvancedVisibilityResources.IsReady)
+            {
+                reason = !_resources.AdvancedSceneResources.IsReady
+                    ? _resources.AdvancedSceneResources.AvailabilityReason
+                    : _resources.AdvancedVisibilityResources.AvailabilityReason;
+                return VulkanAdvancedVisibilityPipelineReadiness.Missing;
+            }
 
-        RequestPreparation();
-        PreparationSnapshot preparation = Volatile.Read(ref _preparation);
-        reason = preparation.Reason;
-        return preparation.State;
+            RequestPreparation();
+            PreparationSnapshot preparation = Volatile.Read(ref _preparation);
+            reason = preparation.Reason;
+            return preparation.State;
+        }
+        finally
+        {
+            Interlocked.Add(ref _foregroundPollTicks, Stopwatch.GetTimestamp() - pollStart);
+            Interlocked.Increment(ref _foregroundPollCount);
+        }
+    }
+
+    internal AdvancedVisibilityPreparationDiagnosticsSnapshot CapturePreparationDiagnostics()
+    {
+        double tickMilliseconds = 1000.0 / Stopwatch.Frequency;
+        double sourceMilliseconds = 0.0;
+        double linkMilliseconds = 0.0;
+        double nativeMilliseconds = 0.0;
+        AccumulateProgramTimings(ref sourceMilliseconds, ref linkMilliseconds, ref nativeMilliseconds, _earlyVisibilityProgram);
+        AccumulateProgramTimings(ref sourceMilliseconds, ref linkMilliseconds, ref nativeMilliseconds, _buildIndirectProgram);
+        AccumulateProgramTimings(ref sourceMilliseconds, ref linkMilliseconds, ref nativeMilliseconds, _buildDepthPyramidProgram);
+        AccumulateProgramTimings(ref sourceMilliseconds, ref linkMilliseconds, ref nativeMilliseconds, _lateVisibilityProgram);
+        AccumulateProgramTimings(ref sourceMilliseconds, ref linkMilliseconds, ref nativeMilliseconds, _opaqueRasterProgram);
+        AccumulateProgramTimings(ref sourceMilliseconds, ref linkMilliseconds, ref nativeMilliseconds, _maskedRasterProgram);
+        AccumulateProgramTimings(ref sourceMilliseconds, ref linkMilliseconds, ref nativeMilliseconds, _opaqueMeshRasterProgram);
+        AccumulateProgramTimings(ref sourceMilliseconds, ref linkMilliseconds, ref nativeMilliseconds, _maskedMeshRasterProgram);
+        AccumulateProgramTimings(ref sourceMilliseconds, ref linkMilliseconds, ref nativeMilliseconds, _opaqueMultiviewRasterProgram);
+        AccumulateProgramTimings(ref sourceMilliseconds, ref linkMilliseconds, ref nativeMilliseconds, _maskedMultiviewRasterProgram);
+        AccumulateProgramTimings(ref sourceMilliseconds, ref linkMilliseconds, ref nativeMilliseconds, _opaqueMultiviewMeshRasterProgram);
+        AccumulateProgramTimings(ref sourceMilliseconds, ref linkMilliseconds, ref nativeMilliseconds, _maskedMultiviewMeshRasterProgram);
+        for (int index = 0; index < _nativeComputePrograms.Length; index++)
+            AccumulateProgramTimings(ref sourceMilliseconds, ref linkMilliseconds, ref nativeMilliseconds, _nativeComputePrograms[index]);
+
+        PreparationSnapshot snapshot = Volatile.Read(ref _preparation);
+        long startedTimestamp = Volatile.Read(ref _preparationStartedTimestamp);
+        long completedTimestamp = Volatile.Read(ref _preparationCompletedTimestamp);
+        return new(
+            snapshot.State.ToString(),
+            snapshot.Reason,
+            Volatile.Read(ref _preparationAttemptCount),
+            startedTimestamp == 0
+                ? 0.0
+                : Stopwatch.GetElapsedTime(
+                    startedTimestamp,
+                    completedTimestamp == 0 ? Stopwatch.GetTimestamp() : completedTimestamp).TotalMilliseconds,
+            Volatile.Read(ref _preparationAttemptTicks) * tickMilliseconds,
+            sourceMilliseconds,
+            linkMilliseconds,
+            nativeMilliseconds,
+            _foregroundWaitObserver.Count,
+            _foregroundWaitObserver.Ticks * tickMilliseconds,
+            Volatile.Read(ref _foregroundPollCount),
+            Volatile.Read(ref _foregroundPollTicks) * tickMilliseconds);
+    }
+
+    private void AccumulateProgramTimings(
+        ref double sourceMilliseconds,
+        ref double linkMilliseconds,
+        ref double nativeMilliseconds,
+        XRRenderProgram? source)
+    {
+        if (source is null ||
+            _resources.WrapperLookup.GetOrCreate(source, generateNow: false) is not VkRenderProgram program)
+            return;
+        foreach (XRShader shader in source.Shaders)
+            if (_resources.WrapperLookup.GetOrCreate(shader, generateNow: false) is VkShader backendShader)
+                sourceMilliseconds += backendShader.LastArtifact?.CompilationMilliseconds ?? 0.0;
+        XRRenderProgram.ShaderProgramBackendStatus status = source.ShaderMetadata.Backend;
+        linkMilliseconds += status.LinkMilliseconds;
+        nativeMilliseconds += program.LastComputePipelineCompileMilliseconds;
     }
 
     internal void StopPreparation()
@@ -86,6 +163,13 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
             _preparationCancellation?.Dispose();
             _preparationCancellation = new CancellationTokenSource();
             CancellationToken cancellationToken = _preparationCancellation.Token;
+            _foregroundWaitObserver.Reset();
+            Volatile.Write(ref _preparationAttemptCount, 0);
+            Volatile.Write(ref _preparationAttemptTicks, 0);
+            Volatile.Write(ref _foregroundPollCount, 0);
+            Volatile.Write(ref _foregroundPollTicks, 0);
+            Volatile.Write(ref _preparationStartedTimestamp, Stopwatch.GetTimestamp());
+            Volatile.Write(ref _preparationCompletedTimestamp, 0);
             PublishPreparationState(
                 VulkanAdvancedVisibilityPipelineReadiness.Pending,
                 "Advanced visibility pipeline preparation is pending.");
@@ -120,6 +204,7 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
 
                     Volatile.Write(ref _completedPreparationIdentity, preparationIdentity);
                     PublishPreparationState(readiness, reason);
+                    Volatile.Write(ref _preparationCompletedTimestamp, Stopwatch.GetTimestamp());
                     return;
                 }
 
@@ -132,6 +217,7 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
             PublishPreparationState(
                 VulkanAdvancedVisibilityPipelineReadiness.Failed,
                 "Advanced visibility pipeline preparation was canceled during renderer shutdown.");
+            Volatile.Write(ref _preparationCompletedTimestamp, Stopwatch.GetTimestamp());
         }
         catch (Exception exception)
         {
@@ -139,56 +225,68 @@ internal sealed partial class VulkanAdvancedVisibilityPipelineRuntime
             PublishPreparationState(
                 VulkanAdvancedVisibilityPipelineReadiness.Failed,
                 exception.Message);
+            Volatile.Write(ref _preparationCompletedTimestamp, Stopwatch.GetTimestamp());
         }
     }
 
     private VulkanAdvancedVisibilityPipelineReadiness PrepareRequiredFamilyOnce(out string reason)
     {
-        VulkanAdvancedVisibilityPipelineReadiness readiness =
-            PrepareComputePipelines(out _, out _, out reason);
-        if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
-            return readiness;
-
-        readiness = PrepareLateVisibilityComputePipelines(out _, out _, out reason);
-        if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
-            return readiness;
-
-        readiness = PrepareNativeComputePipelines(out _preparedNativeComputePipelines, out reason);
-        if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
-            return readiness;
-
-        readiness = PrepareRasterFamily(meshlet: false, multiview: false, out reason);
-        if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
-            return readiness;
-
-        bool supportsMeshlets =
-            _resources.BackendObjectContext?.DeviceContext.SupportsMeshTaskIndirectCount == true;
-        if (supportsMeshlets)
+        long attemptStart = Stopwatch.GetTimestamp();
+        Interlocked.Increment(ref _preparationAttemptCount);
+        try
         {
-            readiness = PrepareRasterFamily(meshlet: true, multiview: false, out reason);
+            using var foregroundWaitObservation =
+                new VulkanPipelineForegroundWaitObservationScope(_foregroundWaitObserver);
+            VulkanAdvancedVisibilityPipelineReadiness readiness =
+                PrepareComputePipelines(out _, out _, out reason);
             if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
                 return readiness;
-        }
 
-        bool supportsMultiview =
-            _resources.BackendObjectContext?.DeviceContext.AdvancedMultiviewEnabled == true;
-        if (supportsMultiview)
-        {
-            readiness = PrepareRasterFamily(meshlet: false, multiview: true, out reason);
+            readiness = PrepareLateVisibilityComputePipelines(out _, out _, out reason);
             if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
                 return readiness;
-        }
 
-        if (supportsMeshlets && supportsMultiview &&
-            _resources.AdvancedVisibilityResources.SupportsMultiviewMeshRaster)
-        {
-            readiness = PrepareRasterFamily(meshlet: true, multiview: true, out reason);
+            readiness = PrepareNativeComputePipelines(out _preparedNativeComputePipelines, out reason);
             if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
                 return readiness;
-        }
 
-        reason = "Ready";
-        return VulkanAdvancedVisibilityPipelineReadiness.Ready;
+            readiness = PrepareRasterFamily(meshlet: false, multiview: false, out reason);
+            if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
+                return readiness;
+
+            bool supportsMeshlets =
+                _resources.BackendObjectContext?.DeviceContext.SupportsMeshTaskIndirectCount == true;
+            if (supportsMeshlets)
+            {
+                readiness = PrepareRasterFamily(meshlet: true, multiview: false, out reason);
+                if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
+                    return readiness;
+            }
+
+            bool supportsMultiview =
+                _resources.BackendObjectContext?.DeviceContext.AdvancedMultiviewEnabled == true;
+            if (supportsMultiview)
+            {
+                readiness = PrepareRasterFamily(meshlet: false, multiview: true, out reason);
+                if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
+                    return readiness;
+            }
+
+            if (supportsMeshlets && supportsMultiview &&
+                _resources.AdvancedVisibilityResources.SupportsMultiviewMeshRaster)
+            {
+                readiness = PrepareRasterFamily(meshlet: true, multiview: true, out reason);
+                if (readiness != VulkanAdvancedVisibilityPipelineReadiness.Ready)
+                    return readiness;
+            }
+
+            reason = "Ready";
+            return VulkanAdvancedVisibilityPipelineReadiness.Ready;
+        }
+        finally
+        {
+            Interlocked.Add(ref _preparationAttemptTicks, Stopwatch.GetTimestamp() - attemptStart);
+        }
     }
 
     private VulkanAdvancedVisibilityPipelineReadiness PrepareRasterFamily(

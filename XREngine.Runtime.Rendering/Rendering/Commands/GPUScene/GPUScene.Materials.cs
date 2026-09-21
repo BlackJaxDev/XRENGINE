@@ -285,7 +285,7 @@ namespace XREngine.Rendering.Commands
                         AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.ClientMappedBuffer | EMemoryBarrierMask.Command);
                     else if (modified)
                     {
-                        buffer.PushSubData();
+                        buffer.CommitDirtyBytes(0u, buffer.Length);
                         AbstractRenderer.Current?.MemoryBarrier(EMemoryBarrierMask.Command);
                     }
 

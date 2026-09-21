@@ -1,0 +1,16 @@
+#version 450
+layout(local_size_x = 128) in;
+struct PackedTriangle { vec4 v0; vec4 v1; vec4 v2; uvec4 extra; };
+layout(std430, binding = 0) readonly buffer Unsorted { PackedTriangle Source[]; };
+layout(std430, binding = 1) readonly buffer Morton { uvec2 MortonData[]; };
+layout(std430, binding = 2) writeonly buffer Sorted { PackedTriangle Destination[]; };
+uniform uint uTriangleCount;
+void main()
+{
+    uint index = gl_GlobalInvocationID.x;
+    if (index >= uTriangleCount)
+        return;
+    uint sourceIndex = MortonData[index].y;
+    if (sourceIndex < uTriangleCount)
+        Destination[index] = Source[sourceIndex];
+}

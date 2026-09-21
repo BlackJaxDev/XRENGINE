@@ -2,12 +2,21 @@ using System.Collections.Generic;
 using System.Numerics;
 using XREngine.Scene.Transforms;
 using XREngine.Scene;
+using XREngine.Data.Core;
 using XREngine.Data.Rendering;
 
 namespace XREngine.Rendering;
 
 public partial class XRMesh
 {
+    private static readonly string[] SkinningBufferKeys =
+    [
+        ECommonBufferType.BoneInfluenceCoreIndices.ToString(),
+        ECommonBufferType.BoneInfluenceCoreWeights.ToString(),
+        ECommonBufferType.BoneInfluenceSpillHeaders.ToString(),
+        ECommonBufferType.BoneInfluenceSpillEntries.ToString(),
+    ];
+
     public void EnsureComputeSkinningBuffers()
     {
         if (!HasSkinning)
@@ -16,11 +25,22 @@ public partial class XRMesh
         if (HasCanonicalComputeSkinningBuffers())
             return;
 
-        if (CanRebuildSkinningBuffersFromVertices())
-            RebuildSkinningBuffersFromVertices();
+        lock (_skinningBufferPreparationLock)
+        {
+            // A concurrent preparation winner may have published while this caller waited.
+            if (HasCanonicalComputeSkinningBuffers())
+                return;
 
-        if (!HasCanonicalComputeSkinningBuffers())
-            throw new InvalidOperationException(BuildInvalidComputeSkinningMessage(GetComputeSkinningValidationError()));
+            XRMeshSkinningBufferState? prepared = null;
+            if (CanRebuildSkinningBuffersFromVertices())
+                prepared = RebuildSkinningBuffersFromVerticesTransactionallyCore();
+
+            if (!HasCanonicalComputeSkinningBuffers() &&
+                (prepared is null || !HasCanonicalComputeSkinningBuffers(prepared)))
+            {
+                throw new InvalidOperationException(BuildInvalidComputeSkinningMessage(GetComputeSkinningValidationError()));
+            }
+        }
     }
 
     /// <summary>
@@ -37,15 +57,31 @@ public partial class XRMesh
     /// rebuilt (no source vertices) are assumed to already carry canonical, cooked buffers.
     /// </summary>
     public void EnsureSkinningBoneOrderFinalized()
+        => _ = GetSkinningBoneOrderForPreparation();
+
+    /// <summary>
+    /// Returns the immutable bone ordering used by either the current canonical buffers or
+    /// the replacement already enlisted in the ambient publication transaction.
+    /// </summary>
+    internal (TransformBase tfm, Matrix4x4 invBindWorldMtx)[] GetSkinningBoneOrderForPreparation()
     {
         if (!HasSkinning)
-            return;
+            return UtilizedBones;
 
         if (HasCanonicalComputeSkinningBuffers())
-            return;
+            return UtilizedBones;
 
         if (CanRebuildSkinningBuffersFromVertices())
-            RebuildSkinningBuffersFromVertices();
+        {
+            lock (_skinningBufferPreparationLock)
+            {
+                if (HasCanonicalComputeSkinningBuffers())
+                    return GetSkinningBufferStateSnapshot().UtilizedBones;
+                return RebuildSkinningBuffersFromVerticesTransactionallyCore().UtilizedBones;
+            }
+        }
+
+        return UtilizedBones;
     }
 
     private bool CanRebuildSkinningBuffersFromVertices()
@@ -55,25 +91,29 @@ public partial class XRMesh
 
     private bool HasCanonicalComputeSkinningBuffers()
     {
-        if (!HasSkinning)
-            return false;
+        XRMeshSkinningBufferState state = GetSkinningBufferStateSnapshot();
+        return state.UtilizedBones.Length > 0 && HasCanonicalComputeSkinningBuffers(state);
+    }
+
+    private bool HasCanonicalComputeSkinningBuffers(XRMeshSkinningBufferState state)
+    {
         if (VertexCount <= 0)
             return false;
-        if (SkinningInfluenceEncoding is not (SkinningInfluenceEncoding.Core4Spill or SkinningInfluenceEncoding.Core4NoSpill))
+        if (state.InfluenceEncoding is not (SkinningInfluenceEncoding.Core4Spill or SkinningInfluenceEncoding.Core4NoSpill))
             return false;
-        if (SkinningCoreIndexFormat is not (SkinningCoreIndexFormat.Core4x8 or SkinningCoreIndexFormat.Core4x16))
+        if (state.CoreIndexFormat is not (SkinningCoreIndexFormat.Core4x8 or SkinningCoreIndexFormat.Core4x16))
             return false;
-        if (!IsCanonicalCoreIndexBuffer(BoneInfluenceCoreIndices))
+        if (!IsCanonicalCoreIndexBuffer(state.CoreIndices, state.CoreIndexFormat))
             return false;
-        if (!IsCanonicalCoreWeightBuffer(BoneInfluenceCoreWeights))
+        if (!IsCanonicalCoreWeightBuffer(state.CoreWeights))
             return false;
 
-        if (!HasSpillInfluences)
-            return SkinningInfluenceEncoding == SkinningInfluenceEncoding.Core4NoSpill;
+        if (!state.HasSpillInfluences)
+            return state.InfluenceEncoding == SkinningInfluenceEncoding.Core4NoSpill;
 
-        return SkinningInfluenceEncoding == SkinningInfluenceEncoding.Core4Spill &&
-               IsCanonicalSpillHeaderBuffer(BoneInfluenceSpillHeaders) &&
-               IsCanonicalSpillEntryBuffer(BoneInfluenceSpillEntries);
+        return state.InfluenceEncoding == SkinningInfluenceEncoding.Core4Spill &&
+               IsCanonicalSpillHeaderBuffer(state.SpillHeaders) &&
+               IsCanonicalSpillEntryBuffer(state.SpillEntries);
     }
 
     private string GetComputeSkinningValidationError()
@@ -105,8 +145,11 @@ public partial class XRMesh
         => $"Skinned mesh '{Name ?? "<unnamed>"}' is not in the required Core4 compute-skinning runtime format ({reason}). Recook or reimport the source mesh.";
 
     private bool IsCanonicalCoreIndexBuffer(XRDataBuffer? buffer)
+        => IsCanonicalCoreIndexBuffer(buffer, SkinningCoreIndexFormat);
+
+    private bool IsCanonicalCoreIndexBuffer(XRDataBuffer? buffer, SkinningCoreIndexFormat format)
     {
-        EComponentType expectedType = SkinningCoreIndexFormat == SkinningCoreIndexFormat.Core4x8
+        EComponentType expectedType = format == SkinningCoreIndexFormat.Core4x8
             ? EComponentType.Byte
             : EComponentType.UShort;
 
@@ -140,14 +183,19 @@ public partial class XRMesh
 
     public void RebuildSkinningBuffersFromVertices()
     {
-        ClearSkinningBuffers();
-        SkinningShaderConvention = ESkinningShaderConvention.ExplicitRowMajorRowVector;
+        lock (_skinningBufferPreparationLock)
+            _ = RebuildSkinningBuffersFromVerticesTransactionallyCore();
+    }
 
-        if (Vertices is not { Length: > 0 })
-        {
-            UtilizedBones = [];
-            return;
-        }
+    private XRMeshSkinningBufferState RebuildSkinningBuffersFromVerticesTransactionallyCore()
+    {
+        BufferCollection targetBuffers = Buffers;
+        BufferCollection.PreparedBufferTicket preparationTicket =
+            targetBuffers.CapturePreparationTicket(SkinningBufferKeys, includeGeometryRevision: true);
+        XRMeshSkinningBufferState previous = CaptureSkinningBufferState();
+        XRMeshSkinningBufferState prepared = EmptySkinningBufferState();
+        BufferCollection.PreparedBufferBatch? swap = null;
+        XRMesh? staging = null;
 
         var boneToIndexTable = new Dictionary<TransformBase, int>(System.Collections.Generic.ReferenceEqualityComparer.Instance);
         var utilizedBones = new List<(TransformBase tfm, Matrix4x4 invBindWorldMtx)>(UtilizedBones.Length);
@@ -162,38 +210,79 @@ public partial class XRMesh
             utilizedBones.Add(utilized);
         }
 
-        var weightsPerVertex = new Dictionary<TransformBase, (float weight, Matrix4x4 invBindMatrix)>?[VertexCount];
-        _maxWeightCount = 0;
-
-        for (int vertexIndex = 0; vertexIndex < VertexCount; ++vertexIndex)
+        Dictionary<TransformBase, (float weight, Matrix4x4 invBindMatrix)>?[]? weightsPerVertex = null;
+        if (Vertices is { Length: > 0 } sourceVertices)
         {
-            Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>? weights = Vertices[vertexIndex].Weights;
-            if (weights is null || weights.Count == 0)
-                continue;
-
-            var copiedWeights = new Dictionary<TransformBase, (float weight, Matrix4x4 invBindMatrix)>(weights.Count, System.Collections.Generic.ReferenceEqualityComparer.Instance);
-            foreach (var pair in weights)
+            weightsPerVertex = new Dictionary<TransformBase, (float weight, Matrix4x4 invBindMatrix)>?[VertexCount];
+            for (int vertexIndex = 0; vertexIndex < VertexCount; ++vertexIndex)
             {
-                copiedWeights[pair.Key] = pair.Value;
-                if (boneToIndexTable.ContainsKey(pair.Key))
+                Dictionary<TransformBase, (float weight, Matrix4x4 bindInvWorldMatrix)>? weights = sourceVertices[vertexIndex].Weights;
+                if (weights is null || weights.Count == 0)
                     continue;
 
-                boneToIndexTable.Add(pair.Key, utilizedBones.Count);
-                utilizedBones.Add((pair.Key, pair.Value.bindInvWorldMatrix));
+                var copiedWeights = new Dictionary<TransformBase, (float weight, Matrix4x4 invBindMatrix)>(weights.Count, System.Collections.Generic.ReferenceEqualityComparer.Instance);
+                foreach (var pair in weights)
+                {
+                    copiedWeights[pair.Key] = pair.Value;
+                    if (boneToIndexTable.ContainsKey(pair.Key))
+                        continue;
+
+                    boneToIndexTable.Add(pair.Key, utilizedBones.Count);
+                    utilizedBones.Add((pair.Key, pair.Value.bindInvWorldMatrix));
+                }
+
+                weightsPerVertex[vertexIndex] = copiedWeights;
             }
-
-            weightsPerVertex[vertexIndex] = copiedWeights;
-            _maxWeightCount = Math.Max(_maxWeightCount, copiedWeights.Count);
         }
 
-        if (boneToIndexTable.Count == 0)
+        try
         {
-            UtilizedBones = [];
-            return;
+            if (weightsPerVertex is not null && boneToIndexTable.Count > 0)
+            {
+                staging = new XRMesh(deferObjectCachePublication: true)
+                {
+                    VertexCount = VertexCount,
+                    UtilizedBones = [.. utilizedBones],
+                    SkinningShaderConvention = ESkinningShaderConvention.ExplicitRowMajorRowVector,
+                };
+                using RenderObjectPublicationScope publication = GenericRenderObject.BeginDeferredPublication();
+                staging.PopulateSkinningBuffers(boneToIndexTable, weightsPerVertex);
+                prepared = staging.CaptureSkinningBufferState();
+                KeyValuePair<string, XRDataBuffer>[] replacements = CreateSkinningBufferReplacements(prepared);
+                publication.Complete(
+                    () => swap = CommitSkinningBufferState(
+                        prepared,
+                        replacements,
+                        previous,
+                        targetBuffers,
+                        preparationTicket),
+                    () => RollbackSkinningBufferState(previous, swap, targetBuffers),
+                    () => CompleteSkinningBufferReplacement(prepared, swap, targetBuffers));
+            }
+            else
+            {
+                using RenderObjectPublicationScope publication = GenericRenderObject.BeginDeferredPublication();
+                publication.Complete(
+                    () => swap = CommitSkinningBufferState(
+                        prepared,
+                        [],
+                        previous,
+                        targetBuffers,
+                        preparationTicket),
+                    () => RollbackSkinningBufferState(previous, swap, targetBuffers),
+                    () => CompleteSkinningBufferReplacement(prepared, swap, targetBuffers));
+            }
+        }
+        finally
+        {
+            if (staging is not null)
+            {
+                staging.ApplySkinningBufferState(EmptySkinningBufferState());
+                staging.AbortMeshConstruction();
+            }
         }
 
-        UtilizedBones = [.. utilizedBones];
-        PopulateSkinningBuffers(boneToIndexTable, weightsPerVertex);
+        return prepared;
     }
 
     public bool NeedsSerializedTransformRebind()
@@ -407,22 +496,111 @@ public partial class XRMesh
         }
     }
 
-    private void ClearSkinningBuffers()
-    {
-        Buffers.RemoveBuffer(ECommonBufferType.BoneInfluenceCoreIndices.ToString());
-        Buffers.RemoveBuffer(ECommonBufferType.BoneInfluenceCoreWeights.ToString());
-        Buffers.RemoveBuffer(ECommonBufferType.BoneInfluenceSpillHeaders.ToString());
-        Buffers.RemoveBuffer(ECommonBufferType.BoneInfluenceSpillEntries.ToString());
+    private BufferCollection.PreparedBufferBatch CommitSkinningBufferState(
+        XRMeshSkinningBufferState prepared,
+        KeyValuePair<string, XRDataBuffer>[] replacements,
+        XRMeshSkinningBufferState previous,
+        BufferCollection targetBuffers,
+        BufferCollection.PreparedBufferTicket preparationTicket)
+        => targetBuffers.SwapPreparedBatch(
+            replacements,
+            SkinningBufferKeys,
+            expectedTicket: preparationTicket,
+            installState: () => ApplySkinningBufferState(prepared),
+            restoreStateOnFailure: () => ApplySkinningBufferState(previous));
 
-        BoneInfluenceCoreIndices = null;
-        BoneInfluenceCoreWeights = null;
-        BoneInfluenceSpillHeaders = null;
-        BoneInfluenceSpillEntries = null;
-        SkinningInfluenceEncoding = SkinningInfluenceEncoding.None;
-        SkinningCoreIndexFormat = SkinningCoreIndexFormat.None;
-        HasSpillInfluences = false;
-        MaxSpillInfluenceCount = 0;
-        _maxWeightCount = 0;
+    private void RollbackSkinningBufferState(
+        XRMeshSkinningBufferState previous,
+        BufferCollection.PreparedBufferBatch? swap,
+        BufferCollection targetBuffers)
+    {
+        if (swap is not null)
+            targetBuffers.RestorePreparedBatch(
+                swap,
+                () => ApplySkinningBufferState(previous));
+    }
+
+    private void CompleteSkinningBufferReplacement(
+        XRMeshSkinningBufferState prepared,
+        BufferCollection.PreparedBufferBatch? swap,
+        BufferCollection targetBuffers)
+    {
+        if (swap is not null)
+            targetBuffers.DisposeReplacedBuffers(swap);
+        if (prepared.CoreIndices is not null && prepared.CoreWeights is not null)
+            RecordSkinningBufferUpload();
+    }
+
+    /// <summary>
+    /// Captures one immutable, coherent skinning-buffer generation for a compound consumer.
+    /// </summary>
+    public XRMeshSkinningBufferState GetSkinningBufferStateSnapshot()
+        => Volatile.Read(ref _skinningBufferState);
+
+    private XRMeshSkinningBufferState CaptureSkinningBufferState()
+    {
+        XRMeshSkinningBufferState buffers = GetSkinningBufferStateSnapshot();
+        return buffers with
+        {
+            UtilizedBones = UtilizedBones,
+            ShaderConvention = SkinningShaderConvention,
+            InfluenceEncoding = SkinningInfluenceEncoding,
+            CoreIndexFormat = SkinningCoreIndexFormat,
+            HasSpillInfluences = HasSpillInfluences,
+            MaxSpillInfluenceCount = MaxSpillInfluenceCount,
+            MaxWeightCount = _maxWeightCount,
+        };
+    }
+
+    private void ApplySkinningBufferState(XRMeshSkinningBufferState state)
+    {
+        // Publish this metadata together with the collection swap. Individual
+        // SetField observers must not veto rollback or see a mixed palette/index
+        // convention while the replacement group is being installed.
+        using (XRBase.SuppressPropertyNotifications())
+        {
+            UtilizedBones = state.UtilizedBones;
+            SkinningShaderConvention = state.ShaderConvention;
+            SkinningInfluenceEncoding = state.InfluenceEncoding;
+            SkinningCoreIndexFormat = state.CoreIndexFormat;
+            HasSpillInfluences = state.HasSpillInfluences;
+            MaxSpillInfluenceCount = state.MaxSpillInfluenceCount;
+            SetField(ref _maxWeightCount, state.MaxWeightCount, nameof(MaxWeightCount));
+        }
+        Volatile.Write(ref _skinningBufferState, state);
+    }
+
+    private static XRMeshSkinningBufferState EmptySkinningBufferState()
+        => new(
+            null,
+            null,
+            null,
+            null,
+            [],
+            ESkinningShaderConvention.ExplicitRowMajorRowVector,
+            SkinningInfluenceEncoding.None,
+            SkinningCoreIndexFormat.None,
+            false,
+            0,
+            0);
+
+    private static KeyValuePair<string, XRDataBuffer>[] CreateSkinningBufferReplacements(
+        XRMeshSkinningBufferState state)
+    {
+        List<KeyValuePair<string, XRDataBuffer>> replacements = new(4);
+        AddSkinningBufferReplacement(replacements, state.CoreIndices);
+        AddSkinningBufferReplacement(replacements, state.CoreWeights);
+        AddSkinningBufferReplacement(replacements, state.SpillHeaders);
+        AddSkinningBufferReplacement(replacements, state.SpillEntries);
+        return [.. replacements];
+    }
+
+    private static void AddSkinningBufferReplacement(
+        List<KeyValuePair<string, XRDataBuffer>> replacements,
+        XRDataBuffer? buffer)
+    {
+        if (buffer is not null)
+            replacements.Add(new KeyValuePair<string, XRDataBuffer>(buffer.AttributeName, buffer));
     }
 
     private void PopulateSkinningBuffers(
@@ -457,26 +635,21 @@ public partial class XRMesh
         };
         PopulateWeightBuffers(boneToIndexTable, weightsPerVertex);
 
-        Buffers.Add(BoneInfluenceCoreIndices.AttributeName, BoneInfluenceCoreIndices);
-        Buffers.Add(BoneInfluenceCoreWeights.AttributeName, BoneInfluenceCoreWeights);
-        if (BoneInfluenceSpillHeaders is not null)
-            Buffers.Add(BoneInfluenceSpillHeaders.AttributeName, BoneInfluenceSpillHeaders);
-        if (BoneInfluenceSpillEntries is not null)
-            Buffers.Add(BoneInfluenceSpillEntries.AttributeName, BoneInfluenceSpillEntries);
+    }
 
-        RuntimeEngine.Rendering.Stats.RecordSkinningUpload(
+    private void RecordSkinningBufferUpload()
+        => RuntimeEngine.Rendering.Stats.RecordSkinningUpload(
             0L,
             0L,
-            coreInfluenceBytes: (long)(BoneInfluenceCoreIndices.Length + BoneInfluenceCoreWeights.Length),
+            coreInfluenceBytes: (long)(BoneInfluenceCoreIndices!.Length + BoneInfluenceCoreWeights!.Length),
             spillHeaderBytes: (long)(BoneInfluenceSpillHeaders?.Length ?? 0u),
             spillEntryBytes: (long)(BoneInfluenceSpillEntries?.Length ?? 0u));
-    }
 
     private void PopulateWeightBuffers(
         Dictionary<TransformBase, int> boneToIndexTable,
         Dictionary<TransformBase, (float weight, Matrix4x4 invBindMatrix)>?[] weightsPerVertex)
     {
-        _maxWeightCount = 0;
+        SetField(ref _maxWeightCount, 0, nameof(MaxWeightCount));
         PopulateCompressedWeights(boneToIndexTable, weightsPerVertex);
     }
 
@@ -521,7 +694,7 @@ public partial class XRMesh
             }
 
             List<PackedSkinningInfluence> influences = BuildPackedInfluences(boneToIndexTable, group, out int logicalInfluenceCount);
-            _maxWeightCount = Math.Max(_maxWeightCount, logicalInfluenceCount);
+            SetField(ref _maxWeightCount, Math.Max(_maxWeightCount, logicalInfluenceCount), nameof(MaxWeightCount));
 
             if (influences.Count == 0)
             {

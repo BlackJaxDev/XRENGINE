@@ -1,0 +1,81 @@
+#version 460
+
+// Converts DDGI's persistent 32-byte probe records into the point-debug layout
+// consumed by Common/Debug/gs/PointInstance.gs. No probe data returns to the CPU.
+layout(local_size_x = 64) in;
+
+#pragma snippet "DDGIBindings"
+
+struct DDGIProbe { vec4 position; vec4 relocationOffset; };
+struct DebugPoint { vec4 position; vec4 color; };
+
+layout(std430, XR_DDGI_STORAGE_BINDING(0)) readonly buffer ProbeStateBuffer { DDGIProbe probes[]; };
+layout(std430, XR_DDGI_STORAGE_BINDING(1)) writeonly buffer DebugPointBuffer { DebugPoint debugPoints[]; };
+
+uniform uint uProbeCount;
+uniform int uCascadeCount;
+uniform vec3 uCascadeGridMin[4];
+uniform vec3 uCascadeProbeSpacing[4];
+uniform ivec3 uCascadeProbeCounts[4];
+uniform int uCascadeProbeOffset[4];
+
+uint CascadeProbeCount(int cascade)
+{
+    ivec3 counts = max(uCascadeProbeCounts[cascade], ivec3(1));
+    return uint(counts.x * counts.y * counts.z);
+}
+
+int FindCascade(uint probeIndex)
+{
+    int count = clamp(uCascadeCount, 1, 4);
+    for (int cascade = 0; cascade < count; ++cascade)
+    {
+        uint base = uint(max(uCascadeProbeOffset[cascade], 0));
+        uint cascadeCount = CascadeProbeCount(cascade);
+        if (probeIndex >= base && probeIndex < base + cascadeCount)
+            return cascade;
+    }
+    return -1;
+}
+
+vec3 CascadeColor(int cascade)
+{
+    const vec3 colors[4] = vec3[4](vec3(0.20, 1.00, 0.35), vec3(1.00, 0.75, 0.15),
+        vec3(0.20, 0.65, 1.00), vec3(0.85, 0.35, 1.00));
+    return colors[clamp(cascade, 0, 3)];
+}
+
+void main()
+{
+    uint probeIndex = gl_GlobalInvocationID.x;
+    if (probeIndex >= uProbeCount)
+        return;
+
+    int cascade = FindCascade(probeIndex);
+    if (cascade < 0)
+    {
+        debugPoints[probeIndex].position = vec4(0.0);
+        debugPoints[probeIndex].color = vec4(0.0);
+        return;
+    }
+
+    uint localIndex = probeIndex - uint(max(uCascadeProbeOffset[cascade], 0));
+    ivec3 counts = max(uCascadeProbeCounts[cascade], ivec3(1));
+    uint xCount = uint(counts.x);
+    uint yCount = uint(counts.y);
+    uint x = localIndex % xCount;
+    uint y = (localIndex / xCount) % yCount;
+    uint z = localIndex / (xCount * yCount);
+    vec3 nominalPosition = uCascadeGridMin[cascade]
+        + vec3(float(x), float(y), float(z)) * uCascadeProbeSpacing[cascade];
+
+    float state = probes[probeIndex].position.w;
+    vec3 color = CascadeColor(cascade);
+    if (state >= 1.5)
+        color = vec3(0.30, 0.45, 1.00); // sleeping
+    else if (state >= 0.5)
+        color = vec3(1.00, 0.15, 0.15); // inactive/enclosed
+
+    debugPoints[probeIndex].position = vec4(nominalPosition + probes[probeIndex].relocationOffset.xyz, 1.0);
+    debugPoints[probeIndex].color = vec4(color, 0.9);
+}

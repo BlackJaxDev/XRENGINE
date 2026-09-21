@@ -44,10 +44,14 @@ namespace XREngine.Rendering.Shaders.Generator
         private bool _useBlendshapeInput;
         private int _texCoordsUsed;
         private int _colorsUsed;
+        private readonly XRMeshSkinningBufferState _skinningState;
+        private readonly XRMeshBlendshapeBufferState _blendshapeState;
 
         public DefaultVertexShaderGenerator(XRMesh mesh) : base(mesh)
         {
             Mesh.EnsureComputeSkinningBuffers();
+            _skinningState = Mesh.GetSkinningBufferStateSnapshot();
+            _blendshapeState = Mesh.GetBlendshapeBufferStateSnapshot();
 
             HelperMethodWriters.Add(WriteAdjointMethod);
 
@@ -153,11 +157,11 @@ namespace XREngine.Rendering.Shaders.Generator
             // Always provide FragNorm to satisfy fragment inputs expecting it
             OutputVars.Add(FragNormName, (1, EShaderVarType._vec3));
 
-            if (_useTangents)
-            {
-                OutputVars.Add(FragTanName, (2, EShaderVarType._vec3));
-                OutputVars.Add(FragBinormName, (3, EShaderVarType._vec3)); //Binormal is created in vertex shader if tangents exist
-            }
+            // Common normal-map fragments consume this interface even when an
+            // imported mesh has no authored tangent stream. A zero TBN marks
+            // that case so the fragment helper can reconstruct it from UVs.
+            OutputVars.Add(FragTanName, (2, EShaderVarType._vec3));
+            OutputVars.Add(FragBinormName, (3, EShaderVarType._vec3));
 
             int uvOutputs = Math.Max(4, _texCoordsUsed.ClampMax(8));
             for (int i = 0; i < uvOutputs; ++i)
@@ -274,11 +278,11 @@ namespace XREngine.Rendering.Shaders.Generator
             && RuntimeEngine.Rendering.Settings.EnableBlendshapePrecombinePass
             && RuntimeEngine.Rendering.Settings.EnableBlendshapePrecombineForDirectVertexPath
             && !UseComputeBlendshapes
-            && Mesh.BlendshapeSparseShapeRanges is not null
-            && Mesh.BlendshapeSparseRecords is not null
-            && Mesh.BlendshapeQuantizedDeltas is not null
-            && Mesh.BlendshapeQuantizationMetadata is not null;
-        private bool UseExplicitRowVectorSkinningConvention => Mesh.SkinningShaderConvention == ESkinningShaderConvention.ExplicitRowMajorRowVector;
+            && _blendshapeState.SparseShapeRanges is not null
+            && _blendshapeState.SparseRecords is not null
+            && _blendshapeState.QuantizedDeltas is not null
+            && _blendshapeState.QuantizationMetadata is not null;
+        private bool UseExplicitRowVectorSkinningConvention => _skinningState.ShaderConvention == ESkinningShaderConvention.ExplicitRowMajorRowVector;
 
         private const int ComputeInterleavedBinding = (int)MeshDeformationBindingLayout.ComputeInterleaved;
         private const int ComputePositionBinding = (int)MeshDeformationBindingLayout.ComputePosition;
@@ -319,6 +323,12 @@ namespace XREngine.Rendering.Shaders.Generator
             // Ensure FragNorm is always initialized to a sensible default when normals are absent
             if (!_useNormals)
                 Line($"{FragNormName} = vec3(0.0f, 0.0f, 1.0f);");
+
+            if (!_useTangents)
+            {
+                Line($"{FragTanName} = vec3(0.0f);");
+                Line($"{FragBinormName} = vec3(0.0f);");
+            }
 
             if (_colorsUsed != 0)
                 for (int i = 0; i < _colorsUsed.ClampMax(8); ++i)
@@ -459,10 +469,10 @@ namespace XREngine.Rendering.Shaders.Generator
                 EShaderVarType intVarType = RuntimeEngine.Rendering.Settings.UseIntegerUniformsInShaders
                     ? EShaderVarType._ivec4
                     : EShaderVarType._vec4;
-                bool useSparseBlendshapeBuffers = Mesh.BlendshapeSparseShapeRanges is not null && Mesh.BlendshapeSparseRecords is not null;
+                bool useSparseBlendshapeBuffers = _blendshapeState.SparseShapeRanges is not null && _blendshapeState.SparseRecords is not null;
                 bool useQuantizedBlendshapeDeltas = useSparseBlendshapeBuffers
-                    && Mesh.BlendshapeQuantizedDeltas is not null
-                    && Mesh.BlendshapeQuantizationMetadata is not null;
+                    && _blendshapeState.QuantizedDeltas is not null
+                    && _blendshapeState.QuantizationMetadata is not null;
 
                 if (useQuantizedBlendshapeDeltas)
                 {
@@ -525,7 +535,7 @@ namespace XREngine.Rendering.Shaders.Generator
                 using (StartShaderStorageBufferBlock($"{ECommonBufferType.SkinPalette}Buffer", binding++))
                     WriteUniform(EShaderVarType._vec4, "SkinPaletteRows", true);
 
-                if (Mesh.SkinningInfluenceEncoding == SkinningInfluenceEncoding.Core4Spill && Mesh.HasSpillInfluences)
+                if (_skinningState.InfluenceEncoding == SkinningInfluenceEncoding.Core4Spill && _skinningState.HasSpillInfluences)
                 {
                     using (StartShaderStorageBufferBlock($"{ECommonBufferType.BoneInfluenceSpillHeaders}Buffer", binding++))
                         WriteUniform(EShaderVarType._uint, ECommonBufferType.BoneInfluenceSpillHeaders.ToString(), true);
@@ -753,9 +763,9 @@ namespace XREngine.Rendering.Shaders.Generator
             bool hasNormals = _useNormals;
             bool hasTangents = _useTangents;
 
-            if (Mesh.SkinningInfluenceEncoding is not (SkinningInfluenceEncoding.Core4Spill or SkinningInfluenceEncoding.Core4NoSpill))
+            if (_skinningState.InfluenceEncoding is not (SkinningInfluenceEncoding.Core4Spill or SkinningInfluenceEncoding.Core4NoSpill))
                 throw new InvalidOperationException($"Skinned mesh '{Mesh.Name ?? "<unnamed>"}' is not in the required Core4 skinning format. Recook or reimport the source mesh.");
-            bool hasSpillInfluences = Mesh.SkinningInfluenceEncoding == SkinningInfluenceEncoding.Core4Spill && Mesh.HasSpillInfluences;
+            bool hasSpillInfluences = _skinningState.InfluenceEncoding == SkinningInfluenceEncoding.Core4Spill && _skinningState.HasSpillInfluences;
 
             Line($"vec3 xreSkinBasePosition = {BasePositionName};");
             if (hasNormals)
@@ -854,7 +864,7 @@ namespace XREngine.Rendering.Shaders.Generator
             bool hasNormals = _useNormals;
             bool hasTangents = _useTangents;
 
-            Line($"// BlendshapeShaderVariant: {Mesh.BlendshapeShaderVariant}");
+            Line($"// BlendshapeShaderVariant: {_blendshapeState.ShaderVariant}");
             Line("if (blendshapeActiveCount != 0)");
             using (OpenBracketState())
             {
@@ -890,7 +900,7 @@ namespace XREngine.Rendering.Shaders.Generator
 
         private void WriteBlendshapeFallbackCalc(bool hasNormals, bool hasTangents)
         {
-            if (Mesh.BlendshapeSparseShapeRanges is not null && Mesh.BlendshapeSparseRecords is not null)
+            if (_blendshapeState.SparseShapeRanges is not null && _blendshapeState.SparseRecords is not null)
             {
                 WriteSparseActiveBlendshapeCalc(hasNormals, hasTangents);
                 return;
@@ -1082,7 +1092,7 @@ namespace XREngine.Rendering.Shaders.Generator
 
         private void WriteBlendshapeDeltaLoad(string targetName, string deltaIndexExpression, string blendshapeIndexExpression)
         {
-            if (Mesh.BlendshapeQuantizedDeltas is not null && Mesh.BlendshapeQuantizationMetadata is not null)
+            if (_blendshapeState.QuantizedDeltas is not null && _blendshapeState.QuantizationMetadata is not null)
             {
                 Line($"vec3 {targetName};");
                 Line($"if ({deltaIndexExpression} == 0)");

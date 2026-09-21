@@ -275,7 +275,7 @@ namespace XREngine.Rendering.Commands
 
                     uint byteOffset = minIndex * elementSize;
                     uint byteCount = (maxIndex - minIndex + 1) * elementSize;
-                    UpdatingDrawMetadataBuffer.PushSubData((int)byteOffset, byteCount);
+                    UpdatingDrawMetadataBuffer.CommitDirtyBytes(byteOffset, byteCount);
                     FlushCpuLodTransitionWrites();
                     MarkUpdatingCommandsDirty();
 

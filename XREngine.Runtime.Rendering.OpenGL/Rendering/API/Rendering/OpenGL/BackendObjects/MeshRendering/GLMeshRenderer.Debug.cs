@@ -53,15 +53,21 @@ namespace XREngine.Rendering.OpenGL
             [Conditional("DEBUG")]
             private static void Dbg(string msg, string category = "General")
             {
-                if (!_verbose)
-                    return;
-
-                bool enabled;
-                lock (_enabledDebugCategories)
-                    enabled = _enabledDebugCategories.Contains(category) || _enabledDebugCategories.Contains("All");
-
-                if (enabled)
+                if (IsDebugCategoryEnabled(category))
                     Debug.OpenGL($"[GLMeshRenderer/{category}] {msg}");
+            }
+
+            private static bool IsDebugCategoryEnabled(string category)
+            {
+#if DEBUG
+                if (!_verbose)
+                    return false;
+
+                lock (_enabledDebugCategories)
+                    return _enabledDebugCategories.Contains(category) || _enabledDebugCategories.Contains("All");
+#else
+                return false;
+#endif
             }
 
             private void LogDeformationBindingDiagnostic(GLRenderProgram vertexProgram)

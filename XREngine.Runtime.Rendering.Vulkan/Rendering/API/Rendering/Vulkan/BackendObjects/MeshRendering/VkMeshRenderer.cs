@@ -21,7 +21,7 @@ namespace XREngine.Rendering.Vulkan;
 
 internal unsafe partial class VkMeshRenderer(
     VulkanBackendObjectContext backendContext,
-    XRMeshRenderer.BaseVersion data) : VkObject<XRMeshRenderer.BaseVersion>(backendContext, data), IRenderPreparationState
+    XRMeshRenderer.BaseVersion data) : VkObject<XRMeshRenderer.BaseVersion>(backendContext, data), IRenderPreparationState, IApiMeshRenderer
 {
     private VulkanProgramCommandOperations? _commandOperations;
     private VulkanProgramPlannerPort? _programPlanner;
@@ -48,6 +48,10 @@ internal unsafe partial class VkMeshRenderer(
     private static int s_screenSpaceUiDrawDiagCount;
 
     private readonly object _bufferStateSync = new();
+    private bool _isDataLinked;
+    private bool _geometryLayoutCollectionPending;
+    private bool _geometryLayoutCollectionQueued;
+    private int _geometryLayoutCollectionGeneration;
     private readonly Dictionary<string, VkDataBuffer> _bufferCache = new(StringComparer.Ordinal);
     private readonly Dictionary<string, BufferStructuralIdentity> _bufferStructuralIdentities = new(StringComparer.Ordinal);
     private ulong _cachedBufferResourceFingerprint;
@@ -230,7 +234,15 @@ internal unsafe partial class VkMeshRenderer(
 
     protected override void LinkData()
     {
-        Data.CanonicalRenderRequested += OnRenderRequested;
+        lock (_bufferStateSync)
+        {
+            _isDataLinked = true;
+            unchecked
+            {
+                _geometryLayoutCollectionGeneration++;
+            }
+        }
+
         MeshRenderer.PropertyChanged += OnMeshRendererPropertyChanged;
         MeshRenderer.PropertyChanging += OnMeshRendererPropertyChanging;
         SubscribeRendererBuffers(MeshRenderer.Buffers);
@@ -243,7 +255,17 @@ internal unsafe partial class VkMeshRenderer(
 
     protected override void UnlinkData()
     {
-        Data.CanonicalRenderRequested -= OnRenderRequested;
+        lock (_bufferStateSync)
+        {
+            _isDataLinked = false;
+            _geometryLayoutCollectionPending = false;
+            _geometryLayoutCollectionQueued = false;
+            unchecked
+            {
+                _geometryLayoutCollectionGeneration++;
+            }
+        }
+
         MeshRenderer.PropertyChanged -= OnMeshRendererPropertyChanged;
         MeshRenderer.PropertyChanging -= OnMeshRendererPropertyChanging;
         SubscribeRendererBuffers(null);
@@ -327,6 +349,8 @@ internal unsafe partial class VkMeshRenderer(
 
     private void InvalidateGeometryLayout(string reason, bool collectBuffers)
     {
+        int collectionGeneration = 0;
+        bool queueCollection = false;
         lock (_bufferStateSync)
         {
             BumpPreparationCompatibilityRevision();
@@ -345,7 +369,22 @@ internal unsafe partial class VkMeshRenderer(
 
             if (collectBuffers)
             {
-                CollectBuffers();
+                if (CanCollectGeometryBuffersNoLock())
+                {
+                    if (RuntimeEngine.IsRenderThread)
+                    {
+                        CollectBuffers();
+                        return;
+                    }
+
+                    _geometryLayoutCollectionPending = true;
+                    collectionGeneration = _geometryLayoutCollectionGeneration;
+                    if (!_geometryLayoutCollectionQueued)
+                    {
+                        _geometryLayoutCollectionQueued = true;
+                        queueCollection = true;
+                    }
+                }
             }
             else
             {
@@ -353,18 +392,79 @@ internal unsafe partial class VkMeshRenderer(
                 CommandOperations.MarkCommandBuffersDirtyForLegacyMeshState();
             }
         }
+
+        if (queueCollection)
+            QueueGeometryLayoutCollection(collectionGeneration);
     }
 
-    private void OnRenderRequested(Matrix4x4 modelMatrix, Matrix4x4 prevModelMatrix, XRMaterial? materialOverride, RenderingParameters? renderOptionsOverride, uint instances, EMeshBillboardMode billboardMode, bool forceNoStereo, AdvancedGpuSceneDrawIdentitySnapshot canonicalDrawIdentitySnapshot)
+    /// <summary>
+    /// Buffer wrapper lookup belongs to the render owner. Event callbacks can arrive
+    /// from import and data-preparation workers, so those callbacks only publish dirty
+    /// state and coalesce a later render-thread collection.
+    /// </summary>
+    private bool CanCollectGeometryBuffersNoLock()
+        => _isDataLinked && !IsRetired && !Data.IsDestroyed;
+
+    private void QueueGeometryLayoutCollection(int generation)
+        => RuntimeEngine.EnqueueMainThreadTask(
+            () => DrainGeometryLayoutCollection(generation),
+            "VkMeshRenderer.GeometryLayoutChanged",
+            RenderThreadJobKind.MeshUpload);
+
+    private void DrainGeometryLayoutCollection(int generation)
     {
+        if (!RuntimeEngine.IsRenderThread)
+        {
+            QueueGeometryLayoutCollection(generation);
+            return;
+        }
+
+        lock (_bufferStateSync)
+        {
+            if (generation != _geometryLayoutCollectionGeneration)
+                return;
+
+            _geometryLayoutCollectionQueued = false;
+            if (!_geometryLayoutCollectionPending || !CanCollectGeometryBuffersNoLock())
+            {
+                _geometryLayoutCollectionPending = false;
+                return;
+            }
+
+            _geometryLayoutCollectionPending = false;
+            CollectBuffers();
+        }
+    }
+
+    void IApiMeshRenderer.Render(Matrix4x4 modelMatrix, Matrix4x4 prevModelMatrix, XRMaterial? materialOverride, RenderingParameters? renderOptionsOverride, uint instances, EMeshBillboardMode billboardMode, bool forceNoStereo, in AdvancedGpuSceneDrawIdentitySnapshot canonicalDrawIdentitySnapshot)
+    {
+        ObjectDisposedException.ThrowIf(IsRetired || Data.IsDestroyed, this);
+        ValidateOwnerGeneration();
         int passIndex = RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex;
         XRRenderPipelineInstance? pipeline =
             RuntimeEngine.Rendering.State.CurrentRenderingPipeline;
         FrameOpContext context = _programPlanner?.CaptureFrameOpContext() ?? default;
+        // A stereo pipeline also produces mono utility draws (for example BRDF
+        // integration). Freeze the selected shader version's topology with this
+        // operation before any producer, resident-template or queue identity is built.
+        context = VulkanFrameOpSnapshotSignatures.StampMeshTopology(context, Data.UsesMultiview);
         VulkanMeshProducerSnapshot producer =
             CommandOperations.CaptureMeshProducerSnapshot(in context);
         DeferredRenderBindingPublication deferredBindings =
             MeshRenderer.BindingPublishers.CaptureDeferredPublication();
+        WindowPresentationSourceMarker windowPresentationSourceMarker = default;
+        if (deferredBindings.Publisher is IWindowPresentationBindingPublisher windowPresentationPublisher &&
+            windowPresentationPublisher.TryGetWindowPresentationSource(
+                deferredBindings.Token,
+                out XRTexture? windowPresentationTexture,
+                out XRFrameBuffer? windowPresentationFrameBuffer))
+        {
+            windowPresentationSourceMarker = new WindowPresentationSourceMarker(
+                windowPresentationTexture,
+                windowPresentationFrameBuffer,
+                windowPresentationPublisher,
+                deferredBindings.Token);
+        }
         ResolvedMeshRenderMaterial resolvedMaterial =
             ResolveMaterialSelection(materialOverride, instances);
         LayeredShadowUniformState shadowUniformState =
@@ -446,10 +546,20 @@ internal unsafe partial class VkMeshRenderer(
             billboardMode,
             forceNoStereo,
             canonicalDrawIdentitySnapshot,
-            residentTemplateHandle);
+            residentTemplateHandle,
+            windowPresentationSourceMarker);
         VulkanMeshOperationRequestQueue.EMeshRequestScheduleResult scheduleResult =
             _meshRequests?.TryEnqueue(in request)
             ?? VulkanMeshOperationRequestQueue.EMeshRequestScheduleResult.TerminalFailure;
+        if (RenderDiagnosticsFlags.VkTraceDraw &&
+            MeshRenderer.Name?.StartsWith("FullscreenQuad:", StringComparison.Ordinal) == true)
+        {
+            Debug.VulkanEvery(
+                $"Vulkan.Quad.Enqueue.{GetHashCode()}.{context.PipelineIdentity}", TimeSpan.FromSeconds(3),
+                "[Vulkan.Quad.Enqueue] renderer={0} pipeline={1} pass={2} target={3} multiview={4} result={5}",
+                MeshRenderer.Name, context.PipelineIdentity, passIndex, producer.Target?.Name ?? "<none>",
+                context.MultiviewEnabled, scheduleResult);
+        }
         if (scheduleResult is VulkanMeshOperationRequestQueue.EMeshRequestScheduleResult.Scheduled
             or VulkanMeshOperationRequestQueue.EMeshRequestScheduleResult.AlreadyReady)
             return;
@@ -867,7 +977,8 @@ internal unsafe partial class VkMeshRenderer(
             preparedProgramIdentitySnapshot,
             preparedProgramLinkGenerationSnapshot,
             programBindingSnapshot,
-            request.CanonicalDrawIdentitySnapshot);
+            request.CanonicalDrawIdentitySnapshot,
+            request.WindowPresentationSourceMarker);
         draw = draw with
         {
             PreparationCompatibilitySignature =
@@ -1058,6 +1169,7 @@ internal unsafe partial class VkMeshRenderer(
             preparedProgramIdentity,
             preparedProgramLinkGeneration,
             programBindingSnapshot,
+            default,
             default);
         draw = draw with
         {

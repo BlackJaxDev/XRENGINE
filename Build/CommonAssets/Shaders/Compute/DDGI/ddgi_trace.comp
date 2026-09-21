@@ -1,0 +1,83 @@
+#version 450
+#pragma snippet "DDGIBindings"
+#define XR_BVH_STORAGE_BINDING(slot) XR_DDGI_STORAGE_BINDING(slot)
+#define XR_CUSTOM_ACCEPT_HIT 1
+#define DDGI_ATTRIBUTE_BINDING 6
+#define DDGI_MATERIAL_TEXTURE_BINDING 0
+
+// DDGI uses closest-hit traversal to find the nearest scene surface per probe ray.
+#define XR_FORCE_ANY_HIT 0u
+#define XR_FORCE_CLOSEST_HIT 1u
+#define XR_CUSTOM_RAY_INPUT 1
+#define XR_BVH_DISABLE_DIAGNOSTICS 1
+
+layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in;
+
+struct DDGIRayInput
+{
+    vec4 origin;    // .w = tMin
+    vec4 direction; // .w = tMax
+    vec4 params;    // x = probeIndex, y = rayIndex, z = frameIndex, w = flags
+};
+
+layout(std430, XR_DDGI_STORAGE_BINDING(0)) readonly buffer Rays
+{
+    DDGIRayInput gRays[];
+};
+
+uniform uint uRayCount;
+uniform uint uRootIndex;
+uniform uint uPacketWidth;
+uniform uint uUsePacketMode;
+uniform uint uAnyHitMode;
+uniform uint uMaxStackDepth;
+uniform uint uNodeCount;
+uniform uint uTriangleCount;
+
+#pragma snippet "BvhRaycastCore"
+#pragma snippet "DDGIMaterials"
+
+bool AcceptRayHit(in Ray ray, in PackedTriangle triangle, in vec3 barycentric)
+{
+    return DDGIAcceptSurface(triangle, barycentric);
+}
+
+// BvhRaycastCore owns the shared Ray definition. The custom input decoder must
+// be declared after that snippet so this program has exactly one Ray type.
+Ray DecodeRay(DDGIRayInput rayInput)
+{
+    Ray r;
+    r.origin = rayInput.origin.xyz;
+    r.tMin = rayInput.origin.w;
+    r.direction = rayInput.direction.xyz;
+    r.tMax = rayInput.direction.w;
+    return r;
+}
+
+void main()
+{
+    uint rayIndex = gl_GlobalInvocationID.x;
+    if (rayIndex >= uRayCount)
+        return;
+
+    Ray ray = DecodeRay(gRays[rayIndex]);
+    ray.tMin = max(ray.tMin, 0.001);
+    ray.tMax = ray.tMax <= 0.0 ? 1e30 : ray.tMax;
+
+    uint stackLimit = clamp(uMaxStackDepth, 1u, XR_BVH_STACK_MAX);
+    bool anyHit = false;
+
+    HitRecord hit;
+    if (uNodeCount == 0u || uTriangleCount == 0u)
+    {
+        hit.t = ray.tMax;
+        hit.objectId = XR_BVH_INVALID_INDEX;
+        hit.faceIndex = XR_BVH_INVALID_INDEX;
+        hit.triangleIndex = XR_BVH_INVALID_INDEX;
+        hit.barycentric = vec3(0.0);
+        hit.padding = 0.0;
+    }
+    else
+        hit = TraceRay(ray, uRootIndex, stackLimit, anyHit);
+    gHits[rayIndex] = hit;
+}

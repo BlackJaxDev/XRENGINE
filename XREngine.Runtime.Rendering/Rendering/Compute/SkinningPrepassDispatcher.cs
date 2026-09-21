@@ -150,8 +150,12 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
     {
         lock (_syncRoot)
         {
-            if (_resources.TryGetValue(renderer, out var resources))
-                return (resources.SkinnedPositions, resources.SkinnedNormals, resources.SkinnedTangents, resources.SkinnedInterleaved);
+            if (_resources.TryGetValue(renderer, out _))
+            {
+                XRMeshRenderer.SkinnedOutputResourceSnapshot outputState =
+                    renderer.CaptureSkinnedOutputResources();
+                return (outputState.Positions, outputState.Normals, outputState.Tangents, outputState.Interleaved);
+            }
             return (null, null, null, null);
         }
     }
@@ -165,7 +169,9 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
         {
             if (!_resources.TryGetValue(renderer, out var resources))
                 return false;
-            return resources.SkinnedPositions is not null || resources.SkinnedInterleaved is not null;
+            XRMeshRenderer.SkinnedOutputResourceSnapshot outputState =
+                renderer.CaptureSkinnedOutputResources();
+            return outputState.Positions is not null || outputState.Interleaved is not null;
         }
     }
 
@@ -223,7 +229,53 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
     internal void RunForGpuMeshBvh(XRMeshRenderer renderer)
         => Run(renderer, forceSkinning: true);
 
-    private void Run(XRMeshRenderer renderer, bool forceSkinning)
+    /// <summary>
+    /// Runs the forced compute-deformation path for a GPU mesh BVH consumer and returns
+    /// only output produced for the current render frame. Persistent buffers from an
+    /// earlier frame are deliberately not exposed through this contract.
+    /// </summary>
+    internal bool TryRunForGpuMeshBvh(
+        XRMeshRenderer renderer,
+        bool forceBlendshapeOutput,
+        out (XRDataBuffer? positions, XRDataBuffer? interleaved) buffers,
+        out string? diagnostic)
+    {
+        ArgumentNullException.ThrowIfNull(renderer);
+        buffers = (null, null);
+        diagnostic = null;
+        Run(renderer, forceSkinning: true, forceBlendshapes: forceBlendshapeOutput);
+
+        lock (_syncRoot)
+        {
+            if (!_resources.TryGetValue(renderer, out RendererResources? resources) ||
+                !resources.HasCurrentFrameOutput(State.RenderFrameId))
+            {
+                diagnostic = "GPU deformation output has not been produced for the current render frame.";
+                return false;
+            }
+
+            XRMeshRenderer.SkinnedOutputResourceSnapshot outputState =
+                renderer.CaptureSkinnedOutputResources();
+            XRDataBuffer? positions = outputState.Positions;
+            XRDataBuffer? interleaved = outputState.Interleaved;
+            if (positions is null && interleaved is null)
+            {
+                diagnostic = "GPU deformation output has no position buffer.";
+                return false;
+            }
+
+            buffers = (positions, interleaved);
+            return true;
+        }
+    }
+
+    private sealed partial class RendererResources
+    {
+        public bool HasCurrentFrameOutput(ulong frameId)
+            => LastComputePrepassFrameId == frameId && _hasValidOutput;
+    }
+
+    private void Run(XRMeshRenderer renderer, bool forceSkinning, bool forceBlendshapes = false)
     {
         if (AbstractRenderer.Current is null)
             return;
@@ -269,7 +321,7 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
             && RuntimeEngine.Rendering.Settings.AllowBlendshapes;
         bool blendshapePathRequested = mesh.BlendshapeCount > 0
             && RuntimeEngine.Rendering.Settings.AllowBlendshapes
-            && (computeBlendshapesEnabledForBackend || doSkinning);
+            && (computeBlendshapesEnabledForBackend || doSkinning || forceBlendshapes);
         bool precombinePathRequested = hasBlendshapePath
             && RuntimeEngine.Rendering.Settings.EnableBlendshapePrecombinePass
             && !RuntimeEngine.Rendering.State.IsVulkan;
@@ -277,9 +329,11 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
         if (blendshapePathRequested || precombinePathRequested)
             renderer.EnsureBlendshapeBuffers(logWarnings: false);
 
-        bool doBlendshapes = blendshapePathRequested && renderer.HasActiveBlendshapes;
+        XRMeshRenderer.BlendshapeResourceSnapshot rendererBlendshapeState =
+            renderer.CaptureBlendshapeResources();
+        bool doBlendshapes = blendshapePathRequested && rendererBlendshapeState.ActiveCount > 0;
         BlendshapePrecombineRendererPath precombinePath =
-            computeBlendshapesEnabledForBackend || doSkinning
+            computeBlendshapesEnabledForBackend || doSkinning || forceBlendshapes
                 ? BlendshapePrecombineRendererPath.ComputePrepass
                 : BlendshapePrecombineRendererPath.DirectVertex;
         bool wantsPrecombinedBlendshapes = ShouldUseBlendshapePrecombine(renderer, mesh, precombinePath);
@@ -291,9 +345,9 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
                 0L,
                 skippedBlendshapeDispatches: 1,
                 blendshapeAuthoredShapeCount: (int)mesh.BlendshapeCount,
-                blendshapeActiveShapeCount: renderer.ActiveBlendshapeCount,
+                blendshapeActiveShapeCount: rendererBlendshapeState.ActiveCount,
                 blendshapeAffectedVertexCount: mesh.BlendshapeAffectedVertexCount,
-                compactedActiveBlendshapeCount: renderer.ActiveBlendshapeCount,
+                compactedActiveBlendshapeCount: rendererBlendshapeState.ActiveCount,
                 liveBlendshapeShaderPermutations: mesh.BlendshapeShaderVariant == BlendshapeShaderVariant.None ? 0 : 1);
             return;
         }
@@ -304,6 +358,9 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
         // Prepare CPU-side renderer/mesh state before taking the dispatcher lock.
         if (doSkinning)
             mesh.EnsureComputeSkinningBuffers();
+
+        XRMeshSkinningBufferState meshSkinningState = mesh.GetSkinningBufferStateSnapshot();
+        XRMeshBlendshapeBufferState meshBlendshapeState = mesh.GetBlendshapeBufferStateSnapshot();
 
         if (doSkinning && !renderer.HasExternalSkinPaletteSource)
             renderer.EnsureSkinningBuffers(logWarnings: false);
@@ -395,9 +452,9 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
                     skippedBlendshapeDispatches: doBlendshapes ? 1 : 0,
                     reusedSkinnedOutputBuffers: 1,
                     blendshapeAuthoredShapeCount: doBlendshapes ? (int)mesh.BlendshapeCount : 0,
-                    blendshapeActiveShapeCount: doBlendshapes ? renderer.ActiveBlendshapeCount : 0,
+                    blendshapeActiveShapeCount: doBlendshapes ? rendererBlendshapeState.ActiveCount : 0,
                     blendshapeAffectedVertexCount: doBlendshapes ? mesh.BlendshapeAffectedVertexCount : 0,
-                    compactedActiveBlendshapeCount: doBlendshapes ? renderer.ActiveBlendshapeCount : 0,
+                    compactedActiveBlendshapeCount: doBlendshapes ? rendererBlendshapeState.ActiveCount : 0,
                     liveBlendshapeShaderPermutations: doBlendshapes && mesh.BlendshapeShaderVariant != BlendshapeShaderVariant.None ? 1 : 0);
                 return;
             }
@@ -475,6 +532,7 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
             try
             {
                 EmptyStorageBuffers emptyBuffers = GetEmptyStorageBuffers();
+                ulong dispatchedVersion = renderer.SkinnedOutputVersion;
 
                 resources.BindBlocks(
                     activeProgram,
@@ -497,11 +555,11 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
                 activeProgram.Uniform("usePrecombinedBlendshapeDeltas", usePrecombinedBlendshapes ? 1 : 0);
                 activeProgram.Uniform("absoluteBlendshapePositions", RuntimeEngine.Rendering.Settings.UseAbsoluteBlendshapePositions ? 1 : 0);
                 activeProgram.Uniform("maxBlendshapeAccumulation", mesh.MaxBlendshapeAccumulation ? 1 : 0);
-                activeProgram.Uniform("activeBlendshapeCount", renderer.ActiveBlendshapeCount);
+                activeProgram.Uniform("activeBlendshapeCount", rendererBlendshapeState.ActiveCount);
                 activeProgram.Uniform("blendshapeWeightThreshold", renderer.BlendshapeActiveWeightThreshold);
                 activeProgram.Uniform("useIntegerUniforms", RuntimeEngine.Rendering.Settings.UseIntegerUniformsInShaders ? 1 : 0);
-                activeProgram.Uniform("skinningCoreIndexFormat", (int)mesh.SkinningCoreIndexFormat);
-                activeProgram.Uniform("hasSpillInfluences", mesh.HasSpillInfluences ? 1 : 0);
+                activeProgram.Uniform("skinningCoreIndexFormat", (int)meshSkinningState.CoreIndexFormat);
+                activeProgram.Uniform("hasSpillInfluences", meshSkinningState.HasSpillInfluences ? 1 : 0);
                 activeProgram.Uniform("skinningInfluenceCap", renderer.ActiveSkinningInfluenceCap);
                 activeProgram.Uniform("updateLiveBounds", updateLiveBounds ? 1 : 0);
                 activeProgram.Uniform("liveBoundsVec4Offset", resources.SkinnedBoundsVec4Offset);
@@ -525,7 +583,7 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
                 EMemoryBarrierMask barrierMask = EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.VertexAttribArray;
 
                 activeProgram.DispatchCompute(groupsX, 1u, 1u, barrierMask);
-                resources.MarkOutputValid(doSkinning, doBlendshapes, usePrecombinedBlendshapes);
+                resources.MarkOutputValid(doSkinning, doBlendshapes, usePrecombinedBlendshapes, dispatchedVersion);
                 if (updateLiveBounds)
                     resources.MarkSkinnedBoundsValid();
                 else if (needsLiveSkinnedBounds)
@@ -538,13 +596,13 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
                     doSkinning ? 1 : 0,
                     doBlendshapes ? 1 : 0,
                     blendshapeDeltaBytes: doBlendshapes
-                        ? (mesh.BlendshapeQuantizedDeltas?.Length ?? mesh.BlendshapeDeltas?.Length ?? 0u)
-                            + (mesh.BlendshapeQuantizationMetadata?.Length ?? 0u)
+                        ? (meshBlendshapeState.QuantizedDeltas?.Length ?? meshBlendshapeState.Deltas?.Length ?? 0u)
+                            + (meshBlendshapeState.QuantizationMetadata?.Length ?? 0u)
                         : 0u,
                     blendshapeAuthoredShapeCount: doBlendshapes ? (int)mesh.BlendshapeCount : 0,
-                    blendshapeActiveShapeCount: doBlendshapes ? renderer.ActiveBlendshapeCount : 0,
+                    blendshapeActiveShapeCount: doBlendshapes ? rendererBlendshapeState.ActiveCount : 0,
                     blendshapeAffectedVertexCount: doBlendshapes ? mesh.BlendshapeAffectedVertexCount : 0,
-                    compactedActiveBlendshapeCount: doBlendshapes ? renderer.ActiveBlendshapeCount : 0,
+                    compactedActiveBlendshapeCount: doBlendshapes ? rendererBlendshapeState.ActiveCount : 0,
                     liveBlendshapeShaderPermutations: doBlendshapes && mesh.BlendshapeShaderVariant != BlendshapeShaderVariant.None ? 1 : 0);
             }
             finally
@@ -561,8 +619,10 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
         if (!EnsureSkinnedBoundsReduceProgramReady())
             return false;
 
-        XRDataBuffer? positions = resources.SkinnedPositions;
-        XRDataBuffer? interleaved = resources.SkinnedInterleaved;
+        XRMeshRenderer.SkinnedOutputResourceSnapshot outputState =
+            resources.CaptureSkinnedOutputResources();
+        XRDataBuffer? positions = outputState.Positions;
+        XRDataBuffer? interleaved = outputState.Interleaved;
         XRDataBuffer? source = isInterleaved ? interleaved : positions;
         if (source is null)
             return false;
@@ -600,6 +660,10 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
         XRMesh mesh,
         BlendshapePrecombineRendererPath rendererPath)
     {
+        XRMeshBlendshapeBufferState meshBlendshapeState =
+            mesh.GetBlendshapeBufferStateSnapshot();
+        XRMeshRenderer.BlendshapeResourceSnapshot rendererBlendshapeState =
+            renderer.CaptureBlendshapeResources();
         var settings = RuntimeEngine.Rendering.Settings;
         if (!settings.EnableBlendshapePrecombinePass)
             return false;
@@ -608,13 +672,13 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
         {
             return false;
         }
-        if (!settings.AllowBlendshapes || mesh.BlendshapeCount == 0 || !renderer.HasActiveBlendshapes)
+        if (!settings.AllowBlendshapes || mesh.BlendshapeCount == 0 || rendererBlendshapeState.ActiveCount <= 0)
             return false;
-        if (mesh.BlendshapeSparseShapeRanges is null
-            || mesh.BlendshapeSparseRecords is null
-            || mesh.BlendshapeQuantizedDeltas is null
-            || mesh.BlendshapeQuantizationMetadata is null
-            || renderer.BlendshapeActiveWeights is null)
+        if (meshBlendshapeState.SparseShapeRanges is null
+            || meshBlendshapeState.SparseRecords is null
+            || meshBlendshapeState.QuantizedDeltas is null
+            || meshBlendshapeState.QuantizationMetadata is null
+            || rendererBlendshapeState.ActiveWeights is null)
         {
             return false;
         }
@@ -622,7 +686,7 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
         int minActiveShapes = rendererPath == BlendshapePrecombineRendererPath.DirectVertex
             ? settings.BlendshapePrecombineDirectMinActiveShapes
             : settings.BlendshapePrecombineComputeMinActiveShapes;
-        if (renderer.ActiveBlendshapeCount < Math.Max(1, minActiveShapes))
+        if (rendererBlendshapeState.ActiveCount < Math.Max(1, minActiveShapes))
             return false;
 
         int minAffectedVertices = Math.Max(1, settings.BlendshapePrecombineMinAffectedVertices);
@@ -636,7 +700,7 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
             && settings.AllowBlendshapes
             && mesh.HasBlendshapes
             && mesh.HasBlendshapeBasisCompressionPayload
-            && renderer.HasActiveBlendshapes;
+            && renderer.CaptureBlendshapeResources().ActiveCount > 0;
     }
 
     private bool EnsurePrecombinedBlendshapeDeltas(
@@ -650,16 +714,20 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
         if (!renderer.EnsurePrecombinedBlendshapeBuffers(mesh))
             return false;
 
-        if (renderer.HasValidPrecombinedBlendshapeDeltas)
+        XRMeshRenderer.BlendshapeResourceSnapshot rendererBlendshapeState =
+            renderer.CaptureBlendshapeResources();
+        XRMeshBlendshapeBufferState meshBlendshapeState =
+            mesh.GetBlendshapeBufferStateSnapshot();
+        if (rendererBlendshapeState.IsPrecombinedValidFor(mesh))
         {
             RuntimeEngine.Rendering.Stats.RecordSkinningUpload(
                 0L,
                 0L,
                 skippedBlendshapeDispatches: 1,
                 blendshapeAuthoredShapeCount: (int)mesh.BlendshapeCount,
-                blendshapeActiveShapeCount: renderer.ActiveBlendshapeCount,
+                blendshapeActiveShapeCount: rendererBlendshapeState.ActiveCount,
                 blendshapeAffectedVertexCount: mesh.BlendshapeAffectedVertexCount,
-                compactedActiveBlendshapeCount: renderer.ActiveBlendshapeCount,
+                compactedActiveBlendshapeCount: rendererBlendshapeState.ActiveCount,
                 liveBlendshapeShaderPermutations: 1);
             return true;
         }
@@ -670,35 +738,37 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
             return false;
 
         renderer.PushBlendshapeWeightsToGPU();
-        EnsurePrecombineInputsResident(renderer, mesh);
+        EnsurePrecombineInputsResident(rendererBlendshapeState, meshBlendshapeState);
 
         try
         {
-            BindPrecombineBlocks(program, renderer, mesh);
+            BindPrecombineBlocks(program, rendererBlendshapeState, meshBlendshapeState);
 
             uint vertexCount = (uint)mesh.VertexCount;
             program.Uniform("vertexCount", vertexCount);
             program.Uniform("hasNormals", mesh.HasNormals ? 1 : 0);
             program.Uniform("hasTangents", mesh.HasTangents ? 1 : 0);
             program.Uniform("maxBlendshapeAccumulation", mesh.MaxBlendshapeAccumulation ? 1 : 0);
-            program.Uniform("activeBlendshapeCount", renderer.ActiveBlendshapeCount);
+            program.Uniform("activeBlendshapeCount", rendererBlendshapeState.ActiveCount);
             program.Uniform("blendshapeWeightThreshold", renderer.BlendshapeActiveWeightThreshold);
             program.Uniform("useIntegerUniforms", RuntimeEngine.Rendering.Settings.UseIntegerUniformsInShaders ? 1 : 0);
 
             uint groupsX = Math.Max(1u, (vertexCount + ThreadGroupSize - 1u) / ThreadGroupSize);
             program.DispatchCompute(groupsX, 1u, 1u, EMemoryBarrierMask.ShaderStorage | EMemoryBarrierMask.VertexAttribArray);
-            renderer.MarkPrecombinedBlendshapeDeltasValid(mesh);
+            renderer.MarkPrecombinedBlendshapeDeltasValid(
+                mesh,
+                rendererBlendshapeState.GenerationId);
 
             RuntimeEngine.Rendering.Stats.RecordSkinningUpload(
                 0L,
                 0L,
                 blendshapeDispatches: 1,
-                blendshapeDeltaBytes: (mesh.BlendshapeQuantizedDeltas?.Length ?? mesh.BlendshapeDeltas?.Length ?? 0u)
-                    + (mesh.BlendshapeQuantizationMetadata?.Length ?? 0u),
+                blendshapeDeltaBytes: (meshBlendshapeState.QuantizedDeltas?.Length ?? meshBlendshapeState.Deltas?.Length ?? 0u)
+                    + (meshBlendshapeState.QuantizationMetadata?.Length ?? 0u),
                 blendshapeAuthoredShapeCount: (int)mesh.BlendshapeCount,
-                blendshapeActiveShapeCount: renderer.ActiveBlendshapeCount,
+                blendshapeActiveShapeCount: rendererBlendshapeState.ActiveCount,
                 blendshapeAffectedVertexCount: mesh.BlendshapeAffectedVertexCount,
-                compactedActiveBlendshapeCount: renderer.ActiveBlendshapeCount,
+                compactedActiveBlendshapeCount: rendererBlendshapeState.ActiveCount,
                 liveBlendshapeShaderPermutations: 1);
 
             return true;
@@ -709,16 +779,19 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
         }
     }
 
-    private static void BindPrecombineBlocks(XRRenderProgram program, XRMeshRenderer renderer, XRMesh mesh)
+    private static void BindPrecombineBlocks(
+        XRRenderProgram program,
+        XRMeshRenderer.BlendshapeResourceSnapshot rendererState,
+        XRMeshBlendshapeBufferState meshState)
     {
-        BindStorageBuffer(program, renderer.BlendshapeActiveWeights, BlendshapePrecombineBindings.BlendshapeActiveWeights);
-        BindStorageBuffer(program, mesh.BlendshapeSparseShapeRanges, BlendshapePrecombineBindings.BlendshapeSparseShapeRanges);
-        BindStorageBuffer(program, mesh.BlendshapeSparseRecords, BlendshapePrecombineBindings.BlendshapeSparseRecords);
-        BindStorageBuffer(program, mesh.BlendshapeQuantizedDeltas, BlendshapePrecombineBindings.BlendshapeQuantizedDeltas);
-        BindStorageBuffer(program, mesh.BlendshapeQuantizationMetadata, BlendshapePrecombineBindings.BlendshapeQuantizationMetadata);
-        BindStorageBuffer(program, renderer.PrecombinedBlendshapePositionsBuffer, BlendshapePrecombineBindings.PrecombinedPositionDeltas);
-        BindStorageBuffer(program, renderer.PrecombinedBlendshapeNormalsBuffer, BlendshapePrecombineBindings.PrecombinedNormalDeltas);
-        BindStorageBuffer(program, renderer.PrecombinedBlendshapeTangentsBuffer, BlendshapePrecombineBindings.PrecombinedTangentDeltas);
+        BindStorageBuffer(program, rendererState.ActiveWeights, BlendshapePrecombineBindings.BlendshapeActiveWeights);
+        BindStorageBuffer(program, meshState.SparseShapeRanges, BlendshapePrecombineBindings.BlendshapeSparseShapeRanges);
+        BindStorageBuffer(program, meshState.SparseRecords, BlendshapePrecombineBindings.BlendshapeSparseRecords);
+        BindStorageBuffer(program, meshState.QuantizedDeltas, BlendshapePrecombineBindings.BlendshapeQuantizedDeltas);
+        BindStorageBuffer(program, meshState.QuantizationMetadata, BlendshapePrecombineBindings.BlendshapeQuantizationMetadata);
+        BindStorageBuffer(program, rendererState.PrecombinedPositions, BlendshapePrecombineBindings.PrecombinedPositionDeltas);
+        BindStorageBuffer(program, rendererState.PrecombinedNormals, BlendshapePrecombineBindings.PrecombinedNormalDeltas);
+        BindStorageBuffer(program, rendererState.PrecombinedTangents, BlendshapePrecombineBindings.PrecombinedTangentDeltas);
     }
 
     private static void BindStorageBuffer(XRRenderProgram program, XRDataBuffer? buffer, uint binding)
@@ -729,26 +802,30 @@ internal sealed partial class SkinningPrepassDispatcher : IDisposable
         buffer.BindTo(program, binding);
     }
 
-    private static void EnsurePrecombineInputsResident(XRMeshRenderer renderer, XRMesh mesh)
+    private static void EnsurePrecombineInputsResident(
+        XRMeshRenderer.BlendshapeResourceSnapshot rendererState,
+        XRMeshBlendshapeBufferState meshState)
     {
-        EnsureBufferResident(renderer.BlendshapeActiveWeights);
-        EnsureBufferResident(mesh.BlendshapeSparseShapeRanges);
-        EnsureBufferResident(mesh.BlendshapeSparseRecords);
-        EnsureBufferResident(mesh.BlendshapeQuantizedDeltas);
-        EnsureBufferResident(mesh.BlendshapeQuantizationMetadata);
-        EnsureBufferResident(renderer.PrecombinedBlendshapePositionsBuffer);
-        EnsureBufferResident(renderer.PrecombinedBlendshapeNormalsBuffer);
-        EnsureBufferResident(renderer.PrecombinedBlendshapeTangentsBuffer);
+        EnsureBufferResident(rendererState.ActiveWeights);
+        EnsureBufferResident(meshState.SparseShapeRanges);
+        EnsureBufferResident(meshState.SparseRecords);
+        EnsureBufferResident(meshState.QuantizedDeltas);
+        EnsureBufferResident(meshState.QuantizationMetadata);
+        EnsureBufferResident(rendererState.PrecombinedPositions);
+        EnsureBufferResident(rendererState.PrecombinedNormals);
+        EnsureBufferResident(rendererState.PrecombinedTangents);
     }
 
     private static void EnsureBufferResident(XRDataBuffer? buffer)
     {
         if (buffer is null)
             return;
-        foreach (var wrapper in buffer.APIWrappers)
+
+        if (buffer.TryGetApiBufferForCurrentOwner(
+                out IApiDataBuffer? apiBuffer) &&
+            !apiBuffer.BackendIsReadyForGpuUse)
         {
-            if (wrapper is IApiDataBuffer apiBuffer && !apiBuffer.BackendIsReadyForGpuUse)
-                apiBuffer.EnsureStorageAllocatedForGpuUse();
+            apiBuffer.EnsureStorageAllocatedForGpuUse();
         }
     }
 

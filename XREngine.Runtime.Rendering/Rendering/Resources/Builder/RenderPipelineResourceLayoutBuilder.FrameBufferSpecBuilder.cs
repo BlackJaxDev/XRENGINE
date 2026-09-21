@@ -9,6 +9,7 @@ public sealed partial class RenderPipelineResourceLayoutBuilder
     {
         private readonly List<FrameBufferAttachmentDescriptor> _attachments = [];
         private Func<XRFrameBuffer>? _factory;
+        private Func<IIncrementalFrameBufferFactory>? _incrementalFactory;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="FrameBufferSpecBuilder"/> class.
@@ -85,6 +86,17 @@ public sealed partial class RenderPipelineResourceLayoutBuilder
         public FrameBufferSpecBuilder Factory(Func<XRFrameBuffer> factory)
         {
             _factory = factory;
+            _incrementalFactory = null;
+            return this;
+        }
+
+        /// <summary>
+        /// Sets a factory that prepares the framebuffer across bounded owner-thread steps.
+        /// </summary>
+        public FrameBufferSpecBuilder IncrementalFactory(Func<IIncrementalFrameBufferFactory> factory)
+        {
+            _factory = null;
+            _incrementalFactory = factory;
             return this;
         }
 
@@ -103,7 +115,8 @@ public sealed partial class RenderPipelineResourceLayoutBuilder
                 HistoryPolicyValue,
                 DebugLabelValue,
                 RequiredValue,
-                _attachments.ToArray(),
-                _factory));
+                [.. _attachments],
+                _factory,
+                _incrementalFactory));
     }
 }

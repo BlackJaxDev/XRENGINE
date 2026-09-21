@@ -23,7 +23,8 @@ namespace XREngine.Editor.Mcp
             NumberHandling = JsonNumberHandling.AllowReadingFromString,
             Converters =
             {
-                new JsonStringEnumConverter(), new McpColorF4JsonConverter(),
+                new JsonStringEnumConverter(), new McpColorF3JsonConverter(), new McpColorF4JsonConverter(),
+                new McpIVector3JsonConverter(),
                 new McpNumericsJsonConverter<System.Numerics.Vector2>(),
                 new McpNumericsJsonConverter<System.Numerics.Vector3>(),
                 new McpNumericsJsonConverter<System.Numerics.Vector4>(),

@@ -10,8 +10,8 @@ namespace XREngine.Rendering.Vulkan;
 internal sealed class VulkanAdvancedNativeComputeClosureStorage
 {
     // Identity, metadata, depth, HDR, velocity, reactive, diagnostics, and
-    // the shared AO storage/sampled view retained by one sealed closure.
-    private readonly ImageView[] _views = new ImageView[8];
+    // the shared AO view, plus four optional DDGI surface exports.
+    private readonly ImageView[] _views = new ImageView[12];
     private int _count;
     private VulkanImageResourceService? _images;
 

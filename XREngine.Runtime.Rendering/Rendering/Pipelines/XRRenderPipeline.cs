@@ -420,6 +420,10 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
     internal virtual ulong BuildResourceFeatureMaskForGenerationKey(XRRenderPipelineInstance instance, XRViewport? viewport)
         => 0UL;
 
+    /// <summary>Captures pipeline-specific resource dimensions for immutable generation factories.</summary>
+    internal virtual RenderPipelineResourceVariant BuildResourceVariantForGenerationKey(XRRenderPipelineInstance instance, XRViewport? viewport)
+        => default;
+
     /// <summary>
     /// Handles the event when the viewport is resized. 
     /// Derived pipelines can override this method to respond to viewport size changes, 
@@ -1002,15 +1006,13 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
     internal virtual bool UsesDisplayResolutionForManagedResources => false;
 
     /// <summary>
-    /// Creates a texture used by PBR shading to light an opaque surface.
-    /// Input is an incoming light direction and an outgoing direction (calculated using the normal)
-    /// Output from this texture is ratio of refleced radiance in the outgoing direction to irradiance from the incoming direction.
-    /// https://en.wikipedia.org/wiki/Bidirectional_reflectance_distribution_function
+    /// Allocates a split-sum BRDF lookup. The pipeline's VPRC_PrecomputeBRDF pass
+    /// initializes it on the GPU after resources and programs are ready.
     /// </summary>
     /// <param name="width"></param>
     /// <param name="height"></param>
     /// <returns></returns>
-    public static XRTexture2D PrecomputeBRDF(uint width = 256u, uint height = 256u)
+    public static XRTexture2D CreateBrdfLookupTexture(uint width = 256u, uint height = 256u)
     {
         XRTexture2D brdf = new(
             width, height,
@@ -1029,34 +1031,6 @@ public abstract partial class RenderPipeline : XRAsset, IRuntimeRenderPipelineHo
             SizedInternalFormat = ESizedInternalFormat.Rg16f
         };
 
-        XRShader shader = XRShader.EngineShader(Path.Combine("Scene3D", "BRDF.fs"), EShaderType.Fragment);
-        XRMaterial mat = new(shader)
-        {
-            RenderOptions = new()
-            {
-                DepthTest = new()
-                {
-                    Enabled = ERenderParamUsage.Disabled,
-                    Function = EComparison.Always,
-                    UpdateDepth = false,
-                },
-            }
-        };
-
-        XRQuadFrameBuffer fbo = new(mat);
-        fbo.SetRenderTargets((brdf, EFrameBufferAttachment.ColorAttachment0, 0, -1));
-        BoundingRectangle region = new(IVector2.Zero, new IVector2((int)width, (int)height));
-
-        //Now render the texture to the FBO using the quad
-        using (fbo.BindForWritingState())
-        {
-            using (State.PushRenderArea(region))
-            {
-                //ClearColor(new ColorF4(0.0f, 0.0f, 0.0f, 1.0f));
-                //Clear(true, true, false);
-                fbo.Render(null, true);
-            }
-        }
         return brdf;
     }
 }

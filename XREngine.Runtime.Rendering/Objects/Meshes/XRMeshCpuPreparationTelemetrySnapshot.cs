@@ -1,0 +1,42 @@
+namespace XREngine.Rendering;
+
+/// <summary>
+/// Monotonic process-lifetime measurements for CPU mesh preparation and owner-first wrapper publication.
+/// </summary>
+public readonly record struct XRMeshCpuPreparationTelemetrySnapshot(
+    long CompletedMeshCount,
+    long FailedMeshCount,
+    long PreparedVertexCount,
+    long PreparedBufferCount,
+    long PreparedBufferBytes,
+    long PeakMeshVertexCount,
+    long PeakMeshBufferBytes,
+    long AllocationCount,
+    long AllocationBytes,
+    long AllocationTicks,
+    long ZeroFillCount,
+    long ZeroFillBytes,
+    long ZeroFillTicks,
+    long BufferCallbackCount,
+    long BufferCallbackTicks,
+    long VertexPopulationCount,
+    long VertexPopulationVertexCount,
+    long VertexPopulationTicks,
+    long CachePublicationBatchCount,
+    long CachePublicationObjectCount,
+    long CachePublicationTicks,
+    long WrapperLockWaitCount,
+    long WrapperLockWaitTicks,
+    long WrapperLockWaitPeakTicks,
+    long OpenGlWrapperCreationCount,
+    long OpenGlWrapperCreationFailureCount,
+    long OpenGlWrapperCreationTicks,
+    long VulkanWrapperCreationCount,
+    long VulkanWrapperCreationFailureCount,
+    long VulkanWrapperCreationTicks,
+    long WrapperCreationDuringCpuPreparationCount,
+    long WrapperCreationOffOwnerThreadCount,
+    long ActivePreparationCount,
+    int LastPreparationThreadId,
+    int LastCachePublicationThreadId,
+    int LastWrapperCreationThreadId);

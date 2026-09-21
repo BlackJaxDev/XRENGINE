@@ -1,0 +1,88 @@
+#version 450
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+#pragma snippet "OctahedralMapping"
+#pragma snippet "DDGIBindings"
+
+struct DDGIRayInput
+{
+    vec4 origin;    // .w = tMin
+    vec4 direction; // .w = tMax
+    vec4 params;    // x = probeIndex, y = rayIndex, z = frameIndex, w = flags
+};
+
+layout(std430, XR_DDGI_STORAGE_BINDING(0)) readonly buffer Rays
+{
+    DDGIRayInput gRays[];
+};
+
+layout(std430, XR_DDGI_STORAGE_BINDING(1)) readonly buffer RayRadianceBuffer
+{
+    vec4 gRayRadiance[]; // xyz = radiance, w = hit distance
+};
+
+layout(rg16f, XR_DDGI_IMAGE_BINDING(0)) uniform image2DArray uVisibilityAtlas;
+
+uniform uint uProbeCount;
+uniform uint uRaysPerProbe;
+uniform uint uProbeCountX;
+uniform float uHysteresis;
+uniform float uMaxProbeDistance;
+uniform uint uProbeOffset;
+uniform uint uScheduledProbeCount;
+uniform int uCascadeIndex;
+
+void main()
+{
+    uint scheduledIndex = gl_WorkGroupID.x;
+    if (uScheduledProbeCount > 0u && scheduledIndex >= uScheduledProbeCount)
+        return;
+
+    uint probeIndex = (uProbeOffset + scheduledIndex) % max(1u, uProbeCount);
+
+    ivec2 localId = ivec2(gl_LocalInvocationID.xy);
+
+    // Only update interior 14x14 texels; outer 1-pixel border is copied by ddgi_border_copy
+    if (localId.x == 0 || localId.x == 15 || localId.y == 0 || localId.y == 15)
+        return;
+
+    // Decode octahedral direction from interior texel (1..14 mapped to [0, 1])
+    vec2 octUV = (vec2(localId) - vec2(0.5)) / 14.0;
+    vec3 probeDir = XRENGINE_DecodeOcta(octUV);
+
+    uint rayOffset = scheduledIndex * uRaysPerProbe;
+    vec2 accumMoments = vec2(0.0);
+    float totalWeight = 0.0;
+    // Both distance moments must remain representable by the RG16F atlas.
+    float maxDist = clamp(uMaxProbeDistance, 0.001, 255.0);
+    // Distance moments need a narrow directional filter to preserve blockers.
+    // The separate Chebyshev power controls visibility contrast at lookup time;
+    // using that low exponent here mixes open rays into occluded directions.
+    const float distanceExponent = 50.0;
+
+    for (uint r = 0u; r < uRaysPerProbe; ++r)
+    {
+        vec3 rayDir = gRays[rayOffset + r].direction.xyz;
+        float dotProduct = max(0.0, dot(probeDir, rayDir));
+        float weight = pow(dotProduct, distanceExponent);
+        if (weight > 0.0)
+        {
+            float dist = min(gRayRadiance[rayOffset + r].w, maxDist);
+            accumMoments += weight * vec2(dist, dist * dist);
+            totalWeight += weight;
+        }
+    }
+
+    vec2 newMoments = totalWeight > 1e-5 ? (accumMoments / totalWeight) : vec2(maxDist, maxDist * maxDist);
+
+    // Compute pixel coordinate in visibility atlas
+    uint countX = max(1u, uProbeCountX);
+    ivec2 tileCoord = ivec2(int(probeIndex % countX), int(probeIndex / countX));
+    ivec3 atlasCoord = ivec3(tileCoord * 16 + localId, uCascadeIndex);
+
+    vec2 oldMoments = imageLoad(uVisibilityAtlas, atlasCoord).rg;
+    vec2 blended = mix(newMoments, oldMoments, clamp(uHysteresis, 0.0, 1.0));
+
+    imageStore(uVisibilityAtlas, atlasCoord, vec4(blended, 0.0, 0.0));
+}

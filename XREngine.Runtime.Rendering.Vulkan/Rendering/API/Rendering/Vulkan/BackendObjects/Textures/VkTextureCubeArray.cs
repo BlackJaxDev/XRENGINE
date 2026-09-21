@@ -76,7 +76,16 @@ internal sealed class VkTextureCubeArray(VulkanBackendObjectContext backendConte
 
                     Mipmap2D side = cubeMip.Sides[face];
                     Extent3D extent = new(Math.Max(side.Width, 1u), Math.Max(side.Height, 1u), 1);
-                    _ = UploadStagingDataToImage(side.Data, level, baseLayer, 1, extent);
+                    DataSource? uploadData = VkFormatConversions.CreateNormalizedUploadData2D(side, ResolvedFormat, out bool ownsUploadData);
+                    try
+                    {
+                        _ = UploadStagingDataToImage(uploadData, level, baseLayer, 1, extent);
+                    }
+                    finally
+                    {
+                        if (ownsUploadData)
+                            uploadData?.Dispose();
+                    }
                 }
             }
         }

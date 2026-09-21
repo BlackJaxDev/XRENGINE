@@ -96,6 +96,20 @@ public interface IRuntimeRendererHost
         => null;
 
     /// <summary>
+    /// Captures the latest Advanced family preparation state and phase timings.
+    /// Null means the backend does not expose this diagnostic surface.
+    /// </summary>
+    AdvancedVisibilityPreparationDiagnosticsSnapshot? CaptureAdvancedVisibilityPreparationDiagnostics()
+        => null;
+
+    /// <summary>
+    /// Captures backend-owned pipeline compilation and invalidation diagnostics.
+    /// Null means the backend does not expose this diagnostic surface.
+    /// </summary>
+    object? CapturePipelineCompilationDiagnostics()
+        => null;
+
+    /// <summary>
     /// Returns the task/mesh shader dialect visible to this renderer.
     /// </summary>
     EMeshShaderDialect MeshShaderDialect { get; }

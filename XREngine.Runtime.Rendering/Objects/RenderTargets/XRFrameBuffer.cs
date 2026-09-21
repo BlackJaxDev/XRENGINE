@@ -248,8 +248,10 @@ namespace XREngine.Rendering
             List<EDrawBuffersAttachment> fboAttachments = [];
             if (Targets is not null)
             {
-                foreach (var (_, Attachment, _, _) in Targets)
+                foreach (var (target, Attachment, _, _) in Targets)
                 {
+                    if (target is XRTexture texture)
+                        texture.MarkGpuWritable();
                     switch (Attachment)
                     {
                         //case EFrameBufferAttachment.ColorAttachment0:

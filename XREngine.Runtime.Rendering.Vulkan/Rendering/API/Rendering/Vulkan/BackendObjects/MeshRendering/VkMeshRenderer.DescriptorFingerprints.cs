@@ -517,6 +517,7 @@ internal unsafe partial class VkMeshRenderer
 		XRMaterial material,
 		ComputeDispatchSnapshot? snapshot,
 		CommandBuffer descriptorCommandBuffer,
+		WindowPresentationSourceMarker windowPresentationSourceMarker,
 		out string reason)
 	{
 		reason = "no frame-source sampler descriptors";
@@ -566,6 +567,7 @@ internal unsafe partial class VkMeshRenderer
 			material,
 			snapshot,
 			descriptorCommandBuffer,
+			windowPresentationSourceMarker,
 			out reason);
 	}
 
@@ -602,6 +604,7 @@ internal unsafe partial class VkMeshRenderer
 		XRMaterial material,
 		ComputeDispatchSnapshot? snapshot,
 		CommandBuffer descriptorCommandBuffer,
+		WindowPresentationSourceMarker windowPresentationSourceMarker,
 		out string reason)
 	{
 		bool refreshed = false;
@@ -702,6 +705,7 @@ internal unsafe partial class VkMeshRenderer
 					binding.Name,
 					resolvedImageInfos[0],
 					exactSamplerResourceSignature,
+					windowPresentationSourceMarker,
 					writeMatched: true,
 					writeSucceeded: true);
 				continue;
@@ -729,6 +733,7 @@ internal unsafe partial class VkMeshRenderer
 				binding.Name,
 				resolvedImageInfos[0],
 				exactSamplerResourceSignature,
+				windowPresentationSourceMarker,
 				writeMatched: false,
 				writeSucceeded: true);
 			refreshed = true;
@@ -1199,6 +1204,7 @@ internal unsafe partial class VkMeshRenderer
 		string? bindingName,
 		in DescriptorImageInfo imageInfo,
 		ulong resourceSignature,
+		WindowPresentationSourceMarker windowPresentationSourceMarker,
 		bool writeMatched,
 		bool writeSucceeded)
 	{
@@ -1211,6 +1217,7 @@ internal unsafe partial class VkMeshRenderer
 			bindingName,
 			imageInfo,
 			resourceSignature,
+			windowPresentationSourceMarker,
 			writeMatched,
 			writeSucceeded,
 			_program?.Data?.Name ?? _program?.ToString());

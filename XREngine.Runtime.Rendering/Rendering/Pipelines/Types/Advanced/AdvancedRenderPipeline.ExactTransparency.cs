@@ -459,25 +459,101 @@ public partial class AdvancedRenderPipeline
         };
     }
 
-    private XRFrameBuffer CreateDepthPeelingResolveFBO()
-    {
-        XRMaterial material = new(Array.Empty<XRTexture?>(), XRShader.EngineShader(Path.Combine(SceneShaderPath, DepthPeelingResolveShaderName()), EShaderType.Fragment))
-        {
-            RenderOptions = new RenderingParameters()
-            {
-                DepthTest = new DepthTest()
-                {
-                    Enabled = ERenderParamUsage.Disabled,
-                    Function = EComparison.Always,
-                    UpdateDepth = false,
-                },
-            }
-        };
+    private IIncrementalFrameBufferFactory CreateDepthPeelingResolveFBOIncrementally()
+        => new DepthPeelingResolveFrameBufferFactory(this);
 
-        var fbo = new XRQuadFrameBuffer(material, deriveRenderTargetsFromMaterial: false, useMultiview: Stereo) { Name = DepthPeelingResolveFBOName };
-        var hdrAttachment = EnsureTextureAttachment(HDRSceneTextureName, CreateHDRSceneTexture);
-        fbo.SetRenderTargets((hdrAttachment, EFrameBufferAttachment.ColorAttachment0, 0, -1));
-        return fbo;
+    private sealed class DepthPeelingResolveFrameBufferFactory(AdvancedRenderPipeline owner) : IIncrementalFrameBufferFactory
+    {
+        private int _stage;
+        private XRShader? _shader;
+        private XRMaterial? _material;
+        private XRQuadFrameBuffer? _frameBuffer;
+        private bool _transferred;
+
+        public bool MoveNext(out XRFrameBuffer? frameBuffer)
+        {
+            frameBuffer = null;
+            switch (_stage)
+            {
+                case 0:
+                    _shader = XRShader.EngineShader(
+                        Path.Combine(SceneShaderPath, owner.DepthPeelingResolveShaderName()),
+                        EShaderType.Fragment);
+                    _stage++;
+                    return false;
+                case 1:
+                    CreateMaterial();
+                    _stage++;
+                    return false;
+                case 2:
+                    _frameBuffer = new XRQuadFrameBuffer(
+                        _material ?? throw new InvalidOperationException("Depth-peeling resolve material was not prepared."),
+                        deriveRenderTargetsFromMaterial: false,
+                        useMultiview: owner.Stereo,
+                        prepareForInitialRendering: false)
+                    {
+                        Name = DepthPeelingResolveFBOName
+                    };
+                    _stage++;
+                    return false;
+                case 3:
+                    _frameBuffer!.PrepareInitialRenderingVersion();
+                    _stage++;
+                    return false;
+                case 4:
+                    CompleteFrameBuffer();
+                    frameBuffer = _frameBuffer;
+                    _frameBuffer = null;
+                    _material = null;
+                    _shader = null;
+                    _transferred = true;
+                    _stage++;
+                    return true;
+                default:
+                    throw new InvalidOperationException("Depth-peeling resolve framebuffer factory was advanced after completion.");
+            }
+        }
+
+        private void CreateMaterial()
+        {
+            _material = new XRMaterial(
+                Array.Empty<XRTexture?>(),
+                _shader ?? throw new InvalidOperationException("Depth-peeling resolve shader was not prepared."))
+            {
+                RenderOptions = new RenderingParameters
+                {
+                    DepthTest = new DepthTest
+                    {
+                        Enabled = ERenderParamUsage.Disabled,
+                        Function = EComparison.Always,
+                        UpdateDepth = false,
+                    },
+                }
+            };
+        }
+
+        private void CompleteFrameBuffer()
+        {
+            XRQuadFrameBuffer frameBuffer = _frameBuffer
+                ?? throw new InvalidOperationException("Depth-peeling resolve framebuffer was not constructed.");
+            frameBuffer.PrepareForInitialRendering();
+            if (GetTexture<XRTexture>(HDRSceneTextureName) is not IFrameBufferAttachement hdrAttachment)
+                throw new InvalidOperationException("Depth-peeling HDR output texture is not FBO-attachable.");
+
+            frameBuffer.SetRenderTargets((hdrAttachment, EFrameBufferAttachment.ColorAttachment0, 0, -1));
+        }
+
+        public void Dispose()
+        {
+            if (_transferred)
+                return;
+
+            _frameBuffer?.Destroy();
+            _material?.Destroy();
+            _frameBuffer = null;
+            _material = null;
+            _shader = null;
+        }
     }
 
     private XRFrameBuffer CreateDepthPeelingDebugFBO()

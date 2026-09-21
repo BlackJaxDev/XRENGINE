@@ -8,6 +8,7 @@ public partial class XRMesh
     public XRMesh Clone()
     {
         using var _ = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRMesh Clone");
+        using RenderObjectPublicationScope publication = GenericRenderObject.BeginDeferredPublication();
 
         XRMesh clone = new()
         {
@@ -91,12 +92,14 @@ public partial class XRMesh
             clone.BlendshapeQuantizationMetadata = clone.Buffers.GetValueOrDefault($"{ECommonBufferType.BlendshapeQuantizationMetadata}Buffer");
         }
 
+        publication.Complete();
         return clone;
     }
 
     internal XRMesh CloneForRuntimeTransformRebind()
     {
         using var _ = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRMesh Runtime Transform Rebind Clone");
+        using RenderObjectPublicationScope publication = GenericRenderObject.BeginDeferredPublication();
 
         XRMesh clone = new()
         {
@@ -140,6 +143,7 @@ public partial class XRMesh
         }
 
         clone.Buffers = Buffers.CloneShared();
+        publication.Complete();
         return clone;
     }
 }

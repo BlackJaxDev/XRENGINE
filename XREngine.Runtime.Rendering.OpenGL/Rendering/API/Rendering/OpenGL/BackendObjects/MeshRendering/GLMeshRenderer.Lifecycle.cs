@@ -12,7 +12,6 @@ namespace XREngine.Rendering.OpenGL
             {
                 Dbg($"LinkData start (MeshRenderer={MeshRenderer.Name ?? "null"}, Mesh={Mesh?.Name ?? "null"})", "Lifecycle");
 
-                Data.RenderRequested += Render;
                 MeshRenderer.PropertyChanged += OnMeshRendererPropertyChanged;
                 MeshRenderer.PropertyChanging += OnMeshRendererPropertyChanging;
                 SubscribeRendererBuffers(MeshRenderer.Buffers);
@@ -32,7 +31,6 @@ namespace XREngine.Rendering.OpenGL
             {
                 Dbg("UnlinkData start", "Lifecycle");
 
-                Data.RenderRequested -= Render;
                 MeshRenderer.PropertyChanged -= OnMeshRendererPropertyChanged;
                 MeshRenderer.PropertyChanging -= OnMeshRendererPropertyChanging;
                 SubscribeRendererBuffers(null);
@@ -51,7 +49,8 @@ namespace XREngine.Rendering.OpenGL
             /// <param name="e"></param>
             private void OnMeshRendererPropertyChanged(object? sender, IXRPropertyChangedEventArgs e)
             {
-                Dbg($"OnMeshRendererPropertyChanged: {e.PropertyName}", "Lifecycle");
+                if (IsDebugCategoryEnabled("Lifecycle"))
+                    Dbg($"OnMeshRendererPropertyChanged: {e.PropertyName}", "Lifecycle");
                 switch (e.PropertyName)
                 {
                     case nameof(XRMeshRenderer.Mesh):

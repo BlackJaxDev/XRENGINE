@@ -58,12 +58,13 @@ internal readonly record struct VulkanRenderBinKey(
         uint viewMask = context.OutputSchedulingRequest.IsDefined
             ? context.OutputSchedulingRequest.Target.ViewMask
             : 0u;
-        if (viewMask == 0u)
-        {
-            viewMask = context.MultiviewEnabled || context.StereoEnabled
-                ? 0b11u
-                : 0b1u;
-        }
+        bool hasMultipleViews = viewMask != 0u && (viewMask & (viewMask - 1u)) != 0u;
+        // The scheduling request describes the whole output family, including
+        // mono utility draws. Preserve an explicit single-eye mask, but never
+        // promote a mono shader into a multiview bin merely because its owner is stereo.
+        viewMask = context.MultiviewEnabled
+            ? hasMultipleViews ? viewMask : 0b11u
+            : viewMask != 0u && !hasMultipleViews ? viewMask : 0b1u;
         return Create(
             structuralIdentity,
             variant,

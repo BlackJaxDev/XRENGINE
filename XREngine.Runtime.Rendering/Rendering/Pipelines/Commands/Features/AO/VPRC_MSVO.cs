@@ -197,7 +197,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                     RenderOptions = renderParams
                 };
 
-                XRQuadFrameBuffer msvoGenFbo = new(msvoGenMaterial, true,
+                XRQuadFrameBuffer msvoGenFbo = new(msvoGenMaterial, true, true, Stereo,
                     (RequireAttachment(instance, AlbedoTextureName), EFrameBufferAttachment.ColorAttachment0, 0, -1),
                     (RequireAttachment(instance, NormalTextureName), EFrameBufferAttachment.ColorAttachment1, 0, -1),
                     (RequireAttachment(instance, RMSETextureName), EFrameBufferAttachment.ColorAttachment2, 0, -1),
@@ -216,6 +216,8 @@ namespace XREngine.Rendering.Pipelines.Commands
                 XRQuadFrameBuffer msvoBlurFbo = new(
                     msvoBlurMaterial,
                     true,
+                    true,
+                    Stereo,
                     (RequireAttachment(rawAoTexture, MSVORawTextureName), EFrameBufferAttachment.ColorAttachment0, 0, -1))
                 {
                     Name = MSVOBlurFBOName

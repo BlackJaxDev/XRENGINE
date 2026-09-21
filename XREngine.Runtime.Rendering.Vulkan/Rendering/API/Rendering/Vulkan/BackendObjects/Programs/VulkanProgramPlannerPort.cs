@@ -38,14 +38,24 @@ internal sealed class VulkanProgramPlannerPort(
     internal void DispatchCompute(VkRenderProgram program, int x, int y, int z)
     {
         if (!program.Link(program.Data.AllowAsyncBackendCompile))
+        {
+            XRRenderProgram.ShaderProgramBackendStatus status = program.Data.ShaderMetadata.Backend;
+            if (status.Stage is XRRenderProgram.EShaderProgramBackendStage.Failed or
+                XRRenderProgram.EShaderProgramBackendStage.BinaryUploadFailed or
+                XRRenderProgram.EShaderProgramBackendStage.Abandoned)
+            {
+                string reason = status.FailureReason ?? status.Detail ?? "Vulkan program linking failed.";
+                throw new InvalidOperationException($"Vulkan compute program '{program.Data.Name ?? "UnnamedProgram"}' could not link: {reason}");
+            }
             return;
+        }
         FrameOpContext frameContext = GetCurrentGeneration().State.LastActiveFrameOpContext ?? default;
         int passIndex = RuntimeEngine.Rendering.State.CurrentRenderGraphPassIndex;
         if (passIndex == int.MinValue)
             passIndex = (int)EDefaultRenderPass.PreRender;
         ComputeDispatchSnapshot snapshot = program.CaptureComputeSnapshot();
-        if (!program.ValidateComputeSnapshot(snapshot, out _))
-            return;
+        if (!program.ValidateComputeSnapshot(snapshot, out string? failure))
+            throw new InvalidOperationException($"Vulkan compute program '{program.Data.Name ?? "UnnamedProgram"}' has an invalid dispatch snapshot: {failure ?? "unknown validation failure"}");
         // Native compute pipeline readiness is resolved by the frame-plan
         // preparation authority before sealing. Do not erase this dispatch
         // while its asynchronously compiled pipeline is pending: the next

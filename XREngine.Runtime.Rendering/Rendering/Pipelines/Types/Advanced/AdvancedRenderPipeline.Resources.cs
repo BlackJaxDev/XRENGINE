@@ -1,4 +1,7 @@
+using System.Runtime.InteropServices;
+using XREngine.Components.Lights;
 using XREngine.Data.Rendering;
+using XREngine.Rendering.GI.DDGI;
 using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.Resources;
 
@@ -12,6 +15,7 @@ public partial class AdvancedRenderPipeline
     // from a desktop-present definition can never be reused for an eye FBO.
     private const ulong OpenXrTwoPassEyeFamilyFeatureBit = 1UL << 63;
     private const ulong MinimalVisibilityOffscreenFeatureBit = 1UL << 62;
+    private const ulong DdgiResourcesFeatureBit = 1UL << 56;
     public const string ExternalOutputResourceName = "$ExternalOutput";
 
     // Forward late/debug consumers retain the existing probe-array contract.
@@ -129,6 +133,9 @@ public partial class AdvancedRenderPipeline
                 : 0UL) |
             (UsesMinimalVisibilityOutput
                 ? MinimalVisibilityOffscreenFeatureBit
+                : 0UL) |
+            (UsesDDGI && !UsesMinimalVisibilityOutput
+                ? DdgiResourcesFeatureBit
                 : 0UL);
         return (ulong)visibilityFeatures |
             (ulong)reconstructionFeatures |
@@ -137,6 +144,36 @@ public partial class AdvancedRenderPipeline
             latePassFeatureMask |
             profileFeatureMask;
     }
+
+    /// <summary>
+    /// Freezes the active DDGI volume layout into the resource-generation key.
+    /// Baked probe and cascade dimensions come directly from the asset because
+    /// resource generation can run before render-thread preparation reapplies
+    /// its authoritative spatial metadata to the volume.
+    /// </summary>
+    internal override RenderPipelineResourceVariant BuildResourceVariantForGenerationKey(
+        XRRenderPipelineInstance instance,
+        XRViewport? viewport)
+    {
+        if (!UsesDDGI)
+            return default;
+
+        var world = viewport?.World;
+        return world is not null &&
+            DDGIVolumeComponent.Registry.TryGetFirstActive(world, out DDGIVolumeComponent? volume) &&
+            volume is not null
+            ? BuildDdgiResourceDescriptor(volume).ToVariant()
+            : DDGIResourceDescriptor.Default.ToVariant();
+    }
+
+    private static DDGIResourceDescriptor BuildDdgiResourceDescriptor(DDGIVolumeComponent volume)
+        => volume.UpdateMode == EDDGIUpdateMode.Baked && volume.BakedAsset is { } asset
+            ? new DDGIResourceDescriptor(
+                asset.ProbeCounts,
+                volume.RaysPerProbe,
+                asset.CascadeCount,
+                volume.MaxProbesUpdatedPerFrame)
+            : DDGIResourceDescriptor.FromVolume(volume);
 
     /// <summary>
     /// Declares the document-04/05/06/07/08 visibility, reconstruction, classification, native shading, and late-pass contracts.
@@ -153,11 +190,13 @@ public partial class AdvancedRenderPipeline
         DeclareAttributeReconstructionResources(builder);
         DeclareClassificationResources(builder);
         DeclareNativeShadingResources(builder);
+        DeclareBrdfLookupResource(builder);
         DeclareForwardProbeImports(builder);
         // Every native shaded output can contain authored background. Share only
         // its canonical HDR/depth framebuffer with late work and raw HDR export;
         // this does not realize the rest of the late/post graph for captures.
         DeclareForwardPassOutputResource(builder, RenderResourceSizePolicy.Internal());
+        DeclareAdvancedDdgiResources(builder);
         // Thumbnail and depth/visibility captures consume the native visibility
         // outputs directly.  Do not realize the late/post graph for those views.
         if (AllowsLateTransparency)
@@ -172,6 +211,21 @@ public partial class AdvancedRenderPipeline
             DeclareAdvancedPostExecutionResources(builder);
 
         DeclareExternalTarget(builder);
+    }
+
+    private void DeclareBrdfLookupResource(RenderPipelineResourceLayoutBuilder builder)
+    {
+        uint size = ResolveBrdfLutSize();
+        builder.Texture(BRDFTextureName)
+            .Lifetime(RenderResourceLifetime.Persistent)
+            .Size(RenderResourceSizePolicy.Absolute(size, size))
+            .Usage(RenderPipelineResourceUsage.SampledTexture | RenderPipelineResourceUsage.ColorAttachment |
+                RenderPipelineResourceUsage.TransferSource | RenderPipelineResourceUsage.TransferDestination)
+            .Format(EPixelInternalFormat.RG16f, EPixelFormat.Rg, EPixelType.HalfFloat)
+            .SizedFormat(ESizedInternalFormat.Rg16f)
+            .Mips(new RenderResourceMipPolicy(AutoGenerateMipmaps: false, RequireImmutableStorage: false))
+            .Factory(CreateBRDFTexture)
+            .Add();
     }
 
     private static void DeclareExternalTarget(
@@ -213,7 +267,176 @@ public partial class AdvancedRenderPipeline
         => builder.FrameBuffer(ForwardPassFBOName).Size(internalSize).Lifetime(RenderResourceLifetime.Persistent)
             .Usage(RenderPipelineResourceUsage.ColorAttachment | RenderPipelineResourceUsage.DepthStencilAttachment)
             .Color(0, HDRSceneTextureName).DepthStencil(AdvancedVisibilityResourceNames.DepthStencil)
-            .Factory(CreateForwardPassFBO).Add();
+            .IncrementalFactory(CreateForwardPassFBOIncrementally).Add();
+
+    /// <summary>
+    /// Declares the shared DDGI execution resources against Advanced's native
+    /// depth, normal, albedo and HDR outputs. Dimensions come solely from the
+    /// frozen resource variant, so a baked layout cannot reuse a live-volume
+    /// allocation with a different grid or cascade count.
+    /// </summary>
+    private void DeclareAdvancedDdgiResources(RenderPipelineResourceLayoutBuilder builder)
+    {
+        DDGIResourceImports.Declare(builder, HasDdgiResources);
+        if (!HasDdgiResources(builder.Profile))
+            return;
+
+        DDGIResourceDescriptor descriptor = DDGIResourceDescriptor.FromVariant(builder.Profile.ResourceVariant);
+        uint layers = Math.Max(builder.Profile.ViewCount, builder.Profile.Stereo ? 2u : 1u);
+        RenderResourceSizePolicy internalSize = RenderResourceSizePolicy.Internal();
+
+        ReconstructionTexture(
+                builder,
+                DDGITextureName,
+                internalSize,
+                EPixelInternalFormat.Rgba16f,
+                EPixelFormat.Rgba,
+                EPixelType.HalfFloat,
+                ESizedInternalFormat.Rgba16f)
+            .Lifetime(RenderResourceLifetime.Persistent)
+            .Layers(layers)
+            .StereoCompatible(layers > 1u)
+            .When(HasDdgiResources)
+            .DebugLabel("Advanced DDGI screen irradiance")
+            .Add();
+
+        DeclareAdvancedDdgiSurface(builder, NormalTextureName, layers);
+        DeclareAdvancedDdgiSurface(builder, AlbedoOpacityTextureName, layers);
+        DeclareAdvancedDdgiSurface(builder, RMSETextureName, layers);
+        DeclareAdvancedDdgiSurface(builder, EmissionColorTextureName, layers);
+
+        builder.QuadMaterial(DDGICompositeFBOName)
+            .Lifetime(RenderResourceLifetime.Transient)
+            .DependsOn(DDGITextureName)
+            .Factory(CreateDDGICompositeFBO)
+            .When(HasDdgiResources)
+            .Add();
+
+        VisibilityTexture(
+                builder,
+                DDGIEnvironmentResources.TextureName,
+                RenderResourceSizePolicy.Absolute(DDGIEnvironmentResources.Resolution, DDGIEnvironmentResources.Resolution),
+                RenderPipelineResourceUsage.SampledTexture | RenderPipelineResourceUsage.ColorAttachment,
+                EPixelInternalFormat.Rgba16f,
+                EPixelFormat.Rgba,
+                EPixelType.HalfFloat,
+                ESizedInternalFormat.Rgba16f,
+                attachment: null,
+                storage: false)
+            .Lifetime(RenderResourceLifetime.Persistent)
+            .Factory(DDGIEnvironmentResources.CreateRadianceTexture)
+            .When(HasDdgiResources)
+            .DebugLabel("Advanced DDGI environment radiance")
+            .Add();
+
+        DeclareAdvancedDdgiAtlas(
+            builder,
+            DDGIIrradianceAtlasTextureName,
+            descriptor.IrradianceWidth,
+            descriptor.IrradianceHeight,
+            descriptor.Cascades,
+            EPixelInternalFormat.R11fG11fB10f,
+            EPixelFormat.Rgb,
+            EPixelType.Float,
+            ESizedInternalFormat.R11fG11fB10f,
+            () => DDGIVolumeRuntimeState.CreateIrradianceAtlasTextureArray(
+                (uint)descriptor.Cascades,
+                checked((int)descriptor.IrradianceWidth),
+                checked((int)descriptor.IrradianceHeight)));
+        DeclareAdvancedDdgiAtlas(
+            builder,
+            DDGIVisibilityAtlasTextureName,
+            descriptor.VisibilityWidth,
+            descriptor.VisibilityHeight,
+            descriptor.Cascades,
+            EPixelInternalFormat.RG16f,
+            EPixelFormat.Rg,
+            EPixelType.HalfFloat,
+            ESizedInternalFormat.Rg16f,
+            () => DDGIVolumeRuntimeState.CreateVisibilityAtlasTextureArray(
+                (uint)descriptor.Cascades,
+                checked((int)descriptor.VisibilityWidth),
+                checked((int)descriptor.VisibilityHeight)));
+
+        DeclareAdvancedDdgiBuffer(builder, DDGIProbeStateBufferName,
+            (uint)Marshal.SizeOf<DDGIProbeGPU>(), descriptor.ProbeElements,
+            () => DDGIVolumeRuntimeState.CreateDeclaredProbeBuffer(descriptor.ProbeElements));
+        DeclareAdvancedDdgiBuffer(builder, DDGIRayBufferName,
+            (uint)Marshal.SizeOf<DDGIRayGPU>(), descriptor.RayElements,
+            () => DDGIVolumeRuntimeState.CreateDeclaredRayBuffer(descriptor.RayElements));
+        DeclareAdvancedDdgiBuffer(builder, DDGIHitBufferName,
+            (uint)Marshal.SizeOf<DDGIHitGPU>(), descriptor.RayElements,
+            () => DDGIVolumeRuntimeState.CreateDeclaredHitBuffer(descriptor.RayElements));
+        DeclareAdvancedDdgiBuffer(builder, DDGIRayRadianceBufferName,
+            (uint)Marshal.SizeOf<DDGIRayRadianceGPU>(), descriptor.RayElements,
+            () => DDGIVolumeRuntimeState.CreateDeclaredRayRadianceBuffer(descriptor.RayElements));
+    }
+
+    private void DeclareAdvancedDdgiAtlas(
+        RenderPipelineResourceLayoutBuilder builder,
+        string name,
+        uint width,
+        uint height,
+        int cascades,
+        EPixelInternalFormat internalFormat,
+        EPixelFormat pixelFormat,
+        EPixelType pixelType,
+        ESizedInternalFormat sizedFormat,
+        Func<XRTexture> factory)
+        => VisibilityTexture(
+                builder,
+                name,
+                RenderResourceSizePolicy.Absolute(width, height),
+                RenderPipelineResourceUsage.SampledTexture | RenderPipelineResourceUsage.StorageImage,
+                internalFormat,
+                pixelFormat,
+                pixelType,
+                sizedFormat,
+                attachment: null,
+                storage: true)
+            .Layers((uint)cascades)
+            .Factory(factory)
+            .When(HasDdgiResources)
+            .DebugLabel($"Advanced DDGI atlas {name}")
+            .Add();
+
+    private void DeclareAdvancedDdgiSurface(
+        RenderPipelineResourceLayoutBuilder builder,
+        string name,
+        uint layers)
+        => ReconstructionTexture(
+                builder,
+                name,
+                RenderResourceSizePolicy.Internal(),
+                EPixelInternalFormat.Rgba16f,
+                EPixelFormat.Rgba,
+                EPixelType.HalfFloat,
+                ESizedInternalFormat.Rgba16f)
+            .Lifetime(RenderResourceLifetime.Persistent)
+            .Layers(layers)
+            .StereoCompatible(layers > 1u)
+            .When(HasDdgiResources)
+            .DebugLabel($"Advanced DDGI native surface {name}")
+            .Add();
+
+    private static void DeclareAdvancedDdgiBuffer(
+        RenderPipelineResourceLayoutBuilder builder,
+        string name,
+        uint stride,
+        uint elementCount,
+        Func<XRDataBuffer> factory)
+        => builder.Buffer(name)
+            .Size(RenderResourceSizePolicy.Internal())
+            .Lifetime(RenderResourceLifetime.Persistent)
+            .Usage(RenderPipelineResourceUsage.StorageBuffer)
+            .BufferFormat((ulong)stride * elementCount, EBufferTarget.ShaderStorageBuffer, EBufferUsage.DynamicDraw)
+            .Elements(stride, elementCount)
+            .Factory(factory)
+            .When(HasDdgiResources)
+            .Add();
+
+    private static bool HasDdgiResources(RenderPipelineResourceProfile profile)
+        => (profile.FeatureMask & DdgiResourcesFeatureBit) != 0UL;
 
     private void DeclareAdvancedLateExecutionResources(RenderPipelineResourceLayoutBuilder builder)
     {
@@ -297,7 +520,7 @@ public partial class AdvancedRenderPipeline
             .DependsOn(HDRSceneTextureName, BloomBlurTextureName, DepthViewTextureName, StencilViewTextureName, AutoExposureTextureName);
         if (!builder.Profile.Stereo)
             postProcessMaterial.DependsOn(AtmosphereColorTextureName, VolumetricFogColorTextureName);
-        postProcessMaterial.Factory(CreatePostProcessFBO).Add();
+        postProcessMaterial.IncrementalFactory(CreatePostProcessFBOIncrementally).Add();
         builder.QuadMaterial(FinalPostProcessFBOName).Lifetime(RenderResourceLifetime.Transient)
             .DependsOn(PostProcessOutputTextureName).Factory(CreateFinalPostProcessFBO).Add();
         DeclareAdvancedBloomFrameBuffers(builder, internalSize);
@@ -320,7 +543,7 @@ public partial class AdvancedRenderPipeline
         builder.FrameBuffer(TsrUpscaleFBOName).Size(windowSize).Lifetime(RenderResourceLifetime.Persistent)
             .Usage(RenderPipelineResourceUsage.ColorAttachment).Color(0, TsrOutputTextureName)
             .DependsOn(FinalPostProcessOutputTextureName, VelocityTextureName, DepthViewTextureName, HistoryDepthViewTextureName, TsrHistoryColorTextureName, StencilViewTextureName, AdvancedTemporalHistoryContract.ReactiveMaskResourceName)
-            .Factory(CreateTsrUpscaleFBO).Add();
+            .IncrementalFactory(CreateTsrUpscaleFBOIncrementally).Add();
 
     }
 
@@ -400,7 +623,7 @@ public partial class AdvancedRenderPipeline
                 AutoExposureTextureName,
                 AtmosphereColorTextureName,
                 VolumetricFogColorTextureName)
-            .Factory(CreatePostProcessFBO).Add();
+            .IncrementalFactory(CreatePostProcessFBOIncrementally).Add();
         builder.QuadMaterial(FinalPostProcessFBOName).Lifetime(RenderResourceLifetime.Transient)
             .DependsOn(PostProcessOutputTextureName)
             .Factory(CreateFinalPostProcessFBO).Add();
@@ -439,7 +662,7 @@ public partial class AdvancedRenderPipeline
 
         builder.FrameBuffer(DepthPeelingResolveFBOName).Size(internalSize).Lifetime(RenderResourceLifetime.Transient)
             .Usage(RenderPipelineResourceUsage.ColorAttachment).Color(0, HDRSceneTextureName)
-            .DependsOn(TransparentSceneCopyTextureName, DepthPeelColorTextureName(0), DepthPeelDepthTextureName(0)).Factory(CreateDepthPeelingResolveFBO).Add();
+            .DependsOn(TransparentSceneCopyTextureName, DepthPeelColorTextureName(0), DepthPeelDepthTextureName(0)).IncrementalFactory(CreateDepthPeelingResolveFBOIncrementally).Add();
     }
 
     private void DeclareAdvancedBloomFrameBuffers(RenderPipelineResourceLayoutBuilder builder, RenderResourceSizePolicy internalSize)
@@ -467,8 +690,8 @@ public partial class AdvancedRenderPipeline
         DeclareLatePostColor(builder, DepthOfFieldTextureName, internalSize, layers, EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat, ESizedInternalFormat.Rgba16f);
         DeclareLatePostDestination(builder, MotionBlurCopyFBOName, MotionBlurTextureName, internalSize, CreateMotionBlurCopyFBO);
         DeclareLatePostDestination(builder, DepthOfFieldCopyFBOName, DepthOfFieldTextureName, internalSize, CreateDepthOfFieldCopyFBO);
-        builder.QuadMaterial(MotionBlurFBOName).Lifetime(RenderResourceLifetime.Transient).DependsOn(MotionBlurTextureName, VelocityTextureName, DepthViewTextureName).Factory(CreateMotionBlurFBO).Add();
-        builder.QuadMaterial(DepthOfFieldFBOName).Lifetime(RenderResourceLifetime.Transient).DependsOn(DepthOfFieldTextureName, DepthViewTextureName).Factory(CreateDepthOfFieldFBO).Add();
+        builder.QuadMaterial(MotionBlurFBOName).Lifetime(RenderResourceLifetime.Transient).DependsOn(MotionBlurTextureName, VelocityTextureName, DepthViewTextureName).IncrementalFactory(CreateMotionBlurFBOIncrementally).Add();
+        builder.QuadMaterial(DepthOfFieldFBOName).Lifetime(RenderResourceLifetime.Transient).DependsOn(DepthOfFieldTextureName, DepthViewTextureName).IncrementalFactory(CreateDepthOfFieldFBOIncrementally).Add();
 
         DeclareAdvancedHalfEffect(builder, AtmosphereColorTextureName, AtmosphereHalfDepthTextureName, AtmosphereHalfScatterTextureName, AtmosphereHalfTemporalTextureName, AtmosphereHalfHistoryTextureName,
             AtmosphereHalfDepthQuadFBOName, AtmosphereHalfDepthFBOName, AtmosphereHalfScatterQuadFBOName, AtmosphereHalfScatterFBOName, AtmosphereReprojectQuadFBOName, AtmosphereReprojectFBOName, AtmosphereHistoryFBOName, AtmosphereUpscaleQuadFBOName, AtmosphereUpscaleFBOName,

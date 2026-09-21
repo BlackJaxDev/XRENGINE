@@ -424,16 +424,20 @@ internal sealed partial class VulkanFrameLoop
             bool presentedSceneSource =
                 !attempt.InteractiveResizeOverlayOnly &&
                 attempt.RecoverySwapchainWriteCount <= 0;
-            if (presentedSceneSource &&
-                source.ColorTexture is not null &&
+            // Only the retained source owner observes and writes this frame
+            // slot's descriptor. Other stereo cohorts legally replay it.
+            bool requiresFinalSourceDescriptor =
+                presentedSceneSource &&
+                attempt.HasWindowPresentationSourceOwner &&
+                source.ColorTexture is not null;
+            if (requiresFinalSourceDescriptor &&
                 !sourceSnapshotReady)
             {
                 invariantFailed = true;
                 invariantFailure =
                     "accepted desktop present source is not descriptor-ready";
             }
-            else if (presentedSceneSource &&
-                     source.ColorTexture is not null &&
+            else if (requiresFinalSourceDescriptor &&
                      (descriptor.Sequence == 0 ||
                       descriptor.DescriptorSlot != unchecked((int)attempt.ImageIndex)))
             {
@@ -441,16 +445,14 @@ internal sealed partial class VulkanFrameLoop
                 invariantFailure =
                     "final source descriptor observation is missing or belongs to another frame-data slot";
             }
-            else if (presentedSceneSource &&
-                     source.ColorTexture is not null &&
+            else if (requiresFinalSourceDescriptor &&
                      !descriptor.WriteSucceeded)
             {
                 invariantFailed = true;
                 invariantFailure =
                     "final source descriptor write did not complete";
             }
-            else if (presentedSceneSource &&
-                     source.ColorTexture is not null &&
+            else if (requiresFinalSourceDescriptor &&
                      (descriptor.ImageView != source.ImageView.Handle ||
                       descriptor.Sampler != source.Sampler.Handle))
             {

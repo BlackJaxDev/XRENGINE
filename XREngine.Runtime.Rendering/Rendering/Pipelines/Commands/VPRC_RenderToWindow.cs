@@ -14,21 +14,37 @@ namespace XREngine.Rendering.Pipelines.Commands;
 [RenderPipelineScriptCommand]
 public sealed class VPRC_RenderToWindow : ViewportRenderCommand
 {
+    private readonly record struct PresentBindingState(
+        XRTexture? SourceTexture,
+        XRFrameBuffer? SourceFrameBuffer,
+        AbstractRenderer? Renderer,
+        RenderTextureSamplingState SamplingState,
+        bool FlipSourceYOnVulkan,
+        int PipelineResourceGeneration,
+        bool PublishesWindowSource);
+
     /// <summary>
     /// Publishes presentation state with exact source-resource ownership so an
     /// unchanged backbuffer copy can reuse its immutable Vulkan artifact.
     /// </summary>
     private sealed class PresentBindingPublisher(
-        VPRC_RenderToWindow owner) : IRenderResourceBindingPublisher
+        VPRC_RenderToWindow owner) :
+        IRenderResourceBindingPublisher,
+        IWindowPresentationBindingPublisher
     {
+        private const int DeferredPublicationCapacity = 1024;
         private readonly object _generationSync = new();
-        private XRTexture? _lastSourceTexture;
-        private AbstractRenderer? _lastRenderer;
-        private ulong _lastSourceDescriptorResourceEpoch;
-        private bool _lastSourceReady;
-        private bool _lastFlipSourceYOnVulkan;
-        private int _lastPipelineResourceGeneration = int.MinValue;
+        private readonly object _activationSync = new();
+        private readonly object _publicationSync = new();
+        private readonly PresentBindingState[] _deferredStates =
+            new PresentBindingState[DeferredPublicationCapacity];
+        private readonly ulong[] _deferredTokens = new ulong[DeferredPublicationCapacity];
+        private PresentBindingState _lastState;
+        private bool _hasLastState;
         private long _generation = 1;
+        private long _nextDeferredToken;
+        private PresentBindingState _activeState;
+        private ulong _activeDeferredToken;
 
         public ERenderBindingFrequency Frequency
             => ERenderBindingFrequency.Pass;
@@ -37,44 +53,7 @@ public sealed class VPRC_RenderToWindow : ViewportRenderCommand
 
         public ulong Generation
         {
-            get
-            {
-                XRTexture? sourceTexture = owner.ResolvePresentSourceTexture();
-                AbstractRenderer? renderer = AbstractRenderer.Current;
-                RenderTextureSamplingState samplingState =
-                    owner.ResolvePresentSourceSamplingState(
-                        sourceTexture,
-                        renderer);
-                bool flipSourceYOnVulkan = owner.FlipSourceYOnVulkan;
-                int pipelineResourceGeneration =
-                    RuntimeEngine.Rendering.State.CurrentRenderingPipeline
-                        ?.ResourceGeneration ?? 0;
-
-                lock (_generationSync)
-                {
-                    if (ReferenceEquals(sourceTexture, _lastSourceTexture) &&
-                        ReferenceEquals(renderer, _lastRenderer) &&
-                        samplingState.DescriptorResourceEpoch ==
-                            _lastSourceDescriptorResourceEpoch &&
-                        samplingState.IsReady == _lastSourceReady &&
-                        flipSourceYOnVulkan == _lastFlipSourceYOnVulkan &&
-                        pipelineResourceGeneration == _lastPipelineResourceGeneration)
-                    {
-                        return unchecked((ulong)_generation);
-                    }
-
-                    _lastSourceTexture = sourceTexture;
-                    _lastRenderer = renderer;
-                    _lastSourceDescriptorResourceEpoch =
-                        samplingState.DescriptorResourceEpoch;
-                    _lastSourceReady = samplingState.IsReady;
-                    _lastFlipSourceYOnVulkan = flipSourceYOnVulkan;
-                    _lastPipelineResourceGeneration = pipelineResourceGeneration;
-                    if (Interlocked.Increment(ref _generation) == 0)
-                        Interlocked.CompareExchange(ref _generation, 1, 0);
-                    return unchecked((ulong)_generation);
-                }
-            }
+            get => GetGeneration(GetBindingState(out _));
         }
 
         public ulong ResourceGeneration => Generation;
@@ -82,15 +61,23 @@ public sealed class VPRC_RenderToWindow : ViewportRenderCommand
         public void PublishUniforms(
             XRRenderProgram vertexProgram,
             XRRenderProgram materialProgram)
-            => materialProgram.Uniform(
-                "FlipSourceYOnVulkan",
-                owner.FlipSourceYOnVulkan);
+        {
+            PresentBindingState state = GetBindingState(out _);
+            materialProgram.Uniform("FlipSourceYOnVulkan", state.FlipSourceYOnVulkan);
+        }
 
         public void PublishResources(
             XRRenderProgram vertexProgram,
             XRRenderProgram materialProgram)
         {
-            XRTexture? sourceTexture = owner.ResolvePresentSourceTexture();
+            PresentBindingState state = GetBindingState(out bool hasDeferredSnapshot);
+            XRTexture? sourceTexture = state.SourceTexture;
+            if (hasDeferredSnapshot &&
+                (state.Renderer is null || !state.SamplingState.IsReady))
+            {
+                throw new InvalidOperationException(
+                    "Deferred presentation binding snapshot was not sampling-ready.");
+            }
             if (sourceTexture is null)
             {
                 materialProgram.SuppressFallbackSamplerWarning("SourceTexture");
@@ -98,6 +85,131 @@ public sealed class VPRC_RenderToWindow : ViewportRenderCommand
             }
 
             materialProgram.Sampler("SourceTexture", sourceTexture, 0);
+        }
+
+        public ulong CaptureDeferredPublication()
+        {
+            PresentBindingState state = CaptureCurrentState();
+            if (state.SourceTexture is null || state.Renderer is null ||
+                !state.SamplingState.IsReady)
+            {
+                throw new InvalidOperationException(
+                    "RenderToWindow deferred binding capture requires a resolved, sampling-ready presentation source.");
+            }
+
+            ulong token = unchecked((ulong)Interlocked.Increment(ref _nextDeferredToken));
+            if (token == 0)
+                token = unchecked((ulong)Interlocked.Increment(ref _nextDeferredToken));
+
+            int slot = (int)(token % DeferredPublicationCapacity);
+            // Retain this publication after deactivation so a foreground
+            // request can retry materialization with the same token. A later
+            // ring wrap replaces it; the stale token then fails activation.
+            lock (_publicationSync)
+            {
+                _deferredStates[slot] = state;
+                _deferredTokens[slot] = token;
+            }
+            return token;
+        }
+
+        public bool TryActivateDeferredPublication(ulong token)
+        {
+            if (token == 0)
+                return false;
+
+            Monitor.Enter(_activationSync);
+            int slot = (int)(token % DeferredPublicationCapacity);
+            lock (_publicationSync)
+            {
+                if (_deferredTokens[slot] != token)
+                {
+                    Monitor.Exit(_activationSync);
+                    return false;
+                }
+
+                _activeState = _deferredStates[slot];
+                _activeDeferredToken = token;
+            }
+            return true;
+        }
+
+        public void DeactivateDeferredPublication(ulong token)
+        {
+            if (_activeDeferredToken != token)
+                throw new InvalidOperationException(
+                    "Deferred presentation binding publication deactivated out of order.");
+
+            _activeState = default;
+            _activeDeferredToken = 0;
+            Monitor.Exit(_activationSync);
+        }
+
+        public bool TryGetWindowPresentationSource(
+            ulong token,
+            out XRTexture? sourceTexture,
+            out XRFrameBuffer? sourceFrameBuffer)
+        {
+            sourceTexture = null;
+            sourceFrameBuffer = null;
+            if (token == 0)
+                return false;
+
+            int slot = (int)(token % DeferredPublicationCapacity);
+            lock (_publicationSync)
+            {
+                if (_deferredTokens[slot] != token)
+                    return false;
+
+                PresentBindingState state = _deferredStates[slot];
+                if (!state.PublishesWindowSource || state.SourceTexture is null)
+                    return false;
+
+                sourceTexture = state.SourceTexture;
+                sourceFrameBuffer = state.SourceFrameBuffer;
+                return true;
+            }
+        }
+
+        private PresentBindingState GetBindingState(out bool hasDeferredSnapshot)
+        {
+            lock (_activationSync)
+            {
+                hasDeferredSnapshot = _activeDeferredToken != 0;
+                if (hasDeferredSnapshot)
+                    return _activeState;
+            }
+
+            return CaptureCurrentState();
+        }
+
+        private PresentBindingState CaptureCurrentState()
+        {
+            XRTexture? sourceTexture = owner.ResolvePresentSourceTexture();
+            AbstractRenderer? renderer = AbstractRenderer.Current;
+            return new PresentBindingState(
+                sourceTexture,
+                owner._resolvedSourceFrameBuffer,
+                renderer,
+                owner.ResolvePresentSourceSamplingState(sourceTexture, renderer),
+                owner.FlipSourceYOnVulkan,
+                ActivePipelineInstance.ResourceGeneration,
+                owner._publishesWindowSource);
+        }
+
+        private ulong GetGeneration(in PresentBindingState state)
+        {
+            lock (_generationSync)
+            {
+                if (_hasLastState && state == _lastState)
+                    return unchecked((ulong)_generation);
+
+                _lastState = state;
+                _hasLastState = true;
+                if (Interlocked.Increment(ref _generation) == 0)
+                    Interlocked.CompareExchange(ref _generation, 1, 0);
+                return unchecked((ulong)_generation);
+            }
         }
     }
 
@@ -162,13 +274,49 @@ void main()
 }
 """;
 
+    // A desktop backbuffer is a single-layer target even when the source was
+    // rendered as a stereo array. Select eye zero explicitly instead of
+    // relying on OVR view selection, which is only valid for layered output.
+    private const string ArrayMirrorPresentShaderCode = """
+#version 450
+
+layout(location = 0) out vec4 OutColor;
+layout(location = 0) in vec3 FragPos;
+
+uniform sampler2DArray SourceTexture;
+uniform bool FlipSourceYOnVulkan; // XRENGINE_FREQUENCY(Pass)
+
+vec2 ResolvePresentTextureUv(vec2 clipXY)
+{
+    vec2 uv = clipXY * 0.5 + 0.5;
+#ifdef XRENGINE_VULKAN
+    if (FlipSourceYOnVulkan)
+        uv.y = 1.0 - uv.y;
+#endif
+    return uv;
+}
+
+void main()
+{
+    vec2 clipXY = FragPos.xy;
+    if (clipXY.x < -1.0 || clipXY.x > 1.0 || clipXY.y < -1.0 || clipXY.y > 1.0)
+        discard;
+
+    OutColor = texture(SourceTexture, vec3(ResolvePresentTextureUv(clipXY), 0.0));
+}
+""";
+
     private XRMaterial? _material;
     private XRQuadFrameBuffer? _quad;
+    private XRMaterial? _arrayMirrorMaterial;
+    private XRQuadFrameBuffer? _arrayMirrorQuad;
     private XRMaterial? _stereoMaterial;
     private XRQuadFrameBuffer? _stereoQuad;
     private XRTexture? _resolvedSourceTexture;
+    private XRFrameBuffer? _resolvedSourceFrameBuffer;
     private AbstractRenderer? _resolvedSourceRenderer;
     private RenderTextureSamplingState _resolvedSourceSamplingState;
+    private bool _publishesWindowSource;
     private string? _cachedPassSourceTextureName;
     private string? _cachedPassSourceFboName;
     private string? _cachedRenderGraphPassName;
@@ -185,14 +333,19 @@ void main()
 
     internal override void AllocateContainerResources(XRRenderPipelineInstance instance)
     {
-        if (_quad is not null)
-            return;
+        bool stereoGeneration = instance.CurrentResourceBuildContext?.Key.Stereo
+            ?? instance.ActiveGeneration?.Key.Stereo
+            ?? false;
 
         _material ??= CreatePresentMaterial(PresentShaderCode);
+        _quad ??= CreatePresentQuad(_material, useMultiview: false);
+        if (!stereoGeneration)
+            return;
 
-        _quad = new XRQuadFrameBuffer(_material);
-        _quad.FullScreenMesh.BindingPublishers.Add(
-            new PresentBindingPublisher(this));
+        _arrayMirrorMaterial ??= CreatePresentMaterial(ArrayMirrorPresentShaderCode);
+        _arrayMirrorQuad ??= CreatePresentQuad(_arrayMirrorMaterial, useMultiview: false);
+        _stereoMaterial ??= CreatePresentMaterial(StereoPresentShaderCode);
+        _stereoQuad ??= CreatePresentQuad(_stereoMaterial, useMultiview: true);
     }
 
     internal override void ReleaseContainerResources(XRRenderPipelineInstance instance)
@@ -205,6 +358,15 @@ void main()
 
         _material?.Destroy();
         _material = null;
+
+        if (_arrayMirrorQuad is not null)
+        {
+            _arrayMirrorQuad.Destroy();
+            _arrayMirrorQuad = null;
+        }
+
+        _arrayMirrorMaterial?.Destroy();
+        _arrayMirrorMaterial = null;
 
         if (_stereoQuad is not null)
         {
@@ -299,7 +461,8 @@ void main()
         bool isActiveWindowViewport = windowViewport?.Window?.Viewports.Contains(windowViewport) == true;
         bool isExternalSwapchainTarget = renderer.IsRenderingExternalSwapchainTarget;
         bool isLeaseBackedOutputTarget = isExternalSwapchainTarget || isExplicitFrameOutputTarget;
-        bool useBoundOutputFbo = instance.RenderState.OutputFBO is not null;
+        XRFrameBuffer? outputFbo = instance.RenderState.OutputFBO;
+        bool useBoundOutputFbo = outputFbo is not null;
         if (windowViewport is not null && !isActiveWindowViewport && !isLeaseBackedOutputTarget && !useBoundOutputFbo)
         {
             Debug.RenderingWarningEvery(
@@ -343,9 +506,25 @@ void main()
             return;
         }
 
-        bool useStereoPresent = instance.RenderState.StereoPass && IsStereoArrayTexture(sourceTexture);
-        XRQuadFrameBuffer quad = useStereoPresent ? GetOrCreateStereoQuad() : _quad;
-        if (instance.RenderState.StereoPass && !useStereoPresent)
+        bool sourceIsStereoArray = IsStereoArrayTexture(sourceTexture);
+        bool useStereoPresent = sourceIsStereoArray && HasLayeredPresentDestination(instance, finalOutput);
+        if (sourceIsStereoArray &&
+            (useStereoPresent && _stereoQuad is null || !useStereoPresent && _arrayMirrorQuad is null))
+        {
+            Debug.RenderingWarningEvery(
+                $"RenderToWindow.ArrayQuadUnavailable.{instance.GetHashCode()}",
+                TimeSpan.FromSeconds(1),
+                "[RenderDiag] RenderToWindow skipped: array source requires a stereo presentation quad, but this resource generation was allocated for mono. SourceTex='{0}' SourceFBO='{1}' Pipeline={2} Generation={3}",
+                SourceTextureName ?? "<null>",
+                SourceFBOName ?? "<null>",
+                instance.Pipeline?.DebugName ?? instance.Pipeline?.GetType().Name ?? "<null>",
+                instance.ResourceGeneration);
+            return;
+        }
+        XRQuadFrameBuffer quad = sourceIsStereoArray
+            ? useStereoPresent ? _stereoQuad! : _arrayMirrorQuad!
+            : _quad;
+        if (instance.RenderState.StereoPass && !sourceIsStereoArray)
         {
             Debug.RenderingWarningEvery(
                 $"RenderToWindow.StereoMonoSource.{instance.GetHashCode()}.{sourceTexture.Name}",
@@ -358,7 +537,7 @@ void main()
                 instance.Pipeline?.DebugName ?? instance.Pipeline?.GetType().Name ?? "<null>");
         }
 
-        if (useStereoPresent)
+        if (useStereoPresent && XREnvironment.IsEnabled(XREngineEnvironmentVariables.VulkanDescriptorTrace))
         {
             Debug.RenderingEvery(
                 $"RenderToWindow.StereoPresent.{instance.GetHashCode()}.{sourceTexture.Name}",
@@ -390,10 +569,21 @@ void main()
             ? RuntimeEngine.Rendering.State.PushRenderGraphPassIndex(passIndex)
             : default;
 
+        // OutputFBO describes the destination but does not bind it. Keep both
+        // identities scoped through clear and deferred draw capture so a layered
+        // output cannot accidentally become a desktop/backbuffer draw.
+        using var outputTargetScope = outputFbo is not null
+            ? instance.RenderState.PushRenderTargetBinding(
+                RenderGraphResourceNames.OutputRenderTarget, outputFbo, write: true)
+            : default;
+        using var outputBindingScope = outputFbo is not null
+            ? outputFbo.BindForWritingState()
+            : default;
         if (!useBoundOutputFbo)
             RuntimeEngine.Rendering.State.UnbindFrameBuffers(EFramebufferTarget.Framebuffer);
+        XRFrameBuffer? sourceFrameBuffer = ResolveSourceFrameBuffer(instance, sourceTexture);
         if (!isLeaseBackedOutputTarget && !useBoundOutputFbo)
-            renderer.TrackWindowPresentSource(sourceTexture, ResolveSourceFrameBuffer(instance, sourceTexture));
+            renderer.TrackWindowPresentSource(sourceTexture, sourceFrameBuffer);
 
         using var areaScope = instance.RenderState.PushRenderArea(region);
         if (ClearColor || ClearDepth || ClearStencil)
@@ -402,8 +592,10 @@ void main()
         try
         {
             _resolvedSourceTexture = sourceTexture;
+            _resolvedSourceFrameBuffer = sourceFrameBuffer;
             _resolvedSourceRenderer = renderer;
             _resolvedSourceSamplingState = sourceSamplingState;
+            _publishesWindowSource = !isLeaseBackedOutputTarget && !useBoundOutputFbo;
             // SourceTexture is published by PresentBindingPublisher while the
             // draw snapshot is captured. Eager quad preflight runs before that
             // publication and would reject the draw for its not-yet-bound source.
@@ -412,8 +604,10 @@ void main()
         finally
         {
             _resolvedSourceTexture = null;
+            _resolvedSourceFrameBuffer = null;
             _resolvedSourceRenderer = null;
             _resolvedSourceSamplingState = default;
+            _publishesWindowSource = false;
         }
     }
 
@@ -587,16 +781,25 @@ void main()
             }
         };
 
-    private XRQuadFrameBuffer GetOrCreateStereoQuad()
+    private XRQuadFrameBuffer CreatePresentQuad(XRMaterial material, bool useMultiview)
     {
-        if (_stereoQuad is not null)
-            return _stereoQuad;
+        var quad = new XRQuadFrameBuffer(
+            material,
+            useMultiview: useMultiview,
+            prepareForInitialRendering: false);
+        quad.FullScreenMesh.BindingPublishers.Add(new PresentBindingPublisher(this));
+        quad.PrepareForInitialRendering();
+        return quad;
+    }
 
-        _stereoMaterial ??= CreatePresentMaterial(StereoPresentShaderCode);
-        _stereoQuad = new XRQuadFrameBuffer(_stereoMaterial);
-        _stereoQuad.FullScreenMesh.BindingPublishers.Add(
-            new PresentBindingPublisher(this));
-        return _stereoQuad;
+    private static bool HasLayeredPresentDestination(
+        XRRenderPipelineInstance instance,
+        RenderFrameOutputDescription? output)
+    {
+        if (instance.RenderState.OutputFBO is { } outputFbo)
+            return outputFbo.ForceOvrMultiview;
+
+        return output is { IsValid: true } frameOutput && frameOutput.Properties.Layers > 1;
     }
 
     private static bool IsStereoArrayTexture(XRTexture texture)

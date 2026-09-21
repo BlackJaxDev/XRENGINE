@@ -3,6 +3,7 @@ using System.Numerics;
 using System.Runtime.InteropServices;
 using XREngine.Components.Capture.Lights;
 using XREngine.Data.Rendering;
+using static XREngine.RuntimeEngine.Rendering.State;
 
 namespace XREngine.Rendering;
 
@@ -12,57 +13,71 @@ public partial class AdvancedRenderPipeline
     /// Stages a complete probe refresh before replacing the last usable publication.
     /// Allocations here occur only on structural/capture-version changes, not sampling.
     /// </summary>
-    private void BuildProbeResources(IList<LightProbeComponent> readyProbes, bool deferredByBatchCapture = false)
+    private void BuildProbeResources(
+        ForwardLightProbeInstanceResources state,
+        IList<LightProbeComponent> readyProbes,
+        IReadOnlyList<int> sourceIndices,
+        object worldIdentity,
+        bool deferredByBatchCapture = false)
     {
         if (readyProbes.Count == 0)
         {
-            ClearProbeResources();
+            state.ClearResources();
             return;
         }
 
-        if (!RuntimeEngine.IsRenderThread || AbstractRenderer.Current is not { } renderer)
+        if (!RuntimeEngine.IsRenderThread ||
+            AbstractRenderer.Current is not { } renderer ||
+            !ReferenceEquals(CurrentRenderingPipeline, state.Owner))
         {
-            DeferProbeResourceRefresh();
+            DeferProbeResourceRefresh(state);
             return;
         }
 
+        int resourceGeneration = state.Owner.ResourceGeneration;
+        IRenderApiWrapperOwner apiWrapperIdentityOwner = renderer.ApiWrapperIdentityOwner;
+        LightProbeComponent[] probeSnapshot = [.. readyProbes];
+        int[] sourceIndexSnapshot = [.. sourceIndices];
+        ulong bindingFrameId = state.BindingStateFrameId;
+        int observedBatchVersion = state.ObservedLightProbeBatchCompletedVersion;
         Stopwatch stopwatch = Stopwatch.StartNew();
-        var retained = new List<LightProbeIblOutputGeneration>(readyProbes.Count);
-        var irradianceSources = new XRTexture2D[readyProbes.Count];
-        var prefilterSources = new XRTexture2D[readyProbes.Count];
-        var positions = new List<ProbePositionData>(readyProbes.Count);
-        var parameters = new List<ProbeParamData>(readyProbes.Count);
+        var retained = new List<LightProbeIblOutputGeneration>(probeSnapshot.Length);
+        var irradianceSources = new XRTexture2D[probeSnapshot.Length];
+        var prefilterSources = new XRTexture2D[probeSnapshot.Length];
+        var positions = new ProbePositionData[probeSnapshot.Length];
+        var parameters = new ProbeParamData[probeSnapshot.Length];
+        var probeIds = new Guid[probeSnapshot.Length];
         XRTexture2DArray? irradiance = null;
         XRTexture2DArray? prefilter = null;
         XRDataBuffer? positionBuffer = null;
         XRDataBuffer? parameterBuffer = null;
+        ProbeGridResourceCandidate? grid = null;
         bool committed = false;
         try
         {
-            for (int index = 0; index < readyProbes.Count; index++)
+            for (int index = 0; index < probeSnapshot.Length; index++)
             {
-                LightProbeComponent probe = readyProbes[index];
+                LightProbeComponent probe = probeSnapshot[index];
                 if (!probe.TryGetActiveIblOutput(out LightProbeIblOutputGeneration generation) ||
                     !generation.TryRetainPublication())
                 {
-                    DeferProbeResourceRefresh();
-                    Debug.RenderingWarningEvery("Advanced.ProbeArrayRefreshRejected", TimeSpan.FromSeconds(2),
+                    DeferProbeResourceRefresh(state);
+                    Debug.RenderingWarningEvery(
+                        "Advanced.ProbeArrayRefreshRejected",
+                        TimeSpan.FromSeconds(2),
                         "[Advanced] Probe array refresh deferred; an output generation became unavailable before retention. Keeping the previous publication.");
                     return;
                 }
+
                 retained.Add(generation);
                 irradianceSources[index] = generation.Irradiance;
                 prefilterSources[index] = generation.PrefilteredRadiance;
-                positions.Add(new ProbePositionData { Position = new Vector4(probe.Transform.RenderTranslation, 1.0f) });
-                parameters.Add(new ProbeParamData
+                probeIds[index] = probe.ID;
+                positions[index] = new ProbePositionData
                 {
-                    InfluenceInner = new Vector4(probe.InfluenceBoxInnerExtents, probe.InfluenceSphereInnerRadius),
-                    InfluenceOuter = new Vector4(probe.InfluenceBoxOuterExtents, probe.InfluenceSphereOuterRadius),
-                    InfluenceOffsetShape = new Vector4(probe.InfluenceOffset, probe.InfluenceShape == LightProbeComponent.EInfluenceShape.Box ? 1.0f : 0.0f),
-                    ProxyCenterEnable = new Vector4(probe.ProxyBoxCenterOffset, probe.ParallaxCorrectionEnabled ? 1.0f : 0.0f),
-                    ProxyHalfExtents = new Vector4(probe.ProxyBoxHalfExtents, probe.NormalizationScale),
-                    ProxyRotation = new Vector4(probe.ProxyBoxRotation.X, probe.ProxyBoxRotation.Y, probe.ProxyBoxRotation.Z, probe.ProxyBoxRotation.W),
-                });
+                    Position = new Vector4(probe.Transform.RenderTranslation, 1.0f),
+                };
+                parameters[index] = CreateProbeParamData(probe);
             }
 
             irradiance = new XRTexture2DArray(irradianceSources)
@@ -84,58 +99,129 @@ public partial class AdvancedRenderPipeline
             PushProbeTextureArray(renderer, irradiance);
             PushProbeTextureArray(renderer, prefilter);
 
-            positionBuffer = new XRDataBuffer(LightProbePositionBufferName, EBufferTarget.ShaderStorageBuffer,
-                (uint)positions.Count, EComponentType.Struct, (uint)Marshal.SizeOf<ProbePositionData>(), false, false)
+            positionBuffer = new XRDataBuffer(
+                LightProbePositionBufferName,
+                EBufferTarget.ShaderStorageBuffer,
+                (uint)positions.Length,
+                EComponentType.Struct,
+                (uint)Marshal.SizeOf<ProbePositionData>(),
+                false,
+                false)
             {
                 BindingIndexOverride = 0,
             };
-            positionBuffer.SetDataRaw<ProbePositionData>(positions);
+            positionBuffer.SetDataRaw(positions);
             positionBuffer.PushData();
-            parameterBuffer = new XRDataBuffer(LightProbeParamBufferName, EBufferTarget.ShaderStorageBuffer,
-                (uint)parameters.Count, EComponentType.Struct, (uint)Marshal.SizeOf<ProbeParamData>(), false, false)
+
+            parameterBuffer = new XRDataBuffer(
+                LightProbeParamBufferName,
+                EBufferTarget.ShaderStorageBuffer,
+                (uint)parameters.Length,
+                EComponentType.Struct,
+                (uint)Marshal.SizeOf<ProbeParamData>(),
+                false,
+                false)
             {
                 BindingIndexOverride = 2,
             };
-            parameterBuffer.SetDataRaw<ProbeParamData>(parameters);
+            parameterBuffer.SetDataRaw(parameters);
             parameterBuffer.PushData();
 
-            // No ordinary copy/descriptor rejection after this point: both candidate
-            // arrays are ready, and old native images retire through their last-use tickets.
-            ClearProbeResources();
-            _probeIrradianceArray = irradiance;
-            _probePrefilterArray = prefilter;
-            _probePositionBuffer = positionBuffer;
-            _probeParamBuffer = parameterBuffer;
-            committed = true;
-            RegisterProbeTextureArrays();
-            RegisterProbeBuffer(positionBuffer);
-            RegisterProbeBuffer(parameterBuffer);
-            for (int index = 0; index < readyProbes.Count; index++)
-            {
-                Guid id = readyProbes[index].ID;
-                Vector4 position = positions[index].Position;
-                _cachedProbePositions[id] = new Vector3(position.X, position.Y, position.Z);
-                _cachedProbeTextures[id] = (irradianceSources[index], prefilterSources[index]);
-                _observedProbeCaptureVersions[id] = retained[index].Generation;
-            }
-            _cachedProbePositionData = [.. positions];
-            _cachedProbeParamData = [.. parameters];
             if (_useProbeGridAcceleration)
-                BuildProbeGrid(_cachedProbePositionData, _cachedProbeParamData, null);
-            _lastProbeCount = positions.Count;
-            _pendingProbeRefresh = false;
-            _pendingProbeRefreshDeferredByBatchCapture = false;
-            StartTetrahedralizationJob(readyProbes);
+            {
+                grid = ForwardLightProbeGridBuilder.Build(
+                    positions,
+                    parameters,
+                    null,
+                    LightProbeGridCellBufferName,
+                    LightProbeGridIndexBufferName);
+            }
+
+            if (!RuntimeEngine.IsRenderThread ||
+                !ReferenceEquals(CurrentRenderingPipeline, state.Owner) ||
+                !ReferenceEquals(AbstractRenderer.Current, renderer) ||
+                !ReferenceEquals(renderer.ApiWrapperIdentityOwner, apiWrapperIdentityOwner) ||
+                !ReferenceEquals(RenderingWorld, worldIdentity) ||
+                state.Owner.ResourceGeneration != resourceGeneration)
+            {
+                DeferProbeResourceRefresh(state);
+                return;
+            }
+
+            ulong layoutSignature = ForwardLightProbeInstanceResources.ComputeLayoutSignature(
+                probeIds,
+                sourceIndexSnapshot,
+                positions,
+                parameters);
+
+            // Every candidate GPU object is ready before the old cohort is retired.
+            state.ClearResources();
+            state.IrradianceArray = irradiance;
+            state.PrefilterArray = prefilter;
+            state.PositionBuffer = positionBuffer;
+            state.ParamBuffer = parameterBuffer;
+            irradiance = null;
+            prefilter = null;
+            positionBuffer = null;
+            parameterBuffer = null;
+            if (grid is not null)
+            {
+                grid.RelinquishBuffers(out state.GridCellBuffer, out state.GridIndexBuffer);
+                state.GridOrigin = grid.Origin;
+                state.GridCellSize = grid.CellSize;
+                state.GridDimensions = grid.Dimensions;
+            }
+
+            state.CachedReadyProbes.AddRange(probeSnapshot);
+            state.CachedReadyProbeSourceIndices.AddRange(sourceIndexSnapshot);
+            for (int index = 0; index < probeSnapshot.Length; index++)
+            {
+                LightProbeComponent probe = probeSnapshot[index];
+                Vector4 position = positions[index].Position;
+                state.CachedProbePositions[probe.ID] = new Vector3(position.X, position.Y, position.Z);
+                state.CachedProbeTextures[probe.ID] = (irradianceSources[index], prefilterSources[index]);
+                state.ObservedProbeCaptureVersions[probe.ID] = retained[index].Generation;
+            }
+
+            state.CachedProbePositionData = positions;
+            state.CachedProbeParamData = parameters;
+            state.CachedProbeIds = probeIds;
+            state.CachedProbeSourceIndices = sourceIndexSnapshot;
+            state.CachedProbeLayoutSignature = layoutSignature;
+            state.ApiWrapperIdentityOwner = apiWrapperIdentityOwner;
+            state.WorldIdentity = worldIdentity;
+            state.PublicationResourceGeneration = resourceGeneration;
+            state.LastProbeCount = positions.Length;
+            state.PendingProbeRefresh = false;
+            state.PendingProbeRefreshDeferredByBatchCapture = false;
+            state.ObservedLightProbeBatchCompletedVersion = observedBatchVersion;
+            state.BindingStateFrameId = bindingFrameId;
+            committed = true;
+
+            state.Owner.BindImportedTexture(state.IrradianceArray!);
+            state.Owner.BindImportedTexture(state.PrefilterArray!);
+            state.Owner.BindImportedBuffer(state.PositionBuffer!);
+            state.Owner.BindImportedBuffer(state.ParamBuffer!);
+            if (state.GridCellBuffer is not null)
+                state.Owner.BindImportedBuffer(state.GridCellBuffer);
+            if (state.GridIndexBuffer is not null)
+                state.Owner.BindImportedBuffer(state.GridIndexBuffer);
+
+            StartTetrahedralizationJob(state, apiWrapperIdentityOwner, worldIdentity);
             stopwatch.Stop();
-            ReportProbeResourceRefresh(true, readyProbes.Count, stopwatch.Elapsed, deferredByBatchCapture);
+            ReportProbeResourceRefresh(true, probeSnapshot.Length, stopwatch.Elapsed, deferredByBatchCapture);
         }
         catch (Exception exception)
         {
-            DeferProbeResourceRefresh();
+            DeferProbeResourceRefresh(state);
             if (committed)
                 throw;
-            Debug.RenderingWarningEvery("Advanced.ProbeArrayRefreshRejected", TimeSpan.FromSeconds(2),
-                "[Advanced] Probe array refresh deferred; keeping the previous publication. {0}", exception.Message);
+
+            Debug.RenderingWarningEvery(
+                "Advanced.ProbeArrayRefreshRejected",
+                TimeSpan.FromSeconds(2),
+                "[Advanced] Probe array refresh deferred; keeping the previous publication. {0}",
+                exception.Message);
         }
         finally
         {
@@ -143,18 +229,20 @@ public partial class AdvancedRenderPipeline
             {
                 irradiance?.Destroy();
                 prefilter?.Destroy();
-                DestroyProbeBuffer(ref positionBuffer);
-                DestroyProbeBuffer(ref parameterBuffer);
+                ForwardLightProbeInstanceResources.DestroyBuffer(ref positionBuffer);
+                ForwardLightProbeInstanceResources.DestroyBuffer(ref parameterBuffer);
             }
+
+            grid?.Destroy();
             foreach (LightProbeIblOutputGeneration generation in retained)
                 generation.ReleasePublication();
         }
     }
 
-    private void DeferProbeResourceRefresh()
+    private static void DeferProbeResourceRefresh(ForwardLightProbeInstanceResources state)
     {
-        _pendingProbeRefresh = true;
-        _probeRefreshEarliestFrameId = RuntimeEngine.Rendering.State.RenderFrameId + 1;
+        state.PendingProbeRefresh = true;
+        state.ProbeRefreshEarliestFrameId = RuntimeEngine.Rendering.State.RenderFrameId + 1;
     }
 
     private static void PushProbeTextureArray(AbstractRenderer renderer, XRTexture2DArray texture)
@@ -162,8 +250,6 @@ public partial class AdvancedRenderPipeline
         if (renderer.GetOrCreateAPIRenderObject(texture, generateNow: true) is null)
             throw new InvalidOperationException("The renderer did not create the required probe array.");
         texture.PushData();
-        // Unlike PushData's void event, this does not mistake a deferred/busy/lost
-        // backend for a completed copy. Vulkan publishes readiness after its fence.
         if (!renderer.IsTextureReadyForShaderSampling(texture))
             throw new InvalidOperationException("The required probe array copy has not completed.");
     }

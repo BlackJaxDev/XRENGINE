@@ -310,8 +310,10 @@ public sealed class BvhRaycastDispatcher : IDisposable
             ShouldMap = false,
         };
         buffer.SetDataRaw(new uint[4], 4);
-        buffer.Generate();
-        buffer.PushSubData();
+        // The dispatcher can be constructed before a render owner is active.
+        // Retain the initial bytes now; the first dispatch binds and creates the
+        // owner-specific backend wrapper.
+        buffer.CommitDirtyBytes(0u, buffer.Length);
         _fallbackTraversalDiagnosticsBuffer = buffer;
         return buffer;
     }

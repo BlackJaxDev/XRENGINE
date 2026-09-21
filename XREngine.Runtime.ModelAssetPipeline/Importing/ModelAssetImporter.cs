@@ -21,6 +21,7 @@ using XREngine.Rendering;
 using XREngine.Rendering.Models;
 using XREngine.Rendering.Models.Caching;
 using XREngine.Rendering.Models.Materials;
+using XREngine.Rendering.Materials;
 using XREngine.Scene;
 using XREngine.Scene.Transforms;
 using AScene = Assimp.Scene;
@@ -218,8 +219,6 @@ namespace XREngine
         private static XRTexture? GetDiffuseTexture(XRTexture[] textureList, List<TextureSlot> textures)
         {
             int diffuseIndex = ResolveTextureIndex(textures, TextureType.Diffuse, TextureType.BaseColor);
-            if (diffuseIndex < 0)
-                diffuseIndex = Array.FindIndex(textureList, t => t is not null);
             if (diffuseIndex < 0 || diffuseIndex >= textureList.Length)
                 return null;
             return textureList[diffuseIndex];
@@ -1083,6 +1082,65 @@ namespace XREngine
                 ? ShaderHelper.CreateDefinedShaderVariant(shader, ImportedHeightMapShaderDefine) ?? shader
                 : shader;
 
+        /// <summary>
+        /// Publishes source texture roles before legacy material factories compact or reorder sampler slots.
+        /// These references intentionally use the original loaded texture array rather than <see cref="XRMaterial.Textures"/>.
+        /// </summary>
+        private static void PopulateSurfaceTextureBindings(XRMaterial material, XRTexture[] textureList, List<TextureSlot> textureSlots)
+        {
+            if (textureSlots.Count == 0 || textureList.Length == 0)
+            {
+                material.SurfaceTextureBindings = [];
+                return;
+            }
+
+            List<MaterialSurfaceTextureBinding> bindings = new(textureSlots.Count);
+            int count = Math.Min(textureSlots.Count, textureList.Length);
+            for (int index = 0; index < count; index++)
+            {
+                XRTexture? texture = textureList[index];
+                if (texture is null || !TryGetSurfaceTextureSemantic(NormalizeTextureType(textureSlots[index].TextureType), out EMaterialTextureSemantic semantic))
+                    continue;
+
+                ETexWrapMode wrapU = ETexWrapMode.Repeat;
+                ETexWrapMode wrapV = ETexWrapMode.Repeat;
+                if (texture is XRTexture2D texture2D)
+                {
+                    wrapU = texture2D.UWrap;
+                    wrapV = texture2D.VWrap;
+                }
+
+                bindings.Add(new MaterialSurfaceTextureBinding(
+                    semantic,
+                    texture,
+                    textureSlots[index].UVIndex,
+                    Channel: 0,
+                    IsSrgb: semantic is EMaterialTextureSemantic.BaseColor or EMaterialTextureSemantic.Emissive,
+                    WrapU: wrapU,
+                    WrapV: wrapV,
+                    UvScaleOffset: new Vector4(1.0f, 1.0f, 0.0f, 0.0f)));
+            }
+
+            material.SurfaceTextureBindings = [.. bindings];
+        }
+
+        private static bool TryGetSurfaceTextureSemantic(TextureType textureType, out EMaterialTextureSemantic semantic)
+        {
+            semantic = textureType switch
+            {
+                TextureType.Diffuse or TextureType.BaseColor => EMaterialTextureSemantic.BaseColor,
+                TextureType.Opacity => EMaterialTextureSemantic.Opacity,
+                TextureType.NormalCamera or TextureType.Normals => EMaterialTextureSemantic.Normal,
+                TextureType.Metalness => EMaterialTextureSemantic.Metallic,
+                TextureType.Roughness => EMaterialTextureSemantic.Roughness,
+                TextureType.Emissive or TextureType.EmissionColor => EMaterialTextureSemantic.Emissive,
+                _ => default,
+            };
+            return textureType is TextureType.Diffuse or TextureType.BaseColor or TextureType.Opacity
+                or TextureType.NormalCamera or TextureType.Normals or TextureType.Metalness
+                or TextureType.Roughness or TextureType.Emissive or TextureType.EmissionColor;
+        }
+
         public static void MakeMaterialDeferred(XRMaterial mat, XRTexture[] textureList, List<TextureSlot> textures, string name)
         {
             ETransparencyMode transparencyMode = ResolveTransparencyMode(textureList, textures);
@@ -1090,10 +1148,6 @@ namespace XREngine
             bool hasAnyTexture = textureList.Length > 0;
 
             int diffuseIndex = ResolveTextureIndex(textures, TextureType.Diffuse, TextureType.BaseColor);
-            if (diffuseIndex < 0)
-                diffuseIndex = Array.FindIndex(textureList, t => t is not null);
-            if (diffuseIndex < 0)
-                diffuseIndex = 0;
 
             int normalIndex = ResolveSurfaceDetailTextureIndex(textures, out bool usesHeightMap);
             int specularIndex = ResolveTextureIndex(textures, TextureType.Specular, TextureType.Shininess);
@@ -1109,6 +1163,10 @@ namespace XREngine
             XRTexture? metallic = ResolveTexture(textureList, metallicIndex);
             XRTexture? roughness = ResolveTexture(textureList, roughnessIndex);
             XRTexture? emissive = ResolveTexture(textureList, emissiveIndex);
+
+            // A normal-only or emissive-only material still uses a textured-normal shader.
+            // Its Texture0 must be neutral rather than whichever non-base map happened to load first.
+            diffuse ??= GetOrCreateDefaultUberSamplerTexture("_ImportedBaseColor", ColorF4.White);
 
             bool hasNormal = normal is not null;
             bool hasSpecular = specular is not null;
@@ -1310,6 +1368,7 @@ namespace XREngine
             }
 
             ConfigureImportedTransparency(mat, textureList, textures);
+            PopulateSurfaceTextureBindings(mat, textureList, textures);
         }
 
         public static XRMaterial MakeMaterialDeferred(XRTexture[] textureList, List<TextureSlot> textures, string name)
@@ -1457,6 +1516,7 @@ namespace XREngine
             };
 
             ConfigureImportedTransparency(mat, textureList, textures);
+            PopulateSurfaceTextureBindings(mat, textureList, textures);
         }
 
         public static XRMaterial MakeMaterialForwardPlusTextured(XRTexture[] textureList, List<TextureSlot> textures, string name)

@@ -1,6 +1,7 @@
 using System.IO;
 using XREngine.Data.Rendering;
 using XREngine.Data.Vectors;
+using XREngine.Rendering.GI.DDGI;
 using XREngine.Rendering.Models.Materials;
 
 namespace XREngine.Rendering;
@@ -25,7 +26,7 @@ public partial class DefaultRenderPipeline
     private XRTexture CreateBRDFTexture()
     {
         uint size = ResolveBrdfLutSize();
-        var tex = PrecomputeBRDF(size, size);
+        var tex = CreateBrdfLookupTexture(size, size);
         tex.Name ??= BRDFTextureName;
         tex.SamplerName ??= BRDFTextureName;
         return tex;
@@ -417,6 +418,30 @@ public partial class DefaultRenderPipeline
         }
     }
 
+    private XRTexture CreateEmissionColorTexture()
+    {
+        if (Stereo)
+        {
+            var texture = XRTexture2DArray.CreateFrameBufferTexture(
+                2, InternalWidth, InternalHeight,
+                EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat);
+            texture.Resizable = false;
+            texture.OVRMultiViewParameters = new(0, 2u);
+            texture.SizedInternalFormat = ESizedInternalFormat.Rgba16f;
+            texture.Name = EmissionColorTextureName;
+            texture.SamplerName = EmissionColorTextureName;
+            return texture;
+        }
+
+        var result = XRTexture2D.CreateFrameBufferTexture(
+            InternalWidth, InternalHeight,
+            EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat);
+        result.SizedInternalFormat = ESizedInternalFormat.Rgba16f;
+        result.Name = EmissionColorTextureName;
+        result.SamplerName = EmissionColorTextureName;
+        return result;
+    }
+
     private XRTexture CreateLightingTexture()
         => CreateLightingTexture(DiffuseTextureName, DiffuseTextureName);
 
@@ -513,6 +538,18 @@ public partial class DefaultRenderPipeline
         t.Name = MsaaRMSETextureName;
         t.SamplerName = RMSETextureName;
         return t;
+    }
+
+    private XRTexture CreateMsaaEmissionColorTexture()
+    {
+        var texture = XRTexture2D.CreateFrameBufferTexture(
+            InternalWidth, InternalHeight,
+            EPixelInternalFormat.Rgba16f, EPixelFormat.Rgba, EPixelType.HalfFloat);
+        texture.MultiSampleCount = MsaaSampleCount;
+        texture.SizedInternalFormat = ESizedInternalFormat.Rgba16f;
+        texture.Name = MsaaEmissionColorTextureName;
+        texture.SamplerName = EmissionColorTextureName;
+        return texture;
     }
 
     private XRTexture CreateMsaaDepthStencilTexture()
@@ -1697,4 +1734,46 @@ public partial class DefaultRenderPipeline
             return t;
         }
     }
+
+    private XRTexture CreateDDGITexture()
+    {
+        if (Stereo)
+        {
+            var t = XRTexture2DArray.CreateFrameBufferTexture(
+                2,
+                InternalWidth, InternalHeight,
+                EPixelInternalFormat.Rgba16f,
+                EPixelFormat.Rgba,
+                EPixelType.HalfFloat);
+            t.OVRMultiViewParameters = new(0, 2u);
+            t.Resizable = false;
+            t.SizedInternalFormat = ESizedInternalFormat.Rgba16f;
+            t.MinFilter = ETexMinFilter.Linear;
+            t.MagFilter = ETexMagFilter.Linear;
+            t.SamplerName = DDGITextureName;
+            t.Name = DDGITextureName;
+            return t;
+        }
+        else
+        {
+            var t = XRTexture2D.CreateFrameBufferTexture(
+                InternalWidth, InternalHeight,
+                EPixelInternalFormat.Rgba16f,
+                EPixelFormat.Rgba,
+                EPixelType.HalfFloat);
+            t.Resizable = false;
+            t.SizedInternalFormat = ESizedInternalFormat.Rgba16f;
+            t.MinFilter = ETexMinFilter.Linear;
+            t.MagFilter = ETexMagFilter.Linear;
+            t.SamplerName = DDGITextureName;
+            t.Name = DDGITextureName;
+            return t;
+        }
+    }
+
+    private XRTexture CreateDDGIIrradianceAtlasTexture()
+        => DDGIVolumeRuntimeState.CreateIrradianceAtlasTextureArray();
+
+    private XRTexture CreateDDGIVisibilityAtlasTexture()
+        => DDGIVolumeRuntimeState.CreateVisibilityAtlasTextureArray();
 }

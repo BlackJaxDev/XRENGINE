@@ -6,10 +6,12 @@ layout (location = 0) out vec4 AlbedoOpacity;
 layout (location = 1) out vec2 Normal;
 layout (location = 2) out vec4 RMSI;
 layout (location = 3) out uint TransformId;
+layout (location = 4) out vec4 EmissionColor;
 
 layout (location = 0) in vec3 FragPos;
 layout (location = 1) in vec3 FragNorm;
 layout (location = 4) in vec2 FragUV0;
+layout (location = 5) in vec2 FragUV1;
 layout (location = 21) flat in uint FragTransformId;
 layout (location = 27) flat in uint FragRenderIdentityId;
 
@@ -21,6 +23,7 @@ uniform float Specular = 1.0f;
 uniform float Roughness = 0.0f;
 uniform float Metallic = 0.0f;
 uniform float Emission = 0.0f;
+#pragma snippet "SurfaceEmission"
 
 void main()
 {
@@ -35,4 +38,5 @@ void main()
     Normal = XRENGINE_EncodeNormal(worldNormal);
     AlbedoOpacity = vec4(matcapSample.rgb * BaseColor, Opacity);
     RMSI = vec4(Roughness, Metallic, Specular, Emission);
+    EmissionColor = XRENGINE_ResolveSurfaceEmission(FragUV0, FragUV1, BaseColor, Emission);
 }

@@ -264,41 +264,41 @@ public partial class OpenGLRenderer
 
     private uint ToGLMask(EMemoryBarrierMask mask)
     {
-        if (mask.HasFlag(EMemoryBarrierMask.All))
+        if ((mask & EMemoryBarrierMask.All) == EMemoryBarrierMask.All)
             return uint.MaxValue;
 
         uint glMask = 0;
-        if (mask.HasFlag(EMemoryBarrierMask.VertexAttribArray))
+        if ((mask & EMemoryBarrierMask.VertexAttribArray) == EMemoryBarrierMask.VertexAttribArray)
             glMask |= (uint)MemoryBarrierMask.VertexAttribArrayBarrierBit;
-        if (mask.HasFlag(EMemoryBarrierMask.ElementArray))
+        if ((mask & EMemoryBarrierMask.ElementArray) == EMemoryBarrierMask.ElementArray)
             glMask |= (uint)MemoryBarrierMask.ElementArrayBarrierBit;
-        if (mask.HasFlag(EMemoryBarrierMask.Uniform))
+        if ((mask & EMemoryBarrierMask.Uniform) == EMemoryBarrierMask.Uniform)
             glMask |= (uint)MemoryBarrierMask.UniformBarrierBit;
-        if (mask.HasFlag(EMemoryBarrierMask.TextureFetch))
+        if ((mask & EMemoryBarrierMask.TextureFetch) == EMemoryBarrierMask.TextureFetch)
             glMask |= (uint)MemoryBarrierMask.TextureFetchBarrierBit;
-        if (mask.HasFlag(EMemoryBarrierMask.ShaderGlobalAccess))
+        if ((mask & EMemoryBarrierMask.ShaderGlobalAccess) == EMemoryBarrierMask.ShaderGlobalAccess)
             glMask |= (uint)MemoryBarrierMask.ShaderGlobalAccessBarrierBitNV;
-        if (mask.HasFlag(EMemoryBarrierMask.ShaderImageAccess))
+        if ((mask & EMemoryBarrierMask.ShaderImageAccess) == EMemoryBarrierMask.ShaderImageAccess)
             glMask |= (uint)MemoryBarrierMask.ShaderImageAccessBarrierBit;
-        if (mask.HasFlag(EMemoryBarrierMask.Command))
+        if ((mask & EMemoryBarrierMask.Command) == EMemoryBarrierMask.Command)
             glMask |= (uint)MemoryBarrierMask.CommandBarrierBit;
-        if (mask.HasFlag(EMemoryBarrierMask.PixelBuffer))
+        if ((mask & EMemoryBarrierMask.PixelBuffer) == EMemoryBarrierMask.PixelBuffer)
             glMask |= (uint)MemoryBarrierMask.PixelBufferBarrierBit;
-        if (mask.HasFlag(EMemoryBarrierMask.TextureUpdate))
+        if ((mask & EMemoryBarrierMask.TextureUpdate) == EMemoryBarrierMask.TextureUpdate)
             glMask |= (uint)MemoryBarrierMask.TextureUpdateBarrierBit;
-        if (mask.HasFlag(EMemoryBarrierMask.BufferUpdate))
+        if ((mask & EMemoryBarrierMask.BufferUpdate) == EMemoryBarrierMask.BufferUpdate)
             glMask |= (uint)MemoryBarrierMask.BufferUpdateBarrierBit;
-        if (mask.HasFlag(EMemoryBarrierMask.Framebuffer))
+        if ((mask & EMemoryBarrierMask.Framebuffer) == EMemoryBarrierMask.Framebuffer)
             glMask |= (uint)MemoryBarrierMask.FramebufferBarrierBit;
-        if (mask.HasFlag(EMemoryBarrierMask.TransformFeedback))
+        if ((mask & EMemoryBarrierMask.TransformFeedback) == EMemoryBarrierMask.TransformFeedback)
             glMask |= (uint)MemoryBarrierMask.TransformFeedbackBarrierBit;
-        if (mask.HasFlag(EMemoryBarrierMask.AtomicCounter))
+        if ((mask & EMemoryBarrierMask.AtomicCounter) == EMemoryBarrierMask.AtomicCounter)
             glMask |= (uint)MemoryBarrierMask.AtomicCounterBarrierBit;
-        if (mask.HasFlag(EMemoryBarrierMask.ShaderStorage))
+        if ((mask & EMemoryBarrierMask.ShaderStorage) == EMemoryBarrierMask.ShaderStorage)
             glMask |= (uint)MemoryBarrierMask.ShaderStorageBarrierBit;
-        if (mask.HasFlag(EMemoryBarrierMask.ClientMappedBuffer))
+        if ((mask & EMemoryBarrierMask.ClientMappedBuffer) == EMemoryBarrierMask.ClientMappedBuffer)
             glMask |= (uint)MemoryBarrierMask.ClientMappedBufferBarrierBit;
-        if (mask.HasFlag(EMemoryBarrierMask.QueryBuffer))
+        if ((mask & EMemoryBarrierMask.QueryBuffer) == EMemoryBarrierMask.QueryBuffer)
             glMask |= (uint)MemoryBarrierMask.QueryBufferBarrierBit;
         return glMask;
     }

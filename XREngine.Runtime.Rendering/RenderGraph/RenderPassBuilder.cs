@@ -216,6 +216,10 @@ public sealed class RenderPassBuilder
     public RenderPassBuilder SampleStorageTexture(string resourceName)
         => AddUsage(resourceName, ERenderPassResourceType.StorageTexture, ERenderGraphAccess.Read, ERenderPassLoadOp.Load, ERenderPassStoreOp.Store);
 
+    /// <summary>Declares a storage image output that does not read its previous contents.</summary>
+    public RenderPassBuilder WriteTexture(string resourceName)
+        => AddUsage(resourceName, ERenderPassResourceType.StorageTexture, ERenderGraphAccess.Write, ERenderPassLoadOp.DontCare, ERenderPassStoreOp.Store);
+
     /// <summary>
     /// Configures the render pass to read and write to a texture, which provides read and write access to the texture resource.
     /// </summary>

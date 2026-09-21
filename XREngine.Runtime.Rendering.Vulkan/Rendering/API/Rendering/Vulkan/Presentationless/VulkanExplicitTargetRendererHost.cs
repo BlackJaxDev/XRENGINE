@@ -199,6 +199,9 @@ public sealed unsafe partial class VulkanExplicitTargetRendererHost :
     public AdvancedOutputReservationDiagnosticsSnapshot CaptureAdvancedOutputReservationDiagnostics()
         => _renderer.CaptureAdvancedOutputReservationDiagnostics();
 
+    public AdvancedVisibilityPreparationDiagnosticsSnapshot? CaptureAdvancedVisibilityPreparationDiagnostics()
+        => _renderer.CaptureAdvancedVisibilityPreparationDiagnostics();
+
     public bool TryDrawMeshTasksIndirectCount(
         XRRenderProgram program,
         XRDataBuffer indirectBuffer,

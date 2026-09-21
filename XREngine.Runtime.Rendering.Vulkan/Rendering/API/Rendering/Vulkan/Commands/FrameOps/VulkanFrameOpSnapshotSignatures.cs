@@ -15,6 +15,46 @@ internal static class VulkanFrameOpSnapshotSignatures
 {
     private const int MaxPassMetadataSignatureCacheEntries = 128;
 
+    /// <summary>Freezes the selected shader's topology independently of its output family's stereo mode.</summary>
+    internal static FrameOpContext StampMeshTopology(in FrameOpContext context, bool usesMultiview)
+        => context.MultiviewEnabled == usesMultiview
+            ? context
+            : RefreshRecordingFingerprint(context with { MultiviewEnabled = usesMultiview });
+
+    /// <summary>
+    /// Recomputes recording identity after a producer freezes operation-specific
+    /// topology. It uses only captured context values, never ambient render state.
+    /// </summary>
+    internal static FrameOpContext RefreshRecordingFingerprint(in FrameOpContext context)
+        => context with { RecordingFingerprint = ComputeRecordingFingerprint(context) };
+
+    internal static ulong ComputeRecordingFingerprint(in FrameOpContext context)
+    {
+        FrameOpSignatureHasher hash = new();
+        hash.Add(0x46524D4F50435458UL);
+        hash.Add((int)context.ContextKind);
+        hash.Add(context.PipelineIdentity);
+        hash.Add(context.ViewportIdentity);
+        hash.Add(context.AdvancedVisibilityOutputIdentity);
+        hash.Add(context.OutputFrameBufferIdentity);
+        hash.Add(context.OutputTargetIdentity);
+        hash.Add(context.LogicalViewId);
+        hash.Add(context.OutputTargetName);
+        hash.Add(context.DisplayWidth);
+        hash.Add(context.DisplayHeight);
+        hash.Add(context.InternalWidth);
+        hash.Add(context.InternalHeight);
+        hash.Add(context.StereoEnabled);
+        hash.Add(context.MultiviewEnabled);
+        hash.Add(context.ResourceRegistrySignatureSnapshot ??
+            context.ResourceRegistry?.DescriptorSignature ?? 0);
+        hash.Add(ComputePassMetadataSignature(context.PassMetadata));
+        hash.Add(context.ResourceGeneration);
+        hash.Add(context.DescriptorGeneration);
+        hash.Add(context.SubmissionQueueFamily);
+        return hash.ToHash();
+    }
+
     internal static VulkanFrameOpPlannerStateKey BuildPlannerStateKey(
         in FrameOpContext context)
         => new(

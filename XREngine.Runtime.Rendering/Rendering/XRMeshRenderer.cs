@@ -37,7 +37,7 @@ namespace XREngine.Rendering
         /// Index of the vertex in the deformer mesh.
         /// </summary>
         public int VertexIndex;
-        
+
         /// <summary>
         /// Weight of this influence (0 to 1).
         /// </summary>
@@ -69,6 +69,75 @@ namespace XREngine.Rendering
         }
 
         private static int CurrentSettingsRevision => Volatile.Read(ref _settingsRevision);
+
+        // Held from each aggregate state install through root cache publication and
+        // rollback/post-commit cleanup. This is deliberately separate from child
+        // buffer wrapper locks: it protects the renderer's multi-buffer generations.
+        private readonly object _resourcePublicationGate = new();
+        private bool _resourcePublicationTerminated;
+        private int _resourcePublicationDepth;
+        private int _resourcePublicationThreadId;
+
+        internal void EnterResourcePublicationLease()
+        {
+            Monitor.Enter(_resourcePublicationGate);
+            int threadId = Environment.CurrentManagedThreadId;
+            if (_resourcePublicationTerminated || IsDestroyQueued || IsDestroyed)
+            {
+                Monitor.Exit(_resourcePublicationGate);
+                throw new ObjectDisposedException(
+                    nameof(XRMeshRenderer),
+                    "The mesh renderer entered teardown while resources were being prepared.");
+            }
+
+            if (_resourcePublicationDepth == 0)
+                _resourcePublicationThreadId = threadId;
+            else if (_resourcePublicationThreadId != threadId)
+            {
+                Monitor.Exit(_resourcePublicationGate);
+                throw new InvalidOperationException("Mesh-renderer publication leases are thread-affine.");
+            }
+            _resourcePublicationDepth++;
+        }
+
+        internal void ExitResourcePublicationLease()
+        {
+            if (_resourcePublicationDepth <= 0 ||
+                _resourcePublicationThreadId != Environment.CurrentManagedThreadId)
+            {
+                throw new InvalidOperationException("Mesh-renderer publication lease ownership was lost.");
+            }
+
+            _resourcePublicationDepth--;
+            if (_resourcePublicationDepth == 0)
+                _resourcePublicationThreadId = 0;
+            Monitor.Exit(_resourcePublicationGate);
+        }
+
+        internal void ValidateResourcePublicationLease()
+        {
+            if (!Monitor.IsEntered(_resourcePublicationGate) ||
+                _resourcePublicationThreadId != Environment.CurrentManagedThreadId)
+            {
+                throw new InvalidOperationException("The mesh-renderer publication lease is not held by this thread.");
+            }
+            if (_resourcePublicationTerminated || IsDestroyQueued || IsDestroyed)
+            {
+                throw new ObjectDisposedException(
+                    nameof(XRMeshRenderer),
+                    "The mesh renderer entered teardown during resource publication.");
+            }
+        }
+
+        internal void EnterResourceTeardownGate()
+            => Monitor.Enter(_resourcePublicationGate);
+
+        internal void ExitResourceTeardownGate()
+            => Monitor.Exit(_resourcePublicationGate);
+
+        private bool IsResourcePublicationLeaseHeldByCurrentThread
+            => _resourcePublicationDepth > 0 &&
+               _resourcePublicationThreadId == Environment.CurrentManagedThreadId;
 
         /// <summary>
         /// This class holds specific information about rendering the mesh depending on the type of pass.
@@ -163,19 +232,6 @@ namespace XREngine.Rendering
 
             protected abstract string? GenerateVertexShaderSource();
 
-            public delegate void DelRenderRequested(Matrix4x4 worldMatrix, Matrix4x4 prevWorldMatrix, XRMaterial? materialOverride, RenderingParameters? renderOptionsOverride, uint instances, EMeshBillboardMode billboardMode, bool forceNoStereo);
-            public delegate void DelCanonicalRenderRequested(Matrix4x4 worldMatrix, Matrix4x4 prevWorldMatrix, XRMaterial? materialOverride, RenderingParameters? renderOptionsOverride, uint instances, EMeshBillboardMode billboardMode, bool forceNoStereo, AdvancedGpuSceneDrawIdentitySnapshot canonicalDrawIdentitySnapshot);
-            /// <summary>
-            /// Tells all renderers to render this mesh.
-            /// </summary>
-            public event DelRenderRequested? RenderRequested;
-            /// <summary>
-            /// Carries canonical resident draw identities to backends that can
-            /// retain the associated publication through GPU submission.
-            /// Legacy backends continue to consume <see cref="RenderRequested"/>.
-            /// </summary>
-            public event DelCanonicalRenderRequested? CanonicalRenderRequested;
-
             /// <summary>
             /// Use this to render the mesh.
             /// </summary>
@@ -184,12 +240,17 @@ namespace XREngine.Rendering
             /// <param name="materialOverride"></param>
             public void Render(Matrix4x4 modelMatrix, Matrix4x4 prevModelMatrix, XRMaterial? materialOverride, RenderingParameters? renderOptionsOverride, uint instances, EMeshBillboardMode billboardMode, bool forceNoStereo, in AdvancedGpuSceneDrawIdentitySnapshot canonicalDrawIdentitySnapshot)
             {
-                RenderRequested?.Invoke(modelMatrix, prevModelMatrix, materialOverride, renderOptionsOverride, instances, billboardMode, forceNoStereo);
-                CanonicalRenderRequested?.Invoke(modelMatrix, prevModelMatrix, materialOverride, renderOptionsOverride, instances, billboardMode, forceNoStereo, canonicalDrawIdentitySnapshot);
+                // Published mesh versions are backend-neutral until their first draw.
+                // Resolve this draw's owner explicitly so cold versions cannot silently
+                // skip rendering or broadcast a draw into another viewport's backend.
+                if (EnsureApiWrapperForOwnerFirstUse() is not IApiMeshRenderer renderer)
+                    throw new InvalidOperationException("The active render owner does not provide mesh submission.");
+                renderer.Render(modelMatrix, prevModelMatrix, materialOverride, renderOptionsOverride,
+                    instances, billboardMode, forceNoStereo, canonicalDrawIdentitySnapshot);
             }
         }
 
-        public class Version<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] T>(XRMeshRenderer renderer, Func<XRShader, bool> vertexShaderSelector, bool allowShaderPipelines) 
+        public class Version<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] T>(XRMeshRenderer renderer, Func<XRShader, bool> vertexShaderSelector, bool allowShaderPipelines)
             : BaseVersion(renderer, vertexShaderSelector, allowShaderPipelines) where T : ShaderGeneratorBase
         {
             protected override string? GenerateVertexShaderSource()
@@ -202,8 +263,32 @@ namespace XREngine.Rendering
             }
         }
 
+        private readonly Lock _generatedVertexShaderVersionsLock = new();
+        private readonly object[] _generatedVertexShaderVersionCreationGates =
+        [
+            new(), new(), new(), new(), new(),
+            new(), new(), new(), new(), new(),
+        ];
+        private readonly PendingVersionPublication?[] _pendingVertexShaderVersionPublications = new PendingVersionPublication?[10];
+        private readonly Dictionary<int, BaseVersion> _generatedVertexShaderVersions = [];
+
+        private sealed class PendingVersionPublication(object batchIdentity, int ownerThreadId)
+        {
+            internal object BatchIdentity { get; } = batchIdentity;
+            internal int OwnerThreadId { get; } = ownerThreadId;
+            internal ManualResetEventSlim Completion { get; } = new(false);
+            internal BaseVersion? Version { get; set; }
+        }
+
         [MemoryPackIgnore]
-        public Dictionary<int, BaseVersion> GeneratedVertexShaderVersions { get; set; } = [];
+        public IReadOnlyDictionary<int, BaseVersion> GeneratedVertexShaderVersions
+        {
+            get
+            {
+                lock (_generatedVertexShaderVersionsLock)
+                    return new Dictionary<int, BaseVersion>(_generatedVertexShaderVersions);
+            }
+        }
 
         private bool? _shaderPipelinesAllowedForAllVersions;
 
@@ -215,7 +300,10 @@ namespace XREngine.Rendering
         {
             SetField(ref _shaderPipelinesAllowedForAllVersions, allow, nameof(SetShaderPipelinesAllowedForAllVersions));
 
-            foreach (BaseVersion version in GeneratedVertexShaderVersions.Values)
+            BaseVersion[] versions;
+            lock (_generatedVertexShaderVersionsLock)
+                versions = [.. _generatedVertexShaderVersions.Values];
+            foreach (BaseVersion version in versions)
                 version.AllowShaderPipelines = allow;
         }
 
@@ -275,7 +363,7 @@ namespace XREngine.Rendering
                     throw new InvalidOperationException("The OVR multiview target requires a matching material vertex shader or a generated stereo vertex shader.");
                 return useMeshDeform ? GetMeshDeformOVRMultiViewVersion() : GetOVRMultiViewVersion();
             }
-            
+
             if (useMeshDeform)
             {
                 // Use mesh deform versions
@@ -329,7 +417,7 @@ namespace XREngine.Rendering
             => Material?.VertexShaders is { Count: > 0 };
 
         private static bool CanUseVrSpecificVersions()
-            => RuntimeEngine.VRState.IsInVR;
+            => RuntimeEngine.VRState.IsInVR || RuntimeEngine.VRState.EmulatedRenderActive;
 
         public BaseVersion GetDefaultVersion() => GetOrCreateVersion(0);
         public BaseVersion GetOVRMultiViewVersion() => GetOrCreateVersion(1);
@@ -350,7 +438,7 @@ namespace XREngine.Rendering
             _ = GetOVRMultiViewVersion();
             _ = GetNVStereoVersion();
         }
-        
+
         public BaseVersion GetMeshDeformDefaultVersion() => GetOrCreateVersion(3);
         public BaseVersion GetMeshDeformOVRMultiViewVersion() => GetOrCreateVersion(4);
         public BaseVersion GetMeshDeformNVStereoVersion() => GetOrCreateVersion(5);
@@ -365,25 +453,75 @@ namespace XREngine.Rendering
             =>
                 x.HasExtension(OvrMultiview2Extension, XRShader.EExtensionBehavior.Require) ||
                 x.HasExtension(ExtMultiviewExtension, XRShader.EExtensionBehavior.Require);
-        private static bool NoSpecialExtensions(XRShader x) => 
+        private static bool NoSpecialExtensions(XRShader x) =>
             !x.HasExtension(OvrMultiview2Extension, XRShader.EExtensionBehavior.Require) &&
             !x.HasExtension(ExtMultiviewExtension, XRShader.EExtensionBehavior.Require) &&
             !x.HasExtension(NvStereoViewRenderingExtension, XRShader.EExtensionBehavior.Require);
 
-        public XRMeshRenderer() : this(null, null) { }
+        public XRMeshRenderer() : this((XRMesh?)null, (XRMaterial?)null) { }
         public XRMeshRenderer(XRMesh? mesh, XRMaterial? material)
+            : base(deferObjectCachePublication: true)
         {
-            _mesh = mesh;
-            _material = material;
-            InitializeDrivableBuffers();
+            try
+            {
+                using (RenderObjectPublicationScope publication = GenericRenderObject.BeginDeferredPublication())
+                {
+                    JoinDeferredObjectCachePublication();
+                    _mesh = mesh;
+                    _material = material;
+                    InitializeDrivableBuffers();
+                    publication.Complete();
+                }
+            }
+            catch
+            {
+                AbortRendererConstruction();
+                throw;
+            }
         }
         public XRMeshRenderer(params (XRMesh mesh, XRMaterial material)[] submeshes)
             : this((IEnumerable<(XRMesh mesh, XRMaterial material)>)submeshes) { }
         public XRMeshRenderer(IEnumerable<(XRMesh mesh, XRMaterial material)> submeshes)
+            : base(deferObjectCachePublication: true)
         {
-            foreach (var (mesh, material) in submeshes)
-                Submeshes.Add(new SubMesh() { Mesh = mesh, Material = material, InstanceCount = 1 });
-            InitializeDrivableBuffers();
+            try
+            {
+                using (RenderObjectPublicationScope publication = GenericRenderObject.BeginDeferredPublication())
+                {
+                    JoinDeferredObjectCachePublication();
+                    foreach (var (mesh, material) in submeshes)
+                        Submeshes.Add(new SubMesh() { Mesh = mesh, Material = material, InstanceCount = 1 });
+                    InitializeDrivableBuffers();
+                    publication.Complete();
+                }
+            }
+            catch
+            {
+                AbortRendererConstruction();
+                throw;
+            }
+        }
+
+        /// <summary>
+        /// Creates an unpublished renderer used solely to prepare replacement buffers. The asset
+        /// cache deferral keeps the staging owner detached; only child buffers created while the
+        /// caller's render-publication scope is open join that transaction.
+        /// </summary>
+        private XRMeshRenderer(bool detachedStagingRenderer)
+            : base(deferObjectCachePublication: true)
+        {
+        }
+
+        private void AbortRendererConstruction()
+        {
+            try
+            {
+                AbortFailedConstruction();
+            }
+            catch (Exception ex)
+            {
+                RuntimeRenderingHostServices.Diagnostics.LogException(ex);
+            }
         }
 
         private EMeshGenerationPriority _generationPriority;
@@ -398,35 +536,164 @@ namespace XREngine.Rendering
 
         private BaseVersion GetOrCreateVersion(int versionKey)
         {
-            if (GeneratedVertexShaderVersions.TryGetValue(versionKey, out var existing))
+            if ((uint)versionKey >= (uint)_generatedVertexShaderVersionCreationGates.Length)
+                throw new ArgumentOutOfRangeException(nameof(versionKey), versionKey, "Unknown mesh renderer shader version.");
+
+            object creationGate = _generatedVertexShaderVersionCreationGates[versionKey];
+            while (true)
             {
-                existing.ProgramPriority = ResolveProgramPriority(versionKey);
-                return existing;
+                PendingVersionPublication? pendingToWaitFor = null;
+                lock (creationGate)
+                {
+                    lock (_generatedVertexShaderVersionsLock)
+                    {
+                        if (_generatedVertexShaderVersions.TryGetValue(versionKey, out BaseVersion? existing))
+                        {
+                            existing.ProgramPriority = ResolveProgramPriority(versionKey);
+                            return existing;
+                        }
+                    }
+
+                    RenderObjectPublicationScope? activePublication =
+                        GenericRenderObject.CurrentDeferredPublicationScope;
+                    object? activeBatchIdentity = activePublication?.BatchIdentity;
+                    PendingVersionPublication? pending =
+                        _pendingVertexShaderVersionPublications[versionKey];
+                    if (pending is not null)
+                    {
+                        if (activeBatchIdentity is not null
+                            && ReferenceEquals(pending.BatchIdentity, activeBatchIdentity))
+                        {
+                            BaseVersion sameBatchVersion = pending.Version
+                                ?? throw new InvalidOperationException(
+                                    $"Recursive construction of mesh renderer shader version {versionKey} is not supported.");
+                            sameBatchVersion.ProgramPriority = ResolveProgramPriority(versionKey);
+                            return sameBatchVersion;
+                        }
+
+                        pendingToWaitFor = pending;
+                    }
+                    else
+                    {
+                        return CreateVersionForPublication(
+                            versionKey,
+                            activeBatchIdentity,
+                            creationGate);
+                    }
+                }
+
+                pendingToWaitFor!.Completion.Wait();
+            }
+        }
+
+        private BaseVersion CreateVersionForPublication(
+            int versionKey,
+            object? activeBatchIdentity,
+            object creationGate)
+        {
+            PendingVersionPublication? pending = null;
+            if (activeBatchIdentity is not null)
+            {
+                pending = new PendingVersionPublication(
+                    activeBatchIdentity,
+                    Environment.CurrentManagedThreadId);
+                _pendingVertexShaderVersionPublications[versionKey] = pending;
             }
 
-            bool allowShaderPipelines = ResolveShaderPipelinesAllowedForVersion(versionKey);
-            BaseVersion created = versionKey switch
+            bool lifetimeLeaseHeld = false;
+            try
             {
-                0 => new Version<DefaultVertexShaderGenerator>(this, NoSpecialExtensions, allowShaderPipelines),
-                1 => new Version<OVRMultiViewVertexShaderGenerator>(this, HasMultiViewExtension, allowShaderPipelines),
-                2 => new Version<NVStereoVertexShaderGenerator>(this, HasNVStereoViewRendering, allowShaderPipelines),
-                3 => new MeshDeformVersion(this, NoSpecialExtensions, allowShaderPipelines),
-                4 => new MeshDeformVersion(this, HasMultiViewExtension, allowShaderPipelines) { UseOVRMultiView = true },
-                5 => new MeshDeformVersion(this, HasNVStereoViewRendering, allowShaderPipelines) { UseNVStereo = true },
-                6 => new Version<DirectionalCascadeInstancedVertexShaderGenerator>(this, NoSpecialExtensions, allowShaderPipelines),
-                7 => new Version<PointLightInstancedVertexShaderGenerator>(this, NoSpecialExtensions, allowShaderPipelines),
-                8 => new Version<DirectionalCascadeAtlasInstancedVertexShaderGenerator>(this, NoSpecialExtensions, allowShaderPipelines),
-                9 => new Version<PointLightAtlasInstancedVertexShaderGenerator>(this, NoSpecialExtensions, allowShaderPipelines),
-                _ => throw new ArgumentOutOfRangeException(nameof(versionKey), versionKey, "Unknown mesh renderer shader version."),
-            };
+                using RenderObjectPublicationScope publication = GenericRenderObject.BeginDeferredPublication();
+                BaseVersion created = versionKey switch
+                {
+                    0 => new Version<DefaultVertexShaderGenerator>(this, NoSpecialExtensions, ResolveShaderPipelinesAllowedForVersion(versionKey)),
+                    1 => new Version<OVRMultiViewVertexShaderGenerator>(this, HasMultiViewExtension, ResolveShaderPipelinesAllowedForVersion(versionKey)),
+                    2 => new Version<NVStereoVertexShaderGenerator>(this, HasNVStereoViewRendering, ResolveShaderPipelinesAllowedForVersion(versionKey)),
+                    3 => new MeshDeformVersion(this, NoSpecialExtensions, ResolveShaderPipelinesAllowedForVersion(versionKey)),
+                    4 => new MeshDeformVersion(this, HasMultiViewExtension, ResolveShaderPipelinesAllowedForVersion(versionKey)) { UseOVRMultiView = true },
+                    5 => new MeshDeformVersion(this, HasNVStereoViewRendering, ResolveShaderPipelinesAllowedForVersion(versionKey)) { UseNVStereo = true },
+                    6 => new Version<DirectionalCascadeInstancedVertexShaderGenerator>(this, NoSpecialExtensions, ResolveShaderPipelinesAllowedForVersion(versionKey)),
+                    7 => new Version<PointLightInstancedVertexShaderGenerator>(this, NoSpecialExtensions, ResolveShaderPipelinesAllowedForVersion(versionKey)),
+                    8 => new Version<DirectionalCascadeAtlasInstancedVertexShaderGenerator>(this, NoSpecialExtensions, ResolveShaderPipelinesAllowedForVersion(versionKey)),
+                    9 => new Version<PointLightAtlasInstancedVertexShaderGenerator>(this, NoSpecialExtensions, ResolveShaderPipelinesAllowedForVersion(versionKey)),
+                    _ => throw new ArgumentOutOfRangeException(nameof(versionKey), versionKey, "Unknown mesh renderer shader version."),
+                };
 
-            // Assign a priority bucket so the shared-context shader-link worker queue can serve
-            // user-visible main-pass programs before shadow / VR variants.
-            created.ProgramPriority = ResolveProgramPriority(versionKey);
-            created.UsesMultiview = versionKey is 1 or 4;
+                created.ProgramPriority = ResolveProgramPriority(versionKey);
+                created.UsesMultiview = versionKey is 1 or 4;
+                if (pending is not null)
+                    pending.Version = created;
 
-            GeneratedVertexShaderVersions.Add(versionKey, created);
-            return created;
+                publication.Complete(
+                    () =>
+                    {
+                        EnterResourcePublicationLease();
+                        lifetimeLeaseHeld = true;
+                        lock (_generatedVertexShaderVersionsLock)
+                            _generatedVertexShaderVersions.Add(versionKey, created);
+                    },
+                    () =>
+                    {
+                        try
+                        {
+                            if (lifetimeLeaseHeld)
+                            {
+                                lock (_generatedVertexShaderVersionsLock)
+                                    if (_generatedVertexShaderVersions.TryGetValue(versionKey, out BaseVersion? published)
+                                        && ReferenceEquals(published, created))
+                                    {
+                                        _generatedVertexShaderVersions.Remove(versionKey);
+                                    }
+                            }
+                        }
+                        finally
+                        {
+                            if (lifetimeLeaseHeld)
+                            {
+                                lifetimeLeaseHeld = false;
+                                ExitResourcePublicationLease();
+                            }
+                            CompletePendingVersionPublication(versionKey, pending, creationGate);
+                        }
+                    },
+                    () =>
+                    {
+                        if (lifetimeLeaseHeld)
+                        {
+                            lifetimeLeaseHeld = false;
+                            ExitResourcePublicationLease();
+                        }
+                        CompletePendingVersionPublication(versionKey, pending, creationGate);
+                    },
+                    () => CompletePendingVersionPublication(versionKey, pending, creationGate));
+                return created;
+            }
+            catch
+            {
+                if (lifetimeLeaseHeld)
+                {
+                    lifetimeLeaseHeld = false;
+                    ExitResourcePublicationLease();
+                }
+                CompletePendingVersionPublication(versionKey, pending, creationGate);
+                throw;
+            }
+        }
+
+        private void CompletePendingVersionPublication(
+            int versionKey,
+            PendingVersionPublication? pending,
+            object creationGate)
+        {
+            if (pending is null)
+                return;
+
+            lock (creationGate)
+            {
+                if (ReferenceEquals(_pendingVertexShaderVersionPublications[versionKey], pending))
+                    _pendingVertexShaderVersionPublications[versionKey] = null;
+                pending.Completion.Set();
+            }
         }
 
         /// <summary>
@@ -646,7 +913,73 @@ namespace XREngine.Rendering
         public XRMesh? Mesh
         {
             get => _mesh;
-            set => SetField(ref _mesh, value);
+            set => SetMeshTransactionally(value);
+        }
+
+        private void SetMeshTransactionally(XRMesh? value)
+        {
+            XRMesh? previous = _mesh;
+            if (ReferenceEquals(previous, value) ||
+                !OnPropertyChanging(nameof(Mesh), previous, value))
+            {
+                return;
+            }
+
+            using RenderObjectPublicationScope rootPublication = GenericRenderObject.BeginDeferredPublication();
+            bool lifetimeLeaseHeld = false;
+            bool stateInstalled = false;
+            using (RenderObjectPublicationScope meshPublication = GenericRenderObject.BeginDeferredPublication())
+            {
+                meshPublication.Complete(
+                    () =>
+                    {
+                        EnterResourcePublicationLease();
+                        lifetimeLeaseHeld = true;
+                        if (!ReferenceEquals(_mesh, previous))
+                            throw new InvalidOperationException("The renderer mesh changed while replacement resources were being prepared.");
+                        InstallMeshWithoutNotification(value);
+                        stateInstalled = true;
+                    },
+                    () =>
+                    {
+                        if (!lifetimeLeaseHeld)
+                            return;
+                        try
+                        {
+                            if (stateInstalled)
+                                InstallMeshWithoutNotification(previous);
+                        }
+                        finally
+                        {
+                            stateInstalled = false;
+                            lifetimeLeaseHeld = false;
+                            ExitResourcePublicationLease();
+                        }
+                    },
+                    () =>
+                    {
+                        if (!lifetimeLeaseHeld)
+                            return;
+                        try
+                        {
+                            OnPropertyChanged(nameof(Mesh), previous, value);
+                        }
+                        finally
+                        {
+                            lifetimeLeaseHeld = false;
+                            ExitResourcePublicationLease();
+                        }
+                    });
+            }
+
+            InitializeDrivableBuffers(value);
+            rootPublication.Complete();
+        }
+
+        private void InstallMeshWithoutNotification(XRMesh? value)
+        {
+            using (XRBase.SuppressPropertyNotifications())
+                SetField(ref _mesh, value, nameof(Mesh));
         }
 
         private XRMaterial? _material;
@@ -689,7 +1022,11 @@ namespace XREngine.Rendering
         public XRMeshRenderer? DeformMeshRenderer
         {
             get => _deformMeshRenderer;
-            set => SetField(ref _deformMeshRenderer, value);
+            set => ChangeMeshDeformConfiguration(
+                value,
+                _meshDeformInfluences,
+                _maxMeshDeformInfluences,
+                _optimizeMeshDeformToVec4);
         }
 
         private MeshDeformInfluence[][]? _meshDeformInfluences;
@@ -703,11 +1040,11 @@ namespace XREngine.Rendering
         public MeshDeformInfluence[][]? MeshDeformInfluences
         {
             get => _meshDeformInfluences;
-            set
-            {
-                if (SetField(ref _meshDeformInfluences, value))
-                    RebuildMeshDeformBuffers();
-            }
+            set => ChangeMeshDeformConfiguration(
+                _deformMeshRenderer,
+                value,
+                _maxMeshDeformInfluences,
+                _optimizeMeshDeformToVec4);
         }
 
         private int _maxMeshDeformInfluences = 8;
@@ -718,14 +1055,11 @@ namespace XREngine.Rendering
         public int MaxMeshDeformInfluences
         {
             get => _maxMeshDeformInfluences;
-            set
-            {
-                if (SetField(ref _maxMeshDeformInfluences, Math.Max(1, value)))
-                {
-                    ResetMeshDeformVersionShaders();
-                    RebuildMeshDeformBuffers();
-                }
-            }
+            set => ChangeMeshDeformConfiguration(
+                _deformMeshRenderer,
+                _meshDeformInfluences,
+                Math.Max(1, value),
+                _optimizeMeshDeformToVec4);
         }
 
         private uint _meshDeformLastTargetVertexCount;
@@ -782,25 +1116,142 @@ namespace XREngine.Rendering
         public bool OptimizeMeshDeformToVec4
         {
             get => _optimizeMeshDeformToVec4;
-            set
+            set => ChangeMeshDeformConfiguration(
+                _deformMeshRenderer,
+                _meshDeformInfluences,
+                _maxMeshDeformInfluences,
+                value);
+        }
+
+        private void ChangeMeshDeformConfiguration(
+            XRMeshRenderer? deformer,
+            MeshDeformInfluence[][]? influences,
+            int maxInfluences,
+            bool optimizeToVec4)
+        {
+            maxInfluences = Math.Max(1, maxInfluences);
+            XRMeshRenderer? previousDeformer = _deformMeshRenderer;
+            MeshDeformInfluence[][]? previousInfluences = _meshDeformInfluences;
+            int previousMaxInfluences = _maxMeshDeformInfluences;
+            bool previousOptimizeToVec4 = _optimizeMeshDeformToVec4;
+            bool deformerChanged = !ReferenceEquals(previousDeformer, deformer);
+            bool influencesChanged = !ReferenceEquals(previousInfluences, influences);
+            bool maxChanged = previousMaxInfluences != maxInfluences;
+            bool optimizeChanged = previousOptimizeToVec4 != optimizeToVec4;
+            if (!deformerChanged && !influencesChanged && !maxChanged && !optimizeChanged)
+                return;
+
+            if ((deformerChanged && !OnPropertyChanging(nameof(DeformMeshRenderer), previousDeformer, deformer)) ||
+                (influencesChanged && !OnPropertyChanging(nameof(MeshDeformInfluences), previousInfluences, influences)) ||
+                (maxChanged && !OnPropertyChanging(nameof(MaxMeshDeformInfluences), previousMaxInfluences, maxInfluences)) ||
+                (optimizeChanged && !OnPropertyChanging(nameof(OptimizeMeshDeformToVec4), previousOptimizeToVec4, optimizeToVec4)))
             {
-                if (SetField(ref _optimizeMeshDeformToVec4, value))
-                {
-                    ResetMeshDeformVersionShaders();
-                    RebuildMeshDeformBuffers();
-                }
+                return;
+            }
+
+            using RenderObjectPublicationScope rootPublication = GenericRenderObject.BeginDeferredPublication();
+            bool lifetimeLeaseHeld = false;
+            bool stateInstalled = false;
+            using (RenderObjectPublicationScope configurationPublication = GenericRenderObject.BeginDeferredPublication())
+            {
+                configurationPublication.Complete(
+                    () =>
+                    {
+                        EnterResourcePublicationLease();
+                        lifetimeLeaseHeld = true;
+                        if (!ReferenceEquals(_deformMeshRenderer, previousDeformer) ||
+                            !ReferenceEquals(_meshDeformInfluences, previousInfluences) ||
+                            _maxMeshDeformInfluences != previousMaxInfluences ||
+                            _optimizeMeshDeformToVec4 != previousOptimizeToVec4)
+                        {
+                            throw new InvalidOperationException("Mesh-deformation configuration changed while replacement buffers were being prepared.");
+                        }
+
+                        InstallMeshDeformConfigurationWithoutNotification(
+                            deformer,
+                            influences,
+                            maxInfluences,
+                            optimizeToVec4);
+                        stateInstalled = true;
+                    },
+                    () =>
+                    {
+                        if (!lifetimeLeaseHeld)
+                            return;
+                        try
+                        {
+                            if (stateInstalled)
+                            {
+                                InstallMeshDeformConfigurationWithoutNotification(
+                                    previousDeformer,
+                                    previousInfluences,
+                                    previousMaxInfluences,
+                                    previousOptimizeToVec4);
+                            }
+                        }
+                        finally
+                        {
+                            stateInstalled = false;
+                            lifetimeLeaseHeld = false;
+                            ExitResourcePublicationLease();
+                        }
+                    },
+                    () =>
+                    {
+                        if (!lifetimeLeaseHeld)
+                            return;
+                        try
+                        {
+                            if (maxChanged || optimizeChanged)
+                                ResetMeshDeformVersionShaders();
+                            if (deformerChanged)
+                                OnPropertyChanged(nameof(DeformMeshRenderer), previousDeformer, deformer);
+                            if (influencesChanged)
+                                OnPropertyChanged(nameof(MeshDeformInfluences), previousInfluences, influences);
+                            if (maxChanged)
+                                OnPropertyChanged(nameof(MaxMeshDeformInfluences), previousMaxInfluences, maxInfluences);
+                            if (optimizeChanged)
+                                OnPropertyChanged(nameof(OptimizeMeshDeformToVec4), previousOptimizeToVec4, optimizeToVec4);
+                        }
+                        finally
+                        {
+                            lifetimeLeaseHeld = false;
+                            ExitResourcePublicationLease();
+                        }
+                    });
+            }
+
+            RebuildMeshDeformBuffers(_mesh, deformer, influences, maxInfluences, optimizeToVec4);
+            rootPublication.Complete();
+        }
+
+        private void InstallMeshDeformConfigurationWithoutNotification(
+            XRMeshRenderer? deformer,
+            MeshDeformInfluence[][]? influences,
+            int maxInfluences,
+            bool optimizeToVec4)
+        {
+            using (XRBase.SuppressPropertyNotifications())
+            {
+                SetField(ref _deformMeshRenderer, deformer, nameof(DeformMeshRenderer));
+                SetField(ref _meshDeformInfluences, influences, nameof(MeshDeformInfluences));
+                SetField(ref _maxMeshDeformInfluences, maxInfluences, nameof(MaxMeshDeformInfluences));
+                SetField(ref _optimizeMeshDeformToVec4, optimizeToVec4, nameof(OptimizeMeshDeformToVec4));
             }
         }
 
         private void ResetMeshDeformVersionShaders()
         {
             // Reset the mesh deform version shader sources so they regenerate with new parameters
-            if (GeneratedVertexShaderVersions.TryGetValue(3, out var v3))
-                v3.ResetVertexShaderSource();
-            if (GeneratedVertexShaderVersions.TryGetValue(4, out var v4))
-                v4.ResetVertexShaderSource();
-            if (GeneratedVertexShaderVersions.TryGetValue(5, out var v5))
-                v5.ResetVertexShaderSource();
+            lock (_generatedVertexShaderVersionsLock)
+            {
+                if (_generatedVertexShaderVersions.TryGetValue(3, out BaseVersion? v3))
+                    v3.ResetVertexShaderSource();
+                if (_generatedVertexShaderVersions.TryGetValue(4, out BaseVersion? v4))
+                    v4.ResetVertexShaderSource();
+                if (_generatedVertexShaderVersions.TryGetValue(5, out BaseVersion? v5))
+                    v5.ResetVertexShaderSource();
+            }
         }
 
         #endregion
@@ -810,9 +1261,6 @@ namespace XREngine.Rendering
             base.OnPropertyChanged(propName, prev, field);
             switch (propName)
             {
-                case nameof(Mesh):
-                    InitializeDrivableBuffers();
-                    break;
                 case nameof(Submeshes):
                     //Link added and removed events
                     Submeshes.PostAnythingAdded += Submeshes_PostAnythingAdded;
@@ -827,9 +1275,6 @@ namespace XREngine.Rendering
             {
                 switch (propName)
                 {
-                    case nameof(Mesh):
-                        ResetDrivableBuffers();
-                        break;
                     case nameof(Submeshes):
                         //Unlink added and removed events
                         Submeshes.PostAnythingAdded -= Submeshes_PostAnythingAdded;
@@ -914,6 +1359,7 @@ namespace XREngine.Rendering
                     verticesIndex += mesh.VertexCount;
                 }
             }
+
         }
 
         public XRDataBuffer? GenerateCombinedIndexBuffer()
@@ -929,12 +1375,14 @@ namespace XREngine.Rendering
             if (totalIndexCount == 0)
                 return null;
 
+            using RenderObjectPublicationScope publication = GenericRenderObject.BeginDeferredPublication();
+
             IndexSize indexSize = IndexSize.Byte;
             if (totalIndexCount > ushort.MaxValue)
                 indexSize = IndexSize.FourBytes;
             else if (totalIndexCount > byte.MaxValue)
                 indexSize = IndexSize.TwoBytes;
-            
+
             XRDataBuffer combinedIndexBuffer = new(
                 "CombinedIndexBuffer",
                 EBufferTarget.ElementArrayBuffer,
@@ -967,6 +1415,7 @@ namespace XREngine.Rendering
                 currentIndex += indexCount;
             }
             combinedIndexBuffer.PushSubData();
+            publication.Complete();
             return combinedIndexBuffer;
         }
 
@@ -1084,10 +1533,11 @@ namespace XREngine.Rendering
         /// <returns></returns>
         public float GetBlendshapeWeightNormalized(uint index)
         {
-            if (BlendshapeWeights is null || index >= (Mesh?.BlendshapeCount ?? 0u))
+            XRDataBuffer? weights = CaptureBlendshapeResources().Weights;
+            if (weights is null || index >= (Mesh?.BlendshapeCount ?? 0u))
                 return 0.0f;
 
-            return BlendshapeWeights.GetFloat(index);
+            return weights.GetFloat(index);
         }
 
         /// <summary>
@@ -1105,27 +1555,93 @@ namespace XREngine.Rendering
         /// <param name="weight"></param>
         public void SetBlendshapeWeightNormalized(uint index, float weight)
         {
-            if (BlendshapeWeights is null || index >= (Mesh?.BlendshapeCount ?? 0u))
+            XRDataBuffer? weights = CaptureBlendshapeResources().Weights;
+            if (weights is null || index >= (Mesh?.BlendshapeCount ?? 0u))
                 return;
 
-            float previous = BlendshapeWeights.GetFloat(index);
+            float previous = weights.GetFloat(index);
             if (previous.Equals(weight))
                 return;
 
-            BlendshapeWeights.SetFloat(index, weight);
+            weights.SetFloat(index, weight);
             MarkBlendshapeWeightDirty(index);
             MarkSkinnedOutputDirty();
         }
 
         private void InitializeDrivableBuffers()
+            => InitializeDrivableBuffers(_mesh);
+
+        private void InitializeDrivableBuffers(XRMesh? mesh)
         {
-            ResetDrivableBuffers();
+            if ((mesh?.HasSkinning ?? false) && RuntimeEngine.Rendering.Settings.AllowSkinning)
+                PopulateBoneMatrixBuffers(mesh);
+            else
+                ClearBoneMatrixBuffersTransactionally(mesh);
 
-            if ((Mesh?.HasSkinning ?? false) && RuntimeEngine.Rendering.Settings.AllowSkinning)
-                PopulateBoneMatrixBuffers();
+            if ((mesh?.HasBlendshapes ?? false) && RuntimeEngine.Rendering.Settings.AllowBlendshapes)
+                PopulateBlendshapeWeightsBuffer(mesh);
+            else
+                ClearBlendshapeBuffersTransactionally(mesh);
 
-            if ((Mesh?.HasBlendshapes ?? false) && RuntimeEngine.Rendering.Settings.AllowBlendshapes)
-                PopulateBlendshapeWeightsBuffer();
+            RebuildMeshDeformBuffers(
+                mesh,
+                _deformMeshRenderer,
+                _meshDeformInfluences,
+                _maxMeshDeformInfluences,
+                _optimizeMeshDeformToVec4);
+        }
+
+        public override void Destroy(bool now = false)
+        {
+            if (!now || IsDestroyed)
+            {
+                base.Destroy(now);
+                return;
+            }
+
+            if (IsResourcePublicationLeaseHeldByCurrentThread)
+            {
+                // Teardown requested synchronously by a publication observer must
+                // run after this generation either commits or rolls back.
+                base.Destroy(now: false);
+                return;
+            }
+
+            Monitor.Enter(_resourcePublicationGate);
+            try
+            {
+                _resourcePublicationTerminated = true;
+                base.Destroy(now: true);
+            }
+            finally
+            {
+                if (!IsDestroyed)
+                    _resourcePublicationTerminated = false;
+                Monitor.Exit(_resourcePublicationGate);
+            }
+        }
+
+        protected override void OnDestroying()
+        {
+            try
+            {
+                ResetDrivableBuffers();
+                IndirectDrawBuffer?.Dispose();
+                IndirectDrawBuffer = null;
+
+                BaseVersion[] versions;
+                lock (_generatedVertexShaderVersionsLock)
+                {
+                    versions = [.. _generatedVertexShaderVersions.Values];
+                    _generatedVertexShaderVersions.Clear();
+                }
+                foreach (BaseVersion version in versions)
+                    version.Destroy(now: true);
+            }
+            finally
+            {
+                base.OnDestroying();
+            }
         }
 
         /// <summary>
@@ -1136,54 +1652,51 @@ namespace XREngine.Rendering
         /// <returns>True if the renderer skin palette is available after this call; false otherwise.</returns>
         public bool EnsureSkinningBuffers(bool logWarnings = true)
         {
-            if (BoneMatricesBuffer is not null && BoneInvBindMatricesBuffer is not null && SkinPaletteBuffer is not null)
+            BoneResourceSnapshot resources = CaptureBoneResources();
+            if (resources.BoneMatrices is not null
+                && resources.InverseBindMatrices is not null
+                && resources.SkinPalette is not null)
                 return true;
 
-            if (BoneMatricesBuffer is not null || BoneInvBindMatricesBuffer is not null || SkinPaletteBuffer is not null)
-            {
-                RemoveMeshDeformBuffer(BoneMatricesBuffer);
-                BoneMatricesBuffer?.Destroy();
-                BoneMatricesBuffer = null;
+            if (resources.BoneMatrices is not null
+                || resources.InverseBindMatrices is not null
+                || resources.SkinPalette is not null)
+                ClearBoneMatrixBuffersTransactionally(_mesh);
 
-                RemoveMeshDeformBuffer(BoneInvBindMatricesBuffer);
-                BoneInvBindMatricesBuffer?.Destroy();
-                BoneInvBindMatricesBuffer = null;
-
-                RemoveMeshDeformBuffer(SkinPaletteBuffer);
-                SkinPaletteBuffer?.Destroy();
-                SkinPaletteBuffer = null;
-            }
-
-            if (Mesh is null)
+            XRMesh? mesh = Mesh;
+            if (mesh is null)
             {
                 if (logWarnings)
                     Debug.LogWarning($"[XRMeshRenderer] EnsureSkinningBuffers: Mesh is null, cannot initialize skinning buffers. Renderer={GetHashCode():X}");
                 return false;
             }
 
-            if (!Mesh.HasSkinning)
+            if (!mesh.HasSkinning)
             {
                 if (logWarnings)
-                    Debug.LogWarning($"[XRMeshRenderer] EnsureSkinningBuffers: Mesh '{Mesh.Name}' has no skinning data. Renderer={GetHashCode():X}");
+                    Debug.LogWarning($"[XRMeshRenderer] EnsureSkinningBuffers: Mesh '{mesh.Name}' has no skinning data. Renderer={GetHashCode():X}");
                 return false;
             }
 
             if (!RuntimeEngine.Rendering.Settings.AllowSkinning)
             {
                 if (logWarnings)
-                    Debug.LogWarning($"[XRMeshRenderer] EnsureSkinningBuffers: Skinning is disabled in render settings. Mesh='{Mesh.Name}', Renderer={GetHashCode():X}");
+                    Debug.LogWarning($"[XRMeshRenderer] EnsureSkinningBuffers: Skinning is disabled in render settings. Mesh='{mesh.Name}', Renderer={GetHashCode():X}");
                 return false;
             }
 
             if (logWarnings)
-                Debug.LogWarning($"[XRMeshRenderer] EnsureSkinningBuffers: BoneMatricesBuffer was null, initializing late. This may indicate a timing issue with mesh/renderer creation. Mesh='{Mesh.Name}', UtilizedBones={Mesh.UtilizedBones?.Length ?? 0}, Renderer={GetHashCode():X}");
+                Debug.LogWarning($"[XRMeshRenderer] EnsureSkinningBuffers: BoneMatricesBuffer was null, initializing late. This may indicate a timing issue with mesh/renderer creation. Mesh='{mesh.Name}', UtilizedBones={mesh.GetSkinningBufferStateSnapshot().UtilizedBones.Length}, Renderer={GetHashCode():X}");
 
-            PopulateBoneMatrixBuffers();
+            PopulateBoneMatrixBuffers(mesh);
 
-            if (BoneMatricesBuffer is null || BoneInvBindMatricesBuffer is null || SkinPaletteBuffer is null)
+            resources = CaptureBoneResources();
+            if (resources.BoneMatrices is null
+                || resources.InverseBindMatrices is null
+                || resources.SkinPalette is null)
             {
                 if (logWarnings)
-                    Debug.LogWarning($"[XRMeshRenderer] EnsureSkinningBuffers: PopulateBoneMatrixBuffers did not create buffer. Mesh='{Mesh.Name}', Renderer={GetHashCode():X}");
+                    Debug.LogWarning($"[XRMeshRenderer] EnsureSkinningBuffers: PopulateBoneMatrixBuffers did not create buffer. Mesh='{mesh.Name}', Renderer={GetHashCode():X}");
                 return false;
             }
 
@@ -1192,7 +1705,7 @@ namespace XREngine.Rendering
 
         public bool EnsureBlendshapeBuffers(bool logWarnings = true)
         {
-            if (BlendshapeWeights is not null)
+            if (CaptureBlendshapeResources().Weights is not null)
                 return true;
 
             if (Mesh is null)
@@ -1221,39 +1734,211 @@ namespace XREngine.Rendering
         }
 
         private void PopulateBlendshapeWeightsBuffer()
+            => PopulateBlendshapeWeightsBuffer(_mesh);
+
+        private void PopulateBlendshapeWeightsBuffer(XRMesh? sourceMesh)
+        {
+            XRMesh.BufferCollection targetBuffers = Buffers;
+            XRMesh.BufferCollection.PreparedBufferTicket preparationTicket =
+                targetBuffers.CapturePreparationTicket(BlendshapeBufferState.CollectionKeys);
+            int expectedSettingsRevision = CurrentSettingsRevision;
+            XRMeshRenderer staging = new(detachedStagingRenderer: true)
+            {
+                _mesh = sourceMesh,
+            };
+            BlendshapeBufferState prepared;
+            try
+            {
+                using RenderObjectPublicationScope publication = GenericRenderObject.BeginDeferredPublication();
+                staging.PopulateBlendshapeWeightsBufferCore();
+                prepared = staging.CaptureBlendshapeBufferState();
+                BlendshapeBufferState? previous = null;
+                XRMesh.BufferCollection.PreparedBufferBatch? batch = null;
+                bool lifetimeLeaseHeld = false;
+                publication.Complete(
+                    () =>
+                    {
+                        EnterResourcePublicationLease();
+                        lifetimeLeaseHeld = true;
+                        if (!ReferenceEquals(_mesh, sourceMesh) ||
+                            CurrentSettingsRevision != expectedSettingsRevision ||
+                            !RuntimeEngine.Rendering.Settings.AllowBlendshapes)
+                        {
+                            throw new InvalidOperationException("Blendshape configuration changed while renderer buffers were being prepared.");
+                        }
+
+                        batch = targetBuffers.SwapPreparedBatch(
+                            prepared.EnumerateCollectionBuffers(),
+                            BlendshapeBufferState.CollectionKeys,
+                            expectedTicket: preparationTicket,
+                            installState: () =>
+                            {
+                                previous = CaptureBlendshapeBufferState();
+                                ApplyBlendshapeBufferState(prepared);
+                            },
+                            restoreStateOnFailure: () =>
+                            {
+                                if (previous is not null)
+                                    ApplyBlendshapeBufferState(previous);
+                            });
+                        ValidateResourcePublicationLease();
+                    },
+                    () =>
+                    {
+                        if (!lifetimeLeaseHeld)
+                            return;
+                        try
+                        {
+                            if (batch is not null)
+                                targetBuffers.RestorePreparedBatch(
+                                    batch,
+                                    () =>
+                                    {
+                                        if (previous is not null)
+                                            ApplyBlendshapeBufferState(previous);
+                                    });
+                        }
+                        finally
+                        {
+                            lifetimeLeaseHeld = false;
+                            ExitResourcePublicationLease();
+                        }
+                    },
+                    () =>
+                    {
+                        if (!lifetimeLeaseHeld)
+                            return;
+                        try
+                        {
+                            if (batch is not null)
+                                targetBuffers.DisposeReplacedBuffers(batch);
+                            previous?.DestroyPrecombinedBuffers();
+                        }
+                        finally
+                        {
+                            lifetimeLeaseHeld = false;
+                            ExitResourcePublicationLease();
+                        }
+                    });
+                staging.DetachBlendshapeBufferState();
+            }
+            finally
+            {
+                staging.AbortRendererConstruction();
+            }
+        }
+
+        private void PopulateBlendshapeWeightsBufferCore()
         {
             uint blendshapeCount = Mesh?.BlendshapeCount ?? 0;
-            BlendshapeWeights = new XRDataBuffer($"{ECommonBufferType.BlendshapeWeights}Buffer", EBufferTarget.ShaderStorageBuffer, blendshapeCount.Align(4), EComponentType.Float, 1, false, false)
+            XRDataBuffer weights = new($"{ECommonBufferType.BlendshapeWeights}Buffer", EBufferTarget.ShaderStorageBuffer, blendshapeCount.Align(4), EComponentType.Float, 1, false, false)
             {
                 Usage = EBufferUsage.DynamicDraw,
                 DisposeOnPush = false
             };
 
             for (uint i = 0; i < blendshapeCount; i++)
-                BlendshapeWeights.Set(i, 0.0f);
-
-            Buffers.Add(BlendshapeWeights.AttributeName, BlendshapeWeights);
-
-            BlendshapeActiveWeights = new XRDataBuffer($"{ECommonBufferType.BlendshapeActiveWeights}Buffer", EBufferTarget.ShaderStorageBuffer, blendshapeCount.Align(4), EComponentType.Float, 2, false, false)
+                weights.Set(i, 0.0f);
+            Buffers.Add(weights.AttributeName, weights);
+            XRDataBuffer activeWeights = new($"{ECommonBufferType.BlendshapeActiveWeights}Buffer", EBufferTarget.ShaderStorageBuffer, blendshapeCount.Align(4), EComponentType.Float, 2, false, false)
             {
                 Usage = EBufferUsage.DynamicDraw,
                 DisposeOnPush = false
             };
-            Buffers.Add(BlendshapeActiveWeights.AttributeName, BlendshapeActiveWeights);
-
-            _activeBlendshapeCount = 0;
-            _blendshapeDirtyStartIndex = uint.MaxValue;
-            _blendshapeDirtyEndIndex = 0u;
-            unchecked
-            {
-                _blendshapeWeightsVersion++;
-                _precombinedBlendshapeInputVersion++;
-            }
-            SetBlendshapesInvalidated(false);
-            _blendshapeActiveListInvalidated = false;
-
+            Buffers.Add(activeWeights.AttributeName, activeWeights);
+            BlendshapeBufferState prepared = CloneBlendshapeBufferState(
+                Volatile.Read(ref _blendshapeBufferState));
+            prepared.GenerationId = 0L;
+            prepared.Weights = weights;
+            prepared.ActiveWeights = activeWeights;
+            prepared.ActiveCount = 0;
+            prepared.DirtyStart = uint.MaxValue;
+            prepared.DirtyEnd = 0u;
+            prepared.WeightsVersion++;
+            prepared.PrecombinedInputVersion++;
+            prepared.Invalidated = false;
+            prepared.ActiveListInvalidated = false;
+            ApplyBlendshapeBufferState(prepared);
             if (RuntimeEngine.Rendering.Settings.EnableBlendshapePrecombinePass && Mesh is { VertexCount: > 0 } mesh)
                 EnsurePrecombinedBlendshapeBuffers(mesh);
+        }
+
+        private void ClearBlendshapeBuffersTransactionally(XRMesh? expectedMesh)
+        {
+            XRMesh.BufferCollection targetBuffers = Buffers;
+            XRMesh.BufferCollection.PreparedBufferTicket preparationTicket =
+                targetBuffers.CapturePreparationTicket(BlendshapeBufferState.CollectionKeys);
+            BlendshapeBufferState? previous = null;
+            BlendshapeBufferState? empty = null;
+            using RenderObjectPublicationScope publication = GenericRenderObject.BeginDeferredPublication();
+            XRMesh.BufferCollection.PreparedBufferBatch? batch = null;
+            bool lifetimeLeaseHeld = false;
+            publication.Complete(
+                () =>
+                {
+                    EnterResourcePublicationLease();
+                    lifetimeLeaseHeld = true;
+                    if (!ReferenceEquals(_mesh, expectedMesh))
+                        throw new InvalidOperationException("The renderer mesh changed while blendshape buffers were being cleared.");
+                    batch = targetBuffers.SwapPreparedBatch(
+                        [],
+                        BlendshapeBufferState.CollectionKeys,
+                        expectedTicket: preparationTicket,
+                        installState: () =>
+                        {
+                            previous = CaptureBlendshapeBufferState();
+                            empty = new BlendshapeBufferState
+                            {
+                                DirtyStart = uint.MaxValue,
+                                WeightsVersion = previous.WeightsVersion + 1UL,
+                                PrecombinedInputVersion = previous.PrecombinedInputVersion + 1UL,
+                            };
+                            ApplyBlendshapeBufferState(empty);
+                        },
+                        restoreStateOnFailure: () =>
+                        {
+                            if (previous is not null)
+                                ApplyBlendshapeBufferState(previous);
+                        });
+                    ValidateResourcePublicationLease();
+                },
+                () =>
+                {
+                    if (!lifetimeLeaseHeld)
+                        return;
+                    try
+                    {
+                        if (batch is not null)
+                            targetBuffers.RestorePreparedBatch(
+                                batch,
+                                () =>
+                                {
+                                    if (previous is not null)
+                                        ApplyBlendshapeBufferState(previous);
+                                });
+                    }
+                    finally
+                    {
+                        lifetimeLeaseHeld = false;
+                        ExitResourcePublicationLease();
+                    }
+                },
+                () =>
+                {
+                    if (!lifetimeLeaseHeld)
+                        return;
+                    try
+                    {
+                        if (batch is not null)
+                            targetBuffers.DisposeReplacedBuffers(batch);
+                        previous?.DestroyPrecombinedBuffers();
+                    }
+                    finally
+                    {
+                        lifetimeLeaseHeld = false;
+                        ExitResourcePublicationLease();
+                    }
+                });
         }
 
         private void ResetDrivableBuffers()
@@ -1279,38 +1964,29 @@ namespace XREngine.Rendering
 
             RemoveMeshDeformBuffer(BoneMatricesBuffer);
             BoneMatricesBuffer?.Destroy();
-            BoneMatricesBuffer = null;
 
             RemoveMeshDeformBuffer(BoneInvBindMatricesBuffer);
             BoneInvBindMatricesBuffer?.Destroy();
-            BoneInvBindMatricesBuffer = null;
 
             RemoveMeshDeformBuffer(SkinPaletteBuffer);
             SkinPaletteBuffer?.Destroy();
-            SkinPaletteBuffer = null;
 
             RemoveMeshDeformBuffer(PreviousSkinPaletteBuffer);
             PreviousSkinPaletteBuffer?.Destroy();
-            PreviousSkinPaletteBuffer = null;
+            Volatile.Write(ref _boneBufferState, new BoneBufferState());
 
-            RemoveMeshDeformBuffer(BlendshapeWeights);
-            BlendshapeWeights?.Destroy();
-            BlendshapeWeights = null;
-
-            RemoveMeshDeformBuffer(BlendshapeActiveWeights);
-            BlendshapeActiveWeights?.Destroy();
-            BlendshapeActiveWeights = null;
-            DestroyPrecombinedBlendshapeBuffers();
-            _activeBlendshapeCount = 0;
-            _blendshapeDirtyStartIndex = uint.MaxValue;
-            _blendshapeDirtyEndIndex = 0u;
-            unchecked
+            BlendshapeBufferState previousBlendshapeState =
+                Volatile.Read(ref _blendshapeBufferState);
+            RemoveMeshDeformBuffer(previousBlendshapeState.Weights);
+            RemoveMeshDeformBuffer(previousBlendshapeState.ActiveWeights);
+            Volatile.Write(ref _validPrecombinedGenerationId, 0L);
+            ApplyBlendshapeBufferState(new BlendshapeBufferState
             {
-                _blendshapeWeightsVersion++;
-                _precombinedBlendshapeInputVersion++;
-            }
-            SetBlendshapesInvalidated(false);
-            _blendshapeActiveListInvalidated = false;
+                DirtyStart = uint.MaxValue,
+                WeightsVersion = previousBlendshapeState.WeightsVersion + 1UL,
+                PrecombinedInputVersion = previousBlendshapeState.PrecombinedInputVersion + 1UL,
+            });
+            previousBlendshapeState.Destroy();
 
             ResetMeshDeformBuffers();
         }
@@ -1319,43 +1995,34 @@ namespace XREngine.Rendering
         {
             RemoveMeshDeformBuffer(DeformerPositionsBuffer);
             DeformerPositionsBuffer?.Destroy();
-            DeformerPositionsBuffer = null;
 
             RemoveMeshDeformBuffer(DeformerRestPositionsBuffer);
             DeformerRestPositionsBuffer?.Destroy();
-            DeformerRestPositionsBuffer = null;
 
             RemoveMeshDeformBuffer(DeformerNormalsBuffer);
             DeformerNormalsBuffer?.Destroy();
-            DeformerNormalsBuffer = null;
 
             RemoveMeshDeformBuffer(DeformerTangentsBuffer);
             DeformerTangentsBuffer?.Destroy();
-            DeformerTangentsBuffer = null;
 
             RemoveMeshDeformBuffer(MeshDeformIndicesBuffer);
             MeshDeformIndicesBuffer?.Destroy();
-            MeshDeformIndicesBuffer = null;
 
             RemoveMeshDeformBuffer(MeshDeformWeightsBuffer);
             MeshDeformWeightsBuffer?.Destroy();
-            MeshDeformWeightsBuffer = null;
 
             RemoveMeshDeformBuffer(MeshDeformVertexIndicesBuffer);
             MeshDeformVertexIndicesBuffer?.Destroy();
-            MeshDeformVertexIndicesBuffer = null;
 
             RemoveMeshDeformBuffer(MeshDeformVertexWeightsBuffer);
             MeshDeformVertexWeightsBuffer?.Destroy();
-            MeshDeformVertexWeightsBuffer = null;
 
             RemoveMeshDeformBuffer(MeshDeformVertexOffsetBuffer);
             MeshDeformVertexOffsetBuffer?.Destroy();
-            MeshDeformVertexOffsetBuffer = null;
 
             RemoveMeshDeformBuffer(MeshDeformVertexCountBuffer);
             MeshDeformVertexCountBuffer?.Destroy();
-            MeshDeformVertexCountBuffer = null;
+            Volatile.Write(ref _meshDeformBufferState, new MeshDeformBufferState());
 
             _meshDeformLastTargetVertexCount = 0;
             _meshDeformLastDeformerVertexCount = 0;
@@ -1371,22 +2038,160 @@ namespace XREngine.Rendering
         /// Stream-write buffer.
         /// </summary>
         [MemoryPackIgnore]
-        public XRDataBuffer? BoneMatricesBuffer { get; private set; }
+        public XRDataBuffer? BoneMatricesBuffer => Volatile.Read(ref _boneBufferState).Matrices;
 
         /// <summary>
         /// All bone inverse bind matrices for the mesh.
         /// </summary>
         [MemoryPackIgnore]
-        public XRDataBuffer? BoneInvBindMatricesBuffer { get; private set; }
+        public XRDataBuffer? BoneInvBindMatricesBuffer => Volatile.Read(ref _boneBufferState).InverseBindMatrices;
 
         /// <summary>
         /// Precomposed final skin palette stored as three vec4 rows per bone.
         /// </summary>
         [MemoryPackIgnore]
-        public XRDataBuffer? SkinPaletteBuffer { get; private set; }
+        public XRDataBuffer? SkinPaletteBuffer => Volatile.Read(ref _boneBufferState).Palette;
 
         [MemoryPackIgnore]
-        public XRDataBuffer? PreviousSkinPaletteBuffer { get; private set; }
+        public XRDataBuffer? PreviousSkinPaletteBuffer => Volatile.Read(ref _boneBufferState).PreviousPalette;
+
+        private BoneBufferState _boneBufferState = new();
+
+        /// <summary>Captures one coherent skinning-resource generation for backend binding.</summary>
+        public readonly record struct BoneResourceSnapshot(
+            XRDataBuffer? BoneMatrices,
+            XRDataBuffer? InverseBindMatrices,
+            XRDataBuffer? SkinPalette,
+            XRDataBuffer? PreviousSkinPalette);
+
+        public BoneResourceSnapshot CaptureBoneResources()
+        {
+            BoneBufferState state = Volatile.Read(ref _boneBufferState);
+            return new(state.Matrices, state.InverseBindMatrices, state.Palette, state.PreviousPalette);
+        }
+
+        private sealed class BoneBufferState
+        {
+            internal static readonly string[] CollectionKeys =
+            [
+                $"{ECommonBufferType.BoneMatrices}Buffer",
+                $"{ECommonBufferType.BoneInvBindMatrices}Buffer",
+                $"{ECommonBufferType.SkinPalette}Buffer",
+            ];
+
+            internal XRDataBuffer? Matrices;
+            internal XRDataBuffer? InverseBindMatrices;
+            internal XRDataBuffer? Palette;
+            internal XRDataBuffer? PreviousPalette;
+            internal RenderBone[]? Bones;
+            internal Dictionary<TransformBase, RenderBone>? BoneByTransform;
+            internal List<uint>? DirtyIndices;
+            internal bool[]? DirtyFlags;
+            internal Matrix4x4[]? DirtyMatrices;
+            internal bool BonesInvalidated;
+            internal int[]? GpuDrivenRefCounts;
+            internal int GpuDrivenCount;
+            internal int PaletteSignature;
+            internal bool PaletteOrderChecked;
+            internal bool PaletteStaleReported;
+
+            internal IEnumerable<KeyValuePair<string, XRDataBuffer>> EnumerateCollectionBuffers()
+            {
+                if (Matrices is not null)
+                    yield return new(Matrices.AttributeName, Matrices);
+                if (InverseBindMatrices is not null)
+                    yield return new(InverseBindMatrices.AttributeName, InverseBindMatrices);
+                if (Palette is not null)
+                    yield return new(Palette.AttributeName, Palette);
+            }
+
+            internal void Destroy()
+            {
+                Matrices?.Destroy();
+                InverseBindMatrices?.Destroy();
+                Palette?.Destroy();
+            }
+        }
+
+        private BoneBufferState CaptureBoneBufferState()
+        {
+            BoneBufferState buffers = Volatile.Read(ref _boneBufferState);
+            lock (_dirtyBoneSyncRoot)
+            {
+                return new BoneBufferState
+                {
+                    Matrices = buffers.Matrices,
+                    InverseBindMatrices = buffers.InverseBindMatrices,
+                    Palette = buffers.Palette,
+                    PreviousPalette = buffers.PreviousPalette,
+                    Bones = _bones,
+                    BoneByTransform = _boneByTransform,
+                    DirtyIndices = _dirtyBoneIndices,
+                    DirtyFlags = _dirtyBoneFlags,
+                    DirtyMatrices = _dirtyBoneMatrices,
+                    BonesInvalidated = _bonesInvalidated,
+                    GpuDrivenRefCounts = _gpuDrivenBoneRefCounts,
+                    GpuDrivenCount = _gpuDrivenBoneCount,
+                    PaletteSignature = _paletteBoneOrderSignature,
+                    PaletteOrderChecked = _bonePaletteOrderChecked,
+                    PaletteStaleReported = _bonePaletteStaleReported,
+                };
+            }
+        }
+
+        private void ApplyBoneBufferState(BoneBufferState state)
+        {
+            Volatile.Write(ref _boneBufferState, state);
+            _bones = state.Bones;
+            _boneByTransform = state.BoneByTransform;
+            lock (_dirtyBoneSyncRoot)
+            {
+                _dirtyBoneIndices = state.DirtyIndices;
+                _dirtyBoneFlags = state.DirtyFlags;
+                _dirtyBoneMatrices = state.DirtyMatrices;
+                _bonesInvalidated = state.BonesInvalidated;
+                _gpuDrivenBoneRefCounts = state.GpuDrivenRefCounts;
+                _gpuDrivenBoneCount = state.GpuDrivenCount;
+            }
+            _paletteBoneOrderSignature = state.PaletteSignature;
+            _bonePaletteOrderChecked = state.PaletteOrderChecked;
+            _bonePaletteStaleReported = state.PaletteStaleReported;
+        }
+
+        private void AttachBoneSubscriptions(BoneBufferState state)
+        {
+            if (state.BoneByTransform is null)
+                return;
+            foreach (TransformBase transform in state.BoneByTransform.Keys)
+            {
+                transform.RenderMatrixChanged -= BoneTransformRenderMatrixChanged;
+                transform.RenderMatrixChanged += BoneTransformRenderMatrixChanged;
+            }
+        }
+
+        private void DetachBoneSubscriptions(BoneBufferState state)
+        {
+            if (state.BoneByTransform is null)
+                return;
+            foreach (TransformBase transform in state.BoneByTransform.Keys)
+                transform.RenderMatrixChanged -= BoneTransformRenderMatrixChanged;
+        }
+
+        private void DetachBoneBufferState()
+        {
+            Volatile.Write(ref _boneBufferState, new BoneBufferState());
+            _bones = null;
+            _boneByTransform = null;
+            lock (_dirtyBoneSyncRoot)
+            {
+                _dirtyBoneIndices = null;
+                _dirtyBoneFlags = null;
+                _dirtyBoneMatrices = null;
+                _gpuDrivenBoneRefCounts = null;
+                _gpuDrivenBoneCount = 0;
+            }
+            Buffers = [];
+        }
 
         [MemoryPackIgnore]
         public XRDataBuffer? ActiveSkinPaletteBuffer => HasExternalSkinPaletteSource ? _externalSkinPaletteBuffer : SkinPaletteBuffer;
@@ -1471,13 +2276,176 @@ namespace XREngine.Rendering
         /// All blendshape weights for the mesh.
         /// </summary>
         [MemoryPackIgnore]
-        public XRDataBuffer? BlendshapeWeights { get; private set; }
+        public XRDataBuffer? BlendshapeWeights => Volatile.Read(ref _blendshapeBufferState).Weights;
 
         /// <summary>
         /// Dense active blendshape index/weight pairs for compact shader paths.
         /// </summary>
         [MemoryPackIgnore]
-        public XRDataBuffer? BlendshapeActiveWeights { get; private set; }
+        public XRDataBuffer? BlendshapeActiveWeights => Volatile.Read(ref _blendshapeBufferState).ActiveWeights;
+
+        private BlendshapeBufferState _blendshapeBufferState = new();
+        private static long _nextBlendshapeGenerationId;
+        private long _validPrecombinedGenerationId;
+        private ulong _precombinedBlendshapeInputVersion;
+        private ulong _precombinedBlendshapeOutputVersion;
+
+        /// <summary>Captures one coherent blendshape-resource generation for backend binding.</summary>
+        public readonly record struct BlendshapeResourceSnapshot(
+            XRDataBuffer? Weights,
+            XRDataBuffer? ActiveWeights,
+            XRDataBuffer? PrecombinedPositions,
+            XRDataBuffer? PrecombinedNormals,
+            XRDataBuffer? PrecombinedTangents,
+            bool HasValidPrecombinedOutput,
+            XRMesh? PrecombinedMesh,
+            int PrecombinedVertexCount,
+            bool PrecombinedHasNormals,
+            bool PrecombinedHasTangents,
+            int ActiveCount,
+            ulong WeightsVersion,
+            ulong PrecombinedInputVersion,
+            ulong PrecombinedOutputVersion,
+            long GenerationId)
+        {
+            public bool IsPrecombinedValidFor(XRMesh mesh)
+                => HasValidPrecombinedOutput
+                    && ReferenceEquals(PrecombinedMesh, mesh)
+                    && PrecombinedVertexCount == mesh.VertexCount
+                    && PrecombinedHasNormals == mesh.HasNormals
+                    && PrecombinedHasTangents == mesh.HasTangents
+                    && PrecombinedOutputVersion == PrecombinedInputVersion;
+        }
+
+        public BlendshapeResourceSnapshot CaptureBlendshapeResources()
+        {
+            BlendshapeBufferState state = Volatile.Read(ref _blendshapeBufferState);
+            return new(
+                state.Weights,
+                state.ActiveWeights,
+                state.PrecombinedPositions,
+                state.PrecombinedNormals,
+                state.PrecombinedTangents,
+                state.GenerationId != 0L
+                    && Volatile.Read(ref _validPrecombinedGenerationId) == state.GenerationId
+                    && _precombinedBlendshapeOutputVersion == _precombinedBlendshapeInputVersion,
+                state.PrecombinedMesh,
+                state.PrecombinedVertexCount,
+                state.PrecombinedHasNormals,
+                state.PrecombinedHasTangents,
+                _activeBlendshapeCount,
+                _blendshapeWeightsVersion,
+                _precombinedBlendshapeInputVersion,
+                _precombinedBlendshapeOutputVersion,
+                state.GenerationId);
+        }
+
+        private sealed class BlendshapeBufferState
+        {
+            internal static readonly string[] CollectionKeys =
+            [
+                $"{ECommonBufferType.BlendshapeWeights}Buffer",
+                $"{ECommonBufferType.BlendshapeActiveWeights}Buffer",
+            ];
+
+            internal XRDataBuffer? Weights;
+            internal XRDataBuffer? ActiveWeights;
+            internal XRDataBuffer? PrecombinedPositions;
+            internal XRDataBuffer? PrecombinedNormals;
+            internal XRDataBuffer? PrecombinedTangents;
+            internal XRMesh? PrecombinedMesh;
+            internal int PrecombinedVertexCount;
+            internal bool PrecombinedHasNormals;
+            internal bool PrecombinedHasTangents;
+            internal bool HasValidPrecombinedOutput;
+            internal ulong PrecombinedOutputVersion;
+            internal int ActiveCount;
+            internal uint DirtyStart;
+            internal uint DirtyEnd;
+            internal ulong WeightsVersion;
+            internal ulong PrecombinedInputVersion;
+            internal bool Invalidated;
+            internal bool ActiveListInvalidated;
+            internal long GenerationId;
+
+            internal IEnumerable<KeyValuePair<string, XRDataBuffer>> EnumerateCollectionBuffers()
+            {
+                if (Weights is not null)
+                    yield return new(Weights.AttributeName, Weights);
+                if (ActiveWeights is not null)
+                    yield return new(ActiveWeights.AttributeName, ActiveWeights);
+            }
+
+            internal void Destroy()
+            {
+                Weights?.Destroy();
+                ActiveWeights?.Destroy();
+                DestroyPrecombinedBuffers();
+            }
+
+            internal void DestroyPrecombinedBuffers()
+            {
+                PrecombinedPositions?.Destroy();
+                PrecombinedNormals?.Destroy();
+                PrecombinedTangents?.Destroy();
+            }
+        }
+
+        private BlendshapeBufferState CaptureBlendshapeBufferState()
+        {
+            BlendshapeBufferState snapshot = CloneBlendshapeBufferState(
+                Volatile.Read(ref _blendshapeBufferState));
+            snapshot.ActiveCount = _activeBlendshapeCount;
+            snapshot.DirtyStart = _blendshapeDirtyStartIndex;
+            snapshot.DirtyEnd = _blendshapeDirtyEndIndex;
+            snapshot.WeightsVersion = _blendshapeWeightsVersion;
+            snapshot.PrecombinedInputVersion = _precombinedBlendshapeInputVersion;
+            snapshot.PrecombinedOutputVersion = _precombinedBlendshapeOutputVersion;
+            snapshot.Invalidated = _blendshapesInvalidated;
+            snapshot.ActiveListInvalidated = _blendshapeActiveListInvalidated;
+            return snapshot;
+        }
+
+        private static BlendshapeBufferState CloneBlendshapeBufferState(BlendshapeBufferState source)
+            => new()
+            {
+                Weights = source.Weights, ActiveWeights = source.ActiveWeights,
+                PrecombinedPositions = source.PrecombinedPositions, PrecombinedNormals = source.PrecombinedNormals,
+                PrecombinedTangents = source.PrecombinedTangents, PrecombinedMesh = source.PrecombinedMesh,
+                PrecombinedVertexCount = source.PrecombinedVertexCount, PrecombinedHasNormals = source.PrecombinedHasNormals,
+                PrecombinedHasTangents = source.PrecombinedHasTangents, PrecombinedOutputVersion = source.PrecombinedOutputVersion,
+                ActiveCount = source.ActiveCount, DirtyStart = source.DirtyStart, DirtyEnd = source.DirtyEnd,
+                WeightsVersion = source.WeightsVersion, PrecombinedInputVersion = source.PrecombinedInputVersion,
+                Invalidated = source.Invalidated, ActiveListInvalidated = source.ActiveListInvalidated,
+                GenerationId = source.GenerationId,
+            };
+
+        private void ApplyBlendshapeBufferState(BlendshapeBufferState state)
+        {
+            PublishBlendshapeBufferState(state);
+            _activeBlendshapeCount = state.ActiveCount;
+            _blendshapeDirtyStartIndex = state.DirtyStart;
+            _blendshapeDirtyEndIndex = state.DirtyEnd;
+            _blendshapeWeightsVersion = state.WeightsVersion;
+            _precombinedBlendshapeInputVersion = state.PrecombinedInputVersion;
+            _precombinedBlendshapeOutputVersion = state.PrecombinedOutputVersion;
+            _blendshapesInvalidated = state.Invalidated;
+            _blendshapeActiveListInvalidated = state.ActiveListInvalidated;
+        }
+
+        private void PublishBlendshapeBufferState(BlendshapeBufferState state)
+        {
+            if (state.GenerationId == 0L)
+                state.GenerationId = Interlocked.Increment(ref _nextBlendshapeGenerationId);
+            Volatile.Write(ref _blendshapeBufferState, state);
+        }
+
+        private void DetachBlendshapeBufferState()
+        {
+            Volatile.Write(ref _blendshapeBufferState, new BlendshapeBufferState());
+            Volatile.Write(ref _validPrecombinedGenerationId, 0L);
+            Buffers = [];
+        }
 
         [MemoryPackIgnore]
         public int ActiveBlendshapeCount => _activeBlendshapeCount;
@@ -1576,152 +2544,202 @@ namespace XREngine.Rendering
         /// When set, this buffer is used instead of the mesh's position buffer for rendering.
         /// </summary>
         [MemoryPackIgnore]
-        public XRDataBuffer? SkinnedPositionsBuffer { get; internal set; }
+        public XRDataBuffer? SkinnedPositionsBuffer
+        {
+            get => Volatile.Read(ref _skinnedOutputResourceState).Positions;
+            internal set { SkinnedOutputResourceSnapshot state = CaptureSkinnedOutputResources(); InstallSkinnedOutputResources(value, state.Normals, state.Tangents, state.Interleaved); }
+        }
 
         /// <summary>
         /// Output buffer for skinned normals from compute shader pre-pass.
         /// When set, this buffer is used instead of the mesh's normal buffer for rendering.
         /// </summary>
         [MemoryPackIgnore]
-        public XRDataBuffer? SkinnedNormalsBuffer { get; internal set; }
+        public XRDataBuffer? SkinnedNormalsBuffer
+        {
+            get => Volatile.Read(ref _skinnedOutputResourceState).Normals;
+            internal set { SkinnedOutputResourceSnapshot state = CaptureSkinnedOutputResources(); InstallSkinnedOutputResources(state.Positions, value, state.Tangents, state.Interleaved); }
+        }
 
         /// <summary>
         /// Output buffer for skinned tangents from compute shader pre-pass.
         /// When set, this buffer is used instead of the mesh's tangent buffer for rendering.
         /// </summary>
         [MemoryPackIgnore]
-        public XRDataBuffer? SkinnedTangentsBuffer { get; internal set; }
+        public XRDataBuffer? SkinnedTangentsBuffer
+        {
+            get => Volatile.Read(ref _skinnedOutputResourceState).Tangents;
+            internal set { SkinnedOutputResourceSnapshot state = CaptureSkinnedOutputResources(); InstallSkinnedOutputResources(state.Positions, state.Normals, value, state.Interleaved); }
+        }
 
         /// <summary>
         /// Output buffer for skinned interleaved data from compute shader pre-pass.
         /// When set, this buffer is used instead of the mesh's interleaved buffer for rendering.
         /// </summary>
         [MemoryPackIgnore]
-        public XRDataBuffer? SkinnedInterleavedBuffer { get; internal set; }
+        public XRDataBuffer? SkinnedInterleavedBuffer
+        {
+            get => Volatile.Read(ref _skinnedOutputResourceState).Interleaved;
+            internal set { SkinnedOutputResourceSnapshot state = CaptureSkinnedOutputResources(); InstallSkinnedOutputResources(state.Positions, state.Normals, state.Tangents, value); }
+        }
+
+        private SkinnedOutputResourceState _skinnedOutputResourceState = new();
+
+        private sealed class SkinnedOutputResourceState
+        {
+            internal XRDataBuffer? Positions;
+            internal XRDataBuffer? Normals;
+            internal XRDataBuffer? Tangents;
+            internal XRDataBuffer? Interleaved;
+        }
+
+        /// <summary>Captures one coherent generation of compute-skinning outputs.</summary>
+        public readonly record struct SkinnedOutputResourceSnapshot(
+            XRDataBuffer? Positions,
+            XRDataBuffer? Normals,
+            XRDataBuffer? Tangents,
+            XRDataBuffer? Interleaved);
+
+        public SkinnedOutputResourceSnapshot CaptureSkinnedOutputResources()
+        {
+            SkinnedOutputResourceState state = Volatile.Read(ref _skinnedOutputResourceState);
+            return new(state.Positions, state.Normals, state.Tangents, state.Interleaved);
+        }
+
+        /// <summary>
+        /// Atomically publishes a complete compute-skinning output generation. Callers must
+        /// create and validate every member before invoking this method.
+        /// </summary>
+        internal void InstallSkinnedOutputResources(
+            XRDataBuffer? positions,
+            XRDataBuffer? normals,
+            XRDataBuffer? tangents,
+            XRDataBuffer? interleaved)
+            => Volatile.Write(ref _skinnedOutputResourceState, new SkinnedOutputResourceState
+            {
+                Positions = positions,
+                Normals = normals,
+                Tangents = tangents,
+                Interleaved = interleaved,
+            });
 
         /// <summary>
         /// Precombined position deltas for active blendshapes. The compute pre-pass writes this and
         /// final skinning/direct vertex paths add it once per vertex when the heuristic selects it.
         /// </summary>
         [MemoryPackIgnore]
-        public XRDataBuffer? PrecombinedBlendshapePositionsBuffer { get; internal set; }
+        public XRDataBuffer? PrecombinedBlendshapePositionsBuffer
+            => Volatile.Read(ref _blendshapeBufferState).PrecombinedPositions;
 
         /// <summary>
         /// Precombined normal deltas for active blendshapes.
         /// </summary>
         [MemoryPackIgnore]
-        public XRDataBuffer? PrecombinedBlendshapeNormalsBuffer { get; internal set; }
+        public XRDataBuffer? PrecombinedBlendshapeNormalsBuffer
+            => Volatile.Read(ref _blendshapeBufferState).PrecombinedNormals;
 
         /// <summary>
         /// Precombined tangent deltas for active blendshapes.
         /// </summary>
         [MemoryPackIgnore]
-        public XRDataBuffer? PrecombinedBlendshapeTangentsBuffer { get; internal set; }
+        public XRDataBuffer? PrecombinedBlendshapeTangentsBuffer
+            => Volatile.Read(ref _blendshapeBufferState).PrecombinedTangents;
 
-        private bool _skinnedOutputDirty = true;
-        private ulong _skinnedOutputVersion;
-        private XRMesh? _precombinedBlendshapeMesh;
-        private int _precombinedBlendshapeVertexCount;
-        private bool _precombinedBlendshapeHasNormals;
-        private bool _precombinedBlendshapeHasTangents;
-        private bool _hasValidPrecombinedBlendshapeOutput;
-        private ulong _precombinedBlendshapeInputVersion;
-        private ulong _precombinedBlendshapeOutputVersion;
+        private readonly SkinnedOutputInvalidationState _skinnedOutputInvalidation = new();
+        [MemoryPackIgnore]
+        internal bool SkinnedOutputDirty => _skinnedOutputInvalidation.IsDirty;
 
         [MemoryPackIgnore]
-        internal bool SkinnedOutputDirty => _skinnedOutputDirty;
-
-        [MemoryPackIgnore]
-        internal ulong SkinnedOutputVersion => _skinnedOutputVersion;
+        internal ulong SkinnedOutputVersion => _skinnedOutputInvalidation.Version;
 
         [MemoryPackIgnore]
         internal bool HasValidPrecombinedBlendshapeDeltas
-            => _hasValidPrecombinedBlendshapeOutput
-            && _precombinedBlendshapeMesh is not null
-            && ReferenceEquals(_precombinedBlendshapeMesh, Mesh)
-            && _precombinedBlendshapeVertexCount == (Mesh?.VertexCount ?? 0)
-            && _precombinedBlendshapeOutputVersion == _precombinedBlendshapeInputVersion;
+        {
+            get
+            {
+                BlendshapeBufferState state = Volatile.Read(ref _blendshapeBufferState);
+                return state.GenerationId != 0L
+                    && Volatile.Read(ref _validPrecombinedGenerationId) == state.GenerationId
+                    && state.PrecombinedMesh is not null
+                    && ReferenceEquals(state.PrecombinedMesh, Mesh)
+                    && state.PrecombinedVertexCount == (Mesh?.VertexCount ?? 0)
+                    && state.PrecombinedHasNormals == (Mesh?.HasNormals ?? false)
+                    && state.PrecombinedHasTangents == (Mesh?.HasTangents ?? false)
+                    && _precombinedBlendshapeOutputVersion == _precombinedBlendshapeInputVersion;
+            }
+        }
 
         [MemoryPackIgnore]
         internal bool HasPendingComputeSkinningInputChanges
             => _bonesInvalidated || _blendshapesInvalidated || _meshDeformInvalidated;
 
         internal void MarkSkinnedOutputDirty()
-        {
-            if (!_skinnedOutputDirty)
-            {
-                bool dirty = true;
-                SetField(ref _skinnedOutputDirty, dirty);
-            }
+            => _skinnedOutputInvalidation.MarkDirty();
 
-            unchecked
-            {
-                _skinnedOutputVersion++;
-            }
-        }
-
-        internal void MarkSkinnedOutputClean()
-        {
-            if (_skinnedOutputDirty)
-            {
-                bool dirty = false;
-                SetField(ref _skinnedOutputDirty, dirty);
-            }
-        }
+        internal void MarkSkinnedOutputClean(ulong dispatchedVersion)
+            => _skinnedOutputInvalidation.MarkClean(dispatchedVersion);
 
         internal bool EnsurePrecombinedBlendshapeBuffers(XRMesh mesh)
         {
-            int vertexCount = mesh.VertexCount;
-            if (vertexCount <= 0)
-                return false;
-
-            bool buffersExist = PrecombinedBlendshapePositionsBuffer is not null
-                && (!mesh.HasNormals || PrecombinedBlendshapeNormalsBuffer is not null)
-                && (!mesh.HasTangents || PrecombinedBlendshapeTangentsBuffer is not null);
-            if (buffersExist
-                && ReferenceEquals(_precombinedBlendshapeMesh, mesh)
-                && _precombinedBlendshapeVertexCount == vertexCount
-                && _precombinedBlendshapeHasNormals == mesh.HasNormals
-                && _precombinedBlendshapeHasTangents == mesh.HasTangents)
+            EnterResourcePublicationLease();
+            try
             {
+                int vertexCount = mesh.VertexCount;
+                if (vertexCount <= 0)
+                    return false;
+
+                BlendshapeBufferState current = Volatile.Read(ref _blendshapeBufferState);
+                bool buffersExist = current.PrecombinedPositions is not null
+                    && (!mesh.HasNormals || current.PrecombinedNormals is not null)
+                    && (!mesh.HasTangents || current.PrecombinedTangents is not null);
+                if (buffersExist
+                    && ReferenceEquals(current.PrecombinedMesh, mesh)
+                    && current.PrecombinedVertexCount == vertexCount
+                    && current.PrecombinedHasNormals == mesh.HasNormals
+                    && current.PrecombinedHasTangents == mesh.HasTangents)
+                {
+                    return true;
+                }
+
+                BlendshapeBufferState next = CloneBlendshapeBufferState(current);
+                next.GenerationId = 0L;
+                next.PrecombinedMesh = mesh;
+                next.PrecombinedVertexCount = vertexCount;
+                next.PrecombinedHasNormals = mesh.HasNormals;
+                next.PrecombinedHasTangents = mesh.HasTangents;
+                next.PrecombinedPositions = CreatePrecombinedBlendshapeBuffer("PrecombinedBlendshapePositionDeltas", vertexCount);
+                if (mesh.HasNormals)
+                    next.PrecombinedNormals = CreatePrecombinedBlendshapeBuffer("PrecombinedBlendshapeNormalDeltas", vertexCount);
+                if (mesh.HasTangents)
+                    next.PrecombinedTangents = CreatePrecombinedBlendshapeBuffer("PrecombinedBlendshapeTangentDeltas", vertexCount);
+                next.PrecombinedOutputVersion = 0UL;
+                Volatile.Write(ref _validPrecombinedGenerationId, 0L);
+                _precombinedBlendshapeOutputVersion = 0UL;
+                PublishBlendshapeBufferState(next);
+                current.DestroyPrecombinedBuffers();
                 return true;
             }
-
-            DestroyPrecombinedBlendshapeBuffers();
-
-            _precombinedBlendshapeMesh = mesh;
-            _precombinedBlendshapeVertexCount = vertexCount;
-            _precombinedBlendshapeHasNormals = mesh.HasNormals;
-            _precombinedBlendshapeHasTangents = mesh.HasTangents;
-
-            PrecombinedBlendshapePositionsBuffer = CreatePrecombinedBlendshapeBuffer("PrecombinedBlendshapePositionDeltas", vertexCount);
-            if (mesh.HasNormals)
-                PrecombinedBlendshapeNormalsBuffer = CreatePrecombinedBlendshapeBuffer("PrecombinedBlendshapeNormalDeltas", vertexCount);
-            if (mesh.HasTangents)
-                PrecombinedBlendshapeTangentsBuffer = CreatePrecombinedBlendshapeBuffer("PrecombinedBlendshapeTangentDeltas", vertexCount);
-
-            _hasValidPrecombinedBlendshapeOutput = false;
-            _precombinedBlendshapeOutputVersion = 0UL;
-            return true;
+            finally
+            {
+                ExitResourcePublicationLease();
+            }
         }
 
-        internal void MarkPrecombinedBlendshapeDeltasValid(XRMesh mesh)
+        internal void MarkPrecombinedBlendshapeDeltasValid(XRMesh mesh, long expectedGenerationId)
         {
-            _precombinedBlendshapeMesh = mesh;
-            _precombinedBlendshapeVertexCount = mesh.VertexCount;
-            _precombinedBlendshapeHasNormals = mesh.HasNormals;
-            _precombinedBlendshapeHasTangents = mesh.HasTangents;
+            BlendshapeBufferState current = Volatile.Read(ref _blendshapeBufferState);
+            if (current.GenerationId != expectedGenerationId
+                || !ReferenceEquals(current.PrecombinedMesh, mesh))
+                return;
             _precombinedBlendshapeOutputVersion = _precombinedBlendshapeInputVersion;
-            _hasValidPrecombinedBlendshapeOutput = true;
+            Volatile.Write(ref _validPrecombinedGenerationId, expectedGenerationId);
         }
 
         internal void InvalidatePrecombinedBlendshapeDeltas()
         {
-            if (!_hasValidPrecombinedBlendshapeOutput)
+            if (Volatile.Read(ref _validPrecombinedGenerationId) == 0L)
                 return;
-
-            bool valid = false;
-            SetField(ref _hasValidPrecombinedBlendshapeOutput, valid);
+            Volatile.Write(ref _validPrecombinedGenerationId, 0L);
         }
 
         private static XRDataBuffer CreatePrecombinedBlendshapeBuffer(string name, int vertexCount)
@@ -1733,18 +2751,21 @@ namespace XREngine.Rendering
 
         private void DestroyPrecombinedBlendshapeBuffers()
         {
-            PrecombinedBlendshapePositionsBuffer?.Destroy();
-            PrecombinedBlendshapeNormalsBuffer?.Destroy();
-            PrecombinedBlendshapeTangentsBuffer?.Destroy();
-            PrecombinedBlendshapePositionsBuffer = null;
-            PrecombinedBlendshapeNormalsBuffer = null;
-            PrecombinedBlendshapeTangentsBuffer = null;
-            _precombinedBlendshapeMesh = null;
-            _precombinedBlendshapeVertexCount = 0;
-            _precombinedBlendshapeHasNormals = false;
-            _precombinedBlendshapeHasTangents = false;
-            _hasValidPrecombinedBlendshapeOutput = false;
+            BlendshapeBufferState previous = Volatile.Read(ref _blendshapeBufferState);
+            BlendshapeBufferState empty = CloneBlendshapeBufferState(previous);
+            empty.GenerationId = 0L;
+            empty.PrecombinedPositions = null;
+            empty.PrecombinedNormals = null;
+            empty.PrecombinedTangents = null;
+            empty.PrecombinedMesh = null;
+            empty.PrecombinedVertexCount = 0;
+            empty.PrecombinedHasNormals = false;
+            empty.PrecombinedHasTangents = false;
+            empty.PrecombinedOutputVersion = 0UL;
+            Volatile.Write(ref _validPrecombinedGenerationId, 0L);
             _precombinedBlendshapeOutputVersion = 0UL;
+            PublishBlendshapeBufferState(empty);
+            previous.DestroyPrecombinedBuffers();
         }
 
         #region Mesh Deform Buffers
@@ -1754,70 +2775,279 @@ namespace XREngine.Rendering
         /// Updated each frame from DeformMeshRenderer.
         /// </summary>
         [MemoryPackIgnore]
-        public XRDataBuffer? DeformerPositionsBuffer { get; private set; }
+        public XRDataBuffer? DeformerPositionsBuffer => Volatile.Read(ref _meshDeformBufferState).Positions;
 
         /// <summary>
         /// Rest positions of deformer mesh vertices (SSBO).
         /// Static buffer containing original bind pose positions.
         /// </summary>
         [MemoryPackIgnore]
-        public XRDataBuffer? DeformerRestPositionsBuffer { get; private set; }
+        public XRDataBuffer? DeformerRestPositionsBuffer => Volatile.Read(ref _meshDeformBufferState).RestPositions;
 
         /// <summary>
         /// Current normals of deformer mesh vertices (SSBO).
         /// Updated each frame from DeformMeshRenderer.
         /// </summary>
         [MemoryPackIgnore]
-        public XRDataBuffer? DeformerNormalsBuffer { get; private set; }
+        public XRDataBuffer? DeformerNormalsBuffer => Volatile.Read(ref _meshDeformBufferState).Normals;
 
         /// <summary>
         /// Current tangents of deformer mesh vertices (SSBO).
         /// Updated each frame from DeformMeshRenderer.
         /// </summary>
         [MemoryPackIgnore]
-        public XRDataBuffer? DeformerTangentsBuffer { get; private set; }
+        public XRDataBuffer? DeformerTangentsBuffer => Volatile.Read(ref _meshDeformBufferState).Tangents;
 
         /// <summary>
         /// SSBO containing all deformer vertex indices for all vertices (SSBO mode only).
         /// </summary>
         [MemoryPackIgnore]
-        public XRDataBuffer? MeshDeformIndicesBuffer { get; private set; }
+        public XRDataBuffer? MeshDeformIndicesBuffer => Volatile.Read(ref _meshDeformBufferState).Indices;
 
         /// <summary>
         /// SSBO containing all deformer weights for all vertices (SSBO mode only).
         /// </summary>
         [MemoryPackIgnore]
-        public XRDataBuffer? MeshDeformWeightsBuffer { get; private set; }
+        public XRDataBuffer? MeshDeformWeightsBuffer => Volatile.Read(ref _meshDeformBufferState).Weights;
 
         /// <summary>
         /// Per-vertex vec4 containing up to 4 deformer vertex indices (vec4 optimized mode).
         /// </summary>
         [MemoryPackIgnore]
-        public XRDataBuffer? MeshDeformVertexIndicesBuffer { get; private set; }
+        public XRDataBuffer? MeshDeformVertexIndicesBuffer => Volatile.Read(ref _meshDeformBufferState).VertexIndices;
 
         /// <summary>
         /// Per-vertex vec4 containing up to 4 deformer weights (vec4 optimized mode).
         /// </summary>
         [MemoryPackIgnore]
-        public XRDataBuffer? MeshDeformVertexWeightsBuffer { get; private set; }
+        public XRDataBuffer? MeshDeformVertexWeightsBuffer => Volatile.Read(ref _meshDeformBufferState).VertexWeights;
 
         /// <summary>
         /// Per-vertex offset into MeshDeformIndicesBuffer/MeshDeformWeightsBuffer (SSBO mode).
         /// </summary>
         [MemoryPackIgnore]
-        public XRDataBuffer? MeshDeformVertexOffsetBuffer { get; private set; }
+        public XRDataBuffer? MeshDeformVertexOffsetBuffer => Volatile.Read(ref _meshDeformBufferState).VertexOffsets;
 
         /// <summary>
         /// Per-vertex count of influences (SSBO mode).
         /// </summary>
         [MemoryPackIgnore]
-        public XRDataBuffer? MeshDeformVertexCountBuffer { get; private set; }
+        public XRDataBuffer? MeshDeformVertexCountBuffer => Volatile.Read(ref _meshDeformBufferState).VertexCounts;
 
         private bool _meshDeformInvalidated = false;
+
+        private MeshDeformBufferState _meshDeformBufferState = new();
+
+        /// <summary>Captures one coherent mesh-deform resource generation for backend binding.</summary>
+        public readonly record struct MeshDeformResourceSnapshot(
+            XRDataBuffer? Positions,
+            XRDataBuffer? RestPositions,
+            XRDataBuffer? Normals,
+            XRDataBuffer? Tangents,
+            XRDataBuffer? Indices,
+            XRDataBuffer? Weights,
+            XRDataBuffer? VertexIndices,
+            XRDataBuffer? VertexWeights,
+            XRDataBuffer? VertexOffsets,
+            XRDataBuffer? VertexCounts);
+
+        public MeshDeformResourceSnapshot CaptureMeshDeformResources()
+        {
+            MeshDeformBufferState state = Volatile.Read(ref _meshDeformBufferState);
+            return new(state.Positions, state.RestPositions, state.Normals, state.Tangents, state.Indices, state.Weights, state.VertexIndices, state.VertexWeights, state.VertexOffsets, state.VertexCounts);
+        }
+
+        private sealed class MeshDeformBufferState
+        {
+            internal static readonly string[] CollectionKeys =
+            [
+                $"{MeshDeformVertexShaderGenerator.DeformerPositionsBufferName}Buffer",
+                $"{MeshDeformVertexShaderGenerator.DeformerRestPositionsBufferName}Buffer",
+                $"{MeshDeformVertexShaderGenerator.DeformerNormalsBufferName}Buffer",
+                $"{MeshDeformVertexShaderGenerator.DeformerTangentsBufferName}Buffer",
+                $"{MeshDeformVertexShaderGenerator.MeshDeformIndicesBufferName}Buffer",
+                $"{MeshDeformVertexShaderGenerator.MeshDeformWeightsBufferName}Buffer",
+                MeshDeformVertexShaderGenerator.MeshDeformVertexIndicesAttrName,
+                MeshDeformVertexShaderGenerator.MeshDeformVertexWeightsAttrName,
+                MeshDeformVertexShaderGenerator.MeshDeformVertexOffsetAttrName,
+                MeshDeformVertexShaderGenerator.MeshDeformVertexCountAttrName,
+            ];
+
+            internal XRDataBuffer? Positions;
+            internal XRDataBuffer? RestPositions;
+            internal XRDataBuffer? Normals;
+            internal XRDataBuffer? Tangents;
+            internal XRDataBuffer? Indices;
+            internal XRDataBuffer? Weights;
+            internal XRDataBuffer? VertexIndices;
+            internal XRDataBuffer? VertexWeights;
+            internal XRDataBuffer? VertexOffsets;
+            internal XRDataBuffer? VertexCounts;
+            internal bool Invalidated;
+            internal uint TargetVertexCount;
+            internal uint DeformerVertexCount;
+            internal int InvalidInfluenceCount;
+            internal int TruncatedVertexCount;
+
+            internal IEnumerable<KeyValuePair<string, XRDataBuffer>> EnumerateCollectionBuffers()
+            {
+                XRDataBuffer?[] buffers = [Positions, RestPositions, Normals, Tangents, Indices, Weights, VertexIndices, VertexWeights, VertexOffsets, VertexCounts];
+                foreach (XRDataBuffer? buffer in buffers)
+                    if (buffer is not null)
+                        yield return new(buffer.AttributeName, buffer);
+            }
+
+            internal void Destroy()
+            {
+                foreach (XRDataBuffer? buffer in new XRDataBuffer?[] { Positions, RestPositions, Normals, Tangents, Indices, Weights, VertexIndices, VertexWeights, VertexOffsets, VertexCounts })
+                    buffer?.Destroy();
+            }
+        }
+
+        private MeshDeformBufferState CaptureMeshDeformBufferState()
+            => new()
+            {
+                Positions = DeformerPositionsBuffer,
+                RestPositions = DeformerRestPositionsBuffer,
+                Normals = DeformerNormalsBuffer,
+                Tangents = DeformerTangentsBuffer,
+                Indices = MeshDeformIndicesBuffer,
+                Weights = MeshDeformWeightsBuffer,
+                VertexIndices = MeshDeformVertexIndicesBuffer,
+                VertexWeights = MeshDeformVertexWeightsBuffer,
+                VertexOffsets = MeshDeformVertexOffsetBuffer,
+                VertexCounts = MeshDeformVertexCountBuffer,
+                Invalidated = _meshDeformInvalidated,
+                TargetVertexCount = _meshDeformLastTargetVertexCount,
+                DeformerVertexCount = _meshDeformLastDeformerVertexCount,
+                InvalidInfluenceCount = _meshDeformLastInvalidInfluenceCount,
+                TruncatedVertexCount = _meshDeformLastTruncatedVertexCount,
+            };
+
+        private void ApplyMeshDeformBufferState(MeshDeformBufferState state)
+        {
+            Volatile.Write(ref _meshDeformBufferState, state);
+            _meshDeformInvalidated = state.Invalidated;
+            _meshDeformLastTargetVertexCount = state.TargetVertexCount;
+            _meshDeformLastDeformerVertexCount = state.DeformerVertexCount;
+            _meshDeformLastInvalidInfluenceCount = state.InvalidInfluenceCount;
+            _meshDeformLastTruncatedVertexCount = state.TruncatedVertexCount;
+        }
+
+        private void DetachMeshDeformBufferState()
+        {
+            Volatile.Write(ref _meshDeformBufferState, new MeshDeformBufferState());
+            Buffers = [];
+        }
 
         #endregion
 
         private void PopulateBoneMatrixBuffers()
+            => PopulateBoneMatrixBuffers(_mesh);
+
+        private void PopulateBoneMatrixBuffers(XRMesh? sourceMesh)
+        {
+            XRMesh.BufferCollection targetBuffers = Buffers;
+            XRMesh.BufferCollection.PreparedBufferTicket preparationTicket =
+                targetBuffers.CapturePreparationTicket(BoneBufferState.CollectionKeys);
+            int expectedSettingsRevision = CurrentSettingsRevision;
+            XRMeshRenderer staging = new(detachedStagingRenderer: true)
+            {
+                _mesh = sourceMesh,
+            };
+            BoneBufferState prepared;
+            try
+            {
+                using RenderObjectPublicationScope publication = GenericRenderObject.BeginDeferredPublication();
+                staging.PopulateBoneMatrixBuffersCore();
+                prepared = staging.CaptureBoneBufferState();
+                staging.DetachBoneSubscriptions(prepared);
+                BoneBufferState? previous = null;
+                XRMesh.BufferCollection.PreparedBufferBatch? batch = null;
+                bool lifetimeLeaseHeld = false;
+                publication.Complete(
+                    () =>
+                    {
+                        EnterResourcePublicationLease();
+                        lifetimeLeaseHeld = true;
+                        if (!ReferenceEquals(_mesh, sourceMesh) ||
+                            CurrentSettingsRevision != expectedSettingsRevision ||
+                            !RuntimeEngine.Rendering.Settings.AllowSkinning)
+                        {
+                            throw new InvalidOperationException("Skinning configuration changed while renderer buffers were being prepared.");
+                        }
+
+                        batch = targetBuffers.SwapPreparedBatch(
+                            prepared.EnumerateCollectionBuffers(),
+                            BoneBufferState.CollectionKeys,
+                            expectedTicket: preparationTicket,
+                            installState: () =>
+                            {
+                                previous = CaptureBoneBufferState();
+                                DetachBoneSubscriptions(previous);
+                                ApplyBoneBufferState(prepared);
+                                AttachBoneSubscriptions(prepared);
+                            },
+                            restoreStateOnFailure: () =>
+                            {
+                                DetachBoneSubscriptions(prepared);
+                                if (previous is not null)
+                                {
+                                    ApplyBoneBufferState(previous);
+                                    AttachBoneSubscriptions(previous);
+                                }
+                            });
+                        ValidateResourcePublicationLease();
+                    },
+                    () =>
+                    {
+                        if (!lifetimeLeaseHeld)
+                            return;
+                        try
+                        {
+                            if (batch is not null)
+                                targetBuffers.RestorePreparedBatch(
+                                    batch,
+                                    () =>
+                                    {
+                                        DetachBoneSubscriptions(prepared);
+                                        if (previous is not null)
+                                        {
+                                            ApplyBoneBufferState(previous);
+                                            AttachBoneSubscriptions(previous);
+                                        }
+                                    });
+                        }
+                        finally
+                        {
+                            lifetimeLeaseHeld = false;
+                            ExitResourcePublicationLease();
+                        }
+                    },
+                    () =>
+                    {
+                        if (!lifetimeLeaseHeld)
+                            return;
+                        try
+                        {
+                            if (batch is not null)
+                                targetBuffers.DisposeReplacedBuffers(batch);
+                        }
+                        finally
+                        {
+                            lifetimeLeaseHeld = false;
+                            ExitResourcePublicationLease();
+                        }
+                    });
+                staging.DetachBoneBufferState();
+            }
+            finally
+            {
+                staging.AbortRendererConstruction();
+            }
+        }
+
+        private void PopulateBoneMatrixBuffersCore()
         {
             //using var timer = RuntimeEngine.Profiler.Start();
 
@@ -1828,30 +3058,31 @@ namespace XREngine.Rendering
             // (e.g. during the compute pre-pass), the indices reference the wrong palette slots and
             // the mesh explodes until a skinning toggle forces a palette rebuild. Finalizing here
             // guarantees the palette and the core indices share the same bone order from frame one.
-            Mesh?.EnsureSkinningBoneOrderFinalized();
+            XRMesh? mesh = Mesh;
+            (TransformBase tfm, Matrix4x4 invBindWorldMtx)[] utilizedBones =
+                mesh?.GetSkinningBoneOrderForPreparation() ?? [];
+            uint boneCount = (uint)utilizedBones.Length;
 
-            uint boneCount = (uint)(Mesh?.UtilizedBones?.Length ?? 0);
-
-            BoneMatricesBuffer = new($"{ECommonBufferType.BoneMatrices}Buffer", EBufferTarget.ShaderStorageBuffer, boneCount + 1, EComponentType.Float, 16, false, false)
+            Volatile.Read(ref _boneBufferState).Matrices = new($"{ECommonBufferType.BoneMatrices}Buffer", EBufferTarget.ShaderStorageBuffer, boneCount + 1, EComponentType.Float, 16, false, false)
             {
                 //RangeFlags = EBufferMapRangeFlags.Write | EBufferMapRangeFlags.Persistent | EBufferMapRangeFlags.Coherent;
                 //StorageFlags = EBufferMapStorageFlags.Write | EBufferMapStorageFlags.Persistent | EBufferMapStorageFlags.Coherent | EBufferMapStorageFlags.ClientStorage;
                 Usage = EBufferUsage.StreamDraw,
                 DisposeOnPush = false
             };
-            BoneInvBindMatricesBuffer = new($"{ECommonBufferType.BoneInvBindMatrices}Buffer", EBufferTarget.ShaderStorageBuffer, boneCount + 1, EComponentType.Float, 16, false, false)
+            Volatile.Read(ref _boneBufferState).InverseBindMatrices = new($"{ECommonBufferType.BoneInvBindMatrices}Buffer", EBufferTarget.ShaderStorageBuffer, boneCount + 1, EComponentType.Float, 16, false, false)
             {
                 Usage = EBufferUsage.StaticCopy
             };
-            SkinPaletteBuffer = new($"{ECommonBufferType.SkinPalette}Buffer", EBufferTarget.ShaderStorageBuffer, boneCount + 1, EComponentType.Float, 12, false, false)
+            Volatile.Read(ref _boneBufferState).Palette = new($"{ECommonBufferType.SkinPalette}Buffer", EBufferTarget.ShaderStorageBuffer, boneCount + 1, EComponentType.Float, 12, false, false)
             {
                 Usage = EBufferUsage.StreamDraw,
                 DisposeOnPush = false
             };
 
-            BoneMatricesBuffer.Set(0, Matrix4x4.Identity);
-            BoneInvBindMatricesBuffer.Set(0, Matrix4x4.Identity);
-            SkinPaletteBuffer.Set(0, SkinPaletteMatrix.Identity);
+            BoneMatricesBuffer!.Set(0, Matrix4x4.Identity);
+            BoneInvBindMatricesBuffer!.Set(0, Matrix4x4.Identity);
+            SkinPaletteBuffer!.Set(0, SkinPaletteMatrix.Identity);
 
             _bones = new RenderBone[boneCount];
             _boneByTransform = new Dictionary<TransformBase, RenderBone>((int)boneCount);
@@ -1868,11 +3099,11 @@ namespace XREngine.Rendering
             // Vertices live in root-local space (from geometryTransform), but InverseBindMatrix
             // maps from world space to bone-local space. Pre-multiply by the root's BindMatrix
             // so InvBind correctly maps: root-local → world → bone-local.
-            Matrix4x4 rootBindMtx = Mesh!.BindRootMatrix ?? Matrix4x4.Identity;
+            Matrix4x4 rootBindMtx = mesh!.BindRootMatrix ?? Matrix4x4.Identity;
 
             for (int i = 0; i < _bones.Length; i++)
             {
-                var (tfm, invBindWorldMtx) = Mesh!.UtilizedBones[i];
+                var (tfm, invBindWorldMtx) = utilizedBones[i];
                 uint boneIndex = (uint)i + 1u;
 
                 var rb = new RenderBone(tfm, invBindWorldMtx, boneIndex);
@@ -1901,6 +3132,85 @@ namespace XREngine.Rendering
             _bonePaletteOrderChecked = false;
             _bonePaletteStaleReported = false;
             MarkSkinnedOutputDirty();
+        }
+
+        private void ClearBoneMatrixBuffersTransactionally(XRMesh? expectedMesh)
+        {
+            XRMesh.BufferCollection targetBuffers = Buffers;
+            XRMesh.BufferCollection.PreparedBufferTicket preparationTicket =
+                targetBuffers.CapturePreparationTicket(BoneBufferState.CollectionKeys);
+            BoneBufferState? previous = null;
+            BoneBufferState empty = new();
+            using RenderObjectPublicationScope publication = GenericRenderObject.BeginDeferredPublication();
+            XRMesh.BufferCollection.PreparedBufferBatch? batch = null;
+            bool lifetimeLeaseHeld = false;
+            publication.Complete(
+                () =>
+                {
+                    EnterResourcePublicationLease();
+                    lifetimeLeaseHeld = true;
+                    if (!ReferenceEquals(_mesh, expectedMesh))
+                        throw new InvalidOperationException("The renderer mesh changed while skinning buffers were being cleared.");
+                    batch = targetBuffers.SwapPreparedBatch(
+                        [],
+                        BoneBufferState.CollectionKeys,
+                        expectedTicket: preparationTicket,
+                        installState: () =>
+                        {
+                            previous = CaptureBoneBufferState();
+                            DetachBoneSubscriptions(previous);
+                            ApplyBoneBufferState(empty);
+                        },
+                        restoreStateOnFailure: () =>
+                        {
+                            if (previous is not null)
+                            {
+                                ApplyBoneBufferState(previous);
+                                AttachBoneSubscriptions(previous);
+                            }
+                        });
+                    ValidateResourcePublicationLease();
+                },
+                () =>
+                {
+                    if (!lifetimeLeaseHeld)
+                        return;
+                    try
+                    {
+                        if (batch is not null)
+                            targetBuffers.RestorePreparedBatch(
+                                batch,
+                                () =>
+                                {
+                                    if (previous is not null)
+                                    {
+                                        ApplyBoneBufferState(previous);
+                                        AttachBoneSubscriptions(previous);
+                                    }
+                                });
+                    }
+                    finally
+                    {
+                        lifetimeLeaseHeld = false;
+                        ExitResourcePublicationLease();
+                    }
+                },
+                () =>
+                {
+                    if (!lifetimeLeaseHeld)
+                        return;
+                    try
+                    {
+                        if (batch is not null)
+                            targetBuffers.DisposeReplacedBuffers(batch);
+                        previous?.PreviousPalette?.Destroy();
+                    }
+                    finally
+                    {
+                        lifetimeLeaseHeld = false;
+                        ExitResourcePublicationLease();
+                    }
+                });
         }
 
         private int _paletteBoneOrderSignature;
@@ -1977,13 +3287,13 @@ namespace XREngine.Rendering
         private int _activeBlendshapeCount;
         private ulong _blendshapeWeightsVersion;
         private float _blendshapeActiveWeightThreshold;
-    private int[]? _gpuDrivenBoneRefCounts;
-    private int _gpuDrivenBoneCount;
-    private object? _externalSkinPaletteSourceOwner;
-    private XRDataBuffer? _externalSkinPaletteBuffer;
-    private XRDataBuffer? _externalPreviousSkinPaletteBuffer;
-    private uint _externalSkinPaletteBase;
-    private uint _externalSkinPaletteCount;
+        private int[]? _gpuDrivenBoneRefCounts;
+        private int _gpuDrivenBoneCount;
+        private object? _externalSkinPaletteSourceOwner;
+        private XRDataBuffer? _externalSkinPaletteBuffer;
+        private XRDataBuffer? _externalPreviousSkinPaletteBuffer;
+        private uint _externalSkinPaletteBase;
+        private uint _externalSkinPaletteCount;
 
         private void BoneTransformRenderMatrixChanged(TransformBase transform, Matrix4x4 renderMatrix)
         {
@@ -2058,7 +3368,10 @@ namespace XREngine.Rendering
 
         internal void RefreshBoneMatricesFromRenderState()
         {
-            if (_bones is null || BoneMatricesBuffer is null || SkinPaletteBuffer is null)
+            BoneResourceSnapshot resources = CaptureBoneResources();
+            XRDataBuffer? boneMatrices = resources.BoneMatrices;
+            XRDataBuffer? skinPalette = resources.SkinPalette;
+            if (_bones is null || boneMatrices is null || skinPalette is null)
             {
                 MarkSkinnedOutputDirty();
                 return;
@@ -2068,8 +3381,8 @@ namespace XREngine.Rendering
             {
                 uint index = bone.Index;
                 Matrix4x4 renderMatrix = GetCurrentBoneMatrix(bone.Transform);
-                BoneMatricesBuffer.Set(index, renderMatrix);
-                SkinPaletteBuffer.Set(index, SkinPaletteMatrix.FromRowVectorMatrix(ComposeSkinPaletteMatrix(index, renderMatrix)));
+                boneMatrices.Set(index, renderMatrix);
+                skinPalette.Set(index, SkinPaletteMatrix.FromRowVectorMatrix(ComposeSkinPaletteMatrix(index, renderMatrix)));
                 MarkBoneMatrixDirty(index, renderMatrix);
             }
 
@@ -2195,8 +3508,9 @@ namespace XREngine.Rendering
                 return;
 
             uint dirtyElementCount = dirtyBoneEnd - dirtyBoneStart + 1u;
-            BoneMatricesBuffer?.CommitDirtyElements(dirtyBoneStart, dirtyElementCount);
-            SkinPaletteBuffer?.CommitDirtyElements(dirtyBoneStart, dirtyElementCount);
+            BoneResourceSnapshot resources = CaptureBoneResources();
+            resources.BoneMatrices?.CommitDirtyElements(dirtyBoneStart, dirtyElementCount);
+            resources.SkinPalette?.CommitDirtyElements(dirtyBoneStart, dirtyElementCount);
             long skinPaletteBytes = dirtyBoneCount * 12L * sizeof(float);
             RuntimeEngine.Rendering.Stats.RecordSkinningUpload(skinPaletteBytes, 0L, skinPaletteBytes: skinPaletteBytes);
         }
@@ -2212,7 +3526,10 @@ namespace XREngine.Rendering
             dirtyBoneStart = uint.MaxValue;
             dirtyBoneEnd = 0u;
 
-            if (BoneMatricesBuffer is null)
+            BoneResourceSnapshot resources = CaptureBoneResources();
+            XRDataBuffer? boneMatrices = resources.BoneMatrices;
+            XRDataBuffer? skinPalette = resources.SkinPalette;
+            if (boneMatrices is null)
                 return false;
 
             lock (_dirtyBoneSyncRoot)
@@ -2244,12 +3561,12 @@ namespace XREngine.Rendering
                         dirtyBoneEnd = index;
 
                     Matrix4x4 currentMatrix = _dirtyBoneMatrices[i];
-                    BoneMatricesBuffer.Set(index, currentMatrix);
-                    if (SkinPaletteBuffer is not null)
+                    boneMatrices.Set(index, currentMatrix);
+                    if (skinPalette is not null)
                     {
                         Matrix4x4 composed = ComposeSkinPaletteMatrix(index, currentMatrix);
                         DetectSkinPaletteExplosion(index, currentMatrix, composed);
-                        SkinPaletteBuffer.Set(index, SkinPaletteMatrix.FromRowVectorMatrix(composed));
+                        skinPalette.Set(index, SkinPaletteMatrix.FromRowVectorMatrix(composed));
                     }
                     if (clearDirtyState)
                         _dirtyBoneFlags[i] = false;
@@ -2499,6 +3816,7 @@ namespace XREngine.Rendering
 
         private void MarkBlendshapeWeightDirty(uint index)
         {
+            InvalidatePrecombinedBlendshapeDeltas();
             SetBlendshapesInvalidated(true);
             if (_blendshapeDirtyStartIndex == uint.MaxValue || index < _blendshapeDirtyStartIndex)
                 _blendshapeDirtyStartIndex = index;
@@ -2516,21 +3834,25 @@ namespace XREngine.Rendering
 
         private void RebuildActiveBlendshapeList()
         {
-            if (BlendshapeWeights is null || BlendshapeActiveWeights is null || Mesh is null)
+            BlendshapeResourceSnapshot resources = CaptureBlendshapeResources();
+            XRDataBuffer? weights = resources.Weights;
+            XRDataBuffer? activeWeights = resources.ActiveWeights;
+            if (weights is null || activeWeights is null || Mesh is null)
                 return;
 
             uint blendshapeCount = Mesh.BlendshapeCount;
             int activeCount = 0;
             for (uint i = 0; i < blendshapeCount; i++)
             {
-                float weight = BlendshapeWeights.GetFloat(i);
+                float weight = weights.GetFloat(i);
                 if (!IsBlendshapeWeightActive(weight) || !IsBlendshapeAllowedByLod((int)i))
                     continue;
 
-                BlendshapeActiveWeights.SetVector2((uint)activeCount, new Vector2(i, weight));
+                activeWeights.SetVector2((uint)activeCount, new Vector2(i, weight));
                 activeCount++;
             }
 
+            InvalidatePrecombinedBlendshapeDeltas();
             SetField(ref _activeBlendshapeCount, activeCount);
             _blendshapeActiveListInvalidated = true;
             unchecked
@@ -2578,7 +3900,10 @@ namespace XREngine.Rendering
 
         public void PushBlendshapeWeightsToGPU()
         {
-            if (BlendshapeWeights is null)
+            BlendshapeResourceSnapshot resources = CaptureBlendshapeResources();
+            XRDataBuffer? weights = resources.Weights;
+            XRDataBuffer? activeWeights = resources.ActiveWeights;
+            if (weights is null)
                 return;
 
             long blendshapeWeightBytes = 0L;
@@ -2586,15 +3911,15 @@ namespace XREngine.Rendering
             {
                 if (_blendshapeDirtyStartIndex != uint.MaxValue && _blendshapeDirtyEndIndex >= _blendshapeDirtyStartIndex)
                 {
-                    int offset = checked((int)(_blendshapeDirtyStartIndex * BlendshapeWeights.ElementSize));
-                    uint length = checked((_blendshapeDirtyEndIndex - _blendshapeDirtyStartIndex + 1u) * BlendshapeWeights.ElementSize);
-                    BlendshapeWeights.CommitDirtyBytes(checked((uint)offset), length);
+                    int offset = checked((int)(_blendshapeDirtyStartIndex * weights.ElementSize));
+                    uint length = checked((_blendshapeDirtyEndIndex - _blendshapeDirtyStartIndex + 1u) * weights.ElementSize);
+                    weights.CommitDirtyBytes(checked((uint)offset), length);
                     blendshapeWeightBytes = length;
                 }
                 else
                 {
-                    BlendshapeWeights.CommitDirtyBytes(0u, BlendshapeWeights.Length);
-                    blendshapeWeightBytes = BlendshapeWeights.Length;
+                    weights.CommitDirtyBytes(0u, weights.Length);
+                    blendshapeWeightBytes = weights.Length;
                 }
 
                 _blendshapeDirtyStartIndex = uint.MaxValue;
@@ -2603,13 +3928,13 @@ namespace XREngine.Rendering
             }
 
             long activeListBytes = 0L;
-            if (_blendshapeActiveListInvalidated && BlendshapeActiveWeights is not null)
+            if (_blendshapeActiveListInvalidated && activeWeights is not null)
             {
                 if (_activeBlendshapeCount > 0)
                 {
                     uint activeElementCount = checked((uint)_activeBlendshapeCount);
-                    BlendshapeActiveWeights.CommitDirtyElements(0u, activeElementCount);
-                    activeListBytes = checked(activeElementCount * BlendshapeActiveWeights.ElementSize);
+                    activeWeights.CommitDirtyElements(0u, activeElementCount);
+                    activeListBytes = checked(activeElementCount * activeWeights.ElementSize);
                 }
 
                 _blendshapeActiveListInvalidated = false;
@@ -2633,13 +3958,225 @@ namespace XREngine.Rendering
         /// Rebuilds the mesh deform buffers when influences or settings change.
         /// </summary>
         private void RebuildMeshDeformBuffers()
+            => RebuildMeshDeformBuffers(
+                _mesh,
+                _deformMeshRenderer,
+                _meshDeformInfluences,
+                _maxMeshDeformInfluences,
+                _optimizeMeshDeformToVec4);
+
+        private void RebuildMeshDeformBuffers(
+            XRMesh? targetMesh,
+            XRMeshRenderer? deformer,
+            MeshDeformInfluence[][]? influences,
+            int maxInfluences,
+            bool optimizeToVec4)
         {
-            ResetMeshDeformBuffers();
-
-            if (_meshDeformInfluences is null || DeformMeshRenderer?.Mesh is null || Mesh is null)
+            if (influences is null || deformer?.Mesh is null || targetMesh is null)
+            {
+                ClearMeshDeformBuffersTransactionally(
+                    targetMesh,
+                    deformer,
+                    influences,
+                    maxInfluences,
+                    optimizeToVec4);
                 return;
+            }
 
-            PopulateMeshDeformBuffers();
+            XRMesh.BufferCollection targetBuffers = Buffers;
+            XRMesh.BufferCollection.PreparedBufferTicket preparationTicket =
+                targetBuffers.CapturePreparationTicket(MeshDeformBufferState.CollectionKeys);
+            XRMeshRenderer staging = new(detachedStagingRenderer: true)
+            {
+                _mesh = targetMesh,
+                _deformMeshRenderer = deformer,
+                _meshDeformInfluences = influences,
+                _maxMeshDeformInfluences = maxInfluences,
+                _optimizeMeshDeformToVec4 = optimizeToVec4,
+            };
+            MeshDeformBufferState prepared;
+            try
+            {
+                using RenderObjectPublicationScope publication = GenericRenderObject.BeginDeferredPublication();
+                staging.PopulateMeshDeformBuffers();
+                prepared = staging.CaptureMeshDeformBufferState();
+                MeshDeformBufferState? previous = null;
+                XRMesh.BufferCollection.PreparedBufferBatch? batch = null;
+                bool lifetimeLeaseHeld = false;
+                publication.Complete(
+                    () =>
+                    {
+                        EnterResourcePublicationLease();
+                        lifetimeLeaseHeld = true;
+                        ValidateMeshDeformConfigurationIdentity(
+                            targetMesh,
+                            deformer,
+                            influences,
+                            maxInfluences,
+                            optimizeToVec4);
+                        batch = targetBuffers.SwapPreparedBatch(
+                            prepared.EnumerateCollectionBuffers(),
+                            MeshDeformBufferState.CollectionKeys,
+                            expectedTicket: preparationTicket,
+                            installState: () =>
+                            {
+                                previous = CaptureMeshDeformBufferState();
+                                ApplyMeshDeformBufferState(prepared);
+                            },
+                            restoreStateOnFailure: () =>
+                            {
+                                if (previous is not null)
+                                    ApplyMeshDeformBufferState(previous);
+                            });
+                        ValidateResourcePublicationLease();
+                    },
+                    () =>
+                    {
+                        if (!lifetimeLeaseHeld)
+                            return;
+                        try
+                        {
+                            if (batch is not null)
+                                targetBuffers.RestorePreparedBatch(
+                                    batch,
+                                    () =>
+                                    {
+                                        if (previous is not null)
+                                            ApplyMeshDeformBufferState(previous);
+                                    });
+                        }
+                        finally
+                        {
+                            lifetimeLeaseHeld = false;
+                            ExitResourcePublicationLease();
+                        }
+                    },
+                    () =>
+                    {
+                        if (!lifetimeLeaseHeld)
+                            return;
+                        try
+                        {
+                            if (batch is not null)
+                                targetBuffers.DisposeReplacedBuffers(batch);
+                        }
+                        finally
+                        {
+                            lifetimeLeaseHeld = false;
+                            ExitResourcePublicationLease();
+                        }
+                    });
+                staging.DetachMeshDeformBufferState();
+            }
+            finally
+            {
+                staging.AbortRendererConstruction();
+            }
+        }
+
+        private void ClearMeshDeformBuffersTransactionally()
+            => ClearMeshDeformBuffersTransactionally(
+                _mesh,
+                _deformMeshRenderer,
+                _meshDeformInfluences,
+                _maxMeshDeformInfluences,
+                _optimizeMeshDeformToVec4);
+
+        private void ClearMeshDeformBuffersTransactionally(
+            XRMesh? targetMesh,
+            XRMeshRenderer? deformer,
+            MeshDeformInfluence[][]? influences,
+            int maxInfluences,
+            bool optimizeToVec4)
+        {
+            XRMesh.BufferCollection targetBuffers = Buffers;
+            XRMesh.BufferCollection.PreparedBufferTicket preparationTicket =
+                targetBuffers.CapturePreparationTicket(MeshDeformBufferState.CollectionKeys);
+            MeshDeformBufferState? previous = null;
+            MeshDeformBufferState empty = new();
+            using RenderObjectPublicationScope publication = GenericRenderObject.BeginDeferredPublication();
+            XRMesh.BufferCollection.PreparedBufferBatch? batch = null;
+            bool lifetimeLeaseHeld = false;
+            publication.Complete(
+                () =>
+                {
+                    EnterResourcePublicationLease();
+                    lifetimeLeaseHeld = true;
+                    ValidateMeshDeformConfigurationIdentity(
+                        targetMesh,
+                        deformer,
+                        influences,
+                        maxInfluences,
+                        optimizeToVec4);
+                    batch = targetBuffers.SwapPreparedBatch(
+                        [],
+                        MeshDeformBufferState.CollectionKeys,
+                        expectedTicket: preparationTicket,
+                        installState: () =>
+                        {
+                            previous = CaptureMeshDeformBufferState();
+                            ApplyMeshDeformBufferState(empty);
+                        },
+                        restoreStateOnFailure: () =>
+                        {
+                            if (previous is not null)
+                                ApplyMeshDeformBufferState(previous);
+                        });
+                    ValidateResourcePublicationLease();
+                },
+                () =>
+                {
+                    if (!lifetimeLeaseHeld)
+                        return;
+                    try
+                    {
+                        if (batch is not null)
+                            targetBuffers.RestorePreparedBatch(
+                                batch,
+                                () =>
+                                {
+                                    if (previous is not null)
+                                        ApplyMeshDeformBufferState(previous);
+                                });
+                    }
+                    finally
+                    {
+                        lifetimeLeaseHeld = false;
+                        ExitResourcePublicationLease();
+                    }
+                },
+                () =>
+                {
+                    if (!lifetimeLeaseHeld)
+                        return;
+                    try
+                    {
+                        if (batch is not null)
+                            targetBuffers.DisposeReplacedBuffers(batch);
+                    }
+                    finally
+                    {
+                        lifetimeLeaseHeld = false;
+                        ExitResourcePublicationLease();
+                    }
+                });
+        }
+
+        private void ValidateMeshDeformConfigurationIdentity(
+            XRMesh? targetMesh,
+            XRMeshRenderer? deformer,
+            MeshDeformInfluence[][]? influences,
+            int maxInfluences,
+            bool optimizeToVec4)
+        {
+            if (!ReferenceEquals(_mesh, targetMesh) ||
+                !ReferenceEquals(_deformMeshRenderer, deformer) ||
+                !ReferenceEquals(_meshDeformInfluences, influences) ||
+                _maxMeshDeformInfluences != maxInfluences ||
+                _optimizeMeshDeformToVec4 != optimizeToVec4)
+            {
+                throw new InvalidOperationException("Mesh-deformation configuration changed while renderer buffers were being prepared.");
+            }
         }
 
         /// <summary>
@@ -2657,21 +4194,21 @@ namespace XREngine.Rendering
         /// - If the deformer renderer has compute-skinned outputs, the mesh-deform path prefers those over the static mesh buffers.
         /// </remarks>
         public void SetupMeshDeformation(XRMeshRenderer deformerRenderer, MeshDeformInfluence[][] influences)
-        {
-            _deformMeshRenderer = deformerRenderer;
-            _meshDeformInfluences = influences;
-            RebuildMeshDeformBuffers();
-        }
+            => ChangeMeshDeformConfiguration(
+                deformerRenderer,
+                influences,
+                _maxMeshDeformInfluences,
+                _optimizeMeshDeformToVec4);
 
         /// <summary>
         /// Clears mesh deformation, reverting to standard rendering.
         /// </summary>
         public void ClearMeshDeformation()
-        {
-            _deformMeshRenderer = null;
-            _meshDeformInfluences = null;
-            ResetMeshDeformBuffers();
-        }
+            => ChangeMeshDeformConfiguration(
+                null,
+                null,
+                _maxMeshDeformInfluences,
+                _optimizeMeshDeformToVec4);
 
         private void PopulateMeshDeformBuffers()
         {
@@ -2685,7 +4222,7 @@ namespace XREngine.Rendering
             ValidateMeshDeformConfiguration(vertexCount, deformerVertexCount);
 
             // Create deformer position buffers
-            DeformerPositionsBuffer = new XRDataBuffer(
+            Volatile.Read(ref _meshDeformBufferState).Positions = new XRDataBuffer(
                 $"{MeshDeformVertexShaderGenerator.DeformerPositionsBufferName}Buffer",
                 EBufferTarget.ShaderStorageBuffer,
                 deformerVertexCount,
@@ -2698,7 +4235,7 @@ namespace XREngine.Rendering
                 DisposeOnPush = false
             };
 
-            DeformerRestPositionsBuffer = new XRDataBuffer(
+            Volatile.Read(ref _meshDeformBufferState).RestPositions = new XRDataBuffer(
                 $"{MeshDeformVertexShaderGenerator.DeformerRestPositionsBufferName}Buffer",
                 EBufferTarget.ShaderStorageBuffer,
                 deformerVertexCount,
@@ -2715,20 +4252,20 @@ namespace XREngine.Rendering
             for (uint i = 0; i < deformerVertexCount; i++)
             {
                 var pos = deformerMesh.GetPosition(i);
-                DeformerPositionsBuffer.SetVector4(i, new Vector4(pos, 1.0f));
-                DeformerRestPositionsBuffer.SetVector4(i, new Vector4(pos, 1.0f));
+                DeformerPositionsBuffer!.SetVector4(i, new Vector4(pos, 1.0f));
+                DeformerRestPositionsBuffer!.SetVector4(i, new Vector4(pos, 1.0f));
             }
 
             if (TryCopySkinnedDeformerPositions(deformerMesh))
                 _meshDeformInvalidated = true;
 
-            Buffers.Add(DeformerPositionsBuffer.AttributeName, DeformerPositionsBuffer);
-            Buffers.Add(DeformerRestPositionsBuffer.AttributeName, DeformerRestPositionsBuffer);
+            Buffers.Add(DeformerPositionsBuffer!.AttributeName, DeformerPositionsBuffer);
+            Buffers.Add(DeformerRestPositionsBuffer!.AttributeName, DeformerRestPositionsBuffer);
 
             // Create deformer normal buffer if mesh has normals
             if (Mesh.HasNormals && deformerMesh.HasNormals)
             {
-                DeformerNormalsBuffer = new XRDataBuffer(
+                Volatile.Read(ref _meshDeformBufferState).Normals = new XRDataBuffer(
                     $"{MeshDeformVertexShaderGenerator.DeformerNormalsBufferName}Buffer",
                     EBufferTarget.ShaderStorageBuffer,
                     deformerVertexCount,
@@ -2744,18 +4281,18 @@ namespace XREngine.Rendering
                 for (uint i = 0; i < deformerVertexCount; i++)
                 {
                     var nrm = deformerMesh.GetNormal(i);
-                    DeformerNormalsBuffer.SetVector4(i, new Vector4(nrm, 0.0f));
+                    DeformerNormalsBuffer!.SetVector4(i, new Vector4(nrm, 0.0f));
                 }
 
                 TryCopySkinnedDeformerNormals(deformerMesh);
 
-                Buffers.Add(DeformerNormalsBuffer.AttributeName, DeformerNormalsBuffer);
+                Buffers.Add(DeformerNormalsBuffer!.AttributeName, DeformerNormalsBuffer);
             }
 
             // Create deformer tangent buffer if mesh has tangents
             if (Mesh.HasTangents && deformerMesh.HasTangents)
             {
-                DeformerTangentsBuffer = new XRDataBuffer(
+                Volatile.Read(ref _meshDeformBufferState).Tangents = new XRDataBuffer(
                     $"{MeshDeformVertexShaderGenerator.DeformerTangentsBufferName}Buffer",
                     EBufferTarget.ShaderStorageBuffer,
                     deformerVertexCount,
@@ -2770,12 +4307,12 @@ namespace XREngine.Rendering
 
                 for (uint i = 0; i < deformerVertexCount; i++)
                 {
-                    DeformerTangentsBuffer.SetVector4(i, deformerMesh.GetTangentWithSign(i));
+                    DeformerTangentsBuffer!.SetVector4(i, deformerMesh.GetTangentWithSign(i));
                 }
 
                 TryCopySkinnedDeformerTangents(deformerMesh);
 
-                Buffers.Add(DeformerTangentsBuffer.AttributeName, DeformerTangentsBuffer);
+                Buffers.Add(DeformerTangentsBuffer!.AttributeName, DeformerTangentsBuffer);
             }
 
             // Create per-vertex influence buffers
@@ -2796,7 +4333,7 @@ namespace XREngine.Rendering
         private void PopulateMeshDeformVec4Buffers(uint vertexCount)
         {
             // Create per-vertex vec4 buffers for indices and weights
-            MeshDeformVertexIndicesBuffer = new XRDataBuffer(
+            Volatile.Read(ref _meshDeformBufferState).VertexIndices = new XRDataBuffer(
                 MeshDeformVertexShaderGenerator.MeshDeformVertexIndicesAttrName,
                 EBufferTarget.ArrayBuffer,
                 vertexCount,
@@ -2809,7 +4346,7 @@ namespace XREngine.Rendering
                 DisposeOnPush = false
             };
 
-            MeshDeformVertexWeightsBuffer = new XRDataBuffer(
+            Volatile.Read(ref _meshDeformBufferState).VertexWeights = new XRDataBuffer(
                 MeshDeformVertexShaderGenerator.MeshDeformVertexWeightsAttrName,
                 EBufferTarget.ArrayBuffer,
                 vertexCount,
@@ -2826,7 +4363,7 @@ namespace XREngine.Rendering
             for (uint v = 0; v < vertexCount; v++)
             {
                 var influences = v < _meshDeformInfluences!.Length ? _meshDeformInfluences[v] : null;
-                
+
                 Vector4 indices = new(-1, -1, -1, -1);
                 Vector4 weights = Vector4.Zero;
 
@@ -2864,17 +4401,17 @@ namespace XREngine.Rendering
 
                 if (RuntimeEngine.Rendering.Settings.UseIntegerUniformsInShaders)
                 {
-                    MeshDeformVertexIndicesBuffer.SetDataRawAtIndex(v, new IVector4((int)indices.X, (int)indices.Y, (int)indices.Z, (int)indices.W));
+                    MeshDeformVertexIndicesBuffer!.SetDataRawAtIndex(v, new IVector4((int)indices.X, (int)indices.Y, (int)indices.Z, (int)indices.W));
                 }
                 else
                 {
-                    MeshDeformVertexIndicesBuffer.SetDataRawAtIndex(v, indices);
+                    MeshDeformVertexIndicesBuffer!.SetDataRawAtIndex(v, indices);
                 }
-                MeshDeformVertexWeightsBuffer.SetDataRawAtIndex(v, weights);
+                MeshDeformVertexWeightsBuffer!.SetDataRawAtIndex(v, weights);
             }
 
-            Buffers.Add(MeshDeformVertexIndicesBuffer.AttributeName, MeshDeformVertexIndicesBuffer);
-            Buffers.Add(MeshDeformVertexWeightsBuffer.AttributeName, MeshDeformVertexWeightsBuffer);
+            Buffers.Add(MeshDeformVertexIndicesBuffer!.AttributeName, MeshDeformVertexIndicesBuffer);
+            Buffers.Add(MeshDeformVertexWeightsBuffer!.AttributeName, MeshDeformVertexWeightsBuffer);
         }
 
         private void PopulateMeshDeformSSBOBuffers(uint vertexCount)
@@ -2895,7 +4432,7 @@ namespace XREngine.Rendering
             }
 
             // Create SSBO buffers for indices and weights
-            MeshDeformIndicesBuffer = new XRDataBuffer(
+            Volatile.Read(ref _meshDeformBufferState).Indices = new XRDataBuffer(
                 $"{MeshDeformVertexShaderGenerator.MeshDeformIndicesBufferName}Buffer",
                 EBufferTarget.ShaderStorageBuffer,
                 Math.Max(1, totalInfluences),
@@ -2908,7 +4445,7 @@ namespace XREngine.Rendering
                 DisposeOnPush = false
             };
 
-            MeshDeformWeightsBuffer = new XRDataBuffer(
+            Volatile.Read(ref _meshDeformBufferState).Weights = new XRDataBuffer(
                 $"{MeshDeformVertexShaderGenerator.MeshDeformWeightsBufferName}Buffer",
                 EBufferTarget.ShaderStorageBuffer,
                 Math.Max(1, totalInfluences),
@@ -2922,7 +4459,7 @@ namespace XREngine.Rendering
             };
 
             // Create per-vertex offset and count attribute buffers
-            MeshDeformVertexOffsetBuffer = new XRDataBuffer(
+            Volatile.Read(ref _meshDeformBufferState).VertexOffsets = new XRDataBuffer(
                 MeshDeformVertexShaderGenerator.MeshDeformVertexOffsetAttrName,
                 EBufferTarget.ArrayBuffer,
                 vertexCount,
@@ -2935,7 +4472,7 @@ namespace XREngine.Rendering
                 DisposeOnPush = false
             };
 
-            MeshDeformVertexCountBuffer = new XRDataBuffer(
+            Volatile.Read(ref _meshDeformBufferState).VertexCounts = new XRDataBuffer(
                 MeshDeformVertexShaderGenerator.MeshDeformVertexCountAttrName,
                 EBufferTarget.ArrayBuffer,
                 vertexCount,
@@ -2965,13 +4502,13 @@ namespace XREngine.Rendering
 
                 if (RuntimeEngine.Rendering.Settings.UseIntegerUniformsInShaders)
                 {
-                    MeshDeformVertexOffsetBuffer.Set(v, (int)currentOffset);
-                    MeshDeformVertexCountBuffer.Set(v, count);
+                    MeshDeformVertexOffsetBuffer!.Set(v, (int)currentOffset);
+                    MeshDeformVertexCountBuffer!.Set(v, count);
                 }
                 else
                 {
-                    MeshDeformVertexOffsetBuffer.Set(v, (float)currentOffset);
-                    MeshDeformVertexCountBuffer.Set(v, (float)count);
+                    MeshDeformVertexOffsetBuffer!.Set(v, (float)currentOffset);
+                    MeshDeformVertexCountBuffer!.Set(v, (float)count);
                 }
 
                 if (influences is not null)
@@ -2982,8 +4519,8 @@ namespace XREngine.Rendering
                         if (!IsValidMeshDeformInfluence(influences[i], DeformerPositionsBuffer?.ElementCount ?? 0u))
                             continue;
 
-                        MeshDeformIndicesBuffer.Set(currentOffset + (uint)writeIndex, influences[i].VertexIndex);
-                        MeshDeformWeightsBuffer.Set(currentOffset + (uint)writeIndex, influences[i].Weight);
+                        MeshDeformIndicesBuffer!.Set(currentOffset + (uint)writeIndex, influences[i].VertexIndex);
+                        MeshDeformWeightsBuffer!.Set(currentOffset + (uint)writeIndex, influences[i].Weight);
                         writeIndex++;
                     }
                 }
@@ -2991,10 +4528,10 @@ namespace XREngine.Rendering
                 currentOffset += (uint)count;
             }
 
-            Buffers.Add(MeshDeformIndicesBuffer.AttributeName, MeshDeformIndicesBuffer);
-            Buffers.Add(MeshDeformWeightsBuffer.AttributeName, MeshDeformWeightsBuffer);
-            Buffers.Add(MeshDeformVertexOffsetBuffer.AttributeName, MeshDeformVertexOffsetBuffer);
-            Buffers.Add(MeshDeformVertexCountBuffer.AttributeName, MeshDeformVertexCountBuffer);
+            Buffers.Add(MeshDeformIndicesBuffer!.AttributeName, MeshDeformIndicesBuffer);
+            Buffers.Add(MeshDeformWeightsBuffer!.AttributeName, MeshDeformWeightsBuffer);
+            Buffers.Add(MeshDeformVertexOffsetBuffer!.AttributeName, MeshDeformVertexOffsetBuffer);
+            Buffers.Add(MeshDeformVertexCountBuffer!.AttributeName, MeshDeformVertexCountBuffer);
         }
 
         /// <summary>
@@ -3256,7 +4793,7 @@ namespace XREngine.Rendering
 
         #endregion
 
-        public T? Parameter<T>(int index) where T : ShaderVar 
+        public T? Parameter<T>(int index) where T : ShaderVar
             => Material?.Parameter<T>(index);
         public T? Parameter<T>(string name) where T : ShaderVar
             => Material?.Parameter<T>(name);

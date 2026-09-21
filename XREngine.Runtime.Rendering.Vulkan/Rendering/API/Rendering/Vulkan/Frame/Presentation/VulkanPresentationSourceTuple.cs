@@ -6,13 +6,15 @@ namespace XREngine.Rendering.Vulkan;
 
 /// <summary>
 /// Immutable publication consumed from final-source validation through submit.
-/// Native handles are always paired with the allocation/publication generation
-/// that made them valid; logical wrappers are retained only for diagnostics and
-/// readback ownership.
+/// Native handles are paired with the allocation/publication generation that
+/// made them valid. Accepted final-draw selection may temporarily retain only
+/// logical ownership until that draw publishes its exact descriptor payload.
 /// </summary>
 /// <param name="LogicalEpoch">The logical epoch of the frame, used to track the sequence of frames.</param>
 /// <param name="ColorTexture">The color texture associated with the frame, if any.</param>
 /// <param name="FrameBuffer">The framebuffer associated with the frame, if any.</param>
+/// <param name="PresentationPublisher">The deferred publisher that captured the accepted source.</param>
+/// <param name="PresentationPublicationToken">The publisher-local token of that accepted capture.</param>
 /// <param name="Context">The context of the frame operation, providing information about the rendering state.</param>
 /// <param name="DescriptorResourceEpoch">The epoch of the descriptor resource, used for tracking changes in descriptor sets.</param>
 /// <param name="Image">The Vulkan image handle associated with the frame.</param>
@@ -37,6 +39,8 @@ internal readonly record struct VulkanPresentationSourceTuple(
     ulong LogicalEpoch,
     XRTexture? ColorTexture,
     XRFrameBuffer? FrameBuffer,
+    IWindowPresentationBindingPublisher? PresentationPublisher,
+    ulong PresentationPublicationToken,
     FrameOpContext Context,
     ulong DescriptorResourceEpoch,
     Image Image,
@@ -99,6 +103,8 @@ internal readonly record struct VulkanPresentationSourceTuple(
         LogicalEpoch == other.LogicalEpoch &&
         ReferenceEquals(ColorTexture, other.ColorTexture) &&
         ReferenceEquals(FrameBuffer, other.FrameBuffer) &&
+        ReferenceEquals(PresentationPublisher, other.PresentationPublisher) &&
+        PresentationPublicationToken == other.PresentationPublicationToken &&
         Context.PipelineIdentity == other.Context.PipelineIdentity &&
         Context.ViewportIdentity == other.Context.ViewportIdentity &&
         Context.ResourceGeneration == other.Context.ResourceGeneration &&

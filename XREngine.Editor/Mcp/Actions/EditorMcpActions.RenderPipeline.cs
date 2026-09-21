@@ -141,6 +141,7 @@ namespace XREngine.Editor.Mcp
                         descriptor_signature = resources.DescriptorSignature,
                     },
                     texture_count = textures.Length,
+                    ddgi = XREngine.Rendering.GI.DDGI.DDGIDiagnostics.Capture(instance),
                     framebuffer_count = frameBuffers.Length,
                     textures,
                     framebuffers = frameBuffers,
@@ -352,6 +353,13 @@ namespace XREngine.Editor.Mcp
                     cutover = binding.CutoverStatus,
                 },
                 outputReservationDiagnostics = renderer?.CaptureAdvancedOutputReservationDiagnostics(),
+                preparationDiagnostics = renderer?.CaptureAdvancedVisibilityPreparationDiagnostics(),
+                pipelineCompilationDiagnostics = renderer?.CapturePipelineCompilationDiagnostics(),
+                resourceMaterialization = new
+                {
+                    active = DescribeResourceMaterialization(instance.ActiveGeneration),
+                    pending = DescribeResourceMaterialization(instance.PendingGeneration),
+                },
                 temporalHistory = BuildTemporalHistoryDiagnostics(instance),
                 resources = new
                 {
@@ -418,6 +426,23 @@ namespace XREngine.Editor.Mcp
                 },
             };
         }
+
+        private static object? DescribeResourceMaterialization(RenderResourceGeneration? generation)
+            => generation is null ? null : new
+            {
+                isInitialBuild = generation.IsInitialBuild,
+                status = generation.Status.ToString(),
+                materializedSpecCount = generation.MaterializedSpecCount,
+                totalSpecCount = generation.Layout.OrderedSpecs.Count,
+                buildMilliseconds = generation.BuildDuration.TotalMilliseconds,
+                workMilliseconds = generation.MaterializationWorkDuration.TotalMilliseconds,
+                sliceCount = generation.MaterializationSliceCount,
+                lastSliceMilliseconds = generation.LastMaterializationSliceDuration.TotalMilliseconds,
+                worstSliceMilliseconds = generation.WorstMaterializationSliceDuration.TotalMilliseconds,
+                worstSpecName = generation.WorstMaterializationSpecName,
+                worstSpecKind = generation.WorstMaterializationSpecKind?.ToString(),
+                worstSpecMilliseconds = generation.WorstMaterializationSpecDuration.TotalMilliseconds,
+            };
 
         private static object[] BuildAdvancedExecutableInventory(
             AdvancedProfileResourceDiagnostic[] resources,

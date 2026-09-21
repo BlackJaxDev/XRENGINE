@@ -22,6 +22,7 @@ layout(binding = 5) uniform sampler2DArray LightingAccumTexture; // XRENGINE_FRE
 layout(binding = 6) uniform sampler2D BRDF; // XRENGINE_FREQUENCY(Pass)
 layout(binding = 7) uniform sampler2DArray IrradianceArray; // XRENGINE_FREQUENCY(Pass)
 layout(binding = 8) uniform sampler2DArray PrefilterArray; // XRENGINE_FREQUENCY(Pass)
+layout(binding = 9) uniform sampler2DArray EmissionColor; // XRENGINE_FREQUENCY(Pass)
 
 layout(std430, binding = 20) buffer LightProbePositions
 {
@@ -76,6 +77,7 @@ uniform float AmbientOcclusionPower = 1.0f; // XRENGINE_FREQUENCY(Pass)
 uniform bool AmbientOcclusionMultiBounce = false; // XRENGINE_FREQUENCY(Pass)
 uniform bool SpecularOcclusionEnabled = false; // XRENGINE_FREQUENCY(Pass)
 uniform vec3 GlobalAmbient = vec3(0.03f); // XRENGINE_FREQUENCY(Pass)
+uniform bool UsesDDGI = false; // XRENGINE_FREQUENCY(Pass)
 
 // Debug: set via XRE_DEFERRED_DEBUG env var.
 // 0 = normal, 1 = raw albedo, 2 = InLo, 3 = RMSE, 4 = normal, 5 = depth,
@@ -337,6 +339,7 @@ void main()
     vec3 albedoColor = albedoOpacity.rgb;
     vec3 normal = XRENGINE_ReadNormal(Normal, uvi);
     vec4 rmse = texture(RMSE, uvi);
+    vec4 emissionColor = texture(EmissionColor, uvi);
     float depth = texture(DepthView, uvi).r;
     vec3 inLo = max(texture(LightingAccumTexture, uvi).rgb, vec3(0.0f));
 
@@ -430,6 +433,11 @@ void main()
         probeAmbient = irradianceColor;
     }
 
+    if (UsesDDGI)
+    {
+        probeAmbient = vec3(0.0f);
+    }
+
     vec3 diffuse = GlobalAmbient * probeAmbient * albedoColor;
     vec3 specular = prefilteredColor * (kS * brdfValue.x + brdfValue.y);
 
@@ -437,5 +445,8 @@ void main()
     float specOcclusion = SpecularOcclusionEnabled ? GTSpecularOcclusion(NoV, ao, roughness) : ao;
     vec3 ambient = kD * diffuse * diffuseAO + specular * specOcclusion;
 
-    OutLo = vec4(ambient + inLo + emissiveIntensity * albedoColor, albedoOpacity.a);
+    vec3 emittedRadiance = emissionColor.a > 0.5
+        ? emissionColor.rgb
+        : emissiveIntensity * albedoColor;
+    OutLo = vec4(ambient + inLo + emittedRadiance, albedoOpacity.a);
 }
