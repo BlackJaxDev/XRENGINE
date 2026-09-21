@@ -299,14 +299,15 @@ public partial class XRMesh
 
     // Index buffer helpers
     /// <summary>
-    /// Returns a GPU-ready index buffer for the given primitive type.
+    /// Returns a CPU-prepared index buffer for the given primitive type.
     ///
-    /// For the default <see cref="EBufferTarget.ElementArrayBuffer"/> target, the heavy index
-    /// conversion work (traversing triangle/line/point lists, downcasting to ushort, uploading
-    /// the raw bytes) is offloaded to a background <see cref="Task.Run"/> so it never stalls the
-    /// render thread. The first call after an invalidation returns <c>null</c> and schedules the
-    /// build; once the background task finishes, the buffer is cached and any <paramref name="onReady"/>
-    /// callbacks are invoked. Subsequent calls return the cached buffer synchronously.
+    /// For the default <see cref="EBufferTarget.ElementArrayBuffer"/> target, the requesting
+    /// topology owner captures an immutable index/vertex-count snapshot before scheduling
+    /// conversion and CPU buffer population on a background <see cref="Task.Run"/>. Native
+    /// wrapper materialization and upload retain their existing renderer-thread ownership.
+    /// The first call after invalidation returns <c>null</c> unless explicitly synchronous;
+    /// subsequent calls reuse the cached buffer. Snapshotting still has a cold O(index count)
+    /// cost: request preparation before draw admission, not from command recording.
     ///
     /// Non-default targets (e.g. <see cref="EBufferTarget.ShaderStorageBuffer"/> for compute) are
     /// rare and off the render hot path, so they build synchronously and bypass the cache.
@@ -314,11 +315,14 @@ public partial class XRMesh
     /// <param name="onReady">
     /// Optional completion callback. Invoked synchronously if the buffer is already cached, or on
     /// the background task thread when the async build completes. Callers that need the callback
-    /// on a specific thread should marshal inside the callback body.
+    /// on a specific thread should marshal inside the callback body. This is a readiness
+    /// notification, not a resource lease: consumers must resolve current bindings on their
+    /// owning thread rather than retaining a callback buffer across topology invalidation.
     /// </param>
     /// <param name="requireSynchronous">
-    /// Waits for the per-primitive build ticket when no cached buffer is available. The wait never
-    /// holds the cache lock and propagates a terminal worker failure to exact readiness callers.
+    /// Explicit off-draw callers may wait for the per-primitive build ticket. The wait never
+    /// holds the cache lock and propagates terminal failure. Normal draw admission must leave
+    /// this false and preserve its pending cohort until the exact geometry is ready.
     /// </param>
     public XRDataBuffer? GetIndexBuffer(
         EPrimitiveType type,
@@ -327,6 +331,7 @@ public partial class XRMesh
         Action<XRDataBuffer, IndexSize>? onReady = null,
         bool requireSynchronous = false)
     {
+        ObjectDisposedException.ThrowIf(IsDestroyed, this);
         elementSize = IndexSize.TwoBytes;
 
         // Non-default targets bypass the cache and build synchronously.
@@ -338,17 +343,17 @@ public partial class XRMesh
             return syncBuf;
         }
 
-        // Cheap short-circuit: avoid spawning a Task just to discover there are no indices
-        // (e.g. querying Points on a triangle-only mesh).
-        if (!HasIndexData(type))
-            return null;
-
         while (true)
         {
             (XRDataBuffer buffer, IndexSize elementSize)? cached = null;
             IndexBufferBuildTicket? ticket = null;
             lock (_indexBufferLock)
             {
+                ObjectDisposedException.ThrowIf(IsDestroyed, this);
+                // Recheck on every retry: invalidation may have made the mesh nonindexed.
+                if (!HasIndexData(type))
+                    return null;
+
                 if (_indexBufferCache.TryGetValue(type, out var cachedResult))
                     cached = cachedResult;
                 else
@@ -368,6 +373,12 @@ public partial class XRMesh
                 {
                     (XRDataBuffer buffer, IndexSize completedElementSize) =
                         ticket!.Completion.Task.GetAwaiter().GetResult();
+                    lock (_indexBufferLock)
+                    {
+                        ObjectDisposedException.ThrowIf(IsDestroyed, this);
+                        if (!IsCurrentIndexBufferBuildNoLock(type, ticket!, buffer))
+                            continue;
+                    }
                     elementSize = completedElementSize;
                     onReady?.Invoke(buffer, completedElementSize);
                     return buffer;
@@ -381,9 +392,21 @@ public partial class XRMesh
             }
 
             if (onReady is not null)
-                RegisterIndexBufferReadyCallback(ticket!, onReady);
+                RegisterIndexBufferReadyCallback(type, ticket!, onReady);
             return null;
         }
+    }
+
+    /// <summary>
+    /// Requests mesh-owned primitive streams before program/draw readiness is polled.
+    /// Call on the topology owner after edits are committed; no task is queued for
+    /// absent streams, unchanged cached buffers, or an already pending/failed ticket.
+    /// </summary>
+    internal void RequestIndexBufferPreparation()
+    {
+        _ = GetIndexBuffer(EPrimitiveType.Triangles, out _);
+        _ = GetIndexBuffer(EPrimitiveType.Lines, out _);
+        _ = GetIndexBuffer(EPrimitiveType.Points, out _);
     }
 
     internal bool HasIndexData(EPrimitiveType type) => type switch
@@ -424,11 +447,89 @@ public partial class XRMesh
 
         ticket = new IndexBufferBuildTicket(GeometryRevision);
         _indexBufferBuildTickets.Add(type, ticket);
-        _ = Task.Run(() => BuildIndexBufferWorker(type, ticket));
+        try
+        {
+            // Primitive lists remain owner-mutated. Copy their scalar indices now:
+            // workers must not enumerate mutable lists or read a later VertexCount.
+            // The snapshot belongs only to this work item, not the retained ticket.
+            int vertexCount = VertexCount;
+            int[] indices = CaptureIndexBuildSnapshot(type);
+            if (ticket.GeometryRevision != GeometryRevision)
+            {
+                InvalidateBuildTicketNoLock(type);
+                return ticket;
+            }
+
+            _ = Task.Run(() => BuildIndexBufferWorker(type, ticket, indices, vertexCount));
+        }
+        catch (Exception ex)
+        {
+            // Snapshot/scheduling failure is terminal for this ticket, just like a
+            // worker failure. Never leave a task that was not queued pending forever.
+            ticket.Fail(ex);
+        }
         return ticket;
     }
 
+    private int[] CaptureIndexBuildSnapshot(EPrimitiveType type)
+    {
+        if (type == EPrimitiveType.Patches)
+            type = PatchVertices switch
+            {
+                1 => EPrimitiveType.Points,
+                2 => EPrimitiveType.Lines,
+                3 => EPrimitiveType.Triangles,
+                _ => EPrimitiveType.Patches,
+            };
+
+        // One scalar array, without a temporary allocation for every primitive.
+        // Callers must serialize edits with snapshot capture and explicitly invalidate
+        // after raw list edits, as required by the existing mesh-editing contract.
+        switch (type)
+        {
+            case EPrimitiveType.Triangles when _triangles is { } triangles:
+            {
+                int count = triangles.Count;
+                int[] indices = new int[checked(count * 3)];
+                for (int i = 0, offset = 0; i < count; i++)
+                {
+                    IndexTriangle triangle = triangles[i];
+                    indices[offset++] = triangle.Point0;
+                    indices[offset++] = triangle.Point1;
+                    indices[offset++] = triangle.Point2;
+                }
+                return indices;
+            }
+            case EPrimitiveType.Lines when _lines is { } lines:
+            {
+                int count = lines.Count;
+                int[] indices = new int[checked(count * 2)];
+                for (int i = 0, offset = 0; i < count; i++)
+                {
+                    IndexLine line = lines[i];
+                    indices[offset++] = line.Point0;
+                    indices[offset++] = line.Point1;
+                }
+                return indices;
+            }
+            case EPrimitiveType.Points when _points is { } points:
+                return points.ToArray();
+            default:
+                return [];
+        }
+    }
+
+    private bool IsCurrentIndexBufferBuildNoLock(
+        EPrimitiveType type,
+        IndexBufferBuildTicket ticket,
+        XRDataBuffer buffer)
+        => _indexBufferBuildTickets.TryGetValue(type, out IndexBufferBuildTicket? current) &&
+           ReferenceEquals(current, ticket) &&
+           _indexBufferCache.TryGetValue(type, out var cached) &&
+           ReferenceEquals(cached.buffer, buffer);
+
     private void RegisterIndexBufferReadyCallback(
+        EPrimitiveType type,
         IndexBufferBuildTicket ticket,
         Action<XRDataBuffer, IndexSize> onReady)
         => _ = ticket.Completion.Task.ContinueWith(
@@ -440,6 +541,13 @@ public partial class XRMesh
                 try
                 {
                     (XRDataBuffer buffer, IndexSize elementSize) = completed.Result;
+                    lock (_indexBufferLock)
+                    {
+                        if (IsDestroyed || !IsCurrentIndexBufferBuildNoLock(type, ticket, buffer))
+                            return;
+                    }
+                    // External callbacks never run under the cache lock. Renderer
+                    // callbacks only publish a readiness edge and re-resolve on owner.
                     onReady(buffer, elementSize);
                 }
                 catch (Exception ex)
@@ -451,8 +559,16 @@ public partial class XRMesh
             TaskContinuationOptions.ExecuteSynchronously,
             TaskScheduler.Default);
 
-    private void BuildIndexBufferWorker(EPrimitiveType type, IndexBufferBuildTicket ticket)
+    private void BuildIndexBufferWorker(
+        EPrimitiveType type,
+        IndexBufferBuildTicket ticket,
+        int[] indices,
+        int vertexCount)
     {
+        // Invalidated work that has not started needs neither allocation nor publication.
+        if (ticket.Completion.Task.IsCompleted)
+            return;
+
         XRDataBuffer? buffer = null;
         IndexSize elementSize = IndexSize.TwoBytes;
         Exception? error = null;
@@ -460,13 +576,14 @@ public partial class XRMesh
         try
         {
             using RenderObjectPublicationScope publication = GenericRenderObject.BeginDeferredPublication();
-            buffer = BuildIndexBuffer(type, EBufferTarget.ElementArrayBuffer, out elementSize) ??
+            buffer = BuildIndexBuffer(type, EBufferTarget.ElementArrayBuffer, indices, vertexCount, out elementSize) ??
                 throw new InvalidOperationException($"Mesh has no {type} index data to build.");
 
             lock (_indexBufferLock)
             {
                 if (!_indexBufferBuildTickets.TryGetValue(type, out IndexBufferBuildTicket? current) ||
                     !ReferenceEquals(current, ticket) ||
+                    IsDestroyed ||
                     ticket.GeometryRevision != GeometryRevision)
                 {
                     if (ReferenceEquals(current, ticket))
@@ -504,11 +621,18 @@ public partial class XRMesh
     }
 
     private XRDataBuffer? BuildIndexBuffer(EPrimitiveType type, EBufferTarget target, out IndexSize elementSize)
+        => BuildIndexBuffer(type, target, GetIndices(type), VertexCount, out elementSize);
+
+    private static XRDataBuffer? BuildIndexBuffer(
+        EPrimitiveType type,
+        EBufferTarget target,
+        int[]? indices,
+        int vertexCount,
+        out IndexSize elementSize)
     {
         using RenderObjectPublicationScope publication = GenericRenderObject.BeginDeferredPublication();
         elementSize = IndexSize.TwoBytes;
 
-        var indices = GetIndices(type);
         if (indices is null || indices.Length == 0)
             return null;
 
@@ -519,7 +643,7 @@ public partial class XRMesh
 
         // Use UInt16 as minimum index size to avoid dependency on VK_EXT_index_type_uint8.
         // Byte-sized indices are an optional Vulkan extension and the memory savings are negligible.
-        if (VertexCount < short.MaxValue)
+        if (vertexCount < short.MaxValue)
         {
             elementSize = IndexSize.TwoBytes;
             buf.SetDataRaw(indices.Select(x => (ushort)x), indices.Length);
