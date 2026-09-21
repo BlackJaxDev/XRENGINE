@@ -87,7 +87,7 @@ internal unsafe partial class VkMeshRenderer
 	/// </summary>
 	private bool TryPrepareForDrawEnqueue(
 		XRMaterial material,
-		bool requireSynchronousIndexBuild,
+		bool requireExactGeometry,
 		out string reason)
 	{
 		reason = "Ready";
@@ -117,6 +117,8 @@ internal unsafe partial class VkMeshRenderer
 
 		EnsureRuntimeDeformationBuffersCurrent();
 
+		RequestIndexPreparationBeforeDrawAdmission();
+
 		bool shaderConfigurationChanged =
 			_pipelineShaderConfigVersion != RuntimeEngine.Rendering.Settings.ShaderConfigVersion ||
 			_pipelineUsesShaderClipDepthRemap != RuntimeEngine.Rendering.ShouldUseVulkanShaderClipDepthRemap ||
@@ -135,10 +137,12 @@ internal unsafe partial class VkMeshRenderer
 			return SetPrepareResult(false, "ProgramsPending", "No compatible Vulkan render program is available yet.", out reason);
 
 		bool usesShaderGeneratedVertices = ProgramUsesShaderGeneratedVertices();
-		EnsureBuffers(usesShaderGeneratedVertices, requireSynchronousIndexBuild);
-		if (requireSynchronousIndexBuild && !usesShaderGeneratedVertices &&
+		// Exact geometry is an admission requirement, not permission to join a CPU worker.
+		// Keep the existing pending request/retry path until the exact indices are ready.
+		EnsureBuffers(usesShaderGeneratedVertices, requireSynchronousIndexBuild: false);
+		if (requireExactGeometry && !usesShaderGeneratedVertices &&
 			ResolveMissingExpectedIndexBufferDetail() is { Length: > 0 } missingIndex)
-			throw new InvalidOperationException($"Exact geometry preparation did not materialize mesh '{Mesh?.Name}': {missingIndex}; triangleCached={Mesh?.HasCachedIndexBuffer(EPrimitiveType.Triangles)}.");
+			return SetPrepareResult(false, "BuffersPending", missingIndex, out reason);
 
 		if (!AreCachedBuffersReadyForRendering(out string bufferDetail, usesShaderGeneratedVertices))
 			return SetPrepareResult(false, "BuffersPending", bufferDetail, out reason);
