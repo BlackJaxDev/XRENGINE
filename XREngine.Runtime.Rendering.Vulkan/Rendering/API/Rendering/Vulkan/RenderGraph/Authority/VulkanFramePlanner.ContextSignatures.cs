@@ -48,6 +48,7 @@ internal sealed partial class VulkanFramePlanner
             ResolveResourcePlanOutputTargetIdentity(context),
             context.LogicalViewId,
             ResolveFrameOpContextResourceRegistrySignature(context),
+            ResolveFrameOpContextResourceRegistryInstanceRevision(context),
             ComputePassMetadataSignature(context.PassMetadata),
             context.ResourceGeneration,
             context.DescriptorGeneration,
@@ -93,6 +94,7 @@ internal sealed partial class VulkanFramePlanner
             ResolveResourcePlanOutputTargetIdentity(context) == key.OutputTargetIdentity &&
             context.LogicalViewId == key.LogicalViewId &&
             ResolveFrameOpContextResourceRegistrySignature(context) == key.ResourceRegistrySignature &&
+            ResolveFrameOpContextResourceRegistryInstanceRevision(context) == key.ResourceRegistryInstanceRevision &&
             ComputePassMetadataSignature(context.PassMetadata) == key.PassMetadataSignature &&
             context.ResourceGeneration == key.ResourceGeneration &&
             context.DescriptorGeneration == key.DescriptorGeneration &&
@@ -123,6 +125,9 @@ internal sealed partial class VulkanFramePlanner
 
     internal static int ResolveFrameOpContextResourceRegistrySignature(in FrameOpContext context)
         => context.ResourceRegistrySignatureSnapshot ?? ComputeResourceRegistrySignature(context.ResourceRegistry);
+
+    internal static int ResolveFrameOpContextResourceRegistryInstanceRevision(in FrameOpContext context)
+        => context.ResourceRegistryInstanceRevisionSnapshot ?? context.ResourceRegistry?.InstanceRevision ?? 0;
 
     internal static ulong ResolveFrameOpContextDescriptorGeneration(RenderResourceRegistry? registry)
         => unchecked((ulong)(uint)ComputeResourceRegistrySignature(registry));

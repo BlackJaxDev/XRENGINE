@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using XREngine.Data.Rendering;
 using XREngine.Rendering;
+using XREngine.Rendering.GI.Contracts;
 using XREngine.Rendering.Pipelines.Commands;
 using XREngine.Rendering.Vulkan;
 
@@ -569,7 +570,7 @@ namespace XREngine
                 foreach (XRViewport viewport in RuntimeEngine.EnumerateActiveViewports(
                              RuntimeEngine.EViewportEnumerationMode.IncludeVrEyeViewports))
                 {
-                    if (viewport.RenderPipeline is IGlobalIlluminationPipelineProvider pipeline)
+                    if (viewport.RenderPipeline is IGlobalIlluminationPlanHost pipeline)
                         pipeline.GlobalIlluminationMode = mode;
                 }
             }

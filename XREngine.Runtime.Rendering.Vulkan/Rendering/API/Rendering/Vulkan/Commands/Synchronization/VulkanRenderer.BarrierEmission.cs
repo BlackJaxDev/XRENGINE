@@ -954,7 +954,12 @@ namespace XREngine.Rendering.Vulkan
                     BufferMemoryBarrierCount = bufferBarrierCount,
                     PBufferMemoryBarriers = nativeBufferBarriers,
                 };
-                CmdPipelineBarrier2Tracked(commandBuffer, in dependencyInfo, plannedBufferBarriers);
+                CmdPipelineBarrier2Tracked(
+                    commandBuffer,
+                    in dependencyInfo,
+                    plannedBufferBarriers,
+                    plannedImageBarriers,
+                    excludedImage.Handle);
             }
         }
 
@@ -978,6 +983,12 @@ namespace XREngine.Rendering.Vulkan
                 if (planned.NativeImage.Handle == 0)
                     throw new InvalidOperationException(
                         $"Frozen barrier resource id={planned.ResourceId.Value} became unavailable after prepared-input validation.");
+                if (planned.NativeGeneration != 0UL &&
+                    ResourceRuntime.GetPublishedGeneration(ObjectType.Image, planned.NativeImage.Handle) != planned.NativeGeneration)
+                {
+                    throw new InvalidOperationException(
+                        $"Frozen barrier resource id={planned.ResourceId.Value} references a superseded native image generation.");
+                }
 
                 // The barrier planner pre-computes OldLayout from the logical dependency
                 // graph, but dynamic rendering, blits, and resource-plan replacement can

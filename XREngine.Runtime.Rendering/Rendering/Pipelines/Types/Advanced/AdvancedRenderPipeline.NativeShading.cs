@@ -50,7 +50,6 @@ public partial class AdvancedRenderPipeline
     /// </summary>
     public const uint DefaultLightIndexListCapacity = 1048576u;
 
-    private IAdvancedGlobalIlluminationProvider? _globalIlluminationProvider = AdvancedLightProbesAndIblProvider.Instance;
     private IAdvancedAmbientOcclusionProvider? _ambientOcclusionProvider = AdvancedDepthGtaoProvider.Instance;
     private bool _enableBuiltInAmbientOcclusion = true;
 
@@ -64,20 +63,6 @@ public partial class AdvancedRenderPipeline
         set
         {
             if (!SetField(ref _enableBuiltInAmbientOcclusion, value))
-                return;
-            InvalidateNativeShadingResourceProfile();
-        }
-    }
-
-    /// <summary>
-    /// Active global illumination provider contract.
-    /// </summary>
-    public IAdvancedGlobalIlluminationProvider? GlobalIlluminationProvider
-    {
-        get => _globalIlluminationProvider;
-        set
-        {
-            if (!SetField(ref _globalIlluminationProvider, value))
                 return;
             InvalidateNativeShadingResourceProfile();
         }

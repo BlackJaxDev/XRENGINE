@@ -10,7 +10,6 @@ internal static class DDGIResourceImports
     public const string Materials = "DDGIGeometryMaterials";
     public const string Attributes = "DDGIGeometryAttributes";
     public const string MaterialTextures = "DDGIMaterialTextures";
-    public const string DirectLights = "DDGILightBlock";
     private static readonly string[] BufferNames = [Nodes, Triangles, Materials, Attributes];
 
     public static void Declare(RenderPipelineResourceLayoutBuilder builder, RenderPipelineResourcePredicate predicate)
@@ -24,37 +23,38 @@ internal static class DDGIResourceImports
             .Contract(ExternalRenderResourceKind.Texture, ExternalRenderResourceOwnership.Caller,
                 ExternalRenderResourceSynchronization.FrameBoundary)
             .When(predicate).Add();
-        builder.External(DirectLights)
-            .Contract(ExternalRenderResourceKind.Buffer, ExternalRenderResourceOwnership.Caller,
-                ExternalRenderResourceSynchronization.FrameBoundary)
-            .When(predicate).Add();
     }
 
-    public static void BindDirectLights(XRRenderPipelineInstance pipeline, XRDataBuffer buffer)
-        => BindBuffer(pipeline, buffer, DirectLights);
-
-    public static void BindAvailable(XRRenderPipelineInstance pipeline, GpuDdgiGeometryService geometry)
+    public static bool BindAvailable(XRRenderPipelineInstance pipeline, GpuDdgiGeometryService geometry)
     {
+        bool published = true;
         if (geometry.Nodes is { } nodes)
-            BindBuffer(pipeline, nodes, Nodes);
+            published &= BindBuffer(pipeline, nodes, Nodes);
+        else
+            published = false;
         if (geometry.Triangles is { } triangles)
-            BindBuffer(pipeline, triangles, Triangles);
+            published &= BindBuffer(pipeline, triangles, Triangles);
+        else
+            published = false;
         if (geometry.Materials is { } materials)
-            BindBuffer(pipeline, materials, Materials);
+            published &= BindBuffer(pipeline, materials, Materials);
+        else
+            published = false;
         if (geometry.Attributes is { } attributes)
-            BindBuffer(pipeline, attributes, Attributes);
-        if (geometry.MaterialTextures is { } texture &&
-            (!pipeline.Resources.TryGetTexture(MaterialTextures, out XRTexture? current) || !ReferenceEquals(current, texture)))
-            pipeline.BindImportedTexture(texture);
+            published &= BindBuffer(pipeline, attributes, Attributes);
+        else
+            published = false;
+        if (geometry.MaterialTextures is { } texture)
+            published &= pipeline.BindImportedTexture(texture);
+        else
+            published = false;
+        return published;
     }
 
-    private static void BindBuffer(XRRenderPipelineInstance pipeline, XRDataBuffer buffer, string name)
+    private static bool BindBuffer(XRRenderPipelineInstance pipeline, XRDataBuffer buffer, string name)
     {
         if (buffer.AttributeName != name)
             buffer.AttributeName = name;
-        if (pipeline.Resources.BufferRecords.TryGetValue(name, out RenderBufferResource? record) &&
-            ReferenceEquals(record.Instance, buffer) && record.Descriptor.SizeInBytes == buffer.Length)
-            return;
-        pipeline.BindImportedBuffer(buffer);
+        return pipeline.BindImportedBuffer(buffer);
     }
 }

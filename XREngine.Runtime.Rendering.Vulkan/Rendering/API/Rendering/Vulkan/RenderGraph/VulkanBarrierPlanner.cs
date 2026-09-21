@@ -304,7 +304,7 @@ internal sealed class VulkanBarrierPlanner
 
         PlannedImageState previousState = _lastImageStates.TryGetValue(stateKey, out PlannedImageState tracked)
             ? tracked
-            : PlannedImageState.Initial(desiredState.AspectMask);
+            : PlannedImageState.Initial(pending.Group, desiredState.AspectMask);
         if (!previousState.Equals(desiredState) || srcQueueFamily != Vk.QueueFamilyIgnored)
         {
             AddImageBarrier(new PlannedImageBarrier(
@@ -774,7 +774,8 @@ internal sealed class VulkanBarrierPlanner
         uint SrcQueueFamilyIndex,
         uint DstQueueFamilyIndex,
         Image NativeImage = default,
-        Format NativeFormat = Format.Undefined);
+        Format NativeFormat = Format.Undefined,
+        ulong NativeGeneration = 0UL);
 
     internal readonly record struct PlannedBufferBarrier(
         int PassIndex,
@@ -836,6 +837,18 @@ internal sealed class VulkanBarrierPlanner
             PipelineStageFlags stages = VulkanBarrierUsageMapper.ResolveStage(usage.ResourceType, passStage);
             AccessFlags access = VulkanBarrierUsageMapper.ResolveAccess(usage.ResourceType, usage.Access);
             return new(layout, stages, access, aspect);
+        }
+
+        public static PlannedImageState Initial(VulkanPhysicalImageGroup group, ImageAspectFlags aspectMask)
+        {
+            ImageLayout layout = group.IsBorrowedExternal ? group.LastKnownLayout : ImageLayout.Undefined;
+            return layout == ImageLayout.Undefined
+                ? Initial(aspectMask)
+                : new PlannedImageState(
+                    layout,
+                    PipelineStageFlags.AllCommandsBit,
+                    AccessFlags.MemoryReadBit | AccessFlags.MemoryWriteBit,
+                    aspectMask);
         }
 
         public static PlannedImageState FromSyncState(

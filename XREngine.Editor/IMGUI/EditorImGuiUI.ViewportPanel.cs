@@ -38,6 +38,7 @@ public static partial class EditorImGuiUI
         }
 
         EnsureScenePanelRenderRegionProvider();
+        _scenePanelInteracting = false;
 
         ImGuiWindowFlags flags =
             ImGuiWindowFlags.NoScrollbar |
@@ -51,12 +52,6 @@ public static partial class EditorImGuiUI
             ImGui.End();
             return;
         }
-
-        // Important: do not treat "focused" alone as scene interaction.
-        // Focus can linger on the Scene window for one frame while clicking another panel,
-        // which causes click-through into world picking.
-        _scenePanelInteracting =
-            ImGui.IsWindowHovered(ImGuiHoveredFlags.RootAndChildWindows | ImGuiHoveredFlags.AllowWhenBlockedByActiveItem);
 
         UpdateScenePanelRenderRegion();
 
@@ -110,6 +105,10 @@ public static partial class EditorImGuiUI
         Vector2 uv0 = flipTextureY ? new Vector2(0.0f, 1.0f) : new Vector2(0.0f, 0.0f);
         Vector2 uv1 = flipTextureY ? new Vector2(1.0f, 0.0f) : new Vector2(1.0f, 1.0f);
         ImGui.Image(handle, contentSize, uv0, uv1);
+
+        // Only the displayed scene image may pass pointer input through ImGui. Window chrome,
+        // tabs, and overlapping/active widgets must continue to own the pointer.
+        _scenePanelInteracting = ImGui.IsItemHovered();
 
         // Handle asset drop on the scene image - must be right after ImGui.Image()
         RuntimeWorld? world = TryGetActiveWorldInstance();

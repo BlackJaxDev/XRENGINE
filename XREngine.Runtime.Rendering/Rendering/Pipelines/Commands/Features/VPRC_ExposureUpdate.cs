@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 using XREngine.Rendering;
-using XREngine.Rendering.GI.DDGI;
+using XREngine.Rendering.GI.Contracts;
 using XREngine.Rendering.RenderGraph;
 
 namespace XREngine.Rendering.Pipelines.Commands
@@ -145,7 +145,7 @@ namespace XREngine.Rendering.Pipelines.Commands
                 return;
             }
 
-            if (DDGIFrameContext.IsDiagnosticPresentationFrame(ActivePipelineInstance))
+            if (GlobalIlluminationDiagnosticPresentation.IsCurrentFrame(ActivePipelineInstance))
                 return;
 
             grading.MarkGpuAutoExposureReady(false);

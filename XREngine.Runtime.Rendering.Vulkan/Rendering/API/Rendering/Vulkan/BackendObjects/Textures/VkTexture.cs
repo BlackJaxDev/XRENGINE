@@ -354,8 +354,14 @@ internal abstract class VkTexture<T>(
         if (!ResourcePublications.TryGetPhysicalImageGroup(
                 ResourcePublications.GetCurrentGeneration(),
                 resourceName,
-                out group) || group is null)
+                out group) || group is null || group.IsBorrowedExternal)
+        {
+            // External graph imports are represented by a borrowed planner
+            // group for barrier identity only. The texture wrapper continues to
+            // own its dedicated image and must never adopt (then retire) itself.
+            group = null;
             return true;
+        }
 
         if (ensureAllocated &&
             !group.TryEnsureAllocated(BackendContext, out string allocationFailureReason))

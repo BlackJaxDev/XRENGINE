@@ -1,4 +1,5 @@
 using System.Numerics;
+using XREngine.Rendering.GI.Contracts;
 
 namespace XREngine.Rendering.GI.DDGI;
 
@@ -33,16 +34,17 @@ public sealed record DDGIMemoryDiagnostics(
     internal static DDGIMemoryDiagnostics Capture(XRRenderPipelineInstance pipeline, int cascadeCount)
     {
         cascadeCount = Math.Max(0, cascadeCount);
-        long irradiance = TexturePayloadBytes(pipeline.GetTexture<XRTexture>(DefaultRenderPipeline.DDGIIrradianceAtlasTextureName), bytesPerTexel: 4);
-        long visibility = TexturePayloadBytes(pipeline.GetTexture<XRTexture>(DefaultRenderPipeline.DDGIVisibilityAtlasTextureName), bytesPerTexel: 4);
-        long probeState = BufferPayloadBytes(pipeline.GetBuffer(DefaultRenderPipeline.DDGIProbeStateBufferName));
-        long rays = BufferPayloadBytes(pipeline.GetBuffer(DefaultRenderPipeline.DDGIRayBufferName));
-        long hits = BufferPayloadBytes(pipeline.GetBuffer(DefaultRenderPipeline.DDGIHitBufferName));
-        long radiance = BufferPayloadBytes(pipeline.GetBuffer(DefaultRenderPipeline.DDGIRayRadianceBufferName));
-        long screenOutput = TexturePayloadBytes(pipeline.GetTexture<XRTexture>(DefaultRenderPipeline.DDGITextureName), bytesPerTexel: 8);
+        long irradiance = TexturePayloadBytes(pipeline.GetTexture<XRTexture>(DDGIResourceNames.IrradianceAtlas), bytesPerTexel: 4);
+        long visibility = TexturePayloadBytes(pipeline.GetTexture<XRTexture>(DDGIResourceNames.VisibilityAtlas), bytesPerTexel: 4);
+        long probeState = BufferPayloadBytes(pipeline.GetBuffer(DDGIResourceNames.ProbeStateBuffer));
+        long rays = BufferPayloadBytes(pipeline.GetBuffer(DDGIResourceNames.RayBuffer));
+        long hits = BufferPayloadBytes(pipeline.GetBuffer(DDGIResourceNames.HitBuffer));
+        long radiance = BufferPayloadBytes(pipeline.GetBuffer(DDGIResourceNames.RayRadianceBuffer));
+        long screenOutput = TexturePayloadBytes(pipeline.GetTexture<XRTexture>(DDGIResourceNames.ScreenDiffuse), bytesPerTexel: 8);
         // Advanced native shading exports four full-resolution RGBA16F surface
         // inputs for DDGI composition: normal, albedo/opacity, RMSE, and emission.
-        long advancedSurfaceExports = pipeline.Pipeline is IAdvancedRenderStageFamilyHost { AdvancedStageFamilyDefinition.UsesDDGI: true }
+        long advancedSurfaceExports = pipeline.Pipeline is IGlobalIlluminationPlanHost { GlobalIlluminationPlan: { } plan } &&
+            plan.IsSelectedAndSupported(EGlobalIlluminationMode.DDGI)
             ? checked(
                 TexturePayloadBytes(pipeline.GetTexture<XRTexture>(DefaultRenderPipeline.NormalTextureName), bytesPerTexel: 8) +
                 TexturePayloadBytes(pipeline.GetTexture<XRTexture>(DefaultRenderPipeline.AlbedoOpacityTextureName), bytesPerTexel: 8) +
@@ -50,7 +52,7 @@ public sealed record DDGIMemoryDiagnostics(
                 TexturePayloadBytes(pipeline.GetTexture<XRTexture>(DefaultRenderPipeline.EmissionColorTextureName), bytesPerTexel: 8))
             : 0L;
         long environment = TexturePayloadBytes(pipeline.GetTexture<XRTexture>(DDGIEnvironmentResources.TextureName), bytesPerTexel: 8);
-        long directLights = BufferPayloadBytes(pipeline.GetBuffer(DDGIResourceImports.DirectLights));
+        long directLights = BufferPayloadBytes(pipeline.GetBuffer(DDGILightResources.BufferName));
         long geometryNodes = BufferPayloadBytes(pipeline.GetBuffer(DDGIResourceImports.Nodes));
         long geometryTriangles = BufferPayloadBytes(pipeline.GetBuffer(DDGIResourceImports.Triangles));
         long geometryMaterials = BufferPayloadBytes(pipeline.GetBuffer(DDGIResourceImports.Materials));

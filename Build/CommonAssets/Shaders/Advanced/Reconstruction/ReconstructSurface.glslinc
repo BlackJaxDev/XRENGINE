@@ -612,14 +612,12 @@ bool XR_ADV_TryReconstructSurface(
         material.requiredAttributeMask &
         XR_ADV_LoadShadingKernel(kernelDense).requiredAttributeMask &
         XR_ADV_REQUIRED_ATTRIBUTE_MASK;
-    if ((requiredMask & XR_ADV_ATTRIBUTE_TEXCOORD1) != 0u &&
-        ((current0.flags & XR_ADV_VERTEX_HAS_TEXCOORD1) == 0u ||
-         (current1.flags & XR_ADV_VERTEX_HAS_TEXCOORD1) == 0u ||
-         (current2.flags & XR_ADV_VERTEX_HAS_TEXCOORD1) == 0u))
-    {
-        surface.invalidReason = XR_ADV_RECONSTRUCTION_TEXCOORD1_MISSING;
-        return false;
-    }
+    bool requiresTexCoord1 =
+        (requiredMask & XR_ADV_ATTRIBUTE_TEXCOORD1) != 0u;
+    bool hasTexCoord1 =
+        (current0.flags & XR_ADV_VERTEX_HAS_TEXCOORD1) != 0u &&
+        (current1.flags & XR_ADV_VERTEX_HAS_TEXCOORD1) != 0u &&
+        (current2.flags & XR_ADV_VERTEX_HAS_TEXCOORD1) != 0u;
     bool flatQualified =
         (requiredMask & XR_ADV_ATTRIBUTE_FLAT) != 0u;
     vec3 geometricNormal =
@@ -716,14 +714,14 @@ bool XR_ADV_TryReconstructSurface(
             flatQualified)
         : vec2(0.0);
     vec2 uv1 =
-        (requiredMask & XR_ADV_ATTRIBUTE_TEXCOORD1) != 0u
+        requiresTexCoord1 && hasTexCoord1
             ? XR_ADV_Interpolate(
                 unpackHalf2x16(current0.texCoord1Half),
                 unpackHalf2x16(current1.texCoord1Half),
                 unpackHalf2x16(current2.texCoord1Half),
                 weights,
                 flatQualified)
-            : vec2(0.0);
+            : requiresTexCoord1 ? uv0 : vec2(0.0);
     vec4 color0 =
         (requiredMask & XR_ADV_ATTRIBUTE_COLOR0) != 0u
             ? XR_ADV_Interpolate(
@@ -758,18 +756,22 @@ bool XR_ADV_TryReconstructSurface(
             weightDy);
     vec2 uv1Dx = !derivativesRequested || flatQualified
         ? vec2(0.0)
-        : XR_ADV_Gradient(
-            unpackHalf2x16(current0.texCoord1Half),
-            unpackHalf2x16(current1.texCoord1Half),
-            unpackHalf2x16(current2.texCoord1Half),
-            weightDx);
+        : hasTexCoord1
+            ? XR_ADV_Gradient(
+                unpackHalf2x16(current0.texCoord1Half),
+                unpackHalf2x16(current1.texCoord1Half),
+                unpackHalf2x16(current2.texCoord1Half),
+                weightDx)
+            : uv0Dx;
     vec2 uv1Dy = !derivativesRequested || flatQualified
         ? vec2(0.0)
-        : XR_ADV_Gradient(
-            unpackHalf2x16(current0.texCoord1Half),
-            unpackHalf2x16(current1.texCoord1Half),
-            unpackHalf2x16(current2.texCoord1Half),
-            weightDy);
+        : hasTexCoord1
+            ? XR_ADV_Gradient(
+                unpackHalf2x16(current0.texCoord1Half),
+                unpackHalf2x16(current1.texCoord1Half),
+                unpackHalf2x16(current2.texCoord1Half),
+                weightDy)
+            : uv0Dy;
 
     vec3 interpolatedCurrentWorld = XR_ADV_Interpolate(
         currentWorld0,

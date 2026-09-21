@@ -1,4 +1,5 @@
 using XREngine.Rendering.PostProcessing;
+using XREngine.Rendering.GI.Contracts;
 
 namespace XREngine.Rendering;
 
@@ -9,7 +10,7 @@ namespace XREngine.Rendering;
 /// </summary>
 public interface ISceneRenderPipelineFeatureProvider :
     IForwardDepthNormalPrePassSettings,
-    IGlobalIlluminationPipelineProvider,
+    IGlobalIlluminationPlanHost,
     IPbrLightingResourceProvider,
     IRenderPipelinePassMaterialProvider
 {

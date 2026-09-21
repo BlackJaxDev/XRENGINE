@@ -8,6 +8,7 @@ public readonly record struct BackendReadyFramePackageValidationContext(
     ulong CommandGeneration,
     int ResourceGeneration,
     int DescriptorGeneration,
+    int ResourceInstanceRevision,
     int RenderGraphGeneration,
     int ViewportWidth,
     int ViewportHeight,

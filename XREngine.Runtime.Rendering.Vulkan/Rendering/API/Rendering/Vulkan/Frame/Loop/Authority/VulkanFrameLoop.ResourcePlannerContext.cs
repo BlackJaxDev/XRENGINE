@@ -385,6 +385,7 @@ internal sealed partial class VulkanFrameLoop
             ResourceGeneration = unchecked((ulong)Math.Max(pipeline.ResourceGeneration + 1, 0)),
             DescriptorGeneration = VulkanFramePlanner.ResolveFrameOpContextDescriptorGeneration(generation.Registry),
             ResourceRegistrySignatureSnapshot = VulkanFramePlanner.ComputeResourceRegistrySignature(generation.Registry),
+            ResourceRegistryInstanceRevisionSnapshot = generation.Registry?.InstanceRevision ?? 0,
         };
         context = VulkanFramePlanner.RefreshFrameOpContextRecordingFingerprint(context);
 
@@ -593,7 +594,7 @@ internal sealed partial class VulkanFrameLoop
                     allowSynchronousUpload: true,
                     out VkImageDescriptorSnapshot snapshot) ||
                 !snapshot.IsReady ||
-                !snapshot.UsesAllocatorImage ||
+                snapshot.UsesAllocatorImage == physicalGroup.IsBorrowedExternal ||
                 snapshot.Image.Handle != physicalGroup.Image.Handle)
             {
                 manifest = null;
@@ -647,7 +648,7 @@ internal sealed partial class VulkanFrameLoop
                     allowSynchronousUpload: false,
                     out VkImageDescriptorSnapshot snapshot) ||
                 !snapshot.IsReady ||
-                !snapshot.UsesAllocatorImage ||
+                snapshot.UsesAllocatorImage == physicalGroup.IsBorrowedExternal ||
                 snapshot.Image.Handle != physicalGroup.Image.Handle)
             {
                 RestorePreparedGenerationFramebufferWrappers(
@@ -866,6 +867,7 @@ internal sealed partial class VulkanFrameLoop
             ResourceGeneration = ResolveFrameOpContextResourceGeneration(context.PipelineInstance),
             DescriptorGeneration = VulkanFramePlanner.ResolveFrameOpContextDescriptorGeneration(context.ResourceRegistry),
             ResourceRegistrySignatureSnapshot = VulkanFramePlanner.ComputeResourceRegistrySignature(context.ResourceRegistry),
+            ResourceRegistryInstanceRevisionSnapshot = context.ResourceRegistry?.InstanceRevision ?? 0,
             OutputHistorySequenceId = historySequence,
             OutputHistorySourceFrame = historySequence == 0UL
                 ? 0UL

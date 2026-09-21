@@ -44,6 +44,12 @@ public static class BackendReadyFramePackageValidator
                 EBackendReadyFramePackageValidationFailure.DescriptorGenerationMismatch);
         }
 
+        if (identity.ResourceInstanceRevision != context.ResourceInstanceRevision)
+        {
+            return BackendReadyFramePackageValidationResult.Reject(
+                EBackendReadyFramePackageValidationFailure.ResourceInstanceRevisionMismatch);
+        }
+
         if (identity.RenderGraphGeneration != context.RenderGraphGeneration)
         {
             return BackendReadyFramePackageValidationResult.Reject(

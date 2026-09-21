@@ -26,6 +26,7 @@ public partial class AdvancedRenderPipeline
         {
             if (!SetField(ref _offscreenProfile, value))
                 return;
+            RefreshGlobalIlluminationPlan();
             InvalidateStereoResourceProfile();
             RebuildCommandChain();
         }

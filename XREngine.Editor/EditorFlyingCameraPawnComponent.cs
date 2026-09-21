@@ -4,6 +4,7 @@ using System.Collections.Concurrent;
 using System.ComponentModel;
 using System.Numerics;
 using System.Runtime.CompilerServices;
+using System.Threading;
 using XREngine.Components;
 using XREngine.Components.Scene.Environment;
 using XREngine.Components.Scene.Mesh;
@@ -681,10 +682,15 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     /// to one throttle interval plus the GPU BVH readback latency behind the cursor).
     /// </summary>
     private bool _selectAfterForcedPick;
+    private bool _selectOnCurrentPickCompletion;
     private AdvancedPickingResult _lastAdvancedPickingResult;
     private readonly Lock _pickDispatchLock = new();
     private bool _octreePickInFlight;
     private bool _pendingPickAfterCurrent;
+    private Vector2 _lastObservedWorldPickCursorPosition = new(float.NaN, float.NaN);
+    private int _worldPickInputRevision;
+    private int _activeWorldPickInputRevision;
+    private int _worldPickInputAllowed;
 
     protected ERaycastHitMode CurrentRaycastMode => _raycastMode;
     protected Triangle? CurrentFacePickResult => _facePickResult;
@@ -1252,6 +1258,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     {
         if (vp is null)
         {
+            UpdateWorldPickInputState(new(float.NaN, float.NaN), false);
             ClearLastViewportMouseSegment();
             return;
         }
@@ -1259,17 +1266,20 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         var cam = this.GetCamera();
         if (cam is null)
         {
+            UpdateWorldPickInputState(new(float.NaN, float.NaN), false);
             ClearLastViewportMouseSegment();
             return;
         }
 
         Vector2 rawP = GetUnclampedNormalizedCursorPosition(vp);
         bool cursorInViewport = IsNormalizedViewportPointInside(rawP);
+        bool worldPickInputAllowed = AllowWorldPicking && IsWorldPickInputAllowed(vp, cursorInViewport);
+        UpdateWorldPickInputState(rawP, worldPickInputAllowed);
         Vector2 p = ClampNormalizedViewport(rawP);
         ApplyTransformations(vp);
 
         _lastRaycastSegment = vp.GetWorldSegment(p, useUnjitteredProjection: true);
-        if (cursorInViewport)
+        if (worldPickInputAllowed)
             SetLastViewportMouseSegment(_lastRaycastSegment);
         else
             ClearLastViewportMouseSegment();
@@ -1280,9 +1290,54 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
         UpdateSelectionDrag(vp);
 
-        if (AllowWorldPicking)
-            DispatchWorldPickIfNeeded(vp, cursorInViewport ? p : rawP);
+        if (worldPickInputAllowed)
+            DispatchWorldPickIfNeeded(vp, p);
     }
+
+    private static bool IsWorldPickInputAllowed(XRViewport viewport, bool cursorInViewport)
+    {
+        if (!cursorInViewport || Engine.Input.IsUIInputCaptured)
+            return false;
+
+        if (EditorUnitTests.Toggles.EditorType == EditorUnitTests.UnitTestEditorType.IMGUI)
+            return EditorImGuiUI.IsScenePointerInputAllowed;
+
+        return viewport.Window?.IsFocused == true;
+    }
+
+    /// <summary>
+    /// Invalidates pending hover results whenever the pointer moves or scene input ownership
+    /// changes. A click selection already dispatched remains valid, but an undispatched click
+    /// is cancelled when the scene no longer owns the pointer.
+    /// </summary>
+    private void UpdateWorldPickInputState(Vector2 normalizedCursorPosition, bool inputAllowed)
+    {
+        bool wasInputAllowed = Volatile.Read(ref _worldPickInputAllowed) != 0;
+        bool cursorChanged = float.IsNaN(normalizedCursorPosition.X)
+            ? !float.IsNaN(_lastObservedWorldPickCursorPosition.X)
+            : normalizedCursorPosition != _lastObservedWorldPickCursorPosition;
+        if (!cursorChanged && inputAllowed == wasInputAllowed)
+            return;
+
+        _lastObservedWorldPickCursorPosition = normalizedCursorPosition;
+        Volatile.Write(ref _worldPickInputAllowed, inputAllowed ? 1 : 0);
+        Interlocked.Increment(ref _worldPickInputRevision);
+
+        if (inputAllowed)
+            return;
+
+        ClearHoverHighlight();
+        ClearMeshHitVisualization();
+        _lastPickCursorPosition = new(float.NaN, float.NaN);
+        _forceRepick = false;
+        _selectAfterForcedPick = false;
+        using (_pickDispatchLock.EnterScope())
+            _pendingPickAfterCurrent = false;
+    }
+
+    private bool CanApplyCurrentWorldPickHover()
+        => Volatile.Read(ref _worldPickInputAllowed) != 0 &&
+           Volatile.Read(ref _activeWorldPickInputRevision) == Volatile.Read(ref _worldPickInputRevision);
 
     /// <summary>
     /// Dispatches octree + physics raycasts only when the cursor has moved, is inside the
@@ -1338,13 +1393,17 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         _pickAccumulator = 0f;
         _lastPickCursorPosition = normalizedCursorPos;
         _forceRepick = false;
+        Volatile.Write(ref _activeWorldPickInputRevision, Volatile.Read(ref _worldPickInputRevision));
+        bool selectOnCompletion = _selectAfterForcedPick;
+        _selectAfterForcedPick = false;
 
         if (vp.RenderPipelineInstance.Pipeline is AdvancedRenderPipeline)
         {
-            DispatchAdvancedVisibilityPick(vp, normalizedCursorPos);
+            DispatchAdvancedVisibilityPick(vp, normalizedCursorPos, selectOnCompletion);
             return;
         }
 
+        _selectOnCurrentPickCompletion = selectOnCompletion;
         var octreeResults = GetOctreePickResultDict();
         var physicsResults = GetPhysicsPickResultDict();
         vp.PickSceneAsync(normalizedCursorPos, false, true, true, _layerMask, _physxQueryFilter,
@@ -1353,10 +1412,9 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
     private void DispatchAdvancedVisibilityPick(
         XRViewport viewport,
-        Vector2 normalizedCursorPosition)
+        Vector2 normalizedCursorPosition,
+        bool selectOnCompletion)
     {
-        bool selectOnCompletion = _selectAfterForcedPick;
-        _selectAfterForcedPick = false;
         if (viewport.TryPickAdvancedAsync(
                 normalizedCursorPosition,
                 viewIndex: 0u,
@@ -1382,6 +1440,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         in AdvancedPickingResult result,
         bool selectOnCompletion)
     {
+        bool canApplyHover = CanApplyCurrentWorldPickHover();
         CompleteWorldPickDispatch();
         _lastAdvancedPickingResult = result;
         SceneNode? node = ResolveAdvancedPickingSceneNode(in result);
@@ -1397,7 +1456,11 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
                 result.Draw.Generation);
         }
 
-        UpdateAdvancedPickingHover(result.AuthoringRenderInfo, result.PrimitiveSection);
+        if (canApplyHover)
+            UpdateAdvancedPickingHover(result.AuthoringRenderInfo, result.PrimitiveSection);
+        else
+            ClearHoverHighlight();
+
         if (selectOnCompletion)
             Selection.SceneNodes = node is null ? [] : [node];
     }
@@ -1452,7 +1515,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     {
         UpdateMeshHitVisualization(dictionary);
 
-        if (HoverOutlineEnabled || RenderHoveredNodeName)
+        if (CanApplyCurrentWorldPickHover() && (HoverOutlineEnabled || RenderHoveredNodeName))
             TryRenderFirstRaycastResult(dictionary);
         else
             ClearHoverHighlight();
@@ -1468,9 +1531,10 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         // (dispatched at the exact click position) instead of the stale prior result.
         // Octree raycast callbacks run on the scene-swap thread, so marshal the
         // selection mutation onto the main thread like the GPU pending-selection path.
-        if (_selectAfterForcedPick)
+        bool selectOnCompletion = _selectOnCurrentPickCompletion;
+        _selectOnCurrentPickCompletion = false;
+        if (selectOnCompletion)
         {
-            _selectAfterForcedPick = false;
             Engine.EnqueueMainThreadTask(Select, "EditorFlyingCameraPawnComponent.ClickSelect");
         }
 
@@ -1811,6 +1875,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             DefaultRenderPipeline.SetHighlighted(effectiveMesh, true);
 
         _currentHoverHighlightMesh = effectiveMesh;
+        InvalidateView();
     }
 
     /// <summary>
@@ -1822,6 +1887,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         {
             DefaultRenderPipeline.SetHighlighted(_currentHoverHighlightMesh, false);
             _currentHoverHighlightMesh = null;
+            InvalidateView();
         }
     }
 
@@ -2567,24 +2633,29 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         base.OnLeftClick(pressed);
         InvalidateView();
 
-        // Force a fresh raycast on the next tick so click handlers always have
-        // up-to-date results, regardless of throttle or cursor-dirty state.
-        _forceRepick = true;
         if (!AllowWorldPicking)
             return;
 
-        if (Engine.Input.IsUIInputCaptured)
+        XRViewport? currentViewport = Viewport;
+        bool cursorInViewport = currentViewport is not null &&
+            IsNormalizedViewportPointInside(GetUnclampedNormalizedCursorPosition(currentViewport));
+        if (currentViewport is null ||
+            !IsWorldPickInputAllowed(currentViewport, cursorInViewport) ||
+            IsHoveringUI())
         {
+            _forceRepick = false;
+            _selectAfterForcedPick = false;
             if (!pressed && _selectionDragActive)
                 ResetSelectionDrag();
             return;
         }
 
+        // Force a fresh raycast on the next tick so click handlers always have
+        // up-to-date results, regardless of throttle or cursor-dirty state.
+        _forceRepick = true;
+
         if (pressed)
         {
-            if (IsHoveringUI())
-                return;
-
             if (TransformTool3D.GetActiveInstance(out var tfmComp) && tfmComp is not null && tfmComp.Highlighted)
                 return;
 
@@ -2617,16 +2688,18 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             return;
         }
 
-        if (IsHoveringUI())
-        {
-            ResetSelectionDrag();
-            return;
-        }
-
         if (!TryFinalizeRectangleSelection(viewport))
             _selectAfterForcedPick = true;
 
         ResetSelectionDrag();
+    }
+
+    protected override void MouseMove(float x, float y)
+    {
+        if (MathF.Abs(x) > float.Epsilon || MathF.Abs(y) > float.Epsilon)
+            InvalidateView();
+
+        base.MouseMove(x, y);
     }
 
     protected override void MouseRotate(float x, float y)

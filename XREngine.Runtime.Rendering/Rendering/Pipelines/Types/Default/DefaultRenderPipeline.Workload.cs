@@ -53,8 +53,7 @@ public partial class DefaultRenderPipeline
             RuntimeEngine.Rendering.State.IsSceneCapturePass ||
             RuntimeEngine.Rendering.State.IsLightProbePass ||
             RuntimeEngine.Rendering.State.IsMirrorPass ||
-            RuntimeEnableMsaaTargets ||
-            UsesVoxelConeTracing)
+            RuntimeEnableMsaaTargets)
         {
             return true;
         }

@@ -288,7 +288,8 @@ internal sealed partial class VulkanFramePlanner
                 request.SupportsTransformFeedback,
                 request.ActivePassMetadata,
                 request.PendingPlanner,
-                request.ExtentContext);
+                request.ExtentContext,
+                request.Context.ResourceRegistry);
             int reusedImageCount = pendingAllocator.ReuseCompatiblePhysicalImagesFrom(
                 state.ResourceAllocator,
                 out reusedImageGroups);

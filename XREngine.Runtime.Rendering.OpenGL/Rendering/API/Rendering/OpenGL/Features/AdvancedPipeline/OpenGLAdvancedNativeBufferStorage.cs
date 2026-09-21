@@ -17,7 +17,7 @@ internal sealed unsafe class OpenGLAdvancedNativeBufferStorage : IDisposable
     private uint[] _pushWords = [];
     internal ulong PreparedRenderFrame { get; set; }
     internal ulong PreparedPublication { get; set; }
-    internal bool PreparedDdgiSurfaceExports { get; set; }
+    internal bool PreparedMaterialSurfaceExports { get; set; }
     private nuint _pushStride;
     private nuint _pushBytes;
     private ulong _capacityTiles;
@@ -55,7 +55,7 @@ internal sealed unsafe class OpenGLAdvancedNativeBufferStorage : IDisposable
     }
 
     internal void UploadPushConstants(uint width, uint height, uint viewCount, uint depthSlices, uint lightCount,
-        bool requireNativeOutput, bool enableAmbientOcclusion, bool enableIbl, bool enableDdgiSurfaceExports,
+        bool requireNativeOutput, bool enableAmbientOcclusion, bool enableIbl, bool requireMaterialSurfaceExports,
         EAdvancedShadingDebugView debugView)
     {
         uint alignment = checked((uint)Math.Max(64, _renderer.RawGL.GetInteger((GLEnum)UniformBufferOffsetAlignment)));
@@ -70,7 +70,7 @@ internal sealed unsafe class OpenGLAdvancedNativeBufferStorage : IDisposable
         }
         uint tilesX = DivideRoundUp(width, 16u), tilesY = DivideRoundUp(height, 16u);
         uint flags = (requireNativeOutput ? 2u : 0u) | (enableAmbientOcclusion ? 4u : 0u) |
-            (enableIbl ? 8u : 0u) | (enableDdgiSurfaceExports ? 16u : 0u) |
+            (enableIbl ? 8u : 0u) | (requireMaterialSurfaceExports ? 16u : 0u) |
             (((uint)debugView & 0xFFu) << 8);
         Span<uint> words = stackalloc uint[16];
         words[0] = width; words[1] = height; words[2] = tilesX; words[3] = tilesY;

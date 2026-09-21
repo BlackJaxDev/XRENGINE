@@ -3,6 +3,7 @@ using System.Numerics;
 using XREngine.Components.Lights;
 using XREngine.Data.Core;
 using XREngine.Data.Rendering;
+using XREngine.Rendering.GI.Contracts;
 using XREngine.Rendering.GI.DDGI;
 using XREngine.Rendering.Models.Materials;
 using XREngine.Rendering.RenderGraph;
@@ -18,28 +19,29 @@ namespace XREngine.Rendering.Pipelines.Commands
     [RenderPipelineScriptCommand]
     public class VPRC_DDGIRelocatePass : VPRC_DDGIComputePass
     {
-        public string ProbeBufferName { get; set; } = DefaultRenderPipeline.DDGIProbeStateBufferName;
-        public string RayBufferName { get; set; } = DefaultRenderPipeline.DDGIRayBufferName;
-        public string HitBufferName { get; set; } = DefaultRenderPipeline.DDGIHitBufferName;
+        public string ProbeBufferName { get; set; } = DDGIResourceNames.ProbeStateBuffer;
+        public string RayBufferName { get; set; } = DDGIResourceNames.RayBuffer;
+        public string HitBufferName { get; set; } = DDGIResourceNames.HitBuffer;
         public string TriangleBufferVariableName { get; set; } = "DDGIGeometryTriangles";
 
         private XRRenderProgram? _relocateProgram;
 
         protected override bool ShouldExecuteThisFrame()
-            => RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline is
-                IGlobalIlluminationPipelineProvider { UsesDDGI: true };
+            => GlobalIlluminationPlanSelection.IsSelectedAndSupported(
+                RuntimeEngine.Rendering.State.CurrentRenderingPipeline?.Pipeline,
+                EGlobalIlluminationMode.DDGI);
 
         protected override void ExecuteDDGI()
         {
-            if (ActivePipelineInstance.Pipeline is not IGlobalIlluminationPipelineProvider { UsesDDGI: true })
+            if (!GlobalIlluminationPlanSelection.IsSelectedAndSupported(ActivePipelineInstance.Pipeline, EGlobalIlluminationMode.DDGI))
                 return;
 
             var world = ActivePipelineInstance.RenderState.WindowViewport?.World
                 ?? RuntimeEngine.Rendering.State.RenderingWorld;
-            if (world is null || !DDGIVolumeComponent.Registry.TryGetFirstActive(world, out var activeVolume) || activeVolume is null || !activeVolume.VolumeEnabled)
+            var context = DDGIFrameContext.Get(ActivePipelineInstance);
+            if (world is null || !context.TryGetSelectedVolume(world, out var activeVolume) || activeVolume is null || !activeVolume.VolumeEnabled)
                 return;
 
-            var context = DDGIFrameContext.Get(ActivePipelineInstance);
             var state = context.State;
             if (!context.CanRun(EDDGIUpdateStage.Radiance))
                 return;
