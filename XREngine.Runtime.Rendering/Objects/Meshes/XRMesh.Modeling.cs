@@ -16,6 +16,9 @@ public partial class XRMesh
     public void MarkGeometryChanged()
     {
         AdvanceGeometryRevision();
+        // Exposed topology lists can change in place, bypassing their property setters.
+        // Retire both ready buffers and in-flight tickets before notifying consumers.
+        InvalidateIndexBufferCache();
         ClearAccelerationCaches();
         DataChanged?.Invoke(this);
     }
