@@ -28,6 +28,9 @@ namespace XREngine.Rendering.Vulkan
                     recordingState.PassIndexLabelActive = false;
                 }
 
+                if (recordingState.ArtifactOwner is { } artifactOwner)
+                    artifactOwner.HasAuthoredSwapchainWrite = recordingState.ActualSwapchainWriteCount > 0;
+
                 bool forceMagentaSwapchain = XREngine.Rendering.RenderDiagnosticsFlags.VkForceSwapchainMagenta;
                 bool requiresExactTerminal =
                     recordingState.Policy.ReadinessPolicy ==
@@ -39,7 +42,8 @@ namespace XREngine.Rendering.Vulkan
                 if (requiresFreshEmptyTerminalWrite &&
                     recordingState.ActualSwapchainWriteCount == 0)
                 {
-                    RecordFreshEmptyRequiredTerminalClear(ref recordingState);
+                    if (!TryRecordResizeContinuityTerminal(ref recordingState))
+                        RecordFreshEmptyRequiredTerminalClear(ref recordingState);
                 }
                 int sceneActualSwapchainWritesBeforeOverlay = recordingState.ActualSwapchainWriteCount;
 
@@ -97,7 +101,8 @@ namespace XREngine.Rendering.Vulkan
                     if (requiresExactTerminal &&
                         recordingState.ActualSwapchainWriteCount == 0)
                     {
-                        RecordFreshEmptyRequiredTerminalClear(ref recordingState);
+                        if (!TryRecordResizeContinuityTerminal(ref recordingState))
+                            RecordFreshEmptyRequiredTerminalClear(ref recordingState);
                     }
 
                     bool refreshRequested =
@@ -507,6 +512,11 @@ namespace XREngine.Rendering.Vulkan
             for (int index = 0; index < operationCount; index++)
             {
                 int operationIndex = firstOperationIndex + index;
+                if (recordingState.Ops.GetTarget(operationIndex) is null &&
+                    recordingState.Ops.TryGetMeshDraw(operationIndex, out MeshDrawPayload draw))
+                {
+                    recordingState.ArtifactOwner?.RecordPresentationSource(draw.Draw.WindowPresentationSourceMarker);
+                }
                 ref readonly FrameOpContext context =
                     ref recordingState.Ops.GetContext(operationIndex);
                 MarkActualTerminalOutput(

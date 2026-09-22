@@ -2487,7 +2487,20 @@ namespace XREngine.Rendering.Vulkan
             // maintain pass-scoped ordering.  Any remaining global mask is emitted
             // before the first pass barrier group via EmitPassBarriers.
 
-            if (recordingState.Ops.Length > 0)
+            recordingState.InitialPrimaryContextOperationIndex = -1;
+            for (int operationIndex = 0; operationIndex < recordingState.Ops.Length; operationIndex++)
+            {
+                if (!recordingState.Ops.GetHeader(operationIndex).RequiresPrimaryRecordingContext)
+                    continue;
+
+                recordingState.InitialContext = recordingState.Ops.GetContext(operationIndex);
+                recordingState.InitialPrimaryContextOperationIndex = operationIndex;
+                break;
+            }
+
+            // Marker-only command buffers still need a context for terminal output
+            // bookkeeping, but the marker does not own a render-graph publication.
+            if (recordingState.InitialPrimaryContextOperationIndex < 0 && recordingState.Ops.Length > 0)
                 recordingState.InitialContext = recordingState.Ops.GetContext(0);
         }
 
@@ -2506,12 +2519,11 @@ namespace XREngine.Rendering.Vulkan
                 : ImageLayout.ColorAttachmentOptimal;
             recordingState.SwapchainFinalLayout = recordingState.InitialSwapchainColorLayout;
 
-            if (recordingState.Ops.Length > 0)
+            if (recordingState.InitialPrimaryContextOperationIndex >= 0)
             {
-                FrameOpContext firstContext = recordingState.Ops.GetContext(0);
                 recordingState.RenderGraphPlan = ResolvePrimaryRenderGraphPlan(
                     ref recordingState,
-                    in firstContext);
+                    in recordingState.InitialContext);
             }
 
             // Ensure swapchain resources are transitioned appropriately before any rendering.

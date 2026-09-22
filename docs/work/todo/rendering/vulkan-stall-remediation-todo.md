@@ -2,7 +2,7 @@
 
 Last Updated: 2026-09-21
 Owner: Rendering, with Profiler, Runtime Core, and ImGui Editor owners per item
-Status: S00/S00a/S01/S02/S03/S06/S07 Validated; S04/S05 Pending
+Status: S00/S00a/S01/S02/S03/S06/S07/S08/S09/S10 Validated; S04/S05 Pending
 Execution: One fix at a time, with a mandatory validation gate after each fix
 
 ## Purpose And Ownership
@@ -156,9 +156,9 @@ gate record. No item is complete merely because this checklist was written.
 | S05 | Cache publication and foreground native creation | S04, measured remaining cost | Pending |
 | S06 | [Bounded initial resource materialization](../../investigations/rendering/2026-09-16-vulkan-last-run-diagnostics.md#s06-gate-record-bounded-initial-resource-materialization) | S02; default after S05 disposition | Validated |
 | S07 | [CPU mesh preparation and wrapper publication](../../investigations/rendering/2026-09-16-vulkan-last-run-diagnostics.md#s07-gate-record-separate-mesh-cpu-data-and-wrapper-publication) | S06, measured construction cost | Validated |
-| S08 | Index preparation before draw admission | S07 disposition, measured join | Pending |
-| S09 | Shared immutable helper geometry | S07-S08 dispositions, measured duplication | Pending |
-| S10 | Toolbar icon preparation | S02; default after S09 disposition | Pending |
+| S08 | [Index preparation before draw admission](../../investigations/rendering/2026-09-21-s08-index-preparation.md) | S07 disposition, measured join | Validated (PR #75 merged; normal Vulkan admission requests/polls exact-revision index preparation without joining) |
+| S09 | [Shared immutable helper geometry](../../investigations/rendering/2026-09-21-s09-shared-helper-geometry.md) | S07-S08 dispositions, measured duplication | Validated (fullscreen helpers share one leased CPU mesh per topology while retaining per-consumer renderer/material/stereo state) |
+| S10 | [Toolbar icon preparation](../../investigations/rendering/2026-09-21-s10-toolbar-icon-preparation.md) | S02; default after S09 disposition | Validated (CPU preparation is off draw; bounded owner publication reaches 12/12 on Vulkan and OpenGL) |
 | S11 | Camera inspector metadata/discovery | S10 disposition, measured cost | Pending |
 | S12 | Shared Advanced extraction/publication | S02; default after S11 disposition | Pending |
 | S13 | Recurring recording/source/upload preparation | S02; default after S12 disposition | Pending |
@@ -497,10 +497,10 @@ early disposal and multiple-consumer retirement also passed. See the
 
 Anchor: [XRMesh.Geometry.cs](../../../../XREngine.Runtime.Rendering/Objects/Meshes/XRMesh.Geometry.cs#L358).
 
-- [ ] Establish which cold/revised indexed meshes synchronously join preparation.
-- [ ] Request work before admission using immutable topology and exact revision
+- [x] Establish which cold/revised indexed meshes synchronously join preparation.
+- [x] Request work before admission using immutable topology and exact revision
   tickets. Preserve explicit pending/failure outcomes and completion ownership.
-- [ ] Validate cold indexed geometry, unchanged reuse, topology mutation while
+- [x] Validate cold indexed geometry, unchanged reuse, topology mutation while
   pending, stale completion, disposal, nonindexed geometry and renderer switching
   where shared code changes. Confirm submitted draw ranges remain correct.
 
@@ -508,39 +508,79 @@ Gate: normal draw admission no longer joins index preparation, stale indices are
 never used, and required geometry is not silently skipped. If no join matters,
 record a conditional deferral instead of performing a speculative rewrite.
 
+Result: validated by merged PR #75. Index inputs are captured for an exact mesh
+revision, Vulkan draw admission requests and polls preparation instead of joining
+the worker, and topology changes invalidate obsolete cached buffers. The current
+branch also completed warning-free rendering builds and Vulkan/OpenGL live smoke
+while exercising indexed scene and fullscreen composition. See the
+[S08 gate record](../../investigations/rendering/2026-09-21-s08-index-preparation.md).
+
 ## S09. Share Helper Geometry Only When Justified
 
-- [ ] Count duplicate fullscreen/debug/light-volume constructions and establish
+- [x] Count duplicate fullscreen/debug/light-volume constructions and establish
   their actual cost after S07-S08. Audit existing reuse before adding more.
-- [ ] If justified, define immutable shared geometry with per-consumer material/
+- [x] If justified, define immutable shared geometry with per-consumer material/
   renderer state, explicit ownership and safe retirement. Apply one geometry
   category at a time and validate it before expanding reuse.
-- [ ] Validate multiple windows/pipelines, owner teardown, custom shaders, debug
-  primitives, relevant stereo views, and OpenGL/Vulkan behavior.
-- [ ] Keep procedural fullscreen drawing as a separate deferred design unless
+- [x] Validate the selected category across pipelines, owner teardown, custom
+  shaders, relevant stereo views, and OpenGL/Vulkan behavior. Confirm window
+  ownership remains wrapper-scoped, and inspect debug/light-volume candidates
+  before leaving them unchanged.
+- [x] Keep procedural fullscreen drawing as a separate deferred design unless
   measured need warrants it; it requires explicit topology/count and shader/view
   compatibility, not simply deleting a dummy mesh.
 
 Gate: sharing reduces measured construction without mutable cross-consumer state,
 premature disposal or new retained lifetime. Unchanged visual output is required.
 
+Result: validated for the fullscreen-helper category only. `XRQuadFrameBuffer`
+now leases one immutable-by-contract CPU mesh per fullscreen topology while each
+consumer retains its own renderer, material, shader callbacks, versions and
+multiview state. The final Vulkan Advanced run served 60 triangle acquisitions
+with one construction; OpenGL Default served 27 with one. Pipeline-cache teardown,
+recreation and renderer replacement preserved output and retired the compatibility
+quad at its last lease. Light volumes, debug primitives and procedural fullscreen
+drawing remain unchanged pending separate evidence. See the
+[S09 gate record](../../investigations/rendering/2026-09-21-s09-shared-helper-geometry.md).
+
 ## S10. Remove Cold Toolbar Work From Drawing
 
 Anchor: [EditorImGuiUI.Icons.cs](../../../../XREngine.Editor/IMGUI/EditorImGuiUI.Icons.cs#L41).
 
-- [ ] Distinguish path lookup, SVG parse, Skia rasterization, texture construction
+- [x] Distinguish path lookup, SVG parse, Skia rasterization, texture construction
   and upload. Check whether the first-use delay explains the observed toolbar scope.
-- [ ] Prepare pixels before use or on bounded workers, then publish/upload on the
+- [x] Prepare pixels before use or on bounded workers, then publish/upload on the
   correct owner. Do not move mutable caches/counters or the whole current texture
   factory onto arbitrary workers. One icon per frame is not a time bound.
-- [ ] Validate first toolbar display, all icons warmed, multiple sizes/windows,
+- [x] Validate first toolbar display, all icons warmed, multiple sizes/windows,
   unavailable/malformed isolated icon inputs, shutdown during preparation and
   repeated requests. Preserve useful pending/failure behavior and bounded retries.
-- [ ] Inspect actual toolbar images and interaction, pixel-buffer ownership,
+- [x] Inspect actual toolbar images and interaction, pixel-buffer ownership,
   upload budgets and cached resource retirement on both affected backends.
 
 Gate: no synchronous file/parse/raster work remains on the normal draw path,
 icons eventually render correctly, and warm allocation/latency stays within budget.
+
+Result: validated. The 12 toolbar SVGs now use one cancellable sequential CPU
+preparation worker; the render owner publishes bounded texture/preview work in a
+separate profiler scope, and `DrawToolbar` performs only ready-handle lookup.
+The matching cold Vulkan toolbar leaf fell from 729.970 ms to a sampled ready
+0.023 ms, while OpenGL and Vulkan each reached 12/12 ready icons. The inspected
+OpenGL composited capture showed correctly oriented transform, space, snap and
+playback icons, and a Vulkan renderer restart reuploaded without rerasterizing.
+One indivisible cold Vulkan preview upload had reached 85.753 ms outside the draw
+scope. Follow-up diagnosis reproduced a 62.970 ms versus 5.535 ms cold
+first-publication spread for the 2.3 KiB icon and found three graphics-queue
+submit-and-wait operations in the legacy preview path. That residual is now
+remediated: Vulkan honors `UploadIfNeeded`, performs published-descriptor lookup
+without `PushData`, admits prepared pixels through the existing generation-owned
+`VulkanTextureUploadService`, and returns pending until publication completes.
+An isolated Vulkan run completed 12 worker preparations, 12 transfer chunks and
+12 final publications with zero upload failures; after initial scheduling,
+owner polls were 0.011-0.476 ms. A renderer restart reuploaded 12/12 icons with
+0.013-0.091 ms owner polls and no rerasterization. Composited captures before and
+after restart showed the toolbar icons present and correctly oriented. See the
+[S10 gate record](../../investigations/rendering/2026-09-21-s10-toolbar-icon-preparation.md).
 
 ## S11. Bound Inspector Discovery And Metadata Work
 

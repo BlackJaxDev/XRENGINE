@@ -25,8 +25,6 @@ public static partial class EditorImGuiUI
     /// </summary>
     private static void DrawToolbar()
     {
-        BeginToolbarIconFrame();
-
         var viewport = ImGui.GetMainViewport();
         float menuBarHeight = ImGui.GetFrameHeight();
         
@@ -375,8 +373,8 @@ public static partial class EditorImGuiUI
         ImGui.PushStyleColor(ImGuiCol.Text, textColor);
         
         bool clicked;
-        if (iconName != null && TryGetIconHandle(iconName, out nint handle))
-            clicked = DrawToolbarIconButton(label, handle);
+        if (iconName != null && TryGetIconHandle(iconName, out nint handle, out bool requiresVerticalFlip))
+            clicked = DrawToolbarIconButton(label, handle, requiresVerticalFlip);
         else
             clicked = ImGui.Button(label, new Vector2(ToolbarButtonSize, ToolbarButtonSize));
         
@@ -411,8 +409,8 @@ public static partial class EditorImGuiUI
         ImGui.PushStyleColor(ImGuiCol.ButtonActive, activeColor);
         
         bool clicked;
-        if (iconName != null && TryGetIconHandle(iconName, out nint handle))
-            clicked = DrawToolbarIconButton(label, handle);
+        if (iconName != null && TryGetIconHandle(iconName, out nint handle, out bool requiresVerticalFlip))
+            clicked = DrawToolbarIconButton(label, handle, requiresVerticalFlip);
         else
             clicked = ImGui.Button(label, new Vector2(ToolbarButtonSize, ToolbarButtonSize));
         
@@ -424,7 +422,7 @@ public static partial class EditorImGuiUI
         return clicked;
     }
 
-    private static bool DrawToolbarIconButton(string id, nint handle)
+    private static bool DrawToolbarIconButton(string id, nint handle, bool requiresVerticalFlip)
     {
         var style = ImGui.GetStyle();
         var buttonSize = new Vector2(ToolbarButtonSize, ToolbarButtonSize);
@@ -443,9 +441,8 @@ public static partial class EditorImGuiUI
         Vector2 iconMin = buttonMin + new Vector2(padding, padding);
         Vector2 iconMax = buttonMax - new Vector2(padding, padding);
 
-        // Flip V so SVG textures match other UI usage.
-        Vector2 uv0 = new(0.0f, 1.0f);
-        Vector2 uv1 = new(1.0f, 0.0f);
+        Vector2 uv0 = requiresVerticalFlip ? new Vector2(0.0f, 1.0f) : Vector2.Zero;
+        Vector2 uv1 = requiresVerticalFlip ? new Vector2(1.0f, 0.0f) : Vector2.One;
         uint tint = ImGui.ColorConvertFloat4ToU32(new Vector4(1f, 1f, 1f, 1f));
         ImGui.GetWindowDrawList().AddImage((nint)handle, iconMin, iconMax, uv0, uv1, tint);
 

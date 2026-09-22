@@ -69,6 +69,17 @@ internal sealed partial class VulkanFrameLoop
                 out snapshot);
         }
 
+        uint sourceWidth = resolvedFrameBuffer?.Width ?? 0;
+        uint sourceHeight = resolvedFrameBuffer?.Height ?? 0;
+        if (snapshotReady &&
+            _resourceRuntime.TryGetImageAllocationExtent(
+                snapshot.Image.Handle,
+                out Extent3D allocationExtent))
+        {
+            sourceWidth = allocationExtent.Width;
+            sourceHeight = allocationExtent.Height;
+        }
+
         return new VulkanPresentationSourceTuple(
             0, colorTexture, resolvedFrameBuffer, presentationPublisher,
             presentationPublicationToken, context,
@@ -83,7 +94,7 @@ internal sealed partial class VulkanFrameLoop
             snapshotReady ? snapshot.Aspect : default,
             snapshotReady ? snapshot.Samples : default,
             snapshotReady ? snapshot.TrackedLayout : ImageLayout.Undefined,
-            resolvedFrameBuffer?.Width ?? 0, resolvedFrameBuffer?.Height ?? 0,
+            sourceWidth, sourceHeight,
             default, 0, -1, 0, default, 0);
     }
 

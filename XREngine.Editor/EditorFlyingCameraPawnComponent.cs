@@ -622,6 +622,8 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
     }
 
     private bool _depthQueryRequested = false;
+    private bool _rightClickDepthQueryRequested = false;
+    private Vector3? _rightDragDepthFallbackNormalizedViewportPoint = null;
     private int _depthQueryWaitFrames = 0;
 
     private bool _allowWorldPicking = true;
@@ -2017,6 +2019,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
 
             if (validDepth && worldPoint.HasValue)
             {
+                _rightDragDepthFallbackNormalizedViewportPoint = null;
                 DepthHitNormalizedViewportPoint = new Vector3(clampedNormP.X, clampedNormP.Y, depth!.Value);
                 WorldDragPoint = worldPoint.Value;
                 if (_rightClickPressed && _arcballRotationPosition is null && !GetAverageSelectionPoint(out _))
@@ -2026,13 +2029,55 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             {
                 DepthHitNormalizedViewportPoint = null;
                 WorldDragPoint = null;
+
+                // The transform gizmo renders on top and does not reliably contribute a usable
+                // depth sample. Use its projected position only for RMB screen-space panning so
+                // the drag scales to the gizmo distance without changing scroll or orbit.
+                if (_rightClickDepthQueryRequested)
+                {
+                    _rightDragDepthFallbackNormalizedViewportPoint =
+                        TryGetTransformToolDepthHit(vp, out Vector3 toolViewportPoint)
+                            ? toolViewportPoint
+                            : null;
+                }
             }
         }
         finally
         {
             _depthQueryRequested = false;
+            _rightClickDepthQueryRequested = false;
             _depthQueryWaitFrames = 0;
         }
+    }
+
+    private bool TryGetTransformToolDepthHit(
+        XRViewport vp,
+        out Vector3 normalizedViewportPoint)
+    {
+        normalizedViewportPoint = Vector3.Zero;
+
+        XRCamera? camera = vp.Camera;
+        if (camera is null ||
+            !camera.CullingMask.Contains(DefaultLayers.GizmosIndex) ||
+            !TransformTool3D.GetActiveInstance(out TransformTool3D? tool) ||
+            tool is null ||
+            tool.TargetSocket is null ||
+            !tool.IsActiveInHierarchy ||
+            !ReferenceEquals(tool.World.GetRenderWorld(), vp.World))
+        {
+            return false;
+        }
+
+        normalizedViewportPoint = vp.WorldToNormalizedViewportCoordinate(
+            tool.RootTransform.WorldTranslation,
+            useUnjitteredProjection: true);
+
+        return float.IsFinite(normalizedViewportPoint.X) &&
+            float.IsFinite(normalizedViewportPoint.Y) &&
+            float.IsFinite(normalizedViewportPoint.Z) &&
+            IsNormalizedViewportPointInside(normalizedViewportPoint.XY()) &&
+            normalizedViewportPoint.Z > 0.0f &&
+            normalizedViewportPoint.Z < 1.0f;
     }
 
     private static float? GetDepth(XRViewport vp, Vector2 internalSizeCoordinate)
@@ -2378,7 +2423,16 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         {
             case nameof(RightClickPressed):
                 if (_rightClickPressed && !IsHoveringUI())
+                {
+                    _rightDragDepthFallbackNormalizedViewportPoint = null;
+                    _rightClickDepthQueryRequested = true;
                     _depthQueryRequested = true;
+                }
+                else
+                {
+                    _rightClickDepthQueryRequested = false;
+                    _rightDragDepthFallbackNormalizedViewportPoint = null;
+                }
                 break;
             case nameof(RenderOnDemand):
                 if (_renderOnDemand)
@@ -2472,6 +2526,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
             if (_depthQueryWaitFrames > 2)
             {
                 _depthQueryRequested = false;
+                _rightClickDepthQueryRequested = false;
                 _depthQueryWaitFrames = 0;
                 waitingForScrollDepthHit = false;
             }
@@ -2496,9 +2551,10 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         bool smoothScrollChanged = UpdateScrollSmooth(tfm);
         transformChanged |= smoothScrollChanged;
 
-        if (trans.HasValue && WorldDragPoint.HasValue && DepthHitNormalizedViewportPoint.HasValue)
+        Vector3? dragDepthPoint = DepthHitNormalizedViewportPoint ?? _rightDragDepthFallbackNormalizedViewportPoint;
+        if (trans.HasValue && dragDepthPoint.HasValue)
         {
-            Vector3 normCoord = DepthHitNormalizedViewportPoint.Value;
+            Vector3 normCoord = dragDepthPoint.Value;
             Vector3 worldCoord = vp.NormalizedViewportToWorldCoordinate(normCoord);
             Vector2 screenCoord = vp.DenormalizeViewportCoordinate(normCoord.XY());
             Vector2 newScreenCoord = screenCoord + trans.Value;
@@ -2749,7 +2805,7 @@ public partial class EditorFlyingCameraPawnComponent : FlyingCameraPawnComponent
         // ApplyTransformations' hasNonScrollInput check alone would miss it.
         if (Math.Abs(x) >= 0.00001f || Math.Abs(y) >= 0.00001f)
             _scrollSmoothTarget = null;
-        if (WorldDragPoint.HasValue)
+        if (WorldDragPoint.HasValue || _rightDragDepthFallbackNormalizedViewportPoint.HasValue)
         {
             if (Math.Abs(x) <0.00001f && Math.Abs(y) <0.00001f)
                 return;

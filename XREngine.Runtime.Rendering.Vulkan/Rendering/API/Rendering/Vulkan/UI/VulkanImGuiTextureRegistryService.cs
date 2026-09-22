@@ -86,7 +86,8 @@ internal sealed unsafe class VulkanImGuiTextureRegistryService
                 out ImageView descriptorView,
                 out Sampler descriptorSampler,
                 out ImageLayout descriptorLayout,
-                out ulong descriptorGeneration))
+                out ulong descriptorGeneration,
+                out _))
             return false;
 
         if (registration.ImageViewHandle == descriptorView.Handle &&
@@ -101,13 +102,18 @@ internal sealed unsafe class VulkanImGuiTextureRegistryService
         if (replacementSet.Handle == 0)
             return false;
 
-        _registry.DescriptorSets[textureId] = replacementSet;
-        UpdateImGuiDescriptorHeapPayload(textureId, new DescriptorImageInfo
+        if (!UpdateImGuiDescriptorHeapPayload(textureId, new DescriptorImageInfo
         {
             Sampler = descriptorSampler,
             ImageView = descriptorView,
             ImageLayout = descriptorLayout,
-        });
+        }))
+        {
+            ImGuiTextureOutputResources.Retire(_resourcesState, replacementSet);
+            return false;
+        }
+
+        _registry.DescriptorSets[textureId] = replacementSet;
         registration.DescriptorSet = replacementSet;
         registration.ImageViewHandle = descriptorView.Handle;
         registration.SamplerHandle = descriptorSampler.Handle;
@@ -118,10 +124,15 @@ internal sealed unsafe class VulkanImGuiTextureRegistryService
         return true;
     }
 
-    public IntPtr RegisterImGuiTexture(XRTexture texture)
+    public IntPtr RegisterImGuiTexture(
+        XRTexture texture,
+        out EVulkanImGuiTextureRegistrationStatus status)
     {
         if (texture is null)
+        {
+            status = EVulkanImGuiTextureRegistrationStatus.Unsupported;
             return IntPtr.Zero;
+        }
 
         _fontAtlas.EnsureCreated();
 
@@ -130,7 +141,8 @@ internal sealed unsafe class VulkanImGuiTextureRegistryService
                 out ImageView descriptorView,
                 out Sampler descriptorSampler,
                 out ImageLayout descriptorLayout,
-                out ulong descriptorGeneration))
+                out ulong descriptorGeneration,
+                out status))
             return IntPtr.Zero;
 
         if (_registry.Registrations.TryGetValue(texture, out VulkanImGuiTextureRegistration registration))
@@ -153,15 +165,24 @@ internal sealed unsafe class VulkanImGuiTextureRegistryService
                 {
                     DescriptorSet replacementSet = AllocateImGuiDescriptorSet(descriptorView, descriptorSampler, descriptorLayout);
                     if (replacementSet.Handle == 0)
-                        return (IntPtr)registration.Id;
+                    {
+                        status = EVulkanImGuiTextureRegistrationStatus.DescriptorUnavailable;
+                        return IntPtr.Zero;
+                    }
 
-                    _registry.DescriptorSets[registration.Id] = replacementSet;
-                    UpdateImGuiDescriptorHeapPayload(registration.Id, new DescriptorImageInfo
+                    if (!UpdateImGuiDescriptorHeapPayload(registration.Id, new DescriptorImageInfo
                     {
                         Sampler = descriptorSampler,
                         ImageView = descriptorView,
                         ImageLayout = descriptorLayout,
-                    });
+                    }))
+                    {
+                        ImGuiTextureOutputResources.Retire(_resourcesState, replacementSet);
+                        status = EVulkanImGuiTextureRegistrationStatus.DescriptorUnavailable;
+                        return IntPtr.Zero;
+                    }
+
+                    _registry.DescriptorSets[registration.Id] = replacementSet;
                     registration.DescriptorSet = replacementSet;
                     registration.ImageViewHandle = descriptorView.Handle;
                     registration.SamplerHandle = descriptorSampler.Handle;
@@ -173,22 +194,33 @@ internal sealed unsafe class VulkanImGuiTextureRegistryService
                         liveDescriptorSet);
                 }
 
+                status = EVulkanImGuiTextureRegistrationStatus.Ready;
                 return (IntPtr)registration.Id;
             }
         }
 
         DescriptorSet descriptorSet = AllocateImGuiDescriptorSet(descriptorView, descriptorSampler, descriptorLayout);
         if (descriptorSet.Handle == 0)
+        {
+            status = EVulkanImGuiTextureRegistrationStatus.DescriptorUnavailable;
             return IntPtr.Zero;
+        }
 
-        nint id = _registry.NextTextureId++;
-        _registry.DescriptorSets[id] = descriptorSet;
-        UpdateImGuiDescriptorHeapPayload(id, new DescriptorImageInfo
+        nint id = _registry.NextTextureId;
+        if (!UpdateImGuiDescriptorHeapPayload(id, new DescriptorImageInfo
         {
             Sampler = descriptorSampler,
             ImageView = descriptorView,
             ImageLayout = descriptorLayout,
-        });
+        }))
+        {
+            ImGuiTextureOutputResources.Retire(_resourcesState, descriptorSet);
+            status = EVulkanImGuiTextureRegistrationStatus.DescriptorUnavailable;
+            return IntPtr.Zero;
+        }
+
+        _registry.NextTextureId++;
+        _registry.DescriptorSets[id] = descriptorSet;
         _registry.TexturesById[id] = texture;
         _registry.Registrations[texture] = new VulkanImGuiTextureRegistration
         {
@@ -199,6 +231,7 @@ internal sealed unsafe class VulkanImGuiTextureRegistryService
             ImageLayout = descriptorLayout,
             DescriptorGeneration = descriptorGeneration,
         };
+        status = EVulkanImGuiTextureRegistrationStatus.Ready;
         return (IntPtr)id;
     }
 
@@ -241,21 +274,25 @@ internal sealed unsafe class VulkanImGuiTextureRegistryService
         out ImageView descriptorView,
         out Sampler descriptorSampler,
         out ImageLayout descriptorLayout,
-        out ulong descriptorGeneration)
+        out ulong descriptorGeneration,
+        out EVulkanImGuiTextureRegistrationStatus status)
     {
         descriptorView = default;
         descriptorSampler = default;
         descriptorLayout = ImageLayout.ShaderReadOnlyOptimal;
         descriptorGeneration = 0;
 
-        bool allowSynchronousTextureUpload = BackendContext.Resources.AllowSynchronousResourceUploads;
-        if (BackendContext.GetOrCreateAPIRenderObject(texture, generateNow: allowSynchronousTextureUpload) is not IVkImageDescriptorSource source)
+        if (BackendContext.GetOrCreateAPIRenderObject(texture, generateNow: false) is not IVkImageDescriptorSource source)
+        {
+            status = EVulkanImGuiTextureRegistrationStatus.Unsupported;
             return false;
+        }
 
-        if (allowSynchronousTextureUpload)
-            TryUploadImGuiTextureIfUninitialized(texture, ref source);
-        else if (!source.IsDescriptorReady)
+        if (!source.IsDescriptorReady)
+        {
+            status = EVulkanImGuiTextureRegistrationStatus.NeedsUpload;
             return false;
+        }
 
         descriptorView = ResolveImGuiDescriptorView(source);
         descriptorSampler = source.DescriptorSampler;
@@ -267,25 +304,15 @@ internal sealed unsafe class VulkanImGuiTextureRegistryService
 
         descriptorLayout = VulkanProgramUtilities.ResolveDescriptorImageLayout(source, DescriptorType.CombinedImageSampler);
         descriptorGeneration = source.DescriptorGeneration;
-        return descriptorView.Handle != 0 &&
+        bool available = descriptorView.Handle != 0 &&
             _resources.Images.IsLiveBackedByLiveImage(descriptorView) &&
             _resources.Images.IsAvailableForDescriptor(descriptorView) &&
             descriptorSampler.Handle != 0 &&
             _resources.Descriptors.IsLiveSampler(descriptorSampler);
-    }
-
-    private void TryUploadImGuiTextureIfUninitialized(XRTexture texture, ref IVkImageDescriptorSource source)
-    {
-        if (source.TrackedImageLayout != ImageLayout.Undefined)
-            return;
-
-        if (texture is not XRTexture2D { Mipmaps.Length: > 0 })
-            return;
-
-        texture.PushData();
-
-        if (BackendContext.GetOrCreateAPIRenderObject(texture, generateNow: true) is IVkImageDescriptorSource refreshed)
-            source = refreshed;
+        status = available
+            ? EVulkanImGuiTextureRegistrationStatus.Ready
+            : EVulkanImGuiTextureRegistrationStatus.DescriptorUnavailable;
+        return available;
     }
 
     private static ImageView ResolveImGuiDescriptorView(IVkImageDescriptorSource source)

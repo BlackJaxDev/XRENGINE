@@ -77,7 +77,8 @@ internal unsafe sealed class VulkanImageResourceService(
             Sampler sampler = resources.Sampler;
             if (image.Handle != 0)
             {
-                RequireCommandRuntime().ClearTrackedImageLayouts(image);
+                // A retained presentation lease can still replay this generation.
+                // Keep submitted layouts until native destruction, not enqueue.
                 Views.RetiringImageHandles[image.Handle] = 0;
                 if (!lifetime.Retirement.AllImageHandles.Add(image.Handle))
                     image = default;
@@ -174,6 +175,7 @@ internal unsafe sealed class VulkanImageResourceService(
     {
         if (image.Handle == 0)
             return;
+        ClearTrackedLayouts(image);
         context.Api.DestroyImage(context.Device, image, null);
         allocations.Images.Allocations.TryRemove(image.Handle, out _);
         lock (lifetime.Tracker.SyncRoot)

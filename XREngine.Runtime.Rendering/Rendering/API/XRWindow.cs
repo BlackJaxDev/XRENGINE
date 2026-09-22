@@ -3281,6 +3281,18 @@ namespace XREngine.Rendering
                     IsInteractiveResizeInProgress ||
                     RuntimeInteractiveResizeDispatchState.IsActive;
 
+                if (interactiveResizeFrame)
+                {
+                    // The native thread may publish another size between pending
+                    // resize consumption and DoRender. Layout and Vulkan's output
+                    // mapping must use this same latched surface for the whole
+                    // frame, without admitting a new internal resource generation.
+                    Vector2D<int> presentationSize = RenderFramebufferSize;
+                    for (int viewportIndex = 0; viewportIndex < Viewports.Count; viewportIndex++)
+                        Viewports[viewportIndex].SetPresentationOutputExtent(
+                            (uint)presentationSize.X, (uint)presentationSize.Y);
+                }
+
                 // Reset per-frame rendering statistics at the start of each frame.
                 long phaseStart = System.Diagnostics.Stopwatch.GetTimestamp();
                 using (var renderStatsSample = RuntimeRenderingHostServices.Profiling.StartProfileScope("XRWindow.BeginRenderStatsFrame"))

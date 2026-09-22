@@ -313,7 +313,10 @@ public static partial class EditorImGuiUI
         /// called during UI creation because Play can suppress that first draw entirely.
         /// </summary>
         internal static void Initialize()
-            => Engine.WindowCloseRequested = HandleWindowCloseRequested;
+        {
+            Engine.WindowCloseRequested = HandleWindowCloseRequested;
+            InitializeToolbarIcons();
+        }
 
         internal static void ForceAllowWindowCloseForShutdown()
         {
@@ -611,6 +614,8 @@ public static partial class EditorImGuiUI
             // Draw menu bar and toolbar first
             using (Engine.Profiler.Start("UI.DrawMainMenuBar"))
                 DrawMainMenuBar();
+            using (Engine.Profiler.Start("UI.ToolbarIconOwnerWork"))
+                ProcessToolbarIconOwnerWork();
             using (Engine.Profiler.Start("UI.DrawToolbar"))
                 DrawToolbar();
 

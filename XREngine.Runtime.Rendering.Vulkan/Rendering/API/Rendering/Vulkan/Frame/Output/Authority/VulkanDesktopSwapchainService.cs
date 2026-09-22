@@ -208,7 +208,9 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
                         oldImageTimelineValues[i]);
             }
             RetireDesktopCommandArtifacts();
-            _imguiPipeline.InvalidateForDesktopOutputMutation();
+            // Extent-only replacements do not change dynamic-rendering pipeline
+            // compatibility. EnsureCreated compares the new target signature
+            // below; forcing invalidation here recompiles shaders on every drag.
             RetireStreamlineUiResources();
             // The resource runtime carries the frame slot published by the frame
             // loop; retirement therefore remains correct even while no renderer
@@ -586,10 +588,9 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
     }
 
     /// <summary>
-    /// A swapchain replacement changes the UI pipeline compatibility key. The
-    /// first generation may exist before an ImGui context, but once that context
-    /// has made the font descriptor resources resident every replacement must
-    /// rebuild the mandatory terminal pipeline before publication.
+    /// Checks the replacement target's UI pipeline compatibility before publication.
+    /// Extent-only changes retain the dynamic-rendering pipeline; changes to its
+    /// format, shader variant, or legacy render pass rebuild it.
     /// </summary>
     private void EnsureMandatoryOutputPipelineForExistingImGuiContext()
     {
@@ -698,10 +699,17 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
             return false;
         }
 
+        // The render-frame framebuffer latch is the single pixel-extent authority.
+        // Silk's logical window size is sampled independently and may briefly lead
+        // or lag it while WM_EXITSIZEMOVE is unwinding; taking the larger dimension
+        // can therefore recreate a swapchain that no published render frame owns.
+        Vector2D<int> requested = framebuffer.X > 0 && framebuffer.Y > 0
+            ? framebuffer
+            : window;
         extent = new Extent2D
         {
-            Width = Math.Clamp((uint)Math.Max(Math.Max(framebuffer.X, window.X), 1), capabilities.MinImageExtent.Width, capabilities.MaxImageExtent.Width),
-            Height = Math.Clamp((uint)Math.Max(Math.Max(framebuffer.Y, window.Y), 1), capabilities.MinImageExtent.Height, capabilities.MaxImageExtent.Height),
+            Width = Math.Clamp((uint)Math.Max(requested.X, 1), capabilities.MinImageExtent.Width, capabilities.MaxImageExtent.Width),
+            Height = Math.Clamp((uint)Math.Max(requested.Y, 1), capabilities.MinImageExtent.Height, capabilities.MaxImageExtent.Height),
         };
         reason = extent.Width == 0 || extent.Height == 0 ? "surface clamp produced a zero extent" : string.Empty;
         return extent.Width != 0 && extent.Height != 0;
@@ -766,7 +774,14 @@ internal sealed unsafe partial class VulkanDesktopSwapchainService
             extent.Width <= queried.MaxScaledImageExtent.Width && extent.Height <= queried.MaxScaledImageExtent.Height;
         if (!supported)
             return false;
-        createInfo = new SwapchainPresentScalingCreateInfoEXT { SType = StructureType.SwapchainPresentScalingCreateInfoExt, ScalingBehavior = PresentScalingFlagsKHR.StretchBitExt, PresentGravityX = PresentGravityFlagsKHR.CenteredBitExt, PresentGravityY = PresentGravityFlagsKHR.CenteredBitExt };
+        // Gravity is ignored for stretch scaling. Leave it unset so swapchain
+        // creation remains valid even when the surface does not advertise a
+        // centered gravity bit on one or both axes.
+        createInfo = new SwapchainPresentScalingCreateInfoEXT
+        {
+            SType = StructureType.SwapchainPresentScalingCreateInfoExt,
+            ScalingBehavior = PresentScalingFlagsKHR.StretchBitExt,
+        };
         return true;
     }
 

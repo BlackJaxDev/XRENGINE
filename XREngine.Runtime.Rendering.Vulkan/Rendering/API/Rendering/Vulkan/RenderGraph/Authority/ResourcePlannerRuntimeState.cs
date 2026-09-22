@@ -26,6 +26,17 @@ internal struct ResourcePlannerRuntimeState
     public FrameOpResourcePlannerSwitchingState? FrameOpResourcePlannerSwitchingState;
     public VulkanPreparedResourceGenerationManifest? PreparedGenerationManifest;
 
+    /// <summary>
+    /// Gets whether this snapshot still owns the allocator generation captured
+    /// when the planner state was published. Retirement is shared by every
+    /// shallow copy of the state, so it is the authoritative publication
+    /// tombstone after a resource-generation replacement.
+    /// </summary>
+    public readonly bool HasLiveAllocatorOwnership
+        => ResourceAllocator is not null &&
+           !ResourceAllocator.IsRetired &&
+           ResourceAllocator.OwnershipId == AllocatorOwnershipId;
+
     public static ResourcePlannerRuntimeState CreateEmpty()
     {
         VulkanResourceAllocator allocator = new();

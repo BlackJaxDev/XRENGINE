@@ -81,8 +81,55 @@ internal sealed partial class VulkanCommandRuntime
         if (!TryValidatePreparedPrimaryInput(in input, out string reason))
             return VulkanPrimaryCommandRecordingResult.ReplanRequired(reason);
         if (!input.FramePlan.HasAnyExecutableOutput)
-            return VulkanPrimaryCommandRecordingResult.Deferred(
-                "the immutable output DAG deferred every output in this frame plan");
+        {
+            // Recovery records a new, one-time overlay primary for the acquired
+            // image. Supply it with a freshly recorded color-only secondary
+            // rather than replaying a mutable secondary from an earlier frame.
+            // The secondary's normal parent is the per-image dynamic overlay
+            // primary, whose tracked reset below proves it is no longer in use.
+            PrimaryCommandArtifactOwner? deferredOwner =
+                ResolvePreparedPrimaryOwner(input.PrimaryCommandBuffer);
+            FrameOperationSequence deferredDynamicUiOperations =
+                input.FramePlan.GetNativeDynamicOverlayOperationsForRecording();
+            bool canRecordDynamicRecoveryOverlay =
+                deferredOwner is not null &&
+                input.Policy.UseDynamicRendering &&
+                input.RecordingTarget.IsValid;
+            if (canRecordDynamicRecoveryOverlay &&
+                deferredDynamicUiOperations.Length > 0 &&
+                !RecordDynamicUiBatchTextSecondaryCommandBuffer(
+                    input.ImageIndex,
+                    input.FrameDataSlotIndex,
+                    deferredOwner!,
+                    deferredDynamicUiOperations,
+                    input.FramePlan.DynamicOverlaySignature,
+                    forceRecord: input.Policy.FreshSerialRecording,
+                    includeDepthAttachment: false,
+                    releaseInlinePrimaryBeforeSecondaryMutation: false,
+                    input.RecordingTarget,
+                    input.Policy))
+            {
+                return VulkanPrimaryCommandRecordingResult.Deferred(
+                    "the immutable output DAG deferred every output and dynamic UI recovery recording was deferred");
+            }
+
+            CommandBuffer deferredDynamicUiSecondary =
+                canRecordDynamicRecoveryOverlay
+                    ? deferredOwner!.DynamicUiSecondaryCommandBuffer
+                    : default;
+            int deferredDynamicUiOperationCount =
+                canRecordDynamicRecoveryOverlay &&
+                deferredOwner!.DynamicUiSecondaryRecorded
+                    ? input.FramePlan.DynamicOverlayOperationCount
+                    : 0;
+            return AttachDeferredRecordingArtifacts(
+                VulkanPrimaryCommandRecordingResult.Deferred(
+                    "the immutable output DAG deferred every output in this frame plan"),
+                default,
+                default,
+                deferredDynamicUiSecondary,
+                deferredDynamicUiOperationCount);
+        }
 
         Interlocked.Increment(ref _recordedPrimaryFrameCounter);
         bool gpuPipelineProfilingActive =
@@ -197,7 +244,8 @@ internal sealed partial class VulkanCommandRuntime
                     owner.RecordedSwapchainWriteCount,
                     Volatile.Read(ref CommandBuffers.DirtyGeneration),
                     Reason: null,
-                    input.FramePlan);
+                    input.FramePlan,
+                    HasAuthoredSwapchainWrite: owner.HasAuthoredSwapchainWrite);
             }
         }
 
@@ -311,7 +359,8 @@ internal sealed partial class VulkanCommandRuntime
             context.RecordedSwapchainWriteCount,
             Volatile.Read(ref CommandBuffers.DirtyGeneration),
             Reason: null,
-            input.FramePlan);
+            input.FramePlan,
+            HasAuthoredSwapchainWrite: owner?.HasAuthoredSwapchainWrite == true);
     }
 
     /// <summary>
@@ -738,6 +787,8 @@ internal sealed partial class VulkanCommandRuntime
             : context.RecordingDeferredReason;
         if (context.FailureKind == EVulkanCommandRecordingFailureKind.ReplanRequired)
             return VulkanPrimaryCommandRecordingResult.ReplanRequired(reason);
+        if (context.NoAuthoredDesktopOutput)
+            return VulkanPrimaryCommandRecordingResult.NoAuthoredOutput(reason);
 
         return context.Policy.IsPresentNow
             ? VulkanPrimaryCommandRecordingResult.Failed(

@@ -19,7 +19,8 @@ internal readonly record struct VulkanPrimaryCommandRecordingResult(
     ERenderOutputWorkClass WorkClass = ERenderOutputWorkClass.Background,
     ulong SourceFrameId = 0UL,
     EVulkanCommandRecordingFailureKind FailureKind =
-        EVulkanCommandRecordingFailureKind.None)
+        EVulkanCommandRecordingFailureKind.None,
+    bool HasAuthoredSwapchainWrite = false)
 {
     internal bool Succeeded => Disposition is EVulkanPrimaryCommandRecordingDisposition.Recorded or
         EVulkanPrimaryCommandRecordingDisposition.RecordedWithGpuFallback or
@@ -40,6 +41,15 @@ internal readonly record struct VulkanPrimaryCommandRecordingResult(
         => new(EVulkanPrimaryCommandRecordingDisposition.Deferred, default, default, 0, default, default,
             ImageLayout.Undefined, 0, 0, reason,
             FailureKind: EVulkanCommandRecordingFailureKind.Deferred);
+
+    /// <summary>
+    /// Does not fulfill an exact-output request: pacing or producer suspension
+    /// published no scene. The frame loop may compose UI over a committed source,
+    /// but must not manufacture a fresh clear or complete scene history from it.
+    /// </summary>
+    internal static VulkanPrimaryCommandRecordingResult NoAuthoredOutput(string reason)
+        => new(EVulkanPrimaryCommandRecordingDisposition.NoAuthoredOutput, default, default, 0, default, default,
+            ImageLayout.Undefined, 0, 0, reason);
 
     internal static VulkanPrimaryCommandRecordingResult Failed(string reason,
         ERenderOutputReadinessPolicy readinessPolicy = ERenderOutputReadinessPolicy.BlockForExact,

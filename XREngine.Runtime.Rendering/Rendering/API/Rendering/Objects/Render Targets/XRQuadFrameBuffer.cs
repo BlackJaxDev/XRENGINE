@@ -1,5 +1,6 @@
 using System.IO;
 using System.Numerics;
+using XREngine.Data.Core;
 using XREngine.Data.Rendering;
 using XREngine.Rendering.Models.Materials;
 
@@ -15,6 +16,8 @@ namespace XREngine.Rendering
         /// </summary>
         private DelSetUniforms? _settingUniforms;
         private readonly bool _useMultiview;
+        private readonly SharedRenderHelperGeometry.Lease _geometryLease;
+        private int _tearingDown;
         private bool _initialRenderingPrepared;
         private XRMeshRenderer.BaseVersion? _initialRenderingVersion;
 
@@ -36,42 +39,6 @@ namespace XREngine.Rendering
         }
 
         public XRMeshRenderer FullScreenMesh { get; }
-
-        private static XRMesh Mesh(bool useTriangle)
-        {
-            if (useTriangle)
-            {
-                //Render a triangle that overdraws past the screen - discard fragments outside the screen in the shader.
-                VertexTriangle triangle = new(
-                    new Vector3(-1, -1, 0),
-                    new Vector3( 3, -1, 0),
-                    new Vector3(-1,  3, 0));
-
-                return XRMesh.Create(triangle);
-            }
-            else
-            {
-                //     .3
-                //    /|
-                //   / |
-                // 1.__.2
-                VertexTriangle triangle1 = new(
-                    new Vector3(-1, -1, 0),
-                    new Vector3( 1, -1, 0),
-                    new Vector3( 1,  1, 0));
-
-                // 3.__.2
-                //  | /
-                //  |/
-                // 1.
-                VertexTriangle triangle2 = new(
-                    new Vector3(-1, -1, 0),
-                    new Vector3( 1,  1, 0),
-                    new Vector3(-1,  1, 0));
-
-                return XRMesh.Create(triangle1, triangle2);
-            }
-        }
 
         /// <summary>
         /// Renders a material to the screen using a fullscreen orthographic quad.
@@ -108,15 +75,29 @@ namespace XREngine.Rendering
                 mat.Shaders.Add(XRShader.EngineShader(Path.Combine("Scene3D", "FullscreenTriOVR.vs"), EShaderType.Vertex));
             }
 
-            FullScreenMesh = new XRMeshRenderer(Mesh(useTriangle), mat);
-            FullScreenMesh.ForceOvrMultiview = _useMultiview;
-            FullScreenMesh.Name = $"FullscreenQuad:{mat.Name ?? "Material"}";
-            FullScreenMesh.GenerateAsync = false;
-            FullScreenMesh.CaptureUniformsOnRender = true;
-            FullScreenMesh.GenerationPriority = EMeshGenerationPriority.RenderPipeline;
-            FullScreenMesh.SetShaderPipelinesAllowedForAllVersions(false);
-            if (prepareForInitialRendering)
-                PrepareForInitialRendering();
+            SharedRenderHelperGeometry.Lease geometryLease =
+                SharedRenderHelperGeometry.AcquireFullscreen(useTriangle);
+            XRMeshRenderer? fullScreenMesh = null;
+            try
+            {
+                fullScreenMesh = new XRMeshRenderer(geometryLease.Mesh, mat);
+                FullScreenMesh = fullScreenMesh;
+                _geometryLease = geometryLease;
+                FullScreenMesh.ForceOvrMultiview = _useMultiview;
+                FullScreenMesh.Name = $"FullscreenQuad:{mat.Name ?? "Material"}";
+                FullScreenMesh.GenerateAsync = false;
+                FullScreenMesh.CaptureUniformsOnRender = true;
+                FullScreenMesh.GenerationPriority = EMeshGenerationPriority.RenderPipeline;
+                FullScreenMesh.SetShaderPipelinesAllowedForAllVersions(false);
+                if (prepareForInitialRendering)
+                    PrepareForInitialRendering();
+            }
+            catch
+            {
+                fullScreenMesh?.Destroy(now: true);
+                geometryLease.Dispose();
+                throw;
+            }
         }
 
         internal void PrepareForInitialRendering()
@@ -181,6 +162,9 @@ namespace XREngine.Rendering
         // selecting the vertex declaration that broadcasts into both array layers.
         public bool TryPrepareForRendering(bool forceNoStereo = true)
         {
+            if (IsDestroyQueued || IsDestroyed || Volatile.Read(ref _tearingDown) != 0)
+                return false;
+
             PrepareForInitialRendering();
             bool prepareWithoutStereo = forceNoStereo && !_useMultiview;
             if (!RenderDiagnosticsFlags.VkTraceDraw)
@@ -222,6 +206,9 @@ namespace XREngine.Rendering
         /// </summary>
         internal void EnqueueRender(bool forceNoStereo = true)
         {
+            if (IsDestroyQueued || IsDestroyed || Volatile.Read(ref _tearingDown) != 0)
+                return;
+
             forceNoStereo &= !_useMultiview;
             if (RenderDiagnosticsFlags.VkTraceDraw)
                 Debug.RenderingEvery(
@@ -238,6 +225,35 @@ namespace XREngine.Rendering
             }
             else
                 FullScreenMesh.Render(Matrix4x4.Identity, Matrix4x4.Identity, null, 1, forceNoStereo);
+        }
+
+        protected override void OnDestroying()
+        {
+            Volatile.Write(ref _tearingDown, 1);
+            if (_settingUniforms is not null)
+                FullScreenMesh.SettingUniforms -= SetUniforms;
+
+            // Retire consumer-specific versions and wrappers before releasing
+            // the shared CPU geometry that those versions reference.
+            if (FullScreenMesh.IsDestroyed)
+            {
+                _geometryLease.Dispose();
+                base.OnDestroying();
+                return;
+            }
+
+            FullScreenMesh.Destroyed += FullScreenMeshDestroyed;
+            FullScreenMesh.Destroy(now: true);
+            if (!FullScreenMesh.IsDestroyed && !FullScreenMesh.IsDestroyQueued)
+                throw new InvalidOperationException("Fullscreen renderer teardown was vetoed before shared geometry could be released.");
+
+            base.OnDestroying();
+        }
+
+        private void FullScreenMeshDestroyed(XRObjectBase _)
+        {
+            FullScreenMesh.Destroyed -= FullScreenMeshDestroyed;
+            _geometryLease.Dispose();
         }
     }
 }

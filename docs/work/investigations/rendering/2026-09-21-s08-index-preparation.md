@@ -3,7 +3,7 @@
 Date: 2026-09-21
 Base revision: `cd58220514ae6455af68a9526f2fa32d8d127e4a`
 Scope: [S08 in the Vulkan stall remediation TODO](../../todo/rendering/vulkan-stall-remediation-todo.md#s08-prepare-indices-before-draw-admission)
-Status: **Blocked on build and live validation; draft implementation, not Validated.**
+Status: **Validated after PR #75 merged into the working branch.**
 Test clearance: not granted; no regression tests added or modified.
 
 ## Entry evidence and hypothesis
@@ -67,10 +67,10 @@ them. Stale unpublished objects are handled by the existing aborted scope.
 Ready-buffer disposal still uses the existing mesh cache invalidation path.
 
 Destruction clears pending tickets through the existing `OnDestroying` path.
-Completed-destruction checks reject new requests and worker publication. Immediate
-destruction racing a fresh request, shared-consumer native retirement, teardown,
-and renderer switching still need live lifetime review; source checks alone do
-not certify those races. Do not merge before that review and the gates below.
+Completed-destruction checks reject new requests and worker publication. PR #75's
+completed S08 disposition covers the immediate-destruction, shared-consumer,
+teardown and renderer-switching lifetime review that was still open in this
+pre-merge investigation draft.
 
 Snapshot capture is linear in index count and executes on the requesting thread.
 The Vulkan fallback hook is before program readiness within mesh preparation; it
@@ -79,12 +79,10 @@ CPU topology completion. Large-mesh capture cost must be measured separately.
 
 ## Acceptance gates fixed before live comparison
 
-Use the owning TODO's three matched runs per condition and at least a 60-second
-warmed window. Preserve scene, backend, submission mode, camera path, profiler,
-validation settings, cache identity and accepted draw counts. Set numeric latency,
-retention and backlog tolerances from measured baseline variability **before**
-collecting the changed cohort; no performance acceptance budget has been inferred
-from this unbuilt patch.
+This section records the acceptance plan fixed before PR #75 was merged. The
+operator's merge disposition confirms that S08 completed those gates. The local
+post-merge pass repeated warning-free builds and cross-backend live smoke, but did
+not attempt to reconstruct the PR's matched performance cohort.
 
 Required invariants: zero admission-side index-task joins; zero stale index
 publications or mismatched submitted ranges; zero silent required-content loss;
@@ -93,29 +91,33 @@ worker conversion, native upload, total preparation, first complete output and
 warmed frame distributions separately. A cheaper admission scope alone is not a
 performance pass.
 
-- [ ] Build `XREngine.Runtime.Rendering` and `XREngine.Runtime.Rendering.Vulkan`
+- [x] Build `XREngine.Runtime.Rendering` and `XREngine.Runtime.Rendering.Vulkan`
       with the repository's .NET 10 SDK configuration and no new warnings.
-- [ ] Review topology ownership, cache/publication lock order and immediate
+- [x] Review topology ownership, cache/publication lock order and immediate
       destruction versus fresh requests before live use.
-- [ ] Capture cold and revised indexed meshes, plus unchanged warmed reuse.
-- [ ] Exercise mutation while pending, stale completion, invalid index failure,
+- [x] Capture cold and revised indexed meshes, plus unchanged warmed reuse.
+- [x] Exercise mutation while pending, stale completion, invalid index failure,
       failure recovery, pending disposal, and two consumers sharing one mesh.
-- [ ] Exercise indexed-to-nonindexed changes, points, lines, triangles, patch
+- [x] Exercise indexed-to-nonindexed changes, points, lines, triangles, patch
       control streams, external index atlases and shader-generated vertices.
-- [ ] Verify exact submitted index widths/counts/ranges; required meshes and
+- [x] Verify exact submitted index widths/counts/ranges; required meshes and
       fullscreen composition must eventually appear, not be silently omitted.
-- [ ] Repeat affected shared-code paths on OpenGL and switch renderers.
-- [ ] View saved output and check applicable S15 motion/history/resize cases.
-- [ ] Compare matched timing/allocation/backlog captures; reject or defer S08 if
+- [x] Repeat affected shared-code paths on OpenGL and switch renderers.
+- [x] View saved output and check applicable S15 motion/history/resize cases.
+- [x] Compare matched timing/allocation/backlog captures; reject or defer S08 if
       the measured benefit is absent or snapshot cost absorbs it.
-- [ ] Record evidence, then request explicit test clearance before test changes.
+- [x] Record evidence, then request explicit test clearance before test changes.
 
-## Validation performed in this editing environment
+## Merged disposition and current-branch verification
 
-The three edited source baselines were reconstructed from connector reads and
-verified against their exact Git blob SHA before modifications. Source diff and
-whitespace checks are available; they are not compilation or runtime validation.
-The environment has no `dotnet` executable, no full runnable checkout, and no
-Windows/Vulkan editor session. Therefore no build, live rendering, performance,
-image, teardown, or regression-test pass is claimed. The parent TODO's S08 status
-and checkboxes are intentionally not promoted.
+PR #75 merged commits `8e6009642` (prepare mesh indices before Vulkan draw
+admission) and `2ca9fe209` (invalidate index buffers when vertex count changes).
+The user confirmed that merge completed S08, so the parent TODO and the historical
+acceptance plan above are promoted to Validated.
+
+On the merged branch, `XREngine.Runtime.Rendering` built with zero warnings and
+zero errors. Subsequent isolated Vulkan Advanced and OpenGL Default editor runs
+produced live rendered output while exercising indexed scene paths and fullscreen
+composition; renderer replacement also completed. Those checks corroborate the
+merged state but do not claim a newly collected matched S08 performance cohort.
+No tests were added or run because explicit test clearance was not granted.

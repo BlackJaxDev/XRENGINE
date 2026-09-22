@@ -63,6 +63,8 @@ internal ref struct VulkanCommandRecordingContext(
     public int RecordedSwapchainWriteCount = 0;
     public ImageLayout RecordedSwapchainFinalLayout = ImageLayout.Undefined;
     public string RecordingDeferredReason = string.Empty;
+    /// <summary>No authored scene write reached the desktop before synthetic finalization.</summary>
+    public bool NoAuthoredDesktopOutput = false;
     public EVulkanCommandRecordingFailureKind FailureKind = EVulkanCommandRecordingFailureKind.None;
     /// <summary>
     /// True when this recording intentionally omitted transient work and therefore

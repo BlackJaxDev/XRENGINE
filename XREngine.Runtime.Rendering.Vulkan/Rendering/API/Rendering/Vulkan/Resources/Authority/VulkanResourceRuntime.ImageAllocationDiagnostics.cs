@@ -45,9 +45,9 @@ internal sealed partial class VulkanResourceRuntime
             depth,
             layers,
             Math.Max(1u, mipLevels),
-            format.ToString(),
-            usage.ToString(),
-            samples.ToString(),
+            format,
+            usage,
+            samples,
             allocationClass,
             allocation.MemoryTypeIndex,
             memoryTypeFlags.ToString(),
@@ -81,6 +81,53 @@ internal sealed partial class VulkanResourceRuntime
             Allocations.Images.DebugInfo.TryRemove(image.Handle, out _);
     }
 
+    /// <summary>
+    /// Resolves the immutable native allocation extent for a live image. Logical
+    /// framebuffer wrappers can already expose a pending resize while their
+    /// published Vulkan allocation still belongs to the previous generation, so
+    /// presentation replay must use this physical extent rather than wrapper size.
+    /// </summary>
+    internal bool TryGetImageAllocationExtent(
+        ulong imageHandle,
+        out Extent3D extent)
+    {
+        if (imageHandle != 0 &&
+            Allocations.Images.DebugInfo.TryGetValue(
+                imageHandle,
+                out VulkanImageAllocationDebugInfo allocation) &&
+            allocation.Width != 0 &&
+            allocation.Height != 0 &&
+            allocation.Depth != 0)
+        {
+            extent = new Extent3D(
+                allocation.Width,
+                allocation.Height,
+                allocation.Depth);
+            return true;
+        }
+
+        extent = default;
+        return false;
+    }
+
+    /// <summary>Resolves the immutable native format and sample count, not pending wrapper metadata.</summary>
+    internal bool TryGetImageAllocationFormat(
+        ulong imageHandle,
+        out Format format,
+        out SampleCountFlags samples)
+    {
+        if (Allocations.Images.DebugInfo.TryGetValue(imageHandle, out var allocation))
+        {
+            format = allocation.Format;
+            samples = allocation.Samples;
+            return format != Format.Undefined && samples != 0;
+        }
+
+        format = Format.Undefined;
+        samples = default;
+        return false;
+    }
+
     internal object GetLiveImageAllocationDiagnostics(int limit)
     {
         int clampedLimit = Math.Clamp(limit, 1, 512);
@@ -110,9 +157,9 @@ internal sealed partial class VulkanResourceRuntime
                 entry.Depth,
                 entry.Layers,
                 entry.MipLevels,
-                entry.Format,
-                entry.Usage,
-                entry.Samples,
+                Format = entry.Format.ToString(),
+                Usage = entry.Usage.ToString(),
+                Samples = entry.Samples.ToString(),
                 entry.AllocationClass,
                 entry.MemoryTypeIndex,
                 entry.MemoryTypeFlags,

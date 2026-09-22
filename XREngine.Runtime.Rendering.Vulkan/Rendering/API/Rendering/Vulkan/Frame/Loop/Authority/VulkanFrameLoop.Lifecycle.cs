@@ -271,6 +271,7 @@ internal sealed partial class VulkanFrameLoop
         List<Exception> failures)
     {
         const string shutdownReason = "Vulkan renderer shutdown";
+        RunCleanupStep("submitted presentation source", _outputRuntime.PresentationSource.Submitted.Dispose, failures);
         // Split slots borrow the target's final fence. Retire them while that
         // fence and their retained native dependencies still exist.
         RunCleanupStep("advanced queue overlap", _commandRuntime.DestroyAdvancedQueueOverlapResources, failures);

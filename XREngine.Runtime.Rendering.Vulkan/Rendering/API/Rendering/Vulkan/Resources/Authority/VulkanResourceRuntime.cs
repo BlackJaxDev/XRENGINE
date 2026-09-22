@@ -2329,6 +2329,7 @@ internal sealed partial class VulkanResourceRuntime
 
             if (canDestroyImage)
             {
+                Images.ClearTrackedLayouts(resources.Image);
                 api.DestroyImage(device, resources.Image, null);
                 CompleteSimpleResourceDestruction(
                     ObjectType.Image,
@@ -2944,6 +2945,19 @@ internal sealed partial class VulkanResourceRuntime
         {
             failureReason =
                 $"final presentation source epoch {source.LogicalEpoch} is not replayable";
+            return false;
+        }
+
+        if (TryGetImageAllocationExtent(
+                source.Image.Handle,
+                out Extent3D allocationExtent) &&
+            (source.Width != allocationExtent.Width ||
+             source.Height != allocationExtent.Height))
+        {
+            failureReason =
+                $"final presentation replay source epoch {source.LogicalEpoch} has logical extent " +
+                $"{source.Width}x{source.Height}, but native image 0x{source.Image.Handle:X} is " +
+                $"{allocationExtent.Width}x{allocationExtent.Height}";
             return false;
         }
 

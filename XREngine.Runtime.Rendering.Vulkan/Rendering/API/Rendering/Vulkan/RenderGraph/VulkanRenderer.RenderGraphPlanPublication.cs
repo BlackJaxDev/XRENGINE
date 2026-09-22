@@ -26,6 +26,13 @@ internal sealed partial class VulkanFramePlanner
         out bool nativeBindingsSuperseded)
     {
 		nativeBindingsSuperseded = false;
+        if (!state.HasLiveAllocatorOwnership)
+        {
+            reason =
+                $"Resource plan {state.ResourcePlannerRevision} cannot freeze native barriers because its allocator generation is retired or no longer owned.";
+            return false;
+        }
+
         VulkanRenderGraphPlan currentPlan = state.RenderGraphPlan;
         ulong nativeBufferBindingRevision = backendContext?.Resources.NativeBufferBindingRevision ?? 0UL;
         if (currentPlan.Revision == state.ResourcePlannerRevision &&

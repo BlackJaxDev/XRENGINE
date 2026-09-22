@@ -1,4 +1,5 @@
 using Silk.NET.Vulkan;
+using System.Runtime.CompilerServices;
 using XREngine.Rendering;
 using XREngine.Rendering.UI;
 
@@ -16,6 +17,8 @@ internal sealed partial class VulkanFrameLoop
     private VulkanImGuiTextureRegistryService? _imguiTextureRegistryService;
     private VulkanOpenXrOutputResourceService? _openXrOutputResourceService;
     private VulkanReadbackOutputResourceService? _readbackOutputResourceService;
+    private ConditionalWeakTable<XRTexture2D, VulkanTexturePreviewUploadState> _texturePreviewUploads = new();
+    private CancellationTokenSource? _texturePreviewUploadCancellation;
 
     internal VulkanDesktopSwapchainService DesktopSwapchainService
         => _desktopSwapchainService ?? throw OutputServicesNotAttached();
@@ -41,13 +44,135 @@ internal sealed partial class VulkanFrameLoop
         out bool requiresVerticalFlip,
         out string? failureReason)
     {
-        IntPtr textureId = ImGuiTextureRegistryService.RegisterImGuiTexture(texture);
+        IntPtr textureId = ImGuiTextureRegistryService.RegisterImGuiTexture(
+            texture,
+            out EVulkanImGuiTextureRegistrationStatus registrationStatus);
         handle = (nint)textureId;
         requiresVerticalFlip = false;
-        failureReason = textureId == IntPtr.Zero
-            ? "Texture has not been uploaded to the GPU yet."
-            : null;
-        return textureId != IntPtr.Zero;
+        if (textureId != IntPtr.Zero)
+        {
+            if (texture is XRTexture2D uploadedTexture)
+                _texturePreviewUploads.Remove(uploadedTexture);
+            failureReason = null;
+            return true;
+        }
+
+        if (!options.UploadIfNeeded)
+        {
+            failureReason = "Texture has not been uploaded to the GPU yet.";
+            return false;
+        }
+
+        if (registrationStatus != EVulkanImGuiTextureRegistrationStatus.NeedsUpload)
+        {
+            failureReason = registrationStatus switch
+            {
+                EVulkanImGuiTextureRegistrationStatus.DescriptorUnavailable =>
+                    "The Vulkan texture descriptor is not currently available.",
+                EVulkanImGuiTextureRegistrationStatus.Unsupported =>
+                    "The Vulkan preview backend does not support this texture type.",
+                _ => "The Vulkan texture preview handle is not currently available.",
+            };
+            return false;
+        }
+
+        if (texture is not XRTexture2D texture2D)
+        {
+            failureReason = "Only two-dimensional textures can request a Vulkan preview upload.";
+            return false;
+        }
+
+        if (!TryRequestTexturePreviewUpload(texture2D, out failureReason))
+            return false;
+
+        // A null failure denotes accepted, nonblocking work. The caller should
+        // poll on a later frame rather than consume a failure retry.
+        failureReason = null;
+        return false;
+    }
+
+    private bool TryRequestTexturePreviewUpload(
+        XRTexture2D texture,
+        out string? failureReason)
+    {
+        if (_texturePreviewUploads.TryGetValue(
+                texture,
+                out VulkanTexturePreviewUploadState? pending))
+        {
+            VulkanTextureStreamingTicketSnapshot snapshot =
+                _resourceRuntime.Uploads.CaptureTicketSnapshot(
+                    texture,
+                    pending.Ticket);
+            if (snapshot.TerminalFailure || !snapshot.Found)
+            {
+                failureReason = snapshot.Detail ??
+                    $"Vulkan preview upload ticket {pending.Ticket.Sequence} is no longer available.";
+                return false;
+            }
+
+            failureReason = null;
+            return true;
+        }
+
+        Mipmap2D[] mipmaps = texture.Mipmaps;
+        if (mipmaps.Length == 0)
+        {
+            failureReason = "Texture has no resident mip data to upload.";
+            return false;
+        }
+
+        Mipmap2D? firstMip = null;
+        for (int index = 0; index < mipmaps.Length; index++)
+        {
+            if (mipmaps[index] is not { } candidate)
+                continue;
+
+            firstMip = candidate;
+            break;
+        }
+        if (firstMip is null)
+        {
+            failureReason = "Texture has no populated resident mip data to upload.";
+            return false;
+        }
+
+        Mipmap2D[] retainedMipmaps = [.. mipmaps];
+        TextureStreamingResidentData residentData = new(
+            retainedMipmaps,
+            Math.Max(texture.Width, firstMip.Width),
+            Math.Max(texture.Height, firstMip.Height),
+            Math.Max(firstMip.Width, firstMip.Height));
+        CancellationToken cancellationToken =
+            _texturePreviewUploadCancellation?.Token ?? CancellationToken.None;
+        if (!ImportedTextureStreamingManager.Instance.TryScheduleRawResidentDataForVulkan(
+                texture,
+                residentData,
+                includeMipChain: retainedMipmaps.Length > 1,
+                TextureUploadPriorityClass.VisibleNow,
+                cancellationToken,
+                out long generation))
+        {
+            failureReason = "The Vulkan texture upload service did not accept the preview upload.";
+            return false;
+        }
+
+        if (!_resourceRuntime.Uploads.TryGetLatestTicketForGeneration(
+                texture,
+                generation,
+                out VulkanTextureUploadTicket ticket))
+        {
+            failureReason = $"Vulkan preview upload generation {generation} has no registered ticket.";
+            return false;
+        }
+
+        _texturePreviewUploads.Add(
+            texture,
+            new VulkanTexturePreviewUploadState(
+                new VulkanTextureStreamingUploadTicket(
+                    ticket.Sequence,
+                    ticket.StreamingGeneration)));
+        failureReason = null;
+        return true;
     }
     internal VulkanOpenXrOutputResourceService OpenXrOutputResourceService
         => _openXrOutputResourceService ?? throw OutputServicesNotAttached();
@@ -58,6 +183,10 @@ internal sealed partial class VulkanFrameLoop
     {
         if (_targetOutputSession is not null)
             throw new InvalidOperationException("Vulkan output services are already attached.");
+
+        _texturePreviewUploadCancellation?.Dispose();
+        _texturePreviewUploadCancellation = new CancellationTokenSource();
+        _texturePreviewUploads = new ConditionalWeakTable<XRTexture2D, VulkanTexturePreviewUploadState>();
 
         VulkanTargetOutputContext target = new(this);
         VulkanImGuiOverlayAdmission admission = new(_outputRuntime, _resourceRuntime, _deviceContext);
@@ -151,6 +280,11 @@ internal sealed partial class VulkanFrameLoop
 
     internal void DetachOutputServices()
     {
+        CancellationTokenSource? previewUploadCancellation =
+            Interlocked.Exchange(ref _texturePreviewUploadCancellation, null);
+        previewUploadCancellation?.Cancel();
+        previewUploadCancellation?.Dispose();
+        _texturePreviewUploads = new ConditionalWeakTable<XRTexture2D, VulkanTexturePreviewUploadState>();
         _readbackOutputResourceService = null;
         _openXrOutputResourceService = null;
         _desktopSwapchainService = null;

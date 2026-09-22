@@ -410,7 +410,14 @@ internal sealed partial class VulkanFrameLoop
                 // History preparation can initialize a freshly allocated target
                 // from Undefined to General. Capture the immutable descriptor
                 // manifest only after that tracked layout transition exists.
-                if (!TryPreserveTrackedAutoExposureHistory(pendingState.ResourceAllocator))
+                // Auto-exposure history belongs to generations that declare an
+                // exposure destination. An unrelated UI, shadow, probe, or capture
+                // generation must not retain the active main-viewport image merely
+                // because its own allocator has no AutoExposureTex target.
+                if (VulkanFramePlanner.TryGetAutoExposurePhysicalGroup(
+                        pendingState.ResourceAllocator,
+                        out _) &&
+                    !TryPreserveTrackedAutoExposureHistory(pendingState.ResourceAllocator))
                 {
                     VulkanResourceAllocator? historyAllocator =
                         ResolveAutoExposureHistoryAllocator(

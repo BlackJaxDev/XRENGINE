@@ -23,7 +23,9 @@ internal readonly record struct VulkanCommandRecordingPolicySnapshot(
     bool AllowIndirectSecondaryArtifactReuse = false,
     EVulkanQueueOverlapMode QueueOverlapMode = EVulkanQueueOverlapMode.GraphicsOnly,
     bool AllowAdvancedQueueOverlap = false,
-    bool InitializeOutputColor = false)
+    bool InitializeOutputColor = false,
+    VulkanPresentationSourceTuple ResizeContinuityPresentationSource = default,
+    VulkanResidentTemplateDependencyLease? ResizeContinuityPresentationSourceLease = null)
 {
     /// <summary>Present-now outputs must either record fresh work or fail explicitly.</summary>
     internal bool IsPresentNow => WorkClass == ERenderOutputWorkClass.PresentNow;
@@ -36,4 +38,8 @@ internal readonly record struct VulkanCommandRecordingPolicySnapshot(
         !FreshSerialRecording && (AllowArtifactReuse || AllowIndirectSecondaryArtifactReuse);
 
     internal bool AllowsSecondaryDeferral => AllowSecondaryDeferral && !IsPresentNow;
+
+    internal bool HasResizeContinuityPresentationSource =>
+        ResizeContinuityPresentationSource.IsComplete &&
+        ResizeContinuityPresentationSourceLease is { IsActive: true };
 }

@@ -26,6 +26,20 @@ namespace XREngine.Rendering.Vulkan
                 attempt.AcquireOwnership ==
                     EVulkanDesktopAcquireOwnership.AcquiredUnresolved &&
                 attempt.AcquireSemaphore.Handle != 0;
+            // Pacing and a generation transition can publish UI without a scene
+            // producer. Absence is not an authored empty scene and cannot grant
+            // permission to clear it. This recovery does not fulfill the accepted
+            // exact-output contract or advance its view history. Replay is checked
+            // against the separately leased, successfully submitted scene source,
+            // including when this particular swapchain image has never presented.
+            if (attempt.PrimaryRecordingDisposition ==
+                    EVulkanPrimaryCommandRecordingDisposition.NoAuthoredOutput &&
+                acquireAvailable && !_deviceLost)
+            {
+                return new RejectedDesktopFramePolicyDecision(
+                    ERejectedDesktopFrameDisposition.PresentLastCompletedContent,
+                    ERejectedDesktopFramePolicyReason.ReuseCompletedContent);
+            }
             RejectedDesktopFramePolicyDecision policy =
                 VulkanRejectedDesktopFramePolicy.Resolve(
                     acquireAvailable,

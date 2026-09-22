@@ -50,8 +50,30 @@ internal sealed class PrimaryCommandArtifactOwner(
             public ImageLayout RecordedSwapchainFinalLayout { get; set; } = ImageLayout.PresentSrcKhr;
             public int RecordedSwapchainWriteCount { get; set; }
 
+            /// <summary>Scene commands wrote the acquired image before synthetic clears, replay, or late overlays.</summary>
+            public bool HasAuthoredSwapchainWrite { get; set; }
+
+            private WindowPresentationSourceMarker _recordedPresentationSource;
+
+            /// <summary>Records the source only after its marked final draw actually executes.</summary>
+            public void RecordPresentationSource(in WindowPresentationSourceMarker marker)
+            {
+                if (marker.HasSource && marker.HasDeferredAuthority)
+                    _recordedPresentationSource = marker;
+            }
+
+            public bool HasRecordedPresentationSource(in VulkanPresentationSourceTuple source)
+                => _recordedPresentationSource.HasSource &&
+                   ReferenceEquals(_recordedPresentationSource.SourceTexture, source.ColorTexture) &&
+                   ReferenceEquals(_recordedPresentationSource.Publisher, source.PresentationPublisher) &&
+                   _recordedPresentationSource.PublicationToken == source.PresentationPublicationToken &&
+                   (_recordedPresentationSource.SourceFrameBuffer is null ||
+                    ReferenceEquals(_recordedPresentationSource.SourceFrameBuffer, source.FrameBuffer));
+
             public void ClearRecordedTerminalOutputManifest()
             {
+                HasAuthoredSwapchainWrite = false;
+                _recordedPresentationSource = default;
                 _recordedTerminalOutputs.AsSpan(0, _recordedTerminalOutputCount).Clear();
                 _recordedTerminalOutputIndices.AsSpan(
                     0,

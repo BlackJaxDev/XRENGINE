@@ -249,6 +249,7 @@ internal partial class Program
         {
             smokeRun.FinishAfterRun();
             smokeRun.Dispose();
+            EditorImGuiUI.ShutdownToolbarIcons();
             WriteBootstrapTrace("Shutting down MCP host.");
             McpServerHost.Shutdown();
         }

@@ -564,6 +564,39 @@ internal sealed partial class VulkanFrameLoop
                         return result;
                     }
 
+                    // The scene cohort was deliberately withheld, but the
+                    // independently prepared late UI secondary is safe for the
+                    // recovery submit. This path can reach either a normal
+                    // recorded primary or a deferred result: both carry the
+                    // color-only secondary when the dynamic overlay was ready.
+                    // Do not discard it merely because the scene primary is
+                    // intentionally unpublishable.
+                    if (result.DynamicUiSecondaryCommandBuffer.Handle != 0 &&
+                        result.DynamicUiOverlayOperationCount > 0)
+                    {
+                        string noSceneReason = string.IsNullOrEmpty(
+                            meshMaterializationDeferredReason)
+                            ? result.Reason ??
+                                "the desktop frame has no authored scene terminal producer"
+                            : meshMaterializationDeferredReason;
+                        return VulkanPrimaryCommandRecordingResult.NoAuthoredOutput(
+                            noSceneReason) with
+                        {
+                            DynamicUiSecondaryCommandBuffer =
+                                result.DynamicUiSecondaryCommandBuffer,
+                            DynamicUiOverlayOperationCount =
+                                result.DynamicUiOverlayOperationCount,
+                            TextureUploadCommandBuffer =
+                                result.TextureUploadCommandBuffer,
+                            TextureUploadCommandPool =
+                                result.TextureUploadCommandPool,
+                            OutputExecutionPlan = result.OutputExecutionPlan,
+                            ReadinessPolicy = result.ReadinessPolicy,
+                            WorkClass = result.WorkClass,
+                            SourceFrameId = result.SourceFrameId,
+                        };
+                    }
+
                     return CreateDesktopRecordingReadinessFailure(
                         ref attempt,
                         meshMaterializationDeferredReason);
@@ -2344,6 +2377,19 @@ internal sealed partial class VulkanFrameLoop
             plannerState.ResourcePlannerRevision,
             plannerState.ResourcePlannerSignature,
             plannerState.ResourceAllocationSignature);
+        VulkanPresentationSourceTuple resizeContinuitySource = default;
+        VulkanResidentTemplateDependencyLease? resizeContinuitySourceLease = null;
+        if (_outputRuntime._desktopSwapchainPolicy.TryGetHeldPresentationSource(
+                out VulkanPresentationSourceTuple heldPresentationSource,
+                out VulkanResidentTemplateDependencyLease? heldPresentationSourceLease) &&
+            ResourceRuntime.TryValidateRetainedPresentationSourceForReplay(
+                heldPresentationSource,
+                heldPresentationSourceLease,
+                out _))
+        {
+            resizeContinuitySource = heldPresentationSource;
+            resizeContinuitySourceLease = heldPresentationSourceLease;
+        }
         VulkanCommandRecordingPolicySnapshot policy = new(
             UseDynamicRenderingRenderTargets,
             allowSynchronousResourceUploads,
@@ -2358,7 +2404,9 @@ internal sealed partial class VulkanFrameLoop
             SourceFrameId: sourceFrameId,
             AllowArtifactReuse: workClass != ERenderOutputWorkClass.PresentNow,
             AllowSecondaryDeferral: workClass != ERenderOutputWorkClass.PresentNow,
-            QueueOverlapMode: RuntimeEngine.EffectiveSettings.VulkanQueueOverlapMode);
+            QueueOverlapMode: RuntimeEngine.EffectiveSettings.VulkanQueueOverlapMode,
+            ResizeContinuityPresentationSource: resizeContinuitySource,
+            ResizeContinuityPresentationSourceLease: resizeContinuitySourceLease);
         authority = new VulkanPreparedPrimaryAuthority(
             target,
             CapturePreparedRenderTargetSnapshot(

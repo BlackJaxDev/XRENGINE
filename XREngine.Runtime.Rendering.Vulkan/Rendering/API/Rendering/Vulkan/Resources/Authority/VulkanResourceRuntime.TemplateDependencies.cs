@@ -154,6 +154,19 @@ internal sealed partial class VulkanResourceRuntime
             return false;
         }
 
+
+        if (TryGetImageAllocationExtent(
+                source.Image.Handle,
+                out Extent3D allocationExtent) &&
+            (source.Width != allocationExtent.Width ||
+             source.Height != allocationExtent.Height))
+        {
+            failureReason =
+                $"The retained presentation source extent {source.Width}x{source.Height} " +
+                $"does not match native image extent {allocationExtent.Width}x{allocationExtent.Height}.";
+            return false;
+        }
+
         ReadOnlySpan<VulkanResourceSlotHandle> dependencies = lease.Dependencies;
         if (dependencies.Length != 3)
         {

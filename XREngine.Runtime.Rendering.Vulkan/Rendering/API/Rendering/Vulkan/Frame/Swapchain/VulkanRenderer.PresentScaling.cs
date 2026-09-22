@@ -1,5 +1,4 @@
 using Silk.NET.Vulkan;
-using Silk.NET.Vulkan.Extensions.KHR;
 using Silk.NET.Maths;
 using XREngine.Data.Geometry;
 
@@ -7,137 +6,6 @@ namespace XREngine.Rendering.Vulkan;
 
 internal sealed partial class VulkanFrameLoop
 {
-    private const string GetSurfaceCapabilities2ExtensionName = "VK_KHR_get_surface_capabilities2";
-    private const string SurfaceMaintenance1ExtensionName = "VK_EXT_surface_maintenance1";
-    internal const string SwapchainMaintenance1ExtensionName = "VK_EXT_swapchain_maintenance1";
-
-
-    internal unsafe bool QuerySwapchainMaintenance1FeatureSupport()
-    {
-        PhysicalDeviceSwapchainMaintenance1FeaturesEXT supportedFeatures = new()
-        {
-            SType = StructureType.PhysicalDeviceSwapchainMaintenance1FeaturesExt,
-        };
-        PhysicalDeviceFeatures2 features = new()
-        {
-            SType = StructureType.PhysicalDeviceFeatures2,
-            PNext = &supportedFeatures,
-        };
-
-        Api.GetPhysicalDeviceFeatures2(_deviceContext.PhysicalDevice, &features);
-        return supportedFeatures.SwapchainMaintenance1;
-    }
-
-    private unsafe bool TryGetSwapchainPresentScalingConfiguration(
-        PresentModeKHR presentMode,
-        Extent2D imageExtent,
-        out SwapchainPresentScalingCreateInfoEXT createInfo,
-        out SurfacePresentScalingCapabilitiesEXT capabilities)
-    {
-        createInfo = default;
-        capabilities = default;
-        if (!_deviceContext.MutableCapabilities._surfacePresentScalingInstanceExtensionsEnabled || !_outputRuntime.Desktop.Maintenance1Enabled)
-            return false;
-
-        if (!Api.TryGetInstanceExtension<KhrGetSurfaceCapabilities2>(
-                _deviceContext.Instance,
-                out KhrGetSurfaceCapabilities2? surfaceCapabilities2))
-        {
-            Debug.VulkanWarningEvery(
-                $"Vulkan.PresentScaling.SurfaceCapabilities2Unavailable.{GetHashCode()}",
-                TimeSpan.FromSeconds(5),
-                "[Vulkan] Present scaling was enabled but VK_KHR_get_surface_capabilities2 could not be loaded. Falling back to strict swapchain extents.");
-            return false;
-        }
-
-        SurfacePresentModeEXT surfacePresentMode = new()
-        {
-            SType = StructureType.SurfacePresentModeExt,
-            PresentMode = presentMode,
-        };
-        PhysicalDeviceSurfaceInfo2KHR surfaceInfo = new()
-        {
-            SType = StructureType.PhysicalDeviceSurfaceInfo2Khr,
-            PNext = &surfacePresentMode,
-            Surface = _outputRuntime.Surface,
-        };
-        SurfacePresentScalingCapabilitiesEXT queriedCapabilities = new()
-        {
-            SType = StructureType.SurfacePresentScalingCapabilitiesExt,
-        };
-        SurfaceCapabilities2KHR surfaceCapabilities = new()
-        {
-            SType = StructureType.SurfaceCapabilities2Khr,
-            PNext = &queriedCapabilities,
-        };
-
-        Result queryResult = surfaceCapabilities2.GetPhysicalDeviceSurfaceCapabilities2(
-            _deviceContext.PhysicalDevice,
-            &surfaceInfo,
-            &surfaceCapabilities);
-        if (queryResult != Result.Success)
-        {
-            Debug.VulkanWarningEvery(
-                $"Vulkan.PresentScaling.CapabilityQueryFailed.{GetHashCode()}",
-                TimeSpan.FromSeconds(5),
-                "[Vulkan] Present-scaling capability query failed ({0}). Falling back to strict swapchain extents.",
-                queryResult);
-            return false;
-        }
-
-        capabilities = queriedCapabilities;
-        bool supportsStretch =
-            (capabilities.SupportedPresentScaling & PresentScalingFlagsKHR.StretchBitExt) != 0;
-        bool imageExtentSupported =
-            imageExtent.Width >= capabilities.MinScaledImageExtent.Width &&
-            imageExtent.Height >= capabilities.MinScaledImageExtent.Height &&
-            imageExtent.Width <= capabilities.MaxScaledImageExtent.Width &&
-            imageExtent.Height <= capabilities.MaxScaledImageExtent.Height;
-        if (!supportsStretch || !imageExtentSupported)
-        {
-            Debug.Vulkan(
-                "[Vulkan] Present scaling unavailable for this swapchain. Stretch={0} ImageExtent={1}x{2} ScaledRange={3}x{4}-{5}x{6}.",
-                supportsStretch,
-                imageExtent.Width,
-                imageExtent.Height,
-                capabilities.MinScaledImageExtent.Width,
-                capabilities.MinScaledImageExtent.Height,
-                capabilities.MaxScaledImageExtent.Width,
-                capabilities.MaxScaledImageExtent.Height);
-            return false;
-        }
-
-        createInfo = new SwapchainPresentScalingCreateInfoEXT
-        {
-            SType = StructureType.SwapchainPresentScalingCreateInfoExt,
-            ScalingBehavior = PresentScalingFlagsKHR.StretchBitExt,
-            PresentGravityX = PresentGravityFlagsKHR.CenteredBitExt,
-            PresentGravityY = PresentGravityFlagsKHR.CenteredBitExt,
-        };
-        return true;
-    }
-
-    private bool IsSwapchainPresentScalingExtentSupported(
-        uint swapchainWidth,
-        uint swapchainHeight)
-    {
-        if (!_outputRuntime.Desktop.PresentScalingActive ||
-            swapchainWidth == 0 ||
-            swapchainHeight == 0)
-        {
-            return false;
-        }
-
-        // The scaled-image range constrains the swapchain image extent, while
-        // the compositor owns the changing destination surface extent.
-        Extent2D min = _outputRuntime.Desktop.PresentScalingCapabilities.MinScaledImageExtent;
-        Extent2D max = _outputRuntime.Desktop.PresentScalingCapabilities.MaxScaledImageExtent;
-        return swapchainWidth >= min.Width &&
-            swapchainHeight >= min.Height &&
-            swapchainWidth <= max.Width &&
-            swapchainHeight <= max.Height;
-    }
-
     /// <summary>
     /// Keeps layout and projection in the live presentation space while converting
     /// the final window composite to the fixed swapchain image that WSI will stretch.
@@ -154,9 +22,13 @@ internal sealed partial class VulkanFrameLoop
             !interactiveResizeDispatchActive)
             return region;
 
-        Vector2D<int> presentationExtent = desktopWsiOutput.ResizeExtents.PresentationExtent;
+        // Recording must use the same surface snapshot that XRWindow latched for
+        // this render dispatch. ResizeExtents remains live while Win32 is pumping
+        // the modal sizing loop and can otherwise change between two commands in
+        // the same primary buffer, producing incompatible viewport/scissor maps.
+        Vector2D<int> presentationExtent = desktopWsiOutput.EffectiveFramebufferSize;
         if (presentationExtent.X <= 0 || presentationExtent.Y <= 0)
-            presentationExtent = desktopWsiOutput.EffectiveFramebufferSize;
+            presentationExtent = desktopWsiOutput.ResizeExtents.PresentationExtent;
 
         return ScalePresentationRegionToBackbuffer(
             region,

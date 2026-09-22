@@ -9,4 +9,5 @@ internal sealed class VulkanPresentationSourceState
     internal XRFrameBuffer? FallbackFrameBuffer;
     internal FrameOpContext? FrameOpContext;
     internal VulkanPresentationSourcePublication Publication { get; } = new();
+    internal VulkanSubmittedPresentationSource Submitted { get; } = new();
 }

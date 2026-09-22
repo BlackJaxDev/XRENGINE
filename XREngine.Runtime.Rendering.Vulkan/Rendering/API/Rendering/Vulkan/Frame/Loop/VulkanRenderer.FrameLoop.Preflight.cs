@@ -96,15 +96,14 @@ namespace XREngine.Rendering.Vulkan
                     "Live surface size is zero");
             }
 
-            if (!attempt.InteractiveResize &&
-                TryGetViewportResourceBlocker(
-                    allowInteractiveDisplayMismatch: false,
+            if (TryGetViewportResourceBlocker(
+                    allowInteractiveDisplayMismatch: attempt.InteractiveResize,
                     out string resourceMismatchReason))
             {
-                    return StopDesktopFrameForPreflightStatus(
-                        ref attempt,
-                        EVulkanDesktopPreflightStatus.ResourceMismatch,
-                        resourceMismatchReason);
+                return StopDesktopFrameForPreflightStatus(
+                    ref attempt,
+                    EVulkanDesktopPreflightStatus.ResourceMismatch,
+                    resourceMismatchReason);
             }
 
             ServiceDesktopSwapchainRecreatePolicy(ref attempt);

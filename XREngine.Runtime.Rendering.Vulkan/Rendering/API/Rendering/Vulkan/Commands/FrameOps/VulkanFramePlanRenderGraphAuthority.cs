@@ -47,6 +47,13 @@ internal readonly record struct VulkanFramePlanRenderGraphAuthority(
             FrameOpResourcePlannerSwitchingState selectedSwitchingState = hasPrimary
                 ? SwitchingState!
                 : SecondarySwitchingState!;
+            if (!state.HasLiveAllocatorOwnership)
+            {
+                plan = VulkanRenderGraphPlan.Empty;
+                failureReason = DescribeNonRecordablePlan(in state);
+                return false;
+            }
+
             // Desktop publications shallow-copy historical keyed states. Only
             // the paired eye contract requires each state to own its exact map.
             if (SecondarySwitchingState is not null && !ReferenceEquals(
@@ -81,10 +88,10 @@ internal readonly record struct VulkanFramePlanRenderGraphAuthority(
                 selectedSwitchingState.States[key] = state;
             }
 
-            if (!IsRecordable(state.RenderGraphPlan))
+            if (!IsRecordable(in state))
             {
                 plan = VulkanRenderGraphPlan.Empty;
-                failureReason = DescribeNonRecordablePlan(state);
+                failureReason = DescribeNonRecordablePlan(in state);
                 return false;
             }
 
@@ -115,6 +122,9 @@ internal readonly record struct VulkanFramePlanRenderGraphAuthority(
             $"completeNativeBindings={plan?.Barriers.HasCompleteNativeBindings ?? false}, " +
             $"nativeBufferRevision={plan?.Barriers.NativeBufferBindingRevision ?? 0}.";
     }
+
+    private static bool IsRecordable(in ResourcePlannerRuntimeState state)
+        => state.HasLiveAllocatorOwnership && IsRecordable(state.RenderGraphPlan);
 
     private static bool IsRecordable(VulkanRenderGraphPlan? plan)
         => plan is not null &&
