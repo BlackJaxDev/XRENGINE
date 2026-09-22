@@ -7,8 +7,9 @@ internal readonly record struct VulkanAdvancedNativeComputePipelines(
     VulkanAdvancedComputePipeline AmbientOcclusion,
     VulkanAdvancedComputePipeline BuildFroxels,
     VulkanAdvancedComputePipeline Background,
-    VulkanAdvancedComputePipeline Shade)
+    VulkanAdvancedComputePipeline Shade,
+    VulkanAdvancedComputePipeline ShadeMultisample)
 {
     internal bool IsCurrent => Classify.IsCurrent && BuildArguments.IsCurrent && AmbientOcclusion.IsCurrent &&
-        BuildFroxels.IsCurrent && Background.IsCurrent && Shade.IsCurrent;
+        BuildFroxels.IsCurrent && Background.IsCurrent && Shade.IsCurrent && ShadeMultisample.IsCurrent;
 }

@@ -16,12 +16,15 @@ internal sealed class VulkanUpscaleBridge : IVulkanUpscaleBridge
 {
     private const string ViewportResizeReason = "viewport resized";
     private const string InternalResolutionResizeReason = "internal resolution resized";
+    private const string DormantReactivationReason = "vendor upscaler reactivated";
 
     private readonly XRViewport _viewport;
     private bool _disposed;
     private EVulkanUpscaleBridgeState _state = EVulkanUpscaleBridgeState.Initializing;
     private VulkanUpscaleBridgeFrameResources _frameResources;
     private bool _hasFrameResources;
+    private VulkanUpscaleBridgeFrameResources _sidecarFrameResources;
+    private bool _hasSidecarFrameResources;
     private string? _lastStateReason;
     private string? _pendingRecreateReason;
     private string? _lastFaultFingerprint;
@@ -112,9 +115,19 @@ internal sealed class VulkanUpscaleBridge : IVulkanUpscaleBridge
             EVulkanUpscaleBridgeState availability = DetermineAvailability(snapshot, in frameResources, out string availabilityReason);
             if (availability is EVulkanUpscaleBridgeState.Disabled or EVulkanUpscaleBridgeState.Unsupported)
             {
-                DestroyInteropResources();
-                SidecarDeviceOwned = false;
-                _pendingRecreateReason = null;
+                // An AA switch away from DLAA has no vendor work to submit, but
+                // tearing down Streamline and its bound Vulkan device here makes
+                // the next DLAA toggle initialize the native runtime again.
+                // Keep that device dormant until the viewport is destroyed.
+                bool keepDormantSidecar = availability == EVulkanUpscaleBridgeState.Disabled &&
+                    RuntimeEngine.Rendering.VulkanUpscaleBridgeRequested &&
+                    !frameResources.VendorRequested && _sidecar is not null;
+                if (!keepDormantSidecar)
+                {
+                    DestroyInteropResources();
+                    SidecarDeviceOwned = false;
+                }
+                _pendingRecreateReason = keepDormantSidecar ? DormantReactivationReason : null;
                 TransitionState(availability, availabilityReason);
                 return _state;
             }
@@ -147,7 +160,6 @@ internal sealed class VulkanUpscaleBridge : IVulkanUpscaleBridge
                     renderer,
                     snapshot,
                     in frameResources,
-                    hadFrameResources ? previousFrameResources : null,
                     readyReason);
                 SidecarDeviceOwned = _sidecar is not null;
                 _pendingRecreateReason = null;
@@ -180,9 +192,7 @@ internal sealed class VulkanUpscaleBridge : IVulkanUpscaleBridge
 
         if (!RuntimeEngine.EffectiveSettings.EnableNvidiaDlss && !RuntimeEngine.EffectiveSettings.EnableIntelXess)
         {
-            DestroyInteropResources();
-            SidecarDeviceOwned = false;
-            _pendingRecreateReason = null;
+            _pendingRecreateReason = _sidecar is not null ? DormantReactivationReason : null;
             TransitionState(EVulkanUpscaleBridgeState.Disabled, reason);
             return;
         }
@@ -774,22 +784,21 @@ internal sealed class VulkanUpscaleBridge : IVulkanUpscaleBridge
     /// <param name="renderer">The OpenGL renderer instance.</param>
     /// <param name="snapshot">The capability snapshot for the Vulkan upscale bridge.</param>
     /// <param name="frameResources">The current frame resources.</param>
-    /// <param name="previousFrameResources">The previous frame resources, if available.</param>
     /// <param name="recreateReason">The reason for recreating the interop resources.</param>
     /// <exception cref="InvalidOperationException">Thrown if the Vulkan upscale bridge sidecar fails to create or recreate any interop frame slots.</exception>
     private void RecreateInteropResources(
         IOpenGlVendorUpscaleBackendCapability renderer,
         global::XREngine.VulkanUpscaleBridgeCapabilitySnapshot snapshot,
         in VulkanUpscaleBridgeFrameResources frameResources,
-        VulkanUpscaleBridgeFrameResources? previousFrameResources,
         string recreateReason)
     {
         if (_sidecar is not null
-            && previousFrameResources is VulkanUpscaleBridgeFrameResources previous
-            && CanRecreateFrameSlotsInPlace(in previous, in frameResources, recreateReason))
+            && _hasSidecarFrameResources
+            && CanRecreateFrameSlotsInPlace(in _sidecarFrameResources, in frameResources, recreateReason))
         {
             _frameSlots = _sidecar.RecreateFrameSlots(renderer, frameResources, SanitizeLabel(DescribeViewport()));
             _frameSlotIndex = _frameSlots.Length > 0 ? 0 : -1;
+            _sidecarFrameResources = frameResources;
             unchecked
             {
                 _resourceGeneration++;
@@ -806,6 +815,8 @@ internal sealed class VulkanUpscaleBridge : IVulkanUpscaleBridge
         _sidecar = new VulkanUpscaleBridgeSidecar(snapshot.OpenGlVendor, snapshot.OpenGlRenderer, in frameResources);
         _frameSlots = _sidecar.CreateFrameSlots(renderer, frameResources, SanitizeLabel(DescribeViewport()));
         _frameSlotIndex = _frameSlots.Length > 0 ? 0 : -1;
+        _sidecarFrameResources = frameResources;
+        _hasSidecarFrameResources = true;
         unchecked
         {
             _resourceGeneration++;
@@ -842,6 +853,7 @@ internal sealed class VulkanUpscaleBridge : IVulkanUpscaleBridge
             || string.Equals(recreateReason, "internal resolution changed", StringComparison.Ordinal)
             || string.Equals(recreateReason, "output HDR changed", StringComparison.Ordinal)
             || string.Equals(recreateReason, "anti-aliasing resources changed", StringComparison.Ordinal)
+            || string.Equals(recreateReason, DormantReactivationReason, StringComparison.Ordinal)
             || string.Equals(recreateReason, "vendor quality changed", StringComparison.Ordinal);
 
     /// <summary>
@@ -852,6 +864,8 @@ internal sealed class VulkanUpscaleBridge : IVulkanUpscaleBridge
         // Dispose of the sidecar if it exists.
         _sidecar?.Dispose();
         _sidecar = null;
+        _sidecarFrameResources = default;
+        _hasSidecarFrameResources = false;
 
         // Clear the frame slots and reset the frame slot index.
         _frameSlots = [];

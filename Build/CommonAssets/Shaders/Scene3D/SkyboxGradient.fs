@@ -2,7 +2,7 @@
 
 #pragma snippet "DDGIEnvironmentCapture"
 
-layout (location = 0) out vec3 OutColor;
+layout (location = 0) out vec4 OutColor;
 layout (location = 1) in vec3 FragWorldDir;
 
 uniform float SkyboxIntensity = 1.0;
@@ -14,5 +14,5 @@ void main()
     vec3 dir = XRENGINE_DDGIEnvironmentDirection(FragWorldDir);
     float t = clamp(dir.y * 0.5 + 0.5, 0.0, 1.0);
     vec3 col = mix(SkyboxBottomColor, SkyboxTopColor, t);
-    OutColor = col * SkyboxIntensity;
+    OutColor = vec4(col * SkyboxIntensity, 1.0);
 }

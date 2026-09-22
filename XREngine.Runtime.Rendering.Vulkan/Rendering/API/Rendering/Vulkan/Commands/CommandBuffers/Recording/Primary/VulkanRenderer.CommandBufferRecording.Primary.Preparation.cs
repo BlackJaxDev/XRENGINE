@@ -641,6 +641,7 @@ namespace XREngine.Rendering.Vulkan
             int rasterStageCount = 0;
             int lateComputeStageCount = 0;
             int lateRasterStageCount = 0;
+            int multisampleResolveStageCount = 0;
             int ambientOcclusionStageCount = 0;
             int classificationStageCount = 0;
             int nativeOpaqueStageCount = 0;
@@ -679,14 +680,16 @@ namespace XREngine.Rendering.Vulkan
                         EVulkanCommandRecordingFailureKind.RetryFrame;
                     return false;
                 }
-                if (preparationStageCount + rasterStageCount + lateComputeStageCount + lateRasterStageCount + ambientOcclusionStageCount +
+                if (preparationStageCount + rasterStageCount + lateComputeStageCount + lateRasterStageCount + multisampleResolveStageCount + ambientOcclusionStageCount +
                     classificationStageCount + nativeOpaqueStageCount == 0)
                 {
                     familyRequest = request;
                     familyInput = input;
                 }
-                else if (!familyRequest.MatchesFamily(in request) ||
-                    !ReferenceEquals(familyInput, input))
+                else if ((request.Phase == EAdvancedVisibilityStageBackendPhase.MultisampleResolve &&
+                          request.MsaaSampleCount <= 1u) ||
+                         !familyRequest.MatchesFamily(in request) ||
+                         !ReferenceEquals(familyInput, input))
                 {
                     recordingState.RecordingDeferredReason =
                         "Advanced visibility operation is Unsupported: the sealed stages do not form one exact publication/view/target family.";
@@ -718,6 +721,9 @@ namespace XREngine.Rendering.Vulkan
                     case (EAdvancedRenderStage.DepthPyramidAndLateVisibility, EAdvancedVisibilityStageBackendPhase.LateRaster):
                         lateRasterStageCount++;
                         break;
+                    case (EAdvancedRenderStage.DepthPyramidAndLateVisibility, EAdvancedVisibilityStageBackendPhase.MultisampleResolve):
+                        multisampleResolveStageCount++;
+                        break;
                     case (EAdvancedRenderStage.AmbientOcclusion, EAdvancedVisibilityStageBackendPhase.Complete):
                         ambientOcclusionStageCount++;
                         break;
@@ -730,6 +736,7 @@ namespace XREngine.Rendering.Vulkan
                 }
                 if (preparationStageCount > 1 || rasterStageCount > 1 ||
                     lateComputeStageCount > 1 || lateRasterStageCount > 1 ||
+                    multisampleResolveStageCount > 1 ||
                     ambientOcclusionStageCount > request.Views.ViewCount ||
                     classificationStageCount > request.Views.ViewCount ||
                     nativeOpaqueStageCount > request.Views.ViewCount)
@@ -762,7 +769,8 @@ namespace XREngine.Rendering.Vulkan
                     recordingState.Ops.GetHeader(operationIndex).PassIndex;
                 bool requiresGraphicsTargetClosure =
                     request.Stage == EAdvancedRenderStage.VisibilityRaster ||
-                    request.Phase == EAdvancedVisibilityStageBackendPhase.LateRaster;
+                    request.Phase is EAdvancedVisibilityStageBackendPhase.LateRaster or
+                        EAdvancedVisibilityStageBackendPhase.MultisampleResolve;
                 VkFrameBuffer? targetWrapper = null;
                 if (requiresGraphicsTargetClosure &&
                     (targetWrapper = ResourceRuntime.BackendObjects.Get(request.Target)
@@ -818,6 +826,18 @@ namespace XREngine.Rendering.Vulkan
                         $"Advanced visibility operation is Unsupported: target compatibility failed: {targetCompatibilityReason}";
                     recordingState.FailureKind = EVulkanCommandRecordingFailureKind
                         .RecoverAfterStateChange;
+                    return false;
+                }
+                if (!TryValidateAdvancedVisibilityTargetFormats(
+                        in request,
+                        in targetFormats,
+                        rasterizationSamples,
+                        out string targetFormatReason))
+                {
+                    recordingState.RecordingDeferredReason =
+                        $"Advanced visibility operation is Unsupported: target format contract failed: {targetFormatReason}";
+                    recordingState.FailureKind =
+                        EVulkanCommandRecordingFailureKind.RecoverAfterStateChange;
                     return false;
                 }
                 RenderFrameViewSet visibilityViews = request.Views;
@@ -943,6 +963,45 @@ namespace XREngine.Rendering.Vulkan
                         "Advanced visibility operation is Unsupported: its exact native target closure could not be retained.";
                     return false;
                 }
+                if (request.Phase == EAdvancedVisibilityStageBackendPhase.MultisampleResolve)
+                {
+                    bool multiviewResolve = request.Views.ViewCount > 1;
+                    VulkanAdvancedVisibilityPipelineReadiness resolveReadiness =
+                        ResourceRuntime.AdvancedVisibilityPipelines
+                            .TryGetMultisampleResolveProgram(
+                                multiviewResolve,
+                                out VkRenderProgram resolveProgram,
+                                out string resolveReason);
+                    if (resolveReadiness != VulkanAdvancedVisibilityPipelineReadiness.Ready ||
+                        !VulkanAdvancedMsaaResolvePipelineFactory.TryPrepare(
+                            resolveProgram,
+                            in targetClosure,
+                            out VulkanAdvancedMsaaResolvePipeline resolvePipeline,
+                            out resolveReason))
+                    {
+                        recordingState.RecordingDeferredReason = resolveReadiness is
+                            VulkanAdvancedVisibilityPipelineReadiness.Pending or
+                            VulkanAdvancedVisibilityPipelineReadiness.Missing
+                                ? $"Advanced visibility operation is waiting for MSAA resolve pipeline admission: {resolveReason}"
+                                : $"Advanced visibility operation is Unsupported: MSAA resolve pipeline failed: {resolveReason}";
+                        recordingState.FailureKind = resolveReadiness is
+                            VulkanAdvancedVisibilityPipelineReadiness.Pending or
+                            VulkanAdvancedVisibilityPipelineReadiness.Missing
+                                ? EVulkanCommandRecordingFailureKind.RetryFrame
+                                : EVulkanCommandRecordingFailureKind.RecoverAfterStateChange;
+                        return false;
+                    }
+                    if (!recordingState.Ops.Stream
+                            .TryAssociateAdvancedMultisampleResolvePipeline(
+                                operationIndex,
+                                in request,
+                                in resolvePipeline))
+                    {
+                        recordingState.RecordingDeferredReason =
+                            "Advanced visibility operation is Unsupported: immutable MSAA resolve pipeline publication was rejected.";
+                        return false;
+                    }
+                }
 
                 if (!recordingState.Ops.Stream
                         .TryAssociateAdvancedVisibilityPublication(
@@ -1009,7 +1068,7 @@ namespace XREngine.Rendering.Vulkan
                 }
             }
 
-            if (preparationStageCount + rasterStageCount + lateComputeStageCount + lateRasterStageCount + ambientOcclusionStageCount +
+            if (preparationStageCount + rasterStageCount + lateComputeStageCount + lateRasterStageCount + multisampleResolveStageCount + ambientOcclusionStageCount +
                 classificationStageCount + nativeOpaqueStageCount == 0)
                 return true;
             bool hasMinimalProducerStages =
@@ -1021,8 +1080,10 @@ namespace XREngine.Rendering.Vulkan
                 ambientOcclusionStageCount == familyRequest.Views.ViewCount &&
                 classificationStageCount == familyRequest.Views.ViewCount &&
                 nativeOpaqueStageCount == familyRequest.Views.ViewCount;
+            int expectedResolveStageCount = familyRequest.MsaaSampleCount > 1u ? 1 : 0;
             if (preparationStageCount != 1 || rasterStageCount != 1 ||
                 lateComputeStageCount != 1 || lateRasterStageCount != 1 ||
+                multisampleResolveStageCount != expectedResolveStageCount ||
                 (!hasMinimalProducerStages && !hasCompleteNativeStages) ||
                 !familyState.IsValid)
             {
@@ -1108,7 +1169,8 @@ namespace XREngine.Rendering.Vulkan
                     return false;
                 }
 
-                if (request.RequiresNativeComputeClosure)
+                if (request.RequiresNativeComputeClosure ||
+                    request.Phase == EAdvancedVisibilityStageBackendPhase.MultisampleResolve)
                 {
                     FrameOpContext operationContext =
                         recordingState.Ops.GetContext(operationIndex);
@@ -1140,6 +1202,7 @@ namespace XREngine.Rendering.Vulkan
                                 // dedicated XR arena slots are a separate identity.
                                 checked((uint)framePlan.FrameSlot),
                                 request.NativeViewIndex,
+                                request.MsaaSampleCount,
                                 request.AmbientOcclusionTargetName,
                                 request.RequiresMaterialSurfaceExports,
                                 nativeStorage,
@@ -1231,7 +1294,9 @@ namespace XREngine.Rendering.Vulkan
                                 .TryCaptureLateTargetClosure(
                                     operationGraph,
                                     lateGeneration,
-                                    request.DepthTargetName,
+                                    request.MsaaSampleCount > 1u
+                                        ? AdvancedVisibilityResourceNames.DepthStencil
+                                        : request.DepthTargetName,
                                     request.CurrentDepthPyramidTargetName,
                                     familyState.ViewCount,
                                     lateStorage,
@@ -1248,6 +1313,7 @@ namespace XREngine.Rendering.Vulkan
                         VulkanAdvancedVisibilityPipelineReadiness latePipelineReadiness =
                             ResourceRuntime.AdvancedVisibilityPipelines
                                 .TryGetLateVisibilityComputePipelines(
+                                    disableHzbOcclusion: request.MsaaSampleCount > 1u,
                                     out VkRenderProgram buildDepthPyramidProgram,
                                     out VkRenderProgram lateVisibilityProgram,
                                     out string latePipelineReason);
@@ -1573,26 +1639,44 @@ namespace XREngine.Rendering.Vulkan
             VkFrameBuffer target,
             out string reason)
         {
-            if (request.Target.Targets is not { Length: 4 } attachments)
+            bool multisampleRaster = request.MsaaSampleCount > 1u &&
+                request.Phase != EAdvancedVisibilityStageBackendPhase.MultisampleResolve;
+            int expectedAttachmentCount = multisampleRaster ? 5 : 4;
+            if (request.Target.Targets is not { } attachments ||
+                attachments.Length != expectedAttachmentCount)
             {
-                reason = "the authoritative framebuffer does not have exactly three color attachments and one depth-stencil attachment";
+                reason = $"the authoritative framebuffer does not have exactly {(multisampleRaster ? "four" : "three")} color attachments and one depth-stencil attachment";
                 return false;
             }
 
-            EFrameBufferAttachment[] expected =
-            [
-                EFrameBufferAttachment.ColorAttachment0,
-                EFrameBufferAttachment.ColorAttachment1,
-                EFrameBufferAttachment.ColorAttachment2,
-                EFrameBufferAttachment.DepthStencilAttachment,
-            ];
-            string[] names =
-            [
-                request.IdentityTargetName,
-                request.MetadataTargetName,
-                request.SelectionTargetName,
-                request.DepthTargetName,
-            ];
+            EFrameBufferAttachment[] expected = multisampleRaster
+                ? [
+                    EFrameBufferAttachment.ColorAttachment0,
+                    EFrameBufferAttachment.ColorAttachment1,
+                    EFrameBufferAttachment.ColorAttachment2,
+                    EFrameBufferAttachment.ColorAttachment3,
+                    EFrameBufferAttachment.DepthStencilAttachment,
+                ]
+                : [
+                    EFrameBufferAttachment.ColorAttachment0,
+                    EFrameBufferAttachment.ColorAttachment1,
+                    EFrameBufferAttachment.ColorAttachment2,
+                    EFrameBufferAttachment.DepthStencilAttachment,
+                ];
+            string[] names = multisampleRaster
+                ? [
+                    request.IdentityTargetName,
+                    request.MetadataTargetName,
+                    request.SelectionTargetName,
+                    AdvancedVisibilityResourceNames.SamplePositionMultisample,
+                    request.DepthTargetName,
+                ]
+                : [
+                    request.IdentityTargetName,
+                    request.MetadataTargetName,
+                    request.SelectionTargetName,
+                    request.DepthTargetName,
+                ];
             for (int index = 0; index < attachments.Length; ++index)
             {
                 if (attachments[index].Attachment != expected[index] ||
@@ -1612,6 +1696,48 @@ namespace XREngine.Rendering.Vulkan
                 return false;
             }
             reason = string.Empty;
+            return true;
+        }
+
+        private static bool TryValidateAdvancedVisibilityTargetFormats(
+            in VulkanAdvancedVisibilityStageRequest request,
+            in DynamicRenderingFormatSignature formats,
+            SampleCountFlags samples,
+            out string reason)
+        {
+            bool multisampleRaster = request.MsaaSampleCount > 1u &&
+                request.Phase != EAdvancedVisibilityStageBackendPhase.MultisampleResolve;
+            uint expectedColorCount = multisampleRaster ? 4u : 3u;
+            SampleCountFlags expectedSamples = request.Phase ==
+                EAdvancedVisibilityStageBackendPhase.MultisampleResolve
+                    ? SampleCountFlags.Count1Bit
+                    : request.MsaaSampleCount switch
+                    {
+                        <= 1u => SampleCountFlags.Count1Bit,
+                        2u => SampleCountFlags.Count2Bit,
+                        4u => SampleCountFlags.Count4Bit,
+                        8u => SampleCountFlags.Count8Bit,
+                        16u => SampleCountFlags.Count16Bit,
+                        32u => SampleCountFlags.Count32Bit,
+                        64u => SampleCountFlags.Count64Bit,
+                        _ => 0,
+                    };
+            bool valid = expectedSamples != 0 && samples == expectedSamples &&
+                formats.ColorAttachmentCount == expectedColorCount &&
+                formats.GetColorAttachmentFormat(0u) == Format.R32G32Uint &&
+                formats.GetColorAttachmentFormat(1u) == Format.R32Uint &&
+                formats.GetColorAttachmentFormat(2u) == Format.R32Uint &&
+                (!multisampleRaster ||
+                 formats.GetColorAttachmentFormat(3u) == Format.R16G16Sfloat) &&
+                formats.DepthAttachmentFormat == Format.D32SfloatS8Uint &&
+                formats.StencilAttachmentFormat == Format.D32SfloatS8Uint;
+            if (!valid)
+            {
+                reason = $"expected samples={expectedSamples}, colors={(multisampleRaster ? "R32G32Uint,R32Uint,R32Uint,R16G16Sfloat" : "R32G32Uint,R32Uint,R32Uint")}, depth/stencil=D32SfloatS8Uint; received samples={samples}, colors={formats.DescribeColorFormats()}, depth={formats.DepthAttachmentFormat}, stencil={formats.StencilAttachmentFormat}";
+                return false;
+            }
+
+            reason = "Ready";
             return true;
         }
 

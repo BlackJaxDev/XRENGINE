@@ -77,14 +77,20 @@ public partial class OpenGLRenderer : IAdvancedVisibilityStageBackendCapability
                 failureReason = "OpenGL Advanced requires contiguous physical layers in canonical view order.";
                 return false;
             }
+        int nativeOffset = request.MsaaSampleCount > 1u ? 5 : 4;
         int ordinal = request.Stage switch
         {
             EAdvancedRenderStage.VisibilityPreparation => 0,
             EAdvancedRenderStage.VisibilityRaster => 1,
-            EAdvancedRenderStage.DepthPyramidAndLateVisibility => request.Phase == EAdvancedVisibilityStageBackendPhase.LateCompute ? 2 : 3,
-            EAdvancedRenderStage.AmbientOcclusion => 4 + (int)request.NativeViewIndex,
-            EAdvancedRenderStage.WorkClassification => 4 + request.Views.ViewCount + (int)request.NativeViewIndex,
-            EAdvancedRenderStage.NativeOpaqueShading => 4 + 2 * request.Views.ViewCount + (int)request.NativeViewIndex,
+            EAdvancedRenderStage.DepthPyramidAndLateVisibility => request.Phase switch
+            {
+                EAdvancedVisibilityStageBackendPhase.LateCompute => 2,
+                EAdvancedVisibilityStageBackendPhase.MultisampleResolve => 4,
+                _ => 3,
+            },
+            EAdvancedRenderStage.AmbientOcclusion => nativeOffset + (int)request.NativeViewIndex,
+            EAdvancedRenderStage.WorkClassification => nativeOffset + request.Views.ViewCount + (int)request.NativeViewIndex,
+            EAdvancedRenderStage.NativeOpaqueShading => nativeOffset + 2 * request.Views.ViewCount + (int)request.NativeViewIndex,
             _ => -1,
         };
         if (ordinal == 0)
@@ -116,12 +122,14 @@ public partial class OpenGLRenderer : IAdvancedVisibilityStageBackendCapability
                 EAdvancedRenderStage.VisibilityRaster => TryRasterAdvancedVisibility(in request, false, out failureReason),
                 EAdvancedRenderStage.DepthPyramidAndLateVisibility when request.Phase == EAdvancedVisibilityStageBackendPhase.LateCompute
                     => TryDispatchAdvancedLateVisibility(in request, out failureReason),
+                EAdvancedRenderStage.DepthPyramidAndLateVisibility when request.Phase == EAdvancedVisibilityStageBackendPhase.MultisampleResolve
+                    => TryResolveAdvancedMultisampleVisibility(in request, out failureReason),
                 EAdvancedRenderStage.DepthPyramidAndLateVisibility => TryRasterAdvancedVisibility(in request, true, out failureReason),
                 _ => TryDispatchAdvancedNativeStage(in request, out failureReason),
             };
             if (!accepted) { AbortAdvancedVisibilityFamily(); return false; }
             _advancedNextOperation++;
-            int requiredOperations = request.IsMinimalVisibilityOutput ? 4 : 4 + 3 * request.Views.ViewCount;
+            int requiredOperations = request.IsMinimalVisibilityOutput ? nativeOffset : nativeOffset + 3 * request.Views.ViewCount;
             if (_advancedNextOperation == requiredOperations)
             {
                 bool completed = TryCompleteAdvancedVisibilityFamily(in request, out failureReason);

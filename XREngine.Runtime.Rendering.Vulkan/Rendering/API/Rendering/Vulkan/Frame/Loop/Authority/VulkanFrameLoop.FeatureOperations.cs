@@ -129,7 +129,9 @@ internal sealed partial class VulkanFrameLoop
             request.EnableLightProbesAndIbl,
             request.IsMinimalVisibilityOutput,
             request.NativeViewIndex,
-            request.RequiresMaterialSurfaceExports);
+            request.RequiresMaterialSurfaceExports,
+            request.MsaaSampleCount,
+            request.HasAuthoredBackground);
         if (!_frameOperationQueue.TryAcquireAdvancedVisibilityInput(
                 in vulkanRequest,
                 out VulkanAdvancedVisibilityInputLease inputLease,

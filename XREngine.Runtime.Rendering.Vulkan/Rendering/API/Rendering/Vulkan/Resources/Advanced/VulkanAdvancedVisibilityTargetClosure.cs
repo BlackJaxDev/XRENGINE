@@ -21,6 +21,6 @@ internal readonly record struct VulkanAdvancedVisibilityTargetClosure(
         => Target is not null && NativeTarget.IsComplete &&
            RasterizationSamples != 0 &&
            (UsesDynamicRendering
-               ? DynamicRenderingFormats.ColorAttachmentCount == 3u
+               ? DynamicRenderingFormats.ColorAttachmentCount is 3u or 4u
                : RenderPass.Handle != 0);
 }

@@ -28,9 +28,11 @@ internal static class ImGuiAssetUtilities
     private const uint AssetPickerPreviewSize = 256;
     private const float AssetPickerPreviewFallbackEdge = 96.0f;
     private static readonly Dictionary<AssetPickerKey, object> _assetPickerStates = new();
-    private static readonly ConcurrentDictionary<string, Type?> _assetTypeHintCache = new(StringComparer.Ordinal);
-    private static readonly ConcurrentDictionary<Type, bool> _creatableAssetTypeCache = new();
+    private static readonly ConcurrentDictionary<string, WeakReference<Type>> _assetTypeHintCache = new(StringComparer.Ordinal);
     private const string AssetCreateReplacePopupId = "AssetCreateReplace";
+
+    static ImGuiAssetUtilities()
+        => EditorTypeCatalogGeneration.Changed += static _ => _assetTypeHintCache.Clear();
 
     [ThreadStatic]
     private static HashSet<XRAsset>? _inlineInspectorStack;
@@ -113,10 +115,7 @@ internal static class ImGuiAssetUtilities
             : 0.0f;
 
         bool canCreateOrReplace = allowCreateOrReplace
-            && !AssetFieldCache<TAsset>.ContainsGenericParameters
-            && _creatableAssetTypeCache.GetOrAdd(
-                AssetFieldCache<TAsset>.AssetType,
-                static type => EditorImGuiUI.HasCreatablePropertyTypes(type));
+            && !AssetFieldCache<TAsset>.ContainsGenericParameters;
         string createReplaceLabel = current is null ? "Create..." : "Replace...";
         float createReplaceWidth = canCreateOrReplace
             ? ImGui.CalcTextSize(createReplaceLabel).X + style.FramePadding.X * 2.0f
@@ -193,7 +192,8 @@ internal static class ImGuiAssetUtilities
             if (ImGui.SmallButton(createReplaceLabel))
                 ImGui.OpenPopup(AssetCreateReplacePopupId);
 
-            EditorImGuiUI.DrawCreatablePropertyTypePickerPopup(AssetCreateReplacePopupId, typeof(TAsset), selectedType =>
+            Type? selectedType = EditorImGuiUI.DrawCreatablePropertyTypePickerPopup(AssetCreateReplacePopupId, typeof(TAsset));
+            if (selectedType is not null)
             {
                 try
                 {
@@ -206,7 +206,7 @@ internal static class ImGuiAssetUtilities
                 {
                     Debug.LogException(ex, $"Failed to create asset instance of '{selectedType.FullName}'.");
                 }
-            });
+            }
         }
 
         ImGui.SameLine();
@@ -468,8 +468,25 @@ internal static class ImGuiAssetUtilities
         if (!TryPeekSerializedAssetType(filePath, out string? typeName) || string.IsNullOrWhiteSpace(typeName))
             return false;
 
-        type = _assetTypeHintCache.GetOrAdd(typeName, static key => ResolveTypeFromHint(key));
-        return type is not null;
+        if (_assetTypeHintCache.TryGetValue(typeName, out WeakReference<Type>? cached)
+            && cached.TryGetTarget(out type)
+            && EditorTypeCatalogGeneration.IsAssemblyDiscoverable(type.Assembly))
+        {
+            return true;
+        }
+
+        _assetTypeHintCache.TryRemove(typeName, out _);
+        type = ResolveTypeFromHint(typeName);
+        if (type is null || !EditorTypeCatalogGeneration.IsAssemblyDiscoverable(type.Assembly))
+        {
+            type = null;
+            return false;
+        }
+
+        // Weak values avoid re-rooting an unloading collectible assembly if its
+        // generation changes between the discoverability check and publication.
+        _assetTypeHintCache[typeName] = new WeakReference<Type>(type);
+        return true;
     }
 
     private static bool TryPeekSerializedAssetType(string filePath, out string? typeName)
@@ -512,11 +529,14 @@ internal static class ImGuiAssetUtilities
             return null;
 
         Type? type = Type.GetType(typeName, throwOnError: false, ignoreCase: false);
-        if (type is not null)
+        if (type is not null && EditorTypeCatalogGeneration.IsAssemblyDiscoverable(type.Assembly))
             return type;
 
         foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
         {
+            if (!EditorTypeCatalogGeneration.IsAssemblyDiscoverable(assembly))
+                continue;
+
             type = assembly.GetType(typeName, throwOnError: false, ignoreCase: false);
             if (type is not null)
                 return type;
@@ -525,6 +545,9 @@ internal static class ImGuiAssetUtilities
         // Fall back to matching by simple Name.
         foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
         {
+            if (!EditorTypeCatalogGeneration.IsAssemblyDiscoverable(assembly))
+                continue;
+
             foreach (Type candidate in XREngine.Core.XRLoadableTypeCatalog.GetTypes(assembly))
             {
                 if (!typeof(XRAsset).IsAssignableFrom(candidate))

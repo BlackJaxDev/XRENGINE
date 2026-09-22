@@ -53,7 +53,8 @@ internal readonly record struct VulkanAdvancedVisibilityOperationPayload(
     VkRenderProgram? LateVisibilityProgram,
     Pipeline LateVisibilityPipeline,
     ulong LateVisibilityLinkGeneration,
-    VulkanAdvancedNativeComputePipelines NativeComputePipelines = default);
+    VulkanAdvancedNativeComputePipelines NativeComputePipelines = default,
+    VulkanAdvancedMsaaResolvePipeline MultisampleResolvePipeline = default);
 
 /// <summary>
 /// Per-opcode dense storage owned exclusively by a sealed operation stream.

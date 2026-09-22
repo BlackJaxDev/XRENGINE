@@ -16,6 +16,9 @@ namespace XREngine.Rendering.OpenGL
         private uint _allocatedHeight = 0;
         private uint _allocatedDepth = 0;
         private uint _allocatedLevels = 0;
+        private uint _allocatedSampleCount = 1;
+        private bool _allocatedMultisample;
+        private bool _allocatedFixedSampleLocations;
 
         public class MipmapInfo : XRBase
         {
@@ -177,6 +180,9 @@ namespace XREngine.Rendering.OpenGL
             _allocatedHeight = 0;
             _allocatedDepth = 0;
             _allocatedLevels = 0;
+            _allocatedSampleCount = 1;
+            _allocatedMultisample = false;
+            _allocatedFixedSampleLocations = false;
             Mipmaps.ForEach(m =>
             {
                 m.HasPushedResizedData = false;
@@ -205,6 +211,9 @@ namespace XREngine.Rendering.OpenGL
             _allocatedHeight = 0;
             _allocatedDepth = 0;
             _allocatedLevels = 0;
+            _allocatedSampleCount = 1;
+            _allocatedMultisample = false;
+            _allocatedFixedSampleLocations = false;
             base.PostGenerated();
         }
         protected internal override void PostDeleted()
@@ -221,21 +230,59 @@ namespace XREngine.Rendering.OpenGL
             _allocatedHeight = 0;
             _allocatedDepth = 0;
             _allocatedLevels = 0;
+            _allocatedSampleCount = 1;
+            _allocatedMultisample = false;
+            _allocatedFixedSampleLocations = false;
             base.PostDeleted();
         }
 
         private void EnsureStorage(ESizedInternalFormat desiredFormat, uint width, uint height, uint depth, uint levels)
         {
+            bool multisample = Data.MultiSample;
+            uint samples = multisample && Data.Textures.Length > 0
+                ? Math.Max(1u, Data.Textures[0].MultiSampleCount) : 1u;
+            bool fixedSampleLocations = multisample &&
+                (Data.Textures.Length == 0 || Data.Textures[0].FixedSampleLocations);
+            if (multisample)
+            {
+                levels = 1u;
+                for (int layer = 0; layer < Data.Textures.Length; layer++)
+                    if (Data.Textures[layer].MultiSampleCount != samples ||
+                        Data.Textures[layer].FixedSampleLocations != fixedSampleLocations)
+                    {
+                        throw new InvalidOperationException("All multisample array layers must use the same sample count and fixed-sample-locations policy.");
+                    }
+            }
             bool needsAllocation = !_storageSet
                 || _allocatedInternalFormat != desiredFormat
                 || _allocatedWidth != width
                 || _allocatedHeight != height
                 || _allocatedDepth != depth
-                || _allocatedLevels != levels;
+                || _allocatedLevels != levels
+                || _allocatedMultisample != multisample
+                || _allocatedSampleCount != samples
+                || _allocatedFixedSampleLocations != fixedSampleLocations;
             if (!needsAllocation)
                 return;
 
-            long requestedBytes = CalculateTextureArrayVRAMSize(width, height, depth, levels, desiredFormat);
+            // glTextureStorage3D and glTextureStorage3DMultisample both create
+            // immutable storage. The sample count and fixed-location policy are part
+            // of that immutable identity, so changing either requires a fresh GL name.
+            // Do this before accounting the new allocation so the old handle and its
+            // VRAM entry are retired as one operation.
+            bool hasCommittedStorage = _storageSet || _allocatedWidth != 0 || _allocatedHeight != 0 ||
+                _allocatedDepth != 0 || _allocatedLevels != 0;
+            if (hasCommittedStorage && IsGenerated)
+            {
+                Renderer.SetBoundTexture(TextureTarget, null);
+                Api.BindTexture(ToGLEnum(TextureTarget), 0);
+                Destroy();
+                Generate();
+                if (!TryGetBindingId(out uint regeneratedBindingId) || regeneratedBindingId == InvalidBindingId)
+                    throw new InvalidOperationException("Failed to recreate immutable OpenGL texture-array storage.");
+            }
+
+            long requestedBytes = checked(CalculateTextureArrayVRAMSize(width, height, depth, levels, desiredFormat) * samples);
             if (!RuntimeEngine.Rendering.Stats.Vram.CanAllocateVram(requestedBytes, _allocatedVRAMBytes, out long projectedBytes, out long budgetBytes))
             {
                 Debug.OpenGLWarning($"[VRAM Budget] Skipping 2D array texture allocation for '{Data.Name ?? BindingId.ToString()}' ({requestedBytes} bytes). Projected={projectedBytes} bytes, Budget={budgetBytes} bytes.");
@@ -248,13 +295,20 @@ namespace XREngine.Rendering.OpenGL
                 _allocatedVRAMBytes = 0;
             }
 
-            Api.TextureStorage3D(BindingId, levels, ToGLEnum(desiredFormat), width, height, depth);
+            if (multisample)
+                Api.TextureStorage3DMultisample(BindingId, samples, ToGLEnum(desiredFormat), width, height, depth,
+                    fixedSampleLocations);
+            else
+                Api.TextureStorage3D(BindingId, levels, ToGLEnum(desiredFormat), width, height, depth);
             _storageSet = true;
             _allocatedInternalFormat = desiredFormat;
             _allocatedWidth = width;
             _allocatedHeight = height;
             _allocatedDepth = depth;
             _allocatedLevels = levels;
+            _allocatedSampleCount = samples;
+            _allocatedMultisample = multisample;
+            _allocatedFixedSampleLocations = fixedSampleLocations;
             _allocatedVRAMBytes = requestedBytes;
             RuntimeEngine.Rendering.Stats.Vram.AddTextureAllocation(_allocatedVRAMBytes);
             TextureRuntimeDiagnostics.LogStorageAllocated(
@@ -294,7 +348,7 @@ namespace XREngine.Rendering.OpenGL
             uint width = Math.Max(1u, Data.Width);
             uint height = Math.Max(1u, Data.Height);
             uint depth = Math.Max(1u, Data.Depth);
-            uint levels = (uint)Math.Max(1, Data.SmallestMipmapLevel + 1);
+            uint levels = Data.MultiSample ? 1u : (uint)Math.Max(1, Data.SmallestMipmapLevel + 1);
             EnsureStorage(Data.SizedInternalFormat, width, height, depth, levels);
         }
 
@@ -334,6 +388,8 @@ namespace XREngine.Rendering.OpenGL
 
         private void ApplyMipRangeParameters()
         {
+            if (Data.MultiSample)
+                return;
             int baseLevel = Math.Max(0, Data.LargestMipmapLevel);
             int maxLevel = ResolveMaxMipLevel(baseLevel);
 
@@ -363,6 +419,17 @@ namespace XREngine.Rendering.OpenGL
                 Bind();
 
                 Api.PixelStore(PixelStoreParameter.UnpackAlignment, 1);
+
+                if (Data.MultiSample)
+                {
+                    // Multisample arrays have one level and no filtering/wrap
+                    // state or CPU subimage upload. Their contents come from raster.
+                    EnsureFramebufferStorage();
+                    if (allowPostPushCallback)
+                        OnPostPushData();
+                    IsPushing = false;
+                    return;
+                }
 
                 // Fast path: render-target arrays already have GPU storage populated via FBO. Skip CPU->GPU copy from slices.
                 if (Data.FrameBufferAttachment.HasValue)

@@ -60,6 +60,8 @@ public partial class AdvancedRenderPipeline
             builder.Profile.ViewCount,
             builder.Profile.Stereo ? 2u : 1u);
 
+        DeclareMultisampleVisibilityResources(builder, layers);
+
         VisibilityTexture(
                 builder,
                 AdvancedVisibilityResourceNames.Identity,

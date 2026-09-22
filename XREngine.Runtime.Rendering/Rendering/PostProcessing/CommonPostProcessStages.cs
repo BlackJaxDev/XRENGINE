@@ -95,7 +95,9 @@ public static class CommonPostProcessStages
         DescribeFogStage(builder.Stage(StageKeys.Fog, "Depth Fog").BackedBy<FogSettings>());
         DescribeAtmosphericScatteringStage(builder.Stage(StageKeys.AtmosphericScattering, "Atmospheric Scattering").BackedBy<AtmosphericScatteringSettings>());
         DescribeVolumetricFogStage(builder.Stage(StageKeys.VolumetricFog, "Volumetric Fog").BackedBy<VolumetricFogSettings>());
-        DescribeGpuBvhDebugStage(builder.Stage(StageKeys.GpuBvhDebug, "Debug Visualization").BackedBy<GpuBvhDebugSettings>());
+        DescribeGpuBvhDebugStage(builder.Stage(StageKeys.GpuBvhDebug, "Debug Visualization")
+            .BackedBy<GpuBvhDebugSettings>()
+            .InEditorSection(PipelineEditorSection.Debug));
     }
 
     public static void AddStandardCategories(RenderPipelinePostProcessSchemaBuilder builder)
@@ -600,11 +602,21 @@ public static class CommonPostProcessStages
             PostProcessParameterKind.Bool,
             false,
             displayName: "Debug: Show Bloom Only",
-            visibilityCondition: IsEnabled);
+            visibilityCondition: IsEnabled,
+            editorSection: PipelineEditorSection.Debug);
     }
 
     public static void DescribeTemporalAntiAliasingStage(RenderPipelinePostProcessSchemaBuilder.PostProcessStageBuilder stage)
     {
+        stage.WithStateEvaluator(static camera =>
+        {
+            EAntiAliasingMode mode = camera.AntiAliasingModeOverride ?? RuntimeEngine.EffectiveSettings.AntiAliasingMode;
+            bool active = mode is EAntiAliasingMode.Taa or EAntiAliasingMode.Tsr or EAntiAliasingMode.Dlaa;
+            return active
+                ? (false, null)
+                : (true, "Temporal AA controls are inactive because the camera is not using TAA, TSR, or DLAA.");
+        });
+
         stage.AddParameter(
             PostProcessParameterNames.TemporalFeedbackMin,
             PostProcessParameterKind.Float,
@@ -700,7 +712,8 @@ public static class CommonPostProcessStages
             PostProcessParameterKind.Int,
             (int)TemporalDebugViewMode.Disabled,
             displayName: "Debug View",
-            enumOptions: BuildEnumOptions<TemporalDebugViewMode>());
+            enumOptions: BuildEnumOptions<TemporalDebugViewMode>(),
+            editorSection: PipelineEditorSection.Debug);
     }
 
     public static void DescribeAmbientOcclusionStage(RenderPipelinePostProcessSchemaBuilder.PostProcessStageBuilder stage)
@@ -1598,7 +1611,8 @@ public static class CommonPostProcessStages
             (int)AtmosphericScatteringSettings.EDebugMode.Off,
             displayName: "Debug Mode",
             enumOptions: BuildEnumOptions<AtmosphericScatteringSettings.EDebugMode>(),
-            visibilityCondition: IsEnabled);
+            visibilityCondition: IsEnabled,
+            editorSection: PipelineEditorSection.Debug);
     }
 
     public static void DescribeVolumetricFogStage(RenderPipelinePostProcessSchemaBuilder.PostProcessStageBuilder stage)
@@ -1657,7 +1671,8 @@ public static class CommonPostProcessStages
             (int)VolumetricFogSettings.EDebugMode.Off,
             displayName: "Debug Mode",
             enumOptions: BuildEnumOptions<VolumetricFogSettings.EDebugMode>(),
-            visibilityCondition: IsEnabled);
+            visibilityCondition: IsEnabled,
+            editorSection: PipelineEditorSection.Debug);
     }
 
     public static void DescribeGpuBvhDebugStage(RenderPipelinePostProcessSchemaBuilder.PostProcessStageBuilder stage)

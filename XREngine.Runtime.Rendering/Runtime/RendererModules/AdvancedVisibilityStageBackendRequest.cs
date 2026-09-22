@@ -33,7 +33,9 @@ public readonly record struct AdvancedVisibilityStageBackendRequest(
     /// and geometry templates consumed by native backend stages.
     /// </summary>
     Commands.BackendReadyFramePackage? BackendReadyPackage = null,
-    uint FroxelDepthSlices = 24u)
+    uint FroxelDepthSlices = 24u,
+    uint MsaaSampleCount = 1u,
+    bool HasAuthoredBackground = false)
 {
     public bool IsValid => GetInvalidReason() is null;
 
@@ -83,7 +85,8 @@ public readonly record struct AdvancedVisibilityStageBackendRequest(
                 Phase == EAdvancedVisibilityStageBackendPhase.Complete,
             EAdvancedRenderStage.DepthPyramidAndLateVisibility =>
                 Phase is EAdvancedVisibilityStageBackendPhase.LateCompute or
-                    EAdvancedVisibilityStageBackendPhase.LateRaster,
+                    EAdvancedVisibilityStageBackendPhase.LateRaster or
+                    EAdvancedVisibilityStageBackendPhase.MultisampleResolve,
             // These stages are compute-only.  Their Vulkan implementation
             // seals a per-stage descriptor closure from the frozen graph
             // generation before recording; they do not participate in the

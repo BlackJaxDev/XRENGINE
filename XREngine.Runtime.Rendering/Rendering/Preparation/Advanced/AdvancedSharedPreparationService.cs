@@ -1,3 +1,6 @@
+using System.Diagnostics;
+using System.Runtime.CompilerServices;
+
 namespace XREngine.Rendering;
 
 /// <summary>
@@ -15,6 +18,19 @@ public sealed class AdvancedSharedPreparationService : IDisposable
     private readonly AdvancedPreparationExtractor _extractor;
     private GPUScene? _publishedScene;
     private AdvancedPreparationPublication _publication;
+    private long _acquireCount;
+    private long _cacheHitCount;
+    private long _rebuildCount;
+    private long _acquireLockWaitTicks;
+    private long _buildTicks;
+    private long _extractionTicks;
+    private long _deformationTicks;
+    private long _copyCount;
+    private long _copyFailureCount;
+    private long _copyLockWaitTicks;
+    private long _copyTicks;
+    private long _copiedBytes;
+    private long _buildAllocatedBytes;
 
     public AdvancedSharedPreparationService(AdvancedPreparationOptions options)
         => _extractor = new AdvancedPreparationExtractor(options);
@@ -33,19 +49,31 @@ public sealed class AdvancedSharedPreparationService : IDisposable
             return new(service._publication, service._extractor.LastDeferralReason,
                 service._extractor.GpuDeformation.LastOutputReuseStatus.ToString(),
                 service._extractor.GpuDeformation.LastOutputReuseSlot,
-                service._extractor.GpuDeformation.LastOutputReuseAuthority);
+                service._extractor.GpuDeformation.LastOutputReuseAuthority,
+                service.GetTelemetryLocked());
     }
+
+    private AdvancedSharedPreparationTelemetry GetTelemetryLocked() => new(
+        _acquireCount, _cacheHitCount, _rebuildCount,
+        _acquireLockWaitTicks, _buildTicks, _extractionTicks,
+        _deformationTicks, _copyCount, _copyFailureCount,
+        _copyLockWaitTicks, _copyTicks, _copiedBytes,
+        _buildAllocatedBytes, Stopwatch.Frequency);
 
     public AdvancedPreparationPublication Acquire(
         in RenderWorldSnapshot world,
         RenderFrameViewSet? viewSet,
         EAdvancedPreparationConsumer consumers)
     {
+        long waitStarted = Stopwatch.GetTimestamp();
         lock (_sync)
         {
+            _acquireLockWaitTicks += Stopwatch.GetTimestamp() - waitStarted;
+            _acquireCount++;
             if (_publication.FrameId == world.FrameId &&
                 ReferenceEquals(_publishedScene, world.GpuScene))
             {
+                _cacheHitCount++;
                 EAdvancedPreparationConsumer addedConsumers =
                     consumers & ~_publication.Consumers;
                 int viewCount = _extractor.AddVisibilityPlans(viewSet);
@@ -73,13 +101,22 @@ public sealed class AdvancedSharedPreparationService : IDisposable
                 return _publication;
             }
 
+            _rebuildCount++;
+            long allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
+            long buildStarted = Stopwatch.GetTimestamp();
             _publication = _extractor.Build(world, viewSet, consumers);
+            _buildTicks += Stopwatch.GetTimestamp() - buildStarted;
+            _buildAllocatedBytes +=
+                GC.GetAllocatedBytesForCurrentThread() - allocatedBefore;
+            _extractionTicks += _extractor.LastExtractionTicks;
+            long deformationStarted = Stopwatch.GetTimestamp();
             bool executed = _publication.GpuResourcesPublished &&
                 _extractor.GpuDeformation.TryExecute(
                     _extractor.DispatchPlanner,
                     _extractor.DeformationJobs,
                     consumers,
                     _extractor.Admission.RejectedJobCount);
+            _deformationTicks += Stopwatch.GetTimestamp() - deformationStarted;
             AdvancedDeformationDispatchTelemetry telemetry =
                 _extractor.GpuDeformation.LastTelemetry;
             _publication = _publication with
@@ -112,19 +149,27 @@ public sealed class AdvancedSharedPreparationService : IDisposable
         out AdvancedIndirectPreparationResult indirect,
         out AdvancedGpuDeformationPublication deformationPublication)
     {
+        long waitStarted = Stopwatch.GetTimestamp();
         lock (_sync)
         {
+            _copyLockWaitTicks += Stopwatch.GetTimestamp() - waitStarted;
+            _copyCount++;
+            long copyStarted = Stopwatch.GetTimestamp();
             indirect = default;
             deformationPublication = default;
             if (!ReferenceEquals(extractor, _extractor) ||
                 !_extractor.MatchesPublication(in publication))
             {
+                _copyFailureCount++;
                 return false;
             }
 
             if (publication.DeformationJobCount != 0u &&
                 !publication.AggregateDispatchExecuted)
+            {
+                _copyFailureCount++;
                 return false;
+            }
 
             deformationPublication = _extractor.GpuDeformationPublication;
             if (publication.DeformationJobCount != 0u &&
@@ -132,6 +177,7 @@ public sealed class AdvancedSharedPreparationService : IDisposable
                  deformationPublication.JobCount != publication.DeformationJobCount))
             {
                 deformationPublication = default;
+                _copyFailureCount++;
                 return false;
             }
 
@@ -156,6 +202,7 @@ public sealed class AdvancedSharedPreparationService : IDisposable
                 deformationSlices.Length != sourcePayloads.Length)
             {
                 indirect = default;
+                _copyFailureCount++;
                 return false;
             }
 
@@ -176,9 +223,20 @@ public sealed class AdvancedSharedPreparationService : IDisposable
                 {
                     indirect = default;
                     deformationPublication = default;
+                    _copyFailureCount++;
                     return false;
                 }
             }
+            _copyTicks += Stopwatch.GetTimestamp() - copyStarted;
+            _copiedBytes +=
+                (long)sourcePayloads.Length *
+                    (Unsafe.SizeOf<AdvancedVisibilityPayload>() +
+                     Unsafe.SizeOf<AdvancedVisibilityCandidate>() +
+                     Unsafe.SizeOf<EAdvancedGeometryProducer>() +
+                     Unsafe.SizeOf<int>() +
+                     Unsafe.SizeOf<AdvancedDeformedArenaSlice>()) +
+                (long)sourceIndirectRanges.Length *
+                    Unsafe.SizeOf<AdvancedIndirectRange>();
             return true;
         }
     }

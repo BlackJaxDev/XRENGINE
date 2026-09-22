@@ -20,6 +20,11 @@ internal readonly record struct VulkanAdvancedNativeComputeClosure(
     VulkanPhysicalImageGroup Reactive,
     VulkanPhysicalImageGroup ShadingDiagnostics,
     VulkanPhysicalImageGroup AmbientOcclusion,
+    VulkanPhysicalImageGroup? IdentityMultisample,
+    VulkanPhysicalImageGroup? MetadataMultisample,
+    VulkanPhysicalImageGroup? DepthMultisample,
+    VulkanPhysicalImageGroup? SelectionMultisample,
+    VulkanPhysicalImageGroup? SamplePositionMultisample,
     VulkanAdvancedNativeImageClosure IdentityResource,
     VulkanAdvancedNativeImageClosure MetadataResource,
     VulkanAdvancedNativeImageClosure DepthResource,
@@ -28,6 +33,11 @@ internal readonly record struct VulkanAdvancedNativeComputeClosure(
     VulkanAdvancedNativeImageClosure ReactiveResource,
     VulkanAdvancedNativeImageClosure ShadingDiagnosticsResource,
     VulkanAdvancedNativeImageClosure AmbientOcclusionResource,
+    VulkanAdvancedNativeImageClosure IdentityMultisampleResource,
+    VulkanAdvancedNativeImageClosure MetadataMultisampleResource,
+    VulkanAdvancedNativeImageClosure DepthMultisampleResource,
+    VulkanAdvancedNativeImageClosure SelectionMultisampleResource,
+    VulkanAdvancedNativeImageClosure SamplePositionMultisampleResource,
     Sampler Sampler,
     ulong SamplerGeneration,
     VulkanFrozenBufferBarrier ActiveTiles,
@@ -49,6 +59,12 @@ internal readonly record struct VulkanAdvancedNativeComputeClosure(
     DescriptorImageInfo ShadingDiagnosticsDescriptor,
     DescriptorImageInfo AmbientOcclusionStorageDescriptor,
     DescriptorImageInfo AmbientOcclusionSampledDescriptor,
+    DescriptorImageInfo IdentityMultisampleDescriptor,
+    DescriptorImageInfo MetadataMultisampleDescriptor,
+    DescriptorImageInfo DepthMultisampleDescriptor,
+    DescriptorImageInfo SelectionMultisampleDescriptor,
+    DescriptorImageInfo SamplePositionMultisampleDescriptor,
+    uint MsaaSampleCount,
     uint ViewIndex)
 {
     internal VulkanAdvancedNativeShadingRootBinding ShadingAddressRoot { get; init; }
@@ -88,7 +104,29 @@ internal readonly record struct VulkanAdvancedNativeComputeClosure(
            ShadingDiagnosticsDescriptor.ImageView.Handle != 0 &&
            AmbientOcclusionStorageDescriptor.ImageView.Handle != 0 &&
            AmbientOcclusionSampledDescriptor.ImageView.Handle != 0 &&
-           AmbientOcclusionSampledDescriptor.Sampler.Handle != 0;
+           AmbientOcclusionSampledDescriptor.Sampler.Handle != 0 &&
+           (MsaaSampleCount <= 1u ||
+            IdentityMultisample is { IsAllocated: true } &&
+            MetadataMultisample is { IsAllocated: true } &&
+            DepthMultisample is { IsAllocated: true } &&
+            SelectionMultisample is { IsAllocated: true } &&
+            SamplePositionMultisample is { IsAllocated: true } &&
+            IdentityMultisampleResource.IsValid &&
+            MetadataMultisampleResource.IsValid &&
+            DepthMultisampleResource.IsValid &&
+            SelectionMultisampleResource.IsValid &&
+            SamplePositionMultisampleResource.IsValid &&
+            IdentityMultisampleDescriptor.ImageView.Handle != 0 &&
+            MetadataMultisampleDescriptor.ImageView.Handle != 0 &&
+            DepthMultisampleDescriptor.ImageView.Handle != 0 &&
+            SelectionMultisampleDescriptor.ImageView.Handle != 0 &&
+            SamplePositionMultisampleDescriptor.ImageView.Handle != 0 &&
+            IdentityMultisampleDescriptor.Sampler.Handle != 0 &&
+            MetadataMultisampleDescriptor.Sampler.Handle != 0 &&
+            DepthMultisampleDescriptor.Sampler.Handle != 0 &&
+            SelectionMultisampleDescriptor.Sampler.Handle != 0);
+
+    internal bool UsesMultisampleVisibility => MsaaSampleCount > 1u;
 
     private static bool HasFrozenRange(in VulkanFrozenBufferBarrier barrier)
         => barrier.NativeBuffer.Handle != 0 &&

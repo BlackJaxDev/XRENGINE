@@ -107,6 +107,14 @@ internal const uint VisibilityDepthPyramidStorageBinding = 43u;
     internal const uint NativeDdgiAlbedoBinding = 52u;
     internal const uint NativeDdgiNormalBinding = 53u;
     internal const uint NativeDdgiRmseBinding = 54u;
+    // MSAA visibility is kept separate from the canonical single-sample
+    // tuple. These append-only bindings deliberately follow the existing
+    // native set-1 ABI; 8..14 are occupied by native storage buffers.
+    internal const uint NativeIdentityMultisampleBinding = 55u;
+    internal const uint NativeMetadataMultisampleBinding = 56u;
+    internal const uint NativeSelectionMultisampleBinding = 57u;
+    internal const uint NativeDepthMultisampleBinding = 58u;
+    internal const uint NativeSamplePositionMultisampleBinding = 59u;
     internal const uint ExternallyOwnedSetMask =
         (1u << (int)GlobalSetIndex) |
         (1u << (int)VisibilitySetIndex) |
@@ -331,7 +339,10 @@ internal const uint VisibilityDepthPyramidStorageBinding = 43u;
 
     private static bool ContainsNativeSampledBinding(uint binding)
         => binding is NativeIdentityBinding or NativeMetadataBinding or NativeDepthBinding or
-            NativeAmbientOcclusionSampledBinding;
+            NativeAmbientOcclusionSampledBinding or
+            NativeIdentityMultisampleBinding or NativeMetadataMultisampleBinding or
+            NativeSelectionMultisampleBinding or NativeDepthMultisampleBinding or
+            NativeSamplePositionMultisampleBinding;
 
     private static bool ContainsNativeStorageImageBinding(uint binding)
         => binding is NativeHdrBinding or NativeVelocityBinding or NativeReactiveBinding or

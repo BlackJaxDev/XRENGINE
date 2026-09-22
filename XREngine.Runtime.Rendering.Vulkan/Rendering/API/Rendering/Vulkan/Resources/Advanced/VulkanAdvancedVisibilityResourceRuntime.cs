@@ -756,7 +756,12 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
             VulkanAdvancedSceneProgramBindingContract.NativeIdentityBinding,
             VulkanAdvancedSceneProgramBindingContract.NativeMetadataBinding,
             VulkanAdvancedSceneProgramBindingContract.NativeDepthBinding,
-            VulkanAdvancedSceneProgramBindingContract.NativeAmbientOcclusionSampledBinding];
+            VulkanAdvancedSceneProgramBindingContract.NativeAmbientOcclusionSampledBinding,
+            VulkanAdvancedSceneProgramBindingContract.NativeIdentityMultisampleBinding,
+            VulkanAdvancedSceneProgramBindingContract.NativeMetadataMultisampleBinding,
+            VulkanAdvancedSceneProgramBindingContract.NativeDepthMultisampleBinding,
+            VulkanAdvancedSceneProgramBindingContract.NativeSelectionMultisampleBinding,
+            VulkanAdvancedSceneProgramBindingContract.NativeSamplePositionMultisampleBinding];
         ReadOnlySpan<uint> nativeStorageImageBindingNumbers = [
             VulkanAdvancedSceneProgramBindingContract.NativeHdrBinding,
             VulkanAdvancedSceneProgramBindingContract.NativeVelocityBinding,
@@ -1480,7 +1485,7 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
             VulkanAdvancedSceneProgramBindingContract.NativeFroxelDecalGridBinding,
             VulkanAdvancedSceneProgramBindingContract.NativeDecalIndicesBinding];
         DescriptorBufferInfo* bufferInfos = stackalloc DescriptorBufferInfo[buffers.Length];
-        const int imageCount = 13;
+        const int imageCount = 18;
         DescriptorImageInfo* imageInfos = stackalloc DescriptorImageInfo[imageCount]
         {
             closure.IdentityDescriptor, closure.MetadataDescriptor, closure.DepthDescriptor,
@@ -1489,6 +1494,9 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
             closure.AmbientOcclusionSampledDescriptor,
             closure.DdgiSurface.EmissionDescriptor, closure.DdgiSurface.AlbedoDescriptor,
             closure.DdgiSurface.NormalDescriptor, closure.DdgiSurface.RmseDescriptor,
+            closure.IdentityMultisampleDescriptor, closure.MetadataMultisampleDescriptor,
+            closure.DepthMultisampleDescriptor, closure.SelectionMultisampleDescriptor,
+            closure.SamplePositionMultisampleDescriptor,
         };
         WriteDescriptorSet* writes = stackalloc WriteDescriptorSet[buffers.Length + imageCount];
         for (int index = 0; index < buffers.Length; ++index)
@@ -1526,11 +1534,19 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
             VulkanAdvancedSceneProgramBindingContract.NativeDdgiEmissionBinding,
             VulkanAdvancedSceneProgramBindingContract.NativeDdgiAlbedoBinding,
             VulkanAdvancedSceneProgramBindingContract.NativeDdgiNormalBinding,
-            VulkanAdvancedSceneProgramBindingContract.NativeDdgiRmseBinding];
+            VulkanAdvancedSceneProgramBindingContract.NativeDdgiRmseBinding,
+            VulkanAdvancedSceneProgramBindingContract.NativeIdentityMultisampleBinding,
+            VulkanAdvancedSceneProgramBindingContract.NativeMetadataMultisampleBinding,
+            VulkanAdvancedSceneProgramBindingContract.NativeDepthMultisampleBinding,
+            VulkanAdvancedSceneProgramBindingContract.NativeSelectionMultisampleBinding,
+            VulkanAdvancedSceneProgramBindingContract.NativeSamplePositionMultisampleBinding];
         for (int index = 0; index < imageCount; ++index)
         {
             DescriptorImageInfo image = imageInfos[index];
-            if (image.ImageView.Handle == 0 || ((index < 3 || index == 8) && image.Sampler.Handle == 0))
+            bool multisampleDescriptor = index >= 13;
+            if (multisampleDescriptor && !closure.UsesMultisampleVisibility)
+                continue;
+            if (image.ImageView.Handle == 0 || ((index < 3 || index == 8 || multisampleDescriptor) && image.Sampler.Handle == 0))
             {
                 reason = "A frozen native-compute image descriptor is unavailable.";
                 return false;
@@ -1539,12 +1555,12 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
             {
                 SType = StructureType.WriteDescriptorSet, DstSet = descriptorSet,
                 DstBinding = imageBindings[index], DescriptorCount = 1u,
-                DescriptorType = index < 3 || index == 8 ? DescriptorType.CombinedImageSampler : DescriptorType.StorageImage,
+                DescriptorType = index < 3 || index == 8 || multisampleDescriptor ? DescriptorType.CombinedImageSampler : DescriptorType.StorageImage,
                 PImageInfo = imageInfos + index,
             };
         }
         if (!_resources.DescriptorLifetime.TryUpdateDescriptorSets(
-                (uint)(buffers.Length + imageCount), writes, out reason))
+                (uint)(buffers.Length + (closure.UsesMultisampleVisibility ? imageCount : imageCount - 5)), writes, out reason))
         {
             return false;
         }
@@ -1724,6 +1740,7 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
         ResourcePlannerRuntimeGeneration generation,
         uint frameSlot,
         uint viewIndex,
+        uint msaaSampleCount,
         string ambientOcclusionTargetName,
         bool requireMaterialSurfaceExports,
         VulkanAdvancedNativeComputeClosureStorage storage,
@@ -1765,6 +1782,12 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
                 out VulkanPhysicalImageGroup? depth, out VulkanPhysicalImageGroup? hdr,
                 out VulkanPhysicalImageGroup? velocity, out VulkanPhysicalImageGroup? reactive,
                 out VulkanPhysicalImageGroup? shadingDiagnostics, out VulkanPhysicalImageGroup? ambientOcclusion,
+                out VulkanPhysicalImageGroup? identityMultisample,
+                out VulkanPhysicalImageGroup? metadataMultisample,
+                out VulkanPhysicalImageGroup? depthMultisample,
+                out VulkanPhysicalImageGroup? selectionMultisample,
+                out VulkanPhysicalImageGroup? samplePositionMultisample,
+                msaaSampleCount,
                 ambientOcclusionTargetName) ||
             !TryFindFrozenBuffer(graphPlan.Barriers.BufferBarriers, activeTiles, out VulkanFrozenBufferBarrier active) ||
             !TryFindFrozenBuffer(graphPlan.Barriers.BufferBarriers, kernelTiles, out VulkanFrozenBufferBarrier kernels) ||
@@ -1791,7 +1814,18 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
             viewIndex >= Math.Max(1u, velocity.Template.Layers) ||
             viewIndex >= Math.Max(1u, reactive.Template.Layers) ||
             viewIndex >= Math.Max(1u, shadingDiagnostics.Template.Layers) ||
-            viewIndex >= Math.Max(1u, ambientOcclusion.Template.Layers))
+            viewIndex >= Math.Max(1u, ambientOcclusion.Template.Layers) ||
+            (msaaSampleCount > 1u &&
+             (identityMultisample is not { IsAllocated: true } ||
+              metadataMultisample is not { IsAllocated: true } ||
+              depthMultisample is not { IsAllocated: true } ||
+              selectionMultisample is not { IsAllocated: true } ||
+              samplePositionMultisample is not { IsAllocated: true } ||
+              viewIndex >= Math.Max(1u, identityMultisample.Template.Layers) ||
+              viewIndex >= Math.Max(1u, metadataMultisample.Template.Layers) ||
+              viewIndex >= Math.Max(1u, depthMultisample.Template.Layers) ||
+              viewIndex >= Math.Max(1u, selectionMultisample.Template.Layers) ||
+              viewIndex >= Math.Max(1u, samplePositionMultisample.Template.Layers))))
         {
             reason = "The frozen advanced native compute image closure is unallocated or does not contain the requested view layer.";
             return false;
@@ -1813,6 +1847,11 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
         bool captured = false;
         try
         {
+            VulkanAdvancedNativeImageClosure identityMultisampleResource = default;
+            VulkanAdvancedNativeImageClosure metadataMultisampleResource = default;
+            VulkanAdvancedNativeImageClosure depthMultisampleResource = default;
+            VulkanAdvancedNativeImageClosure selectionMultisampleResource = default;
+            VulkanAdvancedNativeImageClosure samplePositionMultisampleResource = default;
             if (!TryAcquireNativeComputeView(context, storage, identity, ImageAspectFlags.ColorBit, viewIndex, out ImageView identityView) ||
                 !TryAcquireNativeComputeView(context, storage, metadata, ImageAspectFlags.ColorBit, viewIndex, out ImageView metadataView) ||
                 !TryAcquireNativeComputeView(context, storage, depth, ImageAspectFlags.DepthBit, viewIndex, out ImageView depthView) ||
@@ -1825,6 +1864,21 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
                 reason = "The frozen advanced native compute image view closure could not be acquired.";
                 return false;
             }
+            ImageView identityMultisampleView = default;
+            ImageView metadataMultisampleView = default;
+            ImageView depthMultisampleView = default;
+            ImageView selectionMultisampleView = default;
+            ImageView samplePositionMultisampleView = default;
+            if (msaaSampleCount > 1u &&
+                (!TryAcquireNativeComputeView(context, storage, identityMultisample!, ImageAspectFlags.ColorBit, viewIndex, out identityMultisampleView) ||
+                 !TryAcquireNativeComputeView(context, storage, metadataMultisample!, ImageAspectFlags.ColorBit, viewIndex, out metadataMultisampleView) ||
+                 !TryAcquireNativeComputeView(context, storage, depthMultisample!, ImageAspectFlags.DepthBit, viewIndex, out depthMultisampleView) ||
+                 !TryAcquireNativeComputeView(context, storage, selectionMultisample!, ImageAspectFlags.ColorBit, viewIndex, out selectionMultisampleView) ||
+                 !TryAcquireNativeComputeView(context, storage, samplePositionMultisample!, ImageAspectFlags.ColorBit, viewIndex, out samplePositionMultisampleView)))
+            {
+                reason = "The frozen advanced MSAA visibility image view closure could not be acquired.";
+                return false;
+            }
             if (!TryCaptureNativeComputeImageClosure(identity, identityView, out VulkanAdvancedNativeImageClosure identityResource) ||
                 !TryCaptureNativeComputeImageClosure(metadata, metadataView, out VulkanAdvancedNativeImageClosure metadataResource) ||
                 !TryCaptureNativeComputeImageClosure(depth, depthView, out VulkanAdvancedNativeImageClosure depthResource) ||
@@ -1833,6 +1887,12 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
                 !TryCaptureNativeComputeImageClosure(reactive, reactiveView, out VulkanAdvancedNativeImageClosure reactiveResource) ||
                 !TryCaptureNativeComputeImageClosure(shadingDiagnostics, shadingDiagnosticsView, out VulkanAdvancedNativeImageClosure shadingDiagnosticsResource) ||
                 !TryCaptureNativeComputeImageClosure(ambientOcclusion, ambientOcclusionView, out VulkanAdvancedNativeImageClosure ambientOcclusionResource) ||
+                (msaaSampleCount > 1u &&
+                 (!TryCaptureNativeComputeImageClosure(identityMultisample!, identityMultisampleView, out identityMultisampleResource) ||
+                  !TryCaptureNativeComputeImageClosure(metadataMultisample!, metadataMultisampleView, out metadataMultisampleResource) ||
+                  !TryCaptureNativeComputeImageClosure(depthMultisample!, depthMultisampleView, out depthMultisampleResource) ||
+                  !TryCaptureNativeComputeImageClosure(selectionMultisample!, selectionMultisampleView, out selectionMultisampleResource) ||
+                  !TryCaptureNativeComputeImageClosure(samplePositionMultisample!, samplePositionMultisampleView, out samplePositionMultisampleResource))) ||
                 !TryCaptureNativeComputeSamplerGeneration(sampler, out ulong samplerGeneration))
             {
                 reason = "The frozen advanced native compute closure lost an image, view, or sampler generation.";
@@ -1848,8 +1908,15 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
 
             closure = new VulkanAdvancedNativeComputeClosure(
                 graphPlan.Revision, identity, metadata, depth, hdr, velocity, reactive, shadingDiagnostics, ambientOcclusion,
+                identityMultisample, metadataMultisample, depthMultisample, selectionMultisample, samplePositionMultisample,
                 identityResource, metadataResource, depthResource, hdrResource, velocityResource, reactiveResource,
-                shadingDiagnosticsResource, ambientOcclusionResource, sampler, samplerGeneration,
+                shadingDiagnosticsResource, ambientOcclusionResource,
+                msaaSampleCount > 1u ? identityMultisampleResource : default,
+                msaaSampleCount > 1u ? metadataMultisampleResource : default,
+                msaaSampleCount > 1u ? depthMultisampleResource : default,
+                msaaSampleCount > 1u ? selectionMultisampleResource : default,
+                msaaSampleCount > 1u ? samplePositionMultisampleResource : default,
+                sampler, samplerGeneration,
                 active, kernels, classificationCounters, dispatch, counts, froxelGrid,
                 indices, lighting, decalFroxelGrid, decalIndexList,
                 new DescriptorImageInfo { Sampler = sampler, ImageView = identityView, ImageLayout = ImageLayout.General },
@@ -1861,6 +1928,12 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
                 new DescriptorImageInfo { ImageView = shadingDiagnosticsView, ImageLayout = ImageLayout.General },
                 new DescriptorImageInfo { ImageView = ambientOcclusionView, ImageLayout = ImageLayout.General },
                 new DescriptorImageInfo { Sampler = sampler, ImageView = ambientOcclusionView, ImageLayout = ImageLayout.ShaderReadOnlyOptimal },
+                new DescriptorImageInfo { Sampler = sampler, ImageView = identityMultisampleView, ImageLayout = ImageLayout.General },
+                new DescriptorImageInfo { Sampler = sampler, ImageView = metadataMultisampleView, ImageLayout = ImageLayout.General },
+                new DescriptorImageInfo { Sampler = sampler, ImageView = depthMultisampleView, ImageLayout = ImageLayout.ShaderReadOnlyOptimal },
+                new DescriptorImageInfo { Sampler = sampler, ImageView = selectionMultisampleView, ImageLayout = ImageLayout.General },
+                new DescriptorImageInfo { Sampler = sampler, ImageView = samplePositionMultisampleView, ImageLayout = ImageLayout.General },
+                msaaSampleCount,
                 viewIndex)
             {
                 DdgiSurface = ddgiSurface,
@@ -1909,6 +1982,12 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
         out VulkanPhysicalImageGroup? reactive,
         out VulkanPhysicalImageGroup? shadingDiagnostics,
         out VulkanPhysicalImageGroup? ambientOcclusion,
+        out VulkanPhysicalImageGroup? identityMultisample,
+        out VulkanPhysicalImageGroup? metadataMultisample,
+        out VulkanPhysicalImageGroup? depthMultisample,
+        out VulkanPhysicalImageGroup? selectionMultisample,
+        out VulkanPhysicalImageGroup? samplePositionMultisample,
+        uint msaaSampleCount,
         string ambientOcclusionTargetName)
     {
         bool found = allocator.TryGetPhysicalGroupForResource(AdvancedVisibilityResourceNames.Identity, out identity);
@@ -1919,6 +1998,19 @@ VulkanAdvancedSceneProgramBindingContract.VisibilityLateMeshPayloadsBinding,
         found &= allocator.TryGetPhysicalGroupForResource(AdvancedShadingResourceNames.ReactiveMask, out reactive);
         found &= allocator.TryGetPhysicalGroupForResource(AdvancedShadingResourceNames.ShadingDiagnostics, out shadingDiagnostics);
         found &= allocator.TryGetPhysicalGroupForResource(ambientOcclusionTargetName, out ambientOcclusion);
+        identityMultisample = null;
+        metadataMultisample = null;
+        depthMultisample = null;
+        selectionMultisample = null;
+        samplePositionMultisample = null;
+        if (msaaSampleCount > 1u)
+        {
+            found &= allocator.TryGetPhysicalGroupForResource(AdvancedVisibilityResourceNames.IdentityMultisample, out identityMultisample);
+            found &= allocator.TryGetPhysicalGroupForResource(AdvancedVisibilityResourceNames.MetadataMultisample, out metadataMultisample);
+            found &= allocator.TryGetPhysicalGroupForResource(AdvancedVisibilityResourceNames.DepthStencilMultisample, out depthMultisample);
+            found &= allocator.TryGetPhysicalGroupForResource(AdvancedVisibilityResourceNames.SelectionMultisample, out selectionMultisample);
+            found &= allocator.TryGetPhysicalGroupForResource(AdvancedVisibilityResourceNames.SamplePositionMultisample, out samplePositionMultisample);
+        }
         return found;
     }
 

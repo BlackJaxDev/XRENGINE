@@ -1503,7 +1503,8 @@ namespace XREngine.Rendering
                 _renderPipeline.ResourceGeneration,
                 descriptorGeneration,
                 instanceRevision,
-                ResolveRenderGraphGeneration(_renderPipeline.Pipeline?.PassMetadata),
+                ResolveRenderGraphGeneration(
+                    activeGeneration?.PassMetadata ?? _renderPipeline.Pipeline?.PassMetadata),
                 dimensions.DisplayWidth,
                 dimensions.DisplayHeight,
                 dimensions.InternalWidth,

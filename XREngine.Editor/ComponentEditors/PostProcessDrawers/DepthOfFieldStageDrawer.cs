@@ -17,7 +17,7 @@ public sealed class DepthOfFieldStageDrawer : IPostProcessStageCustomDrawer
 {
     public void DrawStageFooter(PostProcessStageCustomDrawerContext context)
     {
-        if (context.Component is null || context.StageState.BackingInstance is not DepthOfFieldSettings dof)
+        if (context.StageState.BackingInstance is not DepthOfFieldSettings dof)
             return;
 
         if (dof.Mode != DepthOfFieldSettings.DepthOfFieldControlMode.TargetTransform)
@@ -60,7 +60,7 @@ public sealed class DepthOfFieldStageDrawer : IPostProcessStageCustomDrawer
 
             // Show computed distance as read-only info
             Vector3 targetPos = current.WorldTranslation + dof.FocusTargetOffset;
-            Vector3 cameraPos = context.Component.Camera.Transform.WorldTranslation;
+            Vector3 cameraPos = context.Camera.Transform.WorldTranslation;
             float dist = Vector3.Distance(cameraPos, targetPos);
             ImGui.TextDisabled($"Computed Distance: {dist:F2}");
         }

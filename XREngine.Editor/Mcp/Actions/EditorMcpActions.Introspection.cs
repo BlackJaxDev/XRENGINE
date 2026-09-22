@@ -16,6 +16,7 @@ using XREngine.Input;
 using XREngine.Input.Devices;
 using XREngine.Rendering;
 using XREngine.Rendering.Commands;
+using XREngine.Rendering.RenderGraph;
 using XREngine.Scene;
 using XREngine.Scene.Prefabs;
 using XREngine.Scene.Transforms;
@@ -389,6 +390,7 @@ namespace XREngine.Editor.Mcp
                 activeViewportUpdatingCommandCount = activeViewportCommands?.GetUpdatingCommandCount(),
                 activeViewportCommandsAddedCount = activeViewportCommands?.GetCommandsAddedCount(),
                 activeViewportRenderingCommandPasses = BuildRenderCommandPassSummary(activeViewportCommands),
+                activeViewportResourcePasses = BuildResourcePassSummary(activeViewport?.RenderPipelineInstance.ActiveGeneration?.PassMetadata),
                 advancedProfile = activeViewport is null
                     ? null
                     : BuildAdvancedProfileDiagnostics(activeViewport),
@@ -533,6 +535,7 @@ namespace XREngine.Editor.Mcp
                 activeRenderingCommandCount = activeCommands.GetRenderingCommandCount(),
                 activeUpdatingCommandCount = activeCommands.GetUpdatingCommandCount(),
                 activeCommandPasses = BuildRenderCommandPassSummary(activeCommands),
+                activeResourcePasses = BuildResourcePassSummary(viewport.RenderPipelineInstance.ActiveGeneration?.PassMetadata),
                 cameraType = activeCamera?.GetType().FullName,
                 cameraNodeId = activeCameraNode?.ID,
                 cameraNodeName = activeCameraNode?.Name,
@@ -548,6 +551,21 @@ namespace XREngine.Editor.Mcp
                 lastResourceGenerationFailure = viewport.RenderPipelineInstance.LastResourceGenerationFailure
             };
         }
+
+        private static object[]? BuildResourcePassSummary(IReadOnlyCollection<RenderPassMetadata>? passes)
+            => passes?.OrderBy(static pass => pass.PassIndex)
+                .Select(static pass => (object)new
+                {
+                    passIndex = pass.PassIndex,
+                    passName = pass.Name,
+                    stage = pass.Stage.ToString(),
+                    resources = pass.ResourceUsages.Select(static usage => new
+                    {
+                        name = usage.ResourceName,
+                        type = usage.ResourceType.ToString(),
+                        access = usage.Access.ToString()
+                    }).ToArray()
+                }).ToArray();
 
         private static object[]? BuildRenderCommandPassSummary(RenderCommandCollection? commands)
         {

@@ -718,6 +718,35 @@ internal sealed class FrameOperationStream
         return true;
     }
 
+    internal bool TryAssociateAdvancedMultisampleResolvePipeline(
+        int index,
+        in VulkanAdvancedVisibilityStageRequest request,
+        in VulkanAdvancedMsaaResolvePipeline pipeline)
+    {
+        if (!pipeline.IsValid ||
+            request.Phase != EAdvancedVisibilityStageBackendPhase.MultisampleResolve ||
+            (uint)index >= (uint)_count ||
+            _headers[index].OpCode != EVulkanPrimaryPlanNodeKind.AdvancedVisibility)
+        {
+            return false;
+        }
+
+        ref readonly FrameOperationHeader header = ref _headers[index];
+        VulkanAdvancedVisibilityOperationPayload payload =
+            _payloads.AdvancedVisibilities[header.PayloadIndex];
+        if (!payload.Request.Equals(request) ||
+            payload.TargetClosure != pipeline.TargetClosure)
+        {
+            return false;
+        }
+
+        _payloads.AdvancedVisibilities[header.PayloadIndex] = payload with
+        {
+            MultisampleResolvePipeline = pipeline,
+        };
+        return true;
+    }
+
     internal VulkanAdvancedVisibilityPipelineReadiness TryAssociateAdvancedVisibilityLateClosure(
         int index,
         in VulkanAdvancedVisibilityStageRequest request,

@@ -56,6 +56,7 @@ namespace XREngine
         private int _materialPreviewSurfaceIndex = 0;
         private int _submeshInspectorTabIndex = 0;
         private int _submeshDetailTabIndex = 0;
+        private bool _showCameraPreviews;
         private EditorThemeSettings _theme = new();
         private EditorDebugOptions _debug = new();
         private EditorViewportPreferences? _viewport;
@@ -221,6 +222,19 @@ namespace XREngine
         {
             get => _viewportPresentationMode;
             set => SetField(ref _viewportPresentationMode, value);
+        }
+
+        /// <summary>
+        /// Shows inline camera output previews in all camera inspectors. Disabled previews do no preview discovery work.
+        /// </summary>
+        [Category("Inspector")]
+        [DisplayName("Show Camera Previews")]
+        [Description("Show rendered camera output above camera settings. Shared by all camera inspectors; does not change scene rendering.")]
+        [DefaultValue(false)]
+        public bool ShowCameraPreviews
+        {
+            get => _showCameraPreviews;
+            set => SetField(ref _showCameraPreviews, value);
         }
 
         /// <summary>

@@ -41,11 +41,14 @@ internal sealed partial class VulkanCommandRuntime
             (payload.Request.EnableBuiltInAmbientOcclusion ? 4u : 0u) |
             (payload.Request.EnableLightProbesAndIbl ? 8u : 0u) |
             (payload.Request.RequiresMaterialSurfaceExports ? 16u : 0u) |
-            (((uint)payload.Request.ShadingDebugView & 0xFFu) << 8), depthSlices,
+            (((uint)payload.Request.ShadingDebugView & 0xFFu) << 8) |
+            ((Math.Min(closure.MsaaSampleCount, 16u) & 0xFu) << 24), depthSlices,
             checked((uint)(closure.LightIndices.NativeSize / sizeof(uint))),
             payload.SceneState.Lights.Length / 128u,
             checked((uint)(closure.KernelTiles.NativeSize / 16u)),
-            new Vector4(clear.R, clear.G, clear.B, clear.A));
+            payload.Request.MsaaSampleCount > 1u && payload.Request.HasAuthoredBackground
+                ? Vector4.Zero
+                : new Vector4(clear.R, clear.G, clear.B, clear.A));
 
         if (payload.Request.Stage != EAdvancedRenderStage.AmbientOcclusion &&
             !(state.AdvancedQueueOverlap is not null && payload.Request.Stage == EAdvancedRenderStage.WorkClassification))
@@ -127,6 +130,14 @@ internal sealed partial class VulkanCommandRuntime
         // final submit owns the Classified wait covering indirect argument reads.
         BeginAdvancedQueueOverlapShade(ref state);
         TrackAdvancedNativeShadeClosure(state.CommandBuffer, in closure);
+        if (closure.UsesMultisampleVisibility)
+        {
+            TransitionNativeSharedInput(state.CommandBuffer, closure.IdentityMultisample!, closure.ViewIndex);
+            TransitionNativeSharedInput(state.CommandBuffer, closure.MetadataMultisample!, closure.ViewIndex);
+            TransitionNativeSharedInput(state.CommandBuffer, closure.SelectionMultisample!, closure.ViewIndex);
+            TransitionNativeInput(state.CommandBuffer, closure.DepthMultisample!, closure.ViewIndex);
+            TransitionNativeSharedInput(state.CommandBuffer, closure.SamplePositionMultisample!, closure.ViewIndex);
+        }
         if (state.AdvancedQueueOverlap is not null)
         {
             // Final owns these real accesses; inherited entry layouts alone do
@@ -141,30 +152,51 @@ internal sealed partial class VulkanCommandRuntime
             TransitionNativeOutput(state.CommandBuffer, closure.ShadingDiagnostics, closure.ViewIndex);
             TransitionNativeDdgiOutputs(state.CommandBuffer, in closure);
         }
-        VulkanAdvancedComputePipeline shade = payload.NativeComputePipelines.Shade;
+        VulkanAdvancedComputePipeline shade = closure.UsesMultisampleVisibility
+            ? payload.NativeComputePipelines.ShadeMultisample
+            : payload.NativeComputePipelines.Shade;
         ulong parameterAddress = shade.UsesAddressRoot
             ? WriteNativeShadingAddressRoot(ref state, closure.ShadingAddressRoot, in push)
             : 0UL;
         using (TryBeginVulkanGpuProfilerScope(state.CommandBuffer, NativeOpaqueGpuProfilerPath))
         {
-            CmdBeginLabel(state.CommandBuffer, "Advanced.NativeOpaque.Indirect");
+            CmdBeginLabel(state.CommandBuffer, closure.UsesMultisampleVisibility
+                ? "Advanced.NativeOpaque.Msaa"
+                : "Advanced.NativeOpaque.Indirect");
             BindPipelineTracked(state.CommandBuffer, PipelineBindPoint.Compute, shade.Pipeline);
             BindAdvancedVisibilityDescriptorSets(state.CommandBuffer, PipelineBindPoint.Compute,
                 shade.Program.PipelineLayout, in payload, payload.NativeComputeDescriptorSet);
-            for (uint kernel = 0; kernel < AdvancedRenderPipeline.DefaultMaxShadingKernels; ++kernel)
+            if (closure.UsesMultisampleVisibility)
             {
-                push = push with { KernelIndex = kernel };
+                // MSAA must shade every covered sample at its own position.
+                // Classification is pixel-granular and would omit edge materials,
+                // so the MS variant performs one full-screen dispatch.
+                push = push with { KernelIndex = 0u };
                 PushNativeConstants(state.CommandBuffer, shade, in push, parameterAddress);
-                Api.CmdDispatchIndirect(state.CommandBuffer, closure.DispatchArguments.NativeBuffer,
-                    closure.DispatchArguments.NativeOffset + kernel * 16UL);
+                Api.CmdDispatch(state.CommandBuffer, tilesX, tilesY, 1u);
+            }
+            else
+            {
+                for (uint kernel = 0; kernel < AdvancedRenderPipeline.DefaultMaxShadingKernels; ++kernel)
+                {
+                    push = push with { KernelIndex = kernel };
+                    PushNativeConstants(state.CommandBuffer, shade, in push, parameterAddress);
+                    Api.CmdDispatchIndirect(state.CommandBuffer, closure.DispatchArguments.NativeBuffer,
+                        closure.DispatchArguments.NativeOffset + kernel * 16UL);
+                }
             }
             CmdEndLabel(state.CommandBuffer);
         }
         EmitMemoryBarrierMask(state.CommandBuffer, EMemoryBarrierMask.ShaderImageAccess);
         push = push with { Flags = push.Flags | 1u };
-        RecordNativeDispatch(state.CommandBuffer, in payload, shade,
-            in push, tilesX, tilesY, 1, "Advanced.NativeOpaque.GpuOverflowRepair", NativeOpaqueRepairGpuProfilerPath, parameterAddress);
-        RecordNativeShadingRootUse(shade.UsesAddressRoot, checked((int)AdvancedRenderPipeline.DefaultMaxShadingKernels + 1));
+        if (!closure.UsesMultisampleVisibility)
+        {
+            RecordNativeDispatch(state.CommandBuffer, in payload, shade,
+                in push, tilesX, tilesY, 1, "Advanced.NativeOpaque.GpuOverflowRepair", NativeOpaqueRepairGpuProfilerPath, parameterAddress);
+            RecordNativeShadingRootUse(shade.UsesAddressRoot, checked((int)AdvancedRenderPipeline.DefaultMaxShadingKernels + 1));
+        }
+        else
+            RecordNativeShadingRootUse(shade.UsesAddressRoot, 1);
         EmitMemoryBarrierMask(state.CommandBuffer, EMemoryBarrierMask.ShaderImageAccess | EMemoryBarrierMask.TextureFetch);
         VulkanFrozenBufferBarrier lightingCounters = closure.LightingCounters;
         VulkanAdvancedVisibilityStageRequest lightingRequest = payload.Request;

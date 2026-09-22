@@ -22,6 +22,7 @@ internal static class ComponentEditorLayout
         public nint TextureHandle;
         public Vector2 PixelSize = new(1f, 1f);
         public bool FlipVertically = true;
+        public bool IsCameraPreview;
     }
 
     private static readonly ConditionalWeakTable<XRComponent, InspectorModeState> s_modes = new();
@@ -60,7 +61,12 @@ internal static class ComponentEditorLayout
         return true;
     }
 
-    public static void RequestPreviewDialog(string title, nint textureHandle, Vector2 pixelSize, bool flipVertically)
+    public static void RequestPreviewDialog(
+        string title,
+        nint textureHandle,
+        Vector2 pixelSize,
+        bool flipVertically,
+        bool isCameraPreview = false)
     {
         if (textureHandle == nint.Zero)
             return;
@@ -71,6 +77,7 @@ internal static class ComponentEditorLayout
         s_previewDialog.TextureHandle = textureHandle;
         s_previewDialog.PixelSize = new Vector2(MathF.Max(1f, pixelSize.X), MathF.Max(1f, pixelSize.Y));
         s_previewDialog.FlipVertically = flipVertically;
+        s_previewDialog.IsCameraPreview = isCameraPreview;
         s_previewFrameRendered = -1;
     }
 
@@ -78,6 +85,13 @@ internal static class ComponentEditorLayout
     {
         if (s_previewDialog is not { IsOpen: true } dialog)
             return;
+
+        if (dialog.IsCameraPreview && !Engine.GlobalEditorPreferences.ShowCameraPreviews)
+        {
+            s_previewDialog = null;
+            s_previewFrameRendered = -1;
+            return;
+        }
 
         int frame = ImGui.GetFrameCount();
         if (frame == s_previewFrameRendered)

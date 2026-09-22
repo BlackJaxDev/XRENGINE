@@ -2,7 +2,7 @@
 
 #pragma snippet "DDGIEnvironmentCapture"
 
-layout (location = 0) out vec3 OutColor;
+layout (location = 0) out vec4 OutColor;
 layout (location = 1) in vec3 FragWorldDir;
 
 uniform sampler2D Texture0;
@@ -21,5 +21,5 @@ void main()
     // Map to UV coordinates
     vec2 uv = vec2((phi / (2.0 * PI)) + 0.5, 1.0 - ((theta / PI) + 0.5));
 
-    OutColor = texture(Texture0, uv).rgb * SkyboxIntensity;
+    OutColor = vec4(texture(Texture0, uv).rgb * SkyboxIntensity, 1.0);
 }

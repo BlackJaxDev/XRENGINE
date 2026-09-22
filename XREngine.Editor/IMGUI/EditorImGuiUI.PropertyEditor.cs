@@ -1,5 +1,6 @@
 using ImGuiNET;
 using System.Collections;
+using System.Collections.Concurrent;
 using System.ComponentModel;
 using System.Globalization;
 using System.Numerics;
@@ -13,6 +14,7 @@ using XREngine.Extensions;
 using XREngine.Data.Colors;
 using XREngine.Data.Core;
 using XREngine.Editor.ComponentEditors;
+using XREngine.Editor.Services;
 using XREngine.Editor.UI;
 using XREngine.Rendering;
 using XREngine.Rendering.UI;
@@ -117,11 +119,6 @@ public static partial class EditorImGuiUI
             }
         }
 
-        internal static bool HasCreatablePropertyTypes(Type baseType)
-            => GetPropertyTypeDescriptors(baseType).Count > 0;
-
-        internal static void DrawCreatablePropertyTypePickerPopup(string popupId, Type baseType, Action<Type> onSelected)
-            => DrawPropertyTypePickerPopup(popupId, baseType, onSelected);
         private static string FormatFlagsEnumPreview(Type enumType, Array values, ulong bits)
         {
             if (bits == 0)
@@ -167,8 +164,33 @@ public static partial class EditorImGuiUI
         }
 
         // Property Type Picker state
-        private static readonly Dictionary<Type, List<CollectionTypeDescriptor>> _propertyTypeDescriptorCache = new();
+        private sealed class PropertyTypeDescriptorCacheState(long generation)
+        {
+            public long Generation { get; } = generation;
+            public ConcurrentDictionary<Type, IReadOnlyList<CollectionTypeDescriptor>> Descriptors { get; } = new();
+        }
+
+        private static PropertyTypeDescriptorCacheState _propertyTypeDescriptorCacheState =
+            new(EditorTypeCatalogGeneration.Current);
         private static readonly Dictionary<string, string> _propertyTypePickerSearch = new(StringComparer.Ordinal);
+
+        private static void ResetPropertyTypeDescriptorCache(long generation)
+            => Volatile.Write(ref _propertyTypeDescriptorCacheState, new PropertyTypeDescriptorCacheState(generation));
+
+        private static PropertyTypeDescriptorCacheState GetCurrentPropertyTypeDescriptorCache()
+        {
+            PropertyTypeDescriptorCacheState state = Volatile.Read(ref _propertyTypeDescriptorCacheState);
+            long generation = EditorTypeCatalogGeneration.Current;
+            if (state.Generation == generation)
+                return state;
+
+            var replacement = new PropertyTypeDescriptorCacheState(generation);
+            PropertyTypeDescriptorCacheState observed = Interlocked.CompareExchange(
+                ref _propertyTypeDescriptorCacheState,
+                replacement,
+                state);
+            return ReferenceEquals(observed, state) ? replacement : observed;
+        }
 
         /// <summary>
         /// XRAsset infrastructure members that should never appear in the generic property inspector.
@@ -2446,7 +2468,7 @@ public static partial class EditorImGuiUI
 
         private static IReadOnlyList<Type> GetLoadableAssemblyTypesSafe(Assembly assembly)
         {
-            if (assembly.IsDynamic)
+            if (!EditorTypeCatalogGeneration.IsAssemblyDiscoverable(assembly))
                 return [];
 
             return XREngine.Core.XRLoadableTypeCatalog.GetTypes(assembly);
@@ -2458,10 +2480,40 @@ public static partial class EditorImGuiUI
         private static IReadOnlyList<CollectionTypeDescriptor> GetPropertyTypeDescriptors(Type baseType)
         {
             baseType = Nullable.GetUnderlyingType(baseType) ?? baseType;
+            if (!EditorTypeCatalogGeneration.IsTypeDiscoverable(baseType))
+                return Array.Empty<CollectionTypeDescriptor>();
 
-            if (_propertyTypeDescriptorCache.TryGetValue(baseType, out var cached))
-                return cached;
+            const int maxGenerationAttempts = 2;
+            for (int attempt = 0; attempt < maxGenerationAttempts; attempt++)
+            {
+                PropertyTypeDescriptorCacheState state = GetCurrentPropertyTypeDescriptorCache();
+                if (state.Generation != EditorTypeCatalogGeneration.Current)
+                    continue;
 
+                if (state.Descriptors.TryGetValue(baseType, out IReadOnlyList<CollectionTypeDescriptor>? cached))
+                {
+                    if (state.Generation == EditorTypeCatalogGeneration.Current)
+                        return cached;
+
+                    continue;
+                }
+
+                using var profilerScope = Engine.Profiler.Start("UI.Inspector.CreatableTypeDiscovery.Sync");
+                CollectionTypeDescriptor[] descriptors = DiscoverPropertyTypeDescriptors(baseType);
+                if (state.Generation != EditorTypeCatalogGeneration.Current)
+                    continue;
+
+                IReadOnlyList<CollectionTypeDescriptor> published =
+                    state.Descriptors.GetOrAdd(baseType, descriptors);
+                if (state.Generation == EditorTypeCatalogGeneration.Current)
+                    return published;
+            }
+
+            return Array.Empty<CollectionTypeDescriptor>();
+        }
+
+        private static CollectionTypeDescriptor[] DiscoverPropertyTypeDescriptors(Type baseType)
+        {
             var descriptors = new List<CollectionTypeDescriptor>();
 
             // If the base type itself is concrete with a parameterless constructor, include it
@@ -2514,8 +2566,7 @@ public static partial class EditorImGuiUI
                 return string.Compare(a.AssemblyName, b.AssemblyName, StringComparison.OrdinalIgnoreCase);
             });
 
-            _propertyTypeDescriptorCache[baseType] = descriptors;
-            return descriptors;
+            return [.. descriptors];
         }
 
         /// <summary>
@@ -2980,6 +3031,8 @@ public static partial class EditorImGuiUI
         private static IReadOnlyList<CollectionTypeDescriptor> GetCollectionTypeDescriptors(Type baseType)
         {
             baseType = Nullable.GetUnderlyingType(baseType) ?? baseType;
+            if (!EditorTypeCatalogGeneration.IsTypeDiscoverable(baseType))
+                return Array.Empty<CollectionTypeDescriptor>();
 
             if (_collectionTypeDescriptorCache.TryGetValue(baseType, out var cached))
                 return cached;
@@ -2987,6 +3040,9 @@ public static partial class EditorImGuiUI
             var descriptors = new List<CollectionTypeDescriptor>();
             foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
             {
+                if (!EditorTypeCatalogGeneration.IsAssemblyDiscoverable(assembly))
+                    continue;
+
                 foreach (Type type in XREngine.Core.XRLoadableTypeCatalog.GetTypes(assembly))
                 {
                     if (!baseType.IsAssignableFrom(type))

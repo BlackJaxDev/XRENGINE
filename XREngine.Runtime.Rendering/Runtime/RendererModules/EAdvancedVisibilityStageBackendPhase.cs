@@ -9,4 +9,5 @@ public enum EAdvancedVisibilityStageBackendPhase
     Complete,
     LateCompute,
     LateRaster,
+    MultisampleResolve,
 }

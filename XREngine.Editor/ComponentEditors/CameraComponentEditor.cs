@@ -23,12 +23,8 @@ using XREngine.Scene.Transforms;
 
 namespace XREngine.Editor.ComponentEditors;
 
-public sealed class CameraComponentEditor : IXRComponentEditor
+public sealed partial class CameraComponentEditor : IXRComponentEditor
 {
-    private const float PreviewMaxEdge = 256.0f;
-    private const float PreviewMinEdge = 96.0f;
-    private const double PreviewDiscoveryRefreshSeconds = 0.125;
-    private const int CascadePreviewsPerRow = 2;
 
     /// <summary>
     /// Active camera transitions keyed by camera instance.
@@ -40,19 +36,6 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         public string SelectedStageKey = string.Empty;
     }
 
-    /// <summary>
-    /// Caches only preview discovery metadata. GPU handles are deliberately resolved for every visible frame,
-    /// because a render-target recreation may invalidate them without changing the texture object identity.
-    /// </summary>
-    private sealed class CameraPreviewState
-    {
-        public XRCamera? Camera;
-        public XRFrameBuffer? DefaultRenderTarget;
-        public XRTexture? Texture;
-        public Vector2 PixelSize;
-        public string? Failure;
-        public long NextDiscoveryTimestamp;
-    }
 
     private readonly struct PostProcessStageEntry
     {
@@ -67,11 +50,167 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         public PostProcessStageDescriptor Descriptor { get; }
         public PostProcessStageState State { get; }
     }
-    private static readonly ConditionalWeakTable<XRTexture2DArray, Dictionary<int, XRTexture2DArrayView>> CascadePreviewViews = new();
     private static readonly ConditionalWeakTable<PipelinePostProcessState, PostProcessStageSelectorState> PostProcessStageSelectorStates = new();
-    private static readonly ConditionalWeakTable<CameraComponent, CameraPreviewState> PreviewStates = new();
-    private static readonly ConcurrentDictionary<Type, PropertyInfo[]> PipelineCameraSettingProperties = new();
     private static readonly List<XRViewport> BoundViewportScratch = [];
+
+    private sealed class CameraMetadataCacheState(long generation)
+    {
+        public long Generation { get; } = generation;
+        public ConcurrentDictionary<Type, PropertyInfo[]> PipelineSettingProperties { get; } = new();
+        public ConcurrentDictionary<Type, RenderPipeline> FallbackPipelines { get; } = new();
+        public ParameterOption[]? ParameterOptions;
+    }
+
+    private sealed class EditorFallbackPipelineState
+    {
+        private readonly object _sync = new();
+        private readonly ConditionalWeakTable<XRCamera, PerCameraFallbackState> _states = new();
+        private readonly List<WeakReference<PerCameraFallbackState>> _ownedStates = [];
+
+        public PipelinePostProcessState GetOrCreate(XRCamera camera, RenderPipeline pipeline)
+        {
+            lock (_sync)
+            {
+                if (!_states.TryGetValue(camera, out PerCameraFallbackState? state))
+                {
+                    state = new PerCameraFallbackState();
+                    _states.Add(camera, state);
+                    _ownedStates.Add(new WeakReference<PerCameraFallbackState>(state));
+                }
+
+                return state.GetOrCreate(pipeline);
+            }
+        }
+
+        public void Dispose()
+        {
+            lock (_sync)
+            {
+                for (int i = 0; i < _ownedStates.Count; i++)
+                    if (_ownedStates[i].TryGetTarget(out PerCameraFallbackState? state))
+                        state.Dispose();
+                _ownedStates.Clear();
+            }
+        }
+
+        private sealed class PerCameraFallbackState
+        {
+            private PipelinePostProcessState? _state;
+            private RenderPipelinePostProcessSchema? _schema;
+
+            public PipelinePostProcessState GetOrCreate(RenderPipeline pipeline)
+            {
+                RenderPipelinePostProcessSchema schema = pipeline.PostProcessSchema;
+                if (_state is not null && ReferenceEquals(_schema, schema))
+                    return _state;
+
+                Dispose();
+                _state = new PipelinePostProcessState();
+                _state.BindToPipeline(pipeline);
+                _schema = schema;
+                return _state;
+            }
+
+            public void Dispose()
+            {
+                if (_state is not null)
+                    foreach (PostProcessStageState stage in _state.Stages.Values)
+                        stage.Dispose();
+
+                _state = null;
+                _schema = null;
+            }
+        }
+    }
+
+    private static CameraMetadataCacheState _metadataCacheState =
+        new(EditorTypeCatalogGeneration.Current);
+    private static readonly ConcurrentQueue<CameraMetadataCacheState> RetiredMetadataStates = new();
+    private static readonly ConditionalWeakTable<RenderPipeline, EditorFallbackPipelineState> EditorFallbackPipelineStates = new();
+    private static IEnumerator<RenderPipeline>? _retiredPipelineEnumerator;
+
+    static CameraComponentEditor()
+        => EditorTypeCatalogGeneration.Changed += ReplaceMetadataCacheState;
+
+    private static void ReplaceMetadataCacheState(long generation)
+    {
+        CameraMetadataCacheState state = Volatile.Read(ref _metadataCacheState);
+        if (state.Generation >= generation)
+            return;
+
+        var replacement = new CameraMetadataCacheState(generation);
+        if (!ReferenceEquals(
+            Interlocked.CompareExchange(ref _metadataCacheState, replacement, state),
+            state))
+        {
+            return;
+        }
+
+        RetiredMetadataStates.Enqueue(state);
+    }
+
+    /// <summary>
+    /// Releases editor-owned fallback pipelines after their type generation has
+    /// been detached. This is called by the ImGui owner before drawing a frame.
+    /// </summary>
+    internal static void ProcessTypeCatalogOwnerWork()
+    {
+        const int maxRetiredStatesPerFrame = 8;
+        const int maxRetiredPipelinesPerFrame = 4;
+        int retiredStateCount = 0;
+        int retiredPipelineCount = 0;
+
+        while (retiredStateCount < maxRetiredStatesPerFrame
+            && retiredPipelineCount < maxRetiredPipelinesPerFrame)
+        {
+            if (_retiredPipelineEnumerator is null)
+            {
+                if (!RetiredMetadataStates.TryDequeue(out CameraMetadataCacheState? retired))
+                    return;
+
+                _retiredPipelineEnumerator = retired.FallbackPipelines.Values.GetEnumerator();
+                retiredStateCount++;
+            }
+
+            if (!_retiredPipelineEnumerator.MoveNext())
+            {
+                _retiredPipelineEnumerator.Dispose();
+                _retiredPipelineEnumerator = null;
+                continue;
+            }
+
+            RenderPipeline pipeline = _retiredPipelineEnumerator.Current;
+            if (EditorFallbackPipelineStates.TryGetValue(pipeline, out EditorFallbackPipelineState? state))
+            {
+                state.Dispose();
+                EditorFallbackPipelineStates.Remove(pipeline);
+            }
+
+            pipeline.Destroy();
+            retiredPipelineCount++;
+        }
+    }
+
+    private static CameraMetadataCacheState GetCurrentMetadataCacheState()
+    {
+        CameraMetadataCacheState state = Volatile.Read(ref _metadataCacheState);
+        long generation = EditorTypeCatalogGeneration.Current;
+        if (state.Generation == generation)
+            return state;
+
+        var replacement = new CameraMetadataCacheState(generation);
+        CameraMetadataCacheState observed = Interlocked.CompareExchange(
+            ref _metadataCacheState,
+            replacement,
+            state);
+        if (ReferenceEquals(observed, state))
+        {
+            RetiredMetadataStates.Enqueue(state);
+            return replacement;
+        }
+
+        return observed;
+    }
 
     /// <summary>
     /// Settings for animated camera transitions.
@@ -136,8 +275,37 @@ public sealed class CameraComponentEditor : IXRComponentEditor
     /// Automatically discovers all available camera parameter types via reflection,
     /// respecting the <see cref="CameraParameterEditorAttribute"/> for ordering and display.
     /// </summary>
-    private static ParameterOption[]? _parameterOptions;
-    private static ParameterOption[] ParameterOptions => _parameterOptions ??= DiscoverParameterTypes();
+    private static ParameterOption[] GetParameterOptions(out long generation)
+    {
+        const int maxGenerationAttempts = 2;
+        for (int attempt = 0; attempt < maxGenerationAttempts; attempt++)
+        {
+            CameraMetadataCacheState state = GetCurrentMetadataCacheState();
+            if (state.Generation != EditorTypeCatalogGeneration.Current)
+                continue;
+
+            ParameterOption[]? cached = Volatile.Read(ref state.ParameterOptions);
+            if (cached is not null)
+            {
+                generation = state.Generation;
+                return cached;
+            }
+
+            ParameterOption[] discovered = DiscoverParameterTypes();
+            if (state.Generation != EditorTypeCatalogGeneration.Current)
+                continue;
+
+            cached = Interlocked.CompareExchange(ref state.ParameterOptions, discovered, null) ?? discovered;
+            if (state.Generation != EditorTypeCatalogGeneration.Current)
+                continue;
+
+            generation = state.Generation;
+            return cached;
+        }
+
+        generation = EditorTypeCatalogGeneration.Current;
+        return [];
+    }
 
     /// <summary>
     /// Discovers all concrete types derived from XRCameraParameters across all loaded assemblies.
@@ -149,7 +317,8 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         
         // Search in the main engine assembly and any assemblies that reference it
         var assemblies = AppDomain.CurrentDomain.GetAssemblies()
-            .Where(a => !a.IsDynamic && ReferencesAssembly(a, baseType.Assembly));
+            .Where(a => EditorTypeCatalogGeneration.IsAssemblyDiscoverable(a)
+                && ReferencesAssembly(a, baseType.Assembly));
 
         var types = assemblies
             .SelectMany(static assembly => XREngine.Core.XRLoadableTypeCatalog.GetTypes(assembly))
@@ -188,6 +357,10 @@ public sealed class CameraComponentEditor : IXRComponentEditor
     }
 
     public void DrawInspector(XRComponent component, HashSet<object> visited)
+        => DrawInspector(component, visited, null);
+
+    internal void DrawInspector(XRComponent component, HashSet<object> visited, RenderPipeline? defaultPipeline,
+        XRViewport? viewport = null, XRRenderPipelineInstance? pipelineInstance = null)
     {
         if (component is not CameraComponent cameraComponent)
         {
@@ -202,279 +375,23 @@ public sealed class CameraComponentEditor : IXRComponentEditor
             return;
         }
 
-        ImGui.PushID(cameraComponent.GetHashCode());
-        if (ImGui.BeginTabBar("CameraEditorTabs"))
-        {
-            if (ImGui.BeginTabItem("Settings"))
-            {
-                DrawCameraSettings(cameraComponent);
-                ImGui.EndTabItem();
-            }
-
-            if (ImGui.BeginTabItem("Projection"))
-            {
-                DrawParameterSection(cameraComponent, visited);
-                ImGui.EndTabItem();
-            }
-
-            if (ImGui.BeginTabItem("Post Processing"))
-            {
-                DrawSchemaBasedPostProcessingEditor(cameraComponent, visited);
-                ImGui.EndTabItem();
-            }
-
-            if (ImGui.BeginTabItem("Preview"))
-            {
-                DrawPreviewSection(cameraComponent);
-                ImGui.EndTabItem();
-            }
-
-            ImGui.EndTabBar();
-        }
-        ImGui.PopID();
-
-        ComponentEditorLayout.DrawActivePreviewDialog();
+        DrawRuntimeCameraEditor(cameraComponent.Camera, defaultPipeline, cameraComponent, visited, viewport, pipelineInstance);
     }
 
-    private static void DrawUsageStatus(CameraComponent component)
+
+
+    private static bool DrawRenderPipelineCameraSettings(RenderPipeline pipeline)
     {
-        bool isActive = component.IsActivelyRendering;
-        var player = component.GetUsingLocalPlayer();
-        var pawn = component.GetUsingPawn();
-
-        // Authoritative viewport bindings: scan live windows.
-        var boundViewports = BoundViewportScratch;
-        boundViewports.Clear();
-        foreach (var vp in RuntimeEngine.EnumerateActiveViewports())
-        {
-            if (ReferenceEquals(vp.CameraComponent, component))
-                boundViewports.Add(vp);
-        }
-
-        // Status indicator with color
-        Vector4 statusColor = isActive 
-            ? new Vector4(0.2f, 0.8f, 0.2f, 1.0f)  // Green for active
-            : new Vector4(0.6f, 0.6f, 0.6f, 1.0f); // Gray for inactive
-        
-        string statusIcon = isActive ? "[ACTIVE]" : "[INACTIVE]";
-        ImGui.TextColored(statusColor, statusIcon);
-        ImGui.SameLine();
-        ImGui.Text("Rendering Status");
-
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip(component.GetUsageDescription());
-
-        ImGui.Indent();
-
-        // Local Player info
-        if (player is not null)
-        {
-            ELocalPlayerIndex? localPlayerIndex = player.LocalPlayerIndex;
-            if (localPlayerIndex.HasValue)
-            {
-                int playerNumber = (int)localPlayerIndex.GetValueOrDefault() + 1;
-                ImGui.TextColored(new Vector4(0.4f, 0.8f, 1.0f, 1.0f), $"Local Player: {playerNumber}");
-                if (ImGui.IsItemHovered())
-                    ImGui.SetTooltip($"This camera is being used by Local Player {playerNumber}'s viewport.");
-            }
-            else
-            {
-                ImGui.TextDisabled("Local Player: None");
-            }
-        }
-        else
-        {
-            ImGui.TextDisabled("Local Player: None");
-        }
-
-        // Pawn info
-        if (pawn is not null)
-        {
-            string pawnName = pawn.SceneNode?.Name ?? pawn.GetType().Name;
-            string pawnType = pawn.GetType().Name;
-            ImGui.TextColored(new Vector4(0.4f, 1.0f, 0.6f, 1.0f), $"Pawn: {pawnName}");
-            if (ImGui.IsItemHovered())
-                ImGui.SetTooltip($"Type: {pawnType}\nThis camera is provided by this pawn component.");
-        }
-        else
-        {
-            ImGui.TextDisabled("Pawn: None");
-        }
-
-        // Viewport count
-        var cam = component.Camera;
-        int viewportCount = boundViewports.Count;
-        ImGui.TextDisabled($"(CameraHash: {cam.GetHashCode()})");
-        ImGui.TextDisabled($"(XRCamera.Viewports: {cam.Viewports.Count})");
-        if (viewportCount > 0)
-        {
-            ImGui.TextColored(new Vector4(1.0f, 0.8f, 0.4f, 1.0f), $"Viewports: {viewportCount}");
-            if (ImGui.IsItemHovered())
-            {
-                string tooltip = "Bound viewports:\n";
-                for (int i = 0; i < boundViewports.Count; i++)
-                {
-                    var vp = boundViewports[i];
-                    tooltip += $"  [{i}] {vp.Region.Width}x{vp.Region.Height}";
-                    if (vp.Window is not null)
-                        tooltip += $" (Window: {vp.Window.WindowTitle})";
-                    tooltip += "\n";
-                }
-                ImGui.SetTooltip(tooltip.TrimEnd());
-            }
-        }
-        else
-        {
-            ImGui.TextDisabled("Viewports: 0");
-        }
-
-        // Warning if not in use
-        if (!isActive)
-        {
-            ImGui.Spacing();
-            ImGui.TextColored(new Vector4(1.0f, 0.7f, 0.2f, 1.0f), "⚠ Camera is not rendering");
-            if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("This camera is not bound to any viewport or render target.\nIt will not consume rendering resources.");
-        }
-
-        ImGui.Unindent();
-    }
-
-    private static void DrawCameraSettings(CameraComponent component)
-    {
-        using var profilerScope = Engine.Profiler.Start("UI.ComponentEditor.CameraComponent.Settings");
-
-        if (!ImGui.CollapsingHeader("Camera Settings", ImGuiTreeNodeFlags.DefaultOpen))
-            return;
-
-        // Usage Status Section
-        DrawUsageStatus(component);
-        ImGui.Separator();
-
-        bool cullWithFrustum = component.CullWithFrustum;
-        if (ImGui.Checkbox("Cull With Frustum", ref cullWithFrustum))
-            component.CullWithFrustum = cullWithFrustum;
-
-        int directionalShadowMode = (int)component.DirectionalShadowRenderingMode;
-        string[] directionalShadowModes =
-        [
-            "Non-Cascaded",
-            "Cascaded"
-        ];
-        ImGui.SetNextItemWidth(180.0f);
-        if (ImGui.Combo("Directional Shadow Rendering", ref directionalShadowMode, directionalShadowModes, directionalShadowModes.Length))
-            component.DirectionalShadowRenderingMode = (EDirectionalShadowRenderingMode)directionalShadowMode;
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Chooses between the legacy single directional shadow map and cascaded directional shadows for this camera.");
-
-        // Culling Mask
-        int cullingMask = component.Camera.CullingMask.Value;
-        bool cullingChanged = false;
-
-        ImGui.Text("Culling Mask");
-        ImGui.SameLine();
-        ImGui.TextDisabled($"(0x{cullingMask:X8})");
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Bitmask determining which layers this camera renders. -1 = all layers.");
-
-        const int columns = 4;
-        if (ImGui.BeginTable("CullingMaskTable", columns, ImGuiTableFlags.BordersInnerV))
-        {
-            var layerNames = Engine.GameSettings.LayerNames;
-            for (int layer = 0; layer < 32; layer++)
-            {
-                if (layer % columns == 0)
-                    ImGui.TableNextRow();
-
-                ImGui.TableSetColumnIndex(layer % columns);
-
-                string label = layerNames.TryGetValue(layer, out var name) && !string.IsNullOrWhiteSpace(name)
-                    ? name
-                    : $"Layer {layer}";
-
-                bool enabled = (cullingMask & (1 << layer)) != 0;
-                if (ImGui.Checkbox(label, ref enabled))
-                {
-                    cullingChanged = true;
-                    if (enabled)
-                        cullingMask |= 1 << layer;
-                    else
-                        cullingMask &= ~(1 << layer);
-                }
-            }
-
-            ImGui.EndTable();
-        }
-
-        if (cullingChanged)
-            component.Camera.CullingMask = new LayerMask(cullingMask);
-
-        var overlay = component.GetUserInterfaceOverlay();
-        string uiOverlay = (overlay as XRComponent)?.SceneNode?.Name
-            ?? overlay?.GetType().Name
-            ?? "<none>";
-        ImGui.TextDisabled($"UI Overlay: {uiOverlay}");
-
-        ImGui.Separator();
-
-        // Anti-Aliasing Override
-        DrawAntiAliasingOverride(component);
-
-        ImGui.Separator();
-
-        // HDR Output Override
-        DrawOutputHDROverride(component);
-
-        ImGui.Separator();
-
-        // Internal Resolution Settings
-        DrawInternalResolutionSettings(component);
-
-        ImGui.Separator();
-        if (DrawRenderPipelineCameraSettings(component))
-            ImGui.Separator();
-
-        ImGui.TextDisabled("Render Pipeline Asset");
-        var pipeline = component.Camera.RenderPipeline;
-        ImGuiAssetUtilities.DrawAssetField<RenderPipeline>("CameraRenderPipeline", pipeline, asset =>
-        {
-            component.Camera.ReplaceRenderPipelineAsset(asset ?? RuntimeEngine.Rendering.NewRenderPipeline());
-        }, allowClear: false, allowCreateOrReplace: true);
-
-        ImGui.TextDisabled("Default Render Target Asset");
-        ImGuiAssetUtilities.DrawAssetField<XRFrameBuffer>("CameraDefaultRenderTarget", component.DefaultRenderTarget, asset =>
-        {
-            component.DefaultRenderTarget = asset;
-        });
-
-        ImGui.Separator();
-        DrawForwardPlusDebugSection(component);
-    }
-
-    private static bool DrawRenderPipelineCameraSettings(CameraComponent component)
-    {
-        RenderPipeline pipeline = ResolveCameraEditorPipeline(component.Camera);
-        PropertyInfo[] properties = PipelineCameraSettingProperties.GetOrAdd(
-            pipeline.GetType(),
-            static type => type
-                .GetProperties(BindingFlags.Instance | BindingFlags.Public)
-                .Where(property => property.CanRead
-                    && property.CanWrite
-                    && property.GetIndexParameters().Length == 0
-                    && property.GetCustomAttribute<RenderPipelineCameraSettingAttribute>(inherit: true) is not null)
-                .OrderBy(property => property.GetCustomAttribute<RenderPipelineCameraSettingAttribute>(inherit: true)?.Order ?? 0)
-                .ThenBy(property => property.GetCustomAttribute<CategoryAttribute>(inherit: true)?.Category ?? string.Empty, StringComparer.Ordinal)
-                .ThenBy(GetPipelineSettingDisplayName, StringComparer.Ordinal)
-                .ToArray());
+        PropertyInfo[] properties = GetPipelineCameraSettingProperties(pipeline.GetType());
 
         if (properties.Length == 0)
             return false;
 
-        ImGui.Text("Render Pipeline Settings");
+        ImGui.SeparatorText("Pipeline Settings");
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Settings exposed by the active render pipeline for this camera.");
+            ImGui.SetTooltip("Settings exposed by the selected pipeline asset; all render instances using that asset share them.");
 
-        ImGui.TextDisabled($"Pipeline: {pipeline.DebugName}");
+        ImGui.TextWrapped($"Pipeline: {pipeline.DebugName}");
         ImGui.PushID("RenderPipelineCameraSettings");
 
         string? currentCategory = null;
@@ -493,10 +410,42 @@ public sealed class CameraComponentEditor : IXRComponentEditor
             DrawPipelineCameraSettingProperty(pipeline, property);
         }
 
-        DrawForwardDepthNormalPrePassHint(pipeline);
+
 
         ImGui.PopID();
         return true;
+    }
+
+    private static PropertyInfo[] GetPipelineCameraSettingProperties(Type pipelineType)
+    {
+        if (!EditorTypeCatalogGeneration.IsTypeDiscoverable(pipelineType))
+            return [];
+
+        const int maxGenerationAttempts = 2;
+        for (int attempt = 0; attempt < maxGenerationAttempts; attempt++)
+        {
+            CameraMetadataCacheState state = GetCurrentMetadataCacheState();
+            if (state.Generation != EditorTypeCatalogGeneration.Current)
+                continue;
+
+            PropertyInfo[] properties = state.PipelineSettingProperties.GetOrAdd(
+                pipelineType,
+                static type => type
+                    .GetProperties(BindingFlags.Instance | BindingFlags.Public)
+                    .Where(property => property.CanRead
+                        && property.CanWrite
+                        && property.GetIndexParameters().Length == 0
+                        && property.GetCustomAttribute<RenderPipelineCameraSettingAttribute>(inherit: true) is not null)
+                    .OrderBy(property => property.GetCustomAttribute<RenderPipelineCameraSettingAttribute>(inherit: true)?.Order ?? 0)
+                    .ThenBy(property => property.GetCustomAttribute<CategoryAttribute>(inherit: true)?.Category ?? string.Empty, StringComparer.Ordinal)
+                    .ThenBy(GetPipelineSettingDisplayName, StringComparer.Ordinal)
+                    .ToArray());
+
+            if (state.Generation == EditorTypeCatalogGeneration.Current)
+                return properties;
+        }
+
+        return [];
     }
 
     private static void DrawPipelineCameraSettingProperty(RenderPipeline pipeline, PropertyInfo property)
@@ -539,8 +488,8 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         Array values = Enum.GetValues(enumType);
         string currentLabel = current is not null ? GetEnumDisplayName(enumType, current) : "<unset>";
 
-        ImGui.SetNextItemWidth(180.0f);
-        if (ImGui.BeginCombo(displayName, currentLabel))
+        CameraSettingLabel(displayName);
+        if (ImGui.BeginCombo("##Value", currentLabel))
         {
             foreach (object option in values)
             {
@@ -584,355 +533,14 @@ public sealed class CameraComponentEditor : IXRComponentEditor
             ?? name;
     }
 
-    private static void DrawForwardDepthNormalPrePassHint(RenderPipeline pipeline)
-    {
-        if (pipeline is not IForwardDepthNormalPrePassSettings settings)
-            return;
-
-        if (!settings.ForwardDepthPrePassEnabled)
-        {
-            ImGui.TextDisabled("Forward pre-pass is disabled; share and resolution settings are inactive.");
-            return;
-        }
-
-        if (settings.ForwardPrePassSharesGBufferTargets && settings.ForwardDepthNormalPrePassResolution != EDepthNormalPrePassResolution.Full)
-            ImGui.TextDisabled("Shared GBuffer writes stay full resolution; this resolution affects the dedicated/contact pre-pass targets.");
-    }
-
-    private static readonly string[] ForwardPlusDebugModeNames =
-    [
-        "None",
-        "Heatmap",
-        "Heatmap + Grid",
-        "Overflow Only",
-        "Grid Only",
-    ];
-
-    private static void DrawForwardPlusDebugSection(CameraComponent component)
-    {
-        if (!ImGui.CollapsingHeader("Forward+ Debug Visualization"))
-            return;
-
-        var cam = component.Camera;
-        int totalLights = RuntimeEngine.Rendering.State.ForwardPlusLocalLightCount;
-        int tilesX = RuntimeEngine.Rendering.State.ForwardPlusTileCountX;
-        int tilesY = RuntimeEngine.Rendering.State.ForwardPlusTileCountY;
-        int maxPerTile = RuntimeEngine.Rendering.State.ForwardPlusMaxLightsPerTile;
-        int tileSize = RuntimeEngine.Rendering.State.ForwardPlusTileSize;
-
-        ImGui.TextDisabled($"Tiles: {tilesX} x {tilesY} ({tileSize}px)   MaxLightsPerTile: {maxPerTile}");
-        if (totalLights <= 0)
-        {
-            ImGui.TextColored(new Vector4(1.0f, 0.5f, 0.2f, 1.0f),
-                "No point/spot lights submitted to Forward+. Heatmap will be empty.");
-            ImGui.TextDisabled("Forward+ only culls dynamic point and spot lights; directional lights are unaffected.");
-        }
-        else
-        {
-            ImGui.TextDisabled($"Local lights submitted this frame: {totalLights}");
-        }
-        ImGui.Separator();
-
-        int mode = (int)cam.ForwardPlusDebugMode;
-        ImGui.SetNextItemWidth(200.0f);
-        if (ImGui.Combo("Mode##ForwardPlusDebug", ref mode, ForwardPlusDebugModeNames, ForwardPlusDebugModeNames.Length))
-            component.ForwardPlusDebugMode = (XRCamera.EForwardPlusDebugMode)mode;
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Selects the Forward+ tile-light-culling overlay style.");
-
-        float opacity = cam.ForwardPlusDebugOpacity;
-        ImGui.SetNextItemWidth(200.0f);
-        if (ImGui.SliderFloat("Opacity##ForwardPlusDebug", ref opacity, 0.0f, 1.0f))
-            component.ForwardPlusDebugOpacity = opacity;
-
-        int maxCount = cam.ForwardPlusDebugMaxCount;
-        ImGui.SetNextItemWidth(200.0f);
-        if (ImGui.SliderInt("Heatmap Max Count##ForwardPlusDebug", ref maxCount, 1, 64))
-            component.ForwardPlusDebugMaxCount = maxCount;
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Per-tile visible-light count that saturates the heatmap. Lower = more sensitive.");
-
-        ImGui.SameLine();
-        if (ImGui.SmallButton("Auto##ForwardPlusDebug"))
-            component.ForwardPlusDebugMaxCount = Math.Max(1, Math.Min(maxPerTile > 0 ? maxPerTile : 32, Math.Max(4, totalLights)));
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Pick a sensible Max Count from the current scene (clamped to total light count or MaxLightsPerTile).");
-
-        bool showEmpty = cam.ForwardPlusDebugShowEmptyTiles;
-        if (ImGui.Checkbox("Show Empty Tiles##ForwardPlusDebug", ref showEmpty))
-            component.ForwardPlusDebugShowEmptyTiles = showEmpty;
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("If on, paints zero-count tiles faintly so the entire culling grid is visible. If off, only populated tiles draw.");
-
-        bool showBar = cam.ForwardPlusDebugShowCountBar;
-        if (ImGui.Checkbox("Per-Tile Count Bar##ForwardPlusDebug", ref showBar))
-            component.ForwardPlusDebugShowCountBar = showBar;
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Draw a small horizontal bar in each populated tile whose length equals (count / Max Count) for a quantitative readout.");
-    }
-
-    private static readonly string[] AntiAliasingModeNames =
-    [
-        "None",
-        "MSAA",
-        "FXAA",
-        "SMAA",
-        "TAA",
-        "TSR",
-        "DLAA"
-    ];
-
-    private static readonly EAntiAliasingMode[] AntiAliasingModes =
-    [
-        EAntiAliasingMode.None,
-        EAntiAliasingMode.Msaa,
-        EAntiAliasingMode.Fxaa,
-        EAntiAliasingMode.Smaa,
-        EAntiAliasingMode.Taa,
-        EAntiAliasingMode.Tsr,
-        EAntiAliasingMode.Dlaa,
-    ];
-
     private static readonly Vector4 WarningTextColor = new(1.0f, 0.7f, 0.2f, 1.0f);
-    private static readonly Vector4 InfoTextColor = new(0.4f, 0.8f, 1.0f, 1.0f);
 
-    private static XRViewport? ResolvePrimaryRuntimeViewport()
-        => (Engine.State.MainPlayer?.Viewport as XRViewport)
-            ?? RuntimeEngine.EnumerateActiveViewports().FirstOrDefault();
-
-    private static EAntiAliasingMode ResolveEffectiveAaMode(XRCamera? camera)
-        => camera?.AntiAliasingModeOverride ?? Engine.EffectiveSettings.AntiAliasingMode;
-
-    private static string DescribeCamera(XRCamera? camera)
-        => camera?.Transform.SceneNode?.Name
-            ?? (camera is null ? "<none>" : $"Camera #{camera.GetHashCode()}");
-
-    private static void DrawAntiAliasingOverride(CameraComponent component)
-    {
-        var camera = component.Camera;
-        EAntiAliasingMode globalMode = Engine.EffectiveSettings.AntiAliasingMode;
-        EAntiAliasingMode effectiveMode = camera.AntiAliasingModeOverride ?? globalMode;
-
-        ImGui.Text("Anti-Aliasing Override");
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Per-camera AA override. When enabled, overrides the global\nanti-aliasing setting for this camera only.");
-
-        bool hasOverride = camera.AntiAliasingModeOverride.HasValue;
-        if (ImGui.Checkbox("Override AA##AAOverrideToggle", ref hasOverride))
-        {
-            camera.AntiAliasingModeOverride = hasOverride
-                ? globalMode
-                : null;
-        }
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Enable to override the global AA mode for this camera.");
-
-        ImGui.TextDisabled($"Effective AA: {effectiveMode}");
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("This is the anti-aliasing mode the renderer will use when this camera is the active render camera.");
-
-        if (camera.AntiAliasingModeOverride.HasValue)
-        {
-            int modeIndex = Array.IndexOf(AntiAliasingModes, camera.AntiAliasingModeOverride.Value);
-            if (modeIndex < 0)
-                modeIndex = 0;
-            ImGui.SetNextItemWidth(150f);
-            if (ImGui.Combo("Mode##AAOverrideMode", ref modeIndex, AntiAliasingModeNames, AntiAliasingModeNames.Length))
-            {
-                camera.AntiAliasingModeOverride = AntiAliasingModes[Math.Clamp(modeIndex, 0, AntiAliasingModes.Length - 1)];
-            }
-
-            if (camera.AntiAliasingModeOverride == EAntiAliasingMode.Msaa)
-            {
-                bool hasMsaaOverride = camera.MsaaSampleCountOverride.HasValue;
-                if (ImGui.Checkbox("Override MSAA Samples##MsaaOverrideToggle", ref hasMsaaOverride))
-                {
-                    camera.MsaaSampleCountOverride = hasMsaaOverride
-                        ? Engine.EffectiveSettings.MsaaSampleCount
-                        : null;
-                }
-
-                if (camera.MsaaSampleCountOverride.HasValue)
-                {
-                    int samples = (int)camera.MsaaSampleCountOverride.Value;
-                    ImGui.SetNextItemWidth(150f);
-                    if (ImGui.SliderInt("Samples##MsaaSamples", ref samples, 1, 8))
-                    {
-                        camera.MsaaSampleCountOverride = (uint)Math.Clamp(samples, 1, 8);
-                    }
-                }
-            }
-        }
-
-        if (effectiveMode == EAntiAliasingMode.Tsr)
-            DrawTsrScaleOverride(camera);
-
-        ImGui.TextDisabled($"Global: {globalMode}");
-    }
-
-    private static void DrawTsrScaleOverride(XRCamera camera)
-    {
-        bool hasOverride = camera.TsrRenderScaleOverride.HasValue;
-        if (ImGui.Checkbox("Override TSR Scale##TsrScaleOverrideToggle", ref hasOverride))
-        {
-            camera.TsrRenderScaleOverride = hasOverride
-                ? RuntimeEngine.Rendering.Settings.TsrRenderScale
-                : null;
-        }
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Enable to override the global TSR internal render scale for this camera.");
-
-        if (camera.TsrRenderScaleOverride.HasValue)
-        {
-            float scale = camera.TsrRenderScaleOverride.Value;
-            ImGui.SetNextItemWidth(150f);
-            if (ImGui.SliderFloat("TSR Scale##TsrScaleOverride", ref scale, 0.5f, 1.0f, "%.2fx"))
-                camera.TsrRenderScaleOverride = scale;
-        }
-
-        ImGui.TextDisabled($"Global TSR Scale: {RuntimeEngine.Rendering.Settings.TsrRenderScale:0.00}x");
-    }
-
-    private static void DrawOutputHDROverride(CameraComponent component)
-    {
-        var camera = component.Camera;
-
-        ImGui.Text("HDR Output Override");
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Per-camera HDR override. When enabled, overrides the global\nOutputHDR setting for this camera. Tonemapping is skipped in HDR mode.");
-
-        bool hasOverride = camera.OutputHDROverride.HasValue;
-        if (ImGui.Checkbox("Override HDR##HDROverrideToggle", ref hasOverride))
-        {
-            camera.OutputHDROverride = hasOverride
-                ? RuntimeEngine.Rendering.Settings.OutputHDR
-                : null;
-        }
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Enable to override the global HDR output mode for this camera.");
-
-        if (camera.OutputHDROverride.HasValue)
-        {
-            bool hdr = camera.OutputHDROverride.Value;
-            if (ImGui.Checkbox("Output HDR##HDRValue", ref hdr))
-                camera.OutputHDROverride = hdr;
-        }
-
-        // Show what the global setting is for reference
-        ImGui.TextDisabled($"Global HDR: {(RuntimeEngine.Rendering.Settings.OutputHDR ? "On" : "Off")}");
-    }
-
-    private static readonly string[] InternalResolutionModeNames = 
-    [
-        "Full Resolution",
-        "Scale",
-        "Manual"
-    ];
-
-    private static void DrawInternalResolutionSettings(CameraComponent component)
-    {
-        ImGui.Text("Internal Resolution");
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Controls the rendering resolution used by the camera.\nLower resolutions improve performance but reduce quality.");
-
-        // Mode selector
-        int modeIndex = (int)component.InternalResolutionMode;
-        ImGui.SetNextItemWidth(150f);
-        if (ImGui.Combo("Mode##InternalResMode", ref modeIndex, InternalResolutionModeNames, InternalResolutionModeNames.Length))
-        {
-            component.InternalResolutionMode = (EInternalResolutionMode)modeIndex;
-        }
-
-        // Show relevant controls based on mode
-        switch (component.InternalResolutionMode)
-        {
-            case EInternalResolutionMode.FullResolution:
-                ImGui.TextDisabled("Renders at viewport's native resolution.");
-                break;
-
-            case EInternalResolutionMode.Scale:
-                float scale = component.InternalResolutionScale;
-                ImGui.SetNextItemWidth(150f);
-                if (ImGui.SliderFloat("Scale##InternalResScale", ref scale, 0.1f, 2.0f, "%.2fx"))
-                {
-                    component.InternalResolutionScale = scale;
-                }
-                if (ImGui.IsItemHovered())
-                    ImGui.SetTooltip("1.0 = native resolution\n0.5 = half resolution (faster)\n2.0 = supersampling (slower, higher quality)");
-
-                // Quick preset buttons
-                ImGui.SameLine();
-                if (ImGui.SmallButton("0.5x"))
-                    component.InternalResolutionScale = 0.5f;
-                ImGui.SameLine();
-                if (ImGui.SmallButton("1x"))
-                    component.InternalResolutionScale = 1.0f;
-                ImGui.SameLine();
-                if (ImGui.SmallButton("1.5x"))
-                    component.InternalResolutionScale = 1.5f;
-                break;
-
-            case EInternalResolutionMode.Manual:
-                int width = component.ManualInternalWidth;
-                int height = component.ManualInternalHeight;
-
-                ImGui.SetNextItemWidth(100f);
-                if (ImGui.InputInt("Width##InternalResWidth", ref width, 1, 100))
-                {
-                    component.ManualInternalWidth = Math.Max(1, width);
-                }
-                ImGui.SameLine();
-                ImGui.SetNextItemWidth(100f);
-                if (ImGui.InputInt("Height##InternalResHeight", ref height, 1, 100))
-                {
-                    component.ManualInternalHeight = Math.Max(1, height);
-                }
-
-                // Common resolution presets
-                ImGui.Text("Presets:");
-                ImGui.SameLine();
-                if (ImGui.SmallButton("720p"))
-                {
-                    component.ManualInternalWidth = 1280;
-                    component.ManualInternalHeight = 720;
-                }
-                ImGui.SameLine();
-                if (ImGui.SmallButton("1080p"))
-                {
-                    component.ManualInternalWidth = 1920;
-                    component.ManualInternalHeight = 1080;
-                }
-                ImGui.SameLine();
-                if (ImGui.SmallButton("1440p"))
-                {
-                    component.ManualInternalWidth = 2560;
-                    component.ManualInternalHeight = 1440;
-                }
-                ImGui.SameLine();
-                if (ImGui.SmallButton("4K"))
-                {
-                    component.ManualInternalWidth = 3840;
-                    component.ManualInternalHeight = 2160;
-                }
-                break;
-        }
-
-        // Show current effective resolution if camera has viewports
-        if (component.Camera.Viewports.Count > 0)
-        {
-            var viewport = component.Camera.Viewports[0];
-            ImGui.TextDisabled($"Effective: {viewport.InternalWidth}x{viewport.InternalHeight} → {viewport.Width}x{viewport.Height}");
-        }
-    }
-
-    private static void DrawParameterSection(CameraComponent component, HashSet<object> visited)
-        => DrawRuntimeCameraProjection(component.Camera, visited);
 
     internal static void DrawRuntimeCameraProjection(XRCamera camera, HashSet<object> visited)
     {
         using var profilerScope = Engine.Profiler.Start("UI.ComponentEditor.CameraComponent.Projection");
 
-        if (!ImGui.CollapsingHeader("Projection Parameters", ImGuiTreeNodeFlags.DefaultOpen))
+        if (!ImGui.CollapsingHeader("Projection"))
             return;
 
         var parameters = camera.Parameters;
@@ -979,15 +587,16 @@ public sealed class CameraComponentEditor : IXRComponentEditor
 
     private static void DrawParameterTypeSwitcher(XRCamera camera, XRCameraParameters current)
     {
-        int currentIndex = Array.FindIndex(ParameterOptions, option => option.ParameterType == current.GetType());
+        ParameterOption[] parameterOptions = GetParameterOptions(out long optionsGeneration);
+        int currentIndex = Array.FindIndex(parameterOptions, option => option.ParameterType == current.GetType());
         
         // Handle unknown types that aren't in the discovered list
         string currentLabel = currentIndex >= 0 
-            ? ParameterOptions[currentIndex].Label 
+            ? parameterOptions[currentIndex].Label
             : new ParameterOption(current.GetType()).Label;
 
         // Show category/description for current type
-        var currentOption = currentIndex >= 0 ? ParameterOptions[currentIndex] : new ParameterOption(current.GetType());
+        var currentOption = currentIndex >= 0 ? parameterOptions[currentIndex] : new ParameterOption(current.GetType());
         
         // Check if a transition is in progress
         bool isTransitioning = _activeTransitions.TryGetValue(camera, out var transition) && transition.IsTransitioning;
@@ -1004,9 +613,9 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         {
             string? lastCategory = null;
             
-            for (int i = 0; i < ParameterOptions.Length; i++)
+            for (int i = 0; i < parameterOptions.Length; i++)
             {
-                var option = ParameterOptions[i];
+                var option = parameterOptions[i];
                 
                 // Draw category separator if category changes
                 if (option.Category != lastCategory && !string.IsNullOrEmpty(option.Category))
@@ -1022,7 +631,10 @@ public sealed class CameraComponentEditor : IXRComponentEditor
                 }
 
                 bool selected = i == currentIndex;
-                if (ImGui.Selectable(option.Label, selected) && !selected && !isTransitioning)
+                if (ImGui.Selectable(option.Label, selected)
+                    && !selected
+                    && !isTransitioning
+                    && optionsGeneration == EditorTypeCatalogGeneration.Current)
                 {
                     SwitchCameraType(camera, current, option.ParameterType);
                 }
@@ -1132,51 +744,7 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         }
     }
 
-    private static void DrawTemporalControlsStatus(CameraComponent component)
-    {
-        XRViewport? runtimeViewport = ResolvePrimaryRuntimeViewport();
-        XRCamera? runtimeCamera = runtimeViewport?.ActiveCamera;
-        XRCamera inspectedCamera = component.Camera;
-        bool isLiveCamera = ReferenceEquals(runtimeCamera, inspectedCamera);
-        EAntiAliasingMode inspectedMode = ResolveEffectiveAaMode(inspectedCamera);
-        EAntiAliasingMode runtimeMode = ResolveEffectiveAaMode(runtimeCamera);
 
-        ImGui.TextColored(InfoTextColor, $"Inspected Camera AA: {inspectedMode}");
-
-        if (runtimeViewport is null)
-        {
-            ImGui.TextColored(WarningTextColor, "No active runtime viewport is currently available.");
-            return;
-        }
-
-        ImGui.TextDisabled($"Scene Panel Camera: {DescribeCamera(runtimeCamera)}");
-        ImGui.TextDisabled($"Scene Panel AA: {runtimeMode}");
-
-        if (!component.IsActivelyRendering)
-        {
-            ImGui.TextColored(WarningTextColor, "This camera is not actively rendering, so its post-processing controls will not affect the scene panel.");
-            return;
-        }
-
-        if (!isLiveCamera)
-        {
-            ImGui.TextColored(WarningTextColor, "The scene panel is rendering through a different camera. These controls only affect this camera's own viewports or previews.");
-            return;
-        }
-
-        if (runtimeMode != EAntiAliasingMode.Taa && runtimeMode != EAntiAliasingMode.Tsr)
-        {
-            ImGui.TextColored(WarningTextColor, "Temporal AA controls are inactive because the live camera is not using TAA or TSR.");
-            if (ImGui.SmallButton("Set AA Override To TAA"))
-                inspectedCamera.AntiAliasingModeOverride = EAntiAliasingMode.Taa;
-            ImGui.SameLine();
-            if (ImGui.SmallButton("Set AA Override To TSR"))
-                inspectedCamera.AntiAliasingModeOverride = EAntiAliasingMode.Tsr;
-            return;
-        }
-
-        ImGui.TextColored(new Vector4(0.2f, 0.8f, 0.2f, 1.0f), "Temporal AA controls are live for the scene panel camera.");
-    }
 
     /// <summary>
     /// Creates a new camera parameter instance of the specified type, using <see cref="XRCameraParameters.CreateFromPrevious"/>
@@ -1457,112 +1025,223 @@ public sealed class CameraComponentEditor : IXRComponentEditor
             parameters.LeftEye = leftEye;
     }
 
-    private static void DrawSchemaBasedPostProcessingEditor(CameraComponent component, HashSet<object> visited)
-        => DrawRuntimeCameraPostProcessing(component.Camera, ResolvePostProcessingEditorPipeline(component.Camera), component, visited);
-
     private static readonly ConditionalWeakTable<XRCamera, CameraPostProcessEditorState> PostProcessEditorStates = new();
-    private static readonly Dictionary<Type, RenderPipeline> FallbackPipelinesByType = [];
 
     private sealed class CameraPostProcessEditorState
     {
         public string? SelectedPipelineId { get; set; }
+        public RenderPipeline? AssetTarget { get; private set; }
+        public Action<RenderPipeline?> SelectAsset { get; }
+
+        public CameraPostProcessEditorState()
+            => SelectAsset = SetAssetTarget;
+
+        private void SetAssetTarget(RenderPipeline? pipeline)
+        {
+            AssetTarget = pipeline;
+            SelectedPipelineId = pipeline?.ID.ToString();
+        }
     }
 
     private static List<(string Label, RenderPipeline Pipeline)> GetCandidatePostProcessingPipelines(XRCamera camera, RenderPipeline activePipeline)
     {
-        List<(string Label, RenderPipeline Pipeline)> list = [];
-        HashSet<Guid> seen = [];
+        const int maxGenerationAttempts = 2;
+        for (int attempt = 0; attempt < maxGenerationAttempts; attempt++)
+        {
+            List<(string Label, RenderPipeline Pipeline)> list = GetKnownPostProcessingPipelines(
+                camera,
+                activePipeline,
+                out HashSet<Guid> seen);
 
-        // 1. Active viewport pipeline is always primary
+            // 5. Discover loadable RenderPipeline types from one exact catalog generation.
+            IReadOnlyList<Type> pipelineTypes = GetAvailableRenderPipelineTypes(out long generation);
+            foreach (Type pipelineType in pipelineTypes)
+            {
+                if (list.Any(p => p.Pipeline.GetType() == pipelineType))
+                    continue;
+
+                if (TryGetOrCreatePipelineTypeFallback(pipelineType, generation, out RenderPipeline? pipelineInstance)
+                    && seen.Add(pipelineInstance.ID))
+                {
+                    list.Add(($"Type Preview ({pipelineInstance.DebugName}, read-only)", pipelineInstance));
+                }
+            }
+
+            if (generation == EditorTypeCatalogGeneration.Current)
+                return list;
+        }
+
+        // Continuous type-catalog churn must not spin the ImGui owner. Keep the
+        // already-owned pipelines visible and retry discovered fallbacks next frame.
+        return GetKnownPostProcessingPipelines(camera, activePipeline, out _);
+    }
+
+    private static List<(string Label, RenderPipeline Pipeline)> GetKnownPostProcessingPipelines(
+        XRCamera camera,
+        RenderPipeline activePipeline,
+        out HashSet<Guid> seen)
+    {
+        List<(string Label, RenderPipeline Pipeline)> list = [];
+        seen = [];
+
         list.Add(($"Active Viewport ({activePipeline.DebugName})", activePipeline));
         seen.Add(activePipeline.ID);
 
-        // 2. Camera-configured pipeline
-        if (camera.RenderPipeline is { } camPipeline && seen.Add(camPipeline.ID))
-        {
-            list.Add(($"Camera Assigned ({camPipeline.DebugName})", camPipeline));
-        }
+        if (PostProcessEditorStates.GetOrCreateValue(camera).AssetTarget is { } assetTarget && seen.Add(assetTarget.ID))
+            list.Add(($"Selected Asset ({assetTarget.DebugName})", assetTarget));
 
-        // 3. Viewport-bound pipelines
+        if (camera.RenderPipeline is { } camPipeline && seen.Add(camPipeline.ID))
+            list.Add(($"Camera Assigned ({camPipeline.DebugName})", camPipeline));
+
         foreach (var viewport in camera.Viewports)
         {
             if (viewport.RenderPipeline is { } cvpPipeline && seen.Add(cvpPipeline.ID))
-            {
                 list.Add(($"Bound Viewport ({cvpPipeline.DebugName})", cvpPipeline));
-            }
         }
 
-        // 4. Any active viewport pipeline in the engine
         foreach (var viewport in RuntimeEngine.EnumerateActiveViewports())
         {
             if (viewport.RenderPipeline is { } vpPipeline && seen.Add(vpPipeline.ID))
-            {
                 list.Add(($"Viewport #{viewport.FrameOutputIdentity} ({vpPipeline.DebugName})", vpPipeline));
-            }
-        }
-
-        // 5. Discover loadable RenderPipeline types from catalog
-        foreach (Type pipelineType in GetAvailableRenderPipelineTypes())
-        {
-            if (list.Any(p => p.Pipeline.GetType() == pipelineType))
-                continue;
-
-            if (TryGetOrCreatePipelineTypeFallback(pipelineType, out RenderPipeline? pipelineInstance) && seen.Add(pipelineInstance.ID))
-            {
-                list.Add(($"{pipelineInstance.DebugName}", pipelineInstance));
-            }
         }
 
         return list;
     }
 
-    private static IEnumerable<Type> GetAvailableRenderPipelineTypes()
+    private static IReadOnlyList<Type> GetAvailableRenderPipelineTypes(out long generation)
     {
-        return AppDomain.CurrentDomain.GetAssemblies()
-            .Where(a => !a.IsDynamic)
-            .SelectMany(static assembly => XREngine.Core.XRLoadableTypeCatalog.GetTypes(assembly))
-            .Where(t => t.IsClass && !t.IsAbstract && typeof(RenderPipeline).IsAssignableFrom(t));
+        const int maxGenerationAttempts = 2;
+        for (int attempt = 0; attempt < maxGenerationAttempts; attempt++)
+        {
+            generation = EditorTypeCatalogGeneration.Current;
+            Type[] types = AppDomain.CurrentDomain.GetAssemblies()
+                .Where(EditorTypeCatalogGeneration.IsAssemblyDiscoverable)
+                .SelectMany(static assembly => XREngine.Core.XRLoadableTypeCatalog.GetTypes(assembly))
+                .Where(t => t.IsClass && !t.IsAbstract && typeof(RenderPipeline).IsAssignableFrom(t))
+                .ToArray();
+            if (generation == EditorTypeCatalogGeneration.Current)
+                return types;
+        }
+
+        generation = EditorTypeCatalogGeneration.Current;
+        return [];
     }
 
-    private static bool TryGetOrCreatePipelineTypeFallback(Type pipelineType, [NotNullWhen(true)] out RenderPipeline? pipeline)
+    private static bool TryGetOrCreatePipelineTypeFallback(
+        Type pipelineType,
+        long expectedGeneration,
+        [NotNullWhen(true)] out RenderPipeline? pipeline)
     {
-        if (FallbackPipelinesByType.TryGetValue(pipelineType, out pipeline))
-            return true;
+        if (!EditorTypeCatalogGeneration.IsTypeDiscoverable(pipelineType))
+        {
+            pipeline = null;
+            return false;
+        }
 
+        CameraMetadataCacheState state = GetCurrentMetadataCacheState();
+        if (state.Generation != expectedGeneration
+            || expectedGeneration != EditorTypeCatalogGeneration.Current)
+        {
+            pipeline = null;
+            return false;
+        }
+
+        if (state.FallbackPipelines.TryGetValue(pipelineType, out pipeline))
+        {
+            EditorFallbackPipelineStates.GetValue(pipeline, static _ => new EditorFallbackPipelineState());
+            return expectedGeneration == EditorTypeCatalogGeneration.Current;
+        }
+
+        RenderPipeline? created;
         try
         {
-            if (Activator.CreateInstance(pipelineType) is RenderPipeline created)
-            {
-                FallbackPipelinesByType[pipelineType] = created;
-                pipeline = created;
-                return true;
-            }
+            created = Activator.CreateInstance(pipelineType) as RenderPipeline;
         }
         catch
         {
             try
             {
-                if (Activator.CreateInstance(pipelineType, false) is RenderPipeline createdStereo)
-                {
-                    FallbackPipelinesByType[pipelineType] = createdStereo;
-                    pipeline = createdStereo;
-                    return true;
-                }
+                created = Activator.CreateInstance(pipelineType, false) as RenderPipeline;
             }
             catch
             {
+                pipeline = null;
+                return false;
             }
+        }
+
+        if (created is null)
+        {
+            pipeline = null;
+            return false;
+        }
+
+        if (state.Generation != expectedGeneration
+            || expectedGeneration != EditorTypeCatalogGeneration.Current)
+        {
+            created.Destroy();
+            pipeline = null;
+            return false;
+        }
+
+        pipeline = state.FallbackPipelines.GetOrAdd(pipelineType, created);
+        if (!ReferenceEquals(pipeline, created))
+            created.Destroy();
+        EditorFallbackPipelineStates.GetValue(pipeline, static _ => new EditorFallbackPipelineState());
+
+        if (state.Generation == expectedGeneration
+            && expectedGeneration == EditorTypeCatalogGeneration.Current)
+        {
+            return true;
         }
 
         pipeline = null;
         return false;
     }
 
-    internal static void DrawRuntimeCameraPostProcessing(XRCamera camera, RenderPipeline? defaultPipeline, CameraComponent? component, HashSet<object> visited)
+    private static bool IsPipelineTypePreview(RenderPipeline pipeline)
+        => EditorFallbackPipelineStates.TryGetValue(pipeline, out _);
+
+    private static PipelinePostProcessState? GetEditorPostProcessState(
+        XRCamera camera,
+        RenderPipeline pipeline)
+        => EditorFallbackPipelineStates.TryGetValue(pipeline, out EditorFallbackPipelineState? fallbackState)
+            ? fallbackState.GetOrCreate(camera, pipeline)
+            : camera.GetPostProcessState(pipeline);
+
+    private static void DrawRuntimeCameraPostProcessing(PipelineEditorContext context)
     {
         using var profilerScope = Engine.Profiler.Start("UI.ComponentEditor.CameraComponent.PostProcessing");
 
-        RenderPipeline activePipeline = defaultPipeline ?? ResolvePostProcessingEditorPipeline(camera);
+        XRCamera camera = context.Camera;
+        CameraComponent? component = context.Component;
+        RenderPipeline selectedPipeline = context.SelectedPipeline;
+        ImGui.PushID("PostProcessingPanel");
+        var schema = context.Schema;
+        var state = context.State;
+
+        ImGui.BeginDisabled(IsPipelineTypePreview(selectedPipeline));
+        selectedPipeline.EditorUIProvider?.DrawPostProcessingHeader(context);
+        if (schema.IsEmpty || state is null)
+        {
+            ImGui.Separator();
+            ImGui.TextDisabled($"Pipeline '{selectedPipeline.DebugName}' exposes no post-processing schema.");
+        }
+        else
+        {
+
+            ImGui.Separator();
+            DrawSchemaStageSelector(schema, state, camera, component, context.IsActivePipeline);
+            ImGui.Spacing();
+        }
+
+        selectedPipeline.EditorUIProvider?.DrawPostProcessingFooter(context);
+        ImGui.EndDisabled();
+        ImGui.PopID();
+    }
+
+    private static RenderPipeline DrawCameraPipelineSelector(XRCamera camera, RenderPipeline activePipeline)
+    {
         List<(string Label, RenderPipeline Pipeline)> candidatePipelines = GetCandidatePostProcessingPipelines(camera, activePipeline);
 
         var editorState = PostProcessEditorStates.GetOrCreateValue(camera);
@@ -1579,14 +1258,8 @@ public sealed class CameraComponentEditor : IXRComponentEditor
             }
         }
 
-        ImGui.PushID("PostProcessingPanel");
-
-        // Target pipeline selector
-        ImGui.AlignTextToFramePadding();
-        ImGui.Text("Target Pipeline");
-        ImGui.SameLine();
-        ImGui.SetNextItemWidth(-1.0f);
-        if (ImGui.BeginCombo("##PostProcessingTargetPipelineCombo", candidatePipelines[selectedIndex].Label))
+        CameraSettingLabel("Target Pipeline");
+        if (ImGui.BeginCombo("##TargetPipeline", candidatePipelines[selectedIndex].Label))
         {
             for (int i = 0; i < candidatePipelines.Count; i++)
             {
@@ -1603,40 +1276,21 @@ public sealed class CameraComponentEditor : IXRComponentEditor
             ImGui.EndCombo();
         }
 
-        var schema = selectedPipeline.PostProcessSchema;
-        var state = camera.GetPostProcessState(selectedPipeline);
-
-        var context = new PipelineEditorContext(
-            camera,
-            component,
-            activePipeline,
-            selectedPipeline,
-            state,
-            schema);
-
-        // Allow pipeline to render custom header controls (e.g. ShadingDebugView)
-        selectedPipeline.PostProcessUIProvider?.DrawPipelineHeader(context);
-
-        if (schema.IsEmpty || state is null)
+        ImGui.TextWrapped(ReferenceEquals(selectedPipeline, activePipeline)
+            ? "Editing the active pipeline."
+            : "Editing a separate pipeline; the camera's rendering pipeline is unchanged.");
+        if (IsPipelineTypePreview(selectedPipeline))
+            ImGui.TextWrapped("Read-only type preview. Select a saved pipeline asset below to edit it.");
+        else if (!ReferenceEquals(selectedPipeline, activePipeline))
+            ImGui.TextWrapped("Live applicability checks are applied only when this camera uses the target pipeline.");
+        if (ImGui.TreeNode("Edit Another Pipeline Asset"))
         {
-            ImGui.Separator();
-            ImGui.TextDisabled($"Pipeline '{selectedPipeline.DebugName}' exposes no post-processing schema.");
-            DrawAdvancedPostProcessingInspector(state, visited);
+            ImGui.TextWrapped("Choose an existing asset without assigning it to this camera. Pipeline properties affect all views using that asset; effect settings remain on this camera for that asset.");
+            ImGuiAssetUtilities.DrawAssetField<RenderPipeline>("EditingPipelineAsset", editorState.AssetTarget,
+                editorState.SelectAsset, allowCreateOrReplace: false, allowInlineInspector: false);
+            ImGui.TreePop();
         }
-        else
-        {
-            if (component is not null)
-                DrawTemporalControlsStatus(component);
-            ImGui.Separator();
-            DrawSchemaStageSelector(schema, state, camera, component);
-            ImGui.Spacing();
-            DrawAdvancedPostProcessingInspector(state, visited);
-        }
-
-        // Allow pipeline to render custom footer controls
-        selectedPipeline.PostProcessUIProvider?.DrawPipelineFooter(context);
-
-        ImGui.PopID();
+        return selectedPipeline;
     }
 
     private static RenderPipeline ResolveCameraEditorPipeline(XRCamera camera)
@@ -1645,10 +1299,7 @@ public sealed class CameraComponentEditor : IXRComponentEditor
             .FirstOrDefault(pipeline => pipeline is not null)
             ?? camera.RenderPipeline;
 
-    private static RenderPipeline ResolvePostProcessingEditorPipeline(XRCamera camera)
-        => ResolveCameraEditorPipeline(camera);
-
-    private static void DrawSchemaStageSelector(RenderPipelinePostProcessSchema schema, PipelinePostProcessState state, XRCamera camera, CameraComponent? component)
+    private static void DrawSchemaStageSelector(RenderPipelinePostProcessSchema schema, PipelinePostProcessState state, XRCamera camera, CameraComponent? component, bool evaluateLiveState)
     {
         List<PostProcessStageEntry> stages = BuildOrderedStageEntries(schema, state);
         if (stages.Count == 0)
@@ -1688,7 +1339,7 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         }
 
         ImGui.Spacing();
-        DrawSchemaStageSelection(stages[selectedIndex], camera, component);
+        DrawSchemaStageSelection(stages[selectedIndex], camera, component, evaluateLiveState: evaluateLiveState);
     }
 
     private static int FindSelectedStageIndex(List<PostProcessStageEntry> stages, string selectedStageKey)
@@ -1710,7 +1361,7 @@ public sealed class CameraComponentEditor : IXRComponentEditor
             ? $"{category.DisplayName} / {stage.Descriptor.DisplayName}"
             : stage.Descriptor.DisplayName;
 
-    private static List<PostProcessStageEntry> BuildOrderedStageEntries(RenderPipelinePostProcessSchema schema, PipelinePostProcessState state)
+    private static List<PostProcessStageEntry> BuildOrderedStageEntries(RenderPipelinePostProcessSchema schema, PipelinePostProcessState state, PipelineEditorSection section = PipelineEditorSection.PostProcessing)
     {
         List<PostProcessStageEntry> stages = new(schema.StagesByKey.Count);
         HashSet<string> addedStageKeys = new(StringComparer.OrdinalIgnoreCase);
@@ -1719,10 +1370,11 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         {
             foreach (var stageKey in category.StageKeys)
             {
+
                 if (!TryCreateStageEntry(schema, state, stageKey, category, out PostProcessStageEntry stage))
                     continue;
 
-                if (!addedStageKeys.Add(stage.Descriptor.Key))
+                if (!StageHasEditorSection(stage.Descriptor, section) || !addedStageKeys.Add(stage.Descriptor.Key))
                     continue;
 
                 stages.Add(stage);
@@ -1731,6 +1383,9 @@ public sealed class CameraComponentEditor : IXRComponentEditor
 
         foreach (var stage in schema.StagesByKey.Values)
         {
+            if (!StageHasEditorSection(stage, section))
+                continue;
+
             if (!addedStageKeys.Add(stage.Key))
                 continue;
 
@@ -1741,6 +1396,16 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         }
 
         return stages;
+    }
+
+    private static bool StageHasEditorSection(PostProcessStageDescriptor stage, PipelineEditorSection section)
+    {
+        if (stage.EditorSection == section && PostProcessCustomDrawerRegistry.GetDrawer(stage) is not null)
+            return true;
+        foreach (var parameter in stage.Parameters)
+            if ((parameter.EditorSection ?? stage.EditorSection) == section)
+                return true;
+        return false;
     }
 
     private static bool TryCreateStageEntry(RenderPipelinePostProcessSchema schema, PipelinePostProcessState state, string stageKey, PostProcessCategoryDescriptor? category, out PostProcessStageEntry stageEntry)
@@ -1758,9 +1423,9 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         return true;
     }
 
-    private static void DrawSchemaStageSelection(PostProcessStageEntry stage, XRCamera camera, CameraComponent? component)
+    private static void DrawSchemaStageSelection(PostProcessStageEntry stage, XRCamera camera, CameraComponent? component, PipelineEditorSection section = PipelineEditorSection.PostProcessing, bool evaluateLiveState = true)
     {
-        var (stageDisabled, disableReason) = stage.Descriptor.EvaluateState(camera);
+        var (stageDisabled, disableReason) = evaluateLiveState ? stage.Descriptor.EvaluateState(camera) : (false, null);
 
         ImGui.PushID(stage.Descriptor.Key);
 
@@ -1769,7 +1434,7 @@ public sealed class CameraComponentEditor : IXRComponentEditor
 
         XRBase? undoTarget = (stage.State.BackingInstance as XRBase) ?? component;
         if (ImGui.SmallButton("Reset To Defaults"))
-            ResetSchemaStageToDefaults(stage.Descriptor, stage.State, undoTarget);
+            ResetSchemaStageToDefaults(stage.Descriptor, stage.State, undoTarget, section);
 
         if (!string.IsNullOrWhiteSpace(stage.Category?.Description))
             ImGui.TextDisabled(stage.Category.Description);
@@ -1780,17 +1445,18 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         IPostProcessStageCustomDrawer? customDrawer = PostProcessCustomDrawerRegistry.GetDrawer(stage.Descriptor);
 
         using (new ImGuiDisabledScope(stageDisabled))
-            DrawSchemaStage(stage.Descriptor, stage.State, undoTarget, component, customDrawer, drawStageHeader: false, camera: camera);
+            DrawSchemaStage(stage.Descriptor, stage.State, undoTarget, component, customDrawer, drawStageHeader: false, camera: camera, section: section);
 
         ImGui.PopID();
     }
 
-    private static void ResetSchemaStageToDefaults(PostProcessStageDescriptor stage, PostProcessStageState stageState, XRBase? undoTarget)
+    private static void ResetSchemaStageToDefaults(PostProcessStageDescriptor stage, PostProcessStageState stageState, XRBase? undoTarget, PipelineEditorSection section)
     {
         using var _ = Undo.TrackChange($"Reset {stage.DisplayName}", undoTarget);
 
         foreach (var param in stage.Parameters)
-            ResetSchemaParameterToDefault(param, stageState);
+            if ((param.EditorSection ?? stage.EditorSection) == section)
+                ResetSchemaParameterToDefault(param, stageState);
     }
 
     private static void ResetSchemaParameterToDefault(PostProcessParameterDescriptor param, PostProcessStageState stageState)
@@ -1825,7 +1491,8 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         CameraComponent? component,
         IPostProcessStageCustomDrawer? customDrawer,
         bool drawStageHeader = true,
-        XRCamera? camera = null)
+        XRCamera? camera = null,
+        PipelineEditorSection section = PipelineEditorSection.PostProcessing)
     {
         if (stage.Parameters.Count == 0 && customDrawer is null)
             return;
@@ -1838,14 +1505,15 @@ public sealed class CameraComponentEditor : IXRComponentEditor
         undoTarget = (stageState.BackingInstance as XRBase) ?? undoTarget;
 
         PostProcessStageCustomDrawerContext? stageContext = null;
-        if (customDrawer is not null && camera is not null)
+        if (stage.EditorSection == section && customDrawer is not null && camera is not null)
         {
             stageContext = new PostProcessStageCustomDrawerContext(camera, component, stage, stageState, undoTarget);
             customDrawer.DrawStageHeader(stageContext);
         }
 
         foreach (var param in stage.Parameters)
-            DrawSchemaParameter(param, stage, stageState, undoTarget, camera, component, customDrawer);
+            if ((param.EditorSection ?? stage.EditorSection) == section)
+                DrawSchemaParameter(param, stage, stageState, undoTarget, camera, component, customDrawer);
 
         if (stageContext is not null)
         {
@@ -2066,446 +1734,6 @@ public sealed class CameraComponentEditor : IXRComponentEditor
     }
 
 
-    private static void DrawPreviewSection(CameraComponent component)
-    {
-        using var profilerScope = Engine.Profiler.Start("UI.ComponentEditor.CameraComponent.Preview");
-
-        if (!ImGui.CollapsingHeader("Camera Preview", ImGuiTreeNodeFlags.DefaultOpen))
-            return;
-
-        if (!Engine.IsRenderThread)
-        {
-            ImGui.TextDisabled("Preview is available only on the render thread.");
-            return;
-        }
-
-        CameraPreviewState previewState = PreviewStates.GetOrCreateValue(component);
-        Vector2 reservedSize = CalculatePreviewSize(
-            previewState.PixelSize.X > 0.0f && previewState.PixelSize.Y > 0.0f
-                ? previewState.PixelSize
-                : new Vector2(PreviewMaxEdge, PreviewMaxEdge));
-        bool previewImageVisible = ImGui.IsRectVisible(reservedSize);
-        bool hasPreviewImage = false;
-        nint handle = nint.Zero;
-        XRTexture? resolvedTexture = null;
-        string? handleFailure = null;
-
-        if (previewImageVisible)
-        {
-            RefreshPreviewDiscovery(component, previewState, force: false);
-            if (previewState.Texture is XRTexture discoveredTexture
-                && TryGetTextureHandle(discoveredTexture, out handle, out handleFailure))
-            {
-                resolvedTexture = discoveredTexture;
-                hasPreviewImage = true;
-            }
-            else if (previewState.Texture is not null)
-            {
-                // The cached texture may have been recreated in-place. Re-discover once before reporting failure.
-                RefreshPreviewDiscovery(component, previewState, force: true);
-                if (previewState.Texture is XRTexture refreshedTexture
-                    && TryGetTextureHandle(refreshedTexture, out handle, out handleFailure))
-                {
-                    resolvedTexture = refreshedTexture;
-                    hasPreviewImage = true;
-                }
-            }
-        }
-
-        Vector2 pixelSize = previewState.PixelSize;
-        Vector2 displaySize = CalculatePreviewSize(pixelSize);
-        Vector2 uv0 = new(0.0f, 1.0f);
-        Vector2 uv1 = new(1.0f, 0.0f);
-        bool openDialog = false;
-
-        if (hasPreviewImage)
-        {
-            ImGui.Image(handle, displaySize, uv0, uv1);
-            if (ImGui.IsItemHovered())
-            {
-                string formatLabel = resolvedTexture is XRTexture2D tex2D
-                    ? tex2D.SizedInternalFormat.ToString()
-                    : resolvedTexture!.GetType().Name;
-                ImGui.SetTooltip($"{pixelSize.X:0} x {pixelSize.Y:0} | {formatLabel}");
-                if (ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left))
-                    openDialog = true;
-            }
-        }
-        else if (previewImageVisible)
-        {
-            DrawPreviewFailurePlaceholder(
-                "CameraPreviewFailure",
-                reservedSize,
-                handleFailure ?? previewState.Failure ?? "Failed to acquire GPU handle.");
-        }
-        else
-        {
-            // Keep the image slot in the scroll layout while avoiding discovery and handle resolution when clipped.
-            ImGui.Dummy(reservedSize);
-        }
-
-        if (previewState.Texture is XRTexture metadataTexture)
-        {
-            ImGui.TextDisabled($"{pixelSize.X:0} x {pixelSize.Y:0} ({metadataTexture.GetType().Name})");
-            using (new ImGuiDisabledScope(!hasPreviewImage))
-            {
-                if (ImGui.Button("Open Preview Window"))
-                    openDialog = true;
-            }
-        }
-        else if (!previewImageVisible)
-        {
-            ImGui.TextDisabled(previewState.Failure ?? "Preview unavailable.");
-        }
-
-        if (openDialog && resolvedTexture is not null)
-            ComponentEditorLayout.RequestPreviewDialog(component.SceneNode?.Name ?? "Camera Preview", handle, pixelSize, flipVertically: true);
-
-        // Cascades have their own layout and must continue to submit independently of the main preview image.
-        DrawActiveCascadeDepthPreviews(component);
-    }
-
-    private static void DrawActiveCascadeDepthPreviews(CameraComponent component)
-    {
-        if (component.DirectionalShadowRenderingMode != EDirectionalShadowRenderingMode.Cascaded)
-            return;
-
-        IRuntimeRenderWorld? world = component.WorldAs<IRuntimeRenderWorld>();
-        if (world?.Lights is null)
-            return;
-
-        DirectionalLightComponent[] lights;
-        try
-        {
-            lights = [.. world.Lights.DynamicDirectionalLights];
-        }
-        catch (InvalidOperationException)
-        {
-            ImGui.Separator();
-            ImGui.TextDisabled("Cascade previews are updating.");
-            return;
-        }
-
-        bool drewAny = false;
-        foreach (DirectionalLightComponent light in lights)
-        {
-            if (!light.CastsShadows || !light.EnableCascadedShadows)
-                continue;
-
-            XRTexture2DArray? cascadeTexture = light.CascadedShadowPreviewTexture;
-            int activeCascades = light.ActiveCascadeCount;
-            if (cascadeTexture is null || activeCascades <= 0)
-                continue;
-
-            if (!drewAny)
-            {
-                ImGui.Separator();
-                ImGui.SeparatorText("Directional Shadow Cascades");
-                drewAny = true;
-            }
-
-            DrawCascadePreviewGroup(light, cascadeTexture, activeCascades);
-        }
-    }
-
-    private static void DrawCascadePreviewGroup(DirectionalLightComponent light, XRTexture2DArray cascadeTexture, int activeCascades)
-    {
-        string lightLabel = light.SceneNode?.Name ?? light.Name ?? light.GetType().Name;
-
-        ImGui.PushID(light.GetHashCode());
-        ImGui.TextDisabled($"{lightLabel}: {activeCascades} active cascade(s)");
-
-        Vector2 pixelSize = GetPixelSize(cascadeTexture);
-        Vector2 displaySize = CalculatePreviewSize(pixelSize);
-        Vector2 reservedSize = new(displaySize.X, displaySize.Y + ImGui.GetFrameHeightWithSpacing() + 2.0f * ImGui.GetTextLineHeightWithSpacing());
-        for (int cascadeIndex = 0; cascadeIndex < activeCascades; cascadeIndex++)
-        {
-            if (cascadeIndex > 0 && cascadeIndex % CascadePreviewsPerRow != 0)
-                ImGui.SameLine();
-
-            if (!ImGui.IsRectVisible(reservedSize))
-            {
-                // Each cascade reserves its complete group before allocating a layer view or resolving its handle.
-                ImGui.Dummy(reservedSize);
-                continue;
-            }
-
-            XRTexture2DArrayView cascadeView = GetOrCreateCascadePreviewView(cascadeTexture, cascadeIndex);
-            if (!TryGetTextureHandle(cascadeView, out nint handle, out string? handleFailure))
-            {
-                ImGui.BeginGroup();
-                DrawPreviewFailurePlaceholder(
-                    $"CascadePreviewFailure{cascadeIndex}",
-                    displaySize,
-                    handleFailure ?? $"Cascade {cascadeIndex} preview unavailable.");
-                ImGui.TextDisabled($"Cascade {cascadeIndex}");
-                ImGui.TextDisabled($"Split {light.GetCascadeSplit(cascadeIndex):F1}");
-                using (new ImGuiDisabledScope(true))
-                    ImGui.SmallButton($"Open##Cascade{cascadeIndex}");
-                ImGui.EndGroup();
-                continue;
-            }
-
-            Vector2 uv0 = new(0.0f, 1.0f);
-            Vector2 uv1 = new(1.0f, 0.0f);
-            bool openDialog = false;
-
-            ImGui.BeginGroup();
-            ImGui.Image(handle, displaySize, uv0, uv1);
-            if (ImGui.IsItemHovered())
-            {
-                ImGui.SetTooltip(
-                    $"{lightLabel} | Cascade {cascadeIndex}\n" +
-                    $"{pixelSize.X:0} x {pixelSize.Y:0} | {cascadeTexture.SizedInternalFormat}\n" +
-                    $"Split Far: {light.GetCascadeSplit(cascadeIndex):F1}");
-                if (ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left))
-                    openDialog = true;
-            }
-
-            ImGui.TextDisabled($"Cascade {cascadeIndex}");
-            ImGui.TextDisabled($"Split {light.GetCascadeSplit(cascadeIndex):F1}");
-            if (ImGui.SmallButton($"Open##Cascade{cascadeIndex}"))
-                openDialog = true;
-
-            if (openDialog)
-                ComponentEditorLayout.RequestPreviewDialog($"{lightLabel} Cascade {cascadeIndex}", handle, pixelSize, flipVertically: true);
-
-            ImGui.EndGroup();
-        }
-
-        ImGui.PopID();
-    }
-
-    private static XRTexture2DArrayView GetOrCreateCascadePreviewView(XRTexture2DArray texture, int layerIndex)
-    {
-        var views = CascadePreviewViews.GetOrCreateValue(texture);
-        if (views.TryGetValue(layerIndex, out XRTexture2DArrayView? existing))
-        {
-            existing.MinLevel = 0u;
-            existing.NumLevels = 1u;
-            existing.MinLayer = (uint)layerIndex;
-            existing.NumLayers = 1u;
-            return existing;
-        }
-
-        var view = new XRTexture2DArrayView(texture, 0u, 1u, (uint)layerIndex, 1u, texture.SizedInternalFormat, false, texture.MultiSample)
-        {
-            Name = $"{texture.Name ?? "CascadeShadow"}_Layer{layerIndex}_Preview",
-            MinFilter = ETexMinFilter.Linear,
-            MagFilter = ETexMagFilter.Linear,
-            UWrap = ETexWrapMode.ClampToEdge,
-            VWrap = ETexWrapMode.ClampToEdge,
-        };
-
-        views[layerIndex] = view;
-        return view;
-    }
-
-    private static bool TryResolvePreviewTexture(CameraComponent component, out XRTexture? texture, out Vector2 pixelSize, out string? failure)
-    {
-        if (TryExtractTextureFromFbo(component.DefaultRenderTarget, out texture, out pixelSize))
-        {
-            failure = null;
-            return true;
-        }
-
-        // Take a snapshot of the viewports collection to avoid "Collection was modified" exceptions
-        // during play mode transitions when viewports may be added/removed concurrently.
-        XRViewport[] viewportsSnapshot;
-        try
-        {
-            viewportsSnapshot = [.. component.Camera.Viewports];
-        }
-        catch (InvalidOperationException)
-        {
-            // Collection was modified during snapshot - return failure gracefully
-            texture = null;
-            pixelSize = Vector2.Zero;
-            failure = "Viewports collection is being modified.";
-            return false;
-        }
-
-        foreach (var viewport in viewportsSnapshot)
-        {
-            if (viewport is null || viewport.CameraComponent != component && viewport.Camera != component.Camera)
-                continue;
-            
-            RenderPipeline? pipeline = viewport.RenderPipeline 
-                ?? viewport.RenderPipelineInstance.Pipeline 
-                ?? component.Camera.RenderPipeline;
-
-            if (!TryResolvePipelineTexture(viewport.RenderPipelineInstance, pipeline, out texture))
-                continue;
-            
-            pixelSize = GetPixelSize(texture);
-            failure = null;
-            return true;
-        }
-
-        texture = null;
-        pixelSize = Vector2.Zero;
-        failure = "No render target or viewport texture is available.";
-        return false;
-    }
-
-    private static void RefreshPreviewDiscovery(CameraComponent component, CameraPreviewState state, bool force)
-    {
-        long now = Stopwatch.GetTimestamp();
-        bool sourceChanged = !ReferenceEquals(state.Camera, component.Camera)
-            || !ReferenceEquals(state.DefaultRenderTarget, component.DefaultRenderTarget);
-        if (!force && !sourceChanged && now < state.NextDiscoveryTimestamp)
-            return;
-
-        state.Camera = component.Camera;
-        state.DefaultRenderTarget = component.DefaultRenderTarget;
-        if (TryResolvePreviewTexture(component, out XRTexture? texture, out Vector2 pixelSize, out string? failure))
-        {
-            state.Texture = texture;
-            state.PixelSize = pixelSize;
-            state.Failure = null;
-        }
-        else
-        {
-            state.Texture = null;
-            state.PixelSize = Vector2.Zero;
-            state.Failure = failure;
-        }
-
-        state.NextDiscoveryTimestamp = now + (long)(Stopwatch.Frequency * PreviewDiscoveryRefreshSeconds);
-    }
-    private static bool TryExtractTextureFromFbo(XRFrameBuffer? fbo, out XRTexture? texture, out Vector2 pixelSize)
-    {
-        texture = null;
-        pixelSize = Vector2.Zero;
-        if (fbo?.Targets is null)
-            return false;
-
-        foreach (var (target, attachment, _, _) in fbo.Targets)
-        {
-            if (!IsColorAttachment(attachment) || target is not XRTexture tex)
-                continue;
-
-            texture = tex;
-            pixelSize = GetPixelSize(tex);
-            return true;
-        }
-
-        return false;
-    }
-
-    private static bool TryResolvePipelineTexture(
-        XRRenderPipelineInstance pipelineInstance,
-        RenderPipeline? pipeline,
-        [NotNullWhen(true)] out XRTexture? texture)
-    {
-        texture = null;
-        RenderResourceRegistry resources = pipelineInstance.Resources;
-
-        pipeline ??= pipelineInstance.Pipeline;
-
-        IReadOnlyList<string> preferredTextures = pipeline?.PreferredPreviewTextureNames
-            ?? Array.Empty<string>();
-
-        foreach (string name in preferredTextures)
-        {
-            if (resources.TryGetTexture(name, out XRTexture? candidate) && candidate is XRTexture2D)
-            {
-                texture = candidate!;
-                return true;
-            }
-        }
-
-        IReadOnlyList<string> preferredFbos = pipeline?.PreferredPreviewFrameBufferNames
-            ?? Array.Empty<string>();
-
-        foreach (string fboName in preferredFbos)
-        {
-            if (resources.TryGetFrameBuffer(fboName, out XRFrameBuffer? fbo) && TryExtractTextureFromFbo(fbo, out XRTexture? candidate, out _))
-            {
-                texture = candidate!;
-                return true;
-            }
-        }
-
-        foreach (XRFrameBuffer fbo in resources.EnumerateFrameBufferInstances())
-        {
-            if (TryExtractTextureFromFbo(fbo, out XRTexture? candidate, out _))
-            {
-                texture = candidate!;
-                return true;
-            }
-        }
-
-        texture = resources.EnumerateTextureInstances()
-            .OfType<XRTexture2D>()
-            .OrderByDescending(GetPixelArea)
-            .FirstOrDefault();
-
-        return texture is not null;
-    }
-
-    private static float GetPixelArea(XRTexture texture)
-    {
-        Vector3 dims = texture.WidthHeightDepth;
-        return MathF.Max(1.0f, dims.X) * MathF.Max(1.0f, dims.Y);
-    }
-
-    private static bool TryGetTextureHandle(XRTexture texture, out nint handle, out string? failure)
-    {
-        handle = nint.Zero;
-        failure = null;
-
-        return EditorTexturePreviewService.TryGetHandle(
-            texture,
-            out handle,
-            out _,
-            out failure);
-    }
-
-    private static Vector2 CalculatePreviewSize(Vector2 pixelSize)
-    {
-        float width = MathF.Max(1.0f, pixelSize.X);
-        float height = MathF.Max(1.0f, pixelSize.Y);
-
-        float scale = MathF.Min(PreviewMaxEdge / width, PreviewMaxEdge / height);
-        scale = MathF.Min(scale, 1.0f);
-
-        width = MathF.Max(PreviewMinEdge, width * scale);
-        height = MathF.Max(PreviewMinEdge, height * scale);
-        return new Vector2(width, height);
-    }
-
-    private static void DrawPreviewFailurePlaceholder(string id, Vector2 size, string failure)
-    {
-        if (ImGui.BeginChild(id, size, ImGuiChildFlags.Borders, ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse))
-            ImGui.TextWrapped(failure);
-        ImGui.EndChild();
-    }
-    private static Vector2 GetPixelSize(XRTexture texture)
-    {
-        Vector3 dims = texture.WidthHeightDepth;
-        return new Vector2(MathF.Max(1.0f, dims.X), MathF.Max(1.0f, dims.Y));
-    }
-
-    private static void DrawAdvancedPostProcessingInspector(PipelinePostProcessState? state, HashSet<object> visited)
-    {
-        if (!ImGui.CollapsingHeader("Advanced Post Processing"))
-            return;
-
-        if (state is null)
-        {
-            ImGui.TextDisabled("No post-processing state available.");
-            return;
-        }
-
-        ImGui.TextDisabled("Full object view (experimental)");
-        EditorImGuiUI.DrawRuntimeObjectInspector("Post Processing State", state, visited, defaultOpen: false);
-    }
-
-    private static bool IsColorAttachment(EFrameBufferAttachment attachment)
-    {
-        return attachment >= EFrameBufferAttachment.ColorAttachment0 && attachment <= EFrameBufferAttachment.ColorAttachment31;
-    }
 
     private static float Clamp(float value, float min, float max)
         => MathF.Max(min, MathF.Min(max, value));

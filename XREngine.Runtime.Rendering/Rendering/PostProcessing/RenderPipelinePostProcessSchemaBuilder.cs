@@ -128,7 +128,10 @@ public sealed class RenderPipelinePostProcessSchemaBuilder(RenderPipeline pipeli
                     customization?.Max,
                     customization?.Step,
                     customization?.EnumOptions,
-                    null));
+                    null)
+                {
+                    EditorSection = customization?.EditorSection,
+                });
             }
         }
 
@@ -146,7 +149,10 @@ public sealed class RenderPipelinePostProcessSchemaBuilder(RenderPipeline pipeli
                 custom.Max,
                 custom.Step,
                 custom.EnumOptions,
-                custom.VisibilityCondition));
+                custom.VisibilityCondition)
+            {
+                EditorSection = custom.EditorSection,
+            });
         }
 
         if (parameters.Count == 0)
@@ -160,6 +166,7 @@ public sealed class RenderPipelinePostProcessSchemaBuilder(RenderPipeline pipeli
             definition.BackingFactory)
         {
             CustomDrawer = definition.CustomDrawer,
+            EditorSection = definition.EditorSection,
             StateEvaluator = definition.StateEvaluator,
         };
     }
@@ -210,6 +217,7 @@ public sealed class RenderPipelinePostProcessSchemaBuilder(RenderPipeline pipeli
         public Type? BackingType { get; set; }
         public Func<object>? BackingFactory { get; set; }
         public IPostProcessStageCustomDrawer? CustomDrawer { get; set; }
+        public PipelineEditorSection EditorSection { get; set; } = PipelineEditorSection.PostProcessing;
         public Func<XRCamera, (bool Disabled, string? Reason)>? StateEvaluator { get; set; }
 
         public void SetShaderFactory(Func<IEnumerable<XRShader>> factory)
@@ -239,6 +247,7 @@ public sealed class RenderPipelinePostProcessSchemaBuilder(RenderPipeline pipeli
         public float? Step { get; set; }
         public bool IsColor { get; set; }
         public IReadOnlyList<PostProcessEnumOption>? EnumOptions { get; set; }
+        public PipelineEditorSection? EditorSection { get; set; }
     }
 
     public sealed class CustomParameterDefinition
@@ -253,6 +262,7 @@ public sealed class RenderPipelinePostProcessSchemaBuilder(RenderPipeline pipeli
         public float? Step { get; init; }
         public IReadOnlyList<PostProcessEnumOption>? EnumOptions { get; init; }
         public Func<object, bool>? VisibilityCondition { get; init; }
+        public PipelineEditorSection? EditorSection { get; init; }
     }
 
     public sealed class PostProcessStageBuilder
@@ -289,6 +299,15 @@ public sealed class RenderPipelinePostProcessSchemaBuilder(RenderPipeline pipeli
         public PostProcessStageBuilder WithCustomDrawer(IPostProcessStageCustomDrawer drawer)
         {
             _definition.CustomDrawer = drawer;
+            return this;
+        }
+
+        /// <summary>
+        /// Assigns this stage to an editor section.
+        /// </summary>
+        public PostProcessStageBuilder InEditorSection(PipelineEditorSection section)
+        {
+            _definition.EditorSection = section;
             return this;
         }
 
@@ -371,6 +390,20 @@ public sealed class RenderPipelinePostProcessSchemaBuilder(RenderPipeline pipeli
             return this;
         }
 
+        /// <summary>
+        /// Assigns an editor section override to a reflected shader uniform.
+        /// </summary>
+        public PostProcessStageBuilder SetUniformEditorSection(string uniformName, PipelineEditorSection? section)
+        {
+            if (string.IsNullOrWhiteSpace(uniformName))
+                return this;
+            if (!_definition.Customizations.TryGetValue(uniformName, out var customization) || customization is null)
+                customization = new UniformCustomization();
+            customization.EditorSection = section;
+            _definition.Customizations[uniformName] = customization;
+            return this;
+        }
+
         public PostProcessStageBuilder AddParameter(
             string name,
             PostProcessParameterKind kind,
@@ -381,7 +414,8 @@ public sealed class RenderPipelinePostProcessSchemaBuilder(RenderPipeline pipeli
             float? step = null,
             bool isColor = false,
             IReadOnlyList<PostProcessEnumOption>? enumOptions = null,
-            Func<object, bool>? visibilityCondition = null)
+            Func<object, bool>? visibilityCondition = null,
+            PipelineEditorSection? editorSection = null)
         {
             if (string.IsNullOrWhiteSpace(name))
                 throw new ArgumentException("Parameter name cannot be empty.", nameof(name));
@@ -397,7 +431,8 @@ public sealed class RenderPipelinePostProcessSchemaBuilder(RenderPipeline pipeli
                 Step = step,
                 IsColor = isColor,
                 EnumOptions = enumOptions,
-                VisibilityCondition = visibilityCondition
+                VisibilityCondition = visibilityCondition,
+                EditorSection = editorSection,
             });
 
             return this;

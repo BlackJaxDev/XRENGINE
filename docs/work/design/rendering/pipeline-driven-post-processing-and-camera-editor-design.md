@@ -3,6 +3,21 @@
 Last Updated: 2026-09-15  
 Status: Draft / Proposed Architecture  
 Target Subsystem: `XREngine.Runtime.Rendering` & `XREngine.Editor`  
+
+Implementation update (2026-09-22): camera diagnostics now have a dedicated Debug
+tab. The provider API below was superseded by `IRenderPipelineEditorUIProvider`
+and `RenderPipeline.EditorUIProvider`, with `DrawCameraSettings`,
+`DrawPostProcessingHeader`, `DrawPostProcessingFooter`, and `DrawDebug`.
+Pipeline-authored `PipelineEditorSection` metadata routes stages and individual
+parameters to Post Processing or Debug without changing their schema/state keys.
+Settings, Post Processing, and Debug use the same editing target. Camera-wide
+overrides are explicitly labelled and editable only for the active target;
+selected pipeline properties and effect state can be edited separately.
+Native shading and Forward+ controls use pipeline-owned Debug hooks. See the
+[camera layout investigation](../../investigations/editor/2026-09-22-camera-settings-layout.md)
+for current behavior and validation. Historical proposal examples below retain
+their original names.
+
 Primary References:
 - [`CameraComponentEditor.cs`](../../../../XREngine.Editor/ComponentEditors/CameraComponentEditor.cs)
 - [`RenderPipelinePostProcessSchema.cs`](../../../../XREngine.Runtime.Rendering/Rendering/PostProcessing/RenderPipelinePostProcessSchema.cs)

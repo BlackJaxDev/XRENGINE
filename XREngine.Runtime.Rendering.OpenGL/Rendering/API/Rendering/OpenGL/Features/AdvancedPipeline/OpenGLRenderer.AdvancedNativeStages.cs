@@ -22,23 +22,35 @@ public partial class OpenGLRenderer
             buffers.EnsureCapacity(closure.Width, closure.Height, views, depthSlices);
             buffers.UploadPushConstants(closure.Width, closure.Height, views, depthSlices, _advancedSceneUploader?.LightCount ?? 0u,
                 request.RequireNativeOutput, request.EnableBuiltInAmbientOcclusion, request.EnableLightProbesAndIbl, request.RequiresMaterialSurfaceExports,
-                request.ShadingDebugView);
+                request.ShadingDebugView, request.MsaaSampleCount > 1u && request.HasAuthoredBackground);
             buffers.PreparedRenderFrame = request.RenderFrameId;
             buffers.PreparedPublication = request.Publication.PublicationGeneration;
             buffers.PreparedMaterialSurfaceExports = request.RequiresMaterialSurfaceExports;
         }
-        Span<uint> priorSamplers = stackalloc uint[5];
+        bool multisample = request.MsaaSampleCount > 1u;
+        Span<uint> raw = stackalloc uint[5];
+        if (multisample && (!TryEnsureAdvancedMultisamplePrograms(out reason) ||
+            !TryGetAdvancedMultisampleTextures(request.MsaaSampleCount, raw, out reason)))
+            return false;
+        Span<uint> priorSamplerStorage = stackalloc uint[10];
+        Span<uint> priorSamplers = priorSamplerStorage[..(multisample ? 10 : 5)];
         if (!TryBindAdvancedNativeSamplers(0u, priorSamplers, out reason))
             return false;
         try
         {
             BindNativeResources(in closure, request.Stage == EAdvancedRenderStage.NativeOpaqueShading);
+            if (multisample)
+                for (uint index = 0; index < 5; index++)
+                {
+                    RawGL.BindTextureUnit(5u + index, raw[(int)index]);
+                    RawGL.BindSampler(5u + index, 0u);
+                }
             uint tilesX = DivideRoundUp(closure.Width, 16u), tilesY = DivideRoundUp(closure.Height, 16u), view = request.NativeViewIndex;
             return request.Stage switch
             {
                 EAdvancedRenderStage.AmbientOcclusion => DispatchAmbientOcclusion(buffers, view, tilesX, tilesY, out reason),
                 EAdvancedRenderStage.WorkClassification => DispatchClassification(buffers, view, tilesX, tilesY, out reason),
-                EAdvancedRenderStage.NativeOpaqueShading => DispatchNativeOpaque(buffers, view, tilesX, tilesY, depthSlices, out reason),
+                EAdvancedRenderStage.NativeOpaqueShading => DispatchNativeOpaque(buffers, view, tilesX, tilesY, depthSlices, multisample, out reason),
                 _ => UnsupportedNativeStage(out reason),
             };
         }
@@ -93,11 +105,11 @@ public partial class OpenGLRenderer
         reason = "Ready"; return true;
     }
 
-    private bool DispatchNativeOpaque(OpenGLAdvancedNativeBufferStorage buffers, uint view, uint tilesX, uint tilesY, uint depthSlices, out string reason)
+    private bool DispatchNativeOpaque(OpenGLAdvancedNativeBufferStorage buffers, uint view, uint tilesX, uint tilesY, uint depthSlices, bool multisample, out string reason)
     {
         if (GenericToAPI<GLRenderProgram>(_advancedBuildFroxelsProgram) is not { } froxels ||
             GenericToAPI<GLRenderProgram>(_advancedShadeBackgroundProgram) is not { } background ||
-            GenericToAPI<GLRenderProgram>(_advancedShadeNativeOpaqueProgram) is not { } shade || !froxels.Use())
+            GenericToAPI<GLRenderProgram>(multisample ? _advancedMsaaShadeProgram : _advancedShadeNativeOpaqueProgram) is not { } shade || !froxels.Use())
         { reason = "The OpenGL Advanced native opaque programs are not linked."; return false; }
         buffers.ResetLightingCounters();
         RawGL.MemoryBarrier(MemoryBarrierMask.ShaderStorageBarrierBit);
@@ -109,6 +121,16 @@ public partial class OpenGLRenderer
         RawGL.DispatchCompute(tilesX, tilesY, 1u);
         RawGL.MemoryBarrier(MemoryBarrierMask.ShaderImageAccessBarrierBit);
         if (!shade.Use()) { reason = "The OpenGL Advanced opaque shading program is not linked."; return false; }
+        if (multisample)
+        {
+            // Each invocation owns one pixel and resolves every sample once;
+            // per-material indirect lists cannot represent mixed-surface pixels.
+            buffers.BindPushConstants(view, 0u);
+            RawGL.DispatchCompute(tilesX, tilesY, 1u);
+            RawGL.MemoryBarrier(MemoryBarrierMask.ShaderImageAccessBarrierBit | MemoryBarrierMask.TextureFetchBarrierBit | MemoryBarrierMask.FramebufferBarrierBit);
+            reason = "Ready";
+            return true;
+        }
         buffers.BindDispatchArguments();
         for (uint kernel = 0u; kernel < 128u; ++kernel)
         {

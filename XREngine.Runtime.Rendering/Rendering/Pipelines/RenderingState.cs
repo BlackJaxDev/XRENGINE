@@ -140,6 +140,11 @@ public sealed partial class XRRenderPipelineInstance
         /// </summary>
         public RenderFrameViewSet? FrameViewSet { get; private set; }
         /// <summary>
+        /// Immutable native authoring views with this invocation's temporal sample.
+        /// The logical view set remains unchanged for history-ledger ownership.
+        /// </summary>
+        internal RenderFrameViewSet? TemporalAuthoringViewSet { get; set; }
+        /// <summary>
         /// Frame-owned publication of stable render-side scene buffers and logical views.
         /// </summary>
         public RenderWorldSnapshot? WorldSnapshot { get; private set; }
@@ -342,11 +347,13 @@ public sealed partial class XRRenderPipelineInstance
                         Scene.GPUCommands.AdvancedGlobalResources);
                     WorldSnapshot = snapshot;
                     FrameViewSet = views;
+                    TemporalAuthoringViewSet = null;
                 }
                 else
                 {
                     WorldSnapshot = null;
                     FrameViewSet = null;
+                    TemporalAuthoringViewSet = null;
                 }
 
                 if (WindowViewport is not null)
@@ -376,6 +383,7 @@ public sealed partial class XRRenderPipelineInstance
                 ViewHistoryCaptureAccepted = false;
                 WorldSnapshot = null;
                 FrameViewSet = null;
+                TemporalAuthoringViewSet = null;
                 while (_renderingViewports.Count > viewportDepth) _renderingViewports.Pop();
                 while (_renderingScenes.Count > sceneDepth) _renderingScenes.Pop();
                 while (_renderingCameras.Count > cameraDepth) _renderingCameras.Pop();
@@ -431,6 +439,7 @@ public sealed partial class XRRenderPipelineInstance
             MeshRenderCommands = null;
             CapturePolicy = RenderCapturePolicy.None;
             FrameViewSet = null;
+            TemporalAuthoringViewSet = null;
             WorldSnapshot = null;
             LastVisibilityBatchDecision = null;
             LastVisibilityContentPolicy = ViewBatchContentPolicy.Exact;
@@ -1113,6 +1122,8 @@ public sealed partial class XRRenderPipelineInstance
         }
 
         public EAdvancedLateTemporalOutput AdvancedLateTemporalOutput { get; private set; }
+        /// <summary>Composites admitted background radiance into uncovered MSAA samples.</summary>
+        internal bool AdvancedMultisampleBackground { get; set; }
         private readonly Stack<EAdvancedLateTemporalOutput> _advancedLateTemporalOutputs = new();
         public StateObject PushAdvancedLateTemporalOutput(EAdvancedLateTemporalOutput output)
         {

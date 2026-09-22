@@ -874,7 +874,7 @@ namespace XREngine.Rendering
         /// </summary>
         /// <param name="projection">The projection matrix to modify.</param>
         /// <returns>The jittered projection matrix.</returns>
-        private static Matrix4x4 ApplyProjectionJitter(Matrix4x4 projection, Vector2 jitter, bool orthographic)
+        internal static Matrix4x4 ApplyProjectionJitter(Matrix4x4 projection, Vector2 jitter, bool orthographic)
         {
             if (orthographic)
             {
@@ -883,8 +883,10 @@ namespace XREngine.Rendering
             }
             else
             {
-                projection.M31 += jitter.X;
-                projection.M32 += jitter.Y;
+                // Perspective clip W carries M34: scale by it so the requested
+                // positive NDC offset does not reverse under the usual -Z view.
+                projection.M31 += jitter.X * projection.M34;
+                projection.M32 += jitter.Y * projection.M34;
             }
 
             return projection;

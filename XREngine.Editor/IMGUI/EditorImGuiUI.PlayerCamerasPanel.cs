@@ -248,22 +248,10 @@ public static partial class EditorImGuiUI
         if (ImGui.BeginTabItem(entry.Component is null ? "Camera" : "Component"))
         {
             if (entry.Component is not null)
-                PlayerCameraPanelCameraEditor.DrawInspector(entry.Component, PlayerCameraPanelVisited);
+                PlayerCameraPanelCameraEditor.DrawInspector(entry.Component, PlayerCameraPanelVisited, entry.Pipeline, entry.Viewport, entry.PipelineInstance);
             else
-                DrawRuntimeObjectInspector("Camera", entry.Camera, PlayerCameraPanelVisited, defaultOpen: true);
+                CameraComponentEditor.DrawRuntimeCameraEditor(entry.Camera, entry.Pipeline, null, PlayerCameraPanelVisited, entry.Viewport, entry.PipelineInstance);
 
-            ImGui.EndTabItem();
-        }
-
-        if (ImGui.BeginTabItem("Projection"))
-        {
-            CameraComponentEditor.DrawRuntimeCameraProjection(entry.Camera, PlayerCameraPanelVisited);
-            ImGui.EndTabItem();
-        }
-
-        if (ImGui.BeginTabItem("Post Processing"))
-        {
-            CameraComponentEditor.DrawRuntimeCameraPostProcessing(entry.Camera, entry.Pipeline, entry.Component, PlayerCameraPanelVisited);
             ImGui.EndTabItem();
         }
 

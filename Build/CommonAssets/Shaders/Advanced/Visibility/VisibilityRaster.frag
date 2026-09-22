@@ -18,6 +18,7 @@ layout(location = 10) flat in uint VisibilityEditorFlags;
 layout(location = 0) out uvec2 OutVisibilityIdentity;
 layout(location = 1) out uint OutVisibilityMetadata;
 layout(location = 2) out uint OutVisibilitySelection;
+layout(location = 3) out vec2 OutVisibilitySamplePosition;
 
 void main()
 {
@@ -53,4 +54,6 @@ void main()
     OutVisibilitySelection = selectionValid
         ? VisibilitySelectionId
         : XR_ADV_VIS_INVALID;
+    // Preserve the actual covered sample position for native MSAA shading.
+    OutVisibilitySamplePosition = gl_SamplePosition;
 }

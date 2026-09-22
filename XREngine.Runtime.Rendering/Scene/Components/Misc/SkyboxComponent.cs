@@ -1237,7 +1237,7 @@ namespace XREngine.Components.Scene.Mesh
                 RenderOptions = renderParams,
             };
 
-            _material.AdvancedBackgroundProfile = new(_material.ShaderStateRevision, SupportsStereo: true,
+            _material.AdvancedBackgroundProfile = new(_material.ShaderStateRevision, SupportsStereo: true, WritesOpaqueAlpha: true,
                 UnsupportedReason: _mode == ESkyboxMode.Texture && tex is null
                     ? "Texture skybox rendering requires an authored environment texture."
                     : null);

@@ -305,7 +305,10 @@ internal sealed unsafe partial class VulkanDeviceContext
             deviceFeatures.MultiViewport = Vk.True;
 
         if (supportedFeatures.SampleRateShading)
+        {
             deviceFeatures.SampleRateShading = Vk.True;
+            _deviceContext.SampleRateShadingEnabled = true;
+        }
 
         if (supportedFeatures.IndependentBlend)
             deviceFeatures.IndependentBlend = Vk.True;

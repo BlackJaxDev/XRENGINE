@@ -108,6 +108,7 @@ internal sealed partial class VulkanFrameLoop
             pipeline,
             pipeline?.Resources,
             pipeline?.ActiveMeshRenderCommands.RenderingBackendReadyPackage.PassMetadata
+                ?? pipeline?.ActiveGeneration?.PassMetadata
                 ?? pipeline?.Pipeline?.PassMetadata,
             displayWidth,
             displayHeight,
@@ -833,7 +834,9 @@ internal sealed partial class VulkanFrameLoop
                 : RuntimeHelpers.GetHashCode(viewport),
             pipeline,
             pipeline.Resources,
-            pipeline.ActiveMeshRenderCommands.RenderingBackendReadyPackage.PassMetadata ?? pipeline.Pipeline?.PassMetadata,
+            pipeline.ActiveMeshRenderCommands.RenderingBackendReadyPackage.PassMetadata
+                ?? pipeline.ActiveGeneration?.PassMetadata
+                ?? pipeline.Pipeline?.PassMetadata,
             displayWidth, displayHeight, internalWidth, internalHeight, outputFrameBuffer?.Name,
             ShouldPreserveSubmissionOrderBlock(), outputTargetIdentity, outputTargetName);
         return ApplyInteractiveResizePlannerFreeze(CompleteFrameOpContext(context with

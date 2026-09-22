@@ -36,7 +36,7 @@ namespace XREngine.Components.Scripting
             public Type[] MenuItems { get; } = menuItems;
         }
         
-        private static readonly Dictionary<string, (object source, Assembly assembly, WeakReference<AssemblyLoadContext> contextRef, AssemblyData data)> _loadedAssemblies = [];
+        private static readonly Dictionary<string, (object source, Assembly assembly, AssemblyLoadContext context, AssemblyData data)> _loadedAssemblies = [];
         public static IReadOnlyDictionary<string, AssemblyData> LoadedAssemblies => _loadedAssemblies.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.data);
 
         [RequiresUnreferencedCode("Calls System.Reflection.Assembly.GetExportedTypes()")]
@@ -46,8 +46,10 @@ namespace XREngine.Components.Scripting
             Type[] components = [.. exported.Where(t => t.IsSubclassOf(typeof(XRComponent)))];
             Type[] menuItems = [.. exported.Where(t => typeof(IRuntimeMenuItem).IsAssignableFrom(t) && !t.IsInterface)];
             
-            // Use WeakReference to allow GC to collect the context after unload
-            _loadedAssemblies[id] = (source, assembly, new WeakReference<AssemblyLoadContext>(context), new AssemblyData(components, menuItems));
+            // Keep the context alive for the logical load lifetime. A weak context can
+            // be finalized and begin unloading even while its assembly remains in use.
+            // Removing this entry in Unload releases ownership before requesting unload.
+            _loadedAssemblies[id] = (source, assembly, context, new AssemblyData(components, menuItems));
             OnAssemblyLoaded?.Invoke(id, new AssemblyData(components, menuItems));
         }
 
@@ -131,11 +133,7 @@ namespace XREngine.Components.Scripting
             
             _loadedAssemblies.Remove(id);
             
-            // Try to get the context and unload it
-            if (data.contextRef.TryGetTarget(out var context))
-            {
-                context.Unload();
-            }
+            data.context.Unload();
             
             if (data.source is Stream stream)
                 stream.Dispose();
